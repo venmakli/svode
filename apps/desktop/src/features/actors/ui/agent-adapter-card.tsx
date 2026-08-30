@@ -61,6 +61,7 @@ export function AgentAdapterCard({
   open,
   pending,
   primary,
+  readOnly,
   validation,
   onChange,
   onCheck,
@@ -78,6 +79,7 @@ export function AgentAdapterCard({
   open?: boolean;
   pending: boolean;
   primary: boolean;
+  readOnly: boolean;
   validation?: AgentActorBindingValidation;
   onChange(binding: AgentActorBinding): void;
   onCheck(): void;
@@ -125,6 +127,7 @@ export function AgentAdapterCard({
               <AdapterSelectField
                 label={m.agent_actors_model_label()}
                 options={descriptor?.modelOptions ?? []}
+                readOnly={readOnly}
                 value={binding.model}
                 onChange={(model) =>
                   onChange({ ...binding, effort: null, model })
@@ -133,6 +136,7 @@ export function AgentAdapterCard({
               <AdapterSelectField
                 label={m.agent_actors_effort_label()}
                 options={effortOptions}
+                readOnly={readOnly}
                 value={binding.effort}
                 onChange={(effort) => onChange({ ...binding, effort })}
               />
@@ -174,7 +178,7 @@ export function AgentAdapterCard({
                 type="button"
                 variant="outline"
                 size="sm"
-                disabled={checkDisabled}
+                disabled={checkDisabled || readOnly}
                 onClick={onCheck}
               >
                 {pending ? (
@@ -190,6 +194,7 @@ export function AgentAdapterCard({
                   type="button"
                   variant="outline"
                   size="sm"
+                  disabled={readOnly}
                   onClick={onMakePrimary}
                 >
                   {m.agent_actors_make_primary()}
@@ -199,7 +204,7 @@ export function AgentAdapterCard({
                 type="button"
                 variant="ghost"
                 size="sm"
-                disabled={!canRemove}
+                disabled={readOnly || !canRemove}
                 onClick={onRemove}
               >
                 <Trash2 data-icon="inline-start" />
@@ -217,11 +222,13 @@ function AdapterSelectField({
   label,
   onChange,
   options,
+  readOnly,
   value,
 }: {
   label: string;
   onChange(value: string | null): void;
   options: readonly AgentActorSelectOption[];
+  readOnly: boolean;
   value: string | null;
 }) {
   const known = options.some((option) => option.value === value);
@@ -231,6 +238,7 @@ function AdapterSelectField({
     <Field data-invalid={!known && Boolean(value)}>
       <FieldLabel>{label}</FieldLabel>
       <Select
+        disabled={readOnly}
         value={value ?? DEFAULT_VALUE}
         onValueChange={(next) => onChange(next === DEFAULT_VALUE ? null : next)}
       >

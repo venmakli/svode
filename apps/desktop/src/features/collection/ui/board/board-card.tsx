@@ -33,6 +33,7 @@ export function SortableBoardCard(props: BoardCardProps) {
       entryPath: props.card.entry.path,
       groupKey: props.card.groupKey,
     },
+    disabled: props.readOnly || props.disabledReorder,
   });
 
   return (
@@ -70,6 +71,7 @@ export function BoardCardContent({
   onOpenPath,
   onDuplicate,
   onDelete,
+  readOnly,
 }: BoardCardProps) {
   const { entry } = card;
   const conflictPath = documentNameConflictDisplayPath(entry);
@@ -145,7 +147,7 @@ export function BoardCardContent({
                 onOpenPath,
               }}
               onRequestActors={onRequestActors}
-              onUpdateField={overlay ? undefined : onUpdateField}
+              onUpdateField={overlay || readOnly ? undefined : onUpdateField}
             />
           </CardContent>
         </Card>
@@ -160,14 +162,21 @@ export function BoardCardContent({
           <FileText data-icon="inline-start" />
           {m.collection_open_in_peek()}
         </ContextMenuItem>
-        <ContextMenuItem onClick={() => onDuplicate(entry)}>
-          <Copy data-icon="inline-start" />
-          {m.collection_duplicate_entry()}
-        </ContextMenuItem>
-        <ContextMenuItem variant="destructive" onClick={() => onDelete(entry)}>
-          <Trash2 data-icon="inline-start" />
-          {m.space_delete()}
-        </ContextMenuItem>
+        {!readOnly ? (
+          <ContextMenuItem onClick={() => onDuplicate(entry)}>
+            <Copy data-icon="inline-start" />
+            {m.collection_duplicate_entry()}
+          </ContextMenuItem>
+        ) : null}
+        {!readOnly ? (
+          <ContextMenuItem
+            variant="destructive"
+            onClick={() => onDelete(entry)}
+          >
+            <Trash2 data-icon="inline-start" />
+            {m.space_delete()}
+          </ContextMenuItem>
+        ) : null}
       </ContextMenuContent>
     </ContextMenu>
   );

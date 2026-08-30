@@ -83,6 +83,7 @@ export function ViewSettingsFilterEditorPane({
   applyFilterDraft,
   clearFilterDraft,
   onSchemaChange,
+  readOnly,
 }: {
   schema: CollectionSchema;
   query: UseViewQueryResult;
@@ -93,6 +94,7 @@ export function ViewSettingsFilterEditorPane({
   applyFilterDraft: () => void;
   clearFilterDraft: () => void;
   onSchemaChange: (schema: CollectionSchema) => void;
+  readOnly: boolean;
 }) {
   if (!filterDraft) return { content: null, footer: null };
 
@@ -125,10 +127,14 @@ export function ViewSettingsFilterEditorPane({
           <Trash2 data-icon="inline-start" />
           {m.view_query_clear_filter()}
         </Button>
-        <SaveButton
-          query={query}
-          onSaved={(nextSchema) => onSchemaChange(normalizeSchema(nextSchema))}
-        />
+        {!readOnly ? (
+          <SaveButton
+            query={query}
+            onSaved={(nextSchema) =>
+              onSchemaChange(normalizeSchema(nextSchema))
+            }
+          />
+        ) : null}
       </div>
     ),
   };
@@ -193,6 +199,7 @@ export function ViewSettingsSortEditorPane({
   applySortDraft,
   clearSortDraft,
   onSchemaChange,
+  readOnly,
 }: {
   query: UseViewQueryResult;
   sortDraft: { index: number | null; sort: QuerySort } | null;
@@ -200,6 +207,7 @@ export function ViewSettingsSortEditorPane({
   applySortDraft: () => void;
   clearSortDraft: () => void;
   onSchemaChange: (schema: CollectionSchema) => void;
+  readOnly: boolean;
 }) {
   if (!sortDraft) return { content: null, footer: null };
 
@@ -224,10 +232,14 @@ export function ViewSettingsSortEditorPane({
           <Trash2 data-icon="inline-start" />
           {m.view_query_delete_sort()}
         </Button>
-        <SaveButton
-          query={query}
-          onSaved={(nextSchema) => onSchemaChange(normalizeSchema(nextSchema))}
-        />
+        {!readOnly ? (
+          <SaveButton
+            query={query}
+            onSaved={(nextSchema) =>
+              onSchemaChange(normalizeSchema(nextSchema))
+            }
+          />
+        ) : null}
       </div>
     ),
   };
@@ -237,10 +249,12 @@ export function ViewSettingsGroupPane({
   schema,
   query,
   onSchemaChange,
+  readOnly,
 }: {
   schema: CollectionSchema;
   query: UseViewQueryResult;
   onSchemaChange: (schema: CollectionSchema) => void;
+  readOnly: boolean;
 }) {
   return {
     content: (
@@ -250,11 +264,11 @@ export function ViewSettingsGroupPane({
         onSelect={(field) => query.setLocalQuery({ groupBy: field })}
       />
     ),
-    footer: (
+    footer: !readOnly ? (
       <SaveButton
         query={query}
         onSaved={(nextSchema) => onSchemaChange(normalizeSchema(nextSchema))}
       />
-    ),
+    ) : null,
   };
 }

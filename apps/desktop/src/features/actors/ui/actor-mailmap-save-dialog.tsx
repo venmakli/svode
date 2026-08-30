@@ -19,12 +19,14 @@ export function ActorMailmapSaveDialog({
   failure,
   pending,
   review,
+  readOnly = false,
   onClose,
   onConfirm,
 }: {
   failure: string | null;
   pending: boolean;
   review: ActorMailmapSaveReview | null;
+  readOnly?: boolean;
   onClose(): void;
   onConfirm(): void;
 }) {
@@ -62,7 +64,11 @@ export function ActorMailmapSaveDialog({
           <AlertDialogCancel disabled={pending}>
             {m.actors_mailmap_save_cancel()}
           </AlertDialogCancel>
-          <Button type="button" disabled={pending} onClick={onConfirm}>
+          <Button
+            type="button"
+            disabled={pending || readOnly}
+            onClick={onConfirm}
+          >
             {pending ? (
               <LoaderCircle data-icon="inline-start" className="animate-spin" />
             ) : null}

@@ -17,12 +17,14 @@ import type { RoutineRow } from "../model/types";
 export function RoutineDeleteDialog({
   error,
   pending,
+  readOnly,
   routine,
   onClose,
   onConfirm,
 }: {
   error: string | null;
   pending: boolean;
+  readOnly: boolean;
   routine: RoutineRow | null;
   onClose(): void;
   onConfirm(): void;
@@ -46,7 +48,7 @@ export function RoutineDeleteDialog({
           </AlertDialogCancel>
           <AlertDialogAction
             variant="destructive"
-            disabled={pending}
+            disabled={pending || readOnly}
             onClick={(event) => {
               event.preventDefault();
               onConfirm();

@@ -58,6 +58,7 @@ export function AgentActorForm({
   expandedAdapter,
   formId,
   pendingAdapter,
+  readOnly = false,
   sections = ALL_SECTIONS,
   showValidation = true,
   validation,
@@ -84,6 +85,7 @@ export function AgentActorForm({
   expandedAdapter?: AgentActorBinding["adapter"] | null;
   formId: string;
   pendingAdapter: AgentActorBinding["adapter"] | null;
+  readOnly?: boolean;
   sections?: readonly AgentActorFormSection[];
   showValidation?: boolean;
   validation?: AgentActorDraftValidation;
@@ -108,6 +110,7 @@ export function AgentActorForm({
       className="flex min-h-0 flex-col gap-5"
       onSubmit={(event) => {
         event.preventDefault();
+        if (readOnly) return;
         if (!validateOnSubmit || (!errors.name && !errors.adapters)) onSubmit();
       }}
     >
@@ -123,6 +126,7 @@ export function AgentActorForm({
               value={draft.name}
               aria-invalid={showValidation && Boolean(errors.name)}
               autoFocus
+              readOnly={readOnly}
               onChange={(event) =>
                 onChange({ ...draft, name: event.target.value })
               }
@@ -138,6 +142,7 @@ export function AgentActorForm({
             <Textarea
               id={`${formId}-description`}
               value={draft.description}
+              readOnly={readOnly}
               onChange={(event) =>
                 onChange({ ...draft, description: event.target.value })
               }
@@ -160,6 +165,7 @@ export function AgentActorForm({
           >
             <FieldLabel>{m.agent_actors_approval_label()}</FieldLabel>
             <Select
+              disabled={readOnly}
               value={draft.approvalMode}
               onValueChange={(value) =>
                 onChange({
@@ -276,6 +282,7 @@ export function AgentActorForm({
                   canRemove={draft.adapters.length > 1}
                   pending={pendingAdapter === binding.adapter}
                   primary={index === 0}
+                  readOnly={readOnly}
                   validation={validations[binding.adapter]}
                   onChange={(next) =>
                     onChange({
@@ -322,6 +329,7 @@ export function AgentActorForm({
           ) : null}
           {available.length > 0 ? (
             <Select
+              disabled={readOnly}
               value=""
               onValueChange={(value) => {
                 const adapter = value as AgentActorBinding["adapter"];

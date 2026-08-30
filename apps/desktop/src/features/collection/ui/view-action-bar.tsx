@@ -32,6 +32,7 @@ export function ViewActionBar({
   collectionPath,
   spacePath,
   projectPath,
+  readOnly,
   onSearchOpenChange,
   onSearchQueryChange,
   onSettingsOpenChange,
@@ -64,6 +65,7 @@ export function ViewActionBar({
   collectionPath: string;
   spacePath: string;
   projectPath?: string | null;
+  readOnly: boolean;
   onSearchOpenChange: (open: boolean) => void;
   onSearchQueryChange: (query: string) => void;
   onSettingsOpenChange: (open: boolean) => void;
@@ -173,21 +175,24 @@ export function ViewActionBar({
         collectionPath={collectionPath}
         spacePath={spacePath}
         projectPath={projectPath}
+        readOnly={readOnly}
         onSchemaChange={onSchemaChange}
         autoConfigForType={autoConfigForType}
       />
-      <TemplatesSplitButton
-        schema={schema}
-        onPrimaryCreate={onCreateEntry}
-        onLoadTemplates={onLoadTemplates}
-        onCreateTemplate={onCreateTemplate}
-        onInstantiateTemplate={onInstantiateTemplate}
-        onEditTemplate={onEditTemplate}
-        onSetDefaultTemplate={onSetDefaultTemplate}
-        onDuplicateTemplate={onDuplicateTemplate}
-        onDeleteTemplate={onDeleteTemplate}
-        onReorderTemplates={onReorderTemplates}
-      />
+      {!readOnly ? (
+        <TemplatesSplitButton
+          schema={schema}
+          onPrimaryCreate={onCreateEntry}
+          onLoadTemplates={onLoadTemplates}
+          onCreateTemplate={onCreateTemplate}
+          onInstantiateTemplate={onInstantiateTemplate}
+          onEditTemplate={onEditTemplate}
+          onSetDefaultTemplate={onSetDefaultTemplate}
+          onDuplicateTemplate={onDuplicateTemplate}
+          onDeleteTemplate={onDeleteTemplate}
+          onReorderTemplates={onReorderTemplates}
+        />
+      ) : null}
     </div>
   );
 }

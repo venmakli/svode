@@ -12,6 +12,7 @@ export function useCollectionKeyboardShortcuts({
   moveActive,
   focusActiveViewCreate,
   createEntry,
+  readOnly,
 }: {
   activeTab: ActiveTab;
   views: CollectionView[];
@@ -19,6 +20,7 @@ export function useCollectionKeyboardShortcuts({
   moveActive: (offset: number) => Promise<void>;
   focusActiveViewCreate: (asFolder: boolean) => boolean;
   createEntry: (asFolder?: boolean) => Promise<Entry>;
+  readOnly: boolean;
 }) {
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
@@ -26,11 +28,13 @@ export function useCollectionKeyboardShortcuts({
       if (!(event.ctrlKey || event.metaKey)) return;
       if (event.shiftKey && event.key === "ArrowRight") {
         event.preventDefault();
+        if (readOnly) return;
         void moveActive(1).catch(handleError);
         return;
       }
       if (event.shiftKey && event.key === "ArrowLeft") {
         event.preventDefault();
+        if (readOnly) return;
         void moveActive(-1).catch(handleError);
         return;
       }
@@ -62,12 +66,14 @@ export function useCollectionKeyboardShortcuts({
       }
       if (!event.shiftKey && event.key.toLowerCase() === "n") {
         event.preventDefault();
+        if (readOnly) return;
         if (focusActiveViewCreate(false)) return;
         void createEntry(false).catch(handleError);
         return;
       }
       if (event.shiftKey && event.key.toLowerCase() === "n") {
         event.preventDefault();
+        if (readOnly) return;
         if (focusActiveViewCreate(true)) return;
         void createEntry(true).catch(handleError);
       }
@@ -79,6 +85,7 @@ export function useCollectionKeyboardShortcuts({
     createEntry,
     focusActiveViewCreate,
     moveActive,
+    readOnly,
     selectTab,
     views,
   ]);

@@ -10,6 +10,7 @@ import {
 import * as m from "@/paraglide/messages.js";
 
 export function TableFooterComposer({
+  readOnly,
   colSpan,
   entryCount,
   footerRef,
@@ -22,6 +23,7 @@ export function TableFooterComposer({
   onCreate,
 }: {
   colSpan: number;
+  readOnly: boolean;
   entryCount: number;
   footerRef: RefObject<HTMLDivElement | null>;
   inputRef: RefObject<HTMLInputElement | null>;
@@ -37,7 +39,7 @@ export function TableFooterComposer({
       <ShadcnTableRow className="h-10 hover:bg-background">
         <TableCell colSpan={colSpan} className="p-0">
           <div ref={footerRef} className="flex h-10 items-center gap-2 px-3">
-            {open ? (
+            {readOnly ? null : open ? (
               <Input
                 ref={inputRef}
                 value={value}

@@ -25,9 +25,10 @@ export interface GalleryCardProps {
   nestedCollection: boolean;
   folder: boolean;
   disabledReorder: boolean;
+  readOnly: boolean;
   focused: boolean;
   onRequestActors: (allTime: boolean) => Promise<ActorCandidate[]>;
-  onUpdateField: (entry: Entry, column: Column, value: unknown) => void;
+  onUpdateField?: (entry: Entry, column: Column, value: unknown) => void;
   onOpen: (entry: Entry, nestedCollection: boolean) => void;
   onOpenFullPage: (entry: Entry) => void;
   onOpenNestedCollection: (entry: Entry) => void;

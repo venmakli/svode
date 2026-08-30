@@ -27,6 +27,7 @@ import {
 import * as m from "@/paraglide/messages.js";
 
 export function useTableColumns({
+  readOnly,
   visibleFields,
   schema,
   view,
@@ -56,6 +57,7 @@ export function useTableColumns({
   onRequestActors,
   onCommitField,
 }: {
+  readOnly: boolean;
   visibleFields: string[];
   schema: CollectionSchema;
   view: CollectionView;
@@ -105,6 +107,7 @@ export function useTableColumns({
             minSize: 200,
             header: ({ header }) => (
               <ColumnHeader
+                readOnly={readOnly}
                 field="title"
                 label={label}
                 icon={TITLE_ICON}
@@ -167,6 +170,7 @@ export function useTableColumns({
           minSize: minColumnWidth(property),
           header: ({ header }) => (
             <ColumnHeader
+              readOnly={readOnly}
               field={field}
               label={field}
               icon={Icon}
@@ -208,6 +212,7 @@ export function useTableColumns({
           cell: ({ row }) =>
             property ? (
               <PropertyCell
+                readOnly={readOnly}
                 column={property}
                 entryLabel={row.original.entry.meta.title}
                 actors={actors}
@@ -264,6 +269,7 @@ export function useTableColumns({
     actors,
     projectPath,
     query,
+    readOnly,
     schema,
     setEditing,
     setExpanded,

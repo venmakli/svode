@@ -12,10 +12,12 @@ import type { CollectionTableRow } from "./types";
 import * as m from "@/paraglide/messages.js";
 
 export function TableHeaderRow({
+  readOnly,
   table,
   onAddColumn,
 }: {
   table: ReactTable<CollectionTableRow>;
+  readOnly: boolean;
   onAddColumn: (type: PropertyType) => void;
 }) {
   return (
@@ -33,20 +35,24 @@ export function TableHeaderRow({
             </TableHead>
           ))}
           <TableHead className="h-[34px] p-0">
-            <PropertyTypePicker
-              trigger={
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon-sm"
-                  className="h-[34px] w-11 rounded-none text-muted-foreground [&_svg]:size-3.5"
-                >
-                  <Plus />
-                  <span className="sr-only">{m.collection_add_property()}</span>
-                </Button>
-              }
-              onSelect={onAddColumn}
-            />
+            {!readOnly ? (
+              <PropertyTypePicker
+                trigger={
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-sm"
+                    className="h-[34px] w-11 rounded-none text-muted-foreground [&_svg]:size-3.5"
+                  >
+                    <Plus />
+                    <span className="sr-only">
+                      {m.collection_add_property()}
+                    </span>
+                  </Button>
+                }
+                onSelect={onAddColumn}
+              />
+            ) : null}
           </TableHead>
         </ShadcnTableRow>
       ))}

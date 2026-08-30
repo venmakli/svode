@@ -42,9 +42,11 @@ import { CatalogRetryButton } from "./catalog-retry-button";
 
 export function ActorsSurface({
   owner,
+  readOnly = false,
   repositoryOwnerName,
   onOpenRepositorySettings,
 }: ScopeSurfaceRenderContext & {
+  readOnly?: boolean;
   repositoryOwnerName?: string;
   onOpenRepositorySettings?: (repositoryPath: string) => void;
 }) {
@@ -70,6 +72,7 @@ export function ActorsSurface({
     detailController,
     instanceKey,
     owner,
+    readOnly,
     onOpenRepositorySettings,
   });
   const catalogRows = useMemo(
@@ -151,7 +154,8 @@ export function ActorsSurface({
     [openAdd, openEdit, openMerge],
   );
   const requestMutationIntent = useCallback(
-    (intent: ActorMutationIntent) =>
+    (intent: ActorMutationIntent) => {
+      if (readOnly) return;
       void accessRecovery.request({
         continuation: "automatic",
         continue: () => continueMutationIntent(intent),
@@ -159,8 +163,9 @@ export function ActorsSurface({
         intentLabel: actorIntentLabel(intent),
         placement: "dialog",
         targets: [repositoryTarget],
-      }),
-    [accessRecovery, continueMutationIntent, repositoryTarget],
+      });
+    },
+    [accessRecovery, continueMutationIntent, readOnly, repositoryTarget],
   );
 
   useEffect(() => {
@@ -185,6 +190,7 @@ export function ActorsSurface({
   const mutationState = mutationActionState(
     state,
     mutation.pendingPhase !== null,
+    readOnly,
   );
   const presentation = createActorsPresentation({
     catalogGeneration,
@@ -258,6 +264,7 @@ export function ActorsSurface({
         review={mutation.review}
         rootPointerCommitExpectation={mutation.rootPointerCommitExpectation}
         rows={catalogRows}
+        readOnly={readOnly}
         onApply={() => void mutation.apply()}
         onBack={mutation.back}
         onClose={mutation.close}
@@ -269,6 +276,7 @@ export function ActorsSurface({
         failure={mailmapSave.failure}
         pending={mailmapSave.pendingPhase === "commit"}
         review={mailmapSave.review}
+        readOnly={readOnly}
         onClose={mailmapSave.close}
         onConfirm={() => void mailmapSave.confirm()}
       />
@@ -290,8 +298,15 @@ function repositoryNameFromPath(path: string) {
 function mutationActionState(
   catalog: ActorCatalogState,
   mutationPending: boolean,
+  readOnly: boolean,
 ): SystemCollectionActionState {
   if (mutationPending) return { status: "pending" };
+  if (readOnly) {
+    return {
+      reason: m.repository_work_status_read_only(),
+      status: "disabled",
+    };
+  }
   if (catalog.phase === "initial") {
     return {
       reason: m.actors_mutation_disabled_loading(),

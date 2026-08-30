@@ -28,6 +28,7 @@ import * as m from "@/paraglide/messages.js";
 
 export function BoardView(props: BoardViewProps) {
   const {
+    readOnly,
     query,
     spacePath,
     projectPath,
@@ -71,31 +72,33 @@ export function BoardView(props: BoardViewProps) {
                 : m.collection_board_incomplete()}
             </EmptyTitle>
           </EmptyHeader>
-          <EmptyContent>
-            {runtime.groupableColumns.length === 0 ? (
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() =>
-                  void runtime.addGroupColumn("status").catch(console.error)
-                }
-              >
-                {m.board_add_status_column()}
-              </Button>
-            ) : (
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() =>
-                  runtime.selectGroupColumn(runtime.groupableColumns[0].name)
-                }
-              >
-                {m.view_query_add_group()}
-              </Button>
-            )}
-          </EmptyContent>
+          {!readOnly || runtime.groupableColumns.length > 0 ? (
+            <EmptyContent>
+              {runtime.groupableColumns.length === 0 ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() =>
+                    void runtime.addGroupColumn("status").catch(console.error)
+                  }
+                >
+                  {m.board_add_status_column()}
+                </Button>
+              ) : (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() =>
+                    runtime.selectGroupColumn(runtime.groupableColumns[0].name)
+                  }
+                >
+                  {m.view_query_add_group()}
+                </Button>
+              )}
+            </EmptyContent>
+          ) : null}
         </Empty>
       </div>
     );
@@ -114,16 +117,18 @@ export function BoardView(props: BoardViewProps) {
           <EmptyHeader>
             <EmptyTitle>{m.table_empty()}</EmptyTitle>
           </EmptyHeader>
-          <EmptyContent>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => runtime.openInitialDraft(false)}
-            >
-              {m.table_create_first_entry()}
-            </Button>
-          </EmptyContent>
+          {!readOnly ? (
+            <EmptyContent>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => runtime.openInitialDraft(false)}
+              >
+                {m.table_create_first_entry()}
+              </Button>
+            </EmptyContent>
+          ) : null}
         </Empty>
       </div>
     );
@@ -159,11 +164,17 @@ export function BoardView(props: BoardViewProps) {
 
   return (
     <DndContext
-      sensors={sensors}
+      sensors={readOnly ? undefined : sensors}
       collisionDetection={closestCorners}
-      onDragStart={runtime.handleDragStart}
-      onDragOver={runtime.handleDragOver}
-      onDragEnd={(event) => void runtime.handleDragEnd(event)}
+      onDragStart={(event) => {
+        if (!readOnly) runtime.handleDragStart(event);
+      }}
+      onDragOver={(event) => {
+        if (!readOnly) runtime.handleDragOver(event);
+      }}
+      onDragEnd={(event) => {
+        if (!readOnly) void runtime.handleDragEnd(event);
+      }}
       onDragCancel={runtime.handleDragCancel}
     >
       <div className={detailPageViewRowClassName}>
@@ -189,6 +200,7 @@ export function BoardView(props: BoardViewProps) {
                   overGroupKey={runtime.overGroupKey}
                   draftOpen={runtime.draftGroupKey === column.key}
                   draftAsFolder={runtime.draftAsFolder}
+                  readOnly={readOnly}
                   onPointerEnter={() => {
                     runtime.markActiveGroup(column.key);
                   }}
@@ -204,18 +216,21 @@ export function BoardView(props: BoardViewProps) {
                     )
                   }
                   cardProps={{
+                    readOnly,
                     groupColumn,
                     cardFields: runtime.cardFields,
                     customColumns: runtime.customColumns,
                     nestedCollectionPaths: runtime.nestedCollectionPaths,
-                    disabledReorder: runtime.hasSort,
+                    disabledReorder: readOnly || runtime.hasSort,
                     overlay: false,
                     spacePath,
                     projectPath,
                     actors: runtime.actors,
                     onRequestActors: runtime.loadActors,
-                    onUpdateField: (entry, column, value) =>
-                      void runtime.commitField(entry, column, value),
+                    onUpdateField: readOnly
+                      ? undefined
+                      : (entry, column, value) =>
+                          void runtime.commitField(entry, column, value),
                     onOpen: onOpenEntry,
                     onOpenNestedPeek,
                     onOpenNestedCollection,
@@ -237,12 +252,13 @@ export function BoardView(props: BoardViewProps) {
       <DragOverlay>
         {runtime.activeModel ? (
           <BoardCardContent
+            readOnly={readOnly}
             card={runtime.activeModel}
             groupColumn={groupColumn}
             cardFields={runtime.cardFields}
             customColumns={runtime.customColumns}
             nestedCollectionPaths={runtime.nestedCollectionPaths}
-            disabledReorder={runtime.hasSort}
+            disabledReorder={readOnly || runtime.hasSort}
             active
             overlay
             spacePath={spacePath}

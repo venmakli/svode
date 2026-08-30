@@ -29,6 +29,18 @@ test("table boolean cell renders missing and conflicts as unchecked without trut
             onRequestActors={async () => []}
           />
           <PropertyCell
+            readOnly
+            actors={[]}
+            entryLabel="Task three"
+            column={{ name: "Archived", type: "boolean" }}
+            editing={false}
+            value
+            onCancel={() => undefined}
+            onCommit={() => undefined}
+            onEdit={() => undefined}
+            onRequestActors={async () => []}
+          />
+          <PropertyCell
             actors={[]}
             entryLabel="Task one"
             column={{ name: "Invalid", type: "boolean" }}
@@ -69,6 +81,11 @@ test("table boolean cell renders missing and conflicts as unchecked without trut
     expect(invalid.getAttribute("aria-invalid")).toBe("true");
     expect(switchControl.getAttribute("aria-checked")).toBe("true");
     expect(switchControl.getAttribute("data-size")).toBe("sm");
+    expect(
+      dom.window.document.querySelector(
+        '[role="checkbox"][aria-label="Archived: Task three"]',
+      ),
+    ).toBeNull();
   } finally {
     await act(async () => root.unmount());
     restoreGlobals();

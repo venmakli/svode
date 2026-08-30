@@ -83,6 +83,7 @@ export function CollectionListRowContent({
   onDelete,
   onFocusRow,
   onKeyboardMove,
+  readOnly = false,
   rowRef,
 }: ListRowProps & {
   dragAttributes: ButtonHTMLAttributes<HTMLButtonElement>;
@@ -212,17 +213,21 @@ export function CollectionListRowContent({
             <FileText data-icon="inline-start" />
             {m.collection_open_in_peek()}
           </ContextMenuItem>
-          <ContextMenuItem onClick={() => onDuplicate(entry)}>
-            <Copy data-icon="inline-start" />
-            {m.collection_duplicate_entry()}
-          </ContextMenuItem>
-          <ContextMenuItem
-            variant="destructive"
-            onClick={() => onDelete(entry)}
-          >
-            <Trash2 data-icon="inline-start" />
-            {m.space_delete()}
-          </ContextMenuItem>
+          {!readOnly ? (
+            <ContextMenuItem onClick={() => onDuplicate(entry)}>
+              <Copy data-icon="inline-start" />
+              {m.collection_duplicate_entry()}
+            </ContextMenuItem>
+          ) : null}
+          {!readOnly ? (
+            <ContextMenuItem
+              variant="destructive"
+              onClick={() => onDelete(entry)}
+            >
+              <Trash2 data-icon="inline-start" />
+              {m.space_delete()}
+            </ContextMenuItem>
+          ) : null}
         </ContextMenuGroup>
       }
     />

@@ -118,6 +118,20 @@ test("Actors refreshes both catalogs from owner events without access probes", a
       calls.filter((command) => command === "agent_actors_get").length,
     ).toBe(2);
     expect(calls.includes("repository_access_verify")).toBe(false);
+
+    await act(async () => {
+      root.render(
+        <TooltipProvider>
+          <ActorsSurface readOnly owner={owner} presentation="full" />
+        </TooltipProvider>,
+      );
+      await nextTurn();
+    });
+    expect(
+      dom.window.document.querySelector<HTMLButtonElement>(
+        '[data-system-collection-create="add-actor"]',
+      )?.disabled,
+    ).toBe(true);
   } finally {
     await act(async () => root.unmount());
     clearNativeMocks();

@@ -18,6 +18,10 @@ import {
   type GitSaveScope,
   type GitSaveScopeLabel,
 } from "@/features/git/app-shell";
+import {
+  repositoryAccessIsEditable,
+  useRepositoryAccess,
+} from "@/features/git";
 import { useToggleCommandPalette } from "@/features/search/app-shell";
 import { useSpace } from "@/features/space";
 import {
@@ -55,6 +59,8 @@ export function useKeyboardShortcuts() {
       ? state.surfaceByOwnerKey[`space:${activeScopeSpace.id}`]
       : undefined,
   );
+  const repositoryAccess = useRepositoryAccess(activeScopeSpace?.path ?? "");
+  const activeScopeReadOnly = !repositoryAccessIsEditable(repositoryAccess);
   const actorsPresentationId = useSystemCollectionActivePresentationId(
     activeScopeSpace ? `actors:space:${activeScopeSpace.id}` : null,
   );
@@ -72,8 +78,11 @@ export function useKeyboardShortcuts() {
         const saveRoute = resolveScopeSaveShortcutRoute(
           e.shiftKey,
           activeScopeSurface,
+          activeScopeReadOnly,
         );
-        if (saveRoute === "descendants") {
+        if (saveRoute === "blocked") {
+          return;
+        } else if (saveRoute === "descendants") {
           void commitSaveScopeAndMaybeSync(
             activeScopeSpace.path,
             scope,
@@ -141,6 +150,7 @@ export function useKeyboardShortcuts() {
     activeDocument,
     activeRootPath,
     activeScopeSpace,
+    activeScopeReadOnly,
     activeScopeSurface,
     actorsPresentationId,
     toggleCommandPalette,
@@ -156,7 +166,9 @@ export function useKeyboardShortcuts() {
 export function resolveScopeSaveShortcutRoute(
   shiftKey: boolean,
   surface: ScopeSurfaceId | undefined,
-): "actors" | "descendants" | "feedback" {
+  readOnly = false,
+): "actors" | "blocked" | "descendants" | "feedback" {
+  if (readOnly) return "blocked";
   if (shiftKey) return "descendants";
   return surface === "actors" ? "actors" : "feedback";
 }

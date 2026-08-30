@@ -25,6 +25,7 @@ import { titleFilter } from "../lib/utils";
 import * as m from "@/paraglide/messages.js";
 
 export function ViewPlaceholder({
+  readOnly,
   type,
   name,
   schema,
@@ -37,6 +38,7 @@ export function ViewPlaceholder({
   onDuplicateEntry,
   onDeleteEntry,
 }: {
+  readOnly: boolean;
   type: ViewType;
   name: string;
   schema: CollectionSchema;
@@ -74,6 +76,7 @@ export function ViewPlaceholder({
       <IncompleteState
         title={m.collection_board_incomplete()}
         action={m.collection_add_group_property()}
+        hideAction={readOnly}
       />
     );
   }
@@ -82,6 +85,7 @@ export function ViewPlaceholder({
       <IncompleteState
         title={m.collection_calendar_incomplete()}
         action={m.collection_add_date_property()}
+        hideAction={readOnly}
       />
     );
   }
@@ -129,17 +133,21 @@ export function ViewPlaceholder({
                     <FileText data-icon="inline-start" />
                     {m.collection_open_in_peek()}
                   </ContextMenuItem>
-                  <ContextMenuItem onClick={() => onDuplicateEntry(entry)}>
-                    <Copy data-icon="inline-start" />
-                    {m.collection_duplicate_entry()}
-                  </ContextMenuItem>
-                  <ContextMenuItem
-                    className="text-destructive focus:text-destructive"
-                    onClick={() => onDeleteEntry(entry)}
-                  >
-                    <Trash2 data-icon="inline-start" />
-                    {m.space_delete()}
-                  </ContextMenuItem>
+                  {!readOnly ? (
+                    <ContextMenuItem onClick={() => onDuplicateEntry(entry)}>
+                      <Copy data-icon="inline-start" />
+                      {m.collection_duplicate_entry()}
+                    </ContextMenuItem>
+                  ) : null}
+                  {!readOnly ? (
+                    <ContextMenuItem
+                      className="text-destructive focus:text-destructive"
+                      onClick={() => onDeleteEntry(entry)}
+                    >
+                      <Trash2 data-icon="inline-start" />
+                      {m.space_delete()}
+                    </ContextMenuItem>
+                  ) : null}
                 </ContextMenuContent>
               </ContextMenu>
             );

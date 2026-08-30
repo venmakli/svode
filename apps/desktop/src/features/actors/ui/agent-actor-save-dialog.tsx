@@ -33,6 +33,7 @@ export function AgentActorSaveDialog({
   candidates,
   failure,
   pending,
+  readOnly,
   selectedOwnerPath,
   onClose,
   onConfirm,
@@ -42,6 +43,7 @@ export function AgentActorSaveDialog({
   candidates: readonly AgentActorSaveCandidate[];
   failure: string | null;
   pending: boolean;
+  readOnly: boolean;
   selectedOwnerPath: string | null;
   onClose(): void;
   onConfirm(): void;
@@ -130,7 +132,7 @@ export function AgentActorSaveDialog({
             <RepositoryAccessPrimaryButton recovery={accessRecovery} />
           ) : (
             <AlertDialogAction
-              disabled={pending || !selectedOwnerPath}
+              disabled={readOnly || pending || !selectedOwnerPath}
               onClick={onConfirm}
             >
               {pending ? (

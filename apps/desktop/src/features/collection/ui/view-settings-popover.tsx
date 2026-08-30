@@ -51,6 +51,7 @@ export function ViewSettingsPopover({
   collectionPath,
   spacePath,
   projectPath,
+  readOnly,
   onSchemaChange,
   autoConfigForType,
 }: {
@@ -73,6 +74,7 @@ export function ViewSettingsPopover({
   collectionPath: string;
   spacePath: string;
   projectPath?: string | null;
+  readOnly: boolean;
   onSchemaChange: (schema: CollectionSchema) => void;
   autoConfigForType: (type: ViewType) => Record<string, unknown>;
 }) {
@@ -142,6 +144,7 @@ export function ViewSettingsPopover({
     applyFilterDraft,
     clearFilterDraft,
     onSchemaChange,
+    readOnly,
   });
   const sortPane = ViewSettingsSortPane({
     schema,
@@ -156,11 +159,13 @@ export function ViewSettingsPopover({
     applySortDraft,
     clearSortDraft,
     onSchemaChange,
+    readOnly,
   });
   const groupPane = ViewSettingsGroupPane({
     schema,
     query,
     onSchemaChange,
+    readOnly,
   });
 
   const panes = [
@@ -305,18 +310,19 @@ export function ViewSettingsPopover({
     <MultiPanePopover
       open={open}
       onOpenChange={(nextOpen) => {
-        if (nextOpen) setPane("main");
+        if (nextOpen && !readOnly) setPane("main");
         onOpenChange(nextOpen);
       }}
       pane={pane}
       onPaneChange={setPane}
-      mainPane="main"
+      mainPane={readOnly ? pane : "main"}
       className="w-80 max-w-[calc(100vw-2rem)]"
       trigger={
         <Button
           type="button"
           variant="ghost"
           size="icon-sm"
+          disabled={readOnly}
           className={cn(
             "rounded-[7px] text-muted-foreground hover:bg-accent hover:text-foreground aria-expanded:bg-transparent aria-expanded:text-muted-foreground",
             open &&

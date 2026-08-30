@@ -47,6 +47,7 @@ interface AgentActorEditorDialogProps {
   failure: string | null;
   pending: boolean;
   pendingAdapter: AgentActorBinding["adapter"] | null;
+  readOnly?: boolean;
   requesting: boolean;
   runtime: AgentActorDraftRuntimeState;
   onChange(draft: AgentActorDraft): void;
@@ -68,6 +69,7 @@ function AgentActorCreateJourney({
   failure,
   pending,
   pendingAdapter,
+  readOnly = false,
   requesting,
   runtime,
   onChange,
@@ -177,7 +179,7 @@ function AgentActorCreateJourney({
     if (next) moveTo(next);
   };
   const submit = () => {
-    if (submitRequestedRef.current) return;
+    if (readOnly || submitRequestedRef.current) return;
     const invalidStep = firstInvalidAgentActorCreateStep(validation);
     if (invalidStep) {
       focusInvalid(invalidStep);
@@ -219,6 +221,7 @@ function AgentActorCreateJourney({
       primaryAction={
         step === "review"
           ? {
+              disabled: readOnly,
               label: activeAccessRecovery
                 ? repositoryAccessPrimaryActionLabel(accessRecovery)
                 : m.agent_actors_create_confirm(),
@@ -234,6 +237,7 @@ function AgentActorCreateJourney({
                   : m.agent_actors_create_confirm(),
             }
           : {
+              disabled: readOnly,
               form: "agent-actor-create-form",
               label: m.agent_actors_create_continue(),
             }
@@ -279,6 +283,7 @@ function AgentActorCreateJourney({
           expandedAdapter={expandedAdapter}
           formId="agent-actor-create-form"
           pendingAdapter={pendingAdapter}
+          readOnly={readOnly}
           sections={[step as AgentActorFormSection]}
           showValidation={attemptedSteps.has(step)}
           validation={validation}

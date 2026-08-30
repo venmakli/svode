@@ -28,6 +28,7 @@ import { EntryTitleIcon } from "../entry-title-icon";
 import * as m from "@/paraglide/messages.js";
 
 export function CalendarEventContent({
+  readOnly,
   arg,
   scope,
   onOpen,
@@ -37,6 +38,7 @@ export function CalendarEventContent({
   onDelete,
   propertyContext,
 }: {
+  readOnly: boolean;
   arg: EventContentArg;
   scope: CalendarScope;
   onOpen: (entry: Entry) => void;
@@ -123,6 +125,7 @@ export function CalendarEventContent({
               <CalendarEventTooltip
                 model={model}
                 propertyContext={propertyContext}
+                readOnly={readOnly}
               />
             </TooltipContent>
           </Tooltip>
@@ -137,6 +140,7 @@ export function CalendarEventContent({
                     entry={entry}
                     column={column}
                     propertyContext={propertyContext}
+                    readOnly={readOnly}
                   />
                 </div>
               ))}
@@ -149,14 +153,21 @@ export function CalendarEventContent({
           <FileText data-icon="inline-start" />
           {m.collection_open_in_peek()}
         </ContextMenuItem>
-        <ContextMenuItem onClick={() => onDuplicate(entry)}>
-          <Copy data-icon="inline-start" />
-          {m.collection_duplicate_entry()}
-        </ContextMenuItem>
-        <ContextMenuItem variant="destructive" onClick={() => onDelete(entry)}>
-          <Trash2 data-icon="inline-start" />
-          {m.space_delete()}
-        </ContextMenuItem>
+        {!readOnly ? (
+          <ContextMenuItem onClick={() => onDuplicate(entry)}>
+            <Copy data-icon="inline-start" />
+            {m.collection_duplicate_entry()}
+          </ContextMenuItem>
+        ) : null}
+        {!readOnly ? (
+          <ContextMenuItem
+            variant="destructive"
+            onClick={() => onDelete(entry)}
+          >
+            <Trash2 data-icon="inline-start" />
+            {m.space_delete()}
+          </ContextMenuItem>
+        ) : null}
       </ContextMenuContent>
     </ContextMenu>
   );
@@ -165,9 +176,11 @@ export function CalendarEventContent({
 function CalendarEventTooltip({
   model,
   propertyContext,
+  readOnly,
 }: {
   model: CalendarEventModel;
   propertyContext: CalendarPropertyContext;
+  readOnly: boolean;
 }) {
   const { entry } = model;
   const conflictPath = documentNameConflictDisplayPath(entry);
@@ -207,6 +220,7 @@ function CalendarEventTooltip({
                   entry={entry}
                   column={column}
                   propertyContext={propertyContext}
+                  readOnly={readOnly}
                 />
               </span>
             </div>
@@ -221,15 +235,17 @@ function CalendarPropertyControl({
   entry,
   column,
   propertyContext,
+  readOnly,
 }: {
   entry: Entry;
   column: Column;
   propertyContext: CalendarPropertyContext;
+  readOnly: boolean;
 }) {
   const value = calendarColumnValue(entry, column);
   const validation = validatePropertyValue(column, value);
 
-  if (isReadonlySystemColumn(column)) {
+  if (readOnly || isReadonlySystemColumn(column)) {
     return (
       <span className="inline-flex min-w-0 max-w-full items-center text-xs">
         <PropertyValue

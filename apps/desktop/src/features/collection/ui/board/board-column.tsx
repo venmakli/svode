@@ -21,6 +21,7 @@ export function BoardColumn({
   overGroupKey,
   draftOpen,
   draftAsFolder,
+  readOnly,
   cardProps,
   onPointerEnter,
   onOpenDraft,
@@ -34,6 +35,7 @@ export function BoardColumn({
   overGroupKey: string | null;
   draftOpen: boolean;
   draftAsFolder: boolean;
+  readOnly: boolean;
   cardProps: Omit<BoardCardProps, "card" | "active">;
   onPointerEnter: () => void;
   onOpenDraft: (asFolder: boolean) => void;
@@ -78,16 +80,18 @@ export function BoardColumn({
             {count}
           </span>
         </button>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-xs"
-          className="size-[22px] rounded-md text-muted-foreground"
-          onClick={(event) => onOpenDraft(event.shiftKey)}
-        >
-          <Plus data-icon="inline-start" />
-          <span className="sr-only">{m.board_new_card()}</span>
-        </Button>
+        {!readOnly ? (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-xs"
+            className="size-[22px] rounded-md text-muted-foreground"
+            onClick={(event) => onOpenDraft(event.shiftKey)}
+          >
+            <Plus data-icon="inline-start" />
+            <span className="sr-only">{m.board_new_card()}</span>
+          </Button>
+        ) : null}
       </div>
 
       {collapsed ? (
@@ -117,14 +121,14 @@ export function BoardColumn({
             {highlighted ? (
               <div className="h-14 rounded-lg border border-dashed border-primary/40 bg-primary/5" />
             ) : null}
-            {draftOpen ? (
+            {!readOnly && draftOpen ? (
               <BoardDraftCard
                 groupLabel={group.label}
                 asFolder={draftAsFolder}
                 onCancel={onCancelDraft}
                 onCreate={onCreateDraft}
               />
-            ) : (
+            ) : !readOnly ? (
               <Button
                 type="button"
                 variant="ghost"
@@ -135,7 +139,7 @@ export function BoardColumn({
                 <Plus data-icon="inline-start" />
                 {m.board_new_card()}
               </Button>
-            )}
+            ) : null}
           </div>
         </div>
       )}

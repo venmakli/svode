@@ -78,6 +78,7 @@ function GalleryCardContent({
   onDelete,
   onFocusCard,
   onKeyboardMove,
+  readOnly,
 }: GalleryCardProps & {
   dragAttributes: HTMLAttributes<HTMLDivElement>;
   dragListeners?: HTMLAttributes<HTMLDivElement>;
@@ -148,17 +149,21 @@ function GalleryCardContent({
             <FileText data-icon="inline-start" />
             {m.collection_open_in_peek()}
           </ContextMenuItem>
-          <ContextMenuItem onClick={() => onDuplicate(entry)}>
-            <Copy data-icon="inline-start" />
-            {m.collection_duplicate_entry()}
-          </ContextMenuItem>
-          <ContextMenuItem
-            variant="destructive"
-            onClick={() => onDelete(entry)}
-          >
-            <Trash2 data-icon="inline-start" />
-            {m.space_delete()}
-          </ContextMenuItem>
+          {!readOnly ? (
+            <ContextMenuItem onClick={() => onDuplicate(entry)}>
+              <Copy data-icon="inline-start" />
+              {m.collection_duplicate_entry()}
+            </ContextMenuItem>
+          ) : null}
+          {!readOnly ? (
+            <ContextMenuItem
+              variant="destructive"
+              onClick={() => onDelete(entry)}
+            >
+              <Trash2 data-icon="inline-start" />
+              {m.space_delete()}
+            </ContextMenuItem>
+          ) : null}
         </ContextMenuGroup>
       }
       contextMenuClassName="w-48"

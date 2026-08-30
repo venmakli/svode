@@ -15,6 +15,7 @@ import { isTerminalKeyboardEvent } from "@/features/terminal";
 import * as m from "@/paraglide/messages.js";
 
 interface UseCollectionSaveShortcutsInput {
+  readOnly: boolean;
   projectPath?: string | null;
   readmePath: string;
   saveScopeTree: readonly GitSaveScopeTreeNode[];
@@ -22,6 +23,7 @@ interface UseCollectionSaveShortcutsInput {
 }
 
 export function useCollectionSaveShortcuts({
+  readOnly,
   projectPath,
   readmePath,
   saveScopeTree,
@@ -39,6 +41,7 @@ export function useCollectionSaveShortcuts({
       if (!isSaveKey) return;
 
       event.preventDefault();
+      if (readOnly) return;
       const saveAllScope = resolveGitSaveAllScope({
         activePath: readmePath,
         tree: saveScopeTree,
@@ -59,7 +62,7 @@ export function useCollectionSaveShortcuts({
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [projectPath, readmePath, saveScopeTree, spacePath]);
+  }, [projectPath, readOnly, readmePath, saveScopeTree, spacePath]);
 }
 
 async function showNoEditableSurfaceFeedback(

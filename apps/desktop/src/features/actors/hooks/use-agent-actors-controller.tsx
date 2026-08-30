@@ -35,11 +35,13 @@ export function useAgentActorsController({
   detailController,
   instanceKey,
   owner,
+  readOnly,
   onOpenRepositorySettings,
 }: {
   detailController: SystemCollectionDetailController | null;
   instanceKey: string;
   owner: ScopeOwnerRef;
+  readOnly: boolean;
   onOpenRepositorySettings?: (repositoryPath: string) => void;
 }) {
   const catalog = useAgentActorCatalog(owner.projectPath, owner.spacePath);
@@ -148,6 +150,7 @@ export function useAgentActorsController({
     editSession,
     instanceKey,
     mutationPending,
+    readOnly,
     pendingAdapter: catalog.pendingAdapter,
     savedRuntimeFor,
     setEditSession,
@@ -206,9 +209,14 @@ export function useAgentActorsController({
 
   const actionState: SystemCollectionActionState = mutationPending
     ? { status: "pending" }
-    : snapshot
-      ? { status: "idle" }
-      : { status: "disabled", reason: m.agent_actors_catalog_unavailable() };
+    : readOnly
+      ? {
+          reason: m.repository_work_status_read_only(),
+          status: "disabled",
+        }
+      : snapshot
+        ? { status: "idle" }
+        : { status: "disabled", reason: m.agent_actors_catalog_unavailable() };
   const actionStateForOwner = (
     ownerPath: string,
   ): SystemCollectionActionState =>
@@ -271,6 +279,7 @@ export function useAgentActorsController({
         requesting={accessCoordinator.requesting}
         pendingAdapter={catalog.pendingAdapter}
         runtime={createRuntime}
+        readOnly={readOnly}
         onChange={setCreateDraft}
         onCheck={(adapter) => void catalog.diagnose(adapter)}
         onClose={() => {
@@ -289,6 +298,7 @@ export function useAgentActorsController({
         failure={mutationFailure}
         pending={mutationPending}
         referenceState={deleteReferences}
+        readOnly={readOnly}
         onClose={() => !mutationPending && closeDelete()}
         onConfirm={() =>
           deleteActor &&
@@ -302,6 +312,7 @@ export function useAgentActorsController({
         failure={catalogSave.failure}
         pending={catalogSave.pending}
         selectedOwnerPath={catalogSave.selectedOwnerPath}
+        readOnly={readOnly}
         onClose={catalogSave.close}
         onConfirm={() =>
           catalogSave.selectedOwnerPath &&
@@ -322,12 +333,17 @@ export function useAgentActorsController({
         actionStateForOwner(row.ownerPath),
       getEditState: (row: AgentActorRow) => actionStateForOwner(row.ownerPath),
       onAdd: () => {
+        if (readOnly) return;
         openCreate(owner.spacePath);
       },
-      onDelete: (row: AgentActorRow) =>
-        requestAccess({ kind: "delete-agent", ownerPath: row.ownerPath, row }),
-      onEdit: (row: AgentActorRow) =>
-        requestAccess({ kind: "edit-agent", ownerPath: row.ownerPath, row }),
+      onDelete: (row: AgentActorRow) => {
+        if (readOnly) return;
+        requestAccess({ kind: "delete-agent", ownerPath: row.ownerPath, row });
+      },
+      onEdit: (row: AgentActorRow) => {
+        if (readOnly) return;
+        requestAccess({ kind: "edit-agent", ownerPath: row.ownerPath, row });
+      },
     },
     inheritedVisible: snapshot?.rows.some((row) => row.inherited) ?? false,
     overlays,

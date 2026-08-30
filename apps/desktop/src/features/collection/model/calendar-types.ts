@@ -38,6 +38,7 @@ export interface CalendarEventModel {
 }
 
 export interface CalendarViewProps {
+  readOnly: boolean;
   name: string;
   view: CollectionView;
   schema: CollectionSchema;

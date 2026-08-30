@@ -36,6 +36,7 @@ import * as m from "@/paraglide/messages.js";
 
 export function GalleryView(props: GalleryViewProps) {
   const {
+    readOnly,
     query,
     spacePath,
     projectPath,
@@ -94,8 +95,8 @@ export function GalleryView(props: GalleryViewProps) {
     return (
       <EmptyState
         title={m.table_empty()}
-        action={m.table_create_first_entry()}
-        onAction={() => openDraft(false)}
+        action={readOnly ? undefined : m.table_create_first_entry()}
+        onAction={readOnly ? undefined : () => openDraft(false)}
       />
     );
   }
@@ -115,9 +116,11 @@ export function GalleryView(props: GalleryViewProps) {
 
   return (
     <DndContext
-      sensors={sensors}
+      sensors={readOnly ? undefined : sensors}
       collisionDetection={closestCenter}
-      onDragEnd={(event) => void handleDragEnd(event)}
+      onDragEnd={(event) => {
+        if (!readOnly) void handleDragEnd(event);
+      }}
     >
       <div className={detailPageViewRowClassName}>
         <CollectionCardsShell ref={gridRef} cardWidth={cardWidth}>
@@ -144,12 +147,16 @@ export function GalleryView(props: GalleryViewProps) {
                   actors={actors}
                   nestedCollection={nestedCollection}
                   folder={isFolderEntry(entry)}
-                  disabledReorder={hasSort}
+                  disabledReorder={readOnly || hasSort}
+                  readOnly={readOnly}
                   focused={focusedPath === entry.path}
                   cardRef={(element) => cardRef(entry.path, element)}
                   onRequestActors={loadActors}
-                  onUpdateField={(entryToUpdate, column, value) =>
-                    void commitField(entryToUpdate, column, value)
+                  onUpdateField={
+                    readOnly
+                      ? undefined
+                      : (entryToUpdate, column, value) =>
+                          void commitField(entryToUpdate, column, value)
                   }
                   onOpen={openCard}
                   onOpenFullPage={onOpenFullPage}
@@ -163,18 +170,20 @@ export function GalleryView(props: GalleryViewProps) {
               );
             })}
           </SortableContext>
-          <GalleryCreateTile
-            refElement={draftRef}
-            open={draftOpen}
-            value={draftValue}
-            onOpen={(asFolder) => {
-              openDraft(asFolder);
-            }}
-            onValueChange={setDraftValue}
-            inputRef={inputRef}
-            onCreate={() => void createDraft()}
-            onCancel={cancelDraft}
-          />
+          {!readOnly ? (
+            <GalleryCreateTile
+              refElement={draftRef}
+              open={draftOpen}
+              value={draftValue}
+              onOpen={(asFolder) => {
+                openDraft(asFolder);
+              }}
+              onValueChange={setDraftValue}
+              inputRef={inputRef}
+              onCreate={() => void createDraft()}
+              onCancel={cancelDraft}
+            />
+          ) : null}
         </CollectionCardsShell>
       </div>
     </DndContext>
@@ -244,8 +253,8 @@ function EmptyState({
   onAction,
 }: {
   title: string;
-  action: string;
-  onAction: () => void;
+  action?: string;
+  onAction?: () => void;
 }) {
   return (
     <div className="flex p-8">
@@ -256,11 +265,18 @@ function EmptyState({
           </EmptyMedia>
           <EmptyTitle>{title}</EmptyTitle>
         </EmptyHeader>
-        <EmptyContent>
-          <Button type="button" variant="outline" size="sm" onClick={onAction}>
-            {action}
-          </Button>
-        </EmptyContent>
+        {action && onAction ? (
+          <EmptyContent>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={onAction}
+            >
+              {action}
+            </Button>
+          </EmptyContent>
+        ) : null}
       </Empty>
     </div>
   );

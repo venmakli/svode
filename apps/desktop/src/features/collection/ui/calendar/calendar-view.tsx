@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { detailPageViewClassName } from "@/shared/ui/page-layout";
 import { CalendarEngine } from "./calendar-engine";
@@ -16,6 +17,7 @@ import {
 import * as m from "@/paraglide/messages.js";
 
 export function CalendarView({
+  readOnly,
   name,
   view,
   schema,
@@ -72,6 +74,7 @@ export function CalendarView({
     syncDates,
     visibleCount,
   } = useCalendarViewRuntime({
+    readOnly,
     name,
     view,
     schema,
@@ -96,12 +99,21 @@ export function CalendarView({
     onCreateEntry,
   });
 
+  useEffect(() => {
+    if (!readOnly) return;
+    shellRef.current
+      ?.querySelectorAll("[data-calendar-day-new='true']")
+      .forEach((button) => button.remove());
+  }, [readOnly, shellRef]);
+
   if (!dateColumn) {
     return (
       <NoDateFieldState
         loading={loading}
-        onAddDateColumn={() =>
-          void addDateColumnForView().catch(reportCalendarError)
+        onAddDateColumn={
+          readOnly
+            ? undefined
+            : () => void addDateColumnForView().catch(reportCalendarError)
         }
       />
     );
@@ -128,6 +140,7 @@ export function CalendarView({
         />
         <div className="relative overflow-visible">
           <CalendarEngine
+            readOnly={readOnly}
             calendarRef={calendarRef}
             scope={scope}
             events={events}
@@ -162,13 +175,15 @@ export function CalendarView({
           </div>
         ) : null}
       </div>
-      <CalendarTitlePopover
-        draft={createDraft}
-        onCancel={() => setCreateDraft(null)}
-        onCreate={(title, draft) =>
-          void createEntryFromDraft(title, draft).catch(reportCalendarError)
-        }
-      />
+      {!readOnly ? (
+        <CalendarTitlePopover
+          draft={createDraft}
+          onCancel={() => setCreateDraft(null)}
+          onCreate={(title, draft) =>
+            void createEntryFromDraft(title, draft).catch(reportCalendarError)
+          }
+        />
+      ) : null}
     </div>
   );
 }

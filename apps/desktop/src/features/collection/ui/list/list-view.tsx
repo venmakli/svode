@@ -33,6 +33,7 @@ import * as m from "@/paraglide/messages.js";
 
 export function ListView(props: ListViewProps) {
   const {
+    readOnly,
     query,
     spacePath,
     projectPath,
@@ -87,8 +88,8 @@ export function ListView(props: ListViewProps) {
     return (
       <EmptyState
         title={m.table_empty()}
-        action={m.table_create_first_entry()}
-        onAction={() => openComposer(false)}
+        action={readOnly ? undefined : m.table_create_first_entry()}
+        onAction={readOnly ? undefined : () => openComposer(false)}
       />
     );
   }
@@ -108,9 +109,11 @@ export function ListView(props: ListViewProps) {
 
   return (
     <DndContext
-      sensors={sensors}
+      sensors={readOnly ? undefined : sensors}
       collisionDetection={closestCenter}
-      onDragEnd={(event) => void handleDragEnd(event)}
+      onDragEnd={(event) => {
+        if (!readOnly) void handleDragEnd(event);
+      }}
     >
       <div className={detailPageViewRowClassName}>
         <CollectionListShell>
@@ -128,12 +131,16 @@ export function ListView(props: ListViewProps) {
                 spacePath={spacePath}
                 projectPath={projectPath}
                 actors={actors}
-                disabledReorder={hasSort}
+                disabledReorder={readOnly || hasSort}
+                readOnly={readOnly}
                 focused={focusedPath === row.entry.path}
                 rowRef={(element) => rowRef(row.entry.path, element)}
                 onRequestActors={loadActors}
-                onUpdateField={(entry, column, value) =>
-                  void commitField(entry, column, value)
+                onUpdateField={
+                  readOnly
+                    ? undefined
+                    : (entry, column, value) =>
+                        void commitField(entry, column, value)
                 }
                 onToggle={toggleRow}
                 onOpen={openRow}
@@ -152,7 +159,7 @@ export function ListView(props: ListViewProps) {
           ref={footerRef}
           className="flex items-center justify-between gap-3 px-1 py-3"
         >
-          {composerOpen ? (
+          {readOnly ? null : composerOpen ? (
             <Input
               ref={inputRef}
               value={composerValue}
@@ -196,8 +203,8 @@ function EmptyState({
   onAction,
 }: {
   title: string;
-  action: string;
-  onAction: () => void;
+  action?: string;
+  onAction?: () => void;
 }) {
   return (
     <div className="flex p-8">
@@ -208,11 +215,18 @@ function EmptyState({
           </EmptyMedia>
           <EmptyTitle>{title}</EmptyTitle>
         </EmptyHeader>
-        <EmptyContent>
-          <Button type="button" variant="outline" size="sm" onClick={onAction}>
-            {action}
-          </Button>
-        </EmptyContent>
+        {action && onAction ? (
+          <EmptyContent>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={onAction}
+            >
+              {action}
+            </Button>
+          </EmptyContent>
+        ) : null}
       </Empty>
     </div>
   );

@@ -13,9 +13,10 @@ export interface ListRowProps {
   projectPath?: string | null;
   actors: ActorCandidate[];
   disabledReorder: boolean;
+  readOnly?: boolean;
   focused: boolean;
   onRequestActors: (allTime: boolean) => Promise<ActorCandidate[]>;
-  onUpdateField: (entry: Entry, column: Column, value: unknown) => void;
+  onUpdateField?: (entry: Entry, column: Column, value: unknown) => void;
   onToggle: (entry: Entry) => void;
   onOpen: (entry: Entry, nestedCollection: boolean) => void;
   onOpenFullPage: (entry: Entry) => void;

@@ -11,9 +11,11 @@ import {
 export function IncompleteState({
   title,
   action,
+  hideAction = false,
 }: {
   title: string;
   action: string;
+  hideAction?: boolean;
 }) {
   return (
     <div className="flex p-8">
@@ -24,11 +26,13 @@ export function IncompleteState({
           </EmptyMedia>
           <EmptyTitle>{title}</EmptyTitle>
         </EmptyHeader>
-        <EmptyContent>
-          <Button type="button" variant="outline" size="sm">
-            {action}
-          </Button>
-        </EmptyContent>
+        {!hideAction ? (
+          <EmptyContent>
+            <Button type="button" variant="outline" size="sm">
+              {action}
+            </Button>
+          </EmptyContent>
+        ) : null}
       </Empty>
     </div>
   );

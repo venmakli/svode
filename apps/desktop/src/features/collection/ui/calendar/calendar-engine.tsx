@@ -28,6 +28,7 @@ import {
 } from "../../hooks/calendar/calendar-adapter";
 
 export function CalendarEngine({
+  readOnly,
   calendarRef,
   scope,
   events,
@@ -46,6 +47,7 @@ export function CalendarEngine({
   onDuplicateEntry,
   onDeleteEntry,
 }: {
+  readOnly: boolean;
   calendarRef: RefObject<FullCalendar | null>;
   scope: CalendarScope;
   events: CalendarEventInput[];
@@ -75,8 +77,8 @@ export function CalendarEngine({
       locale={locale === "ru" ? ruLocale : "en"}
       firstDay={1}
       nowIndicator
-      editable={scope !== "list"}
-      selectable={scope !== "list"}
+      editable={!readOnly && scope !== "list"}
+      selectable={!readOnly && scope !== "list"}
       selectMirror
       eventResizableFromStart
       eventDragMinDistance={6}
@@ -87,16 +89,17 @@ export function CalendarEngine({
       dayMaxEvents
       allDayMaintainDuration
       displayEventEnd
-      dateClick={onDateClick}
-      select={onSelect}
+      dateClick={readOnly ? undefined : onDateClick}
+      select={readOnly ? undefined : onSelect}
       eventClick={onEventClick}
-      eventDrop={onEventDrop}
-      eventResize={onEventResize}
-      dayCellDidMount={onDayCellDidMount}
+      eventDrop={readOnly ? undefined : onEventDrop}
+      eventResize={readOnly ? undefined : onEventResize}
+      dayCellDidMount={readOnly ? undefined : onDayCellDidMount}
       dayCellWillUnmount={unmountCalendarDayNewButton}
       datesSet={onDatesSet}
       eventContent={(arg) => (
         <CalendarEventContent
+          readOnly={readOnly}
           arg={arg}
           scope={scope}
           onOpen={onOpenEntry}

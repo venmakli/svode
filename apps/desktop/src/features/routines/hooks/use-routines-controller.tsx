@@ -30,6 +30,7 @@ import { useRoutineStorageRecovery } from "./use-routine-storage-recovery";
 export function useRoutinesController(
   owner: ScopeOwnerRef,
   onOpenSession: (target: RoutineSessionTarget) => void,
+  readOnly: boolean,
 ) {
   const routineOwner = useMemo<RoutineOwnerInput>(
     () => ({
@@ -78,6 +79,7 @@ export function useRoutinesController(
     onRun: dispatch.run,
     owner: routineOwner,
     pending: mutations.pending,
+    readOnly,
     onEditChange: mutations.changeEditDraft,
     setEditSession: mutations.setEditSession,
   });
@@ -125,6 +127,12 @@ export function useRoutinesController(
     : executors;
   const actionState = useMemo<SystemCollectionActionState>(() => {
     if (mutations.pending || create.pending) return { status: "pending" };
+    if (readOnly) {
+      return {
+        reason: m.repository_work_status_read_only(),
+        status: "disabled",
+      };
+    }
     if (state.phase !== "ready") {
       return {
         reason: m.routines_catalog_unavailable(),
@@ -132,7 +140,7 @@ export function useRoutinesController(
       };
     }
     return { status: "idle" };
-  }, [create.pending, mutations.pending, state.phase]);
+  }, [create.pending, mutations.pending, readOnly, state.phase]);
   const actions: RoutinePresentationActions = {
     createState: actionState,
     getDeleteState: (row) =>
@@ -163,9 +171,16 @@ export function useRoutinesController(
               : m.routines_invalid_edit_disabled(),
             status: "disabled",
           },
-    getRunState: dispatch.getRunState,
+    getRunState: (row) => {
+      if (!readOnly) return dispatch.getRunState(row);
+      if (row.lastRun?.active) return { status: "idle" };
+      return {
+        reason: m.repository_work_status_read_only(),
+        status: "disabled",
+      };
+    },
     onAdd: () => {
-      if (state.phase !== "ready") return;
+      if (readOnly || state.phase !== "ready") return;
       create.open({
         automaticAuthority:
           automaticConsent.loading || automaticConsent.error
@@ -176,9 +191,14 @@ export function useRoutinesController(
         ownerLabel: routineOwnerLabel(owner),
       });
     },
-    onDelete: mutations.openDelete,
-    onEdit: mutations.openEdit,
+    onDelete: (row) => {
+      if (!readOnly) mutations.openDelete(row);
+    },
+    onEdit: (row) => {
+      if (!readOnly) mutations.openEdit(row);
+    },
     onEnabledChange: async (row, enabled) => {
+      if (readOnly) throw new Error(m.repository_work_status_read_only());
       if (!row.definition || row.definition.trigger.type === "manual") return;
       const updated = await mutations.applyUpdate(
         row,
@@ -190,7 +210,14 @@ export function useRoutinesController(
       );
       if (!updated) throw new Error(m.routines_mutation_blocked());
     },
-    onRun: dispatch.run,
+    onRun: async (row) => {
+      if (readOnly) {
+        if (row.lastRun?.active) dispatch.openLastSession(row);
+        else throw new Error(m.repository_work_status_read_only());
+        return;
+      }
+      await dispatch.run(row);
+    },
   };
   const presentation = createRoutinesPresentation({
     actions,
@@ -222,6 +249,7 @@ export function useRoutinesController(
           nameError={create.nameError}
           ownerLabel={create.session.ownerLabel}
           pending={create.pending}
+          readOnly={readOnly}
           retryBlocked={create.retryBlocked}
           onChange={create.change}
           onClose={create.close}
@@ -232,6 +260,7 @@ export function useRoutinesController(
       <RoutineDeleteDialog
         error={mutations.deleteTarget ? mutations.error : null}
         pending={mutations.pending && mutations.deleteTarget !== null}
+        readOnly={readOnly}
         routine={mutations.deleteTarget}
         onClose={mutations.closeDelete}
         onConfirm={() => void mutations.submitDelete()}

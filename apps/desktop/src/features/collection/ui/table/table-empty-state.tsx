@@ -17,11 +17,13 @@ import * as m from "@/paraglide/messages.js";
 export function EmptyTableBody({
   colSpan,
   filtered,
+  readOnly,
   onCreate,
   onClearFilters,
 }: {
   colSpan: number;
   filtered: boolean;
+  readOnly: boolean;
   onCreate: () => void;
   onClearFilters: () => void;
 }) {
@@ -38,18 +40,20 @@ export function EmptyTableBody({
                 {filtered ? m.table_no_results() : m.table_empty()}
               </EmptyTitle>
             </EmptyHeader>
-            <EmptyContent>
-              <Button
-                type="button"
-                variant={filtered ? "outline" : "default"}
-                size="sm"
-                onClick={filtered ? onClearFilters : onCreate}
-              >
-                {filtered
-                  ? m.table_clear_filters()
-                  : m.table_create_first_entry()}
-              </Button>
-            </EmptyContent>
+            {filtered || !readOnly ? (
+              <EmptyContent>
+                <Button
+                  type="button"
+                  variant={filtered ? "outline" : "default"}
+                  size="sm"
+                  onClick={filtered ? onClearFilters : onCreate}
+                >
+                  {filtered
+                    ? m.table_clear_filters()
+                    : m.table_create_first_entry()}
+                </Button>
+              </EmptyContent>
+            ) : null}
           </Empty>
         </TableCell>
       </ShadcnTableRow>

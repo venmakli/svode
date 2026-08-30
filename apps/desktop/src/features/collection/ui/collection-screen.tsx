@@ -59,6 +59,7 @@ import type { CollectionView } from "../query/model";
 import * as m from "@/paraglide/messages.js";
 
 interface CollectionScreenProps {
+  readOnly?: boolean;
   spacePath: string;
   projectPath?: string | null;
   documentPath: string;
@@ -70,6 +71,7 @@ interface CollectionScreenProps {
 const EMPTY_SAVE_SCOPE_TREE: readonly GitSaveScopeTreeNode[] = [];
 
 function CollectionScreen({
+  readOnly = false,
   spacePath,
   projectPath,
   documentPath,
@@ -96,6 +98,7 @@ function CollectionScreen({
       onOpenPath={openPath}
     >
       <CollectionScreenContent
+        readOnly={readOnly}
         spacePath={spacePath}
         projectPath={projectPath}
         documentPath={documentPath}
@@ -156,6 +159,7 @@ interface CollectionViewsSurfaceInternalProps extends CollectionScreenProps {
 }
 
 function CollectionViewsSurfaceInternal({
+  readOnly = false,
   spacePath,
   projectPath,
   documentPath,
@@ -259,6 +263,15 @@ function CollectionViewsSurfaceInternal({
       setSettingsOpen(false);
     });
   }, [activeTab]);
+
+  useEffect(() => {
+    if (!readOnly) return;
+    queueMicrotask(() => {
+      if (!isLocalQueryPane(settingsPane)) setSettingsOpen(false);
+      setDeleteOpen(false);
+      setDeleteEntry(null);
+    });
+  }, [readOnly, setDeleteEntry, settingsPane]);
 
   useEffect(() => {
     if (!activeView) return;
@@ -372,18 +385,20 @@ function CollectionViewsSurfaceInternal({
     moveActive,
     focusActiveViewCreate,
     createEntry,
+    readOnly,
   });
   useCollectionSaveShortcuts({
     projectPath,
     readmePath,
     saveScopeTree,
     spacePath,
+    readOnly,
   });
 
   if (loading) {
     return (
       <div className="flex min-h-full flex-col">
-        {showOwnerChrome ? <ScopeOwnerHeader /> : null}
+        {showOwnerChrome ? <ScopeOwnerHeader readOnly={readOnly} /> : null}
         <CollectionSkeleton />
       </div>
     );
@@ -392,7 +407,7 @@ function CollectionViewsSurfaceInternal({
   if (schemaError || !schema) {
     return (
       <div className="flex min-h-full flex-col">
-        {showOwnerChrome ? <ScopeOwnerHeader /> : null}
+        {showOwnerChrome ? <ScopeOwnerHeader readOnly={readOnly} /> : null}
         <div className="flex h-full flex-col gap-4 p-6">
           <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-4 text-sm">
             <div className="font-medium">{m.collection_invalid_schema()}</div>
@@ -420,13 +435,17 @@ function CollectionViewsSurfaceInternal({
           void duplicateDetailEntry(entryToDuplicate).catch(handleError)
         }
         onDeleteEntry={setDeleteEntry}
+        readOnly={readOnly}
       />
     ) : null);
 
   return (
     <div className="flex min-h-full flex-col">
       {showOwnerChrome ? (
-        <ScopeOwnerHeader actions={effectiveHeaderActions} />
+        <ScopeOwnerHeader
+          readOnly={readOnly}
+          actions={effectiveHeaderActions}
+        />
       ) : null}
 
       <Tabs value={activeTab} onValueChange={selectTab} className="gap-0">
@@ -444,9 +463,14 @@ function CollectionViewsSurfaceInternal({
               addViewLabel={m.collection_add_view()}
               manageViewsLabel={m.collection_manage_views()}
               moreViewsLabel={m.collection_more_views()}
+              readOnly={readOnly}
               views={views}
-              onAddView={(type) => void addView(type).catch(handleError)}
-              onReorderViews={reorder}
+              onAddView={(type) => {
+                if (!readOnly) void addView(type).catch(handleError);
+              }}
+              onReorderViews={(order) =>
+                readOnly ? blockReadOnly() : reorder(order)
+              }
               onTabChange={selectTab}
             />
           }
@@ -464,18 +488,27 @@ function CollectionViewsSurfaceInternal({
                 collectionPath={collectionPath}
                 spacePath={spacePath}
                 projectPath={projectPath}
+                readOnly={readOnly}
                 onSearchOpenChange={setSearchOpen}
                 onSearchQueryChange={setSearchQuery}
                 onSettingsOpenChange={setSettingsOpen}
                 onSettingsPaneChange={setSettingsPane}
                 onRenameValueChange={setRenameValue}
-                onRename={renameActiveView}
-                onUpdateView={updateView}
-                onDuplicateView={duplicateActiveView}
-                onDeleteViewRequest={() => setDeleteOpen(true)}
-                onSchemaChange={(nextSchema) =>
-                  setSchema(normalizeSchema(nextSchema))
+                onRename={() =>
+                  readOnly ? blockReadOnly() : renameActiveView()
                 }
+                onUpdateView={(name, patch) =>
+                  readOnly ? blockReadOnly() : updateView(name, patch)
+                }
+                onDuplicateView={() =>
+                  readOnly ? blockReadOnly() : duplicateActiveView()
+                }
+                onDeleteViewRequest={() => {
+                  if (!readOnly) setDeleteOpen(true);
+                }}
+                onSchemaChange={(nextSchema) => {
+                  if (!readOnly) setSchema(normalizeSchema(nextSchema));
+                }}
                 autoConfigForType={autoConfigForType}
                 onLoadTemplates={loadTemplatesForMenu}
                 onCreateTemplate={createTemplateForMenu}
@@ -499,6 +532,7 @@ function CollectionViewsSurfaceInternal({
         {views.map((view) => (
           <TabsContent key={view.name} value={view.name} className="flex-none">
             <CollectionViewContent
+              readOnly={readOnly}
               view={view}
               query={query}
               schema={schema}
@@ -523,26 +557,42 @@ function CollectionViewsSurfaceInternal({
               onOpenFullPage={openFullPage}
               onOpenPath={openPath}
               onOpenRelationTarget={openRelationPeek}
-              onDuplicateEntry={(entryToDuplicate) =>
-                void duplicateRow(entryToDuplicate).catch(handleError)
-              }
-              onDeleteEntry={setDeleteEntry}
-              onSchemaChange={(nextSchema) =>
-                setSchema(normalizeSchema(nextSchema))
-              }
-              onUpdateView={updateView}
+              onDuplicateEntry={(entryToDuplicate) => {
+                if (!readOnly) {
+                  void duplicateRow(entryToDuplicate).catch(handleError);
+                }
+              }}
+              onDeleteEntry={(entryToDelete) => {
+                if (!readOnly) setDeleteEntry(entryToDelete);
+              }}
+              onSchemaChange={(nextSchema) => {
+                if (!readOnly) setSchema(normalizeSchema(nextSchema));
+              }}
+              onUpdateView={(name, patch) => {
+                if (readOnly) {
+                  return Promise.reject(
+                    new Error(m.repository_work_status_read_only()),
+                  );
+                }
+                return updateView(name, patch);
+              }}
               onCalendarScopeChange={routeState?.onCalendarScopeChange}
-              onCreateEntry={(title, asFolder, contextualDefaults) =>
-                createEntry(asFolder, title, false, contextualDefaults)
-              }
+              onCreateEntry={(title, asFolder, contextualDefaults) => {
+                if (readOnly) {
+                  return Promise.reject(
+                    new Error(m.repository_work_status_read_only()),
+                  );
+                }
+                return createEntry(asFolder, title, false, contextualDefaults);
+              }}
             />
           </TabsContent>
         ))}
       </Tabs>
 
       <DeleteDialogs
-        viewOpen={deleteOpen}
-        entry={deleteEntry}
+        viewOpen={!readOnly && deleteOpen}
+        entry={readOnly ? null : deleteEntry}
         onViewOpenChange={setDeleteOpen}
         onEntryOpenChange={(open) => {
           if (!open) setDeleteEntry(null);
@@ -553,6 +603,7 @@ function CollectionViewsSurfaceInternal({
         }
       />
       <EntryPeekSheet
+        readOnly={readOnly}
         target={peekTarget}
         spacePath={spacePath}
         projectPath={projectPath}
@@ -580,6 +631,7 @@ function CollectionViewsSurfaceInternal({
           renderNested ??
           ((entryToOpen, actions) => (
             <CollectionScreen
+              readOnly={readOnly}
               spacePath={spacePath}
               projectPath={projectPath}
               documentPath={entryToOpen.path}
@@ -591,6 +643,22 @@ function CollectionViewsSurfaceInternal({
       />
     </div>
   );
+}
+
+function isLocalQueryPane(pane: SettingsPane) {
+  return (
+    pane === "filter" ||
+    pane === "filterField" ||
+    pane === "filterEditor" ||
+    pane === "sort" ||
+    pane === "sortField" ||
+    pane === "sortEditor" ||
+    pane === "group"
+  );
+}
+
+function blockReadOnly(): Promise<void> {
+  return Promise.resolve();
 }
 
 function collectionPathHandoffFromEntry(

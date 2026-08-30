@@ -33,6 +33,7 @@ export interface CollectionInfo {
 }
 
 export interface TableViewProps {
+  readOnly: boolean;
   name: string;
   view: CollectionView;
   query: UseViewQueryResult;

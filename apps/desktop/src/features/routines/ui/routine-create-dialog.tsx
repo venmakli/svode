@@ -43,6 +43,7 @@ export function RoutineCreateDialog({
   executors,
   ownerLabel,
   pending,
+  readOnly = false,
   retryBlocked,
   onChange,
   onClose,
@@ -60,6 +61,7 @@ export function RoutineCreateDialog({
   nameError?: string | null;
   ownerLabel: string;
   pending: boolean;
+  readOnly?: boolean;
   retryBlocked: boolean;
   onChange(definition: RoutineDefinition): void;
   onClose(): void;
@@ -142,7 +144,7 @@ export function RoutineCreateDialog({
     if (next) moveTo(next);
   };
   const submit = () => {
-    if (submitRequestedRef.current || retryBlocked) return;
+    if (readOnly || submitRequestedRef.current || retryBlocked) return;
     const invalidStep = firstInvalidRoutineCreateStep(
       definition,
       validationContext,
@@ -185,13 +187,14 @@ export function RoutineCreateDialog({
       primaryAction={
         step === "review"
           ? {
-              disabled: retryBlocked,
+              disabled: readOnly || retryBlocked,
               label: m.routines_create_confirm(),
               onClick: submit,
               pending,
               pendingLabel: m.routines_creating(),
             }
           : {
+              disabled: readOnly,
               form: "routine-create-form",
               label: m.routines_create_continue(),
             }
@@ -203,104 +206,110 @@ export function RoutineCreateDialog({
       totalSteps={ROUTINE_CREATE_STEPS.length}
       onClose={onClose}
     >
-      {step === "review" ? (
-        <div className="flex flex-col gap-4">
-          <RoutineCreateReview
-            automaticAuthority={automaticAuthority}
-            definition={definition}
-            executors={executors}
-            ownerLabel={ownerLabel}
-            onEdit={(target) => moveTo(target, "control")}
-          />
-          {error ? (
-            <Alert variant="destructive">
-              <AlertDescription>{error}</AlertDescription>
-            </Alert>
-          ) : null}
-        </div>
-      ) : (
-        <form
-          id="routine-create-form"
-          className="flex min-h-0 flex-col gap-6"
-          onSubmit={(event) => {
-            event.preventDefault();
-            continueFromStep();
-          }}
-        >
-          {step === "basics" ? (
-            <div className="flex flex-col gap-5">
-              <Field>
-                <FieldLabel htmlFor="routine-create-owner">
-                  {m.routines_create_owner_label()}
-                </FieldLabel>
-                <Input id="routine-create-owner" readOnly value={ownerLabel} />
-                <FieldDescription>
-                  {m.routines_create_owner_hint()}
-                </FieldDescription>
-              </Field>
-              <RoutineIdentityFields
-                definition={definition}
-                idPrefix="routine-create"
-                nameError={nameError}
-                showValidation={
-                  attemptedSteps.has("basics") || Boolean(nameError)
-                }
-                onChange={onChange}
-              />
-            </div>
-          ) : null}
-          {step === "trigger" ? (
-            <RoutineTriggerFields
-              collectionOwner={collectionOwner}
+      <fieldset disabled={readOnly} className="contents">
+        {step === "review" ? (
+          <div className="flex flex-col gap-4">
+            <RoutineCreateReview
+              automaticAuthority={automaticAuthority}
               definition={definition}
-              idPrefix="routine-create"
-              issues={visibleIssues}
-              onChange={onChange}
+              executors={executors}
+              ownerLabel={ownerLabel}
+              onEdit={(target) => moveTo(target, "control")}
             />
-          ) : null}
-          {step === "action" ? (
-            <>
-              {executorLoading && definition.action.type === "run_agent" ? (
-                <Alert>
-                  <LoaderCircle className="animate-spin" />
-                  <AlertDescription>
-                    {m.routines_create_executors_loading()}
-                  </AlertDescription>
-                </Alert>
-              ) : null}
-              {executorError && definition.action.type === "run_agent" ? (
-                <Alert variant="destructive">
-                  <AlertDescription className="flex flex-col items-start gap-2">
-                    <span>{executorError}</span>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      onClick={onRetryExecutors}
-                    >
-                      {m.routines_retry()}
-                    </Button>
-                  </AlertDescription>
-                </Alert>
-              ) : null}
-              <RoutineActionFields
+            {error ? (
+              <Alert variant="destructive">
+                <AlertDescription>{error}</AlertDescription>
+              </Alert>
+            ) : null}
+          </div>
+        ) : (
+          <form
+            id="routine-create-form"
+            className="flex min-h-0 flex-col gap-6"
+            onSubmit={(event) => {
+              event.preventDefault();
+              continueFromStep();
+            }}
+          >
+            {step === "basics" ? (
+              <div className="flex flex-col gap-5">
+                <Field>
+                  <FieldLabel htmlFor="routine-create-owner">
+                    {m.routines_create_owner_label()}
+                  </FieldLabel>
+                  <Input
+                    id="routine-create-owner"
+                    readOnly
+                    value={ownerLabel}
+                  />
+                  <FieldDescription>
+                    {m.routines_create_owner_hint()}
+                  </FieldDescription>
+                </Field>
+                <RoutineIdentityFields
+                  definition={definition}
+                  idPrefix="routine-create"
+                  nameError={nameError}
+                  showValidation={
+                    attemptedSteps.has("basics") || Boolean(nameError)
+                  }
+                  onChange={onChange}
+                />
+              </div>
+            ) : null}
+            {step === "trigger" ? (
+              <RoutineTriggerFields
+                collectionOwner={collectionOwner}
                 definition={definition}
-                executorError={executorError}
-                executors={executors}
                 idPrefix="routine-create"
                 issues={visibleIssues}
-                loading={executorLoading}
                 onChange={onChange}
               />
-              <RoutineContentField
-                definition={definition}
-                editorKey="routine-create"
-                onChange={onChange}
-              />
-            </>
-          ) : null}
-        </form>
-      )}
+            ) : null}
+            {step === "action" ? (
+              <>
+                {executorLoading && definition.action.type === "run_agent" ? (
+                  <Alert>
+                    <LoaderCircle className="animate-spin" />
+                    <AlertDescription>
+                      {m.routines_create_executors_loading()}
+                    </AlertDescription>
+                  </Alert>
+                ) : null}
+                {executorError && definition.action.type === "run_agent" ? (
+                  <Alert variant="destructive">
+                    <AlertDescription className="flex flex-col items-start gap-2">
+                      <span>{executorError}</span>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        onClick={onRetryExecutors}
+                      >
+                        {m.routines_retry()}
+                      </Button>
+                    </AlertDescription>
+                  </Alert>
+                ) : null}
+                <RoutineActionFields
+                  definition={definition}
+                  executorError={executorError}
+                  executors={executors}
+                  idPrefix="routine-create"
+                  issues={visibleIssues}
+                  loading={executorLoading}
+                  onChange={onChange}
+                />
+                <RoutineContentField
+                  definition={definition}
+                  editorKey="routine-create"
+                  onChange={onChange}
+                />
+              </>
+            ) : null}
+          </form>
+        )}
+      </fieldset>
     </SystemCollectionCreateFlow>
   );
 }

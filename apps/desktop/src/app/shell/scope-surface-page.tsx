@@ -136,23 +136,29 @@ export function ScopeSurfacePage({
     },
     [owner.projectPath, owner.spaceId, owner.spacePath],
   );
-  const contributions = useMemo(
-    () =>
+  const createContributions = useCallback(
+    (readOnly: boolean) =>
       createScopeSurfaceContributions({
         actors: (context) => (
           <ActorsSurface
             {...context}
+            readOnly={readOnly}
             repositoryOwnerName={fallbackTitle}
             onOpenRepositorySettings={openRepositorySettings}
           />
         ),
         context: (context) => <AgentContextSurface {...context} />,
         routines: (context) => (
-          <RoutinesSurface {...context} onOpenSession={openRoutineSession} />
+          <RoutinesSurface
+            {...context}
+            readOnly={readOnly}
+            onOpenSession={openRoutineSession}
+          />
         ),
         readme: () => <ReadmeSurface />,
         collection: () => (
           <CollectionViewsSurface
+            readOnly={readOnly}
             spacePath={owner.spacePath}
             projectPath={owner.projectPath}
             documentPath={owner.readmePath}
@@ -193,7 +199,7 @@ export function ScopeSurfacePage({
         <ScopePageSurfaceHost
           owner={owner}
           presentation={presentation}
-          contributions={contributions}
+          createContributions={createContributions}
           headerActions={headerActions}
           openIntent={openIntent}
           openRequestKey={openRequestKey}
@@ -212,15 +218,24 @@ export function ScopeSurfacePage({
 }
 
 function ScopePageSurfaceHost({
+  createContributions,
   headerActions,
   ...props
-}: Omit<ComponentProps<typeof ScopeSurfaceHost>, "header"> & {
+}: Omit<ComponentProps<typeof ScopeSurfaceHost>, "contributions" | "header"> & {
+  createContributions: (
+    readOnly: boolean,
+  ) => ComponentProps<typeof ScopeSurfaceHost>["contributions"];
   headerActions?: ReactNode;
 }) {
   const pageSurface = usePageSurfaceSession();
+  const contributions = useMemo(
+    () => createContributions(pageSurface.readOnly),
+    [createContributions, pageSurface.readOnly],
+  );
   return (
     <ScopeSurfaceHost
       {...props}
+      contributions={contributions}
       header={() => (
         <ScopeOwnerHeader
           readOnly={pageSurface.readOnly}

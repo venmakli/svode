@@ -21,6 +21,7 @@ import * as m from "@/paraglide/messages.js";
 
 export function TableView(props: TableViewProps) {
   const {
+    readOnly,
     view,
     query,
     schema,
@@ -43,6 +44,7 @@ export function TableView(props: TableViewProps) {
   const runtime = useTableViewRuntime(props);
 
   const tableColumns = useTableColumns({
+    readOnly,
     visibleFields: runtime.visibleFields,
     schema,
     view,
@@ -103,6 +105,7 @@ export function TableView(props: TableViewProps) {
       <TableShell
         onKeyDown={(event) => {
           if (isEditableTarget(event.target)) return;
+          if (readOnly) return;
           if (event.ctrlKey && event.key.toLowerCase() === "n") {
             event.preventDefault();
             runtime.openComposer(event.shiftKey);
@@ -115,6 +118,7 @@ export function TableView(props: TableViewProps) {
           style={{ minWidth: table.getTotalSize() + 62, width: "100%" }}
         >
           <TableHeaderRow
+            readOnly={readOnly}
             table={table}
             onAddColumn={(type) => void runtime.handleAddColumn(type)}
           />
@@ -122,6 +126,7 @@ export function TableView(props: TableViewProps) {
             <EmptyTableBody
               colSpan={runtime.visibleFields.length + 2}
               filtered={Boolean(searchQuery) || filters.length > 0}
+              readOnly={readOnly}
               onCreate={() => runtime.openComposer(false)}
               onClearFilters={() => {
                 onClearSearch?.();
@@ -134,6 +139,7 @@ export function TableView(props: TableViewProps) {
               sensors={sensors}
               sortedEntries={runtime.filteredTopLevel}
               hasSort={runtime.hasSort}
+              readOnly={readOnly}
               actors={runtime.actors}
               spacePath={spacePath}
               projectPath={projectPath}
@@ -144,12 +150,15 @@ export function TableView(props: TableViewProps) {
               onOpenRelationTarget={onOpenRelationTarget}
               onDuplicateEntry={onDuplicateEntry}
               onDeleteEntry={onDeleteEntry}
-              onDragEnd={(event) => void runtime.handleDragEnd(event)}
+              onDragEnd={(event) => {
+                if (!readOnly) void runtime.handleDragEnd(event);
+              }}
               density={runtime.density}
               wrapText={runtime.wrapText}
             />
           )}
           <TableFooterComposer
+            readOnly={readOnly}
             colSpan={runtime.visibleFields.length + 2}
             entryCount={runtime.filteredTopLevel.length}
             footerRef={runtime.footerRef}

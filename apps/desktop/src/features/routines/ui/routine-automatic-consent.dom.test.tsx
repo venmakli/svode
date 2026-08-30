@@ -51,6 +51,49 @@ test("the full compact control toggles once from either the shell or switch", as
   }
 });
 
+test("read-only automatic consent is non-interactive", async () => {
+  const dom = new JSDOM(
+    "<!doctype html><html><body><div id=app></div></body></html>",
+    { pretendToBeVisual: true, url: "http://localhost/" },
+  );
+  const restoreGlobals = installDomGlobals(dom);
+  const changes: boolean[] = [];
+  const root = createRoot(dom.window.document.getElementById("app")!);
+
+  try {
+    await act(async () => {
+      root.render(
+        <TooltipProvider>
+          <RoutineAutomaticConsent
+            readOnly
+            enabled={false}
+            error={null}
+            loading={false}
+            ownerKind="project"
+            pending={false}
+            onChange={(enabled) => changes.push(enabled)}
+          />
+        </TooltipProvider>,
+      );
+    });
+
+    const shell = dom.window.document.querySelector<HTMLLabelElement>(
+      "[data-routine-automatic-authority]",
+    )!;
+    const switchControl =
+      dom.window.document.querySelector<HTMLButtonElement>('[role="switch"]')!;
+    expect(shell.getAttribute("aria-disabled")).toBe("true");
+    expect(switchControl.disabled).toBe(true);
+
+    await act(async () => shell.click());
+    expect(changes).toEqual([]);
+  } finally {
+    await act(async () => root.unmount());
+    restoreGlobals();
+    dom.window.close();
+  }
+});
+
 function installDomGlobals(dom: JSDOM) {
   const values: Record<string, unknown> = {
     CustomEvent: dom.window.CustomEvent,

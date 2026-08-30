@@ -18,6 +18,7 @@ export function RoutineAutomaticConsentNotice({
   loading,
   recoveryError,
   recoveryPending,
+  readOnly = false,
   storageResetPending,
   onDismissReset,
   onRetry,
@@ -26,6 +27,7 @@ export function RoutineAutomaticConsentNotice({
   loading: boolean;
   recoveryError: string | null;
   recoveryPending: boolean;
+  readOnly?: boolean;
   storageResetPending: boolean;
   onDismissReset(): void;
   onRetry(): void;
@@ -53,6 +55,7 @@ export function RoutineAutomaticConsentNotice({
           loading={loading}
           recoveryError={recoveryError}
           recoveryPending={recoveryPending}
+          readOnly={readOnly}
           storageResetPending={storageResetPending}
           onDismissReset={onDismissReset}
           onRetry={onRetry}
@@ -67,6 +70,7 @@ export function RoutineAutomaticConsentNoticeContent({
   loading,
   recoveryError,
   recoveryPending,
+  readOnly = false,
   storageResetPending,
   onDismissReset,
   onRetry,
@@ -75,6 +79,7 @@ export function RoutineAutomaticConsentNoticeContent({
   loading: boolean;
   recoveryError: string | null;
   recoveryPending: boolean;
+  readOnly?: boolean;
   storageResetPending: boolean;
   onDismissReset(): void;
   onRetry(): void;
@@ -113,7 +118,7 @@ export function RoutineAutomaticConsentNoticeContent({
         {storageResetPending ? (
           <Button
             type="button"
-            disabled={recoveryPending}
+            disabled={readOnly || recoveryPending}
             onClick={onDismissReset}
           >
             {recoveryPending

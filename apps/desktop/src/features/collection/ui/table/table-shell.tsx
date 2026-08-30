@@ -36,6 +36,7 @@ export function ColumnHeader({
   label,
   icon: Icon,
   open,
+  readOnly,
   children,
   onOpenChange,
   onResizeMouseDown,
@@ -44,6 +45,7 @@ export function ColumnHeader({
   label: string;
   icon: ElementType;
   open: boolean;
+  readOnly: boolean;
   children: ReactNode;
   onOpenChange: (open: boolean) => void;
   onResizeMouseDown: (event: ReactMouseEvent) => void;
@@ -51,6 +53,7 @@ export function ColumnHeader({
   const trigger = (
     <button
       type="button"
+      disabled={readOnly}
       className={cn(
         "group/header relative flex h-full w-full items-center gap-2 px-2 text-left text-[12px] font-semibold text-muted-foreground hover:bg-accent/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
         open && "bg-accent",
@@ -62,17 +65,19 @@ export function ColumnHeader({
     >
       <Icon className="size-3.5 shrink-0 text-muted-foreground" />
       <span className="min-w-0 flex-1 truncate">{label}</span>
-      <MoreVertical
-        className={cn(
-          "size-3.5 shrink-0 text-muted-foreground opacity-0 group-hover/header:opacity-100",
-          open && "opacity-100",
-        )}
-      />
+      {!readOnly ? (
+        <MoreVertical
+          className={cn(
+            "size-3.5 shrink-0 text-muted-foreground opacity-0 group-hover/header:opacity-100",
+            open && "opacity-100",
+          )}
+        />
+      ) : null}
     </button>
   );
   return (
     <div className="relative h-full w-full">
-      {cloneColumnMenu(children, trigger)}
+      {readOnly ? trigger : cloneColumnMenu(children, trigger)}
       <span
         className="absolute -right-1 top-0 z-20 h-full w-2 cursor-col-resize"
         onMouseDown={(event) => {

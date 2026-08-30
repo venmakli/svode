@@ -16,7 +16,7 @@ export function NoDateFieldState({
   onAddDateColumn,
 }: {
   loading: boolean;
-  onAddDateColumn: () => void;
+  onAddDateColumn?: () => void;
 }) {
   if (loading) return <CalendarLoadingState />;
   return (
@@ -28,12 +28,14 @@ export function NoDateFieldState({
           </EmptyMedia>
           <EmptyTitle>{m.calendar_no_date_field_title()}</EmptyTitle>
         </EmptyHeader>
-        <EmptyContent>
-          <Button type="button" size="sm" onClick={onAddDateColumn}>
-            <Plus data-icon="inline-start" />
-            {m.collection_add_date_property()}
-          </Button>
-        </EmptyContent>
+        {onAddDateColumn ? (
+          <EmptyContent>
+            <Button type="button" size="sm" onClick={onAddDateColumn}>
+              <Plus data-icon="inline-start" />
+              {m.collection_add_date_property()}
+            </Button>
+          </EmptyContent>
+        ) : null}
       </Empty>
     </div>
   );

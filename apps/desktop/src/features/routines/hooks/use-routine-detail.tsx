@@ -33,6 +33,7 @@ export function useRoutineDetail({
   onRun,
   owner,
   pending,
+  readOnly,
   onEditChange,
   setEditSession,
 }: {
@@ -52,6 +53,7 @@ export function useRoutineDetail({
   onRun(row: RoutineRow): Promise<void>;
   owner: RoutineOwnerInput;
   pending: boolean;
+  readOnly: boolean;
   onEditChange(definition: RoutineDefinition): void;
   setEditSession(
     value:
@@ -109,27 +111,33 @@ export function useRoutineDetail({
                 <AlertDescription>{mutationError}</AlertDescription>
               </Alert>
             ) : null}
-            <RoutineDefinitionForm
-              collectionOwner={owner.ownerKind === "collection_directory"}
-              definition={session.draft}
-              executorError={executorError}
-              executors={executors}
-              formId={formId}
-              nameError={nameError}
-              onChange={onEditChange}
-              onSubmit={() => {
-                void (async () => {
-                  const updated = await applyUpdate(session.row, session.draft);
-                  if (!updated) return;
-                  session.guard.dirty = false;
-                  setEditSession(null);
-                  await detailController.open({
-                    ...createReadOnlyDetail(updated),
-                    selection,
-                  });
-                })();
-              }}
-            />
+            <fieldset disabled={readOnly} className="contents">
+              <RoutineDefinitionForm
+                collectionOwner={owner.ownerKind === "collection_directory"}
+                definition={session.draft}
+                executorError={executorError}
+                executors={executors}
+                formId={formId}
+                nameError={nameError}
+                onChange={onEditChange}
+                onSubmit={() => {
+                  if (readOnly) return;
+                  void (async () => {
+                    const updated = await applyUpdate(
+                      session.row,
+                      session.draft,
+                    );
+                    if (!updated) return;
+                    session.guard.dirty = false;
+                    setEditSession(null);
+                    await detailController.open({
+                      ...createReadOnlyDetail(updated),
+                      selection,
+                    });
+                  })();
+                }}
+              />
+            </fieldset>
           </div>
         ),
         description: (
@@ -152,7 +160,7 @@ export function useRoutineDetail({
             >
               {m.routines_cancel()}
             </Button>
-            <Button type="submit" form={formId} disabled={pending}>
+            <Button type="submit" form={formId} disabled={pending || readOnly}>
               {pending ? (
                 <LoaderCircle
                   data-icon="inline-start"
@@ -190,6 +198,7 @@ export function useRoutineDetail({
     onRun,
     owner.ownerKind,
     pending,
+    readOnly,
     onEditChange,
     setEditSession,
   ]);

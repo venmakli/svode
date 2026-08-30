@@ -12,11 +12,13 @@ import { RoutineAutomaticConsentNotice } from "./routine-automatic-consent-notic
 
 export function RoutinesSurface({
   owner,
+  readOnly,
   onOpenSession,
 }: ScopeSurfaceRenderContext & {
+  readOnly: boolean;
   onOpenSession(target: RoutineSessionTarget): void;
 }) {
-  const controller = useRoutinesController(owner, onOpenSession);
+  const controller = useRoutinesController(owner, onOpenSession, readOnly);
   const body =
     controller.collectionState.phase === "ready" ? (
       <SystemCollectionPresentationCore
@@ -27,6 +29,7 @@ export function RoutinesSurface({
               loading={controller.automaticConsent.loading}
               recoveryError={controller.storageRecovery.error}
               recoveryPending={controller.storageRecovery.pending}
+              readOnly={readOnly}
               storageResetPending={
                 controller.automaticConsent.storageResetPending
               }
@@ -39,6 +42,7 @@ export function RoutinesSurface({
               loading={controller.automaticConsent.loading}
               ownerKind={controller.automaticConsent.ownerKind}
               pending={controller.automaticConsent.pending}
+              readOnly={readOnly}
               onChange={(enabled) =>
                 void controller.automaticConsent.setEnabled(enabled)
               }

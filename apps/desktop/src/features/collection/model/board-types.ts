@@ -35,6 +35,7 @@ export interface BoardCardModel {
 }
 
 export interface BoardViewProps {
+  readOnly: boolean;
   name: string;
   view: CollectionView;
   query: UseViewQueryResult;
@@ -70,6 +71,7 @@ export interface BoardViewProps {
 }
 
 export interface BoardCardProps {
+  readOnly: boolean;
   card: BoardCardModel;
   groupColumn: Column;
   cardFields: string[];

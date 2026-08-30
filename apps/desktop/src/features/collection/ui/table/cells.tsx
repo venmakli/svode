@@ -27,6 +27,7 @@ export function PropertyCell({
   actors,
   onRequestActors,
   relationContext,
+  readOnly = false,
   value,
   editing,
   onEdit,
@@ -38,6 +39,7 @@ export function PropertyCell({
   actors: ActorCandidate[];
   onRequestActors: (allTime: boolean) => Promise<ActorCandidate[]>;
   relationContext?: RelationContext;
+  readOnly?: boolean;
   value: unknown;
   editing: boolean;
   onEdit: () => void;
@@ -45,6 +47,22 @@ export function PropertyCell({
   onCommit: (value: unknown, options?: { close?: boolean }) => void;
 }) {
   const validation = validatePropertyValue(column, value);
+
+  if (readOnly) {
+    return (
+      <div className="flex h-7 min-w-0 items-center px-1 text-[13px]">
+        <PropertyValue
+          column={column}
+          value={value}
+          actors={actors}
+          relationContext={relationContext}
+          relationPresentation={
+            column.type === "relation" ? "table" : "default"
+          }
+        />
+      </div>
+    );
+  }
 
   if (column.type === "boolean") {
     return (

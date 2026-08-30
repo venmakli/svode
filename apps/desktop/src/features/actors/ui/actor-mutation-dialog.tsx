@@ -42,6 +42,7 @@ export function ActorMutationDialog({
   intent,
   pendingPhase,
   review,
+  readOnly,
   rootPointerCommitExpectation,
   rows,
   onApply,
@@ -58,6 +59,7 @@ export function ActorMutationDialog({
   intent: ActorMutationIntent | null;
   pendingPhase: "preview" | "apply" | null;
   review: ActorMutationReview | null;
+  readOnly: boolean;
   rootPointerCommitExpectation: ActorCommitExpectation | null;
   rows: readonly ActorCatalogRow[];
   onApply(): void;
@@ -123,7 +125,7 @@ export function ActorMutationDialog({
           <ActorMutationInputStep
             key={intentKey(intent)}
             intent={intent}
-            pending={pending}
+            pending={pending || readOnly}
             rows={rows}
             mergeTargetEmail={mergeTargetEmail}
             onMergeTargetChange={(canonicalEmail) =>
@@ -174,7 +176,7 @@ export function ActorMutationDialog({
               {retryable ? (
                 <Button
                   type="button"
-                  disabled={pending}
+                  disabled={pending || readOnly}
                   onClick={onRetryReview}
                 >
                   {pending ? (
@@ -186,7 +188,11 @@ export function ActorMutationDialog({
                   {m.actors_mutation_review_again()}
                 </Button>
               ) : (
-                <Button type="button" disabled={pending} onClick={onApply}>
+                <Button
+                  type="button"
+                  disabled={pending || readOnly}
+                  onClick={onApply}
+                >
                   {pending ? (
                     <LoaderCircle
                       data-icon="inline-start"
@@ -213,7 +219,9 @@ export function ActorMutationDialog({
                 type="submit"
                 form="actor-mutation-form"
                 disabled={
-                  pending || (intent.kind === "merge" && !mergeTargetEmail)
+                  pending ||
+                  readOnly ||
+                  (intent.kind === "merge" && !mergeTargetEmail)
                 }
               >
                 {pending ? (

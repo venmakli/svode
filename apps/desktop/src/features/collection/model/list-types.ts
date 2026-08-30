@@ -8,6 +8,7 @@ import type { Entry } from "@/features/entry";
 import type { CollectionSchema } from "@/features/properties";
 
 export interface ListViewProps {
+  readOnly: boolean;
   name: string;
   view: CollectionView;
   query: UseViewQueryResult;

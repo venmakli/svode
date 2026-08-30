@@ -28,6 +28,7 @@ export function AgentActorDeleteDialog({
   actor,
   failure,
   pending,
+  readOnly,
   referenceState,
   onClose,
   onConfirm,
@@ -37,6 +38,7 @@ export function AgentActorDeleteDialog({
   actor: AgentActorRow | null;
   failure: string | null;
   pending: boolean;
+  readOnly: boolean;
   referenceState: AgentActorDeleteReferenceState;
   onClose(): void;
   onConfirm(): void;
@@ -133,7 +135,7 @@ export function AgentActorDeleteDialog({
           ) : (
             <AlertDialogAction
               className="bg-destructive text-white hover:bg-destructive/90"
-              disabled={pending || referenceState.phase !== "ready"}
+              disabled={readOnly || pending || referenceState.phase !== "ready"}
               onClick={onConfirm}
             >
               {pending ? (

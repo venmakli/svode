@@ -19,6 +19,7 @@ import { TableView } from "./table/table-view";
 import { ViewPlaceholder } from "./view-placeholder";
 
 interface CollectionViewContentProps {
+  readOnly: boolean;
   view: CollectionView;
   query: UseViewQueryResult;
   schema: CollectionSchema;
@@ -53,6 +54,7 @@ interface CollectionViewContentProps {
 }
 
 export function CollectionViewContent({
+  readOnly,
   view,
   query,
   schema,
@@ -80,6 +82,7 @@ export function CollectionViewContent({
 }: CollectionViewContentProps) {
   const type = viewType(view);
   const commonProps = {
+    readOnly,
     name: view.name,
     view,
     schema,
@@ -167,6 +170,7 @@ export function CollectionViewContent({
 
   return (
     <ViewPlaceholder
+      readOnly={readOnly}
       type={type as ViewType}
       name={view.name}
       schema={schema}

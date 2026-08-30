@@ -43,6 +43,7 @@ export function useAgentActorDetail({
   editSession,
   instanceKey,
   mutationPending,
+  readOnly = false,
   pendingAdapter,
   savedRuntimeFor,
   setEditSession,
@@ -65,6 +66,7 @@ export function useAgentActorDetail({
   editSession: AgentActorEditSession | null;
   instanceKey: string;
   mutationPending: boolean;
+  readOnly?: boolean;
   pendingAdapter: AgentActorBinding["adapter"] | null;
   savedRuntimeFor(
     row: AgentActorRow,
@@ -145,7 +147,7 @@ export function useAgentActorDetail({
               descriptors={descriptors}
               diagnostics={diagnostics}
               draft={editSession.draft}
-              editMode={true}
+              editMode={!readOnly}
               pendingAdapter={pendingAdapter}
               runtime={editRuntime}
               onChange={(draft) =>
@@ -156,13 +158,14 @@ export function useAgentActorDetail({
                 })
               }
               onCheck={diagnose}
-              onSave={() =>
+              onSave={() => {
+                if (readOnly) return;
                 void applyMutation(
                   "update",
                   editSession.row.ownerPath,
                   editSession.draft,
-                )
-              }
+                );
+              }}
             />
             {accessBlocked ? (
               <RepositoryAccessInlineRecovery recovery={accessRecovery!} />
@@ -202,7 +205,7 @@ export function useAgentActorDetail({
               <Button
                 type="submit"
                 form={`agent-actor-detail-${editSession.draft.id}`}
-                disabled={mutationPending}
+                disabled={mutationPending || readOnly}
               >
                 {mutationPending ? (
                   <LoaderCircle
@@ -238,6 +241,7 @@ export function useAgentActorDetail({
     instanceKey,
     mutationPending,
     pendingAdapter,
+    readOnly,
     setEditSession,
   ]);
 

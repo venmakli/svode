@@ -44,6 +44,7 @@ interface CollectionTabStripProps {
   addViewLabel: string;
   manageViewsLabel: string;
   moreViewsLabel: string;
+  readOnly: boolean;
   views: CollectionView[];
   onAddView: (type: ViewType) => void;
   onReorderViews: (nextOrder: string[]) => Promise<void>;
@@ -91,6 +92,7 @@ export function CollectionTabStrip({
   addViewLabel,
   manageViewsLabel,
   moreViewsLabel,
+  readOnly,
   views,
   onAddView,
   onReorderViews,
@@ -206,6 +208,10 @@ export function CollectionTabStrip({
       document.removeEventListener("mousedown", handleDocumentMouseDown, true);
   }, [moreOpen]);
 
+  useEffect(() => {
+    if (readOnly) queueMicrotask(() => setAddMenuOpen(false));
+  }, [readOnly]);
+
   const activeTabItem = tabs.find((tab) => tab.value === activeTab) ?? null;
   const visibleTabs = tabs.slice(0, layout.visibleCount);
   const hiddenTabs = tabs.slice(layout.visibleCount);
@@ -275,73 +281,75 @@ export function CollectionTabStrip({
           />
         </div>
       ) : null}
-      <MultiPanePopover<AddViewsPane>
-        open={addMenuOpen}
-        onOpenChange={(open) => {
-          setAddMenuOpen(open);
-          if (open) setAddMenuPane("add");
-        }}
-        pane={addMenuPane}
-        onPaneChange={setAddMenuPane}
-        mainPane="add"
-        align="start"
-        className="w-72"
-        trigger={
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-sm"
-            className="shrink-0 rounded-md text-muted-foreground hover:text-foreground"
-          >
-            <Plus />
-            <span className="sr-only">{addViewLabel}</span>
-          </Button>
-        }
-        panes={[
-          {
-            id: "add",
-            title: addViewLabel,
-            content: (
-              <div className="flex flex-col p-1">
-                <SettingsSection label={addViewLabel} />
-                {addViewOptions.map((option) => {
-                  const Icon = viewIcons[option.type];
-                  return (
-                    <SettingsRow
-                      key={option.type}
-                      icon={Icon}
-                      label={option.label}
-                      right={null}
-                      onClick={() => {
-                        onAddView(option.type);
-                        setAddMenuOpen(false);
-                      }}
-                    />
-                  );
-                })}
-                <Separator className="my-1" />
-                <SettingsRow
-                  icon={GripVertical}
-                  label={manageViewsLabel}
-                  onClick={() => setAddMenuPane("manage")}
+      {!readOnly ? (
+        <MultiPanePopover<AddViewsPane>
+          open={addMenuOpen}
+          onOpenChange={(open) => {
+            setAddMenuOpen(open);
+            if (open) setAddMenuPane("add");
+          }}
+          pane={addMenuPane}
+          onPaneChange={setAddMenuPane}
+          mainPane="add"
+          align="start"
+          className="w-72"
+          trigger={
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              className="shrink-0 rounded-md text-muted-foreground hover:text-foreground"
+            >
+              <Plus />
+              <span className="sr-only">{addViewLabel}</span>
+            </Button>
+          }
+          panes={[
+            {
+              id: "add",
+              title: addViewLabel,
+              content: (
+                <div className="flex flex-col p-1">
+                  <SettingsSection label={addViewLabel} />
+                  {addViewOptions.map((option) => {
+                    const Icon = viewIcons[option.type];
+                    return (
+                      <SettingsRow
+                        key={option.type}
+                        icon={Icon}
+                        label={option.label}
+                        right={null}
+                        onClick={() => {
+                          onAddView(option.type);
+                          setAddMenuOpen(false);
+                        }}
+                      />
+                    );
+                  })}
+                  <Separator className="my-1" />
+                  <SettingsRow
+                    icon={GripVertical}
+                    label={manageViewsLabel}
+                    onClick={() => setAddMenuPane("manage")}
+                  />
+                </div>
+              ),
+            },
+            {
+              id: "manage",
+              title: manageViewsLabel,
+              content: (
+                <ManageViewsPane
+                  activeViewName={activeTab || null}
+                  views={views}
+                  onReorderViews={onReorderViews}
+                  onSelectView={onTabChange}
                 />
-              </div>
-            ),
-          },
-          {
-            id: "manage",
-            title: manageViewsLabel,
-            content: (
-              <ManageViewsPane
-                activeViewName={activeTab || null}
-                views={views}
-                onReorderViews={onReorderViews}
-                onSelectView={onTabChange}
-              />
-            ),
-          },
-        ]}
-      />
+              ),
+            },
+          ]}
+        />
+      ) : null}
       <div
         aria-hidden
         className="pointer-events-none fixed -left-[10000px] top-0 flex opacity-0"

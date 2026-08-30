@@ -29,6 +29,7 @@ export function TableRowsBody({
   sensors,
   sortedEntries,
   hasSort,
+  readOnly,
   actors,
   spacePath,
   projectPath,
@@ -47,6 +48,7 @@ export function TableRowsBody({
   sensors: ReturnType<typeof useSensors> | undefined;
   sortedEntries: Entry[];
   hasSort: boolean;
+  readOnly: boolean;
   actors: ActorCandidate[];
   spacePath: string;
   projectPath?: string | null;
@@ -74,7 +76,7 @@ export function TableRowsBody({
   );
   return (
     <DndContext
-      sensors={hasSort ? undefined : sensors}
+      sensors={hasSort || readOnly ? undefined : sensors}
       collisionDetection={closestCenter}
       onDragEnd={onDragEnd}
     >
@@ -89,7 +91,8 @@ export function TableRowsBody({
               <SortableTableRow
                 key={original.entry.path}
                 row={original}
-                disabled={hasSort || original.child}
+                disabled={readOnly || hasSort || original.child}
+                readOnly={readOnly}
                 rowHeightClassName={rowHeight}
                 onOpen={() =>
                   original.nestedCollection

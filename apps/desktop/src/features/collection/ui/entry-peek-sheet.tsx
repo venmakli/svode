@@ -24,6 +24,7 @@ import { useOptionalSystemCollectionDetailController } from "../system/hooks/det
 import * as m from "@/paraglide/messages.js";
 
 interface EntryPeekSheetProps {
+  readOnly: boolean;
   target: EntryPeekTarget | null;
   spacePath: string;
   projectPath?: string | null;
@@ -51,6 +52,7 @@ interface EntryPeekSheetProps {
 }
 
 export function EntryPeekSheet({
+  readOnly,
   target,
   spacePath,
   projectPath,
@@ -103,6 +105,7 @@ export function EntryPeekSheet({
     currentEntry && !target?.nested ? (
       <EntryPeekActions
         entry={currentEntry}
+        readOnly={readOnly}
         onDuplicateEntry={onDuplicateEntry}
         onDeleteEntry={onDeleteEntry}
         onConvertedEntry={onConvertedEntry}
@@ -150,6 +153,7 @@ export function EntryPeekSheet({
               const detail = (
                 <EntryPeekActions
                   entry={currentEntry}
+                  readOnly={readOnly}
                   onDuplicateEntry={onDuplicateEntry}
                   onDeleteEntry={onDeleteEntry}
                   onConvertedEntry={onConvertedEntry}
@@ -201,6 +205,7 @@ export function EntryPeekSheet({
             </PeekTopBar>
             <PeekScrollSurface>
               <EntryPeekSurface
+                readOnly={readOnly}
                 entry={currentEntry}
                 schemaResult={schemaResult}
                 spacePath={effectiveSpacePath}
@@ -295,6 +300,7 @@ function PeekScrollSurface({ children }: { children: ReactNode }) {
 
 function EntryPeekActions({
   entry,
+  readOnly,
   onDuplicateEntry,
   onDeleteEntry,
   onConvertedEntry,
@@ -306,6 +312,7 @@ function EntryPeekActions({
   spaceId,
 }: {
   entry: Entry;
+  readOnly: boolean;
   onDuplicateEntry: (entry: Entry) => void;
   onDeleteEntry: (entry: Entry) => void;
   onConvertedEntry: (entry: Entry, nested: boolean) => void;
@@ -317,7 +324,7 @@ function EntryPeekActions({
   spaceId: string;
 }) {
   const templateDefaultAction =
-    template && onSetTemplateDefault ? (
+    !readOnly && template && onSetTemplateDefault ? (
       template.isDefault ? (
         <DropdownMenuItem
           onClick={() => void onSetTemplateDefault(null).catch(handleError)}
@@ -354,6 +361,7 @@ function EntryPeekActions({
       onDeleteEntry={onDeleteEntry}
       actionItemsBeforeDuplicate={templateDefaultAction}
       duplicateLabel={template ? m.collection_template_duplicate() : undefined}
+      readOnly={readOnly}
     />
   );
 }

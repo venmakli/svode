@@ -19,6 +19,7 @@ export function RoutineAutomaticConsent({
   loading,
   ownerKind,
   pending,
+  readOnly = false,
   onChange,
 }: {
   enabled: boolean | null;
@@ -26,6 +27,7 @@ export function RoutineAutomaticConsent({
   loading: boolean;
   ownerKind: RoutineResolvedOwnerKind;
   pending: boolean;
+  readOnly?: boolean;
   onChange(enabled: boolean): void;
 }) {
   const controlId = useId();
@@ -39,9 +41,9 @@ export function RoutineAutomaticConsent({
       <TooltipTrigger asChild>
         <Label
           htmlFor={controlId}
-          data-disabled={loading || pending || unavailable}
+          data-disabled={loading || pending || readOnly || unavailable}
           data-invalid={Boolean(error)}
-          aria-disabled={loading || pending || unavailable}
+          aria-disabled={loading || pending || readOnly || unavailable}
           className="h-7 w-auto shrink-0 gap-1.5 rounded-md border bg-background px-2 data-[disabled=true]:opacity-50 data-[invalid=true]:border-destructive data-[invalid=true]:text-destructive"
           data-routine-automatic-authority={ownerKind}
         >
@@ -60,13 +62,13 @@ export function RoutineAutomaticConsent({
               id={controlId}
               size="sm"
               checked={enabled === true}
-              disabled={pending || unavailable}
+              disabled={pending || readOnly || unavailable}
               aria-busy={pending}
               aria-describedby={descriptionId}
               aria-invalid={Boolean(error)}
               aria-label={label}
               onCheckedChange={(checked) => {
-                if (!unavailable) onChange(checked === true);
+                if (!readOnly && !unavailable) onChange(checked === true);
               }}
             />
           )}

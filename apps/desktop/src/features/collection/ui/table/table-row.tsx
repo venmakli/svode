@@ -16,6 +16,7 @@ import * as m from "@/paraglide/messages.js";
 export function SortableTableRow({
   row,
   disabled,
+  readOnly,
   rowHeightClassName,
   children,
   onOpen,
@@ -25,6 +26,7 @@ export function SortableTableRow({
 }: {
   row: CollectionTableRow;
   disabled: boolean;
+  readOnly: boolean;
   rowHeightClassName: string;
   children: ReactNode;
   onOpen: () => void;
@@ -87,14 +89,18 @@ export function SortableTableRow({
           <FileText data-icon="inline-start" />
           {m.collection_open_in_peek()}
         </ContextMenuItem>
-        <ContextMenuItem onClick={onDuplicate}>
-          <Copy data-icon="inline-start" />
-          {m.collection_duplicate_entry()}
-        </ContextMenuItem>
-        <ContextMenuItem variant="destructive" onClick={onDelete}>
-          <Trash2 data-icon="inline-start" />
-          {m.space_delete()}
-        </ContextMenuItem>
+        {!readOnly ? (
+          <ContextMenuItem onClick={onDuplicate}>
+            <Copy data-icon="inline-start" />
+            {m.collection_duplicate_entry()}
+          </ContextMenuItem>
+        ) : null}
+        {!readOnly ? (
+          <ContextMenuItem variant="destructive" onClick={onDelete}>
+            <Trash2 data-icon="inline-start" />
+            {m.space_delete()}
+          </ContextMenuItem>
+        ) : null}
       </ContextMenuContent>
     </ContextMenu>
   );

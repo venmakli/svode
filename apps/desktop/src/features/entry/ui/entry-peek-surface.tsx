@@ -19,6 +19,7 @@ import { EntrySubpages } from "./entry-subpages";
 import { EntrySystemFields } from "./entry-system-fields";
 
 interface EntryPeekSurfaceProps {
+  readOnly?: boolean;
   entry: Entry;
   schemaResult: EntrySchemaResult | null;
   spacePath: string;
@@ -33,6 +34,7 @@ interface EntryPeekSurfaceProps {
 }
 
 export function EntryPeekSurface({
+  readOnly = false,
   entry,
   schemaResult,
   spacePath,
@@ -50,6 +52,7 @@ export function EntryPeekSurface({
     projectPath,
     spaceId,
     onEntryChange,
+    readOnly,
   });
 
   async function updateCover(cover: EntryCover | null) {
@@ -60,6 +63,7 @@ export function EntryPeekSurface({
     <div className="flex min-h-full flex-col">
       <div className={detailPageHeaderClassName}>
         <EntryIdentityHeader
+          readOnly={readOnly}
           title={entry.meta.title}
           icon={entry.meta.icon}
           description={entry.meta.description ?? ""}
@@ -93,6 +97,7 @@ export function EntryPeekSurface({
         {schemaResult && schemaResult.schema.columns.length > 0 ? (
           <div>
             <PropertyPanel
+              readOnly={readOnly}
               spacePath={spacePath}
               projectPath={projectPath}
               spaceId={spaceId}
@@ -127,6 +132,7 @@ export function EntryPeekSurface({
         initialEntry={entry}
         initialEntrySpacePath={spacePath}
         documentPathHandoff={documentPathHandoff}
+        readOnly={readOnly}
         onDocumentPathChange={(path) => {
           onEntryChange((current) =>
             current ? { ...current, path } : current,
@@ -138,6 +144,7 @@ export function EntryPeekSurface({
         projectPath={projectPath}
         spaceId={spaceId}
         documentPath={entry.path}
+        readOnly={readOnly}
       />
     </div>
   );
@@ -148,11 +155,13 @@ function useEntryPeekFieldSave({
   projectPath,
   spaceId,
   onEntryChange,
+  readOnly,
 }: {
   spacePath: string;
   projectPath?: string | null;
   spaceId: string;
   onEntryChange: Dispatch<SetStateAction<Entry | null>>;
+  readOnly: boolean;
 }) {
   const patchEntryTreeMeta = useSpaceTreeSync(
     (state) => state.patchEntryTreeMeta,
@@ -169,7 +178,7 @@ function useEntryPeekFieldSave({
     [onEntryChange],
   );
 
-  return useEntryFieldSave({
+  const { save } = useEntryFieldSave({
     spacePath,
     projectPath,
     applyEntryUpdate,
@@ -191,5 +200,12 @@ function useEntryPeekFieldSave({
         }
       }
     },
-  }).save;
+  });
+  return useCallback(
+    (...args: Parameters<typeof save>) => {
+      if (readOnly) return Promise.resolve();
+      return save(...args);
+    },
+    [readOnly, save],
+  );
 }
