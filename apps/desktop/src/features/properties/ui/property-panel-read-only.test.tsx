@@ -23,6 +23,7 @@ test("read-only Page properties keep values and navigation copy without mutation
   expect(markup.includes("Summary")).toBe(true);
   expect(markup.includes("Visible value")).toBe(true);
   expect(markup.includes("Visible legacy value")).toBe(true);
+  expect(markup.includes('data-property-type-icon="text"')).toBe(true);
   expect(markup.includes("data-property-label-trigger")).toBe(false);
   expect(markup.includes("<button")).toBe(false);
   expect(markup.includes('role="button"')).toBe(false);
