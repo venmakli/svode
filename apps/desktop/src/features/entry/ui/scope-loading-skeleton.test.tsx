@@ -1,24 +1,32 @@
 import { expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import { EntryDetailProvider } from "../hooks/entry-detail-context";
+import { PageSurfaceSessionProvider } from "../hooks/page-surface-context";
 import { ReadmeSurface } from "./readme-surface";
 import { ScopeOwnerHeader } from "./scope-owner-header";
 
 test("keeps fallback identity hidden while the owner README is loading", () => {
   const markup = renderToStaticMarkup(
-    <EntryDetailProvider
+    <PageSurfaceSessionProvider
+      displayName="Project title"
+      displayPath="README.md"
       spacePath="/repo"
-      projectPath="/repo"
-      spaceId="root"
-      readmePath="README.md"
-      ownerPath="."
-      fallbackTitle="Project title"
-      fallbackIcon="🚀"
-      onOpenPath={() => undefined}
+      targetKey="root"
     >
-      <ScopeOwnerHeader />
-      <ReadmeSurface />
-    </EntryDetailProvider>,
+      <EntryDetailProvider
+        spacePath="/repo"
+        projectPath="/repo"
+        spaceId="root"
+        readmePath="README.md"
+        ownerPath="."
+        fallbackTitle="Project title"
+        fallbackIcon="🚀"
+        onOpenPath={() => undefined}
+      >
+        <ScopeOwnerHeader />
+        <ReadmeSurface />
+      </EntryDetailProvider>
+    </PageSurfaceSessionProvider>,
   );
 
   expect(markup.includes("Project title")).toBe(false);

@@ -259,14 +259,21 @@ export function EntryDetailProvider({
       const column = schemaResult?.schema.columns.find(
         (item) => item.name === field,
       );
-      await saveField(target, field, value, {
-        flush: options.flush ?? !entry,
-        policy:
-          options.policy ??
-          (column ? propertyFieldSavePolicy(column) : undefined),
-      });
+      const save = async () => {
+        await saveField(target, field, value, {
+          flush: options.flush ?? !entry,
+          policy:
+            options.policy ??
+            (column ? propertyFieldSavePolicy(column) : undefined),
+        });
+      };
+      if (field === "title" && options.flush && pageSurface) {
+        await pageSurface.runMutation(save);
+        return;
+      }
+      await save();
     },
-    [createReadme, entry, pageSurface?.readOnly, saveField, schemaResult],
+    [createReadme, entry, pageSurface, saveField, schemaResult],
   );
 
   const value = useMemo<EntryDetailContextValue>(

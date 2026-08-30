@@ -45,7 +45,53 @@ test("Page chooses a local default without verification and keeps blocked edit r
   }
 });
 
-async function renderPage(status: "local" | "read_only") {
+test("serializes a rename-style mutation before an immediate View transition", async () => {
+  let releaseFirstBodyFlush: () => void = () => undefined;
+  const firstBodyFlush = new Promise<void>((resolve) => {
+    releaseFirstBodyFlush = resolve;
+  });
+  let bodyFlushCount = 0;
+  const page = await renderPage("local", {
+    onBodyFlush: async () => {
+      bodyFlushCount += 1;
+      if (bodyFlushCount === 1) await firstBodyFlush;
+    },
+  });
+  try {
+    await act(async () => {
+      page.dom.window.document
+        .querySelector<HTMLButtonElement>("[data-run-mutation]")!
+        .click();
+      activateMode(page.dom, "View");
+      await nextTurn();
+    });
+
+    expect(page.events).toEqual(["body"]);
+
+    await act(async () => {
+      releaseFirstBodyFlush();
+      await nextTurn();
+      await nextTurn();
+    });
+
+    expect(page.events).toEqual([
+      "body",
+      "metadata",
+      "mutation",
+      "body",
+      "metadata",
+    ]);
+    expect(textOf(page.dom, "[data-mode]")).toBe("view");
+    expect(textOf(page.dom, "[data-read-only]")).toBe("read-only");
+  } finally {
+    await page.cleanup();
+  }
+});
+
+async function renderPage(
+  status: "local" | "read_only",
+  options: { onBodyFlush?: () => Promise<void> } = {},
+) {
   const dom = new JSDOM(
     "<!doctype html><html><body><div id=app></div></body></html>",
     { pretendToBeVisual: true, url: "http://localhost/" },
@@ -78,6 +124,7 @@ async function renderPage(status: "local" | "read_only") {
     useEffect(() => {
       const unregisterBody = registerPersistence("body", async () => {
         events.push("body");
+        await options.onBodyFlush?.();
       });
       const unregisterMetadata = registerPersistence("metadata", async () => {
         events.push("metadata");

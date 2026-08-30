@@ -35,7 +35,7 @@ export function usePagePersistence({
     (error: unknown, retry: () => Promise<void>) => Promise<boolean>
   >(async () => false);
   const retryPersistenceRef = useRef<(() => Promise<void>) | null>(null);
-  const mutationsRef = useRef(new Set<Promise<void>>());
+  const persistenceQueueRef = useRef<Promise<void>>(Promise.resolve());
   const [persistenceError, setPersistenceError] = useState<string | null>(null);
 
   const registerPersistence = useCallback(
@@ -47,14 +47,13 @@ export function usePagePersistence({
     [],
   );
 
-  const flushPersistence = useCallback(async (): Promise<boolean> => {
+  const flushPersistenceNow = useCallback(async (): Promise<boolean> => {
     const participants = [...persistenceRef.current.values()].sort(
       (left, right) =>
         persistencePriority(left.kind) - persistencePriority(right.kind),
     );
     try {
       for (const participant of participants) await participant.flush();
-      await Promise.all([...mutationsRef.current]);
       if (accessBlockedRef.current) return false;
       setPersistenceError(null);
       retryPersistenceRef.current = null;
@@ -73,10 +72,27 @@ export function usePagePersistence({
     }
   }, []);
 
+  const enqueuePersistenceTask = useCallback(
+    <Result,>(task: () => Promise<Result>) => {
+      const result = persistenceQueueRef.current.then(task, task);
+      persistenceQueueRef.current = result.then(
+        () => undefined,
+        () => undefined,
+      );
+      return result;
+    },
+    [],
+  );
+
+  const flushPersistence = useCallback(
+    () => enqueuePersistenceTask(flushPersistenceNow),
+    [enqueuePersistenceTask, flushPersistenceNow],
+  );
+
   const recoverWriteError = useCallback(
     async (error: unknown, retry: () => Promise<void>) => {
       const explicitRetry = async () => {
-        await retry();
+        await enqueuePersistenceTask(retry);
         accessBlockedRef.current = false;
         setPersistenceError(null);
         retryPersistenceRef.current = null;
@@ -107,7 +123,7 @@ export function usePagePersistence({
       }
       return handled;
     },
-    [makeAccessRequest, recovery, targetKey],
+    [enqueuePersistenceTask, makeAccessRequest, recovery, targetKey],
   );
   useEffect(() => {
     recoverWriteErrorRef.current = recoverWriteError;
@@ -121,25 +137,17 @@ export function usePagePersistence({
   }, [recovery]);
 
   const runMutation = useCallback(
-    async (operation: () => Promise<void>) => {
-      if (!(await flushPersistence())) return;
-      const execute = async () => {
+    (operation: () => Promise<void>) =>
+      enqueuePersistenceTask(async () => {
+        if (!(await flushPersistenceNow())) return;
         try {
           await operation();
         } catch (error) {
           if (await recoverWriteErrorRef.current(error, operation)) return;
           throw error;
         }
-      };
-      const promise = execute();
-      mutationsRef.current.add(promise);
-      try {
-        await promise;
-      } finally {
-        mutationsRef.current.delete(promise);
-      }
-    },
-    [flushPersistence],
+      }),
+    [enqueuePersistenceTask, flushPersistenceNow],
   );
 
   const retryPersistence = useCallback(async () => {

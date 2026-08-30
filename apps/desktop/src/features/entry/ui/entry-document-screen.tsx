@@ -291,11 +291,13 @@ export function EntryDocumentScreen({
   function updateTitle(value: string) {
     if (pageSurface.readOnly) return;
     if (!documentName.acceptTitle(value)) return;
-    void updateField(activeEntry, "title", value, { flush: true }).catch(
-      (error) => {
+    void pageSurface
+      .runMutation(async () => {
+        await updateField(activeEntry, "title", value, { flush: true });
+      })
+      .catch((error) => {
         if (!documentName.handleSaveError(error)) handleError(error);
-      },
-    );
+      });
   }
 
   return (
