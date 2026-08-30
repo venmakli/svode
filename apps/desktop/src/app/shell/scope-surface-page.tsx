@@ -29,7 +29,6 @@ import {
   ScopeOwnerHeader,
   usePageSurfaceSession,
 } from "@/features/entry/scope-surface";
-import { RepositoryWorkStatus } from "@/features/git";
 import { useOpenEntryDocument } from "@/features/entry/selection";
 import {
   createCollectionDirectoryOwner,
@@ -200,8 +199,6 @@ export function ScopeSurfacePage({
           openRequestKey={openRequestKey}
           previousOwnerKey={previousOwnerKey}
           sessionKey={sessionKey}
-          contextName={fallbackTitle ?? owner.ownerPath}
-          onOpenRepositorySettings={openRepositorySettings}
           compactSurfaceId={
             compactSurfaceState?.surfaceId ?? localCompactSurfaceId
           }
@@ -216,13 +213,9 @@ export function ScopeSurfacePage({
 
 function ScopePageSurfaceHost({
   headerActions,
-  contextName,
-  onOpenRepositorySettings,
   ...props
 }: Omit<ComponentProps<typeof ScopeSurfaceHost>, "header"> & {
   headerActions?: ReactNode;
-  contextName: string;
-  onOpenRepositorySettings: (repositoryPath: string) => void;
 }) {
   const pageSurface = usePageSurfaceSession();
   return (
@@ -232,23 +225,9 @@ function ScopePageSurfaceHost({
         <ScopeOwnerHeader
           readOnly={pageSurface.readOnly}
           actions={
-            <>
-              {props.presentation === "full" ? (
-                <RepositoryWorkStatus
-                  contextName={contextName}
-                  displayPath={
-                    props.owner.ownerPath === "."
-                      ? props.owner.spacePath
-                      : props.owner.ownerPath
-                  }
-                  repositoryPath={props.owner.spacePath}
-                  onOpenRepositorySettings={onOpenRepositorySettings}
-                />
-              ) : null}
-              {headerActions ?? (
-                <ScopeOwnerActions readOnly={pageSurface.readOnly} />
-              )}
-            </>
+            headerActions ?? (
+              <ScopeOwnerActions readOnly={pageSurface.readOnly} />
+            )
           }
         />
       )}

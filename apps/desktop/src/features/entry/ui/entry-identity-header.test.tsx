@@ -34,7 +34,7 @@ test("places the coverless picker before the entry actions without reserving ban
   expect(markup.includes("h-10 w-full justify-center")).toBe(false);
 });
 
-test("keeps the covered Page action before repository status and hides it when read-only", () => {
+test("keeps the covered Page action before entry actions and hides it when read-only", () => {
   const render = (readOnly: boolean) =>
     renderToStaticMarkup(
       <ThemeProvider theme="light" setTheme={() => undefined}>
@@ -52,7 +52,7 @@ test("keeps the covered Page action before repository status and hides it when r
           onCoverChange={() => undefined}
           onBodyFocus={() => undefined}
           readOnly={readOnly}
-          actions={<button data-work-status>Repository status</button>}
+          actions={<button data-entry-actions>Actions</button>}
         />
       </ThemeProvider>,
     );
@@ -61,7 +61,7 @@ test("keeps the covered Page action before repository status and hides it when r
   expect(editMarkup.indexOf(m.editor_change_cover()) > -1).toBe(true);
   expect(
     editMarkup.indexOf(m.editor_change_cover()) <
-      editMarkup.indexOf("data-work-status"),
+      editMarkup.indexOf("data-entry-actions"),
   ).toBe(true);
   expect(render(true).includes(m.editor_change_cover())).toBe(false);
 });

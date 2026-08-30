@@ -1,6 +1,10 @@
 export { useAppGitFocus } from "./hooks/use-app-git-focus";
 export { useGitAvailability } from "./hooks/use-git-availability";
 export { GitSyncStatusWidget } from "./ui/git-sync-status-widget";
+export {
+  RepositoryWorkStatus,
+  type RepositoryWorkStatusProps,
+} from "./ui/repository-work-status";
 export { GitMissingDialog } from "./ui/git-missing-dialog";
 export { SpaceGitWatcher } from "./ui/space-git-watcher";
 export {

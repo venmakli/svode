@@ -10,11 +10,14 @@ import {
 } from "@/components/ui/tooltip";
 import { useSidebar } from "@/components/ui/sidebar";
 import { useActiveEntryDocument } from "@/features/entry/selection";
-import { useSpace } from "@/features/space";
+import { selectActiveSpacePath, useSpace } from "@/features/space";
 import { useTrafficLightInset } from "./hooks/use-fullscreen";
 import { useShellStore } from "./model";
 import { cn } from "@/shared/lib/utils";
-import { GitSyncStatusWidget } from "@/features/git/app-shell";
+import {
+  GitSyncStatusWidget,
+  RepositoryWorkStatus,
+} from "@/features/git/app-shell";
 import { buildProjectTerminalTarget } from "@/features/terminal";
 import { MainBreadcrumbs } from "@/features/space/app-shell";
 import { ProjectOpenersMenu } from "./project-openers-menu";
@@ -97,9 +100,22 @@ export function WindowHeader() {
   const activeDocument = useActiveEntryDocument();
   const toggleChatPanel = useShellStore((state) => state.toggleChatPanel);
   const mainSurface = useShellStore((state) => state.mainSurface);
-  const { activeRootId, activeRootName, activeRootPath } = useSpace();
+  const openSpaceSettings = useShellStore((state) => state.openSpaceSettings);
+  const {
+    activeRootId,
+    activeRootName,
+    activeRootPath,
+    activeSpaceId,
+    spaces,
+  } = useSpace();
+  const activeSpacePath = useSpace(selectActiveSpacePath);
   const { state } = useSidebar();
   const matches = useMatches();
+  const activeSpace = activeSpaceId
+    ? spaces.find((space) => space.id === activeSpaceId)
+    : null;
+  const repositoryContextName =
+    activeSpace?.name ?? activeRootName ?? activeSpacePath;
 
   const chatToggleDisabled = !activeDocument;
   const terminalTarget = buildProjectTerminalTarget({
@@ -136,6 +152,17 @@ export function WindowHeader() {
 
       <div className="flex shrink-0 items-center gap-1">
         {isSpaceRoute && <GitSyncStatusWidget />}
+        {isSpaceRoute && mainSurface === "content" && activeSpacePath ? (
+          <RepositoryWorkStatus
+            key={activeSpacePath}
+            contextName={repositoryContextName}
+            displayPath={activeSpacePath}
+            repositoryPath={activeSpacePath}
+            onOpenRepositorySettings={(repositoryPath) =>
+              openSpaceSettings(repositoryPath, "git")
+            }
+          />
+        ) : null}
         {isSpaceRoute && (
           <ProjectOpenersMenu
             projectPath={activeRootPath}

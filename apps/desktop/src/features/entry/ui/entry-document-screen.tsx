@@ -28,7 +28,6 @@ import { type EntrySchemaResult } from "@/features/properties";
 import { getEntrySchema } from "@/features/properties/api";
 import { detailPageHeaderClassName } from "@/shared/ui/page-layout";
 import { useSpaceTreeSync } from "@/features/space";
-import { RepositoryWorkStatus } from "@/features/git";
 import { logTiming, nowMs } from "@/shared/lib/performance";
 import { EntryDeleteDialog } from "./entry-delete-dialog";
 import { EntryDetailActions } from "./entry-detail-actions";
@@ -50,7 +49,6 @@ interface EntryDocumentScreenProps {
   projectPath?: string | null;
   documentPath: string;
   spaceId: string;
-  onOpenRepositorySettings?: (repositoryPath: string) => void;
 }
 
 function getDocumentTargetKey(spacePath: string, documentPath: string) {
@@ -62,7 +60,6 @@ export function EntryDocumentScreen({
   projectPath,
   documentPath,
   spaceId,
-  onOpenRepositorySettings,
 }: EntryDocumentScreenProps) {
   const pageSurface = usePageSurfaceSession();
   const openDocument = useOpenEntryDocument();
@@ -285,14 +282,7 @@ export function EntryDocumentScreen({
   }
 
   if (!currentEntry) {
-    return (
-      <EntryDocumentLoadingState
-        contextName={pageDisplayName(documentPath)}
-        displayPath={documentPath}
-        repositoryPath={spacePath}
-        onOpenRepositorySettings={onOpenRepositorySettings}
-      />
-    );
+    return <EntryDocumentLoadingState />;
   }
   const activeEntry = currentEntry;
   const showSubpages = detailState?.form === "folder";
@@ -336,42 +326,34 @@ export function EntryDocumentScreen({
           coverSize="compact"
           readOnly={pageSurface.readOnly}
           actions={
-            <>
-              <RepositoryWorkStatus
-                contextName={currentEntry.meta.title}
-                displayPath={currentEntry.path}
-                repositoryPath={spacePath}
-                onOpenRepositorySettings={onOpenRepositorySettings}
-              />
-              <EntryDetailActions
-                entry={currentEntry}
-                spacePath={spacePath}
-                projectPath={projectPath}
-                spaceId={spaceId}
-                onConverted={(nextEntry, nested) => {
-                  setEntry(nextEntry);
-                  setLoadedEntryKey(
-                    getDocumentTargetKey(spacePath, nextEntry.path),
-                  );
-                  if (nested) {
-                    openScopeOwner({
-                      kind: "collection",
-                      path: nextEntry.path,
-                      spaceId,
-                    });
-                    void reloadTreePathParents(spaceId, [nextEntry.path]);
-                  } else {
-                    openDocument(nextEntry.path, spaceId);
-                  }
-                }}
-                onDuplicateEntry={(entryToDuplicate) =>
-                  duplicateCurrentEntry(entryToDuplicate)
+            <EntryDetailActions
+              entry={currentEntry}
+              spacePath={spacePath}
+              projectPath={projectPath}
+              spaceId={spaceId}
+              onConverted={(nextEntry, nested) => {
+                setEntry(nextEntry);
+                setLoadedEntryKey(
+                  getDocumentTargetKey(spacePath, nextEntry.path),
+                );
+                if (nested) {
+                  openScopeOwner({
+                    kind: "collection",
+                    path: nextEntry.path,
+                    spaceId,
+                  });
+                  void reloadTreePathParents(spaceId, [nextEntry.path]);
+                } else {
+                  openDocument(nextEntry.path, spaceId);
                 }
-                onDeleteEntry={setDeleteEntry}
-                readOnly={pageSurface.readOnly}
-                runMutation={pageSurface.runMutation}
-              />
-            </>
+              }}
+              onDuplicateEntry={(entryToDuplicate) =>
+                duplicateCurrentEntry(entryToDuplicate)
+              }
+              onDeleteEntry={setDeleteEntry}
+              readOnly={pageSurface.readOnly}
+              runMutation={pageSurface.runMutation}
+            />
           }
         />
         {schemaResult && schemaResult.schema.columns.length > 0 ? (
@@ -463,30 +445,11 @@ function isFileNotFoundError(error: unknown, path: string) {
   );
 }
 
-function EntryDocumentLoadingState({
-  contextName,
-  displayPath,
-  repositoryPath,
-  onOpenRepositorySettings,
-}: {
-  contextName: string;
-  displayPath: string;
-  repositoryPath: string;
-  onOpenRepositorySettings?: (repositoryPath: string) => void;
-}) {
+function EntryDocumentLoadingState() {
   return (
     <div className="flex min-h-full flex-col">
       <div className={detailPageHeaderClassName}>
-        <EntryIdentityHeaderSkeleton
-          actions={
-            <RepositoryWorkStatus
-              contextName={contextName}
-              displayPath={displayPath}
-              repositoryPath={repositoryPath}
-              onOpenRepositorySettings={onOpenRepositorySettings}
-            />
-          }
-        />
+        <EntryIdentityHeaderSkeleton />
         <div className="flex max-w-5xl flex-col gap-4">
           <div className="flex gap-2">
             <Skeleton className="h-6 w-20" />
@@ -502,12 +465,4 @@ function EntryDocumentLoadingState({
       </div>
     </div>
   );
-}
-
-function pageDisplayName(path: string) {
-  const segments = path.replaceAll("\\", "/").split("/");
-  const name = segments.at(-1) ?? path;
-  return name.toLowerCase() === "readme.md"
-    ? (segments.at(-2) ?? name)
-    : name.replace(/\.md$/i, "");
 }

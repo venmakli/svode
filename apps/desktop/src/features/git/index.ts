@@ -55,7 +55,3 @@ export {
   RepositoryAccessSummary,
   type RepositoryAccessOwnerKind,
 } from "./ui/repository-access-summary";
-export {
-  RepositoryWorkStatus,
-  type RepositoryWorkStatusProps,
-} from "./ui/repository-work-status";
