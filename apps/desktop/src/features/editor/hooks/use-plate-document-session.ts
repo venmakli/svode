@@ -32,6 +32,11 @@ interface UsePlateDocumentSessionInput {
   documentPathHandoff?: { previousPath: string; path: string } | null;
   projectPath: string | null;
   spacePath: string | null;
+  readOnly: boolean;
+  onWriteAccessError?: (
+    error: unknown,
+    retry: () => Promise<void>,
+  ) => Promise<boolean>;
 }
 
 interface UsePlateDocumentSessionResult {
@@ -42,6 +47,7 @@ interface UsePlateDocumentSessionResult {
   handleChange: (_: { value: Descendant[] }) => void;
   projectPath: string | null;
   spacePath: string;
+  flushPendingSource: () => Promise<void>;
 }
 
 export function usePlateDocumentSession({
@@ -56,6 +62,8 @@ export function usePlateDocumentSession({
   documentPathHandoff,
   projectPath: projectPathProp,
   spacePath: spacePathProp,
+  readOnly,
+  onWriteAccessError,
 }: UsePlateDocumentSessionInput): UsePlateDocumentSessionResult {
   const { activeDocument, activeDocumentSpaceId } = useActiveEntrySelection();
   const openDocument = useOpenEntryDocument();
@@ -171,7 +179,7 @@ export function usePlateDocumentSession({
 
   useEffect(() => cancelDebounce, [cancelDebounce]);
 
-  const { handleSave, handleSaveAll, scheduleAutoSave } =
+  const { flushPendingSource, handleSave, handleSaveAll, scheduleAutoSave } =
     useEditorDocumentWriter({
       activeRootId,
       activeWsId,
@@ -195,9 +203,15 @@ export function usePlateDocumentSession({
       setCurrentDocument,
       spacePath,
       titleRef,
+      readOnly,
+      onWriteAccessError,
     });
 
-  useEditorSaveShortcuts({ onSave: handleSave, onSaveAll: handleSaveAll });
+  useEditorSaveShortcuts({
+    disabled: readOnly,
+    onSave: handleSave,
+    onSaveAll: handleSaveAll,
+  });
 
   const handleWatcherEntryReloaded = useCallback(
     (entry: Entry) => {
@@ -226,7 +240,7 @@ export function usePlateDocumentSession({
   const handleChange = useCallback(
     (_: { value: Descendant[] }) => {
       const currentPath = currentPathRef.current;
-      if (!editor || isLoadingRef.current || !currentPath) return;
+      if (readOnly || !editor || isLoadingRef.current || !currentPath) return;
 
       const hasContentChange = editor.operations.some(
         (op) => op.type !== "set_selection",
@@ -236,7 +250,7 @@ export function usePlateDocumentSession({
         scheduleAutoSave();
       }
     },
-    [editor, markUnsaved, scheduleAutoSave, spacePath],
+    [editor, markUnsaved, readOnly, scheduleAutoSave, spacePath],
   );
 
   const deserializeToolbarMarkdown = useCallback(
@@ -253,5 +267,6 @@ export function usePlateDocumentSession({
     handleChange,
     projectPath,
     spacePath,
+    flushPendingSource,
   };
 }

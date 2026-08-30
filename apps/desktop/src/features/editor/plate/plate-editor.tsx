@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { Plate, usePlateEditor } from "platejs/react";
 
 import { Editor, EditorContainer } from "@/components/ui/editor";
@@ -28,6 +29,15 @@ interface PlateDocumentEditorProps {
   initialEntrySpacePath?: string | null;
   onDocumentPathChange?: (path: string) => void;
   documentPathHandoff?: { previousPath: string; path: string } | null;
+  readOnly?: boolean;
+  registerPersistence?: (
+    kind: "body",
+    flush: () => Promise<void>,
+  ) => () => void;
+  onWriteAccessError?: (
+    error: unknown,
+    retry: () => Promise<void>,
+  ) => Promise<boolean>;
 }
 
 export function PlateDocumentEditor({
@@ -42,6 +52,9 @@ export function PlateDocumentEditor({
   initialEntrySpacePath = null,
   onDocumentPathChange,
   documentPathHandoff = null,
+  readOnly = false,
+  registerPersistence,
+  onWriteAccessError,
 }: PlateDocumentEditorProps) {
   const editor = usePlateEditor({
     plugins: EditorKit,
@@ -55,6 +68,7 @@ export function PlateDocumentEditor({
     handleChange,
     projectPath,
     spacePath,
+    flushPendingSource,
   } = usePlateDocumentSession({
     bodyOnly,
     bodyOnlyMeta,
@@ -67,7 +81,14 @@ export function PlateDocumentEditor({
     documentPathHandoff,
     projectPath: projectPathProp,
     spacePath: spacePathProp,
+    readOnly,
+    onWriteAccessError,
   });
+
+  useEffect(() => {
+    if (!registerPersistence) return;
+    return registerPersistence("body", flushPendingSource);
+  }, [flushPendingSource, registerPersistence]);
 
   return (
     <EditorMediaAdapterProvider
@@ -76,7 +97,7 @@ export function PlateDocumentEditor({
       spaceId={currentDocumentSpaceId}
       spacePath={spacePath || null}
     >
-      <Plate editor={editor} onChange={handleChange}>
+      <Plate editor={editor} onChange={handleChange} readOnly={readOnly}>
         <div
           className={cn(
             "flex w-full flex-col",

@@ -80,6 +80,96 @@ test("owner retarget preserves the mounted scope surface and focus", async () =>
   }
 });
 
+test("owner surface round trip preserves the mounted Readme session", async () => {
+  const dom = new JSDOM(
+    "<!doctype html><html><body><div id=app></div></body></html>",
+    { pretendToBeVisual: true, url: "http://localhost/" },
+  );
+  const restoreGlobals = installDomGlobals(dom);
+  const root = createRoot(dom.window.document.getElementById("app")!);
+  const targetOwner = owner("tasks");
+  const contributions: ScopeSurfaceContribution[] = [
+    {
+      ...contribution,
+      id: "readme",
+      label: "Readme",
+      render: () => <input data-testid="readme-session" defaultValue="draft" />,
+    },
+    {
+      ...contribution,
+      id: "collection",
+      label: "Collection",
+      render: () => <div data-testid="collection-session">Collection</div>,
+    },
+  ];
+  useScopeSurfaceStore.setState({
+    surfaceByOwnerKey: { [targetOwner.ownerKey]: "readme" as const },
+    openRequestKeyByOwnerKey: {},
+  });
+
+  try {
+    await act(async () => {
+      root.render(
+        <ScopeSurfaceHost
+          owner={targetOwner}
+          presentation="full"
+          contributions={contributions}
+          header={null}
+          sessionKey="session"
+        />,
+      );
+    });
+    const readme = dom.window.document.querySelector<HTMLInputElement>(
+      '[data-testid="readme-session"]',
+    )!;
+    readme.value = "pending draft";
+    readme.focus();
+
+    await act(async () => {
+      activateTab(dom, "Collection");
+      await new Promise((resolve) => dom.window.setTimeout(resolve, 0));
+    });
+    expect(
+      Boolean(
+        dom.window.document.querySelector('[data-testid="collection-session"]'),
+      ),
+    ).toBe(true);
+    expect(
+      dom.window.document.querySelector('[data-testid="readme-session"]'),
+    ).toBe(readme);
+
+    await act(async () => {
+      activateTab(dom, "Readme");
+      await new Promise((resolve) => dom.window.setTimeout(resolve, 0));
+    });
+    const restored = dom.window.document.querySelector<HTMLInputElement>(
+      '[data-testid="readme-session"]',
+    )!;
+    expect(restored).toBe(readme);
+    expect(restored.value).toBe("pending draft");
+  } finally {
+    await act(async () => root.unmount());
+    restoreGlobals();
+    dom.window.close();
+  }
+});
+
+function findTab(dom: JSDOM, label: string) {
+  return Array.from(
+    dom.window.document.querySelectorAll<HTMLButtonElement>('[role="tab"]'),
+  ).find((tab) => tab.textContent === label)!;
+}
+
+function activateTab(dom: JSDOM, label: string) {
+  findTab(dom, label).dispatchEvent(
+    new dom.window.MouseEvent("mousedown", {
+      bubbles: true,
+      button: 0,
+      ctrlKey: false,
+    }),
+  );
+}
+
 function owner(ownerPath: string) {
   return createCollectionDirectoryOwner({
     spaceId: "root",
@@ -116,6 +206,9 @@ function installDomGlobals(dom: JSDOM) {
     Node: dom.window.Node,
     document: dom.window.document,
     navigator: dom.window.navigator,
+    getComputedStyle: dom.window.getComputedStyle.bind(dom.window),
+    requestAnimationFrame: dom.window.requestAnimationFrame.bind(dom.window),
+    cancelAnimationFrame: dom.window.cancelAnimationFrame.bind(dom.window),
     window: dom.window,
   };
   const previous = new Map<string, PropertyDescriptor | undefined>();

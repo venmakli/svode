@@ -1,4 +1,10 @@
-import { useCallback, useMemo, useState, type ReactNode } from "react";
+import {
+  useCallback,
+  useMemo,
+  useState,
+  type ComponentProps,
+  type ReactNode,
+} from "react";
 import { AgentContextSurface } from "@/features/agent-context";
 import { ActorsSurface } from "@/features/actors";
 import { RoutinesSurface } from "@/features/routines";
@@ -17,9 +23,12 @@ import type {
 } from "@/features/collection/app-shell";
 import {
   EntryDetailProvider,
+  PageModeControl,
+  PageSurfaceSessionProvider,
   ReadmeSurface,
   ScopeOwnerActions,
   ScopeOwnerHeader,
+  usePageSurfaceSession,
 } from "@/features/entry/scope-surface";
 import { useOpenEntryDocument } from "@/features/entry/selection";
 import {
@@ -164,35 +173,72 @@ export function ScopeSurfacePage({
     ],
   );
   return (
-    <EntryDetailProvider
+    <PageSurfaceSessionProvider
+      displayName={fallbackTitle ?? owner.ownerPath}
+      displayPath={owner.readmePath}
+      onOpenRepositorySettings={openRepositorySettings}
+      registerGlobalDeactivation={presentation === "full"}
       spacePath={owner.spacePath}
-      projectPath={owner.projectPath}
-      spaceId={owner.spaceId}
-      readmePath={owner.readmePath}
-      ownerPath={owner.ownerPath}
-      fallbackTitle={fallbackTitle}
-      fallbackIcon={fallbackIcon}
-      onOpenPath={openPath}
+      targetKey={previousOwnerKey ?? owner.ownerKey}
     >
-      <ScopeSurfaceHost
-        owner={owner}
-        presentation={presentation}
-        contributions={contributions}
-        header={
-          <ScopeOwnerHeader actions={headerActions ?? <ScopeOwnerActions />} />
-        }
-        openIntent={openIntent}
-        openRequestKey={openRequestKey}
-        previousOwnerKey={previousOwnerKey}
-        sessionKey={sessionKey}
-        compactSurfaceId={
-          compactSurfaceState?.surfaceId ?? localCompactSurfaceId
-        }
-        onCompactSurfaceIdChange={
-          compactSurfaceState?.onSurfaceIdChange ?? setLocalCompactSurfaceId
-        }
-      />
-    </EntryDetailProvider>
+      <EntryDetailProvider
+        spacePath={owner.spacePath}
+        projectPath={owner.projectPath}
+        spaceId={owner.spaceId}
+        readmePath={owner.readmePath}
+        ownerPath={owner.ownerPath}
+        fallbackTitle={fallbackTitle}
+        fallbackIcon={fallbackIcon}
+        onOpenPath={openPath}
+      >
+        <ScopePageSurfaceHost
+          owner={owner}
+          presentation={presentation}
+          contributions={contributions}
+          headerActions={headerActions}
+          openIntent={openIntent}
+          openRequestKey={openRequestKey}
+          previousOwnerKey={previousOwnerKey}
+          sessionKey={sessionKey}
+          compactSurfaceId={
+            compactSurfaceState?.surfaceId ?? localCompactSurfaceId
+          }
+          onCompactSurfaceIdChange={
+            compactSurfaceState?.onSurfaceIdChange ?? setLocalCompactSurfaceId
+          }
+        />
+      </EntryDetailProvider>
+    </PageSurfaceSessionProvider>
+  );
+}
+
+function ScopePageSurfaceHost({
+  headerActions,
+  ...props
+}: Omit<ComponentProps<typeof ScopeSurfaceHost>, "header"> & {
+  headerActions?: ReactNode;
+}) {
+  const pageSurface = usePageSurfaceSession();
+  return (
+    <ScopeSurfaceHost
+      {...props}
+      header={(activeSurfaceId) => (
+        <ScopeOwnerHeader
+          readOnly={activeSurfaceId === "readme" && pageSurface.readOnly}
+          actions={
+            <>
+              {activeSurfaceId === "readme" ? <PageModeControl /> : null}
+              {headerActions ?? <ScopeOwnerActions />}
+            </>
+          }
+        />
+      )}
+      prepareForSurfaceChange={(currentSurfaceId) =>
+        currentSurfaceId === "readme"
+          ? pageSurface.prepareForNavigation()
+          : true
+      }
+    />
   );
 }
 

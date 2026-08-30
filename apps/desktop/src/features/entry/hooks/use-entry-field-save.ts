@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import { updateEntryField } from "../api/entry-api";
 import {
   enqueueEntryFieldSave,
@@ -36,6 +36,16 @@ export interface SaveEntryFieldOptions {
   flush?: boolean;
 }
 
+export interface EntryFieldSaveController {
+  save: (
+    entry: Entry,
+    field: string,
+    value: unknown,
+    options?: SaveEntryFieldOptions,
+  ) => Promise<Entry | null>;
+  flush: () => Promise<void>;
+}
+
 export function useEntryFieldSave({
   spacePath,
   projectPath,
@@ -43,6 +53,7 @@ export function useEntryFieldSave({
   deferTitlePathAdoption = false,
   onSaved,
   onError,
+  recoverFromError,
 }: {
   spacePath: string;
   projectPath?: string | null;
@@ -53,8 +64,14 @@ export function useEntryFieldSave({
   deferTitlePathAdoption?: boolean;
   onSaved?: (entry: Entry, context: EntryFieldSaveContext) => void;
   onError?: (error: unknown, context: EntryFieldSaveContext) => void;
-}) {
+  recoverFromError?: (
+    error: unknown,
+    context: EntryFieldSaveContext,
+    retry: () => Promise<void>,
+  ) => Promise<boolean>;
+}): EntryFieldSaveController {
   const pendingRef = useRef(new Map<string, PendingFieldSave>());
+  const inFlightRef = useRef(new Set<Promise<Entry | null>>());
   const versionsRef = useRef(new Map<string, number>());
   const pathAliasesRef = useRef(new Map<string, string>());
   const mountedRef = useRef(true);
@@ -74,7 +91,35 @@ export function useEntryFieldSave({
     };
   }, []);
 
-  return useCallback(
+  const trackInFlight = useCallback((promise: Promise<Entry | null>) => {
+    inFlightRef.current.add(promise);
+    void promise
+      .finally(() => inFlightRef.current.delete(promise))
+      .catch(() => undefined);
+    return promise;
+  }, []);
+
+  const flush = useCallback(async () => {
+    const pending = [...pendingRef.current.entries()];
+    for (const [key, item] of pending) {
+      clearTimeout(item.timer);
+      pendingRef.current.delete(key);
+    }
+    await Promise.all(
+      pending.map(async ([, item]) => {
+        try {
+          const result = await item.flush();
+          item.resolve(result);
+        } catch (error) {
+          item.reject(error);
+          throw error;
+        }
+      }),
+    );
+    await Promise.all([...inFlightRef.current]);
+  }, []);
+
+  const saveField = useCallback(
     (
       entry: Entry,
       field: string,
@@ -134,9 +179,13 @@ export function useEntryFieldSave({
 
       const runSave = async ({
         applyResult = true,
+        allowRecovery = true,
+        notifyOnError = true,
         rollbackOnError = true,
       }: {
         applyResult?: boolean;
+        allowRecovery?: boolean;
+        notifyOnError?: boolean;
         rollbackOnError?: boolean;
       } = {}) => {
         let requestPath = entry.path;
@@ -210,16 +259,7 @@ export function useEntryFieldSave({
               pathAliasesRef.current,
               requestPath,
             );
-            if (rollbackOnError && mountedRef.current) {
-              const applyRollback = (current: Entry) =>
-                rollbackEntryField(current, field, entry);
-              applyEntryUpdate(rollbackPath, applyRollback);
-              if (rollbackPath !== entry.path) {
-                applyEntryUpdate(entry.path, applyRollback);
-              }
-            }
-            onError?.(
-              error,
+            const errorContext =
               rollbackPath === context.previousEntry.path
                 ? context
                 : {
@@ -228,15 +268,38 @@ export function useEntryFieldSave({
                       ...context.previousEntry,
                       path: rollbackPath,
                     },
-                  },
-            );
+                  };
+            if (
+              allowRecovery &&
+              recoverFromError &&
+              (await recoverFromError(error, errorContext, async () => {
+                await trackInFlight(
+                  runSave({
+                    rollbackOnError: false,
+                    allowRecovery: false,
+                    notifyOnError: false,
+                  }),
+                );
+              }))
+            ) {
+              return null;
+            }
+            if (rollbackOnError && mountedRef.current) {
+              const applyRollback = (current: Entry) =>
+                rollbackEntryField(current, field, entry);
+              applyEntryUpdate(rollbackPath, applyRollback);
+              if (rollbackPath !== entry.path) {
+                applyEntryUpdate(entry.path, applyRollback);
+              }
+            }
+            if (notifyOnError) onError?.(error, errorContext);
           }
           throw error;
         }
       };
 
       if (policy.mode === "immediate" || options.flush) {
-        return runSave();
+        return trackInFlight(runSave());
       }
 
       return new Promise<Entry | null>((resolve, reject) => {
@@ -244,14 +307,14 @@ export function useEntryFieldSave({
           if (pendingRef.current.get(key)?.version === version) {
             pendingRef.current.delete(key);
           }
-          void runSave().then(resolve).catch(reject);
+          void trackInFlight(runSave()).then(resolve).catch(reject);
         }, policy.delayMs ?? 0);
         pendingRef.current.set(key, {
           timer,
           resolve,
           reject,
           version,
-          flush: () => runSave(),
+          flush: () => trackInFlight(runSave()),
         });
       });
     },
@@ -261,7 +324,11 @@ export function useEntryFieldSave({
       onError,
       onSaved,
       projectPath,
+      recoverFromError,
       spacePath,
+      trackInFlight,
     ],
   );
+
+  return useMemo(() => ({ flush, save: saveField }), [flush, saveField]);
 }

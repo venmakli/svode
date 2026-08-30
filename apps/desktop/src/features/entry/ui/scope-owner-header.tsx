@@ -11,7 +11,13 @@ import {
 import { EntrySystemFields } from "./entry-system-fields";
 import { TitleZone } from "./title-zone";
 
-export function ScopeOwnerHeader({ actions }: { actions?: ReactNode }) {
+export function ScopeOwnerHeader({
+  actions,
+  readOnly = false,
+}: {
+  actions?: ReactNode;
+  readOnly?: boolean;
+}) {
   const context = useEntryDetailContext();
   const { entry, schemaResult } = context;
 
@@ -19,7 +25,7 @@ export function ScopeOwnerHeader({ actions }: { actions?: ReactNode }) {
     return <ScopeOwnerHeaderSkeleton />;
   }
 
-  const canCreateReadme = context.status === "missing";
+  const canCreateReadme = context.status === "missing" && !readOnly;
   const createReadme = () => {
     if (canCreateReadme) void context.createReadme().catch(handleError);
   };
@@ -53,6 +59,7 @@ export function ScopeOwnerHeader({ actions }: { actions?: ReactNode }) {
           actions={actions}
           metadata={<EntrySystemFields meta={entry.meta} />}
           coverSize="compact"
+          readOnly={readOnly}
         />
       ) : (
         <div className="max-w-4xl">
@@ -75,6 +82,7 @@ export function ScopeOwnerHeader({ actions }: { actions?: ReactNode }) {
       {entry && schemaResult?.schema.columns.length ? (
         <div className="max-w-5xl">
           <PropertyPanel
+            key={`properties:${readOnly ? "view" : "edit"}`}
             spacePath={context.spacePath}
             projectPath={context.projectPath}
             spaceId={context.spaceId}
@@ -83,6 +91,7 @@ export function ScopeOwnerHeader({ actions }: { actions?: ReactNode }) {
             schemaResult={schemaResult}
             values={entry.meta.extra ?? {}}
             mode="full"
+            readOnly={readOnly}
             onOpenPath={context.onOpenPath}
             onValueChange={context.updateField}
           />

@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { prepareActiveContentDeactivation } from "./active-surface-deactivation";
 import type {
   ActiveContentSelection,
   ArtifactOpenTarget,
@@ -14,6 +15,7 @@ interface ArtifactSelectionState {
   selection: ActiveContentSelection | null;
   activeRevealRequest: ContentRevealRequest | null;
   activePathRetarget: ContentPathRetarget | null;
+  transitionPending: boolean;
   openArtifact: (
     target: Omit<ArtifactOpenTarget, "spaceId"> & { spaceId?: string | null },
     options?: OpenArtifactOptions,
@@ -27,8 +29,11 @@ interface ArtifactSelectionState {
 }
 
 let nextOpenRequestKey = 1;
+let nextArtifactSessionKey = 1;
 let nextRevealRequestKey = 1;
 let nextPathRetargetKey = 1;
+let nextTransitionRequestKey = 1;
+let latestTransitionRequestKey = 0;
 
 export function normalizeArtifactTargetPath(path: string): string {
   const normalized = path.replaceAll("\\", "/");
@@ -97,80 +102,114 @@ function selectionPath(
       : null;
 }
 
+type SelectionUpdate = Pick<
+  ArtifactSelectionState,
+  "selection" | "activeRevealRequest" | "activePathRetarget"
+>;
+
+function applySelectionTransition(
+  set: (
+    update:
+      | Partial<ArtifactSelectionState>
+      | ((state: ArtifactSelectionState) => Partial<ArtifactSelectionState>),
+  ) => void,
+  update: SelectionUpdate,
+) {
+  const requestKey = nextTransitionRequestKey++;
+  latestTransitionRequestKey = requestKey;
+  const deactivation = prepareActiveContentDeactivation();
+  if (!deactivation) {
+    set({ ...update, transitionPending: false });
+    return;
+  }
+
+  set({ transitionPending: true });
+  void deactivation.then((result) => {
+    if (requestKey !== latestTransitionRequestKey) return;
+    if (result === "ready") {
+      set({ ...update, transitionPending: false });
+      return;
+    }
+    set({ transitionPending: false });
+  });
+}
+
 export const useArtifactSelectionStore = create<ArtifactSelectionState>(
-  (set) => ({
+  (set, get) => ({
     selection: null,
     activeRevealRequest: null,
     activePathRetarget: null,
+    transitionPending: false,
 
-    openArtifact: (input, options) =>
-      set((state) => {
-        const target: ArtifactOpenTarget = {
-          ...input,
-          path: normalizeArtifactTargetPath(input.path),
-          spaceId: input.spaceId ?? selectionSpaceId(state.selection),
-        };
-        if (
-          state.selection?.kind === "artifact" &&
-          artifactTargetsEqual(state.selection.request.intent.target, target) &&
-          !options?.reveal
-        ) {
-          return state;
-        }
-        return {
-          selection: {
-            kind: "artifact",
-            request: {
-              key: nextOpenRequestKey++,
-              intent: { target },
-            },
+    openArtifact: (input, options) => {
+      const state = get();
+      const target: ArtifactOpenTarget = {
+        ...input,
+        path: normalizeArtifactTargetPath(input.path),
+        spaceId: input.spaceId ?? selectionSpaceId(state.selection),
+      };
+      if (
+        state.selection?.kind === "artifact" &&
+        artifactTargetsEqual(state.selection.request.intent.target, target) &&
+        !options?.reveal
+      ) {
+        return;
+      }
+      applySelectionTransition(set, {
+        selection: {
+          kind: "artifact",
+          request: {
+            key: nextOpenRequestKey++,
+            sessionKey: nextArtifactSessionKey++,
+            intent: { target },
           },
-          activeRevealRequest: options?.reveal
+        },
+        activeRevealRequest: options?.reveal
+          ? {
+              key: nextRevealRequestKey++,
+              path: target.path,
+              spaceId: target.spaceId,
+            }
+          : null,
+        activePathRetarget: null,
+      });
+    },
+
+    openScopeOwner: (input, options) => {
+      const state = get();
+      const owner: ScopeOwnerTarget =
+        input.kind === "collection"
+          ? { ...input, path: normalizeArtifactTargetPath(input.path) }
+          : input;
+      if (
+        state.selection?.kind === "scope-owner" &&
+        ownerTargetsEqual(state.selection.request.owner, owner) &&
+        !options?.reveal &&
+        !options?.scopeOpenIntent
+      ) {
+        return;
+      }
+      const path = ownerPath(owner);
+      applySelectionTransition(set, {
+        selection: {
+          kind: "scope-owner",
+          request: {
+            key: nextOpenRequestKey++,
+            owner,
+            intent: options?.scopeOpenIntent ?? { kind: "default" },
+          },
+        },
+        activeRevealRequest:
+          options?.reveal && path
             ? {
                 key: nextRevealRequestKey++,
-                path: target.path,
-                spaceId: target.spaceId,
+                path,
+                spaceId: owner.spaceId,
               }
             : null,
-          activePathRetarget: null,
-        };
-      }),
-
-    openScopeOwner: (input, options) =>
-      set((state) => {
-        const owner: ScopeOwnerTarget =
-          input.kind === "collection"
-            ? { ...input, path: normalizeArtifactTargetPath(input.path) }
-            : input;
-        if (
-          state.selection?.kind === "scope-owner" &&
-          ownerTargetsEqual(state.selection.request.owner, owner) &&
-          !options?.reveal &&
-          !options?.scopeOpenIntent
-        ) {
-          return state;
-        }
-        const path = ownerPath(owner);
-        return {
-          selection: {
-            kind: "scope-owner",
-            request: {
-              key: nextOpenRequestKey++,
-              owner,
-              intent: options?.scopeOpenIntent ?? { kind: "default" },
-            },
-          },
-          activeRevealRequest:
-            options?.reveal && path
-              ? {
-                  key: nextRevealRequestKey++,
-                  path,
-                  spaceId: owner.spaceId,
-                }
-              : null,
-          activePathRetarget: null,
-        };
-      }),
+        activePathRetarget: null,
+      });
+    },
 
     retarget: (fromPath, inputPath, spaceId) =>
       set((state) => {
@@ -189,6 +228,7 @@ export const useArtifactSelectionStore = create<ArtifactSelectionState>(
             ? {
                 kind: "artifact",
                 request: {
+                  ...state.selection.request,
                   key: nextOpenRequestKey++,
                   intent: {
                     target: {
@@ -225,7 +265,7 @@ export const useArtifactSelectionStore = create<ArtifactSelectionState>(
       }),
 
     close: () =>
-      set({
+      applySelectionTransition(set, {
         selection: null,
         activeRevealRequest: null,
         activePathRetarget: null,

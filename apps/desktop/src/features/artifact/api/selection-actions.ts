@@ -8,9 +8,18 @@ import type {
 } from "../model/types";
 
 export function getActiveContentSelection(): ActiveContentSelectionSnapshot {
-  const { selection, activeRevealRequest, activePathRetarget } =
-    useArtifactSelectionStore.getState();
-  return { selection, activeRevealRequest, activePathRetarget };
+  const {
+    selection,
+    activeRevealRequest,
+    activePathRetarget,
+    transitionPending,
+  } = useArtifactSelectionStore.getState();
+  return {
+    selection,
+    activeRevealRequest,
+    activePathRetarget,
+    transitionPending,
+  };
 }
 
 export function openArtifact(

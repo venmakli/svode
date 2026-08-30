@@ -15,6 +15,7 @@ interface ArtifactResolutionState<TSurface> {
 export function useArtifactResolution<TSurface>(
   registry: ArtifactRegistry<TSurface>,
   request: ActiveArtifactOpenRequest,
+  options: { retainPreviousResolution?: boolean } = {},
 ) {
   const sessionRef = useRef(new ArtifactResolutionSession());
   const [state, setState] = useState<ArtifactResolutionState<TSurface>>({
@@ -42,7 +43,8 @@ export function useArtifactResolution<TSurface>(
     };
   }, [registry, request]);
 
-  return state.registry === registry && state.requestKey === request.key
+  if (state.registry !== registry) return null;
+  return state.requestKey === request.key || options.retainPreviousResolution
     ? state.resolution
     : null;
 }

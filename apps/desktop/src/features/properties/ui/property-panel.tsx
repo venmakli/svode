@@ -36,6 +36,7 @@ interface PropertyPanelProps {
   schemaResult: EntrySchemaResult;
   values: Record<string, unknown>;
   mode?: "peek" | "full";
+  readOnly?: boolean;
   onOpenPath?: (path: string, spaceId?: string | null) => void;
   onValueChange: (field: string, value: unknown) => Promise<void>;
   onSchemaChange?: (result: EntrySchemaResult | null) => void;
@@ -55,6 +56,7 @@ export function PropertyPanel({
   schemaResult,
   values,
   mode = "peek",
+  readOnly = false,
   onOpenPath,
   onValueChange,
   onSchemaChange,
@@ -111,24 +113,30 @@ export function PropertyPanel({
             <div key={column.name} className="contents">
               <PropertyLabel
                 schemaMenu={
-                  <SchemaColumnMenu
-                    trigger={
-                      <PropertyLabelTrigger
-                        column={column}
-                        open={openColumn === column.name}
-                      />
-                    }
-                    open={openColumn === column.name}
-                    column={column}
-                    schema={schema}
-                    collectionPath={collectionRootPath}
-                    spacePath={spacePath}
-                    projectPath={projectPath}
-                    onOpenChange={(open) =>
-                      setOpenColumn(open ? column.name : null)
-                    }
-                    onSchemaChange={applyCollectionSchema}
-                  />
+                  readOnly ? (
+                    <span className="block truncate px-2 py-1.5">
+                      {column.name}
+                    </span>
+                  ) : (
+                    <SchemaColumnMenu
+                      trigger={
+                        <PropertyLabelTrigger
+                          column={column}
+                          open={openColumn === column.name}
+                        />
+                      }
+                      open={openColumn === column.name}
+                      column={column}
+                      schema={schema}
+                      collectionPath={collectionRootPath}
+                      spacePath={spacePath}
+                      projectPath={projectPath}
+                      onOpenChange={(open) =>
+                        setOpenColumn(open ? column.name : null)
+                      }
+                      onSchemaChange={applyCollectionSchema}
+                    />
+                  )
                 }
                 invalid={state.invalid}
                 message={validationMessage}
@@ -140,6 +148,7 @@ export function PropertyPanel({
                   value={panelValues[column.name]}
                   invalid={state.invalid}
                   disabled={state.code === "type_conflict"}
+                  readOnly={readOnly}
                   editing={editingField === column.name}
                   actors={actors}
                   relationContext={relationContext}
@@ -149,7 +158,7 @@ export function PropertyPanel({
                   }
                   onValueChange={(value) => onValueChange(column.name, value)}
                 />
-                {state.invalid ? (
+                {state.invalid && !readOnly ? (
                   <div className="mt-1 flex flex-wrap gap-1">
                     {(column.type === "select" ||
                       column.type === "multi_select" ||
@@ -218,28 +227,30 @@ export function PropertyPanel({
               <div className="min-w-0 flex-1 truncate rounded-lg border border-dashed px-2 py-1.5 font-mono text-xs text-muted-foreground">
                 {valueToString(value)}
               </div>
-              <div className="flex shrink-0 items-center gap-1">
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon-xs"
-                  onClick={() => void promoteOrphan(field)}
-                >
-                  <RotateCcw />
-                  <span className="sr-only">{m.property_action_readd()}</span>
-                </Button>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon-xs"
-                  onClick={() => void clearOrphanValues(field)}
-                >
-                  <Trash2 />
-                  <span className="sr-only">
-                    {m.property_action_clear_values()}
-                  </span>
-                </Button>
-              </div>
+              {!readOnly ? (
+                <div className="flex shrink-0 items-center gap-1">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-xs"
+                    onClick={() => void promoteOrphan(field)}
+                  >
+                    <RotateCcw />
+                    <span className="sr-only">{m.property_action_readd()}</span>
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-xs"
+                    onClick={() => void clearOrphanValues(field)}
+                  >
+                    <Trash2 />
+                    <span className="sr-only">
+                      {m.property_action_clear_values()}
+                    </span>
+                  </Button>
+                </div>
+              ) : null}
             </div>
           </div>
         ))}
@@ -249,36 +260,42 @@ export function PropertyPanel({
         <span className="text-xs text-muted-foreground">
           {m.property_collection_path({ path: collectionRootPath })}
         </span>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          onClick={() => setDialog({ type: "add-column" })}
-        >
-          <Plus data-icon="inline-start" />
-          {m.editor_frontmatter_add_field()}
-        </Button>
+        {!readOnly ? (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => setDialog({ type: "add-column" })}
+          >
+            <Plus data-icon="inline-start" />
+            {m.editor_frontmatter_add_field()}
+          </Button>
+        ) : null}
       </div>
 
-      <AddColumnDialog
-        open={dialog?.type === "add-column"}
-        onOpenChange={(open) => !open && setDialog(null)}
-        collectionPath={collectionRootPath}
-        onSubmit={async (column) => {
-          await addColumn(column);
-          setDialog(null);
-        }}
-      />
-      <AddOptionDialog
-        open={dialog?.type === "add-option"}
-        onOpenChange={(open) => !open && setDialog(null)}
-        column={dialog?.type === "add-option" ? dialog.column : null}
-        onSubmit={async (option) => {
-          if (dialog?.type !== "add-option") return;
-          await addOption(dialog.column, option);
-          setDialog(null);
-        }}
-      />
+      {!readOnly ? (
+        <AddColumnDialog
+          open={dialog?.type === "add-column"}
+          onOpenChange={(open) => !open && setDialog(null)}
+          collectionPath={collectionRootPath}
+          onSubmit={async (column) => {
+            await addColumn(column);
+            setDialog(null);
+          }}
+        />
+      ) : null}
+      {!readOnly ? (
+        <AddOptionDialog
+          open={dialog?.type === "add-option"}
+          onOpenChange={(open) => !open && setDialog(null)}
+          column={dialog?.type === "add-option" ? dialog.column : null}
+          onSubmit={async (option) => {
+            if (dialog?.type !== "add-option") return;
+            await addOption(dialog.column, option);
+            setDialog(null);
+          }}
+        />
+      ) : null}
     </div>
   );
 }
@@ -309,6 +326,7 @@ function PropertyPanelValue({
   value,
   invalid,
   disabled,
+  readOnly,
   editing,
   actors,
   relationContext,
@@ -321,6 +339,7 @@ function PropertyPanelValue({
   value: unknown;
   invalid: boolean;
   disabled: boolean;
+  readOnly: boolean;
   editing: boolean;
   actors: ActorCandidate[];
   relationContext: RelationContext;
@@ -328,6 +347,20 @@ function PropertyPanelValue({
   onEditChange: (editing: boolean) => void;
   onValueChange: (value: unknown) => Promise<void>;
 }) {
+  if (readOnly) {
+    return (
+      <div className="flex min-h-8 w-full min-w-0 items-center px-2 py-1.5 text-sm">
+        <span className="min-w-0 flex-1">
+          <PropertyValue
+            column={column}
+            value={value}
+            actors={actors}
+            relationContext={relationContext}
+          />
+        </span>
+      </div>
+    );
+  }
   if (editing) {
     return (
       <div

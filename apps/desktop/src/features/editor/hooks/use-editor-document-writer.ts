@@ -1,4 +1,4 @@
-import { useCallback } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import { MarkdownPlugin } from "@platejs/markdown";
 import type { PlateEditor } from "platejs/react";
 import { toast } from "sonner";
@@ -64,12 +64,18 @@ interface UseEditorDocumentWriterInput {
   setCurrentDocument: (path: string) => void;
   spacePath: string;
   titleRef: MutableRef<string>;
+  readOnly: boolean;
+  onWriteAccessError?: (
+    error: unknown,
+    retry: () => Promise<void>,
+  ) => Promise<boolean>;
 }
 
 interface UseEditorDocumentWriterResult {
   handleSave: () => Promise<void>;
   handleSaveAll: () => Promise<void>;
   scheduleAutoSave: () => void;
+  flushPendingSource: () => Promise<void>;
 }
 
 export function useEditorDocumentWriter({
@@ -95,7 +101,11 @@ export function useEditorDocumentWriter({
   setCurrentDocument,
   spacePath,
   titleRef,
+  readOnly,
+  onWriteAccessError,
 }: UseEditorDocumentWriterInput): UseEditorDocumentWriterResult {
+  const sourceWriteChainRef = useRef<Promise<void>>(Promise.resolve());
+  const autoSavePausedRef = useRef(false);
   const {
     applyAutoSaveResult,
     applySavedDocumentResult,
@@ -120,39 +130,91 @@ export function useEditorDocumentWriter({
       skipRename: boolean,
       targetPath?: string,
     ): Promise<WriteResult | null> => {
-      const path = targetPath ?? currentPathRef.current;
-      if (!editor || !path || !spacePath) return null;
+      const write = async () => {
+        const path = targetPath ?? currentPathRef.current;
+        if (!editor || !path || !spacePath) return null;
 
-      if (hasUnresolvedConflicts(editor.children)) {
-        if (!skipRename) {
-          toast.error(m.git_sync_conflict({ count: "1" }));
+        if (hasUnresolvedConflicts(editor.children)) {
+          if (!skipRename) {
+            toast.error(m.git_sync_conflict({ count: "1" }));
+          }
+          return null;
         }
-        return null;
-      }
 
-      const markdown = editor.getApi(MarkdownPlugin).markdown.serialize();
-      const result = await writeEntry({
-        spacePath,
-        path,
-        content: markdown,
-        skipRename,
-        projectPath: projectPath ?? null,
-      });
+        const markdown = editor.getApi(MarkdownPlugin).markdown.serialize();
+        const result = await writeEntry({
+          spacePath,
+          path,
+          content: markdown,
+          skipRename,
+          projectPath: projectPath ?? null,
+        });
 
-      if (result.writeNonce) {
-        ownNoncesRef.current.add(result.writeNonce);
-      }
-      if (!skipRename) {
-        publishEntryFilenameWarnings(result.warnings);
-      }
+        if (result.writeNonce) {
+          ownNoncesRef.current.add(result.writeNonce);
+        }
+        if (!skipRename) {
+          publishEntryFilenameWarnings(result.warnings);
+        }
 
+        return result;
+      };
+      const result = sourceWriteChainRef.current.then(write, write);
+      sourceWriteChainRef.current = result.then(
+        () => undefined,
+        () => undefined,
+      );
       return result;
     },
     [currentPathRef, editor, ownNoncesRef, projectPath, spacePath],
   );
 
+  const persistLatestSource = useCallback(async () => {
+    const path = currentPathRef.current;
+    const cacheKey = currentCacheKeyRef.current;
+    const write = async () => {
+      const result = await performWrite(true);
+      applyAutoSaveResult(result, path, cacheKey);
+      if (result) void refreshGitSpaceStatus(spacePath);
+    };
+    try {
+      await write();
+      autoSavePausedRef.current = false;
+    } catch (error) {
+      if (
+        onWriteAccessError &&
+        (await onWriteAccessError(error, async () => {
+          await write();
+          autoSavePausedRef.current = false;
+        }))
+      ) {
+        autoSavePausedRef.current = true;
+        return;
+      }
+      throw error;
+    }
+  }, [
+    applyAutoSaveResult,
+    currentCacheKeyRef,
+    currentPathRef,
+    onWriteAccessError,
+    performWrite,
+    spacePath,
+  ]);
+
+  useEffect(() => {
+    if (!readOnly) autoSavePausedRef.current = false;
+  }, [readOnly]);
+
   const scheduleAutoSave = useCallback(() => {
-    if (!currentPathRef.current || !spacePath) return;
+    if (
+      readOnly ||
+      autoSavePausedRef.current ||
+      !currentPathRef.current ||
+      !spacePath
+    ) {
+      return;
+    }
     if (debounceTimerRef.current) {
       clearTimeout(debounceTimerRef.current);
     }
@@ -163,15 +225,7 @@ export function useEditorDocumentWriter({
     isDebouncePendingRef.current = true;
     debounceTimerRef.current = setTimeout(() => {
       debounceTimerRef.current = null;
-      const path = currentPathRef.current;
-      const cacheKey = currentCacheKeyRef.current;
-      void performWrite(true)
-        .then((result) => {
-          applyAutoSaveResult(result, path, cacheKey);
-          if (result) {
-            void refreshGitSpaceStatus(spacePath);
-          }
-        })
+      void persistLatestSource()
         .catch((err) => {
           console.error("Auto-save failed:", err);
         })
@@ -184,12 +238,62 @@ export function useEditorDocumentWriter({
     }, AUTOSAVE_DEBOUNCE_MS);
   }, [
     bufferTimerRef,
-    currentCacheKeyRef,
     currentPathRef,
     debounceTimerRef,
-    applyAutoSaveResult,
     isDebouncePendingRef,
+    persistLatestSource,
+    readOnly,
+    spacePath,
+  ]);
+
+  const flushPendingSource = useCallback(async () => {
+    const hasPendingDebounce = Boolean(debounceTimerRef.current);
+    cancelDebounce();
+    await sourceWriteChainRef.current;
+    if (autoSavePausedRef.current) return;
+    const path = currentPathRef.current;
+    const hasUnsaved = Boolean(
+      path && useEditorStore.getState().hasUnsaved(spacePath, path),
+    );
+    if (hasPendingDebounce || hasUnsaved) await persistLatestSource();
+    await sourceWriteChainRef.current;
+  }, [
+    cancelDebounce,
+    currentPathRef,
+    debounceTimerRef,
+    persistLatestSource,
+    spacePath,
+  ]);
+
+  const saveCurrentSurface = useCallback(async () => {
+    if (!currentDocument) return;
+    const result = await performWrite(false);
+    if (!result) return;
+
+    const committedPath = applySavedDocumentResult(result, currentDocument);
+    const status = getGitSpaceStatus(spacePath);
+    if (status?.hasConflicts) {
+      try {
+        await continueGitResolve(spacePath);
+      } catch (error) {
+        console.error("git merge resolution failed:", error);
+        toast.error(m.git_sync_failed());
+      }
+      return;
+    }
+    clearCommittedMarkers(
+      await commitFileAndMaybeSync(
+        spacePath,
+        committedPath,
+        projectPath ?? undefined,
+      ),
+    );
+  }, [
+    applySavedDocumentResult,
+    clearCommittedMarkers,
+    currentDocument,
     performWrite,
+    projectPath,
     spacePath,
   ]);
 
@@ -214,40 +318,24 @@ export function useEditorDocumentWriter({
 
     cancelDebounce();
     try {
-      const result = await performWrite(false);
-      if (!result) return;
-
-      const committedPath = applySavedDocumentResult(result, currentDocument);
-      const status = getGitSpaceStatus(spacePath);
-      if (status?.hasConflicts) {
-        try {
-          await continueGitResolve(spacePath);
-        } catch (err) {
-          console.error("git merge resolution failed:", err);
-          toast.error(m.git_sync_failed());
-        }
-      } else {
-        clearCommittedMarkers(
-          await commitFileAndMaybeSync(
-            spacePath,
-            committedPath,
-            projectPath ?? undefined,
-          ),
-        );
+      await saveCurrentSurface();
+    } catch (error) {
+      if (
+        onWriteAccessError &&
+        (await onWriteAccessError(error, saveCurrentSurface))
+      ) {
+        return;
       }
-    } catch (err) {
-      console.error("Failed to save document:", err);
+      console.error("Failed to save document:", error);
       toast.error(m.editor_error_save());
     }
   }, [
-    applySavedDocumentResult,
     cancelDebounce,
     currentDocument,
     editor,
-    performWrite,
-    projectPath,
+    onWriteAccessError,
+    saveCurrentSurface,
     saveScopeTree,
-    clearCommittedMarkers,
     spacePath,
   ]);
 
@@ -282,7 +370,7 @@ export function useEditorDocumentWriter({
       return;
     }
 
-    try {
+    const saveAll = async () => {
       const result = await performWrite(false);
       if (!result) return;
       applySavedDocumentResult(result, currentDocument, {
@@ -296,7 +384,13 @@ export function useEditorDocumentWriter({
           projectPath ?? undefined,
         ),
       );
+    };
+    try {
+      await saveAll();
     } catch (err) {
+      if (onWriteAccessError && (await onWriteAccessError(err, saveAll))) {
+        return;
+      }
       console.error("Save-all failed:", err);
       toast.error(m.editor_error_save());
     }
@@ -306,6 +400,7 @@ export function useEditorDocumentWriter({
     clearCommittedMarkers,
     currentDocument,
     editor,
+    onWriteAccessError,
     performWrite,
     projectPath,
     saveScopeTree,
@@ -313,6 +408,7 @@ export function useEditorDocumentWriter({
   ]);
 
   return {
+    flushPendingSource,
     handleSave,
     handleSaveAll,
     scheduleAutoSave,

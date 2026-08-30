@@ -16,6 +16,19 @@ export {
   inferArtifactSourceShape,
   normalizeArtifactTargetPath,
 } from "./model/selection-store";
+export { registerActiveContentDeactivation } from "./model/active-surface-deactivation";
+export {
+  ArtifactSurfaceTransitionSession,
+  resolveArtifactSurfaceHost,
+} from "./model/surface-host";
+export type {
+  ArtifactSurfaceAvailability,
+  ArtifactSurfaceContribution,
+  ArtifactSurfaceRole,
+  ArtifactSurfaceTransitionResult,
+  ArtifactSurfaceTransitionStep,
+  ResolvedArtifactSurfaceHost,
+} from "./model/surface-host";
 export type {
   ActiveArtifactOpenRequest,
   ActiveContentSelection,

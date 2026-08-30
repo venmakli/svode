@@ -11,13 +11,20 @@ import { useTheme } from "@/components/ui/theme-provider";
 interface EmojiPickerProps {
   value: string;
   onChange: (emoji: string) => void;
+  disabled?: boolean;
   /** Size of the trigger button text */
   size?: "sm" | "md" | "lg";
   /** Custom placeholder when value is empty */
   placeholder?: React.ReactNode;
 }
 
-export function EmojiPicker({ value, onChange, size = "lg", placeholder }: EmojiPickerProps) {
+export function EmojiPicker({
+  value,
+  onChange,
+  disabled = false,
+  size = "lg",
+  placeholder,
+}: EmojiPickerProps) {
   const [open, setOpen] = useState(false);
   const { theme } = useTheme();
 
@@ -28,11 +35,15 @@ export function EmojiPicker({ value, onChange, size = "lg", placeholder }: Emoji
   };
 
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <Popover
+      open={open}
+      onOpenChange={(nextOpen) => !disabled && setOpen(nextOpen)}
+    >
       <PopoverTrigger asChild>
         <button
           className={`${sizeClasses[size]} hover:bg-muted rounded-md transition-colors shrink-0`}
           type="button"
+          disabled={disabled}
         >
           {value || placeholder || "\u{1F4C4}"}
         </button>

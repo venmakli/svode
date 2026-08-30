@@ -33,3 +33,35 @@ test("places the coverless picker before the entry actions without reserving ban
   expect(markup.includes("group h-12")).toBe(false);
   expect(markup.includes("h-10 w-full justify-center")).toBe(false);
 });
+
+test("keeps the covered Page action before mode actions and hides it in view", () => {
+  const render = (readOnly: boolean) =>
+    renderToStaticMarkup(
+      <ThemeProvider theme="light" setTheme={() => undefined}>
+        <EntryIdentityHeader
+          title="Svode"
+          icon={null}
+          description=""
+          cover={{ type: "color", value: "blue" }}
+          projectPath={null}
+          spacePath="/project"
+          documentPath="readme.md"
+          onTitleChange={() => undefined}
+          onIconChange={() => undefined}
+          onDescriptionChange={() => undefined}
+          onCoverChange={() => undefined}
+          onBodyFocus={() => undefined}
+          readOnly={readOnly}
+          actions={<button data-page-mode>Mode</button>}
+        />
+      </ThemeProvider>,
+    );
+
+  const editMarkup = render(false);
+  expect(editMarkup.indexOf(m.editor_change_cover()) > -1).toBe(true);
+  expect(
+    editMarkup.indexOf(m.editor_change_cover()) <
+      editMarkup.indexOf("data-page-mode"),
+  ).toBe(true);
+  expect(render(true).includes(m.editor_change_cover())).toBe(false);
+});

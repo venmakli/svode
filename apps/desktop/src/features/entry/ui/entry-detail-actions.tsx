@@ -36,10 +36,12 @@ interface EntryDetailActionsProps {
   projectPath?: string | null;
   spaceId: string;
   onConverted?: (entry: Entry, nested: boolean) => void;
-  onDuplicateEntry: (entry: Entry) => void;
+  onDuplicateEntry: (entry: Entry) => void | Promise<void>;
   onDeleteEntry: (entry: Entry) => void;
   actionItemsBeforeDuplicate?: ReactNode;
   duplicateLabel?: string;
+  readOnly?: boolean;
+  runMutation?: (operation: () => Promise<void>) => Promise<void>;
 }
 
 export function EntryDetailActions({
@@ -52,6 +54,8 @@ export function EntryDetailActions({
   onDeleteEntry,
   actionItemsBeforeDuplicate,
   duplicateLabel,
+  readOnly = false,
+  runMutation = (operation) => operation(),
 }: EntryDetailActionsProps) {
   const [state, setState] = useState<{
     path: string;
@@ -178,7 +182,10 @@ export function EntryDetailActions({
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-64">
         {form === "leaf" ? (
-          <DropdownMenuItem onClick={() => void nestPage().catch(handleError)}>
+          <DropdownMenuItem
+            disabled={readOnly}
+            onClick={() => void runMutation(nestPage).catch(handleError)}
+          >
             <FilePlus data-icon="inline-start" />
             {m.space_nest_page()}
           </DropdownMenuItem>
@@ -186,22 +193,23 @@ export function EntryDetailActions({
         {form === "folder" ? (
           <>
             <DropdownMenuItem
-              disabled={Boolean(leafDisabledReason)}
+              disabled={readOnly || Boolean(leafDisabledReason)}
               title={leafDisabledReason ?? undefined}
               onSelect={(event) => {
                 if (leafDisabledReason) {
                   event.preventDefault();
                   return;
                 }
-                void convertToLeaf().catch(handleError);
+                void runMutation(convertToLeaf).catch(handleError);
               }}
             >
               <FileText data-icon="inline-start" />
               {m.entry_convert_to_leaf()}
             </DropdownMenuItem>
             <DropdownMenuItem
+              disabled={readOnly}
               onClick={() =>
-                void convertToNestedCollection().catch(handleError)
+                void runMutation(convertToNestedCollection).catch(handleError)
               }
             >
               <Database data-icon="inline-start" />
@@ -210,13 +218,21 @@ export function EntryDetailActions({
           </>
         ) : null}
         {actionItemsBeforeDuplicate}
-        <DropdownMenuItem onClick={() => onDuplicateEntry(entry)}>
+        <DropdownMenuItem
+          disabled={readOnly}
+          onClick={() =>
+            void runMutation(async () => {
+              await onDuplicateEntry(entry);
+            }).catch(handleError)
+          }
+        >
           <Copy data-icon="inline-start" />
           {duplicateLabel ?? m.entry_duplicate()}
         </DropdownMenuItem>
         <DropdownMenuSeparator />
         <DropdownMenuItem
           variant="destructive"
+          disabled={readOnly}
           onClick={() => onDeleteEntry(entry)}
         >
           <Trash2 data-icon="inline-start" />

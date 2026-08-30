@@ -105,6 +105,58 @@ test("canonical title update keeps Enter focus in the description", async () => 
   }
 });
 
+test("read-only identity keeps its draft visible without emitting mutations", async () => {
+  const dom = new JSDOM(
+    "<!doctype html><html><body><div id=app></div></body></html>",
+    { pretendToBeVisual: true, url: "http://localhost/" },
+  );
+  const restoreGlobals = installDomGlobals(dom);
+  const changes: string[] = [];
+  const root = createRoot(dom.window.document.getElementById("app")!);
+
+  try {
+    await act(async () => {
+      root.render(
+        <TitleZone
+          title="Visible title"
+          icon={null}
+          description="Visible description"
+          readOnly
+          fallbackEmoji="📄"
+          onTitleChange={(value) => changes.push(`title:${value}`)}
+          onIconChange={(value) => changes.push(`icon:${value}`)}
+          onDescriptionChange={(value) => changes.push(`description:${value}`)}
+          onBodyFocus={() => changes.push("body")}
+        />,
+      );
+    });
+
+    const input = dom.window.document.querySelector<HTMLInputElement>("input")!;
+    const description =
+      dom.window.document.querySelector<HTMLTextAreaElement>("textarea")!;
+    expect(input.readOnly).toBe(true);
+    expect(description.readOnly).toBe(true);
+    expect(
+      dom.window.document.querySelector<HTMLButtonElement>(
+        'button[aria-label="Visible title"]',
+      )?.disabled,
+    ).toBe(true);
+
+    await act(async () => {
+      setInputValue(input, "Blocked rename");
+      input.blur();
+      description.dispatchEvent(
+        new dom.window.Event("input", { bubbles: true }),
+      );
+    });
+    expect(changes).toEqual([]);
+  } finally {
+    await act(async () => root.unmount());
+    restoreGlobals();
+    dom.window.close();
+  }
+});
+
 function setInputValue(input: HTMLInputElement, value: string) {
   const setter = Object.getOwnPropertyDescriptor(
     input.ownerDocument.defaultView!.HTMLInputElement.prototype,

@@ -139,13 +139,19 @@ export function TitleZone({
     <div className="mb-1 flex items-center gap-3">
       <div className="flex shrink-0 items-center">
         {icon ? (
-          <EmojiPicker value={icon} onChange={onIconChange} size="md" />
+          <EmojiPicker
+            value={icon}
+            onChange={onIconChange}
+            size="md"
+            disabled={readOnly}
+          />
         ) : fallbackEmoji ? (
           <button
             type="button"
             aria-label={title}
             className="flex size-9 items-center justify-center rounded-md text-2xl hover:bg-muted"
             onClick={onActivateIdentity}
+            disabled={readOnly && !onActivateIdentity}
           >
             {fallbackEmoji}
           </button>
@@ -155,6 +161,7 @@ export function TitleZone({
             aria-label={title}
             className="flex size-9 items-center justify-center rounded-md text-muted-foreground hover:bg-muted"
             onClick={onActivateIdentity}
+            disabled={readOnly && !onActivateIdentity}
           >
             <FallbackIcon />
           </button>
@@ -163,6 +170,7 @@ export function TitleZone({
             value=""
             onChange={onIconChange}
             size="md"
+            disabled={readOnly}
             placeholder={
               <SmilePlus className="size-6 text-muted-foreground/40" />
             }
@@ -187,6 +195,7 @@ export function TitleZone({
             }
             onBlur={() => {
               isTitleFocusedRef.current = false;
+              if (readOnly) return;
               const nextTitle = titleDraft || defaultTitle;
               if (nextTitle !== title) onTitleChange(nextTitle);
             }}
@@ -208,10 +217,12 @@ export function TitleZone({
             ref={descriptionRef}
             value={descriptionDraft}
             rows={1}
+            readOnly={readOnly}
             onFocus={() => {
               isDescriptionFocusedRef.current = true;
             }}
             onChange={(e) => {
+              if (readOnly) return;
               const next = e.target.value.replace(/\n/g, " ");
               setDescriptionDraft(next);
               onDescriptionChange(next);
@@ -228,7 +239,7 @@ export function TitleZone({
               "placeholder:text-muted-foreground/40",
             )}
           />
-        ) : canShowDescription ? (
+        ) : canShowDescription && (!readOnly || onActivateIdentity) ? (
           <button
             type="button"
             onClick={focusDescription}

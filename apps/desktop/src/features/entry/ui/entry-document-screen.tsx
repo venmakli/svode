@@ -41,6 +41,9 @@ import { handleError } from "../lib/errors";
 import { publishEntryFilenameWarnings } from "../lib/filename-warning";
 import { propertyFieldSavePolicy } from "../property-field-save";
 import { useEntryDocumentName } from "../hooks/use-entry-document-name";
+import { usePageSurfaceSession } from "../hooks/page-surface-context";
+import { PageAccessRecovery } from "./page-access-recovery";
+import { PageModeControl } from "./page-mode-control";
 
 interface EntryDocumentScreenProps {
   spacePath: string;
@@ -59,6 +62,7 @@ export function EntryDocumentScreen({
   documentPath,
   spaceId,
 }: EntryDocumentScreenProps) {
+  const pageSurface = usePageSurfaceSession();
   const openDocument = useOpenEntryDocument();
   const openScopeOwner = useOpenScopeOwner();
   const openPath = useCallback(
@@ -109,7 +113,7 @@ export function EntryDocumentScreen({
     entry: currentEntry,
     spaceId,
   });
-  const updateField = useEntryFieldSave({
+  const { flush: flushMetadata, save: updateField } = useEntryFieldSave({
     spacePath,
     projectPath,
     applyEntryUpdate,
@@ -138,7 +142,25 @@ export function EntryDocumentScreen({
       if (context.field !== "title") return;
       documentName.handleSaveError(error);
     },
+    recoverFromError: (saveError, _context, retry) =>
+      pageSurface.recoverWriteError(saveError, retry),
   });
+
+  useEffect(
+    () => pageSurface.registerPersistence("metadata", flushMetadata),
+    [flushMetadata, pageSurface],
+  );
+
+  useEffect(() => {
+    if (!pageSurface.readOnly || !deleteEntry) return;
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (!cancelled) setDeleteEntry(null);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [deleteEntry, pageSurface.readOnly]);
 
   useEntryTitleOutcomeEffect({
     scopePath: spacePath,
@@ -234,7 +256,7 @@ export function EntryDocumentScreen({
   }, [documentTargetKey, reload]);
 
   async function updateCover(cover: EntryCover | null) {
-    if (!currentEntry) return;
+    if (!currentEntry || pageSurface.readOnly) return;
     await updateField(currentEntry, "cover", cover);
   }
 
@@ -267,6 +289,7 @@ export function EntryDocumentScreen({
   const showSubpages = detailState?.form === "folder";
 
   function updateTitle(value: string) {
+    if (pageSurface.readOnly) return;
     if (!documentName.acceptTitle(value)) return;
     void updateField(activeEntry, "title", value, { flush: true }).catch(
       (error) => {
@@ -300,38 +323,45 @@ export function EntryDocumentScreen({
           onBodyFocus={() => undefined}
           metadata={<EntrySystemFields meta={currentEntry.meta} />}
           coverSize="compact"
+          readOnly={pageSurface.readOnly}
           actions={
-            <EntryDetailActions
-              entry={currentEntry}
-              spacePath={spacePath}
-              projectPath={projectPath}
-              spaceId={spaceId}
-              onConverted={(nextEntry, nested) => {
-                setEntry(nextEntry);
-                setLoadedEntryKey(
-                  getDocumentTargetKey(spacePath, nextEntry.path),
-                );
-                if (nested) {
-                  openScopeOwner({
-                    kind: "collection",
-                    path: nextEntry.path,
-                    spaceId,
-                  });
-                  void reloadTreePathParents(spaceId, [nextEntry.path]);
-                } else {
-                  openDocument(nextEntry.path, spaceId);
+            <>
+              <PageModeControl />
+              <EntryDetailActions
+                entry={currentEntry}
+                spacePath={spacePath}
+                projectPath={projectPath}
+                spaceId={spaceId}
+                onConverted={(nextEntry, nested) => {
+                  setEntry(nextEntry);
+                  setLoadedEntryKey(
+                    getDocumentTargetKey(spacePath, nextEntry.path),
+                  );
+                  if (nested) {
+                    openScopeOwner({
+                      kind: "collection",
+                      path: nextEntry.path,
+                      spaceId,
+                    });
+                    void reloadTreePathParents(spaceId, [nextEntry.path]);
+                  } else {
+                    openDocument(nextEntry.path, spaceId);
+                  }
+                }}
+                onDuplicateEntry={(entryToDuplicate) =>
+                  duplicateCurrentEntry(entryToDuplicate)
                 }
-              }}
-              onDuplicateEntry={(entryToDuplicate) =>
-                void duplicateCurrentEntry(entryToDuplicate).catch(handleError)
-              }
-              onDeleteEntry={setDeleteEntry}
-            />
+                onDeleteEntry={setDeleteEntry}
+                readOnly={pageSurface.readOnly}
+                runMutation={pageSurface.runMutation}
+              />
+            </>
           }
         />
         {schemaResult && schemaResult.schema.columns.length > 0 ? (
           <div className="max-w-5xl">
             <PropertyPanel
+              key={`properties:${pageSurface.currentMode}`}
               spacePath={spacePath}
               projectPath={projectPath}
               spaceId={spaceId}
@@ -340,6 +370,7 @@ export function EntryDocumentScreen({
               schemaResult={schemaResult}
               values={currentEntry.meta.extra ?? {}}
               mode="full"
+              readOnly={pageSurface.readOnly}
               onOpenPath={openPath}
               onSchemaChange={setSchemaResult}
               onValueChange={async (field, value) => {
@@ -354,6 +385,7 @@ export function EntryDocumentScreen({
           </div>
         ) : null}
       </div>
+      <PageAccessRecovery className="mx-auto w-full max-w-5xl px-6 pb-4" />
       <Separator />
       <PlateDocumentEditor
         bodyOnly
@@ -366,6 +398,9 @@ export function EntryDocumentScreen({
         initialEntry={currentEntry}
         initialEntrySpacePath={spacePath}
         documentPathHandoff={pathHandoff}
+        readOnly={pageSurface.readOnly}
+        registerPersistence={pageSurface.registerPersistence}
+        onWriteAccessError={pageSurface.recoverWriteError}
         onDocumentPathChange={(path) => {
           adoptedDocumentTargetKeyRef.current = getDocumentTargetKey(
             spacePath,
@@ -382,15 +417,18 @@ export function EntryDocumentScreen({
           projectPath={projectPath}
           spaceId={spaceId}
           documentPath={currentEntry.path}
+          readOnly={pageSurface.readOnly}
         />
       ) : null}
       <EntryDeleteDialog
-        entry={deleteEntry}
+        entry={pageSurface.readOnly ? null : deleteEntry}
         onOpenChange={(open) => {
           if (!open) setDeleteEntry(null);
         }}
         onDeleteEntry={(entryToDelete) =>
-          void deleteCurrentEntry(entryToDelete).catch(handleError)
+          void pageSurface
+            .runMutation(() => deleteCurrentEntry(entryToDelete))
+            .catch(handleError)
         }
       />
     </div>

@@ -11,29 +11,36 @@ import { PlateDocumentEditor } from "@/features/editor";
 import * as m from "@/paraglide/messages.js";
 import { detailPageBodyClassName } from "@/shared/ui/page-layout";
 import { useEntryDetailContext } from "../hooks/entry-detail-context";
+import { usePageSurfaceSession } from "../hooks/page-surface-context";
+import { PageAccessRecovery } from "./page-access-recovery";
+import type { ReactNode } from "react";
 
 export function ReadmeSurface() {
   const context = useEntryDetailContext();
-  if (context.status === "loading") return <ReadmeSurfaceSkeleton />;
+  const pageSurface = usePageSurfaceSession();
+  let content: ReactNode = null;
+  if (context.status === "loading") content = <ReadmeSurfaceSkeleton />;
   if (context.status === "missing") {
-    return (
+    content = (
       <Empty>
         <EmptyHeader>
           <EmptyTitle>{m.scope_readme_missing_title()}</EmptyTitle>
           <EmptyDescription>
             {m.scope_readme_missing_description()}
           </EmptyDescription>
-          <Button
-            onClick={() => void context.createReadme().catch(() => undefined)}
-          >
-            {m.scope_readme_create()}
-          </Button>
+          {!pageSurface.readOnly ? (
+            <Button
+              onClick={() => void context.createReadme().catch(() => undefined)}
+            >
+              {m.scope_readme_create()}
+            </Button>
+          ) : null}
         </EmptyHeader>
       </Empty>
     );
   }
   if (context.status === "error") {
-    return (
+    content = (
       <Alert variant="destructive">
         <AlertTitle>{m.scope_readme_error_title()}</AlertTitle>
         <AlertDescription className="flex flex-col items-start gap-3">
@@ -53,25 +60,35 @@ export function ReadmeSurface() {
       </Alert>
     );
   }
-  if (!context.entry) return null;
+  if (context.status === "ready" && context.entry) {
+    content = (
+      <PlateDocumentEditor
+        bodyOnly
+        pageScroll
+        documentPath={context.entry.path}
+        documentSpaceId={context.spaceId}
+        spacePath={context.spacePath}
+        projectPath={context.projectPath}
+        bodyOnlyMeta={context.entry.meta}
+        initialEntry={context.entry}
+        initialEntrySpacePath={context.spacePath}
+        onDocumentPathChange={(path) =>
+          context.setEntry((current) =>
+            current ? { ...current, path } : current,
+          )
+        }
+        documentPathHandoff={context.pathHandoff}
+        readOnly={pageSurface.readOnly}
+        registerPersistence={pageSurface.registerPersistence}
+        onWriteAccessError={pageSurface.recoverWriteError}
+      />
+    );
+  }
   return (
-    <PlateDocumentEditor
-      bodyOnly
-      pageScroll
-      documentPath={context.entry.path}
-      documentSpaceId={context.spaceId}
-      spacePath={context.spacePath}
-      projectPath={context.projectPath}
-      bodyOnlyMeta={context.entry.meta}
-      initialEntry={context.entry}
-      initialEntrySpacePath={context.spacePath}
-      onDocumentPathChange={(path) =>
-        context.setEntry((current) =>
-          current ? { ...current, path } : current,
-        )
-      }
-      documentPathHandoff={context.pathHandoff}
-    />
+    <>
+      <PageAccessRecovery className="mx-auto w-full max-w-5xl px-6 pt-4" />
+      {content}
+    </>
   );
 }
 

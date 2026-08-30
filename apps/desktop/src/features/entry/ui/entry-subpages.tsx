@@ -36,6 +36,7 @@ interface EntrySubpagesProps {
   projectPath?: string | null;
   spaceId: string;
   documentPath: string;
+  readOnly?: boolean;
 }
 
 export function EntrySubpages({
@@ -43,6 +44,7 @@ export function EntrySubpages({
   projectPath,
   spaceId,
   documentPath,
+  readOnly = false,
 }: EntrySubpagesProps) {
   const openDocument = useOpenEntryDocument();
   const openScopeOwner = useOpenScopeOwner();
@@ -103,7 +105,7 @@ export function EntrySubpages({
 
   async function handleDragEnd(event: DragEndEvent) {
     const { active, over } = event;
-    if (!over || active.id === over.id) return;
+    if (readOnly || !over || active.id === over.id) return;
     const oldIndex = subpages.findIndex((item) => item.path === active.id);
     const newIndex = subpages.findIndex((item) => item.path === over.id);
     if (oldIndex < 0 || newIndex < 0) return;
@@ -127,16 +129,18 @@ export function EntrySubpages({
     <section className={detailPageSectionClassName}>
       <div className="flex items-center justify-between border-t pt-4">
         <h3 className="text-sm font-medium">{m.entry_subpages()}</h3>
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          className="text-muted-foreground"
-          onClick={() => void createSubpage().catch(handleError)}
-        >
-          <Plus data-icon="inline-start" />
-          {m.entry_add_subpage()}
-        </Button>
+        {!readOnly ? (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="text-muted-foreground"
+            onClick={() => void createSubpage().catch(handleError)}
+          >
+            <Plus data-icon="inline-start" />
+            {m.entry_add_subpage()}
+          </Button>
+        ) : null}
       </div>
       {loading ? null : subpages.length > 0 ? (
         <DndContext
@@ -153,6 +157,7 @@ export function EntrySubpages({
                 <SubpageRow
                   key={node.path}
                   node={node}
+                  readOnly={readOnly}
                   onOpen={() =>
                     node.has_schema
                       ? openScopeOwner({
@@ -176,7 +181,15 @@ export function EntrySubpages({
   );
 }
 
-function SubpageRow({ node, onOpen }: { node: TreeNode; onOpen: () => void }) {
+function SubpageRow({
+  node,
+  onOpen,
+  readOnly,
+}: {
+  node: TreeNode;
+  onOpen: () => void;
+  readOnly: boolean;
+}) {
   const {
     attributes,
     isDragging,
@@ -184,7 +197,7 @@ function SubpageRow({ node, onOpen }: { node: TreeNode; onOpen: () => void }) {
     setNodeRef,
     transform,
     transition,
-  } = useSortable({ id: node.path });
+  } = useSortable({ id: node.path, disabled: readOnly });
   const folder = normalizeEntryPath(node.path)
     .toLowerCase()
     .endsWith("/readme.md");
@@ -200,15 +213,17 @@ function SubpageRow({ node, onOpen }: { node: TreeNode; onOpen: () => void }) {
         isDragging && "opacity-60",
       )}
     >
-      <button
-        type="button"
-        className="flex size-7 items-center justify-center rounded text-muted-foreground opacity-0 transition-opacity hover:bg-muted group-hover/subpage:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-        {...attributes}
-        {...listeners}
-      >
-        <GripVertical />
-        <span className="sr-only">{m.view_query_sort_notice()}</span>
-      </button>
+      {!readOnly ? (
+        <button
+          type="button"
+          className="flex size-7 items-center justify-center rounded text-muted-foreground opacity-0 transition-opacity hover:bg-muted group-hover/subpage:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          {...attributes}
+          {...listeners}
+        >
+          <GripVertical />
+          <span className="sr-only">{m.view_query_sort_notice()}</span>
+        </button>
+      ) : null}
       <button
         type="button"
         className="flex min-w-0 flex-1 items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"

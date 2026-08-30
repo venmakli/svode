@@ -3,15 +3,18 @@ import { useEffect } from "react";
 import { isTerminalKeyboardEvent } from "@/features/terminal";
 
 interface UseEditorSaveShortcutsInput {
+  disabled?: boolean;
   onSave: () => void | Promise<void>;
   onSaveAll: () => void | Promise<void>;
 }
 
 export function useEditorSaveShortcuts({
+  disabled = false,
   onSave,
   onSaveAll,
 }: UseEditorSaveShortcutsInput) {
   useEffect(() => {
+    if (disabled) return;
     const handler = (event: KeyboardEvent) => {
       if (isTerminalKeyboardEvent(event)) return;
       const isSaveKey =
@@ -28,5 +31,5 @@ export function useEditorSaveShortcuts({
 
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [onSave, onSaveAll]);
+  }, [disabled, onSave, onSaveAll]);
 }

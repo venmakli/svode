@@ -137,7 +137,7 @@ export function useCalendarEntries({
     },
     [],
   );
-  const saveEntryField = useEntryFieldSave({
+  const { save: saveEntryField } = useEntryFieldSave({
     spacePath,
     projectPath,
     applyEntryUpdate,

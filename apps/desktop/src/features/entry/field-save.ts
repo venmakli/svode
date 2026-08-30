@@ -8,6 +8,7 @@ export {
 } from "./model/field-save";
 export {
   useEntryFieldSave,
+  type EntryFieldSaveController,
   type EntryFieldSaveContext,
   type SaveEntryFieldOptions,
 } from "./hooks/use-entry-field-save";

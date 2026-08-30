@@ -29,6 +29,9 @@ interface ArtifactSurfaceProps {
   spacePath: string;
   projectPath: string | null;
   spaceId: string;
+  onOpenRepositorySettings?: (repositoryPath: string) => void;
+  pageSessionKey?: string;
+  retainSurfaceDuringRetarget?: boolean;
 }
 
 interface ArtifactSurfaceRenderProps {
@@ -36,6 +39,8 @@ interface ArtifactSurfaceRenderProps {
   spacePath: string;
   projectPath: string | null;
   spaceId: string;
+  onOpenRepositorySettings?: (repositoryPath: string) => void;
+  pageSessionKey?: string;
 }
 
 type ArtifactSurfaceComponent = ComponentType<ArtifactSurfaceRenderProps>;
@@ -43,21 +48,33 @@ type ArtifactSurfaceComponent = ComponentType<ArtifactSurfaceRenderProps>;
 async function loadPageSurface(): Promise<{
   default: ArtifactSurfaceComponent;
 }> {
-  const { EntryDocumentScreen } = await import("@/features/entry/app-shell");
+  const { EntryDocumentScreen, PageSurfaceSessionProvider } =
+    await import("@/features/entry/app-shell");
   return {
     default: function PageArtifactSurface({
       target,
       spacePath,
       projectPath,
       spaceId,
+      onOpenRepositorySettings,
+      pageSessionKey,
     }: ArtifactSurfaceRenderProps) {
       return (
-        <EntryDocumentScreen
+        <PageSurfaceSessionProvider
+          displayName={artifactDisplayName(target.path)}
+          displayPath={target.path}
+          onOpenRepositorySettings={onOpenRepositorySettings}
+          registerGlobalDeactivation
           spacePath={spacePath}
-          projectPath={projectPath}
-          documentPath={target.path}
-          spaceId={spaceId}
-        />
+          targetKey={pageSessionKey ?? `${spaceId}:${target.path}`}
+        >
+          <EntryDocumentScreen
+            spacePath={spacePath}
+            projectPath={projectPath}
+            documentPath={target.path}
+            spaceId={spaceId}
+          />
+        </PageSurfaceSessionProvider>
       );
     },
   };
@@ -98,12 +115,17 @@ export function ArtifactSurface({
   spacePath,
   projectPath,
   spaceId,
+  onOpenRepositorySettings,
+  pageSessionKey,
+  retainSurfaceDuringRetarget = false,
 }: ArtifactSurfaceProps) {
   const registry = useMemo(
     () => createFirstPartyArtifactRegistry(spacePath),
     [spacePath],
   );
-  const resolution = useArtifactResolution(registry, request);
+  const resolution = useArtifactResolution(registry, request, {
+    retainPreviousResolution: retainSurfaceDuringRetarget,
+  });
   const Surface =
     resolution &&
     (resolution.status === "ready" || resolution.status === "limited")
@@ -128,10 +150,20 @@ export function ArtifactSurface({
           spacePath={spacePath}
           projectPath={projectPath}
           spaceId={spaceId}
+          onOpenRepositorySettings={onOpenRepositorySettings}
+          pageSessionKey={pageSessionKey}
         />
       </Suspense>
     </ArtifactSurfaceErrorBoundary>
   );
+}
+
+function artifactDisplayName(path: string) {
+  const segments = path.replaceAll("\\", "/").split("/");
+  const name = segments.at(-1) ?? path;
+  return name.toLowerCase() === "readme.md"
+    ? (segments.at(-2) ?? name)
+    : name.replace(/\.md$/i, "");
 }
 
 function ArtifactLoadingState() {

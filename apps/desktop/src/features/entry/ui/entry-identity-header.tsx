@@ -23,6 +23,7 @@ interface EntryIdentityHeaderProps {
   metadata?: ReactNode;
   coverSize?: "default" | "compact";
   titleError?: string | null;
+  readOnly?: boolean;
 }
 
 export function EntryIdentityHeader({
@@ -43,6 +44,7 @@ export function EntryIdentityHeader({
   metadata,
   coverSize = "default",
   titleError,
+  readOnly = false,
 }: EntryIdentityHeaderProps) {
   return (
     <>
@@ -54,6 +56,7 @@ export function EntryIdentityHeader({
           documentPath={documentPath}
           onCoverChange={onCoverChange}
           size={coverSize}
+          readOnly={readOnly}
         />
       ) : null}
       <div
@@ -72,14 +75,15 @@ export function EntryIdentityHeader({
             onDescriptionChange={onDescriptionChange}
             onBodyFocus={onBodyFocus}
             titleError={titleError}
+            readOnly={readOnly}
           />
         </div>
         {actions || metadata || !cover ? (
           <div className="flex max-w-[22rem] shrink-0 flex-col items-end text-right">
             <div className="flex h-8 items-center justify-end">
-              {!cover ? (
+              {!readOnly ? (
                 <CoverPicker
-                  cover={null}
+                  cover={cover}
                   projectPath={projectPath}
                   spacePath={spacePath}
                   documentPath={documentPath}

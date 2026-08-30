@@ -27,7 +27,7 @@ export function useCollectionEntryFieldSave({
     },
     [setEntries, setManualOrderEntries],
   );
-  const saveEntryField = useEntryFieldSave({
+  const { save: saveEntryField } = useEntryFieldSave({
     spacePath,
     projectPath,
     applyEntryUpdate,

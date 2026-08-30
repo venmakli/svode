@@ -22,6 +22,7 @@ export interface ArtifactOpenIntent {
 
 export interface ActiveArtifactOpenRequest {
   key: number;
+  sessionKey: number;
   intent: ArtifactOpenIntent;
 }
 
@@ -65,4 +66,5 @@ export interface ActiveContentSelectionSnapshot {
   selection: ActiveContentSelection | null;
   activeRevealRequest: ContentRevealRequest | null;
   activePathRetarget: ContentPathRetarget | null;
+  transitionPending: boolean;
 }

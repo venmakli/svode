@@ -191,5 +191,5 @@ function useEntryPeekFieldSave({
         }
       }
     },
-  });
+  }).save;
 }

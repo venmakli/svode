@@ -52,6 +52,7 @@ interface CoverBannerProps {
   documentPath: string | null;
   onCoverChange: (cover: EntryCover | null) => void;
   size?: "default" | "compact";
+  readOnly?: boolean;
 }
 
 interface CoverPickerProps extends Pick<
@@ -156,11 +157,10 @@ export function CoverPicker({
 
 export function CoverBanner({
   cover,
-  projectPath,
   spacePath,
-  documentPath,
   onCoverChange,
   size = "default",
+  readOnly = false,
 }: CoverBannerProps) {
   const bannerRef = useRef<HTMLDivElement>(null);
   const dragStartRef = useRef<{ y: number; position: number } | null>(null);
@@ -186,7 +186,7 @@ export function CoverBanner({
   );
 
   function handlePointerDown(e: PointerEvent<HTMLDivElement>) {
-    if (!isRepositioning || cover?.type !== "image") return;
+    if (readOnly || !isRepositioning || cover?.type !== "image") return;
     e.preventDefault();
     e.currentTarget.setPointerCapture(e.pointerId);
     dragStartRef.current = {
@@ -249,29 +249,24 @@ export function CoverBanner({
           onError={() => setImageLoadState({ src: imageSrc, status: "error" })}
         />
       )}
-      <div className="absolute right-3 top-3 flex items-center gap-2 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
-        <CoverPicker
-          cover={cover}
-          projectPath={projectPath}
-          spacePath={spacePath}
-          documentPath={documentPath}
-          onCoverChange={onCoverChange}
-        />
-        {cover.type === "image" && (
-          <Button
-            type="button"
-            variant={isRepositioning ? "default" : "secondary"}
-            size="sm"
-            onClick={(e) => {
-              e.stopPropagation();
-              setIsRepositioning((current) => !current);
-            }}
-          >
-            <MoveVertical data-icon="inline-start" />
-            {m.editor_reposition_cover()}
-          </Button>
-        )}
-      </div>
+      {!readOnly ? (
+        <div className="absolute right-3 top-3 flex items-center gap-2 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+          {cover.type === "image" && (
+            <Button
+              type="button"
+              variant={isRepositioning ? "default" : "secondary"}
+              size="sm"
+              onClick={(e) => {
+                e.stopPropagation();
+                setIsRepositioning((current) => !current);
+              }}
+            >
+              <MoveVertical data-icon="inline-start" />
+              {m.editor_reposition_cover()}
+            </Button>
+          )}
+        </div>
+      ) : null}
     </div>
   );
 }

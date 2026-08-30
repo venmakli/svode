@@ -25,6 +25,7 @@ import {
   useRetargetEntryDocument,
 } from "./use-entry-selection";
 import { handleError } from "../lib/errors";
+import { useOptionalPageSurfaceSession } from "./page-surface-context";
 
 export type ReadmeStatus = "loading" | "ready" | "missing" | "error";
 
@@ -94,6 +95,7 @@ export function EntryDetailProvider({
   const reloadSequenceRef = useRef(0);
   const adoptedReadmePathRef = useRef<string | null>(null);
   const retargetDocument = useRetargetEntryDocument();
+  const pageSurface = useOptionalPageSurfaceSession();
   const {
     patchEntryTreeMeta,
     reloadTreeParent,
@@ -108,7 +110,7 @@ export function EntryDetailProvider({
     },
     [],
   );
-  const saveField = useEntryFieldSave({
+  const { flush: flushMetadata, save: saveField } = useEntryFieldSave({
     spacePath,
     projectPath,
     applyEntryUpdate,
@@ -131,7 +133,16 @@ export function EntryDetailProvider({
         ]).catch(handleError);
       }
     },
+    recoverFromError: pageSurface
+      ? (saveError, _context, retry) =>
+          pageSurface.recoverWriteError(saveError, retry)
+      : undefined,
   });
+
+  useEffect(() => {
+    if (!pageSurface) return;
+    return pageSurface.registerPersistence("metadata", flushMetadata);
+  }, [flushMetadata, pageSurface]);
 
   useEntryTitleOutcomeEffect({
     scopePath: spacePath,
@@ -243,6 +254,7 @@ export function EntryDetailProvider({
       value: unknown,
       options: SaveEntryFieldOptions = {},
     ) => {
+      if (pageSurface?.readOnly) return;
       const target = entry ?? (await createReadme());
       const column = schemaResult?.schema.columns.find(
         (item) => item.name === field,
@@ -254,7 +266,7 @@ export function EntryDetailProvider({
           (column ? propertyFieldSavePolicy(column) : undefined),
       });
     },
-    [createReadme, entry, saveField, schemaResult],
+    [createReadme, entry, pageSurface?.readOnly, saveField, schemaResult],
   );
 
   const value = useMemo<EntryDetailContextValue>(

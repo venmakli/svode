@@ -9,6 +9,7 @@ export function useActiveContentSelection(): ActiveContentSelectionSnapshot {
         selection: state.selection,
         activeRevealRequest: state.activeRevealRequest,
         activePathRetarget: state.activePathRetarget,
+        transitionPending: state.transitionPending,
       }),
     ),
   );
