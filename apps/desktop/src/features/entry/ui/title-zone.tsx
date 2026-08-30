@@ -57,6 +57,9 @@ export function TitleZone({
   const [titleDraft, setTitleDraft] = useState(displayValue);
   const [descriptionDraft, setDescriptionDraft] = useState(description);
   const hasDescription = descriptionDraft.trim().length > 0;
+  const hasIconPresentation = Boolean(
+    icon || fallbackEmoji || FallbackIcon || !readOnly,
+  );
 
   useEffect(() => {
     if (!isTitleFocusedRef.current) {
@@ -137,46 +140,47 @@ export function TitleZone({
 
   return (
     <div className="mb-1 flex items-center gap-3">
-      <div className="flex shrink-0 items-center">
-        {icon ? (
-          <EmojiPicker
-            value={icon}
-            onChange={onIconChange}
-            size="md"
-            disabled={readOnly}
-          />
-        ) : fallbackEmoji ? (
-          <button
-            type="button"
-            aria-label={title}
-            className="flex size-9 items-center justify-center rounded-md text-2xl hover:bg-muted"
-            onClick={onActivateIdentity}
-            disabled={readOnly && !onActivateIdentity}
-          >
-            {fallbackEmoji}
-          </button>
-        ) : FallbackIcon ? (
-          <button
-            type="button"
-            aria-label={title}
-            className="flex size-9 items-center justify-center rounded-md text-muted-foreground hover:bg-muted"
-            onClick={onActivateIdentity}
-            disabled={readOnly && !onActivateIdentity}
-          >
-            <FallbackIcon />
-          </button>
-        ) : (
-          <EmojiPicker
-            value=""
-            onChange={onIconChange}
-            size="md"
-            disabled={readOnly}
-            placeholder={
-              <SmilePlus className="size-6 text-muted-foreground/40" />
-            }
-          />
-        )}
-      </div>
+      {hasIconPresentation ? (
+        <div className="flex shrink-0 items-center">
+          {icon ? (
+            <EmojiPicker
+              value={icon}
+              onChange={onIconChange}
+              size="md"
+              disabled={readOnly}
+            />
+          ) : fallbackEmoji ? (
+            <button
+              type="button"
+              aria-label={title}
+              className="flex size-9 items-center justify-center rounded-md text-2xl hover:bg-muted"
+              onClick={onActivateIdentity}
+              disabled={readOnly && !onActivateIdentity}
+            >
+              {fallbackEmoji}
+            </button>
+          ) : FallbackIcon ? (
+            <button
+              type="button"
+              aria-label={title}
+              className="flex size-9 items-center justify-center rounded-md text-muted-foreground hover:bg-muted"
+              onClick={onActivateIdentity}
+              disabled={readOnly && !onActivateIdentity}
+            >
+              <FallbackIcon />
+            </button>
+          ) : (
+            <EmojiPicker
+              value=""
+              onChange={onIconChange}
+              size="md"
+              placeholder={
+                <SmilePlus className="size-6 text-muted-foreground/40" />
+              }
+            />
+          )}
+        </div>
+      ) : null}
       <div className="flex min-w-0 flex-1 flex-col">
         <Field data-invalid={titleError ? "true" : undefined} className="gap-0">
           <input

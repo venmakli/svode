@@ -23,6 +23,25 @@ test("renders a read-only fallback emoji without mounting the editable picker", 
   expect(markup.includes('aria-label="Design"')).toBe(true);
 });
 
+test("omits empty icon and description affordances in read-only mode", () => {
+  const markup = renderToStaticMarkup(
+    <TitleZone
+      title="Page"
+      icon={null}
+      description=""
+      readOnly
+      onTitleChange={() => undefined}
+      onIconChange={() => undefined}
+      onDescriptionChange={() => undefined}
+      onBodyFocus={() => undefined}
+    />,
+  );
+
+  expect(markup.includes("<button")).toBe(false);
+  expect(markup.includes("<textarea")).toBe(false);
+  expect(markup.includes('value="Page"')).toBe(true);
+});
+
 test("exposes an inline document name conflict through the title field", () => {
   const markup = renderToStaticMarkup(
     <TitleZone
