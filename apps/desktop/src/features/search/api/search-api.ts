@@ -19,7 +19,7 @@ export interface SearchEntriesByTitleInput {
 export interface SearchEntriesInput {
   projectPath: string;
   query: string;
-  entryType?: string | null;
+  itemType?: string | null;
   tableName?: string | null;
   limit?: number;
   scope?: SearchScope;
@@ -48,7 +48,7 @@ export function searchEntries(
   return searchProjectEntries({
     projectPath: input.projectPath,
     query: input.query,
-    entryType: input.entryType,
+    itemType: input.itemType,
     tableName: input.tableName,
     limit: input.limit,
     scope: input.scope,

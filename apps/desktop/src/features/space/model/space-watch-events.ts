@@ -3,7 +3,7 @@ export type SpaceFileEventName =
   | "file:changed"
   | "file:deleted";
 
-export type SpaceFileEventKind = "document" | "schema" | "folder" | "unknown";
+export type SpaceFileEventKind = "page" | "schema" | "folder" | "unknown";
 
 export interface SpaceFileEvent {
   space?: string;
@@ -21,7 +21,7 @@ export interface SpaceDirtyEvent {
   affectsTree?: boolean;
 }
 
-export interface WatchedSpaceEntry {
+export interface WatchedSpacePage {
   meta: {
     title: string;
     icon: string | null;

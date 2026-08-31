@@ -1,4 +1,4 @@
-import { readEntry } from "@/platform/entries/entries-api";
+import { readPage } from "@/platform/pages/pages-api";
 import {
   listenSpaceDirty,
   listenSpaceFileEvent,
@@ -9,17 +9,17 @@ import type {
   SpaceDirtyEvent,
   SpaceFileEvent,
   SpaceFileEventName,
-  WatchedSpaceEntry,
+  WatchedSpacePage,
 } from "../model/space-watch-events";
 
 type SpaceFileEventHandler = (event: { payload: SpaceFileEvent }) => void;
 type SpaceDirtyEventHandler = (event: { payload: SpaceDirtyEvent }) => void;
 
-export function readWatchedSpaceEntry(
+export function readWatchedSpacePage(
   spacePath: string,
-  entryPath: string,
-): Promise<WatchedSpaceEntry> {
-  return readEntry(spacePath, entryPath);
+  pagePath: string,
+): Promise<WatchedSpacePage> {
+  return readPage(spacePath, pagePath);
 }
 
 export function watchSpaceFiles(spacePath: string): Promise<void> {

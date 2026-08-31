@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import type { Entry } from "@/features/entry";
+import type { Page } from "@/features/page";
 import type { Column } from "@/features/properties";
 import {
   calendarCustomFields,
@@ -68,7 +68,7 @@ function dateColumn(patch: Partial<Column> = {}): Column {
   return { name: "Due", type: "date", ...patch };
 }
 
-function entry(path: string, extra: Record<string, unknown>): Entry {
+function entry(path: string, extra: Record<string, unknown>): Page {
   return {
     path,
     body: "",

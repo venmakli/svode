@@ -26,7 +26,7 @@ const props: ComponentProps<typeof SpaceRow> = {
     {
       name: "doc.md",
       path: "doc.md",
-      title: "Document",
+      title: "Page",
       icon: null,
       has_changes: false,
       has_schema: false,

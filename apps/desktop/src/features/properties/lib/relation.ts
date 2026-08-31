@@ -2,7 +2,7 @@ import type {
   Column,
   RelationContext,
   RelationScope,
-  ResolvedRelationEntry,
+  ResolvedRelationPage,
 } from "../model/types";
 
 export interface RelationSpaceLookup {
@@ -61,8 +61,8 @@ export function relationTargetSpaceId(
   return scope.id;
 }
 
-export function resolvedRelationPath(entry: ResolvedRelationEntry) {
-  return entry.filePath ?? "";
+export function resolvedRelationPath(page: ResolvedRelationPage) {
+  return page.filePath ?? "";
 }
 
 export function normalizeRelationValues(

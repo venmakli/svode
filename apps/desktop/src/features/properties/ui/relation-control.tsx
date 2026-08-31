@@ -18,7 +18,7 @@ import { normalizeRelationRoot, relationValueForPath } from "../lib/relation";
 import type { Column, RelationContext, RelationTarget } from "../model";
 import { useRelationTargets } from "../hooks/use-relation-targets";
 import { useRelationValues } from "../hooks/use-relation-values";
-import { RelationEntryIcon, RelationValue } from "./relation-value";
+import { RelationPageIcon, RelationValue } from "./relation-value";
 import * as m from "@/paraglide/messages.js";
 
 function deferStateUpdate(update: () => void) {
@@ -154,21 +154,21 @@ export function RelationControl({
                     : m.property_relation_empty()}
                 </CommandEmpty>
                 <CommandGroup heading={m.property_relation_targets()}>
-                  {targets.map((entry) => {
+                  {targets.map((page) => {
                     const targetValue = relationValueForPath(
                       relation,
-                      entry.path,
+                      page.path,
                     );
                     return (
                       <CommandItem
-                        key={entry.path}
-                        value={`${entry.title} ${entry.path}`}
+                        key={page.path}
+                        value={`${page.title} ${page.path}`}
                         disabled={selected.has(targetValue)}
-                        onSelect={() => addTarget(entry)}
+                        onSelect={() => addTarget(page)}
                       >
-                        <RelationEntryIcon icon={entry.icon} />
+                        <RelationPageIcon icon={page.icon} />
                         <span className="min-w-0 flex-1 truncate">
-                          {entry.title}
+                          {page.title}
                         </span>
                         <span className="max-w-28 truncate text-xs text-muted-foreground">
                           {targetValue}

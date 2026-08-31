@@ -1,4 +1,4 @@
-import type { Entry } from "@/features/entry";
+import type { Page } from "@/features/page";
 import type { ScopeSurfaceId } from "@/features/scope-surfaces";
 import type { CalendarScope } from "./calendar-types";
 
@@ -30,8 +30,8 @@ export type SettingsPane =
   | "sortEditor"
   | "group";
 
-export interface EntryPeekTarget {
-  entry: Entry;
+export interface PagePeekTarget {
+  page: Page;
   nested: boolean;
   spaceId?: string | null;
   spacePath?: string | null;

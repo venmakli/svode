@@ -1,5 +1,5 @@
 import type { CollectionView } from "@/features/collection/query/model";
-import type { Entry } from "@/features/entry";
+import type { Page } from "@/features/page";
 import type { CollectionSchema, Column } from "@/features/properties";
 import { isDateRangeValue } from "@/features/properties";
 import type { CalendarDateValue, CalendarScope } from "./calendar-types";
@@ -103,7 +103,7 @@ export function parseCalendarDateValue(
   };
 }
 
-export function hiddenNoDateCount(entries: Entry[], dateColumn: Column) {
+export function hiddenNoDateCount(entries: Page[], dateColumn: Column) {
   return entries.filter(
     (entry) => !parseCalendarDateValue(entry.meta.extra?.[dateColumn.name]),
   ).length;
@@ -138,7 +138,7 @@ export function dateValueFromSelection(
 }
 
 export function updateEntryDateValue(
-  entry: Entry,
+  entry: Page,
   field: string,
   value: unknown,
 ) {

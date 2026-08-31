@@ -3,11 +3,11 @@ import {
   queryCollectionEntries as queryCollectionEntriesDto,
 } from "@/platform/collections/collections-api";
 import type { QueryFilter, QuerySort } from "@/features/collection/query/model";
-import { normalizeEntries, type Entry } from "@/features/entry";
+import { normalizePages, type Page } from "@/features/page";
 import {
-  saveEntryTreeOrder,
-  saveEntryTreeOrderNames,
-} from "@/features/entry/entry-api";
+  savePageTreeOrder,
+  savePageTreeOrderNames,
+} from "@/features/page/page-api";
 
 export function queryCollectionEntries({
   spacePath,
@@ -31,7 +31,7 @@ export function queryCollectionEntries({
     sort,
     includeNested,
     projectPath: projectPath ?? null,
-  }).then(normalizeEntries);
+  }).then(normalizePages);
 }
 
 export function listEntriesForView({
@@ -53,7 +53,7 @@ export function listEntriesForView({
     viewName,
     includeNested,
     projectPath: projectPath ?? null,
-  }).then(normalizeEntries);
+  }).then(normalizePages);
 }
 
 export async function saveCollectionTreeOrder({
@@ -64,13 +64,13 @@ export async function saveCollectionTreeOrder({
 }: {
   spacePath: string;
   orderKey: string;
-  entries: Entry[];
+  entries: Page[];
   projectPath?: string | null;
 }) {
-  await saveEntryTreeOrder({
+  await savePageTreeOrder({
     spacePath,
     orderKey,
-    entries,
+    pages: entries,
     projectPath,
   });
 }
@@ -86,7 +86,7 @@ export async function saveCollectionTreeOrderNames({
   names: string[];
   projectPath?: string | null;
 }) {
-  await saveEntryTreeOrderNames({
+  await savePageTreeOrderNames({
     spacePath,
     orderKey,
     names,

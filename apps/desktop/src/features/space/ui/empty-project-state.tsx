@@ -9,13 +9,13 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "@/components/ui/empty";
-import { useRootDocumentActions } from "../hooks/use-root-document-actions";
+import { useRootContentActions } from "../hooks/use-root-content-actions";
 
 /**
- * Shown when a project has no documents and no children.
+ * Shown when a project has no Pages and no children.
  */
 export function EmptyProjectState() {
-  const { activeRootPath, handleNewPage } = useRootDocumentActions();
+  const { activeRootPath, handleNewPage } = useRootContentActions();
 
   return (
     <Empty className="h-full border-0">

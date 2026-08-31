@@ -1,4 +1,4 @@
-import type { Entry, EntryCover } from "@/features/entry";
+import type { Page, PageCover } from "@/features/page";
 import type { CollectionSchema } from "@/features/properties";
 import {
   resolveEntryImageSource,
@@ -12,7 +12,7 @@ export function resolveGalleryCover({
   schema,
   spacePath,
 }: {
-  entry: Entry;
+  entry: Page;
   cardCover: string[];
   schema: CollectionSchema;
   spacePath: string;
@@ -56,7 +56,7 @@ export function resolveGalleryCover({
 }
 
 function resolveSystemCover(
-  cover: EntryCover | null | undefined,
+  cover: PageCover | null | undefined,
   spacePath: string,
 ): GalleryResolvedCover | null {
   if (!cover) return null;

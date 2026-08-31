@@ -3,9 +3,9 @@ import { toast } from "sonner";
 import * as m from "@/paraglide/messages.js";
 import { createCollection } from "@/features/collection";
 import { useOpenScopeOwner } from "@/features/artifact";
-import { publishEntryFilenameWarnings } from "@/features/entry";
-import { useOpenEntryDocument } from "@/features/entry/selection";
-import { createTreeFolder } from "../api/tree-entry-actions";
+import { publishPageFilenameWarnings } from "@/features/page";
+import { useOpenPage } from "@/features/page/navigation";
+import { createTreeFolder } from "../api/content-tree-actions";
 import { useSpaceActions } from "./use-space-actions";
 
 export type ScopeTarget = { id: string; path: string };
@@ -26,29 +26,29 @@ export function useSpaceScopeActions({
   onBeforeNavigation,
   reloadTreeParent,
 }: UseSpaceScopeActionsInput) {
-  const { createEntry } = useSpaceActions();
-  const openDocument = useOpenEntryDocument();
+  const { createPage } = useSpaceActions();
+  const openPage = useOpenPage();
   const openScopeOwner = useOpenScopeOwner();
 
   const handleNewPage = useCallback(
     async (scope: ScopeTarget) => {
       if (onBeforeNavigation && !(await onBeforeNavigation())) return;
       try {
-        const entry = await createEntry(
+        const page = await createPage(
           scope.path,
           String(m.editor_untitled()),
         );
-        if (entry) {
-          publishEntryFilenameWarnings(entry.warnings);
+        if (page) {
+          publishPageFilenameWarnings(page.warnings);
           onActivateContent();
-          openDocument(entry.path, scope.id);
+          openPage(page.path, scope.id);
         }
       } catch (err) {
         console.error("Failed to create page:", err);
         toast.error(m.toast_error());
       }
     },
-    [createEntry, onActivateContent, onBeforeNavigation, openDocument],
+    [createPage, onActivateContent, onBeforeNavigation, openPage],
   );
 
   const handleNewFolder = useCallback(
@@ -77,17 +77,17 @@ export function useSpaceScopeActions({
       if (onBeforeNavigation && !(await onBeforeNavigation())) return;
 
       try {
-        const entry = await createCollection({
+        const page = await createCollection({
           spacePath: scope.path,
           title: m.editor_untitled(),
           projectPath: activeRootPath,
         });
-        publishEntryFilenameWarnings(entry.warnings);
+        publishPageFilenameWarnings(page.warnings);
         await reloadTreeParent(scope.id, null);
         onActivateContent();
         openScopeOwner({
           kind: "collection",
-          path: entry.path,
+          path: page.path,
           spaceId: scope.id,
         });
       } catch (err) {

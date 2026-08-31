@@ -3,9 +3,9 @@ import type {
   CompatibleReverseChoiceDto,
   RelationDriftRowDto,
   RelationDriftSummaryDto,
-  RelationTargetEntryDto,
+  RelationTargetPageDto,
   RelationTwoWayDiagnosticsDto,
-  ResolvedRelationEntryDto,
+  ResolvedRelationPageDto,
 } from "@/platform/properties/properties-api";
 import { relationValueForPath } from "../lib/relation";
 import type {
@@ -15,7 +15,7 @@ import type {
   RelationRepairStrategy,
   RelationTarget,
   RelationTwoWayDiagnostics,
-  ResolvedRelationEntry,
+  ResolvedRelationPage,
 } from "../model/types";
 
 export async function resolveRelationsBatch({
@@ -29,13 +29,13 @@ export async function resolveRelationsBatch({
   relation: string;
   values: string[];
 }) {
-  const entries = await propertiesPlatform.resolveRelationsBatch({
+  const pages = await propertiesPlatform.resolveRelationsBatch({
     spacePath,
     projectPath,
     relation,
     values,
   });
-  return entries.map((entry) => (entry ? toResolvedRelationEntry(entry) : null));
+  return pages.map((page) => (page ? toResolvedRelationPage(page) : null));
 }
 
 export async function queryRelationTargets({
@@ -50,14 +50,14 @@ export async function queryRelationTargets({
   query: string;
 }) {
   const trimmed = query.trim();
-  const entries = await propertiesPlatform.queryRelationTargetEntries({
+  const pages = await propertiesPlatform.queryRelationTargetPages({
     spacePath,
     projectPath,
     relation,
     titleQuery: trimmed || null,
     limit: 50,
   });
-  const targets = entries.map(toRelationTarget);
+  const targets = pages.map(toRelationTarget);
   if (!trimmed) return targets;
 
   const normalized = trimmed.toLowerCase();
@@ -70,7 +70,7 @@ export async function queryRelationTargets({
   );
   if (matchingTargets.length > 0) return matchingTargets;
 
-  const fallback = await propertiesPlatform.queryRelationTargetEntries({
+  const fallback = await propertiesPlatform.queryRelationTargetPages({
     spacePath,
     projectPath,
     relation,
@@ -135,23 +135,23 @@ export function repairTwoWayRelation({
   });
 }
 
-function toRelationTarget(entry: RelationTargetEntryDto): RelationTarget {
+function toRelationTarget(page: RelationTargetPageDto): RelationTarget {
   return {
-    path: entry.path,
-    title: entry.meta?.title || entry.path,
-    icon: entry.meta?.icon ?? null,
+    path: page.path,
+    title: page.meta?.title || page.path,
+    icon: page.meta?.icon ?? null,
   };
 }
 
-function toResolvedRelationEntry(
-  entry: ResolvedRelationEntryDto,
-): ResolvedRelationEntry {
+function toResolvedRelationPage(
+  page: ResolvedRelationPageDto,
+): ResolvedRelationPage {
   return {
-    title: entry.title,
-    icon: entry.icon ?? null,
-    filePath: entry.filePath ?? entry.file_path ?? "",
+    title: page.title,
+    icon: page.icon ?? null,
+    filePath: page.filePath ?? page.file_path ?? "",
     collectionRootPath:
-      entry.collectionRootPath ?? entry.collection_root_path ?? null,
+      page.collectionRootPath ?? page.collection_root_path ?? null,
   };
 }
 

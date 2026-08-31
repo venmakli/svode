@@ -70,8 +70,8 @@ export function useRelationTargets({
       relation,
       query,
     })
-      .then((entries) => {
-        if (!cancelled) setTargets(entries);
+      .then((pages) => {
+        if (!cancelled) setTargets(pages);
       })
       .catch(() => {
         if (!cancelled) setTargets([]);

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { Entry } from "@/features/entry";
+import type { Page } from "@/features/page";
 import { listEntriesForView } from "../api";
 
 export function useViewPlaceholderEntries({
@@ -17,7 +17,7 @@ export function useViewPlaceholderEntries({
   projectPath?: string | null;
   refreshToken: number;
 }) {
-  const [entries, setEntries] = useState<Entry[]>([]);
+  const [entries, setEntries] = useState<Page[]>([]);
 
   useEffect(() => {
     let cancelled = false;

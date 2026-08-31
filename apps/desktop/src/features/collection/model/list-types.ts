@@ -4,7 +4,7 @@ import type {
   QuerySort,
   UseViewQueryResult,
 } from "@/features/collection/query/model";
-import type { Entry } from "@/features/entry";
+import type { Page } from "@/features/page";
 import type { CollectionSchema } from "@/features/properties";
 
 export interface ListViewProps {
@@ -24,18 +24,18 @@ export interface ListViewProps {
   createFocusSignal?: number;
   createAsFolder?: boolean;
   onClearSearch?: () => void;
-  onOpenEntry: (entry: Entry) => void;
-  onOpenNestedPeek: (entry: Entry) => void;
-  onOpenNestedCollection: (entry: Entry) => void;
-  onOpenFullPage: (entry: Entry) => void;
+  onOpenEntry: (entry: Page) => void;
+  onOpenNestedPeek: (entry: Page) => void;
+  onOpenNestedCollection: (entry: Page) => void;
+  onOpenFullPage: (entry: Page) => void;
   onOpenPath: (path: string, spaceId?: string | null) => void;
-  onDuplicateEntry: (entry: Entry) => void;
-  onDeleteEntry: (entry: Entry) => void;
-  onCreateEntry: (title: string, asFolder: boolean) => Promise<Entry>;
+  onDuplicateEntry: (entry: Page) => void;
+  onDeleteEntry: (entry: Page) => void;
+  onCreateEntry: (title: string, asFolder: boolean) => Promise<Page>;
 }
 
 export interface ListRowModel {
-  entry: Entry;
+  entry: Page;
   level: number;
   expandable: boolean;
   expanded: boolean;

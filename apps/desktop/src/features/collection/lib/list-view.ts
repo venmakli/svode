@@ -1,5 +1,5 @@
 import type { CollectionView } from "@/features/collection/query/model";
-import type { Entry } from "@/features/entry";
+import type { Page } from "@/features/page";
 import type { CollectionSchema, Column } from "@/features/properties";
 import type { ListRowModel } from "../model/list-types";
 import {
@@ -68,14 +68,14 @@ export function flattenListRows({
   collectionPath,
   nestedCollectionPaths,
 }: {
-  parents: Entry[];
-  entries: Entry[];
+  parents: Page[];
+  entries: Page[];
   expanded: Set<string>;
   collectionPath: string;
   nestedCollectionPaths: Set<string>;
 }) {
   const rows: ListRowModel[] = [];
-  const append = (entry: Entry, level: number) => {
+  const append = (entry: Page, level: number) => {
     const folder = entryCollectionPath(entry);
     const nestedCollection = nestedCollectionPaths.has(folder);
     const children = entries.filter(

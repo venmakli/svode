@@ -1,4 +1,4 @@
-import type { Entry } from "@/features/entry";
+import type { Page } from "@/features/page";
 
 export function collectionEntriesTargetKey({
   collectionPath,
@@ -12,7 +12,7 @@ export function collectionEntriesTargetKey({
   return [spacePath, projectPath ?? "", collectionPath].join("\u0000");
 }
 
-export function mergeStableEntriesByPath(current: Entry[], next: Entry[]) {
+export function mergeStableEntriesByPath(current: Page[], next: Page[]) {
   if (current.length === 0) return next;
 
   const currentByPath = new Map(
@@ -42,7 +42,7 @@ export function sameStringSet(left: Set<string>, right: Set<string>) {
 }
 
 export function rebaseCollectionEntries(
-  entries: Entry[],
+  entries: Page[],
   previousCollectionPath: string,
   collectionPath: string,
 ) {
@@ -85,7 +85,7 @@ export function rebaseCollectionPath(
     : path;
 }
 
-function sameEntry(left: Entry, right: Entry) {
+function sameEntry(left: Page, right: Page) {
   return (
     left.path === right.path &&
     left.body === right.body &&

@@ -10,15 +10,15 @@ import { useSpace } from "@/features/space";
 import * as m from "@/paraglide/messages.js";
 import type { TreeNode } from "@/features/space";
 
-interface DocItem {
+interface PageItem {
   title: string;
   path: string;
   icon: string | null;
 }
 
 /** Flatten the Page tree into a flat mention list. */
-function flattenTree(nodes: TreeNode[]): DocItem[] {
-  const items: DocItem[] = [];
+function flattenTree(nodes: TreeNode[]): PageItem[] {
+  const items: PageItem[] = [];
   for (const node of nodes) {
     items.push({ title: node.title, path: node.path, icon: node.icon });
     if (node.children.length > 0) {
@@ -41,10 +41,10 @@ function fuzzyMatch(target: string, query: string): boolean {
 interface UseSlashMenuResult {
   isOpen: boolean;
   query: string;
-  items: DocItem[];
+  items: PageItem[];
   selectedIndex: number;
   handleInputChange: (value: string, cursorPos: number) => void;
-  handleSelect: (item: DocItem) => string;
+  handleSelect: (item: PageItem) => string;
   handleKeyDown: (e: KeyboardEvent<HTMLTextAreaElement>) => boolean;
   close: () => void;
 }
@@ -59,7 +59,7 @@ export function useSlashMenu(
 ): UseSlashMenuResult {
   const { activeSpaceId, fileTrees } = useSpace();
   const tree = activeSpaceId ? (fileTrees[activeSpaceId] ?? []) : [];
-  const allDocs = flattenTree(tree);
+  const allPages = flattenTree(tree);
 
   const [isOpen, setIsOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -103,14 +103,14 @@ export function useSlashMenu(
 
   // Filter docs by query
   const items = query
-    ? allDocs.filter(
+    ? allPages.filter(
         (d) => fuzzyMatch(d.title, query) || fuzzyMatch(d.path, query),
       )
-    : allDocs;
+    : allPages;
 
-  // Handle selection: remove /query from text (doc is added as chip separately)
+  // Handle selection: remove /query from text (page is added as chip separately)
   const handleSelect = useCallback(
-    (_item: DocItem): string => {
+    (_item: PageItem): string => {
       const before = currentValue.slice(0, triggerStart);
       const after = currentValue.slice(cursorPosition);
       const newValue = `${before}${after}`;
@@ -169,9 +169,9 @@ export function SlashMenuDropdown({
   selectedIndex,
   onSelect,
 }: {
-  items: DocItem[];
+  items: PageItem[];
   selectedIndex: number;
-  onSelect: (item: DocItem) => void;
+  onSelect: (item: PageItem) => void;
 }) {
   const listRef = useRef<HTMLDivElement>(null);
 

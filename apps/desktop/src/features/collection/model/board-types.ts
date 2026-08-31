@@ -4,7 +4,7 @@ import type {
   QuerySort,
   UseViewQueryResult,
 } from "@/features/collection/query/model";
-import type { Entry } from "@/features/entry";
+import type { Page } from "@/features/page";
 import type {
   ActorCandidate,
   CollectionSchema,
@@ -30,7 +30,7 @@ export interface BoardColumnGroup {
 }
 
 export interface BoardCardModel {
-  entry: Entry;
+  entry: Page;
   groupKey: string;
 }
 
@@ -51,13 +51,13 @@ export interface BoardViewProps {
   createFocusSignal?: number;
   createAsFolder?: boolean;
   onClearSearch?: () => void;
-  onOpenEntry: (entry: Entry) => void;
-  onOpenNestedPeek: (entry: Entry) => void;
-  onOpenNestedCollection: (entry: Entry) => void;
-  onOpenFullPage: (entry: Entry) => void;
+  onOpenEntry: (entry: Page) => void;
+  onOpenNestedPeek: (entry: Page) => void;
+  onOpenNestedCollection: (entry: Page) => void;
+  onOpenFullPage: (entry: Page) => void;
   onOpenPath: (path: string, spaceId?: string | null) => void;
-  onDuplicateEntry: (entry: Entry) => void;
-  onDeleteEntry: (entry: Entry) => void;
+  onDuplicateEntry: (entry: Page) => void;
+  onDeleteEntry: (entry: Page) => void;
   onSchemaChange: (schema: CollectionSchema) => void;
   onUpdateView: (
     viewName: string,
@@ -67,7 +67,7 @@ export interface BoardViewProps {
     title: string,
     asFolder: boolean,
     contextualDefaults?: Record<string, unknown>,
-  ) => Promise<Entry>;
+  ) => Promise<Page>;
 }
 
 export interface BoardCardProps {
@@ -84,12 +84,12 @@ export interface BoardCardProps {
   projectPath?: string | null;
   actors: ActorCandidate[];
   onRequestActors: (allTime: boolean) => Promise<ActorCandidate[]>;
-  onUpdateField?: (entry: Entry, column: Column, value: unknown) => void;
-  onOpen: (entry: Entry) => void;
-  onOpenNestedPeek: (entry: Entry) => void;
-  onOpenNestedCollection: (entry: Entry) => void;
-  onOpenFullPage: (entry: Entry) => void;
+  onUpdateField?: (entry: Page, column: Column, value: unknown) => void;
+  onOpen: (entry: Page) => void;
+  onOpenNestedPeek: (entry: Page) => void;
+  onOpenNestedCollection: (entry: Page) => void;
+  onOpenFullPage: (entry: Page) => void;
   onOpenPath: (path: string, spaceId?: string | null) => void;
-  onDuplicate: (entry: Entry) => void;
-  onDelete: (entry: Entry) => void;
+  onDuplicate: (entry: Page) => void;
+  onDelete: (entry: Page) => void;
 }

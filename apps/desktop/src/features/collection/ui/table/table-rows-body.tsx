@@ -11,7 +11,7 @@ import {
 import { flexRender, type Table as ReactTable } from "@tanstack/react-table";
 import { TableBody, TableCell } from "@/components/ui/table";
 import { cn } from "@/shared/lib/utils";
-import type { Entry } from "@/features/entry";
+import type { Page } from "@/features/page";
 import type {
   CollectionSchema,
   Column,
@@ -46,19 +46,19 @@ export function TableRowsBody({
 }: {
   table: ReactTable<CollectionTableRow>;
   sensors: ReturnType<typeof useSensors> | undefined;
-  sortedEntries: Entry[];
+  sortedEntries: Page[];
   hasSort: boolean;
   readOnly: boolean;
   actors: ActorCandidate[];
   spacePath: string;
   projectPath?: string | null;
-  onOpenEntry: (entry: Entry) => void;
-  onOpenNestedPeek: (entry: Entry) => void;
-  onOpenFullPage: (entry: Entry) => void;
+  onOpenEntry: (entry: Page) => void;
+  onOpenNestedPeek: (entry: Page) => void;
+  onOpenFullPage: (entry: Page) => void;
   onOpenPath: (path: string, spaceId?: string | null) => void;
   onOpenRelationTarget: (target: RelationOpenTarget) => void;
-  onDuplicateEntry: (entry: Entry) => void;
-  onDeleteEntry: (entry: Entry) => void;
+  onDuplicateEntry: (entry: Page) => void;
+  onDeleteEntry: (entry: Page) => void;
   onDragEnd: (event: DragEndEvent) => void;
   density?: "compact" | "default" | "spacious";
   wrapText?: boolean;

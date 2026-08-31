@@ -1,5 +1,5 @@
 import type { CollectionView } from "@/features/collection/query/model";
-import type { Entry } from "@/features/entry";
+import type { Page } from "@/features/page";
 import type {
   CollectionSchema,
   Column,
@@ -58,8 +58,8 @@ export function minColumnWidth(column?: Column) {
 }
 
 export function flattenRows(
-  parents: Entry[],
-  entries: Entry[],
+  parents: Page[],
+  entries: Page[],
   expanded: Set<string>,
   collectionPath: string,
   showNested: boolean,
@@ -67,7 +67,7 @@ export function flattenRows(
 ) {
   const result: CollectionTableRow[] = [];
   const append = (
-    entry: Entry,
+    entry: Page,
     level: number,
     child: boolean,
     nestedSchema?: CollectionSchema | null,
@@ -111,8 +111,8 @@ export function nestedPreviewFields(schema: CollectionSchema) {
 }
 
 export function isExpandable(
-  entry: Entry,
-  entries: Entry[],
+  entry: Page,
+  entries: Page[],
   showNested: boolean,
   nestedCollectionPaths: Set<string> = new Set(),
 ) {
@@ -127,7 +127,7 @@ export function isExpandable(
 }
 
 export function isNestedCollection(
-  entry: Entry,
+  entry: Page,
   nestedCollectionPaths: Set<string>,
 ) {
   return nestedCollectionPaths.has(entryCollectionPath(entry));

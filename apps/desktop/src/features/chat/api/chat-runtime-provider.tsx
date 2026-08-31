@@ -7,7 +7,7 @@ import {
 } from "@assistant-ui/react";
 import { invokeCommand as invoke } from "@/platform/native/invoke";
 import { listen, type UnlistenFn } from "@/platform/native/events";
-import { readEntry } from "@/features/entry/entry-api";
+import { readPage } from "@/features/page/page-api";
 import {
   useSpace,
   selectActiveSpacePath,
@@ -381,35 +381,38 @@ export function ChatRuntimeProvider({
       try {
         const {
           selectedModel: model,
-          docMentions,
-          clearDocMentions,
+          pageMentions,
+          clearPageMentions,
         } = useChatStatusStore.getState();
 
-        // Resolve doc-mention chips to file context
+        // Resolve page-mention chips to file context
         let messageWithContext = text;
-        if (docMentions.length > 0) {
-          const entries = await Promise.all(
-            docMentions.map(async (doc) => {
+        if (pageMentions.length > 0) {
+          const loadedPages = await Promise.all(
+            pageMentions.map(async (mention) => {
               try {
-                const entry = await readEntry({ spacePath, path: doc.path });
-                return { path: doc.path, content: entry.body };
+                const page = await readPage({
+                  spacePath,
+                  path: mention.path,
+                });
+                return { path: page.path, content: page.body };
               } catch {
                 return null;
               }
             }),
           );
-          const valid = entries.filter(
+          const valid = loadedPages.filter(
             (e): e is { path: string; content: string } => e !== null,
           );
           if (valid.length > 0) {
             const contextBlocks = valid.map((f) => {
-              const doc = docMentions.find((d) => d.path === f.path);
-              const title = doc?.title ?? "";
+              const mention = pageMentions.find((item) => item.path === f.path);
+              const title = mention?.title ?? "";
               return `<page path="${f.path}" title="${title}">\n${f.content}\n</page>`;
             });
             messageWithContext = contextBlocks.join("\n\n") + "\n\n" + text;
           }
-          clearDocMentions();
+          clearPageMentions();
         }
 
         await invoke("agent_send", {

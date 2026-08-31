@@ -1,5 +1,5 @@
 import { useCallback } from "react";
-import type { Entry } from "@/features/entry";
+import type { Page } from "@/features/page";
 import { useSpace, useSpaceTreeSync } from "@/features/space";
 import { saveCollectionTreeOrder } from "../api";
 
@@ -28,7 +28,7 @@ export function useCollectionTreeOrder({
   );
 
   const saveOrder = useCallback(
-    async (orderKey: string, entries: Entry[]) => {
+    async (orderKey: string, entries: Page[]) => {
       await saveCollectionTreeOrder({
         spacePath,
         orderKey,

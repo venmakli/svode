@@ -1,8 +1,6 @@
-import { retargetEntryFilenameWarnings, type Entry } from "@/features/entry";
-import { createEntry } from "@/features/entry/entry-api";
+import { retargetPageFilenameWarnings, type Page } from "@/features/page";
+import { createPage } from "@/features/page/page-api";
 import { convertToCollection } from "@/platform/collections/collections-api";
-
-export type CollectionEntry = Entry;
 
 interface CreateCollectionArgs {
   spacePath: string;
@@ -16,8 +14,8 @@ export async function createCollection({
   parentPath = null,
   title,
   projectPath,
-}: CreateCollectionArgs): Promise<CollectionEntry> {
-  const entry = await createEntry({
+}: CreateCollectionArgs): Promise<Page> {
+  const page = await createPage({
     spacePath,
     parentPath,
     title,
@@ -28,16 +26,16 @@ export async function createCollection({
 
   const conversion = await convertToCollection({
     spacePath,
-    path: entry.path,
+    path: page.path,
     projectPath: projectPath ?? null,
   });
 
   return {
-    ...entry,
-    path: conversion.entry.path,
-    warnings: retargetEntryFilenameWarnings(
-      entry.warnings,
-      conversion.entry.path,
+    ...page,
+    path: conversion.page.path,
+    warnings: retargetPageFilenameWarnings(
+      page.warnings,
+      conversion.page.path,
     ),
   };
 }

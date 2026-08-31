@@ -38,7 +38,7 @@ import { useRef, useState, useCallback, type FC } from "react";
 import { ModelSelector } from "@/components/assistant-ui/model-selector";
 // eslint-disable-next-line svode/import-boundaries -- Dormant assistant-ui thread still hosts Svode chat composer glue; remove when thread composition moves to features/chat.
 import {
-  DocMentionChips,
+  PageMentionChips,
   PermissionCard,
   SlashMenuDropdown,
   useChatStatusStore,
@@ -148,7 +148,7 @@ const Composer: FC = () => {
   const [cursorPos, setCursorPos] = useState(0);
   const [inputValue, setInputValue] = useState("");
 
-  const addDocMention = useChatStatusStore((s) => s.addDocMention);
+  const addPageMention = useChatStatusStore((s) => s.addPageMention);
   const slashMenu = useSlashMenu(inputValue, cursorPos);
 
   const handleInput = useCallback(() => {
@@ -184,12 +184,12 @@ const Composer: FC = () => {
       const newValue =
         baseValue.slice(0, insertPos) + item.title + baseValue.slice(insertPos);
 
-      addDocMention({ title: item.title, path: item.path, icon: item.icon });
+      addPageMention({ title: item.title, path: item.path, icon: item.icon });
       setTextareaValue(newValue);
     },
     [
       slashMenu,
-      addDocMention,
+      addPageMention,
       setTextareaValue,
       inputValue,
       cursorPos,
@@ -217,7 +217,7 @@ const Composer: FC = () => {
           className="flex w-full flex-col gap-2 rounded-(--composer-radius) border bg-background p-(--composer-padding) transition-shadow focus-within:border-ring/75 focus-within:ring-2 focus-within:ring-ring/20 data-[dragging=true]:border-ring data-[dragging=true]:border-dashed data-[dragging=true]:bg-accent/50"
         >
           <ComposerAttachments />
-          <DocMentionChips onRemoveText={handleChipRemove} />
+          <PageMentionChips onRemoveText={handleChipRemove} />
           <div className="relative">
             <ComposerPrimitive.Input
               ref={textareaRef}

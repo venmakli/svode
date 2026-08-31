@@ -7,9 +7,10 @@ import {
   requestAgentActorCatalogSave,
 } from "@/features/actors";
 import {
-  useActiveEntrySelection,
-  useCloseEntryDocument,
-} from "@/features/entry/selection";
+  useActiveContentPath,
+  useActiveContentSpaceId,
+  useCloseActiveContent,
+} from "@/features/artifact";
 import {
   commitSaveScopeAndMaybeSync,
   dirtyPathsForGitSaveScope,
@@ -39,14 +40,15 @@ import { useCollectionCoreActivePresentationId } from "@/features/collection/cor
 
 export function useKeyboardShortcuts() {
   const detailController = useCollectionDetailController();
-  const closeDocument = useCloseEntryDocument();
-  const { activeDocument, activeDocumentSpaceId } = useActiveEntrySelection();
+  const closeContent = useCloseActiveContent();
+  const activeContentPath = useActiveContentPath();
+  const activeContentSpaceId = useActiveContentSpaceId();
   const { toggleChatPanel, openAppSettings } = useShellStore();
   const toggleCommandPalette = useToggleCommandPalette();
   const activeRootPath = useSpace((s) => s.activeRootPath);
   const goHome = useSpace((s) => s.goHome);
   const activeScopeSpace = useSpace((s) => {
-    const scopeSpaceId = activeDocumentSpaceId ?? s.activeRootId;
+    const scopeSpaceId = activeContentSpaceId ?? s.activeRootId;
     if (!scopeSpaceId) return null;
     return (
       s.rootSpaces.find((space) => space.id === scopeSpaceId) ??
@@ -72,7 +74,7 @@ export function useKeyboardShortcuts() {
       const isMeta = e.metaKey || e.ctrlKey;
       const isSaveKey = isMeta && !e.altKey && e.key.toLowerCase() === "s";
 
-      if (isSaveKey && !activeDocument && activeScopeSpace) {
+      if (isSaveKey && !activeContentPath && activeScopeSpace) {
         e.preventDefault();
         const scope: GitSaveScope = { kind: "space", path: "", label: "space" };
         const saveRoute = resolveScopeSaveShortcutRoute(
@@ -131,7 +133,7 @@ export function useKeyboardShortcuts() {
       // Cmd+W — close document
       if (isMeta && e.key === "w") {
         e.preventDefault();
-        void runCollectionNavigation(detailController, closeDocument);
+        void runCollectionNavigation(detailController, closeContent);
       }
 
       // Cmd+Shift+O — go to home / all projects
@@ -147,7 +149,7 @@ export function useKeyboardShortcuts() {
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [
-    activeDocument,
+    activeContentPath,
     activeRootPath,
     activeScopeSpace,
     activeScopeReadOnly,
@@ -155,7 +157,7 @@ export function useKeyboardShortcuts() {
     actorsPresentationId,
     toggleCommandPalette,
     toggleChatPanel,
-    closeDocument,
+    closeContent,
     openAppSettings,
     goHome,
     navigate,

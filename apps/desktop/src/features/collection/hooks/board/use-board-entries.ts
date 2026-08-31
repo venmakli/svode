@@ -2,7 +2,7 @@ import { useCallback, useLayoutEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useStableViewQueryArgs } from "@/features/collection/query/hooks";
 import type { QueryFilter, QuerySort } from "@/features/collection/query/model";
-import type { Entry } from "@/features/entry";
+import type { Page } from "@/features/page";
 import { listCollectionInfos, queryCollectionEntries } from "../../api";
 import {
   collectionEntriesTargetKey,
@@ -30,8 +30,8 @@ export function useBoardEntries({
   sort: QuerySort[];
   spacePath: string;
 }) {
-  const [entries, setEntries] = useState<Entry[]>([]);
-  const [manualOrderEntries, setManualOrderEntries] = useState<Entry[]>([]);
+  const [entries, setEntries] = useState<Page[]>([]);
+  const [manualOrderEntries, setManualOrderEntries] = useState<Page[]>([]);
   const [nestedCollectionPaths, setNestedCollectionPaths] = useState<
     Set<string>
   >(new Set());
@@ -63,7 +63,7 @@ export function useBoardEntries({
     const retargeting =
       initialLoad && loadedTargetRef.current === previousTargetKey;
     if (retargeting && previousCollectionPath) {
-      const rebase = (current: Entry[]) =>
+      const rebase = (current: Page[]) =>
         rebaseCollectionEntries(
           current,
           previousCollectionPath,
@@ -94,7 +94,7 @@ export function useBoardEntries({
           projectPath,
         }),
         hasActiveSort
-          ? Promise.resolve<Entry[]>([])
+          ? Promise.resolve<Page[]>([])
           : queryCollectionEntries({
               spacePath,
               collectionPath,

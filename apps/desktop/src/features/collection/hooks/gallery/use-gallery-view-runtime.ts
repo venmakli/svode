@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { DragEndEvent } from "@dnd-kit/core";
-import type { Entry } from "@/features/entry";
+import type { Page } from "@/features/page";
 import type { GalleryViewProps } from "../../model/gallery-types";
 import type { GalleryNavigationKey } from "../../ui/gallery/types";
 import { titleFilter } from "../../lib/utils";
@@ -69,7 +69,7 @@ export function useGalleryViewRuntime({
   const coverFit = galleryCoverFit(view);
   const coverAspect = galleryCoverAspect(view);
   const resolveCover = useCallback(
-    (entry: Entry) =>
+    (entry: Page) =>
       resolveGalleryCover({
         entry,
         cardCover,
@@ -168,7 +168,7 @@ export function useGalleryViewRuntime({
   }, [createEntry, draftAsFolder, draftValue, focusCard]);
 
   const openCard = useCallback(
-    (entry: Entry, nestedCollection: boolean) => {
+    (entry: Page, nestedCollection: boolean) => {
       if (nestedCollection) onOpenNestedPeek(entry);
       else onOpenEntry(entry);
     },

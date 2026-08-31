@@ -1,7 +1,7 @@
 import type { TreeNode } from "./types";
 import { logTiming, nowMs } from "@/shared/lib/performance";
 import * as spaceActions from "../api/space-store-actions";
-import type { SpaceEntryDto } from "../api/space-store-actions";
+import type { SpacePageDto } from "../api/space-store-actions";
 import {
   applyReadmeMeta as applyReadmeMetaPatch,
   dirname,
@@ -52,14 +52,10 @@ export interface SpaceTreeDataState {
 }
 
 export interface SpaceTreeState extends SpaceTreeDataState {
-  createEntry: (
-    spacePath: string,
-    title: string,
-  ) => Promise<SpaceEntryDto | null>;
   createPage: (
     spacePath: string,
     title: string,
-  ) => Promise<SpaceEntryDto | null>;
+  ) => Promise<SpacePageDto | null>;
   // Full recursive repair fallback only. Ordinary UI mutations should use
   // parent-level reload/patch helpers below.
   refreshTree: (
@@ -83,7 +79,7 @@ export interface SpaceTreeState extends SpaceTreeDataState {
   ) => Promise<void>;
   reloadTreePathParent: (spaceId: string, path: string) => Promise<void>;
   reloadTreePathParents: (spaceId: string, paths: string[]) => Promise<void>;
-  patchEntryTreeMeta: (
+  patchPageTreeMeta: (
     spaceId: string,
     path: string,
     title: string,
@@ -120,7 +116,7 @@ export interface SpaceTreeState extends SpaceTreeDataState {
     action: SidebarTreeExpansionAction,
   ) => void;
   toggleExpanded: (spaceId: string, path: string) => void;
-  moveEntry: (
+  moveContentItem: (
     spaceId: string,
     from: string,
     toParent: string,
@@ -351,9 +347,9 @@ export function createSpaceTreeState<T extends SpaceTreeStoreState>(
   return {
     ...createEmptySpaceTreeState(),
 
-    createEntry: async (spacePath: string, title: string) => {
+    createPage: async (spacePath: string, title: string) => {
       try {
-        const entry = await spaceActions.createSpaceEntry({
+        const page = await spaceActions.createSpacePage({
           spacePath,
           parentPath: null,
           title,
@@ -367,15 +363,12 @@ export function createSpaceTreeState<T extends SpaceTreeStoreState>(
         if (ws) {
           await get().reloadTreeParent(ws.id, ROOT_TREE_PARENT);
         }
-        return entry;
+        return page;
       } catch (err) {
         console.error("Failed to create page:", err);
         return null;
       }
     },
-
-    createPage: async (spacePath: string, title: string) =>
-      get().createEntry(spacePath, title),
 
     // Full recursive repair fallback for manual/debug recovery paths. Do not
     // call from ordinary create/rename/delete/reorder flows.
@@ -397,7 +390,7 @@ export function createSpaceTreeState<T extends SpaceTreeStoreState>(
       let nodeCount = 0;
       set((state) => createTreeActivityPatch(state, id, hadCachedTree, true));
       try {
-        const tree = await spaceActions.listSpaceTreeEntries(spacePath);
+        const tree = await spaceActions.listSpaceContentTree(spacePath);
         nodeCount = countTreeNodes(tree);
         const loadedAt = Date.now();
         const childrenByParent = flattenChildrenByParentPath(tree);
@@ -682,7 +675,7 @@ export function createSpaceTreeState<T extends SpaceTreeStoreState>(
       );
     },
 
-    patchEntryTreeMeta: (spaceId, path, title, icon, description) => {
+    patchPageTreeMeta: (spaceId, path, title, icon, description) => {
       if (isReadmePath(path)) {
         get().applyReadmeMeta(spaceId, path, title, icon, description);
       } else {
@@ -1060,11 +1053,15 @@ export function createSpaceTreeState<T extends SpaceTreeStoreState>(
       }
     },
 
-    moveEntry: async (spaceId: string, from: string, toParent: string) => {
+    moveContentItem: async (
+      spaceId: string,
+      from: string,
+      toParent: string,
+    ) => {
       const spacePath = findSpacePath(get(), spaceId);
       if (!spacePath) throw new Error("Space not found");
       const oldParent = treeRowParentPath(from);
-      const newPath = await spaceActions.moveSpaceEntry({
+      const newPath = await spaceActions.moveSpaceTreeItem({
         spacePath,
         from,
         toParent,

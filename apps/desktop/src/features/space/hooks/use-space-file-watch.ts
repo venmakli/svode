@@ -3,7 +3,7 @@ import { useShallow } from "zustand/shallow";
 import {
   listenWatchedSpaceDirty,
   listenWatchedSpaceFileEvent,
-  readWatchedSpaceEntry,
+  readWatchedSpacePage,
   unwatchSpaceFiles,
   watchSpaceFiles,
 } from "../api/space-watch-actions";
@@ -124,8 +124,8 @@ export function useSpaceFileWatch() {
               eventName,
               getStore: () => useSpaceStore.getState(),
               payload,
-              readEntry: (entryPath) =>
-                readWatchedSpaceEntry(spacePath, entryPath),
+              readPage: (pagePath) =>
+                readWatchedSpacePage(spacePath, pagePath),
               repairTree: (parentPath) => queueRepair(spaceId, parentPath),
               spaceId,
             });

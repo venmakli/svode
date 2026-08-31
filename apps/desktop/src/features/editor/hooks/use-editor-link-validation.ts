@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 
-import { validateLinks } from "@/features/entry/entry-api";
+import { validatePageLinks } from "@/features/page/page-api";
 
 interface UseEditorLinkValidationInput {
   loadedDocumentKey: string | null;
@@ -22,7 +22,7 @@ export function useEditorLinkValidation({
 
     let cancelled = false;
     const timer = window.setTimeout(() => {
-      validateLinks({
+      validatePageLinks({
         spacePath,
         path: currentDocument,
         projectPath,

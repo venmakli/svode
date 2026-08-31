@@ -16,7 +16,7 @@ interface UseFileTreeItemNavigationInput {
   loadTreeChildren: LoadTreeChildren;
   onActivateContent?: () => void;
   onBeforeNavigation?: () => Promise<boolean>;
-  openDocument: (path: string, spaceId: string) => void;
+  openPage: (path: string, spaceId: string) => void;
   openCollectionOwner: (path: string, spaceId: string) => void;
   toggleExpanded: (spaceId: string, path: string) => void;
 }
@@ -31,11 +31,11 @@ export function useFileTreeItemNavigation({
   loadTreeChildren,
   onActivateContent,
   onBeforeNavigation,
-  openDocument,
+  openPage,
   openCollectionOwner,
   toggleExpanded,
 }: UseFileTreeItemNavigationInput) {
-  async function activateDocumentNode() {
+  async function activatePageNode() {
     if (onBeforeNavigation && !(await onBeforeNavigation())) {
       return;
     }
@@ -49,13 +49,13 @@ export function useFileTreeItemNavigation({
     if (node.has_schema) {
       openCollectionOwner(node.path, spaceId);
     } else {
-      openDocument(node.path, spaceId);
+      openPage(node.path, spaceId);
     }
   }
 
-  function handleDocumentClick() {
+  function handlePageClick() {
     if (node.has_schema) {
-      void activateDocumentNode();
+      void activatePageNode();
       return;
     }
     if (bareFolder) {
@@ -63,7 +63,7 @@ export function useFileTreeItemNavigation({
       toggleExpanded(spaceId, node.path);
       return;
     }
-    void activateDocumentNode();
+    void activatePageNode();
   }
 
   function handleNodeOpenChange(open: boolean) {
@@ -72,7 +72,7 @@ export function useFileTreeItemNavigation({
   }
 
   return {
-    handleDocumentClick,
+    handlePageClick,
     handleNodeOpenChange,
   };
 }

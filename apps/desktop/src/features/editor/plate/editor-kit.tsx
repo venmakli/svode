@@ -43,15 +43,15 @@ import { TocKit } from "@/components/editor/plugins/toc-kit";
 import { ToggleKit } from "@/components/editor/plugins/toggle-kit";
 import { MentionElement } from "@/components/ui/mention-node";
 import { ConflictPlugin } from "../conflict/conflict-plugin";
-import { DocLinkElement } from "../ui/doc-link-element";
-import { DocLinkInputElement } from "../ui/doc-link-input-element";
-import { DocLinkFloatingToolbar } from "../ui/doc-link-toolbar";
+import { PageLinkElement } from "../ui/page-link-element";
+import { PageLinkInputElement } from "../ui/page-link-input-element";
+import { PageLinkFloatingToolbar } from "../ui/page-link-toolbar";
 
 const ProductLinkKit = [
   LinkPlugin.configure({
     render: {
-      node: DocLinkElement,
-      afterEditable: () => <DocLinkFloatingToolbar />,
+      node: PageLinkElement,
+      afterEditable: () => <PageLinkFloatingToolbar />,
     },
   }),
 ];
@@ -62,7 +62,7 @@ const ProductMentionKit = [
       triggerPreviousCharPattern: /^$|^[\s"']$/,
     },
   }).withComponent(MentionElement),
-  MentionInputPlugin.withComponent(DocLinkInputElement),
+  MentionInputPlugin.withComponent(PageLinkInputElement),
 ];
 
 export const EditorKit = [

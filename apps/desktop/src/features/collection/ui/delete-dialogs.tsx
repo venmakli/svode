@@ -8,7 +8,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import type { Entry } from "@/features/entry";
+import type { Page } from "@/features/page";
 import * as m from "@/paraglide/messages.js";
 
 export function DeleteDialogs({
@@ -20,11 +20,11 @@ export function DeleteDialogs({
   onDeleteEntry,
 }: {
   viewOpen: boolean;
-  entry: Entry | null;
+  entry: Page | null;
   onViewOpenChange: (open: boolean) => void;
   onEntryOpenChange: (open: boolean) => void;
   onDeleteView: () => void;
-  onDeleteEntry: (entry: Entry) => void;
+  onDeleteEntry: (entry: Page) => void;
 }) {
   return (
     <>

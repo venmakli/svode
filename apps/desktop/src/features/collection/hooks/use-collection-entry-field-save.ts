@@ -1,6 +1,6 @@
 import { useCallback, type Dispatch, type SetStateAction } from "react";
-import { propertyFieldSavePolicy, type Entry } from "@/features/entry";
-import { useEntryFieldSave } from "@/features/entry/field-save";
+import { propertyFieldSavePolicy, type Page } from "@/features/page";
+import { usePageFieldSave } from "@/features/page/field-save";
 import type { Column } from "@/features/properties";
 
 export function useCollectionEntryFieldSave({
@@ -12,12 +12,12 @@ export function useCollectionEntryFieldSave({
 }: {
   spacePath: string;
   projectPath?: string | null;
-  setEntries: Dispatch<SetStateAction<Entry[]>>;
-  setManualOrderEntries?: Dispatch<SetStateAction<Entry[]>>;
+  setEntries: Dispatch<SetStateAction<Page[]>>;
+  setManualOrderEntries?: Dispatch<SetStateAction<Page[]>>;
   onCommitError?: (error: unknown) => void;
 }) {
-  const applyEntryUpdate = useCallback(
-    (entryPath: string, update: (entry: Entry) => Entry) => {
+  const applyPageUpdate = useCallback(
+    (entryPath: string, update: (entry: Page) => Page) => {
       setEntries((current) =>
         current.map((item) => (item.path === entryPath ? update(item) : item)),
       );
@@ -27,15 +27,15 @@ export function useCollectionEntryFieldSave({
     },
     [setEntries, setManualOrderEntries],
   );
-  const { save: saveEntryField } = useEntryFieldSave({
+  const { save: saveEntryField } = usePageFieldSave({
     spacePath,
     projectPath,
-    applyEntryUpdate,
+    applyPageUpdate,
   });
 
   const saveField = useCallback(
     async (
-      entry: Entry,
+      entry: Page,
       column: Column,
       value: unknown,
       options?: { flush?: boolean },
@@ -50,7 +50,7 @@ export function useCollectionEntryFieldSave({
 
   const commitField = useCallback(
     async (
-      entry: Entry,
+      entry: Page,
       column: Column,
       value: unknown,
       options?: { flush?: boolean },

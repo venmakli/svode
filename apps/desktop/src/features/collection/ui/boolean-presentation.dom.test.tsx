@@ -3,12 +3,12 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { JSDOM } from "jsdom";
 
-import type { Entry } from "@/features/entry";
+import type { Page } from "@/features/page";
 import type { Column } from "@/features/properties";
 import { BoardPropertyFlow } from "./board/board-property-flow";
 import { CardPropertyFlow } from "./card-property-flow";
 
-const entry: Entry = {
+const entry: Page = {
   body: "",
   meta: {
     created: "2026-08-22T00:00:00Z",

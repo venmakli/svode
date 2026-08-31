@@ -11,8 +11,8 @@ import type {
   EventDropArg,
 } from "@fullcalendar/core";
 import { toast } from "sonner";
-import { propertyFieldSavePolicy, type Entry } from "@/features/entry";
-import { documentNameConflictFromError } from "@/features/entry/entry-api";
+import { propertyFieldSavePolicy, type Page } from "@/features/page";
+import { pageNameConflictFromError } from "@/features/page/page-api";
 import type { Column } from "@/features/properties";
 import { getLocale } from "@/paraglide/runtime.js";
 import { useCollectionActors } from "../use-collection-actors";
@@ -226,7 +226,7 @@ export function useCalendarViewRuntime({
       onOpenPath,
       actors,
       onRequestActors: loadActors,
-      onUpdateField: (entry: Entry, column: Column, value: unknown) => {
+      onUpdateField: (entry: Page, column: Column, value: unknown) => {
         void updateField(entry, column.name, value, {
           policy: propertyFieldSavePolicy(column),
         });
@@ -395,7 +395,7 @@ export function useCalendarViewRuntime({
 }
 
 export function reportCalendarError(error: unknown) {
-  if (documentNameConflictFromError(error)) {
+  if (pageNameConflictFromError(error)) {
     handleEntryCreateError(error);
     return;
   }

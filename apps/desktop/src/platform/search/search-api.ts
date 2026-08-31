@@ -14,7 +14,7 @@ export interface SearchProjectEntriesByTitleInputDto extends Record<
 export interface SearchProjectEntriesInputDto extends Record<string, unknown> {
   projectPath: string;
   query: string;
-  entryType?: string | null;
+  itemType?: string | null;
   tableName?: string | null;
   limit?: number;
   scope?: SearchScopeDto;
@@ -38,7 +38,11 @@ export function searchProjectEntriesByTitle(
 export function searchProjectEntries(
   input: SearchProjectEntriesInputDto,
 ): Promise<SearchResponseDto> {
-  return invokeCommand<SearchResponseDto>("search_project_entries", input);
+  const { itemType, ...rest } = input;
+  return invokeCommand<SearchResponseDto>("search_project_entries", {
+    ...rest,
+    entryType: itemType,
+  });
 }
 
 export function recentProjectEntries(

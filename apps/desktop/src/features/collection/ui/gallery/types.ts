@@ -1,4 +1,4 @@
-import type { Entry } from "@/features/entry";
+import type { Page } from "@/features/page";
 import type { ActorCandidate, Column } from "@/features/properties";
 import type { GalleryResolvedCover } from "../../model/gallery-cover-types";
 
@@ -13,7 +13,7 @@ export type GalleryNavigationKey =
   | "Home";
 
 export interface GalleryCardProps {
-  entry: Entry;
+  entry: Page;
   cover: GalleryResolvedCover | null;
   cardFields: string[];
   metaColumns: Column[];
@@ -28,13 +28,13 @@ export interface GalleryCardProps {
   readOnly: boolean;
   focused: boolean;
   onRequestActors: (allTime: boolean) => Promise<ActorCandidate[]>;
-  onUpdateField?: (entry: Entry, column: Column, value: unknown) => void;
-  onOpen: (entry: Entry, nestedCollection: boolean) => void;
-  onOpenFullPage: (entry: Entry) => void;
-  onOpenNestedCollection: (entry: Entry) => void;
+  onUpdateField?: (entry: Page, column: Column, value: unknown) => void;
+  onOpen: (entry: Page, nestedCollection: boolean) => void;
+  onOpenFullPage: (entry: Page) => void;
+  onOpenNestedCollection: (entry: Page) => void;
   onOpenPath: (path: string, spaceId?: string | null) => void;
-  onDuplicate: (entry: Entry) => void;
-  onDelete: (entry: Entry) => void;
+  onDuplicate: (entry: Page) => void;
+  onDelete: (entry: Page) => void;
   onFocusCard: (path: string) => void;
   onKeyboardMove: (path: string, key: GalleryNavigationKey) => void;
   cardRef?: (element: HTMLElement | null) => void;

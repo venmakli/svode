@@ -11,7 +11,7 @@ import type {
   CollectionSchema,
   Column,
   ColumnPatch,
-  EntrySchemaResult,
+  PageSchemaResult,
   PropertyOption,
   PropertyType,
 } from "../model/types";
@@ -32,11 +32,11 @@ export async function listPropertyActors(spacePath: string, allTime = false) {
   return actors.map(toActorCandidate);
 }
 
-export async function getEntrySchema(input: {
+export async function getPageSchema(input: {
   spacePath: string;
   filePath: string;
-}): Promise<EntrySchemaResult | null> {
-  const result = await propertiesPlatform.getEntrySchema(input);
+}): Promise<PageSchemaResult | null> {
+  const result = await propertiesPlatform.getPageSchema(input);
   return result
     ? {
         schema: normalizeSchema(result.schema),
@@ -56,13 +56,13 @@ export function listCollectionOptions(spacePath: string) {
   return propertiesPlatform.listCollections(spacePath);
 }
 
-export async function assignEntryUniqueId(input: {
+export async function assignPageUniqueId(input: {
   spacePath: string;
   filePath: string;
   projectPath?: string | null;
 }) {
-  const entry = await propertiesPlatform.assignUniqueId(input);
-  return entry.meta?.extra ?? {};
+  const page = await propertiesPlatform.assignUniqueId(input);
+  return page.meta?.extra ?? {};
 }
 
 export async function normalizeUniqueIdCounter(

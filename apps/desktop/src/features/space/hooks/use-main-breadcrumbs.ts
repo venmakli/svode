@@ -1,8 +1,9 @@
 import {
-  useActiveEntrySelection,
-  useOpenEntryDocument,
-} from "@/features/entry/selection";
-import { useOpenScopeOwner } from "@/features/artifact";
+  useActiveContentPath,
+  useActiveContentSpaceId,
+  useOpenScopeOwner,
+} from "@/features/artifact";
+import { useOpenPage } from "@/features/page/navigation";
 import {
   buildSpaceBreadcrumbSegments,
   type SpaceBreadcrumbSegment,
@@ -10,8 +11,9 @@ import {
 import { useSpaceStore } from "../model";
 
 export function useMainBreadcrumbs() {
-  const { activeDocument, activeDocumentSpaceId } = useActiveEntrySelection();
-  const openDocument = useOpenEntryDocument();
+  const activeContentPath = useActiveContentPath();
+  const activeContentSpaceId = useActiveContentSpaceId();
+  const openPage = useOpenPage();
   const openScopeOwner = useOpenScopeOwner();
   const { activeRootId, fileTrees, openSpace, spaces } = useSpaceStore();
   const openBreadcrumb = (
@@ -25,48 +27,48 @@ export function useMainBreadcrumbs() {
         spaceId: targetSpaceId ?? null,
       });
     } else {
-      openDocument(segment.path, targetSpaceId);
+      openPage(segment.path, targetSpaceId);
     }
   };
 
-  if (!activeDocument) {
+  if (!activeContentPath) {
     const selectedSpace =
-      activeDocumentSpaceId && activeDocumentSpaceId !== activeRootId
-        ? spaces.find((space) => space.id === activeDocumentSpaceId)
+      activeContentSpaceId && activeContentSpaceId !== activeRootId
+        ? spaces.find((space) => space.id === activeContentSpaceId)
         : null;
 
     return {
-      activeDocument,
+      activeContentPath,
       openBreadcrumb,
-      openDocument,
+      openPage,
       openSpace,
       selectedSpace,
       segments: [],
-      treeId: activeDocumentSpaceId,
+      treeId: activeContentSpaceId,
       workspaceName: "",
       workspaces: spaces,
     };
   }
 
-  const activeWorkspace = activeDocumentSpaceId
-    ? spaces.find((space) => space.id === activeDocumentSpaceId)
+  const activeWorkspace = activeContentSpaceId
+    ? spaces.find((space) => space.id === activeContentSpaceId)
     : null;
-  const showWorkspaceName = activeDocumentSpaceId !== activeRootId;
+  const showWorkspaceName = activeContentSpaceId !== activeRootId;
   const workspaceName =
     activeWorkspace && showWorkspaceName
       ? `${activeWorkspace.icon} ${activeWorkspace.name}`
       : "";
 
-  const treeId = activeDocumentSpaceId;
+  const treeId = activeContentSpaceId;
   const tree = treeId ? (fileTrees[treeId] ?? []) : [];
 
   return {
-    activeDocument,
+    activeContentPath,
     openBreadcrumb,
-    openDocument,
+    openPage,
     openSpace,
     selectedSpace: null,
-    segments: buildSpaceBreadcrumbSegments(activeDocument, tree),
+    segments: buildSpaceBreadcrumbSegments(activeContentPath, tree),
     treeId,
     workspaceName,
     workspaces: spaces,

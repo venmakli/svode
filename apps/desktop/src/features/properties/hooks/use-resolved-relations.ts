@@ -8,7 +8,7 @@ import {
 import type {
   RelationContext,
   RelationScope,
-  ResolvedRelationEntry,
+  ResolvedRelationPage,
 } from "../model";
 
 function deferStateUpdate(update: () => void) {
@@ -28,7 +28,7 @@ export function useResolvedRelations(
   values: string[],
 ) {
   const [resolved, setResolved] = useState<
-    Map<string, ResolvedRelationEntry | null>
+    Map<string, ResolvedRelationPage | null>
   >(() => new Map());
   const activeRootPath = useSpace((state) => state.activeRootPath);
   const spaces = useSpace((state) => state.spaces);

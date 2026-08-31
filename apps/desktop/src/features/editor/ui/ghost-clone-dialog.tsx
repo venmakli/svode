@@ -30,18 +30,18 @@ export function GhostCloneDialog({
       <AlertDialogContent>
         <AlertDialogHeader>
           <AlertDialogTitle>
-            {m.doc_link_clone_missing_title()}
+            {m.page_link_clone_missing_title()}
           </AlertDialogTitle>
           <AlertDialogDescription>
-            {m.doc_link_clone_missing_description({ name: spaceName })}
+            {m.page_link_clone_missing_description({ name: spaceName })}
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel disabled={cloning}>
-            {m.doc_link_clone_missing_cancel()}
+            {m.page_link_clone_missing_cancel()}
           </AlertDialogCancel>
           <AlertDialogAction disabled={cloning} onClick={onConfirm}>
-            {m.doc_link_clone_missing_action()}
+            {m.page_link_clone_missing_action()}
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>

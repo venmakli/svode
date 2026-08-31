@@ -216,7 +216,7 @@ export function buildCrossParentMovePlan(
   };
 }
 
-export function movedDocumentPath(
+export function movedPagePath(
   plan: CrossParentMovePlan,
   newPath: string,
 ): string {

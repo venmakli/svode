@@ -3,7 +3,7 @@ import type {
   QueryFilter,
   QuerySort,
 } from "@/features/collection/query/model";
-import type { Entry } from "@/features/entry";
+import type { Page } from "@/features/page";
 import type {
   CollectionSchema,
   Column,
@@ -27,7 +27,7 @@ export interface CalendarDateValue {
 }
 
 export interface CalendarEventModel {
-  entry: Entry;
+  entry: Page;
   value: CalendarDateValue;
   dateField: string;
   cardFields: string[];
@@ -53,13 +53,13 @@ export interface CalendarViewProps {
   calendarScope?: CalendarScope | null;
   createFocusSignal?: number;
   createAsFolder?: boolean;
-  onOpenEntry: (entry: Entry) => void;
-  onOpenNestedPeek: (entry: Entry) => void;
-  onOpenNestedCollection: (entry: Entry) => void;
-  onOpenFullPage: (entry: Entry) => void;
+  onOpenEntry: (entry: Page) => void;
+  onOpenNestedPeek: (entry: Page) => void;
+  onOpenNestedCollection: (entry: Page) => void;
+  onOpenFullPage: (entry: Page) => void;
   onOpenPath: (path: string, spaceId?: string | null) => void;
-  onDuplicateEntry: (entry: Entry) => void;
-  onDeleteEntry: (entry: Entry) => void;
+  onDuplicateEntry: (entry: Page) => void;
+  onDeleteEntry: (entry: Page) => void;
   onSchemaChange: (schema: CollectionSchema) => void;
   onUpdateView: (
     viewName: string,
@@ -70,7 +70,7 @@ export interface CalendarViewProps {
     title: string,
     asFolder: boolean,
     contextualDefaults?: Record<string, unknown>,
-  ) => Promise<Entry>;
+  ) => Promise<Page>;
 }
 
 export interface CalendarPropertyContext {
@@ -79,7 +79,7 @@ export interface CalendarPropertyContext {
   onOpenPath: (path: string, spaceId?: string | null) => void;
   actors: ActorCandidate[];
   onRequestActors: (allTime: boolean) => Promise<ActorCandidate[]>;
-  onUpdateField: (entry: Entry, column: Column, value: unknown) => void;
+  onUpdateField: (entry: Page, column: Column, value: unknown) => void;
 }
 
 export interface CalendarCreateDraft {

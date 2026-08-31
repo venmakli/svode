@@ -60,7 +60,9 @@ export function inferArtifactSourceShape(path: string): ArtifactSourceShape {
     : "file";
 }
 
-function selectionSpaceId(selection: ActiveContentSelection | null) {
+export function selectedContentSpaceId(
+  selection: ActiveContentSelection | null,
+) {
   return selection?.kind === "artifact"
     ? selection.request.intent.target.spaceId
     : (selection?.request.owner.spaceId ?? null);
@@ -92,7 +94,7 @@ function ownerPath(owner: ScopeOwnerTarget): string | null {
   return owner.kind === "collection" ? owner.path : null;
 }
 
-function selectionPath(
+export function selectedContentPath(
   selection: ActiveContentSelection | null,
 ): string | null {
   return selection?.kind === "artifact"
@@ -146,7 +148,7 @@ export const useArtifactSelectionStore = create<ArtifactSelectionState>(
       const target: ArtifactOpenTarget = {
         ...input,
         path: normalizeArtifactTargetPath(input.path),
-        spaceId: input.spaceId ?? selectionSpaceId(state.selection),
+        spaceId: input.spaceId ?? selectedContentSpaceId(state.selection),
       };
       if (
         state.selection?.kind === "artifact" &&
@@ -214,10 +216,10 @@ export const useArtifactSelectionStore = create<ArtifactSelectionState>(
     retarget: (fromPath, inputPath, spaceId) =>
       set((state) => {
         const path = normalizeArtifactTargetPath(inputPath);
-        const targetSpaceId = spaceId ?? selectionSpaceId(state.selection);
+        const targetSpaceId = spaceId ?? selectedContentSpaceId(state.selection);
         if (
-          selectionPath(state.selection) !== fromPath ||
-          selectionSpaceId(state.selection) !== targetSpaceId ||
+          selectedContentPath(state.selection) !== fromPath ||
+          selectedContentSpaceId(state.selection) !== targetSpaceId ||
           fromPath === path ||
           !state.selection
         ) {

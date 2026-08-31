@@ -7,10 +7,10 @@ import {
 import { useStableViewQueryArgs } from "@/features/collection/query/hooks";
 import type { QueryFilter, QuerySort } from "@/features/collection/query/model";
 import {
-  useEntryFieldSave,
-  type EntryFieldSavePolicy,
-} from "@/features/entry/field-save";
-import type { Entry } from "@/features/entry";
+  usePageFieldSave,
+  type PageFieldSavePolicy,
+} from "@/features/page/field-save";
+import type { Page } from "@/features/page";
 import {
   collectionEntriesTargetKey,
   mergeStableEntriesByPath,
@@ -37,7 +37,7 @@ export function useCalendarEntries({
   sort: QuerySort[];
   spacePath: string;
 }) {
-  const [entries, setEntries] = useState<Entry[]>([]);
+  const [entries, setEntries] = useState<Page[]>([]);
   const [nestedCollectionPaths, setNestedCollectionPaths] = useState<
     Set<string>
   >(new Set());
@@ -129,26 +129,26 @@ export function useCalendarEntries({
     void loadEntries();
   }, [loadEntries, refreshToken]);
 
-  const applyEntryUpdate = useCallback(
-    (entryPath: string, update: (entry: Entry) => Entry) => {
+  const applyPageUpdate = useCallback(
+    (entryPath: string, update: (entry: Page) => Page) => {
       setEntries((current) =>
         current.map((item) => (item.path === entryPath ? update(item) : item)),
       );
     },
     [],
   );
-  const { save: saveEntryField } = useEntryFieldSave({
+  const { save: saveEntryField } = usePageFieldSave({
     spacePath,
     projectPath,
-    applyEntryUpdate,
+    applyPageUpdate,
   });
 
   const updateField = useCallback(
     async (
-      entry: Entry,
+      entry: Page,
       field: string,
       value: unknown,
-      options?: { revert?: () => void; policy?: EntryFieldSavePolicy },
+      options?: { revert?: () => void; policy?: PageFieldSavePolicy },
     ) => {
       try {
         await saveEntryField(entry, field, value, {

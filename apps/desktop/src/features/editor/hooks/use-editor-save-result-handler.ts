@@ -1,7 +1,7 @@
 import { useCallback } from "react";
 import type { PlateEditor } from "platejs/react";
 
-import type { WriteResult } from "@/features/entry";
+import type { WritePageResult } from "@/features/page";
 import { getSpaceSnapshot, getSpaceTreeSyncSnapshot } from "@/features/space";
 import * as m from "@/paraglide/messages.js";
 
@@ -24,7 +24,7 @@ interface UseEditorSaveResultHandlerInput {
   descriptionRef: MutableRef<string>;
   editor: PlateEditor | null;
   iconRef: MutableRef<string | null>;
-  patchEntryTreeMeta: (
+  patchPageTreeMeta: (
     spaceId: string,
     path: string,
     title: string,
@@ -45,7 +45,7 @@ export function useEditorSaveResultHandler({
   descriptionRef,
   editor,
   iconRef,
-  patchEntryTreeMeta,
+  patchPageTreeMeta,
   reloadTreePathParents,
   removeTreePath,
   setCurrentDocument,
@@ -62,7 +62,7 @@ export function useEditorSaveResultHandler({
   );
 
   const handleModifiedSources = useCallback(
-    (result: WriteResult) => {
+    (result: WritePageResult) => {
       const sources =
         result.modifiedSources && result.modifiedSources.length > 0
           ? result.modifiedSources
@@ -116,7 +116,7 @@ export function useEditorSaveResultHandler({
   const patchCurrentTreeMeta = useCallback(
     (path: string) => {
       if (!activeWsId) return;
-      patchEntryTreeMeta(
+      patchPageTreeMeta(
         activeWsId,
         path,
         titleRef.current || m.editor_untitled(),
@@ -124,12 +124,12 @@ export function useEditorSaveResultHandler({
         descriptionRef.current || null,
       );
     },
-    [activeWsId, descriptionRef, iconRef, patchEntryTreeMeta, titleRef],
+    [activeWsId, descriptionRef, iconRef, patchPageTreeMeta, titleRef],
   );
 
   const applyAutoSaveResult = useCallback(
     (
-      result: WriteResult | null,
+      result: WritePageResult | null,
       path: string | null,
       cacheKey: string | null,
     ) => {
@@ -145,7 +145,7 @@ export function useEditorSaveResultHandler({
 
   const applySavedDocumentResult = useCallback(
     (
-      result: WriteResult,
+      result: WritePageResult,
       currentDocument: string,
       options: { cacheCurrentDocument?: boolean } = {},
     ): string => {

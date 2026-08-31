@@ -8,9 +8,9 @@ import {
   ContextMenuItem,
 } from "@/components/ui/context-menu";
 import { cn } from "@/shared/lib/utils";
-import { documentNameConflictDisplayPath } from "@/features/entry/entry-api";
+import { pageNameConflictDisplayPath } from "@/features/page/page-api";
 import { CardPropertyFlow } from "../card-property-flow";
-import { EntryTitleIcon } from "../entry-title-icon";
+import { PageTitleIcon } from "../page-title-icon";
 import { CollectionPresentationGalleryCard } from "../presentation-gallery-card";
 import { GalleryCover } from "./gallery-cover";
 import type { GalleryCardProps } from "./types";
@@ -86,7 +86,7 @@ function GalleryCardContent({
   const showTitle = cardFields.includes("title");
   const showIcon = cardFields.includes("icon");
   const showDescription = cardFields.includes("description");
-  const conflictPath = documentNameConflictDisplayPath(entry);
+  const conflictPath = pageNameConflictDisplayPath(entry);
 
   return (
     <CollectionPresentationGalleryCard
@@ -106,7 +106,7 @@ function GalleryCardContent({
         />
       }
       overlays={
-        <EntryKindMarker
+        <PageKindMarker
           folder={folder}
           nestedCollection={nestedCollection}
           onOpenNested={() => onOpenNestedCollection(entry)}
@@ -114,7 +114,7 @@ function GalleryCardContent({
       }
       leading={
         showIcon ? (
-          <EntryTitleIcon
+          <PageTitleIcon
             icon={entry.meta.icon}
             className="h-5 min-w-4 text-sm leading-5"
           />
@@ -175,7 +175,7 @@ function GalleryCardContent({
   );
 }
 
-function EntryKindMarker({
+function PageKindMarker({
   folder,
   nestedCollection,
   onOpenNested,

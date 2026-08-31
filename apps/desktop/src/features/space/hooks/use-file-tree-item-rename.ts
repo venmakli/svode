@@ -12,17 +12,17 @@ import {
   markEditorFilesStale,
   suppressEditorFileEvents,
 } from "@/features/editor/file-tree-sync";
-import { publishEntryTitleOutcome } from "@/features/entry/selection";
-import { normalizeEntry } from "@/features/entry";
+import { publishPageTitleOutcome } from "@/features/page/navigation";
+import { normalizePage } from "@/features/page";
 import {
-  renameTreeEntryPath,
-  updateTreeEntryTitle,
-} from "../api/tree-entry-actions";
+  renameTreeItemPath,
+  updateTreePageTitle,
+} from "../api/content-tree-actions";
 import type { SpaceInfo } from "../model";
 import {
-  documentNameConflictFromError,
-  findDocumentNameConflictPath,
-} from "@/features/entry/entry-api";
+  pageNameConflictFromError,
+  findPageNameConflictPath,
+} from "@/features/page/page-api";
 
 interface UseFileTreeItemRenameInput {
   node: TreeNode;
@@ -34,7 +34,7 @@ interface UseFileTreeItemRenameInput {
     spaceId: string,
     parentPaths: Array<string | null | undefined>,
   ) => Promise<void>;
-  patchEntryTreeMeta: (
+  patchPageTreeMeta: (
     spaceId: string,
     path: string,
     title: string,
@@ -52,7 +52,7 @@ export function useFileTreeItemRename({
   bareFolder,
   activeRootPath,
   reloadTreeParents,
-  patchEntryTreeMeta,
+  patchPageTreeMeta,
   removeTreePath,
   siblingRows,
 }: UseFileTreeItemRenameInput) {
@@ -86,7 +86,7 @@ export function useFileTreeItemRename({
     }
 
     if (!bareFolder) {
-      const conflictPath = findDocumentNameConflictPath(
+      const conflictPath = findPageNameConflictPath(
         newName,
         siblingRows,
         node.path,
@@ -108,7 +108,7 @@ export function useFileTreeItemRename({
           ? node.path.substring(0, node.path.lastIndexOf("/"))
           : "";
         const newPath = parent ? `${parent}/${newName}` : newName;
-        const modifiedFiles = await renameTreeEntryPath({
+        const modifiedFiles = await renameTreeItemPath({
           spacePath: space.path,
           from: node.path,
           to: newPath,
@@ -121,35 +121,35 @@ export function useFileTreeItemRename({
         removeTreePath(spaceId, node.path);
         await reloadTreeParents(spaceId, [parent]);
       } else {
-        const entry = normalizeEntry(
-          await updateTreeEntryTitle({
+        const page = normalizePage(
+          await updateTreePageTitle({
             spacePath: space.path,
             filePath: node.path,
             title: newName,
             projectPath: activeRootPath,
           }),
         );
-        if (entry.path !== node.path) {
-          suppressEditorFileEvents(space.path, [node.path, entry.path]);
+        if (page.path !== node.path) {
+          suppressEditorFileEvents(space.path, [node.path, page.path]);
         }
-        publishEntryTitleOutcome(space.path, node.path, entry);
-        patchEntryTreeMeta(
+        publishPageTitleOutcome(space.path, node.path, page);
+        patchPageTreeMeta(
           spaceId,
           node.path,
-          entry.meta.title,
-          entry.meta.icon,
-          entry.meta.description ?? null,
+          page.meta.title,
+          page.meta.icon,
+          page.meta.description ?? null,
         );
         const parent = node.path.toLowerCase().endsWith("/readme.md")
           ? node.path.split("/").slice(0, -2).join("/")
           : node.path.split("/").slice(0, -1).join("/");
-        const nextParent = entry.path.toLowerCase().endsWith("/readme.md")
-          ? entry.path.split("/").slice(0, -2).join("/")
-          : entry.path.split("/").slice(0, -1).join("/");
+        const nextParent = page.path.toLowerCase().endsWith("/readme.md")
+          ? page.path.split("/").slice(0, -2).join("/")
+          : page.path.split("/").slice(0, -1).join("/");
         await reloadTreeParents(spaceId, [parent, nextParent]);
       }
     } catch (err) {
-      const conflict = documentNameConflictFromError(err);
+      const conflict = pageNameConflictFromError(err);
       if (conflict) {
         setRenameConflictPath(conflict.conflicts[0]?.path ?? null);
         requestAnimationFrame(() => {

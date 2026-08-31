@@ -1,13 +1,13 @@
 import { useCallback } from "react";
 import type { TreeNode } from "../model/types";
-import { nestTreeEntry, unnestTreeEntry } from "../api/tree-entry-actions";
+import { nestTreePage, unnestTreePage } from "../api/content-tree-actions";
 import {
   buildCrossParentMovePlan,
   buildCrossParentMoveOrder,
   buildNestConversionOrder,
   buildSameParentReorderOrder,
   getChildNestConversionPlan,
-  movedDocumentPath,
+  movedPagePath,
   prepareTreeDrag,
   readmeFolderPath,
   type CrossParentMovePlan,
@@ -48,13 +48,13 @@ async function convertProjectedChildTarget(input: {
   if (!nestPlan) return;
 
   input.editorSync.suppressPaths([nestPlan.targetPath, input.fromPath]);
-  const newNestPath = await nestTreeEntry({
+  const newNestPath = await nestTreePage({
     spacePath: input.space.path,
     path: nestPlan.targetPath,
     projectPath: useSpaceStore.getState().activeRootPath,
   });
   input.editorSync.suppressPaths([newNestPath]);
-  input.editorSync.reopenInitialDocument(nestPlan.targetPath, newNestPath);
+  input.editorSync.reopenInitialPage(nestPlan.targetPath, newNestPath);
 
   const order = buildNestConversionOrder(input.tree, nestPlan);
   if (order) {
@@ -83,15 +83,15 @@ async function maybeUnnestEmptyOldParent(input: {
   if (!oldParentNode || oldParentNode.children.length > 1) return;
 
   try {
-    const currentActive = input.editorSync.activeDocument();
+    const currentActive = input.editorSync.activeContentPath();
     input.editorSync.suppressPaths([input.movePlan.oldParentReadme]);
-    const unnestPath = await unnestTreeEntry({
+    const unnestPath = await unnestTreePage({
       spacePath: input.space.path,
       path: input.movePlan.oldParentReadme,
       projectPath: useSpaceStore.getState().activeRootPath,
     });
     input.editorSync.suppressPaths([unnestPath]);
-    input.editorSync.reopenDocumentSnapshot(
+    input.editorSync.reopenPageSnapshot(
       currentActive,
       input.movePlan.oldParentReadme,
       unnestPath,
@@ -154,15 +154,15 @@ export function useFileTreeDragCommand({
       editorSync.suppressPaths([movePlan.fromPath, movePlan.movePath]);
       const newPath = await useSpaceStore
         .getState()
-        .moveEntry(spaceId, movePlan.movePath, movePlan.toParent);
+        .moveContentItem(spaceId, movePlan.movePath, movePlan.toParent);
       if (newPath) {
         editorSync.suppressPaths([newPath]);
       }
 
       if (newPath && !movePlan.isBareFolder) {
-        editorSync.reopenInitialDocument(
+        editorSync.reopenInitialPage(
           movePlan.fromPath,
-          movedDocumentPath(movePlan, newPath),
+          movedPagePath(movePlan, newPath),
         );
       }
 

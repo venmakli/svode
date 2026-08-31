@@ -1,0 +1,135 @@
+import type { ReactNode } from "react";
+import { Skeleton } from "@/components/ui/skeleton";
+import { CoverBanner, CoverPicker } from "./cover-banner";
+import { TitleZone } from "./title-zone";
+import { cn } from "@/shared/lib/utils";
+import type { PageCover } from "../model/types";
+
+interface PageIdentityHeaderProps {
+  title: string;
+  icon: string | null;
+  description: string;
+  cover: PageCover | null;
+  projectPath: string | null;
+  spacePath: string;
+  pagePath: string | null;
+  onTitleChange: (title: string) => void;
+  onIconChange: (icon: string) => void;
+  onDescriptionChange: (description: string) => void;
+  onCoverChange: (cover: PageCover | null) => void;
+  onBodyFocus: () => void;
+  titleClassName?: string;
+  actions?: ReactNode;
+  metadata?: ReactNode;
+  coverSize?: "default" | "compact";
+  titleError?: string | null;
+  readOnly?: boolean;
+}
+
+export function PageIdentityHeader({
+  title,
+  icon,
+  description,
+  cover,
+  projectPath,
+  spacePath,
+  pagePath,
+  onTitleChange,
+  onIconChange,
+  onDescriptionChange,
+  onCoverChange,
+  onBodyFocus,
+  titleClassName,
+  actions,
+  metadata,
+  coverSize = "default",
+  titleError,
+  readOnly = false,
+}: PageIdentityHeaderProps) {
+  return (
+    <>
+      {cover ? (
+        <CoverBanner
+          cover={cover}
+          projectPath={projectPath}
+          spacePath={spacePath}
+          pagePath={pagePath}
+          onCoverChange={onCoverChange}
+          size={coverSize}
+          readOnly={readOnly}
+        />
+      ) : null}
+      <div
+        className={cn(
+          "flex min-w-0 items-start justify-between gap-4",
+          titleClassName,
+        )}
+      >
+        <div className="min-w-0 flex-1">
+          <TitleZone
+            title={title}
+            icon={icon}
+            description={description}
+            onTitleChange={onTitleChange}
+            onIconChange={onIconChange}
+            onDescriptionChange={onDescriptionChange}
+            onBodyFocus={onBodyFocus}
+            titleError={titleError}
+            readOnly={readOnly}
+          />
+        </div>
+        {actions || metadata || !cover ? (
+          <div className="flex max-w-[22rem] shrink-0 flex-col items-end text-right">
+            <div className="flex h-8 items-center justify-end">
+              {!readOnly ? (
+                <CoverPicker
+                  cover={cover}
+                  projectPath={projectPath}
+                  spacePath={spacePath}
+                  pagePath={pagePath}
+                  onCoverChange={onCoverChange}
+                  iconOnly
+                />
+              ) : null}
+              {actions}
+            </div>
+            {metadata}
+          </div>
+        ) : null}
+      </div>
+    </>
+  );
+}
+
+export function PageIdentityHeaderSkeleton({
+  actions,
+}: {
+  actions?: ReactNode;
+} = {}) {
+  return (
+    <>
+      <Skeleton className="h-44 min-h-32 max-h-48 w-full" />
+      <div className="flex min-w-0 items-start justify-between gap-4">
+        <div className="flex min-w-0 flex-1 items-center gap-3">
+          <Skeleton className="size-9 shrink-0" />
+          <div className="flex min-w-0 flex-1 flex-col">
+            <div className="flex h-8 items-center">
+              <Skeleton className="h-6 w-64 max-w-full" />
+            </div>
+            <div className="flex h-5 items-center">
+              <Skeleton className="h-3 w-40 max-w-2/3" />
+            </div>
+          </div>
+        </div>
+        <div className="flex shrink-0 flex-col items-end">
+          <div className="flex h-8 items-center">
+            {actions ?? <Skeleton className="size-7" />}
+          </div>
+          <div className="flex h-5 items-center">
+            <Skeleton className="h-3 w-24" />
+          </div>
+        </div>
+      </div>
+    </>
+  );
+}

@@ -1,15 +1,15 @@
 import { toast } from "sonner";
 import * as m from "@/paraglide/messages.js";
-import { publishEntryFilenameWarnings } from "@/features/entry";
+import { publishPageFilenameWarnings } from "@/features/page";
 import type { TreeNode } from "../model/types";
 import {
   convertTreeBareFolderToCollection,
-  convertTreeDocumentToCollection,
+  convertTreePageToCollection,
   createTreeFolder,
   createTreePage,
-  makeBareFolderDocument,
+  createBareFolderPage,
   resolveTreeChildTarget,
-} from "../api/tree-entry-actions";
+} from "../api/content-tree-actions";
 import type { SpaceInfo } from "../model";
 
 interface UseFileTreeItemCreateInput {
@@ -19,7 +19,7 @@ interface UseFileTreeItemCreateInput {
   bareFolder: boolean;
   activeRootPath: string | null;
   expandedPaths: Record<string, string[]>;
-  openDocument: (path: string, spaceId: string) => void;
+  openPage: (path: string, spaceId: string) => void;
   openCollectionOwner: (path: string, spaceId: string) => void;
   reloadTreeParent: (
     spaceId: string,
@@ -38,7 +38,7 @@ export function useFileTreeItemCreate({
   bareFolder,
   activeRootPath,
   expandedPaths,
-  openDocument,
+  openPage,
   openCollectionOwner,
   reloadTreeParent,
   reloadTreePathParent,
@@ -55,13 +55,13 @@ export function useFileTreeItemCreate({
         node,
         projectPath: activeRootPath,
       });
-      const entry = await createTreePage({
+      const page = await createTreePage({
         spacePath: space.path,
         parentPath,
         title: String(m.editor_untitled()),
         projectPath: activeRootPath,
       });
-      publishEntryFilenameWarnings(entry.warnings);
+      publishPageFilenameWarnings(page.warnings);
       if (parentNodePath !== node.path) {
         removeTreePath(spaceId, node.path);
         await reloadTreePathParent(spaceId, node.path);
@@ -70,7 +70,7 @@ export function useFileTreeItemCreate({
       if (!expandedPaths[spaceId]?.includes(parentNodePath)) {
         toggleExpanded(spaceId, parentNodePath);
       }
-      openDocument(entry.path, spaceId);
+      openPage(page.path, spaceId);
       toast.success(m.toast_page_created());
     } catch (err) {
       console.error("Failed to create page:", err);
@@ -78,11 +78,11 @@ export function useFileTreeItemCreate({
     }
   }
 
-  async function handleMakeDocument() {
+  async function handleMakePage() {
     if (!space || !bareFolder) return;
     if (onBeforeNavigation && !(await onBeforeNavigation())) return;
     try {
-      const readmePath = await makeBareFolderDocument({
+      const readmePath = await createBareFolderPage({
         spacePath: space.path,
         folderPath: node.path,
         title: node.title,
@@ -90,9 +90,9 @@ export function useFileTreeItemCreate({
       });
       await reloadTreePathParent(spaceId, node.path);
       await reloadTreeParent(spaceId, node.path);
-      openDocument(readmePath, spaceId);
+      openPage(readmePath, spaceId);
     } catch (err) {
-      console.error("Failed to make document:", err);
+      console.error("Failed to make page:", err);
       toast.error(m.toast_error());
     }
   }
@@ -102,18 +102,18 @@ export function useFileTreeItemCreate({
     if (onBeforeNavigation && !(await onBeforeNavigation())) return;
     try {
       if (bareFolder) {
-        const entry = await convertTreeBareFolderToCollection({
+        const ownerPage = await convertTreeBareFolderToCollection({
           spacePath: space.path,
           folderPath: node.path,
           projectPath: activeRootPath,
         });
         await reloadTreePathParent(spaceId, node.path);
         await reloadTreeParent(spaceId, node.path);
-        openCollectionOwner(entry.path, spaceId);
+        openCollectionOwner(ownerPage.path, spaceId);
         return;
       }
 
-      const readmeEntry = await convertTreeDocumentToCollection({
+      const readmePage = await convertTreePageToCollection({
         spacePath: space.path,
         filePath: node.path,
         projectPath: activeRootPath,
@@ -121,9 +121,9 @@ export function useFileTreeItemCreate({
       await reloadTreePathParent(spaceId, node.path);
       await reloadTreeParent(
         spaceId,
-        readmeEntry.path.replace(/\/readme\.md$/i, ""),
+        readmePage.path.replace(/\/readme\.md$/i, ""),
       );
-      openCollectionOwner(readmeEntry.path, spaceId);
+      openCollectionOwner(readmePage.path, spaceId);
     } catch (err) {
       console.error("Failed to make collection:", err);
       toast.error(m.toast_error());
@@ -160,7 +160,7 @@ export function useFileTreeItemCreate({
 
   return {
     handleMakeCollection,
-    handleMakeDocument,
+    handleMakePage,
     handleNewFolder,
     handleNewPage,
   };

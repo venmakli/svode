@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import type { Entry } from "@/features/entry";
+import type { Page } from "@/features/page";
 import type { ActiveTab } from "../model";
 import type { CollectionView } from "../query";
 import { handleError } from "./error-feedback";
@@ -19,7 +19,7 @@ export function useCollectionKeyboardShortcuts({
   selectTab: (next: ActiveTab) => void;
   moveActive: (offset: number) => Promise<void>;
   focusActiveViewCreate: (asFolder: boolean) => boolean;
-  createEntry: (asFolder?: boolean) => Promise<Entry>;
+  createEntry: (asFolder?: boolean) => Promise<Page>;
   readOnly: boolean;
 }) {
   useEffect(() => {

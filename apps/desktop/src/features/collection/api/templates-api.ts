@@ -7,8 +7,8 @@ import {
   reorderTemplates as reorderTemplatesDto,
   setDefaultTemplate as setDefaultTemplateDto,
 } from "@/platform/collections/collections-api";
-import { normalizeEntry } from "@/features/entry";
-import { readEntry } from "@/features/entry/entry-api";
+import { normalizePage } from "@/features/page";
+import { readPage } from "@/features/page/page-api";
 import { normalizeSchema } from "@/features/properties";
 import {
   normalizeTemplateInfo,
@@ -118,7 +118,7 @@ export async function instantiateTemplate({
     forceFolder: Boolean(forceFolder),
     contextualDefaults: contextualDefaults ?? {},
     projectPath: projectPath ?? null,
-  }).then(normalizeEntry);
+  }).then(normalizePage);
 }
 
 export async function setDefaultTemplate({
@@ -166,5 +166,5 @@ export function readTemplateEntry({
   spacePath: string;
   path: string;
 }) {
-  return readEntry({ spacePath, path });
+  return readPage({ spacePath, path });
 }

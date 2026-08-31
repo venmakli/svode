@@ -77,7 +77,6 @@ export interface CollectionSchemaDto {
   system_fields?: {
     title?: { label?: string | null } | null;
   } | null;
-  document?: { label?: string | null } | null;
   templates?: { default?: string | null; order?: string[] | null } | null;
   columns: ColumnDto[];
   views?: unknown[];
@@ -94,7 +93,7 @@ export interface ChangeSchemaTypeResultDto {
   warnings: SchemaMutationWarningDto[];
 }
 
-export interface EntrySchemaResultDto {
+export interface PageSchemaResultDto {
   schema: CollectionSchemaDto;
   collectionRootPath?: string;
   collection_root_path?: string;
@@ -113,7 +112,7 @@ export interface ActorCandidateDto {
   is_me?: boolean;
 }
 
-export interface AssignedEntryDto {
+export interface AssignedPageDto {
   meta?: {
     extra?: Record<string, unknown> | null;
   } | null;
@@ -124,7 +123,7 @@ export interface CollectionOptionDto {
   title: string;
 }
 
-export interface RelationTargetEntryDto {
+export interface RelationTargetPageDto {
   path: string;
   meta?: {
     title?: string | null;
@@ -132,7 +131,7 @@ export interface RelationTargetEntryDto {
   } | null;
 }
 
-export interface ResolvedRelationEntryDto {
+export interface ResolvedRelationPageDto {
   title: string;
   icon?: string | null;
   filePath?: string;
@@ -204,8 +203,8 @@ export function listActors(spacePath: string, allTime = false) {
   });
 }
 
-export function getEntrySchema(input: { spacePath: string; filePath: string }) {
-  return invokeCommand<EntrySchemaResultDto | null>("get_entry_schema", {
+export function getPageSchema(input: { spacePath: string; filePath: string }) {
+  return invokeCommand<PageSchemaResultDto | null>("get_entry_schema", {
     space: input.spacePath,
     filePath: input.filePath,
   });
@@ -230,7 +229,7 @@ export function assignUniqueId(input: {
   filePath: string;
   projectPath?: string | null;
 }) {
-  return invokeCommand<AssignedEntryDto>("assign_unique_id", {
+  return invokeCommand<AssignedPageDto>("assign_unique_id", {
     space: input.spacePath,
     filePath: input.filePath,
     projectPath: input.projectPath ?? null,
@@ -413,7 +412,7 @@ export function resolveRelationsBatch(input: {
   relation: string;
   values: string[];
 }) {
-  return invokeCommand<Array<ResolvedRelationEntryDto | null>>(
+  return invokeCommand<Array<ResolvedRelationPageDto | null>>(
     "resolve_relations_batch",
     {
       space: input.spacePath,
@@ -424,7 +423,7 @@ export function resolveRelationsBatch(input: {
   );
 }
 
-export function queryRelationTargetEntries(input: {
+export function queryRelationTargetPages(input: {
   spacePath: string;
   projectPath?: string | null;
   relation: string;
@@ -434,7 +433,7 @@ export function queryRelationTargetEntries(input: {
   const filters = input.titleQuery
     ? [{ field: "title", op: "contains", value: input.titleQuery }]
     : null;
-  return invokeCommand<RelationTargetEntryDto[]>("query_entries", {
+  return invokeCommand<RelationTargetPageDto[]>("query_entries", {
     space: input.spacePath,
     collectionPath: input.relation,
     filters,

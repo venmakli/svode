@@ -3,7 +3,7 @@ import type {
   UseViewQueryResult,
   ViewType,
 } from "@/features/collection/query/model";
-import type { Entry } from "@/features/entry";
+import type { Page } from "@/features/page";
 import type {
   CollectionSchema,
   RelationOpenTarget,
@@ -32,14 +32,14 @@ interface CollectionViewContentProps {
   calendarScope?: CalendarScope | null;
   createRequest: ViewCreateRequest;
   onClearSearch: () => void;
-  onOpenEntry: (entry: Entry) => void;
-  onOpenNestedPeek: (entry: Entry) => void;
-  onOpenNestedCollection: (entry: Entry) => void;
-  onOpenFullPage: (entry: Entry) => void;
+  onOpenEntry: (entry: Page) => void;
+  onOpenNestedPeek: (entry: Page) => void;
+  onOpenNestedCollection: (entry: Page) => void;
+  onOpenFullPage: (entry: Page) => void;
   onOpenPath: (path: string, spaceId?: string | null) => void;
   onOpenRelationTarget: (target: RelationOpenTarget) => void;
-  onDuplicateEntry: (entry: Entry) => void;
-  onDeleteEntry: (entry: Entry) => void;
+  onDuplicateEntry: (entry: Page) => void;
+  onDeleteEntry: (entry: Page) => void;
   onSchemaChange: (schema: CollectionSchema) => void;
   onUpdateView: (
     viewName: string,
@@ -50,7 +50,7 @@ interface CollectionViewContentProps {
     title: string,
     asFolder: boolean,
     contextualDefaults?: Record<string, unknown>,
-  ) => Promise<Entry>;
+  ) => Promise<Page>;
 }
 
 export function CollectionViewContent({

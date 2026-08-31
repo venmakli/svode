@@ -1,7 +1,7 @@
 import { useCallback, type Dispatch, type SetStateAction } from "react";
 import type { DragEndEvent } from "@dnd-kit/core";
 import { toast } from "sonner";
-import type { Entry } from "@/features/entry";
+import type { Page } from "@/features/page";
 import {
   entryParentDir,
   replaceSiblings,
@@ -16,11 +16,11 @@ interface UseListEntryActionsOptions {
   collectionPath: string;
   spacePath: string;
   projectPath?: string | null;
-  entries: Entry[];
-  rows: Array<{ entry: Entry }>;
-  setEntries: Dispatch<SetStateAction<Entry[]>>;
+  entries: Page[];
+  rows: Array<{ entry: Page }>;
+  setEntries: Dispatch<SetStateAction<Page[]>>;
   loadEntries: () => Promise<void>;
-  onCreateEntry: (title: string, asFolder: boolean) => Promise<Entry>;
+  onCreateEntry: (title: string, asFolder: boolean) => Promise<Page>;
 }
 
 export function useListEntryActions({
@@ -42,7 +42,7 @@ export function useListEntryActions({
     async (
       title: string,
       asFolder: boolean,
-      onCreated?: (entry: Entry) => void,
+      onCreated?: (entry: Page) => void,
     ) => {
       try {
         const created = await onCreateEntry(title, asFolder);

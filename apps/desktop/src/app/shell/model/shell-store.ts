@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { ENABLE_IN_APP_CHAT } from "@/app/config/feature-flags";
-import { getActiveEntrySelection } from "@/features/entry/selection";
+import { getActiveContentPath } from "@/features/artifact";
 import type {
   AgentSessionOpenRequest,
   AgentSessionOpenTarget,
@@ -94,8 +94,7 @@ export const useShellStore = create<ShellState>((set) => ({
 
   toggleChatPanel: () => {
     if (!ENABLE_IN_APP_CHAT) return;
-    const { activeDocument } = getActiveEntrySelection();
-    if (!activeDocument) return;
+    if (!getActiveContentPath()) return;
     set((state) => ({ chatPanelOpen: !state.chatPanelOpen }));
   },
 

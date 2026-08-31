@@ -2,8 +2,8 @@ import * as React from "react";
 
 import { toast } from "sonner";
 
-import { makeRelativeDocUrl } from "../api/doc-link-api";
-import { joinAbs } from "../lib/doc-link-utils";
+import { makeRelativePageUrl } from "../api/page-link-api";
+import { joinAbs } from "../lib/page-link-utils";
 import {
   uploadEditorMediaAsset,
   type UploadAssetDto,
@@ -15,7 +15,7 @@ import { useEditorDocumentContext } from "./use-resolved-asset-url";
  * Shape returned by `useUploadFile` — matches the subset of Plate's
  * `UploadedFile` contract that the media node components consume. The `url`
  * is the markdown link path the editor stores in the node: relative to the
- * source document and routed through `make_relative_link` so cross-space
+ * source document and routed through the Page-link adapter so cross-space
  * uploads (when they land) render as `../other-space/.assets/x.png`.
  */
 export interface UploadedFile {
@@ -85,7 +85,7 @@ export function useUploadFile({
       setProgress(100);
 
       // Compute the markdown link from the source document to the asset's
-      // absolute path. Backend `make_relative_link` mirrors how doc-link
+      // absolute path. The Page-link adapter mirrors how editor link
       // insertion builds cross-space `../space/foo.md` paths (Ф.7); for
       // intra-space uploads (MVP, Q3=A) this collapses to `.assets/x.ext`.
       // The asset's owning space is identified by `result.spaceId` (null =
@@ -95,7 +95,7 @@ export function useUploadFile({
         ? (spaces.find((s) => s.id === result.spaceId)?.path ?? spacePath)
         : projectPath;
       const targetAbsPath = joinAbs(assetOwnerPath, result.relPath);
-      const link = await makeRelativeDocUrl(documentAbsPath, targetAbsPath);
+      const link = await makeRelativePageUrl(documentAbsPath, targetAbsPath);
 
       const uploaded: UploadedFile = {
         key: result.relPath,

@@ -15,7 +15,7 @@ import type {
   EventDropArg,
 } from "@fullcalendar/core";
 import ruLocale from "@fullcalendar/core/locales/ru";
-import type { Entry } from "@/features/entry";
+import type { Page } from "@/features/page";
 import { CalendarEventContent } from "./calendar-event-content";
 import { unmountCalendarDayNewButton } from "../../hooks/calendar/calendar-dom";
 import type {
@@ -60,11 +60,11 @@ export function CalendarEngine({
   onEventResize: (arg: EventResizeDoneArg) => void;
   onDayCellDidMount: (arg: DayCellMountArg) => void;
   onDatesSet: (arg: DatesSetArg) => void;
-  onOpenEntry: (entry: Entry) => void;
-  onOpenNestedPeek: (entry: Entry) => void;
-  onOpenNestedCollection: (entry: Entry) => void;
-  onDuplicateEntry: (entry: Entry) => void;
-  onDeleteEntry: (entry: Entry) => void;
+  onOpenEntry: (entry: Page) => void;
+  onOpenNestedPeek: (entry: Page) => void;
+  onOpenNestedCollection: (entry: Page) => void;
+  onDuplicateEntry: (entry: Page) => void;
+  onDeleteEntry: (entry: Page) => void;
 }) {
   return (
     <FullCalendar

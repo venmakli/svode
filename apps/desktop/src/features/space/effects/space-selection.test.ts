@@ -1,16 +1,19 @@
 import { expect, test } from "bun:test";
 import {
-  getActiveEntrySelection,
-  openEntryDocument,
-} from "@/features/entry/selection";
+  getActiveContentPath,
+  getActiveContentSelection,
+  getActiveContentSpaceId,
+} from "@/features/artifact";
+import { openPage } from "@/features/page/navigation";
 import { openScopeHomeSelection } from "./space-selection";
 
-test("ordinary scope open selects the owner instead of its README document", () => {
-  openEntryDocument("README.md", "previous");
+test("ordinary scope open selects the owner instead of its README Page", () => {
+  openPage("README.md", "previous");
 
   openScopeHomeSelection("marketing");
 
-  const selection = getActiveEntrySelection();
-  expect(selection.activeDocument).toBeNull();
-  expect(selection.activeDocumentSpaceId).toBe("marketing");
+  const selection = getActiveContentSelection();
+  expect(selection.selection?.kind).toBe("scope-owner");
+  expect(getActiveContentPath()).toBeNull();
+  expect(getActiveContentSpaceId()).toBe("marketing");
 });

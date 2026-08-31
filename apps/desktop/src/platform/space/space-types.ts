@@ -128,7 +128,7 @@ export interface TreeNodeDto {
 }
 
 export type SpaceFileEventKindDto =
-  | "document"
+  | "page"
   | "schema"
   | "folder"
   | "unknown";

@@ -8,8 +8,8 @@ import { Separator } from "@/components/ui/separator";
 import { cn } from "@/shared/lib/utils";
 import * as m from "@/paraglide/messages.js";
 
-import { useBrokenDocLinkRepair } from "../hooks/use-broken-doc-link-repair";
-import { applyLinkUrl } from "../lib/doc-link-editor-actions";
+import { useBrokenPageLinkRepair } from "../hooks/use-broken-page-link-repair";
+import { applyLinkUrl } from "../lib/page-link-editor-actions";
 
 interface BrokenLinkRepairProps {
   editButtonProps: React.ButtonHTMLAttributes<HTMLButtonElement>;
@@ -31,7 +31,7 @@ export function BrokenLinkRepair({
   url,
 }: BrokenLinkRepairProps) {
   const editor = useEditorRef();
-  const { makeSuggestionUrl, suggestions } = useBrokenDocLinkRepair({
+  const { makeSuggestionUrl, suggestions } = useBrokenPageLinkRepair({
     projectPath,
     sourcePath,
     sourceSpaceId,
@@ -47,7 +47,7 @@ export function BrokenLinkRepair({
   return (
     <div className="flex w-[300px] flex-col gap-1 p-1">
       <div className="px-2 py-1 text-sm font-medium">
-        {m.doc_link_file_missing()}
+        {m.page_link_file_missing()}
       </div>
       {suggestions.length > 0 && (
         <div className="flex flex-col gap-0.5">
@@ -76,7 +76,7 @@ export function BrokenLinkRepair({
           type="button"
           {...editButtonProps}
         >
-          {m.doc_link_edit_link()}
+          {m.page_link_edit_link()}
         </button>
         <Separator orientation="vertical" />
         <button

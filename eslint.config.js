@@ -27,12 +27,12 @@ const allowedFeatureSubpathExceptions = new Set([
   "@/features/collection/scope-surface",
   "@/features/collection/core",
   "@/features/editor/file-tree-sync",
-  "@/features/entry/app-shell",
-  "@/features/entry/detail",
-  "@/features/entry/scope-surface",
-  "@/features/entry/entry-api",
-  "@/features/entry/field-save",
-  "@/features/entry/selection",
+  "@/features/page/app-shell",
+  "@/features/page/detail",
+  "@/features/page/scope-surface",
+  "@/features/page/page-api",
+  "@/features/page/field-save",
+  "@/features/page/navigation",
   "@/features/git/app-shell",
   "@/features/git/editor",
   "@/features/git/sidebar",
@@ -125,6 +125,8 @@ function createImportBoundaryRule() {
           "components is copied/registry code. Product/runtime imports require a documented Phase 9 exception.",
         featureWorkspace:
           "features/workspace is not a target owner. Use features/space, features/git, or another current owner.",
+        legacyPageOwner:
+          "Legacy Page owners are forbidden. Use features/page or the neutral Space content-tree platform boundary.",
         featureDeep:
           "Do not deep-import another feature internals. Import through the feature public API or a documented narrow exception.",
         collectionCoreReverse:
@@ -155,6 +157,14 @@ function createImportBoundaryRule() {
           /^features\/workspace(?:\/|$)/.test(importedSrcPath)
         ) {
           report(node, "featureWorkspace");
+          return;
+        }
+
+        if (
+          importedSrcPath &&
+          /^(?:features\/entry|platform\/entries)(?:\/|$)/.test(importedSrcPath)
+        ) {
+          report(node, "legacyPageOwner");
           return;
         }
 

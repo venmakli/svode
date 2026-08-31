@@ -22,7 +22,7 @@ import {
   type RelationSpaceLookup,
   resolvedRelationPath,
 } from "../lib/relation";
-import type { Column, RelationContext, ResolvedRelationEntry } from "../model";
+import type { Column, RelationContext, ResolvedRelationPage } from "../model";
 import { useResolvedRelations } from "../hooks/use-resolved-relations";
 import { useRelationValues } from "../hooks/use-relation-values";
 import * as m from "@/paraglide/messages.js";
@@ -150,7 +150,7 @@ function RelationChip({
   presentation,
 }: {
   value: string;
-  target: ResolvedRelationEntry | null | undefined;
+  target: ResolvedRelationPage | null | undefined;
   status: RelationChipStatus;
   onOpen?: () => void;
   onRemove?: (value: string) => void;
@@ -168,7 +168,7 @@ function RelationChip({
   const icon = broken ? (
     <Link2Off data-icon="inline-start" />
   ) : (
-    <RelationEntryIcon icon={target?.icon} />
+    <RelationPageIcon icon={target?.icon} />
   );
   const removeButton = onRemove ? (
     <button
@@ -303,7 +303,7 @@ function RelationOverflowCount({
   );
 }
 
-export function RelationEntryIcon({ icon }: { icon?: string | null }) {
+export function RelationPageIcon({ icon }: { icon?: string | null }) {
   if (icon) {
     return (
       <span data-icon="inline-start" className="shrink-0 text-xs">
@@ -328,7 +328,7 @@ function relationStatus({
   hasResolution,
 }: {
   relation: string;
-  target: ResolvedRelationEntry | null | undefined;
+  target: ResolvedRelationPage | null | undefined;
   hasContext: boolean;
   hasResolution: boolean;
 }): RelationChipStatus {

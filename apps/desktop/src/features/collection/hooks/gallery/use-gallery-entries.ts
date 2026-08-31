@@ -2,7 +2,7 @@ import { useCallback, useLayoutEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useStableViewQueryArgs } from "@/features/collection/query/hooks";
 import type { QueryFilter, QuerySort } from "@/features/collection/query/model";
-import type { Entry } from "@/features/entry";
+import type { Page } from "@/features/page";
 import { listCollectionInfos, queryCollectionEntries } from "../../api";
 import {
   collectionEntriesTargetKey,
@@ -30,7 +30,7 @@ export function useGalleryEntries({
   sort: QuerySort[];
   spacePath: string;
 }) {
-  const [entries, setEntries] = useState<Entry[]>([]);
+  const [entries, setEntries] = useState<Page[]>([]);
   const [nestedCollectionPaths, setNestedCollectionPaths] = useState<
     Set<string>
   >(new Set());

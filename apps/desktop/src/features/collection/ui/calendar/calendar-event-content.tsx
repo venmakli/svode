@@ -12,8 +12,8 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import type { Entry } from "@/features/entry";
-import { documentNameConflictDisplayPath } from "@/features/entry/entry-api";
+import type { Page } from "@/features/page";
+import { pageNameConflictDisplayPath } from "@/features/page/page-api";
 import { validatePropertyValue, type Column } from "@/features/properties";
 import { PropertyControl } from "@/features/properties/control";
 import { PropertyValue } from "@/features/properties/display";
@@ -24,7 +24,7 @@ import type {
   CalendarPropertyContext,
   CalendarScope,
 } from "../../model/calendar-types";
-import { EntryTitleIcon } from "../entry-title-icon";
+import { PageTitleIcon } from "../page-title-icon";
 import * as m from "@/paraglide/messages.js";
 
 export function CalendarEventContent({
@@ -41,17 +41,17 @@ export function CalendarEventContent({
   readOnly: boolean;
   arg: EventContentArg;
   scope: CalendarScope;
-  onOpen: (entry: Entry) => void;
-  onOpenNestedPeek: (entry: Entry) => void;
-  onOpenNestedCollection: (entry: Entry) => void;
-  onDuplicate: (entry: Entry) => void;
-  onDelete: (entry: Entry) => void;
+  onOpen: (entry: Page) => void;
+  onOpenNestedPeek: (entry: Page) => void;
+  onOpenNestedCollection: (entry: Page) => void;
+  onDuplicate: (entry: Page) => void;
+  onDelete: (entry: Page) => void;
   propertyContext: CalendarPropertyContext;
 }) {
   const model = arg.event.extendedProps.model as CalendarEventModel | undefined;
   if (!model) return null;
   const { entry } = model;
-  const conflictPath = documentNameConflictDisplayPath(entry);
+  const conflictPath = pageNameConflictDisplayPath(entry);
   const list = scope === "list";
   const compact = scope === "week" || scope === "day";
 
@@ -82,7 +82,7 @@ export function CalendarEventContent({
               >
                 <span className="svode-calendar-event-color-bar h-3 w-1 shrink-0 rounded-full bg-(--calendar-event-color)" />
                 {model.cardFields.includes("icon") ? (
-                  <EntryTitleIcon
+                  <PageTitleIcon
                     icon={entry.meta.icon}
                     className="svode-calendar-event-icon size-4 text-sm leading-none"
                   />
@@ -100,7 +100,7 @@ export function CalendarEventContent({
                   </div>
                   {conflictPath ? (
                     <div
-                      data-entry-name-conflict-path
+                      data-page-name-conflict-path
                       className="truncate text-xs text-muted-foreground"
                     >
                       {conflictPath}
@@ -114,7 +114,7 @@ export function CalendarEventContent({
                     </div>
                   ) : null}
                 </div>
-                <EntryKindMarker
+                <PageKindMarker
                   folder={model.folder}
                   nestedCollection={model.nestedCollection}
                   onOpenNested={() => onOpenNestedCollection(entry)}
@@ -183,12 +183,12 @@ function CalendarEventTooltip({
   readOnly: boolean;
 }) {
   const { entry } = model;
-  const conflictPath = documentNameConflictDisplayPath(entry);
+  const conflictPath = pageNameConflictDisplayPath(entry);
   return (
     <div className="flex min-w-0 flex-col gap-2">
       <div className="flex min-w-0 items-center gap-2">
         {model.cardFields.includes("icon") ? (
-          <EntryTitleIcon icon={entry.meta.icon} className="size-5" />
+          <PageTitleIcon icon={entry.meta.icon} className="size-5" />
         ) : null}
         <div className="min-w-0">
           <div className="truncate font-medium">{entry.meta.title}</div>
@@ -237,7 +237,7 @@ function CalendarPropertyControl({
   propertyContext,
   readOnly,
 }: {
-  entry: Entry;
+  entry: Page;
   column: Column;
   propertyContext: CalendarPropertyContext;
   readOnly: boolean;
@@ -295,7 +295,7 @@ function CalendarPropertyControl({
   );
 }
 
-function calendarColumnValue(entry: Entry, column: Column) {
+function calendarColumnValue(entry: Page, column: Column) {
   if (column.name === "created") return entry.meta.created;
   if (column.name === "updated") return entry.meta.updated;
   return entry.meta.extra?.[column.name] ?? null;
@@ -311,7 +311,7 @@ function isReadonlySystemColumn(column: Column) {
   return column.name === "created" || column.name === "updated";
 }
 
-function EntryKindMarker({
+function PageKindMarker({
   folder,
   nestedCollection,
   onOpenNested,

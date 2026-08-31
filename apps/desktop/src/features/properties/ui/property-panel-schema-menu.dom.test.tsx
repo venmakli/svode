@@ -38,7 +38,7 @@ if (!isolatedProcess) {
         spacePath="/project"
         projectPath="/project"
         filePath="tasks/task.md"
-        entryLabel="Task"
+        pageLabel="Task"
         schemaResult={{
           collectionRootPath: "tasks",
           schema: {

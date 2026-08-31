@@ -4,10 +4,10 @@ import type { PlateEditor } from "platejs/react";
 import { toast } from "sonner";
 
 import {
-  publishEntryFilenameWarnings,
-  type WriteResult,
-} from "@/features/entry";
-import { writeEntry } from "@/features/entry/entry-api";
+  publishPageFilenameWarnings,
+  type WritePageResult,
+} from "@/features/page";
+import { writePage } from "@/features/page/page-api";
 import {
   commitFileAndMaybeSync,
   commitSaveScopeAndMaybeSync,
@@ -50,7 +50,7 @@ interface UseEditorDocumentWriterInput {
   iconRef: MutableRef<string | null>;
   isDebouncePendingRef: MutableRef<boolean>;
   ownNoncesRef: MutableRef<Set<string>>;
-  patchEntryTreeMeta: (
+  patchPageTreeMeta: (
     spaceId: string,
     path: string,
     title: string,
@@ -93,7 +93,7 @@ export function useEditorDocumentWriter({
   iconRef,
   isDebouncePendingRef,
   ownNoncesRef,
-  patchEntryTreeMeta,
+  patchPageTreeMeta,
   projectPath,
   reloadTreePathParents,
   removeTreePath,
@@ -117,7 +117,7 @@ export function useEditorDocumentWriter({
     descriptionRef,
     editor,
     iconRef,
-    patchEntryTreeMeta,
+    patchPageTreeMeta,
     reloadTreePathParents,
     removeTreePath,
     setCurrentDocument,
@@ -129,7 +129,7 @@ export function useEditorDocumentWriter({
     async (
       skipRename: boolean,
       targetPath?: string,
-    ): Promise<WriteResult | null> => {
+    ): Promise<WritePageResult | null> => {
       const write = async () => {
         const path = targetPath ?? currentPathRef.current;
         if (!editor || !path || !spacePath) return null;
@@ -142,7 +142,7 @@ export function useEditorDocumentWriter({
         }
 
         const markdown = editor.getApi(MarkdownPlugin).markdown.serialize();
-        const result = await writeEntry({
+        const result = await writePage({
           spacePath,
           path,
           content: markdown,
@@ -154,7 +154,7 @@ export function useEditorDocumentWriter({
           ownNoncesRef.current.add(result.writeNonce);
         }
         if (!skipRename) {
-          publishEntryFilenameWarnings(result.warnings);
+          publishPageFilenameWarnings(result.warnings);
         }
 
         return result;

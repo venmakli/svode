@@ -1,4 +1,1 @@
-export {
-  createCollection,
-  type CollectionEntry,
-} from "./api/create-collection";
+export { createCollection } from "./api/create-collection";

@@ -1,6 +1,6 @@
 import { cn } from "@/shared/lib/utils";
 import { validatePropertyValue } from "@/features/properties";
-import type { Entry } from "@/features/entry";
+import type { Page } from "@/features/page";
 import type {
   Column,
   ActorCandidate,
@@ -18,12 +18,12 @@ export function BoardPropertyFlow({
   onRequestActors,
   onUpdateField,
 }: {
-  entry: Entry;
+  entry: Page;
   columns: Column[];
   actors: ActorCandidate[];
   relationContext?: RelationContext;
   onRequestActors: (allTime: boolean) => Promise<ActorCandidate[]>;
-  onUpdateField?: (entry: Entry, column: Column, value: unknown) => void;
+  onUpdateField?: (entry: Page, column: Column, value: unknown) => void;
 }) {
   const rendered = columns
     .map((column) => (
@@ -51,12 +51,12 @@ function BoardPropertyChip({
   onRequestActors,
   onUpdateField,
 }: {
-  entry: Entry;
+  entry: Page;
   column: Column;
   actors: ActorCandidate[];
   relationContext?: RelationContext;
   onRequestActors: (allTime: boolean) => Promise<ActorCandidate[]>;
-  onUpdateField?: (entry: Entry, column: Column, value: unknown) => void;
+  onUpdateField?: (entry: Page, column: Column, value: unknown) => void;
 }) {
   const value = entry.meta.extra?.[column.name] ?? null;
   if (isEmptyValue(value) && column.type !== "boolean") return null;

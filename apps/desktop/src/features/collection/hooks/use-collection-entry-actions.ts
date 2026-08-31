@@ -1,16 +1,16 @@
 import { useCallback, useState } from "react";
 import { toast } from "sonner";
 import {
-  convertEntryToFolder as convertEntryToFolderApi,
-  createEntry as createEntryApi,
-  deleteEntry as deleteEntryApi,
-  duplicateEntry as duplicateEntryApi,
-} from "@/features/entry/entry-api";
+  convertPageToFolder as convertPageToFolderApi,
+  createPage as createPageApi,
+  deletePage as deletePageApi,
+  duplicatePage as duplicatePageApi,
+} from "@/features/page/page-api";
 import {
-  publishEntryFilenameWarnings,
-  retargetEntryFilenameWarnings,
-  type Entry,
-} from "@/features/entry";
+  publishPageFilenameWarnings,
+  retargetPageFilenameWarnings,
+  type Page,
+} from "@/features/page";
 import type { CollectionSchema } from "@/features/properties";
 import { useSpaceTreeSync } from "@/features/space";
 import * as m from "@/paraglide/messages.js";
@@ -27,18 +27,18 @@ export function useCollectionEntryActions({
   projectPath,
   collectionPath,
   spaceId,
-  openDocument,
+  openPage,
 }: {
   schema: CollectionSchema | null;
   spacePath: string;
   projectPath?: string | null;
   collectionPath: string;
   spaceId: string;
-  openDocument: (path: string, spaceId: string) => void;
+  openPage: (path: string, spaceId: string) => void;
 }) {
   const { reloadTreeParent, reloadTreePathParent, removeTreePath } =
     useSpaceTreeSync();
-  const [deleteEntry, setDeleteEntry] = useState<Entry | null>(null);
+  const [deleteEntry, setDeleteEntry] = useState<Page | null>(null);
   const [entriesVersion, setEntriesVersion] = useState(0);
   const refreshEntries = useCallback(() => {
     setEntriesVersion((version) => version + 1);
@@ -66,11 +66,11 @@ export function useCollectionEntryActions({
           contextualDefaults: contextualDefaults ?? null,
           projectPath,
         });
-        publishEntryFilenameWarnings(created.warnings);
+        publishPageFilenameWarnings(created.warnings);
         refreshEntries();
         await reloadTreeParent(spaceId, collectionPath);
         if (openAfterCreate) {
-          openDocument(created.path, spaceId);
+          openPage(created.path, spaceId);
         }
         return created;
       } catch (error) {
@@ -80,7 +80,7 @@ export function useCollectionEntryActions({
       }
     }
 
-    const created = await createEntryApi({
+    const created = await createPageApi({
       spacePath,
       parentPath: collectionPath,
       title: requestedTitle,
@@ -90,42 +90,42 @@ export function useCollectionEntryActions({
     });
     let nextEntry = created;
     if (asFolder) {
-      const converted = await convertEntryToFolderApi({
+      const converted = await convertPageToFolderApi({
         spacePath,
         filePath: created.path,
         projectPath: projectPath ?? null,
       });
       nextEntry = {
         ...converted,
-        warnings: retargetEntryFilenameWarnings(
+        warnings: retargetPageFilenameWarnings(
           created.warnings,
           converted.path,
         ),
       };
     }
-    publishEntryFilenameWarnings(nextEntry.warnings);
+    publishPageFilenameWarnings(nextEntry.warnings);
     refreshEntries();
     await reloadTreeParent(spaceId, collectionPath);
     if (openAfterCreate) {
-      openDocument(nextEntry.path, spaceId);
+      openPage(nextEntry.path, spaceId);
     }
     return nextEntry;
   }
 
-  async function duplicateRow(entryToDuplicate: Entry) {
-    const duplicated = await duplicateEntryApi({
+  async function duplicateRow(entryToDuplicate: Page) {
+    const duplicated = await duplicatePageApi({
       spacePath,
       filePath: entryToDuplicate.path,
       projectPath: projectPath ?? null,
     });
-    publishEntryFilenameWarnings(duplicated.warnings);
+    publishPageFilenameWarnings(duplicated.warnings);
     refreshEntries();
     await reloadTreeParent(spaceId, collectionPath);
-    openDocument(duplicated.path, spaceId);
+    openPage(duplicated.path, spaceId);
   }
 
-  async function deleteRow(entryToDelete: Entry) {
-    await deleteEntryApi({
+  async function deleteRow(entryToDelete: Page) {
+    await deletePageApi({
       spacePath,
       path: entryToDelete.path,
       projectPath: projectPath ?? null,
@@ -136,15 +136,15 @@ export function useCollectionEntryActions({
     await reloadTreePathParent(spaceId, entryToDelete.path);
   }
 
-  async function duplicateDetailEntry(entryToDuplicate: Entry) {
-    const duplicated = await duplicateEntryApi({
+  async function duplicateDetailEntry(entryToDuplicate: Page) {
+    const duplicated = await duplicatePageApi({
       spacePath,
       filePath: entryToDuplicate.path,
       projectPath: projectPath ?? null,
     });
-    publishEntryFilenameWarnings(duplicated.warnings);
+    publishPageFilenameWarnings(duplicated.warnings);
     await reloadTreePathParent(spaceId, duplicated.path);
-    openDocument(duplicated.path, spaceId);
+    openPage(duplicated.path, spaceId);
   }
 
   return {

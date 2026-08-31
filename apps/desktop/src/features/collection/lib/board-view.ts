@@ -1,5 +1,5 @@
 import type { CollectionView } from "@/features/collection/query/model";
-import type { Entry } from "@/features/entry";
+import type { Page } from "@/features/page";
 import type {
   ActorCandidate,
   CollectionSchema,
@@ -73,7 +73,7 @@ export function boardCustomFields(
 }
 
 export function boardColumns(
-  entries: Entry[],
+  entries: Page[],
   groupColumn: Column,
   actors: ActorCandidate[],
 ) {
@@ -138,7 +138,7 @@ export function boardColumns(
 }
 
 export function entriesForGroup(
-  entries: Entry[],
+  entries: Page[],
   column: Column,
   groupKey: string,
 ) {
@@ -148,7 +148,7 @@ export function entriesForGroup(
 }
 
 export function isNestedCollectionEntry(
-  entry: Entry,
+  entry: Page,
   nestedCollectionPaths: Set<string>,
 ) {
   return nestedCollectionPaths.has(entryCollectionPath(entry));

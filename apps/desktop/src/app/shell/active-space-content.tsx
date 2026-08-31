@@ -80,8 +80,8 @@ export function ActiveSpaceContent() {
       : null;
   const hasChildren = spaces.length > 0;
   const rootTree = activeRootId ? (fileTrees[activeRootId] ?? []) : [];
-  const hasDocuments = rootTree.length > 0;
-  const isEmpty = !hasChildren && !hasDocuments;
+  const hasContentItems = rootTree.length > 0;
+  const isEmpty = !hasChildren && !hasContentItems;
   const isCollectionOwner = Boolean(
     selectedPath &&
     activeSpace &&

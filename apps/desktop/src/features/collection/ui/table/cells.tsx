@@ -3,7 +3,7 @@ import { Database, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/shared/lib/utils";
-import { documentNameConflictDisplayPath } from "@/features/entry/entry-api";
+import { pageNameConflictDisplayPath } from "@/features/page/page-api";
 import {
   shouldClosePropertyEditorOnChange,
   validatePropertyValue,
@@ -17,13 +17,13 @@ import {
   PropertyValueActions,
 } from "@/features/properties/display";
 import { PropertyControl } from "@/features/properties/control";
-import { EntryTitleIcon } from "../entry-title-icon";
+import { PageTitleIcon } from "../page-title-icon";
 import type { CollectionTableRow } from "./types";
 import * as m from "@/paraglide/messages.js";
 
 export function PropertyCell({
   column,
-  entryLabel,
+  pageLabel,
   actors,
   onRequestActors,
   relationContext,
@@ -35,7 +35,7 @@ export function PropertyCell({
   onCommit,
 }: {
   column: Column;
-  entryLabel: string;
+  pageLabel: string;
   actors: ActorCandidate[];
   onRequestActors: (allTime: boolean) => Promise<ActorCandidate[]>;
   relationContext?: RelationContext;
@@ -71,7 +71,7 @@ export function PropertyCell({
           column={column}
           value={value}
           invalid={validation.invalid}
-          accessibilityLabel={`${column.name}: ${entryLabel}`}
+          accessibilityLabel={`${column.name}: ${pageLabel}`}
           density="compact"
           onChange={onCommit}
         />
@@ -121,7 +121,7 @@ export function PropertyCell({
             column={column}
             value={value}
             invalid={validation.invalid}
-            accessibilityLabel={`${column.name}: ${entryLabel}`}
+            accessibilityLabel={`${column.name}: ${pageLabel}`}
             density="compact"
             autoOpen
             actors={actors}
@@ -321,13 +321,13 @@ export function TitleCell({
   onOpenFullPage: () => void;
   onOpenNested: () => void;
 }) {
-  const conflictPath = documentNameConflictDisplayPath(row.entry);
+  const conflictPath = pageNameConflictDisplayPath(row.entry);
   return (
     <div
       className="flex min-w-0 items-center gap-1"
       style={{ paddingLeft: row.level * 18 }}
     >
-      <EntryDisclosure
+      <PageDisclosure
         icon={row.entry.meta.icon}
         showIcon={showIcon}
         expandable={expandable}
@@ -348,7 +348,7 @@ export function TitleCell({
           <span className="truncate">{row.entry.meta.title}</span>
           {conflictPath ? (
             <span
-              data-entry-name-conflict-path
+              data-page-name-conflict-path
               className="truncate text-xs text-muted-foreground"
             >
               {conflictPath}
@@ -375,7 +375,7 @@ export function TitleCell({
   );
 }
 
-function EntryDisclosure({
+function PageDisclosure({
   icon,
   showIcon,
   expandable,
@@ -389,7 +389,7 @@ function EntryDisclosure({
   onToggle: () => void;
 }) {
   if (!expandable) {
-    return showIcon ? <EntryTitleIcon icon={icon} className="size-6" /> : null;
+    return showIcon ? <PageTitleIcon icon={icon} className="size-6" /> : null;
   }
   return (
     <Button
@@ -403,7 +403,7 @@ function EntryDisclosure({
       }}
     >
       {showIcon ? (
-        <EntryTitleIcon
+        <PageTitleIcon
           icon={icon}
           className={cn("group-hover/row:hidden", expanded && "hidden")}
         />

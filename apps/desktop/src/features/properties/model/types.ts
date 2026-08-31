@@ -105,7 +105,7 @@ export interface ChangeSchemaTypeResult {
   warnings: SchemaMutationWarning[];
 }
 
-export interface EntrySchemaResult {
+export interface PageSchemaResult {
   schema: CollectionSchema;
   collectionRootPath?: string;
 }
@@ -142,7 +142,7 @@ export interface RelationOpenTarget {
   spacePath?: string | null;
 }
 
-export interface ResolvedRelationEntry {
+export interface ResolvedRelationPage {
   title: string;
   icon?: string | null;
   filePath?: string;

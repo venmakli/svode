@@ -3,8 +3,8 @@ import type { Descendant } from "platejs";
 import type { PlateEditor } from "platejs/react";
 import { toast } from "sonner";
 
-import type { Entry, EntryMeta } from "@/features/entry";
-import { readEntry } from "@/features/entry/entry-api";
+import type { Page, PageMeta } from "@/features/page";
+import { readPage } from "@/features/page/page-api";
 import { logTiming, nowMs } from "@/shared/lib/performance";
 
 import { deserializeWithConflicts } from "../conflict/parse-conflicts";
@@ -24,7 +24,7 @@ interface MutableRef<T> {
 
 interface UseEditorDocumentLoaderInput {
   bodyOnly: boolean;
-  bodyOnlyMeta: EntryMeta | null;
+  bodyOnlyMeta: PageMeta | null;
   adoptedDocumentKeyRef: MutableRef<string | null>;
   cancelDebounce: () => void;
   clearUnsaved: (scopePath: string | null | undefined, path: string) => void;
@@ -34,8 +34,8 @@ interface UseEditorDocumentLoaderInput {
   currentDocumentSpaceId: string | null;
   currentPathRef: MutableRef<string | null>;
   editor: PlateEditor | null;
-  initialEntry: Entry | null;
-  initialEntrySpacePath: string | null;
+  initialPage: Page | null;
+  initialPageSpacePath: string | null;
   isLoadingRef: MutableRef<boolean>;
   loadEditorValue: (value: Descendant[]) => Descendant[];
   setBrokenLinks: (links: Set<string>) => void;
@@ -43,7 +43,7 @@ interface UseEditorDocumentLoaderInput {
 }
 
 interface UseEditorDocumentLoaderResult {
-  applyLoadedEntry: (entry: Pick<Entry, "meta" | "warnings">) => void;
+  applyLoadedPage: (page: Pick<Page, "meta" | "warnings">) => void;
   descriptionRef: MutableRef<string>;
   documentLoading: boolean;
   iconRef: MutableRef<string | null>;
@@ -62,9 +62,9 @@ function waitForNextFrame(): Promise<void> {
   });
 }
 
-function showEntryWarnings(entry: { warnings?: { kind: string }[] }) {
+function showPageWarnings(page: { warnings?: { kind: string }[] }) {
   if (
-    entry.warnings?.some((warning) => warning.kind === "malformed_frontmatter")
+    page.warnings?.some((warning) => warning.kind === "malformed_frontmatter")
   ) {
     toast.warning(m.editor_frontmatter_malformed_warning());
   }
@@ -82,22 +82,22 @@ export function useEditorDocumentLoader({
   currentDocumentSpaceId,
   currentPathRef,
   editor,
-  initialEntry,
-  initialEntrySpacePath,
+  initialPage,
+  initialPageSpacePath,
   isLoadingRef,
   loadEditorValue,
   setBrokenLinks,
   spacePath,
 }: UseEditorDocumentLoaderInput): UseEditorDocumentLoaderResult {
-  const initialEntryRef = useRef<Entry | null>(initialEntry);
-  const initialEntrySpacePathRef = useRef<string | null>(initialEntrySpacePath);
-  const bodyOnlyMetaRef = useRef<EntryMeta | null>(bodyOnlyMeta);
+  const initialPageRef = useRef<Page | null>(initialPage);
+  const initialPageSpacePathRef = useRef<string | null>(initialPageSpacePath);
+  const bodyOnlyMetaRef = useRef<PageMeta | null>(bodyOnlyMeta);
   const loadSeqRef = useRef(0);
   const titleRef = useRef("");
   const iconRef = useRef<string | null>(null);
   const descriptionRef = useRef("");
 
-  const [, setMeta] = useState<EntryMeta | null>(null);
+  const [, setMeta] = useState<PageMeta | null>(null);
   const [title, setTitle] = useState("");
   const [icon, setIcon] = useState<string | null>(null);
   const [description, setDescription] = useState("");
@@ -107,10 +107,10 @@ export function useEditorDocumentLoader({
   );
 
   useEffect(() => {
-    initialEntryRef.current = initialEntry;
-    initialEntrySpacePathRef.current = initialEntrySpacePath;
+    initialPageRef.current = initialPage;
+    initialPageSpacePathRef.current = initialPageSpacePath;
     bodyOnlyMetaRef.current = bodyOnlyMeta;
-  }, [bodyOnlyMeta, initialEntry, initialEntrySpacePath]);
+  }, [bodyOnlyMeta, initialPage, initialPageSpacePath]);
 
   useEffect(() => {
     titleRef.current = title;
@@ -124,20 +124,20 @@ export function useEditorDocumentLoader({
     descriptionRef.current = description;
   }, [description]);
 
-  const applyMeta = useCallback((entryMeta: EntryMeta) => {
-    titleRef.current = entryMeta.title;
-    iconRef.current = entryMeta.icon;
-    descriptionRef.current = entryMeta.description ?? "";
-    setMeta(entryMeta);
-    setTitle(entryMeta.title);
-    setIcon(entryMeta.icon);
-    setDescription(entryMeta.description ?? "");
+  const applyMeta = useCallback((pageMeta: PageMeta) => {
+    titleRef.current = pageMeta.title;
+    iconRef.current = pageMeta.icon;
+    descriptionRef.current = pageMeta.description ?? "";
+    setMeta(pageMeta);
+    setTitle(pageMeta.title);
+    setIcon(pageMeta.icon);
+    setDescription(pageMeta.description ?? "");
   }, []);
 
-  const applyLoadedEntry = useCallback(
-    (entry: Pick<Entry, "meta" | "warnings">) => {
-      showEntryWarnings(entry);
-      applyMeta(entry.meta);
+  const applyLoadedPage = useCallback(
+    (page: Pick<Page, "meta" | "warnings">) => {
+      showPageWarnings(page);
+      applyMeta(page.meta);
     },
     [applyMeta],
   );
@@ -155,13 +155,13 @@ export function useEditorDocumentLoader({
     [currentCacheKeyRef],
   );
 
-  const initialEntryMatchesCurrentDocument =
-    Boolean(initialEntry && initialEntry.path === currentDocument) &&
+  const initialPageMatchesCurrentDocument =
+    Boolean(initialPage && initialPage.path === currentDocument) &&
     Boolean(spacePath) &&
-    initialEntrySpacePath === spacePath;
-  const initialEntryLoadKey =
-    initialEntryMatchesCurrentDocument && initialEntry
-      ? `${spacePath}\0${initialEntry.path}\0${initialEntry.body.length}`
+    initialPageSpacePath === spacePath;
+  const initialPageLoadKey =
+    initialPageMatchesCurrentDocument && initialPage
+      ? `${spacePath}\0${initialPage.path}\0${initialPage.body.length}`
       : null;
 
   useEffect(() => {
@@ -224,14 +224,14 @@ export function useEditorDocumentLoader({
       editorState.hasAiModified(spacePath, currentDocument) ||
       editorState.hasStale(spacePath, currentDocument);
     const cachedBody = cached && !wasExternallyModified ? cached : null;
-    const initialEntrySpacePathForDocument = initialEntrySpacePathRef.current;
+    const initialPageSpacePathForDocument = initialPageSpacePathRef.current;
     const initialForDocument =
-      initialEntryRef.current?.path === currentDocument &&
-      initialEntrySpacePathForDocument === spacePath
-        ? initialEntryRef.current
+      initialPageRef.current?.path === currentDocument &&
+      initialPageSpacePathForDocument === spacePath
+        ? initialPageRef.current
         : null;
     const bodyOnlyMetaForDocument =
-      initialEntrySpacePathForDocument === spacePath
+      initialPageSpacePathForDocument === spacePath
         ? bodyOnlyMetaRef.current
         : null;
     const metaForCachedBody =
@@ -247,7 +247,7 @@ export function useEditorDocumentLoader({
     const finish = (
       status: "ok" | "error",
       usedCachedBody: boolean,
-      source: "cache" | "cache-meta-read" | "initial-entry" | "read-entry",
+      source: "cache" | "cache-meta-read" | "initial-page" | "read-page",
     ) => {
       if (sequence !== loadSeqRef.current) return;
       isLoadingRef.current = false;
@@ -264,14 +264,14 @@ export function useEditorDocumentLoader({
     if (cachedBody) {
       void (async () => {
         try {
-          const entryMeta =
+          const pageMeta =
             metaForCachedBody ??
-            (await readEntry({ spacePath, path: currentDocument }));
+            (await readPage({ spacePath, path: currentDocument }));
           if (sequence !== loadSeqRef.current) return;
-          if ("meta" in entryMeta) {
-            applyLoadedEntry(entryMeta);
+          if ("meta" in pageMeta) {
+            applyLoadedPage(pageMeta);
           } else {
-            applyMeta(entryMeta);
+            applyMeta(pageMeta);
           }
           const loadedValue = loadEditorValue(cachedBody);
           setCachedDocumentValue(spacePath, currentDocument, loadedValue);
@@ -292,15 +292,15 @@ export function useEditorDocumentLoader({
       deleteCachedDocumentValue(currentDocument, spacePath);
       useEditorStore.getState().clearStale(spacePath, currentDocument);
       void (async () => {
-        const source = initialForDocument ? "initial-entry" : "read-entry";
+        const source = initialForDocument ? "initial-page" : "read-page";
         try {
           await waitForNextFrame();
-          const entry =
+          const page =
             initialForDocument ??
-            (await readEntry({ spacePath, path: currentDocument }));
+            (await readPage({ spacePath, path: currentDocument }));
           if (sequence !== loadSeqRef.current) return;
-          applyLoadedEntry(entry);
-          const value = deserializeWithConflicts(editor, entry.body);
+          applyLoadedPage(page);
+          const value = deserializeWithConflicts(editor, page.body);
           const loadedValue = loadEditorValue(value);
           setCachedDocumentValue(spacePath, currentDocument, loadedValue);
           clearUnsaved(spacePath, currentDocument);
@@ -320,12 +320,12 @@ export function useEditorDocumentLoader({
     documentPathHandoff,
     currentDocumentSpaceId,
     spacePath,
-    initialEntryLoadKey,
+    initialPageLoadKey,
     loadEditorValue,
     cancelDebounce,
     clearUnsaved,
     setBrokenLinks,
-    applyLoadedEntry,
+    applyLoadedPage,
     applyMeta,
     currentCacheKeyRef,
     currentPathRef,
@@ -335,7 +335,7 @@ export function useEditorDocumentLoader({
   useEffect(() => {
     bodyOnlyMetaRef.current = bodyOnlyMeta;
     if (!bodyOnly || !bodyOnlyMeta) return;
-    if (initialEntrySpacePath !== spacePath) {
+    if (initialPageSpacePath !== spacePath) {
       return;
     }
     let cancelled = false;
@@ -346,10 +346,10 @@ export function useEditorDocumentLoader({
     return () => {
       cancelled = true;
     };
-  }, [applyMeta, bodyOnly, bodyOnlyMeta, initialEntrySpacePath, spacePath]);
+  }, [applyMeta, bodyOnly, bodyOnlyMeta, initialPageSpacePath, spacePath]);
 
   return {
-    applyLoadedEntry,
+    applyLoadedPage,
     descriptionRef,
     documentLoading,
     iconRef,

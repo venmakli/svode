@@ -1,5 +1,5 @@
 import { invokeCommand } from "@/platform/native/invoke";
-import type { EntryDto } from "@/platform/entries/entries-api";
+import type { PageDto } from "@/platform/pages/pages-api";
 import type {
   CollectionSchemaDto,
   ColumnDto,
@@ -57,7 +57,15 @@ export interface ConvertToCollectionResultDto {
   collectionPath: string;
   readmePath: string;
   schemaPath: string;
-  entry: EntryDto;
+  page: PageDto;
+}
+
+interface PrivateConvertToCollectionResultDto {
+  oldPath: string;
+  collectionPath: string;
+  readmePath: string;
+  schemaPath: string;
+  entry: PageDto;
 }
 
 interface CollectionPathInput {
@@ -80,16 +88,21 @@ export function createFolder(input: {
   });
 }
 
-export function convertToCollection(input: {
+export async function convertToCollection(input: {
   spacePath: string;
   path: string;
   projectPath?: string | null;
 }): Promise<ConvertToCollectionResultDto> {
-  return invokeCommand<ConvertToCollectionResultDto>("convert_to_collection", {
-    space: input.spacePath,
-    path: input.path,
-    projectPath: input.projectPath ?? null,
-  });
+  const { entry, ...result } =
+    await invokeCommand<PrivateConvertToCollectionResultDto>(
+      "convert_to_collection",
+      {
+        space: input.spacePath,
+        path: input.path,
+        projectPath: input.projectPath ?? null,
+      },
+    );
+  return { ...result, page: entry };
 }
 
 export function getCollectionSchema(input: CollectionPathInput) {
@@ -218,7 +231,7 @@ export function queryCollectionEntries(input: {
   includeNested: boolean;
   projectPath?: string | null;
 }) {
-  return invokeCommand<EntryDto[]>("query_entries", {
+  return invokeCommand<PageDto[]>("query_entries", {
     space: input.spacePath,
     collectionPath: input.collectionPath,
     filters: input.filters,
@@ -237,7 +250,7 @@ export function listEntriesForView(input: {
   includeNested: boolean;
   projectPath?: string | null;
 }) {
-  return invokeCommand<EntryDto[]>("list_entries_for_view", {
+  return invokeCommand<PageDto[]>("list_entries_for_view", {
     space: input.spacePath,
     collectionPath: input.collectionPath,
     viewName: input.viewName,
@@ -303,7 +316,7 @@ export function instantiateTemplate(
     contextualDefaults?: Record<string, unknown> | null;
   },
 ) {
-  return invokeCommand<EntryDto>("instantiate_template", {
+  return invokeCommand<PageDto>("instantiate_template", {
     space: input.spacePath,
     collectionPath: input.collectionPath,
     templateSlug: input.templateSlug,

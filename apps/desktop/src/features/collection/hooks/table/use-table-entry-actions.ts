@@ -1,6 +1,6 @@
 import { useCallback, type Dispatch, type SetStateAction } from "react";
 import type { DragEndEvent } from "@dnd-kit/core";
-import type { Entry } from "@/features/entry";
+import type { Page } from "@/features/page";
 import { entryParentDir, reorderVisibleEntries } from "../../lib/entry-tree";
 import { useCollectionTreeOrder } from "../use-collection-tree-order";
 
@@ -8,11 +8,11 @@ interface UseTableEntryActionsOptions {
   collectionPath: string;
   spacePath: string;
   projectPath?: string | null;
-  topLevelEntries: Entry[];
-  filteredTopLevel: Entry[];
-  setEntries: Dispatch<SetStateAction<Entry[]>>;
+  topLevelEntries: Page[];
+  filteredTopLevel: Page[];
+  setEntries: Dispatch<SetStateAction<Page[]>>;
   loadEntries: () => Promise<void>;
-  onCreateEntry: (title: string, asFolder: boolean) => Promise<Entry>;
+  onCreateEntry: (title: string, asFolder: boolean) => Promise<Page>;
 }
 
 export function useTableEntryActions({
@@ -34,7 +34,7 @@ export function useTableEntryActions({
     async (
       title: string,
       asFolder: boolean,
-      onCreated?: (entry: Entry) => void,
+      onCreated?: (entry: Page) => void,
     ) => {
       const created = await onCreateEntry(title, asFolder);
       onCreated?.(created);

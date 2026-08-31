@@ -1,33 +1,33 @@
-import type { Entry } from "@/features/entry";
-import { normalizeEntryPath } from "./utils";
+import type { Page } from "@/features/page";
+import { normalizePagePath } from "./utils";
 
 export function entryParentDir(path: string) {
-  const normalized = normalizeEntryPath(path).replace(/\/readme\.md$/i, ".md");
+  const normalized = normalizePagePath(path).replace(/\/readme\.md$/i, ".md");
   const index = normalized.lastIndexOf("/");
   return index < 0 ? "" : normalized.slice(0, index);
 }
 
-export function entryCollectionPath(entry: Entry) {
-  return normalizeEntryPath(entry.path)
+export function entryCollectionPath(entry: Page) {
+  return normalizePagePath(entry.path)
     .replace(/\/readme\.md$/i, "")
     .replace(/\.md$/i, "");
 }
 
-export function isFolderEntry(entry: Entry) {
-  return normalizeEntryPath(entry.path).toLowerCase().endsWith("/readme.md");
+export function isFolderEntry(entry: Page) {
+  return normalizePagePath(entry.path).toLowerCase().endsWith("/readme.md");
 }
 
-export function siblingEntries(entries: Entry[], parentPath: string) {
+export function siblingEntries(entries: Page[], parentPath: string) {
   return entries.filter((entry) => entryParentDir(entry.path) === parentPath);
 }
 
 export function replaceSiblings(
-  entries: Entry[],
+  entries: Page[],
   parentPath: string,
-  siblings: Entry[],
+  siblings: Page[],
 ) {
   const siblingPaths = new Set(siblings.map((entry) => entry.path));
-  const next: Entry[] = [];
+  const next: Page[] = [];
   let inserted = false;
 
   for (const entry of entries) {
@@ -46,8 +46,8 @@ export function replaceSiblings(
 }
 
 export function reorderVisibleEntries(
-  all: Entry[],
-  visible: Entry[],
+  all: Page[],
+  visible: Page[],
   movedPath: string,
   toVisibleIndex: number,
 ) {

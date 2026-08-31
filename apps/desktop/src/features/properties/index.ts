@@ -8,7 +8,7 @@ export type {
   ColumnPatch,
   DateDisplay,
   DateRangeValue,
-  EntrySchemaResult,
+  PageSchemaResult,
   NumberDisplay,
   PropertyOption,
   PropertySensitivity,
@@ -22,7 +22,7 @@ export type {
   RelationTarget,
   RelationTwoWayDiagnostics,
   RelationTwoWaySchemaStatus,
-  ResolvedRelationEntry,
+  ResolvedRelationPage,
   SchemaMutationWarning,
   StatusGroup,
 } from "./model/types";

@@ -1,8 +1,9 @@
 import {
-  useActiveEntrySelection,
-  useOpenEntryDocument,
-} from "@/features/entry/selection";
-import { useOpenScopeOwner } from "@/features/artifact";
+  useActiveContentPath,
+  useActiveContentSpaceId,
+  useOpenScopeOwner,
+} from "@/features/artifact";
+import { useOpenPage } from "@/features/page/navigation";
 import type { TreeNode } from "../model/types";
 import { useEditorFilePendingWrite } from "@/features/editor/file-tree-sync";
 import { treeNodeHasChildren, treeParentKeyForNode } from "../lib/tree-cache";
@@ -36,7 +37,7 @@ export function useFileTreeItemActions({
   onActivateContent,
   onBeforeNavigation,
 }: UseFileTreeItemActionsInput) {
-  const openDocument = useOpenEntryDocument();
+  const openPage = useOpenPage();
   const openScopeOwner = useOpenScopeOwner();
   const openCollectionOwner = (path: string, targetSpaceId: string) =>
     openScopeOwner({
@@ -44,7 +45,8 @@ export function useFileTreeItemActions({
       path,
       spaceId: targetSpaceId,
     });
-  const { activeDocument, activeDocumentSpaceId } = useActiveEntrySelection();
+  const activeContentPath = useActiveContentPath();
+  const activeContentSpaceId = useActiveContentSpaceId();
   const {
     expandedPaths,
     treeParentLoading,
@@ -52,7 +54,7 @@ export function useFileTreeItemActions({
     reloadTreeParent,
     reloadTreeParents,
     reloadTreePathParent,
-    patchEntryTreeMeta,
+    patchPageTreeMeta,
     removeTreePath,
     spaces,
     rootSpaces,
@@ -77,8 +79,8 @@ export function useFileTreeItemActions({
   const isUnsaved = useEditorFilePendingWrite(spacePath, node.path);
   const isActive =
     !bareFolder &&
-    activeDocument === node.path &&
-    activeDocumentSpaceId === spaceId;
+    activeContentPath === node.path &&
+    activeContentSpaceId === spaceId;
   const expanded = expandedPaths[spaceId]?.includes(node.path) ?? false;
 
   const rename = useFileTreeItemRename({
@@ -88,7 +90,7 @@ export function useFileTreeItemActions({
     bareFolder,
     activeRootPath,
     reloadTreeParents,
-    patchEntryTreeMeta,
+    patchPageTreeMeta,
     removeTreePath,
     siblingRows:
       childrenByParentPath[spaceId]?.[
@@ -105,7 +107,7 @@ export function useFileTreeItemActions({
     bareFolder,
     activeRootPath,
     expandedPaths,
-    openDocument,
+    openPage,
     openCollectionOwner,
     reloadTreeParent,
     reloadTreePathParent,
@@ -135,7 +137,7 @@ export function useFileTreeItemActions({
     loadTreeChildren,
     onActivateContent,
     onBeforeNavigation,
-    openDocument,
+    openPage,
     openCollectionOwner,
     toggleExpanded,
   });
@@ -152,9 +154,9 @@ export function useFileTreeItemActions({
     expanded,
     handleDeleteConfirm: deletion.handleDeleteConfirm,
     handleDeleteRequest: deletion.handleDeleteRequest,
-    handleDocumentClick: navigation.handleDocumentClick,
+    handlePageClick: navigation.handlePageClick,
     handleMakeCollection: creation.handleMakeCollection,
-    handleMakeDocument: creation.handleMakeDocument,
+    handleMakePage: creation.handleMakePage,
     handleNewFolder: creation.handleNewFolder,
     handleNewPage: creation.handleNewPage,
     handleNodeOpenChange: navigation.handleNodeOpenChange,

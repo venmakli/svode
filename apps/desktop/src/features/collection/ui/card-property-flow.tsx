@@ -8,7 +8,7 @@ import {
 } from "@/features/properties";
 import { PropertyControl } from "@/features/properties/control";
 import { PropertyValue } from "@/features/properties/display";
-import type { Entry } from "@/features/entry";
+import type { Page } from "@/features/page";
 import type {
   Column,
   ActorCandidate,
@@ -30,14 +30,14 @@ export function CardPropertyFlow({
   onRequestActors,
   onUpdateField,
 }: {
-  entry: Entry;
+  entry: Page;
   columns: Column[];
   actors: ActorCandidate[];
   relationContext?: RelationContext;
   className?: string;
   mode?: "card" | "inline";
   onRequestActors: (allTime: boolean) => Promise<ActorCandidate[]>;
-  onUpdateField?: (entry: Entry, column: Column, value: unknown) => void;
+  onUpdateField?: (entry: Page, column: Column, value: unknown) => void;
 }) {
   const rendered = columns
     .map((column) => (
@@ -73,15 +73,15 @@ function CardPropertyItem({
   onRequestActors,
   onUpdateField,
 }: {
-  entry: Entry;
+  entry: Page;
   column: Column;
   actors: ActorCandidate[];
   relationContext?: RelationContext;
   mode: "card" | "inline";
   onRequestActors: (allTime: boolean) => Promise<ActorCandidate[]>;
-  onUpdateField?: (entry: Entry, column: Column, value: unknown) => void;
+  onUpdateField?: (entry: Page, column: Column, value: unknown) => void;
 }) {
-  const property = defineSchemaBackedCollectionProperty<Entry>({
+  const property = defineSchemaBackedCollectionProperty<Page>({
     capabilities: {
       edit: onUpdateField
         ? {
@@ -154,7 +154,7 @@ function CardPropertyItem({
   );
 }
 
-function valueForColumn(entry: Entry, column: Column) {
+function valueForColumn(entry: Page, column: Column) {
   if (column.name === "created") return entry.meta.created;
   if (column.name === "updated") return entry.meta.updated;
   const value = entry.meta.extra?.[column.name];

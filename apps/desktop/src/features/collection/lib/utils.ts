@@ -1,26 +1,26 @@
-import type { Entry } from "@/features/entry";
+import type { Page } from "@/features/page";
 import type { CollectionView, ViewType } from "@/features/collection/query/model";
 
 export function humanize(path: string) {
-  const normalized = normalizeEntryPath(path);
+  const normalized = normalizePagePath(path);
   const name = normalized.split("/").filter(Boolean).at(-1) ?? normalized;
   return name
     .replace(/[-_]+/g, " ")
     .replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
-export function normalizeEntryPath(path: string) {
+export function normalizePagePath(path: string) {
   return path.replace(/\\/g, "/");
 }
 
-export function collectionPathFor(documentPath: string) {
-  const normalized = normalizeEntryPath(documentPath);
+export function collectionPathFor(pagePath: string) {
+  const normalized = normalizePagePath(pagePath);
   if (normalized.toLowerCase() === "readme.md") return "";
   return normalized.replace(/\/readme\.md$/i, "");
 }
 
 export function readmePathFor(collectionPath: string) {
-  const normalized = normalizeEntryPath(collectionPath).replace(/\/+$/g, "");
+  const normalized = normalizePagePath(collectionPath).replace(/\/+$/g, "");
   return normalized ? `${normalized}/README.md` : "README.md";
 }
 
@@ -40,7 +40,7 @@ export function viewType(view: CollectionView | null | undefined): ViewType {
     : "table";
 }
 
-export function titleFilter(entries: Entry[], query: string) {
+export function titleFilter(entries: Page[], query: string) {
   const normalized = query.trim().toLowerCase();
   if (!normalized) return entries;
   return entries.filter((entry) =>
@@ -61,8 +61,8 @@ export function nextTableViewName(views: CollectionView[]) {
 }
 
 export function entryTemplateSlug(collectionPath: string, entryPath: string) {
-  const normalizedCollectionPath = normalizeEntryPath(collectionPath);
-  const normalizedEntryPath = normalizeEntryPath(entryPath);
+  const normalizedCollectionPath = normalizePagePath(collectionPath);
+  const normalizedEntryPath = normalizePagePath(entryPath);
   const prefix = normalizedCollectionPath
     ? `${normalizedCollectionPath}/.templates/`
     : ".templates/";

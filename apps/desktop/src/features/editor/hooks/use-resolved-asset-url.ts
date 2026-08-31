@@ -8,8 +8,9 @@ import {
 } from "react";
 
 import {
-  useActiveEntrySelection,
-} from "@/features/entry/selection";
+  useActiveContentPath,
+  useActiveContentSpaceId,
+} from "@/features/artifact";
 import { useSpace, selectActiveSpacePath } from "@/features/space";
 import {
   resolveEditorAssetWebviewUrl,
@@ -78,7 +79,8 @@ function resolveCachedAssetUrl(
 
 export function useEditorDocumentContext(): ResolvedEditorDocumentContext | null {
   const explicitContext = useContext(EditorAssetResolveReactContext);
-  const { activeDocument, activeDocumentSpaceId } = useActiveEntrySelection();
+  const activeDocument = useActiveContentPath();
+  const activeDocumentSpaceId = useActiveContentSpaceId();
   const { activeRootId, activeRootPath, rootSpaces, spaces } = useSpace(
     (state) => ({
       activeRootId: state.activeRootId,

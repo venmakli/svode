@@ -6,7 +6,7 @@ import {
   type QueryFilter,
   type QuerySort,
 } from "@/features/collection/query/model";
-import type { Entry } from "@/features/entry";
+import type { Page } from "@/features/page";
 import { normalizeSchema, type CollectionSchema } from "@/features/properties";
 import {
   getCollectionSchema,
@@ -44,7 +44,7 @@ export function useTableEntries({
   sort: QuerySort[];
   spacePath: string;
 }) {
-  const [entries, setEntries] = useState<Entry[]>([]);
+  const [entries, setEntries] = useState<Page[]>([]);
   const [nestedCollectionPaths, setNestedCollectionPaths] = useState<
     Set<string>
   >(new Set());
@@ -176,7 +176,7 @@ export function useTableEntries({
           }
         }),
       );
-      const entriesByPath = new Map<string, Entry>();
+      const entriesByPath = new Map<string, Page>();
       [...baseEntries, ...nestedEntryBatches.flat()].forEach((entry) => {
         entriesByPath.set(entry.path, entry);
       });

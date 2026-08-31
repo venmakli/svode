@@ -1,7 +1,7 @@
 import { useCallback, type Dispatch, type SetStateAction } from "react";
 import type { DragEndEvent } from "@dnd-kit/core";
 import { toast } from "sonner";
-import type { Entry } from "@/features/entry";
+import type { Page } from "@/features/page";
 import { entryParentDir, reorderVisibleEntries } from "../../lib/entry-tree";
 import { useCollectionTreeOrder } from "../use-collection-tree-order";
 import { handleEntryCreateError } from "../error-feedback";
@@ -11,12 +11,12 @@ interface UseGalleryEntryActionsOptions {
   collectionPath: string;
   spacePath: string;
   projectPath?: string | null;
-  entries: Entry[];
-  topLevelEntries: Entry[];
-  filteredEntries: Entry[];
-  setEntries: Dispatch<SetStateAction<Entry[]>>;
+  entries: Page[];
+  topLevelEntries: Page[];
+  filteredEntries: Page[];
+  setEntries: Dispatch<SetStateAction<Page[]>>;
   loadEntries: () => Promise<void>;
-  onCreateEntry: (title: string, asFolder: boolean) => Promise<Entry>;
+  onCreateEntry: (title: string, asFolder: boolean) => Promise<Page>;
 }
 
 export function useGalleryEntryActions({
@@ -39,7 +39,7 @@ export function useGalleryEntryActions({
     async (
       title: string,
       asFolder: boolean,
-      onCreated?: (entry: Entry) => void,
+      onCreated?: (entry: Page) => void,
     ) => {
       try {
         const created = await onCreateEntry(title, asFolder);

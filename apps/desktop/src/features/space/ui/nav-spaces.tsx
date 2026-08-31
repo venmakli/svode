@@ -55,8 +55,8 @@ export function NavSpaces({
     }),
   );
   const {
-    activeDocument,
-    activeDocumentSpaceId,
+    activeContentPath,
+    activeContentSpaceId,
     activeRevealRequest,
     activeRootIcon,
     activeRootId,
@@ -167,12 +167,12 @@ export function NavSpaces({
                   const tree = fileTrees[space.id] ?? [];
                   const treeLoaded = hasRecordKey(fileTrees, space.id);
                   const isActive =
-                    activeDocumentSpaceId === space.id &&
-                    (!activeDocument ||
-                      activeDocument.toLowerCase() === "readme.md");
+                    activeContentSpaceId === space.id &&
+                    (!activeContentPath ||
+                      activeContentPath.toLowerCase() === "readme.md");
                   const activeRevealKey = getSpaceScopeActiveRevealKey({
-                    activeDocument,
-                    activeDocumentSpaceId,
+                    activeContentPath,
+                    activeContentSpaceId,
                     activeRevealRequest,
                     scopeId: space.id,
                   });

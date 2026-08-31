@@ -5,7 +5,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { JSDOM } from "jsdom";
 
 import { ContextMenuItem } from "@/components/ui/context-menu";
-import type { Entry } from "@/features/entry";
+import type { Page } from "@/features/page";
 
 import { CollectionListRowContent } from "../../ui/list/list-row";
 import { CollectionPresentationGalleryCard } from "../../ui/presentation-gallery-card";
@@ -134,7 +134,7 @@ test("persisted List keeps entry, nested-control, keyboard, double-open, and con
     },
   );
   const restoreGlobals = installDomGlobals(dom);
-  const entry: Entry = {
+  const entry: Page = {
     body: "",
     meta: {
       created: "2026-08-01T00:00:00Z",

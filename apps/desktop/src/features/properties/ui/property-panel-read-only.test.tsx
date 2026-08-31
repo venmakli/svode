@@ -10,7 +10,7 @@ test("read-only Page properties preserve label geometry and disable mutation con
       spacePath="/repo"
       projectPath="/repo"
       filePath="tasks/task.md"
-      entryLabel="Task"
+      pageLabel="Task"
       schemaResult={{
         collectionRootPath: "tasks",
         schema: { columns: [{ name: "Summary", type: "text" }] },
@@ -35,7 +35,7 @@ test("read-only Page properties preserve label geometry and disable mutation con
       spacePath="/repo"
       projectPath="/repo"
       filePath="tasks/task.md"
-      entryLabel="Task"
+      pageLabel="Task"
       schemaResult={{
         collectionRootPath: "tasks",
         schema: { columns: [{ name: "Summary", type: "text" }] },

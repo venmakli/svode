@@ -83,7 +83,7 @@ pub enum AppError {
     #[error("Invalid identity field: {0}")]
     IdentityInvalid(&'static str),
 
-    #[error("Document name is already used in this container")]
+    #[error("Page name is already used in this container")]
     DocumentNameConflict(crate::files::naming::DocumentNameConflict),
 
     #[error("{0}")]
@@ -118,7 +118,7 @@ impl AppError {
             AppError::StrategyInherited => "strategy_inherited",
             AppError::IdentityMissing => "identity_missing",
             AppError::IdentityInvalid(_) => "identity_invalid",
-            AppError::DocumentNameConflict(_) => "document_name_conflict",
+            AppError::DocumentNameConflict(_) => "page_name_conflict",
             AppError::General(_) => "general",
         }
     }
@@ -174,7 +174,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn document_name_conflict_serializes_as_structured_tauri_error() {
+    fn page_name_conflict_serializes_as_structured_tauri_error() {
         let value = serde_json::to_value(AppError::DocumentNameConflict(
             crate::files::naming::DocumentNameConflict {
                 parent_path: Some("docs".to_string()),
@@ -186,7 +186,7 @@ mod tests {
         ))
         .unwrap();
 
-        assert_eq!(value["kind"], "document_name_conflict");
+        assert_eq!(value["kind"], "page_name_conflict");
         assert_eq!(value["conflict"]["parentPath"], "docs");
         assert_eq!(
             value["conflict"]["conflicts"][0]["path"],

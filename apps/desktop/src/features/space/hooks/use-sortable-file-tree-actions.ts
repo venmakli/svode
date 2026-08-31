@@ -31,7 +31,7 @@ export function useSortableFileTreeActions({
           projection: currentProjection,
         });
       } catch (err) {
-        console.error("Failed to move entry:", err);
+        console.error("Failed to move content item:", err);
         toast.error("Failed to move file");
       }
     },

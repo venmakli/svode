@@ -48,7 +48,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { useOpenEntryDocument } from "@/features/entry/selection";
+import { useOpenPage } from "@/features/page/navigation";
 import { CreateSpaceDialog, useSpace } from "@/features/space";
 import { useSpaceSettingsAgent } from "../hooks/use-space-settings-agent";
 import { useSpaceSettingsConfigActions } from "../hooks/use-space-settings-config-actions";
@@ -100,7 +100,7 @@ export function SpaceSettingsDialog({
   enableLegacyAgentIntegration,
   onOpenChange,
 }: SpaceSettingsDialogProps) {
-  const openDocument = useOpenEntryDocument();
+  const openPage = useOpenPage();
   const { activeRootId, activeRootPath, activeRootName, spaces } = useSpace();
 
   const projectPath = activeRootPath ?? inputPath ?? "";
@@ -189,7 +189,7 @@ export function SpaceSettingsDialog({
 
   function handleOpenAgentsMd() {
     onOpenChange(false);
-    openDocument(".svode/AGENTS.md", activeRootId ?? undefined);
+    openPage(".svode/AGENTS.md", activeRootId ?? undefined);
   }
 
   function handleSectionChange(nextSection: Section) {

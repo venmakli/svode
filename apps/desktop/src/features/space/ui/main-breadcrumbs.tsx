@@ -20,7 +20,7 @@ export function MainBreadcrumbs({
   onBeforeNavigation?: () => Promise<boolean>;
 } = {}) {
   const {
-    activeDocument,
+    activeContentPath,
     openBreadcrumb,
     openSpace,
     selectedSpace,
@@ -30,7 +30,7 @@ export function MainBreadcrumbs({
     workspaces,
   } = useMainBreadcrumbs();
 
-  if (!activeDocument) {
+  if (!activeContentPath) {
     if (!selectedSpace) return null;
     return (
       <div className="min-w-0 flex-1 px-2">

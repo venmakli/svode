@@ -17,8 +17,8 @@ import type {
   ViewType,
 } from "@/features/collection/query/model";
 import type { CollectionSchema } from "@/features/properties";
-import type { Entry } from "@/features/entry";
-import { documentNameConflictDisplayPath } from "@/features/entry/entry-api";
+import type { Page } from "@/features/page";
+import { pageNameConflictDisplayPath } from "@/features/page/page-api";
 import { useViewPlaceholderEntries } from "../hooks";
 import { IncompleteState } from "./incomplete-state";
 import { titleFilter } from "../lib/utils";
@@ -47,9 +47,9 @@ export function ViewPlaceholder({
   projectPath?: string | null;
   searchQuery: string;
   refreshToken: number;
-  onOpenEntry: (entry: Entry) => void;
-  onDuplicateEntry: (entry: Entry) => void;
-  onDeleteEntry: (entry: Entry) => void;
+  onOpenEntry: (entry: Page) => void;
+  onDuplicateEntry: (entry: Page) => void;
+  onDeleteEntry: (entry: Page) => void;
 }) {
   const entries = useViewPlaceholderEntries({
     spacePath,
@@ -104,7 +104,7 @@ export function ViewPlaceholder({
       ) : (
         <div className="rounded-lg border bg-background">
           {filtered.slice(0, 20).map((entry) => {
-            const conflictPath = documentNameConflictDisplayPath(entry);
+            const conflictPath = pageNameConflictDisplayPath(entry);
             return (
               <ContextMenu key={entry.path}>
                 <ContextMenuTrigger asChild>
@@ -119,7 +119,7 @@ export function ViewPlaceholder({
                       <span className="truncate">{entry.meta.title}</span>
                       {conflictPath ? (
                         <span
-                          data-entry-name-conflict-path
+                          data-page-name-conflict-path
                           className="truncate text-xs text-muted-foreground"
                         >
                           {conflictPath}

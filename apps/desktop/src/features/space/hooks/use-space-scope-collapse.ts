@@ -1,10 +1,10 @@
 import { useCallback } from "react";
-import type { EntryRevealRequest } from "@/features/entry/selection";
+import type { ContentRevealRequest } from "@/features/artifact";
 
 interface SpaceScopeRevealInput {
-  activeDocument: string | null;
-  activeDocumentSpaceId: string | null;
-  activeRevealRequest: EntryRevealRequest | null;
+  activeContentPath: string | null;
+  activeContentSpaceId: string | null;
+  activeRevealRequest: ContentRevealRequest | null;
   scopeId: string | null;
 }
 
@@ -26,21 +26,21 @@ interface UseSpaceScopeCollapseInput {
 }
 
 export function getSpaceScopeActiveRevealKey({
-  activeDocument,
-  activeDocumentSpaceId,
+  activeContentPath,
+  activeContentSpaceId,
   activeRevealRequest,
   scopeId,
 }: SpaceScopeRevealInput): string | null {
-  if (!scopeId || activeDocumentSpaceId !== scopeId) return null;
+  if (!scopeId || activeContentSpaceId !== scopeId) return null;
   if (
-    !activeDocument ||
+    !activeContentPath ||
     !activeRevealRequest ||
     activeRevealRequest.spaceId !== scopeId ||
-    activeRevealRequest.path !== activeDocument
+    activeRevealRequest.path !== activeContentPath
   ) {
     return null;
   }
-  return `${activeRevealRequest.key}:${activeDocument}`;
+  return `${activeRevealRequest.key}:${activeContentPath}`;
 }
 
 export function isSpaceScopeOpen({

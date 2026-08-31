@@ -1,12 +1,16 @@
 export {
   closeActiveContent,
+  getActiveContentPath,
   getActiveContentSelection,
+  getActiveContentSpaceId,
   openArtifact,
   openScopeOwner,
   retargetActiveContent,
 } from "./api/selection-actions";
 export {
   useActiveContentSelection,
+  useActiveContentPath,
+  useActiveContentSpaceId,
   useCloseActiveContent,
   useOpenArtifact,
   useOpenScopeOwner,
@@ -15,6 +19,8 @@ export {
 export {
   inferArtifactSourceShape,
   normalizeArtifactTargetPath,
+  selectedContentPath,
+  selectedContentSpaceId,
 } from "./model/selection-store";
 export { registerActiveContentDeactivation } from "./model/active-surface-deactivation";
 export {

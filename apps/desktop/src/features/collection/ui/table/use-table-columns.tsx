@@ -1,6 +1,6 @@
 import { useMemo, type Dispatch, type SetStateAction } from "react";
 import type { ColumnDef, ColumnSizingState } from "@tanstack/react-table";
-import type { Entry } from "@/features/entry";
+import type { Page } from "@/features/page";
 import type {
   CollectionView,
   UseViewQueryResult,
@@ -68,7 +68,7 @@ export function useTableColumns({
   columnSizing: ColumnSizingState;
   editing: TableEditingCell | null;
   openColumn: string | null;
-  entries: Entry[];
+  entries: Page[];
   expanded: Set<string>;
   nestedCollectionPaths: Set<string>;
   showNested: boolean;
@@ -78,15 +78,15 @@ export function useTableColumns({
   setExpanded: (path: string) => void;
   onSchemaChange: (schema: CollectionSchema) => void;
   onUpdateViewPatch: (patch: Record<string, unknown>) => Promise<void>;
-  onOpenEntry: (entry: Entry) => void;
-  onOpenNestedPeek: (entry: Entry) => void;
-  onOpenNestedCollection: (entry: Entry) => void;
-  onOpenFullPage: (entry: Entry) => void;
+  onOpenEntry: (entry: Page) => void;
+  onOpenNestedPeek: (entry: Page) => void;
+  onOpenNestedCollection: (entry: Page) => void;
+  onOpenFullPage: (entry: Page) => void;
   onOpenPath: (path: string, spaceId?: string | null) => void;
   onOpenRelationTarget: (target: RelationOpenTarget) => void;
   onRequestActors: (allTime: boolean) => Promise<ActorCandidate[]>;
   onCommitField: (
-    entry: Entry,
+    entry: Page,
     column: Column,
     value: unknown,
     options?: { flush?: boolean },
@@ -214,7 +214,7 @@ export function useTableColumns({
               <PropertyCell
                 readOnly={readOnly}
                 column={property}
-                entryLabel={row.original.entry.meta.title}
+                pageLabel={row.original.entry.meta.title}
                 actors={actors}
                 onRequestActors={onRequestActors}
                 relationContext={{

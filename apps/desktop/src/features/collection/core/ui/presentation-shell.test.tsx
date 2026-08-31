@@ -123,7 +123,7 @@ test("list shell renders structured identity, property flow, context menu, and a
   expect(markup.includes('role="option"')).toBe(false);
 });
 
-test("structured Gallery uses the full responsive geometry and properties without Entry", () => {
+test("structured Gallery uses the full responsive geometry and properties without Page", () => {
   const presentation = defineCollectionCorePresentation<TestRow>({
     descriptor: descriptor({
       onActivate: undefined,

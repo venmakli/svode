@@ -1,20 +1,21 @@
 import {
-  getActiveEntrySelection,
-  openEntryDocument,
-} from "@/features/entry/selection";
+  getActiveContentPath,
+  getActiveContentSpaceId,
+} from "@/features/artifact";
+import { openPage } from "@/features/page/navigation";
 import {
   clearEditorFileUnsaved,
   suppressEditorFileEvents,
 } from "@/features/editor/file-tree-sync";
 
 export interface FileTreeEditorSync {
-  readonly initialActiveDocument: string | null;
+  readonly initialActiveContentPath: string | null;
   suppressPaths: (paths: string[]) => void;
   clearInitialUnsaved: (path: string) => void;
-  reopenInitialDocument: (fromPath: string, toPath: string) => void;
-  activeDocument: () => string | null;
-  reopenDocumentSnapshot: (
-    activeDocument: string | null,
+  reopenInitialPage: (fromPath: string, toPath: string) => void;
+  activeContentPath: () => string | null;
+  reopenPageSnapshot: (
+    activeContentPath: string | null,
     fromPath: string,
     toPath: string,
   ) => void;
@@ -24,34 +25,33 @@ export function createFileTreeEditorSync(
   spaceId: string,
   spacePath: string,
 ): FileTreeEditorSync {
-  const initialSelection = getActiveEntrySelection();
-  const initialActiveDocument = initialSelection.activeDocument;
-  const initialActiveDocumentSpaceId = initialSelection.activeDocumentSpaceId;
+  const initialActiveContentPath = getActiveContentPath();
+  const initialActiveContentPathSpaceId = getActiveContentSpaceId();
 
-  const isInitialDocument = (path: string) =>
-    initialActiveDocumentSpaceId === spaceId && initialActiveDocument === path;
+  const isInitialPage = (path: string) =>
+    initialActiveContentPathSpaceId === spaceId && initialActiveContentPath === path;
 
   return {
-    initialActiveDocument,
+    initialActiveContentPath,
     suppressPaths: (paths) => {
       suppressEditorFileEvents(spacePath, paths);
     },
     clearInitialUnsaved: (path) => {
-      if (isInitialDocument(path)) {
+      if (isInitialPage(path)) {
         clearEditorFileUnsaved(spacePath, path);
       }
     },
-    reopenInitialDocument: (fromPath, toPath) => {
-      if (!isInitialDocument(fromPath)) return;
+    reopenInitialPage: (fromPath, toPath) => {
+      if (!isInitialPage(fromPath)) return;
       clearEditorFileUnsaved(spacePath, fromPath);
-      openEntryDocument(toPath, spaceId);
+      openPage(toPath, spaceId);
     },
-    activeDocument: () => getActiveEntrySelection().activeDocument,
-    reopenDocumentSnapshot: (activeDocument, fromPath, toPath) => {
-      if (activeDocument !== fromPath) return;
-      if (getActiveEntrySelection().activeDocumentSpaceId !== spaceId) return;
+    activeContentPath: getActiveContentPath,
+    reopenPageSnapshot: (activeContentPath, fromPath, toPath) => {
+      if (activeContentPath !== fromPath) return;
+      if (getActiveContentSpaceId() !== spaceId) return;
       clearEditorFileUnsaved(spacePath, fromPath);
-      openEntryDocument(toPath, spaceId);
+      openPage(toPath, spaceId);
     },
   };
 }

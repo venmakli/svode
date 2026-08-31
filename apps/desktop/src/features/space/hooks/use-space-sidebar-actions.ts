@@ -1,5 +1,9 @@
 import { useEffect, useMemo } from "react";
-import { useActiveEntrySelection } from "@/features/entry/selection";
+import {
+  useActiveContentPath,
+  useActiveContentSelection,
+  useActiveContentSpaceId,
+} from "@/features/artifact";
 import { useSpaceStore } from "../model";
 import { useMissingSpaceClone } from "./use-missing-space-clone";
 import { useSpaceActions } from "./use-space-actions";
@@ -46,8 +50,9 @@ export function useSpaceSidebarActions({
     patchSpaceMetadata,
   } = useSpaceStore();
   const { deleteSpace } = useSpaceActions();
-  const { activeDocument, activeDocumentSpaceId, activeRevealRequest } =
-    useActiveEntrySelection();
+  const { activeRevealRequest } = useActiveContentSelection();
+  const activeContentPath = useActiveContentPath();
+  const activeContentSpaceId = useActiveContentSpaceId();
   const {
     deleteFiles,
     deleteTarget,
@@ -68,8 +73,8 @@ export function useSpaceSidebarActions({
     spaces,
   });
   const activeRootRevealKey = getSpaceScopeActiveRevealKey({
-    activeDocument,
-    activeDocumentSpaceId,
+    activeContentPath,
+    activeContentSpaceId,
     activeRevealRequest,
     scopeId: activeRootId,
   });
@@ -80,16 +85,16 @@ export function useSpaceSidebarActions({
     }
     for (const space of spaces) {
       keys[space.id] = getSpaceScopeActiveRevealKey({
-        activeDocument,
-        activeDocumentSpaceId,
+        activeContentPath,
+        activeContentSpaceId,
         activeRevealRequest,
         scopeId: space.id,
       });
     }
     return keys;
   }, [
-    activeDocument,
-    activeDocumentSpaceId,
+    activeContentPath,
+    activeContentSpaceId,
     activeRevealRequest,
     activeRootId,
     activeRootRevealKey,
@@ -122,11 +127,11 @@ export function useSpaceSidebarActions({
   });
 
   useEffect(() => {
-    if (!activeDocument || !activeDocumentSpaceId) return;
-    void ensureTreePathVisible(activeDocumentSpaceId, activeDocument);
+    if (!activeContentPath || !activeContentSpaceId) return;
+    void ensureTreePathVisible(activeContentSpaceId, activeContentPath);
   }, [
-    activeDocument,
-    activeDocumentSpaceId,
+    activeContentPath,
+    activeContentSpaceId,
     activeRevealRequest,
     ensureTreePathVisible,
   ]);
@@ -152,12 +157,12 @@ export function useSpaceSidebarActions({
   useSpaceLfsStateSync(activeRootPath);
 
   const rootHomeActive =
-    activeDocumentSpaceId === activeRootId &&
-    (!activeDocument || activeDocument.toLowerCase() === "readme.md");
+    activeContentSpaceId === activeRootId &&
+    (!activeContentPath || activeContentPath.toLowerCase() === "readme.md");
 
   return {
-    activeDocument,
-    activeDocumentSpaceId,
+    activeContentPath,
+    activeContentSpaceId,
     activeRevealRequest,
     activeRootIcon,
     activeRootId,

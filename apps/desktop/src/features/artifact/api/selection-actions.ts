@@ -1,4 +1,8 @@
-import { useArtifactSelectionStore } from "../model/selection-store";
+import {
+  selectedContentPath,
+  selectedContentSpaceId,
+  useArtifactSelectionStore,
+} from "../model/selection-store";
 import type {
   ActiveContentSelectionSnapshot,
   ArtifactOpenTarget,
@@ -20,6 +24,14 @@ export function getActiveContentSelection(): ActiveContentSelectionSnapshot {
     activePathRetarget,
     transitionPending,
   };
+}
+
+export function getActiveContentPath(): string | null {
+  return selectedContentPath(useArtifactSelectionStore.getState().selection);
+}
+
+export function getActiveContentSpaceId(): string | null {
+  return selectedContentSpaceId(useArtifactSelectionStore.getState().selection);
 }
 
 export function openArtifact(

@@ -16,9 +16,9 @@ import {
   ContextMenuItem,
 } from "@/components/ui/context-menu";
 import { cn } from "@/shared/lib/utils";
-import { documentNameConflictDisplayPath } from "@/features/entry/entry-api";
+import { pageNameConflictDisplayPath } from "@/features/page/page-api";
 import { CardPropertyFlow } from "../card-property-flow";
-import { EntryTitleIcon } from "../entry-title-icon";
+import { PageTitleIcon } from "../page-title-icon";
 import { CollectionPresentationListRow } from "../presentation-core";
 import type { ListRowProps } from "./types";
 import * as m from "@/paraglide/messages.js";
@@ -90,7 +90,7 @@ export function CollectionListRowContent({
   dragListeners?: ButtonHTMLAttributes<HTMLButtonElement>;
 }) {
   const { entry } = row;
-  const conflictPath = documentNameConflictDisplayPath(entry);
+  const conflictPath = pageNameConflictDisplayPath(entry);
   const showIcon = cardFields.includes("icon");
   const showDescription =
     density === "comfortable" && cardFields.includes("description");
@@ -144,7 +144,7 @@ export function CollectionListRowContent({
             </button>
           ) : null}
           {showIcon ? (
-            <EntryTitleIcon
+            <PageTitleIcon
               icon={entry.meta.icon}
               className="size-5 text-[15px] leading-none"
             />
@@ -176,7 +176,7 @@ export function CollectionListRowContent({
             </div>
             {conflictPath ? (
               <div
-                data-entry-name-conflict-path
+                data-page-name-conflict-path
                 className="truncate text-xs text-muted-foreground"
               >
                 {conflictPath}

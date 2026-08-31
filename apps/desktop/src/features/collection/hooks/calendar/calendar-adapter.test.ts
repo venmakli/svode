@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import type { CollectionView } from "@/features/collection/query/model";
-import type { Entry } from "@/features/entry";
+import type { Page } from "@/features/page";
 import type { CollectionSchema, Column } from "@/features/properties";
 import { buildCalendarEvents, visibleEventCount } from "./calendar-adapter";
 
@@ -67,7 +67,7 @@ function statusColumn(): Column {
   };
 }
 
-function entry(path: string, extra: Record<string, unknown>): Entry {
+function entry(path: string, extra: Record<string, unknown>): Page {
   return {
     path,
     body: "",

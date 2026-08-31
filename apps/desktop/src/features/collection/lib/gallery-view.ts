@@ -1,5 +1,5 @@
 import type { CollectionView } from "@/features/collection/query/model";
-import type { Entry } from "@/features/entry";
+import type { Page } from "@/features/page";
 import type { CollectionSchema, Column } from "@/features/properties";
 import {
   COLLECTION_GALLERY_CARD_WIDTH,
@@ -89,7 +89,7 @@ export function galleryMetaColumns(fields: string[], schema: CollectionSchema) {
 }
 
 export function isNestedCollectionEntry(
-  entry: Entry,
+  entry: Page,
   nestedCollectionPaths: Set<string>,
 ) {
   return nestedCollectionPaths.has(entryCollectionPath(entry));

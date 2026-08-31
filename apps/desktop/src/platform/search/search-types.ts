@@ -1,4 +1,4 @@
-export type SearchEntryTypeDto = "page" | "table_row";
+export type SearchItemTypeDto = "page" | "table_row";
 
 export type SearchScopeDto =
   | { kind: "project" }
@@ -11,7 +11,7 @@ export interface SearchItemDto {
   spaceName: string;
   path: string;
   title: string;
-  type: SearchEntryTypeDto;
+  type: SearchItemTypeDto;
   tableName?: string | null;
   snippet?: string | null;
   icon: string;

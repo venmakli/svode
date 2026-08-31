@@ -1,7 +1,7 @@
 import { useCallback } from "react";
 import { toast } from "sonner";
 import { getSpaceSnapshot, useSpace } from "@/features/space";
-import { useOpenEntryDocument } from "@/features/entry/selection";
+import { useOpenPage } from "@/features/page/navigation";
 import { useCommandPaletteStore } from "../model";
 import type { KnowledgeNodeKind } from "@/features/knowledge";
 import * as m from "@/paraglide/messages.js";
@@ -22,7 +22,7 @@ export function useSelectResult({
   const activeRootPath = useSpace((s) => s.activeRootPath);
   const openSpace = useSpace((s) => s.openSpace);
   const clearActiveSpace = useSpace((s) => s.clearActiveSpace);
-  const openDocument = useOpenEntryDocument();
+  const openPage = useOpenPage();
   const setOpen = useCommandPaletteStore((s) => s.setOpen);
 
   return useCallback(
@@ -55,7 +55,7 @@ export function useSelectResult({
         toast.error(m.search_space_unavailable({ name: item.spaceName }));
         return;
       }
-      openDocument(item.path, targetSpaceId ?? undefined, { reveal: true });
+      openPage(item.path, targetSpaceId ?? undefined, { reveal: true });
       setOpen(false);
       onAfterNavigation?.();
     },
@@ -67,7 +67,7 @@ export function useSelectResult({
       onBeforeNavigation,
       onAfterNavigation,
       openSpace,
-      openDocument,
+      openPage,
       setOpen,
     ],
   );

@@ -1,6 +1,6 @@
 import { useCallback, type Dispatch, type SetStateAction } from "react";
 import { toast } from "sonner";
-import type { Entry } from "@/features/entry";
+import type { Page } from "@/features/page";
 import type { Column } from "@/features/properties";
 import { entryParentDir } from "../../lib/entry-tree";
 import {
@@ -26,19 +26,19 @@ interface UseBoardEntryActionsOptions {
   collectionPath: string;
   spacePath: string;
   projectPath?: string | null;
-  entries: Entry[];
-  manualOrderEntries: Entry[];
-  topLevelEntries: Entry[];
+  entries: Page[];
+  manualOrderEntries: Page[];
+  topLevelEntries: Page[];
   groupColumn: Column | null;
   hasSort: boolean;
-  setEntries: Dispatch<SetStateAction<Entry[]>>;
-  setManualOrderEntries: Dispatch<SetStateAction<Entry[]>>;
+  setEntries: Dispatch<SetStateAction<Page[]>>;
+  setManualOrderEntries: Dispatch<SetStateAction<Page[]>>;
   loadEntries: () => Promise<void>;
   onCreateEntry: (
     title: string,
     asFolder: boolean,
     contextualDefaults?: Record<string, unknown>,
-  ) => Promise<Entry>;
+  ) => Promise<Page>;
 }
 
 export function useBoardEntryActions({
@@ -219,7 +219,7 @@ export function useBoardEntryActions({
       title: string,
       groupKey: string,
       asFolder: boolean,
-      onCreated?: (entry: Entry) => void,
+      onCreated?: (entry: Page) => void,
     ) => {
       try {
         const defaults =

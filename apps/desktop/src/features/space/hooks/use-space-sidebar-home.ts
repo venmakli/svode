@@ -1,5 +1,5 @@
 import { useCallback } from "react";
-import { useOpenEntryScopeHome } from "@/features/entry/selection";
+import { useOpenScopeOwner } from "@/features/artifact";
 import type { SpaceInfo } from "../model";
 import {
   useSpaceScopeCollapse,
@@ -32,7 +32,11 @@ export function useSpaceSidebarHome({
   onBeforeNavigation,
   openSpace,
 }: UseSpaceSidebarHomeInput) {
-  const openScopeHome = useOpenEntryScopeHome();
+  const openScopeOwner = useOpenScopeOwner();
+  const openScopeHome = useCallback(
+    (spaceId: string) => openScopeOwner({ kind: "space", spaceId }),
+    [openScopeOwner],
+  );
   const loadRootTree = useCallback(() => {
     if (activeRootId) void ensureTreeLoaded(activeRootId);
   }, [activeRootId, ensureTreeLoaded]);

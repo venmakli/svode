@@ -98,9 +98,9 @@ export function FileTreeItem({
     expanded,
     handleDeleteConfirm,
     handleDeleteRequest,
-    handleDocumentClick,
+    handlePageClick,
     handleMakeCollection,
-    handleMakeDocument,
+    handleMakePage,
     handleNewFolder,
     handleNewPage,
     handleNodeOpenChange,
@@ -258,7 +258,7 @@ export function FileTreeItem({
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" side="bottom">
         {bareFolder && !node.has_schema && (
-          <DropdownMenuItem onClick={handleMakeDocument}>
+          <DropdownMenuItem onClick={handleMakePage}>
             <FileSymlink className="mr-2 h-4 w-4" />
             {m.space_make_page()}
           </DropdownMenuItem>
@@ -401,7 +401,7 @@ export function FileTreeItem({
                   nestHighlight,
                 )}
                 onDragStart={isEditing ? undefined : handleResourceDragStart}
-                onClick={handleDocumentClick}
+                onClick={handlePageClick}
                 onDoubleClick={handleStartRename}
               >
                 {iconElement}
@@ -417,7 +417,7 @@ export function FileTreeItem({
     );
   }
 
-  // Folder node (document with children, or bare folder)
+  // Folder node (Page with children, or bare folder)
   return (
     <>
       <SidebarMenuSubItem ref={setItemRef} style={style} className="relative">
@@ -446,7 +446,7 @@ export function FileTreeItem({
                   nestHighlight,
                 )}
                 onDragStart={isEditing ? undefined : handleResourceDragStart}
-                onClick={handleDocumentClick}
+                onClick={handlePageClick}
                 onDoubleClick={handleStartRename}
               >
                 <CollapsibleTrigger

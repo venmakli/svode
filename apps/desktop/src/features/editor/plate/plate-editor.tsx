@@ -5,7 +5,7 @@ import { Editor, EditorContainer } from "@/components/ui/editor";
 import { FixedToolbar } from "@/components/ui/fixed-toolbar";
 import { FixedToolbarButtons } from "@/components/ui/fixed-toolbar-buttons";
 import { Skeleton } from "@/components/ui/skeleton";
-import type { Entry, EntryMeta } from "@/features/entry";
+import type { Page, PageMeta } from "@/features/page";
 import { cn } from "@/shared/lib/utils";
 import { detailPageBodyClassName } from "@/shared/ui/page-layout";
 
@@ -24,9 +24,9 @@ interface PlateDocumentEditorProps {
   documentSpaceId?: string | null;
   spacePath?: string | null;
   projectPath?: string | null;
-  bodyOnlyMeta?: EntryMeta | null;
-  initialEntry?: Entry | null;
-  initialEntrySpacePath?: string | null;
+  bodyOnlyMeta?: PageMeta | null;
+  initialPage?: Page | null;
+  initialPageSpacePath?: string | null;
   onDocumentPathChange?: (path: string) => void;
   documentPathHandoff?: { previousPath: string; path: string } | null;
   readOnly?: boolean;
@@ -48,8 +48,8 @@ export function PlateDocumentEditor({
   spacePath: spacePathProp = null,
   projectPath: projectPathProp = null,
   bodyOnlyMeta = null,
-  initialEntry = null,
-  initialEntrySpacePath = null,
+  initialPage = null,
+  initialPageSpacePath = null,
   onDocumentPathChange,
   documentPathHandoff = null,
   readOnly = false,
@@ -75,8 +75,8 @@ export function PlateDocumentEditor({
     documentPath,
     documentSpaceId,
     editor,
-    initialEntry,
-    initialEntrySpacePath,
+    initialPage,
+    initialPageSpacePath,
     onDocumentPathChange,
     documentPathHandoff,
     projectPath: projectPathProp,

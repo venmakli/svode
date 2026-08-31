@@ -9,7 +9,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { useSidebar } from "@/components/ui/sidebar";
-import { useActiveEntryDocument } from "@/features/entry/selection";
+import { useActiveContentPath } from "@/features/artifact";
 import { selectActiveSpacePath, useSpace } from "@/features/space";
 import { useTrafficLightInset } from "./hooks/use-fullscreen";
 import { useShellStore } from "./model";
@@ -97,7 +97,7 @@ export function ShellChrome() {
 
 export function WindowHeader() {
   const detailController = useCollectionDetailController();
-  const activeDocument = useActiveEntryDocument();
+  const activeContentPath = useActiveContentPath();
   const toggleChatPanel = useShellStore((state) => state.toggleChatPanel);
   const mainSurface = useShellStore((state) => state.mainSurface);
   const openSpaceSettings = useShellStore((state) => state.openSpaceSettings);
@@ -117,7 +117,7 @@ export function WindowHeader() {
   const repositoryContextName =
     activeSpace?.name ?? activeRootName ?? activeSpacePath;
 
-  const chatToggleDisabled = !activeDocument;
+  const chatToggleDisabled = !activeContentPath;
   const terminalTarget = buildProjectTerminalTarget({
     id: activeRootId,
     name: activeRootName,

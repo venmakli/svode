@@ -4,13 +4,13 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import { Separator } from "@/components/ui/separator";
-import type { EntryMeta } from "@/features/entry";
+import type { PageMeta } from "@/features/page";
 import { PropertyPanel } from "@/features/properties/panel";
 import * as m from "@/paraglide/messages.js";
 import { useFrontmatterSchema } from "../hooks/use-frontmatter-schema";
 
 interface FrontmatterPanelProps {
-  meta: EntryMeta | null;
+  meta: PageMeta | null;
   spacePath: string;
   projectPath?: string | null;
   filePath: string | null;
@@ -92,7 +92,7 @@ export function FrontmatterPanel({
                 spacePath={spacePath}
                 projectPath={projectPath}
                 filePath={filePath}
-                entryLabel={meta.title}
+                pageLabel={meta.title}
                 schemaResult={schemaResult}
                 values={meta.extra ?? {}}
                 onOpenPath={onOpenPath}

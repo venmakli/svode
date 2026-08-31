@@ -471,7 +471,7 @@ fn sync_index_for_watched_path(
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ContentTreeEventKind {
-    Document,
+    Page,
     Schema,
     Folder,
 }
@@ -479,7 +479,7 @@ enum ContentTreeEventKind {
 impl ContentTreeEventKind {
     fn as_payload_str(self) -> &'static str {
         match self {
-            Self::Document => "document",
+            Self::Page => "page",
             Self::Schema => "schema",
             Self::Folder => "folder",
         }
@@ -601,7 +601,7 @@ fn content_tree_event_kind(path: &Path, event_kind: &EventKind) -> Option<Conten
         return Some(ContentTreeEventKind::Schema);
     }
     if is_markdown_path(path) {
-        return Some(ContentTreeEventKind::Document);
+        return Some(ContentTreeEventKind::Page);
     }
     if is_folder_content_tree_event(path, event_kind) {
         return Some(ContentTreeEventKind::Folder);
@@ -629,7 +629,7 @@ fn event_kind_is_folder(event_kind: &EventKind) -> bool {
 
 fn affects_tree(kind: ContentTreeEventKind, event_kind: &EventKind) -> bool {
     match kind {
-        ContentTreeEventKind::Document => !matches!(event_kind, EventKind::Modify(_)),
+        ContentTreeEventKind::Page => !matches!(event_kind, EventKind::Modify(_)),
         ContentTreeEventKind::Schema => !matches!(event_kind, EventKind::Modify(_)),
         ContentTreeEventKind::Folder => true,
     }
@@ -637,7 +637,7 @@ fn affects_tree(kind: ContentTreeEventKind, event_kind: &EventKind) -> bool {
 
 fn affects_metadata(kind: ContentTreeEventKind, path: &Path, event_kind: &EventKind) -> bool {
     match kind {
-        ContentTreeEventKind::Document => {
+        ContentTreeEventKind::Page => {
             matches!(event_kind, EventKind::Modify(_)) || is_readme_path(path)
         }
         ContentTreeEventKind::Schema | ContentTreeEventKind::Folder => false,
@@ -852,7 +852,8 @@ mod tests {
         let classification = classify(&tmp, &doc, EventKind::Create(CreateKind::File)).unwrap();
 
         assert_eq!(classification.rel_path, "docs/note.md");
-        assert_eq!(classification.kind, ContentTreeEventKind::Document);
+        assert_eq!(classification.kind, ContentTreeEventKind::Page);
+        assert_eq!(classification.kind.as_payload_str(), "page");
         assert!(!classification.is_dir);
         assert_eq!(classification.parent_path, "docs");
         assert!(classification.affects_tree);
@@ -904,7 +905,8 @@ mod tests {
         let classification = classify(&tmp, &readme, EventKind::Modify(ModifyKind::Any)).unwrap();
 
         assert_eq!(classification.rel_path, "docs/README.md");
-        assert_eq!(classification.kind, ContentTreeEventKind::Document);
+        assert_eq!(classification.kind, ContentTreeEventKind::Page);
+        assert_eq!(classification.kind.as_payload_str(), "page");
         assert_eq!(classification.parent_path, "docs");
         assert!(!classification.affects_tree);
         assert!(classification.affects_metadata);

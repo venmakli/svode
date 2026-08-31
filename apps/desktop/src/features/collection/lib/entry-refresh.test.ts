@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import type { Entry } from "@/features/entry";
+import type { Page } from "@/features/page";
 import {
   collectionEntriesTargetKey,
   mergeStableEntriesByPath,
@@ -23,7 +23,7 @@ function entry(
       updated: "2026-01-01T00:00:00Z",
       extra,
     },
-  } satisfies Entry;
+  } satisfies Page;
 }
 
 test("mergeStableEntriesByPath reuses an identical snapshot", () => {

@@ -1,5 +1,5 @@
 export {
   changeSchemaType,
   deleteSchemaColumn,
-  getEntrySchema,
+  getPageSchema,
 } from "./api/schema-api";

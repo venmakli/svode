@@ -3,10 +3,10 @@ import { toast } from "sonner";
 import {
   addOption as addOptionApi,
   addSchemaColumn,
-  assignEntryUniqueId,
+  assignPageUniqueId,
   clearFieldValues,
   clearOptionValues,
-  getEntrySchema,
+  getPageSchema,
   listPropertyActors,
   promoteOrphan as promoteOrphanApi,
 } from "../api/schema-api";
@@ -14,7 +14,7 @@ import { normalizeSchema } from "../lib/utils";
 import type {
   ActorCandidate,
   Column,
-  EntrySchemaResult,
+  PageSchemaResult,
   PropertyOption,
   RelationContext,
 } from "../model/types";
@@ -25,10 +25,10 @@ interface UsePropertyPanelStateInput {
   projectPath?: string | null;
   spaceId?: string | null;
   filePath: string;
-  schemaResult: EntrySchemaResult;
+  schemaResult: PageSchemaResult;
   values: Record<string, unknown>;
   onOpenPath?: (path: string, spaceId?: string | null) => void;
-  onSchemaChange?: (result: EntrySchemaResult | null) => void;
+  onSchemaChange?: (result: PageSchemaResult | null) => void;
 }
 
 interface SchemaMutationContext {
@@ -62,7 +62,7 @@ export function usePropertyPanelState({
     toast.error(m.toast_error());
   }, []);
 
-  const applySchemaResult = useCallback((result: EntrySchemaResult | null) => {
+  const applySchemaResult = useCallback((result: PageSchemaResult | null) => {
     if (!result) return;
     setSchema(normalizeSchema(result.schema));
     setCollectionRootPath(schemaResultCollectionPath(result));
@@ -102,7 +102,7 @@ export function usePropertyPanelState({
   }, [hasActor, loadActors]);
 
   const refreshSchema = useCallback(async () => {
-    const result = await getEntrySchema({ spacePath, filePath });
+    const result = await getPageSchema({ spacePath, filePath });
     applySchemaResult(result);
     onSchemaChange?.(result);
     return result;
@@ -110,7 +110,7 @@ export function usePropertyPanelState({
 
   const applyCollectionSchema = useCallback(
     (nextSchema: typeof schema) => {
-      const result: EntrySchemaResult = {
+      const result: PageSchemaResult = {
         schema: normalizeSchema(nextSchema),
         collectionRootPath,
       };
@@ -145,7 +145,7 @@ export function usePropertyPanelState({
   const assignUniqueId = useCallback(
     () =>
       runSchemaMutation(async () => {
-        const nextValues = await assignEntryUniqueId({
+        const nextValues = await assignPageUniqueId({
           spacePath,
           filePath,
           projectPath,
@@ -260,7 +260,7 @@ export function usePropertyPanelState({
   };
 }
 
-function schemaResultCollectionPath(result: EntrySchemaResult) {
+function schemaResultCollectionPath(result: PageSchemaResult) {
   return result.collectionRootPath ?? "";
 }
 

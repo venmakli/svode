@@ -12,20 +12,20 @@ import {
   normalizeSchema,
   type RelationOpenTarget,
 } from "@/features/properties";
-import { useOpenEntryDocument } from "@/features/entry/selection";
+import { useOpenPage } from "@/features/page/navigation";
 import { useOpenScopeOwner } from "@/features/artifact";
-import type { Entry } from "@/features/entry";
-import { EntryDetailActions } from "@/features/entry/detail";
+import type { Page } from "@/features/page";
+import { PageDetailActions } from "@/features/page/detail";
 import {
-  EntryDetailProvider,
-  ScopeOwnerHeader,
-  useOptionalEntryDetailContext,
-} from "@/features/entry/scope-surface";
+  PageDetailProvider,
+  useOptionalPageDetailContext,
+} from "@/features/page/scope-surface";
+import { ScopeOwnerHeader } from "@/features/scope-surfaces";
 import type { GitSaveScopeTreeNode } from "@/features/git/app-shell";
 import { useSpace, useSpaceTreeSync } from "@/features/space";
 import { useViewQuery } from "../query/hooks";
 import { DeleteDialogs } from "./delete-dialogs";
-import { EntryPeekSheet } from "./entry-peek-sheet";
+import { PagePeekSheet } from "./page-peek-sheet";
 import { handleError } from "../hooks/error-feedback";
 import { CollectionSkeleton } from "./skeleton";
 import { CollectionViewContent } from "./collection-view-content";
@@ -52,7 +52,7 @@ import {
 import type {
   CollectionPeekSurfaceState,
   CollectionRouteState,
-  EntryPeekTarget,
+  PagePeekTarget,
   SettingsPane,
 } from "../model";
 import type { CollectionView } from "../query/model";
@@ -62,7 +62,7 @@ interface CollectionScreenProps {
   readOnly?: boolean;
   spacePath: string;
   projectPath?: string | null;
-  documentPath: string;
+  pagePath: string;
   spaceId: string;
   routeState?: CollectionRouteState;
   headerActions?: ReactNode;
@@ -74,22 +74,22 @@ function CollectionScreen({
   readOnly = false,
   spacePath,
   projectPath,
-  documentPath,
+  pagePath,
   spaceId,
   routeState,
   headerActions,
 }: CollectionScreenProps) {
-  const collectionPath = collectionPathFor(documentPath);
+  const collectionPath = collectionPathFor(pagePath);
   const readmePath = readmePathFor(collectionPath);
-  const openDocument = useOpenEntryDocument();
+  const openPage = useOpenPage();
   const openPath = useCallback(
     (path: string, targetSpaceId?: string | null) =>
-      openDocument(path, targetSpaceId ?? spaceId),
-    [openDocument, spaceId],
+      openPage(path, targetSpaceId ?? spaceId),
+    [openPage, spaceId],
   );
 
   return (
-    <EntryDetailProvider
+    <PageDetailProvider
       spacePath={spacePath}
       projectPath={projectPath}
       spaceId={spaceId}
@@ -101,12 +101,12 @@ function CollectionScreen({
         readOnly={readOnly}
         spacePath={spacePath}
         projectPath={projectPath}
-        documentPath={documentPath}
+        pagePath={pagePath}
         spaceId={spaceId}
         routeState={routeState}
         headerActions={headerActions}
       />
-    </EntryDetailProvider>
+    </PageDetailProvider>
   );
 }
 
@@ -115,7 +115,7 @@ export interface CollectionViewsSurfaceProps extends Omit<
   "headerActions"
 > {
   renderNested?: (
-    entry: Entry,
+    entry: Page,
     actions: ReactNode,
     routeState: CollectionRouteState,
     surfaceState: CollectionPeekSurfaceState,
@@ -124,13 +124,13 @@ export interface CollectionViewsSurfaceProps extends Omit<
 }
 
 function CollectionScreenContent(props: CollectionScreenProps) {
-  const entryContext = useOptionalEntryDetailContext();
+  const entryContext = useOptionalPageDetailContext();
   return (
     <CollectionViewsSurfaceInternal
       {...props}
       showOwnerChrome
-      ownerEntry={entryContext?.entry ?? null}
-      setOwnerEntry={entryContext?.setEntry}
+      ownerEntry={entryContext?.page ?? null}
+      setOwnerEntry={entryContext?.setPage}
     />
   );
 }
@@ -147,10 +147,10 @@ export function CollectionViewsSurface(props: CollectionViewsSurfaceProps) {
 
 interface CollectionViewsSurfaceInternalProps extends CollectionScreenProps {
   showOwnerChrome: boolean;
-  ownerEntry: Entry | null;
-  setOwnerEntry?: Dispatch<SetStateAction<Entry | null>>;
+  ownerEntry: Page | null;
+  setOwnerEntry?: Dispatch<SetStateAction<Page | null>>;
   renderNested?: (
-    entry: Entry,
+    entry: Page,
     actions: ReactNode,
     routeState: CollectionRouteState,
     surfaceState: CollectionPeekSurfaceState,
@@ -162,7 +162,7 @@ function CollectionViewsSurfaceInternal({
   readOnly = false,
   spacePath,
   projectPath,
-  documentPath,
+  pagePath,
   spaceId,
   routeState,
   headerActions,
@@ -171,22 +171,22 @@ function CollectionViewsSurfaceInternal({
   setOwnerEntry: setEntry,
   renderNested,
 }: CollectionViewsSurfaceInternalProps) {
-  const entryContext = useOptionalEntryDetailContext();
+  const entryContext = useOptionalPageDetailContext();
   const collectionPath = useMemo(
-    () => collectionPathFor(documentPath),
-    [documentPath],
+    () => collectionPathFor(pagePath),
+    [pagePath],
   );
   const previousCollectionPath = collectionPathHandoffFromEntry(
     entryContext?.pathHandoff ?? null,
     collectionPath,
   );
   const readmePath = readmePathFor(collectionPath);
-  const openDocument = useOpenEntryDocument();
+  const openPage = useOpenPage();
   const openScopeOwner = useOpenScopeOwner();
   const openPath = useCallback(
     (path: string, targetSpaceId?: string | null) =>
-      openDocument(path, targetSpaceId ?? spaceId),
-    [openDocument, spaceId],
+      openPage(path, targetSpaceId ?? spaceId),
+    [openPage, spaceId],
   );
   const saveScopeTree = useSpace(
     (state) => state.fileTrees[spaceId] ?? EMPTY_SAVE_SCOPE_TREE,
@@ -206,7 +206,7 @@ function CollectionViewsSurfaceInternal({
   const [settingsPane, setSettingsPane] = useState<SettingsPane>("main");
   const [renameValue, setRenameValue] = useState("");
   const [deleteOpen, setDeleteOpen] = useState(false);
-  const [peekTarget, setPeekTarget] = useState<EntryPeekTarget | null>(null);
+  const [peekTarget, setPeekTarget] = useState<PagePeekTarget | null>(null);
   const {
     deleteEntry,
     setDeleteEntry,
@@ -222,7 +222,7 @@ function CollectionViewsSurfaceInternal({
     projectPath,
     collectionPath,
     spaceId,
-    openDocument,
+    openPage,
   });
   useCollectionRefreshEvents({
     spacePath,
@@ -320,15 +320,15 @@ function CollectionViewsSurfaceInternal({
     projectPath,
     collectionPath,
     spaceId,
-    openDocument,
+    openPage,
   });
 
-  function openPeek(entryToOpen: Entry, nested = false) {
-    setPeekTarget({ entry: entryToOpen, nested });
+  function openPeek(entryToOpen: Page, nested = false) {
+    setPeekTarget({ page: entryToOpen, nested });
   }
 
   function openFullPage(
-    entryToOpen: Entry,
+    entryToOpen: Page,
     targetSpaceId?: string | null,
     targetViewName?: string | null,
     targetSurfaceId: CollectionPeekSurfaceState["surfaceId"] = "collection",
@@ -350,7 +350,7 @@ function CollectionViewsSurfaceInternal({
         },
       );
     } else {
-      openDocument(entryToOpen.path, targetOwnerSpaceId);
+      openPage(entryToOpen.path, targetOwnerSpaceId);
     }
   }
 
@@ -358,7 +358,7 @@ function CollectionViewsSurfaceInternal({
     (target: RelationOpenTarget) => {
       const title = target.title.trim() || target.path;
       setPeekTarget({
-        entry: {
+        page: {
           path: target.path,
           body: "",
           meta: {
@@ -421,20 +421,20 @@ function CollectionViewsSurfaceInternal({
   const effectiveHeaderActions =
     headerActions ??
     (entry ? (
-      <EntryDetailActions
-        entry={entry}
+      <PageDetailActions
+        page={entry}
         spacePath={spacePath}
         projectPath={projectPath}
         spaceId={spaceId}
         onConverted={(nextEntry, nested) => {
           setEntry?.(nextEntry);
-          openDocument(nextEntry.path, spaceId);
+          openPage(nextEntry.path, spaceId);
           if (nested) void reloadTreePathParents(spaceId, [nextEntry.path]);
         }}
-        onDuplicateEntry={(entryToDuplicate) =>
+        onDuplicatePage={(entryToDuplicate) =>
           void duplicateDetailEntry(entryToDuplicate).catch(handleError)
         }
-        onDeleteEntry={setDeleteEntry}
+        onDeletePage={setDeleteEntry}
         readOnly={readOnly}
       />
     ) : null);
@@ -602,7 +602,7 @@ function CollectionViewsSurfaceInternal({
           void deleteRow(entryToDelete).catch(handleError)
         }
       />
-      <EntryPeekSheet
+      <PagePeekSheet
         readOnly={readOnly}
         target={peekTarget}
         spacePath={spacePath}
@@ -613,15 +613,15 @@ function CollectionViewsSurfaceInternal({
         }}
         onOpenFullPage={openFullPage}
         onOpenPath={openPath}
-        onConvertedEntry={(nextEntry, nested) => {
-          setPeekTarget({ entry: nextEntry, nested });
+        onConvertedPage={(nextEntry, nested) => {
+          setPeekTarget({ page: nextEntry, nested });
           refreshEntries();
         }}
-        onDuplicateEntry={(entryToDuplicate) => {
+        onDuplicatePage={(entryToDuplicate) => {
           setPeekTarget(null);
           void duplicateRow(entryToDuplicate).catch(handleError);
         }}
-        onDeleteEntry={(entryToDelete) => {
+        onDeletePage={(entryToDelete) => {
           setPeekTarget(null);
           setDeleteEntry(entryToDelete);
         }}
@@ -634,7 +634,7 @@ function CollectionViewsSurfaceInternal({
               readOnly={readOnly}
               spacePath={spacePath}
               projectPath={projectPath}
-              documentPath={entryToOpen.path}
+              pagePath={entryToOpen.path}
               spaceId={spaceId}
               headerActions={actions}
             />

@@ -1,5 +1,5 @@
-import { openEntryScopeHome } from "@/features/entry/selection";
+import { openScopeOwner } from "@/features/artifact";
 
 export function openScopeHomeSelection(spaceId: string) {
-  openEntryScopeHome(spaceId);
+  openScopeOwner({ kind: "space", spaceId });
 }

@@ -1,10 +1,10 @@
 import { useEffect, useRef } from "react";
 import type { Descendant } from "platejs";
-import { readEntry } from "@/features/entry/entry-api";
+import { readPage } from "@/features/page/page-api";
 import { toast } from "sonner";
 import type { PlateEditor } from "platejs/react";
 import { deserializeWithConflicts } from "../conflict/parse-conflicts";
-import { useCloseEntryDocument } from "@/features/entry/selection";
+import { useCloseActiveContent } from "@/features/artifact";
 import { getSpaceSnapshot } from "@/features/space";
 import { useEditorStore } from "../model";
 import { setCachedDocumentValue } from "../model/plate-document-cache";
@@ -20,13 +20,13 @@ interface UseFileWatcherOptions {
   editor: PlateEditor | null;
   spacePath: string;
   activeDocument: string | null;
-  /** Nonces emitted by our own `write_entry` calls — own-write echoes are filtered out. */
+  /** Nonces emitted by our own Page writes — own-write echoes are filtered out. */
   ownNoncesRef: React.RefObject<Set<string>>;
   /** True while a debounce-auto-save is pending for the active document — local-wins. */
   isDebouncePendingRef: React.RefObject<boolean>;
   isLoadingRef: React.RefObject<boolean>;
   onEditorValueReload: (path: string, value: Descendant[]) => Descendant[];
-  onEntryReloaded?: (entry: Awaited<ReturnType<typeof readEntry>>) => void;
+  onPageReloaded?: (page: Awaited<ReturnType<typeof readPage>>) => void;
 }
 
 function isSchemaPath(path: string) {
@@ -49,9 +49,9 @@ export function useFileWatcher({
   isDebouncePendingRef,
   isLoadingRef,
   onEditorValueReload,
-  onEntryReloaded,
+  onPageReloaded,
 }: UseFileWatcherOptions) {
-  const closeDocument = useCloseEntryDocument();
+  const closeDocument = useCloseActiveContent();
   const { markAiModified, clearAiModified } = useEditorStore();
 
   const activeDocRef = useRef(activeDocument);
@@ -86,7 +86,7 @@ export function useFileWatcher({
         return;
       }
 
-      // Own-write echo filter: drop events produced by our own write_entry.
+      // Own-write echo filter: drop events produced by our own Page write.
       if (nonce && ownNoncesRef.current.has(nonce)) {
         ownNoncesRef.current.delete(nonce);
         return;
@@ -104,15 +104,15 @@ export function useFileWatcher({
           return;
         }
         // Debounce not active — reload from disk.
-        readEntry({ spacePath, path: changedPath })
-          .then((entry) => {
+        readPage({ spacePath, path: changedPath })
+          .then((page) => {
             isLoadingRef.current = true;
             try {
-              const value = deserializeWithConflicts(editor, entry.body);
+              const value = deserializeWithConflicts(editor, page.body);
               const loadedValue = onEditorValueReload(changedPath, value);
               setCachedDocumentValue(spacePath, changedPath, loadedValue);
               useEditorStore.getState().clearUnsaved(spacePath, changedPath);
-              onEntryReloaded?.(entry);
+              onPageReloaded?.(page);
             } finally {
               isLoadingRef.current = false;
             }
@@ -163,7 +163,7 @@ export function useFileWatcher({
     isDebouncePendingRef,
     isLoadingRef,
     onEditorValueReload,
-    onEntryReloaded,
+    onPageReloaded,
   ]);
 
   // Clear external-edit reload flag when opening a document.

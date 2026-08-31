@@ -2,7 +2,7 @@ import type { EventDropArg, EventInput } from "@fullcalendar/core";
 import type { EventResizeDoneArg } from "@fullcalendar/interaction";
 import type { CSSProperties } from "react";
 import type { CollectionView } from "@/features/collection/query/model";
-import type { Entry } from "@/features/entry";
+import type { Page } from "@/features/page";
 import type {
   CollectionSchema,
   Column,
@@ -41,7 +41,7 @@ export function buildCalendarEvents({
   customColumns,
   nestedCollectionPaths,
 }: {
-  entries: Entry[];
+  entries: Page[];
   view: CollectionView;
   schema: CollectionSchema;
   dateColumn: Column;
@@ -145,7 +145,7 @@ export function eventColorStyle(color: string | null) {
 function eventColor(
   view: CollectionView,
   schema: CollectionSchema,
-  entry: Entry,
+  entry: Page,
 ) {
   const colorField =
     typeof view.color_field === "string" ? view.color_field : null;

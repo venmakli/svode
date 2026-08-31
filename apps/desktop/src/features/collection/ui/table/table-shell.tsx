@@ -24,7 +24,7 @@ import {
   TableRow as ShadcnTableRow,
 } from "@/components/ui/table";
 import { cn } from "@/shared/lib/utils";
-import type { Entry } from "@/features/entry";
+import type { Page } from "@/features/page";
 import type { CollectionSchema } from "@/features/properties";
 import { PROPERTY_TYPE_ICONS } from "@/features/properties/column-menu";
 import { detailPageViewClassName } from "@/shared/ui/page-layout";
@@ -197,7 +197,7 @@ export function ErrorState({ title }: { title: string }) {
 
 export function moveFocus(
   direction: 1 | -1,
-  entries: Entry[],
+  entries: Page[],
   focusedPath: string | null,
   setFocusedPath: (path: string | null) => void,
 ) {

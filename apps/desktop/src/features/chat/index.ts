@@ -3,5 +3,5 @@ export {
   SlashMenuDropdown,
   useSlashMenu,
 } from "./ui/composer-mentions";
-export { DocMentionChips } from "./ui/doc-mention-chips";
+export { PageMentionChips } from "./ui/page-mention-chips";
 export { PermissionCard } from "./ui/permission-card";

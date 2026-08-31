@@ -17,7 +17,7 @@ export function useSpaceActions() {
   const deleteRootAction = useSpaceStore((state) => state.deleteRoot);
   const createSpaceAction = useSpaceStore((state) => state.createSpace);
   const deleteSpaceAction = useSpaceStore((state) => state.deleteSpace);
-  const createEntryAction = useSpaceStore((state) => state.createEntry);
+  const createPageAction = useSpaceStore((state) => state.createPage);
 
   const selectRootHome = useCallback((rootId: string) => {
     openScopeHomeSelection(rootId);
@@ -113,21 +113,21 @@ export function useSpaceActions() {
     [deleteSpaceAction],
   );
 
-  const createEntry = useCallback(
+  const createPage = useCallback(
     async (spacePath: string, title: string) => {
-      const entry = await createEntryAction(spacePath, title);
-      if (entry) {
+      const page = await createPageAction(spacePath, title);
+      if (page) {
         spaceNotifications.notifyPageCreated();
       } else {
         spaceNotifications.notifySpaceError();
       }
-      return entry;
+      return page;
     },
-    [createEntryAction],
+    [createPageAction],
   );
 
   return {
-    createEntry,
+    createPage,
     createRoot,
     createSpace,
     deleteRoot,

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { DragEndEvent } from "@dnd-kit/core";
-import type { Entry } from "@/features/entry";
+import type { Page } from "@/features/page";
 import type { ListViewProps } from "../../model/list-types";
 import { titleFilter } from "../../lib/utils";
 import { entryParentDir } from "../../lib/entry-tree";
@@ -166,7 +166,7 @@ export function useListViewRuntime({
     if (created) focusRow(created.path);
   }, [composerAsFolder, composerValue, createEntry, focusRow]);
 
-  const toggleRow = useCallback((entry: Entry) => {
+  const toggleRow = useCallback((entry: Page) => {
     setExpanded((current) => {
       const next = new Set(current);
       if (next.has(entry.path)) next.delete(entry.path);
@@ -176,7 +176,7 @@ export function useListViewRuntime({
   }, []);
 
   const openRow = useCallback(
-    (entry: Entry, nestedCollection: boolean) => {
+    (entry: Page, nestedCollection: boolean) => {
       if (nestedCollection) onOpenNestedPeek(entry);
       else onOpenEntry(entry);
     },

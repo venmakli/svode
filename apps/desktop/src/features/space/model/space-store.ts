@@ -165,7 +165,7 @@ export const useSpaceStore = create<SpaceState>((set, get) => ({
         explicitHome: false,
       });
       syncMcpContext(get(), null);
-      // Load root file tree (project documents) and spaces
+      // Load the root content tree and spaces.
       // Grant the webview access to this project's `.assets/` via the
       // Tauri asset protocol. Scope is per-app-session and the call is
       // idempotent — safe to repeat on every project open.

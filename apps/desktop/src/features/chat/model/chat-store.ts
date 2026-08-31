@@ -8,7 +8,7 @@ export interface PermissionRequest {
   sessionId: string;
 }
 
-export interface DocMention {
+export interface PageMention {
   title: string;
   path: string;
   icon: string | null;
@@ -32,10 +32,10 @@ interface ChatStatusState {
   availableModels: ModelOption[];
   setAvailableModels: (models: ModelOption[]) => void;
   applyDefaultModel: (defaultModel: string | undefined) => void;
-  docMentions: DocMention[];
-  addDocMention: (doc: DocMention) => void;
-  removeDocMention: (path: string) => void;
-  clearDocMentions: () => void;
+  pageMentions: PageMention[];
+  addPageMention: (page: PageMention) => void;
+  removePageMention: (path: string) => void;
+  clearPageMentions: () => void;
 }
 
 export const useChatStatusStore = create<ChatStatusState>((set) => ({
@@ -53,14 +53,14 @@ export const useChatStatusStore = create<ChatStatusState>((set) => ({
     const validDefault = availableModels.some((m) => m.id === target) ? target : availableModels[0]?.id ?? DEFAULT_MODEL;
     set({ selectedModel: validDefault });
   },
-  docMentions: [],
-  addDocMention: (doc) =>
+  pageMentions: [],
+  addPageMention: (page) =>
     set((s) =>
-      s.docMentions.some((d) => d.path === doc.path)
+      s.pageMentions.some((d) => d.path === page.path)
         ? s
-        : { docMentions: [...s.docMentions, doc] },
+        : { pageMentions: [...s.pageMentions, page] },
     ),
-  removeDocMention: (path) =>
-    set((s) => ({ docMentions: s.docMentions.filter((d) => d.path !== path) })),
-  clearDocMentions: () => set({ docMentions: [] }),
+  removePageMention: (path) =>
+    set((s) => ({ pageMentions: s.pageMentions.filter((d) => d.path !== path) })),
+  clearPageMentions: () => set({ pageMentions: [] }),
 }));

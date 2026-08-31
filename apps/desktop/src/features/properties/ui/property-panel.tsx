@@ -11,7 +11,7 @@ import { AlertTriangle, Plus, RotateCcw, Trash2 } from "lucide-react";
 import type {
   ActorCandidate,
   Column,
-  EntrySchemaResult,
+  PageSchemaResult,
   RelationContext,
 } from "../model/types";
 import {
@@ -32,14 +32,14 @@ interface PropertyPanelProps {
   projectPath?: string | null;
   spaceId?: string | null;
   filePath: string;
-  entryLabel: string;
-  schemaResult: EntrySchemaResult;
+  pageLabel: string;
+  schemaResult: PageSchemaResult;
   values: Record<string, unknown>;
   mode?: "peek" | "full";
   readOnly?: boolean;
   onOpenPath?: (path: string, spaceId?: string | null) => void;
   onValueChange: (field: string, value: unknown) => Promise<void>;
-  onSchemaChange?: (result: EntrySchemaResult | null) => void;
+  onSchemaChange?: (result: PageSchemaResult | null) => void;
 }
 
 type DialogState =
@@ -52,7 +52,7 @@ export function PropertyPanel({
   projectPath,
   spaceId,
   filePath,
-  entryLabel,
+  pageLabel,
   schemaResult,
   values,
   mode = "peek",
@@ -146,7 +146,7 @@ export function PropertyPanel({
               <div className="min-w-0">
                 <PropertyPanelValue
                   column={column}
-                  entryLabel={entryLabel}
+                  pageLabel={pageLabel}
                   value={panelValues[column.name]}
                   invalid={state.invalid}
                   disabled={state.code === "type_conflict"}
@@ -324,7 +324,7 @@ function invalidOptionValues(column: Column, value: unknown): string[] {
 
 function PropertyPanelValue({
   column,
-  entryLabel,
+  pageLabel,
   value,
   invalid,
   disabled,
@@ -337,7 +337,7 @@ function PropertyPanelValue({
   onValueChange,
 }: {
   column: Column;
-  entryLabel: string;
+  pageLabel: string;
   value: unknown;
   invalid: boolean;
   disabled: boolean;
@@ -378,7 +378,7 @@ function PropertyPanelValue({
           column={column}
           value={value}
           invalid={invalid}
-          accessibilityLabel={`${column.name}: ${entryLabel}`}
+          accessibilityLabel={`${column.name}: ${pageLabel}`}
           disabled={disabled}
           autoOpen
           actors={actors}

@@ -22,24 +22,24 @@ import type {
   CollectionRouteState,
 } from "@/features/collection/app-shell";
 import {
-  EntryDetailProvider,
+  PageDetailProvider,
   PageSurfaceSessionProvider,
   ReadmeSurface,
-  ScopeOwnerActions,
-  ScopeOwnerHeader,
   usePageSurfaceSession,
-} from "@/features/entry/scope-surface";
-import { useOpenEntryDocument } from "@/features/entry/selection";
+} from "@/features/page/scope-surface";
+import { useOpenPage } from "@/features/page/navigation";
 import {
   createCollectionDirectoryOwner,
+  ScopeOwnerHeader,
   ScopeSurfaceHost,
   type ScopeOpenIntent,
   type ScopeOwnerRef,
   type ScopePresentation,
 } from "@/features/scope-surfaces";
-import type { Entry } from "@/features/entry";
+import type { Page } from "@/features/page";
 import { createScopeSurfaceContributions } from "./scope-surface-contributions";
 import { useShellStore } from "./model";
+import { ScopeOwnerActions } from "./scope-owner-actions";
 
 interface ScopeSurfacePageProps {
   owner: ScopeOwnerRef;
@@ -84,7 +84,7 @@ export function ScopeSurfacePage({
   );
   const collectionRouteState =
     presentation === "compact" ? (routeState ?? compactRouteState) : routeState;
-  const openDocument = useOpenEntryDocument();
+  const openPage = useOpenPage();
   const detailController = useCollectionDetailController();
   const openSessionsSurface = useShellStore(
     (state) => state.openSessionsSurface,
@@ -104,12 +104,12 @@ export function ScopeSurfacePage({
   );
   const openPath = useCallback(
     (path: string, spaceId?: string | null) =>
-      openDocument(path, spaceId ?? owner.spaceId),
-    [openDocument, owner.spaceId],
+      openPage(path, spaceId ?? owner.spaceId),
+    [openPage, owner.spaceId],
   );
   const renderNested = useCallback(
     (
-      entry: Entry,
+      page: Page,
       actions: ReactNode,
       nestedRouteState: CollectionRouteState,
       nestedSurfaceState: CollectionPeekSurfaceState,
@@ -119,7 +119,7 @@ export function ScopeSurfacePage({
         spaceId: owner.spaceId,
         spacePath: owner.spacePath,
         projectPath: owner.projectPath,
-        ownerPath: collectionOwnerPath(entry.path),
+        ownerPath: collectionOwnerPath(page.path),
         status: "ready",
         hasSchema: true,
       });
@@ -161,7 +161,7 @@ export function ScopeSurfacePage({
             readOnly={readOnly}
             spacePath={owner.spacePath}
             projectPath={owner.projectPath}
-            documentPath={owner.readmePath}
+            pagePath={owner.readmePath}
             spaceId={owner.spaceId}
             routeState={collectionRouteState}
             renderNested={renderNested}
@@ -186,7 +186,7 @@ export function ScopeSurfacePage({
       spacePath={owner.spacePath}
       targetKey={previousOwnerKey ?? owner.ownerKey}
     >
-      <EntryDetailProvider
+      <PageDetailProvider
         spacePath={owner.spacePath}
         projectPath={owner.projectPath}
         spaceId={owner.spaceId}
@@ -212,7 +212,7 @@ export function ScopeSurfacePage({
             compactSurfaceState?.onSurfaceIdChange ?? setLocalCompactSurfaceId
           }
         />
-      </EntryDetailProvider>
+      </PageDetailProvider>
     </PageSurfaceSessionProvider>
   );
 }

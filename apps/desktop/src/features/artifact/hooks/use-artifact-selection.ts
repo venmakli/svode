@@ -1,5 +1,9 @@
 import { useShallow } from "zustand/shallow";
 import { useArtifactSelectionStore } from "../model/selection-store";
+import {
+  selectedContentPath,
+  selectedContentSpaceId,
+} from "../model/selection-store";
 import type { ActiveContentSelectionSnapshot } from "../model/types";
 
 export function useActiveContentSelection(): ActiveContentSelectionSnapshot {
@@ -12,6 +16,18 @@ export function useActiveContentSelection(): ActiveContentSelectionSnapshot {
         transitionPending: state.transitionPending,
       }),
     ),
+  );
+}
+
+export function useActiveContentPath() {
+  return useArtifactSelectionStore((state) =>
+    selectedContentPath(state.selection),
+  );
+}
+
+export function useActiveContentSpaceId() {
+  return useArtifactSelectionStore((state) =>
+    selectedContentSpaceId(state.selection),
   );
 }
 

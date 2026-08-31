@@ -6,11 +6,11 @@ import {
   buildCrossParentMoveOrder,
   buildSameParentReorderOrder,
   getChildNestConversionPlan,
-  movedDocumentPath,
+  movedPagePath,
   prepareTreeDrag,
 } from "./tree-dnd-commit-plan";
 
-test("leaf document move plan moves the markdown file itself", () => {
+test("leaf Page move plan moves the Markdown file itself", () => {
   const tree = sampleTree();
   const drag = prepareTreeDrag(tree, "note.md", afterIntoArchive());
 
@@ -21,12 +21,12 @@ test("leaf document move plan moves the markdown file itself", () => {
   expect(movePlan.isBareFolder).toBe(false);
   expect(movePlan.isDocFolder).toBe(false);
   expect(movePlan.movePath).toBe("note.md");
-  expect(movedDocumentPath(movePlan, "archive/note.md")).toBe(
+  expect(movedPagePath(movePlan, "archive/note.md")).toBe(
     "archive/note.md",
   );
 });
 
-test("document folder move plan moves the directory and reopens README", () => {
+test("Page folder move plan moves the directory and reopens README", () => {
   const tree = sampleTree();
   const drag = prepareTreeDrag(tree, "topic/README.md", afterIntoArchive());
 
@@ -37,7 +37,7 @@ test("document folder move plan moves the directory and reopens README", () => {
   expect(movePlan.isBareFolder).toBe(false);
   expect(movePlan.isDocFolder).toBe(true);
   expect(movePlan.movePath).toBe("topic");
-  expect(movedDocumentPath(movePlan, "archive/topic")).toBe(
+  expect(movedPagePath(movePlan, "archive/topic")).toBe(
     "archive/topic/README.md",
   );
 });
@@ -53,7 +53,7 @@ test("bare folder move plan moves the folder directly", () => {
   expect(movePlan.isBareFolder).toBe(true);
   expect(movePlan.isDocFolder).toBe(false);
   expect(movePlan.movePath).toBe("assets");
-  expect(movedDocumentPath(movePlan, "archive/assets")).toBe("archive/assets");
+  expect(movedPagePath(movePlan, "archive/assets")).toBe("archive/assets");
 });
 
 test("collection move plan moves the collection directory, not README", () => {
@@ -67,7 +67,7 @@ test("collection move plan moves the collection directory, not README", () => {
   expect(movePlan.isBareFolder).toBe(false);
   expect(movePlan.isDocFolder).toBe(true);
   expect(movePlan.movePath).toBe("tasks");
-  expect(movedDocumentPath(movePlan, "archive/tasks")).toBe(
+  expect(movedPagePath(movePlan, "archive/tasks")).toBe(
     "archive/tasks/README.md",
   );
 });

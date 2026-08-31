@@ -3,10 +3,10 @@ import { toast } from "sonner";
 import * as m from "@/paraglide/messages.js";
 import type { TreeNode } from "../model/types";
 import {
-  deleteTreeEntry,
-  getTreeEntryBacklinks,
+  deleteTreeItem,
+  getTreePageBacklinks,
   type BacklinkInfo,
-} from "../api/tree-entry-actions";
+} from "../api/content-tree-actions";
 import type { SpaceInfo } from "../model";
 
 export interface FileTreeDeleteDialogState {
@@ -53,7 +53,7 @@ export function useFileTreeItemDelete({
   async function handleDeleteRequest() {
     if (!space) return;
     try {
-      const backlinks = await getTreeEntryBacklinks({
+      const backlinks = await getTreePageBacklinks({
         spacePath: space.path,
         targetPath: node.path,
         projectPath: activeRootPath ?? null,
@@ -68,7 +68,7 @@ export function useFileTreeItemDelete({
     if (!space) return;
     setDeleteDialog({ open: false, backlinks: [] });
     try {
-      await deleteTreeEntry({
+      await deleteTreeItem({
         spacePath: space.path,
         path: node.path,
         projectPath: activeRootPath,
@@ -76,7 +76,7 @@ export function useFileTreeItemDelete({
       removeTreePath(spaceId, node.path);
       await reloadTreePathParent(spaceId, node.path);
     } catch (err) {
-      console.error("Failed to delete entry:", err);
+      console.error("Failed to delete content item:", err);
       toast.error(m.toast_error());
     }
   }

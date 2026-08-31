@@ -19,7 +19,7 @@ test("table boolean cell renders missing and conflicts as unchecked without trut
         <>
           <PropertyCell
             actors={[]}
-            entryLabel="Task one"
+            pageLabel="Task one"
             column={{ name: "Missing", type: "boolean" }}
             editing={false}
             value={undefined}
@@ -31,7 +31,7 @@ test("table boolean cell renders missing and conflicts as unchecked without trut
           <PropertyCell
             readOnly
             actors={[]}
-            entryLabel="Task three"
+            pageLabel="Task three"
             column={{ name: "Archived", type: "boolean" }}
             editing={false}
             value
@@ -42,7 +42,7 @@ test("table boolean cell renders missing and conflicts as unchecked without trut
           />
           <PropertyCell
             actors={[]}
-            entryLabel="Task one"
+            pageLabel="Task one"
             column={{ name: "Invalid", type: "boolean" }}
             editing={false}
             value="true"
@@ -53,7 +53,7 @@ test("table boolean cell renders missing and conflicts as unchecked without trut
           />
           <PropertyCell
             actors={[]}
-            entryLabel="Task two"
+            pageLabel="Task two"
             column={{ name: "Published", type: "boolean", display: "switch" }}
             editing={false}
             value

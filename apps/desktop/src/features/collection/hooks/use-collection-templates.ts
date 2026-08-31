@@ -1,6 +1,6 @@
 import type { Dispatch, SetStateAction } from "react";
 import { toast } from "sonner";
-import { publishEntryFilenameWarnings, type Entry } from "@/features/entry";
+import { publishPageFilenameWarnings, type Page } from "@/features/page";
 import type { CollectionSchema } from "@/features/properties";
 import { normalizeSchema } from "@/features/properties";
 import { useSpaceTreeSync } from "@/features/space";
@@ -15,10 +15,10 @@ import {
   reorderTemplates,
   setDefaultTemplate,
 } from "../api";
-import { entryTemplateSlug, normalizeEntryPath } from "../lib/utils";
+import { entryTemplateSlug, normalizePagePath } from "../lib/utils";
 import {
   templateHeadPath,
-  type EntryPeekTarget,
+  type PagePeekTarget,
   type TemplateInfo,
   type TemplateKind,
 } from "../model";
@@ -32,17 +32,17 @@ export function useCollectionTemplates({
   projectPath,
   collectionPath,
   spaceId,
-  openDocument,
+  openPage,
 }: {
   schema: CollectionSchema | null;
   setSchema: Dispatch<SetStateAction<CollectionSchema | null>>;
-  setPeekTarget: Dispatch<SetStateAction<EntryPeekTarget | null>>;
+  setPeekTarget: Dispatch<SetStateAction<PagePeekTarget | null>>;
   refreshEntries: () => void;
   spacePath: string;
   projectPath?: string | null;
   collectionPath: string;
   spaceId: string;
-  openDocument: (path: string, spaceId: string) => void;
+  openPage: (path: string, spaceId: string) => void;
 }) {
   const reloadTreeParent = useSpaceTreeSync((state) => state.reloadTreeParent);
 
@@ -60,7 +60,7 @@ export function useCollectionTemplates({
     });
     const entry = await readTemplateEntry({ spacePath, path });
     setPeekTarget({
-      entry,
+      page: entry,
       nested: kind === "nestedCollection",
       template: {
         slug: entryTemplateSlug(collectionPath, entry.path),
@@ -84,17 +84,17 @@ export function useCollectionTemplates({
       contextualDefaults: null,
       projectPath,
     });
-    publishEntryFilenameWarnings(created.warnings);
+    publishPageFilenameWarnings(created.warnings);
     refreshEntries();
     await reloadTreeParent(spaceId, collectionPath);
-    openDocument(created.path, spaceId);
+    openPage(created.path, spaceId);
   }
 
   async function editTemplate(template: TemplateInfo) {
     const path = templateHeadPath(collectionPath, template);
     const entry = await readTemplateEntry({ spacePath, path });
     setPeekTarget({
-      entry,
+      page: entry,
       nested: template.kind === "nestedCollection",
       template: {
         slug: template.slug,
@@ -156,9 +156,9 @@ export function useCollectionTemplates({
     setSchema(normalizeSchema(next));
   }
 
-  async function duplicateTemplateEntry(entryToDuplicate: Entry) {
+  async function duplicateTemplateEntry(entryToDuplicate: Page) {
     const slug = entryTemplateSlug(collectionPath, entryToDuplicate.path);
-    const duplicatePath = normalizeEntryPath(entryToDuplicate.path);
+    const duplicatePath = normalizePagePath(entryToDuplicate.path);
     await duplicateTemplateForMenu({
       slug,
       title: entryToDuplicate.meta.title,

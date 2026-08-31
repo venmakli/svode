@@ -89,7 +89,7 @@ export function UrlControl({
           <Link className="text-muted-foreground" />
           <Input
             value={draft}
-            placeholder={m.doc_link_url_placeholder()}
+            placeholder={m.page_link_url_placeholder()}
             autoFocus={autoOpen}
             onChange={(event) => setDraft(event.target.value)}
             onBlur={commit}
@@ -97,7 +97,7 @@ export function UrlControl({
           <Text className="text-muted-foreground" />
           <Input
             value={text}
-            placeholder={m.doc_link_text_placeholder()}
+            placeholder={m.page_link_text_placeholder()}
             onChange={(event) => setText(event.target.value)}
             onBlur={commit}
           />

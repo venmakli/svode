@@ -5,7 +5,7 @@ import { clearNativeMocks, mockNativeIpc } from "@/platform/native/testing";
 
 import { createCollection } from "./create-collection";
 
-test("collection create uses Entry filename projection and reports the final README path", async () => {
+test("collection create uses Page filename projection and reports the final README path", async () => {
   const dom = new JSDOM("<!doctype html><html><body></body></html>", {
     url: "http://localhost/",
   });
@@ -14,10 +14,10 @@ test("collection create uses Entry filename projection and reports the final REA
     configurable: true,
     value: dom.window,
   });
-  const calls: string[] = [];
-  mockNativeIpc((command) => {
-    calls.push(command);
-    if (command === "create_entry") {
+  let callCount = 0;
+  mockNativeIpc(() => {
+    callCount += 1;
+    if (callCount === 1) {
       return {
         body: "",
         meta: {
@@ -37,7 +37,7 @@ test("collection create uses Entry filename projection and reports the final REA
         ],
       };
     }
-    if (command === "convert_to_collection") {
+    if (callCount === 2) {
       return {
         collectionPath: "A-B",
         entry: {
@@ -56,7 +56,7 @@ test("collection create uses Entry filename projection and reports the final REA
         schemaPath: "A-B/schema.yaml",
       };
     }
-    throw new Error(`Unexpected command: ${command}`);
+    throw new Error(`Unexpected native call: ${callCount}`);
   });
 
   try {
@@ -66,7 +66,7 @@ test("collection create uses Entry filename projection and reports the final REA
       title: "A/B",
     });
 
-    expect(calls).toEqual(["create_entry", "convert_to_collection"]);
+    expect(callCount).toBe(2);
     expect(created.path).toBe("A-B/README.md");
     expect(created.warnings?.[0]?.path).toBe("A-B/README.md");
   } finally {

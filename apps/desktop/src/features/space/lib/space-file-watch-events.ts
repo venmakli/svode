@@ -3,7 +3,7 @@ import type {
   SpaceFileEvent,
   SpaceFileEventKind,
   SpaceFileEventName,
-  WatchedSpaceEntry,
+  WatchedSpacePage,
 } from "../model/space-watch-events";
 import {
   basename,
@@ -57,7 +57,7 @@ interface ApplySpaceFileEventInput {
   eventName: SpaceFileEventName;
   getStore: () => SpaceFileEventTreeStore;
   payload: SpaceFileEvent;
-  readEntry: (entryPath: string) => Promise<WatchedSpaceEntry>;
+  readPage: (pagePath: string) => Promise<WatchedSpacePage>;
   repairTree: (parentPath?: string | null) => void;
   spaceId: string;
 }
@@ -75,7 +75,7 @@ export function inferSpaceFileEventKind(
 ): SpaceFileEventKind {
   if (payload.kind) return payload.kind;
   if (isSchemaPath(payload.path)) return "schema";
-  if (isMarkdownPath(payload.path)) return "document";
+  if (isMarkdownPath(payload.path)) return "page";
   if (payload.isDir) return "folder";
   return "unknown";
 }
@@ -117,20 +117,20 @@ export function repairParentPathForSpaceFileEvent(
   return treeRowParentPath(path) ?? normalizeTreePath(payload.parentPath);
 }
 
-export function watchedEntryToTreeNode(
-  entryPath: string,
-  entry: WatchedSpaceEntry,
+export function watchedPageToTreeNode(
+  pagePath: string,
+  page: WatchedSpacePage,
   parentPath?: string | null,
 ): TreeNode {
   return {
-    name: basename(entryPath),
-    path: normalizeTreePath(entryPath),
-    title: entry.meta.title,
-    icon: entry.meta.icon,
-    description: entry.meta.description,
+    name: basename(pagePath),
+    path: normalizeTreePath(pagePath),
+    title: page.meta.title,
+    icon: page.meta.icon,
+    description: page.meta.description,
     has_changes: false,
     has_schema: false,
-    parent: parentPath ?? dirname(entryPath),
+    parent: parentPath ?? dirname(pagePath),
     kind: "page",
     source_shape: "file",
     hasChildren: false,
@@ -142,7 +142,7 @@ export async function applySpaceFileEvent({
   eventName,
   getStore,
   payload,
-  readEntry,
+  readPage,
   repairTree,
   spaceId,
 }: ApplySpaceFileEventInput): Promise<void> {
@@ -156,7 +156,7 @@ export async function applySpaceFileEvent({
     await applyCreatedSpaceFileEvent({
       getStore,
       payload,
-      readEntry,
+      readPage,
       spaceId,
       kind,
     });
@@ -168,7 +168,7 @@ export async function applySpaceFileEvent({
     await applyChangedSpaceFileEvent({
       getStore,
       payload,
-      readEntry,
+      readPage,
       repairTree,
       spaceId,
       kind,
@@ -203,7 +203,7 @@ function updateSchemaCapability(
 async function applyCreatedSpaceFileEvent({
   getStore,
   payload,
-  readEntry,
+  readPage,
   spaceId,
   kind,
 }: Omit<ApplySpaceFileEventInput, "eventName" | "repairTree"> & {
@@ -235,22 +235,22 @@ async function applyCreatedSpaceFileEvent({
     return;
   }
 
-  const entry = await readEntry(path);
+  const page = await readPage(path);
   if (isReadmePath(path)) {
     if (!dirname(path)) {
       store.upsertTreeNode(
         spaceId,
         "",
-        watchedEntryToTreeNode(path, entry, ""),
+        watchedPageToTreeNode(path, page, ""),
       );
       return;
     }
     store.applyReadmeMeta(
       spaceId,
       path,
-      entry.meta.title,
-      entry.meta.icon,
-      entry.meta.description,
+      page.meta.title,
+      page.meta.icon,
+      page.meta.description,
     );
     return;
   }
@@ -259,14 +259,14 @@ async function applyCreatedSpaceFileEvent({
   store.upsertTreeNode(
     spaceId,
     parentPath,
-    watchedEntryToTreeNode(path, entry, parentPath),
+    watchedPageToTreeNode(path, page, parentPath),
   );
 }
 
 async function applyChangedSpaceFileEvent({
   getStore,
   payload,
-  readEntry,
+  readPage,
   spaceId,
   kind,
 }: Omit<ApplySpaceFileEventInput, "eventName"> & {
@@ -284,14 +284,14 @@ async function applyChangedSpaceFileEvent({
     return;
   }
 
-  const entry = await readEntry(path);
+  const page = await readPage(path);
   if (isReadmePath(path) && dirname(path)) {
     store.applyReadmeMeta(
       spaceId,
       path,
-      entry.meta.title,
-      entry.meta.icon,
-      entry.meta.description,
+      page.meta.title,
+      page.meta.icon,
+      page.meta.description,
     );
     return;
   }
@@ -299,9 +299,9 @@ async function applyChangedSpaceFileEvent({
   store.updateNodeMeta(
     spaceId,
     path,
-    entry.meta.title,
-    entry.meta.icon,
-    entry.meta.description,
+    page.meta.title,
+    page.meta.icon,
+    page.meta.description,
   );
 }
 
@@ -310,7 +310,7 @@ function applyDeletedSpaceFileEvent({
   payload,
   spaceId,
   kind,
-}: Omit<ApplySpaceFileEventInput, "eventName" | "readEntry" | "repairTree"> & {
+}: Omit<ApplySpaceFileEventInput, "eventName" | "readPage" | "repairTree"> & {
   kind: SpaceFileEventKind;
 }) {
   const store = getStore();
@@ -321,12 +321,12 @@ function applyDeletedSpaceFileEvent({
     return;
   }
 
-  if (kind === "document" && isReadmePath(path)) {
+  if (kind === "page" && isReadmePath(path)) {
     store.removeReadmeMeta(spaceId, path);
     return;
   }
 
-  if (kind === "document" || kind === "folder") {
+  if (kind === "page" || kind === "folder") {
     store.removeTreePath(spaceId, path);
   }
 }

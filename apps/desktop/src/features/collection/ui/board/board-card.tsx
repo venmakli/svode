@@ -11,11 +11,11 @@ import {
 } from "@/components/ui/context-menu";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/shared/lib/utils";
-import { documentNameConflictDisplayPath } from "@/features/entry/entry-api";
+import { pageNameConflictDisplayPath } from "@/features/page/page-api";
 import { isFolderEntry, isNestedCollectionEntry } from "./utils";
 import { BoardPropertyFlow } from "./board-property-flow";
 import type { BoardCardProps } from "./types";
-import { EntryTitleIcon } from "../entry-title-icon";
+import { PageTitleIcon } from "../page-title-icon";
 import * as m from "@/paraglide/messages.js";
 
 export function SortableBoardCard(props: BoardCardProps) {
@@ -74,7 +74,7 @@ export function BoardCardContent({
   readOnly,
 }: BoardCardProps) {
   const { entry } = card;
-  const conflictPath = documentNameConflictDisplayPath(entry);
+  const conflictPath = pageNameConflictDisplayPath(entry);
   const showIcon = cardFields.includes("icon");
   const showDescription = cardFields.includes("description");
   const nestedCollection = isNestedCollectionEntry(
@@ -107,7 +107,7 @@ export function BoardCardContent({
           <CardContent className="flex flex-col gap-2 px-2.5">
             <div className="flex min-w-0 items-start gap-1.5">
               {showIcon ? (
-                <EntryTitleIcon
+                <PageTitleIcon
                   icon={entry.meta.icon}
                   className="mt-px h-5 min-w-4 text-sm leading-5"
                 />
@@ -118,7 +118,7 @@ export function BoardCardContent({
                 </div>
                 {conflictPath ? (
                   <div
-                    data-entry-name-conflict-path
+                    data-page-name-conflict-path
                     className="mt-1 truncate text-xs text-muted-foreground"
                   >
                     {conflictPath}
@@ -130,7 +130,7 @@ export function BoardCardContent({
                   </div>
                 ) : null}
               </div>
-              <EntryKindMarker
+              <PageKindMarker
                 folder={folder}
                 nestedCollection={nestedCollection}
                 onOpenNested={() => onOpenNestedCollection(entry)}
@@ -182,7 +182,7 @@ export function BoardCardContent({
   );
 }
 
-function EntryKindMarker({
+function PageKindMarker({
   folder,
   nestedCollection,
   onOpenNested,

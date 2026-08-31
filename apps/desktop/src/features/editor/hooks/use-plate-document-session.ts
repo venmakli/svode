@@ -3,10 +3,11 @@ import type { Descendant } from "platejs";
 import type { PlateEditor } from "platejs/react";
 
 import {
-  useActiveEntrySelection,
-  useOpenEntryDocument,
-} from "@/features/entry/selection";
-import type { Entry, EntryMeta } from "@/features/entry";
+  useActiveContentPath,
+  useActiveContentSpaceId,
+} from "@/features/artifact";
+import { useOpenPage } from "@/features/page/navigation";
+import type { Page, PageMeta } from "@/features/page";
 import { useSpace, useSpaceTreeSync } from "@/features/space";
 
 import { deserializeEditorMarkdownInsertion } from "../model/markdown-io";
@@ -22,12 +23,12 @@ import { useFileWatcher } from "./use-file-watcher";
 
 interface UsePlateDocumentSessionInput {
   bodyOnly: boolean;
-  bodyOnlyMeta: EntryMeta | null;
+  bodyOnlyMeta: PageMeta | null;
   documentPath: string | null;
   documentSpaceId: string | null;
   editor: PlateEditor | null;
-  initialEntry: Entry | null;
-  initialEntrySpacePath: string | null;
+  initialPage: Page | null;
+  initialPageSpacePath: string | null;
   onDocumentPathChange?: (path: string) => void;
   documentPathHandoff?: { previousPath: string; path: string } | null;
   projectPath: string | null;
@@ -56,8 +57,8 @@ export function usePlateDocumentSession({
   documentPath,
   documentSpaceId,
   editor,
-  initialEntry,
-  initialEntrySpacePath,
+  initialPage,
+  initialPageSpacePath,
   onDocumentPathChange,
   documentPathHandoff,
   projectPath: projectPathProp,
@@ -65,8 +66,9 @@ export function usePlateDocumentSession({
   readOnly,
   onWriteAccessError,
 }: UsePlateDocumentSessionInput): UsePlateDocumentSessionResult {
-  const { activeDocument, activeDocumentSpaceId } = useActiveEntrySelection();
-  const openDocument = useOpenEntryDocument();
+  const activeDocument = useActiveContentPath();
+  const activeDocumentSpaceId = useActiveContentSpaceId();
+  const openDocument = useOpenPage();
   const {
     fileTrees,
     rootSpaces,
@@ -74,7 +76,7 @@ export function usePlateDocumentSession({
     activeRootPath,
     activeRootId,
   } = useSpace();
-  const { patchEntryTreeMeta, reloadTreePathParents, removeTreePath } =
+  const { patchPageTreeMeta, reloadTreePathParents, removeTreePath } =
     useSpaceTreeSync();
   const { markUnsaved, clearUnsaved, setBrokenLinks } = useEditorStore();
 
@@ -134,7 +136,7 @@ export function usePlateDocumentSession({
   }, []);
 
   const {
-    applyLoadedEntry,
+    applyLoadedPage,
     descriptionRef,
     documentLoading,
     iconRef,
@@ -153,8 +155,8 @@ export function usePlateDocumentSession({
     currentDocumentSpaceId,
     currentPathRef,
     editor,
-    initialEntry,
-    initialEntrySpacePath,
+    initialPage,
+    initialPageSpacePath,
     isLoadingRef,
     loadEditorValue,
     setBrokenLinks,
@@ -195,7 +197,7 @@ export function usePlateDocumentSession({
       iconRef,
       isDebouncePendingRef,
       ownNoncesRef,
-      patchEntryTreeMeta,
+      patchPageTreeMeta,
       projectPath,
       reloadTreePathParents,
       removeTreePath,
@@ -213,12 +215,12 @@ export function usePlateDocumentSession({
     onSaveAll: handleSaveAll,
   });
 
-  const handleWatcherEntryReloaded = useCallback(
-    (entry: Entry) => {
-      applyLoadedEntry(entry);
+  const handleWatcherPageReloaded = useCallback(
+    (page: Page) => {
+      applyLoadedPage(page);
       refreshLoadedDocumentKey(currentCacheKeyRef.current);
     },
-    [applyLoadedEntry, currentCacheKeyRef, refreshLoadedDocumentKey],
+    [applyLoadedPage, currentCacheKeyRef, refreshLoadedDocumentKey],
   );
 
   const handleEditorValueReload = useCallback(
@@ -234,7 +236,7 @@ export function usePlateDocumentSession({
     isDebouncePendingRef,
     isLoadingRef,
     onEditorValueReload: handleEditorValueReload,
-    onEntryReloaded: handleWatcherEntryReloaded,
+    onPageReloaded: handleWatcherPageReloaded,
   });
 
   const handleChange = useCallback(

@@ -1,15 +1,23 @@
 import { expect, test } from "bun:test";
 import {
   applySpaceFileEvent,
+  inferSpaceFileEventKind,
   repairParentPathForSpaceFileEvent,
   type SpaceFileEventTreeStore,
 } from "./space-file-watch-events";
 
-test("repair parent targets document direct parent", () => {
+test("Markdown watcher payloads use canonical Page kind", () => {
+  expect(inferSpaceFileEventKind({ path: "docs/new.md" })).toBe("page");
+  expect(inferSpaceFileEventKind({ path: "docs/new.md", kind: "page" })).toBe(
+    "page",
+  );
+});
+
+test("repair parent targets Page direct parent", () => {
   expect(
     repairParentPathForSpaceFileEvent({
       path: "docs/new.md",
-      kind: "document",
+      kind: "page",
       parentPath: "docs",
     }),
   ).toBe("docs");
@@ -19,7 +27,7 @@ test("repair parent targets folder row parent for readme metadata", () => {
   expect(
     repairParentPathForSpaceFileEvent({
       path: "docs/README.md",
-      kind: "document",
+      kind: "page",
       parentPath: "docs",
     }),
   ).toBe("");
@@ -55,8 +63,8 @@ test("root schema events update the registered space capability projection", asy
     eventName: "file:created",
     getStore: () => store,
     payload: { path: "schema.yaml", kind: "schema" },
-    readEntry: async () => {
-      throw new Error("schema events do not read entries");
+    readPage: async () => {
+      throw new Error("schema events do not read Pages");
     },
     repairTree: () => undefined,
     spaceId: "root",
@@ -65,8 +73,8 @@ test("root schema events update the registered space capability projection", asy
     eventName: "file:changed",
     getStore: () => store,
     payload: { path: "schema.yaml", kind: "schema" },
-    readEntry: async () => {
-      throw new Error("schema events do not read entries");
+    readPage: async () => {
+      throw new Error("schema events do not read Pages");
     },
     repairTree: () => undefined,
     spaceId: "root",
@@ -75,8 +83,8 @@ test("root schema events update the registered space capability projection", asy
     eventName: "file:deleted",
     getStore: () => store,
     payload: { path: "schema.yaml", kind: "schema" },
-    readEntry: async () => {
-      throw new Error("schema events do not read entries");
+    readPage: async () => {
+      throw new Error("schema events do not read Pages");
     },
     repairTree: () => undefined,
     spaceId: "root",
@@ -99,8 +107,8 @@ test("nested schema events keep using the tree-node projection", async () => {
     eventName: "file:changed",
     getStore: () => store,
     payload: { path: "tasks/schema.yaml", kind: "schema" },
-    readEntry: async () => {
-      throw new Error("schema events do not read entries");
+    readPage: async () => {
+      throw new Error("schema events do not read Pages");
     },
     repairTree: () => undefined,
     spaceId: "root",

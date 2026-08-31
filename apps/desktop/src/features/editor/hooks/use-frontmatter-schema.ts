@@ -1,16 +1,16 @@
 import { useEffect, useState } from "react";
 
-import { getEntrySchema } from "@/features/properties/api";
-import type { EntrySchemaResult } from "@/features/properties";
+import { getPageSchema } from "@/features/properties/api";
+import type { PageSchemaResult } from "@/features/properties";
 
 export function useFrontmatterSchema(
   spacePath: string,
   filePath: string | null,
 ): {
-  schemaResult: EntrySchemaResult | null;
-  setSchemaResult: (result: EntrySchemaResult | null) => void;
+  schemaResult: PageSchemaResult | null;
+  setSchemaResult: (result: PageSchemaResult | null) => void;
 } {
-  const [schemaResult, setSchemaResult] = useState<EntrySchemaResult | null>(
+  const [schemaResult, setSchemaResult] = useState<PageSchemaResult | null>(
     null,
   );
 
@@ -26,7 +26,7 @@ export function useFrontmatterSchema(
       };
     }
 
-    getEntrySchema({ spacePath, filePath })
+    getPageSchema({ spacePath, filePath })
       .then((result) => {
         if (!cancelled) setSchemaResult(result);
       })

@@ -36,7 +36,7 @@ export type SpaceTreeSyncState = Pick<
   | "reloadTreeParent"
   | "reloadTreePathParent"
   | "reloadTreePathParents"
-  | "patchEntryTreeMeta"
+  | "patchPageTreeMeta"
   | "removeTreePath"
 >;
 
@@ -75,7 +75,7 @@ function selectTreeSyncState(state: SpaceState): SpaceTreeSyncState {
     reloadTreeParent: state.reloadTreeParent,
     reloadTreePathParent: state.reloadTreePathParent,
     reloadTreePathParents: state.reloadTreePathParents,
-    patchEntryTreeMeta: state.patchEntryTreeMeta,
+    patchPageTreeMeta: state.patchPageTreeMeta,
     removeTreePath: state.removeTreePath,
   };
 }

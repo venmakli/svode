@@ -1,4 +1,4 @@
-import type { Entry } from "@/features/entry";
+import type { Page } from "@/features/page";
 import type { Column } from "@/features/properties";
 import { isEmptyValue } from "@/features/properties";
 
@@ -16,12 +16,12 @@ export function groupValueForKey(key: string) {
   return key === NO_VALUE_KEY ? null : key;
 }
 
-export function groupValue(entry: Entry, column: Column) {
+export function groupValue(entry: Page, column: Column) {
   return entry.meta.extra?.[column.name] ?? null;
 }
 
 export function updateEntryGroupValue(
-  entry: Entry,
+  entry: Page,
   column: Column,
   value: string | null,
 ) {
@@ -38,7 +38,7 @@ export function updateEntryGroupValue(
 }
 
 export function reorderEntryAround(
-  entries: Entry[],
+  entries: Page[],
   activePath: string,
   overPath: string,
   placement: "before" | "after",

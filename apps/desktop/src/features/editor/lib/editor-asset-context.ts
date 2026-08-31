@@ -1,4 +1,4 @@
-import { joinAbs } from "./doc-link-utils";
+import { joinAbs } from "./page-link-utils";
 
 export interface EditorAssetResolveContext {
   documentPath: string | null;

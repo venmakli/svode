@@ -1,13 +1,15 @@
 import {
-  createEntry,
-  getExpandedPaths,
-  listEntries,
-  listTreeChildren,
-  moveEntry,
-  saveExpandedPaths,
-  saveTreeOrder,
-  type EntryDto,
-} from "@/platform/entries/entries-api";
+  createPage,
+  type PageDto,
+} from "@/platform/pages/pages-api";
+import {
+  getContentTreeExpandedPaths,
+  listContentTree,
+  listContentTreeChildren,
+  moveContentTreeItem,
+  saveContentTreeExpandedPaths,
+  saveContentTreeOrder,
+} from "@/platform/space/content-tree-api";
 import { clearMcpActiveContext, setMcpActiveContext } from "@/platform/mcp";
 import {
   createProject,
@@ -28,7 +30,7 @@ import {
 } from "@/platform/space/space-api";
 import type { SpaceGitType } from "../model/types";
 
-export type SpaceEntryDto = EntryDto;
+export type SpacePageDto = PageDto;
 
 export function listRootSpaces() {
   return listProjects();
@@ -111,13 +113,13 @@ export function ensureChildSpaceScaffold(
   return ensureSpaceScaffold(rootPath, childSpacePath);
 }
 
-export function createSpaceEntry(input: {
+export function createSpacePage(input: {
   spacePath: string;
   parentPath: string | null;
   title: string;
   projectPath: string | null;
 }) {
-  return createEntry({
+  return createPage({
     space: input.spacePath,
     parentPath: input.parentPath,
     title: input.title,
@@ -126,32 +128,32 @@ export function createSpaceEntry(input: {
   });
 }
 
-export function listSpaceTreeEntries(spacePath: string) {
-  return listEntries(spacePath);
+export function listSpaceContentTree(spacePath: string) {
+  return listContentTree(spacePath);
 }
 
 export function listSpaceTreeChildren(
   spacePath: string,
   parentPath: string | null,
 ) {
-  return listTreeChildren(spacePath, parentPath);
+  return listContentTreeChildren(spacePath, parentPath);
 }
 
 export function getSpaceExpandedPaths(spacePath: string) {
-  return getExpandedPaths(spacePath);
+  return getContentTreeExpandedPaths(spacePath);
 }
 
 export function saveSpaceExpandedPaths(spacePath: string, paths: string[]) {
-  return saveExpandedPaths(spacePath, paths);
+  return saveContentTreeExpandedPaths(spacePath, paths);
 }
 
-export function moveSpaceEntry(input: {
+export function moveSpaceTreeItem(input: {
   spacePath: string;
   from: string;
   toParent: string;
   projectPath: string | null;
 }) {
-  return moveEntry({
+  return moveContentTreeItem({
     space: input.spacePath,
     from: input.from,
     toParent: input.toParent,
@@ -164,7 +166,7 @@ export function saveSpaceTreeOrder(input: {
   order: Record<string, string[]>;
   projectPath: string | null;
 }) {
-  return saveTreeOrder({
+  return saveContentTreeOrder({
     space: input.spacePath,
     order: input.order,
     projectPath: input.projectPath,
