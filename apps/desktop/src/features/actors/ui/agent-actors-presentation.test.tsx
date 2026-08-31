@@ -2,10 +2,10 @@ import { expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import {
-  applySystemCollectionQuery,
-  EMPTY_SYSTEM_COLLECTION_QUERY,
-  SystemCollectionPresentationShell,
-} from "@/features/collection/system";
+  applyCollectionCoreQuery,
+  EMPTY_COLLECTION_CORE_QUERY,
+  CollectionCorePresentationShell,
+} from "@/features/collection/core";
 
 import type { AgentActorRow } from "../model/agent-actor-types";
 import {
@@ -47,12 +47,11 @@ test("Agent Actors uses the fixed schema and one shared edit/delete descriptor s
       onEdit: (row) => calls.push(`edit:${row.ownerPath}`),
     },
     inheritedVisible: true,
-    renderDetail: () => ({ content: null, description: null, title: null }),
     rows: [own, inherited],
   });
 
   expect(descriptor.id).toBe("agents");
-  expect(descriptor.fields.map((field) => field.key)).toEqual([
+  expect(descriptor.properties.map((property) => property.key)).toEqual([
     "clients",
     "primary",
     "approval",
@@ -72,21 +71,19 @@ test("Agent Actors default order and search preserve owner provenance", () => {
   const presentation = createAgentActorsPresentation({
     actions: disabledActions(),
     inheritedVisible: true,
-    renderDetail: () => ({ content: null, description: null, title: null }),
     state: { phase: "ready", rows: [inherited, own] },
   });
   const descriptor = createAgentActorsPresentationDescriptor({
     actions: disabledActions(),
     inheritedVisible: true,
-    renderDetail: () => ({ content: null, description: null, title: null }),
     rows: [inherited, own],
   });
-  const ordered = applySystemCollectionQuery({
+  const ordered = applyCollectionCoreQuery({
     descriptor,
-    query: EMPTY_SYSTEM_COLLECTION_QUERY,
+    query: EMPTY_COLLECTION_CORE_QUERY,
     rows: [inherited, own],
   });
-  const searched = applySystemCollectionQuery({
+  const searched = applyCollectionCoreQuery({
     descriptor,
     query: { filters: [], search: "repo", sort: [] },
     rows: [own, inherited],
@@ -98,14 +95,14 @@ test("Agent Actors default order and search preserve owner provenance", () => {
   expect(searched.rows.map((row) => row.ownerPath)).toEqual(["/repo"]);
 
   const markup = renderToStaticMarkup(
-    <SystemCollectionPresentationShell
+    <CollectionCorePresentationShell
       instanceKey="actors:space:docs"
       presentation={presentation}
-      query={EMPTY_SYSTEM_COLLECTION_QUERY}
+      query={EMPTY_COLLECTION_CORE_QUERY}
       onQueryChange={() => undefined}
     />,
   );
-  expect(markup.includes("data-system-collection-row")).toBe(true);
+  expect(markup.includes("data-collection-core-row")).toBe(true);
   expect(markup.includes("data-agent-adapter")).toBe(false);
 });
 

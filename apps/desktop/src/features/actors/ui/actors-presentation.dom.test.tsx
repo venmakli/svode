@@ -5,16 +5,22 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { JSDOM } from "jsdom";
 
 import {
-  EMPTY_SYSTEM_COLLECTION_QUERY,
-  SystemCollectionPresentationShell,
-  type SystemCollectionDetailRequest,
-} from "@/features/collection/system";
+  EMPTY_COLLECTION_CORE_QUERY,
+  CollectionCorePresentationShell,
+} from "@/features/collection/core";
+import {
+  createCollectionDetailActivation,
+  type CollectionDetailRequest,
+} from "@/features/collection/app-shell";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { clearNativeMocks, mockNativeIpc } from "@/platform/native/testing";
 
 import type { ActorCatalogRow } from "../model/types";
 import { ActorDetail } from "./actor-detail";
-import { createActorsPresentation } from "./actors-presentation";
+import {
+  createActorDetailRequest,
+  createActorsPresentation,
+} from "./actors-presentation";
 
 const actor: ActorCatalogRow = {
   aliases: [],
@@ -41,9 +47,22 @@ test("actors rows open in the real DOM and use shared row and Drawer action seam
     { pretendToBeVisual: true, url: "http://localhost/" },
   );
   const restoreGlobals = installDomGlobals(dom);
-  const requests: SystemCollectionDetailRequest[] = [];
+  const requests: CollectionDetailRequest[] = [];
+  const controller = {
+    close: async () => true,
+    open: async (request: CollectionDetailRequest) => {
+      requests.push(request);
+      return true;
+    },
+    prepareForNavigation: async () => true,
+  };
   const presentation = createActorsPresentation({
-    spacePath: "/repo",
+    onActivate: createCollectionDetailActivation({
+      controller,
+      createContent: (row) => createActorDetailRequest(row, "/repo"),
+      instanceKey: "actors:space:root",
+      presentationId: "humans",
+    }),
     state: { phase: "ready", rows: [actor] },
   });
   const root = createRoot(dom.window.document.getElementById("app")!);
@@ -51,25 +70,17 @@ test("actors rows open in the real DOM and use shared row and Drawer action seam
   try {
     await act(async () => {
       root.render(
-        <SystemCollectionPresentationShell
-          detailController={{
-            close: async () => true,
-            open: async (request) => {
-              requests.push(request);
-              return true;
-            },
-            prepareForNavigation: async () => true,
-          }}
+        <CollectionCorePresentationShell
           instanceKey="actors:space:root"
           presentation={presentation}
-          query={EMPTY_SYSTEM_COLLECTION_QUERY}
+          query={EMPTY_COLLECTION_CORE_QUERY}
           onQueryChange={() => undefined}
         />,
       );
     });
 
     const row = dom.window.document.querySelector<HTMLElement>(
-      '[data-system-collection-row="ada@example.test"]',
+      '[data-collection-core-row="ada@example.test"]',
     )!;
     const title = Array.from(row.querySelectorAll("span")).find(
       (element) => element.textContent === "Ada Lovelace",

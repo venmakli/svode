@@ -10,7 +10,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
-import { SystemCollectionToolbarActionButton } from "@/features/collection/system";
+import { CollectionToolbarActionButton } from "@/features/collection/core";
 import * as m from "@/paraglide/messages.js";
 
 export function RoutineAutomaticConsentNotice({
@@ -41,7 +41,7 @@ export function RoutineAutomaticConsentNotice({
   return (
     <Dialog>
       <DialogTrigger asChild>
-        <SystemCollectionToolbarActionButton
+        <CollectionToolbarActionButton
           active
           icon={AlertTriangle}
           label={triggerLabel}

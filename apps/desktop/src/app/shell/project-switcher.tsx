@@ -33,9 +33,9 @@ import { cn } from "@/shared/lib/utils";
 import { useShellStore } from "./model";
 import * as m from "@/paraglide/messages.js";
 import {
-  runSystemCollectionNavigation,
-  useSystemCollectionDetailController,
-} from "@/features/collection/system";
+  runCollectionNavigation,
+  useCollectionDetailController,
+} from "@/features/collection/app-shell";
 
 interface ProjectSwitcherProps {
   className?: string;
@@ -47,7 +47,7 @@ export function ProjectSwitcher({
   showSettingsButton = true,
 }: ProjectSwitcherProps) {
   const navigate = useNavigate();
-  const detailController = useSystemCollectionDetailController();
+  const detailController = useCollectionDetailController();
   const {
     rootSpaces,
     activeRootId,
@@ -81,7 +81,7 @@ export function ProjectSwitcher({
   });
 
   function handleHome() {
-    void runSystemCollectionNavigation(detailController, () => {
+    void runCollectionNavigation(detailController, () => {
       goHome();
       navigate({ to: "/" });
     });

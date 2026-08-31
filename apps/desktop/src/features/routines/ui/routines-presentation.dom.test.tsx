@@ -4,10 +4,9 @@ import { createRoot } from "react-dom/client";
 import { JSDOM } from "jsdom";
 
 import {
-  EMPTY_SYSTEM_COLLECTION_QUERY,
-  SystemCollectionPresentationShell,
-  type SystemCollectionDetailRequest,
-} from "@/features/collection/system";
+  EMPTY_COLLECTION_CORE_QUERY,
+  CollectionCorePresentationShell,
+} from "@/features/collection/core";
 
 import type { RoutineRow } from "../model/types";
 import {
@@ -54,7 +53,7 @@ test("routine enabled Switch is single-flight and does not open the row", async 
   );
   const restoreGlobals = installDomGlobals(dom);
   const root = createRoot(dom.window.document.getElementById("app")!);
-  const detailRequests: SystemCollectionDetailRequest[] = [];
+  const activations: string[] = [];
   const updates: Array<{ enabled: boolean; rowId: string }> = [];
   let rejectUpdate!: (reason: Error) => void;
   const updateResult = new Promise<void>((_resolve, reject) => {
@@ -77,29 +76,19 @@ test("routine enabled Switch is single-flight and does not open the row", async 
   };
   const presentation = createRoutinesPresentation({
     actions,
-    createDetailRequest: (row) => ({
-      content: row.name,
-      description: row.description,
-      title: row.name,
-    }),
+    onActivate: (row) => {
+      activations.push(row.id);
+    },
     state: { phase: "ready", rows: [scheduled] },
   });
 
   try {
     await act(async () => {
       root.render(
-        <SystemCollectionPresentationShell
-          detailController={{
-            close: async () => true,
-            open: async (request) => {
-              detailRequests.push(request);
-              return true;
-            },
-            prepareForNavigation: async () => true,
-          }}
+        <CollectionCorePresentationShell
           instanceKey="routines:space:root"
           presentation={presentation}
-          query={EMPTY_SYSTEM_COLLECTION_QUERY}
+          query={EMPTY_COLLECTION_CORE_QUERY}
           onQueryChange={() => undefined}
         />,
       );
@@ -109,7 +98,7 @@ test("routine enabled Switch is single-flight and does not open the row", async 
       '[role="switch"][aria-label="Enabled: Daily summary"]',
     )!;
     const row = dom.window.document.querySelector<HTMLElement>(
-      '[data-system-collection-row="routine:summary"]',
+      '[data-collection-core-row="routine:summary"]',
     )!;
     const title = Array.from(row.querySelectorAll("span")).find(
       (element) => element.textContent === "Daily summary",
@@ -127,7 +116,7 @@ test("routine enabled Switch is single-flight and does not open the row", async 
     });
 
     expect(updates).toEqual([{ enabled: true, rowId: "routine:summary" }]);
-    expect(detailRequests).toEqual([]);
+    expect(activations).toEqual([]);
     expect(switchControl.disabled).toBe(true);
     expect(switchControl.getAttribute("aria-checked")).toBe("false");
 
@@ -148,7 +137,7 @@ test("routine enabled Switch is single-flight and does not open the row", async 
         new dom.window.MouseEvent("click", { bubbles: true }),
       );
     });
-    expect(detailRequests.length).toBe(1);
+    expect(activations).toEqual([scheduled.id]);
   } finally {
     await act(async () => root.unmount());
     restoreGlobals();

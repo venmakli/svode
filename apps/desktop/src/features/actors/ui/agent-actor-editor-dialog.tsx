@@ -2,10 +2,10 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import {
-  SystemCollectionCreateFlow,
-  type SystemCollectionCreateFlowFocusRequest,
-  type SystemCollectionCreateFlowFocusTarget,
-} from "@/features/collection/system";
+  CollectionCreateFlow,
+  type CollectionCreateFlowFocusRequest,
+  type CollectionCreateFlowFocusTarget,
+} from "@/features/collection/core";
 import {
   RepositoryAccessInlineRecovery,
   repositoryAccessPrimaryActionLabel,
@@ -81,7 +81,7 @@ function AgentActorCreateJourney({
   const submitRequestedRef = useRef(false);
   const [step, setStep] = useState<AgentActorCreateStep>("identity");
   const [focusRequest, setFocusRequest] =
-    useState<SystemCollectionCreateFlowFocusRequest>({
+    useState<CollectionCreateFlowFocusRequest>({
       id: 0,
       target: "control",
     });
@@ -135,7 +135,7 @@ function AgentActorCreateJourney({
   const markAttempted = (target: AgentActorCreateStep) => {
     setAttemptedSteps((current) => new Set([...current, target]));
   };
-  const requestFocus = (target: SystemCollectionCreateFlowFocusTarget) => {
+  const requestFocus = (target: CollectionCreateFlowFocusTarget) => {
     setFocusRequest((current) => ({ id: current.id + 1, target }));
   };
   const moveTo = (
@@ -190,7 +190,7 @@ function AgentActorCreateJourney({
   };
 
   return (
-    <SystemCollectionCreateFlow
+    <CollectionCreateFlow
       backAction={
         stepIndex > 0
           ? {
@@ -295,7 +295,7 @@ function AgentActorCreateJourney({
           onSubmit={continueFromStep}
         />
       )}
-    </SystemCollectionCreateFlow>
+    </CollectionCreateFlow>
   );
 }
 

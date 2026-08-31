@@ -22,12 +22,16 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import {
-  defineSystemCollectionPresentation,
-  normalizeSystemCollectionSearchText,
-  type SystemCollectionFieldDescriptor,
-  type SystemCollectionFilterEditorInput,
-  type SystemCollectionPresentationState,
-} from "@/features/collection/system";
+  defineCollectionCorePresentation,
+  normalizeCollectionCoreSearchText,
+  type CollectionCorePresentationDescriptor,
+  type CollectionCorePresentationState,
+} from "@/features/collection/core";
+import type { CollectionDetailContent } from "@/features/collection/app-shell";
+import type {
+  CollectionPropertyDefinition,
+  CollectionPropertyFilterEditorInput,
+} from "@/features/properties";
 import * as m from "@/paraglide/messages.js";
 
 import { skillSourceFamilies, skillSourceLocations } from "../model/provenance";
@@ -47,7 +51,7 @@ import { AgentContextSkillDetail, skillWarnings } from "./skill-detail";
 export function createAgentContextSkillsPresentation({
   artifactOpeners = [],
   onOpenArtifact,
-  onDetailRequested,
+  onActivate,
   state,
 }: {
   artifactOpeners?: readonly ArtifactOpener[];
@@ -56,10 +60,10 @@ export function createAgentContextSkillsPresentation({
     canonicalArtifactPath: string;
     tool: ArtifactOpener["id"];
   }): void | Promise<void>;
-  onDetailRequested?(rowId: string): void;
-  state: SystemCollectionPresentationState<AgentContextSkillRow>;
+  onActivate?: CollectionCorePresentationDescriptor<AgentContextSkillRow>["onActivate"];
+  state: CollectionCorePresentationState<AgentContextSkillRow>;
 }) {
-  const fields: readonly SystemCollectionFieldDescriptor<AgentContextSkillRow>[] =
+  const properties: readonly CollectionPropertyDefinition<AgentContextSkillRow>[] =
     [
       multiValueField(
         "source",
@@ -80,21 +84,10 @@ export function createAgentContextSkillsPresentation({
       ),
     ];
 
-  return defineSystemCollectionPresentation<AgentContextSkillRow>({
+  return defineCollectionCorePresentation<AgentContextSkillRow>({
     descriptor: {
-      createDetailRequest: (row) => {
-        onDetailRequested?.(row.id);
-        return {
-          content: <AgentContextSkillDetail row={row} />,
-          description: (
-            <span className="sr-only">
-              {m.agent_context_skill_detail_description()}
-            </span>
-          ),
-          title: skillDetailTitle(row),
-        };
-      },
-      fields,
+      onActivate,
+      properties,
       getRowId: (row) => row.id,
       id: "skills",
       label: m.agent_context_skills(),
@@ -112,7 +105,7 @@ export function createAgentContextSkillsPresentation({
           <Sparkles className="size-4 text-muted-foreground" aria-hidden />
         ),
         renderOverlays: (row) => <SkillCardOverlays row={row} />,
-        visibleFields: ["source", "location"],
+        visibleProperties: ["source", "location"],
       },
       query: {
         defaultCompare: compareSkillsByDefault,
@@ -132,6 +125,20 @@ export function createAgentContextSkillsPresentation({
     },
     state,
   });
+}
+
+export function createSkillDetailContent(
+  row: AgentContextSkillRow,
+): CollectionDetailContent {
+  return {
+    content: <AgentContextSkillDetail row={row} />,
+    description: (
+      <span className="sr-only">
+        {m.agent_context_skill_detail_description()}
+      </span>
+    ),
+    title: skillDetailTitle(row),
+  };
 }
 
 export function skillDetailTitle(row: AgentContextSkillRow) {
@@ -177,8 +184,8 @@ export function compareSkillsByDefault(
 ) {
   return (
     compareText(
-      normalizeSystemCollectionSearchText(left.name),
-      normalizeSystemCollectionSearchText(right.name),
+      normalizeCollectionCoreSearchText(left.name),
+      normalizeCollectionCoreSearchText(right.name),
     ) || compareText(left.canonicalPath, right.canonicalPath)
   );
 }
@@ -192,31 +199,35 @@ function multiValueField<Value extends string>(
   placeholder: string,
   getVisibleValues: (values: readonly Value[]) => readonly Value[] = (values) =>
     values,
-): SystemCollectionFieldDescriptor<AgentContextSkillRow> {
+): CollectionPropertyDefinition<AgentContextSkillRow> {
   return {
-    filter: {
-      kind: "custom",
-      matches: (row, rule) =>
-        typeof rule.value === "string" &&
-        getValues(row).includes(rule.value as Value),
-      operators: ["="],
-      renderEditor: (input) => (
-        <SkillFilterEditor
-          {...input}
-          getLabel={getLabel}
-          options={options}
-          placeholder={placeholder}
-        />
-      ),
-      validate: (rule) =>
-        rule.operator === "=" &&
-        typeof rule.value === "string" &&
-        options.includes(rule.value as Value),
+    capabilities: {
+      filter: {
+        kind: "custom",
+        matches: (row, rule) =>
+          typeof rule.value === "string" &&
+          getValues(row).includes(rule.value as Value),
+        operators: ["="],
+        renderEditor: (input) => (
+          <SkillFilterEditor
+            {...input}
+            getLabel={getLabel}
+            options={options}
+            placeholder={placeholder}
+          />
+        ),
+        validate: (rule) =>
+          rule.operator === "=" &&
+          typeof rule.value === "string" &&
+          options.includes(rule.value as Value),
+      },
     },
     getValue: getValues,
     key,
     label,
-    valueSemantics: {
+    origin: "domain_specific",
+    owner: { featureId: "agent-context", kind: "feature" },
+    semantics: {
       kind: "custom",
       render: (_value, row) => {
         const values = getVisibleValues(getValues(row));
@@ -240,7 +251,7 @@ function SkillFilterEditor<Value extends string>({
   options,
   placeholder,
   rule,
-}: SystemCollectionFilterEditorInput & {
+}: CollectionPropertyFilterEditorInput & {
   getLabel(value: Value): string;
   options: readonly Value[];
   placeholder: string;

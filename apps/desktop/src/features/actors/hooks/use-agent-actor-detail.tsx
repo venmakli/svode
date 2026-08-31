@@ -9,9 +9,9 @@ import { Bot, LoaderCircle } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import type {
-  SystemCollectionDetailController,
-  SystemCollectionDetailRequest,
-} from "@/features/collection/system";
+  CollectionDetailController,
+  CollectionDetailRequest,
+} from "@/features/collection/app-shell";
 import {
   RepositoryAccessInlineRecovery,
   RepositoryAccessPrimaryButton,
@@ -55,7 +55,7 @@ export function useAgentActorDetail({
     draft: AgentActorDraft,
   ): void | Promise<void>;
   descriptors: readonly AgentActorAdapterDescriptor[];
-  detailController: SystemCollectionDetailController | null;
+  detailController: CollectionDetailController | null;
   diagnose(adapter: AgentActorBinding["adapter"]): void;
   diagnostics: Readonly<
     Partial<Record<AgentActorBinding["adapter"], AgentActorAdapterDiagnostic>>
@@ -75,7 +75,7 @@ export function useAgentActorDetail({
 }) {
   const readOnlyRowRef = useRef<AgentActorRow | null>(null);
   const createReadOnlyDetail = useCallback(
-    (row: AgentActorRow): Omit<SystemCollectionDetailRequest, "selection"> => {
+    (row: AgentActorRow): Omit<CollectionDetailRequest, "selection"> => {
       readOnlyRowRef.current = row;
       return {
         canClose: () => {

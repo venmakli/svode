@@ -1,6 +1,6 @@
 import { useCallback, useState } from "react";
 
-import type { SystemCollectionActionState } from "@/features/collection/system";
+import type { CollectionCoreActionState } from "@/features/collection/core";
 import * as m from "@/paraglide/messages.js";
 
 import {
@@ -23,7 +23,7 @@ export function useRoutineDispatch({
   } | null>(null);
 
   const getRunState = useCallback(
-    (row: RoutineRow): SystemCollectionActionState => {
+    (row: RoutineRow): CollectionCoreActionState => {
       const disabledReason = routineRunDisabledReason(row);
       if (disabledReason) return { reason: disabledReason, status: "disabled" };
       if (pendingRoutineId === row.id) return { status: "pending" };

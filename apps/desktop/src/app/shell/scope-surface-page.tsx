@@ -9,9 +9,9 @@ import { AgentContextSurface } from "@/features/agent-context";
 import { ActorsSurface } from "@/features/actors";
 import { RoutinesSurface } from "@/features/routines";
 import {
-  runSystemCollectionNavigation,
-  useSystemCollectionDetailController,
-} from "@/features/collection/system";
+  runCollectionNavigation,
+  useCollectionDetailController,
+} from "@/features/collection/app-shell";
 import {
   CollectionViewsSurface,
   type CollectionViewsSurfaceProps,
@@ -85,7 +85,7 @@ export function ScopeSurfacePage({
   const collectionRouteState =
     presentation === "compact" ? (routeState ?? compactRouteState) : routeState;
   const openDocument = useOpenEntryDocument();
-  const detailController = useSystemCollectionDetailController();
+  const detailController = useCollectionDetailController();
   const openSessionsSurface = useShellStore(
     (state) => state.openSessionsSurface,
   );
@@ -96,7 +96,7 @@ export function ScopeSurfacePage({
   );
   const openRoutineSession = useCallback(
     (target: { sessionId: string; launchId: string }) => {
-      void runSystemCollectionNavigation(detailController, () => {
+      void runCollectionNavigation(detailController, () => {
         openSessionsSurface(target);
       });
     },

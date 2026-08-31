@@ -7,10 +7,10 @@ import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import type { AgentActorOption } from "@/features/actors";
 import {
-  SystemCollectionCreateFlow,
-  type SystemCollectionCreateFlowFocusRequest,
-  type SystemCollectionCreateFlowFocusTarget,
-} from "@/features/collection/system";
+  CollectionCreateFlow,
+  type CollectionCreateFlowFocusRequest,
+  type CollectionCreateFlowFocusTarget,
+} from "@/features/collection/core";
 import * as m from "@/paraglide/messages.js";
 
 import {
@@ -71,7 +71,7 @@ export function RoutineCreateDialog({
   const submitRequestedRef = useRef(false);
   const [step, setStep] = useState<RoutineCreateStep>("basics");
   const [focusRequest, setFocusRequest] =
-    useState<SystemCollectionCreateFlowFocusRequest>({
+    useState<CollectionCreateFlowFocusRequest>({
       id: 0,
       target: "control",
     });
@@ -116,7 +116,7 @@ export function RoutineCreateDialog({
   const markAttempted = (target: RoutineCreateStep) => {
     setAttemptedSteps((current) => new Set([...current, target]));
   };
-  const requestFocus = (target: SystemCollectionCreateFlowFocusTarget) => {
+  const requestFocus = (target: CollectionCreateFlowFocusTarget) => {
     setFocusRequest((current) => ({ id: current.id + 1, target }));
   };
   const moveTo = (
@@ -161,7 +161,7 @@ export function RoutineCreateDialog({
     : new Set<RoutineDraftIssue>();
 
   return (
-    <SystemCollectionCreateFlow
+    <CollectionCreateFlow
       backAction={
         stepIndex > 0
           ? {
@@ -310,7 +310,7 @@ export function RoutineCreateDialog({
           </form>
         )}
       </fieldset>
-    </SystemCollectionCreateFlow>
+    </CollectionCreateFlow>
   );
 }
 

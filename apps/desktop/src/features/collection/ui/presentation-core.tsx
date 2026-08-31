@@ -45,7 +45,7 @@ const interactiveTargetSelector = [
   "[role='tab']",
   "[data-card-interactive]",
   "[data-list-interactive]",
-  "[data-system-collection-interactive]",
+  "[data-collection-core-interactive]",
   "[data-radix-collection-item]",
 ].join(",");
 

@@ -81,12 +81,12 @@ test("Actors refreshes both catalogs from owner events without access probes", a
     expect(calls.includes("repository_access_verify")).toBe(false);
     expect(
       dom.window.document.querySelector<HTMLButtonElement>(
-        '[data-system-collection-create="add-actor"]',
+        '[data-collection-core-create="add-actor"]',
       )?.disabled,
     ).toBe(false);
 
     expect(
-      dom.window.document.querySelector("[data-system-collection-refresh]"),
+      dom.window.document.querySelector("[data-collection-core-refresh]"),
     ).toBeNull();
     await act(async () => {
       await emitNativeEvent("actors:invalidated", {
@@ -129,7 +129,7 @@ test("Actors refreshes both catalogs from owner events without access probes", a
     });
     expect(
       dom.window.document.querySelector<HTMLButtonElement>(
-        '[data-system-collection-create="add-actor"]',
+        '[data-collection-core-create="add-actor"]',
       )?.disabled,
     ).toBe(true);
   } finally {

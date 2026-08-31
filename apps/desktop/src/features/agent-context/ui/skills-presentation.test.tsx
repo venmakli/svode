@@ -3,17 +3,18 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 import { TooltipProvider } from "@/components/ui/tooltip";
 import {
-  applySystemCollectionQuery,
-  EMPTY_SYSTEM_COLLECTION_QUERY,
-  SystemCollectionPresentationShell,
-  type SystemCollectionPresentationDescriptor,
-} from "@/features/collection/system";
+  applyCollectionCoreQuery,
+  EMPTY_COLLECTION_CORE_QUERY,
+  CollectionCorePresentationShell,
+  type CollectionCorePresentationDescriptor,
+} from "@/features/collection/core";
 
 import { skillDetailProvenance } from "../model/detail-provenance";
 import type { AgentContextSkillRow } from "../model/types";
 import {
   compareSkillsByDefault,
   createAgentContextSkillsPresentation,
+  createSkillDetailContent,
 } from "./skills-presentation";
 
 const reviewSkill: AgentContextSkillRow = {
@@ -53,7 +54,7 @@ function descriptor(rows: readonly AgentContextSkillRow[]) {
   return (
     presentation(rows) as unknown as {
       instance: {
-        descriptor: SystemCollectionPresentationDescriptor<AgentContextSkillRow>;
+        descriptor: CollectionCorePresentationDescriptor<AgentContextSkillRow>;
       };
     }
   ).instance.descriptor;
@@ -63,16 +64,16 @@ test("skills render as coverless Gallery cards with bounded Reader detail", () =
   const runtime = presentation([reviewSkill]);
   const html = renderToStaticMarkup(
     <TooltipProvider>
-      <SystemCollectionPresentationShell
+      <CollectionCorePresentationShell
         instanceKey="agent-context:space:root"
         presentation={runtime}
-        query={EMPTY_SYSTEM_COLLECTION_QUERY}
+        query={EMPTY_COLLECTION_CORE_QUERY}
         onQueryChange={() => undefined}
       />
     </TooltipProvider>,
   );
 
-  expect(html.includes(`data-system-collection-row="${reviewSkill.id}"`)).toBe(
+  expect(html.includes(`data-collection-core-row="${reviewSkill.id}"`)).toBe(
     true,
   );
   expect(html.includes("Review changes against project conventions.")).toBe(
@@ -95,12 +96,12 @@ test("skills render as coverless Gallery cards with bounded Reader detail", () =
   }
   expect(skillDescriptor.layout.cardSize).toBe("medium");
   expect(skillDescriptor.layout.density).toBe("compact");
-  expect(html.includes("data-system-collection-refresh")).toBe(false);
+  expect(html.includes("data-collection-core-refresh")).toBe(false);
 
-  const request = skillDescriptor.createDetailRequest?.(reviewSkill);
-  const detailHtml = renderToStaticMarkup(request?.content);
-  const detailTitleHtml = renderToStaticMarkup(request?.title);
-  const detailDescriptionHtml = renderToStaticMarkup(request?.description);
+  const request = createSkillDetailContent(reviewSkill);
+  const detailHtml = renderToStaticMarkup(request.content);
+  const detailTitleHtml = renderToStaticMarkup(request.title);
+  const detailDescriptionHtml = renderToStaticMarkup(request.description);
   expect(detailHtml.includes("data-agent-context-skill-detail")).toBe(true);
   expect(detailHtml.includes("data-markdown-reader-blocked-link")).toBe(true);
   expect(detailHtml.includes('href="https://example.com"')).toBe(false);
@@ -137,10 +138,8 @@ test("skill Detail keeps source and optional parameters collapsed before the Rea
     license: "MIT",
     metadata: { author: "Svode" },
   };
-  const request = descriptor([withFrontmatter]).createDetailRequest?.(
-    withFrontmatter,
-  );
-  const detailHtml = renderToStaticMarkup(request?.content);
+  const request = createSkillDetailContent(withFrontmatter);
+  const detailHtml = renderToStaticMarkup(request.content);
   const sourceIndex = detailHtml.indexOf(
     "data-agent-context-source-disclosure",
   );
@@ -179,24 +178,24 @@ test("search and multivalue Source/Location filters use factual alias unions", (
   const rows = [reviewSkill, multiSourceGlobal];
   const queryDescriptor = descriptor(rows);
   expect(
-    queryDescriptor.fields.map(({ key, label }) => ({ key, label })),
+    queryDescriptor.properties.map(({ key, label }) => ({ key, label })),
   ).toEqual([
     { key: "source", label: "Source" },
     { key: "location", label: "Location" },
   ]);
 
   expect(
-    applySystemCollectionQuery({
+    applyCollectionCoreQuery({
       descriptor: queryDescriptor,
       query: { filters: [], search: "verified release", sort: [] },
       rows,
     }).rows.map((row) => row.id),
   ).toEqual([multiSourceGlobal.id]);
   expect(
-    applySystemCollectionQuery({
+    applyCollectionCoreQuery({
       descriptor: queryDescriptor,
       query: {
-        filters: [{ fieldKey: "source", operator: "=", value: "agents" }],
+        filters: [{ propertyKey: "source", operator: "=", value: "agents" }],
         search: "",
         sort: [],
       },
@@ -204,10 +203,10 @@ test("search and multivalue Source/Location filters use factual alias unions", (
     }).rows.map((row) => row.id),
   ).toEqual([multiSourceGlobal.id, reviewSkill.id]);
   expect(
-    applySystemCollectionQuery({
+    applyCollectionCoreQuery({
       descriptor: queryDescriptor,
       query: {
-        filters: [{ fieldKey: "source", operator: "=", value: "claude" }],
+        filters: [{ propertyKey: "source", operator: "=", value: "claude" }],
         search: "",
         sort: [],
       },
@@ -215,10 +214,10 @@ test("search and multivalue Source/Location filters use factual alias unions", (
     }).rows.map((row) => row.id),
   ).toEqual([multiSourceGlobal.id]);
   expect(
-    applySystemCollectionQuery({
+    applyCollectionCoreQuery({
       descriptor: queryDescriptor,
       query: {
-        filters: [{ fieldKey: "location", operator: "=", value: "space" }],
+        filters: [{ propertyKey: "location", operator: "=", value: "space" }],
         search: "",
         sort: [],
       },
@@ -226,10 +225,10 @@ test("search and multivalue Source/Location filters use factual alias unions", (
     }).rows.map((row) => row.id),
   ).toEqual([multiSourceGlobal.id, reviewSkill.id]);
   expect(
-    applySystemCollectionQuery({
+    applyCollectionCoreQuery({
       descriptor: queryDescriptor,
       query: {
-        filters: [{ fieldKey: "location", operator: "=", value: "global" }],
+        filters: [{ propertyKey: "location", operator: "=", value: "global" }],
         search: "",
         sort: [],
       },
@@ -239,10 +238,10 @@ test("search and multivalue Source/Location filters use factual alias unions", (
 
   const html = renderToStaticMarkup(
     <TooltipProvider>
-      <SystemCollectionPresentationShell
+      <CollectionCorePresentationShell
         instanceKey="agent-context:space:filters"
         presentation={presentation(rows)}
-        query={EMPTY_SYSTEM_COLLECTION_QUERY}
+        query={EMPTY_COLLECTION_CORE_QUERY}
         onQueryChange={() => undefined}
       />
     </TooltipProvider>,
@@ -269,10 +268,10 @@ test("default order keeps same-name canonical sources and invalid query resets",
   };
   const rows = [later, reviewSkill, sameName];
   const queryDescriptor = descriptor(rows);
-  const result = applySystemCollectionQuery({
+  const result = applyCollectionCoreQuery({
     descriptor: queryDescriptor,
     query: {
-      filters: [{ fieldKey: "client", operator: "=", value: "codex" }],
+      filters: [{ propertyKey: "client", operator: "=", value: "codex" }],
       search: "",
       sort: [],
     },
@@ -308,10 +307,10 @@ test("safe aliases stay neutral while degraded manifest health warns", () => {
   };
   const html = renderToStaticMarkup(
     <TooltipProvider>
-      <SystemCollectionPresentationShell
+      <CollectionCorePresentationShell
         instanceKey="agent-context:space:warning"
         presentation={presentation([warning])}
-        query={EMPTY_SYSTEM_COLLECTION_QUERY}
+        query={EMPTY_COLLECTION_CORE_QUERY}
         onQueryChange={() => undefined}
       />
     </TooltipProvider>,
@@ -323,7 +322,7 @@ test("safe aliases stay neutral while degraded manifest health warns", () => {
   expect(html.includes("Name does not match its directory")).toBe(true);
 
   const provenanceOnlyDetail = renderToStaticMarkup(
-    descriptor([warning]).createDetailRequest?.(warning).content,
+    createSkillDetailContent(warning).content,
   );
   expect(
     provenanceOnlyDetail.includes("data-agent-context-content-health"),
@@ -333,10 +332,7 @@ test("safe aliases stay neutral while degraded manifest health warns", () => {
   ).toBe(false);
 
   const truncatedDetail = renderToStaticMarkup(
-    descriptor([{ ...warning, truncated: true }]).createDetailRequest?.({
-      ...warning,
-      truncated: true,
-    }).content,
+    createSkillDetailContent({ ...warning, truncated: true }).content,
   );
   expect(truncatedDetail.includes("data-agent-context-content-health")).toBe(
     true,

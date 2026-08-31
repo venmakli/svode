@@ -32,13 +32,13 @@ import { isTerminalKeyboardEvent } from "@/features/terminal";
 import { useShellStore } from "../model";
 import * as m from "@/paraglide/messages.js";
 import {
-  runSystemCollectionNavigation,
-  useSystemCollectionActivePresentationId,
-  useSystemCollectionDetailController,
-} from "@/features/collection/system";
+  runCollectionNavigation,
+  useCollectionDetailController,
+} from "@/features/collection/app-shell";
+import { useCollectionCoreActivePresentationId } from "@/features/collection/core";
 
 export function useKeyboardShortcuts() {
-  const detailController = useSystemCollectionDetailController();
+  const detailController = useCollectionDetailController();
   const closeDocument = useCloseEntryDocument();
   const { activeDocument, activeDocumentSpaceId } = useActiveEntrySelection();
   const { toggleChatPanel, openAppSettings } = useShellStore();
@@ -61,7 +61,7 @@ export function useKeyboardShortcuts() {
   );
   const repositoryAccess = useRepositoryAccess(activeScopeSpace?.path ?? "");
   const activeScopeReadOnly = !repositoryAccessIsEditable(repositoryAccess);
-  const actorsPresentationId = useSystemCollectionActivePresentationId(
+  const actorsPresentationId = useCollectionCoreActivePresentationId(
     activeScopeSpace ? `actors:space:${activeScopeSpace.id}` : null,
   );
   const navigate = useNavigate();
@@ -131,13 +131,13 @@ export function useKeyboardShortcuts() {
       // Cmd+W — close document
       if (isMeta && e.key === "w") {
         e.preventDefault();
-        void runSystemCollectionNavigation(detailController, closeDocument);
+        void runCollectionNavigation(detailController, closeDocument);
       }
 
       // Cmd+Shift+O — go to home / all projects
       if (isMeta && e.shiftKey && e.key === "o") {
         e.preventDefault();
-        void runSystemCollectionNavigation(detailController, () => {
+        void runCollectionNavigation(detailController, () => {
           goHome();
           navigate({ to: "/" });
         });

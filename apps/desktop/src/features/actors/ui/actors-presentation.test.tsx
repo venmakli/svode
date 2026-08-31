@@ -3,18 +3,18 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 import { TooltipProvider } from "@/components/ui/tooltip";
 import {
-  applySystemCollectionQuery,
-  EMPTY_SYSTEM_COLLECTION_QUERY,
-  SystemCollectionPresentationCore,
-  SystemCollectionPresentationShell,
-  type SystemCollectionDetailController,
-  type SystemCollectionInstance,
-  type SystemCollectionStateController,
-} from "@/features/collection/system";
+  applyCollectionCoreQuery,
+  EMPTY_COLLECTION_CORE_QUERY,
+  CollectionCorePresentationCore,
+  CollectionCorePresentationShell,
+  type CollectionCoreInstance,
+  type CollectionCoreStateController,
+} from "@/features/collection/core";
 
 import type { ActorCatalogRow } from "../model/types";
 import {
   actorCatalogBlockingError,
+  createActorDetailRequest,
   createActorsPresentation,
   createActorsPresentationDescriptor,
 } from "./actors-presentation";
@@ -64,25 +64,19 @@ const actors: readonly ActorCatalogRow[] = Object.freeze([
   },
 ]);
 
-const detailController: SystemCollectionDetailController = {
-  close: async () => true,
-  open: async () => true,
-  prepareForNavigation: async () => true,
-};
-
 test("actors descriptor exposes the fixed query fields and exact action placement", () => {
-  const descriptor = createActorsPresentationDescriptor("/repo");
+  const descriptor = createActorsPresentationDescriptor();
 
   expect(descriptor.id).toBe("humans");
-  expect(descriptor.fields.map((field) => field.key)).toEqual([
+  expect(descriptor.properties.map((property) => property.key)).toEqual([
     "contribution",
     "commits",
     "activity",
   ]);
-  expect(descriptor.fields.map((field) => field.valueSemantics?.kind)).toEqual([
-    "property",
-    "property",
-    "property",
+  expect(descriptor.properties.map((property) => property.origin)).toEqual([
+    "owner_defined",
+    "computed",
+    "computed",
   ]);
   expect(descriptor.create?.id).toBe("add-actor");
   expect(descriptor.create?.getState().status).toBe("disabled");
@@ -99,7 +93,7 @@ test("actors descriptor exposes the fixed query fields and exact action placemen
 
 test("actors descriptor delegates enabled add, merge, and edit mutations", async () => {
   const calls: string[] = [];
-  const descriptor = createActorsPresentationDescriptor("/repo", {
+  const descriptor = createActorsPresentationDescriptor({
     mutations: {
       createState: { status: "idle" },
       getEditState: () => ({ status: "idle" }),
@@ -124,13 +118,13 @@ test("actors descriptor delegates enabled add, merge, and edit mutations", async
 });
 
 test("actors query searches name and email with activity-first default ordering", () => {
-  const descriptor = createActorsPresentationDescriptor("/repo");
-  const ordered = applySystemCollectionQuery({
+  const descriptor = createActorsPresentationDescriptor();
+  const ordered = applyCollectionCoreQuery({
     descriptor,
-    query: EMPTY_SYSTEM_COLLECTION_QUERY,
+    query: EMPTY_COLLECTION_CORE_QUERY,
     rows: [...actors].reverse(),
   });
-  const searched = applySystemCollectionQuery({
+  const searched = applyCollectionCoreQuery({
     descriptor,
     query: { filters: [], search: " ADA@EXAMPLE.TEST ", sort: [] },
     rows: actors,
@@ -146,22 +140,21 @@ test("actors query searches name and email with activity-first default ordering"
 });
 
 test("singleton and query-empty actors reuse list keyboard, menu, and detail seams", () => {
-  const descriptor = createActorsPresentationDescriptor("/repo");
+  const descriptor = createActorsPresentationDescriptor();
   const presentation = createActorsPresentation({
-    spacePath: "/repo",
     state: { phase: "ready", rows: [actors[1]!] },
   });
-  const instance: SystemCollectionInstance = {
+  const instance: CollectionCoreInstance = {
     defaultPresentationId: descriptor.id,
     instanceKey: "actors:space:root",
     presentations: [presentation],
     stateScope: "session",
   };
-  const state: Extract<SystemCollectionStateController, { phase: "ready" }> = {
+  const state: Extract<CollectionCoreStateController, { phase: "ready" }> = {
     activePresentationId: descriptor.id,
     dismissResetWarning: () => undefined,
     phase: "ready",
-    query: EMPTY_SYSTEM_COLLECTION_QUERY,
+    query: EMPTY_COLLECTION_CORE_QUERY,
     queryByPresentationId: {},
     resetWarning: false,
     setActivePresentationId: () => undefined,
@@ -169,32 +162,25 @@ test("singleton and query-empty actors reuse list keyboard, menu, and detail sea
   };
   const singleton = renderToStaticMarkup(
     <TooltipProvider>
-      <SystemCollectionPresentationCore
-        detailController={detailController}
-        instance={instance}
-        state={state}
-      />
+      <CollectionCorePresentationCore instance={instance} state={state} />
     </TooltipProvider>,
   );
   const queryEmpty = renderToStaticMarkup(
-    <SystemCollectionPresentationShell
-      detailController={detailController}
+    <CollectionCorePresentationShell
       instanceKey="actors:space:root"
       presentation={presentation}
       query={{ filters: [], search: "missing", sort: [] }}
       onQueryChange={() => undefined}
     />,
   );
-  const detail = descriptor.createDetailRequest?.(actors[0]!);
-  const detailMarkup = detail
-    ? renderToStaticMarkup(
-        <>
-          {detail.title}
-          {detail.description}
-          {detail.content}
-        </>,
-      )
-    : "";
+  const detail = createActorDetailRequest(actors[0]!, "/repo");
+  const detailMarkup = renderToStaticMarkup(
+    <>
+      {detail.title}
+      {detail.description}
+      {detail.content}
+    </>,
+  );
 
   expect(singleton.includes('role="list"')).toBe(true);
   expect(singleton.includes('role="listitem"')).toBe(true);
@@ -202,13 +188,13 @@ test("singleton and query-empty actors reuse list keyboard, menu, and detail sea
   expect(
     singleton.includes('data-collection-presentation-toolbar="true"'),
   ).toBe(true);
-  expect(
-    singleton.includes('data-system-collection-presentation="humans"'),
-  ).toBe(true);
-  expect(singleton.includes('data-system-collection-create="add-actor"')).toBe(
+  expect(singleton.includes('data-collection-core-presentation="humans"')).toBe(
     true,
   );
-  expect(singleton.includes("data-system-collection-refresh")).toBe(false);
+  expect(singleton.includes('data-collection-core-create="add-actor"')).toBe(
+    true,
+  );
+  expect(singleton.includes("data-collection-core-refresh")).toBe(false);
   expect(singleton.includes('aria-label="Search..."')).toBe(true);
   expect(singleton.includes("Filter")).toBe(true);
   expect(singleton.includes("Sort")).toBe(true);

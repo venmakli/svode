@@ -1,7 +1,7 @@
 import { useCallback, useRef, useState } from "react";
 import { toast } from "sonner";
 
-import type { SystemCollectionDetailController } from "@/features/collection/system";
+import type { CollectionDetailController } from "@/features/collection/app-shell";
 import * as m from "@/paraglide/messages.js";
 
 import {
@@ -43,7 +43,7 @@ export function useAgentActorMutations({
   snapshot,
   onAccessDenied,
 }: {
-  detailController: SystemCollectionDetailController | null;
+  detailController: CollectionDetailController | null;
   projectPath: string;
   refresh(): void | Promise<void>;
   saveCatalog(ownerPath: string): void;

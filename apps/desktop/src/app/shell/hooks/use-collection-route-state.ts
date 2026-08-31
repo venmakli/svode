@@ -92,7 +92,9 @@ function normalizeViewName(value: string | null) {
   return trimmed ? trimmed : null;
 }
 
-function normalizeCalendarScopeParam(value: string | null): CalendarScope | null {
+function normalizeCalendarScopeParam(
+  value: string | null,
+): CalendarScope | null {
   return calendarScopes.includes(value as CalendarScope)
     ? (value as CalendarScope)
     : null;

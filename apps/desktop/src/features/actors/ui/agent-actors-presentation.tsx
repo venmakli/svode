@@ -1,23 +1,25 @@
 import { Bot } from "lucide-react";
 
 import {
-  defineSystemCollectionPresentation,
-  type SystemCollectionActionState,
-  type SystemCollectionDetailRequest,
-  type SystemCollectionFieldDescriptor,
-  type SystemCollectionPresentationDescriptor,
-  type SystemCollectionPresentationState,
-} from "@/features/collection/system";
-import type { Column } from "@/features/properties";
+  defineCollectionCorePresentation,
+  type CollectionCoreActionState,
+  type CollectionCorePresentationDescriptor,
+  type CollectionCorePresentationState,
+} from "@/features/collection/core";
+import type {
+  CollectionPropertyDefinition,
+  CollectionPropertyOrigin,
+  CollectionStandardPropertySemantics,
+} from "@/features/properties";
 import * as m from "@/paraglide/messages.js";
 
 import { compareAgentActorsByDefault } from "../model/agent-actor-draft";
 import type { AgentActorRow } from "../model/agent-actor-types";
 
 export interface AgentActorsPresentationActions {
-  createState: SystemCollectionActionState;
-  getDeleteState(row: AgentActorRow): SystemCollectionActionState;
-  getEditState(row: AgentActorRow): SystemCollectionActionState;
+  createState: CollectionCoreActionState;
+  getDeleteState(row: AgentActorRow): CollectionCoreActionState;
+  getEditState(row: AgentActorRow): CollectionCoreActionState;
   onAdd(): void;
   onDelete(row: AgentActorRow): void;
   onEdit(row: AgentActorRow): void;
@@ -26,22 +28,20 @@ export interface AgentActorsPresentationActions {
 export function createAgentActorsPresentation({
   actions,
   inheritedVisible,
-  renderDetail,
+  onActivate,
   state,
 }: {
   actions: AgentActorsPresentationActions;
   inheritedVisible: boolean;
-  renderDetail(
-    row: AgentActorRow,
-  ): Omit<SystemCollectionDetailRequest, "selection">;
-  state: SystemCollectionPresentationState<AgentActorRow>;
+  onActivate?: CollectionCorePresentationDescriptor<AgentActorRow>["onActivate"];
+  state: CollectionCorePresentationState<AgentActorRow>;
 }) {
   const rows = state.phase === "ready" ? state.rows : [];
-  return defineSystemCollectionPresentation({
+  return defineCollectionCorePresentation({
     descriptor: createAgentActorsPresentationDescriptor({
       actions,
       inheritedVisible,
-      renderDetail,
+      onActivate,
       rows,
     }),
     state,
@@ -51,25 +51,22 @@ export function createAgentActorsPresentation({
 export function createAgentActorsPresentationDescriptor({
   actions,
   inheritedVisible,
-  renderDetail,
+  onActivate,
   rows,
 }: {
   actions: AgentActorsPresentationActions;
   inheritedVisible: boolean;
-  renderDetail(
-    row: AgentActorRow,
-  ): Omit<SystemCollectionDetailRequest, "selection">;
+  onActivate?: CollectionCorePresentationDescriptor<AgentActorRow>["onActivate"];
   rows: readonly AgentActorRow[];
-}): SystemCollectionPresentationDescriptor<AgentActorRow> {
+}): CollectionCorePresentationDescriptor<AgentActorRow> {
   const ownerOptions = [...new Set(rows.map((row) => row.ownerLabel))].map(
     (name) => ({ color: "neutral" as const, name }),
   );
-  const fields: readonly SystemCollectionFieldDescriptor<AgentActorRow>[] = [
+  const properties: readonly CollectionPropertyDefinition<AgentActorRow>[] = [
     propertyField(
       "clients",
       m.agent_actors_field_clients(),
       {
-        name: "clients",
         options: [
           { color: "blue", name: "Codex" },
           { color: "orange", name: "Claude Code" },
@@ -77,12 +74,12 @@ export function createAgentActorsPresentationDescriptor({
         type: "multi_select",
       },
       (row) => row.adapters.map((binding) => adapterLabel(binding.adapter)),
+      "owner_defined",
     ),
     propertyField(
       "primary",
       m.agent_actors_field_primary(),
       {
-        name: "primary",
         options: [
           { color: "blue", name: "Codex" },
           { color: "orange", name: "Claude Code" },
@@ -90,12 +87,12 @@ export function createAgentActorsPresentationDescriptor({
         type: "select",
       },
       (row) => adapterLabel(row.adapters[0]!.adapter),
+      "owner_defined",
     ),
     propertyField(
       "approval",
       m.agent_actors_field_approval(),
       {
-        name: "approval",
         options: [
           { color: "neutral", name: m.agent_actors_approval_ask() },
           { color: "yellow", name: m.agent_actors_approval_auto() },
@@ -104,12 +101,12 @@ export function createAgentActorsPresentationDescriptor({
         type: "select",
       },
       (row) => approvalLabel(row.approvalMode),
+      "owner_defined",
     ),
     propertyField(
       "status",
       m.agent_actors_field_status(),
       {
-        name: "status",
         options: [
           { color: "green", name: m.agent_actors_status_ready() },
           { color: "red", name: m.agent_actors_status_attention() },
@@ -118,12 +115,14 @@ export function createAgentActorsPresentationDescriptor({
         type: "select",
       },
       (row) => runtimeStatusLabel(row.runtimeStatus),
+      "computed",
     ),
     propertyField(
       "space",
       m.agent_actors_field_space(),
-      { name: "space", options: ownerOptions, type: "select" },
+      { options: ownerOptions, type: "select" },
       (row) => row.ownerLabel,
+      "owner_defined",
     ),
   ];
 
@@ -134,8 +133,8 @@ export function createAgentActorsPresentationDescriptor({
       label: m.agent_actors_add(),
       run: actions.onAdd,
     },
-    createDetailRequest: renderDetail,
-    fields,
+    onActivate,
+    properties,
     getRowId: agentActorRowId,
     id: "agents",
     label: m.agent_actors_presentation(),
@@ -149,7 +148,7 @@ export function createAgentActorsPresentationDescriptor({
       getTitle: (row) => row.name,
       kind: "list",
       renderLeading: () => <Bot className="size-5 text-muted-foreground" />,
-      visibleFields: inheritedVisible
+      visibleProperties: inheritedVisible
         ? ["primary", "status", "space"]
         : ["primary", "status"],
     },
@@ -184,16 +183,24 @@ export function agentActorRowId(row: AgentActorRow): string {
 function propertyField(
   key: string,
   label: string,
-  column: Column,
+  standard: CollectionStandardPropertySemantics,
   getValue: (row: AgentActorRow) => unknown,
-): SystemCollectionFieldDescriptor<AgentActorRow> {
+  origin: Exclude<
+    CollectionPropertyOrigin,
+    "schema_backed" | "domain_specific"
+  >,
+): CollectionPropertyDefinition<AgentActorRow> {
   return {
-    filter: { kind: "property" },
+    capabilities: {
+      filter: { kind: "standard" },
+      sort: { kind: "standard" },
+    },
     getValue,
     key,
     label,
-    sort: { kind: "property" },
-    valueSemantics: { column, kind: "property" },
+    origin,
+    owner: { featureId: "actors", kind: "feature" },
+    semantics: { kind: "standard", standard },
   };
 }
 

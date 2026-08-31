@@ -4,9 +4,9 @@ import { createRoot } from "react-dom/client";
 import { JSDOM } from "jsdom";
 
 import type {
-  SystemCollectionDetailController,
-  SystemCollectionDetailRequest,
-} from "@/features/collection/system";
+  CollectionDetailController,
+  CollectionDetailRequest,
+} from "@/features/collection/app-shell";
 import { clearNativeMocks, mockNativeIpc } from "@/platform/native/testing";
 
 import { createAgentActorDraft } from "../model/agent-actor-draft";
@@ -85,9 +85,9 @@ test("same-owner create and edit intents continue without an unrelated rerender"
 test("closing edit clears its session so unrelated rerenders cannot reopen it", async () => {
   const dom = createDom();
   const restoreGlobals = installDomGlobals(dom);
-  let latestRequest: SystemCollectionDetailRequest | null = null;
+  let latestRequest: CollectionDetailRequest | null = null;
   let openCount = 0;
-  const detailController: SystemCollectionDetailController = {
+  const detailController: CollectionDetailController = {
     async close() {
       return true;
     },
@@ -108,7 +108,7 @@ test("closing edit clears its session so unrelated rerenders cannot reopen it", 
       await nextTurn();
     });
     expect(openCount).toBe(1);
-    const openedRequest = latestRequest as SystemCollectionDetailRequest | null;
+    const openedRequest = latestRequest as CollectionDetailRequest | null;
     if (!openedRequest) throw new Error("Expected edit detail to open");
     expect(typeof openedRequest.canClose).toBe("function");
 
@@ -133,9 +133,9 @@ test("closing edit clears its session so unrelated rerenders cannot reopen it", 
 test("an open read-only Detail receives current diagnostics without reopening after close", async () => {
   const dom = createDom();
   const restoreGlobals = installDomGlobals(dom);
-  let latestRequest: SystemCollectionDetailRequest | null = null;
+  let latestRequest: CollectionDetailRequest | null = null;
   let openCount = 0;
-  const detailController: SystemCollectionDetailController = {
+  const detailController: CollectionDetailController = {
     async close() {
       return true;
     },
@@ -172,8 +172,7 @@ test("an open read-only Detail receives current diagnostics without reopening af
       await nextTurn();
     });
     expect(openCount).toBe(2);
-    const refreshedRequest =
-      latestRequest as SystemCollectionDetailRequest | null;
+    const refreshedRequest = latestRequest as CollectionDetailRequest | null;
     if (!refreshedRequest) throw new Error("Expected refreshed detail request");
     expect(refreshedRequest.selection.rowId).toBe(
       '["/repo","01arz3ndektsv4rrffq69g5fav"]',
@@ -231,7 +230,7 @@ function AccessHarness({ onContinue }: { onContinue(kind: string): void }) {
 function DetailHarness({
   detailController,
 }: {
-  detailController: SystemCollectionDetailController;
+  detailController: CollectionDetailController;
 }) {
   const [editSession, setEditSession] = useState<AgentActorEditSession | null>({
     draft: createAgentActorDraft(actor.ownerPath, actor),
@@ -265,7 +264,7 @@ function DetailHarness({
 function ReadOnlyDetailHarness({
   detailController,
 }: {
-  detailController: SystemCollectionDetailController;
+  detailController: CollectionDetailController;
 }) {
   const [diagnostics, setDiagnostics] = useState({});
   const createDetail = useAgentActorDetail({

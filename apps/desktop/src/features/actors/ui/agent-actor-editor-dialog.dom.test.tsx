@@ -83,12 +83,12 @@ if (!isolatedDialogDomProcess) {
       expect(currentStep(harness.dom)).toBe("adapters");
       expect(
         harness.dom.window.document.querySelector(
-          '[data-system-collection-create-flow="agent-actor"] legend',
+          '[data-collection-core-create-flow="agent-actor"] legend',
         ),
       ).toBeNull();
       expect(
         harness.dom.window.document.activeElement?.hasAttribute(
-          "data-system-collection-create-step-heading",
+          "data-collection-core-create-step-heading",
         ),
       ).toBe(true);
 
@@ -556,10 +556,10 @@ function cloneDraft(draft: AgentActorDraft): AgentActorDraft {
 
 function currentStep(dom: JSDOM) {
   const journey = dom.window.document.querySelector(
-    '[data-system-collection-create-flow="agent-actor"]',
+    '[data-collection-core-create-flow="agent-actor"]',
   );
   if (!journey) throw new Error("Agent Actor create journey not found");
-  return journey.getAttribute("data-system-collection-create-step");
+  return journey.getAttribute("data-collection-core-create-step");
 }
 
 function findButton(dom: JSDOM, label: string) {

@@ -14,10 +14,12 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import {
-  defineSystemCollectionPresentation,
-  type SystemCollectionFieldDescriptor,
-  type SystemCollectionPresentationState,
-} from "@/features/collection/system";
+  defineCollectionCorePresentation,
+  type CollectionCorePresentationDescriptor,
+  type CollectionCorePresentationState,
+} from "@/features/collection/core";
+import type { CollectionDetailContent } from "@/features/collection/app-shell";
+import type { CollectionPropertyDefinition } from "@/features/properties";
 import * as m from "@/paraglide/messages.js";
 
 import type { AgentContextInstructionRow } from "../model/types";
@@ -28,7 +30,7 @@ import { sourceLinkKindLabel } from "./provenance-labels";
 export function createAgentContextInstructionsPresentation({
   artifactOpeners = [],
   onOpenArtifact,
-  onDetailRequested,
+  onActivate,
   state,
 }: {
   artifactOpeners?: readonly ArtifactOpener[];
@@ -37,27 +39,16 @@ export function createAgentContextInstructionsPresentation({
     canonicalArtifactPath: string;
     tool: ArtifactOpener["id"];
   }): void | Promise<void>;
-  onDetailRequested?(rowId: string): void;
-  state: SystemCollectionPresentationState<AgentContextInstructionRow>;
+  onActivate?: CollectionCorePresentationDescriptor<AgentContextInstructionRow>["onActivate"];
+  state: CollectionCorePresentationState<AgentContextInstructionRow>;
 }) {
-  const fields: readonly SystemCollectionFieldDescriptor<AgentContextInstructionRow>[] =
+  const properties: readonly CollectionPropertyDefinition<AgentContextInstructionRow>[] =
     [instructionSourceField()];
 
-  return defineSystemCollectionPresentation<AgentContextInstructionRow>({
+  return defineCollectionCorePresentation<AgentContextInstructionRow>({
     descriptor: {
-      createDetailRequest: (row) => {
-        onDetailRequested?.(row.id);
-        return {
-          content: <AgentContextInstructionDetail row={row} />,
-          description: (
-            <span className="sr-only">
-              {m.agent_context_detail_description()}
-            </span>
-          ),
-          title: instructionDetailTitle(row),
-        };
-      },
-      fields,
+      onActivate,
+      properties,
       getRowId: (row) => row.id,
       id: "instructions",
       label: m.agent_context_instructions(),
@@ -70,7 +61,7 @@ export function createAgentContextInstructionsPresentation({
           <FileText className="size-4 text-muted-foreground" aria-hidden />
         ),
         renderOverlays: (row) => <InstructionCardOverlays row={row} />,
-        visibleFields: ["source"],
+        visibleProperties: ["source"],
       },
       query: {},
       rowActions: artifactOpeners.map((opener) => ({
@@ -87,6 +78,18 @@ export function createAgentContextInstructionsPresentation({
     },
     state,
   });
+}
+
+export function createInstructionDetailContent(
+  row: AgentContextInstructionRow,
+): CollectionDetailContent {
+  return {
+    content: <AgentContextInstructionDetail row={row} />,
+    description: (
+      <span className="sr-only">{m.agent_context_detail_description()}</span>
+    ),
+    title: instructionDetailTitle(row),
+  };
 }
 
 export function instructionDetailTitle(row: AgentContextInstructionRow) {
@@ -158,12 +161,14 @@ function InstructionCardOverlays({ row }: { row: AgentContextInstructionRow }) {
   );
 }
 
-function instructionSourceField(): SystemCollectionFieldDescriptor<AgentContextInstructionRow> {
+function instructionSourceField(): CollectionPropertyDefinition<AgentContextInstructionRow> {
   return {
+    origin: "domain_specific",
+    owner: { featureId: "agent-context", kind: "feature" },
     getValue: (row) => [row.location, row.support],
     key: "source",
     label: m.agent_context_source(),
-    valueSemantics: {
+    semantics: {
       kind: "custom",
       render: (_value, row) => {
         const showGlobal = row.location === "global";

@@ -20,7 +20,7 @@ import type {
   EntryPeekTarget,
 } from "../model";
 import type { CalendarScope } from "../model/calendar-types";
-import { useOptionalSystemCollectionDetailController } from "../system/hooks/detail-controller-context";
+import { useOptionalCollectionDetailController } from "../app-shell";
 import * as m from "@/paraglide/messages.js";
 
 interface EntryPeekSheetProps {
@@ -67,7 +67,7 @@ export function EntryPeekSheet({
   onDuplicateTemplate,
   renderNested,
 }: EntryPeekSheetProps) {
-  const detailController = useOptionalSystemCollectionDetailController();
+  const detailController = useOptionalCollectionDetailController();
   const open = Boolean(target);
   const effectiveSpacePath = target?.spacePath ?? spacePath;
   const effectiveProjectPath = target?.projectPath ?? projectPath;

@@ -1,10 +1,10 @@
 import { useCallback, useMemo } from "react";
 
 import type {
-  SystemCollectionActionState,
-  SystemCollectionDetailController,
-  SystemCollectionPresentationState,
-} from "@/features/collection/system";
+  CollectionCoreActionState,
+  CollectionCorePresentationState,
+} from "@/features/collection/core";
+import type { CollectionDetailController } from "@/features/collection/app-shell";
 import { RepositoryAccessPreflightDialog } from "@/features/git";
 import type { ScopeOwnerRef } from "@/features/scope-surfaces";
 import * as m from "@/paraglide/messages.js";
@@ -38,7 +38,7 @@ export function useAgentActorsController({
   readOnly,
   onOpenRepositorySettings,
 }: {
-  detailController: SystemCollectionDetailController | null;
+  detailController: CollectionDetailController | null;
   instanceKey: string;
   owner: ScopeOwnerRef;
   readOnly: boolean;
@@ -207,7 +207,7 @@ export function useAgentActorsController({
     });
   }
 
-  const actionState: SystemCollectionActionState = mutationPending
+  const actionState: CollectionCoreActionState = mutationPending
     ? { status: "pending" }
     : readOnly
       ? {
@@ -217,16 +217,14 @@ export function useAgentActorsController({
       : snapshot
         ? { status: "idle" }
         : { status: "disabled", reason: m.agent_actors_catalog_unavailable() };
-  const actionStateForOwner = (
-    ownerPath: string,
-  ): SystemCollectionActionState =>
+  const actionStateForOwner = (ownerPath: string): CollectionCoreActionState =>
     actionState.status === "idle" && !snapshot?.fingerprints[ownerPath]
       ? {
           reason: m.agent_actors_catalog_unavailable(),
           status: "disabled",
         }
       : actionState;
-  const presentationState: SystemCollectionPresentationState<AgentActorRow> =
+  const presentationState: CollectionCorePresentationState<AgentActorRow> =
     catalog.state.phase === "initial"
       ? { phase: "initial" }
       : catalog.state.phase === "blocking_error"

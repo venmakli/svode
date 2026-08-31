@@ -77,9 +77,7 @@ export function RoutineDetailView({ row }: { row: RoutineRow }) {
         ) : null}
         {nextRunCopy ? (
           <DetailValue label={m.routines_field_next_run()}>
-            <time dateTime={row.nextRunAt ?? undefined}>
-              {nextRunCopy}
-            </time>
+            <time dateTime={row.nextRunAt ?? undefined}>{nextRunCopy}</time>
           </DetailValue>
         ) : null}
       </div>

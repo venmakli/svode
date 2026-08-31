@@ -5,10 +5,10 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import type { AgentActorOption } from "@/features/actors";
 import type {
-  SystemCollectionDetailController,
-  SystemCollectionDetailRequest,
-  SystemCollectionActionState,
-} from "@/features/collection/system";
+  CollectionDetailController,
+  CollectionDetailRequest,
+} from "@/features/collection/app-shell";
+import type { CollectionCoreActionState } from "@/features/collection/core";
 import * as m from "@/paraglide/messages.js";
 
 import type { RoutineOwnerInput } from "../api/routines-api";
@@ -41,14 +41,14 @@ export function useRoutineDetail({
     row: RoutineRow,
     definition: RoutineDefinition,
   ): Promise<RoutineRow | null>;
-  detailController: SystemCollectionDetailController | null;
+  detailController: CollectionDetailController | null;
   editSession: RoutineEditSession | null;
   executorError: string | null;
   executors: readonly AgentActorOption[];
   instanceKey: string;
   mutationError: string | null;
   nameError: string | null;
-  getRunState(row: RoutineRow): SystemCollectionActionState;
+  getRunState(row: RoutineRow): CollectionCoreActionState;
   onOpenSession(row: RoutineRow): void;
   onRun(row: RoutineRow): Promise<void>;
   owner: RoutineOwnerInput;
@@ -63,7 +63,7 @@ export function useRoutineDetail({
   ): void;
 }) {
   const createReadOnlyDetail = useCallback(
-    (row: RoutineRow): Omit<SystemCollectionDetailRequest, "selection"> => ({
+    (row: RoutineRow): Omit<CollectionDetailRequest, "selection"> => ({
       content: <RoutineDetailView row={row} />,
       description: (
         <span className="sr-only">{m.routines_detail_description()}</span>

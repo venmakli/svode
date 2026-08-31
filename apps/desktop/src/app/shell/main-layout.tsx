@@ -27,11 +27,11 @@ import {
   useOpenCommandPalette,
 } from "@/features/search/app-shell";
 import { TerminalPanelHost } from "@/features/terminal";
-import { SystemCollectionDetailDrawerProvider } from "@/features/collection/app-shell";
 import {
-  runSystemCollectionNavigation,
-  useSystemCollectionDetailController,
-} from "@/features/collection/system";
+  CollectionDetailDrawerProvider,
+  runCollectionNavigation,
+  useCollectionDetailController,
+} from "@/features/collection/app-shell";
 import { useSpace, useSpaceActions } from "@/features/space";
 import { SpaceFileWatcher, SpaceSidebar } from "@/features/space/app-shell";
 import {
@@ -80,16 +80,16 @@ interface DesktopResizableShellProps {
 export function MainLayout() {
   return (
     <TooltipProvider delayDuration={300}>
-      <SystemCollectionDetailDrawerProvider>
+      <CollectionDetailDrawerProvider>
         <MainLayoutRuntime />
-      </SystemCollectionDetailDrawerProvider>
+      </CollectionDetailDrawerProvider>
     </TooltipProvider>
   );
 }
 
 function MainLayoutRuntime() {
   const navigate = useNavigate();
-  const detailController = useSystemCollectionDetailController();
+  const detailController = useCollectionDetailController();
   useKeyboardShortcuts();
   useAppGitFocus();
   const { activeRootId, activeRootName, activeRootPath, explicitHome } =
@@ -120,7 +120,7 @@ function MainLayoutRuntime() {
   );
   const runNavigation = useCallback(
     (transition: () => void) => {
-      void runSystemCollectionNavigation(detailController, transition);
+      void runCollectionNavigation(detailController, transition);
     },
     [detailController],
   );

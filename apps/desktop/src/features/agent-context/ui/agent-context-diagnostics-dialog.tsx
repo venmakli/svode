@@ -13,7 +13,7 @@ import {
 } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
-import { SystemCollectionToolbarActionButton } from "@/features/collection/system";
+import { CollectionToolbarActionButton } from "@/features/collection/core";
 import * as m from "@/paraglide/messages.js";
 
 import {
@@ -42,7 +42,7 @@ export function AgentContextDiagnosticsDialog({
   return (
     <Dialog>
       <DialogTrigger asChild>
-        <SystemCollectionToolbarActionButton
+        <CollectionToolbarActionButton
           count={count}
           icon={AlertTriangle}
           label={m.agent_context_diagnostics_trigger({ count })}

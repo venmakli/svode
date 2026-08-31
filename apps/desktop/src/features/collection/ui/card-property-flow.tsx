@@ -1,6 +1,11 @@
 import { cn } from "@/shared/lib/utils";
-import { validatePropertyValue } from "@/features/properties";
-import { isEmptyValue, valueToString } from "@/features/properties";
+import {
+  defineSchemaBackedCollectionProperty,
+  isEmptyValue,
+  resolveStandardPropertyColumn,
+  validatePropertyValue,
+  valueToString,
+} from "@/features/properties";
 import { PropertyControl } from "@/features/properties/control";
 import { PropertyValue } from "@/features/properties/display";
 import type { Entry } from "@/features/entry";
@@ -76,12 +81,29 @@ function CardPropertyItem({
   onRequestActors: (allTime: boolean) => Promise<ActorCandidate[]>;
   onUpdateField?: (entry: Entry, column: Column, value: unknown) => void;
 }) {
-  const value = valueForColumn(entry, column);
-  if (isEmptyValue(value) && column.type !== "boolean") return null;
+  const property = defineSchemaBackedCollectionProperty<Entry>({
+    capabilities: {
+      edit: onUpdateField
+        ? {
+            getState: () => ({ status: "idle" }),
+            update: (row, value) => onUpdateField(row, column, value),
+          }
+        : undefined,
+    },
+    column,
+    getAccessibilityLabel: (row) => `${column.name}: ${row.meta.title}`,
+    getValue: (row) => valueForColumn(row, column),
+  });
+  const standardColumn = resolveStandardPropertyColumn(property);
+  const value = property.getValue(entry);
+  if (!standardColumn) return null;
+  if (isEmptyValue(value) && standardColumn.type !== "boolean") return null;
 
-  const validation = validatePropertyValue(column, value);
-  const interactive = Boolean(onUpdateField) && isInteractiveCardType(column);
-  const fullWidth = mode === "card" && isFullWidthCardType(column);
+  const validation = validatePropertyValue(standardColumn, value);
+  const interactive =
+    Boolean(property.capabilities?.edit) &&
+    isInteractiveCardType(standardColumn);
+  const fullWidth = mode === "card" && isFullWidthCardType(standardColumn);
 
   return (
     <CollectionPresentationPropertyItem
@@ -102,24 +124,26 @@ function CardPropertyItem({
           "flex min-w-0 items-center gap-1",
           mode === "inline" && "truncate",
           fullWidth && "w-full truncate",
-          column.type === "multi_select" && "flex-wrap",
+          standardColumn.type === "multi_select" && "flex-wrap",
         )}
       >
         {interactive ? (
           <PropertyControl
-            column={column}
+            column={standardColumn}
             value={value}
             invalid={validation.invalid}
-            accessibilityLabel={`${column.name}: ${entry.meta.title}`}
+            accessibilityLabel={property.getAccessibilityLabel?.(entry)}
             density="compact"
             actors={actors}
             relationContext={relationContext}
             onRequestActors={onRequestActors}
-            onChange={(next) => onUpdateField?.(entry, column, next)}
+            onChange={(next) =>
+              void property.capabilities?.edit?.update(entry, next)
+            }
           />
         ) : (
           <PropertyValue
-            column={column}
+            column={standardColumn}
             value={value}
             actors={actors}
             relationContext={relationContext}

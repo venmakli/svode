@@ -14,7 +14,7 @@ import type {
 } from "../model/types";
 import { ScopeSurfaceErrorBoundary } from "./scope-surface-error-boundary";
 import { ScopeSurfaceTabs } from "./scope-surface-tabs";
-import { useOptionalSystemCollectionDetailController } from "@/features/collection/system";
+import { useOptionalCollectionDetailController } from "@/features/collection/app-shell";
 
 interface ScopeSurfaceHostProps {
   owner: ScopeOwnerRef;
@@ -54,8 +54,7 @@ export function ScopeSurfaceHost({
     () => resolveScopeSurfaceContributions(contributions, owner, presentation),
     [contributions, owner, presentation],
   );
-  const systemCollectionDetailController =
-    useOptionalSystemCollectionDetailController();
+  const collectionDetailController = useOptionalCollectionDetailController();
   const storedSurfaceId = useScopeSurfaceStore(
     (state) => state.surfaceByOwnerKey[owner.ownerKey],
   );
@@ -171,8 +170,8 @@ export function ScopeSurfaceHost({
             setSurfaceTransitionPending(true);
             try {
               if (
-                systemCollectionDetailController &&
-                !(await systemCollectionDetailController.prepareForNavigation())
+                collectionDetailController &&
+                !(await collectionDetailController.prepareForNavigation())
               ) {
                 return;
               }

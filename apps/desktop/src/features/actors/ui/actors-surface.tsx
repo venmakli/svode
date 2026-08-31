@@ -3,13 +3,16 @@ import { AlertTriangle } from "lucide-react";
 
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import {
-  SystemCollectionPresentationCore,
-  useOptionalSystemCollectionDetailController,
-  useSystemCollectionState,
-  type SystemCollectionActionState,
-  type SystemCollectionInstance,
-  type SystemCollectionPresentationState,
-} from "@/features/collection/system";
+  CollectionCorePresentationCore,
+  useCollectionCoreState,
+  type CollectionCoreActionState,
+  type CollectionCoreInstance,
+  type CollectionCorePresentationState,
+} from "@/features/collection/core";
+import {
+  createCollectionDetailActivation,
+  useOptionalCollectionDetailController,
+} from "@/features/collection/app-shell";
 import {
   RepositoryAccessPreflightDialog,
   useRepositoryAccessPreflight,
@@ -64,7 +67,7 @@ export function ActorsSurface({
     }),
     [onOpenRepositorySettings, owner.spacePath, repositoryOwnerName],
   );
-  const detailController = useOptionalSystemCollectionDetailController();
+  const detailController = useOptionalCollectionDetailController();
   const surfaceRef = useRef<HTMLDivElement | null>(null);
   const [focusRowId, setFocusRowId] = useState<string | null>(null);
   const instanceKey = `actors:${owner.ownerKey}`;
@@ -176,9 +179,9 @@ export function ActorsSurface({
     const frame = requestAnimationFrame(() => {
       const row = Array.from(
         surfaceRef.current?.querySelectorAll<HTMLElement>(
-          "[data-system-collection-row]",
+          "[data-collection-core-row]",
         ) ?? [],
-      ).find((element) => element.dataset.systemCollectionRow === focusRowId);
+      ).find((element) => element.dataset.collectionCoreRow === focusRowId);
       row?.focus({ preventScroll: true });
       row?.scrollIntoView?.({ block: "nearest" });
       setFocusRowId(null);
@@ -193,7 +196,6 @@ export function ActorsSurface({
     readOnly,
   );
   const presentation = createActorsPresentation({
-    catalogGeneration,
     mutations: {
       createState: mutationState,
       getEditState: () => mutationState,
@@ -208,22 +210,33 @@ export function ActorsSurface({
       onEdit: (source) => requestMutationIntent({ kind: "edit", source }),
       onMerge: (source) => requestMutationIntent({ kind: "merge", source }),
     },
-    spacePath: owner.spacePath,
+    onActivate: createCollectionDetailActivation({
+      controller: detailController,
+      createContent: (row) =>
+        createActorDetailRequest(row, owner.spacePath, catalogGeneration),
+      instanceKey,
+      presentationId: "humans",
+    }),
     state: presentationState,
   });
   const agentActorsPresentation = createAgentActorsPresentation({
     actions: agentActors.actions,
     inheritedVisible: agentActors.inheritedVisible,
-    renderDetail: agentActors.renderDetail,
+    onActivate: createCollectionDetailActivation({
+      controller: detailController,
+      createContent: agentActors.renderDetail,
+      instanceKey,
+      presentationId: "agents",
+    }),
     state: agentActors.presentationState,
   });
-  const instance: SystemCollectionInstance = {
+  const instance: CollectionCoreInstance = {
     defaultPresentationId: "humans",
     instanceKey,
     presentations: [presentation, agentActorsPresentation],
     stateScope: "session",
   };
-  const collectionState = useSystemCollectionState(instance);
+  const collectionState = useCollectionCoreState(instance);
 
   const body =
     collectionState.phase === "blocking_error" ? (
@@ -238,8 +251,7 @@ export function ActorsSurface({
         </Alert>
       </div>
     ) : (
-      <SystemCollectionPresentationCore
-        detailController={detailController ?? undefined}
+      <CollectionCorePresentationCore
         instance={instance}
         state={collectionState}
       />
@@ -299,7 +311,7 @@ function mutationActionState(
   catalog: ActorCatalogState,
   mutationPending: boolean,
   readOnly: boolean,
-): SystemCollectionActionState {
+): CollectionCoreActionState {
   if (mutationPending) return { status: "pending" };
   if (readOnly) {
     return {
@@ -331,7 +343,7 @@ function mutationActionState(
 function toPresentationState(
   state: ReturnType<typeof useActorCatalog>["state"],
   onRetry: () => void,
-): SystemCollectionPresentationState<ActorCatalogRow> {
+): CollectionCorePresentationState<ActorCatalogRow> {
   if (state.phase === "initial") return { phase: "initial" };
   if (state.phase === "blocking_error") {
     return {

@@ -22,7 +22,7 @@ import { buildProjectTerminalTarget } from "@/features/terminal";
 import { MainBreadcrumbs } from "@/features/space/app-shell";
 import { ProjectOpenersMenu } from "./project-openers-menu";
 import { ProjectSwitcher } from "./project-switcher";
-import { useSystemCollectionDetailController } from "@/features/collection/system";
+import { useCollectionDetailController } from "@/features/collection/app-shell";
 
 function isMacPlatform() {
   if (typeof navigator === "undefined") return false;
@@ -96,7 +96,7 @@ export function ShellChrome() {
 }
 
 export function WindowHeader() {
-  const detailController = useSystemCollectionDetailController();
+  const detailController = useCollectionDetailController();
   const activeDocument = useActiveEntryDocument();
   const toggleChatPanel = useShellStore((state) => state.toggleChatPanel);
   const mainSurface = useShellStore((state) => state.mainSurface);

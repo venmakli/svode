@@ -30,6 +30,25 @@ export type {
   PropertyValidationCode,
   PropertyValidationState,
 } from "./model/validation";
+export type {
+  CollectionPropertyActionState,
+  CollectionPropertyApplicability,
+  CollectionPropertyCapabilities,
+  CollectionPropertyDefinition,
+  CollectionPropertyEdit,
+  CollectionPropertyFilterEditorInput,
+  CollectionPropertyFilterRule,
+  CollectionPropertyFilterSemantics,
+  CollectionPropertyOrigin,
+  CollectionPropertyOwner,
+  CollectionPropertySortSemantics,
+  CollectionPropertyValueSemantics,
+  CollectionStandardPropertySemantics,
+} from "./model/collection-property";
+export {
+  defineSchemaBackedCollectionProperty,
+  resolveStandardPropertyColumn,
+} from "./model/collection-property";
 export {
   shouldClosePropertyEditorOnChange,
   validatePropertyValue,

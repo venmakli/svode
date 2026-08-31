@@ -3,12 +3,12 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 import { TooltipProvider } from "@/components/ui/tooltip";
 import {
-  applySystemCollectionQuery,
-  EMPTY_SYSTEM_COLLECTION_QUERY,
-  SystemCollectionPresentationCore,
-  type SystemCollectionInstance,
-  type SystemCollectionStateController,
-} from "@/features/collection/system";
+  applyCollectionCoreQuery,
+  EMPTY_COLLECTION_CORE_QUERY,
+  CollectionCorePresentationCore,
+  type CollectionCoreInstance,
+  type CollectionCoreStateController,
+} from "@/features/collection/core";
 
 import type { RoutineRow } from "../model/types";
 import { RoutineAutomaticConsent } from "./routine-automatic-consent";
@@ -131,16 +131,12 @@ function actions(calls: string[]): RoutinePresentationActions {
 test("routines expose one fixed All list with the complete fixed schema", () => {
   const descriptor = createRoutinesPresentationDescriptor({
     actions: actions([]),
-    createDetailRequest: () => ({
-      content: null,
-      description: null,
-      title: null,
-    }),
+    onActivate: () => undefined,
   });
 
   expect(descriptor.id).toBe("all");
   expect(descriptor.layout.kind).toBe("list");
-  expect(descriptor.fields.map((field) => field.key)).toEqual([
+  expect(descriptor.properties.map((property) => property.key)).toEqual([
     "trigger",
     "action",
     "executor",
@@ -148,7 +144,7 @@ test("routines expose one fixed All list with the complete fixed schema", () => 
     "next-run",
     "enabled",
   ]);
-  expect(descriptor.layout.visibleFields).toEqual([
+  expect(descriptor.layout.visibleProperties).toEqual([
     "trigger",
     "action",
     "executor",
@@ -157,16 +153,16 @@ test("routines expose one fixed All list with the complete fixed schema", () => 
     "enabled",
   ]);
   for (const key of ["trigger", "next-run"]) {
-    const semantics = descriptor.fields.find(
-      (field) => field.key === key,
-    )?.valueSemantics;
-    expect(semantics?.kind).toBe("property");
+    const semantics = descriptor.properties.find(
+      (property) => property.key === key,
+    )?.semantics;
+    expect(semantics?.kind).toBe("standard");
     expect(semantics && "render" in semantics).toBe(false);
   }
-  const enabledField = descriptor.fields.at(-1)!;
-  expect(enabledField.valueSemantics).toEqual({
-    column: { display: "switch", name: "enabled", type: "boolean" },
-    kind: "property",
+  const enabledField = descriptor.properties.at(-1)!;
+  expect(enabledField.semantics).toEqual({
+    kind: "standard",
+    standard: { display: "switch", type: "boolean" },
   });
   expect(enabledField.getApplicability?.(scheduled)).toEqual({
     status: "applicable",
@@ -284,11 +280,7 @@ test("duplicate-name rows conditionally expose their current path and remain usa
   };
   const descriptor = createRoutinesPresentationDescriptor({
     actions: actions([]),
-    createDetailRequest: () => ({
-      content: null,
-      description: null,
-      title: null,
-    }),
+    onActivate: () => undefined,
   });
   const normalDescription =
     descriptor.layout.kind === "list"
@@ -314,18 +306,14 @@ test("duplicate-name rows conditionally expose their current path and remain usa
 test("routines query searches definitions and defaults to name ordering", () => {
   const descriptor = createRoutinesPresentationDescriptor({
     actions: actions([]),
-    createDetailRequest: () => ({
-      content: null,
-      description: null,
-      title: null,
-    }),
+    onActivate: () => undefined,
   });
-  const ordered = applySystemCollectionQuery({
+  const ordered = applyCollectionCoreQuery({
     descriptor,
-    query: EMPTY_SYSTEM_COLLECTION_QUERY,
+    query: EMPTY_COLLECTION_CORE_QUERY,
     rows: [review, scheduled],
   });
-  const searched = applySystemCollectionQuery({
+  const searched = applyCollectionCoreQuery({
     descriptor,
     query: { filters: [], search: "0 9 * * *", sort: [] },
     rows: [review, scheduled],
@@ -343,10 +331,10 @@ test("routines query searches definitions and defaults to name ordering", () => 
     id: "routine:enabled-summary",
     name: "Enabled summary",
   };
-  const disabledRows = applySystemCollectionQuery({
+  const disabledRows = applyCollectionCoreQuery({
     descriptor,
     query: {
-      filters: [{ fieldKey: "enabled", operator: "eq", value: false }],
+      filters: [{ propertyKey: "enabled", operator: "eq", value: false }],
       search: "",
       sort: [],
     },
@@ -362,11 +350,7 @@ test("routines delegate create, row actions, and inline enabled edits", async ()
   const calls: string[] = [];
   const descriptor = createRoutinesPresentationDescriptor({
     actions: actions(calls),
-    createDetailRequest: () => ({
-      content: null,
-      description: null,
-      title: null,
-    }),
+    onActivate: () => undefined,
   });
 
   await descriptor.create?.run();
@@ -374,9 +358,9 @@ test("routines delegate create, row actions, and inline enabled edits", async ()
     if (action.isVisible?.(review) === false) continue;
     await action.run(review);
   }
-  await descriptor.fields
-    .find((field) => field.key === "enabled")
-    ?.edit?.update(scheduled, true);
+  await descriptor.properties
+    .find((property) => property.key === "enabled")
+    ?.capabilities?.edit?.update(scheduled, true);
 
   expect(calls).toEqual([
     "add",
@@ -390,24 +374,20 @@ test("routines delegate create, row actions, and inline enabled edits", async ()
 test("routines render the common toolbar and a single fixed All list", () => {
   const presentation = createRoutinesPresentation({
     actions: actions([]),
-    createDetailRequest: () => ({
-      content: null,
-      description: null,
-      title: null,
-    }),
+    onActivate: () => undefined,
     state: { phase: "ready", rows: [scheduled] },
   });
-  const instance: SystemCollectionInstance = {
+  const instance: CollectionCoreInstance = {
     defaultPresentationId: "all",
     instanceKey: "routines:space:root",
     presentations: [presentation],
     stateScope: "session",
   };
-  const state: Extract<SystemCollectionStateController, { phase: "ready" }> = {
+  const state: Extract<CollectionCoreStateController, { phase: "ready" }> = {
     activePresentationId: "all",
     dismissResetWarning: () => undefined,
     phase: "ready",
-    query: EMPTY_SYSTEM_COLLECTION_QUERY,
+    query: EMPTY_COLLECTION_CORE_QUERY,
     queryByPresentationId: {},
     resetWarning: false,
     setActivePresentationId: () => undefined,
@@ -415,7 +395,7 @@ test("routines render the common toolbar and a single fixed All list", () => {
   };
   const markup = renderToStaticMarkup(
     <TooltipProvider>
-      <SystemCollectionPresentationCore
+      <CollectionCorePresentationCore
         trailingActions={
           <RoutineAutomaticConsent
             enabled={false}
@@ -437,18 +417,16 @@ test("routines render the common toolbar and a single fixed All list", () => {
     'data-routine-automatic-authority="project"',
   );
   const createPosition = markup.indexOf(
-    'data-system-collection-create="add-routine"',
+    'data-collection-core-create="add-routine"',
   );
 
   expect(markup.includes('role="list"')).toBe(true);
   expect(markup.includes('role="listitem"')).toBe(true);
-  expect(markup.includes('data-system-collection-presentation="all"')).toBe(
+  expect(markup.includes('data-collection-core-presentation="all"')).toBe(true);
+  expect(markup.includes('data-collection-core-create="add-routine"')).toBe(
     true,
   );
-  expect(markup.includes('data-system-collection-create="add-routine"')).toBe(
-    true,
-  );
-  expect(markup.includes("data-system-collection-refresh")).toBe(false);
+  expect(markup.includes("data-collection-core-refresh")).toBe(false);
   expect(markup.includes("Daily summary")).toBe(true);
   expect(markup.includes("Active")).toBe(false);
   expect(markup.includes("Runs")).toBe(false);
@@ -458,7 +436,7 @@ test("routines render the common toolbar and a single fixed All list", () => {
   expect(markup.includes('data-orientation="vertical"')).toBe(false);
   expect(markup.includes("Add routine")).toBe(false);
   expect(markup.includes(">Add<")).toBe(true);
-  expect(markup.includes('data-system-collection-field="enabled"')).toBe(true);
+  expect(markup.includes('data-collection-core-property="enabled"')).toBe(true);
   expect(markup.includes('role="switch"')).toBe(true);
   expect(markup.includes('data-size="sm"')).toBe(true);
   expect(markup.includes('aria-label="Enabled: Daily summary"')).toBe(true);
@@ -475,27 +453,23 @@ test("manual routines omit enabled while invalid routines render a passive marke
   };
   const presentation = createRoutinesPresentation({
     actions: routineActions,
-    createDetailRequest: () => ({
-      content: null,
-      description: null,
-      title: null,
-    }),
+    onActivate: () => undefined,
     state: {
       phase: "ready",
       rows: [scheduled, eventRoutine, review, invalid],
     },
   });
-  const instance: SystemCollectionInstance = {
+  const instance: CollectionCoreInstance = {
     defaultPresentationId: "all",
     instanceKey: "routines:space:manual",
     presentations: [presentation],
     stateScope: "session",
   };
-  const state: Extract<SystemCollectionStateController, { phase: "ready" }> = {
+  const state: Extract<CollectionCoreStateController, { phase: "ready" }> = {
     activePresentationId: "all",
     dismissResetWarning: () => undefined,
     phase: "ready",
-    query: EMPTY_SYSTEM_COLLECTION_QUERY,
+    query: EMPTY_COLLECTION_CORE_QUERY,
     queryByPresentationId: {},
     resetWarning: false,
     setActivePresentationId: () => undefined,
@@ -503,7 +477,7 @@ test("manual routines omit enabled while invalid routines render a passive marke
   };
   const markup = renderToStaticMarkup(
     <TooltipProvider>
-      <SystemCollectionPresentationCore instance={instance} state={state} />
+      <CollectionCorePresentationCore instance={instance} state={state} />
     </TooltipProvider>,
   );
 
@@ -511,7 +485,9 @@ test("manual routines omit enabled while invalid routines render a passive marke
   expect(markup.includes('role="checkbox"')).toBe(false);
   expect(markup.includes("Not applicable")).toBe(false);
   expect(
-    markup.includes('data-system-collection-field-applicability="unavailable"'),
+    markup.includes(
+      'data-collection-core-property-applicability="unavailable"',
+    ),
   ).toBe(true);
   expect(markup.includes("Unavailable")).toBe(true);
   expect(markup.includes("flex-wrap")).toBe(true);

@@ -3,11 +3,14 @@ import { AlertTriangle } from "lucide-react";
 
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import {
-  SystemCollectionPresentationCore,
-  useOptionalSystemCollectionDetailController,
-  useSystemCollectionState,
-  type SystemCollectionInstance,
-} from "@/features/collection/system";
+  CollectionCorePresentationCore,
+  useCollectionCoreState,
+  type CollectionCoreInstance,
+} from "@/features/collection/core";
+import {
+  createCollectionDetailActivation,
+  useOptionalCollectionDetailController,
+} from "@/features/collection/app-shell";
 import type { ScopeSurfaceRenderContext } from "@/features/scope-surfaces";
 
 import { openAgentContextArtifact } from "../api/agent-context-api";
@@ -18,10 +21,12 @@ import { AgentContextDiagnosticsDialog } from "./agent-context-diagnostics-dialo
 import { toAgentContextPresentationState } from "./agent-context-presentation-state";
 import {
   AgentContextInstructionsEmpty,
+  createInstructionDetailContent,
   createAgentContextInstructionsPresentation,
 } from "./instructions-presentation";
 import {
   AgentContextSkillsEmpty,
+  createSkillDetailContent,
   createAgentContextSkillsPresentation,
 } from "./skills-presentation";
 
@@ -36,7 +41,7 @@ export function AgentContextSurface({ owner }: ScopeSurfaceRenderContext) {
     projectPath: owner.projectPath,
     spacePath: owner.spacePath,
   });
-  const detailController = useOptionalSystemCollectionDetailController();
+  const detailController = useOptionalCollectionDetailController();
   const [openedRow, setOpenedRow] = useState<OpenedAgentContextRow | null>(
     null,
   );
@@ -70,11 +75,17 @@ export function AgentContextSurface({ owner }: ScopeSurfaceRenderContext) {
         artifactOpeners,
         onOpenArtifact: ({ canonicalArtifactPath, ownerRoot, tool }) =>
           openAgentContextArtifact({ canonicalArtifactPath, ownerRoot }, tool),
-        onDetailRequested: (rowId) =>
-          setOpenedRow({ presentationId: "instructions", rowId }),
+        onActivate: createCollectionDetailActivation({
+          controller: detailController,
+          createContent: createInstructionDetailContent,
+          instanceKey,
+          onRequested: (rowId) =>
+            setOpenedRow({ presentationId: "instructions", rowId }),
+          presentationId: "instructions",
+        }),
         state: instructionsState,
       }),
-    [artifactOpeners, instructionsState],
+    [artifactOpeners, detailController, instanceKey, instructionsState],
   );
   const skillsPresentation = useMemo(
     () =>
@@ -82,13 +93,19 @@ export function AgentContextSurface({ owner }: ScopeSurfaceRenderContext) {
         artifactOpeners,
         onOpenArtifact: ({ canonicalArtifactPath, ownerRoot, tool }) =>
           openAgentContextArtifact({ canonicalArtifactPath, ownerRoot }, tool),
-        onDetailRequested: (rowId) =>
-          setOpenedRow({ presentationId: "skills", rowId }),
+        onActivate: createCollectionDetailActivation({
+          controller: detailController,
+          createContent: createSkillDetailContent,
+          instanceKey,
+          onRequested: (rowId) =>
+            setOpenedRow({ presentationId: "skills", rowId }),
+          presentationId: "skills",
+        }),
         state: skillsState,
       }),
-    [artifactOpeners, skillsState],
+    [artifactOpeners, detailController, instanceKey, skillsState],
   );
-  const instance = useMemo<SystemCollectionInstance>(
+  const instance = useMemo<CollectionCoreInstance>(
     () => ({
       defaultPresentationId: "instructions",
       instanceKey,
@@ -97,7 +114,7 @@ export function AgentContextSurface({ owner }: ScopeSurfaceRenderContext) {
     }),
     [instanceKey, instructionsPresentation, skillsPresentation],
   );
-  const collectionState = useSystemCollectionState(instance);
+  const collectionState = useCollectionCoreState(instance);
 
   useEffect(() => {
     if (!openedRow || state.phase !== "ready" || !detailController) return;
@@ -134,7 +151,7 @@ export function AgentContextSurface({ owner }: ScopeSurfaceRenderContext) {
       className="flex min-h-0 flex-1 flex-col"
       data-agent-context-surface={owner.ownerKey}
     >
-      <SystemCollectionPresentationCore
+      <CollectionCorePresentationCore
         contextualActions={
           <AgentContextDiagnosticsDialog
             groups={diagnosticGroups}
@@ -142,7 +159,6 @@ export function AgentContextSurface({ owner }: ScopeSurfaceRenderContext) {
             retrying={state.phase === "ready" && state.retrying}
           />
         }
-        detailController={detailController ?? undefined}
         instance={instance}
         state={collectionState}
       />

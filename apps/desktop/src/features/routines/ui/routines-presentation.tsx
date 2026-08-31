@@ -2,14 +2,17 @@ import type { ReactNode } from "react";
 
 import { Button } from "@/components/ui/button";
 import {
-  defineSystemCollectionPresentation,
-  type SystemCollectionActionState,
-  type SystemCollectionDetailRequest,
-  type SystemCollectionFieldDescriptor,
-  type SystemCollectionPresentationDescriptor,
-  type SystemCollectionPresentationState,
-} from "@/features/collection/system";
-import type { Column } from "@/features/properties";
+  defineCollectionCorePresentation,
+  type CollectionCoreActionState,
+  type CollectionCorePresentationDescriptor,
+  type CollectionCorePresentationState,
+} from "@/features/collection/core";
+import type {
+  CollectionPropertyDefinition,
+  CollectionPropertyEdit,
+  CollectionPropertyOrigin,
+  CollectionStandardPropertySemantics,
+} from "@/features/properties";
 import * as m from "@/paraglide/messages.js";
 
 import {
@@ -20,11 +23,11 @@ import type { RoutineCatalogState, RoutineRow } from "../model/types";
 import { RoutineTriggerIcon } from "./routine-trigger-icon";
 
 export interface RoutinePresentationActions {
-  createState: SystemCollectionActionState;
-  getDeleteState(row: RoutineRow): SystemCollectionActionState;
-  getEditState(row: RoutineRow): SystemCollectionActionState;
-  getEnabledState(row: RoutineRow): SystemCollectionActionState;
-  getRunState(row: RoutineRow): SystemCollectionActionState;
+  createState: CollectionCoreActionState;
+  getDeleteState(row: RoutineRow): CollectionCoreActionState;
+  getEditState(row: RoutineRow): CollectionCoreActionState;
+  getEnabledState(row: RoutineRow): CollectionCoreActionState;
+  getRunState(row: RoutineRow): CollectionCoreActionState;
   onAdd(): void;
   onDelete(row: RoutineRow): void;
   onEdit(row: RoutineRow): void;
@@ -34,21 +37,19 @@ export interface RoutinePresentationActions {
 
 export function createRoutinesPresentation({
   actions,
-  createDetailRequest,
+  onActivate,
   getExecutorLabel,
   state,
 }: {
   actions: RoutinePresentationActions;
-  createDetailRequest(
-    row: RoutineRow,
-  ): Omit<SystemCollectionDetailRequest, "selection">;
+  onActivate?: CollectionCorePresentationDescriptor<RoutineRow>["onActivate"];
   getExecutorLabel?(row: RoutineRow): string | null;
-  state: SystemCollectionPresentationState<RoutineRow>;
+  state: CollectionCorePresentationState<RoutineRow>;
 }) {
-  return defineSystemCollectionPresentation({
+  return defineCollectionCorePresentation({
     descriptor: createRoutinesPresentationDescriptor({
       actions,
-      createDetailRequest,
+      onActivate,
       getExecutorLabel,
     }),
     state,
@@ -57,24 +58,21 @@ export function createRoutinesPresentation({
 
 export function createRoutinesPresentationDescriptor({
   actions,
-  createDetailRequest,
+  onActivate,
   getExecutorLabel = (row) =>
     row.definition?.action.type === "run_agent"
       ? row.definition.action.executor
       : null,
 }: {
   actions: RoutinePresentationActions;
-  createDetailRequest(
-    row: RoutineRow,
-  ): Omit<SystemCollectionDetailRequest, "selection">;
+  onActivate?: CollectionCorePresentationDescriptor<RoutineRow>["onActivate"];
   getExecutorLabel?(row: RoutineRow): string | null;
-}): SystemCollectionPresentationDescriptor<RoutineRow> {
-  const fields: readonly SystemCollectionFieldDescriptor<RoutineRow>[] = [
+}): CollectionCorePresentationDescriptor<RoutineRow> {
+  const properties: readonly CollectionPropertyDefinition<RoutineRow>[] = [
     propertyField(
       "trigger",
       m.routines_field_trigger(),
       {
-        name: "trigger",
         options: [
           { color: "neutral", name: m.routines_trigger_manual() },
           { color: "blue", name: m.routines_trigger_schedule() },
@@ -83,12 +81,12 @@ export function createRoutinesPresentationDescriptor({
         type: "select",
       },
       (row) => routineTriggerTypeLabel(row),
+      "owner_defined",
     ),
     propertyField(
       "action",
       m.routines_field_action(),
       {
-        name: "action",
         options: [
           { color: "blue", name: m.routines_action_run_agent() },
           {
@@ -99,31 +97,36 @@ export function createRoutinesPresentationDescriptor({
         type: "select",
       },
       (row) => routineActionTypeLabel(row),
+      "owner_defined",
     ),
     propertyField(
       "executor",
       m.routines_field_executor(),
-      { name: "executor", type: "text" },
+      { type: "text" },
       getExecutorLabel,
+      "owner_defined",
     ),
     propertyField(
       "last-run",
       m.routines_field_last_run(),
-      { display: "medium", name: "last-run", type: "date" },
+      { display: "medium", type: "date" },
       (row) => row.lastRunAt,
+      "computed",
     ),
     propertyField(
       "next-run",
       m.routines_field_next_run(),
-      { display: "medium", name: "next-run", type: "date" },
+      { display: "medium", type: "date" },
       (row) => row.nextRunAt,
+      "computed",
     ),
     {
       ...propertyField(
         "enabled",
         m.routines_field_enabled(),
-        { display: "switch", name: "enabled", type: "boolean" },
+        { display: "switch", type: "boolean" },
         (row) => row.definition?.enabled ?? false,
+        "owner_defined",
         {
           getState: actions.getEnabledState,
           showDisabledReason: false,
@@ -154,8 +157,8 @@ export function createRoutinesPresentationDescriptor({
       label: m.routines_add(),
       run: actions.onAdd,
     },
-    createDetailRequest,
-    fields,
+    onActivate,
+    properties,
     getRowId: (row) => row.id,
     id: "all",
     label: m.routines_presentation_all(),
@@ -174,7 +177,7 @@ export function createRoutinesPresentationDescriptor({
           }
         />
       ),
-      visibleFields: [
+      visibleProperties: [
         "trigger",
         "action",
         "executor",
@@ -220,18 +223,26 @@ export function createRoutinesPresentationDescriptor({
 function propertyField(
   key: string,
   label: string,
-  column: Column,
+  standard: CollectionStandardPropertySemantics,
   getValue: (row: RoutineRow) => unknown,
-  edit?: SystemCollectionFieldDescriptor<RoutineRow>["edit"],
-): SystemCollectionFieldDescriptor<RoutineRow> {
+  origin: Exclude<
+    CollectionPropertyOrigin,
+    "schema_backed" | "domain_specific"
+  >,
+  edit?: CollectionPropertyEdit<RoutineRow>,
+): CollectionPropertyDefinition<RoutineRow> {
   return {
-    edit,
-    filter: { kind: "property" },
+    capabilities: {
+      edit,
+      filter: { kind: "standard" },
+      sort: { kind: "standard" },
+    },
     getValue,
     key,
     label,
-    sort: { kind: "property" },
-    valueSemantics: { column, kind: "property" },
+    origin,
+    owner: { featureId: "routines", kind: "feature" },
+    semantics: { kind: "standard", standard },
   };
 }
 
@@ -255,7 +266,7 @@ function routineActionTypeLabel(row: RoutineRow) {
 export function toRoutinePresentationState(
   state: RoutineCatalogState,
   onRetry: () => void,
-): SystemCollectionPresentationState<RoutineRow> {
+): CollectionCorePresentationState<RoutineRow> {
   if (state.phase === "initial") return { phase: "initial" };
   if (state.phase === "blocking_error") {
     return {

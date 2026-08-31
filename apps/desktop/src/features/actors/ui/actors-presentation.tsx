@@ -1,14 +1,18 @@
 import type { ReactNode } from "react";
 
 import {
-  defineSystemCollectionPresentation,
-  type SystemCollectionActionState,
-  type SystemCollectionDetailRequest,
-  type SystemCollectionFieldDescriptor,
-  type SystemCollectionPresentationDescriptor,
-  type SystemCollectionPresentationState,
-} from "@/features/collection/system";
-import type { Column } from "@/features/properties";
+  defineCollectionCorePresentation,
+  type CollectionCoreActionState,
+  type CollectionCoreActivationContext,
+  type CollectionCorePresentationDescriptor,
+  type CollectionCorePresentationState,
+} from "@/features/collection/core";
+import type { CollectionDetailContent } from "@/features/collection/app-shell";
+import type {
+  CollectionPropertyDefinition,
+  CollectionPropertyOrigin,
+  CollectionStandardPropertySemantics,
+} from "@/features/properties";
 import * as m from "@/paraglide/messages.js";
 
 import { compareActorsByDefault } from "../model/actor-values";
@@ -18,48 +22,45 @@ import { ActorDetail } from "./actor-detail";
 import { CatalogRetryButton } from "./catalog-retry-button";
 
 export function createActorsPresentation({
-  catalogGeneration,
   mutations,
-  spacePath,
+  onActivate,
   state,
 }: {
-  catalogGeneration?: number;
   mutations?: ActorPresentationMutationActions;
-  spacePath: string;
-  state: SystemCollectionPresentationState<ActorCatalogRow>;
+  onActivate?(
+    row: ActorCatalogRow,
+    context: CollectionCoreActivationContext,
+  ): void | Promise<void>;
+  state: CollectionCorePresentationState<ActorCatalogRow>;
 }) {
-  return defineSystemCollectionPresentation({
-    descriptor: createActorsPresentationDescriptor(spacePath, {
-      catalogGeneration,
+  return defineCollectionCorePresentation({
+    descriptor: createActorsPresentationDescriptor({
       mutations,
+      onActivate,
     }),
     state,
   });
 }
 
-export function createActorsPresentationDescriptor(
-  spacePath: string,
-  {
-    catalogGeneration,
-    mutations,
-  }: {
-    catalogGeneration?: number;
-    mutations?: ActorPresentationMutationActions;
-  } = {},
-): SystemCollectionPresentationDescriptor<ActorCatalogRow> {
+export function createActorsPresentationDescriptor({
+  mutations,
+  onActivate,
+}: {
+  mutations?: ActorPresentationMutationActions;
+  onActivate?: CollectionCorePresentationDescriptor<ActorCatalogRow>["onActivate"];
+} = {}): CollectionCorePresentationDescriptor<ActorCatalogRow> {
   const disabledReason = m.actors_mutations_unavailable();
-  const disabledState: SystemCollectionActionState = {
+  const disabledState: CollectionCoreActionState = {
     reason: disabledReason,
     status: "disabled",
   };
   const contributionWithCommits = m.actors_contribution_commits();
   const contributionWithoutCommits = m.actors_contribution_no_commits();
-  const fields: readonly SystemCollectionFieldDescriptor<ActorCatalogRow>[] = [
+  const properties: readonly CollectionPropertyDefinition<ActorCatalogRow>[] = [
     propertyField(
       "contribution",
       m.actors_field_contribution(),
       {
-        name: "contribution",
         options: [
           { color: "green", name: contributionWithCommits },
           { color: "neutral", name: contributionWithoutCommits },
@@ -70,18 +71,21 @@ export function createActorsPresentationDescriptor(
         row.contribution === "contributor"
           ? contributionWithCommits
           : contributionWithoutCommits,
+      "owner_defined",
     ),
     propertyField(
       "commits",
       m.actors_field_commits(),
-      { name: "commits", type: "number" },
+      { type: "number" },
       (row) => row.commitCount,
+      "computed",
     ),
     propertyField(
       "activity",
       m.actors_field_activity(),
-      { display: "medium", name: "activity", type: "date" },
+      { display: "medium", type: "date" },
       (row) => row.lastActivityDate,
+      "computed",
     ),
   ];
 
@@ -92,9 +96,8 @@ export function createActorsPresentationDescriptor(
       label: m.actors_add(),
       run: () => mutations?.onAdd(),
     },
-    createDetailRequest: (row) =>
-      createActorDetailRequest(row, spacePath, catalogGeneration),
-    fields,
+    onActivate,
+    properties,
     getRowId: (row) => row.canonicalEmail,
     id: "humans",
     label: m.actors_presentation_humans(),
@@ -104,7 +107,7 @@ export function createActorsPresentationDescriptor(
       getTitle: (row) => row.displayName,
       kind: "list",
       renderLeading: (row) => <ActorAvatar actor={row} size="sm" />,
-      visibleFields: ["commits", "activity"],
+      visibleProperties: ["commits", "activity"],
     },
     query: {
       defaultCompare: compareActorsByDefault,
@@ -128,9 +131,9 @@ export function createActorsPresentationDescriptor(
 }
 
 interface ActorPresentationMutationActions {
-  createState: SystemCollectionActionState;
-  getMergeState(row: ActorCatalogRow): SystemCollectionActionState;
-  getEditState(row: ActorCatalogRow): SystemCollectionActionState;
+  createState: CollectionCoreActionState;
+  getMergeState(row: ActorCatalogRow): CollectionCoreActionState;
+  getEditState(row: ActorCatalogRow): CollectionCoreActionState;
   onAdd(): void;
   onMerge(row: ActorCatalogRow): void;
   onEdit(row: ActorCatalogRow): void;
@@ -140,7 +143,7 @@ export function createActorDetailRequest(
   row: ActorCatalogRow,
   spacePath: string,
   catalogGeneration = 0,
-): Omit<SystemCollectionDetailRequest, "selection"> {
+): CollectionDetailContent {
   return {
     content: (
       <ActorDetail
@@ -169,16 +172,24 @@ export function createActorDetailRequest(
 function propertyField(
   key: string,
   label: string,
-  column: Column,
+  standard: CollectionStandardPropertySemantics,
   getValue: (row: ActorCatalogRow) => unknown,
-): SystemCollectionFieldDescriptor<ActorCatalogRow> {
+  origin: Exclude<
+    CollectionPropertyOrigin,
+    "schema_backed" | "domain_specific"
+  >,
+): CollectionPropertyDefinition<ActorCatalogRow> {
   return {
-    filter: { kind: "property" },
+    capabilities: {
+      filter: { kind: "standard" },
+      sort: { kind: "standard" },
+    },
     getValue,
     key,
     label,
-    sort: { kind: "property" },
-    valueSemantics: { column, kind: "property" },
+    origin,
+    owner: { featureId: "actors", kind: "feature" },
+    semantics: { kind: "standard", standard },
   };
 }
 

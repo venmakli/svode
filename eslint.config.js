@@ -25,7 +25,7 @@ const allowedFeatureSubpathExceptions = new Set([
   "@/features/artifact/app-shell",
   "@/features/collection/app-shell",
   "@/features/collection/scope-surface",
-  "@/features/collection/system",
+  "@/features/collection/core",
   "@/features/editor/file-tree-sync",
   "@/features/entry/app-shell",
   "@/features/entry/detail",
@@ -80,10 +80,10 @@ function isAllowedRouteAppImport(srcPath, source) {
   return routeAppExceptions.get(srcPath)?.has(source) ?? false;
 }
 
-function isSystemCollectionFoundation(srcPath) {
+function isCollectionCoreFoundation(srcPath) {
   return (
     srcPath === "features/collection/index.ts" ||
-    srcPath === "features/collection/system.ts" ||
+    srcPath === "features/collection/core.ts" ||
     srcPath?.startsWith("features/collection/") ||
     srcPath === "features/properties/index.ts" ||
     srcPath?.startsWith("features/properties/")
@@ -127,10 +127,10 @@ function createImportBoundaryRule() {
           "features/workspace is not a target owner. Use features/space, features/git, or another current owner.",
         featureDeep:
           "Do not deep-import another feature internals. Import through the feature public API or a documented narrow exception.",
-        systemCollectionReverse:
+        collectionCoreReverse:
           "Collection and properties foundations cannot depend on owner consumers such as actors, agent, agent-actors, or routines.",
-        systemCollectionWideBarrel:
-          "System Collection consumer exports belong only in the documented features/collection/system subentrypoint, not the wide collection barrel.",
+        collectionCoreWideBarrel:
+          "Collection Core consumer exports belong only in the documented features/collection/core subentrypoint, not the wide collection barrel.",
         stores:
           "Top-level stores are no longer a frontend owner. Import state through app or feature owners.",
       },
@@ -168,21 +168,21 @@ function createImportBoundaryRule() {
 
         if (
           srcPath === "features/collection/index.ts" &&
-          (importedSrcPath === "features/collection/system" ||
-            importedSrcPath?.startsWith("features/collection/system/"))
+          (importedSrcPath === "features/collection/core" ||
+            importedSrcPath?.startsWith("features/collection/core/"))
         ) {
-          report(node, "systemCollectionWideBarrel");
+          report(node, "collectionCoreWideBarrel");
           return;
         }
 
         if (
-          isSystemCollectionFoundation(srcPath) &&
+          isCollectionCoreFoundation(srcPath) &&
           importedSrcPath &&
-          /^features\/(actors|agent|agent-actors|routines)(?:\/|$)/.test(
+          /^features\/(actors|agent|agent-actors|agent-context|routines)(?:\/|$)/.test(
             importedSrcPath,
           )
         ) {
-          report(node, "systemCollectionReverse");
+          report(node, "collectionCoreReverse");
           return;
         }
 

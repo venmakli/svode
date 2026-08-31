@@ -1,11 +1,14 @@
 import { useCallback, useMemo } from "react";
 
 import {
-  useOptionalSystemCollectionDetailController,
-  useSystemCollectionState,
-  type SystemCollectionActionState,
-  type SystemCollectionInstance,
-} from "@/features/collection/system";
+  useCollectionCoreState,
+  type CollectionCoreActionState,
+  type CollectionCoreInstance,
+} from "@/features/collection/core";
+import {
+  createCollectionDetailActivation,
+  useOptionalCollectionDetailController,
+} from "@/features/collection/app-shell";
 import type { ScopeOwnerRef } from "@/features/scope-surfaces";
 import * as m from "@/paraglide/messages.js";
 
@@ -52,7 +55,7 @@ export function useRoutinesController(
     retryAutomaticConsent: automaticConsent.retry,
   });
   const executors = useRoutineExecutors(owner.projectPath, owner.spacePath);
-  const detailController = useOptionalSystemCollectionDetailController();
+  const detailController = useOptionalCollectionDetailController();
   const instanceKey = `routines:${owner.ownerKey}`;
   const onDetailInvalidated = useCallback(async () => {
     await detailController?.close();
@@ -125,7 +128,7 @@ export function useRoutinesController(
   const createExecutors = useDetachedCreateExecutors
     ? detachedCreateExecutors
     : executors;
-  const actionState = useMemo<SystemCollectionActionState>(() => {
+  const actionState = useMemo<CollectionCoreActionState>(() => {
     if (mutations.pending || create.pending) return { status: "pending" };
     if (readOnly) {
       return {
@@ -221,17 +224,22 @@ export function useRoutinesController(
   };
   const presentation = createRoutinesPresentation({
     actions,
-    createDetailRequest: createReadOnlyDetail,
     getExecutorLabel: (row) => executorLabel(row, executors.options),
+    onActivate: createCollectionDetailActivation({
+      controller: detailController,
+      createContent: createReadOnlyDetail,
+      instanceKey,
+      presentationId: "all",
+    }),
     state: toRoutinePresentationState(state, () => void refresh()),
   });
-  const instance: SystemCollectionInstance = {
+  const instance: CollectionCoreInstance = {
     defaultPresentationId: "all",
     instanceKey,
     presentations: [presentation],
     stateScope: "session",
   };
-  const collectionState = useSystemCollectionState(instance);
+  const collectionState = useCollectionCoreState(instance);
   const overlays = (
     <>
       {create.session ? (
@@ -271,7 +279,6 @@ export function useRoutinesController(
   return {
     automaticConsent,
     collectionState,
-    detailController,
     instance,
     overlays,
     storageRecovery,
