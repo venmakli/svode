@@ -767,7 +767,7 @@ mod tests {
     use tempfile::TempDir;
 
     #[test]
-    fn system_collection_paths_are_classified_by_exact_owner() {
+    fn routine_paths_are_classified_by_exact_owner() {
         let root = Path::new("/project");
         assert_eq!(
             routine_owner_for_path(root, Path::new("/project/.routines/daily.md")),
@@ -781,6 +781,11 @@ mod tests {
             routine_owner_for_path(root, Path::new("/project/tasks/.routines/nested/daily.md")),
             None
         );
+    }
+
+    #[test]
+    fn agent_actor_paths_are_classified_by_exact_owner() {
+        let root = Path::new("/project");
         assert_eq!(
             agent_actor_owner_for_path(root, Path::new("/project/.svode/agent-actors.json")),
             Some(PathBuf::from("/project"))
@@ -789,6 +794,11 @@ mod tests {
             agent_actor_owner_for_path(root, Path::new("/project/docs/.svode/agent-actors.json")),
             Some(PathBuf::from("/project/docs"))
         );
+    }
+
+    #[test]
+    fn actor_repository_source_is_root_scoped() {
+        let root = Path::new("/project");
         assert!(actor_repository_source_path(
             root,
             Path::new("/project/.git/refs/heads/main")
