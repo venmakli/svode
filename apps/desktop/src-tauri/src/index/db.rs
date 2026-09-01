@@ -53,7 +53,10 @@ use crate::error::AppError;
 ///
 /// Bumped to 15 in Stage 8 Slice 1A: rebuilds the Knowledge projection with
 /// canonical Page nodes instead of the legacy document/entry split.
-pub(crate) const SCHEMA_VERSION: i64 = 15;
+///
+/// Bumped to 16 in Stage 8 DF-087: rebuilds Collection membership so a root
+/// Space owner README cannot retain a stale self-membership row.
+pub(crate) const SCHEMA_VERSION: i64 = 16;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SchemaStatus {
@@ -429,5 +432,45 @@ mod tests {
                     .to_string_lossy()
                     .contains(".incompatible-"))
         );
+    }
+
+    #[tokio::test]
+    async fn df_087_membership_upgrade_drops_stale_owner_row_before_pool_publication() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let db_path = temp.path().join("index.db");
+        let legacy = create_pool(&db_path).await.unwrap();
+        sqlx::query("CREATE TABLE schema_version (version INTEGER NOT NULL)")
+            .execute(&legacy)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO schema_version VALUES (?)")
+            .bind(SCHEMA_VERSION - 1)
+            .execute(&legacy)
+            .await
+            .unwrap();
+        sqlx::query(
+            "CREATE TABLE entries (file_path TEXT PRIMARY KEY, collection_root_path TEXT, in_collection INTEGER NOT NULL)",
+        )
+        .execute(&legacy)
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO entries VALUES ('README.md', '.', 1)")
+            .execute(&legacy)
+            .await
+            .unwrap();
+        legacy.close().await;
+
+        let replacement = crate::index::open_prepared_pool(&db_path).await.unwrap();
+
+        assert_eq!(
+            schema_status(&replacement).await.unwrap(),
+            SchemaStatus::Current
+        );
+        let owner_rows: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM entries WHERE file_path = 'README.md'")
+                .fetch_one(&replacement)
+                .await
+                .unwrap();
+        assert_eq!(owner_rows, 0);
     }
 }

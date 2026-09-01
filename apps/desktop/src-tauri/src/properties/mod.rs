@@ -248,23 +248,25 @@ pub fn schema_response(
 fn find_collection_root(space: &Path, file_path: &str) -> Option<PathBuf> {
     let rel = normalize_rel_path(file_path);
     let rel_path = Path::new(&rel);
-    let mut dir = rel_path
+    let parent = rel_path
         .parent()
         .filter(|p| !p.as_os_str().is_empty())
-        .map(Path::to_path_buf)
-        .unwrap_or_default();
+        .map(Path::to_path_buf);
 
-    if rel_path
+    let mut dir = if rel_path
         .file_name()
         .and_then(|n| n.to_str())
         .is_some_and(|n| n.eq_ignore_ascii_case("README.md"))
     {
-        dir = dir
+        let owner_dir = parent?;
+        owner_dir
             .parent()
             .filter(|p| !p.as_os_str().is_empty())
             .map(Path::to_path_buf)
-            .unwrap_or_default();
-    }
+            .unwrap_or_default()
+    } else {
+        parent.unwrap_or_default()
+    };
 
     loop {
         if space.join(&dir).join(SCHEMA_FILE).is_file() {

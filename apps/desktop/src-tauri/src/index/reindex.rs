@@ -381,6 +381,41 @@ mod tests {
     }
 
     #[test]
+    fn df_087_build_entry_uses_ancestor_only_membership_for_owner_readmes() {
+        let tmp = TempDir::new().unwrap();
+        std::fs::create_dir_all(tmp.path().join("notes")).unwrap();
+        std::fs::create_dir_all(tmp.path().join("archive")).unwrap();
+        std::fs::write(tmp.path().join("schema.yaml"), "columns: []\nviews: []\n").unwrap();
+        std::fs::write(tmp.path().join("README.md"), "# Owner").unwrap();
+        std::fs::write(tmp.path().join("child.md"), "# Child").unwrap();
+        std::fs::write(tmp.path().join("notes/README.md"), "# Notes").unwrap();
+        std::fs::write(
+            tmp.path().join("archive/schema.yaml"),
+            "columns: []\nviews: []\n",
+        )
+        .unwrap();
+        std::fs::write(tmp.path().join("archive/README.md"), "# Archive").unwrap();
+        std::fs::write(tmp.path().join("archive/item.md"), "# Archived item").unwrap();
+
+        let owner = build_entry_with_dates(tmp.path(), &tmp.path().join("README.md"), None)
+            .expect("build owner");
+        assert_eq!(owner.collection_root_path, None);
+        assert!(!owner.in_collection);
+
+        for path in ["child.md", "notes/README.md", "archive/README.md"] {
+            let entry = build_entry_with_dates(tmp.path(), &tmp.path().join(path), None)
+                .expect("build root member");
+            assert_eq!(entry.collection_root_path.as_deref(), Some("."));
+            assert!(entry.in_collection);
+        }
+
+        let nested = build_entry_with_dates(tmp.path(), &tmp.path().join("archive/item.md"), None)
+            .expect("build nested member");
+        assert_eq!(nested.collection_root_path.as_deref(), Some("archive"));
+        assert!(nested.in_collection);
+    }
+
+    #[test]
     fn reindex_markdown_walk_applies_tree_excludes() {
         let tmp = TempDir::new().unwrap();
         write_tree_config(&tmp, vec!["node_modules"], vec![]);

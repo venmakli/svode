@@ -962,6 +962,39 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn df_087_targeted_update_excludes_root_owner_readme_from_direct_collection() {
+        let tmp = TempDir::new().unwrap();
+        let space = tmp.path();
+        let state = IndexState::new();
+        std::fs::write(space.join("schema.yaml"), "columns: []\nviews: []\n").unwrap();
+        let owner = space.join("README.md");
+        let child = space.join("child.md");
+        std::fs::write(&owner, "# Owner").unwrap();
+        std::fs::write(&child, "# Child").unwrap();
+
+        update_entry(&state, space, &owner).await.unwrap();
+        update_entry(&state, space, &child).await.unwrap();
+
+        let pool = indexed_pool(&state, space).await;
+        assert_eq!(
+            entry_index_flags(&pool, "README.md").await,
+            (".".to_string(), None, 0, 1)
+        );
+        assert_eq!(
+            entry_index_flags(&pool, "child.md").await,
+            (".".to_string(), Some(".".to_string()), 1, 1)
+        );
+        let routines = routines_pool(&state, space).await;
+        let observed_paths = sqlx::query_scalar::<_, String>(
+            "SELECT entry_path FROM routine_observation_baseline ORDER BY entry_path",
+        )
+        .fetch_all(&routines)
+        .await
+        .unwrap();
+        assert_eq!(observed_paths, vec!["child.md"]);
+    }
+
+    #[tokio::test]
     async fn targeted_updates_do_not_leak_between_root_and_child_space_pools() {
         let tmp = TempDir::new().unwrap();
         let project = tmp.path();

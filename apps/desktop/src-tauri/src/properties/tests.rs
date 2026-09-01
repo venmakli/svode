@@ -2307,10 +2307,11 @@ async fn actor_query_filters_expand_canonical_email_to_stored_aliases() {
 }
 
 #[test]
-fn resolver_uses_readme_parent_exception() {
+fn df_087_resolver_uses_ancestor_only_readme_membership() {
     let tmp = TempDir::new().unwrap();
     let space = tmp.path();
     fs::create_dir_all(space.join("tasks/sub")).unwrap();
+    fs::write(space.join("schema.yaml"), "columns: []\nviews: []\n").unwrap();
     fs::write(
         space.join("tasks/schema.yaml"),
         "columns:\n  - name: Priority\n    type: text\nviews: []\n",
@@ -2322,6 +2323,18 @@ fn resolver_uses_readme_parent_exception() {
     )
     .unwrap();
 
+    assert!(
+        resolve_collection_schema_result(space.to_str().unwrap(), "README.md")
+            .unwrap()
+            .is_none()
+    );
+    assert!(read_collection_schema(space.to_str().unwrap(), ".").is_ok());
+
+    let (_, root) = resolve_collection_schema_result(space.to_str().unwrap(), "tasks/README.md")
+        .unwrap()
+        .unwrap();
+    assert_eq!(root, PathBuf::new());
+
     let (_, root) =
         resolve_collection_schema_result(space.to_str().unwrap(), "tasks/sub/README.md")
             .unwrap()
@@ -2332,6 +2345,128 @@ fn resolver_uses_readme_parent_exception() {
         .unwrap()
         .unwrap();
     assert_eq!(root, PathBuf::from("tasks/sub"));
+
+    fs::write(space.join("schema.yaml"), "columns: [\n").unwrap();
+    assert!(
+        resolve_collection_schema_result(space.to_str().unwrap(), "README.md")
+            .unwrap()
+            .is_none()
+    );
+    assert!(read_collection_schema(space.to_str().unwrap(), ".").is_err());
+}
+
+#[tokio::test]
+async fn df_087_root_collection_queries_exclude_owner_readme_for_all_query_shapes() {
+    let tmp = TempDir::new().unwrap();
+    let space = tmp.path();
+    fs::create_dir_all(space.join(".svode")).unwrap();
+    fs::create_dir_all(space.join("notes")).unwrap();
+    fs::create_dir_all(space.join("archive")).unwrap();
+    fs::write(
+        space.join("schema.yaml"),
+        "columns:\n  - name: Priority\n    type: text\nviews: []\n",
+    )
+    .unwrap();
+    fs::write(
+        space.join("README.md"),
+        "---\ntitle: Owner\nPriority: Hidden\n---\nOwner body",
+    )
+    .unwrap();
+    fs::write(
+        space.join("alpha.md"),
+        "---\ntitle: Alpha\nPriority: High\n---\nAlpha body",
+    )
+    .unwrap();
+    fs::write(space.join("notes/README.md"), "---\ntitle: Notes\n---\n").unwrap();
+    fs::write(space.join("notes/deep.md"), "---\ntitle: Deep\n---\n").unwrap();
+    fs::write(
+        space.join("archive/schema.yaml"),
+        "columns: []\nviews: []\n",
+    )
+    .unwrap();
+    fs::write(
+        space.join("archive/README.md"),
+        "---\ntitle: Archive\n---\n",
+    )
+    .unwrap();
+    fs::write(
+        space.join("archive/item.md"),
+        "---\ntitle: Nested item\n---\n",
+    )
+    .unwrap();
+
+    let pool = crate::index::db::create_pool(&space.join(".svode/index.db"))
+        .await
+        .unwrap();
+    crate::index::db::ensure_schema(&pool).await.unwrap();
+    crate::index::reindex::full_reindex(&pool, space, &[])
+        .await
+        .unwrap();
+    let schema = read_collection_schema(space.to_str().unwrap(), ".").unwrap();
+
+    let rows = query_entry_rows(&pool, &schema, ".", &[], &[], None, None)
+        .await
+        .unwrap();
+    let mut paths = rows
+        .iter()
+        .map(|row| row.file_path.as_str())
+        .collect::<Vec<_>>();
+    paths.sort_unstable();
+    assert_eq!(
+        paths,
+        vec![
+            "alpha.md",
+            "archive/README.md",
+            "notes/README.md",
+            "notes/deep.md"
+        ]
+    );
+
+    let flat = entries_from_rows(space.to_str().unwrap(), ".", rows.clone(), false, false).unwrap();
+    assert_eq!(flat.len(), 3);
+    assert!(flat.iter().all(|entry| entry.path != "README.md"));
+    let nested = entries_from_rows(space.to_str().unwrap(), ".", rows, true, false).unwrap();
+    assert_eq!(nested.len(), 4);
+    assert!(nested.iter().all(|entry| entry.path != "README.md"));
+
+    let owner_filter = vec![Filter {
+        field: "title".into(),
+        op: FilterOp::Eq,
+        value: Some(Value::String("Owner".into())),
+        values: None,
+    }];
+    assert!(
+        query_entry_rows(&pool, &schema, ".", &owner_filter, &[], None, None)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+
+    let title_sort = vec![Sort {
+        field: "title".into(),
+        desc: false,
+    }];
+    let sorted = query_entry_rows(&pool, &schema, ".", &[], &title_sort, None, None)
+        .await
+        .unwrap();
+    assert_eq!(
+        sorted.into_iter().map(|row| row.title).collect::<Vec<_>>(),
+        vec!["Alpha", "Archive", "Deep", "Notes"]
+    );
+
+    let owner_membership_edges: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM knowledge_links WHERE source_path = 'README.md' AND edge_kind = 'member_of'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(owner_membership_edges, 0);
+    assert!(
+        crate::index::search::search_by_title(&pool, "Owner", 10)
+            .await
+            .unwrap()
+            .is_empty()
+    );
 }
 
 #[test]
