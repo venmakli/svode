@@ -6,6 +6,7 @@ mod agent_context;
 mod agent_sessions;
 mod app_windows;
 mod artifact;
+mod attachments;
 mod commands;
 mod error;
 mod files;
@@ -96,6 +97,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            attachments::commands::attachments_list,
             artifact::commands::artifact_probe_app_marker,
             agent_context::commands::agent_context_get_instructions,
             agent_context::commands::agent_context_refresh_instructions,

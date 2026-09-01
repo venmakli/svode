@@ -53,12 +53,14 @@ pub(crate) async fn derive_date_overrides_with_cli(
     let Some(prefix) = git_prefix(cli, space_dir).await else {
         return EntryDateOverrides::new();
     };
-    let use_git_created = !is_shallow_repository(cli, space_dir).await.unwrap_or(false);
+    if is_shallow_repository(cli, space_dir).await.unwrap_or(true) {
+        return EntryDateOverrides::new();
+    }
     let Some(status) = dirty_status(cli, space_dir, &prefix, &rel_paths).await else {
         return EntryDateOverrides::new();
     };
 
-    log_date_overrides(cli, space_dir, &rel_paths, &status.dirty, use_git_created).await
+    log_date_overrides(cli, space_dir, &rel_paths, &status.dirty, true).await
 }
 
 fn normalize_rel_paths(rel_paths: &[String]) -> Vec<String> {
@@ -384,5 +386,63 @@ mod tests {
                 updated: Some(second.to_string()),
             })
         );
+    }
+
+    #[tokio::test]
+    async fn shallow_repository_falls_back_without_git_date_overrides() {
+        let Ok(cli) = GitCli::detect() else {
+            return;
+        };
+        let temp = TempDir::new().unwrap();
+        let source = temp.path().join("source");
+        let shallow = temp.path().join("shallow");
+        fs::create_dir_all(&source).unwrap();
+        assert_eq!(cli.exec(&source, &["init"]).await.unwrap().exit_code, 0);
+        assert_eq!(
+            cli.exec(&source, &["config", "user.email", "test@example.com"])
+                .await
+                .unwrap()
+                .exit_code,
+            0
+        );
+        assert_eq!(
+            cli.exec(&source, &["config", "user.name", "Test User"])
+                .await
+                .unwrap()
+                .exit_code,
+            0
+        );
+        fs::write(source.join("note.md"), "one").unwrap();
+        assert_eq!(
+            cli.exec(&source, &["add", "note.md"])
+                .await
+                .unwrap()
+                .exit_code,
+            0
+        );
+        assert_eq!(
+            cli.exec(&source, &["commit", "-m", "Add note"])
+                .await
+                .unwrap()
+                .exit_code,
+            0
+        );
+        let source_url = format!("file://{}", source.display());
+        let shallow_path = shallow.to_string_lossy().into_owned();
+        assert_eq!(
+            cli.exec(
+                temp.path(),
+                &["clone", "--depth", "1", &source_url, &shallow_path],
+            )
+            .await
+            .unwrap()
+            .exit_code,
+            0
+        );
+
+        let overrides =
+            derive_date_overrides_with_cli(&cli, &shallow, &["note.md".to_string()]).await;
+
+        assert!(overrides.is_empty());
     }
 }

@@ -112,7 +112,9 @@ fn read_frontmatter_meta(abs_path: &Path) -> (String, Option<String>, Option<Str
 }
 
 /// Lazy tree metadata reader: stop at frontmatter instead of loading markdown body.
-fn read_frontmatter_meta_head(abs_path: &Path) -> (String, Option<String>, Option<String>) {
+pub(crate) fn read_frontmatter_meta_head(
+    abs_path: &Path,
+) -> (String, Option<String>, Option<String>) {
     let fallback = abs_path
         .file_stem()
         .unwrap_or_default()

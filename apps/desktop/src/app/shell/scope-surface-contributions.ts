@@ -2,6 +2,7 @@ import {
   Bot,
   FileText,
   ListChecks,
+  Paperclip,
   TableProperties,
   UsersRound,
 } from "lucide-react";
@@ -34,6 +35,15 @@ export function createScopeSurfaceContributions(
       label: m.scope_surface_readme(),
       icon: FileText,
       render: renderers.readme ?? (() => null),
+    },
+    {
+      id: "attachments",
+      order: SCOPE_SURFACE_ORDER.attachments,
+      presentations: ["full"],
+      appliesTo: (owner) => hasScopeCapability(owner, "space"),
+      label: m.scope_surface_attachments(),
+      icon: Paperclip,
+      render: renderers.attachments ?? unavailable,
     },
     {
       id: "actors",

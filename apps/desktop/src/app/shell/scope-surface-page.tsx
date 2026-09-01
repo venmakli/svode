@@ -7,6 +7,7 @@ import {
 } from "react";
 import { AgentContextSurface } from "@/features/agent-context";
 import { ActorsSurface } from "@/features/actors";
+import { AttachmentsSurface } from "@/features/attachments";
 import { RoutinesSurface } from "@/features/routines";
 import {
   runCollectionNavigation,
@@ -139,6 +140,9 @@ export function ScopeSurfacePage({
   const createContributions = useCallback(
     (readOnly: boolean) =>
       createScopeSurfaceContributions({
+        attachments: (context) => (
+          <AttachmentsSurface {...context} readOnly={readOnly} />
+        ),
         actors: (context) => (
           <ActorsSurface
             {...context}

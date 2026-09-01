@@ -1,6 +1,6 @@
 use notify::event::{CreateKind, ModifyKind, RemoveKind, RenameMode};
 use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
@@ -130,6 +130,7 @@ fn debounce_loop(
     mut root_schema_present: bool,
 ) {
     let debounce = Duration::from_millis(200);
+    let mut attachments_generation = 0_u64;
 
     loop {
         // Wait for the first event or stop signal
@@ -151,7 +152,13 @@ fn debounce_loop(
                 }
 
                 // Process collected events
-                process_events(&events, space, app, &mut root_schema_present);
+                process_events(
+                    &events,
+                    space,
+                    app,
+                    &mut root_schema_present,
+                    &mut attachments_generation,
+                );
             }
             Err(mpsc::RecvTimeoutError::Timeout) => {
                 // No events, check stop signal
@@ -167,7 +174,13 @@ fn debounce_loop(
 }
 
 /// Process a batch of debounced events.
-fn process_events(events: &[Event], space: &str, app: &AppHandle, root_schema_present: &mut bool) {
+fn process_events(
+    events: &[Event],
+    space: &str,
+    app: &AppHandle,
+    root_schema_present: &mut bool,
+    attachments_generation: &mut u64,
+) {
     // Deduplicate by path while preserving structural create/delete semantics.
     // Backends often report Create followed by Modify for the same file within
     // one debounce window; the sidebar still needs this as `file:created`.
@@ -182,12 +195,24 @@ fn process_events(events: &[Event], space: &str, app: &AppHandle, root_schema_pr
     let mut routine_owner_paths = BTreeSet::new();
     let mut agent_actor_owners = BTreeSet::new();
     let mut actor_repository_spaces = BTreeSet::new();
+    let mut attachment_invalidations =
+        BTreeMap::<String, BTreeMap<String, AttachmentInvalidationKind>>::new();
     let space_root = Path::new(space);
     let policy = TreeIgnorePolicy::from_space_root(space_root);
     let skip_dirs = child_folder_names(space_root);
     for event in events {
         for (path_index, path) in event.paths.iter().enumerate() {
             let event_kind = event_kind_for_path(event, path_index);
+            for invalidation in classify_attachment_invalidations(space_root, path, &event_kind) {
+                attachment_invalidations
+                    .entry(invalidation.owner_path)
+                    .or_default()
+                    .entry(invalidation.path)
+                    .and_modify(|current| {
+                        *current = current.merge(invalidation.kind);
+                    })
+                    .or_insert(invalidation.kind);
+            }
             visibility_policy_changed =
                 visibility_policy_changed || is_visibility_policy_path(space_root, path);
             if let Some(kind) =
@@ -262,7 +287,21 @@ fn process_events(events: &[Event], space: &str, app: &AppHandle, root_schema_pr
     if root_schema_changed {
         any_dirty = true;
         any_tree_changed = true;
+        attachment_invalidations
+            .entry(".".to_string())
+            .or_default()
+            .insert(
+                "schema.yaml".to_string(),
+                AttachmentInvalidationKind::Boundary,
+            );
     }
+
+    emit_attachment_invalidations(
+        app,
+        space,
+        &attachment_invalidations,
+        attachments_generation,
+    );
 
     for owner_path in routine_owner_paths {
         emit_routine_invalidation(space_root, &owner_path, app);
@@ -385,6 +424,175 @@ fn process_events(events: &[Event], space: &str, app: &AppHandle, root_schema_pr
 
         let _ = app.emit(event_name, payload);
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum AttachmentInvalidationKind {
+    Page,
+    Binary,
+    Boundary,
+}
+
+impl AttachmentInvalidationKind {
+    fn as_payload_str(self) -> &'static str {
+        match self {
+            Self::Page => "page",
+            Self::Binary => "binary",
+            Self::Boundary => "boundary",
+        }
+    }
+
+    fn merge(self, next: Self) -> Self {
+        self.max(next)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct AttachmentInvalidation {
+    owner_path: String,
+    path: String,
+    kind: AttachmentInvalidationKind,
+}
+
+fn classify_attachment_invalidations(
+    space_root: &Path,
+    path: &Path,
+    event_kind: &EventKind,
+) -> Vec<AttachmentInvalidation> {
+    let Some(relative) = relative_watched_path(space_root, path) else {
+        return Vec::new();
+    };
+    if relative == ".svode/config.json" {
+        return vec![AttachmentInvalidation {
+            owner_path: ".".to_string(),
+            path: relative,
+            kind: AttachmentInvalidationKind::Boundary,
+        }];
+    }
+
+    let components = relative.split('/').collect::<Vec<_>>();
+    if components.is_empty() || components[0].starts_with('.') {
+        return Vec::new();
+    }
+    let name = components.last().copied().unwrap_or_default();
+    if is_attachment_sidecar(name) || agent_context_observed_path(space_root, path).is_some() {
+        return Vec::new();
+    }
+
+    let parent = if components.len() <= 1 {
+        ".".to_string()
+    } else {
+        components[..components.len() - 1].join("/")
+    };
+    let grandparent = if components.len() <= 2 {
+        ".".to_string()
+    } else {
+        components[..components.len() - 2].join("/")
+    };
+    let is_schema = name == "schema.yaml";
+    let is_readme = name.eq_ignore_ascii_case("README.md");
+    let is_app_marker = name.eq_ignore_ascii_case("index.html") && components.len() >= 2;
+    let is_folder = is_folder_content_tree_event(path, event_kind);
+
+    if is_schema {
+        let mut invalidations = vec![AttachmentInvalidation {
+            owner_path: parent.clone(),
+            path: relative.clone(),
+            kind: AttachmentInvalidationKind::Boundary,
+        }];
+        if components.len() >= 2 {
+            invalidations.push(AttachmentInvalidation {
+                owner_path: grandparent,
+                path: relative,
+                kind: AttachmentInvalidationKind::Boundary,
+            });
+        }
+        invalidations.sort_by(|left, right| left.owner_path.cmp(&right.owner_path));
+        invalidations.dedup_by(|left, right| left.owner_path == right.owner_path);
+        return invalidations;
+    }
+    if is_readme || is_app_marker {
+        return vec![AttachmentInvalidation {
+            owner_path: grandparent,
+            path: relative,
+            kind: if is_readme {
+                AttachmentInvalidationKind::Page
+            } else {
+                AttachmentInvalidationKind::Boundary
+            },
+        }];
+    }
+    if is_folder {
+        return vec![AttachmentInvalidation {
+            owner_path: parent,
+            path: relative,
+            kind: AttachmentInvalidationKind::Boundary,
+        }];
+    }
+    if is_markdown_path(path) {
+        return vec![AttachmentInvalidation {
+            owner_path: parent,
+            path: relative,
+            kind: AttachmentInvalidationKind::Page,
+        }];
+    }
+    if crate::attachments::source::classify_binary_path(path).is_some() {
+        return vec![AttachmentInvalidation {
+            owner_path: parent,
+            path: relative,
+            kind: AttachmentInvalidationKind::Binary,
+        }];
+    }
+    Vec::new()
+}
+
+fn emit_attachment_invalidations(
+    app: &AppHandle,
+    space: &str,
+    invalidations: &BTreeMap<String, BTreeMap<String, AttachmentInvalidationKind>>,
+    generation: &mut u64,
+) {
+    if invalidations.is_empty() {
+        return;
+    }
+    *generation = generation.wrapping_add(1);
+    for (owner_path, changes) in invalidations {
+        let changes = changes
+            .iter()
+            .map(|(path, kind)| {
+                serde_json::json!({
+                    "path": path,
+                    "kind": kind.as_payload_str(),
+                })
+            })
+            .collect::<Vec<_>>();
+        let _ = app.emit(
+            "attachments:invalidated",
+            serde_json::json!({
+                "spacePath": space,
+                "ownerPath": owner_path,
+                "generation": *generation,
+                "changes": changes,
+            }),
+        );
+    }
+}
+
+fn is_attachment_sidecar(name: &str) -> bool {
+    let lowercase = name.to_ascii_lowercase();
+    name.starts_with("~$")
+        || name.starts_with('#') && name.ends_with('#')
+        || name.ends_with('~')
+        || matches!(
+            lowercase.as_str(),
+            "readme.md~" | "thumbs.db" | "desktop.ini"
+        )
+        || matches!(
+            Path::new(&lowercase)
+                .extension()
+                .and_then(|value| value.to_str()),
+            Some("tmp" | "temp" | "lock" | "swp" | "swo")
+        )
 }
 
 fn emit_routine_invalidation(space_root: &Path, owner_path: &str, app: &AppHandle) {
@@ -923,6 +1131,97 @@ mod tests {
         let policy = TreeIgnorePolicy::from_space_root(tmp.path());
         let skip_dirs = child_folder_names(tmp.path());
         classify_content_tree_event(tmp.path(), &policy, &skip_dirs, path, &event_kind)
+    }
+
+    #[test]
+    fn attachments_invalidation_is_owner_scoped_and_keeps_page_vocabulary() {
+        let root = Path::new("/project");
+        let page = classify_attachment_invalidations(
+            root,
+            Path::new("/project/roadmap.md"),
+            &EventKind::Modify(ModifyKind::Any),
+        );
+        let binary = classify_attachment_invalidations(
+            root,
+            Path::new("/project/guide.pdf"),
+            &EventKind::Create(CreateKind::File),
+        );
+        let nested_page = classify_attachment_invalidations(
+            root,
+            Path::new("/project/notes/idea.md"),
+            &EventKind::Modify(ModifyKind::Any),
+        );
+
+        assert_eq!(
+            page,
+            vec![AttachmentInvalidation {
+                owner_path: ".".into(),
+                path: "roadmap.md".into(),
+                kind: AttachmentInvalidationKind::Page,
+            }]
+        );
+        assert_eq!(page[0].kind.as_payload_str(), "page");
+        assert_eq!(binary[0].kind, AttachmentInvalidationKind::Binary);
+        assert_eq!(nested_page[0].owner_path, "notes");
+    }
+
+    #[test]
+    fn attachments_invalidation_routes_owner_boundary_markers() {
+        let root = Path::new("/project");
+        let readme = classify_attachment_invalidations(
+            root,
+            Path::new("/project/roadmap/README.md"),
+            &EventKind::Modify(ModifyKind::Any),
+        );
+        let schema = classify_attachment_invalidations(
+            root,
+            Path::new("/project/roadmap/schema.yaml"),
+            &EventKind::Create(CreateKind::File),
+        );
+        let app_marker = classify_attachment_invalidations(
+            root,
+            Path::new("/project/dashboard/index.html"),
+            &EventKind::Modify(ModifyKind::Any),
+        );
+        let registry = classify_attachment_invalidations(
+            root,
+            Path::new("/project/.svode/config.json"),
+            &EventKind::Modify(ModifyKind::Any),
+        );
+
+        assert_eq!(readme[0].owner_path, ".");
+        assert_eq!(readme[0].kind, AttachmentInvalidationKind::Page);
+        assert_eq!(
+            schema
+                .iter()
+                .map(|item| item.owner_path.as_str())
+                .collect::<Vec<_>>(),
+            vec![".", "roadmap"]
+        );
+        assert_eq!(app_marker[0].owner_path, ".");
+        assert_eq!(registry[0].owner_path, ".");
+        assert_eq!(registry[0].kind, AttachmentInvalidationKind::Boundary);
+    }
+
+    #[test]
+    fn attachments_invalidation_ignores_system_and_unknown_files() {
+        let root = Path::new("/project");
+        for relative in [
+            ".assets/photo.png",
+            "AGENTS.md",
+            "~$draft.docx",
+            "archive.zip",
+        ] {
+            assert!(
+                classify_attachment_invalidations(
+                    root,
+                    &root.join(relative),
+                    &EventKind::Modify(ModifyKind::Any),
+                )
+                .is_empty(),
+                "{relative}"
+            );
+        }
     }
 
     #[test]

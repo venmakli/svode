@@ -7,6 +7,7 @@ export type ScopePresentation = "full" | "compact";
 export type ScopeSurfaceId =
   | "readme"
   | "actors"
+  | "attachments"
   | "collection"
   | "routines"
   | "context";
