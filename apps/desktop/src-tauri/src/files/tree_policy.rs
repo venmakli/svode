@@ -66,12 +66,22 @@ impl TreeIgnorePolicy {
         self.is_ignored_rel(rel, kind)
     }
 
+    pub fn is_system_ignored_abs(&self, path: &Path, kind: TreePathKind) -> bool {
+        let rel = path.strip_prefix(&self.root).unwrap_or(path);
+        self.is_system_ignored_rel(rel, kind)
+    }
+
+    pub fn is_system_ignored_rel(&self, rel_path: &Path, kind: TreePathKind) -> bool {
+        let rel = normalize_path(rel_path);
+        !rel.is_empty() && is_system_ignored_normalized(&rel, kind)
+    }
+
     pub fn is_ignored_rel(&self, rel_path: &Path, kind: TreePathKind) -> bool {
         let rel = normalize_path(rel_path);
         if rel.is_empty() {
             return false;
         }
-        if is_system_ignored_rel(&rel, kind) {
+        if is_system_ignored_normalized(&rel, kind) {
             return true;
         }
         if self.is_git_ignored(&rel, kind) {
@@ -228,7 +238,7 @@ fn normalize_path(path: &Path) -> String {
         .join("/")
 }
 
-fn is_system_ignored_rel(rel: &str, kind: TreePathKind) -> bool {
+fn is_system_ignored_normalized(rel: &str, kind: TreePathKind) -> bool {
     let components = rel.split('/').collect::<Vec<_>>();
     let filename = components.last().copied().unwrap_or_default();
     if SYSTEM_EXCLUDED_FILE_NAMES.contains(&filename)
@@ -318,6 +328,18 @@ mod tests {
         assert!(policy.is_ignored_rel(Path::new(".assets/image.png"), TreePathKind::File));
         assert!(policy.is_ignored_rel(Path::new(".templates/page.md"), TreePathKind::File));
         assert!(policy.is_ignored_rel(Path::new(".cache"), TreePathKind::Directory));
+    }
+
+    #[test]
+    fn system_classification_is_independent_from_user_and_git_visibility() {
+        let temp = tempfile::TempDir::new().unwrap();
+        std::fs::create_dir_all(temp.path().join(".svode")).unwrap();
+        std::fs::write(temp.path().join(".gitignore"), "ignored/\n").unwrap();
+        let policy = TreeIgnorePolicy::system_only(temp.path());
+
+        assert!(!policy.is_system_ignored_rel(Path::new("ignored/page.md"), TreePathKind::File));
+        assert!(policy.is_ignored_rel(Path::new("ignored/page.md"), TreePathKind::File));
+        assert!(policy.is_system_ignored_rel(Path::new(".svode/index.db"), TreePathKind::File));
     }
 
     #[test]

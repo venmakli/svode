@@ -18,9 +18,10 @@ use crate::error::AppError;
 use crate::files::BacklinkIndex;
 use crate::files::backlinks::{
     LinkSource, ModifiedLinkSource, collect_md_files, dedupe_modified_sources,
-    is_external_or_anchor_url, link_stem, markdown_url_path, rebase_source_links_between,
-    replace_link_urls_between,
+    is_backlink_discoverable_path, is_external_or_anchor_url, link_stem, markdown_url_path,
+    rebase_source_links_between, replace_link_urls_between,
 };
+use crate::files::tree_policy::TreeIgnorePolicy;
 use crate::git::access::ensure_mutation_paths_were_authorized;
 use crate::repo_path::{RootMode, normalize_repo_relative, repo_relative_from_path};
 use crate::space::types::{SpaceConfig, SpaceStatus};
@@ -640,6 +641,10 @@ impl IndexState {
         if !abs.exists() {
             return Ok(());
         }
+        let policy = TreeIgnorePolicy::from_space_root(&source_dir);
+        if !is_backlink_discoverable_path(&source_dir, &source_rel, &policy) {
+            return Ok(());
+        }
 
         let content = std::fs::read_to_string(&abs)?;
         let links = crate::files::backlinks::parse_markdown_links(&content);
@@ -667,7 +672,12 @@ impl IndexState {
                 continue;
             };
             let target_dir = self.dir_for_key(&target_key).await?;
-            if !target_dir.join(&target_rel).exists() {
+            let target_abs = target_dir.join(&target_rel);
+            let target_policy = TreeIgnorePolicy::from_space_root(&target_dir);
+            if !is_backlink_discoverable_path(&target_dir, &target_rel, &target_policy) {
+                continue;
+            }
+            if !target_abs.exists() {
                 let target_space_id = Self::space_id_for_key(&target_key);
                 self.insert_broken_link(&pool, &source_rel, target_space_id.as_deref(), &raw_url)
                     .await?;

@@ -141,6 +141,19 @@ pub(crate) async fn reconcile_pool(
         return Ok(ReconcileOutcome::Rebuild);
     }
 
+    let markdown_projections = inventory
+        .markdown_sources
+        .iter()
+        .filter_map(|source| {
+            crate::repo_path::repo_relative_from_base(
+                &dir,
+                &source.path,
+                crate::repo_path::RootMode::Reject,
+            )
+            .ok()
+            .map(|path| (path, source.projection))
+        })
+        .collect::<HashMap<_, _>>();
     let projected =
         crate::agent_context::projection::target_knowledge_projection(key.project(), &dir).await?;
     let agent_artifacts = projected
@@ -207,7 +220,20 @@ pub(crate) async fn reconcile_pool(
             continue;
         }
         let path = dir.join(&record.source_path);
-        match build_entry_with_dates(&dir, &path, date_overrides.get(&record.source_path)) {
+        let Some(projection) = markdown_projections.get(&record.source_path).copied() else {
+            tracing::warn!(
+                "reconciliation projection missing for {}",
+                record.source_path
+            );
+            record.diagnostic_code = Some("projection_unavailable".to_string());
+            continue;
+        };
+        match build_entry_with_dates(
+            &dir,
+            &path,
+            date_overrides.get(&record.source_path),
+            projection,
+        ) {
             Ok(entry) => {
                 record.diagnostic_code = entry.source_diagnostic.clone();
                 built_entries.insert(record.source_path.clone(), entry);
@@ -689,6 +715,82 @@ mod tests {
         assert_eq!(
             reconcile_pool(&state, &key).await.unwrap(),
             ReconcileOutcome::Rebuild
+        );
+    }
+
+    #[tokio::test]
+    async fn df_088_reconciliation_converges_git_visibility_without_source_edit() {
+        let temp = TempDir::new().unwrap();
+        let space = temp.path();
+        std::fs::write(space.join("schema.yaml"), "columns: []\nviews: []\n").unwrap();
+        std::fs::write(
+            space.join("item.md"),
+            "---\ntitle: Policy Needle\n---\npolicy-body-token",
+        )
+        .unwrap();
+        let state = IndexState::new();
+        let key = IndexKey::Root(space.to_path_buf());
+        let pool = state.get_or_create(&key).await.unwrap();
+        crate::index::reindex::full_reindex_for_target(&pool, space, space, &[])
+            .await
+            .unwrap();
+        let original_fingerprint: String = sqlx::query_scalar(
+            "SELECT fingerprint FROM knowledge_source_manifest \
+             WHERE source_path = 'item.md' AND source_kind = 'markdown'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert!(original_fingerprint.starts_with("discoverable:"));
+
+        std::fs::write(space.join(".gitignore"), "item.md\n").unwrap();
+        assert_eq!(
+            reconcile_pool(&state, &key).await.unwrap(),
+            ReconcileOutcome::Applied
+        );
+        let hidden: (i64, String) = sqlx::query_as(
+            "SELECT is_discoverable,body_preview FROM entries WHERE file_path = 'item.md'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(hidden, (0, String::new()));
+        let hidden_fingerprint: String = sqlx::query_scalar(
+            "SELECT fingerprint FROM knowledge_source_manifest \
+             WHERE source_path = 'item.md' AND source_kind = 'markdown'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert!(hidden_fingerprint.starts_with("collection-member-only:"));
+        assert_ne!(hidden_fingerprint, original_fingerprint);
+        assert!(
+            crate::index::search::search_fts(&pool, "policy-body-token", None, None, 10)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+
+        std::fs::write(space.join(".gitignore"), "item.md\n!item.md\n").unwrap();
+        assert_eq!(
+            reconcile_pool(&state, &key).await.unwrap(),
+            ReconcileOutcome::Applied
+        );
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>(
+                "SELECT is_discoverable FROM entries WHERE file_path = 'item.md'",
+            )
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+            1
+        );
+        assert_eq!(
+            crate::index::search::search_fts(&pool, "policy-body-token", None, None, 10)
+                .await
+                .unwrap()
+                .len(),
+            1
         );
     }
 }

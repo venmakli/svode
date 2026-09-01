@@ -97,7 +97,8 @@ pub async fn search_by_title(
             NULL AS table_name,
             updated AS updated_at
         FROM entries
-        WHERE (title LIKE ? ESCAPE '\' OR file_path LIKE ? ESCAPE '\')
+        WHERE is_discoverable = 1
+          AND (title LIKE ? ESCAPE '\' OR file_path LIKE ? ESCAPE '\')
           AND NOT (
               LOWER(file_path) = 'readme.md'
               OR (
@@ -164,7 +165,8 @@ pub async fn search_unique_id_exact(
         r#"
         SELECT DISTINCT collection_root_path
         FROM entries
-        WHERE in_collection = 1 AND collection_root_path IS NOT NULL
+        WHERE is_discoverable = 1
+          AND in_collection = 1 AND collection_root_path IS NOT NULL
         "#,
     )
     .fetch_all(pool)
@@ -228,7 +230,8 @@ async fn unique_id_rows(
             collection_root_path AS table_name,
             updated AS updated_at
         FROM entries
-        WHERE in_collection = 1
+        WHERE is_discoverable = 1
+          AND in_collection = 1
           AND collection_root_path = ?
           AND CAST(json_extract(fields, ?) AS INTEGER) = ?
         ORDER BY updated DESC
@@ -294,6 +297,7 @@ pub async fn search_fts(
         FROM entries_fts
         JOIN entries e ON e.rowid = entries_fts.rowid
         WHERE entries_fts MATCH ?
+          AND e.is_discoverable = 1
           AND NOT (
               LOWER(e.file_path) = 'readme.md'
               OR (
@@ -349,7 +353,8 @@ pub async fn recent(pool: &SqlitePool, limit: i64) -> Result<Vec<SearchResult>, 
             NULL AS table_name,
             updated AS updated_at
         FROM entries
-        WHERE NOT (
+        WHERE is_discoverable = 1
+          AND NOT (
             LOWER(file_path) = 'readme.md'
             OR (
                 in_collection = 1
@@ -410,6 +415,7 @@ mod tests {
                 updated TEXT NOT NULL,
                 collection_root_path TEXT,
                 in_collection INTEGER NOT NULL,
+                is_discoverable INTEGER NOT NULL,
                 fields TEXT NOT NULL
             )
             "#,
@@ -420,8 +426,9 @@ mod tests {
         sqlx::query(
             r#"
             INSERT INTO entries (
-                file_path, title, updated, collection_root_path, in_collection, fields
-            ) VALUES ('tasks/a.md', 'A', '2026-01-01', 'tasks', 1, '{"Key":24}')
+                file_path, title, updated, collection_root_path, in_collection,
+                is_discoverable, fields
+            ) VALUES ('tasks/a.md', 'A', '2026-01-01', 'tasks', 1, 1, '{"Key":24}')
             "#,
         )
         .execute(&pool)
@@ -448,6 +455,7 @@ mod tests {
                 updated TEXT NOT NULL,
                 collection_root_path TEXT,
                 in_collection INTEGER NOT NULL,
+                is_discoverable INTEGER NOT NULL,
                 fields TEXT NOT NULL
             )
             "#,
@@ -473,10 +481,10 @@ mod tests {
             r#"
             INSERT INTO entries (
                 rowid, file_path, title, description, body_preview,
-                updated, collection_root_path, in_collection, fields
+                updated, collection_root_path, in_collection, is_discoverable, fields
             ) VALUES (
                 1, 'contacts/ivan.md', 'Customer record', '',
-                'Regular note body', '2026-01-01', 'contacts', 1,
+                'Regular note body', '2026-01-01', 'contacts', 1, 1,
                 '{"Phone":"+15550001234","Email":"actor@example.com"}'
             )
             "#,
@@ -516,6 +524,7 @@ mod tests {
                 updated TEXT NOT NULL,
                 collection_root_path TEXT,
                 in_collection INTEGER NOT NULL,
+                is_discoverable INTEGER NOT NULL,
                 fields TEXT NOT NULL
             )
             "#,
@@ -556,7 +565,7 @@ mod tests {
             ),
         ] {
             sqlx::query(
-                "INSERT INTO entries (file_path,title,description,body_preview,updated,collection_root_path,in_collection,fields) VALUES (?,?,NULL,'Needle body',?,?,?,'{}')",
+                "INSERT INTO entries (file_path,title,description,body_preview,updated,collection_root_path,in_collection,is_discoverable,fields) VALUES (?,?,NULL,'Needle body',?,?,?,1,'{}')",
             )
             .bind(path)
             .bind(title)

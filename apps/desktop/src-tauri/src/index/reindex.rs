@@ -21,10 +21,41 @@ fn format_system_time(time: SystemTime) -> String {
 
 #[derive(Debug)]
 pub(crate) struct ReindexInventory {
-    pub markdown_files: Vec<PathBuf>,
-    pub collection_paths: Vec<String>,
+    pub markdown_sources: Vec<MarkdownInventorySource>,
+    pub collection_sources: Vec<CollectionInventorySource>,
     pub source_manifest: Vec<SourceManifestRecord>,
     pub scan_failure_count: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum MarkdownProjection {
+    Discoverable,
+    CollectionMemberOnly,
+}
+
+impl MarkdownProjection {
+    fn manifest_label(self) -> &'static str {
+        match self {
+            Self::Discoverable => "discoverable",
+            Self::CollectionMemberOnly => "collection-member-only",
+        }
+    }
+
+    pub(crate) fn is_discoverable(self) -> bool {
+        self == Self::Discoverable
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct MarkdownInventorySource {
+    pub path: PathBuf,
+    pub projection: MarkdownProjection,
+}
+
+#[derive(Debug)]
+pub(crate) struct CollectionInventorySource {
+    pub path: String,
+    pub discoverable: bool,
 }
 
 pub(crate) fn collect_reindex_inventory(
@@ -32,7 +63,7 @@ pub(crate) fn collect_reindex_inventory(
     skip_top_level: &[String],
 ) -> Result<ReindexInventory, AppError> {
     let mut discovered_markdown = Vec::new();
-    let mut collection_paths = Vec::new();
+    let mut collection_sources = Vec::new();
     let mut scan_failure_count = 0usize;
     let policy = TreeIgnorePolicy::from_space_root(space_dir);
     collect_md_files(
@@ -41,25 +72,25 @@ pub(crate) fn collect_reindex_inventory(
         skip_top_level,
         &policy,
         &mut discovered_markdown,
-        &mut collection_paths,
+        &mut collection_sources,
         &mut scan_failure_count,
     )?;
 
-    let mut markdown_files = Vec::new();
+    let mut markdown_sources = Vec::new();
     let mut source_manifest = Vec::new();
-    for path in discovered_markdown {
-        let record = markdown_source_record(space_dir, &path)?;
+    for source in discovered_markdown {
+        let record = markdown_source_record(space_dir, &source.path, source.projection)?;
         if record.diagnostic_code.is_none() {
-            markdown_files.push(path);
+            markdown_sources.push(source);
         }
         source_manifest.push(record);
     }
-    let mut safe_collection_paths = Vec::new();
-    for collection_path in &collection_paths {
-        let schema_path = if collection_path == "." {
+    let mut safe_collection_sources = Vec::new();
+    for source in collection_sources {
+        let schema_path = if source.path == "." {
             space_dir.join("schema.yaml")
         } else {
-            space_dir.join(collection_path).join("schema.yaml")
+            space_dir.join(&source.path).join("schema.yaml")
         };
         let diagnostic_code = (fs::metadata(&schema_path)?.len() > MAX_INDEXED_MARKDOWN_BYTES)
             .then(|| "oversized_source".to_string());
@@ -68,9 +99,14 @@ pub(crate) fn collect_reindex_inventory(
             &schema_path,
             "collection_schema",
             diagnostic_code,
+            Some(if source.discoverable {
+                "discoverable"
+            } else {
+                "owner-only"
+            }),
         )?;
         if record.diagnostic_code.is_none() {
-            safe_collection_paths.push(collection_path.clone());
+            safe_collection_sources.push(source);
         }
         source_manifest.push(record);
     }
@@ -79,11 +115,11 @@ pub(crate) fn collect_reindex_inventory(
             .cmp(&right.source_kind)
             .then_with(|| left.source_path.cmp(&right.source_path))
     });
-    safe_collection_paths.sort();
+    safe_collection_sources.sort_by(|left, right| left.path.cmp(&right.path));
 
     Ok(ReindexInventory {
-        markdown_files,
-        collection_paths: safe_collection_paths,
+        markdown_sources,
+        collection_sources: safe_collection_sources,
         source_manifest,
         scan_failure_count,
     })
@@ -92,6 +128,7 @@ pub(crate) fn collect_reindex_inventory(
 pub(crate) fn markdown_source_record(
     space_dir: &Path,
     path: &Path,
+    projection: MarkdownProjection,
 ) -> Result<SourceManifestRecord, AppError> {
     let rel_path = repo_relative_from_base(space_dir, path, RootMode::Reject)?;
     let diagnostic_code = if crate::index::knowledge::is_secret_like_source(&rel_path) {
@@ -100,7 +137,13 @@ pub(crate) fn markdown_source_record(
         let size = fs::metadata(path)?.len();
         (size > MAX_INDEXED_MARKDOWN_BYTES).then(|| "oversized_source".to_string())
     };
-    source_record(space_dir, path, "markdown", diagnostic_code)
+    source_record(
+        space_dir,
+        path,
+        "markdown",
+        diagnostic_code,
+        Some(projection.manifest_label()),
+    )
 }
 
 fn source_record(
@@ -108,6 +151,7 @@ fn source_record(
     path: &Path,
     source_kind: &str,
     diagnostic_code: Option<String>,
+    projection_label: Option<&str>,
 ) -> Result<SourceManifestRecord, AppError> {
     let source_path = repo_relative_from_base(space_dir, path, RootMode::Reject)?;
     let metadata = fs::symlink_metadata(path)?;
@@ -123,7 +167,7 @@ fn source_record(
         .and_then(|value| value.duration_since(UNIX_EPOCH).ok())
         .map(|duration| duration.as_nanos().min(i64::MAX as u128) as i64)
         .unwrap_or(0);
-    let (fingerprint, diagnostic_code) = if diagnostic_code.is_some() {
+    let (mut fingerprint, diagnostic_code) = if diagnostic_code.is_some() {
         (
             format!("excluded-v1:{size_bytes}:{modified_ns}"),
             diagnostic_code,
@@ -140,6 +184,9 @@ fn source_record(
             }
         }
     };
+    if let Some(label) = projection_label {
+        fingerprint = format!("{label}:{fingerprint}");
+    }
     Ok(SourceManifestRecord {
         fingerprint,
         source_path,
@@ -179,17 +226,24 @@ fn collect_md_files(
     dir: &Path,
     skip_top_level: &[String],
     policy: &TreeIgnorePolicy,
-    out: &mut Vec<PathBuf>,
-    collection_paths: &mut Vec<String>,
+    out: &mut Vec<MarkdownInventorySource>,
+    collection_sources: &mut Vec<CollectionInventorySource>,
     scan_failure_count: &mut usize,
 ) -> Result<(), AppError> {
-    if dir.join("schema.yaml").is_file() {
+    let schema_path = dir.join("schema.yaml");
+    if fs::symlink_metadata(&schema_path)
+        .is_ok_and(|metadata| metadata.is_file() && !metadata.file_type().is_symlink())
+    {
         let collection_path = if dir == base {
             ".".to_string()
         } else {
             repo_relative_from_base(base, dir, RootMode::Reject)?
         };
-        collection_paths.push(collection_path);
+        let schema_rel = schema_path.strip_prefix(base).unwrap_or(&schema_path);
+        collection_sources.push(CollectionInventorySource {
+            path: collection_path,
+            discoverable: !policy.is_ignored_rel(schema_rel, TreePathKind::File),
+        });
     }
     let entries = match fs::read_dir(dir) {
         Ok(e) => e,
@@ -234,7 +288,7 @@ fn collect_md_files(
         } else {
             TreePathKind::Unknown
         };
-        if policy.is_ignored_rel(rel_path, kind) {
+        if policy.is_system_ignored_rel(rel_path, kind) {
             continue;
         }
 
@@ -245,15 +299,43 @@ fn collect_md_files(
                 skip_top_level,
                 policy,
                 out,
-                collection_paths,
+                collection_sources,
                 scan_failure_count,
             )?;
         } else if meta.is_file() && name.ends_with(".md") {
-            out.push(path);
+            if let Some(projection) = markdown_projection(base, &path, policy)? {
+                out.push(MarkdownInventorySource { path, projection });
+            }
         }
     }
 
     Ok(())
+}
+
+pub(crate) fn markdown_projection(
+    space_dir: &Path,
+    path: &Path,
+    policy: &TreeIgnorePolicy,
+) -> Result<Option<MarkdownProjection>, AppError> {
+    let rel_path = path.strip_prefix(space_dir).unwrap_or(path);
+    if policy.is_system_ignored_rel(rel_path, TreePathKind::File) {
+        return Ok(None);
+    }
+    if !policy.is_ignored_rel(rel_path, TreePathKind::File) {
+        return Ok(Some(MarkdownProjection::Discoverable));
+    }
+    let rel_path = repo_relative_from_base(space_dir, path, RootMode::Reject)?;
+    match crate::properties::resolve_collection_schema_result(
+        &space_dir.to_string_lossy(),
+        &rel_path,
+    ) {
+        Ok(Some(_)) => Ok(Some(MarkdownProjection::CollectionMemberOnly)),
+        Ok(None) => Ok(None),
+        Err(error) => {
+            tracing::warn!("hidden source {rel_path} has no valid Collection membership: {error}");
+            Ok(None)
+        }
+    }
 }
 
 /// Walk `.assets/` (if present) recursively, collecting all non-hidden files.
@@ -317,7 +399,7 @@ mod tests {
     fn collect_rel_paths(tmp: &TempDir) -> Vec<String> {
         let policy = TreeIgnorePolicy::from_space_root(tmp.path());
         let mut files = Vec::new();
-        let mut collection_paths = Vec::new();
+        let mut collection_sources = Vec::new();
         let mut scan_failure_count = 0;
         collect_md_files(
             tmp.path(),
@@ -325,14 +407,16 @@ mod tests {
             &[],
             &policy,
             &mut files,
-            &mut collection_paths,
+            &mut collection_sources,
             &mut scan_failure_count,
         )
         .expect("collect files");
         let mut rels = files
             .iter()
-            .map(|path| {
-                path.strip_prefix(tmp.path())
+            .map(|source| {
+                source
+                    .path
+                    .strip_prefix(tmp.path())
                     .expect("relative")
                     .to_string_lossy()
                     .replace('\\', "/")
@@ -352,7 +436,9 @@ mod tests {
         )
         .unwrap();
 
-        let entry = build_entry_with_dates(tmp.path(), &file, None).expect("build entry");
+        let entry =
+            build_entry_with_dates(tmp.path(), &file, None, MarkdownProjection::Discoverable)
+                .expect("build entry");
         let fields: serde_json::Value =
             serde_json::from_str(&entry.fields_json).expect("fields json");
 
@@ -372,7 +458,9 @@ mod tests {
         let raw = "---\ntitle: [broken\n---\nBody\n";
         std::fs::write(&file, raw).unwrap();
 
-        let entry = build_entry_with_dates(tmp.path(), &file, None).expect("build entry");
+        let entry =
+            build_entry_with_dates(tmp.path(), &file, None, MarkdownProjection::Discoverable)
+                .expect("build entry");
 
         assert_eq!(entry.rel_path, "broken.md");
         assert_eq!(entry.title, "Broken");
@@ -397,20 +485,35 @@ mod tests {
         std::fs::write(tmp.path().join("archive/README.md"), "# Archive").unwrap();
         std::fs::write(tmp.path().join("archive/item.md"), "# Archived item").unwrap();
 
-        let owner = build_entry_with_dates(tmp.path(), &tmp.path().join("README.md"), None)
-            .expect("build owner");
+        let owner = build_entry_with_dates(
+            tmp.path(),
+            &tmp.path().join("README.md"),
+            None,
+            MarkdownProjection::Discoverable,
+        )
+        .expect("build owner");
         assert_eq!(owner.collection_root_path, None);
         assert!(!owner.in_collection);
 
         for path in ["child.md", "notes/README.md", "archive/README.md"] {
-            let entry = build_entry_with_dates(tmp.path(), &tmp.path().join(path), None)
-                .expect("build root member");
+            let entry = build_entry_with_dates(
+                tmp.path(),
+                &tmp.path().join(path),
+                None,
+                MarkdownProjection::Discoverable,
+            )
+            .expect("build root member");
             assert_eq!(entry.collection_root_path.as_deref(), Some("."));
             assert!(entry.in_collection);
         }
 
-        let nested = build_entry_with_dates(tmp.path(), &tmp.path().join("archive/item.md"), None)
-            .expect("build nested member");
+        let nested = build_entry_with_dates(
+            tmp.path(),
+            &tmp.path().join("archive/item.md"),
+            None,
+            MarkdownProjection::Discoverable,
+        )
+        .expect("build nested member");
         assert_eq!(nested.collection_root_path.as_deref(), Some("archive"));
         assert!(nested.in_collection);
     }
@@ -455,6 +558,358 @@ mod tests {
             vec!["docs/guides/keep.md".to_string()]
         );
     }
+
+    #[test]
+    fn df_088_inventory_keeps_hidden_collection_members_but_not_hidden_standalone_pages() {
+        let collection = TempDir::new().unwrap();
+        write_tree_config(&collection, vec!["hidden.md", "notes"], vec![]);
+        std::fs::write(
+            collection.path().join("schema.yaml"),
+            "columns: []\nviews: []\n",
+        )
+        .unwrap();
+        std::fs::create_dir_all(collection.path().join("notes")).unwrap();
+        std::fs::write(collection.path().join("hidden.md"), "hidden").unwrap();
+        std::fs::write(collection.path().join("notes/README.md"), "notes").unwrap();
+        std::fs::write(collection.path().join("visible.md"), "visible").unwrap();
+        std::fs::write(collection.path().join(".gitignore"), "git-hidden.md\n").unwrap();
+        std::fs::write(collection.path().join("git-hidden.md"), "git hidden").unwrap();
+
+        let inventory = collect_reindex_inventory(collection.path(), &[]).unwrap();
+        let mut sources = inventory
+            .markdown_sources
+            .iter()
+            .map(|source| {
+                (
+                    source
+                        .path
+                        .strip_prefix(collection.path())
+                        .unwrap()
+                        .to_string_lossy()
+                        .replace('\\', "/"),
+                    source.projection,
+                )
+            })
+            .collect::<Vec<_>>();
+        sources.sort_by(|left, right| left.0.cmp(&right.0));
+        assert_eq!(
+            sources,
+            vec![
+                (
+                    "git-hidden.md".to_string(),
+                    MarkdownProjection::CollectionMemberOnly,
+                ),
+                (
+                    "hidden.md".to_string(),
+                    MarkdownProjection::CollectionMemberOnly,
+                ),
+                (
+                    "notes/README.md".to_string(),
+                    MarkdownProjection::CollectionMemberOnly,
+                ),
+                ("visible.md".to_string(), MarkdownProjection::Discoverable,),
+            ]
+        );
+
+        let standalone = TempDir::new().unwrap();
+        write_tree_config(&standalone, vec!["hidden.md"], vec![]);
+        std::fs::write(standalone.path().join("hidden.md"), "hidden").unwrap();
+        let inventory = collect_reindex_inventory(standalone.path(), &[]).unwrap();
+        assert!(inventory.markdown_sources.is_empty());
+    }
+
+    #[tokio::test]
+    async fn df_088_full_reindex_keeps_hidden_member_out_of_global_projections() {
+        let tmp = TempDir::new().unwrap();
+        write_tree_config(&tmp, vec!["hidden.md"], vec![]);
+        std::fs::create_dir_all(tmp.path().join(".svode")).unwrap();
+        std::fs::write(
+            tmp.path().join("schema.yaml"),
+            "columns:\n  - { name: Key, type: unique_id, prefix: HID, next: 8 }\nviews: []\n",
+        )
+        .unwrap();
+        std::fs::write(
+            tmp.path().join("hidden.md"),
+            "---\ntitle: Hidden Needle\nKey: 7\n---\nhidden-body-token [private](visible.md)",
+        )
+        .unwrap();
+        std::fs::write(tmp.path().join("visible.md"), "# Visible").unwrap();
+        let pool = crate::index::db::create_pool(&tmp.path().join(".svode/index.db"))
+            .await
+            .unwrap();
+        crate::index::db::ensure_schema(&pool).await.unwrap();
+
+        full_reindex(&pool, tmp.path(), &[]).await.unwrap();
+
+        let row: (Option<String>, i64, i64, String, String) = sqlx::query_as(
+            "SELECT collection_root_path,in_collection,is_discoverable,body_preview,fields \
+             FROM entries WHERE file_path = 'hidden.md'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(row.0.as_deref(), Some("."));
+        assert_eq!((row.1, row.2), (1, 0));
+        assert!(row.3.is_empty());
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&row.4).unwrap()["Key"],
+            7
+        );
+        let collection_rows = crate::properties::query_entries(
+            &pool,
+            &crate::properties::ActorCatalogState::new(),
+            None,
+            &tmp.path().to_string_lossy(),
+            ".",
+            None,
+            None,
+            Some(false),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        assert!(
+            collection_rows
+                .iter()
+                .any(|entry| entry.path == "hidden.md")
+        );
+
+        assert!(
+            crate::index::search::search_by_title(&pool, "Hidden Needle", 10)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            crate::index::search::search_fts(&pool, "hidden-body-token", None, None, 10)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            crate::index::search::search_unique_id_exact(&pool, tmp.path(), "HID-7", 10)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            crate::index::search::recent(&pool, 10)
+                .await
+                .unwrap()
+                .iter()
+                .all(|result| result.path != "hidden.md")
+        );
+        for table in [
+            "knowledge_documents",
+            "knowledge_fragments",
+            "knowledge_links",
+        ] {
+            let count: i64 = sqlx::query_scalar(&format!(
+                "SELECT COUNT(*) FROM {table} WHERE source_path = 'hidden.md'"
+            ))
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+            assert_eq!(count, 0, "{table}");
+        }
+        std::fs::remove_file(tmp.path().join("schema.yaml")).unwrap();
+        full_reindex(&pool, tmp.path(), &[]).await.unwrap();
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM entries WHERE file_path = 'hidden.md'",
+            )
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+            0
+        );
+        std::fs::write(tmp.path().join("schema.yaml"), "columns: [\n").unwrap();
+        full_reindex(&pool, tmp.path(), &[]).await.unwrap();
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM entries WHERE file_path = 'hidden.md'",
+            )
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+            0
+        );
+        std::fs::write(
+            tmp.path().join("schema.yaml"),
+            "columns:\n  - { name: Key, type: unique_id, prefix: HID, next: 8 }\nviews: []\n",
+        )
+        .unwrap();
+        full_reindex(&pool, tmp.path(), &[]).await.unwrap();
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM entries WHERE file_path = 'hidden.md' \
+                 AND in_collection = 1 AND is_discoverable = 0",
+            )
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn df_088_root_and_registered_space_fixture_preserves_hidden_page_shapes() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        write_tree_config(
+            &tmp,
+            vec!["roadmap.md", "notes", "archive", "nested"],
+            vec![],
+        );
+        std::fs::write(root.join("schema.yaml"), "columns: []\nviews: []\n").unwrap();
+        std::fs::write(root.join("README.md"), "# Root owner").unwrap();
+        std::fs::write(root.join("roadmap.md"), "# Roadmap").unwrap();
+        std::fs::create_dir_all(root.join("notes")).unwrap();
+        std::fs::write(root.join("notes/README.md"), "# Notes").unwrap();
+        std::fs::create_dir_all(root.join("archive")).unwrap();
+        std::fs::write(root.join("archive/schema.yaml"), "columns: []\nviews: []\n").unwrap();
+        std::fs::write(root.join("archive/README.md"), "# Archive").unwrap();
+        std::fs::create_dir_all(root.join("nested")).unwrap();
+        std::fs::write(root.join("nested/README.md"), "# Nested").unwrap();
+        std::fs::write(root.join("nested/deep.md"), "# Deep").unwrap();
+
+        let child = root.join("team");
+        std::fs::create_dir_all(child.join(".svode")).unwrap();
+        std::fs::write(child.join("schema.yaml"), "columns: []\nviews: []\n").unwrap();
+        std::fs::write(child.join("README.md"), "# Team owner").unwrap();
+        std::fs::write(child.join("item.md"), "# Team item").unwrap();
+        std::fs::write(child.join(".gitignore"), "item.md\n").unwrap();
+
+        let root_pool = crate::index::db::create_pool(&root.join(".svode/index.db"))
+            .await
+            .unwrap();
+        crate::index::db::ensure_schema(&root_pool).await.unwrap();
+        full_reindex(&root_pool, root, &["team".to_string()])
+            .await
+            .unwrap();
+
+        let direct = crate::properties::query_entries(
+            &root_pool,
+            &crate::properties::ActorCatalogState::new(),
+            None,
+            &root.to_string_lossy(),
+            ".",
+            None,
+            None,
+            Some(false),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            direct
+                .iter()
+                .map(|entry| entry.path.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                "archive/README.md",
+                "nested/README.md",
+                "notes/README.md",
+                "roadmap.md",
+            ]
+        );
+
+        let nested = crate::properties::query_entries(
+            &root_pool,
+            &crate::properties::ActorCatalogState::new(),
+            None,
+            &root.to_string_lossy(),
+            ".",
+            None,
+            None,
+            Some(true),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        let mut nested_paths = nested
+            .iter()
+            .map(|entry| entry.path.as_str())
+            .collect::<Vec<_>>();
+        nested_paths.sort_unstable();
+        assert_eq!(
+            nested_paths,
+            vec![
+                "archive/README.md",
+                "nested/README.md",
+                "nested/deep.md",
+                "notes/README.md",
+                "roadmap.md",
+            ]
+        );
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM entries WHERE in_collection = 1 AND is_discoverable = 0",
+            )
+            .fetch_one(&root_pool)
+            .await
+            .unwrap(),
+            5
+        );
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM entries WHERE file_path LIKE 'team/%'",
+            )
+            .fetch_one(&root_pool)
+            .await
+            .unwrap(),
+            0
+        );
+
+        let child_pool = crate::index::db::create_pool(&child.join(".svode/index.db"))
+            .await
+            .unwrap();
+        crate::index::db::ensure_schema(&child_pool).await.unwrap();
+        full_reindex(&child_pool, &child, &[]).await.unwrap();
+        assert_eq!(
+            sqlx::query_as::<_, (i64, i64, i64)>(
+                "SELECT COUNT(*),MAX(in_collection),MAX(is_discoverable) FROM entries \
+                 WHERE file_path = 'item.md'",
+            )
+            .fetch_one(&child_pool)
+            .await
+            .unwrap(),
+            (1, 1, 0)
+        );
+
+        write_tree_config(
+            &tmp,
+            vec!["roadmap.md", "notes", "archive", "nested"],
+            vec!["roadmap.md"],
+        );
+        full_reindex(&root_pool, root, &["team".to_string()])
+            .await
+            .unwrap();
+        assert_eq!(
+            sqlx::query_as::<_, (i64, i64)>(
+                "SELECT COUNT(*),MAX(is_discoverable) FROM entries WHERE file_path = 'roadmap.md'",
+            )
+            .fetch_one(&root_pool)
+            .await
+            .unwrap(),
+            (1, 1)
+        );
+
+        std::fs::write(child.join(".gitignore"), "item.md\n!item.md\n").unwrap();
+        full_reindex(&child_pool, &child, &[]).await.unwrap();
+        assert_eq!(
+            sqlx::query_as::<_, (i64, i64)>(
+                "SELECT COUNT(*),MAX(is_discoverable) FROM entries WHERE file_path = 'item.md'",
+            )
+            .fetch_one(&child_pool)
+            .await
+            .unwrap(),
+            (1, 1)
+        );
+    }
 }
 
 /// Information extracted from a markdown file ready to be upserted.
@@ -472,6 +927,7 @@ pub(crate) struct IndexedEntry {
     pub is_entry_head: bool,
     pub fields_json: String,
     pub body_preview: String,
+    pub is_discoverable: bool,
     pub knowledge: Option<crate::index::knowledge::KnowledgeArtifact>,
     pub source_diagnostic: Option<String>,
 }
@@ -483,10 +939,11 @@ pub(crate) fn build_entry_with_dates(
     space_dir: &Path,
     abs_path: &Path,
     date_override: Option<&EntryDateOverride>,
+    projection: MarkdownProjection,
 ) -> Result<IndexedEntry, AppError> {
     let rel_path = repo_relative_from_base(space_dir, abs_path, RootMode::Reject)?;
 
-    let source_record = markdown_source_record(space_dir, abs_path)?;
+    let source_record = markdown_source_record(space_dir, abs_path, projection)?;
     if let Some(code) = source_record.diagnostic_code {
         return Err(AppError::Index(format!(
             "knowledge source {rel_path} was skipped: {code}"
@@ -580,24 +1037,28 @@ pub(crate) fn build_entry_with_dates(
                 }
             })
     });
-    let relations = crate::properties::knowledge_projection::project_entry_relations(
-        space_dir,
-        &rel_path,
-        &fields_json,
-    )
-    .unwrap_or_else(|error| {
-        tracing::warn!("knowledge relation projection failed for {rel_path}: {error}");
-        Vec::new()
-    });
-    let knowledge = crate::index::knowledge::build_file_artifact(
-        &rel_path,
-        &title,
-        &updated,
-        &raw,
-        &body_preview,
-        knowledge_collection_root.as_deref(),
-        &relations,
-    );
+    let knowledge = if projection.is_discoverable() {
+        let relations = crate::properties::knowledge_projection::project_entry_relations(
+            space_dir,
+            &rel_path,
+            &fields_json,
+        )
+        .unwrap_or_else(|error| {
+            tracing::warn!("knowledge relation projection failed for {rel_path}: {error}");
+            Vec::new()
+        });
+        crate::index::knowledge::build_file_artifact(
+            &rel_path,
+            &title,
+            &updated,
+            &raw,
+            &body_preview,
+            knowledge_collection_root.as_deref(),
+            &relations,
+        )
+    } else {
+        None
+    };
 
     Ok(IndexedEntry {
         parent_path: parent_path_for(&rel_path)?,
@@ -612,7 +1073,12 @@ pub(crate) fn build_entry_with_dates(
         in_collection,
         is_entry_head: true,
         fields_json,
-        body_preview,
+        body_preview: if projection.is_discoverable() {
+            body_preview
+        } else {
+            String::new()
+        },
+        is_discoverable: projection.is_discoverable(),
         knowledge,
         source_diagnostic,
     })
@@ -694,9 +1160,10 @@ where
         r#"
         INSERT INTO entries (
             file_path, parent_path, title, icon, description, cover, created, updated,
-            collection_root_path, in_collection, is_entry_head, fields, body_preview
+            collection_root_path, in_collection, is_entry_head, fields, body_preview,
+            is_discoverable
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(file_path) DO UPDATE SET
             parent_path = excluded.parent_path,
             title = excluded.title,
@@ -709,7 +1176,8 @@ where
             in_collection = excluded.in_collection,
             is_entry_head = excluded.is_entry_head,
             fields = excluded.fields,
-            body_preview = excluded.body_preview
+            body_preview = excluded.body_preview,
+            is_discoverable = excluded.is_discoverable
         "#,
     )
     .bind(&entry.rel_path)
@@ -725,6 +1193,7 @@ where
     .bind(if entry.is_entry_head { 1_i64 } else { 0_i64 })
     .bind(&entry.fields_json)
     .bind(&entry.body_preview)
+    .bind(if entry.is_discoverable { 1_i64 } else { 0_i64 })
     .execute(executor)
     .await?;
     Ok(())
@@ -833,13 +1302,15 @@ pub async fn full_reindex_for_target(
     })
     .await
     .map_err(|error| AppError::Index(format!("source inventory task failed: {error}")))??;
-    let md_files = inventory.markdown_files;
-    let collection_paths = inventory.collection_paths;
+    let markdown_sources = inventory.markdown_sources;
+    let collection_sources = inventory.collection_sources;
     let mut source_manifest = inventory.source_manifest;
     let scan_failure_count = inventory.scan_failure_count;
-    let md_rel_paths = md_files
+    let md_rel_paths = markdown_sources
         .iter()
-        .filter_map(|path| repo_relative_from_base(space_dir, path, RootMode::Reject).ok())
+        .filter_map(|source| {
+            repo_relative_from_base(space_dir, &source.path, RootMode::Reject).ok()
+        })
         .collect::<Vec<_>>();
     let entry_date_overrides = derive_date_overrides(space_dir, &md_rel_paths).await;
 
@@ -849,15 +1320,15 @@ pub async fn full_reindex_for_target(
         collect_asset_files(&assets_dir, &mut asset_files)?;
     }
 
-    let mut entries: Vec<IndexedEntry> = Vec::with_capacity(md_files.len());
+    let mut entries: Vec<IndexedEntry> = Vec::with_capacity(markdown_sources.len());
     let mut entries_skipped = 0usize;
-    for path in &md_files {
+    for source in &markdown_sources {
         tokio::task::yield_now().await;
-        let rel_path = repo_relative_from_base(space_dir, path, RootMode::Reject).ok();
+        let rel_path = repo_relative_from_base(space_dir, &source.path, RootMode::Reject).ok();
         let date_overrides = rel_path
             .as_ref()
             .and_then(|rel_path| entry_date_overrides.get(rel_path));
-        match build_entry_with_dates(space_dir, path, date_overrides) {
+        match build_entry_with_dates(space_dir, &source.path, date_overrides, source.projection) {
             Ok(entry) => {
                 if let Some(record) = source_manifest.iter_mut().find(|record| {
                     record.source_kind == "markdown" && record.source_path == entry.rel_path
@@ -875,7 +1346,10 @@ pub async fn full_reindex_for_target(
                         record.diagnostic_code = Some("unreadable_source".to_string());
                     }
                 }
-                tracing::warn!("failed to build index entry for {}: {e}", path.display());
+                tracing::warn!(
+                    "failed to build index entry for {}: {e}",
+                    source.path.display()
+                );
             }
         }
     }
@@ -897,7 +1371,11 @@ pub async fn full_reindex_for_target(
         .filter_map(|entry| entry.knowledge.clone())
         .collect::<Vec<_>>();
     let mut knowledge_failures = 0usize;
-    for collection_path in &collection_paths {
+    for collection_source in collection_sources
+        .iter()
+        .filter(|source| source.discoverable)
+    {
+        let collection_path = &collection_source.path;
         match crate::properties::knowledge_projection::project_collection(
             space_dir,
             collection_path,

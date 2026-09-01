@@ -2,9 +2,13 @@ use sqlx::SqlitePool;
 use std::path::Path;
 
 use crate::error::AppError;
+use crate::files::tree_policy::TreeIgnorePolicy;
 use crate::git::dates::derive_date_overrides;
 use crate::index::normalize_rel_result;
-use crate::index::reindex::{build_entry_with_dates, markdown_source_record, upsert_entry};
+use crate::index::reindex::{
+    MarkdownProjection, build_entry_with_dates, markdown_projection, markdown_source_record,
+    upsert_entry,
+};
 use crate::index::{IndexKey, IndexState};
 use crate::routines::CollectionEventOrigin;
 
@@ -72,6 +76,23 @@ pub(crate) async fn update_entry_with_origin(
             &dir,
             &normalized,
             None,
+            None,
+            false,
+            &origin,
+        )
+        .await;
+    }
+
+    let metadata = std::fs::symlink_metadata(&abs)?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return apply_targeted_change(
+            &pool,
+            &routines_pool,
+            &key,
+            &dir,
+            &normalized,
+            None,
+            None,
             false,
             &origin,
         )
@@ -94,13 +115,29 @@ pub(crate) async fn update_entry_with_origin(
             &dir,
             &normalized,
             None,
+            None,
             false,
             &origin,
         )
         .await;
     }
 
-    let source_record = markdown_source_record(&dir, &abs)?;
+    let policy = TreeIgnorePolicy::from_space_root(&dir);
+    let Some(projection) = markdown_projection(&dir, &abs, &policy)? else {
+        return apply_targeted_change(
+            &pool,
+            &routines_pool,
+            &key,
+            &dir,
+            &normalized,
+            None,
+            None,
+            false,
+            &origin,
+        )
+        .await;
+    };
+    let source_record = markdown_source_record(&dir, &abs, projection)?;
     if source_record.diagnostic_code.is_some() {
         return apply_targeted_change(
             &pool,
@@ -109,13 +146,14 @@ pub(crate) async fn update_entry_with_origin(
             &dir,
             &normalized,
             None,
+            Some(projection),
             false,
             &origin,
         )
         .await;
     }
     let date_overrides = derive_date_overrides(&dir, std::slice::from_ref(&normalized)).await;
-    let entry = build_entry_with_dates(&dir, &abs, date_overrides.get(&normalized))?;
+    let entry = build_entry_with_dates(&dir, &abs, date_overrides.get(&normalized), projection)?;
     let frontmatter_valid = markdown_frontmatter_diff_safe(&abs);
     apply_targeted_change(
         &pool,
@@ -124,6 +162,7 @@ pub(crate) async fn update_entry_with_origin(
         &dir,
         &normalized,
         Some(&entry),
+        Some(projection),
         frontmatter_valid,
         &origin,
     )
@@ -148,6 +187,7 @@ pub async fn delete_entry(
         &key,
         &state.dir_for_key(&key).await?,
         &rel_path,
+        None,
         None,
         false,
         &CollectionEventOrigin::managed(),
@@ -207,18 +247,20 @@ async fn apply_targeted_change(
     space_dir: &Path,
     rel_path: &str,
     entry: Option<&crate::index::reindex::IndexedEntry>,
+    source_projection: Option<MarkdownProjection>,
     current_frontmatter_diff_safe: bool,
     origin: &CollectionEventOrigin,
 ) -> Result<(), AppError> {
     let normalized = normalize_rel_result(rel_path)?;
     let source_path = space_dir.join(&normalized);
-    let mut source_record = if source_path.is_file()
+    let mut source_record = if let Some(projection) = source_projection
+        && source_path.is_file()
         && source_path
             .extension()
             .and_then(|extension| extension.to_str())
             .is_some_and(|extension| extension.eq_ignore_ascii_case("md"))
     {
-        Some(markdown_source_record(space_dir, &source_path)?)
+        Some(markdown_source_record(space_dir, &source_path, projection)?)
     } else {
         None
     };
@@ -380,6 +422,10 @@ pub(crate) fn folded_collection_artifact(
     if !schema_path.is_file() {
         return None;
     }
+    let policy = TreeIgnorePolicy::from_space_root(space_dir);
+    if policy.is_ignored_abs(&schema_path, crate::files::tree_policy::TreePathKind::File) {
+        return None;
+    }
     let projection =
         crate::properties::knowledge_projection::project_collection(space_dir, &collection_path)
             .ok()?;
@@ -505,6 +551,12 @@ pub async fn reindex_after_pull(
             .and_then(|name| name.to_str())
             .is_some_and(|name| name == "schema.yaml")
     });
+    let visibility_policy_changed = changed_files.iter().any(|rel| {
+        matches!(
+            rel.replace('\\', "/").as_str(),
+            ".gitignore" | ".svode/config.json"
+        )
+    });
 
     let changed_md_paths = changed_files
         .iter()
@@ -520,6 +572,7 @@ pub async fn reindex_after_pull(
         })
         .collect::<Vec<_>>();
     let date_overrides = derive_date_overrides(&dir, &changed_md_paths).await;
+    let policy = TreeIgnorePolicy::from_space_root(&dir);
 
     for rel in changed_files {
         let normalized = normalize_rel_result(&rel)?;
@@ -535,12 +588,39 @@ pub async fn reindex_after_pull(
                 &dir,
                 &normalized,
                 None,
+                None,
                 false,
                 &CollectionEventOrigin::git_sync(),
             )
             .await
             {
                 tracing::warn!("failed to drop index row for {normalized}: {e}");
+            }
+            continue;
+        }
+
+        let metadata = match std::fs::symlink_metadata(&abs) {
+            Ok(metadata) => metadata,
+            Err(error) => {
+                tracing::warn!("failed to inspect index source {normalized}: {error}");
+                continue;
+            }
+        };
+        if metadata.file_type().is_symlink() || !metadata.is_file() {
+            if let Err(e) = apply_targeted_change(
+                &pool,
+                &routines_pool,
+                key,
+                &dir,
+                &normalized,
+                None,
+                None,
+                false,
+                &CollectionEventOrigin::git_sync(),
+            )
+            .await
+            {
+                tracing::warn!("failed to exclude unsafe index source {normalized}: {e}");
             }
             continue;
         }
@@ -558,6 +638,7 @@ pub async fn reindex_after_pull(
                 &dir,
                 &normalized,
                 None,
+                None,
                 false,
                 &CollectionEventOrigin::git_sync(),
             )
@@ -568,7 +649,33 @@ pub async fn reindex_after_pull(
             continue;
         }
 
-        match markdown_source_record(&dir, &abs) {
+        let projection = match markdown_projection(&dir, &abs, &policy) {
+            Ok(Some(projection)) => projection,
+            Ok(None) => {
+                if let Err(e) = apply_targeted_change(
+                    &pool,
+                    &routines_pool,
+                    key,
+                    &dir,
+                    &normalized,
+                    None,
+                    None,
+                    false,
+                    &CollectionEventOrigin::git_sync(),
+                )
+                .await
+                {
+                    tracing::warn!("failed to exclude index source {normalized}: {e}");
+                }
+                continue;
+            }
+            Err(e) => {
+                tracing::warn!("failed to classify index source {normalized}: {e}");
+                continue;
+            }
+        };
+
+        match markdown_source_record(&dir, &abs, projection) {
             Ok(record) if record.diagnostic_code.is_some() => {
                 if let Err(e) = apply_targeted_change(
                     &pool,
@@ -577,6 +684,7 @@ pub async fn reindex_after_pull(
                     &dir,
                     &normalized,
                     None,
+                    Some(projection),
                     false,
                     &CollectionEventOrigin::git_sync(),
                 )
@@ -593,7 +701,7 @@ pub async fn reindex_after_pull(
             }
         }
 
-        match build_entry_with_dates(&dir, &abs, date_overrides.get(&normalized)) {
+        match build_entry_with_dates(&dir, &abs, date_overrides.get(&normalized), projection) {
             Ok(entry) => {
                 if let Err(e) = apply_targeted_change(
                     &pool,
@@ -602,6 +710,7 @@ pub async fn reindex_after_pull(
                     &dir,
                     &normalized,
                     Some(&entry),
+                    Some(projection),
                     markdown_frontmatter_diff_safe(&abs),
                     &CollectionEventOrigin::git_sync(),
                 )
@@ -616,9 +725,12 @@ pub async fn reindex_after_pull(
         }
     }
 
-    if schema_changed {
+    if schema_changed || visibility_policy_changed {
         drop(_guard);
         state.run_full_reindex(key).await?;
+        if visibility_policy_changed {
+            state.invalidate_project_backlinks(key.project()).await;
+        }
     }
     Ok(())
 }
@@ -628,9 +740,32 @@ mod tests {
     use super::*;
     use crate::index::ProjectSpacesCache;
     use crate::index::search::search_fts;
-    use crate::space::types::SpaceStatus;
+    use crate::space::config::write_space_config;
+    use crate::space::types::{SpaceConfig, SpaceStatus, TreeSpaceConfig};
     use std::collections::HashMap;
     use tempfile::TempDir;
+
+    fn write_tree_config(space: &Path, exclude: &[&str], include: &[&str]) {
+        write_space_config(
+            space,
+            &SpaceConfig {
+                name: "Test".to_string(),
+                description: String::new(),
+                icon: "folder".to_string(),
+                spaces: None,
+                agent: None,
+                defaults: None,
+                git: None,
+                assets: None,
+                tree: Some(TreeSpaceConfig {
+                    exclude: exclude.iter().map(|value| (*value).to_string()).collect(),
+                    include: include.iter().map(|value| (*value).to_string()).collect(),
+                    show_ignored_placeholders: false,
+                }),
+            },
+        )
+        .unwrap();
+    }
 
     async fn insert_event_routine(
         pool: &SqlitePool,
@@ -959,6 +1094,106 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(after, (Some("tasks".to_string()), 1, 1));
+    }
+
+    #[tokio::test]
+    async fn df_088_targeted_update_changes_discoverability_without_collection_churn() {
+        let tmp = TempDir::new().unwrap();
+        let space = tmp.path();
+        write_tree_config(space, &["hidden.md"], &[]);
+        std::fs::write(
+            space.join("schema.yaml"),
+            "columns:\n  - { name: Status, type: text }\nviews: []\n",
+        )
+        .unwrap();
+        let file = space.join("hidden.md");
+        std::fs::write(
+            &file,
+            "---\ntitle: Hidden Needle\nStatus: Open\n---\nhidden-targeted-token [link](target.md)",
+        )
+        .unwrap();
+        let state = IndexState::new();
+
+        update_entry(&state, space, &file).await.unwrap();
+        let pool = indexed_pool(&state, space).await;
+        let hidden: (Option<String>, i64, i64, String, String) = sqlx::query_as(
+            "SELECT collection_root_path,in_collection,is_discoverable,body_preview,fields \
+             FROM entries WHERE file_path = 'hidden.md'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(hidden.0.as_deref(), Some("."));
+        assert_eq!((hidden.1, hidden.2), (1, 0));
+        assert!(hidden.3.is_empty());
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&hidden.4).unwrap()["Status"],
+            "Open"
+        );
+        assert!(
+            crate::index::search::search_by_title(&pool, "Hidden Needle", 10)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            search_fts(&pool, "hidden-targeted-token", None, None, 10)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM knowledge_documents WHERE source_path = 'hidden.md'",
+            )
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+            0
+        );
+
+        write_tree_config(space, &["hidden.md"], &["hidden.md"]);
+        update_entry(&state, space, &file).await.unwrap();
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>(
+                "SELECT is_discoverable FROM entries WHERE file_path = 'hidden.md'",
+            )
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+            1
+        );
+        assert_eq!(
+            crate::index::search::search_by_title(&pool, "Hidden Needle", 10)
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(
+            search_fts(&pool, "hidden-targeted-token", None, None, 10)
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
+
+        write_tree_config(space, &["hidden.md"], &[]);
+        update_entry(&state, space, &file).await.unwrap();
+        let final_row: (i64, i64, i64) = sqlx::query_as(
+            "SELECT COUNT(*),MAX(in_collection),MAX(is_discoverable) FROM entries \
+             WHERE file_path = 'hidden.md'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(final_row, (1, 1, 0));
+        assert!(
+            search_fts(&pool, "hidden-targeted-token", None, None, 10)
+                .await
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[tokio::test]

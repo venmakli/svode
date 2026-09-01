@@ -403,6 +403,7 @@ impl BacklinkIndex {
         let mut index: HashMap<String, Vec<(LinkSource, Vec<LinkSpan>)>> = HashMap::new();
 
         let md_files = collect_md_files_filtered(space_path, skip_top_level)?;
+        let policy = TreeIgnorePolicy::from_space_root(space_path);
 
         for file_path in &md_files {
             let rel_path = file_path
@@ -411,7 +412,16 @@ impl BacklinkIndex {
                 .to_string_lossy()
                 .to_string();
 
-            let content = fs::read_to_string(file_path)?;
+            let content = match fs::read_to_string(file_path) {
+                Ok(content) => content,
+                Err(error) => {
+                    tracing::warn!(
+                        "backlink source {} could not be read: {error}",
+                        file_path.display()
+                    );
+                    continue;
+                }
+            };
             let links = parse_markdown_links(&content);
 
             // Group links by target
@@ -419,6 +429,9 @@ impl BacklinkIndex {
             for (target, span) in links {
                 // Resolve target relative to the file's parent directory
                 let resolved = resolve_relative_to(&rel_path, &target);
+                if !is_backlink_discoverable_path(space_path, &resolved, &policy) {
+                    continue;
+                }
                 by_target.entry(resolved).or_default().push(span);
             }
 
@@ -448,6 +461,10 @@ impl BacklinkIndex {
         if !abs_path.exists() {
             return Ok(());
         }
+        let policy = TreeIgnorePolicy::from_space_root(space_path);
+        if !is_backlink_discoverable_path(space_path, file_rel_path, &policy) {
+            return Ok(());
+        }
 
         let content = fs::read_to_string(&abs_path)?;
         let links = parse_markdown_links(&content);
@@ -455,6 +472,9 @@ impl BacklinkIndex {
         let mut by_target: HashMap<String, Vec<LinkSpan>> = HashMap::new();
         for (target, span) in links {
             let resolved = resolve_relative_to(file_rel_path, &target);
+            if !is_backlink_discoverable_path(space_path, &resolved, &policy) {
+                continue;
+            }
             by_target.entry(resolved).or_default().push(span);
         }
 
@@ -982,6 +1002,25 @@ fn collect_md_files_filtered(
     Ok(files)
 }
 
+pub(crate) fn is_backlink_discoverable_path(
+    space_path: &Path,
+    rel_path: &str,
+    policy: &TreeIgnorePolicy,
+) -> bool {
+    if policy.is_ignored_rel(Path::new(rel_path), TreePathKind::File)
+        || crate::index::knowledge::is_secret_like_source(rel_path)
+    {
+        return false;
+    }
+    match fs::symlink_metadata(space_path.join(rel_path)) {
+        Ok(metadata) => {
+            !metadata.file_type().is_symlink()
+                && metadata.len() <= crate::index::reconcile::MAX_INDEXED_MARKDOWN_BYTES
+        }
+        Err(_) => true,
+    }
+}
+
 /// Public walker for project-aware backlink rebuilds.
 pub fn collect_md_files(dir: &Path, skip_top_level: &[String]) -> Result<Vec<PathBuf>, AppError> {
     collect_md_files_filtered(dir, skip_top_level)
@@ -1172,7 +1211,16 @@ fn collect_md_files_recursive(
         if meta.is_dir() {
             collect_md_files_recursive(base, &path, skip_top_level, policy, files)?;
         } else if meta.is_file() && path.extension().and_then(|e| e.to_str()) == Some("md") {
-            files.push(path);
+            let rel = path
+                .strip_prefix(base)
+                .unwrap_or(&path)
+                .to_string_lossy()
+                .replace('\\', "/");
+            if !crate::index::knowledge::is_secret_like_source(&rel)
+                && meta.len() <= crate::index::reconcile::MAX_INDEXED_MARKDOWN_BYTES
+            {
+                files.push(path);
+            }
         }
     }
 
@@ -1353,6 +1401,29 @@ mod tests {
         index.update_file(ws, "a.md").unwrap();
 
         assert_eq!(index.get_backlinks("b.md").len(), 0);
+    }
+
+    #[test]
+    fn df_088_hidden_source_is_removed_from_backlink_projection() {
+        let tmp = TempDir::new().unwrap();
+        let ws = tmp.path();
+        fs::write(ws.join("source.md"), "See [Target](target.md).\n").unwrap();
+        fs::write(ws.join("target.md"), "Target.\n").unwrap();
+        let index = BacklinkIndex::new();
+        index.build(ws).unwrap();
+        assert_eq!(index.get_backlinks("target.md").len(), 1);
+
+        fs::write(ws.join(".gitignore"), "source.md\n").unwrap();
+        index.update_file(ws, "source.md").unwrap();
+        assert!(index.get_backlinks("target.md").is_empty());
+
+        fs::write(ws.join(".gitignore"), "source.md\n!source.md\n").unwrap();
+        index.update_file(ws, "source.md").unwrap();
+        assert_eq!(index.get_backlinks("target.md").len(), 1);
+
+        fs::write(ws.join(".gitignore"), "target.md\n").unwrap();
+        index.update_file(ws, "source.md").unwrap();
+        assert!(index.get_backlinks("target.md").is_empty());
     }
 
     #[test]

@@ -56,7 +56,11 @@ use crate::error::AppError;
 ///
 /// Bumped to 16 in Stage 8 DF-087: rebuilds Collection membership so a root
 /// Space owner README cannot retain a stale self-membership row.
-pub(crate) const SCHEMA_VERSION: i64 = 16;
+///
+/// Bumped to 17 in Stage 8 DF-088: stores Collection membership independently
+/// from global discoverability and rebuilds FTS/Knowledge projections without
+/// user- or Git-hidden Page content.
+pub(crate) const SCHEMA_VERSION: i64 = 17;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SchemaStatus {
@@ -209,7 +213,8 @@ pub async fn ensure_schema(pool: &SqlitePool) -> Result<(), AppError> {
             in_collection        INTEGER NOT NULL,
             is_entry_head        INTEGER NOT NULL,
             fields               TEXT NOT NULL,
-            body_preview         TEXT
+            body_preview         TEXT,
+            is_discoverable      INTEGER NOT NULL
         )
         "#,
         r#"
@@ -218,13 +223,15 @@ pub async fn ensure_schema(pool: &SqlitePool) -> Result<(), AppError> {
         )
         "#,
         r#"
-        CREATE TRIGGER IF NOT EXISTS entries_ai AFTER INSERT ON entries BEGIN
+        CREATE TRIGGER IF NOT EXISTS entries_ai AFTER INSERT ON entries
+        WHEN new.is_discoverable = 1 BEGIN
             INSERT INTO entries_fts(rowid, title, description, body_preview)
             VALUES (new.rowid, new.title, new.description, new.body_preview);
         END
         "#,
         r#"
-        CREATE TRIGGER IF NOT EXISTS entries_ad AFTER DELETE ON entries BEGIN
+        CREATE TRIGGER IF NOT EXISTS entries_ad AFTER DELETE ON entries
+        WHEN old.is_discoverable = 1 BEGIN
             INSERT INTO entries_fts(entries_fts, rowid, title, description, body_preview)
             VALUES ('delete', old.rowid, old.title, old.description, old.body_preview);
         END
@@ -232,9 +239,11 @@ pub async fn ensure_schema(pool: &SqlitePool) -> Result<(), AppError> {
         r#"
         CREATE TRIGGER IF NOT EXISTS entries_au AFTER UPDATE ON entries BEGIN
             INSERT INTO entries_fts(entries_fts, rowid, title, description, body_preview)
-            VALUES ('delete', old.rowid, old.title, old.description, old.body_preview);
+            SELECT 'delete', old.rowid, old.title, old.description, old.body_preview
+            WHERE old.is_discoverable = 1;
             INSERT INTO entries_fts(rowid, title, description, body_preview)
-            VALUES (new.rowid, new.title, new.description, new.body_preview);
+            SELECT new.rowid, new.title, new.description, new.body_preview
+            WHERE new.is_discoverable = 1;
         END
         "#,
         r#"
@@ -252,6 +261,7 @@ pub async fn ensure_schema(pool: &SqlitePool) -> Result<(), AppError> {
         "CREATE INDEX IF NOT EXISTS idx_entries_collection_root ON entries(collection_root_path)",
         "CREATE INDEX IF NOT EXISTS idx_entries_in_collection ON entries(in_collection)",
         "CREATE INDEX IF NOT EXISTS idx_entries_is_entry_head ON entries(is_entry_head)",
+        "CREATE INDEX IF NOT EXISTS idx_entries_is_discoverable ON entries(is_discoverable)",
         "CREATE INDEX IF NOT EXISTS idx_assets_document ON assets(document_id)",
         // Per-pool broken-link registry (Stage 3.5 Phase 5 §5.6). Source side
         // owns the row — `source_space_id` is the pool; `target_space_id`
@@ -435,7 +445,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn df_087_membership_upgrade_drops_stale_owner_row_before_pool_publication() {
+    async fn df_088_projection_upgrade_drops_stale_visibility_rows_before_pool_publication() {
         let temp = tempfile::TempDir::new().unwrap();
         let db_path = temp.path().join("index.db");
         let legacy = create_pool(&db_path).await.unwrap();
@@ -454,7 +464,7 @@ mod tests {
         .execute(&legacy)
         .await
         .unwrap();
-        sqlx::query("INSERT INTO entries VALUES ('README.md', '.', 1)")
+        sqlx::query("INSERT INTO entries VALUES ('hidden.md', '.', 1)")
             .execute(&legacy)
             .await
             .unwrap();
@@ -466,11 +476,11 @@ mod tests {
             schema_status(&replacement).await.unwrap(),
             SchemaStatus::Current
         );
-        let owner_rows: i64 =
-            sqlx::query_scalar("SELECT COUNT(*) FROM entries WHERE file_path = 'README.md'")
+        let stale_rows: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM entries WHERE file_path = 'hidden.md'")
                 .fetch_one(&replacement)
                 .await
                 .unwrap();
-        assert_eq!(owner_rows, 0);
+        assert_eq!(stale_rows, 0);
     }
 }

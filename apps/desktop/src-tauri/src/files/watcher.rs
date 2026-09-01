@@ -175,6 +175,8 @@ fn process_events(events: &[Event], space: &str, app: &AppHandle, root_schema_pr
     let mut any_dirty = false;
     let mut any_assets_changed = false;
     let mut any_tree_changed = false;
+    let mut visibility_policy_changed = false;
+    let mut membership_only_paths: HashMap<PathBuf, ContentTreeEventKind> = HashMap::new();
     let mut agent_context_paths = BTreeSet::new();
     let mut agent_context_targets = BTreeSet::new();
     let mut routine_owner_paths = BTreeSet::new();
@@ -186,6 +188,15 @@ fn process_events(events: &[Event], space: &str, app: &AppHandle, root_schema_pr
     for event in events {
         for (path_index, path) in event.paths.iter().enumerate() {
             let event_kind = event_kind_for_path(event, path_index);
+            visibility_policy_changed =
+                visibility_policy_changed || is_visibility_policy_path(space_root, path);
+            if let Some(kind) =
+                classify_membership_index_event(space_root, &policy, &skip_dirs, path, &event_kind)
+                && classify_content_tree_event(space_root, &policy, &skip_dirs, path, &event_kind)
+                    .is_none()
+            {
+                membership_only_paths.insert(path.clone(), kind);
+            }
             if actor_repository_source_path(space_root, path) {
                 actor_repository_spaces.insert(space_root.to_path_buf());
             }
@@ -309,6 +320,24 @@ fn process_events(events: &[Event], space: &str, app: &AppHandle, root_schema_pr
     }
 
     let nonces = app.state::<Arc<WriteNonceRegistry>>();
+    let membership_requires_rebuild = membership_only_paths
+        .values()
+        .any(|kind| *kind == ContentTreeEventKind::Schema);
+    if visibility_policy_changed || membership_requires_rebuild {
+        sync_index_for_visibility_change(space_root, app, visibility_policy_changed);
+    } else {
+        for (path, kind) in membership_only_paths {
+            let write_metadata = nonces.take_metadata(&path);
+            let origin = write_metadata
+                .map(|metadata| CollectionEventOrigin {
+                    source_kind: CollectionEventSourceKind::Managed,
+                    origin: Some(metadata.origin),
+                    routine_run_id: metadata.routine_run_id,
+                })
+                .unwrap_or_else(CollectionEventOrigin::watcher);
+            sync_index_for_watched_path(space_root, &path, kind, app, origin);
+        }
+    }
 
     for (path, kind) in seen {
         let Some(classification) =
@@ -466,6 +495,39 @@ fn sync_index_for_watched_path(
         {
             tracing::warn!("watcher index update failed for {}: {e}", path.display());
         }
+        let Ok(rel_path) = repo_relative_from_base(space_root, path, RootMode::Reject) else {
+            return;
+        };
+        let space_id = IndexState::space_id_for_key(&key);
+        if let Err(error) = state
+            .update_file_backlinks(&project, space_id.as_deref(), &rel_path)
+            .await
+        {
+            tracing::warn!(
+                "watcher backlink update failed for {}: {error}",
+                path.display()
+            );
+        }
+    });
+}
+
+fn sync_index_for_visibility_change(
+    space_root: &Path,
+    app: &AppHandle,
+    invalidate_backlinks: bool,
+) {
+    tauri::async_runtime::block_on(async {
+        let state = app.state::<IndexState>();
+        let key = state
+            .key_for_space_dir(space_root)
+            .await
+            .unwrap_or_else(|| IndexKey::Root(space_root.to_path_buf()));
+        if let Err(error) = state.run_full_reindex(&key).await {
+            tracing::warn!("watcher visibility reindex failed for {:?}: {error}", key);
+        }
+        if invalidate_backlinks {
+            state.invalidate_project_backlinks(key.project()).await;
+        }
     });
 }
 
@@ -533,6 +595,28 @@ fn classify_content_tree_event(
         affects_tree: affects_tree(kind, event_kind),
         affects_metadata: affects_metadata(kind, path, event_kind),
     })
+}
+
+fn classify_membership_index_event(
+    space_root: &Path,
+    policy: &TreeIgnorePolicy,
+    skip_dirs: &HashSet<String>,
+    path: &Path,
+    event_kind: &EventKind,
+) -> Option<ContentTreeEventKind> {
+    let kind = content_tree_event_kind(path, event_kind)?;
+    if kind == ContentTreeEventKind::Folder
+        || policy.is_system_ignored_abs(path, path_kind(path, event_kind))
+    {
+        return None;
+    }
+    let rel_path = repo_relative_from_base(space_root, path, RootMode::Reject).ok()?;
+    (!is_under_child_space(&rel_path, skip_dirs)).then_some(kind)
+}
+
+fn is_visibility_policy_path(space_root: &Path, path: &Path) -> bool {
+    relative_watched_path(space_root, path)
+        .is_some_and(|path| matches!(path.as_str(), ".gitignore" | ".svode/config.json"))
 }
 
 fn is_under_child_space(rel_path: &str, skip_dirs: &HashSet<String>) -> bool {
@@ -1124,6 +1208,34 @@ mod tests {
         assert!(!should_emit_content_tree_event(&policy, &ignored_doc));
         assert!(should_emit_content_tree_event(&policy, &visible_doc));
         assert!(classify(&tmp, &ignored_doc, EventKind::Modify(ModifyKind::Any)).is_none());
+    }
+
+    #[test]
+    fn df_088_watcher_routes_hidden_pages_to_membership_without_tree_publication() {
+        let tmp = TempDir::new().unwrap();
+        write_tree_config(&tmp, vec!["hidden.md"], vec![]);
+        let hidden = tmp.path().join("hidden.md");
+        std::fs::write(&hidden, "hidden").unwrap();
+        let policy = TreeIgnorePolicy::from_space_root(tmp.path());
+        let skip_dirs = child_folder_names(tmp.path());
+        let event_kind = EventKind::Modify(ModifyKind::Any);
+
+        assert!(
+            classify_content_tree_event(tmp.path(), &policy, &skip_dirs, &hidden, &event_kind,)
+                .is_none()
+        );
+        assert_eq!(
+            classify_membership_index_event(tmp.path(), &policy, &skip_dirs, &hidden, &event_kind,),
+            Some(ContentTreeEventKind::Page)
+        );
+        assert!(is_visibility_policy_path(
+            tmp.path(),
+            &tmp.path().join(".gitignore")
+        ));
+        assert!(is_visibility_policy_path(
+            tmp.path(),
+            &tmp.path().join(".svode/config.json")
+        ));
     }
 
     #[test]
