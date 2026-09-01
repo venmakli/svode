@@ -79,6 +79,10 @@ export function GalleryView(props: GalleryViewProps) {
     setFocusedPath,
     topLevelEntries,
   } = useGalleryViewRuntime(props);
+  const visiblePropertyKeys = new Set(metaColumns.map((column) => column.name));
+  const visibleProperties = props.properties.filter((property) =>
+    visiblePropertyKeys.has(property.key),
+  );
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -139,7 +143,7 @@ export function GalleryView(props: GalleryViewProps) {
                   entry={entry}
                   cover={resolveCover(entry)}
                   cardFields={cardFields}
-                  metaColumns={metaColumns}
+                  properties={visibleProperties}
                   coverFit={coverFit}
                   coverAspect={coverAspect}
                   spacePath={spacePath}

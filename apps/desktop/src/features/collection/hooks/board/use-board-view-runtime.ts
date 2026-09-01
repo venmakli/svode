@@ -4,13 +4,16 @@ import type {
   DragOverEvent,
   DragStartEvent,
 } from "@dnd-kit/core";
-import type { PropertyType } from "@/features/properties";
+import {
+  resolveStandardPropertyColumn,
+  type Column,
+  type PropertyType,
+} from "@/features/properties";
 import type { BoardViewProps } from "../../model/board-types";
 import { titleFilter } from "../../lib/utils";
 import { entryParentDir } from "../../lib/entry-tree";
 import {
   boardColumns,
-  boardCustomFields,
   groupKeyForValue,
   groupValue,
   isGroupableColumn,
@@ -27,6 +30,7 @@ export function useBoardViewRuntime({
   view,
   query,
   schema,
+  properties,
   collectionPath,
   previousCollectionPath,
   spacePath,
@@ -71,21 +75,34 @@ export function useBoardViewRuntime({
     onSchemaChange,
   });
   const groupBy = query.merged.groupBy;
+  const propertyColumns = useMemo(
+    () =>
+      properties
+        .map((property) => resolveStandardPropertyColumn(property))
+        .filter((column): column is Column => Boolean(column)),
+    [properties],
+  );
   const groupColumn = useMemo(
-    () => schema.columns.find((column) => column.name === groupBy) ?? null,
-    [groupBy, schema.columns],
+    () => propertyColumns.find((column) => column.name === groupBy) ?? null,
+    [groupBy, propertyColumns],
   );
   const groupableColumns = useMemo(
-    () => schema.columns.filter((column) => isGroupableColumn(column)),
-    [schema.columns],
+    () => propertyColumns.filter((column) => isGroupableColumn(column)),
+    [propertyColumns],
   );
   const cardFields = useMemo(
     () => normalizeBoardCardFields(view, schema),
     [schema, view],
   );
   const customColumns = useMemo(
-    () => boardCustomFields(cardFields, schema, groupBy ?? ""),
-    [cardFields, groupBy, schema],
+    () =>
+      propertyColumns.filter(
+        (column) =>
+          cardFields.includes(column.name) &&
+          column.name !== groupBy &&
+          !["title", "icon", "description"].includes(column.name),
+      ),
+    [cardFields, groupBy, propertyColumns],
   );
   const hasActorCardField = useMemo(
     () => customColumns.some((column) => column.type === "actor"),

@@ -13,7 +13,7 @@ import {
 } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
-import { CollectionToolbarActionButton } from "@/features/collection/core";
+import { CollectionToolbarActionButton } from "@/features/collection";
 import * as m from "@/paraglide/messages.js";
 
 import {

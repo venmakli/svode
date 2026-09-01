@@ -1,5 +1,9 @@
 import type { Page } from "@/features/page";
-import type { ActorCandidate, Column } from "@/features/properties";
+import type {
+  ActorCandidate,
+  Column,
+  CollectionPropertyDefinition,
+} from "@/features/properties";
 import type { ListRowModel } from "../../model/list-types";
 
 export type { ListRowModel, ListViewProps } from "../../model/list-types";
@@ -8,7 +12,7 @@ export interface ListRowProps {
   row: ListRowModel;
   density: "compact" | "comfortable";
   cardFields: string[];
-  metaColumns: Column[];
+  properties: readonly CollectionPropertyDefinition<Page>[];
   spacePath: string;
   projectPath?: string | null;
   actors: ActorCandidate[];

@@ -1,15 +1,15 @@
 import { Bot } from "lucide-react";
 
 import {
-  defineCollectionCorePresentation,
-  type CollectionCoreActionState,
-  type CollectionCorePresentationDescriptor,
-  type CollectionCorePresentationState,
-} from "@/features/collection/core";
-import type {
-  CollectionPropertyDefinition,
-  CollectionPropertyOrigin,
-  CollectionStandardPropertySemantics,
+  defineCollectionPresentation,
+  type CollectionActionState,
+  type CollectionPresentationDescriptor,
+  type CollectionPresentationState,
+} from "@/features/collection";
+import {
+  defineComputedCollectionProperty,
+  defineOwnerDefinedCollectionProperty,
+  type CollectionPropertyDefinition,
 } from "@/features/properties";
 import * as m from "@/paraglide/messages.js";
 
@@ -17,9 +17,9 @@ import { compareAgentActorsByDefault } from "../model/agent-actor-draft";
 import type { AgentActorRow } from "../model/agent-actor-types";
 
 export interface AgentActorsPresentationActions {
-  createState: CollectionCoreActionState;
-  getDeleteState(row: AgentActorRow): CollectionCoreActionState;
-  getEditState(row: AgentActorRow): CollectionCoreActionState;
+  createState: CollectionActionState;
+  getDeleteState(row: AgentActorRow): CollectionActionState;
+  getEditState(row: AgentActorRow): CollectionActionState;
   onAdd(): void;
   onDelete(row: AgentActorRow): void;
   onEdit(row: AgentActorRow): void;
@@ -33,11 +33,11 @@ export function createAgentActorsPresentation({
 }: {
   actions: AgentActorsPresentationActions;
   inheritedVisible: boolean;
-  onActivate?: CollectionCorePresentationDescriptor<AgentActorRow>["onActivate"];
-  state: CollectionCorePresentationState<AgentActorRow>;
+  onActivate?: CollectionPresentationDescriptor<AgentActorRow>["onActivate"];
+  state: CollectionPresentationState<AgentActorRow>;
 }) {
   const rows = state.phase === "ready" ? state.rows : [];
-  return defineCollectionCorePresentation({
+  return defineCollectionPresentation({
     descriptor: createAgentActorsPresentationDescriptor({
       actions,
       inheritedVisible,
@@ -56,43 +56,58 @@ export function createAgentActorsPresentationDescriptor({
 }: {
   actions: AgentActorsPresentationActions;
   inheritedVisible: boolean;
-  onActivate?: CollectionCorePresentationDescriptor<AgentActorRow>["onActivate"];
+  onActivate?: CollectionPresentationDescriptor<AgentActorRow>["onActivate"];
   rows: readonly AgentActorRow[];
-}): CollectionCorePresentationDescriptor<AgentActorRow> {
+}): CollectionPresentationDescriptor<AgentActorRow> {
   const ownerOptions = [...new Set(rows.map((row) => row.ownerLabel))].map(
     (name) => ({ color: "neutral" as const, name }),
   );
   const properties: readonly CollectionPropertyDefinition<AgentActorRow>[] = [
-    propertyField(
-      "clients",
-      m.agent_actors_field_clients(),
-      {
+    defineOwnerDefinedCollectionProperty({
+      capabilities: {
+        filter: { kind: "standard" },
+        sort: { kind: "standard" },
+      },
+      featureId: "actors",
+      getValue: (row) =>
+        row.adapters.map((binding) => adapterLabel(binding.adapter)),
+      key: "clients",
+      label: m.agent_actors_field_clients(),
+      standard: {
         options: [
           { color: "blue", name: "Codex" },
           { color: "orange", name: "Claude Code" },
         ],
         type: "multi_select",
       },
-      (row) => row.adapters.map((binding) => adapterLabel(binding.adapter)),
-      "owner_defined",
-    ),
-    propertyField(
-      "primary",
-      m.agent_actors_field_primary(),
-      {
+    }),
+    defineOwnerDefinedCollectionProperty({
+      capabilities: {
+        filter: { kind: "standard" },
+        sort: { kind: "standard" },
+      },
+      featureId: "actors",
+      getValue: (row) => adapterLabel(row.adapters[0]!.adapter),
+      key: "primary",
+      label: m.agent_actors_field_primary(),
+      standard: {
         options: [
           { color: "blue", name: "Codex" },
           { color: "orange", name: "Claude Code" },
         ],
         type: "select",
       },
-      (row) => adapterLabel(row.adapters[0]!.adapter),
-      "owner_defined",
-    ),
-    propertyField(
-      "approval",
-      m.agent_actors_field_approval(),
-      {
+    }),
+    defineOwnerDefinedCollectionProperty({
+      capabilities: {
+        filter: { kind: "standard" },
+        sort: { kind: "standard" },
+      },
+      featureId: "actors",
+      getValue: (row) => approvalLabel(row.approvalMode),
+      key: "approval",
+      label: m.agent_actors_field_approval(),
+      standard: {
         options: [
           { color: "neutral", name: m.agent_actors_approval_ask() },
           { color: "yellow", name: m.agent_actors_approval_auto() },
@@ -100,13 +115,17 @@ export function createAgentActorsPresentationDescriptor({
         ],
         type: "select",
       },
-      (row) => approvalLabel(row.approvalMode),
-      "owner_defined",
-    ),
-    propertyField(
-      "status",
-      m.agent_actors_field_status(),
-      {
+    }),
+    defineComputedCollectionProperty({
+      capabilities: {
+        filter: { kind: "standard" },
+        sort: { kind: "standard" },
+      },
+      featureId: "actors",
+      getValue: (row) => runtimeStatusLabel(row.runtimeStatus),
+      key: "status",
+      label: m.agent_actors_field_status(),
+      standard: {
         options: [
           { color: "green", name: m.agent_actors_status_ready() },
           { color: "red", name: m.agent_actors_status_attention() },
@@ -114,24 +133,31 @@ export function createAgentActorsPresentationDescriptor({
         ],
         type: "select",
       },
-      (row) => runtimeStatusLabel(row.runtimeStatus),
-      "computed",
-    ),
-    propertyField(
-      "space",
-      m.agent_actors_field_space(),
-      { options: ownerOptions, type: "select" },
-      (row) => row.ownerLabel,
-      "owner_defined",
-    ),
+    }),
+    defineOwnerDefinedCollectionProperty({
+      capabilities: {
+        filter: { kind: "standard" },
+        sort: { kind: "standard" },
+      },
+      featureId: "actors",
+      getValue: (row) => row.ownerLabel,
+      key: "space",
+      label: m.agent_actors_field_space(),
+      standard: { options: ownerOptions, type: "select" },
+    }),
   ];
 
   return {
     create: {
-      getState: () => actions.createState,
-      id: "add-agent",
       label: m.agent_actors_add(),
-      run: actions.onAdd,
+      intents: [
+        {
+          getState: () => actions.createState,
+          id: "add-agent",
+          label: m.agent_actors_add(),
+          run: actions.onAdd,
+        },
+      ],
     },
     onActivate,
     properties,
@@ -178,30 +204,6 @@ export function createAgentActorsPresentationDescriptor({
 
 export function agentActorRowId(row: AgentActorRow): string {
   return JSON.stringify([row.ownerPath, row.id]);
-}
-
-function propertyField(
-  key: string,
-  label: string,
-  standard: CollectionStandardPropertySemantics,
-  getValue: (row: AgentActorRow) => unknown,
-  origin: Exclude<
-    CollectionPropertyOrigin,
-    "schema_backed" | "domain_specific"
-  >,
-): CollectionPropertyDefinition<AgentActorRow> {
-  return {
-    capabilities: {
-      filter: { kind: "standard" },
-      sort: { kind: "standard" },
-    },
-    getValue,
-    key,
-    label,
-    origin,
-    owner: { featureId: "actors", kind: "feature" },
-    semantics: { kind: "standard", standard },
-  };
 }
 
 function adapterLabel(adapter: AgentActorRow["adapters"][number]["adapter"]) {

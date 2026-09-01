@@ -2,16 +2,15 @@ import type { ReactNode } from "react";
 
 import { Button } from "@/components/ui/button";
 import {
-  defineCollectionCorePresentation,
-  type CollectionCoreActionState,
-  type CollectionCorePresentationDescriptor,
-  type CollectionCorePresentationState,
-} from "@/features/collection/core";
-import type {
-  CollectionPropertyDefinition,
-  CollectionPropertyEdit,
-  CollectionPropertyOrigin,
-  CollectionStandardPropertySemantics,
+  defineCollectionPresentation,
+  type CollectionActionState,
+  type CollectionPresentationDescriptor,
+  type CollectionPresentationState,
+} from "@/features/collection";
+import {
+  defineComputedCollectionProperty,
+  defineOwnerDefinedCollectionProperty,
+  type CollectionPropertyDefinition,
 } from "@/features/properties";
 import * as m from "@/paraglide/messages.js";
 
@@ -23,11 +22,11 @@ import type { RoutineCatalogState, RoutineRow } from "../model/types";
 import { RoutineTriggerIcon } from "./routine-trigger-icon";
 
 export interface RoutinePresentationActions {
-  createState: CollectionCoreActionState;
-  getDeleteState(row: RoutineRow): CollectionCoreActionState;
-  getEditState(row: RoutineRow): CollectionCoreActionState;
-  getEnabledState(row: RoutineRow): CollectionCoreActionState;
-  getRunState(row: RoutineRow): CollectionCoreActionState;
+  createState: CollectionActionState;
+  getDeleteState(row: RoutineRow): CollectionActionState;
+  getEditState(row: RoutineRow): CollectionActionState;
+  getEnabledState(row: RoutineRow): CollectionActionState;
+  getRunState(row: RoutineRow): CollectionActionState;
   onAdd(): void;
   onDelete(row: RoutineRow): void;
   onEdit(row: RoutineRow): void;
@@ -42,11 +41,11 @@ export function createRoutinesPresentation({
   state,
 }: {
   actions: RoutinePresentationActions;
-  onActivate?: CollectionCorePresentationDescriptor<RoutineRow>["onActivate"];
+  onActivate?: CollectionPresentationDescriptor<RoutineRow>["onActivate"];
   getExecutorLabel?(row: RoutineRow): string | null;
-  state: CollectionCorePresentationState<RoutineRow>;
+  state: CollectionPresentationState<RoutineRow>;
 }) {
-  return defineCollectionCorePresentation({
+  return defineCollectionPresentation({
     descriptor: createRoutinesPresentationDescriptor({
       actions,
       onActivate,
@@ -65,14 +64,20 @@ export function createRoutinesPresentationDescriptor({
       : null,
 }: {
   actions: RoutinePresentationActions;
-  onActivate?: CollectionCorePresentationDescriptor<RoutineRow>["onActivate"];
+  onActivate?: CollectionPresentationDescriptor<RoutineRow>["onActivate"];
   getExecutorLabel?(row: RoutineRow): string | null;
-}): CollectionCorePresentationDescriptor<RoutineRow> {
+}): CollectionPresentationDescriptor<RoutineRow> {
   const properties: readonly CollectionPropertyDefinition<RoutineRow>[] = [
-    propertyField(
-      "trigger",
-      m.routines_field_trigger(),
-      {
+    defineOwnerDefinedCollectionProperty({
+      capabilities: {
+        filter: { kind: "standard" },
+        sort: { kind: "standard" },
+      },
+      featureId: "routines",
+      getValue: (row) => routineTriggerTypeLabel(row),
+      key: "trigger",
+      label: m.routines_field_trigger(),
+      standard: {
         options: [
           { color: "neutral", name: m.routines_trigger_manual() },
           { color: "blue", name: m.routines_trigger_schedule() },
@@ -80,13 +85,17 @@ export function createRoutinesPresentationDescriptor({
         ],
         type: "select",
       },
-      (row) => routineTriggerTypeLabel(row),
-      "owner_defined",
-    ),
-    propertyField(
-      "action",
-      m.routines_field_action(),
-      {
+    }),
+    defineOwnerDefinedCollectionProperty({
+      capabilities: {
+        filter: { kind: "standard" },
+        sort: { kind: "standard" },
+      },
+      featureId: "routines",
+      getValue: (row) => routineActionTypeLabel(row),
+      key: "action",
+      label: m.routines_field_action(),
+      standard: {
         options: [
           { color: "blue", name: m.routines_action_run_agent() },
           {
@@ -96,43 +105,58 @@ export function createRoutinesPresentationDescriptor({
         ],
         type: "select",
       },
-      (row) => routineActionTypeLabel(row),
-      "owner_defined",
-    ),
-    propertyField(
-      "executor",
-      m.routines_field_executor(),
-      { type: "text" },
-      getExecutorLabel,
-      "owner_defined",
-    ),
-    propertyField(
-      "last-run",
-      m.routines_field_last_run(),
-      { display: "medium", type: "date" },
-      (row) => row.lastRunAt,
-      "computed",
-    ),
-    propertyField(
-      "next-run",
-      m.routines_field_next_run(),
-      { display: "medium", type: "date" },
-      (row) => row.nextRunAt,
-      "computed",
-    ),
+    }),
+    defineOwnerDefinedCollectionProperty({
+      capabilities: {
+        filter: { kind: "standard" },
+        sort: { kind: "standard" },
+      },
+      featureId: "routines",
+      getValue: getExecutorLabel,
+      key: "executor",
+      label: m.routines_field_executor(),
+      standard: { type: "text" },
+    }),
+    defineComputedCollectionProperty({
+      capabilities: {
+        filter: { kind: "standard" },
+        sort: { kind: "standard" },
+      },
+      featureId: "routines",
+      getValue: (row) => row.lastRunAt,
+      key: "last-run",
+      label: m.routines_field_last_run(),
+      standard: { display: "medium", type: "date" },
+    }),
+    defineComputedCollectionProperty({
+      capabilities: {
+        filter: { kind: "standard" },
+        sort: { kind: "standard" },
+      },
+      featureId: "routines",
+      getValue: (row) => row.nextRunAt,
+      key: "next-run",
+      label: m.routines_field_next_run(),
+      standard: { display: "medium", type: "date" },
+    }),
     {
-      ...propertyField(
-        "enabled",
-        m.routines_field_enabled(),
-        { display: "switch", type: "boolean" },
-        (row) => row.definition?.enabled ?? false,
-        "owner_defined",
-        {
-          getState: actions.getEnabledState,
-          showDisabledReason: false,
-          update: (row, value) => actions.onEnabledChange(row, value === true),
+      ...defineOwnerDefinedCollectionProperty({
+        capabilities: {
+          edit: {
+            getState: actions.getEnabledState,
+            showDisabledReason: false,
+            update: (row, value) =>
+              actions.onEnabledChange(row, value === true),
+          },
+          filter: { kind: "standard" },
+          sort: { kind: "standard" },
         },
-      ),
+        featureId: "routines",
+        getValue: (row) => row.definition?.enabled ?? false,
+        key: "enabled",
+        label: m.routines_field_enabled(),
+        standard: { display: "switch", type: "boolean" },
+      }),
       getAccessibilityLabel: (row) =>
         m.routines_enabled_accessibility({ name: row.name }),
       getApplicability: (row) => {
@@ -152,10 +176,15 @@ export function createRoutinesPresentationDescriptor({
 
   return {
     create: {
-      getState: () => actions.createState,
-      id: "add-routine",
       label: m.routines_add(),
-      run: actions.onAdd,
+      intents: [
+        {
+          getState: () => actions.createState,
+          id: "add-routine",
+          label: m.routines_add(),
+          run: actions.onAdd,
+        },
+      ],
     },
     onActivate,
     properties,
@@ -220,32 +249,6 @@ export function createRoutinesPresentationDescriptor({
   };
 }
 
-function propertyField(
-  key: string,
-  label: string,
-  standard: CollectionStandardPropertySemantics,
-  getValue: (row: RoutineRow) => unknown,
-  origin: Exclude<
-    CollectionPropertyOrigin,
-    "schema_backed" | "domain_specific"
-  >,
-  edit?: CollectionPropertyEdit<RoutineRow>,
-): CollectionPropertyDefinition<RoutineRow> {
-  return {
-    capabilities: {
-      edit,
-      filter: { kind: "standard" },
-      sort: { kind: "standard" },
-    },
-    getValue,
-    key,
-    label,
-    origin,
-    owner: { featureId: "routines", kind: "feature" },
-    semantics: { kind: "standard", standard },
-  };
-}
-
 function routineTriggerTypeLabel(row: RoutineRow) {
   const type = row.definition?.trigger.type;
   if (type === "manual") return m.routines_trigger_manual();
@@ -266,7 +269,7 @@ function routineActionTypeLabel(row: RoutineRow) {
 export function toRoutinePresentationState(
   state: RoutineCatalogState,
   onRetry: () => void,
-): CollectionCorePresentationState<RoutineRow> {
+): CollectionPresentationState<RoutineRow> {
   if (state.phase === "initial") return { phase: "initial" };
   if (state.phase === "blocking_error") {
     return {

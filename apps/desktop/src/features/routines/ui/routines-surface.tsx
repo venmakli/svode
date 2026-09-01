@@ -1,7 +1,7 @@
 import { AlertTriangle } from "lucide-react";
 
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { CollectionCorePresentationCore } from "@/features/collection/core";
+import { CollectionHost } from "@/features/collection";
 import type { ScopeSurfaceRenderContext } from "@/features/scope-surfaces";
 import * as m from "@/paraglide/messages.js";
 
@@ -21,7 +21,7 @@ export function RoutinesSurface({
   const controller = useRoutinesController(owner, onOpenSession, readOnly);
   const body =
     controller.collectionState.phase === "ready" ? (
-      <CollectionCorePresentationCore
+      <CollectionHost
         trailingActions={
           <>
             <RoutineAutomaticConsentNotice

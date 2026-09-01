@@ -4,7 +4,10 @@ import { createRoot } from "react-dom/client";
 import { JSDOM } from "jsdom";
 
 import type { Page } from "@/features/page";
-import type { Column } from "@/features/properties";
+import {
+  defineSchemaBackedCollectionProperty,
+  type Column,
+} from "@/features/properties";
 import { BoardPropertyFlow } from "./board/board-property-flow";
 import { CardPropertyFlow } from "./card-property-flow";
 
@@ -25,6 +28,10 @@ const column: Column = {
   type: "boolean",
   display: "switch",
 };
+const property = defineSchemaBackedCollectionProperty<Page>({
+  column,
+  getValue: (page) => page.meta.extra.Published,
+});
 
 test("card and board share switch presentation while preserving editability ownership", async () => {
   const dom = new JSDOM(
@@ -41,7 +48,7 @@ test("card and board share switch presentation while preserving editability owne
         <>
           <CardPropertyFlow
             actors={[]}
-            columns={[column]}
+            properties={[property]}
             entry={entry}
             onRequestActors={async () => []}
             onUpdateField={(_entry, _column, value) => changes.push(value)}

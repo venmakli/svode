@@ -3,9 +3,9 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 import { TooltipProvider } from "@/components/ui/tooltip";
 import {
-  EMPTY_COLLECTION_CORE_QUERY,
-  CollectionCorePresentationShell,
-} from "@/features/collection/core";
+  EMPTY_COLLECTION_QUERY,
+  CollectionPresentationShell,
+} from "@/features/collection";
 
 import type { AgentContextInstructionRow } from "../model/types";
 import {
@@ -40,19 +40,17 @@ test("instructions use the common coverless Gallery and safe reader detail", () 
   });
   const html = renderToStaticMarkup(
     <TooltipProvider>
-      <CollectionCorePresentationShell
+      <CollectionPresentationShell
         instanceKey="agent-context:space:root"
         presentation={presentation}
-        query={EMPTY_COLLECTION_CORE_QUERY}
+        query={EMPTY_COLLECTION_QUERY}
         onQueryChange={() => undefined}
       />
     </TooltipProvider>,
   );
 
   expect(
-    html.includes(
-      'data-collection-core-row="codex:project:/workspace/AGENTS.md"',
-    ),
+    html.includes('data-collection-row="codex:project:/workspace/AGENTS.md"'),
   ).toBe(true);
   expect(html.includes("AGENTS.md")).toBe(true);
   expect(html.includes("repeat(auto-fill, minmax(240px, 1fr))")).toBe(true);
@@ -77,7 +75,7 @@ test("instructions use the common coverless Gallery and safe reader detail", () 
   expect(descriptor.instance.descriptor.layout.cardSize).toBe("medium");
   expect(descriptor.instance.descriptor.layout.density).toBe("compact");
   expect("refresh" in descriptor.instance.descriptor).toBe(false);
-  expect(html.includes("data-collection-core-refresh")).toBe(false);
+  expect(html.includes("data-collection-refresh")).toBe(false);
   const detail = createInstructionDetailContent(selected);
   const detailHtml = renderToStaticMarkup(detail.content);
   const detailTitleHtml = renderToStaticMarkup(detail.title);
@@ -113,10 +111,10 @@ test("superseded aliases keep neutral link provenance without a warning", () => 
   });
   const html = renderToStaticMarkup(
     <TooltipProvider>
-      <CollectionCorePresentationShell
+      <CollectionPresentationShell
         instanceKey="agent-context:space:root"
         presentation={presentation}
-        query={EMPTY_COLLECTION_CORE_QUERY}
+        query={EMPTY_COLLECTION_QUERY}
         onQueryChange={() => undefined}
       />
     </TooltipProvider>,
@@ -158,12 +156,12 @@ test("instruction cards show only exceptional factual source metadata", () => {
   };
   const html = renderToStaticMarkup(
     <TooltipProvider>
-      <CollectionCorePresentationShell
+      <CollectionPresentationShell
         instanceKey="agent-context:space:source-metadata"
         presentation={createAgentContextInstructionsPresentation({
           state: { phase: "ready", rows: [selected, global, recognized] },
         })}
-        query={EMPTY_COLLECTION_CORE_QUERY}
+        query={EMPTY_COLLECTION_QUERY}
         onQueryChange={() => undefined}
       />
     </TooltipProvider>,
@@ -185,12 +183,12 @@ test("only row-local degraded health renders a warning overlay", () => {
   };
   const html = renderToStaticMarkup(
     <TooltipProvider>
-      <CollectionCorePresentationShell
+      <CollectionPresentationShell
         instanceKey="agent-context:space:degraded"
         presentation={createAgentContextInstructionsPresentation({
           state: { phase: "ready", rows: [degraded] },
         })}
-        query={EMPTY_COLLECTION_CORE_QUERY}
+        query={EMPTY_COLLECTION_QUERY}
         onQueryChange={() => undefined}
       />
     </TooltipProvider>,

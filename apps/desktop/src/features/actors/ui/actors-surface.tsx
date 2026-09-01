@@ -3,12 +3,12 @@ import { AlertTriangle } from "lucide-react";
 
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import {
-  CollectionCorePresentationCore,
-  useCollectionCoreState,
-  type CollectionCoreActionState,
-  type CollectionCoreInstance,
-  type CollectionCorePresentationState,
-} from "@/features/collection/core";
+  CollectionHost,
+  useCollectionState,
+  type CollectionActionState,
+  type CollectionInstance,
+  type CollectionPresentationState,
+} from "@/features/collection";
 import {
   createCollectionDetailActivation,
   useOptionalCollectionDetailController,
@@ -179,9 +179,9 @@ export function ActorsSurface({
     const frame = requestAnimationFrame(() => {
       const row = Array.from(
         surfaceRef.current?.querySelectorAll<HTMLElement>(
-          "[data-collection-core-row]",
+          "[data-collection-row]",
         ) ?? [],
-      ).find((element) => element.dataset.collectionCoreRow === focusRowId);
+      ).find((element) => element.dataset.collectionRow === focusRowId);
       row?.focus({ preventScroll: true });
       row?.scrollIntoView?.({ block: "nearest" });
       setFocusRowId(null);
@@ -230,13 +230,13 @@ export function ActorsSurface({
     }),
     state: agentActors.presentationState,
   });
-  const instance: CollectionCoreInstance = {
+  const instance: CollectionInstance = {
     defaultPresentationId: "humans",
     instanceKey,
     presentations: [presentation, agentActorsPresentation],
     stateScope: "session",
   };
-  const collectionState = useCollectionCoreState(instance);
+  const collectionState = useCollectionState(instance);
 
   const body =
     collectionState.phase === "blocking_error" ? (
@@ -251,10 +251,7 @@ export function ActorsSurface({
         </Alert>
       </div>
     ) : (
-      <CollectionCorePresentationCore
-        instance={instance}
-        state={collectionState}
-      />
+      <CollectionHost instance={instance} state={collectionState} />
     );
 
   return (
@@ -311,7 +308,7 @@ function mutationActionState(
   catalog: ActorCatalogState,
   mutationPending: boolean,
   readOnly: boolean,
-): CollectionCoreActionState {
+): CollectionActionState {
   if (mutationPending) return { status: "pending" };
   if (readOnly) {
     return {
@@ -343,7 +340,7 @@ function mutationActionState(
 function toPresentationState(
   state: ReturnType<typeof useActorCatalog>["state"],
   onRetry: () => void,
-): CollectionCorePresentationState<ActorCatalogRow> {
+): CollectionPresentationState<ActorCatalogRow> {
   if (state.phase === "initial") return { phase: "initial" };
   if (state.phase === "blocking_error") {
     return {

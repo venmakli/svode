@@ -1,5 +1,9 @@
 import type { Page } from "@/features/page";
-import type { ActorCandidate, Column } from "@/features/properties";
+import type {
+  ActorCandidate,
+  Column,
+  CollectionPropertyDefinition,
+} from "@/features/properties";
 import type { GalleryResolvedCover } from "../../model/gallery-cover-types";
 
 export type { GalleryViewProps } from "../../model/gallery-types";
@@ -16,7 +20,7 @@ export interface GalleryCardProps {
   entry: Page;
   cover: GalleryResolvedCover | null;
   cardFields: string[];
-  metaColumns: Column[];
+  properties: readonly CollectionPropertyDefinition<Page>[];
   coverFit: "cover" | "contain";
   coverAspect: string;
   spacePath: string;

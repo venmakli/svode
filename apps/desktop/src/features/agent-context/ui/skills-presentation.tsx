@@ -22,15 +22,16 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import {
-  defineCollectionCorePresentation,
-  normalizeCollectionCoreSearchText,
-  type CollectionCorePresentationDescriptor,
-  type CollectionCorePresentationState,
-} from "@/features/collection/core";
+  defineCollectionPresentation,
+  normalizeCollectionSearchText,
+  type CollectionPresentationDescriptor,
+  type CollectionPresentationState,
+} from "@/features/collection";
 import type { CollectionDetailContent } from "@/features/collection/app-shell";
-import type {
-  CollectionPropertyDefinition,
-  CollectionPropertyFilterEditorInput,
+import {
+  defineDomainSpecificCollectionProperty,
+  type CollectionPropertyDefinition,
+  type CollectionPropertyFilterEditorInput,
 } from "@/features/properties";
 import * as m from "@/paraglide/messages.js";
 
@@ -60,8 +61,8 @@ export function createAgentContextSkillsPresentation({
     canonicalArtifactPath: string;
     tool: ArtifactOpener["id"];
   }): void | Promise<void>;
-  onActivate?: CollectionCorePresentationDescriptor<AgentContextSkillRow>["onActivate"];
-  state: CollectionCorePresentationState<AgentContextSkillRow>;
+  onActivate?: CollectionPresentationDescriptor<AgentContextSkillRow>["onActivate"];
+  state: CollectionPresentationState<AgentContextSkillRow>;
 }) {
   const properties: readonly CollectionPropertyDefinition<AgentContextSkillRow>[] =
     [
@@ -84,7 +85,7 @@ export function createAgentContextSkillsPresentation({
       ),
     ];
 
-  return defineCollectionCorePresentation<AgentContextSkillRow>({
+  return defineCollectionPresentation<AgentContextSkillRow>({
     descriptor: {
       onActivate,
       properties,
@@ -184,8 +185,8 @@ export function compareSkillsByDefault(
 ) {
   return (
     compareText(
-      normalizeCollectionCoreSearchText(left.name),
-      normalizeCollectionCoreSearchText(right.name),
+      normalizeCollectionSearchText(left.name),
+      normalizeCollectionSearchText(right.name),
     ) || compareText(left.canonicalPath, right.canonicalPath)
   );
 }
@@ -200,7 +201,7 @@ function multiValueField<Value extends string>(
   getVisibleValues: (values: readonly Value[]) => readonly Value[] = (values) =>
     values,
 ): CollectionPropertyDefinition<AgentContextSkillRow> {
-  return {
+  return defineDomainSpecificCollectionProperty({
     capabilities: {
       filter: {
         kind: "custom",
@@ -222,27 +223,23 @@ function multiValueField<Value extends string>(
           options.includes(rule.value as Value),
       },
     },
+    featureId: "agent-context",
     getValue: getValues,
     key,
     label,
-    origin: "domain_specific",
-    owner: { featureId: "agent-context", kind: "feature" },
-    semantics: {
-      kind: "custom",
-      render: (_value, row) => {
-        const values = getVisibleValues(getValues(row));
-        return values.length > 0 ? (
-          <div className="flex flex-wrap gap-1">
-            {values.map((value) => (
-              <Badge key={value} variant="outline">
-                {getLabel(value)}
-              </Badge>
-            ))}
-          </div>
-        ) : null;
-      },
+    render: (_value, row) => {
+      const values = getVisibleValues(getValues(row));
+      return values.length > 0 ? (
+        <div className="flex flex-wrap gap-1">
+          {values.map((value) => (
+            <Badge key={value} variant="outline">
+              {getLabel(value)}
+            </Badge>
+          ))}
+        </div>
+      ) : null;
     },
-  };
+  });
 }
 
 function SkillFilterEditor<Value extends string>({

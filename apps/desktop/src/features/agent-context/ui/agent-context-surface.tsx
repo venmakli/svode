@@ -3,10 +3,10 @@ import { AlertTriangle } from "lucide-react";
 
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import {
-  CollectionCorePresentationCore,
-  useCollectionCoreState,
-  type CollectionCoreInstance,
-} from "@/features/collection/core";
+  CollectionHost,
+  useCollectionState,
+  type CollectionInstance,
+} from "@/features/collection";
 import {
   createCollectionDetailActivation,
   useOptionalCollectionDetailController,
@@ -105,7 +105,7 @@ export function AgentContextSurface({ owner }: ScopeSurfaceRenderContext) {
       }),
     [artifactOpeners, detailController, instanceKey, skillsState],
   );
-  const instance = useMemo<CollectionCoreInstance>(
+  const instance = useMemo<CollectionInstance>(
     () => ({
       defaultPresentationId: "instructions",
       instanceKey,
@@ -114,7 +114,7 @@ export function AgentContextSurface({ owner }: ScopeSurfaceRenderContext) {
     }),
     [instanceKey, instructionsPresentation, skillsPresentation],
   );
-  const collectionState = useCollectionCoreState(instance);
+  const collectionState = useCollectionState(instance);
 
   useEffect(() => {
     if (!openedRow || state.phase !== "ready" || !detailController) return;
@@ -151,7 +151,7 @@ export function AgentContextSurface({ owner }: ScopeSurfaceRenderContext) {
       className="flex min-h-0 flex-1 flex-col"
       data-agent-context-surface={owner.ownerKey}
     >
-      <CollectionCorePresentationCore
+      <CollectionHost
         contextualActions={
           <AgentContextDiagnosticsDialog
             groups={diagnosticGroups}

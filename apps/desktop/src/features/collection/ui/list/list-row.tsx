@@ -19,7 +19,7 @@ import { cn } from "@/shared/lib/utils";
 import { pageNameConflictDisplayPath } from "@/features/page/page-api";
 import { CardPropertyFlow } from "../card-property-flow";
 import { PageTitleIcon } from "../page-title-icon";
-import { CollectionPresentationListRow } from "../presentation-core";
+import { CollectionPresentationListRow } from "../presentation-chrome";
 import type { ListRowProps } from "./types";
 import * as m from "@/paraglide/messages.js";
 
@@ -64,7 +64,7 @@ export function CollectionListRowContent({
   row,
   density,
   cardFields,
-  metaColumns,
+  properties,
   spacePath,
   projectPath,
   actors,
@@ -193,7 +193,7 @@ export function CollectionListRowContent({
       properties={
         <CardPropertyFlow
           entry={entry}
-          columns={metaColumns}
+          properties={properties}
           actors={actors}
           relationContext={{
             spacePath,

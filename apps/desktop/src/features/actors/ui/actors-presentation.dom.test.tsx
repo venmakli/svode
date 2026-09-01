@@ -5,9 +5,9 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { JSDOM } from "jsdom";
 
 import {
-  EMPTY_COLLECTION_CORE_QUERY,
-  CollectionCorePresentationShell,
-} from "@/features/collection/core";
+  EMPTY_COLLECTION_QUERY,
+  CollectionPresentationShell,
+} from "@/features/collection";
 import {
   createCollectionDetailActivation,
   type CollectionDetailRequest,
@@ -70,17 +70,17 @@ test("actors rows open in the real DOM and use shared row and Drawer action seam
   try {
     await act(async () => {
       root.render(
-        <CollectionCorePresentationShell
+        <CollectionPresentationShell
           instanceKey="actors:space:root"
           presentation={presentation}
-          query={EMPTY_COLLECTION_CORE_QUERY}
+          query={EMPTY_COLLECTION_QUERY}
           onQueryChange={() => undefined}
         />,
       );
     });
 
     const row = dom.window.document.querySelector<HTMLElement>(
-      '[data-collection-core-row="ada@example.test"]',
+      '[data-collection-row="ada@example.test"]',
     )!;
     const title = Array.from(row.querySelectorAll("span")).find(
       (element) => element.textContent === "Ada Lovelace",

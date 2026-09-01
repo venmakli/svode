@@ -12,7 +12,7 @@ import type { SettingsPane } from "../model";
 import type { TemplateInfo, TemplateKind } from "../model";
 import { TemplatesSplitButton } from "./templates-menu";
 import { ViewSettingsPopover } from "./view-settings-popover";
-import { CollectionQueryToolbarButton } from "./presentation-core";
+import { CollectionQueryToolbarButton } from "./presentation-chrome";
 import * as m from "@/paraglide/messages.js";
 
 const toolbarActiveButtonClass =

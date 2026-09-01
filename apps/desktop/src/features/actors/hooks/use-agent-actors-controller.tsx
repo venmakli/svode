@@ -1,9 +1,9 @@
 import { useCallback, useMemo } from "react";
 
 import type {
-  CollectionCoreActionState,
-  CollectionCorePresentationState,
-} from "@/features/collection/core";
+  CollectionActionState,
+  CollectionPresentationState,
+} from "@/features/collection";
 import type { CollectionDetailController } from "@/features/collection/app-shell";
 import { RepositoryAccessPreflightDialog } from "@/features/git";
 import type { ScopeOwnerRef } from "@/features/scope-surfaces";
@@ -207,7 +207,7 @@ export function useAgentActorsController({
     });
   }
 
-  const actionState: CollectionCoreActionState = mutationPending
+  const actionState: CollectionActionState = mutationPending
     ? { status: "pending" }
     : readOnly
       ? {
@@ -217,14 +217,14 @@ export function useAgentActorsController({
       : snapshot
         ? { status: "idle" }
         : { status: "disabled", reason: m.agent_actors_catalog_unavailable() };
-  const actionStateForOwner = (ownerPath: string): CollectionCoreActionState =>
+  const actionStateForOwner = (ownerPath: string): CollectionActionState =>
     actionState.status === "idle" && !snapshot?.fingerprints[ownerPath]
       ? {
           reason: m.agent_actors_catalog_unavailable(),
           status: "disabled",
         }
       : actionState;
-  const presentationState: CollectionCorePresentationState<AgentActorRow> =
+  const presentationState: CollectionPresentationState<AgentActorRow> =
     catalog.state.phase === "initial"
       ? { phase: "initial" }
       : catalog.state.phase === "blocking_error"

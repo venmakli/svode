@@ -3,12 +3,12 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 import { TooltipProvider } from "@/components/ui/tooltip";
 import {
-  applyCollectionCoreQuery,
-  EMPTY_COLLECTION_CORE_QUERY,
-  CollectionCorePresentationCore,
-  type CollectionCoreInstance,
-  type CollectionCoreStateController,
-} from "@/features/collection/core";
+  applyCollectionQuery,
+  EMPTY_COLLECTION_QUERY,
+  CollectionHost,
+  type CollectionInstance,
+  type CollectionStateController,
+} from "@/features/collection";
 
 import type { RoutineRow } from "../model/types";
 import { RoutineAutomaticConsent } from "./routine-automatic-consent";
@@ -177,7 +177,7 @@ test("routines expose one fixed All list with the complete fixed schema", () => 
   expect(enabledField.getAccessibilityLabel?.(scheduled)).toBe(
     "Enabled: Daily summary",
   );
-  expect(descriptor.create?.id).toBe("add-routine");
+  expect(descriptor.create?.intents[0]?.id).toBe("add-routine");
   expect("refresh" in descriptor).toBe(false);
   expect(descriptor.rowActions?.map((action) => action.id)).toEqual([
     "run-routine",
@@ -308,12 +308,12 @@ test("routines query searches definitions and defaults to name ordering", () => 
     actions: actions([]),
     onActivate: () => undefined,
   });
-  const ordered = applyCollectionCoreQuery({
+  const ordered = applyCollectionQuery({
     descriptor,
-    query: EMPTY_COLLECTION_CORE_QUERY,
+    query: EMPTY_COLLECTION_QUERY,
     rows: [review, scheduled],
   });
-  const searched = applyCollectionCoreQuery({
+  const searched = applyCollectionQuery({
     descriptor,
     query: { filters: [], search: "0 9 * * *", sort: [] },
     rows: [review, scheduled],
@@ -331,7 +331,7 @@ test("routines query searches definitions and defaults to name ordering", () => 
     id: "routine:enabled-summary",
     name: "Enabled summary",
   };
-  const disabledRows = applyCollectionCoreQuery({
+  const disabledRows = applyCollectionQuery({
     descriptor,
     query: {
       filters: [{ propertyKey: "enabled", operator: "eq", value: false }],
@@ -353,7 +353,7 @@ test("routines delegate create, row actions, and inline enabled edits", async ()
     onActivate: () => undefined,
   });
 
-  await descriptor.create?.run();
+  await descriptor.create?.intents[0]?.run();
   for (const action of descriptor.rowActions ?? []) {
     if (action.isVisible?.(review) === false) continue;
     await action.run(review);
@@ -377,17 +377,17 @@ test("routines render the common toolbar and a single fixed All list", () => {
     onActivate: () => undefined,
     state: { phase: "ready", rows: [scheduled] },
   });
-  const instance: CollectionCoreInstance = {
+  const instance: CollectionInstance = {
     defaultPresentationId: "all",
     instanceKey: "routines:space:root",
     presentations: [presentation],
     stateScope: "session",
   };
-  const state: Extract<CollectionCoreStateController, { phase: "ready" }> = {
+  const state: Extract<CollectionStateController, { phase: "ready" }> = {
     activePresentationId: "all",
     dismissResetWarning: () => undefined,
     phase: "ready",
-    query: EMPTY_COLLECTION_CORE_QUERY,
+    query: EMPTY_COLLECTION_QUERY,
     queryByPresentationId: {},
     resetWarning: false,
     setActivePresentationId: () => undefined,
@@ -395,7 +395,7 @@ test("routines render the common toolbar and a single fixed All list", () => {
   };
   const markup = renderToStaticMarkup(
     <TooltipProvider>
-      <CollectionCorePresentationCore
+      <CollectionHost
         trailingActions={
           <RoutineAutomaticConsent
             enabled={false}
@@ -416,17 +416,13 @@ test("routines render the common toolbar and a single fixed All list", () => {
   const authorityPosition = markup.indexOf(
     'data-routine-automatic-authority="project"',
   );
-  const createPosition = markup.indexOf(
-    'data-collection-core-create="add-routine"',
-  );
+  const createPosition = markup.indexOf('data-collection-create="add-routine"');
 
   expect(markup.includes('role="list"')).toBe(true);
   expect(markup.includes('role="listitem"')).toBe(true);
-  expect(markup.includes('data-collection-core-presentation="all"')).toBe(true);
-  expect(markup.includes('data-collection-core-create="add-routine"')).toBe(
-    true,
-  );
-  expect(markup.includes("data-collection-core-refresh")).toBe(false);
+  expect(markup.includes('data-collection-presentation="all"')).toBe(true);
+  expect(markup.includes('data-collection-create="add-routine"')).toBe(true);
+  expect(markup.includes("data-collection-refresh")).toBe(false);
   expect(markup.includes("Daily summary")).toBe(true);
   expect(markup.includes("Active")).toBe(false);
   expect(markup.includes("Runs")).toBe(false);
@@ -436,7 +432,7 @@ test("routines render the common toolbar and a single fixed All list", () => {
   expect(markup.includes('data-orientation="vertical"')).toBe(false);
   expect(markup.includes("Add routine")).toBe(false);
   expect(markup.includes(">Add<")).toBe(true);
-  expect(markup.includes('data-collection-core-property="enabled"')).toBe(true);
+  expect(markup.includes('data-collection-property="enabled"')).toBe(true);
   expect(markup.includes('role="switch"')).toBe(true);
   expect(markup.includes('data-size="sm"')).toBe(true);
   expect(markup.includes('aria-label="Enabled: Daily summary"')).toBe(true);
@@ -459,17 +455,17 @@ test("manual routines omit enabled while invalid routines render a passive marke
       rows: [scheduled, eventRoutine, review, invalid],
     },
   });
-  const instance: CollectionCoreInstance = {
+  const instance: CollectionInstance = {
     defaultPresentationId: "all",
     instanceKey: "routines:space:manual",
     presentations: [presentation],
     stateScope: "session",
   };
-  const state: Extract<CollectionCoreStateController, { phase: "ready" }> = {
+  const state: Extract<CollectionStateController, { phase: "ready" }> = {
     activePresentationId: "all",
     dismissResetWarning: () => undefined,
     phase: "ready",
-    query: EMPTY_COLLECTION_CORE_QUERY,
+    query: EMPTY_COLLECTION_QUERY,
     queryByPresentationId: {},
     resetWarning: false,
     setActivePresentationId: () => undefined,
@@ -477,7 +473,7 @@ test("manual routines omit enabled while invalid routines render a passive marke
   };
   const markup = renderToStaticMarkup(
     <TooltipProvider>
-      <CollectionCorePresentationCore instance={instance} state={state} />
+      <CollectionHost instance={instance} state={state} />
     </TooltipProvider>,
   );
 
@@ -485,9 +481,7 @@ test("manual routines omit enabled while invalid routines render a passive marke
   expect(markup.includes('role="checkbox"')).toBe(false);
   expect(markup.includes("Not applicable")).toBe(false);
   expect(
-    markup.includes(
-      'data-collection-core-property-applicability="unavailable"',
-    ),
+    markup.includes('data-collection-property-applicability="unavailable"'),
   ).toBe(true);
   expect(markup.includes("Unavailable")).toBe(true);
   expect(markup.includes("flex-wrap")).toBe(true);

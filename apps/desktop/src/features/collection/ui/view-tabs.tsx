@@ -27,7 +27,7 @@ import { SettingsRow, SettingsSection } from "./settings-row";
 import { ManageViewsPane } from "./manage-views-pane";
 import { viewType } from "../lib/utils";
 import { viewIcons } from "./view-icons";
-import { CollectionPresentationTabTrigger } from "./presentation-core";
+import { CollectionPresentationTabTrigger } from "./presentation-chrome";
 import type { ActiveTab } from "../model";
 
 type TabIcon = ComponentType<LucideProps>;

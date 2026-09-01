@@ -5,7 +5,10 @@ import type {
   UseViewQueryResult,
 } from "@/features/collection/query/model";
 import type { Page } from "@/features/page";
-import type { CollectionSchema } from "@/features/properties";
+import type {
+  CollectionPropertyDefinition,
+  CollectionSchema,
+} from "@/features/properties";
 
 export interface GalleryViewProps {
   readOnly: boolean;
@@ -13,6 +16,7 @@ export interface GalleryViewProps {
   view: CollectionView;
   query: UseViewQueryResult;
   schema: CollectionSchema;
+  properties: readonly CollectionPropertyDefinition<Page>[];
   collectionPath: string;
   previousCollectionPath?: string | null;
   spacePath: string;

@@ -120,6 +120,54 @@ export function defineSchemaBackedCollectionProperty<Row>({
   };
 }
 
+export function defineOwnerDefinedCollectionProperty<Row>({
+  featureId,
+  standard,
+  ...definition
+}: Omit<CollectionPropertyDefinition<Row>, "origin" | "owner" | "semantics"> & {
+  featureId: string;
+  standard: CollectionStandardPropertySemantics;
+}): CollectionPropertyDefinition<Row> {
+  return defineFeatureStandardProperty({
+    ...definition,
+    featureId,
+    origin: "owner_defined",
+    standard,
+  });
+}
+
+export function defineComputedCollectionProperty<Row>({
+  featureId,
+  standard,
+  ...definition
+}: Omit<CollectionPropertyDefinition<Row>, "origin" | "owner" | "semantics"> & {
+  featureId: string;
+  standard: CollectionStandardPropertySemantics;
+}): CollectionPropertyDefinition<Row> {
+  return defineFeatureStandardProperty({
+    ...definition,
+    featureId,
+    origin: "computed",
+    standard,
+  });
+}
+
+export function defineDomainSpecificCollectionProperty<Row>({
+  featureId,
+  render,
+  ...definition
+}: Omit<CollectionPropertyDefinition<Row>, "origin" | "owner" | "semantics"> & {
+  featureId: string;
+  render(value: unknown, row: Row): ReactNode;
+}): CollectionPropertyDefinition<Row> {
+  return {
+    ...definition,
+    origin: "domain_specific",
+    owner: { featureId, kind: "feature" },
+    semantics: { kind: "custom", render },
+  };
+}
+
 export function resolveStandardPropertyColumn<Row>(
   property: CollectionPropertyDefinition<Row>,
 ): Column | null {
@@ -134,4 +182,22 @@ function standardSemanticsFromColumn(
   const standard = { ...column } as Partial<Column>;
   delete standard.name;
   return standard as CollectionStandardPropertySemantics;
+}
+
+function defineFeatureStandardProperty<Row>({
+  featureId,
+  origin,
+  standard,
+  ...definition
+}: Omit<CollectionPropertyDefinition<Row>, "origin" | "owner" | "semantics"> & {
+  featureId: string;
+  origin: "owner_defined" | "computed";
+  standard: CollectionStandardPropertySemantics;
+}): CollectionPropertyDefinition<Row> {
+  return {
+    ...definition,
+    origin,
+    owner: { featureId, kind: "feature" },
+    semantics: { kind: "standard", standard },
+  };
 }

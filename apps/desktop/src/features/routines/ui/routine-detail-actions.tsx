@@ -3,7 +3,7 @@ import { AlertTriangle, LoaderCircle } from "lucide-react";
 
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import type { CollectionCoreActionState } from "@/features/collection/core";
+import type { CollectionActionState } from "@/features/collection";
 import * as m from "@/paraglide/messages.js";
 
 import type { RoutineRow } from "../model/types";
@@ -15,7 +15,7 @@ export function RoutineDetailActions({
   onRun,
 }: {
   row: RoutineRow;
-  runState: CollectionCoreActionState;
+  runState: CollectionActionState;
   onOpenSession(row: RoutineRow): void;
   onRun(row: RoutineRow): Promise<void>;
 }) {

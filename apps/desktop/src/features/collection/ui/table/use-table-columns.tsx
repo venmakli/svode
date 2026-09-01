@@ -7,11 +7,15 @@ import type {
 } from "@/features/collection/query/model";
 import type {
   CollectionSchema,
+  CollectionPropertyDefinition,
   Column,
   ActorCandidate,
   RelationOpenTarget,
 } from "@/features/properties";
-import { normalizeSchema } from "@/features/properties";
+import {
+  normalizeSchema,
+  resolveStandardPropertyColumn,
+} from "@/features/properties";
 import { PROPERTY_TYPE_ICONS } from "@/features/properties/column-menu";
 import { ColumnMenuPopover } from "./column-menu";
 import { PropertyCell, TitleCell } from "./cells";
@@ -30,6 +34,7 @@ export function useTableColumns({
   readOnly,
   visibleFields,
   schema,
+  properties,
   view,
   query,
   collectionPath,
@@ -60,6 +65,7 @@ export function useTableColumns({
   readOnly: boolean;
   visibleFields: string[];
   schema: CollectionSchema;
+  properties: readonly CollectionPropertyDefinition<Page>[];
   view: CollectionView;
   query: UseViewQueryResult;
   collectionPath: string;
@@ -100,7 +106,8 @@ export function useTableColumns({
       .map((field) => {
         if (field === "title") {
           const label =
-            schema.systemFields?.title?.label || m.collection_field_title();
+            properties.find((property) => property.key === "title")?.label ??
+            m.collection_field_title();
           return {
             id: "title",
             size: columnSizing.title ?? 260,
@@ -162,17 +169,23 @@ export function useTableColumns({
           };
         }
 
-        const property = schema.columns.find((column) => column.name === field);
+        const propertyDefinition = properties.find(
+          (candidate) => candidate.key === field,
+        );
+        const property = propertyDefinition
+          ? resolveStandardPropertyColumn(propertyDefinition)
+          : null;
         const Icon = PROPERTY_TYPE_ICONS[property?.type ?? "text"];
         return {
           id: field,
-          size: columnSizing[field] ?? defaultColumnWidth(property),
-          minSize: minColumnWidth(property),
+          size:
+            columnSizing[field] ?? defaultColumnWidth(property ?? undefined),
+          minSize: minColumnWidth(property ?? undefined),
           header: ({ header }) => (
             <ColumnHeader
               readOnly={readOnly}
               field={field}
-              label={field}
+              label={propertyDefinition?.label ?? field}
               icon={Icon}
               open={openColumn === field}
               onOpenChange={(open) => setOpenColumn(open ? field : null)}
@@ -210,7 +223,7 @@ export function useTableColumns({
             </ColumnHeader>
           ),
           cell: ({ row }) =>
-            property ? (
+            property && propertyDefinition ? (
               <PropertyCell
                 readOnly={readOnly}
                 column={property}
@@ -224,7 +237,7 @@ export function useTableColumns({
                   onOpenPath,
                   onOpenRelationTarget,
                 }}
-                value={row.original.entry.meta.extra?.[property.name] ?? null}
+                value={propertyDefinition.getValue(row.original.entry)}
                 editing={
                   editing?.path === row.original.entry.path &&
                   editing.field === property.name
@@ -268,6 +281,7 @@ export function useTableColumns({
     openColumn,
     actors,
     projectPath,
+    properties,
     query,
     readOnly,
     schema,

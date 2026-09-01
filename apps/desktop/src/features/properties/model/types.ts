@@ -29,7 +29,7 @@ export type ColorName =
 
 export type StatusGroup = "todo" | "in_progress" | "done";
 
-export type NumberDisplay = "number" | "percent" | "bar" | "ring";
+export type NumberDisplay = "number" | "percent" | "bar" | "ring" | "bytes";
 export type DateDisplay = "short" | "medium" | "long";
 export type BooleanDisplay = "checkbox" | "switch";
 

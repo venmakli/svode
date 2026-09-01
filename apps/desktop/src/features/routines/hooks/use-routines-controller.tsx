@@ -1,10 +1,10 @@
 import { useCallback, useMemo } from "react";
 
 import {
-  useCollectionCoreState,
-  type CollectionCoreActionState,
-  type CollectionCoreInstance,
-} from "@/features/collection/core";
+  useCollectionState,
+  type CollectionActionState,
+  type CollectionInstance,
+} from "@/features/collection";
 import {
   createCollectionDetailActivation,
   useOptionalCollectionDetailController,
@@ -128,7 +128,7 @@ export function useRoutinesController(
   const createExecutors = useDetachedCreateExecutors
     ? detachedCreateExecutors
     : executors;
-  const actionState = useMemo<CollectionCoreActionState>(() => {
+  const actionState = useMemo<CollectionActionState>(() => {
     if (mutations.pending || create.pending) return { status: "pending" };
     if (readOnly) {
       return {
@@ -233,13 +233,13 @@ export function useRoutinesController(
     }),
     state: toRoutinePresentationState(state, () => void refresh()),
   });
-  const instance: CollectionCoreInstance = {
+  const instance: CollectionInstance = {
     defaultPresentationId: "all",
     instanceKey,
     presentations: [presentation],
     stateScope: "session",
   };
-  const collectionState = useCollectionCoreState(instance);
+  const collectionState = useCollectionState(instance);
   const overlays = (
     <>
       {create.session ? (

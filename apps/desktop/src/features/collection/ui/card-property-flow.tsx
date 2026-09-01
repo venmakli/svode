@@ -1,10 +1,8 @@
 import { cn } from "@/shared/lib/utils";
 import {
-  defineSchemaBackedCollectionProperty,
   isEmptyValue,
   resolveStandardPropertyColumn,
   validatePropertyValue,
-  valueToString,
 } from "@/features/properties";
 import { PropertyControl } from "@/features/properties/control";
 import { PropertyValue } from "@/features/properties/display";
@@ -12,17 +10,18 @@ import type { Page } from "@/features/page";
 import type {
   Column,
   ActorCandidate,
+  CollectionPropertyDefinition,
   RelationContext,
 } from "@/features/properties";
 
 import {
   CollectionPresentationPropertyFlow,
   CollectionPresentationPropertyItem,
-} from "./presentation-core";
+} from "./presentation-chrome";
 
 export function CardPropertyFlow({
   entry,
-  columns,
+  properties,
   actors,
   relationContext,
   className,
@@ -31,7 +30,7 @@ export function CardPropertyFlow({
   onUpdateField,
 }: {
   entry: Page;
-  columns: Column[];
+  properties: readonly CollectionPropertyDefinition<Page>[];
   actors: ActorCandidate[];
   relationContext?: RelationContext;
   className?: string;
@@ -39,12 +38,12 @@ export function CardPropertyFlow({
   onRequestActors: (allTime: boolean) => Promise<ActorCandidate[]>;
   onUpdateField?: (entry: Page, column: Column, value: unknown) => void;
 }) {
-  const rendered = columns
-    .map((column) => (
+  const rendered = properties
+    .map((property) => (
       <CardPropertyItem
-        key={column.name}
+        key={property.key}
         entry={entry}
-        column={column}
+        property={property}
         actors={actors}
         relationContext={relationContext}
         mode={mode}
@@ -66,7 +65,7 @@ export function CardPropertyFlow({
 
 function CardPropertyItem({
   entry,
-  column,
+  property,
   actors,
   relationContext,
   mode,
@@ -74,26 +73,13 @@ function CardPropertyItem({
   onUpdateField,
 }: {
   entry: Page;
-  column: Column;
+  property: CollectionPropertyDefinition<Page>;
   actors: ActorCandidate[];
   relationContext?: RelationContext;
   mode: "card" | "inline";
   onRequestActors: (allTime: boolean) => Promise<ActorCandidate[]>;
   onUpdateField?: (entry: Page, column: Column, value: unknown) => void;
 }) {
-  const property = defineSchemaBackedCollectionProperty<Page>({
-    capabilities: {
-      edit: onUpdateField
-        ? {
-            getState: () => ({ status: "idle" }),
-            update: (row, value) => onUpdateField(row, column, value),
-          }
-        : undefined,
-    },
-    column,
-    getAccessibilityLabel: (row) => `${column.name}: ${row.meta.title}`,
-    getValue: (row) => valueForColumn(row, column),
-  });
   const standardColumn = resolveStandardPropertyColumn(property);
   const value = property.getValue(entry);
   if (!standardColumn) return null;
@@ -101,8 +87,7 @@ function CardPropertyItem({
 
   const validation = validatePropertyValue(standardColumn, value);
   const interactive =
-    Boolean(property.capabilities?.edit) &&
-    isInteractiveCardType(standardColumn);
+    Boolean(onUpdateField) && isInteractiveCardType(standardColumn);
   const fullWidth = mode === "card" && isFullWidthCardType(standardColumn);
 
   return (
@@ -132,13 +117,16 @@ function CardPropertyItem({
             column={standardColumn}
             value={value}
             invalid={validation.invalid}
-            accessibilityLabel={property.getAccessibilityLabel?.(entry)}
+            accessibilityLabel={
+              property.getAccessibilityLabel?.(entry) ??
+              `${property.label}: ${entry.meta.title}`
+            }
             density="compact"
             actors={actors}
             relationContext={relationContext}
             onRequestActors={onRequestActors}
             onChange={(next) =>
-              void property.capabilities?.edit?.update(entry, next)
+              void onUpdateField?.(entry, standardColumn, next)
             }
           />
         ) : (
@@ -152,13 +140,6 @@ function CardPropertyItem({
       </span>
     </CollectionPresentationPropertyItem>
   );
-}
-
-function valueForColumn(entry: Page, column: Column) {
-  if (column.name === "created") return entry.meta.created;
-  if (column.name === "updated") return entry.meta.updated;
-  const value = entry.meta.extra?.[column.name];
-  return typeof value === "string" ? valueToString(value) : (value ?? null);
 }
 
 function isInteractiveCardType(column: Column) {

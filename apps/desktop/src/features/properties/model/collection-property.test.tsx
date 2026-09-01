@@ -1,9 +1,9 @@
 import { expect, test } from "bun:test";
 
 import {
-  applyCollectionCoreQuery,
-  defineCollectionCorePresentation,
-} from "@/features/collection/core";
+  applyCollectionQuery,
+  defineCollectionPresentation,
+} from "@/features/collection";
 
 import {
   defineSchemaBackedCollectionProperty,
@@ -72,7 +72,7 @@ test("Collection Properties preserve explicit ownership across all supported ori
     computed,
     domainSpecific,
   ] as const;
-  const presentation = defineCollectionCorePresentation<Row>({
+  const presentation = defineCollectionPresentation<Row>({
     descriptor: {
       getRowId: (item) => item.id,
       id: "origin-fixture",
@@ -105,7 +105,7 @@ test("Collection Properties preserve explicit ownership across all supported ori
   });
   expect(resolveStandardPropertyColumn(domainSpecific)).toBeNull();
   expect(
-    applyCollectionCoreQuery({
+    applyCollectionQuery({
       descriptor: {
         getRowId: (item) => item.id,
         id: "origin-fixture",

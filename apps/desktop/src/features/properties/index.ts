@@ -46,9 +46,19 @@ export type {
   CollectionStandardPropertySemantics,
 } from "./model/collection-property";
 export {
+  defineComputedCollectionProperty,
+  defineDomainSpecificCollectionProperty,
+  defineOwnerDefinedCollectionProperty,
   defineSchemaBackedCollectionProperty,
   resolveStandardPropertyColumn,
 } from "./model/collection-property";
+export {
+  compareStandardPropertyValues,
+  createDefaultStandardPropertyFilterRule,
+  matchesStandardPropertyFilter,
+  standardPropertyFilterOperators,
+  validateStandardPropertyFilterRule,
+} from "./model/standard-query";
 export {
   shouldClosePropertyEditorOnChange,
   validatePropertyValue,

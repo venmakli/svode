@@ -1,4 +1,4 @@
-import type { CollectionCoreActivationContext } from "../core/model/types";
+import type { CollectionActivationContext } from "../runtime/model/types";
 import type {
   CollectionDetailContent,
   CollectionDetailController,
@@ -17,7 +17,7 @@ export function createCollectionDetailActivation<Row>({
   onRequested?(rowId: string, row: Row): void;
   presentationId: string;
 }):
-  | ((row: Row, context: CollectionCoreActivationContext) => Promise<void>)
+  | ((row: Row, context: CollectionActivationContext) => Promise<void>)
   | undefined {
   if (!controller) return undefined;
 

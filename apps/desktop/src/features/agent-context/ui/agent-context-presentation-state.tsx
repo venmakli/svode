@@ -1,5 +1,5 @@
 import { Button } from "@/components/ui/button";
-import type { CollectionCorePresentationState } from "@/features/collection/core";
+import type { CollectionPresentationState } from "@/features/collection";
 import * as m from "@/paraglide/messages.js";
 
 import type { AgentContextCatalogState } from "../model/catalog-state";
@@ -11,7 +11,7 @@ export function toAgentContextPresentationState<Row>(
   ) => readonly Row[],
   sourceEmpty: React.ReactNode,
   onRetry: () => void,
-): CollectionCorePresentationState<Row> {
+): CollectionPresentationState<Row> {
   if (state.phase === "initial") return { phase: "initial" };
   if (state.phase === "blocking_error") {
     return {

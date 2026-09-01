@@ -3,11 +3,11 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 import { TooltipProvider } from "@/components/ui/tooltip";
 import {
-  applyCollectionCoreQuery,
-  EMPTY_COLLECTION_CORE_QUERY,
-  CollectionCorePresentationShell,
-  type CollectionCorePresentationDescriptor,
-} from "@/features/collection/core";
+  applyCollectionQuery,
+  EMPTY_COLLECTION_QUERY,
+  CollectionPresentationShell,
+  type CollectionPresentationDescriptor,
+} from "@/features/collection";
 
 import { skillDetailProvenance } from "../model/detail-provenance";
 import type { AgentContextSkillRow } from "../model/types";
@@ -54,7 +54,7 @@ function descriptor(rows: readonly AgentContextSkillRow[]) {
   return (
     presentation(rows) as unknown as {
       instance: {
-        descriptor: CollectionCorePresentationDescriptor<AgentContextSkillRow>;
+        descriptor: CollectionPresentationDescriptor<AgentContextSkillRow>;
       };
     }
   ).instance.descriptor;
@@ -64,18 +64,16 @@ test("skills render as coverless Gallery cards with bounded Reader detail", () =
   const runtime = presentation([reviewSkill]);
   const html = renderToStaticMarkup(
     <TooltipProvider>
-      <CollectionCorePresentationShell
+      <CollectionPresentationShell
         instanceKey="agent-context:space:root"
         presentation={runtime}
-        query={EMPTY_COLLECTION_CORE_QUERY}
+        query={EMPTY_COLLECTION_QUERY}
         onQueryChange={() => undefined}
       />
     </TooltipProvider>,
   );
 
-  expect(html.includes(`data-collection-core-row="${reviewSkill.id}"`)).toBe(
-    true,
-  );
+  expect(html.includes(`data-collection-row="${reviewSkill.id}"`)).toBe(true);
   expect(html.includes("Review changes against project conventions.")).toBe(
     true,
   );
@@ -96,7 +94,7 @@ test("skills render as coverless Gallery cards with bounded Reader detail", () =
   }
   expect(skillDescriptor.layout.cardSize).toBe("medium");
   expect(skillDescriptor.layout.density).toBe("compact");
-  expect(html.includes("data-collection-core-refresh")).toBe(false);
+  expect(html.includes("data-collection-refresh")).toBe(false);
 
   const request = createSkillDetailContent(reviewSkill);
   const detailHtml = renderToStaticMarkup(request.content);
@@ -185,14 +183,14 @@ test("search and multivalue Source/Location filters use factual alias unions", (
   ]);
 
   expect(
-    applyCollectionCoreQuery({
+    applyCollectionQuery({
       descriptor: queryDescriptor,
       query: { filters: [], search: "verified release", sort: [] },
       rows,
     }).rows.map((row) => row.id),
   ).toEqual([multiSourceGlobal.id]);
   expect(
-    applyCollectionCoreQuery({
+    applyCollectionQuery({
       descriptor: queryDescriptor,
       query: {
         filters: [{ propertyKey: "source", operator: "=", value: "agents" }],
@@ -203,7 +201,7 @@ test("search and multivalue Source/Location filters use factual alias unions", (
     }).rows.map((row) => row.id),
   ).toEqual([multiSourceGlobal.id, reviewSkill.id]);
   expect(
-    applyCollectionCoreQuery({
+    applyCollectionQuery({
       descriptor: queryDescriptor,
       query: {
         filters: [{ propertyKey: "source", operator: "=", value: "claude" }],
@@ -214,7 +212,7 @@ test("search and multivalue Source/Location filters use factual alias unions", (
     }).rows.map((row) => row.id),
   ).toEqual([multiSourceGlobal.id]);
   expect(
-    applyCollectionCoreQuery({
+    applyCollectionQuery({
       descriptor: queryDescriptor,
       query: {
         filters: [{ propertyKey: "location", operator: "=", value: "space" }],
@@ -225,7 +223,7 @@ test("search and multivalue Source/Location filters use factual alias unions", (
     }).rows.map((row) => row.id),
   ).toEqual([multiSourceGlobal.id, reviewSkill.id]);
   expect(
-    applyCollectionCoreQuery({
+    applyCollectionQuery({
       descriptor: queryDescriptor,
       query: {
         filters: [{ propertyKey: "location", operator: "=", value: "global" }],
@@ -238,10 +236,10 @@ test("search and multivalue Source/Location filters use factual alias unions", (
 
   const html = renderToStaticMarkup(
     <TooltipProvider>
-      <CollectionCorePresentationShell
+      <CollectionPresentationShell
         instanceKey="agent-context:space:filters"
         presentation={presentation(rows)}
-        query={EMPTY_COLLECTION_CORE_QUERY}
+        query={EMPTY_COLLECTION_QUERY}
         onQueryChange={() => undefined}
       />
     </TooltipProvider>,
@@ -268,7 +266,7 @@ test("default order keeps same-name canonical sources and invalid query resets",
   };
   const rows = [later, reviewSkill, sameName];
   const queryDescriptor = descriptor(rows);
-  const result = applyCollectionCoreQuery({
+  const result = applyCollectionQuery({
     descriptor: queryDescriptor,
     query: {
       filters: [{ propertyKey: "client", operator: "=", value: "codex" }],
@@ -307,10 +305,10 @@ test("safe aliases stay neutral while degraded manifest health warns", () => {
   };
   const html = renderToStaticMarkup(
     <TooltipProvider>
-      <CollectionCorePresentationShell
+      <CollectionPresentationShell
         instanceKey="agent-context:space:warning"
         presentation={presentation([warning])}
-        query={EMPTY_COLLECTION_CORE_QUERY}
+        query={EMPTY_COLLECTION_QUERY}
         onQueryChange={() => undefined}
       />
     </TooltipProvider>,

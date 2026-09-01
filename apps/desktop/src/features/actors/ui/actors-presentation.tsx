@@ -1,17 +1,17 @@
 import type { ReactNode } from "react";
 
 import {
-  defineCollectionCorePresentation,
-  type CollectionCoreActionState,
-  type CollectionCoreActivationContext,
-  type CollectionCorePresentationDescriptor,
-  type CollectionCorePresentationState,
-} from "@/features/collection/core";
+  defineCollectionPresentation,
+  type CollectionActionState,
+  type CollectionActivationContext,
+  type CollectionPresentationDescriptor,
+  type CollectionPresentationState,
+} from "@/features/collection";
 import type { CollectionDetailContent } from "@/features/collection/app-shell";
-import type {
-  CollectionPropertyDefinition,
-  CollectionPropertyOrigin,
-  CollectionStandardPropertySemantics,
+import {
+  defineComputedCollectionProperty,
+  defineOwnerDefinedCollectionProperty,
+  type CollectionPropertyDefinition,
 } from "@/features/properties";
 import * as m from "@/paraglide/messages.js";
 
@@ -29,11 +29,11 @@ export function createActorsPresentation({
   mutations?: ActorPresentationMutationActions;
   onActivate?(
     row: ActorCatalogRow,
-    context: CollectionCoreActivationContext,
+    context: CollectionActivationContext,
   ): void | Promise<void>;
-  state: CollectionCorePresentationState<ActorCatalogRow>;
+  state: CollectionPresentationState<ActorCatalogRow>;
 }) {
-  return defineCollectionCorePresentation({
+  return defineCollectionPresentation({
     descriptor: createActorsPresentationDescriptor({
       mutations,
       onActivate,
@@ -47,54 +47,71 @@ export function createActorsPresentationDescriptor({
   onActivate,
 }: {
   mutations?: ActorPresentationMutationActions;
-  onActivate?: CollectionCorePresentationDescriptor<ActorCatalogRow>["onActivate"];
-} = {}): CollectionCorePresentationDescriptor<ActorCatalogRow> {
+  onActivate?: CollectionPresentationDescriptor<ActorCatalogRow>["onActivate"];
+} = {}): CollectionPresentationDescriptor<ActorCatalogRow> {
   const disabledReason = m.actors_mutations_unavailable();
-  const disabledState: CollectionCoreActionState = {
+  const disabledState: CollectionActionState = {
     reason: disabledReason,
     status: "disabled",
   };
   const contributionWithCommits = m.actors_contribution_commits();
   const contributionWithoutCommits = m.actors_contribution_no_commits();
   const properties: readonly CollectionPropertyDefinition<ActorCatalogRow>[] = [
-    propertyField(
-      "contribution",
-      m.actors_field_contribution(),
-      {
+    defineOwnerDefinedCollectionProperty({
+      capabilities: {
+        filter: { kind: "standard" },
+        sort: { kind: "standard" },
+      },
+      featureId: "actors",
+      getValue: (row) =>
+        row.contribution === "contributor"
+          ? contributionWithCommits
+          : contributionWithoutCommits,
+      key: "contribution",
+      label: m.actors_field_contribution(),
+      standard: {
         options: [
           { color: "green", name: contributionWithCommits },
           { color: "neutral", name: contributionWithoutCommits },
         ],
         type: "select",
       },
-      (row) =>
-        row.contribution === "contributor"
-          ? contributionWithCommits
-          : contributionWithoutCommits,
-      "owner_defined",
-    ),
-    propertyField(
-      "commits",
-      m.actors_field_commits(),
-      { type: "number" },
-      (row) => row.commitCount,
-      "computed",
-    ),
-    propertyField(
-      "activity",
-      m.actors_field_activity(),
-      { display: "medium", type: "date" },
-      (row) => row.lastActivityDate,
-      "computed",
-    ),
+    }),
+    defineComputedCollectionProperty({
+      capabilities: {
+        filter: { kind: "standard" },
+        sort: { kind: "standard" },
+      },
+      featureId: "actors",
+      getValue: (row) => row.commitCount,
+      key: "commits",
+      label: m.actors_field_commits(),
+      standard: { type: "number" },
+    }),
+    defineComputedCollectionProperty({
+      capabilities: {
+        filter: { kind: "standard" },
+        sort: { kind: "standard" },
+      },
+      featureId: "actors",
+      getValue: (row) => row.lastActivityDate,
+      key: "activity",
+      label: m.actors_field_activity(),
+      standard: { display: "medium", type: "date" },
+    }),
   ];
 
   return {
     create: {
-      getState: () => mutations?.createState ?? disabledState,
-      id: "add-actor",
       label: m.actors_add(),
-      run: () => mutations?.onAdd(),
+      intents: [
+        {
+          getState: () => mutations?.createState ?? disabledState,
+          id: "add-actor",
+          label: m.actors_add(),
+          run: () => mutations?.onAdd(),
+        },
+      ],
     },
     onActivate,
     properties,
@@ -131,9 +148,9 @@ export function createActorsPresentationDescriptor({
 }
 
 interface ActorPresentationMutationActions {
-  createState: CollectionCoreActionState;
-  getMergeState(row: ActorCatalogRow): CollectionCoreActionState;
-  getEditState(row: ActorCatalogRow): CollectionCoreActionState;
+  createState: CollectionActionState;
+  getMergeState(row: ActorCatalogRow): CollectionActionState;
+  getEditState(row: ActorCatalogRow): CollectionActionState;
   onAdd(): void;
   onMerge(row: ActorCatalogRow): void;
   onEdit(row: ActorCatalogRow): void;
@@ -166,30 +183,6 @@ export function createActorDetailRequest(
         </span>
       </span>
     ),
-  };
-}
-
-function propertyField(
-  key: string,
-  label: string,
-  standard: CollectionStandardPropertySemantics,
-  getValue: (row: ActorCatalogRow) => unknown,
-  origin: Exclude<
-    CollectionPropertyOrigin,
-    "schema_backed" | "domain_specific"
-  >,
-): CollectionPropertyDefinition<ActorCatalogRow> {
-  return {
-    capabilities: {
-      filter: { kind: "standard" },
-      sort: { kind: "standard" },
-    },
-    getValue,
-    key,
-    label,
-    origin,
-    owner: { featureId: "actors", kind: "feature" },
-    semantics: { kind: "standard", standard },
   };
 }
 

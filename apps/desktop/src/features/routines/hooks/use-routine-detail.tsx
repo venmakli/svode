@@ -8,7 +8,7 @@ import type {
   CollectionDetailController,
   CollectionDetailRequest,
 } from "@/features/collection/app-shell";
-import type { CollectionCoreActionState } from "@/features/collection/core";
+import type { CollectionActionState } from "@/features/collection";
 import * as m from "@/paraglide/messages.js";
 
 import type { RoutineOwnerInput } from "../api/routines-api";
@@ -48,7 +48,7 @@ export function useRoutineDetail({
   instanceKey: string;
   mutationError: string | null;
   nameError: string | null;
-  getRunState(row: RoutineRow): CollectionCoreActionState;
+  getRunState(row: RoutineRow): CollectionActionState;
   onOpenSession(row: RoutineRow): void;
   onRun(row: RoutineRow): Promise<void>;
   owner: RoutineOwnerInput;

@@ -67,7 +67,7 @@ if (!isolatedDialogDomProcess) {
       expect(currentStep(harness.dom)).toBe("basics");
       expect(
         harness.dom.window.document.querySelectorAll(
-          "[data-collection-core-create-scroll-owner]",
+          "[data-collection-create-scroll-owner]",
         ).length,
       ).toBe(1);
       expect(
@@ -365,8 +365,8 @@ function validDefinition(): RoutineDefinition {
 
 function currentStep(dom: JSDOM) {
   return dom.window.document
-    .querySelector('[data-collection-core-create-flow="routine"]')
-    ?.getAttribute("data-collection-core-create-step");
+    .querySelector('[data-collection-create-flow="routine"]')
+    ?.getAttribute("data-collection-create-step");
 }
 
 function findButton(dom: JSDOM, label: string) {

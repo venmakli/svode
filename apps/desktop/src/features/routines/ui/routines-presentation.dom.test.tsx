@@ -4,9 +4,9 @@ import { createRoot } from "react-dom/client";
 import { JSDOM } from "jsdom";
 
 import {
-  EMPTY_COLLECTION_CORE_QUERY,
-  CollectionCorePresentationShell,
-} from "@/features/collection/core";
+  EMPTY_COLLECTION_QUERY,
+  CollectionPresentationShell,
+} from "@/features/collection";
 
 import type { RoutineRow } from "../model/types";
 import {
@@ -85,10 +85,10 @@ test("routine enabled Switch is single-flight and does not open the row", async 
   try {
     await act(async () => {
       root.render(
-        <CollectionCorePresentationShell
+        <CollectionPresentationShell
           instanceKey="routines:space:root"
           presentation={presentation}
-          query={EMPTY_COLLECTION_CORE_QUERY}
+          query={EMPTY_COLLECTION_QUERY}
           onQueryChange={() => undefined}
         />,
       );
@@ -98,7 +98,7 @@ test("routine enabled Switch is single-flight and does not open the row", async 
       '[role="switch"][aria-label="Enabled: Daily summary"]',
     )!;
     const row = dom.window.document.querySelector<HTMLElement>(
-      '[data-collection-core-row="routine:summary"]',
+      '[data-collection-row="routine:summary"]',
     )!;
     const title = Array.from(row.querySelectorAll("span")).find(
       (element) => element.textContent === "Daily summary",

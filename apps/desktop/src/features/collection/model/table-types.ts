@@ -7,6 +7,7 @@ import type {
 import type { Page } from "@/features/page";
 import type {
   CollectionSchema,
+  CollectionPropertyDefinition,
   RelationOpenTarget,
 } from "@/features/properties";
 
@@ -38,6 +39,7 @@ export interface TableViewProps {
   view: CollectionView;
   query: UseViewQueryResult;
   schema: CollectionSchema;
+  properties: readonly CollectionPropertyDefinition<Page>[];
   collectionPath: string;
   previousCollectionPath?: string | null;
   spacePath: string;

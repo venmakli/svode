@@ -6,7 +6,7 @@ import {
   resolveControlledQueryEditorField,
 } from "./use-controlled-query-editor";
 
-test("controlled query core inserts, replaces, and removes drafts immutably", () => {
+test("controlled query orchestration inserts, replaces, and removes drafts immutably", () => {
   const original = ["first", "second"] as const;
 
   expect(
@@ -21,7 +21,7 @@ test("controlled query core inserts, replaces, and removes drafts immutably", ()
   expect(original).toEqual(["first", "second"]);
 });
 
-test("controlled query core ignores stale draft indexes", () => {
+test("controlled query orchestration ignores stale draft indexes", () => {
   const original = ["first"] as const;
 
   expect(applyControlledQueryDraft(original, { index: 4, item: "stale" })).toBe(
@@ -35,7 +35,7 @@ test("controlled query core ignores stale draft indexes", () => {
   ).toBe(original);
 });
 
-test("controlled query core never falls back from an explicit unknown field", () => {
+test("controlled query orchestration never falls back from an explicit unknown field", () => {
   const fields = [
     {
       createFilter: () => "filter",

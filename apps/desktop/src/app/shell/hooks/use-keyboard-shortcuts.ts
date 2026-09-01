@@ -36,7 +36,7 @@ import {
   runCollectionNavigation,
   useCollectionDetailController,
 } from "@/features/collection/app-shell";
-import { useCollectionCoreActivePresentationId } from "@/features/collection/core";
+import { useCollectionActivePresentationId } from "@/features/collection";
 
 export function useKeyboardShortcuts() {
   const detailController = useCollectionDetailController();
@@ -63,7 +63,7 @@ export function useKeyboardShortcuts() {
   );
   const repositoryAccess = useRepositoryAccess(activeScopeSpace?.path ?? "");
   const activeScopeReadOnly = !repositoryAccessIsEditable(repositoryAccess);
-  const actorsPresentationId = useCollectionCoreActivePresentationId(
+  const actorsPresentationId = useCollectionActivePresentationId(
     activeScopeSpace ? `actors:space:${activeScopeSpace.id}` : null,
   );
   const navigate = useNavigate();

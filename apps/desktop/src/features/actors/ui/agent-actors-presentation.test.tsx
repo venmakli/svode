@@ -2,10 +2,10 @@ import { expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import {
-  applyCollectionCoreQuery,
-  EMPTY_COLLECTION_CORE_QUERY,
-  CollectionCorePresentationShell,
-} from "@/features/collection/core";
+  applyCollectionQuery,
+  EMPTY_COLLECTION_QUERY,
+  CollectionPresentationShell,
+} from "@/features/collection";
 
 import type { AgentActorRow } from "../model/agent-actor-types";
 import {
@@ -62,7 +62,7 @@ test("Agent Actors uses the fixed schema and one shared edit/delete descriptor s
     "edit-agent",
     "delete-agent",
   ]);
-  await descriptor.create?.run();
+  await descriptor.create?.intents[0]?.run();
   for (const action of descriptor.rowActions ?? []) await action.run(inherited);
   expect(calls).toEqual(["add", "edit:/repo", "delete:/repo"]);
 });
@@ -78,12 +78,12 @@ test("Agent Actors default order and search preserve owner provenance", () => {
     inheritedVisible: true,
     rows: [inherited, own],
   });
-  const ordered = applyCollectionCoreQuery({
+  const ordered = applyCollectionQuery({
     descriptor,
-    query: EMPTY_COLLECTION_CORE_QUERY,
+    query: EMPTY_COLLECTION_QUERY,
     rows: [inherited, own],
   });
-  const searched = applyCollectionCoreQuery({
+  const searched = applyCollectionQuery({
     descriptor,
     query: { filters: [], search: "repo", sort: [] },
     rows: [own, inherited],
@@ -95,14 +95,14 @@ test("Agent Actors default order and search preserve owner provenance", () => {
   expect(searched.rows.map((row) => row.ownerPath)).toEqual(["/repo"]);
 
   const markup = renderToStaticMarkup(
-    <CollectionCorePresentationShell
+    <CollectionPresentationShell
       instanceKey="actors:space:docs"
       presentation={presentation}
-      query={EMPTY_COLLECTION_CORE_QUERY}
+      query={EMPTY_COLLECTION_QUERY}
       onQueryChange={() => undefined}
     />,
   );
-  expect(markup.includes("data-collection-core-row")).toBe(true);
+  expect(markup.includes("data-collection-row")).toBe(true);
   expect(markup.includes("data-agent-adapter")).toBe(false);
 });
 

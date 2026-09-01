@@ -5,7 +5,7 @@ import {
   CollectionCreateFlow,
   type CollectionCreateFlowFocusRequest,
   type CollectionCreateFlowFocusTarget,
-} from "@/features/collection/core";
+} from "@/features/collection";
 import {
   RepositoryAccessInlineRecovery,
   repositoryAccessPrimaryActionLabel,

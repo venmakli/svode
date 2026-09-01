@@ -4,7 +4,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import type { CollectionDetailRequest } from "./types";
 import { createCollectionDetailActivation } from "./detail-activation";
 
-test("detail activation owns selection and merges owner and Core actions", async () => {
+test("detail activation owns selection and merges owner and Collection actions", async () => {
   const requests: CollectionDetailRequest[] = [];
   const activation = createCollectionDetailActivation({
     controller: {
@@ -28,7 +28,7 @@ test("detail activation owns selection and merges owner and Core actions", async
   await activation?.(
     { id: "ada@example.test" },
     {
-      actions: <button type="button">Core action</button>,
+      actions: <button type="button">Collection action</button>,
       rowId: "ada@example.test",
     },
   );
@@ -40,7 +40,7 @@ test("detail activation owns selection and merges owner and Core actions", async
   });
   const actions = renderToStaticMarkup(<>{requests[0]?.headerActions}</>);
   expect(actions.includes("Owner action")).toBe(true);
-  expect(actions.includes("Core action")).toBe(true);
+  expect(actions.includes("Collection action")).toBe(true);
 });
 
 test("detail activation preserves a guarded controller rejection", async () => {

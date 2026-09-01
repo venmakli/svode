@@ -182,6 +182,7 @@ export function PropertyValue({
   }
   if (column.type === "date") return formatDateValue(value, column.display);
   if (column.type === "number" && typeof value === "number") {
+    if (column.display === "bytes") return formatBytes(value);
     if (column.display === "bar" || column.display === "ring") {
       return <NumberPreview column={column} value={value} />;
     }
@@ -189,6 +190,22 @@ export function PropertyValue({
   }
   if (column.type === "url") return urlLabel(value);
   return valueToString(value);
+}
+
+export function formatBytes(value: number): string {
+  if (!Number.isFinite(value) || value < 0) return valueToString(value);
+  if (value < 1024) return `${value} B`;
+  const units = ["KB", "MB", "GB", "TB"] as const;
+  const exponent = Math.min(
+    Math.floor(Math.log(value) / Math.log(1024)),
+    units.length,
+  );
+  const scaled = value / 1024 ** exponent;
+  const formatted =
+    scaled < 10 && !Number.isInteger(scaled)
+      ? scaled.toFixed(1).replace(/\.0$/u, "")
+      : String(Math.round(scaled));
+  return `${formatted} ${units[exponent - 1]}`;
 }
 
 export function ActorSingleValue({

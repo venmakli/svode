@@ -13,7 +13,10 @@ import type {
 import { toast } from "sonner";
 import { propertyFieldSavePolicy, type Page } from "@/features/page";
 import { pageNameConflictFromError } from "@/features/page/page-api";
-import type { Column } from "@/features/properties";
+import {
+  resolveStandardPropertyColumn,
+  type Column,
+} from "@/features/properties";
 import { getLocale } from "@/paraglide/runtime.js";
 import { useCollectionActors } from "../use-collection-actors";
 import { useCollectionColumnActions } from "../use-collection-column-actions";
@@ -34,7 +37,6 @@ import type {
   CalendarViewProps,
 } from "../../model/calendar-types";
 import {
-  calendarCustomFields,
   calendarDateColumn,
   dateValueFromClick,
   dateValueFromSelection,
@@ -56,6 +58,7 @@ export function useCalendarViewRuntime({
   name,
   view,
   schema,
+  properties,
   collectionPath,
   previousCollectionPath,
   spacePath,
@@ -122,10 +125,20 @@ export function useCalendarViewRuntime({
     spacePath,
   });
 
-  const dateColumn = useMemo(
-    () => calendarDateColumn(view, schema),
-    [schema, view],
+  const propertyColumns = useMemo(
+    () =>
+      properties
+        .map((property) => resolveStandardPropertyColumn(property))
+        .filter((column): column is Column => Boolean(column)),
+    [properties],
   );
+  const dateColumn = useMemo(() => {
+    const configured = calendarDateColumn(view, schema);
+    return configured
+      ? (propertyColumns.find((column) => column.name === configured.name) ??
+          null)
+      : null;
+  }, [propertyColumns, schema, view]);
   const cardFields = useMemo(
     () => normalizeCalendarCardFields(view, schema),
     [schema, view],
@@ -133,9 +146,14 @@ export function useCalendarViewRuntime({
   const customColumns = useMemo(
     () =>
       dateColumn
-        ? calendarCustomFields(cardFields, schema, dateColumn.name)
+        ? propertyColumns.filter(
+            (column) =>
+              cardFields.includes(column.name) &&
+              column.name !== dateColumn.name &&
+              !["title", "icon", "description"].includes(column.name),
+          )
         : [],
-    [cardFields, dateColumn, schema],
+    [cardFields, dateColumn, propertyColumns],
   );
   const filteredEntries = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();

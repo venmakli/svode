@@ -9,7 +9,7 @@ import {
 import { cn } from "@/shared/lib/utils";
 
 import type { CollectionGalleryCardDensity } from "../model/presentation-layout";
-import { isCollectionPresentationInteractiveTarget } from "./presentation-core";
+import { isCollectionPresentationInteractiveTarget } from "./presentation-chrome";
 import { CollectionCardShell } from "./presentation-layout";
 
 type GalleryMoveKey =

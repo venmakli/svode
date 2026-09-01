@@ -25,7 +25,6 @@ const allowedFeatureSubpathExceptions = new Set([
   "@/features/artifact/app-shell",
   "@/features/collection/app-shell",
   "@/features/collection/scope-surface",
-  "@/features/collection/core",
   "@/features/editor/file-tree-sync",
   "@/features/page/app-shell",
   "@/features/page/detail",
@@ -80,10 +79,9 @@ function isAllowedRouteAppImport(srcPath, source) {
   return routeAppExceptions.get(srcPath)?.has(source) ?? false;
 }
 
-function isCollectionCoreFoundation(srcPath) {
+function isCollectionFoundation(srcPath) {
   return (
     srcPath === "features/collection/index.ts" ||
-    srcPath === "features/collection/core.ts" ||
     srcPath?.startsWith("features/collection/") ||
     srcPath === "features/properties/index.ts" ||
     srcPath?.startsWith("features/properties/")
@@ -129,10 +127,8 @@ function createImportBoundaryRule() {
           "Legacy Page owners are forbidden. Use features/page or the neutral Space content-tree platform boundary.",
         featureDeep:
           "Do not deep-import another feature internals. Import through the feature public API or a documented narrow exception.",
-        collectionCoreReverse:
+        collectionReverse:
           "Collection and properties foundations cannot depend on owner consumers such as actors, agent, agent-actors, or routines.",
-        collectionCoreWideBarrel:
-          "Collection Core consumer exports belong only in the documented features/collection/core subentrypoint, not the wide collection barrel.",
         stores:
           "Top-level stores are no longer a frontend owner. Import state through app or feature owners.",
       },
@@ -177,22 +173,13 @@ function createImportBoundaryRule() {
         }
 
         if (
-          srcPath === "features/collection/index.ts" &&
-          (importedSrcPath === "features/collection/core" ||
-            importedSrcPath?.startsWith("features/collection/core/"))
-        ) {
-          report(node, "collectionCoreWideBarrel");
-          return;
-        }
-
-        if (
-          isCollectionCoreFoundation(srcPath) &&
+          isCollectionFoundation(srcPath) &&
           importedSrcPath &&
           /^features\/(actors|agent|agent-actors|agent-context|routines)(?:\/|$)/.test(
             importedSrcPath,
           )
         ) {
-          report(node, "collectionCoreReverse");
+          report(node, "collectionReverse");
           return;
         }
 

@@ -10,7 +10,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
-import { CollectionToolbarActionButton } from "@/features/collection/core";
+import { CollectionToolbarActionButton } from "@/features/collection";
 import * as m from "@/paraglide/messages.js";
 
 export function RoutineAutomaticConsentNotice({

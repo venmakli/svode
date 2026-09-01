@@ -8,6 +8,7 @@ import type { Page } from "@/features/page";
 import type {
   ActorCandidate,
   CollectionSchema,
+  CollectionPropertyDefinition,
   Column,
   PropertyOption,
 } from "@/features/properties";
@@ -40,6 +41,7 @@ export interface BoardViewProps {
   view: CollectionView;
   query: UseViewQueryResult;
   schema: CollectionSchema;
+  properties: readonly CollectionPropertyDefinition<Page>[];
   collectionPath: string;
   previousCollectionPath?: string | null;
   spacePath: string;

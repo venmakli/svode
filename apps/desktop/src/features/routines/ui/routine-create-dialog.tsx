@@ -10,7 +10,7 @@ import {
   CollectionCreateFlow,
   type CollectionCreateFlowFocusRequest,
   type CollectionCreateFlowFocusTarget,
-} from "@/features/collection/core";
+} from "@/features/collection";
 import * as m from "@/paraglide/messages.js";
 
 import {

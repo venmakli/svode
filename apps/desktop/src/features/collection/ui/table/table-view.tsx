@@ -14,7 +14,8 @@ import { EmptyTableBody } from "./table-empty-state";
 import { TableFooterComposer } from "./table-footer-composer";
 import { TableHeaderRow } from "./table-header-row";
 import { TableRowsBody } from "./table-rows-body";
-import { ErrorState, LoadingTable, TableShell } from "./table-shell";
+import { ErrorState, LoadingTable } from "./table-shell";
+import { CollectionTableShell } from "./table-presentation";
 import type { TableViewProps } from "./types";
 import { useTableColumns } from "./use-table-columns";
 import * as m from "@/paraglide/messages.js";
@@ -25,6 +26,7 @@ export function TableView(props: TableViewProps) {
     view,
     query,
     schema,
+    properties,
     collectionPath,
     spacePath,
     projectPath,
@@ -47,6 +49,7 @@ export function TableView(props: TableViewProps) {
     readOnly,
     visibleFields: runtime.visibleFields,
     schema,
+    properties,
     view,
     query,
     collectionPath,
@@ -102,7 +105,7 @@ export function TableView(props: TableViewProps) {
 
   return (
     <div className={detailPageViewClassName}>
-      <TableShell
+      <CollectionTableShell
         onKeyDown={(event) => {
           if (isEditableTarget(event.target)) return;
           if (readOnly) return;
@@ -171,7 +174,7 @@ export function TableView(props: TableViewProps) {
             onCreate={(asFolder) => void runtime.handleCreate(asFolder)}
           />
         </Table>
-      </TableShell>
+      </CollectionTableShell>
     </div>
   );
 }

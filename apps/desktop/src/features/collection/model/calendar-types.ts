@@ -6,6 +6,7 @@ import type {
 import type { Page } from "@/features/page";
 import type {
   CollectionSchema,
+  CollectionPropertyDefinition,
   Column,
   ActorCandidate,
 } from "@/features/properties";
@@ -42,6 +43,7 @@ export interface CalendarViewProps {
   name: string;
   view: CollectionView;
   schema: CollectionSchema;
+  properties: readonly CollectionPropertyDefinition<Page>[];
   collectionPath: string;
   previousCollectionPath?: string | null;
   spacePath: string;

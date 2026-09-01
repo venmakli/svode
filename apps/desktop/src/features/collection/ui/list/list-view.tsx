@@ -74,6 +74,10 @@ export function ListView(props: ListViewProps) {
     topLevelEntries,
     toggleRow,
   } = useListViewRuntime(props);
+  const visiblePropertyKeys = new Set(metaColumns.map((column) => column.name));
+  const visibleProperties = props.properties.filter((property) =>
+    visiblePropertyKeys.has(property.key),
+  );
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
@@ -127,7 +131,7 @@ export function ListView(props: ListViewProps) {
                 row={row}
                 density={density}
                 cardFields={cardFields}
-                metaColumns={metaColumns}
+                properties={visibleProperties}
                 spacePath={spacePath}
                 projectPath={projectPath}
                 actors={actors}

@@ -55,7 +55,7 @@ function GalleryCardContent({
   entry,
   cover,
   cardFields,
-  metaColumns,
+  properties,
   coverFit,
   coverAspect,
   spacePath,
@@ -130,7 +130,7 @@ function GalleryCardContent({
       properties={
         <CardPropertyFlow
           entry={entry}
-          columns={metaColumns}
+          properties={properties}
           actors={actors}
           relationContext={{
             spacePath,

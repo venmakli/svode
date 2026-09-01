@@ -2,7 +2,6 @@ import {
   cloneElement,
   isValidElement,
   type ElementType,
-  type KeyboardEventHandler,
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
 } from "react";
@@ -31,6 +30,7 @@ import { detailPageViewClassName } from "@/shared/ui/page-layout";
 import { TITLE_ICON } from "./icons";
 import { defaultColumnWidth } from "./utils";
 import * as m from "@/paraglide/messages.js";
+import { CollectionTableShell } from "./table-presentation";
 
 export function ColumnHeader({
   label,
@@ -91,23 +91,6 @@ export function ColumnHeader({
   );
 }
 
-export function TableShell({
-  children,
-  onKeyDown,
-}: {
-  children: ReactNode;
-  onKeyDown?: KeyboardEventHandler<HTMLDivElement>;
-}) {
-  return (
-    <div
-      className="overflow-x-auto overflow-y-visible rounded-xl bg-card ring-1 ring-border/70"
-      onKeyDown={onKeyDown}
-    >
-      {children}
-    </div>
-  );
-}
-
 export function LoadingTable({
   fields,
   schema,
@@ -124,7 +107,7 @@ export function LoadingTable({
 
   return (
     <div className={detailPageViewClassName}>
-      <TableShell>
+      <CollectionTableShell>
         <Table
           className="min-w-full table-auto"
           style={{ minWidth: tableWidth, width: "100%" }}
@@ -174,7 +157,7 @@ export function LoadingTable({
             ))}
           </TableBody>
         </Table>
-      </TableShell>
+      </CollectionTableShell>
     </div>
   );
 }

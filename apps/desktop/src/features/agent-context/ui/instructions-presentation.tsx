@@ -14,12 +14,15 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import {
-  defineCollectionCorePresentation,
-  type CollectionCorePresentationDescriptor,
-  type CollectionCorePresentationState,
-} from "@/features/collection/core";
+  defineCollectionPresentation,
+  type CollectionPresentationDescriptor,
+  type CollectionPresentationState,
+} from "@/features/collection";
 import type { CollectionDetailContent } from "@/features/collection/app-shell";
-import type { CollectionPropertyDefinition } from "@/features/properties";
+import {
+  defineDomainSpecificCollectionProperty,
+  type CollectionPropertyDefinition,
+} from "@/features/properties";
 import * as m from "@/paraglide/messages.js";
 
 import type { AgentContextInstructionRow } from "../model/types";
@@ -39,13 +42,13 @@ export function createAgentContextInstructionsPresentation({
     canonicalArtifactPath: string;
     tool: ArtifactOpener["id"];
   }): void | Promise<void>;
-  onActivate?: CollectionCorePresentationDescriptor<AgentContextInstructionRow>["onActivate"];
-  state: CollectionCorePresentationState<AgentContextInstructionRow>;
+  onActivate?: CollectionPresentationDescriptor<AgentContextInstructionRow>["onActivate"];
+  state: CollectionPresentationState<AgentContextInstructionRow>;
 }) {
   const properties: readonly CollectionPropertyDefinition<AgentContextInstructionRow>[] =
     [instructionSourceField()];
 
-  return defineCollectionCorePresentation<AgentContextInstructionRow>({
+  return defineCollectionPresentation<AgentContextInstructionRow>({
     descriptor: {
       onActivate,
       properties,
@@ -162,35 +165,29 @@ function InstructionCardOverlays({ row }: { row: AgentContextInstructionRow }) {
 }
 
 function instructionSourceField(): CollectionPropertyDefinition<AgentContextInstructionRow> {
-  return {
-    origin: "domain_specific",
-    owner: { featureId: "agent-context", kind: "feature" },
+  return defineDomainSpecificCollectionProperty({
+    featureId: "agent-context",
     getValue: (row) => [row.location, row.support],
     key: "source",
     label: m.agent_context_source(),
-    semantics: {
-      kind: "custom",
-      render: (_value, row) => {
-        const showGlobal = row.location === "global";
-        const showRecognized = row.support === "svode_recognized";
-        if (!showGlobal && !showRecognized) return null;
-        return (
-          <div className="flex flex-wrap gap-1">
-            {showGlobal ? (
-              <Badge variant="outline">
-                {m.agent_context_location_global()}
-              </Badge>
-            ) : null}
-            {showRecognized ? (
-              <Badge variant="outline">
-                {m.agent_context_source_recognized()}
-              </Badge>
-            ) : null}
-          </div>
-        );
-      },
+    render: (_value, row) => {
+      const showGlobal = row.location === "global";
+      const showRecognized = row.support === "svode_recognized";
+      if (!showGlobal && !showRecognized) return null;
+      return (
+        <div className="flex flex-wrap gap-1">
+          {showGlobal ? (
+            <Badge variant="outline">{m.agent_context_location_global()}</Badge>
+          ) : null}
+          {showRecognized ? (
+            <Badge variant="outline">
+              {m.agent_context_source_recognized()}
+            </Badge>
+          ) : null}
+        </div>
+      );
     },
-  };
+  });
 }
 
 function instructionLinkTooltip(row: AgentContextInstructionRow) {
