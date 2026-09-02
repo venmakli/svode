@@ -1,5 +1,6 @@
 import type {
   CollectionActivationContext,
+  CollectionCreateCapability,
   CollectionPresentationDescriptor,
   CollectionPresentationState,
 } from "@/features/collection";
@@ -14,8 +15,10 @@ import type { AttachmentRow, AttachmentsSourceState } from "./types";
 export const ATTACHMENTS_PRESENTATION_ID = "all";
 
 export function createAttachmentsPresentationDescriptor({
+  create,
   onActivate,
 }: {
+  create: CollectionCreateCapability;
   onActivate(
     row: AttachmentRow,
     context: CollectionActivationContext,
@@ -82,6 +85,7 @@ export function createAttachmentsPresentationDescriptor({
   ];
 
   return {
+    create,
     getRowId: (row) => row.key,
     id: ATTACHMENTS_PRESENTATION_ID,
     label: m.attachments_presentation_all(),

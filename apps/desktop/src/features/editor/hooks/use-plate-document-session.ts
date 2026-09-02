@@ -41,6 +41,7 @@ interface UsePlateDocumentSessionInput {
 }
 
 interface UsePlateDocumentSessionResult {
+  adoptDocumentPath: (path: string) => void;
   currentDocument: string | null;
   currentDocumentSpaceId: string | null;
   deserializeToolbarMarkdown: (text: string) => Descendant[];
@@ -262,6 +263,7 @@ export function usePlateDocumentSession({
   );
 
   return {
+    adoptDocumentPath: setCurrentDocument,
     currentDocument,
     currentDocumentSpaceId,
     deserializeToolbarMarkdown,

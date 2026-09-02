@@ -358,68 +358,48 @@ pub(super) async fn import_asset(
     let _policy = MCP_MUTATION_POLICY;
     let (context, space) = resolve_space(app, args.space_id.clone()).await?;
     let content_path = validate_markdown_path(&args.content_path)?;
-    let content_abs = ensure_inside(Path::new(&space), &content_path)?;
-    let content_metadata = fs::metadata(&content_abs).map_err(|error| {
-        McpBusinessError::new(
-            "CONTENT_NOT_FOUND",
-            format!("contentPath must be existing Markdown content: {error}"),
-        )
-    })?;
-    if !content_metadata.is_file() {
-        return Err(McpBusinessError::new(
-            "INVALID_CONTENT_PATH",
-            "contentPath must reference an existing Markdown Page, Collection item, or owner README",
-        ));
-    }
-
-    let source_path = validate_regular_source_path(&args.source_path)?;
-    let file_name = args.file_name.unwrap_or_else(|| {
-        source_path
-            .file_name()
-            .map(|name| name.to_string_lossy().to_string())
-            .unwrap_or_else(|| "file".to_string())
-    });
-
+    ensure_inside(Path::new(&space), &content_path)?;
     let index_state = app.state::<IndexState>();
-    let requested_key = index_key_for_context(&context, args.space_id.as_deref());
-    let scope = resolve_effective_storage_scope_for_key(
+    let selected_space_id = args
+        .space_id
+        .as_deref()
+        .filter(|space_id| !is_mcp_root_space_id(space_id));
+    let plan = crate::attachments::managed_import::plan_managed_import(
         &index_state,
         Path::new(&context.project_path),
-        requested_key,
+        selected_space_id,
+        &content_path,
+        Path::new(&args.source_path),
+        args.file_name.as_deref(),
     )
     .await?;
-    let pool = index_state.get_or_create(&scope.pool_key).await?;
-    let scoped_content_id =
-        content_id_for_asset_scope(&content_abs, &scope.pool_dir, &content_path);
-    let asset = assets::import_file(
-        &pool,
-        &scope.pool_dir,
-        &source_path,
-        &file_name,
-        Some(&scoped_content_id),
+    let result = crate::attachments::managed_import::execute_managed_import(
+        app,
+        &index_state,
+        None,
+        crate::attachments::managed_import::MutationOrigin::Mcp,
+        plan,
     )
     .await?;
-
-    let asset_abs = scope.pool_dir.join(&asset.rel_path);
-    let (markdown_url, cover_path) =
-        asset_reference_paths(&content_abs, Path::new(&space), &asset_abs);
-    let owner_space_id = IndexState::space_id_for_key(&scope.pool_key)
-        .unwrap_or_else(|| MCP_ROOT_SPACE_ID.to_string());
+    let owner_space_id = args
+        .space_id
+        .unwrap_or_else(|| active_mcp_space_id(&context));
 
     Ok(ToolCallResult::ok(
         format!(
             "Imported asset {} for content {content_path}.",
-            asset.file_name
+            result.file_name
         ),
         json!({
             "spaceId": owner_space_id,
-            "assetPath": asset.rel_path,
-            "markdownUrl": markdown_url,
-            "coverPath": cover_path,
-            "fileName": asset.file_name,
-            "mime": asset.mime,
-            "sizeBytes": asset.size_bytes,
-            "changedPaths": [asset.rel_path],
+            "contentPath": result.content_path,
+            "attachmentPath": result.attachment_path,
+            "markdownUrl": result.markdown_url,
+            "coverPath": result.cover_path,
+            "fileName": result.file_name,
+            "mime": result.mime,
+            "sizeBytes": result.size_bytes,
+            "changedPaths": result.changed_paths,
         }),
     ))
 }

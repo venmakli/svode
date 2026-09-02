@@ -18,13 +18,13 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { PagePeekSurface } from "@/features/page/detail";
 import { useOpenPage } from "@/features/page/navigation";
-import type { ScopeOwnerRef } from "@/features/scope-surfaces";
 import * as m from "@/paraglide/messages.js";
 
 import { useAttachmentPagePeek } from "../hooks/use-attachment-page-peek";
 import { attachmentKindLabel } from "../model/presentation";
 import type {
   AttachmentActivationRequest,
+  AttachmentOwnerRef,
   AttachmentRow,
 } from "../model/types";
 
@@ -34,7 +34,7 @@ export function AttachmentsPeek({
   target,
   onOpenChange,
 }: {
-  owner: ScopeOwnerRef;
+  owner: AttachmentOwnerRef;
   readOnly: boolean;
   target: AttachmentActivationRequest | null;
   onOpenChange(open: boolean): void;

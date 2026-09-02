@@ -24,7 +24,7 @@ export interface AttachmentsSnapshotDto {
     projectPath: string;
     spaceId: string | null;
     spacePath: string;
-    ownerPath: ".";
+    ownerPath: string;
     repositoryPath: string;
   };
   generation: string;
@@ -64,8 +64,47 @@ export type AttachmentOwnerLifecycleEventDto =
 export function listAttachments(input: {
   projectPath: string;
   spaceId: string | null;
+  ownerPath: string;
 }): Promise<AttachmentsSnapshotDto> {
   return invokeCommand<AttachmentsSnapshotDto>("attachments_list", input);
+}
+
+export interface ManagedImportSourceInfoDto {
+  name: string;
+  sizeBytes: number;
+  mime: string;
+}
+
+export interface ManagedImportResultDto {
+  contentPath: string;
+  attachmentPath: string;
+  markdownUrl: string;
+  coverPath: string;
+  fileName: string;
+  mime: string;
+  sizeBytes: number;
+  changedPaths: string[];
+}
+
+export function inspectManagedImportSource(
+  sourcePath: string,
+): Promise<ManagedImportSourceInfoDto> {
+  return invokeCommand<ManagedImportSourceInfoDto>(
+    "attachments_inspect_import_source",
+    { sourcePath },
+  );
+}
+
+export function importManagedAttachment(input: {
+  projectPath: string;
+  spaceId: string | null;
+  contentPath: string;
+  sourcePath: string;
+  fileName?: string | null;
+}): Promise<ManagedImportResultDto> {
+  return invokeCommand<ManagedImportResultDto>("attachments_import_file", {
+    ...input,
+  });
 }
 
 export function listenAttachmentsInvalidated(

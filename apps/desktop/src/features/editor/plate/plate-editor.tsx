@@ -28,6 +28,7 @@ interface PlateDocumentEditorProps {
   initialPage?: Page | null;
   initialPageSpacePath?: string | null;
   onDocumentPathChange?: (path: string) => void;
+  prepareManagedImport?: () => Promise<void>;
   documentPathHandoff?: { previousPath: string; path: string } | null;
   readOnly?: boolean;
   registerPersistence?: (
@@ -51,6 +52,7 @@ export function PlateDocumentEditor({
   initialPage = null,
   initialPageSpacePath = null,
   onDocumentPathChange,
+  prepareManagedImport,
   documentPathHandoff = null,
   readOnly = false,
   registerPersistence,
@@ -61,6 +63,7 @@ export function PlateDocumentEditor({
   });
   const usePageScroll = bodyOnly && pageScroll;
   const {
+    adoptDocumentPath,
     currentDocument,
     currentDocumentSpaceId,
     deserializeToolbarMarkdown,
@@ -96,6 +99,8 @@ export function PlateDocumentEditor({
       projectPath={projectPath ?? null}
       spaceId={currentDocumentSpaceId}
       spacePath={spacePath || null}
+      prepareManagedImport={prepareManagedImport ?? flushPendingSource}
+      onDocumentPathChange={adoptDocumentPath}
     >
       <Plate editor={editor} onChange={handleChange} readOnly={readOnly}>
         <div

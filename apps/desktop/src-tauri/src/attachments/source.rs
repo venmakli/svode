@@ -53,7 +53,7 @@ pub(crate) struct AttachmentOwnerIdentity {
     pub project_path: String,
     pub space_id: Option<String>,
     pub space_path: String,
-    pub owner_path: &'static str,
+    pub owner_path: String,
     pub repository_path: String,
 }
 
@@ -72,6 +72,8 @@ pub(crate) struct ResolvedRegisteredOwner {
     pub space_id: Option<String>,
     pub space_path: PathBuf,
     pub repository_path: PathBuf,
+    pub owner_path: PathBuf,
+    pub owner_relative_path: String,
 }
 
 pub(crate) fn resolve_registered_owner(
@@ -141,15 +143,107 @@ pub(crate) fn resolve_registered_owner(
     Ok(ResolvedRegisteredOwner {
         project_path,
         space_id: resolved_space_id,
+        owner_path: space_path.clone(),
+        owner_relative_path: ".".to_string(),
         space_path,
         repository_path,
     })
 }
 
+pub(crate) fn resolve_attachment_owner(
+    project_path: &Path,
+    space_id: Option<&str>,
+    owner_path: Option<&str>,
+) -> Result<ResolvedRegisteredOwner, AppError> {
+    let mut owner = resolve_registered_owner(project_path, space_id)?;
+    let requested = owner_path.unwrap_or(".");
+    if requested == "." {
+        return Ok(owner);
+    }
+
+    let normalized = normalize_repo_relative(requested, RootMode::Reject)?;
+    ensure_owner_path_has_no_symlink_components(&owner.space_path, Path::new(&normalized))?;
+    let first_component = Path::new(&normalized)
+        .components()
+        .next()
+        .map(|component| component.as_os_str().to_string_lossy().to_string());
+    if first_component
+        .as_ref()
+        .is_some_and(|component| child_folder_names(&owner.space_path).contains(component))
+    {
+        return Err(AppError::PathNotAccessible(format!(
+            "attachment owner crosses a registered Space boundary: {normalized}"
+        )));
+    }
+
+    let candidate = owner.space_path.join(&normalized);
+    let metadata = fs::symlink_metadata(&candidate).map_err(|error| {
+        AppError::PathNotAccessible(format!(
+            "cannot inspect attachment owner {}: {error}",
+            candidate.display()
+        ))
+    })?;
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err(AppError::PathNotAccessible(format!(
+            "attachment owner is not a regular directory: {}",
+            candidate.display()
+        )));
+    }
+    if has_direct_schema(&candidate)
+        || !matches!(
+            probe_app_directory(&candidate, &owner.space_path),
+            Ok(AppMarkerProbe::NoMatch)
+        )
+    {
+        return Err(AppError::PathNotAccessible(format!(
+            "path is not a directory-backed Page owner: {normalized}"
+        )));
+    }
+    let readme = direct_readme(&candidate).ok_or_else(|| {
+        AppError::PathNotAccessible(format!(
+            "directory-backed Page owner has no README.md: {normalized}"
+        ))
+    })?;
+    let readme_metadata = fs::symlink_metadata(&readme)?;
+    if readme_metadata.file_type().is_symlink() || !readme_metadata.is_file() {
+        return Err(AppError::PathNotAccessible(format!(
+            "directory-backed Page README.md is not a regular file: {normalized}"
+        )));
+    }
+    let canonical = fs::canonicalize(&candidate)?;
+    if !canonical.starts_with(&owner.space_path) {
+        return Err(AppError::PathNotAccessible(format!(
+            "attachment owner escapes Space boundary: {normalized}"
+        )));
+    }
+    owner.owner_path = canonical;
+    owner.owner_relative_path = normalized;
+    Ok(owner)
+}
+
+fn ensure_owner_path_has_no_symlink_components(
+    space_path: &Path,
+    relative: &Path,
+) -> Result<(), AppError> {
+    let mut current = space_path.to_path_buf();
+    for component in relative.components() {
+        current.push(component.as_os_str());
+        let metadata = fs::symlink_metadata(&current)?;
+        if metadata.file_type().is_symlink() {
+            return Err(AppError::PathNotAccessible(format!(
+                "attachment owner path contains a symbolic link: {}",
+                current.display()
+            )));
+        }
+    }
+    Ok(())
+}
+
 pub(crate) async fn list_registered_owner(
     owner: ResolvedRegisteredOwner,
 ) -> Result<AttachmentsSnapshot, AppError> {
-    let (mut items, diagnostics) = scan_direct_children(&owner.space_path)?;
+    let (mut items, diagnostics) =
+        scan_direct_children(&owner.owner_path, &owner.owner_relative_path)?;
     let source_paths = items
         .iter()
         .map(|item| item.path.clone())
@@ -176,7 +270,7 @@ pub(crate) async fn list_registered_owner(
             project_path: system_path::user_facing_path(&owner.project_path),
             space_id: owner.space_id,
             space_path: system_path::user_facing_path(&owner.space_path),
-            owner_path: ".",
+            owner_path: owner.owner_relative_path,
             repository_path: system_path::user_facing_path(&owner.repository_path),
         },
         generation,
@@ -187,6 +281,7 @@ pub(crate) async fn list_registered_owner(
 
 fn scan_direct_children(
     owner_path: &Path,
+    owner_relative_path: &str,
 ) -> Result<(Vec<AttachmentItem>, Vec<AttachmentSourceDiagnostic>), AppError> {
     let owner_has_schema = has_direct_schema(owner_path);
     let registered_spaces = child_folder_names(owner_path);
@@ -234,7 +329,8 @@ fn scan_direct_children(
                 }
                 _ => continue,
             };
-            let source_path = normalized_direct_path(&name, Some("README.md"))?;
+            let source_path =
+                normalized_direct_path(owner_relative_path, &name, Some("README.md"))?;
             let identity = resolve_markdown_identity(MarkdownIdentityFacts {
                 path: &source_path,
                 source_shape: SourceShape::Directory,
@@ -262,7 +358,7 @@ fn scan_direct_children(
         if !metadata.is_file() {
             continue;
         }
-        let source_path = normalized_direct_path(&name, None)?;
+        let source_path = normalized_direct_path(owner_relative_path, &name, None)?;
         let extension = path
             .extension()
             .and_then(|extension| extension.to_str())
@@ -363,6 +459,8 @@ fn classify_binary_extension(extension: &str) -> Option<(ArtifactKind, Attachmen
             | "3gp"
             | "wma"
             | "aiff"
+            | "avif"
+            | "ico"
     )
     .then_some((ArtifactKind::Media, AttachmentAvailability::Limited))
 }
@@ -380,8 +478,17 @@ fn direct_readme(directory: &Path) -> Option<PathBuf> {
         })
 }
 
-fn normalized_direct_path(name: &str, child: Option<&str>) -> Result<String, AppError> {
-    let path = child.map_or_else(|| name.to_string(), |child| format!("{name}/{child}"));
+fn normalized_direct_path(
+    owner_relative_path: &str,
+    name: &str,
+    child: Option<&str>,
+) -> Result<String, AppError> {
+    let direct = child.map_or_else(|| name.to_string(), |child| format!("{name}/{child}"));
+    let path = if owner_relative_path == "." {
+        direct
+    } else {
+        format!("{owner_relative_path}/{direct}")
+    };
     normalize_repo_relative(&path, RootMode::Reject)
 }
 
@@ -602,6 +709,49 @@ mod tests {
         assert_eq!(inline.repository_path, inline.project_path);
         assert_eq!(independent.repository_path, independent.space_path);
         assert_eq!(submodule.repository_path, submodule.space_path);
+    }
+
+    #[tokio::test]
+    async fn directory_page_owner_is_exact_and_keeps_space_relative_paths() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        write_config(
+            temp.path(),
+            Some(vec![SpaceRef {
+                id: "child-id".into(),
+                path: "child-space".into(),
+                repo: None,
+            }]),
+        );
+        fs::create_dir_all(temp.path().join("roadmap/nested-collection")).unwrap();
+        fs::write(temp.path().join("roadmap/README.md"), "roadmap").unwrap();
+        fs::write(temp.path().join("roadmap/brief.pdf"), b"brief").unwrap();
+        fs::write(temp.path().join("roadmap/task.md"), "task").unwrap();
+        fs::write(
+            temp.path().join("roadmap/nested-collection/README.md"),
+            "collection",
+        )
+        .unwrap();
+        fs::write(
+            temp.path().join("roadmap/nested-collection/schema.yaml"),
+            "columns: []",
+        )
+        .unwrap();
+        fs::create_dir_all(temp.path().join("child-space")).unwrap();
+
+        let owner = resolve_attachment_owner(temp.path(), None, Some("roadmap")).unwrap();
+        let snapshot = list_registered_owner(owner).await.unwrap();
+        let paths = snapshot
+            .items
+            .iter()
+            .map(|item| item.path.as_str())
+            .collect::<Vec<_>>();
+
+        assert_eq!(snapshot.owner.owner_path, "roadmap");
+        assert_eq!(paths, vec!["roadmap/brief.pdf", "roadmap/task.md"]);
+        assert!(resolve_attachment_owner(temp.path(), None, Some("child-space")).is_err());
+        assert!(
+            resolve_attachment_owner(temp.path(), None, Some("roadmap/nested-collection")).is_err()
+        );
     }
 
     #[test]

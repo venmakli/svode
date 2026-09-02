@@ -64,7 +64,11 @@ function resolveCachedAssetUrl(
   const pending = pendingAssetUrlResolutions.get(key);
   if (pending) return pending;
 
-  const promise = resolveEditorAssetWebviewUrl(url, projectPath, documentAbsPath)
+  const promise = resolveEditorAssetWebviewUrl(
+    url,
+    projectPath,
+    documentAbsPath,
+  )
     .then((webviewUrl) => {
       resolvedAssetUrlCache.set(key, webviewUrl);
       return webviewUrl;
@@ -111,7 +115,7 @@ export function useEditorDocumentContext(): ResolvedEditorDocumentContext | null
  * URL. Pass-through for external URLs (http(s), data:, blob:, file:, asset:).
  * Otherwise routes through the backend `resolve_asset_url` IPC which uses the
  * same per-space resolver as document links — so cross-space references like
- * `../engineering/.assets/x.png` work out of the box.
+ * colocated relative links such as `diagram.png` work out of the box.
  *
  * Returns `undefined` while the resolver is in flight; callers should treat
  * that as "render the broken image" (e.g. an LFS pointer file resolving to an

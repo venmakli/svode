@@ -4,8 +4,13 @@ import { resolveStandardPropertyColumn } from "@/features/properties";
 import { createRegisteredSpaceOwner } from "@/features/scope-surfaces";
 
 import { isCurrentAttachmentsLoad } from "../hooks/use-attachments-source";
-import { attachmentOwnerInput, type AttachmentRow } from "./types";
+import {
+  attachmentOwnerFromScopeOwner,
+  attachmentOwnerInput,
+  type AttachmentRow,
+} from "./types";
 import { createAttachmentsPresentationDescriptor } from "./presentation";
+import { createAttachmentsCreateCapability } from "./create";
 
 const page: AttachmentRow = {
   availability: "available",
@@ -19,8 +24,21 @@ const page: AttachmentRow = {
   sourceShape: "file",
 };
 
+const create = {
+  intents: [
+    {
+      getState: () => ({ status: "idle" as const }),
+      id: "import-file",
+      label: "Import file…",
+      run: () => undefined,
+    },
+  ],
+  label: "Add",
+};
+
 test("fixed Attachments Table is Property-driven and query-capable", () => {
   const descriptor = createAttachmentsPresentationDescriptor({
+    create,
     onActivate: () => undefined,
   });
 
@@ -31,7 +49,7 @@ test("fixed Attachments Table is Property-driven and query-capable", () => {
     primaryProperty: "name",
     visibleProperties: ["name", "type", "modified", "size"],
   });
-  expect(descriptor.create).toBe(undefined);
+  expect(descriptor.create).toBe(create);
   expect(descriptor.rowActions).toBe(undefined);
   expect(descriptor.properties.map((property) => property.origin)).toEqual([
     "computed",
@@ -86,6 +104,7 @@ test("fixed Attachments Table is Property-driven and query-capable", () => {
 test("activation remains an opaque owner callback", async () => {
   let activated: AttachmentRow | null = null;
   const descriptor = createAttachmentsPresentationDescriptor({
+    create,
     onActivate: (row) => {
       activated = row;
     },
@@ -112,11 +131,13 @@ test("registered owner input distinguishes Project root from child Space", () =>
     status: "ready",
   });
 
-  expect(attachmentOwnerInput(root)).toEqual({
+  expect(attachmentOwnerInput(attachmentOwnerFromScopeOwner(root))).toEqual({
+    ownerPath: ".",
     projectPath: "/repo",
     spaceId: null,
   });
-  expect(attachmentOwnerInput(child)).toEqual({
+  expect(attachmentOwnerInput(attachmentOwnerFromScopeOwner(child))).toEqual({
+    ownerPath: ".",
     projectPath: "/repo",
     spaceId: "child-id",
   });
@@ -126,4 +147,31 @@ test("stale owner and superseded requests cannot publish snapshots", () => {
   expect(isCurrentAttachmentsLoad("owner:a", "owner:a", 4, 4)).toBe(true);
   expect(isCurrentAttachmentsLoad("owner:b", "owner:a", 4, 4)).toBe(false);
   expect(isCurrentAttachmentsLoad("owner:a", "owner:a", 3, 4)).toBe(false);
+});
+
+test("Attachments create intents follow direct Collection ownership", () => {
+  const standaloneOwner = createAttachmentsCreateCapability({
+    hasDirectCollection: false,
+    onCreatePage: () => undefined,
+    onImportFile: () => undefined,
+    state: { status: "idle" },
+  });
+  const collectionOwner = createAttachmentsCreateCapability({
+    hasDirectCollection: true,
+    onCreatePage: () => undefined,
+    onImportFile: () => undefined,
+    state: { reason: "Read-only", status: "disabled" },
+  });
+
+  expect(standaloneOwner.intents.map((intent) => intent.id)).toEqual([
+    "new-page",
+    "import-file",
+  ]);
+  expect(collectionOwner.intents.map((intent) => intent.id)).toEqual([
+    "import-file",
+  ]);
+  expect(collectionOwner.intents[0]?.getState()).toEqual({
+    reason: "Read-only",
+    status: "disabled",
+  });
 });

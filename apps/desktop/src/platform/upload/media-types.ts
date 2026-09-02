@@ -17,9 +17,53 @@ export const IMAGE_EXTS = [
   ".ico",
 ] as const;
 
-export const VIDEO_EXTS = [".mp4", ".mov", ".webm", ".mkv"] as const;
+export const VIDEO_EXTS = [
+  ".mp4",
+  ".m4v",
+  ".mov",
+  ".webm",
+  ".mkv",
+  ".avi",
+  ".wmv",
+  ".mpg",
+  ".mpeg",
+  ".3gp",
+] as const;
 
-export const AUDIO_EXTS = [".mp3", ".wav", ".ogg", ".flac", ".m4a"] as const;
+export const AUDIO_EXTS = [
+  ".mp3",
+  ".wav",
+  ".ogg",
+  ".flac",
+  ".m4a",
+  ".aac",
+  ".opus",
+  ".wma",
+  ".aiff",
+] as const;
+
+export const DOCUMENT_EXTS = [
+  ".pdf",
+  ".docx",
+  ".xlsx",
+  ".pptx",
+  ".doc",
+  ".xls",
+  ".ppt",
+  ".docm",
+  ".xlsm",
+  ".pptm",
+  ".odt",
+  ".ods",
+  ".odp",
+] as const;
+
+export const MANAGED_ATTACHMENT_EXTS = [
+  ...DOCUMENT_EXTS,
+  ...IMAGE_EXTS,
+  ...VIDEO_EXTS,
+  ...AUDIO_EXTS,
+] as const;
 
 export const IMAGE_MIMES = [
   "image/png",

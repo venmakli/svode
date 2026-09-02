@@ -7,7 +7,10 @@ import {
 } from "react";
 import { AgentContextSurface } from "@/features/agent-context";
 import { ActorsSurface } from "@/features/actors";
-import { AttachmentsSurface } from "@/features/attachments";
+import {
+  attachmentOwnerFromScopeOwner,
+  AttachmentsSurface,
+} from "@/features/attachments";
 import { RoutinesSurface } from "@/features/routines";
 import {
   runCollectionNavigation,
@@ -141,7 +144,10 @@ export function ScopeSurfacePage({
     (readOnly: boolean) =>
       createScopeSurfaceContributions({
         attachments: (context) => (
-          <AttachmentsSurface {...context} readOnly={readOnly} />
+          <AttachmentsSurface
+            owner={attachmentOwnerFromScopeOwner(context.owner)}
+            readOnly={readOnly}
+          />
         ),
         actors: (context) => (
           <ActorsSurface

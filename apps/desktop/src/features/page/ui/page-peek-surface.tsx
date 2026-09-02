@@ -15,7 +15,6 @@ import { propertyFieldSavePolicy } from "../property-field-save";
 import type { Page, PageCover } from "../model";
 import { handleError } from "../lib/errors";
 import { PageIdentityHeader } from "./page-identity-header";
-import { PageSubpages } from "./page-subpages";
 import { PageSystemFields } from "./page-system-fields";
 
 interface PagePeekSurfaceProps {
@@ -134,17 +133,8 @@ export function PagePeekSurface({
         documentPathHandoff={pagePathHandoff}
         readOnly={readOnly}
         onDocumentPathChange={(path) => {
-          onPageChange((current) =>
-            current ? { ...current, path } : current,
-          );
+          onPageChange((current) => (current ? { ...current, path } : current));
         }}
-      />
-      <PageSubpages
-        spacePath={spacePath}
-        projectPath={projectPath}
-        spaceId={spaceId}
-        pagePath={page.path}
-        readOnly={readOnly}
       />
     </div>
   );

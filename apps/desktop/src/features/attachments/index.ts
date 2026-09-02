@@ -1,4 +1,5 @@
 export { AttachmentsSurface } from "./ui/attachments-surface";
+export { attachmentOwnerFromScopeOwner } from "./model/types";
 export {
   ATTACHMENTS_PRESENTATION_ID,
   attachmentKindLabel,
@@ -9,6 +10,7 @@ export type {
   AttachmentActivationRequest,
   AttachmentAvailability,
   AttachmentKind,
+  AttachmentOwnerRef,
   AttachmentRow,
   AttachmentsSnapshot,
   AttachmentsSourceState,

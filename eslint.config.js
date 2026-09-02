@@ -32,6 +32,7 @@ const allowedFeatureSubpathExceptions = new Set([
   "@/features/page/page-api",
   "@/features/page/field-save",
   "@/features/page/navigation",
+  "@/features/page/owner-surface",
   "@/features/git/app-shell",
   "@/features/git/editor",
   "@/features/git/sidebar",

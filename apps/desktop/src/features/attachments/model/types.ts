@@ -27,8 +27,19 @@ export interface ResolvedAttachmentOwner {
   projectPath: string;
   spaceId: string | null;
   spacePath: string;
-  ownerPath: ".";
+  ownerPath: string;
   repositoryPath: string;
+}
+
+export interface AttachmentOwnerRef {
+  ownerKey: string;
+  identityKind: "registered-space" | "page-directory";
+  projectPath: string;
+  spaceId: string;
+  spacePath: string;
+  ownerPath: string;
+  contentPath: string;
+  hasDirectCollection: boolean;
 }
 
 export interface AttachmentActivationRequest {
@@ -51,23 +62,42 @@ export type AttachmentsSourceState =
 export interface AttachmentOwnerInput {
   projectPath: string;
   spaceId: string | null;
+  ownerPath: string;
 }
 
 export function attachmentOwnerInput(
-  owner: ScopeOwnerRef,
+  owner: AttachmentOwnerRef,
 ): AttachmentOwnerInput {
-  if (owner.identityKind !== "registered-space" || owner.ownerPath !== ".") {
-    throw new Error("Attachments 5A requires a registered Project/Space owner");
-  }
   return {
     projectPath: owner.projectPath,
     spaceId: owner.projectPath === owner.spacePath ? null : owner.spaceId,
+    ownerPath: owner.ownerPath,
   };
 }
 
-export function attachmentOwnerGenerationKey(owner: ScopeOwnerRef): string {
+export function attachmentOwnerFromScopeOwner(
+  owner: ScopeOwnerRef,
+): AttachmentOwnerRef {
+  if (owner.identityKind !== "registered-space" || owner.ownerPath !== ".") {
+    throw new Error("Attachments requires a registered Project/Space owner");
+  }
+  return {
+    contentPath: owner.readmePath,
+    hasDirectCollection: owner.capabilities.includes("collection"),
+    identityKind: "registered-space",
+    ownerKey: owner.ownerKey,
+    ownerPath: owner.ownerPath,
+    projectPath: owner.projectPath,
+    spaceId: owner.spaceId,
+    spacePath: owner.spacePath,
+  };
+}
+
+export function attachmentOwnerGenerationKey(
+  owner: AttachmentOwnerRef,
+): string {
   const input = attachmentOwnerInput(owner);
-  return `${normalizeRuntimePath(input.projectPath)}\0${input.spaceId ?? "root"}`;
+  return `${normalizeRuntimePath(input.projectPath)}\0${input.spaceId ?? "root"}\0${input.ownerPath}`;
 }
 
 export function sameRuntimePath(left: string, right: string): boolean {

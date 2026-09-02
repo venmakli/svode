@@ -98,6 +98,8 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             attachments::commands::attachments_list,
+            attachments::commands::attachments_inspect_import_source,
+            attachments::commands::attachments_import_file,
             artifact::commands::artifact_probe_app_marker,
             agent_context::commands::agent_context_get_instructions,
             agent_context::commands::agent_context_refresh_instructions,

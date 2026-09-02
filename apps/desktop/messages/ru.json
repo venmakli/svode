@@ -1594,5 +1594,10 @@
   "attachments_source_partial": "Не удалось проверить {path}; остальные вложения остаются доступны.",
   "attachments_source_stale": "Вложение изменилось. Обновите список и повторите действие.",
   "attachments_full_page": "Открыть полностью",
-  "attachments_binary_unavailable": "Предпросмотр типа «{type}» пока недоступен. Исходный файл не изменён и остаётся доступен обработчику этого формата."
+  "attachments_binary_unavailable": "Предпросмотр типа «{type}» пока недоступен. Исходный файл не изменён и остаётся доступен обработчику этого формата.",
+  "attachments_add": "Добавить",
+  "attachments_new_page": "Новая страница",
+  "attachments_import_file": "Импортировать файл…",
+  "attachments_read_only": "Этот владелец доступен только для чтения.",
+  "page_surface_page": "Страница"
 }

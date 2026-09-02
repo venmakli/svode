@@ -22,16 +22,17 @@ import {
   type CollectionActivationContext,
   type CollectionInstance,
 } from "@/features/collection";
-import type { ScopeSurfaceRenderContext } from "@/features/scope-surfaces";
 import * as m from "@/paraglide/messages.js";
 
 import { useAttachmentsSource } from "../hooks/use-attachments-source";
+import { useAttachmentsCreate } from "../hooks/use-attachments-create";
 import {
   attachmentsPresentationState,
   createAttachmentsPresentationDescriptor,
 } from "../model/presentation";
 import type {
   AttachmentActivationRequest,
+  AttachmentOwnerRef,
   AttachmentRow,
   AttachmentsSnapshot,
 } from "../model/types";
@@ -40,7 +41,10 @@ import { AttachmentsPeek } from "./attachments-peek";
 export function AttachmentsSurface({
   owner,
   readOnly,
-}: ScopeSurfaceRenderContext & { readOnly: boolean }) {
+}: {
+  owner: AttachmentOwnerRef;
+  readOnly: boolean;
+}) {
   const [peekTarget, setPeekTarget] =
     useState<AttachmentActivationRequest | null>(null);
   const reconcilePeek = useCallback((snapshot: AttachmentsSnapshot) => {
@@ -59,6 +63,11 @@ export function AttachmentsSurface({
     });
   }, []);
   const source = useAttachmentsSource(owner, reconcilePeek);
+  const create = useAttachmentsCreate({
+    owner,
+    readOnly,
+    refresh: source.refresh,
+  });
   const onActivate = useCallback(
     (row: AttachmentRow, activation: CollectionActivationContext) => {
       if (source.state.phase !== "ready") {
@@ -79,7 +88,7 @@ export function AttachmentsSurface({
     [source.state],
   );
   const presentation = defineCollectionPresentation({
-    descriptor: createAttachmentsPresentationDescriptor({ onActivate }),
+    descriptor: createAttachmentsPresentationDescriptor({ create, onActivate }),
     state: attachmentsPresentationState(source.state, {
       blockingError: (
         <SourceError

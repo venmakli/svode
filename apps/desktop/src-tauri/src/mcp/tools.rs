@@ -189,7 +189,7 @@ pub fn definitions() -> Vec<ToolDefinition> {
         ),
         def(
             "import_asset",
-            "Copy one local regular file into Svode's managed .assets/ pool for existing Markdown content owned by a Page, Collection item, Space, or Collection. This is the required MCP flow for new local media: use returned markdownUrl in a body or returned coverPath in metadata. It does not change body/cover, does not move the source file, and does not autocommit.",
+            "Copy one supported local regular file next to existing Markdown content owned by a Page, Collection item, Space, or Collection. A leaf Page is converted through Svode's managed Page transition before the colocated copy. Use returned canonical contentPath, attachmentPath, markdownUrl, and coverPath; the tool does not change body/cover, move the source file, or autocommit.",
             schema(
                 &[
                     space_id(),
@@ -207,7 +207,7 @@ pub fn definitions() -> Vec<ToolDefinition> {
         ),
         def(
             "create_collection",
-            "Create a Svode collection: a directory with README.md identity plus schema.yaml. Use for structured data, tables, boards, calendars, CRM, OKRs, tasks, backlog, inventories, and repeated records. A new image cover must use cover.path from import_asset or an already-existing repository file; .assets/ file attachments are not collection records. Does not autocommit.",
+            "Create a Svode collection: a directory with README.md identity plus schema.yaml. Use for structured data, tables, boards, calendars, CRM, OKRs, tasks, backlog, inventories, and repeated records. A new image cover must use cover.path from import_asset or an already-existing repository file; binary attachments are not collection records. Does not autocommit.",
             schema(
                 &[
                     space_id(),
@@ -815,13 +815,11 @@ Structural work and integrity:
 - Structural tools do not autocommit and return changed/touched paths. convert_to_collection is in-place and manages Page/Collection identity; convert_page_to_leaf applies only to a supported directory-backed Page and does not demote a Collection or remove schema.yaml.
 - After an intentional raw structural edit, run validate_collection_integrity for the Collection or selected Space and repair every reported relation target, missing Collection item, or stale order reference before continuing.
 
-Managed file assets:
-- `.assets/` is Svode's managed attachment pool, not a directory whose filenames or storage scope an MCP client should construct. A collection named "assets" or an asset inventory is structured data; it is separate from the `.assets/` file pool.
-- To use a new local image, media file, or attachment, call import_asset with the existing Page, Collection item, or owner README contentPath and an absolute local sourcePath. import_asset copies the file into the effective managed pool, applies filename sanitization and a unique prefix, and registers it in SQLite. It never moves the source file, does not change body/cover automatically, and does not autocommit.
-- After import_asset, use markdownUrl exactly as returned in write_page, update_collection_item_body, or an owner README write tool. It is relative to contentPath and is the Markdown URL Plate uses for media.
-- For a cover, pass coverPath exactly as returned to the matching Page, Collection item, or owner metadata tool as cover.path. cover.path refers to an asset that already exists; it is not an upload API.
-- assetPath is repo-relative to the effective managed pool, markdownUrl is relative to contentPath, and coverPath is relative to the selected Space root. These can differ for an inline Space whose pool is project-owned; use the returned values instead of calculating paths.
-- A repository file deliberately created outside `.assets/` remains valid and is not moved unless you explicitly import_asset a managed copy. Do not write new binary files directly into `.assets/`, and do not create or change AGENTS.md for asset handling.
+Managed colocated attachments:
+- To use a new local image, media file, or attachment, call import_asset with the existing Page, Collection item, or owner README contentPath and an absolute local sourcePath. The source is copied, never moved. A leaf Page may become `<name>/README.md`; always use the returned canonical contentPath for the next content or metadata tool call.
+- The managed copy is a direct child of its content owner. Svode applies portable filename projection, allocates collisions without overwriting a sibling, publishes only a complete file, and preserves Page relations, backlinks, order, and index handoff during a leaf conversion. It does not change body/cover automatically and does not autocommit.
+- Use markdownUrl exactly as returned in write_page, update_collection_item_body, or an owner README write tool. For a cover, pass coverPath exactly as returned as cover.path. attachmentPath and coverPath are relative to the selected Space; markdownUrl is relative to the returned contentPath. changedPaths reports project-relative files changed by the complete managed operation.
+- `.assets/` is a read-compatibility pool for existing links, not a placement for new managed imports. Do not construct new `.assets/` paths or register attachment metadata in SQLite, and do not create or change AGENTS.md for asset handling.
 
 Property semantics:
 - Always read get_collection_schema before schema changes.
@@ -1255,7 +1253,7 @@ fn cover_opt(name: &'static str) -> (&'static str, Value) {
                     "additionalProperties": false,
                     "properties": {
                         "type": { "type": "string", "enum": ["image"] },
-                        "path": { "type": "string", "description": "Existing repository image path, preferably the coverPath returned by import_asset. Do not invent a new .assets/ path here." },
+                        "path": { "type": "string", "description": "Existing repository image path, preferably the coverPath returned by import_asset. Do not invent a new attachment path here." },
                         "position": { "type": ["integer", "null"], "minimum": 0, "maximum": 100 }
                     },
                     "required": ["type", "path"]
@@ -1732,8 +1730,12 @@ mod tests {
             definition.input_schema["required"],
             json!(["contentPath", "sourcePath"])
         );
+        assert!(definition.description.contains("contentPath"));
+        assert!(definition.description.contains("attachmentPath"));
         assert!(definition.description.contains("markdownUrl"));
-        assert!(guide_text().contains("Managed file assets"));
+        assert!(!definition.description.contains("assetPath"));
+        assert!(guide_text().contains("Managed colocated attachments"));
+        assert!(guide_text().contains("read-compatibility pool"));
         assert!(guide_text().contains("AGENTS.md"));
     }
 

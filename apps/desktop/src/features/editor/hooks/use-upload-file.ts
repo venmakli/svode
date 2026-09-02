@@ -2,21 +2,17 @@ import * as React from "react";
 
 import { toast } from "sonner";
 
-import { makeRelativePageUrl } from "../api/page-link-api";
-import { joinAbs } from "../lib/page-link-utils";
 import {
-  uploadEditorMediaAsset,
-  type UploadAssetDto,
+  importEditorMediaAsset,
+  sourcePathForEditorMediaFile,
 } from "../api/editor-media-api";
-import { getSpaceSnapshot } from "@/features/space";
 import { useEditorDocumentContext } from "./use-resolved-asset-url";
 
 /**
  * Shape returned by `useUploadFile` — matches the subset of Plate's
  * `UploadedFile` contract that the media node components consume. The `url`
  * is the markdown link path the editor stores in the node: relative to the
- * source document and routed through the Page-link adapter so cross-space
- * uploads (when they land) render as `../other-space/.assets/x.png`.
+ * source document after the backend has finalized the colocated file.
  */
 export interface UploadedFile {
   key: string;
@@ -32,10 +28,9 @@ interface UseUploadFileProps {
 }
 
 /**
- * Tauri-backed upload hook. Reads the file's bytes, ships them to the
- * `upload_asset` IPC, and returns a record whose `url` is the markdown link
- * Plate writes into the document body. The editor resolves that link back to
- * an absolute filesystem path at render time via `useResolvedAssetUrl`.
+ * Tauri-backed upload hook. It passes the native source path to the managed
+ * import service and returns the markdown link only after disk finalization.
+ * The editor resolves that link to a scoped filesystem URL at render time.
  */
 export function useUploadFile({
   onUploadComplete,
@@ -49,7 +44,7 @@ export function useUploadFile({
 
   async function uploadFile(file: File): Promise<UploadedFile | undefined> {
     // Snapshot the editor-local document at upload initiation. If the user
-    // switches the app selection while file bytes are resolving, the asset still
+    // switches the app selection while the native import is running, the asset still
     // belongs to the document where the upload was started.
     const uploadContext = editorDocument;
     if (!uploadContext) {
@@ -58,48 +53,39 @@ export function useUploadFile({
       onUploadError?.(err);
       return undefined;
     }
-    const { documentAbsPath, documentPath, projectPath, spacePath } =
-      uploadContext;
+    const { documentPath, projectPath, sourceSpaceId } = uploadContext;
+    const sourcePath = sourcePathForEditorMediaFile(file);
+    if (!sourcePath) {
+      const error = new Error(
+        "This file has no native source path. Choose it with the editor file picker and try again.",
+      );
+      toast.error(error.message);
+      onUploadError?.(error);
+      return undefined;
+    }
 
     setIsUploading(true);
     setUploadingFile(file);
     setProgress(0);
 
     try {
-      const buffer = await file.arrayBuffer();
-      // Tauri 2 accepts a plain number[] for Vec<u8> over JSON IPC. For large
-      // files we eat the ~3.5x serialization overhead once — this code runs
-      // rarely and on a local machine, so it's a fine trade-off vs. plumbing
-      // a temp-file round-trip via tauri-plugin-fs.
-      const bytes = Array.from(new Uint8Array(buffer));
-      setProgress(50);
-
-      const result: UploadAssetDto = await uploadEditorMediaAsset({
+      await uploadContext.prepareManagedImport?.();
+      setProgress(25);
+      const result = await importEditorMediaAsset({
         projectPath,
-        documentAbsPath,
+        spaceId: sourceSpaceId,
+        contentPath: documentPath,
+        sourcePath,
         fileName: file.name,
-        bytes,
-        documentId: documentPath,
       });
-
+      if (result.contentPath !== documentPath) {
+        uploadContext.onDocumentPathChange?.(result.contentPath);
+      }
       setProgress(100);
 
-      // Compute the markdown link from the source document to the asset's
-      // absolute path. The Page-link adapter mirrors how editor link
-      // insertion builds cross-space `../space/foo.md` paths (Ф.7); for
-      // intra-space uploads (MVP, Q3=A) this collapses to `.assets/x.ext`.
-      // The asset's owning space is identified by `result.spaceId` (null =
-      // project root); look it up to build the abs filesystem path.
-      const { spaces } = getSpaceSnapshot();
-      const assetOwnerPath = result.spaceId
-        ? (spaces.find((s) => s.id === result.spaceId)?.path ?? spacePath)
-        : projectPath;
-      const targetAbsPath = joinAbs(assetOwnerPath, result.relPath);
-      const link = await makeRelativePageUrl(documentAbsPath, targetAbsPath);
-
       const uploaded: UploadedFile = {
-        key: result.relPath,
-        url: link,
+        key: result.attachmentPath,
+        url: result.markdownUrl,
         name: result.fileName,
         size: result.sizeBytes,
         type: result.mime,

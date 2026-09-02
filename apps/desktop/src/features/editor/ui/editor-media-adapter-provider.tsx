@@ -32,12 +32,16 @@ export function EditorMediaAdapterProvider({
   projectPath,
   spaceId,
   spacePath,
+  prepareManagedImport,
+  onDocumentPathChange,
 }: {
   children: React.ReactNode;
   documentPath: string | null;
   projectPath: string | null;
   spaceId: string | null;
   spacePath: string | null;
+  prepareManagedImport: () => Promise<void>;
+  onDocumentPathChange: (path: string) => void;
 }) {
   const context = React.useMemo<EditorAssetResolveContext>(
     () => ({
@@ -45,8 +49,17 @@ export function EditorMediaAdapterProvider({
       projectPath,
       spaceId,
       spacePath,
+      prepareManagedImport,
+      onDocumentPathChange,
     }),
-    [documentPath, projectPath, spaceId, spacePath],
+    [
+      documentPath,
+      onDocumentPathChange,
+      prepareManagedImport,
+      projectPath,
+      spaceId,
+      spacePath,
+    ],
   );
   const adapter = React.useMemo<MediaAdapter>(
     () => ({

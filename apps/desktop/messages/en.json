@@ -1594,5 +1594,10 @@
   "attachments_source_partial": "Could not inspect {path}; the remaining attachments are still available.",
   "attachments_source_stale": "This attachment changed. Refresh the list and try again.",
   "attachments_full_page": "Full page",
-  "attachments_binary_unavailable": "{type} preview is not available yet. The source remains unchanged and available to its owning viewer."
+  "attachments_binary_unavailable": "{type} preview is not available yet. The source remains unchanged and available to its owning viewer.",
+  "attachments_add": "Add",
+  "attachments_new_page": "New page",
+  "attachments_import_file": "Import file…",
+  "attachments_read_only": "This owner is read-only.",
+  "page_surface_page": "Page"
 }

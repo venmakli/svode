@@ -1,17 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
-  listenAttachmentOwnerLifecycle,
-  listenAttachmentsInvalidated,
+  getAttachmentsSnapshot,
+  subscribeAttachmentOwnerLifecycle,
+  subscribeAttachmentsInvalidated,
   type AttachmentOwnerLifecycleEventDto,
-} from "@/platform/attachments/attachments-api";
-import type { ScopeOwnerRef } from "@/features/scope-surfaces";
-
-import { getAttachmentsSnapshot } from "../api/attachments-api";
+} from "../api/attachments-api";
 import {
   attachmentOwnerGenerationKey,
   attachmentOwnerInput,
   sameRuntimePath,
+  type AttachmentOwnerRef,
   type AttachmentsSnapshot,
   type AttachmentsSourceState,
 } from "../model/types";
@@ -19,13 +18,15 @@ import {
 const INVALIDATION_COALESCE_MS = 80;
 
 export function useAttachmentsSource(
-  owner: ScopeOwnerRef,
+  owner: AttachmentOwnerRef,
   onSnapshot?: (snapshot: AttachmentsSnapshot) => void,
 ) {
   const ownerKey = attachmentOwnerGenerationKey(owner);
   const ownerInput = attachmentOwnerInput(owner);
   const projectPath = ownerInput.projectPath;
+  const ownerPath = ownerInput.ownerPath;
   const spaceId = ownerInput.spaceId;
+  const spacePath = owner.spacePath;
   const [state, setState] = useState<AttachmentsSourceState>({
     phase: "initial",
   });
@@ -36,7 +37,11 @@ export function useAttachmentsSource(
   const refresh = useCallback(async () => {
     const requestGeneration = ++requestGenerationRef.current;
     try {
-      const snapshot = await getAttachmentsSnapshot({ projectPath, spaceId });
+      const snapshot = await getAttachmentsSnapshot({
+        ownerPath,
+        projectPath,
+        spaceId,
+      });
       if (
         !isCurrentAttachmentsLoad(
           activeOwnerKeyRef.current,
@@ -67,7 +72,7 @@ export function useAttachmentsSource(
           : { message, phase: "blocking_error" },
       );
     }
-  }, [onSnapshot, ownerKey, projectPath, spaceId]);
+  }, [onSnapshot, ownerKey, ownerPath, projectPath, spaceId]);
 
   useEffect(() => {
     activeOwnerKeyRef.current = ownerKey;
@@ -95,16 +100,18 @@ export function useAttachmentsSource(
       }, INVALIDATION_COALESCE_MS);
     };
     void Promise.all([
-      listenAttachmentsInvalidated((event) => {
+      subscribeAttachmentsInvalidated((event) => {
         if (
-          event.ownerPath === "." &&
-          sameRuntimePath(event.spacePath, owner.spacePath)
+          event.ownerPath === ownerPath &&
+          sameRuntimePath(event.spacePath, spacePath)
         ) {
           scheduleRefresh();
         }
       }),
-      listenAttachmentOwnerLifecycle((event) => {
-        if (lifecycleAffectsOwner(event, owner)) scheduleRefresh();
+      subscribeAttachmentOwnerLifecycle((event) => {
+        if (lifecycleAffectsOwner(event, { projectPath, spaceId, spacePath })) {
+          scheduleRefresh();
+        }
       }),
     ]).then((dispose) => {
       if (cancelled) {
@@ -127,7 +134,7 @@ export function useAttachmentsSource(
       if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current);
       refreshTimerRef.current = null;
     };
-  }, [owner, refresh]);
+  }, [ownerPath, projectPath, refresh, spaceId, spacePath]);
 
   return { refresh, state };
 }
@@ -146,10 +153,14 @@ export function isCurrentAttachmentsLoad(
 
 function lifecycleAffectsOwner(
   event: AttachmentOwnerLifecycleEventDto,
-  owner: ScopeOwnerRef,
+  owner: {
+    projectPath: string;
+    spaceId: string | null;
+    spacePath: string;
+  },
 ) {
   if (!sameRuntimePath(event.projectPath, owner.projectPath)) return false;
-  const ownerIsRoot = owner.projectPath === owner.spacePath;
+  const ownerIsRoot = owner.spaceId === null;
   if (event.kind === "synced") {
     return ownerIsRoot
       ? event.spaceId == null

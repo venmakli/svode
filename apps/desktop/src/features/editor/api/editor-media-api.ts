@@ -4,14 +4,15 @@ import {
 } from "@/platform/assets/assets-api";
 import {
   filesToFileList,
-  pickMediaFiles,
+  managedSourcePathForFile,
+  pickManagedMediaFiles,
 } from "@/platform/filesystem/native-file-picker";
 import { openPath } from "@/platform/native/shell";
 import type { MediaKind } from "@/platform/upload/media-types";
 import {
-  uploadAsset,
-  type UploadAssetDto,
-} from "@/platform/upload/upload-api";
+  importManagedAttachment,
+  type ManagedImportResultDto,
+} from "@/platform/attachments/attachments-api";
 
 import type { EditorAssetResolveContext } from "../lib/editor-asset-context";
 import { resolveEditorAssetContext } from "../lib/editor-asset-context";
@@ -19,16 +20,20 @@ import { resolveEditorAssetContext } from "../lib/editor-asset-context";
 const EXTERNAL = /^(https?:|data:|blob:|asset:|file:)/i;
 
 export { filesToFileList };
-export type { UploadAssetDto };
+export type { ManagedImportResultDto };
 
 export function pickEditorMediaFiles(kind: MediaKind): Promise<File[]> {
-  return pickMediaFiles(kind);
+  return pickManagedMediaFiles(kind);
 }
 
-export function uploadEditorMediaAsset(
-  input: Parameters<typeof uploadAsset>[0],
-): Promise<UploadAssetDto> {
-  return uploadAsset(input);
+export function sourcePathForEditorMediaFile(file: File): string | null {
+  return managedSourcePathForFile(file);
+}
+
+export function importEditorMediaAsset(
+  input: Parameters<typeof importManagedAttachment>[0],
+): Promise<ManagedImportResultDto> {
+  return importManagedAttachment(input);
 }
 
 export async function resolveEditorAssetWebviewUrl(

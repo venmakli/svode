@@ -22,9 +22,8 @@ use crate::git::access::{ensure_mutation_paths_were_authorized, repository_acces
 use crate::git::{self, commands::GitState};
 use crate::index::{IndexKey, IndexState, search};
 use crate::properties::{self, CollectionSchema, Column, Filter, PropertyType, Sort, View};
-use crate::repo_path::{RootMode, normalize_repo_relative, repo_relative_from_base};
+use crate::repo_path::{RootMode, normalize_repo_relative};
 use crate::space::{config as space_config, project, registry};
-use crate::storage::{assets, scope::resolve_effective_storage_scope_for_key};
 
 const DEFAULT_LIMIT: i64 = 50;
 const MAX_LIMIT: i64 = 200;
@@ -59,23 +58,18 @@ pub(crate) fn routine_caller_provenance() -> Option<crate::terminal::RoutineMcpC
 }
 
 #[derive(Debug, Clone, Copy)]
-pub enum MutationOrigin {
-    Mcp,
-}
-
-#[derive(Debug, Clone, Copy)]
 pub enum CommitPolicy {
     NoAutocommit,
 }
 
 #[derive(Debug, Clone, Copy)]
 struct McpMutationPolicy {
-    _origin: MutationOrigin,
+    _origin: crate::attachments::managed_import::MutationOrigin,
     _commit_policy: CommitPolicy,
 }
 
 const MCP_MUTATION_POLICY: McpMutationPolicy = McpMutationPolicy {
-    _origin: MutationOrigin::Mcp,
+    _origin: crate::attachments::managed_import::MutationOrigin::Mcp,
     _commit_policy: CommitPolicy::NoAutocommit,
 };
 
@@ -531,45 +525,6 @@ fn rel_paths_from_space(space: &str, paths: Vec<PathBuf>) -> Vec<String> {
         .collect()
 }
 
-fn validate_regular_source_path(source_path: &str) -> Result<PathBuf, McpBusinessError> {
-    let path = PathBuf::from(source_path);
-    if !path.is_absolute() {
-        return Err(McpBusinessError::new(
-            "INVALID_SOURCE_PATH",
-            "sourcePath must be an absolute path to a readable local regular file",
-        ));
-    }
-    let metadata = fs::symlink_metadata(&path).map_err(|error| {
-        McpBusinessError::new(
-            "SOURCE_FILE_NOT_FOUND",
-            format!("sourcePath could not be inspected: {error}"),
-        )
-    })?;
-    if !metadata.file_type().is_file() {
-        return Err(McpBusinessError::new(
-            "SOURCE_NOT_REGULAR_FILE",
-            "sourcePath must point to a regular file, not a directory or symbolic link",
-        ));
-    }
-    Ok(path)
-}
-
-fn content_id_for_asset_scope(content_abs: &Path, pool_dir: &Path, fallback: &str) -> String {
-    repo_relative_from_base(pool_dir, content_abs, RootMode::Reject)
-        .unwrap_or_else(|_| fallback.to_string())
-}
-
-fn asset_reference_paths(
-    content_abs: &Path,
-    space_dir: &Path,
-    asset_abs: &Path,
-) -> (String, String) {
-    (
-        crate::files::backlinks::make_relative_link_between(content_abs, asset_abs),
-        crate::files::backlinks::make_relative_path(space_dir, asset_abs),
-    )
-}
-
 fn schema_path_rel(collection_path: &str) -> String {
     if collection_path.is_empty() {
         "schema.yaml".to_string()
@@ -907,33 +862,6 @@ mod tests {
 
         assert_eq!(error.code, "INVALID_COLLECTION_CONVERSION");
         assert_eq!(error.message, "Page is already a collection");
-    }
-
-    #[test]
-    fn import_asset_paths_follow_content_and_cover_semantics() {
-        let (root_markdown, root_cover) = asset_reference_paths(
-            Path::new("/project/note.md"),
-            Path::new("/project"),
-            Path::new("/project/.assets/cover.png"),
-        );
-        assert_eq!(root_markdown, ".assets/cover.png");
-        assert_eq!(root_cover, ".assets/cover.png");
-
-        let (inline_markdown, inline_cover) = asset_reference_paths(
-            Path::new("/project/inline/docs/note.md"),
-            Path::new("/project/inline"),
-            Path::new("/project/.assets/cover.png"),
-        );
-        assert_eq!(inline_markdown, "../../.assets/cover.png");
-        assert_eq!(inline_cover, "../.assets/cover.png");
-    }
-
-    #[test]
-    fn import_asset_requires_an_absolute_regular_file_source() {
-        assert!(validate_regular_source_path("relative.png").is_err());
-
-        let temp = tempfile::tempdir().expect("temp dir");
-        assert!(validate_regular_source_path(temp.path().to_string_lossy().as_ref()).is_err());
     }
 
     #[test]

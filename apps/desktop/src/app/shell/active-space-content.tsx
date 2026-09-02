@@ -1,6 +1,11 @@
 import { FileText } from "lucide-react";
 import { useCallback } from "react";
 import { ArtifactSurface } from "@/features/artifact/app-shell";
+import { AttachmentsSurface } from "@/features/attachments";
+import {
+  PageOwnerSurfaceProvider,
+  type PageAttachmentsSurfaceInput,
+} from "@/features/page/owner-surface";
 import { useActiveContentSelection } from "@/features/artifact";
 import type { TreeNode } from "@/features/space";
 import { useSpace } from "@/features/space";
@@ -46,6 +51,24 @@ export function ActiveSpaceContent() {
   const openRepositorySettings = useCallback(
     (repositoryPath: string) => openSpaceSettings(repositoryPath, "git"),
     [openSpaceSettings],
+  );
+  const renderPageAttachments = useCallback(
+    (pageOwner: PageAttachmentsSurfaceInput) => (
+      <AttachmentsSurface
+        owner={{
+          contentPath: pageOwner.contentPath,
+          hasDirectCollection: false,
+          identityKind: "page-directory",
+          ownerKey: `page:${pageOwner.spaceId}:${pageOwner.ownerPath}`,
+          ownerPath: pageOwner.ownerPath,
+          projectPath: pageOwner.projectPath,
+          spaceId: pageOwner.spaceId,
+          spacePath: pageOwner.spacePath,
+        }}
+        readOnly={pageOwner.readOnly}
+      />
+    ),
+    [],
   );
   const artifactRequest =
     selection?.kind === "artifact" ? selection.request : null;
@@ -128,15 +151,17 @@ export function ActiveSpaceContent() {
         sessionKey={collectionSessionKey}
       />
     ) : artifactRequest && activeSpace && selectionSpaceId ? (
-      <ArtifactSurface
-        request={artifactRequest}
-        spacePath={activeSpace.path}
-        projectPath={activeRootPath}
-        spaceId={selectionSpaceId}
-        onOpenRepositorySettings={openRepositorySettings}
-        pageSessionKey={`${selectionSpaceId}:${artifactRequest.sessionKey}`}
-        retainSurfaceDuringRetarget={isArtifactPathRetarget}
-      />
+      <PageOwnerSurfaceProvider renderAttachments={renderPageAttachments}>
+        <ArtifactSurface
+          request={artifactRequest}
+          spacePath={activeSpace.path}
+          projectPath={activeRootPath}
+          spaceId={selectionSpaceId}
+          onOpenRepositorySettings={openRepositorySettings}
+          pageSessionKey={`${selectionSpaceId}:${artifactRequest.sessionKey}`}
+          retainSurfaceDuringRetarget={isArtifactPathRetarget}
+        />
+      </PageOwnerSurfaceProvider>
     ) : (
       <div className="h-full" />
     );

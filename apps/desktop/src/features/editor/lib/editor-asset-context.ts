@@ -5,6 +5,8 @@ export interface EditorAssetResolveContext {
   projectPath: string | null;
   spaceId: string | null;
   spacePath: string | null;
+  prepareManagedImport?: () => Promise<void>;
+  onDocumentPathChange?: (path: string) => void;
 }
 
 export interface ResolvedEditorDocumentContext {
@@ -14,6 +16,8 @@ export interface ResolvedEditorDocumentContext {
   documentPath: string;
   documentAbsPath: string;
   spacePath: string;
+  prepareManagedImport?: () => Promise<void>;
+  onDocumentPathChange?: (path: string) => void;
 }
 
 export interface EditorDocumentSpaceRef {
@@ -36,12 +40,16 @@ function buildResolvedEditorDocumentContext({
   documentSpaceId,
   projectPath,
   spacePath,
+  prepareManagedImport,
+  onDocumentPathChange,
 }: {
   activeRootId?: string | null;
   documentPath: string;
   documentSpaceId: string | null;
   projectPath: string;
   spacePath: string;
+  prepareManagedImport?: () => Promise<void>;
+  onDocumentPathChange?: (path: string) => void;
 }): ResolvedEditorDocumentContext {
   return {
     projectPath,
@@ -55,6 +63,8 @@ function buildResolvedEditorDocumentContext({
       ? documentPath
       : joinAbs(spacePath, documentPath),
     spacePath,
+    prepareManagedImport,
+    onDocumentPathChange,
   };
 }
 
@@ -99,5 +109,7 @@ export function resolveEditorAssetContext(
     documentSpaceId: context.spaceId ?? null,
     projectPath: context.projectPath,
     spacePath: context.spacePath,
+    prepareManagedImport: context.prepareManagedImport,
+    onDocumentPathChange: context.onDocumentPathChange,
   });
 }

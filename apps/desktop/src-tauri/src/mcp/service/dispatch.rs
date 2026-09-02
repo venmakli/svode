@@ -225,17 +225,21 @@ async fn authorize_mutating_tool(
 
     match name {
         "import_asset" => {
-            let requested_key = index_key_for_context(&context, requested_space_id.as_deref());
+            let decoded: ImportAssetArgs = decode(args.clone())?;
             let index_state = app.state::<IndexState>();
-            paths = vec![
-                resolve_effective_storage_scope_for_key(
-                    &index_state,
-                    Path::new(&context.project_path),
-                    requested_key,
-                )
-                .await?
-                .repo_dir,
-            ];
+            let selected_space_id = requested_space_id
+                .as_deref()
+                .filter(|space_id| !is_mcp_root_space_id(space_id));
+            let plan = crate::attachments::managed_import::plan_managed_import(
+                &index_state,
+                Path::new(&context.project_path),
+                selected_space_id,
+                &decoded.content_path,
+                Path::new(&decoded.source_path),
+                decoded.file_name.as_deref(),
+            )
+            .await?;
+            paths = plan.affected_paths().to_vec();
         }
         "update_collection_item_fields" => {
             let decoded: UpdateCollectionItemFieldsArgs = decode(args.clone())?;

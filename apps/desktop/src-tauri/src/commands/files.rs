@@ -786,8 +786,22 @@ async fn require_entry_backlink_mutation_plan(
     from: &str,
     folder_rename: bool,
 ) -> Result<Vec<PathBuf>, AppError> {
+    let paths =
+        entry_backlink_mutation_paths(index_state, space, project_path, from, folder_rename)
+            .await?;
+    require_repository_mutation_paths(app, paths.clone()).await?;
+    Ok(paths)
+}
+
+pub(crate) async fn entry_backlink_mutation_paths(
+    index_state: &IndexState,
+    space: &str,
+    project_path: Option<&str>,
+    from: &str,
+    folder_rename: bool,
+) -> Result<Vec<PathBuf>, AppError> {
     let Some(project_path) = project_path.filter(|path| !path.is_empty()) else {
-        return require_planned_mutation_paths(app, space, Vec::new()).await;
+        return Ok(vec![PathBuf::from(space)]);
     };
     let target_space_id = space_id_for_dir(index_state, space).await;
     let link_plan = if folder_rename {
@@ -803,7 +817,9 @@ async fn require_entry_backlink_mutation_plan(
             .plan_links_on_rename_project(Path::new(project_path), target_space_id.as_deref(), from)
             .await?
     };
-    require_planned_mutation_paths(app, space, link_plan.mutation_paths().to_vec()).await
+    let mut paths = link_plan.mutation_paths().to_vec();
+    paths.push(PathBuf::from(space));
+    Ok(paths)
 }
 
 async fn require_convert_to_collection_mutation_plan(

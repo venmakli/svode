@@ -110,6 +110,7 @@ pub async fn upload(
 /// register it in SQLite. This is the disk-to-disk counterpart to `upload`:
 /// callers do not need to materialize a byte array just to use the managed
 /// asset contract.
+#[cfg_attr(not(test), allow(dead_code))]
 pub async fn import_file(
     pool: &SqlitePool,
     target_dir: &Path,

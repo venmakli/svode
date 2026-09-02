@@ -484,16 +484,13 @@ pub async fn resolve_asset_url(
 
         // Routes through the resolver to validate ghost/missing/broken spaces.
         let (key, _rel) = index_state.resolve(&project, &abs).await?;
-        let target_dir = index_state.dir_for_key(&key).await?;
+        let _target_dir = index_state.dir_for_key(&key).await?;
 
-        // Whitelist the pool's `.assets/` directory in the webview's asset
-        // protocol scope so `convertFileSrc(absPath)` can load it. The call is
-        // idempotent — Tauri's allow_directory is set-add.
-        if let Err(e) = app
-            .asset_protocol_scope()
-            .allow_directory(target_dir.join(".assets"), true)
-        {
-            tracing::warn!("allow_directory failed for assets scope: {e}");
+        // Grant only the resolved file. This keeps legacy `.assets` links
+        // working while also allowing colocated managed imports without
+        // widening the asset protocol to an entire user-content directory.
+        if let Err(e) = app.asset_protocol_scope().allow_file(&abs) {
+            tracing::warn!("allow_file failed for asset scope: {e}");
         }
 
         Ok(abs.to_string_lossy().to_string())

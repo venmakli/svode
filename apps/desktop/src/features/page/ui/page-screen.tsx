@@ -34,7 +34,6 @@ import {
   PageIdentityHeader,
   PageIdentityHeaderSkeleton,
 } from "./page-identity-header";
-import { PageSubpages } from "./page-subpages";
 import { PageSystemFields } from "./page-system-fields";
 import { handleError } from "../lib/errors";
 import { publishPageFilenameWarnings } from "../lib/filename-warning";
@@ -42,6 +41,10 @@ import { propertyFieldSavePolicy } from "../property-field-save";
 import { usePageName } from "../hooks/use-page-name";
 import { usePageSurfaceSession } from "../hooks/page-surface-context";
 import { PageAccessRecovery } from "./page-access-recovery";
+import { usePageOwnerSurfaceContribution } from "../hooks/page-owner-surface-context";
+import { pageAttachmentOwnerPath } from "../model/page-attachments";
+import * as m from "@/paraglide/messages.js";
+import { PageOwnerTabs } from "./page-owner-tabs";
 
 interface PageScreenProps {
   spacePath: string;
@@ -61,6 +64,7 @@ export function PageScreen({
   spaceId,
 }: PageScreenProps) {
   const pageSurface = usePageSurfaceSession();
+  const pageOwnerSurface = usePageOwnerSurfaceContribution();
   const openPage = useOpenPage();
   const openScopeOwner = useOpenScopeOwner();
   const openPath = useCallback(
@@ -103,8 +107,7 @@ export function PageScreen({
   );
   const renderedPageTargetKey =
     adoptedPageTargetKeyRef.current ?? pageTargetKey;
-  const currentPage =
-    loadedPageKey === renderedPageTargetKey ? page : null;
+  const currentPage = loadedPageKey === renderedPageTargetKey ? page : null;
   const pageName = usePageName({
     pagePath,
     page: currentPage,
@@ -163,10 +166,7 @@ export function PageScreen({
     scopePath: spacePath,
     path: page?.path ?? pagePath,
     onOutcome: (titleOutcome) => {
-      const nextTargetKey = getPageTargetKey(
-        spacePath,
-        titleOutcome.page.path,
-      );
+      const nextTargetKey = getPageTargetKey(spacePath, titleOutcome.page.path);
       adoptedPageTargetKeyRef.current = nextTargetKey;
       setPage((current) =>
         current ? applyPageTitleOutcome(current, titleOutcome.page) : current,
@@ -279,11 +279,34 @@ export function PageScreen({
     openPage(duplicated.path, spaceId);
   }
 
+  const handleManagedDocumentPathChange = useCallback(
+    (path: string) => {
+      const previousPath = page?.path ?? pagePath;
+      adoptedPageTargetKeyRef.current = getPageTargetKey(spacePath, path);
+      setPathHandoff({ path, previousPath });
+      setPage((current) => (current ? { ...current, path } : current));
+      setLoadedPageKey(getPageTargetKey(spacePath, path));
+      setDetailState((current) => ({
+        form: "folder",
+        otherFileCount: (current?.otherFileCount ?? 0) + 1,
+        subpageCount: current?.subpageCount ?? 0,
+      }));
+      retargetPage(previousPath, path, spaceId);
+    },
+    [page?.path, pagePath, retargetPage, spaceId, spacePath],
+  );
+
   if (!currentPage) {
     return <PageLoadingState />;
   }
   const activePage = currentPage;
-  const showSubpages = detailState?.form === "folder";
+  const attachmentOwnerPath = pageAttachmentOwnerPath(
+    currentPage.path,
+    detailState,
+  );
+  const showAttachments = Boolean(
+    attachmentOwnerPath && projectPath && pageOwnerSurface,
+  );
 
   function updateTitle(value: string) {
     if (pageSurface.readOnly) return;
@@ -331,9 +354,7 @@ export function PageScreen({
               spaceId={spaceId}
               onConverted={(nextPage, nested) => {
                 setPage(nextPage);
-                setLoadedPageKey(
-                  getPageTargetKey(spacePath, nextPage.path),
-                );
+                setLoadedPageKey(getPageTargetKey(spacePath, nextPage.path));
                 if (nested) {
                   openScopeOwner({
                     kind: "collection",
@@ -380,6 +401,95 @@ export function PageScreen({
           </div>
         ) : null}
       </div>
+      {showAttachments ? (
+        <PageOwnerTabs
+          prepareForPageDeactivation={pageSurface.prepareForNavigation}
+          page={
+            <PageBody
+              currentPage={currentPage}
+              pathHandoff={pathHandoff}
+              projectPath={projectPath}
+              readOnly={pageSurface.readOnly}
+              registerPersistence={pageSurface.registerPersistence}
+              recoverWriteError={pageSurface.recoverWriteError}
+              spaceId={spaceId}
+              spacePath={spacePath}
+              prepareManagedImport={pageSurface.prepareForNavigation}
+              onDocumentPathChange={handleManagedDocumentPathChange}
+            />
+          }
+          attachments={
+            <>
+              <PageAccessRecovery className="mx-auto w-full max-w-5xl px-6 pb-4" />
+              {pageOwnerSurface?.renderAttachments({
+                contentPath: currentPage.path,
+                ownerPath: attachmentOwnerPath!,
+                projectPath: projectPath!,
+                readOnly: pageSurface.readOnly,
+                spaceId,
+                spacePath,
+              })}
+            </>
+          }
+        />
+      ) : (
+        <PageBody
+          currentPage={currentPage}
+          pathHandoff={pathHandoff}
+          projectPath={projectPath}
+          readOnly={pageSurface.readOnly}
+          registerPersistence={pageSurface.registerPersistence}
+          recoverWriteError={pageSurface.recoverWriteError}
+          spaceId={spaceId}
+          spacePath={spacePath}
+          prepareManagedImport={pageSurface.prepareForNavigation}
+          onDocumentPathChange={handleManagedDocumentPathChange}
+        />
+      )}
+      <PageDeleteDialog
+        page={pageSurface.readOnly ? null : deletePage}
+        onOpenChange={(open) => {
+          if (!open) setDeletePage(null);
+        }}
+        onDeletePage={(pageToDelete) =>
+          void pageSurface
+            .runMutation(() => deleteCurrentPage(pageToDelete))
+            .catch(handleError)
+        }
+      />
+    </div>
+  );
+}
+
+function PageBody({
+  currentPage,
+  pathHandoff,
+  projectPath,
+  readOnly,
+  registerPersistence,
+  recoverWriteError,
+  spaceId,
+  spacePath,
+  prepareManagedImport,
+  onDocumentPathChange,
+}: {
+  currentPage: Page;
+  pathHandoff: { previousPath: string; path: string } | null;
+  projectPath?: string | null;
+  readOnly: boolean;
+  registerPersistence: Parameters<
+    typeof PlateDocumentEditor
+  >[0]["registerPersistence"];
+  recoverWriteError: Parameters<
+    typeof PlateDocumentEditor
+  >[0]["onWriteAccessError"];
+  spaceId: string;
+  spacePath: string;
+  prepareManagedImport: () => Promise<boolean>;
+  onDocumentPathChange(path: string): void;
+}) {
+  return (
+    <>
       <PageAccessRecovery className="mx-auto w-full max-w-5xl px-6 pb-4" />
       <Separator />
       <PlateDocumentEditor
@@ -393,40 +503,17 @@ export function PageScreen({
         initialPage={currentPage}
         initialPageSpacePath={spacePath}
         documentPathHandoff={pathHandoff}
-        readOnly={pageSurface.readOnly}
-        registerPersistence={pageSurface.registerPersistence}
-        onWriteAccessError={pageSurface.recoverWriteError}
-        onDocumentPathChange={(path) => {
-          adoptedPageTargetKeyRef.current = getPageTargetKey(
-            spacePath,
-            path,
-          );
-          setPage((current) => (current ? { ...current, path } : current));
-          setLoadedPageKey(getPageTargetKey(spacePath, path));
-          retargetPage(pagePath, path, spaceId);
+        readOnly={readOnly}
+        registerPersistence={registerPersistence}
+        onWriteAccessError={recoverWriteError}
+        prepareManagedImport={async () => {
+          if (!(await prepareManagedImport())) {
+            throw new Error(m.page_surface_save_error());
+          }
         }}
+        onDocumentPathChange={onDocumentPathChange}
       />
-      {showSubpages ? (
-        <PageSubpages
-          spacePath={spacePath}
-          projectPath={projectPath}
-          spaceId={spaceId}
-          pagePath={currentPage.path}
-          readOnly={pageSurface.readOnly}
-        />
-      ) : null}
-      <PageDeleteDialog
-        page={pageSurface.readOnly ? null : deletePage}
-        onOpenChange={(open) => {
-          if (!open) setDeletePage(null);
-        }}
-        onDeletePage={(pageToDelete) =>
-          void pageSurface
-            .runMutation(() => deleteCurrentPage(pageToDelete))
-            .catch(handleError)
-        }
-      />
-    </div>
+    </>
   );
 }
 
