@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { Plus } from "lucide-react";
 
 import {
@@ -95,6 +95,12 @@ export function LfsExtensionPicker({
     null,
   );
   const listRef = useRef<HTMLDivElement | null>(null);
+  const setListElement = useCallback((element: HTMLDivElement | null) => {
+    if (listRef.current === element) return;
+    listRef.current?.removeEventListener("wheel", containListWheel);
+    listRef.current = element;
+    element?.addEventListener("wheel", containListWheel, { passive: false });
+  }, []);
   const selectedExtensions = extensionValuesFromDraft(value);
   const groups = extensionGroups(selectedExtensions);
 
@@ -127,7 +133,6 @@ export function LfsExtensionPicker({
         <Combobox
           items={groups}
           multiple
-          modal
           value={selectedExtensions}
           itemToStringLabel={(extension: string) => extension}
           itemToStringValue={(extension: string) => extension}
@@ -154,7 +159,7 @@ export function LfsExtensionPicker({
               {m.storage_lfs_extensions_no_results()}
             </ComboboxEmpty>
             <ComboboxList
-              ref={listRef}
+              ref={setListElement}
               className="max-h-[min(16rem,calc(var(--available-height)-2.25rem))] overscroll-contain"
             >
               {(group: ExtensionGroup, index) => (
@@ -235,6 +240,19 @@ export function LfsExtensionPicker({
       </Field>
     </div>
   );
+}
+
+function containListWheel(event: WheelEvent) {
+  const list = event.currentTarget;
+  if (!(list instanceof HTMLDivElement)) return;
+
+  // Base UI portals outside the Radix dialog's scroll-lock boundary in WebKit.
+  // Own the wheel here so the settings viewport cannot consume it instead.
+  event.preventDefault();
+  event.stopPropagation();
+  const deltaScale =
+    event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? list.clientHeight : 1;
+  list.scrollTop += event.deltaY * deltaScale;
 }
 
 function extensionValuesFromDraft(value: string): string[] {
