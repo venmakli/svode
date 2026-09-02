@@ -145,7 +145,47 @@ pub struct AssetsSpaceConfig {
     #[serde(default)]
     pub strategy: AssetsStrategy,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub binary_routing: Option<BinaryRoutingConfig>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub s3: Option<AssetsS3Config>,
+}
+
+pub const BINARY_ROUTING_VERSION: u32 = 1;
+pub const DEFAULT_LFS_THRESHOLD_BYTES: u64 = 10_000_000;
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct BinaryRoutingConfig {
+    pub version: u32,
+    #[serde(default)]
+    pub lfs_extensions: Vec<String>,
+    #[serde(default)]
+    pub lfs_threshold_bytes: Option<u64>,
+    /// Preserve fields written by a future Svode version even though current
+    /// asset mutations fail closed when `version` is unsupported.
+    #[serde(flatten)]
+    pub extensions: BTreeMap<String, serde_json::Value>,
+}
+
+impl BinaryRoutingConfig {
+    pub fn new_project_default() -> Self {
+        Self {
+            version: BINARY_ROUTING_VERSION,
+            lfs_extensions: Vec::new(),
+            lfs_threshold_bytes: Some(DEFAULT_LFS_THRESHOLD_BYTES),
+            extensions: BTreeMap::new(),
+        }
+    }
+}
+
+impl AssetsSpaceConfig {
+    pub fn new_project_default() -> Self {
+        Self {
+            strategy: AssetsStrategy::Local,
+            binary_routing: Some(BinaryRoutingConfig::new_project_default()),
+            s3: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

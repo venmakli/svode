@@ -1,4 +1,5 @@
-use std::path::Path;
+use std::collections::BTreeSet;
+use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 
@@ -7,7 +8,7 @@ use crate::error::AppError;
 use crate::git::GitState;
 use crate::git::cli::{GitCli, GitOutput};
 use crate::git::commands::require_cli;
-use crate::space::types::{AssetsS3Config, AssetsStrategy};
+use crate::space::types::{AssetsS3Config, AssetsStrategy, BinaryRoutingConfig};
 
 /// Non-fatal diagnostics produced by `apply_strategy` — surfaced to the UI so
 /// the user sees setup warnings instead of a misleading "Settings saved" toast.
@@ -19,6 +20,11 @@ pub struct ApplyStrategyResult {
 
 const IGNORE_START: &str = "# svode:assets-ignore:start";
 const IGNORE_END: &str = "# svode:assets-ignore:end";
+const LOCAL_PATHS_START: &str = "# svode:assets-local-paths:start";
+const LOCAL_PATHS_END: &str = "# svode:assets-local-paths:end";
+const LFS_PATHS_START: &str = "# svode:assets-lfs-paths:start";
+const LFS_PATHS_END: &str = "# svode:assets-lfs-paths:end";
+const MANAGED_PATH_PREFIX: &str = "# svode:path ";
 
 const IGNORE_BODY: &str = ".assets/";
 
@@ -94,7 +100,11 @@ fn normalize_trailing_newline(mut s: String) -> String {
     s
 }
 
-fn rewrite_managed_lfs_attributes(contents: &str, enabled: bool) -> String {
+fn rewrite_managed_lfs_attributes(
+    contents: &str,
+    enabled: bool,
+    routing: &BinaryRoutingConfig,
+) -> String {
     let stripped = strip_block(contents, policy::LFS_START, policy::LFS_END);
     // Builds before managed markers were introduced could leave this exact
     // Svode rule at top level. Keep the existing one-time legacy cleanup while
@@ -104,18 +114,127 @@ fn rewrite_managed_lfs_attributes(contents: &str, enabled: bool) -> String {
         .filter(|line| line.trim() != policy::LEGACY_ASSETS_ONLY_LFS_RULE)
         .collect::<Vec<_>>()
         .join("\n");
+    let without_exact_paths = if enabled {
+        without_legacy_rule
+    } else {
+        strip_block(&without_legacy_rule, LFS_PATHS_START, LFS_PATHS_END)
+    };
     let next = if enabled {
-        let body = policy::managed_lfs_attributes_body();
+        let body = policy::managed_lfs_attributes_body(routing);
         append_block(
-            &without_legacy_rule,
+            &without_exact_paths,
             policy::LFS_START,
             &body,
             policy::LFS_END,
         )
     } else {
-        without_legacy_rule
+        without_exact_paths
     };
     normalize_trailing_newline(next)
+}
+
+fn parse_managed_paths(
+    contents: &str,
+    start_marker: &str,
+    end_marker: &str,
+) -> Result<BTreeSet<String>, AppError> {
+    let mut paths = BTreeSet::new();
+    let mut inside = false;
+    let mut blocks = 0_u8;
+    for line in contents.lines() {
+        match line.trim() {
+            value if value == start_marker => {
+                if inside || blocks > 0 {
+                    return Err(AppError::Storage(format!(
+                        "managed Git policy block `{start_marker}` is malformed"
+                    )));
+                }
+                inside = true;
+                blocks += 1;
+            }
+            value if value == end_marker => {
+                if !inside {
+                    return Err(AppError::Storage(format!(
+                        "managed Git policy block `{start_marker}` is malformed"
+                    )));
+                }
+                inside = false;
+            }
+            _ if inside => {
+                if let Some(encoded) = line.trim().strip_prefix(MANAGED_PATH_PREFIX) {
+                    let path: String = serde_json::from_str(encoded).map_err(|_| {
+                        AppError::Storage(format!(
+                            "managed Git policy path in `{start_marker}` is malformed"
+                        ))
+                    })?;
+                    paths.insert(path);
+                }
+            }
+            _ => {}
+        }
+    }
+    if inside {
+        return Err(AppError::Storage(format!(
+            "managed Git policy block `{start_marker}` is malformed"
+        )));
+    }
+    Ok(paths)
+}
+
+fn render_managed_path_body(paths: &BTreeSet<String>, lfs: bool) -> String {
+    paths
+        .iter()
+        .flat_map(|path| {
+            let metadata = format!(
+                "{MANAGED_PATH_PREFIX}{}",
+                serde_json::to_string(path).expect("serializing a String cannot fail")
+            );
+            let pattern = escape_git_pattern(path, !lfs);
+            let rule = if lfs {
+                format!("{pattern} filter=lfs diff=lfs merge=lfs -text")
+            } else {
+                pattern
+            };
+            [metadata, rule]
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn rewrite_managed_path_block(
+    contents: &str,
+    start_marker: &str,
+    end_marker: &str,
+    paths: &BTreeSet<String>,
+    lfs: bool,
+) -> String {
+    let stripped = strip_block(contents, start_marker, end_marker);
+    if paths.is_empty() {
+        return normalize_trailing_newline(stripped);
+    }
+    normalize_trailing_newline(append_block(
+        &stripped,
+        start_marker,
+        &render_managed_path_body(paths, lfs),
+        end_marker,
+    ))
+}
+
+fn escape_git_pattern(path: &str, root_anchored: bool) -> String {
+    let mut output = String::with_capacity(path.len() + usize::from(root_anchored));
+    if root_anchored {
+        output.push('/');
+    }
+    for character in path.chars() {
+        if matches!(
+            character,
+            '\\' | ' ' | '\t' | '!' | '#' | '[' | ']' | '*' | '?'
+        ) {
+            output.push('\\');
+        }
+        output.push(character);
+    }
+    output
 }
 
 /// Write `contents` to `path`, creating or replacing the file. If contents is
@@ -131,6 +250,163 @@ fn write_or_remove(path: &Path, contents: &str) -> Result<(), AppError> {
     }
     std::fs::write(path, contents)?;
     Ok(())
+}
+
+fn restore_file(path: &Path, contents: Option<&str>) {
+    match contents {
+        Some(contents) => {
+            let _ = std::fs::write(path, contents);
+        }
+        None => {
+            let _ = std::fs::remove_file(path);
+        }
+    }
+}
+
+/// Materialize only the exact rule required by one Svode-managed import.
+/// Extension-wide rules are owned by `apply_strategy`; external file-system
+/// activity never calls this function.
+pub(crate) async fn apply_managed_import_route(
+    git_state: &GitState,
+    repo_dir: &Path,
+    route: policy::ManagedBinaryRoute,
+    repo_relative_path: &str,
+) -> Result<Vec<PathBuf>, AppError> {
+    let cli = require_cli(git_state)?;
+    if matches!(
+        route,
+        policy::ManagedBinaryRoute::LfsExtension | policy::ManagedBinaryRoute::LfsThreshold
+    ) && !cli.lfs_available()
+    {
+        return Err(AppError::Storage(
+            "Git LFS route is not ready: git-lfs is not installed".to_string(),
+        ));
+    }
+
+    let lock = git_state.get_lock(repo_dir).await;
+    let _guard = lock.lock().await;
+    let mut changed = Vec::new();
+    let policy_path = match route {
+        policy::ManagedBinaryRoute::Local => Some((
+            repo_dir.join(".gitignore"),
+            LOCAL_PATHS_START,
+            LOCAL_PATHS_END,
+            false,
+        )),
+        policy::ManagedBinaryRoute::LfsThreshold => Some((
+            repo_dir.join(".gitattributes"),
+            LFS_PATHS_START,
+            LFS_PATHS_END,
+            true,
+        )),
+        policy::ManagedBinaryRoute::LfsExtension | policy::ManagedBinaryRoute::DirectGit => None,
+    };
+
+    let original = if let Some((path, start, end, lfs)) = policy_path.as_ref() {
+        let original = if path.exists() {
+            Some(read_or_empty(path)?)
+        } else {
+            None
+        };
+        let current = original.as_deref().unwrap_or_default();
+        let mut paths = parse_managed_paths(current, start, end)?;
+        paths.insert(repo_relative_path.to_string());
+        let next = rewrite_managed_path_block(current, start, end, &paths, *lfs);
+        if next != current {
+            write_or_remove(path, &next)?;
+            changed.push(path.clone());
+        }
+        original.map(|contents| (path.clone(), contents))
+    } else {
+        None
+    };
+
+    let verification = match route {
+        policy::ManagedBinaryRoute::Local => cli
+            .exec(
+                repo_dir,
+                &["check-ignore", "--quiet", "--", repo_relative_path],
+            )
+            .await
+            .and_then(|output| {
+                (output.exit_code == 0).then_some(()).ok_or_else(|| {
+                    AppError::Storage(format!(
+                        "managed local route is not effective for `{repo_relative_path}`"
+                    ))
+                })
+            }),
+        policy::ManagedBinaryRoute::LfsExtension | policy::ManagedBinaryRoute::LfsThreshold => {
+            policy::check_lfs_filters(&cli, repo_dir, &[repo_relative_path.to_string()])
+                .await
+                .and_then(|checks| {
+                    checks
+                        .first()
+                        .is_some_and(|check| check.value == "lfs")
+                        .then_some(())
+                        .ok_or_else(|| {
+                            AppError::Storage(format!(
+                                "Git LFS route is not effective for `{repo_relative_path}`"
+                            ))
+                        })
+                })
+        }
+        policy::ManagedBinaryRoute::DirectGit => Ok(()),
+    };
+
+    if let Err(error) = verification {
+        if let Some((path, contents)) = original.as_ref() {
+            restore_file(path, Some(contents));
+        } else if let Some((path, ..)) = policy_path.as_ref() {
+            restore_file(path, None);
+        }
+        return Err(error);
+    }
+    Ok(changed)
+}
+
+/// Rebase Svode-owned exact rules after a managed Page/folder move. User
+/// blocks remain byte-for-byte outside the generated sections.
+pub(crate) fn rebase_managed_import_routes(
+    repo_dir: &Path,
+    old_path: &str,
+    new_path: &str,
+    subtree: bool,
+) -> Result<Vec<PathBuf>, AppError> {
+    let mut changed = Vec::new();
+    for (file_name, start, end, lfs) in [
+        (".gitignore", LOCAL_PATHS_START, LOCAL_PATHS_END, false),
+        (".gitattributes", LFS_PATHS_START, LFS_PATHS_END, true),
+    ] {
+        let path = repo_dir.join(file_name);
+        if !path.exists() {
+            continue;
+        }
+        let current = read_or_empty(&path)?;
+        let paths = parse_managed_paths(&current, start, end)?;
+        let rebased = paths
+            .into_iter()
+            .map(|path| rebase_managed_path(&path, old_path, new_path, subtree))
+            .collect::<BTreeSet<_>>();
+        let next = rewrite_managed_path_block(&current, start, end, &rebased, lfs);
+        if next != current {
+            write_or_remove(&path, &next)?;
+            changed.push(path);
+        }
+    }
+    Ok(changed)
+}
+
+fn rebase_managed_path(path: &str, old_path: &str, new_path: &str, subtree: bool) -> String {
+    if path == old_path {
+        return new_path.to_string();
+    }
+    if subtree
+        && let Some(suffix) = path.strip_prefix(old_path)
+        && suffix.starts_with('/')
+    {
+        return format!("{new_path}{suffix}");
+    }
+    path.to_string()
 }
 
 fn ensure_storage_strategy_git_args_safe(args: &[&str]) -> Result<(), AppError> {
@@ -177,6 +453,7 @@ pub async fn apply_strategy(
     git_state: &GitState,
     space_dir: &Path,
     new: AssetsStrategy,
+    binary_routing: &BinaryRoutingConfig,
     s3_config: Option<&AssetsS3Config>,
     lfs_dal_path: Option<&Path>,
 ) -> Result<ApplyStrategyResult, AppError> {
@@ -214,6 +491,11 @@ pub async fn apply_strategy(
     {
         let current = read_or_empty(&gitignore_path)?;
         let stripped = strip_block(&current, IGNORE_START, IGNORE_END);
+        let stripped = if matches!(new, AssetsStrategy::Local) {
+            stripped
+        } else {
+            strip_block(&stripped, LOCAL_PATHS_START, LOCAL_PATHS_END)
+        };
         let next = if matches!(new, AssetsStrategy::Local) {
             append_block(&stripped, IGNORE_START, IGNORE_BODY, IGNORE_END)
         } else {
@@ -226,7 +508,11 @@ pub async fn apply_strategy(
     // --- .gitattributes: managed LFS block only for Lfs* strategies. ---
     {
         let current = read_or_empty(&gitattributes_path)?;
-        let next = rewrite_managed_lfs_attributes(&current, policy::strategy_uses_lfs_policy(new));
+        let next = rewrite_managed_lfs_attributes(
+            &current,
+            policy::strategy_uses_lfs_policy(new),
+            binary_routing,
+        );
         write_or_remove(&gitattributes_path, &next)?;
     }
 
@@ -234,10 +520,7 @@ pub async fn apply_strategy(
     // resolution. Nested/user `.gitattributes` files can override root rules;
     // report that as a non-fatal warning without rewriting user configuration.
     if policy::strategy_uses_lfs_policy(new) {
-        let paths: Vec<String> = policy::REPRESENTATIVE_LFS_PATHS
-            .iter()
-            .map(|path| (*path).to_string())
-            .collect();
+        let paths = policy::representative_lfs_paths(binary_routing);
         match policy::check_lfs_filters(&cli, space_dir, &paths).await {
             Ok(checks) => {
                 for check in checks.into_iter().filter(|check| check.value != "lfs") {
@@ -363,18 +646,27 @@ pub async fn apply_strategy(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
     use std::path::{Path, PathBuf};
 
     use super::{
-        apply_strategy, ensure_storage_strategy_git_args_safe, rewrite_managed_lfs_attributes,
+        LFS_PATHS_END, LFS_PATHS_START, apply_managed_import_route, apply_strategy,
+        ensure_storage_strategy_git_args_safe, rebase_managed_import_routes,
+        rewrite_managed_lfs_attributes, rewrite_managed_path_block,
     };
     use crate::AppError;
     use crate::git::GitState;
     use crate::git::cli::GitCli;
-    use crate::space::types::AssetsStrategy;
+    use crate::space::types::{AssetsSpaceConfig, AssetsStrategy, BinaryRoutingConfig};
+    use crate::storage::policy::ManagedBinaryRoute;
     use crate::storage::policy::{
         LEGACY_ASSETS_ONLY_LFS_RULE, LFS_END, LFS_START, managed_lfs_attributes_body,
+        supported_binary_routing,
     };
+
+    fn legacy_routing() -> BinaryRoutingConfig {
+        supported_binary_routing(&AssetsSpaceConfig::default()).expect("legacy routing")
+    }
 
     #[test]
     fn managed_lfs_rewrite_is_idempotent_and_preserves_user_attributes() {
@@ -382,17 +674,18 @@ mod tests {
             "*.bin binary\n{LFS_START}\n{LEGACY_ASSETS_ONLY_LFS_RULE}\n{LFS_END}\n*.custom merge=ours\n"
         );
 
-        let first = rewrite_managed_lfs_attributes(&existing, true);
-        let second = rewrite_managed_lfs_attributes(&first, true);
+        let routing = legacy_routing();
+        let first = rewrite_managed_lfs_attributes(&existing, true, &routing);
+        let second = rewrite_managed_lfs_attributes(&first, true, &routing);
 
         assert_eq!(second, first);
         assert!(first.contains("*.bin binary\n"));
         assert!(first.contains("*.custom merge=ours\n"));
         assert_eq!(first.matches(LFS_START).count(), 1);
         assert_eq!(first.matches(LFS_END).count(), 1);
-        assert!(first.contains(&managed_lfs_attributes_body()));
+        assert!(first.contains(&managed_lfs_attributes_body(&routing)));
 
-        let removed = rewrite_managed_lfs_attributes(&first, false);
+        let removed = rewrite_managed_lfs_attributes(&first, false, &routing);
         assert_eq!(removed, "*.bin binary\n*.custom merge=ours\n");
     }
 
@@ -433,6 +726,78 @@ mod tests {
         }
     }
 
+    #[test]
+    fn exact_path_rules_rebase_a_managed_subtree_and_preserve_user_content() {
+        let paths = BTreeSet::from([
+            "docs/Topic/archive.bin".to_string(),
+            "other/keep.bin".to_string(),
+        ]);
+        let contents = rewrite_managed_path_block(
+            "*.custom merge=ours\n",
+            LFS_PATHS_START,
+            LFS_PATHS_END,
+            &paths,
+            true,
+        );
+        let temp = tempfile::tempdir().expect("temp dir");
+        std::fs::write(temp.path().join(".gitattributes"), contents).expect("attributes");
+
+        let changed = rebase_managed_import_routes(temp.path(), "docs/Topic", "docs/Renamed", true)
+            .expect("rebase exact rules");
+        let next = std::fs::read_to_string(temp.path().join(".gitattributes")).expect("attributes");
+
+        assert_eq!(changed, vec![temp.path().join(".gitattributes")]);
+        assert!(next.contains("*.custom merge=ours"));
+        assert!(next.contains("docs/Renamed/archive.bin"));
+        assert!(next.contains("other/keep.bin"));
+        assert!(!next.contains("docs/Topic/archive.bin"));
+    }
+
+    #[tokio::test]
+    async fn exact_rules_use_git_effective_resolution_and_fail_on_nested_override()
+    -> Result<(), AppError> {
+        let git_state = GitState::new();
+        let Some(cli) = git_state.cli.as_ref() else {
+            return Ok(());
+        };
+        let temp = tempfile::tempdir()?;
+        let repo = temp.path();
+        git_ok(cli, repo, &["init"]).await?;
+
+        apply_managed_import_route(
+            &git_state,
+            repo,
+            ManagedBinaryRoute::Local,
+            "Topic/file [1].bin",
+        )
+        .await?;
+        let ignored = cli
+            .exec(
+                repo,
+                &["check-ignore", "--quiet", "--", "Topic/file [1].bin"],
+            )
+            .await?;
+        assert_eq!(ignored.exit_code, 0);
+
+        if !cli.lfs_available() {
+            return Ok(());
+        }
+        std::fs::create_dir_all(repo.join("Topic"))?;
+        std::fs::write(repo.join("Topic/.gitattributes"), "file.bin -filter\n")?;
+        let error = apply_managed_import_route(
+            &git_state,
+            repo,
+            ManagedBinaryRoute::LfsThreshold,
+            "Topic/file.bin",
+        )
+        .await
+        .expect_err("nested override must block LFS route");
+        assert!(error.to_string().contains("not effective"));
+        let attributes = std::fs::read_to_string(repo.join(".gitattributes")).unwrap_or_default();
+        assert!(!attributes.contains("Topic/file.bin"));
+        Ok(())
+    }
+
     #[tokio::test]
     async fn in_git_apply_keeps_head_on_remote_tracking_history() -> Result<(), AppError> {
         let Some((git_state, _temp, repo)) = setup_remote_tracking_repo().await? else {
@@ -443,7 +808,15 @@ mod tests {
         let head_before = git_stdout(cli, &repo, &["rev-parse", "HEAD"]).await?;
         let origin_head = git_stdout(cli, &repo, &["rev-parse", "origin/main"]).await?;
 
-        apply_strategy(&git_state, &repo, AssetsStrategy::InGit, None, None).await?;
+        apply_strategy(
+            &git_state,
+            &repo,
+            AssetsStrategy::InGit,
+            &legacy_routing(),
+            None,
+            None,
+        )
+        .await?;
 
         let head_after = git_stdout(cli, &repo, &["rev-parse", "HEAD"]).await?;
         let merge_base = git_stdout(cli, &repo, &["merge-base", "HEAD", "origin/main"]).await?;
@@ -465,7 +838,15 @@ mod tests {
             ".assets/** filter=lfs diff=lfs merge=lfs -text\n",
         )?;
 
-        apply_strategy(&git_state, &repo, AssetsStrategy::InGit, None, None).await?;
+        apply_strategy(
+            &git_state,
+            &repo,
+            AssetsStrategy::InGit,
+            &legacy_routing(),
+            None,
+            None,
+        )
+        .await?;
 
         let head_after = git_stdout(cli, &repo, &["rev-parse", "HEAD"]).await?;
         assert_eq!(head_after, head_before);
@@ -487,7 +868,15 @@ mod tests {
         let head_before = git_stdout(cli, &repo, &["rev-parse", "HEAD"]).await?;
         let origin_head = git_stdout(cli, &repo, &["rev-parse", "origin/main"]).await?;
 
-        apply_strategy(&git_state, &repo, AssetsStrategy::LfsRemote, None, None).await?;
+        apply_strategy(
+            &git_state,
+            &repo,
+            AssetsStrategy::LfsRemote,
+            &legacy_routing(),
+            None,
+            None,
+        )
+        .await?;
 
         let head_after = git_stdout(cli, &repo, &["rev-parse", "HEAD"]).await?;
         let merge_base = git_stdout(cli, &repo, &["merge-base", "HEAD", "origin/main"]).await?;

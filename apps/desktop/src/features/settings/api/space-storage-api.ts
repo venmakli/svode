@@ -14,6 +14,7 @@ import {
 import type {
   AssetsS3Config,
   AssetsStrategy,
+  BinaryRoutingConfig,
   LfsState,
   SpaceGitType,
 } from "@/features/space";
@@ -38,6 +39,7 @@ export interface CheckS3ConnectionInput extends Record<string, unknown> {
 
 export interface SetAssetsStrategyInput extends SpacePoolInput {
   strategy: AssetsStrategy;
+  binaryRouting: BinaryRoutingConfig;
   s3Config: AssetsS3Config | null;
   s3Credentials: S3CredentialsInput | null;
 }
@@ -53,6 +55,12 @@ export interface EffectiveAssetsConfig {
   inheritedFromProject: boolean;
   ownerSpaceId: string | null;
   gitType: SpaceGitType | null;
+  binaryRouting: {
+    status: "legacy-preset" | "v1" | "unsupported";
+    version: number | null;
+    lfsExtensions: string[];
+    lfsThresholdBytes: number | null;
+  };
 }
 
 export interface LfsStateChangedEvent {

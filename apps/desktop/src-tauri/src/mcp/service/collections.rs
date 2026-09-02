@@ -724,6 +724,7 @@ fn snapshot_structural_paths_inner(
         }
         let is_relevant = path.extension().is_some_and(|extension| extension == "md")
             || file_name == "schema.yaml"
+            || (directory == root && matches!(file_name.as_ref(), ".gitignore" | ".gitattributes"))
             || (file_name == "order.json"
                 && path
                     .parent()

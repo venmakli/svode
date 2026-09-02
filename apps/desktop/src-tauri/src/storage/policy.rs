@@ -8,7 +8,9 @@ use crate::error::AppError;
 use crate::git::cli::GitCli;
 use crate::git::{GitState, ops};
 use crate::index::IndexState;
-use crate::space::types::AssetsStrategy;
+use crate::space::types::{
+    AssetsSpaceConfig, AssetsStrategy, BINARY_ROUTING_VERSION, BinaryRoutingConfig,
+};
 
 use super::scope::resolve_effective_storage_scope;
 
@@ -26,11 +28,8 @@ pub(crate) const REPOSITORY_LFS_EXTENSIONS: &[&str] = &[
     "docx", "ppt", "pptx", "xls", "xlsx", "zip", "7z", "rar",
 ];
 
-pub(crate) const REPRESENTATIVE_LFS_PATHS: &[&str] = &[
-    ".assets/photo.png",
-    "campaigns/summer/banner.psd",
-    "presentations/demo.mp4",
-];
+const PROTECTED_EXTENSIONS: &[&str] = &["md", "markdown", "yaml", "yml", "json", "csv", "svg"];
+const PROTECTED_FILE_NAMES: &[&str] = &["AGENTS.md", "CLAUDE.md"];
 
 const CHECK_ATTR_BATCH_SIZE: usize = 128;
 const MAX_UNCOVERED_PATHS: usize = 100;
@@ -43,6 +42,31 @@ pub struct LfsPolicyDiagnostic {
     pub truncated_count: usize,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum BinaryRoutingStatus {
+    LegacyPreset,
+    V1,
+    Unsupported,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EffectiveBinaryRouting {
+    pub status: BinaryRoutingStatus,
+    pub version: Option<u32>,
+    pub lfs_extensions: Vec<String>,
+    pub lfs_threshold_bytes: Option<u64>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ManagedBinaryRoute {
+    Local,
+    LfsExtension,
+    LfsThreshold,
+    DirectGit,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct LfsFilterCheck {
     pub path: String,
@@ -53,10 +77,130 @@ pub(crate) fn strategy_uses_lfs_policy(strategy: AssetsStrategy) -> bool {
     matches!(strategy, AssetsStrategy::LfsRemote | AssetsStrategy::LfsS3)
 }
 
-pub(crate) fn managed_lfs_attributes_body() -> String {
-    let mut lines = Vec::with_capacity(REPOSITORY_LFS_EXTENSIONS.len() + 1);
+pub(crate) fn effective_binary_routing(config: &AssetsSpaceConfig) -> EffectiveBinaryRouting {
+    match config.binary_routing.as_ref() {
+        None => EffectiveBinaryRouting {
+            status: BinaryRoutingStatus::LegacyPreset,
+            version: None,
+            lfs_extensions: REPOSITORY_LFS_EXTENSIONS
+                .iter()
+                .map(|extension| (*extension).to_string())
+                .collect(),
+            lfs_threshold_bytes: None,
+        },
+        Some(routing) if routing.version == BINARY_ROUTING_VERSION => EffectiveBinaryRouting {
+            status: BinaryRoutingStatus::V1,
+            version: Some(routing.version),
+            lfs_extensions: routing.lfs_extensions.clone(),
+            lfs_threshold_bytes: routing.lfs_threshold_bytes,
+        },
+        Some(routing) => EffectiveBinaryRouting {
+            status: BinaryRoutingStatus::Unsupported,
+            version: Some(routing.version),
+            lfs_extensions: Vec::new(),
+            lfs_threshold_bytes: None,
+        },
+    }
+}
+
+pub(crate) fn supported_binary_routing(
+    config: &AssetsSpaceConfig,
+) -> Result<BinaryRoutingConfig, AppError> {
+    match config.binary_routing.as_ref() {
+        None => normalize_binary_routing(BinaryRoutingConfig {
+            version: BINARY_ROUTING_VERSION,
+            lfs_extensions: REPOSITORY_LFS_EXTENSIONS
+                .iter()
+                .map(|extension| (*extension).to_string())
+                .collect(),
+            lfs_threshold_bytes: None,
+            extensions: Default::default(),
+        }),
+        Some(routing) if routing.version == BINARY_ROUTING_VERSION => {
+            normalize_binary_routing(routing.clone())
+        }
+        Some(routing) => Err(AppError::Storage(format!(
+            "assets.binaryRouting version {} is not supported; update Svode before changing storage policy or importing files",
+            routing.version
+        ))),
+    }
+}
+
+pub(crate) fn normalize_binary_routing(
+    mut routing: BinaryRoutingConfig,
+) -> Result<BinaryRoutingConfig, AppError> {
+    if routing.version != BINARY_ROUTING_VERSION {
+        return Err(AppError::Storage(format!(
+            "assets.binaryRouting version {} is not supported",
+            routing.version
+        )));
+    }
+    if routing.lfs_threshold_bytes == Some(0) {
+        return Err(AppError::Storage(
+            "LFS threshold must be a positive byte count".to_string(),
+        ));
+    }
+
+    let mut normalized = BTreeSet::new();
+    for extension in routing.lfs_extensions {
+        let extension = extension.trim();
+        if extension.is_empty() {
+            continue;
+        }
+        let extension = extension.trim_start_matches('.').to_ascii_lowercase();
+        if !valid_extension(&extension) {
+            return Err(AppError::Storage(format!(
+                "invalid LFS extension `{extension}`"
+            )));
+        }
+        if PROTECTED_EXTENSIONS.contains(&extension.as_str()) {
+            return Err(AppError::Storage(format!(
+                "protected text extension `{extension}` cannot be routed to Git LFS"
+            )));
+        }
+        normalized.insert(extension);
+    }
+    routing.lfs_extensions = normalized.into_iter().collect();
+    Ok(routing)
+}
+
+pub(crate) fn evaluate_managed_binary_route(
+    config: &AssetsSpaceConfig,
+    path: &str,
+    size_bytes: u64,
+) -> Result<ManagedBinaryRoute, AppError> {
+    let routing = supported_binary_routing(config)?;
+    match config.strategy {
+        AssetsStrategy::Local => return Ok(ManagedBinaryRoute::Local),
+        AssetsStrategy::InGit => return Ok(ManagedBinaryRoute::DirectGit),
+        AssetsStrategy::LfsRemote | AssetsStrategy::LfsS3 => {}
+    }
+    if is_protected_source(path) {
+        return Ok(ManagedBinaryRoute::DirectGit);
+    }
+    let extension = Path::new(path)
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .map(str::to_ascii_lowercase);
+    if extension
+        .as_ref()
+        .is_some_and(|extension| routing.lfs_extensions.contains(extension))
+    {
+        return Ok(ManagedBinaryRoute::LfsExtension);
+    }
+    if routing
+        .lfs_threshold_bytes
+        .is_some_and(|threshold| size_bytes >= threshold)
+    {
+        return Ok(ManagedBinaryRoute::LfsThreshold);
+    }
+    Ok(ManagedBinaryRoute::DirectGit)
+}
+
+pub(crate) fn managed_lfs_attributes_body(routing: &BinaryRoutingConfig) -> String {
+    let mut lines = Vec::with_capacity(routing.lfs_extensions.len() + 1);
     lines.push(LEGACY_ASSETS_ONLY_LFS_RULE.to_string());
-    lines.extend(REPOSITORY_LFS_EXTENSIONS.iter().map(|extension| {
+    lines.extend(routing.lfs_extensions.iter().map(|extension| {
         format!(
             "{} filter=lfs diff=lfs merge=lfs -text",
             case_insensitive_extension_pattern(extension)
@@ -65,10 +209,14 @@ pub(crate) fn managed_lfs_attributes_body() -> String {
     lines.join("\n")
 }
 
-pub(crate) fn is_repository_lfs_candidate(path: &str) -> bool {
+pub(crate) fn is_repository_lfs_candidate(path: &str, routing: &BinaryRoutingConfig) -> bool {
     let normalized = path.replace('\\', "/");
     if normalized.starts_with(".assets/") {
         return true;
+    }
+
+    if is_protected_source(&normalized) {
+        return false;
     }
 
     let Some(file_name) = normalized.rsplit('/').next() else {
@@ -81,23 +229,28 @@ pub(crate) fn is_repository_lfs_candidate(path: &str) -> bool {
         return false;
     }
 
-    REPOSITORY_LFS_EXTENSIONS
+    routing
+        .lfs_extensions
         .iter()
         .any(|candidate| extension.eq_ignore_ascii_case(candidate))
 }
 
-pub(crate) fn managed_policy_current(contents: &str, strategy: AssetsStrategy) -> bool {
+pub(crate) fn managed_policy_current(
+    contents: &str,
+    strategy: AssetsStrategy,
+    routing: &BinaryRoutingConfig,
+) -> bool {
     if !strategy_uses_lfs_policy(strategy) {
         return !contents
             .lines()
             .any(|line| matches!(line.trim(), LFS_START | LFS_END));
     }
 
-    managed_lfs_policy_is_current(contents)
+    managed_lfs_policy_is_current(contents, routing)
 }
 
-fn managed_lfs_policy_is_current(contents: &str) -> bool {
-    let expected: Vec<String> = managed_lfs_attributes_body()
+fn managed_lfs_policy_is_current(contents: &str, routing: &BinaryRoutingConfig) -> bool {
+    let expected: Vec<String> = managed_lfs_attributes_body(routing)
         .lines()
         .map(ToString::to_string)
         .collect();
@@ -130,6 +283,51 @@ fn managed_lfs_policy_is_current(contents: &str) -> bool {
     }
 
     !malformed && blocks.len() == 1 && blocks[0] == expected
+}
+
+pub(crate) fn representative_lfs_paths(routing: &BinaryRoutingConfig) -> Vec<String> {
+    std::iter::once(".assets/legacy.bin".to_string())
+        .chain(
+            routing
+                .lfs_extensions
+                .iter()
+                .map(|extension| format!(".svode-policy/probe.{extension}")),
+        )
+        .collect()
+}
+
+fn valid_extension(extension: &str) -> bool {
+    let mut chars = extension.chars();
+    chars
+        .next()
+        .is_some_and(|character| character.is_ascii_alphanumeric())
+        && chars.all(|character| {
+            character.is_ascii_alphanumeric() || matches!(character, '+' | '_' | '-')
+        })
+}
+
+fn is_protected_source(path: &str) -> bool {
+    let normalized = path.replace('\\', "/");
+    if normalized == ".svode" || normalized.starts_with(".svode/") {
+        return true;
+    }
+    let Some(file_name) = normalized.rsplit('/').next() else {
+        return true;
+    };
+    if PROTECTED_FILE_NAMES
+        .iter()
+        .any(|candidate| file_name.eq_ignore_ascii_case(candidate))
+    {
+        return true;
+    }
+    Path::new(file_name)
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| {
+            PROTECTED_EXTENSIONS
+                .iter()
+                .any(|candidate| extension.eq_ignore_ascii_case(candidate))
+        })
 }
 
 pub(crate) async fn check_lfs_filters(
@@ -198,12 +396,13 @@ fn parse_check_attr_z(stdout: &str) -> Result<Vec<LfsFilterCheck>, AppError> {
 async fn diagnose_repo_lfs_policy(
     cli: &GitCli,
     repo_dir: &Path,
-    strategy: AssetsStrategy,
+    config: &AssetsSpaceConfig,
 ) -> Result<LfsPolicyDiagnostic, AppError> {
+    let routing = supported_binary_routing(config)?;
     let attributes = read_or_empty(&repo_dir.join(".gitattributes"))?;
-    let managed_policy_current = managed_policy_current(&attributes, strategy);
+    let managed_policy_current = managed_policy_current(&attributes, config.strategy, &routing);
 
-    if !strategy_uses_lfs_policy(strategy) {
+    if !strategy_uses_lfs_policy(config.strategy) {
         return Ok(LfsPolicyDiagnostic {
             managed_policy_current,
             uncovered_paths: Vec::new(),
@@ -216,7 +415,7 @@ async fn diagnose_repo_lfs_policy(
         .files
         .into_iter()
         .filter(|file| matches!(file.state.as_str(), "modified" | "untracked"))
-        .filter(|file| is_repository_lfs_candidate(&file.path))
+        .filter(|file| is_repository_lfs_candidate(&file.path, &routing))
         .map(|file| file.path)
         .collect::<BTreeSet<_>>()
         .into_iter()
@@ -251,7 +450,7 @@ pub async fn diagnose_lfs_policy(
     let lock = git_state.get_lock(&scope.repo_dir).await;
     let _guard = lock.lock().await;
 
-    diagnose_repo_lfs_policy(&cli, &scope.repo_dir, scope.config.strategy).await
+    diagnose_repo_lfs_policy(&cli, &scope.repo_dir, &scope.config).await
 }
 
 fn limit_uncovered_paths(mut paths: Vec<String>) -> (Vec<String>, usize) {
@@ -288,13 +487,29 @@ mod tests {
     use std::path::Path;
 
     use super::{
-        LEGACY_ASSETS_ONLY_LFS_RULE, LFS_END, LFS_START, REPOSITORY_LFS_EXTENSIONS,
-        check_lfs_filters, diagnose_repo_lfs_policy, is_repository_lfs_candidate,
-        limit_uncovered_paths, managed_lfs_attributes_body, managed_policy_current,
+        LEGACY_ASSETS_ONLY_LFS_RULE, LFS_END, LFS_START, ManagedBinaryRoute,
+        REPOSITORY_LFS_EXTENSIONS, check_lfs_filters, diagnose_repo_lfs_policy,
+        evaluate_managed_binary_route, is_repository_lfs_candidate, limit_uncovered_paths,
+        managed_lfs_attributes_body, managed_policy_current, normalize_binary_routing,
+        supported_binary_routing,
     };
     use crate::AppError;
     use crate::git::cli::GitCli;
-    use crate::space::types::AssetsStrategy;
+    use crate::space::types::{
+        AssetsSpaceConfig, AssetsStrategy, BINARY_ROUTING_VERSION, BinaryRoutingConfig,
+    };
+
+    fn legacy_routing() -> BinaryRoutingConfig {
+        supported_binary_routing(&AssetsSpaceConfig::default()).expect("legacy routing")
+    }
+
+    fn lfs_config(routing: BinaryRoutingConfig) -> AssetsSpaceConfig {
+        AssetsSpaceConfig {
+            strategy: AssetsStrategy::LfsRemote,
+            binary_routing: Some(routing),
+            s3: None,
+        }
+    }
 
     #[test]
     fn repository_lfs_preset_is_exact_unique_and_excludes_text_formats() {
@@ -308,27 +523,42 @@ mod tests {
         }
         for extension in ["md", "yaml", "json", "csv", "svg"] {
             assert!(!REPOSITORY_LFS_EXTENSIONS.contains(&extension));
-            assert!(!is_repository_lfs_candidate(&format!(
-                "docs/file.{extension}"
-            )));
+            let routing = legacy_routing();
+            assert!(!is_repository_lfs_candidate(
+                &format!("docs/file.{extension}"),
+                &routing
+            ));
         }
     }
 
     #[test]
     fn repository_lfs_candidate_matching_is_case_insensitive_and_repo_scoped() {
-        assert!(is_repository_lfs_candidate("campaigns/summer/banner.PsD"));
-        assert!(is_repository_lfs_candidate("presentations/demo.MP4"));
-        assert!(is_repository_lfs_candidate(".assets/no-extension"));
-        assert!(!is_repository_lfs_candidate(
-            "campaigns/.assets/no-extension"
+        let routing = legacy_routing();
+        assert!(is_repository_lfs_candidate(
+            "campaigns/summer/banner.PsD",
+            &routing
         ));
-        assert!(!is_repository_lfs_candidate("icons/logo.svg"));
+        assert!(is_repository_lfs_candidate(
+            "presentations/demo.MP4",
+            &routing
+        ));
+        assert!(is_repository_lfs_candidate(
+            ".assets/no-extension",
+            &routing
+        ));
+        assert!(!is_repository_lfs_candidate(
+            "campaigns/.assets/no-extension",
+            &routing
+        ));
+        assert!(!is_repository_lfs_candidate("icons/logo.svg", &routing));
+        assert!(!is_repository_lfs_candidate("archive.bin", &routing));
     }
 
     #[test]
     fn generated_lfs_body_is_deterministic_and_marks_old_block_as_stale() {
-        let body = managed_lfs_attributes_body();
-        assert_eq!(body, managed_lfs_attributes_body());
+        let routing = legacy_routing();
+        let body = managed_lfs_attributes_body(&routing);
+        assert_eq!(body, managed_lfs_attributes_body(&routing));
         assert_eq!(body.lines().count(), REPOSITORY_LFS_EXTENSIONS.len() + 1);
         assert_eq!(
             body.lines()
@@ -342,12 +572,28 @@ mod tests {
         assert!(!body.contains("[sS][vV][gG] filter=lfs"));
 
         let old = format!("{LFS_START}\n{LEGACY_ASSETS_ONLY_LFS_RULE}\n{LFS_END}\n");
-        assert!(!managed_policy_current(&old, AssetsStrategy::LfsRemote));
+        assert!(!managed_policy_current(
+            &old,
+            AssetsStrategy::LfsRemote,
+            &routing
+        ));
 
         let current = format!("{LFS_START}\n{body}\n{LFS_END}\n");
-        assert!(managed_policy_current(&current, AssetsStrategy::LfsRemote));
-        assert!(managed_policy_current(&current, AssetsStrategy::LfsS3));
-        assert!(!managed_policy_current(&current, AssetsStrategy::InGit));
+        assert!(managed_policy_current(
+            &current,
+            AssetsStrategy::LfsRemote,
+            &routing
+        ));
+        assert!(managed_policy_current(
+            &current,
+            AssetsStrategy::LfsS3,
+            &routing
+        ));
+        assert!(!managed_policy_current(
+            &current,
+            AssetsStrategy::InGit,
+            &routing
+        ));
     }
 
     #[test]
@@ -370,7 +616,7 @@ mod tests {
         init_repo(&cli, temp.path()).await?;
         std::fs::write(
             temp.path().join(".gitattributes"),
-            managed_lfs_attributes_body(),
+            managed_lfs_attributes_body(&legacy_routing()),
         )?;
 
         let paths: Vec<String> = [
@@ -419,7 +665,8 @@ mod tests {
         git_ok(&cli, repo, &["add", "deleted/video.mp4"]).await?;
         std::fs::remove_file(repo.join("deleted/video.mp4"))?;
 
-        let diagnostic = diagnose_repo_lfs_policy(&cli, repo, AssetsStrategy::LfsRemote).await?;
+        let diagnostic =
+            diagnose_repo_lfs_policy(&cli, repo, &lfs_config(legacy_routing())).await?;
 
         assert!(!diagnostic.managed_policy_current);
         assert_eq!(
@@ -432,6 +679,63 @@ mod tests {
         );
         assert_eq!(diagnostic.truncated_count, 0);
         Ok(())
+    }
+
+    #[test]
+    fn routing_normalizes_and_applies_extension_before_threshold() {
+        let routing = normalize_binary_routing(BinaryRoutingConfig {
+            version: BINARY_ROUTING_VERSION,
+            lfs_extensions: vec![" ZIP ".into(), ".psd".into(), "zip".into()],
+            lfs_threshold_bytes: Some(10),
+            extensions: Default::default(),
+        })
+        .expect("routing");
+        assert_eq!(routing.lfs_extensions, vec!["psd", "zip"]);
+        let config = lfs_config(routing);
+        assert_eq!(
+            evaluate_managed_binary_route(&config, "art.PSD", 1).unwrap(),
+            ManagedBinaryRoute::LfsExtension
+        );
+        assert_eq!(
+            evaluate_managed_binary_route(&config, "archive.bin", 10).unwrap(),
+            ManagedBinaryRoute::LfsThreshold
+        );
+        assert_eq!(
+            evaluate_managed_binary_route(&config, "data.json", 100).unwrap(),
+            ManagedBinaryRoute::DirectGit
+        );
+        assert!(
+            normalize_binary_routing(BinaryRoutingConfig {
+                version: BINARY_ROUTING_VERSION,
+                lfs_extensions: vec![".".into()],
+                lfs_threshold_bytes: None,
+                extensions: Default::default(),
+            })
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn unknown_routing_version_fails_closed_for_mutation() {
+        let routing = BinaryRoutingConfig {
+            version: 2,
+            lfs_extensions: vec!["psd".into()],
+            lfs_threshold_bytes: None,
+            extensions: Default::default(),
+        };
+        for strategy in [
+            AssetsStrategy::Local,
+            AssetsStrategy::InGit,
+            AssetsStrategy::LfsRemote,
+            AssetsStrategy::LfsS3,
+        ] {
+            let config = AssetsSpaceConfig {
+                strategy,
+                binary_routing: Some(routing.clone()),
+                s3: None,
+            };
+            assert!(evaluate_managed_binary_route(&config, "art.psd", 1).is_err());
+        }
     }
 
     fn detected_git() -> Option<GitCli> {

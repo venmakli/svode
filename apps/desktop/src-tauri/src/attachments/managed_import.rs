@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde::Serialize;
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 
 use crate::artifact::identity::{
     ContentOwnerKind, MarkdownIdentityFacts, SemanticIdentity, SourceShape,
@@ -19,8 +19,11 @@ use crate::git::autocommit::{AutocommitService, StructuralOp};
 use crate::index::IndexState;
 use crate::properties;
 use crate::repo_path::{RootMode, normalize_repo_relative, repo_relative_from_base};
-use crate::space::types::AssetsStrategy;
-use crate::storage::{assets, scope::resolve_effective_storage_scope_for_key};
+use crate::space::types::{AssetsSpaceConfig, AssetsStrategy};
+use crate::storage::{
+    assets, policy, scope::resolve_effective_storage_scope_for_key,
+    strategy::apply_managed_import_route,
+};
 use crate::{AppError, system_path};
 
 use super::source::classify_binary_path;
@@ -68,6 +71,8 @@ pub(crate) struct ManagedImportPlan {
     requested_file_name: String,
     requires_conversion: bool,
     storage_strategy: AssetsStrategy,
+    storage_config: AssetsSpaceConfig,
+    binary_route: policy::ManagedBinaryRoute,
     affected_paths: Vec<PathBuf>,
 }
 
@@ -186,6 +191,7 @@ pub(crate) async fn plan_managed_import(
     }
 
     let source_path = validate_regular_source(source_path)?;
+    let source_size = fs::metadata(&source_path)?.len();
     let requested_file_name = normalize_requested_file_name(file_name.unwrap_or_else(|| {
         source_path
             .file_name()
@@ -199,6 +205,8 @@ pub(crate) async fn plan_managed_import(
     }
 
     let scope = resolve_effective_storage_scope_for_key(index_state, &project_path, key).await?;
+    let binary_route =
+        policy::evaluate_managed_binary_route(&scope.config, &requested_file_name, source_size)?;
     let mut affected_paths = if requires_conversion {
         file_commands::entry_backlink_mutation_paths(
             index_state,
@@ -223,6 +231,15 @@ pub(crate) async fn plan_managed_import(
         affected_paths.push(space_path.join(".svode/order.json"));
     }
     affected_paths.push(scope.repo_dir.clone());
+    match binary_route {
+        policy::ManagedBinaryRoute::Local => {
+            affected_paths.push(scope.repo_dir.join(".gitignore"));
+        }
+        policy::ManagedBinaryRoute::LfsThreshold => {
+            affected_paths.push(scope.repo_dir.join(".gitattributes"));
+        }
+        policy::ManagedBinaryRoute::LfsExtension | policy::ManagedBinaryRoute::DirectGit => {}
+    }
     affected_paths.sort();
     affected_paths.dedup();
 
@@ -239,6 +256,8 @@ pub(crate) async fn plan_managed_import(
         requested_file_name,
         requires_conversion,
         storage_strategy: scope.config.strategy,
+        storage_config: scope.config,
+        binary_route,
         affected_paths,
     })
 }
@@ -261,6 +280,24 @@ pub(crate) async fn execute_managed_import(
     )
     .await?;
     ensure_mutation_paths_were_authorized(revalidated.affected_paths())?;
+
+    if matches!(
+        revalidated.binary_route,
+        policy::ManagedBinaryRoute::LfsExtension | policy::ManagedBinaryRoute::LfsThreshold
+    ) {
+        let state = crate::storage::lfs::probe_lfs_config(
+            app,
+            &revalidated.repository_path,
+            &revalidated.storage_config,
+        )
+        .await;
+        if state != crate::storage::lfs::LfsState::Ready {
+            return Err(AppError::Storage(
+                "Git LFS route is not ready; repair the configured backend before importing"
+                    .to_string(),
+            ));
+        }
+    }
 
     let before = fingerprint_candidates(revalidated.affected_paths());
     let temp_parent = if revalidated.requires_conversion {
@@ -295,6 +332,26 @@ pub(crate) async fn execute_managed_import(
         let owner_abs = revalidated.space_path.join(&revalidated.owner_path);
         let (attachment_abs, file_name) =
             publish_staged_copy(&temp_path, &owner_abs, &revalidated.requested_file_name)?;
+        let repository_attachment_path = repo_relative_from_base(
+            &revalidated.repository_path,
+            &attachment_abs,
+            RootMode::Reject,
+        )?;
+        let git_state = app.state::<crate::git::GitState>();
+        let policy_paths = match apply_managed_import_route(
+            &git_state,
+            &revalidated.repository_path,
+            revalidated.binary_route,
+            &repository_attachment_path,
+        )
+        .await
+        {
+            Ok(paths) => paths,
+            Err(error) => {
+                let _ = fs::remove_file(&attachment_abs);
+                return Err(error);
+            }
+        };
         let metadata = fs::metadata(&attachment_abs)?;
         let attachment_path =
             repo_relative_from_base(&revalidated.space_path, &attachment_abs, RootMode::Reject)?;
@@ -311,19 +368,24 @@ pub(crate) async fn execute_managed_import(
             .unwrap_or_default()
             .to_ascii_lowercase();
 
-        if let Some(autocommit) = autocommit
-            && revalidated.storage_strategy != AssetsStrategy::Local
-        {
-            autocommit.schedule_structural_paths(
-                revalidated.project_path.clone(),
-                revalidated.repository_path.clone(),
-                StructuralOp::Create(file_name.clone()),
-                vec![attachment_abs.clone()],
-            );
+        if let Some(autocommit) = autocommit {
+            let mut commit_paths = policy_paths.clone();
+            if revalidated.storage_strategy != AssetsStrategy::Local {
+                commit_paths.push(attachment_abs.clone());
+            }
+            if !commit_paths.is_empty() {
+                autocommit.schedule_structural_paths(
+                    revalidated.project_path.clone(),
+                    revalidated.repository_path.clone(),
+                    StructuralOp::Create(file_name.clone()),
+                    commit_paths,
+                );
+            }
         }
 
         let mut candidates = revalidated.affected_paths.clone();
         candidates.push(attachment_abs.clone());
+        candidates.extend(policy_paths);
         let changed_paths = changed_project_paths(&before, &candidates, &revalidated.project_path);
         emit_import_invalidations(app, &revalidated, &attachment_path);
 
@@ -628,7 +690,9 @@ fn normalize_relative_display(path: &Path) -> String {
 mod tests {
     use super::*;
     use crate::space::config::write_space_config;
-    use crate::space::types::SpaceConfig;
+    use crate::space::types::{
+        AssetsSpaceConfig, AssetsStrategy, BinaryRoutingConfig, SpaceConfig,
+    };
 
     #[test]
     fn source_validation_rejects_symlinks_and_directories() {
@@ -732,5 +796,112 @@ mod tests {
             plan.affected_paths
                 .contains(&plan.project_path.join(".svode/order.json"))
         );
+    }
+
+    #[tokio::test]
+    async fn managed_import_plan_uses_threshold_and_protects_svg_from_lfs() {
+        let temp = tempfile::tempdir().unwrap();
+        let project = temp.path().join("project");
+        fs::create_dir_all(&project).unwrap();
+        write_space_config(
+            &project,
+            &SpaceConfig {
+                name: "Project".into(),
+                description: String::new(),
+                icon: "folder".into(),
+                spaces: None,
+                agent: None,
+                defaults: None,
+                git: None,
+                assets: Some(AssetsSpaceConfig {
+                    strategy: AssetsStrategy::LfsRemote,
+                    binary_routing: Some(BinaryRoutingConfig {
+                        version: 1,
+                        lfs_extensions: vec!["psd".into()],
+                        lfs_threshold_bytes: Some(4),
+                        extensions: Default::default(),
+                    }),
+                    s3: None,
+                }),
+                tree: None,
+            },
+        )
+        .unwrap();
+        fs::write(project.join("README.md"), "---\ntitle: Project\n---\n").unwrap();
+        let archive = temp.path().join("archive.pdf");
+        fs::write(&archive, b"large").unwrap();
+        let svg = temp.path().join("diagram.svg");
+        fs::write(&svg, b"<svg/>").unwrap();
+
+        let threshold = plan_managed_import(
+            &IndexState::new(),
+            &project,
+            None,
+            "README.md",
+            &archive,
+            None,
+        )
+        .await
+        .unwrap();
+        let protected =
+            plan_managed_import(&IndexState::new(), &project, None, "README.md", &svg, None)
+                .await
+                .unwrap();
+
+        assert_eq!(
+            threshold.binary_route,
+            policy::ManagedBinaryRoute::LfsThreshold
+        );
+        assert_eq!(
+            protected.binary_route,
+            policy::ManagedBinaryRoute::DirectGit
+        );
+    }
+
+    #[tokio::test]
+    async fn managed_import_plan_rejects_unknown_binary_routing_version() {
+        let temp = tempfile::tempdir().unwrap();
+        let project = temp.path().join("project");
+        fs::create_dir_all(&project).unwrap();
+        write_space_config(
+            &project,
+            &SpaceConfig {
+                name: "Project".into(),
+                description: String::new(),
+                icon: "folder".into(),
+                spaces: None,
+                agent: None,
+                defaults: None,
+                git: None,
+                assets: Some(AssetsSpaceConfig {
+                    strategy: AssetsStrategy::LfsRemote,
+                    binary_routing: Some(BinaryRoutingConfig {
+                        version: 2,
+                        lfs_extensions: vec!["png".into()],
+                        lfs_threshold_bytes: None,
+                        extensions: Default::default(),
+                    }),
+                    s3: None,
+                }),
+                tree: None,
+            },
+        )
+        .unwrap();
+        fs::write(project.join("README.md"), "---\ntitle: Project\n---\n").unwrap();
+        let source = temp.path().join("photo.png");
+        fs::write(&source, b"image").unwrap();
+
+        let error = plan_managed_import(
+            &IndexState::new(),
+            &project,
+            None,
+            "README.md",
+            &source,
+            None,
+        )
+        .await
+        .expect_err("unknown routing must fail closed");
+
+        assert!(error.to_string().contains("version 2 is not supported"));
     }
 }

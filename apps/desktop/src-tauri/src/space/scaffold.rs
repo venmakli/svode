@@ -4,7 +4,7 @@ use crate::error::AppError;
 use crate::files::{EntryMeta, frontmatter};
 
 use super::config::write_space_config;
-use super::types::SpaceConfig;
+use super::types::{AssetsSpaceConfig, SpaceConfig};
 
 pub const README_FILE: &str = "README.md";
 
@@ -27,14 +27,41 @@ pub fn ensure_readme(path: &Path, title: &str) -> Result<bool, AppError> {
     Ok(true)
 }
 
-/// Scaffold a new space at the given path.
+/// Scaffold a new inline Space at the given path.
 /// Creates .svode/config.json, .svode/local.json, and README.md.
-/// Used for both root spaces and child spaces.
+/// Its storage policy is inherited from the root repository.
 pub fn scaffold_space(
     path: &Path,
     name: &str,
     icon: &str,
     description: &str,
+) -> Result<SpaceConfig, AppError> {
+    scaffold_space_with_assets(path, name, icon, description, None)
+}
+
+/// Scaffold a root, independent, or submodule Space that owns its storage
+/// policy. Inline Spaces use `scaffold_space` and inherit the root policy.
+pub fn scaffold_repository_space(
+    path: &Path,
+    name: &str,
+    icon: &str,
+    description: &str,
+) -> Result<SpaceConfig, AppError> {
+    scaffold_space_with_assets(
+        path,
+        name,
+        icon,
+        description,
+        Some(AssetsSpaceConfig::new_project_default()),
+    )
+}
+
+fn scaffold_space_with_assets(
+    path: &Path,
+    name: &str,
+    icon: &str,
+    description: &str,
+    assets: Option<AssetsSpaceConfig>,
 ) -> Result<SpaceConfig, AppError> {
     let svode_dir = path.join(".svode");
     std::fs::create_dir_all(&svode_dir)?;
@@ -51,7 +78,7 @@ pub fn scaffold_space(
         agent: None,
         defaults: None,
         git: None,
-        assets: None,
+        assets,
         tree: None,
     };
     write_space_config(path, &sp_config)?;
@@ -68,14 +95,15 @@ pub fn scaffold_space(
 
 #[cfg(test)]
 mod tests {
-    use super::{README_FILE, ensure_readme, scaffold_space};
+    use super::{README_FILE, ensure_readme, scaffold_repository_space, scaffold_space};
 
     #[test]
     fn scaffold_creates_stage_6_default_svode_files_and_readme() {
         let temp_dir = tempfile::tempdir().expect("temp dir");
         let space_path = temp_dir.path();
 
-        scaffold_space(space_path, "Stage 5", "", "").expect("scaffold space");
+        scaffold_repository_space(space_path, "Stage 5", "", "")
+            .expect("scaffold repository space");
 
         let svode_dir = space_path.join(".svode");
         assert!(svode_dir.join("config.json").is_file());
@@ -85,6 +113,22 @@ mod tests {
         assert!(!svode_dir.join("mcp.json").exists());
         assert!(!svode_dir.join("skills").exists());
         assert!(!svode_dir.join("agents").exists());
+        let config = std::fs::read_to_string(svode_dir.join("config.json")).expect("config");
+        assert!(config.contains("\"binaryRouting\""));
+        assert!(config.contains("\"lfsThresholdBytes\": 10000000"));
+    }
+
+    #[test]
+    fn inline_space_scaffold_does_not_persist_storage_override() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let space_path = temp.path().join("inline");
+
+        scaffold_space(&space_path, "Inline", "", "").expect("scaffold inline space");
+
+        let config =
+            std::fs::read_to_string(space_path.join(".svode/config.json")).expect("config");
+        assert!(!config.contains("\"assets\""));
+        assert!(!config.contains("\"binaryRouting\""));
     }
 
     #[test]

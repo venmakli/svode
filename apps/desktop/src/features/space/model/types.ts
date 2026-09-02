@@ -67,8 +67,16 @@ export interface AssetsS3Config {
   prefix: string;
 }
 
+export interface BinaryRoutingConfig {
+  version: number;
+  lfsExtensions: string[];
+  lfsThresholdBytes: number | null;
+  [key: string]: unknown;
+}
+
 export interface AssetsSpaceConfig {
   strategy: AssetsStrategy;
+  binaryRouting?: BinaryRoutingConfig;
   s3?: AssetsS3Config;
 }
 

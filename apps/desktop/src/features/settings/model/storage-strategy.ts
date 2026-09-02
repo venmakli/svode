@@ -1,4 +1,32 @@
-import type { AssetsStrategy } from "@/features/space";
+import type { AssetsStrategy, BinaryRoutingConfig } from "@/features/space";
+
+export const BINARY_ROUTING_VERSION = 1;
+const BYTES_PER_MEGABYTE = 1_000_000;
+const PROTECTED_LFS_EXTENSIONS = new Set([
+  "md",
+  "markdown",
+  "yaml",
+  "yml",
+  "json",
+  "csv",
+  "svg",
+]);
+
+export interface LfsRoutingDraft {
+  extensions: string;
+  thresholdEnabled: boolean;
+  thresholdMegabytes: string;
+}
+
+export type LfsRoutingDraftIssue =
+  | "invalid-extension"
+  | "protected-extension"
+  | "invalid-threshold";
+
+export interface LfsRoutingDraftResult {
+  config: BinaryRoutingConfig | null;
+  issue: LfsRoutingDraftIssue | null;
+}
 
 export type LfsStorageStrategy = Extract<
   AssetsStrategy,
@@ -110,4 +138,80 @@ export function storageTargetKey(
   spaceId: string | null,
 ): string {
   return `${projectPath}\u0000${spaceId ?? ""}`;
+}
+
+export function lfsRoutingDraftFromConfig(
+  extensions: string[],
+  thresholdBytes: number | null,
+): LfsRoutingDraft {
+  return {
+    extensions: [...extensions].sort().join(", "),
+    thresholdEnabled: thresholdBytes !== null,
+    thresholdMegabytes:
+      thresholdBytes === null
+        ? "10"
+        : String(thresholdBytes / BYTES_PER_MEGABYTE),
+  };
+}
+
+export function normalizeLfsRoutingDraft(
+  draft: LfsRoutingDraft,
+): LfsRoutingDraftResult {
+  const extensionTokens = draft.extensions
+    .split(/[\s,]+/)
+    .map((value) => value.trim())
+    .filter(Boolean);
+  const normalizedExtensions = extensionTokens.map((value) =>
+    value.replace(/^\.+/, "").toLowerCase(),
+  );
+  const extensions = [...new Set(normalizedExtensions)].sort();
+  if (
+    normalizedExtensions.some((extension) => extension.length === 0) ||
+    extensions.some((extension) => !/^[a-z0-9][a-z0-9+_-]*$/.test(extension))
+  ) {
+    return { config: null, issue: "invalid-extension" };
+  }
+  if (extensions.some((extension) => PROTECTED_LFS_EXTENSIONS.has(extension))) {
+    return { config: null, issue: "protected-extension" };
+  }
+
+  let lfsThresholdBytes: number | null = null;
+  if (draft.thresholdEnabled) {
+    const megabytes = Number(draft.thresholdMegabytes);
+    const bytes = Math.round(megabytes * BYTES_PER_MEGABYTE);
+    if (
+      !Number.isFinite(megabytes) ||
+      megabytes <= 0 ||
+      bytes <= 0 ||
+      !Number.isSafeInteger(bytes)
+    ) {
+      return { config: null, issue: "invalid-threshold" };
+    }
+    lfsThresholdBytes = bytes;
+  }
+
+  return {
+    config: {
+      version: BINARY_ROUTING_VERSION,
+      lfsExtensions: extensions,
+      lfsThresholdBytes,
+    },
+    issue: null,
+  };
+}
+
+export function sameBinaryRouting(
+  left: BinaryRoutingConfig | null,
+  right: BinaryRoutingConfig | null,
+): boolean {
+  return (
+    left !== null &&
+    right !== null &&
+    left.version === right.version &&
+    left.lfsThresholdBytes === right.lfsThresholdBytes &&
+    left.lfsExtensions.length === right.lfsExtensions.length &&
+    left.lfsExtensions.every(
+      (extension, index) => extension === right.lfsExtensions[index],
+    )
+  );
 }

@@ -18,7 +18,9 @@ use crate::git::commands::require_cli;
 use crate::index::IndexState;
 use crate::repo_path::{RootMode, repo_relative_from_base};
 use crate::space::config::{read_space_config, write_space_config};
-use crate::space::types::{AssetsS3Config, AssetsSpaceConfig, AssetsStrategy, SpaceGitType};
+use crate::space::types::{
+    AssetsS3Config, AssetsSpaceConfig, AssetsStrategy, BinaryRoutingConfig, SpaceGitType,
+};
 
 /// File data returned to the frontend after reading a user-selected path.
 /// Used to construct a `File` object on the JS side so Plate's media
@@ -153,6 +155,7 @@ pub struct EffectiveAssetsConfig {
     pub inherited_from_project: bool,
     pub owner_space_id: Option<String>,
     pub git_type: Option<SpaceGitType>,
+    pub binary_routing: super::policy::EffectiveBinaryRouting,
 }
 
 #[tauri::command]
@@ -164,6 +167,7 @@ pub async fn get_assets_config(
     let project = PathBuf::from(&project_path);
     let scope =
         resolve_effective_storage_scope(&index_state, &project, space_id.as_deref()).await?;
+    let binary_routing = super::policy::effective_binary_routing(&scope.config);
     Ok(EffectiveAssetsConfig {
         strategy: scope.config.strategy,
         s3: scope.config.s3,
@@ -171,6 +175,7 @@ pub async fn get_assets_config(
         inherited_from_project: scope.inherited_from_project,
         owner_space_id: IndexState::space_id_for_key(&scope.pool_key),
         git_type: scope.git_type,
+        binary_routing,
     })
 }
 
@@ -269,6 +274,7 @@ pub async fn set_assets_strategy(
     project_path: String,
     space_id: Option<String>,
     strategy: AssetsStrategy,
+    binary_routing: BinaryRoutingConfig,
     s3_config: Option<AssetsS3Config>,
     s3_credentials: Option<S3CredentialInput>,
     git_state: State<'_, GitState>,
@@ -294,6 +300,10 @@ pub async fn set_assets_strategy(
         .map(|assets| assets.strategy)
         .unwrap_or_default();
     ensure_supported_strategy_transition(current_strategy, strategy)?;
+    if let Some(current_assets) = config.assets.as_ref() {
+        super::policy::supported_binary_routing(current_assets)?;
+    }
+    let binary_routing = super::policy::normalize_binary_routing(binary_routing)?;
 
     let s3_config = s3_config.map(|mut config| {
         config.prefix = s3::normalize_prefix_path(&config.prefix, &scope.default_s3_prefix);
@@ -339,6 +349,7 @@ pub async fn set_assets_strategy(
         &git_state,
         &scope.repo_dir,
         strategy,
+        &binary_routing,
         s3_config.as_ref(),
         lfs_dal_path.as_deref(),
     )
@@ -358,6 +369,7 @@ pub async fn set_assets_strategy(
 
     config.assets = Some(AssetsSpaceConfig {
         strategy,
+        binary_routing: Some(binary_routing),
         s3: s3_config,
     });
     write_space_config(&scope.config_dir, &config)?;

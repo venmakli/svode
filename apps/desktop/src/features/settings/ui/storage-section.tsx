@@ -11,9 +11,18 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  Field,
+  FieldDescription,
+  FieldError,
+  FieldLabel,
+  FieldLegend,
+  FieldSet,
+} from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { Switch } from "@/components/ui/switch";
 import { CheckCircle2, Loader2 } from "lucide-react";
 import { GitRemoteAuthDialog } from "@/features/git";
 import type { AssetsStrategy, LfsState, SpaceGitType } from "@/features/space";
@@ -89,7 +98,10 @@ export function StorageSettingsSection({
   ];
   const canSaveVisibleS3 =
     settings.savedAssetsStrategy === "lfs-s3"
-      ? !settings.applyingStrategy && settings.canSaveS3
+      ? !settings.applyingStrategy &&
+        settings.canSaveS3 &&
+        settings.binaryRoutingStatus !== "unsupported" &&
+        settings.binaryRoutingIssue === null
       : settings.canApplyStrategy;
   const lfsStatePanelStrategy =
     settings.storageConfigLoaded &&
@@ -132,6 +144,7 @@ export function StorageSettingsSection({
             option.value !== settings.savedAssetsStrategy;
           const disabled =
             settings.applyingStrategy ||
+            settings.binaryRoutingStatus === "unsupported" ||
             migrationDisabled ||
             (option.needsLfs && !settings.lfsAvailable);
           return (
@@ -201,6 +214,10 @@ export function StorageSettingsSection({
         <p className="text-xs text-muted-foreground">
           {m.storage_migration_unsupported_hint()}
         </p>
+      )}
+      {(isLfsStorageStrategy(settings.assetsStrategy) ||
+        settings.binaryRoutingStatus === "unsupported") && (
+        <LfsRoutingFields settings={settings} />
       )}
       {settings.assetsStrategy !== settings.savedAssetsStrategy &&
         settings.assetsStrategy !== "lfs-s3" && (
@@ -397,6 +414,127 @@ export function StorageSettingsSection({
   }
 
   return storageControls;
+}
+
+function LfsRoutingFields({
+  settings,
+}: {
+  settings: UseSpaceStorageSettingsResult;
+}) {
+  if (settings.binaryRoutingStatus === "unsupported") {
+    return (
+      <div className="rounded-md border border-destructive/40 bg-destructive/5 p-3 space-y-1">
+        <p className="text-sm font-medium">
+          {m.storage_lfs_rules_unsupported()}
+        </p>
+        <p className="text-xs text-muted-foreground">
+          {m.storage_lfs_rules_unsupported_hint({
+            version: String(settings.binaryRoutingVersion ?? "?"),
+          })}
+        </p>
+      </div>
+    );
+  }
+
+  const issue = settings.binaryRoutingIssue
+    ? {
+        "invalid-extension": m.storage_lfs_extensions_invalid(),
+        "protected-extension": m.storage_lfs_extensions_protected(),
+        "invalid-threshold": m.storage_lfs_threshold_invalid(),
+      }[settings.binaryRoutingIssue]
+    : null;
+  const activeStrategy =
+    settings.assetsStrategy === settings.savedAssetsStrategy;
+  const extensionIssue =
+    settings.binaryRoutingIssue === "invalid-extension" ||
+    settings.binaryRoutingIssue === "protected-extension";
+  const thresholdIssue = settings.binaryRoutingIssue === "invalid-threshold";
+
+  return (
+    <FieldSet className="gap-3 rounded-md border p-3">
+      <FieldLegend variant="label">{m.storage_lfs_rules_title()}</FieldLegend>
+      <Field>
+        <FieldLabel htmlFor="storage-lfs-extensions">
+          {m.storage_lfs_extensions_label()}
+        </FieldLabel>
+        <Input
+          id="storage-lfs-extensions"
+          value={settings.lfsExtensions}
+          onChange={(event) => settings.setLfsExtensions(event.target.value)}
+          placeholder="psd, mp4, zip"
+          className="h-8 text-sm font-mono"
+          autoComplete="off"
+          spellCheck={false}
+          disabled={settings.applyingStrategy}
+          aria-invalid={extensionIssue || undefined}
+          aria-describedby={
+            extensionIssue ? "storage-lfs-rules-error" : undefined
+          }
+        />
+        <FieldDescription className="text-xs">
+          {m.storage_lfs_extensions_hint()}
+        </FieldDescription>
+      </Field>
+      <Field orientation="horizontal">
+        <Switch
+          id="storage-lfs-threshold-enabled"
+          checked={settings.lfsThresholdEnabled}
+          onCheckedChange={(checked) =>
+            settings.setLfsThresholdEnabled(checked === true)
+          }
+          disabled={settings.applyingStrategy}
+        />
+        <div className="flex min-w-0 flex-1 flex-col gap-1">
+          <FieldLabel htmlFor="storage-lfs-threshold-enabled">
+            {m.storage_lfs_threshold_label()}
+          </FieldLabel>
+          {settings.lfsThresholdEnabled && (
+            <div className="flex items-center gap-2">
+              <Input
+                aria-label={m.storage_lfs_threshold_input_label()}
+                type="number"
+                min="0.000001"
+                step="any"
+                value={settings.lfsThresholdMegabytes}
+                onChange={(event) =>
+                  settings.setLfsThresholdMegabytes(event.target.value)
+                }
+                className="h-8 w-28 text-sm"
+                disabled={settings.applyingStrategy}
+                aria-invalid={thresholdIssue || undefined}
+                aria-describedby={
+                  thresholdIssue ? "storage-lfs-rules-error" : undefined
+                }
+              />
+              <span className="text-xs text-muted-foreground">MB</span>
+            </div>
+          )}
+        </div>
+      </Field>
+      {issue && (
+        <FieldError id="storage-lfs-rules-error" className="text-xs">
+          {issue}
+        </FieldError>
+      )}
+      <FieldDescription className="text-xs">
+        {m.storage_lfs_existing_unchanged()}
+      </FieldDescription>
+      {activeStrategy && (
+        <Button
+          type="button"
+          size="sm"
+          className="w-fit"
+          onClick={() => void settings.updateLfsPolicy()}
+          disabled={!settings.canUpdateLfsPolicy}
+        >
+          {settings.applyingStrategy && (
+            <Loader2 className="mr-1 size-3 animate-spin" />
+          )}
+          {m.storage_lfs_rules_save()}
+        </Button>
+      )}
+    </FieldSet>
+  );
 }
 
 function RepositoryProjectSetting({

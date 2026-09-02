@@ -32,10 +32,19 @@ fn create_and_register(
     description: &str,
     target: RegistrationTarget,
 ) -> Result<(String, SpaceConfig), AppError> {
+    let repository_owned = match &target {
+        RegistrationTarget::Registry(_) => true,
+        RegistrationTarget::ParentSpace(_, _, repo) => {
+            repo.is_some() || path.join(".git").symlink_metadata().is_ok()
+        }
+    };
     let cfg = match config::read_space_config(path) {
         Ok(cfg) => {
             scaffold::ensure_readme(path, &cfg.name)?;
             cfg
+        }
+        Err(_) if repository_owned => {
+            scaffold::scaffold_repository_space(path, name, icon, description)?
         }
         Err(_) => scaffold::scaffold_space(path, name, icon, description)?,
     };
@@ -135,7 +144,7 @@ pub fn open_project_folder(
                 scaffold::ensure_readme(path, &cfg.name)?;
                 cfg
             }
-            Err(_) => scaffold::scaffold_space(path, &fallback_name, "", "")?,
+            Err(_) => scaffold::scaffold_repository_space(path, &fallback_name, "", "")?,
         };
         return Ok((existing.id.clone(), cfg));
     }
@@ -333,6 +342,9 @@ pub fn register_cloned_space(
                 Ok(cfg) => {
                     scaffold::ensure_readme(&space_dir, &cfg.name)?;
                     cfg
+                }
+                Err(_) if space_dir.join(".git").symlink_metadata().is_ok() => {
+                    scaffold::scaffold_repository_space(&space_dir, fallback_name, icon, "")?
                 }
                 Err(_) => scaffold::scaffold_space(&space_dir, fallback_name, icon, "")?,
             };

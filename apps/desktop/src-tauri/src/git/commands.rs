@@ -308,7 +308,7 @@ pub async fn git_clone_space(
         if svode_existed_before {
             crate::space::project::ensure_scope_readme(&target, &space_folder)?;
         } else {
-            crate::space::scaffold::scaffold_space(&target, &space_folder, "", "")?;
+            crate::space::scaffold::scaffold_repository_space(&target, &space_folder, "", "")?;
         }
         drop(_guard);
         if !svode_existed_before || !readme_existed_before {

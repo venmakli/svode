@@ -924,7 +924,11 @@ pub async fn ensure_space_scaffold(
     if svode_existed_before {
         project::ensure_scope_readme(path, &fallback_name)?;
     } else {
-        crate::space::scaffold::scaffold_space(path, &fallback_name, "", "")?;
+        if path.join(".git").symlink_metadata().is_ok() {
+            crate::space::scaffold::scaffold_repository_space(path, &fallback_name, "", "")?;
+        } else {
+            crate::space::scaffold::scaffold_space(path, &fallback_name, "", "")?;
+        }
     }
 
     if !svode_existed_before || !readme_existed_before {
@@ -1189,7 +1193,7 @@ pub async fn clone_missing_space(
     if svode_existed_before {
         project::ensure_scope_readme(&space_dir, &space_ref.path)?;
     } else {
-        crate::space::scaffold::scaffold_space(&space_dir, &space_ref.path, "", "")?;
+        crate::space::scaffold::scaffold_repository_space(&space_dir, &space_ref.path, "", "")?;
     }
     if !svode_existed_before || !readme_existed_before {
         let commit_result = if !svode_existed_before && readme_existed_before {

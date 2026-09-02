@@ -23,6 +23,7 @@ import {
   canRunLfsPolicyDiagnostic,
   canRunLfsRemoteDiagnostic,
   storageTargetKey,
+  type LfsRoutingDraftIssue,
 } from "../model/storage-strategy";
 
 interface UseSpaceStorageSettingsOptions {
@@ -45,6 +46,13 @@ export interface UseSpaceStorageSettingsResult {
   projectDefaultApplied: boolean;
   inheritedFromProject: boolean;
   ownerSpaceId: string | null;
+  binaryRoutingStatus: "legacy-preset" | "v1" | "unsupported";
+  binaryRoutingVersion: number | null;
+  binaryRoutingIssue: LfsRoutingDraftIssue | null;
+  binaryRoutingChanged: boolean;
+  lfsExtensions: string;
+  lfsThresholdEnabled: boolean;
+  lfsThresholdMegabytes: string;
   currentSpacePath: string;
   currentSpaceId: string | null;
   isRoot: boolean;
@@ -85,6 +93,9 @@ export interface UseSpaceStorageSettingsResult {
   setS3Prefix: (value: string) => void;
   setS3AccessKey: (value: string) => void;
   setS3SecretKey: (value: string) => void;
+  setLfsExtensions: (value: string) => void;
+  setLfsThresholdEnabled: (value: boolean) => void;
+  setLfsThresholdMegabytes: (value: string) => void;
   selectStrategy: (next: AssetsStrategy) => Promise<void>;
   applySelectedStrategy: () => Promise<void>;
   useProjectStorageSetting: () => Promise<void>;
@@ -151,6 +162,14 @@ export function useSpaceStorageSettings({
     defaultS3Prefix,
     inheritedFromProject,
     ownerSpaceId,
+    binaryRoutingStatus,
+    binaryRoutingVersion,
+    binaryRoutingConfig,
+    binaryRoutingIssue,
+    binaryRoutingChanged,
+    lfsExtensions,
+    lfsThresholdEnabled,
+    lfsThresholdMegabytes,
     s3Endpoint,
     s3Bucket,
     s3Region,
@@ -169,6 +188,9 @@ export function useSpaceStorageSettings({
     setS3Prefix,
     setS3AccessKey,
     setS3SecretKey,
+    setLfsExtensions,
+    setLfsThresholdEnabled,
+    setLfsThresholdMegabytes,
     testS3,
     markStrategyApplied,
   } = storageConfig;
@@ -257,6 +279,9 @@ export function useSpaceStorageSettings({
       setApplyingStrategy(true);
       setStrategyInFlight(next);
       try {
+        if (!binaryRoutingConfig || binaryRoutingStatus === "unsupported") {
+          throw new Error(m.storage_lfs_rules_unsupported());
+        }
         let s3Config: AssetsS3Config | null = null;
         let s3Credentials: {
           accessKey: string;
@@ -285,13 +310,12 @@ export function useSpaceStorageSettings({
           projectPath,
           spaceId: currentSpaceId,
           strategy: next,
+          binaryRouting: binaryRoutingConfig,
           s3Config,
           s3Credentials,
         });
         if (currentTargetKeyRef.current !== operationTargetKey) return;
-        if (!useSavedConfig) {
-          markStrategyApplied(next, s3Config);
-        }
+        markStrategyApplied(next, s3Config, binaryRoutingConfig);
         void reloadLfsPolicyDiagnostic();
         if (result.warnings && result.warnings.length > 0) {
           toast.warning(
@@ -329,6 +353,8 @@ export function useSpaceStorageSettings({
     [
       currentSpaceId,
       currentTargetKey,
+      binaryRoutingConfig,
+      binaryRoutingStatus,
       loadLfsState,
       markStrategyApplied,
       projectPath,
@@ -421,24 +447,32 @@ export function useSpaceStorageSettings({
     ],
   );
 
-  const canApplyStrategy = canApplyStorageStrategyDraft({
-    draft: assetsStrategy,
-    saved: savedAssetsStrategy,
-    lfsAvailable,
-    canSaveS3,
-    applying: applyingStrategy,
-  });
-  const canUpdateLfsPolicy = canReapplyLfsPolicy({
-    strategy: savedAssetsStrategy,
-    lfsAvailable,
-    s3ConfigReady: Boolean(
-      savedS3Config?.endpoint &&
-      savedS3Config.bucket &&
-      savedS3Config.region &&
-      savedS3Config.prefix,
-    ),
-    applying: applyingStrategy,
-  });
+  const canApplyStrategy =
+    binaryRoutingStatus !== "unsupported" &&
+    binaryRoutingConfig !== null &&
+    canApplyStorageStrategyDraft({
+      draft: assetsStrategy,
+      saved: savedAssetsStrategy,
+      lfsAvailable,
+      canSaveS3,
+      applying: applyingStrategy,
+    });
+  const canUpdateLfsPolicy =
+    binaryRoutingStatus !== "unsupported" &&
+    binaryRoutingConfig !== null &&
+    (binaryRoutingChanged ||
+      lfsPolicyDiagnostic?.managedPolicyCurrent === false) &&
+    canReapplyLfsPolicy({
+      strategy: savedAssetsStrategy,
+      lfsAvailable,
+      s3ConfigReady: Boolean(
+        savedS3Config?.endpoint &&
+        savedS3Config.bucket &&
+        savedS3Config.region &&
+        savedS3Config.prefix,
+      ),
+      applying: applyingStrategy,
+    });
 
   const applySelectedStrategy = useCallback(async () => {
     if (!canApplyStrategy) return;
@@ -553,6 +587,13 @@ export function useSpaceStorageSettings({
     projectDefaultApplied,
     inheritedFromProject,
     ownerSpaceId,
+    binaryRoutingStatus,
+    binaryRoutingVersion,
+    binaryRoutingIssue,
+    binaryRoutingChanged,
+    lfsExtensions,
+    lfsThresholdEnabled,
+    lfsThresholdMegabytes,
     currentSpacePath: spacePath,
     currentSpaceId,
     isRoot,
@@ -593,6 +634,9 @@ export function useSpaceStorageSettings({
     setS3Prefix,
     setS3AccessKey,
     setS3SecretKey,
+    setLfsExtensions,
+    setLfsThresholdEnabled,
+    setLfsThresholdMegabytes,
     selectStrategy,
     applySelectedStrategy,
     useProjectStorageSetting,

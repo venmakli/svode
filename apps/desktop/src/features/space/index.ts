@@ -3,6 +3,7 @@ export type {
   AssetsS3Config,
   AssetsSpaceConfig,
   AssetsStrategy,
+  BinaryRoutingConfig,
   GitSpaceConfig,
   LfsState,
   LocalConfig,

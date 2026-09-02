@@ -1,8 +1,17 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import * as m from "@/paraglide/messages.js";
-import type { AssetsS3Config, AssetsStrategy } from "@/features/space";
+import type {
+  AssetsS3Config,
+  AssetsStrategy,
+  BinaryRoutingConfig,
+} from "@/features/space";
 import { checkS3Connection, getAssetsConfig, hasS3Credentials } from "../api";
-import { storageTargetKey } from "../model/storage-strategy";
+import {
+  lfsRoutingDraftFromConfig,
+  normalizeLfsRoutingDraft,
+  sameBinaryRouting,
+  storageTargetKey,
+} from "../model/storage-strategy";
 
 export type S3TestState = "idle" | "testing" | "ok" | "fail";
 
@@ -30,6 +39,17 @@ export function useSpaceStorageConfig({
   const [inheritedFromProject, setInheritedFromProject] = useState(false);
   const [ownerSpaceId, setOwnerSpaceId] = useState<string | null>(null);
   const [defaultS3Prefix, setDefaultS3Prefix] = useState("");
+  const [binaryRoutingStatus, setBinaryRoutingStatus] = useState<
+    "legacy-preset" | "v1" | "unsupported"
+  >("legacy-preset");
+  const [binaryRoutingVersion, setBinaryRoutingVersion] = useState<
+    number | null
+  >(null);
+  const [savedBinaryRouting, setSavedBinaryRouting] =
+    useState<BinaryRoutingConfig | null>(null);
+  const [lfsExtensions, setLfsExtensions] = useState("");
+  const [lfsThresholdEnabled, setLfsThresholdEnabled] = useState(false);
+  const [lfsThresholdMegabytes, setLfsThresholdMegabytes] = useState("10");
   const [s3Endpoint, setS3Endpoint] = useState("");
   const [s3Bucket, setS3Bucket] = useState("");
   const [s3Region, setS3Region] = useState("");
@@ -58,6 +78,18 @@ export function useSpaceStorageConfig({
     currentS3Config.prefix &&
     (canUseSavedS3Credentials || (s3AccessKey.trim() && s3SecretKey.trim())),
   );
+  const binaryRoutingDraft = useMemo(
+    () =>
+      normalizeLfsRoutingDraft({
+        extensions: lfsExtensions,
+        thresholdEnabled: lfsThresholdEnabled,
+        thresholdMegabytes: lfsThresholdMegabytes,
+      }),
+    [lfsExtensions, lfsThresholdEnabled, lfsThresholdMegabytes],
+  );
+  const binaryRoutingChanged =
+    binaryRoutingStatus === "legacy-preset" ||
+    !sameBinaryRouting(binaryRoutingDraft.config, savedBinaryRouting);
 
   useEffect(() => {
     if (!open || !spacePath) return;
@@ -79,6 +111,7 @@ export function useSpaceStorageConfig({
         defaultS3Prefix: cfg.defaultS3Prefix,
         inheritedFromProject: cfg.inheritedFromProject,
         ownerSpaceId: cfg.ownerSpaceId,
+        binaryRouting: cfg.binaryRouting,
         hasCredentials,
       };
     };
@@ -91,6 +124,7 @@ export function useSpaceStorageConfig({
           defaultS3Prefix,
           inheritedFromProject,
           ownerSpaceId,
+          binaryRouting,
           hasCredentials,
         }) => {
           if (cancelled) return;
@@ -101,6 +135,24 @@ export function useSpaceStorageConfig({
           setDefaultS3Prefix(defaultS3Prefix);
           setInheritedFromProject(inheritedFromProject);
           setOwnerSpaceId(ownerSpaceId);
+          setBinaryRoutingStatus(binaryRouting.status);
+          setBinaryRoutingVersion(binaryRouting.version);
+          const nextRouting: BinaryRoutingConfig | null =
+            binaryRouting.status === "unsupported"
+              ? null
+              : {
+                  version: 1,
+                  lfsExtensions: [...binaryRouting.lfsExtensions].sort(),
+                  lfsThresholdBytes: binaryRouting.lfsThresholdBytes,
+                };
+          const nextDraft = lfsRoutingDraftFromConfig(
+            binaryRouting.lfsExtensions,
+            binaryRouting.lfsThresholdBytes,
+          );
+          setSavedBinaryRouting(nextRouting);
+          setLfsExtensions(nextDraft.extensions);
+          setLfsThresholdEnabled(nextDraft.thresholdEnabled);
+          setLfsThresholdMegabytes(nextDraft.thresholdMegabytes);
           setS3Endpoint(s3?.endpoint ?? "");
           setS3Bucket(s3?.bucket ?? "");
           setS3Region(s3?.region ?? "");
@@ -151,7 +203,11 @@ export function useSpaceStorageConfig({
   }, [canTestS3, s3AccessKey, s3SecretKey, s3Endpoint, s3Bucket, s3Region]);
 
   const markStrategyApplied = useCallback(
-    (next: AssetsStrategy, nextS3Config: AssetsS3Config | null) => {
+    (
+      next: AssetsStrategy,
+      nextS3Config: AssetsS3Config | null,
+      nextBinaryRouting: BinaryRoutingConfig,
+    ) => {
       const keepSavedCredentials =
         next === "lfs-s3" &&
         hasSavedS3Credentials &&
@@ -159,6 +215,16 @@ export function useSpaceStorageConfig({
       setAssetsStrategy(next);
       setSavedAssetsStrategy(next);
       setSavedS3Config(nextS3Config);
+      setBinaryRoutingStatus("v1");
+      setBinaryRoutingVersion(1);
+      setSavedBinaryRouting(nextBinaryRouting);
+      const nextDraft = lfsRoutingDraftFromConfig(
+        nextBinaryRouting.lfsExtensions,
+        nextBinaryRouting.lfsThresholdBytes ?? null,
+      );
+      setLfsExtensions(nextDraft.extensions);
+      setLfsThresholdEnabled(nextDraft.thresholdEnabled);
+      setLfsThresholdMegabytes(nextDraft.thresholdMegabytes);
       if (next === "lfs-s3") {
         if (s3AccessKey.trim() && s3SecretKey.trim()) {
           setHasSavedS3Credentials(true);
@@ -180,6 +246,14 @@ export function useSpaceStorageConfig({
     loadedForCurrentTarget: loadedTargetKey === targetKey,
     savedS3Config,
     defaultS3Prefix,
+    binaryRoutingStatus,
+    binaryRoutingVersion,
+    binaryRoutingConfig: binaryRoutingDraft.config,
+    binaryRoutingIssue: binaryRoutingDraft.issue,
+    binaryRoutingChanged,
+    lfsExtensions,
+    lfsThresholdEnabled,
+    lfsThresholdMegabytes,
     inheritedFromProject,
     ownerSpaceId,
     s3Endpoint,
@@ -194,6 +268,9 @@ export function useSpaceStorageConfig({
     canTestS3,
     canSaveS3,
     setAssetsStrategy,
+    setLfsExtensions,
+    setLfsThresholdEnabled,
+    setLfsThresholdMegabytes,
     setS3Endpoint,
     setS3Bucket,
     setS3Region,

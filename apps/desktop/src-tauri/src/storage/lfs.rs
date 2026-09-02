@@ -144,7 +144,7 @@ async fn probe_lfs_scope(app: &AppHandle, scope: &AssetsStorageScope) -> LfsStat
     probe_lfs_config(app, &scope.repo_dir, &scope.config).await
 }
 
-async fn probe_lfs_config(
+pub(crate) async fn probe_lfs_config(
     app: &AppHandle,
     repo_dir: &Path,
     config: &AssetsSpaceConfig,

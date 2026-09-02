@@ -133,7 +133,9 @@ pub fn write_git_user_policy(path: &Path, policy: &GitUserPolicy) -> Result<(), 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::space::types::{AgentSessionsLocalConfig, GitSpaceConfig, RoutinesLocalConfig};
+    use crate::space::types::{
+        AgentSessionsLocalConfig, BINARY_ROUTING_VERSION, GitSpaceConfig, RoutinesLocalConfig,
+    };
 
     fn config_with_git() -> SpaceConfig {
         SpaceConfig {
@@ -167,6 +169,68 @@ mod tests {
 
         let read_back = read_space_config(temp.path()).expect("read config");
         assert!(read_back.git.is_none());
+    }
+
+    #[test]
+    fn missing_binary_routing_stays_absent_on_read_and_write() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let dir = temp.path().join(".svode");
+        std::fs::create_dir_all(&dir).expect("svode dir");
+        std::fs::write(
+            dir.join("config.json"),
+            r#"{"name":"Legacy","assets":{"strategy":"lfs-remote"}}"#,
+        )
+        .expect("legacy config");
+
+        let config = read_space_config(temp.path()).expect("read config");
+        assert!(
+            config
+                .assets
+                .as_ref()
+                .is_some_and(|assets| assets.binary_routing.is_none())
+        );
+        write_space_config(temp.path(), &config).expect("write config");
+        let raw = std::fs::read_to_string(dir.join("config.json")).expect("config");
+        assert!(!raw.contains("binaryRouting"));
+    }
+
+    #[test]
+    fn future_binary_routing_fields_survive_config_round_trip() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let dir = temp.path().join(".svode");
+        std::fs::create_dir_all(&dir).expect("svode dir");
+        std::fs::write(
+            dir.join("config.json"),
+            r#"{
+                "name":"Future",
+                "assets":{
+                    "strategy":"lfs-remote",
+                    "binaryRouting":{
+                        "version":2,
+                        "lfsExtensions":["psd"],
+                        "futureMode":"content-aware"
+                    }
+                }
+            }"#,
+        )
+        .expect("future config");
+
+        let config = read_space_config(temp.path()).expect("read config");
+        let routing = config
+            .assets
+            .as_ref()
+            .and_then(|assets| assets.binary_routing.as_ref())
+            .expect("routing");
+        assert_ne!(routing.version, BINARY_ROUTING_VERSION);
+        write_space_config(temp.path(), &config).expect("write config");
+        let value: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(dir.join("config.json")).expect("config"),
+        )
+        .expect("json");
+        assert_eq!(
+            value["assets"]["binaryRouting"]["futureMode"],
+            "content-aware"
+        );
     }
 
     #[test]

@@ -69,6 +69,37 @@ fn order_path(space: &str) -> PathBuf {
     Path::new(space).join(".svode").join("order.json")
 }
 
+fn managed_attachment_repository_dir(space: &str, project_path: Option<&str>) -> PathBuf {
+    let space_dir = PathBuf::from(space);
+    if space_dir.join(".git").symlink_metadata().is_ok() {
+        return space_dir;
+    }
+    project_path
+        .filter(|path| !path.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or(space_dir)
+}
+
+fn managed_attachment_policy_paths(space: &str, project_path: Option<&str>) -> Vec<PathBuf> {
+    let repo_dir = managed_attachment_repository_dir(space, project_path);
+    vec![repo_dir.join(".gitignore"), repo_dir.join(".gitattributes")]
+}
+
+fn rebase_managed_attachment_routes(
+    space: &str,
+    project_path: Option<&str>,
+    from: &str,
+    to: &str,
+    subtree: bool,
+) -> Result<Vec<PathBuf>, AppError> {
+    let space_dir = PathBuf::from(space);
+    let repo_dir = managed_attachment_repository_dir(space, project_path);
+    let space_prefix = space_dir.strip_prefix(&repo_dir).unwrap_or(Path::new(""));
+    let old_path = space_prefix.join(from).to_string_lossy().replace('\\', "/");
+    let new_path = space_prefix.join(to).to_string_lossy().replace('\\', "/");
+    crate::storage::strategy::rebase_managed_import_routes(&repo_dir, &old_path, &new_path, subtree)
+}
+
 fn root_path_for_head(path: &str) -> &str {
     if path
         .rsplit_once('/')
@@ -756,7 +787,12 @@ async fn require_entry_move_mutation_plan(
     to: &str,
 ) -> Result<Vec<PathBuf>, AppError> {
     let Some(project_path) = project_path.filter(|path| !path.is_empty()) else {
-        return require_planned_mutation_paths(app, space, Vec::new()).await;
+        return require_planned_mutation_paths(
+            app,
+            space,
+            managed_attachment_policy_paths(space, None),
+        )
+        .await;
     };
     let mut paths =
         properties::relation_move_mutation_paths_with_project(space, Some(project_path), from, to)?;
@@ -775,6 +811,7 @@ async fn require_entry_move_mutation_plan(
             .await?
     };
     paths.extend_from_slice(link_plan.mutation_paths());
+    paths.extend(managed_attachment_policy_paths(space, Some(project_path)));
     require_planned_mutation_paths(app, space, paths).await
 }
 

@@ -57,16 +57,37 @@ export interface AssetsS3ConfigDto {
   prefix: string;
 }
 
+export interface BinaryRoutingConfigDto {
+  version: number;
+  lfsExtensions: string[];
+  lfsThresholdBytes: number | null;
+  [key: string]: unknown;
+}
+
+export type BinaryRoutingStatusDto = "legacy-preset" | "v1" | "unsupported";
+
+export interface EffectiveBinaryRoutingDto {
+  status: BinaryRoutingStatusDto;
+  version: number | null;
+  lfsExtensions: string[];
+  lfsThresholdBytes: number | null;
+}
+
 export interface AssetsSpaceConfigDto {
   strategy: AssetsStrategyDto;
+  binaryRouting?: BinaryRoutingConfigDto;
   s3?: AssetsS3ConfigDto;
 }
 
-export interface EffectiveAssetsConfigDto extends AssetsSpaceConfigDto {
+export interface EffectiveAssetsConfigDto extends Omit<
+  AssetsSpaceConfigDto,
+  "binaryRouting"
+> {
   defaultS3Prefix: string;
   inheritedFromProject: boolean;
   ownerSpaceId: string | null;
   gitType: SpaceGitTypeDto | null;
+  binaryRouting: EffectiveBinaryRoutingDto;
 }
 
 export interface SpaceRefDto {
@@ -127,11 +148,7 @@ export interface TreeNodeDto {
   children: TreeNodeDto[];
 }
 
-export type SpaceFileEventKindDto =
-  | "page"
-  | "schema"
-  | "folder"
-  | "unknown";
+export type SpaceFileEventKindDto = "page" | "schema" | "folder" | "unknown";
 
 export interface SpaceFileEventDto {
   space?: string;

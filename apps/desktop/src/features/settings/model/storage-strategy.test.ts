@@ -6,6 +6,9 @@ import {
   canRunLfsPolicyDiagnostic,
   canRunLfsRemoteDiagnostic,
   canShowLfsStatePanel,
+  lfsRoutingDraftFromConfig,
+  normalizeLfsRoutingDraft,
+  sameBinaryRouting,
 } from "./storage-strategy";
 
 test("storage strategy draft is not applyable when selection is unchanged", () => {
@@ -197,4 +200,62 @@ test("active LFS policy can be explicitly reapplied when its config is ready", (
       applying: false,
     }),
   ).toBe(false);
+});
+
+test("LFS routing draft normalizes extensions and an enabled MB threshold", () => {
+  const result = normalizeLfsRoutingDraft({
+    extensions: ".PSD, mp4 psd, ZIP",
+    thresholdEnabled: true,
+    thresholdMegabytes: "12.5",
+  });
+
+  expect(result.issue).toBeNull();
+  expect(result.config).toEqual({
+    version: 1,
+    lfsExtensions: ["mp4", "psd", "zip"],
+    lfsThresholdBytes: 12_500_000,
+  });
+});
+
+test("LFS routing draft rejects protected and malformed extensions", () => {
+  expect(
+    normalizeLfsRoutingDraft({
+      extensions: "svg",
+      thresholdEnabled: false,
+      thresholdMegabytes: "10",
+    }).issue,
+  ).toBe("protected-extension");
+  expect(
+    normalizeLfsRoutingDraft({
+      extensions: "*.psd",
+      thresholdEnabled: false,
+      thresholdMegabytes: "10",
+    }).issue,
+  ).toBe("invalid-extension");
+  expect(
+    normalizeLfsRoutingDraft({
+      extensions: ".",
+      thresholdEnabled: false,
+      thresholdMegabytes: "10",
+    }).issue,
+  ).toBe("invalid-extension");
+  expect(
+    normalizeLfsRoutingDraft({
+      extensions: "psd",
+      thresholdEnabled: true,
+      thresholdMegabytes: "0.0000001",
+    }).issue,
+  ).toBe("invalid-threshold");
+});
+
+test("LFS routing draft round-trips a disabled threshold", () => {
+  const draft = lfsRoutingDraftFromConfig(["zip", "psd"], null);
+  const result = normalizeLfsRoutingDraft(draft);
+
+  expect(result.config).toEqual({
+    version: 1,
+    lfsExtensions: ["psd", "zip"],
+    lfsThresholdBytes: null,
+  });
+  expect(sameBinaryRouting(result.config, result.config)).toBe(true);
 });

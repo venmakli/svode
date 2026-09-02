@@ -7,6 +7,7 @@ import {
 import type {
   AssetsS3ConfigDto,
   AssetsStrategyDto,
+  BinaryRoutingConfigDto,
   EffectiveAssetsConfigDto,
   LfsPolicyDiagnosticDto,
   LfsRemoteDiagnosticDto,
@@ -40,6 +41,7 @@ export interface CheckS3ConnectionInputDto extends Record<string, unknown> {
 
 export interface SetAssetsStrategyInputDto extends SpacePoolInputDto {
   strategy: AssetsStrategyDto;
+  binaryRouting: BinaryRoutingConfigDto;
   s3Config: AssetsS3ConfigDto | null;
   s3Credentials: S3CredentialsInputDto | null;
 }

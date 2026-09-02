@@ -365,6 +365,9 @@ pub(super) async fn write_entry_shared(
         ensure_backlinks_before_structural(index_state, project).await;
     }
     let mut planned_paths = relation_mutation_paths;
+    if !skip_rename && write_plan.is_some() {
+        planned_paths.extend(managed_attachment_policy_paths(&space, project));
+    }
     if !skip_rename && let (Some(project), Some(_)) = (project, write_plan.as_ref()) {
         let target_space_id = space_id_for_dir(index_state, &space).await;
         planned_paths.extend_from_slice(
@@ -420,6 +423,22 @@ pub(super) async fn write_entry_shared(
     if let Some(warning) = deferred_rename_warning {
         result.warnings.push(warning);
     }
+    let policy_paths = if !skip_rename && result.new_path.is_some() {
+        if let Some(rename) = write_plan.as_ref() {
+            let (old_path, new_path) = relation_paths_for_write_rename(&path, rename);
+            rebase_managed_attachment_routes(
+                &space,
+                project,
+                &old_path,
+                &new_path,
+                rename.folder_rename_old.is_some(),
+            )?
+        } else {
+            Vec::new()
+        }
+    } else {
+        Vec::new()
+    };
 
     // Register the write-nonce against the canonical post-rename path so the
     // watcher can echo-guard the `file:changed` event that our own write
@@ -600,18 +619,20 @@ pub(super) async fn write_entry_shared(
     if !skip_rename {
         if let Some(ref new_path) = result.new_path {
             if let Some(autocommit) = autocommit {
+                let mut commit_paths = entry_paths_with_order(
+                    &space,
+                    [
+                        abs_entry_path(&space, &path),
+                        abs_entry_path(&space, new_path),
+                    ],
+                );
+                commit_paths.extend(policy_paths);
                 maybe_autocommit_structural_paths(
                     autocommit,
                     project_path.as_deref(),
                     &space,
                     entry_rename_op(&space, &path, new_path),
-                    entry_paths_with_order(
-                        &space,
-                        [
-                            abs_entry_path(&space, &path),
-                            abs_entry_path(&space, new_path),
-                        ],
-                    ),
+                    commit_paths,
                 );
             }
         }
@@ -828,6 +849,7 @@ pub async fn rename_entry_shared(
     revalidate_entry_backlink_mutation_plan(index_state, space, project_path, from, was_dir)
         .await?;
     entry::rename_with_project(space, from, to, project_path)?;
+    let policy_paths = rebase_managed_attachment_routes(space, project_path, from, to, was_dir)?;
     let modified = if let Some(proj) = project_path.filter(|p| !p.is_empty()) {
         let project = Path::new(proj);
         let target_space_id = space_id_for_dir(index_state, space).await;
@@ -914,15 +936,17 @@ pub async fn rename_entry_shared(
         modified
     };
     if let Some(autocommit) = autocommit {
+        let mut commit_paths = entry_paths_with_order(
+            space,
+            [abs_entry_path(space, from), abs_entry_path(space, to)],
+        );
+        commit_paths.extend(policy_paths);
         maybe_autocommit_structural_paths(
             autocommit,
             project_path,
             space,
             entry_rename_op(space, from, to),
-            entry_paths_with_order(
-                space,
-                [abs_entry_path(space, from), abs_entry_path(space, to)],
-            ),
+            commit_paths,
         );
     }
     Ok(modified)
@@ -995,6 +1019,8 @@ pub async fn move_entry_shared(
         },
         project_path,
     )?;
+    let policy_paths =
+        rebase_managed_attachment_routes(space, project_path, from, &new_path, was_dir)?;
     if let Some(proj) = project_path.filter(|p| !p.is_empty()) {
         let project = Path::new(proj);
         let target_space_id = space_id_for_dir(index_state, space).await;
@@ -1075,18 +1101,22 @@ pub async fn move_entry_shared(
         properties::unique_id_mutation_paths_for_entry_tree(Path::new(space), &new_path)?;
     if unique_id_paths.is_empty() {
         if let Some(autocommit) = autocommit {
+            let mut commit_paths =
+                entry_paths_with_order(space, [old_abs.clone(), abs_entry_path(space, &new_path)]);
+            commit_paths.extend(policy_paths.clone());
             maybe_autocommit_structural_paths(
                 autocommit,
                 project_path,
                 space,
                 StructuralOp::Move(entry_commit_name(space, &new_path)),
-                entry_paths_with_order(space, [old_abs.clone(), abs_entry_path(space, &new_path)]),
+                commit_paths,
             );
         }
     } else {
         unique_id_paths.push(old_abs);
         unique_id_paths.push(abs_entry_path(space, &new_path));
         unique_id_paths.push(order_path(space));
+        unique_id_paths.extend(policy_paths);
         if let Some(autocommit) = autocommit {
             maybe_autocommit_schema(
                 autocommit,
