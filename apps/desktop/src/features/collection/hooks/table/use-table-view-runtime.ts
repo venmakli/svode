@@ -112,12 +112,10 @@ export function useTableViewRuntime({
     ],
   );
   const hasSort = sort.length > 0;
-
-  useEffect(() => {
-    if (focusedPath && !rows.some((row) => row.entry.path === focusedPath)) {
-      setFocusedPath(null);
-    }
-  }, [focusedPath, rows]);
+  const visibleFocusedPath =
+    focusedPath && rows.some((row) => row.entry.path === focusedPath)
+      ? focusedPath
+      : null;
   const hasActorColumn = useMemo(
     () => schema.columns.some((column) => column.type === "actor"),
     [schema.columns],
@@ -255,7 +253,7 @@ export function useTableViewRuntime({
     filteredTopLevel,
     footerInputRef,
     footerRef,
-    focusedPath,
+    focusedPath: visibleFocusedPath,
     handleAddColumn,
     handleCreate,
     handleDragEnd,

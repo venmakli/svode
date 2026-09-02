@@ -1,6 +1,7 @@
 import type {
   ComponentProps,
   KeyboardEventHandler,
+  MouseEvent,
   ReactNode,
   Ref,
 } from "react";
@@ -67,6 +68,12 @@ export function CollectionTableRow({
       data-state={selected ? "selected" : undefined}
       className={cn(selected && "bg-muted hover:bg-muted", className)}
       onClick={(event) => {
+        if (isCollectionTablePrimaryTarget(event)) {
+          event.currentTarget.focus();
+          onSelect();
+          onActivate?.();
+          return;
+        }
         if (isCollectionPresentationInteractiveTarget(event)) return;
         event.currentTarget.focus();
         onSelect();
@@ -99,4 +106,12 @@ function isCollectionTableMoveKey(key: string): key is CollectionTableMoveKey {
   return (
     key === "ArrowUp" || key === "ArrowDown" || key === "Home" || key === "End"
   );
+}
+
+function isCollectionTablePrimaryTarget(event: MouseEvent<HTMLElement>) {
+  const { currentTarget, target } = event;
+  if (!(target instanceof Element)) return false;
+
+  const primary = target.closest("[data-collection-primary]");
+  return Boolean(primary && currentTarget.contains(primary));
 }

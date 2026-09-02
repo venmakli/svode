@@ -196,6 +196,18 @@ test("neutral Table preserves row focus, activation, and nested action boundarie
     const second = dom.window.document.querySelector<HTMLElement>(
       '[data-collection-row="two"]',
     )!;
+    const primary = second.querySelector<HTMLElement>(
+      "[data-collection-primary]",
+    )!;
+    await act(async () => {
+      primary.focus();
+      primary.dispatchEvent(
+        new dom.window.MouseEvent("click", { bubbles: true }),
+      );
+    });
+    expect(second.getAttribute("aria-selected")).toBe("true");
+    expect(activated).toEqual(["two"]);
+
     await act(async () => {
       first.focus();
       first.dispatchEvent(
@@ -207,16 +219,6 @@ test("neutral Table preserves row focus, activation, and nested action boundarie
     });
     expect(dom.window.document.activeElement).toBe(second);
     expect(second.getAttribute("aria-selected")).toBe("true");
-
-    const primary = second.querySelector<HTMLElement>(
-      "[data-collection-primary]",
-    )!;
-    await act(async () => {
-      primary.dispatchEvent(
-        new dom.window.MouseEvent("click", { bubbles: true }),
-      );
-    });
-    expect(activated).toEqual(["two"]);
 
     await act(async () => {
       second.dispatchEvent(

@@ -53,10 +53,7 @@ export function useTableColumns({
   setExpanded,
   onSchemaChange,
   onUpdateViewPatch,
-  onOpenEntry,
-  onOpenNestedPeek,
   onOpenNestedCollection,
-  onSelectEntry,
   onOpenPath,
   onOpenRelationTarget,
   onRequestActors,
@@ -84,10 +81,7 @@ export function useTableColumns({
   setExpanded: (path: string) => void;
   onSchemaChange: (schema: CollectionSchema) => void;
   onUpdateViewPatch: (patch: Record<string, unknown>) => Promise<void>;
-  onOpenEntry: (entry: Page) => void;
-  onOpenNestedPeek: (entry: Page) => void;
   onOpenNestedCollection: (entry: Page) => void;
-  onSelectEntry: (entry: Page) => void;
   onOpenPath: (path: string, spaceId?: string | null) => void;
   onOpenRelationTarget: (target: RelationOpenTarget) => void;
   onRequestActors: (allTime: boolean) => Promise<ActorCandidate[]>;
@@ -156,19 +150,6 @@ export function useTableColumns({
                   nestedCollectionPaths,
                 )}
                 onToggle={() => setExpanded(row.original.entry.path)}
-                onOpen={() => {
-                  onSelectEntry(row.original.entry);
-                  if (
-                    isNestedCollection(
-                      row.original.entry,
-                      nestedCollectionPaths,
-                    )
-                  ) {
-                    onOpenNestedPeek(row.original.entry);
-                  } else {
-                    onOpenEntry(row.original.entry);
-                  }
-                }}
                 onOpenNested={() => onOpenNestedCollection(row.original.entry)}
               />
             ),
@@ -274,10 +255,7 @@ export function useTableColumns({
     expanded,
     nestedCollectionPaths,
     onCommitField,
-    onOpenEntry,
-    onSelectEntry,
     onOpenRelationTarget,
-    onOpenNestedPeek,
     onOpenNestedCollection,
     onOpenPath,
     onRequestActors,

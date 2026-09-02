@@ -221,12 +221,6 @@ export function CollectionPresentationItem({
                   className="flex h-7 w-full min-w-0 items-center rounded px-1 text-left hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                   data-collection-interactive
                   data-collection-primary
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    onFocus(rowId);
-                    void activate();
-                  }}
-                  onFocus={() => onFocus(rowId)}
                 >
                   {value}
                 </button>

@@ -45,7 +45,6 @@ test("collection title cells show the current path only for external name confli
           expanded={false}
           nested={false}
           onToggle={() => undefined}
-          onOpen={() => undefined}
           onOpenNested={() => undefined}
         />,
       );
@@ -109,7 +108,32 @@ test("collection Table rows select visibly and open the same peek from double-cl
                 openCount += 1;
               }}
             >
-              <TableCell>Roadmap</TableCell>
+              <TableCell>
+                <TitleCell
+                  row={{
+                    child: false,
+                    entry: {
+                      body: "",
+                      meta: {
+                        created: "",
+                        extra: {},
+                        icon: null,
+                        title: "Roadmap",
+                        updated: "",
+                      },
+                      path: "collection/roadmap.md",
+                    },
+                    level: 0,
+                    nestedCollection: false,
+                  }}
+                  showIcon={false}
+                  expandable={false}
+                  expanded={false}
+                  nested={false}
+                  onToggle={() => undefined}
+                  onOpenNested={() => undefined}
+                />
+              </TableCell>
               <TableCell>
                 <button
                   type="button"
@@ -132,11 +156,15 @@ test("collection Table rows select visibly and open the same peek from double-cl
     const row = dom.window.document.querySelector<HTMLElement>(
       '[data-table-row-path="collection/roadmap.md"]',
     )!;
+    const title = row.querySelector<HTMLElement>("[data-collection-primary]")!;
     await act(async () => {
-      row.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+      title.dispatchEvent(
+        new dom.window.MouseEvent("click", { bubbles: true }),
+      );
     });
     expect(row.getAttribute("aria-selected")).toBe("true");
     expect(row.className.includes("bg-muted")).toBe(true);
+    expect(openCount).toBe(1);
 
     await act(async () => {
       row.dispatchEvent(
@@ -149,14 +177,14 @@ test("collection Table rows select visibly and open the same peek from double-cl
         }),
       );
     });
-    expect(openCount).toBe(2);
+    expect(openCount).toBe(3);
 
     const nested = Array.from(row.querySelectorAll("button")).find(
       (button) => button.textContent === "Nested control",
     )!;
     await act(async () => nested.click());
     expect(nestedCount).toBe(1);
-    expect(openCount).toBe(2);
+    expect(openCount).toBe(3);
   } finally {
     await act(async () => root.unmount());
     restoreGlobals();
