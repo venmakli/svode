@@ -1,25 +1,43 @@
-import type {
-  CollectionView,
-  UseViewQueryResult,
-  ViewType,
-} from "../query/model";
 import type { ReactNode } from "react";
+
 import type { Page } from "@/features/page";
 import type {
   CollectionSchema,
   RelationOpenTarget,
 } from "@/features/properties";
-import type { CalendarScope } from "../model/calendar-types";
-import type { ViewCreateRequest } from "../hooks";
-import type { CollectionPresentationDescriptor } from "../runtime/model/types";
-import { BoardView } from "../ui/board/board-view";
-import { CalendarView } from "../ui/calendar/calendar-view";
-import { GalleryView } from "../ui/gallery/gallery-view";
-import { ListView } from "../ui/list/list-view";
-import { TableView } from "../ui/table/table-view";
 
-export interface PageCollectionPresentationProps {
+import type { ViewCreateRequest } from "../hooks";
+import type { CalendarScope } from "../model/calendar-types";
+import type {
+  CollectionView,
+  UseViewQueryResult,
+  ViewType,
+} from "../query/model";
+import type {
+  CollectionInteractionError,
+  CollectionPresentationDescriptor,
+  CollectionPresentationRuntime,
+  CollectionQueryState,
+} from "../runtime/model/types";
+import { CollectionPresentationShell } from "../runtime/ui/presentation-shell";
+import { BoardView } from "./board/board-view";
+import { CalendarView } from "./calendar/calendar-view";
+import { GalleryView } from "./gallery/gallery-view";
+import { ListView } from "./list/list-view";
+import { TableView } from "./table/table-view";
+
+interface FixedCollectionPresentationProps {
+  instanceKey: string;
+  mode: "fixed";
+  onInteractionError?(error: CollectionInteractionError): void;
+  onQueryChange(query: CollectionQueryState): void;
+  presentation: CollectionPresentationRuntime;
+  query: CollectionQueryState;
+}
+
+export interface SchemaBackedCollectionPresentationProps {
   descriptor: CollectionPresentationDescriptor<Page>;
+  mode: "schema-backed";
   readOnly: boolean;
   view: CollectionView;
   query: UseViewQueryResult;
@@ -54,7 +72,26 @@ export interface PageCollectionPresentationProps {
   ) => Promise<Page>;
 }
 
-export function PageCollectionPresentation({
+export type CollectionPresentationProps =
+  | FixedCollectionPresentationProps
+  | SchemaBackedCollectionPresentationProps;
+
+export function CollectionPresentation(props: CollectionPresentationProps) {
+  if (props.mode === "fixed") {
+    return (
+      <CollectionPresentationShell
+        instanceKey={props.instanceKey}
+        presentation={props.presentation}
+        query={props.query}
+        onInteractionError={props.onInteractionError}
+        onQueryChange={props.onQueryChange}
+      />
+    );
+  }
+  return <SchemaBackedCollectionPresentation {...props} />;
+}
+
+function SchemaBackedCollectionPresentation({
   descriptor,
   readOnly,
   view,
@@ -81,7 +118,7 @@ export function PageCollectionPresentation({
   onUpdateView,
   onCalendarScopeChange,
   onCreateEntry,
-}: PageCollectionPresentationProps) {
+}: SchemaBackedCollectionPresentationProps) {
   const commonProps = {
     readOnly,
     name: view.name,

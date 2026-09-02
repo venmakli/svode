@@ -10,13 +10,12 @@ import type {
 } from "../runtime/model/types";
 import { CollectionCreateControl } from "../runtime/ui/create-action";
 import { CollectionFixedTabs } from "../runtime/ui/fixed-presentation-tabs";
-import { CollectionPresentationShell } from "../runtime/ui/presentation-shell";
 import { CollectionQueryEditor } from "../runtime/ui/query-editor";
 import type { PageCollectionDefinition } from "../persisted/page-collection-definition";
 import {
-  PageCollectionPresentation,
-  type PageCollectionPresentationProps,
-} from "../persisted/page-collection-presentation";
+  CollectionPresentation,
+  type SchemaBackedCollectionPresentationProps,
+} from "./collection-presentation";
 import { CollectionHostFrame } from "./collection-host-frame";
 
 type ReadyCollectionState = Extract<
@@ -36,7 +35,10 @@ export interface SchemaBackedCollectionHostProps {
   actions?: ReactNode;
   activePresentationId: string;
   definition: PageCollectionDefinition;
-  presentation: Omit<PageCollectionPresentationProps, "descriptor"> | null;
+  presentation: Omit<
+    SchemaBackedCollectionPresentationProps,
+    "descriptor" | "mode"
+  > | null;
   tabs: ReactNode;
   onActivePresentationChange(value: string): void;
 }
@@ -112,8 +114,9 @@ function FixedCollectionHostContent({
         </>
       }
     >
-      <CollectionPresentationShell
+      <CollectionPresentation
         instanceKey={instance.instanceKey}
+        mode="fixed"
         presentation={presentation}
         query={state.query}
         onInteractionError={onInteractionError}
@@ -152,9 +155,10 @@ function SchemaBackedCollectionHostContent({
           data-collection-presentation={descriptor.id}
           data-collection-presentation-kind={descriptor.layout.kind}
         >
-          <PageCollectionPresentation
+          <CollectionPresentation
             {...presentation}
             descriptor={descriptor}
+            mode="schema-backed"
           />
         </div>
       </CollectionHostFrame>
