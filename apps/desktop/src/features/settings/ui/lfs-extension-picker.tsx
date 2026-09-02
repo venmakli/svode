@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useRef, useState } from "react";
 import { Plus } from "lucide-react";
 
 import {
@@ -94,10 +94,8 @@ export function LfsExtensionPicker({
   const [customIssue, setCustomIssue] = useState<LfsExtensionDraftIssue | null>(
     null,
   );
-  const selectedExtensions = useMemo(
-    () => extensionValuesFromDraft(value),
-    [value],
-  );
+  const listRef = useRef<HTMLDivElement | null>(null);
+  const selectedExtensions = extensionValuesFromDraft(value);
   const groups = extensionGroups(selectedExtensions);
 
   const addCustomExtension = () => {
@@ -129,6 +127,7 @@ export function LfsExtensionPicker({
         <Combobox
           items={groups}
           multiple
+          modal
           value={selectedExtensions}
           itemToStringLabel={(extension: string) => extension}
           itemToStringValue={(extension: string) => extension}
@@ -138,6 +137,9 @@ export function LfsExtensionPicker({
           onValueChange={(extensions) =>
             onChange(extensionDraftFromValues(extensions))
           }
+          onOpenChangeComplete={(open) => {
+            if (open && listRef.current) listRef.current.scrollTop = 0;
+          }}
         >
           <ComboboxInput
             id="storage-lfs-extensions"
@@ -151,7 +153,10 @@ export function LfsExtensionPicker({
             <ComboboxEmpty>
               {m.storage_lfs_extensions_no_results()}
             </ComboboxEmpty>
-            <ComboboxList>
+            <ComboboxList
+              ref={listRef}
+              className="max-h-[min(16rem,calc(var(--available-height)-2.25rem))] overscroll-contain"
+            >
               {(group: ExtensionGroup, index) => (
                 <ComboboxGroup key={group.value} items={group.items}>
                   <ComboboxLabel>{group.label}</ComboboxLabel>
