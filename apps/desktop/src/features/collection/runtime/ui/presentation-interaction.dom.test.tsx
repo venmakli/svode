@@ -199,12 +199,18 @@ test("neutral Table preserves row focus, activation, and nested action boundarie
     const primary = second.querySelector<HTMLElement>(
       "[data-collection-primary]",
     )!;
+    const pointerDown = new dom.window.MouseEvent("pointerdown", {
+      bubbles: true,
+      cancelable: true,
+    });
+    Object.defineProperty(pointerDown, "pointerType", { value: "mouse" });
     await act(async () => {
-      primary.focus();
+      primary.dispatchEvent(pointerDown);
       primary.dispatchEvent(
         new dom.window.MouseEvent("click", { bubbles: true }),
       );
     });
+    expect(pointerDown.defaultPrevented).toBe(true);
     expect(second.getAttribute("aria-selected")).toBe("true");
     expect(activated).toEqual(["two"]);
 

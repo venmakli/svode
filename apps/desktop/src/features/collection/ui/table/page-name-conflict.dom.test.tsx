@@ -157,11 +157,18 @@ test("collection Table rows select visibly and open the same peek from double-cl
       '[data-table-row-path="collection/roadmap.md"]',
     )!;
     const title = row.querySelector<HTMLElement>("[data-collection-primary]")!;
+    const pointerDown = new dom.window.MouseEvent("pointerdown", {
+      bubbles: true,
+      cancelable: true,
+    });
+    Object.defineProperty(pointerDown, "pointerType", { value: "mouse" });
     await act(async () => {
+      title.dispatchEvent(pointerDown);
       title.dispatchEvent(
         new dom.window.MouseEvent("click", { bubbles: true }),
       );
     });
+    expect(pointerDown.defaultPrevented).toBe(true);
     expect(row.getAttribute("aria-selected")).toBe("true");
     expect(row.className.includes("bg-muted")).toBe(true);
     expect(openCount).toBe(1);

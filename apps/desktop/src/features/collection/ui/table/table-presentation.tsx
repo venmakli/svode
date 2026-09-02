@@ -2,6 +2,7 @@ import type {
   ComponentProps,
   KeyboardEventHandler,
   MouseEvent,
+  PointerEvent,
   ReactNode,
   Ref,
 } from "react";
@@ -50,6 +51,7 @@ export function CollectionTableRow({
   | "onDoubleClick"
   | "onFocus"
   | "onKeyDown"
+  | "onPointerDown"
   | "ref"
 > & {
   children: ReactNode;
@@ -67,6 +69,14 @@ export function CollectionTableRow({
       data-selected={selected || undefined}
       data-state={selected ? "selected" : undefined}
       className={cn(selected && "bg-muted hover:bg-muted", className)}
+      onPointerDown={(event) => {
+        if (
+          event.pointerType === "mouse" &&
+          isCollectionTablePrimaryTarget(event)
+        ) {
+          event.preventDefault();
+        }
+      }}
       onClick={(event) => {
         if (isCollectionTablePrimaryTarget(event)) {
           event.currentTarget.focus();
@@ -108,7 +118,9 @@ function isCollectionTableMoveKey(key: string): key is CollectionTableMoveKey {
   );
 }
 
-function isCollectionTablePrimaryTarget(event: MouseEvent<HTMLElement>) {
+function isCollectionTablePrimaryTarget(
+  event: MouseEvent<HTMLElement> | PointerEvent<HTMLElement>,
+) {
   const { currentTarget, target } = event;
   if (!(target instanceof Element)) return false;
 
