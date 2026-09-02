@@ -33,13 +33,13 @@ export function BoardView(props: BoardViewProps) {
     spacePath,
     projectPath,
     onClearSearch,
-    onOpenEntry,
+    onActivateItem,
     onOpenNestedPeek,
     onOpenNestedCollection,
     onOpenFullPage,
     onOpenPath,
-    onDuplicateEntry,
-    onDeleteEntry,
+    onDuplicatePage,
+    onDeletePage,
   } = props;
   const runtime = useBoardViewRuntime(props);
 
@@ -231,13 +231,13 @@ export function BoardView(props: BoardViewProps) {
                       ? undefined
                       : (entry, column, value) =>
                           void runtime.commitField(entry, column, value),
-                    onOpen: onOpenEntry,
+                    onOpen: onActivateItem,
                     onOpenNestedPeek,
                     onOpenNestedCollection,
                     onOpenFullPage,
                     onOpenPath,
-                    onDuplicate: onDuplicateEntry,
-                    onDelete: onDeleteEntry,
+                    onDuplicate: onDuplicatePage,
+                    onDelete: onDeletePage,
                   }}
                 />
               );
@@ -265,13 +265,13 @@ export function BoardView(props: BoardViewProps) {
             projectPath={projectPath}
             actors={runtime.actors}
             onRequestActors={runtime.loadActors}
-            onOpen={onOpenEntry}
+            onOpen={onActivateItem}
             onOpenNestedPeek={onOpenNestedPeek}
             onOpenNestedCollection={onOpenNestedCollection}
             onOpenFullPage={onOpenFullPage}
             onOpenPath={onOpenPath}
-            onDuplicate={onDuplicateEntry}
-            onDelete={onDeleteEntry}
+            onDuplicate={onDuplicatePage}
+            onDelete={onDeletePage}
           />
         ) : null}
       </DragOverlay>

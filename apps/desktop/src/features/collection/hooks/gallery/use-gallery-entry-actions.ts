@@ -16,7 +16,7 @@ interface UseGalleryEntryActionsOptions {
   filteredEntries: Page[];
   setEntries: Dispatch<SetStateAction<Page[]>>;
   loadEntries: () => Promise<void>;
-  onCreateEntry: (title: string, asFolder: boolean) => Promise<Page>;
+  onCreatePage: (title: string, asFolder: boolean) => Promise<Page>;
 }
 
 export function useGalleryEntryActions({
@@ -28,7 +28,7 @@ export function useGalleryEntryActions({
   filteredEntries,
   setEntries,
   loadEntries,
-  onCreateEntry,
+  onCreatePage,
 }: UseGalleryEntryActionsOptions) {
   const { reloadOrderParent, saveOrder } = useCollectionTreeOrder({
     spacePath,
@@ -42,7 +42,7 @@ export function useGalleryEntryActions({
       onCreated?: (entry: Page) => void,
     ) => {
       try {
-        const created = await onCreateEntry(title, asFolder);
+        const created = await onCreatePage(title, asFolder);
         setEntries((current) => [...current, created]);
         onCreated?.(created);
         await reloadOrderParent(collectionPath);
@@ -53,7 +53,7 @@ export function useGalleryEntryActions({
         return null;
       }
     },
-    [collectionPath, loadEntries, onCreateEntry, reloadOrderParent, setEntries],
+    [collectionPath, loadEntries, onCreatePage, reloadOrderParent, setEntries],
   );
 
   const reorderEntries = useCallback(

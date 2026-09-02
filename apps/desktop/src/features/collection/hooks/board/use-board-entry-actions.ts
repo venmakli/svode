@@ -34,7 +34,7 @@ interface UseBoardEntryActionsOptions {
   setEntries: Dispatch<SetStateAction<Page[]>>;
   setManualOrderEntries: Dispatch<SetStateAction<Page[]>>;
   loadEntries: () => Promise<void>;
-  onCreateEntry: (
+  onCreatePage: (
     title: string,
     asFolder: boolean,
     contextualDefaults?: Record<string, unknown>,
@@ -53,7 +53,7 @@ export function useBoardEntryActions({
   setEntries,
   setManualOrderEntries,
   loadEntries,
-  onCreateEntry,
+  onCreatePage,
 }: UseBoardEntryActionsOptions) {
   const { reloadOrderParent, saveOrder } = useCollectionTreeOrder({
     spacePath,
@@ -226,7 +226,7 @@ export function useBoardEntryActions({
           groupKey === noValueKey() || !groupColumn
             ? undefined
             : { [groupColumn.name]: groupValueForKey(groupKey) };
-        const created = await onCreateEntry(title, asFolder, defaults);
+        const created = await onCreatePage(title, asFolder, defaults);
         onCreated?.(created);
         setEntries((current) => [...current, created]);
         setManualOrderEntries((current) => [...current, created]);
@@ -237,13 +237,7 @@ export function useBoardEntryActions({
         return null;
       }
     },
-    [
-      groupColumn,
-      loadEntries,
-      onCreateEntry,
-      setEntries,
-      setManualOrderEntries,
-    ],
+    [groupColumn, loadEntries, onCreatePage, setEntries, setManualOrderEntries],
   );
 
   return { commitField, createDraft, moveCard };

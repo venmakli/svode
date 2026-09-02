@@ -34,9 +34,9 @@ export function ViewPlaceholder({
   projectPath,
   searchQuery,
   refreshToken,
-  onOpenEntry,
-  onDuplicateEntry,
-  onDeleteEntry,
+  onActivateItem,
+  onDuplicatePage,
+  onDeletePage,
 }: {
   readOnly: boolean;
   type: ViewType;
@@ -47,9 +47,9 @@ export function ViewPlaceholder({
   projectPath?: string | null;
   searchQuery: string;
   refreshToken: number;
-  onOpenEntry: (entry: Page) => void;
-  onDuplicateEntry: (entry: Page) => void;
-  onDeleteEntry: (entry: Page) => void;
+  onActivateItem: (page: Page) => void;
+  onDuplicatePage: (page: Page) => void;
+  onDeletePage: (page: Page) => void;
 }) {
   const entries = useViewPlaceholderEntries({
     spacePath,
@@ -112,7 +112,7 @@ export function ViewPlaceholder({
                     type="button"
                     variant="ghost"
                     className="flex w-full justify-start gap-2 border-b px-3 py-2 text-left last:border-b-0 hover:bg-muted"
-                    onClick={() => onOpenEntry(entry)}
+                    onClick={() => onActivateItem(entry)}
                   >
                     <FileText />
                     <span className="flex min-w-0 flex-1 flex-col">
@@ -129,12 +129,12 @@ export function ViewPlaceholder({
                   </Button>
                 </ContextMenuTrigger>
                 <ContextMenuContent className="w-48">
-                  <ContextMenuItem onClick={() => onOpenEntry(entry)}>
+                  <ContextMenuItem onClick={() => onActivateItem(entry)}>
                     <FileText data-icon="inline-start" />
                     {m.collection_open_in_peek()}
                   </ContextMenuItem>
                   {!readOnly ? (
-                    <ContextMenuItem onClick={() => onDuplicateEntry(entry)}>
+                    <ContextMenuItem onClick={() => onDuplicatePage(entry)}>
                       <Copy data-icon="inline-start" />
                       {m.collection_duplicate_entry()}
                     </ContextMenuItem>
@@ -142,7 +142,7 @@ export function ViewPlaceholder({
                   {!readOnly ? (
                     <ContextMenuItem
                       className="text-destructive focus:text-destructive"
-                      onClick={() => onDeleteEntry(entry)}
+                      onClick={() => onDeletePage(entry)}
                     >
                       <Trash2 data-icon="inline-start" />
                       {m.space_delete()}

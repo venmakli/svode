@@ -44,7 +44,7 @@ export function ViewActionBar({
   onDeleteViewRequest,
   onSchemaChange,
   autoConfigForType,
-  onCreateEntry,
+  onCreatePage,
   onLoadTemplates,
   onCreateTemplate,
   onInstantiateTemplate,
@@ -80,7 +80,7 @@ export function ViewActionBar({
   onDeleteViewRequest: () => void;
   onSchemaChange: (schema: CollectionSchema) => void;
   autoConfigForType: (type: ViewType) => Record<string, unknown>;
-  onCreateEntry: (asFolder: boolean) => void;
+  onCreatePage: (asFolder: boolean) => void;
   onLoadTemplates: () => Promise<TemplateInfo[]>;
   onCreateTemplate: (kind: TemplateKind) => Promise<void>;
   onInstantiateTemplate: (
@@ -182,7 +182,7 @@ export function ViewActionBar({
       {!readOnly ? (
         <TemplatesSplitButton
           schema={schema}
-          onPrimaryCreate={onCreateEntry}
+          onPrimaryCreate={onCreatePage}
           onLoadTemplates={onLoadTemplates}
           onCreateTemplate={onCreateTemplate}
           onInstantiateTemplate={onInstantiateTemplate}

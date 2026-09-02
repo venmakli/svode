@@ -34,14 +34,14 @@ export function TableRowsBody({
   actors,
   spacePath,
   projectPath,
-  onOpenEntry,
+  onActivateItem,
   onOpenNestedPeek,
   focusedPath,
   onFocusRow,
   onOpenPath,
   onOpenRelationTarget,
-  onDuplicateEntry,
-  onDeleteEntry,
+  onDuplicatePage,
+  onDeletePage,
   onDragEnd,
   density = "default",
   wrapText = false,
@@ -54,14 +54,14 @@ export function TableRowsBody({
   actors: ActorCandidate[];
   spacePath: string;
   projectPath?: string | null;
-  onOpenEntry: (entry: Page) => void;
+  onActivateItem: (page: Page) => void;
   onOpenNestedPeek: (entry: Page) => void;
   focusedPath: string | null;
   onFocusRow: (path: string) => void;
   onOpenPath: (path: string, spaceId?: string | null) => void;
   onOpenRelationTarget: (target: RelationOpenTarget) => void;
-  onDuplicateEntry: (entry: Page) => void;
-  onDeleteEntry: (entry: Page) => void;
+  onDuplicatePage: (page: Page) => void;
+  onDeletePage: (page: Page) => void;
   onDragEnd: (event: DragEndEvent) => void;
   density?: "compact" | "default" | "spacious";
   wrapText?: boolean;
@@ -131,7 +131,7 @@ export function TableRowsBody({
                 onOpen={() =>
                   original.nestedCollection
                     ? onOpenNestedPeek(original.entry)
-                    : onOpenEntry(original.entry)
+                    : onActivateItem(original.entry)
                 }
                 onFocus={() => onFocusRow(path)}
                 onMoveFocus={(key) => moveFocus(path, key)}
@@ -139,8 +139,8 @@ export function TableRowsBody({
                   if (element) rowRefs.current.set(path, element);
                   else rowRefs.current.delete(path);
                 }}
-                onDuplicate={() => onDuplicateEntry(original.entry)}
-                onDelete={() => onDeleteEntry(original.entry)}
+                onDuplicate={() => onDuplicatePage(original.entry)}
+                onDelete={() => onDeletePage(original.entry)}
               >
                 {original.nestedSchema ? (
                   <TableCell

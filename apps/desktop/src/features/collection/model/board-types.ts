@@ -53,19 +53,19 @@ export interface BoardViewProps {
   createFocusSignal?: number;
   createAsFolder?: boolean;
   onClearSearch?: () => void;
-  onOpenEntry: (entry: Page) => void;
+  onActivateItem: (page: Page) => void;
   onOpenNestedPeek: (entry: Page) => void;
   onOpenNestedCollection: (entry: Page) => void;
   onOpenFullPage: (entry: Page) => void;
   onOpenPath: (path: string, spaceId?: string | null) => void;
-  onDuplicateEntry: (entry: Page) => void;
-  onDeleteEntry: (entry: Page) => void;
+  onDuplicatePage: (page: Page) => void;
+  onDeletePage: (page: Page) => void;
   onSchemaChange: (schema: CollectionSchema) => void;
   onUpdateView: (
     viewName: string,
     patch: Record<string, unknown>,
   ) => Promise<void>;
-  onCreateEntry: (
+  onCreatePage: (
     title: string,
     asFolder: boolean,
     contextualDefaults?: Record<string, unknown>,

@@ -20,7 +20,7 @@ interface UseListEntryActionsOptions {
   rows: Array<{ entry: Page }>;
   setEntries: Dispatch<SetStateAction<Page[]>>;
   loadEntries: () => Promise<void>;
-  onCreateEntry: (title: string, asFolder: boolean) => Promise<Page>;
+  onCreatePage: (title: string, asFolder: boolean) => Promise<Page>;
 }
 
 export function useListEntryActions({
@@ -31,7 +31,7 @@ export function useListEntryActions({
   rows,
   setEntries,
   loadEntries,
-  onCreateEntry,
+  onCreatePage,
 }: UseListEntryActionsOptions) {
   const { reloadOrderParent, saveOrder } = useCollectionTreeOrder({
     spacePath,
@@ -45,7 +45,7 @@ export function useListEntryActions({
       onCreated?: (entry: Page) => void,
     ) => {
       try {
-        const created = await onCreateEntry(title, asFolder);
+        const created = await onCreatePage(title, asFolder);
         setEntries((current) => [...current, created]);
         onCreated?.(created);
         await reloadOrderParent(collectionPath);
@@ -56,7 +56,7 @@ export function useListEntryActions({
         return null;
       }
     },
-    [collectionPath, loadEntries, onCreateEntry, reloadOrderParent, setEntries],
+    [collectionPath, loadEntries, onCreatePage, reloadOrderParent, setEntries],
   );
 
   const reorderEntries = useCallback(

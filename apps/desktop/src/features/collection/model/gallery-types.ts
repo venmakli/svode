@@ -28,11 +28,11 @@ export interface GalleryViewProps {
   createFocusSignal?: number;
   createAsFolder?: boolean;
   onClearSearch?: () => void;
-  onOpenEntry: (entry: Page) => void;
+  onActivateItem: (page: Page) => void;
   onOpenNestedPeek: (entry: Page) => void;
   onOpenNestedCollection: (entry: Page) => void;
   onOpenPath: (path: string, spaceId?: string | null) => void;
-  onDuplicateEntry: (entry: Page) => void;
-  onDeleteEntry: (entry: Page) => void;
-  onCreateEntry: (title: string, asFolder: boolean) => Promise<Page>;
+  onDuplicatePage: (page: Page) => void;
+  onDeletePage: (page: Page) => void;
+  onCreatePage: (title: string, asFolder: boolean) => Promise<Page>;
 }

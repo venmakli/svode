@@ -41,11 +41,11 @@ export function CalendarEngine({
   onEventResize,
   onDayCellDidMount,
   onDatesSet,
-  onOpenEntry,
+  onActivateItem,
   onOpenNestedPeek,
   onOpenNestedCollection,
-  onDuplicateEntry,
-  onDeleteEntry,
+  onDuplicatePage,
+  onDeletePage,
 }: {
   readOnly: boolean;
   calendarRef: RefObject<FullCalendar | null>;
@@ -60,11 +60,11 @@ export function CalendarEngine({
   onEventResize: (arg: EventResizeDoneArg) => void;
   onDayCellDidMount: (arg: DayCellMountArg) => void;
   onDatesSet: (arg: DatesSetArg) => void;
-  onOpenEntry: (entry: Page) => void;
+  onActivateItem: (page: Page) => void;
   onOpenNestedPeek: (entry: Page) => void;
   onOpenNestedCollection: (entry: Page) => void;
-  onDuplicateEntry: (entry: Page) => void;
-  onDeleteEntry: (entry: Page) => void;
+  onDuplicatePage: (page: Page) => void;
+  onDeletePage: (page: Page) => void;
 }) {
   return (
     <FullCalendar
@@ -102,11 +102,11 @@ export function CalendarEngine({
           readOnly={readOnly}
           arg={arg}
           scope={scope}
-          onOpen={onOpenEntry}
+          onOpen={onActivateItem}
           onOpenNestedPeek={onOpenNestedPeek}
           onOpenNestedCollection={onOpenNestedCollection}
-          onDuplicate={onDuplicateEntry}
-          onDelete={onDeleteEntry}
+          onDuplicate={onDuplicatePage}
+          onDelete={onDeletePage}
           propertyContext={propertyContext}
         />
       )}

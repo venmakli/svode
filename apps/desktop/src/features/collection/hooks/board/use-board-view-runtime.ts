@@ -42,7 +42,7 @@ export function useBoardViewRuntime({
   createFocusSignal = 0,
   createAsFolder = false,
   onSchemaChange,
-  onCreateEntry,
+  onCreatePage,
 }: BoardViewProps) {
   const [activePath, setActivePath] = useState<string | null>(null);
   const [overGroupKey, setOverGroupKey] = useState<string | null>(null);
@@ -150,7 +150,7 @@ export function useBoardViewRuntime({
     setEntries,
     setManualOrderEntries,
     loadEntries,
-    onCreateEntry,
+    onCreatePage,
   });
 
   useEffect(() => {

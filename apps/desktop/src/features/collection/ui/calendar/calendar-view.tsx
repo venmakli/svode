@@ -31,16 +31,16 @@ export function CalendarView({
   refreshToken,
   createFocusSignal = 0,
   createAsFolder = false,
-  onOpenEntry,
+  onActivateItem,
   onOpenNestedPeek,
   onOpenNestedCollection,
   onOpenFullPage,
   onOpenPath,
-  onDuplicateEntry,
-  onDeleteEntry,
+  onDuplicatePage,
+  onDeletePage,
   onSchemaChange,
   onUpdateView,
-  onCreateEntry,
+  onCreatePage,
 }: CalendarViewProps) {
   const {
     addDateColumnForView,
@@ -89,16 +89,16 @@ export function CalendarView({
     sort,
     createFocusSignal,
     createAsFolder,
-    onOpenEntry,
+    onActivateItem,
     onOpenNestedPeek,
     onOpenNestedCollection,
     onOpenFullPage,
     onOpenPath,
-    onDuplicateEntry,
-    onDeleteEntry,
+    onDuplicatePage,
+    onDeletePage,
     onSchemaChange,
     onUpdateView,
-    onCreateEntry,
+    onCreatePage,
   });
 
   useEffect(() => {
@@ -155,11 +155,11 @@ export function CalendarView({
             onEventResize={handleEventResize}
             onDayCellDidMount={handleDayCellDidMount}
             onDatesSet={syncDates}
-            onOpenEntry={onOpenEntry}
+            onActivateItem={onActivateItem}
             onOpenNestedPeek={onOpenNestedPeek}
             onOpenNestedCollection={onOpenNestedCollection}
-            onDuplicateEntry={onDuplicateEntry}
-            onDeleteEntry={onDeleteEntry}
+            onDuplicatePage={onDuplicatePage}
+            onDeletePage={onDeletePage}
           />
           {visibleCount === 0 ? <CalendarEmptyOverlay /> : null}
         </div>

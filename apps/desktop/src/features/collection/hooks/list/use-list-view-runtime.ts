@@ -28,9 +28,9 @@ export function useListViewRuntime({
   refreshToken,
   createFocusSignal = 0,
   createAsFolder = false,
-  onOpenEntry,
+  onActivateItem,
   onOpenNestedPeek,
-  onCreateEntry,
+  onCreatePage,
 }: ListViewProps) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [focusedPath, setFocusedPath] = useState<string | null>(null);
@@ -98,7 +98,7 @@ export function useListViewRuntime({
     rows,
     setEntries,
     loadEntries,
-    onCreateEntry,
+    onCreatePage,
   });
 
   useEffect(() => {
@@ -178,9 +178,9 @@ export function useListViewRuntime({
   const openRow = useCallback(
     (entry: Page, nestedCollection: boolean) => {
       if (nestedCollection) onOpenNestedPeek(entry);
-      else onOpenEntry(entry);
+      else onActivateItem(entry);
     },
-    [onOpenEntry, onOpenNestedPeek],
+    [onActivateItem, onOpenNestedPeek],
   );
 
   const moveFocus = useCallback(

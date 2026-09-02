@@ -32,9 +32,9 @@ export function useGalleryViewRuntime({
   refreshToken,
   createFocusSignal = 0,
   createAsFolder = false,
-  onOpenEntry,
+  onActivateItem,
   onOpenNestedPeek,
-  onCreateEntry,
+  onCreatePage,
 }: GalleryViewProps) {
   const [focusedPath, setFocusedPath] = useState<string | null>(null);
   const [draftOpen, setDraftOpen] = useState(false);
@@ -99,7 +99,7 @@ export function useGalleryViewRuntime({
     filteredEntries,
     setEntries,
     loadEntries,
-    onCreateEntry,
+    onCreatePage,
   });
 
   useEffect(() => {
@@ -170,9 +170,9 @@ export function useGalleryViewRuntime({
   const openCard = useCallback(
     (entry: Page, nestedCollection: boolean) => {
       if (nestedCollection) onOpenNestedPeek(entry);
-      else onOpenEntry(entry);
+      else onActivateItem(entry);
     },
-    [onOpenEntry, onOpenNestedPeek],
+    [onActivateItem, onOpenNestedPeek],
   );
 
   const currentColumnCount = useCallback(() => {

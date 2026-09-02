@@ -51,17 +51,17 @@ export interface TableViewProps {
   createFocusSignal?: number;
   createAsFolder?: boolean;
   onClearSearch?: () => void;
-  onOpenEntry: (entry: Page) => void;
+  onActivateItem: (page: Page) => void;
   onOpenNestedPeek?: (entry: Page) => void;
   onOpenNestedCollection: (entry: Page) => void;
   onOpenPath: (path: string, spaceId?: string | null) => void;
   onOpenRelationTarget: (target: RelationOpenTarget) => void;
-  onDuplicateEntry: (entry: Page) => void;
-  onDeleteEntry: (entry: Page) => void;
+  onDuplicatePage: (page: Page) => void;
+  onDeletePage: (page: Page) => void;
   onSchemaChange: (schema: CollectionSchema) => void;
   onUpdateView: (
     viewName: string,
     patch: Record<string, unknown>,
   ) => Promise<void>;
-  onCreateEntry: (title: string, asFolder: boolean) => Promise<Page>;
+  onCreatePage: (title: string, asFolder: boolean) => Promise<Page>;
 }

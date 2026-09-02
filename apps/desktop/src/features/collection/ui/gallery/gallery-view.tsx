@@ -43,8 +43,8 @@ export function GalleryView(props: GalleryViewProps) {
     onClearSearch,
     onOpenNestedCollection,
     onOpenPath,
-    onDuplicateEntry,
-    onDeleteEntry,
+    onDuplicatePage,
+    onDeletePage,
   } = props;
   const {
     actors,
@@ -164,8 +164,8 @@ export function GalleryView(props: GalleryViewProps) {
                   onOpen={openCard}
                   onOpenNestedCollection={onOpenNestedCollection}
                   onOpenPath={onOpenPath}
-                  onDuplicate={onDuplicateEntry}
-                  onDelete={onDeleteEntry}
+                  onDuplicate={onDuplicatePage}
+                  onDelete={onDeletePage}
                   onFocusCard={setFocusedPath}
                   onKeyboardMove={moveFocus}
                 />

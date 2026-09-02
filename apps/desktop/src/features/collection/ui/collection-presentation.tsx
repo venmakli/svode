@@ -15,10 +15,13 @@ import type {
 } from "../query/model";
 import type {
   CollectionInteractionError,
-  CollectionPresentationDescriptor,
   CollectionPresentationRuntime,
   CollectionQueryState,
 } from "../runtime/model/types";
+import {
+  activatePageCollectionItem,
+  type PageCollectionPresentationDescriptor,
+} from "../persisted/page-collection-definition";
 import { CollectionPresentationShell } from "../runtime/ui/presentation-shell";
 import { BoardView } from "./board/board-view";
 import { CalendarView } from "./calendar/calendar-view";
@@ -36,7 +39,7 @@ interface FixedCollectionPresentationProps {
 }
 
 export interface SchemaBackedCollectionPresentationProps {
-  descriptor: CollectionPresentationDescriptor<Page>;
+  descriptor: PageCollectionPresentationDescriptor;
   mode: "schema-backed";
   readOnly: boolean;
   view: CollectionView;
@@ -51,21 +54,20 @@ export interface SchemaBackedCollectionPresentationProps {
   calendarScope?: CalendarScope | null;
   createRequest: ViewCreateRequest;
   onClearSearch: () => void;
-  onOpenEntry: (entry: Page) => void;
   onOpenNestedPeek: (entry: Page) => void;
   onOpenNestedCollection: (entry: Page) => void;
   onOpenFullPage: (entry: Page) => void;
   onOpenPath: (path: string, spaceId?: string | null) => void;
   onOpenRelationTarget: (target: RelationOpenTarget) => void;
-  onDuplicateEntry: (entry: Page) => void;
-  onDeleteEntry: (entry: Page) => void;
+  onDuplicatePage: (page: Page) => void;
+  onDeletePage: (page: Page) => void;
   onSchemaChange: (schema: CollectionSchema) => void;
   onUpdateView: (
     viewName: string,
     patch: Record<string, unknown>,
   ) => Promise<void>;
   onCalendarScopeChange?: (scope: CalendarScope) => void;
-  onCreateEntry: (
+  onCreatePage: (
     title: string,
     asFolder: boolean,
     contextualDefaults?: Record<string, unknown>,
@@ -106,18 +108,17 @@ function SchemaBackedCollectionPresentation({
   calendarScope,
   createRequest,
   onClearSearch,
-  onOpenEntry,
   onOpenNestedPeek,
   onOpenNestedCollection,
   onOpenFullPage,
   onOpenPath,
   onOpenRelationTarget,
-  onDuplicateEntry,
-  onDeleteEntry,
+  onDuplicatePage,
+  onDeletePage,
   onSchemaChange,
   onUpdateView,
   onCalendarScopeChange,
-  onCreateEntry,
+  onCreatePage,
 }: SchemaBackedCollectionPresentationProps) {
   const commonProps = {
     readOnly,
@@ -136,12 +137,14 @@ function SchemaBackedCollectionPresentation({
     createFocusSignal: createRequest.signal,
     createAsFolder: createRequest.asFolder,
     onClearSearch,
-    onOpenEntry,
+    onActivateItem: (page: Page) => {
+      void activatePageCollectionItem(descriptor, page);
+    },
     onOpenNestedPeek,
     onOpenNestedCollection,
     onOpenPath,
-    onDuplicateEntry,
-    onDeleteEntry,
+    onDuplicatePage,
+    onDeletePage,
   };
 
   const renderers: Record<ViewType, () => ReactNode> = {
@@ -152,7 +155,7 @@ function SchemaBackedCollectionPresentation({
         onOpenRelationTarget={onOpenRelationTarget}
         onSchemaChange={onSchemaChange}
         onUpdateView={onUpdateView}
-        onCreateEntry={(title, asFolder) => onCreateEntry(title, asFolder)}
+        onCreatePage={(title, asFolder) => onCreatePage(title, asFolder)}
       />
     ),
     board: () => (
@@ -162,8 +165,8 @@ function SchemaBackedCollectionPresentation({
         onOpenFullPage={onOpenFullPage}
         onSchemaChange={onSchemaChange}
         onUpdateView={onUpdateView}
-        onCreateEntry={(title, asFolder, contextualDefaults) =>
-          onCreateEntry(title, asFolder, contextualDefaults)
+        onCreatePage={(title, asFolder, contextualDefaults) =>
+          onCreatePage(title, asFolder, contextualDefaults)
         }
       />
     ),
@@ -175,8 +178,8 @@ function SchemaBackedCollectionPresentation({
         onSchemaChange={onSchemaChange}
         onUpdateView={onUpdateView}
         onCalendarScopeChange={onCalendarScopeChange}
-        onCreateEntry={(title, asFolder, contextualDefaults) =>
-          onCreateEntry(title, asFolder, contextualDefaults)
+        onCreatePage={(title, asFolder, contextualDefaults) =>
+          onCreatePage(title, asFolder, contextualDefaults)
         }
       />
     ),
@@ -184,14 +187,14 @@ function SchemaBackedCollectionPresentation({
       <ListView
         {...commonProps}
         query={query}
-        onCreateEntry={(title, asFolder) => onCreateEntry(title, asFolder)}
+        onCreatePage={(title, asFolder) => onCreatePage(title, asFolder)}
       />
     ),
     gallery: () => (
       <GalleryView
         {...commonProps}
         query={query}
-        onCreateEntry={(title, asFolder) => onCreateEntry(title, asFolder)}
+        onCreatePage={(title, asFolder) => onCreatePage(title, asFolder)}
       />
     ),
   };

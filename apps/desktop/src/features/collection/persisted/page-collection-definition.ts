@@ -18,26 +18,41 @@ import {
 } from "../model/calendar-utils";
 import type { CollectionView, ViewType } from "../query/model";
 import type {
+  CollectionActivationContext,
   CollectionInstance,
   CollectionPresentationDescriptor,
   CollectionPresentationLayout,
 } from "../runtime/model/types";
+import {
+  runCollectionCallback,
+  type CollectionCallbackResult,
+} from "../runtime/lib/interaction";
 import * as m from "@/paraglide/messages.js";
 
 const STRUCTURED_FIELDS = new Set(["title", "icon", "description", "cover"]);
 
-export interface PageCollectionDefinition extends CollectionInstance<
-  CollectionPresentationDescriptor<Page>
-> {
+export interface PageCollectionPresentationDescriptor extends CollectionPresentationDescriptor<Page> {
+  onActivate(
+    page: Page,
+    context: CollectionActivationContext,
+  ): void | Promise<void>;
+}
+
+export interface PageCollectionDefinition extends CollectionInstance<PageCollectionPresentationDescriptor> {
   properties: readonly CollectionPropertyDefinition<Page>[];
 }
 
 export function definePageCollection({
   collectionPath,
+  onActivate,
   schema,
   views,
 }: {
   collectionPath: string;
+  onActivate(
+    page: Page,
+    context: CollectionActivationContext,
+  ): void | Promise<void>;
   schema: CollectionSchema;
   views: readonly CollectionView[];
 }): PageCollectionDefinition {
@@ -46,7 +61,12 @@ export function definePageCollection({
     defaultPresentationId: views[0]?.name ?? "",
     instanceKey: `page:${collectionPath}`,
     presentations: views.map((view) =>
-      definePageCollectionPresentation({ properties, schema, view }),
+      definePageCollectionPresentation({
+        onActivate,
+        properties,
+        schema,
+        view,
+      }),
     ),
     properties,
     stateScope: "lifecycle",
@@ -105,21 +125,37 @@ export function definePageCollectionProperties(
   ];
 }
 
+export function activatePageCollectionItem(
+  descriptor: PageCollectionPresentationDescriptor,
+  page: Page,
+): Promise<CollectionCallbackResult> {
+  return runCollectionCallback(
+    () => descriptor.onActivate(page, { rowId: descriptor.getRowId(page) }),
+    m.collection_callback_error(),
+  );
+}
+
 function definePageCollectionPresentation({
+  onActivate,
   properties,
   schema,
   view,
 }: {
+  onActivate(
+    page: Page,
+    context: CollectionActivationContext,
+  ): void | Promise<void>;
   properties: readonly CollectionPropertyDefinition<Page>[];
   schema: CollectionSchema;
   view: CollectionView;
-}): CollectionPresentationDescriptor<Page> {
+}): PageCollectionPresentationDescriptor {
   const type = viewType(view);
   return {
     getRowId: (page) => page.path,
     id: view.name,
     label: view.name,
     layout: pagePresentationLayouts[type]({ schema, view }),
+    onActivate,
     properties,
     query: {},
   };

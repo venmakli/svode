@@ -37,7 +37,7 @@ export function useTableViewRuntime({
   createAsFolder = false,
   onSchemaChange,
   onUpdateView,
-  onCreateEntry,
+  onCreatePage,
 }: TableViewProps) {
   const [editing, setEditing] = useState<TableEditingCell | null>(null);
   const [focusedPath, setFocusedPath] = useState<string | null>(null);
@@ -128,7 +128,7 @@ export function useTableViewRuntime({
     filteredTopLevel,
     setEntries,
     loadEntries,
-    onCreateEntry,
+    onCreatePage,
   });
 
   useEffect(() => {

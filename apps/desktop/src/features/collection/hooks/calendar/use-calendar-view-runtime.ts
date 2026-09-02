@@ -70,14 +70,14 @@ export function useCalendarViewRuntime({
   calendarScope,
   createFocusSignal = 0,
   createAsFolder = false,
-  onOpenEntry,
+  onActivateItem,
   onOpenNestedPeek,
   onOpenFullPage,
   onOpenPath,
   onSchemaChange,
   onUpdateView,
   onCalendarScopeChange,
-  onCreateEntry,
+  onCreatePage,
 }: CalendarViewProps) {
   const calendarRef = useRef<FullCalendar | null>(null);
   const shellRef = useRef<HTMLDivElement | null>(null);
@@ -306,9 +306,9 @@ export function useCalendarViewRuntime({
         return;
       }
       if (model.nestedCollection) onOpenNestedPeek(model.entry);
-      else onOpenEntry(model.entry);
+      else onActivateItem(model.entry);
     },
-    [onOpenEntry, onOpenFullPage, onOpenNestedPeek],
+    [onActivateItem, onOpenFullPage, onOpenNestedPeek],
   );
 
   const handleEventDrop = useCallback(
@@ -358,14 +358,14 @@ export function useCalendarViewRuntime({
   const createEntryFromDraft = useCallback(
     async (title: string, draft: CalendarCreateDraft) => {
       if (!dateColumn) return;
-      const created = await onCreateEntry(title, draft.asFolder, {
+      const created = await onCreatePage(title, draft.asFolder, {
         [dateColumn.name]: draft.dateValue,
       });
       setCreateDraft(null);
       setEntries((current) => [...current, created]);
       await loadEntries();
     },
-    [dateColumn, loadEntries, onCreateEntry, setEntries],
+    [dateColumn, loadEntries, onCreatePage, setEntries],
   );
 
   const syncDates = useCallback(

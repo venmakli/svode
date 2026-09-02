@@ -227,6 +227,10 @@ function CollectionViewsSurfaceInternal({
     refreshEntries,
   });
 
+  const openPeek = useCallback((page: Page, nested = false) => {
+    setPeekTarget({ page, nested });
+  }, []);
+
   const views = useMemo(
     () =>
       ((schema?.views ?? []) as CollectionView[]).filter((view) =>
@@ -245,10 +249,11 @@ function CollectionViewsSurfaceInternal({
     () =>
       definePageCollection({
         collectionPath,
+        onActivate: (page) => openPeek(page),
         schema: schema ?? { columns: [], views: [] },
         views,
       }),
-    [collectionPath, schema, views],
+    [collectionPath, openPeek, schema, views],
   );
   const { focusActiveViewCreate, requests: createRequests } =
     useCollectionViewCreateFocus(activeView);
@@ -327,10 +332,6 @@ function CollectionViewsSurfaceInternal({
     spaceId,
     openPage,
   });
-
-  function openPeek(entryToOpen: Page, nested = false) {
-    setPeekTarget({ page: entryToOpen, nested });
-  }
 
   function openFullPage(
     entryToOpen: Page,
@@ -523,7 +524,7 @@ function CollectionViewsSurfaceInternal({
               onDuplicateTemplate={duplicateTemplateForMenu}
               onDeleteTemplate={deleteTemplateForMenu}
               onReorderTemplates={reorderTemplatesForMenu}
-              onCreateEntry={(asFolder) => {
+              onCreatePage={(asFolder) => {
                 if (focusActiveViewCreate(asFolder)) return;
                 void createEntry(asFolder).catch(handleError);
               }}
@@ -546,7 +547,6 @@ function CollectionViewsSurfaceInternal({
                 calendarScope: routeState?.calendarScope,
                 createRequest: createRequests[viewType(activeView)],
                 onClearSearch: () => setSearchQuery(""),
-                onOpenEntry: (entryToOpen) => openPeek(entryToOpen),
                 onOpenNestedPeek: (entryToOpen) => openPeek(entryToOpen, true),
                 onOpenNestedCollection: (entryToOpen) =>
                   openScopeOwner({
@@ -557,13 +557,13 @@ function CollectionViewsSurfaceInternal({
                 onOpenFullPage: openFullPage,
                 onOpenPath: openPath,
                 onOpenRelationTarget: openRelationPeek,
-                onDuplicateEntry: (entryToDuplicate) => {
+                onDuplicatePage: (pageToDuplicate) => {
                   if (!readOnly) {
-                    void duplicateRow(entryToDuplicate).catch(handleError);
+                    void duplicateRow(pageToDuplicate).catch(handleError);
                   }
                 },
-                onDeleteEntry: (entryToDelete) => {
-                  if (!readOnly) setDeleteEntry(entryToDelete);
+                onDeletePage: (pageToDelete) => {
+                  if (!readOnly) setDeleteEntry(pageToDelete);
                 },
                 onSchemaChange: (nextSchema) => {
                   if (!readOnly) setSchema(normalizeSchema(nextSchema));
@@ -577,7 +577,7 @@ function CollectionViewsSurfaceInternal({
                   return updateView(name, patch);
                 },
                 onCalendarScopeChange: routeState?.onCalendarScopeChange,
-                onCreateEntry: (title, asFolder, contextualDefaults) => {
+                onCreatePage: (title, asFolder, contextualDefaults) => {
                   if (readOnly) {
                     return Promise.reject(
                       new Error(m.repository_work_status_read_only()),
@@ -603,8 +603,8 @@ function CollectionViewsSurfaceInternal({
           if (!open) setDeleteEntry(null);
         }}
         onDeleteView={() => void deleteActiveView().catch(handleError)}
-        onDeleteEntry={(entryToDelete) =>
-          void deleteRow(entryToDelete).catch(handleError)
+        onDeletePage={(pageToDelete) =>
+          void deleteRow(pageToDelete).catch(handleError)
         }
       />
       <PagePeekSheet

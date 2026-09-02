@@ -17,14 +17,14 @@ export function DeleteDialogs({
   onViewOpenChange,
   onEntryOpenChange,
   onDeleteView,
-  onDeleteEntry,
+  onDeletePage,
 }: {
   viewOpen: boolean;
   entry: Page | null;
   onViewOpenChange: (open: boolean) => void;
   onEntryOpenChange: (open: boolean) => void;
   onDeleteView: () => void;
-  onDeleteEntry: (entry: Page) => void;
+  onDeletePage: (page: Page) => void;
 }) {
   return (
     <>
@@ -61,7 +61,7 @@ export function DeleteDialogs({
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>{m.project_cancel()}</AlertDialogCancel>
-            <AlertDialogAction onClick={() => entry && onDeleteEntry(entry)}>
+            <AlertDialogAction onClick={() => entry && onDeletePage(entry)}>
               {m.space_delete()}
             </AlertDialogAction>
           </AlertDialogFooter>

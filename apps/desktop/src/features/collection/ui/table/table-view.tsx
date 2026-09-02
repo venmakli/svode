@@ -33,13 +33,13 @@ export function TableView(props: TableViewProps) {
     searchQuery,
     filters,
     onClearSearch,
-    onOpenEntry,
+    onActivateItem,
     onOpenNestedPeek,
     onOpenNestedCollection,
     onOpenPath,
     onOpenRelationTarget,
-    onDuplicateEntry,
-    onDeleteEntry,
+    onDuplicatePage,
+    onDeletePage,
     onSchemaChange,
   } = props;
   const runtime = useTableViewRuntime(props);
@@ -142,14 +142,14 @@ export function TableView(props: TableViewProps) {
               actors={runtime.actors}
               spacePath={spacePath}
               projectPath={projectPath}
-              onOpenEntry={onOpenEntry}
-              onOpenNestedPeek={onOpenNestedPeek ?? onOpenEntry}
+              onActivateItem={onActivateItem}
+              onOpenNestedPeek={onOpenNestedPeek ?? onActivateItem}
               focusedPath={runtime.focusedPath}
               onFocusRow={runtime.setFocusedPath}
               onOpenPath={onOpenPath}
               onOpenRelationTarget={onOpenRelationTarget}
-              onDuplicateEntry={onDuplicateEntry}
-              onDeleteEntry={onDeleteEntry}
+              onDuplicatePage={onDuplicatePage}
+              onDeletePage={onDeletePage}
               onDragEnd={(event) => {
                 if (!readOnly) void runtime.handleDragEnd(event);
               }}

@@ -12,7 +12,7 @@ interface UseTableEntryActionsOptions {
   filteredTopLevel: Page[];
   setEntries: Dispatch<SetStateAction<Page[]>>;
   loadEntries: () => Promise<void>;
-  onCreateEntry: (title: string, asFolder: boolean) => Promise<Page>;
+  onCreatePage: (title: string, asFolder: boolean) => Promise<Page>;
 }
 
 export function useTableEntryActions({
@@ -23,7 +23,7 @@ export function useTableEntryActions({
   filteredTopLevel,
   setEntries,
   loadEntries,
-  onCreateEntry,
+  onCreatePage,
 }: UseTableEntryActionsOptions) {
   const { reloadOrderParent, saveOrder } = useCollectionTreeOrder({
     spacePath,
@@ -36,12 +36,12 @@ export function useTableEntryActions({
       asFolder: boolean,
       onCreated?: (entry: Page) => void,
     ) => {
-      const created = await onCreateEntry(title, asFolder);
+      const created = await onCreatePage(title, asFolder);
       onCreated?.(created);
       await loadEntries();
       return created;
     },
-    [loadEntries, onCreateEntry],
+    [loadEntries, onCreatePage],
   );
 
   const reorderEntries = useCallback(
