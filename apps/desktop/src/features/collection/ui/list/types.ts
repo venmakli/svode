@@ -23,7 +23,6 @@ export interface ListRowProps {
   onUpdateField?: (entry: Page, column: Column, value: unknown) => void;
   onToggle: (entry: Page) => void;
   onOpen: (entry: Page, nestedCollection: boolean) => void;
-  onOpenFullPage: (entry: Page) => void;
   onOpenNestedCollection: (entry: Page) => void;
   onOpenPath: (path: string, spaceId?: string | null) => void;
   onDuplicate: (entry: Page) => void;

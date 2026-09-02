@@ -42,7 +42,7 @@ test("fixed Attachments Table is Property-driven and query-capable", () => {
   expect(
     descriptor.properties.map((property) => property.capabilities?.filter),
   ).toEqual([
-    undefined,
+    { kind: "standard" },
     { kind: "standard" },
     { kind: "standard" },
     { kind: "standard" },

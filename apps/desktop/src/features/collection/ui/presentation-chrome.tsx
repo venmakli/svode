@@ -166,7 +166,6 @@ export function CollectionPresentationListRow({
   density,
   identity,
   leading,
-  onDoubleOpen,
   onFocusRow,
   onMoveFocus,
   onOpen,
@@ -192,7 +191,6 @@ export function CollectionPresentationListRow({
   density: "compact" | "comfortable";
   identity: ReactNode;
   leading?: ReactNode;
-  onDoubleOpen?(): void;
   onFocusRow?(): void;
   onMoveFocus?(key: "ArrowUp" | "ArrowDown" | "Home" | "End"): void;
   onOpen?(): void;
@@ -214,10 +212,6 @@ export function CollectionPresentationListRow({
         if (isCollectionPresentationInteractiveTarget(event)) return;
         event.currentTarget.focus();
         onOpen?.();
-      }}
-      onDoubleClick={(event) => {
-        if (isCollectionPresentationInteractiveTarget(event)) return;
-        onDoubleOpen?.();
       }}
       onKeyDown={(event) => {
         if (isCollectionPresentationInteractiveTarget(event)) return;

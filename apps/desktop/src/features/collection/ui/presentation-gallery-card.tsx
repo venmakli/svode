@@ -40,7 +40,6 @@ export interface CollectionPresentationGalleryCardProps extends Omit<
   description?: ReactNode;
   diagnostic?: ReactNode;
   leading?: ReactNode;
-  onDoubleOpen?(): void;
   onFocusCard?(): void;
   onMoveFocus?(key: GalleryMoveKey): void;
   onOpen?(): void;
@@ -48,7 +47,6 @@ export interface CollectionPresentationGalleryCardProps extends Omit<
   properties?: ReactNode;
   title?: ReactNode;
   onClick?: ComponentProps<typeof CollectionCardShell>["onClick"];
-  onDoubleClick?: ComponentProps<typeof CollectionCardShell>["onDoubleClick"];
   onFocus?: ComponentProps<typeof CollectionCardShell>["onFocus"];
   onKeyDown?: ComponentProps<typeof CollectionCardShell>["onKeyDown"];
 }
@@ -64,8 +62,6 @@ export function CollectionPresentationGalleryCard({
   diagnostic,
   leading,
   onClick,
-  onDoubleClick,
-  onDoubleOpen,
   onFocus,
   onFocusCard,
   onKeyDown,
@@ -81,7 +77,7 @@ export function CollectionPresentationGalleryCard({
       {...props}
       ref={cardRef}
       size={density === "compact" ? "sm" : "default"}
-      className={cn((onOpen || onDoubleOpen) && "cursor-pointer", className)}
+      className={cn(onOpen && "cursor-pointer", className)}
       onClick={(event) => {
         onClick?.(event);
         if (
@@ -92,16 +88,6 @@ export function CollectionPresentationGalleryCard({
         }
         event.currentTarget.focus();
         onOpen?.();
-      }}
-      onDoubleClick={(event) => {
-        onDoubleClick?.(event);
-        if (
-          event.defaultPrevented ||
-          isCollectionPresentationInteractiveTarget(event)
-        ) {
-          return;
-        }
-        onDoubleOpen?.();
       }}
       onFocus={(event) => {
         onFocus?.(event);

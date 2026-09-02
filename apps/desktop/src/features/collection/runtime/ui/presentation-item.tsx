@@ -1,6 +1,6 @@
 import { useCallback, useId, useMemo, useState } from "react";
 
-import { TableCell, TableRow } from "@/components/ui/table";
+import { TableCell } from "@/components/ui/table";
 import * as m from "@/paraglide/messages.js";
 
 import {
@@ -9,6 +9,7 @@ import {
   CollectionPresentationPropertyItem,
 } from "../../ui/presentation-chrome";
 import { CollectionPresentationGalleryCard } from "../../ui/presentation-gallery-card";
+import { CollectionTableRow } from "../../ui/table/table-presentation";
 import { runCollectionCallback } from "../lib/interaction";
 import type {
   CollectionInteractionError,
@@ -178,63 +179,60 @@ export function CollectionPresentationItem({
   if (descriptor.layout.kind === "table") {
     const layout = descriptor.layout;
     return (
-      <TableRow
-        ref={(element) => registerRow(rowId, element)}
+      <CollectionTableRow
+        rowRef={(element) => registerRow(rowId, element)}
         aria-current={selected || undefined}
         data-collection-activatable={activationEnabled || undefined}
         data-collection-row={rowId}
         id={focusTargetId}
         className="group/row h-10 bg-background text-[13px] hover:bg-muted/40"
+        selected={selected}
         tabIndex={tabIndex}
-        onClick={() => onFocus(rowId)}
-        onDoubleClick={(event) => {
-          if (
-            activationEnabled &&
-            !(event.target as HTMLElement).closest(
-              "[data-collection-interactive]",
-            )
-          ) {
-            void activate();
-          }
-        }}
-        onFocus={() => onFocus(rowId)}
-        onKeyDown={(event) => {
-          if (
-            event.target !== event.currentTarget &&
-            (event.target as HTMLElement).closest(
-              "[data-collection-interactive]",
-            )
-          ) {
-            return;
-          }
-          if (["ArrowUp", "ArrowDown", "Home", "End"].includes(event.key)) {
-            event.preventDefault();
-            onMoveFocus(rowId, event.key);
-          } else if (event.key === "Enter" && activationEnabled) {
-            event.preventDefault();
-            void activate();
-          }
-        }}
+        onActivate={activationEnabled ? () => void activate() : undefined}
+        onMoveFocus={(key) => onMoveFocus(rowId, key)}
+        onSelect={() => onFocus(rowId)}
       >
         {layout.visibleProperties.map((propertyKey) => {
           const property = descriptor.properties.find(
             (candidate) => candidate.key === propertyKey,
           );
+          const value = property?.capabilities?.edit
+            ? renderContext.renderPropertyControl(
+                propertyKey,
+                layout.density === "compact" ? "compact" : "default",
+              )
+            : renderContext.renderProperty(propertyKey);
+          const primaryActivator =
+            propertyKey === layout.primaryProperty &&
+            activationEnabled &&
+            !property?.capabilities?.edit;
           return (
             <TableCell
               key={propertyKey}
               className={
                 propertyKey === layout.primaryProperty
-                  ? "min-w-52 font-medium"
-                  : "min-w-32"
+                  ? "min-w-52 border-r px-2 py-0 font-medium"
+                  : "min-w-32 border-r px-2 py-0"
               }
             >
-              {property?.capabilities?.edit
-                ? renderContext.renderPropertyControl(
-                    propertyKey,
-                    layout.density === "compact" ? "compact" : "default",
-                  )
-                : renderContext.renderProperty(propertyKey)}
+              {primaryActivator ? (
+                <button
+                  type="button"
+                  className="flex h-7 w-full min-w-0 items-center rounded px-1 text-left hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  data-collection-interactive
+                  data-collection-primary
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onFocus(rowId);
+                    void activate();
+                  }}
+                  onFocus={() => onFocus(rowId)}
+                >
+                  {value}
+                </button>
+              ) : (
+                value
+              )}
               {propertyKey === layout.primaryProperty && activationError ? (
                 <CollectionInlineDiagnostic message={activationError} />
               ) : null}
@@ -252,7 +250,7 @@ export function CollectionPresentationItem({
             />
           </TableCell>
         ) : null}
-      </TableRow>
+      </CollectionTableRow>
     );
   }
 

@@ -38,7 +38,6 @@ export function ListView(props: ListViewProps) {
     spacePath,
     projectPath,
     onClearSearch,
-    onOpenFullPage,
     onOpenNestedCollection,
     onOpenPath,
     onDuplicateEntry,
@@ -148,7 +147,6 @@ export function ListView(props: ListViewProps) {
                 }
                 onToggle={toggleRow}
                 onOpen={openRow}
-                onOpenFullPage={onOpenFullPage}
                 onOpenNestedCollection={onOpenNestedCollection}
                 onOpenPath={onOpenPath}
                 onDuplicate={onDuplicateEntry}

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { AlertTriangle, ArrowUpDown, Filter } from "lucide-react";
 
 import {
@@ -8,7 +8,7 @@ import {
   AlertTitle,
 } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import { QueryList, SortEditor } from "@/features/collection/query/ui";
+import { PaneRow, QueryList, SortEditor } from "@/features/collection/query/ui";
 import type {
   ActorCandidate,
   CollectionPropertyDefinition,
@@ -57,6 +57,231 @@ export interface CollectionQueryEditorProps {
   presentation: CollectionPresentationRuntime;
   resetWarning?: boolean;
   value: CollectionQueryState;
+}
+
+export interface CollectionPropertyQueryMenuProps {
+  actors?: ActorCandidate[];
+  onChange(query: CollectionQueryState): void;
+  onOpenChange(open: boolean): void;
+  onRequestActors?: (allTime?: boolean) => Promise<ActorCandidate[]>;
+  open: boolean;
+  presentation: CollectionPresentationRuntime;
+  propertyKey: string;
+  trigger: ReactNode;
+  value: CollectionQueryState;
+}
+
+type CollectionPropertyQueryPane = "main" | "filterEditor" | "sortEditor";
+
+export function CollectionPropertyQueryMenu({
+  actors = [],
+  onChange,
+  onOpenChange,
+  onRequestActors,
+  open,
+  presentation,
+  propertyKey,
+  trigger,
+  value,
+}: CollectionPropertyQueryMenuProps) {
+  const { descriptor } =
+    readCollectionPresentationRuntime(presentation).instance;
+  const property = propertyByKey(descriptor, propertyKey);
+  const [pane, setPane] = useState<CollectionPropertyQueryPane>("main");
+  const editor = useControlledQueryEditor<
+    CollectionPropertyDefinition<unknown>,
+    CollectionFilterRule,
+    CollectionSortDescriptor
+  >({
+    fields: property
+      ? [
+          {
+            ...property,
+            createFilter:
+              collectionFilterOperators(property).length > 0
+                ? () =>
+                    createDefaultCollectionFilterRule(property) ??
+                    ({
+                      propertyKey: property.key,
+                      operator: "",
+                    } satisfies CollectionFilterRule)
+                : undefined,
+            createSort: hasCollectionSort(property)
+              ? () => ({
+                  direction: "asc" as const,
+                  propertyKey: property.key,
+                })
+              : undefined,
+          },
+        ]
+      : [],
+    onChange: (change) =>
+      onChange({
+        ...value,
+        ...(change.filters ? { filters: change.filters } : {}),
+        ...(change.sort ? { sort: change.sort } : {}),
+      }),
+    value,
+  });
+  const filterIndex = value.filters.findIndex(
+    (rule) => rule.propertyKey === propertyKey,
+  );
+  const sortIndex = value.sort.findIndex(
+    (item) => item.propertyKey === propertyKey,
+  );
+  const filterDraft = editor.filterDraft;
+  const sortDraft = editor.sortDraft;
+  const filterDraftValid = isFilterDraftValid(descriptor, value, filterDraft);
+
+  if (!property) return null;
+  const filterSupported = collectionFilterOperators(property).length > 0;
+  const sortSupported = hasCollectionSort(property);
+  if (!filterSupported && !sortSupported) return null;
+
+  function openFilterEditor() {
+    if (filterIndex >= 0) {
+      editor.editFilter({ ...value.filters[filterIndex]! }, filterIndex);
+    } else {
+      editor.startFilter(propertyKey);
+    }
+    setPane("filterEditor");
+  }
+
+  function openSortEditor() {
+    if (sortIndex >= 0) {
+      editor.editSort({ ...value.sort[sortIndex]! }, sortIndex);
+    } else {
+      editor.startSort(propertyKey);
+    }
+    setPane("sortEditor");
+  }
+
+  return (
+    <MultiPanePopover
+      align="start"
+      className="w-[260px]"
+      mainPane="main"
+      open={open}
+      pane={pane}
+      panes={[
+        {
+          content: (
+            <div className="flex flex-col p-1">
+              {filterSupported ? (
+                <PaneRow
+                  active={filterIndex >= 0}
+                  icon={Filter}
+                  label={m.view_query_filter_title()}
+                  meta={
+                    filterIndex >= 0
+                      ? value.filters[filterIndex]?.operator
+                      : undefined
+                  }
+                  onClick={openFilterEditor}
+                />
+              ) : null}
+              {sortSupported ? (
+                <PaneRow
+                  active={sortIndex >= 0}
+                  icon={ArrowUpDown}
+                  label={m.view_query_sort_title()}
+                  meta={
+                    sortIndex >= 0
+                      ? value.sort[sortIndex]?.direction === "desc"
+                        ? m.view_query_sort_desc()
+                        : m.view_query_sort_asc()
+                      : undefined
+                  }
+                  onClick={openSortEditor}
+                />
+              ) : null}
+            </div>
+          ),
+          id: "main" as const,
+          title: property.label,
+        },
+        {
+          content: filterDraft ? (
+            <CollectionQueryFilterEditor
+              actors={actors}
+              property={property}
+              onChange={(item) =>
+                editor.setFilterDraft((current) =>
+                  current ? { ...current, item } : current,
+                )
+              }
+              onRequestActors={onRequestActors}
+              rule={filterDraft.item}
+            />
+          ) : null,
+          footer: filterDraft ? (
+            <QueryEditorFooter
+              applyDisabled={!filterDraftValid}
+              applyLabel={m.view_query_apply_filter()}
+              deleteLabel={m.view_query_clear_filter()}
+              onApply={() => {
+                if (editor.applyFilterDraft()) setPane("main");
+              }}
+              onDelete={() => {
+                editor.removeFilterDraft();
+                setPane("main");
+              }}
+            />
+          ) : null,
+          id: "filterEditor" as const,
+          title: m.view_query_filter_editor_title({ field: property.label }),
+        },
+        {
+          content: sortDraft ? (
+            <SortEditor
+              sort={{
+                desc: sortDraft.item.direction === "desc",
+                field: sortDraft.item.propertyKey,
+              }}
+              onChange={(sort) =>
+                editor.setSortDraft((current) =>
+                  current
+                    ? {
+                        ...current,
+                        item: {
+                          direction: sort.desc ? "desc" : "asc",
+                          propertyKey: sort.field,
+                        },
+                      }
+                    : current,
+                )
+              }
+            />
+          ) : null,
+          footer: sortDraft ? (
+            <QueryEditorFooter
+              applyLabel={m.view_query_apply_sort()}
+              deleteLabel={m.view_query_delete_sort()}
+              onApply={() => {
+                if (editor.applySortDraft()) setPane("main");
+              }}
+              onDelete={() => {
+                editor.removeSortDraft();
+                setPane("main");
+              }}
+            />
+          ) : null,
+          id: "sortEditor" as const,
+          title: m.view_query_sort_editor_title({ field: property.label }),
+        },
+      ]}
+      trigger={trigger}
+      onOpenChange={(nextOpen) => {
+        if (nextOpen) setPane("main");
+        else {
+          editor.setFilterDraft(null);
+          editor.setSortDraft(null);
+        }
+        onOpenChange(nextOpen);
+      }}
+      onPaneChange={setPane}
+    />
+  );
 }
 
 export function CollectionQueryEditor({

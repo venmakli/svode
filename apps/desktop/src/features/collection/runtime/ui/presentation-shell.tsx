@@ -7,6 +7,10 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import {
+  PROPERTY_TYPE_ICONS,
+  resolveStandardPropertyColumn,
+} from "@/features/properties";
 import * as m from "@/paraglide/messages.js";
 import { cn } from "@/shared/lib/utils";
 import { detailPageViewRowClassName } from "@/shared/ui/page-layout";
@@ -19,17 +23,25 @@ import {
   CollectionListSkeleton,
 } from "../../ui/presentation-layout";
 import { CollectionTableShell } from "../../ui/table/table-presentation";
+import { ColumnHeader } from "../../ui/table/table-shell";
+import { defaultColumnWidth } from "../../ui/table/utils";
 import {
   createCollectionPresentationScope,
   resolveCollectionFocusIndex,
 } from "../lib/interaction";
-import { applyCollectionQuery, EMPTY_COLLECTION_QUERY } from "../model/query";
+import {
+  applyCollectionQuery,
+  collectionFilterOperators,
+  EMPTY_COLLECTION_QUERY,
+} from "../model/query";
 import { readCollectionPresentationRuntime } from "../model/runtime";
 import type {
   CollectionInteractionError,
   CollectionPresentationRuntime,
   CollectionQueryState,
 } from "../model/types";
+import { hasCollectionSort } from "./query-editor-parts";
+import { CollectionPropertyQueryMenu } from "./query-editor";
 import { CollectionPresentationItem } from "./presentation-item";
 import {
   CollectionBlockingError,
@@ -76,6 +88,7 @@ export function CollectionPresentationShell({
   const [selection, setSelection] = useState<CollectionSelectionState | null>(
     null,
   );
+  const [openProperty, setOpenProperty] = useState<string | null>(null);
   const rowRefs = useRef(new Map<string, HTMLElement>());
   const cardsRef = useRef<HTMLDivElement | null>(null);
   const surfaceRef = useRef<HTMLDivElement | null>(null);
@@ -221,6 +234,8 @@ export function CollectionPresentationShell({
 
   const sourceEmpty = queryResult?.sourceRows.length === 0;
   const queryEmpty = !sourceEmpty && rows.length === 0;
+  const tableLayout =
+    descriptor.layout.kind === "table" ? descriptor.layout : null;
   return (
     <div
       ref={surfaceRef}
@@ -252,24 +267,89 @@ export function CollectionPresentationShell({
         >
           {items}
         </CollectionCardsShell>
-      ) : descriptor.layout.kind === "table" ? (
+      ) : tableLayout ? (
         <CollectionTableShell>
           <Table
             key={presentationScope}
             className="min-w-full table-auto"
             aria-label={descriptor.label}
+            style={{
+              minWidth:
+                tableLayout.visibleProperties.reduce(
+                  (width, propertyKey) => {
+                    const property = descriptor.properties.find(
+                      (candidate) => candidate.key === propertyKey,
+                    );
+                    const column = property
+                      ? resolveStandardPropertyColumn(property)
+                      : null;
+                    return (
+                      width +
+                      (propertyKey === tableLayout.primaryProperty
+                        ? 260
+                        : defaultColumnWidth(column ?? undefined))
+                    );
+                  },
+                  descriptor.rowActions?.length ? 40 : 0,
+                ) || "100%",
+            }}
           >
-            <TableHeader>
+            <TableHeader className="sticky top-0 z-10 bg-muted/40">
               <TableRow className="h-[34px] bg-muted/40 hover:bg-muted/40">
-                {descriptor.layout.visibleProperties.map((propertyKey) => (
-                  <TableHead key={propertyKey} className="h-[34px]">
-                    {descriptor.properties.find(
-                      (property) => property.key === propertyKey,
-                    )?.label ?? propertyKey}
-                  </TableHead>
-                ))}
+                {tableLayout.visibleProperties.map((propertyKey) => {
+                  const property = descriptor.properties.find(
+                    (candidate) => candidate.key === propertyKey,
+                  );
+                  const column = property
+                    ? resolveStandardPropertyColumn(property)
+                    : null;
+                  const Icon = PROPERTY_TYPE_ICONS[column?.type ?? "text"];
+                  const queryEnabled = Boolean(
+                    property &&
+                    (collectionFilterOperators(property).length > 0 ||
+                      hasCollectionSort(property)),
+                  );
+                  return (
+                    <TableHead
+                      key={propertyKey}
+                      className="h-[34px] border-r p-0"
+                      style={{
+                        width:
+                          propertyKey === tableLayout.primaryProperty
+                            ? 260
+                            : defaultColumnWidth(column ?? undefined),
+                      }}
+                    >
+                      <ColumnHeader
+                        readOnly={!queryEnabled}
+                        label={property?.label ?? propertyKey}
+                        icon={Icon}
+                        open={openProperty === propertyKey}
+                        onOpenChange={(open) =>
+                          setOpenProperty(open ? propertyKey : null)
+                        }
+                      >
+                        {queryEnabled ? (
+                          <CollectionPropertyQueryMenu
+                            open={openProperty === propertyKey}
+                            presentation={presentation}
+                            propertyKey={propertyKey}
+                            trigger={<span />}
+                            value={query}
+                            onChange={onQueryChange}
+                            onOpenChange={(open) =>
+                              setOpenProperty(open ? propertyKey : null)
+                            }
+                          />
+                        ) : (
+                          <span />
+                        )}
+                      </ColumnHeader>
+                    </TableHead>
+                  );
+                })}
                 {descriptor.rowActions?.length ? (
-                  <TableHead className="h-[34px] w-10" />
+                  <TableHead className="h-[34px] w-10 p-0" />
                 ) : null}
               </TableRow>
             </TableHeader>

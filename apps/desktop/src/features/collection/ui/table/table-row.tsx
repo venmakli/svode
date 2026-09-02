@@ -8,9 +8,10 @@ import {
   ContextMenuItem,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
-import { TableCell, TableRow as ShadcnTableRow } from "@/components/ui/table";
+import { TableCell } from "@/components/ui/table";
 import { cn } from "@/shared/lib/utils";
 import type { CollectionTableRow } from "./types";
+import { CollectionTableRow as CollectionTableRowShell } from "./table-presentation";
 import * as m from "@/paraglide/messages.js";
 
 export function SortableTableRow({
@@ -18,9 +19,13 @@ export function SortableTableRow({
   disabled,
   readOnly,
   rowHeightClassName,
+  selected,
+  tabIndex,
   children,
   onOpen,
-  onOpenFullPage,
+  onFocus,
+  onMoveFocus,
+  registerRow,
   onDuplicate,
   onDelete,
 }: {
@@ -28,9 +33,13 @@ export function SortableTableRow({
   disabled: boolean;
   readOnly: boolean;
   rowHeightClassName: string;
+  selected: boolean;
+  tabIndex: number;
   children: ReactNode;
   onOpen: () => void;
-  onOpenFullPage: () => void;
+  onFocus: () => void;
+  onMoveFocus: (key: string) => void;
+  registerRow: (element: HTMLTableRowElement | null) => void;
   onDuplicate: () => void;
   onDelete: () => void;
 }) {
@@ -45,8 +54,11 @@ export function SortableTableRow({
   return (
     <ContextMenu>
       <ContextMenuTrigger asChild>
-        <ShadcnTableRow
-          ref={setNodeRef}
+        <CollectionTableRowShell
+          rowRef={(element) => {
+            setNodeRef(element);
+            registerRow(element);
+          }}
           data-table-row-path={row.entry.path}
           className={cn(
             "group/row h-9 bg-background text-[13px] hover:bg-muted/40",
@@ -57,10 +69,11 @@ export function SortableTableRow({
             transform: CSS.Transform.toString(transform),
             transition,
           }}
-          onDoubleClick={(event) => {
-            if (shouldIgnoreRowOpen(event.target)) return;
-            onOpenFullPage();
-          }}
+          selected={selected}
+          tabIndex={tabIndex}
+          onActivate={onOpen}
+          onMoveFocus={onMoveFocus}
+          onSelect={onFocus}
         >
           <TableCell className="w-[18px] p-0 text-muted-foreground">
             <div className="flex items-center justify-center">
@@ -82,7 +95,7 @@ export function SortableTableRow({
             </div>
           </TableCell>
           {children}
-        </ShadcnTableRow>
+        </CollectionTableRowShell>
       </ContextMenuTrigger>
       <ContextMenuContent className="w-48">
         <ContextMenuItem onClick={onOpen}>
@@ -103,25 +116,5 @@ export function SortableTableRow({
         ) : null}
       </ContextMenuContent>
     </ContextMenu>
-  );
-}
-
-function shouldIgnoreRowOpen(target: EventTarget | null) {
-  if (!(target instanceof HTMLElement)) return true;
-  return Boolean(
-    target.closest(
-      [
-        "button",
-        "a",
-        "input",
-        "textarea",
-        "select",
-        "[role='button']",
-        "[role='checkbox']",
-        "[contenteditable='true']",
-        "[data-radix-collection-item]",
-        "[data-table-property-cell]",
-      ].join(","),
-    ),
   );
 }

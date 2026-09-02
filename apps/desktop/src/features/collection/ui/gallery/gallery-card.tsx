@@ -71,7 +71,6 @@ function GalleryCardContent({
   onRequestActors,
   onUpdateField,
   onOpen,
-  onOpenFullPage,
   onOpenNestedCollection,
   onOpenPath,
   onDuplicate,
@@ -170,7 +169,6 @@ function GalleryCardContent({
       onFocusCard={() => onFocusCard(entry.path)}
       onMoveFocus={(key) => onKeyboardMove(entry.path, key)}
       onOpen={() => onOpen(entry, nestedCollection)}
-      onDoubleOpen={() => onOpenFullPage(entry)}
     />
   );
 }

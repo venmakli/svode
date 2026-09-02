@@ -28,7 +28,7 @@ import { PagePeekSheet } from "./page-peek-sheet";
 import { handleError } from "../hooks/error-feedback";
 import { CollectionSkeleton } from "./skeleton";
 import { definePageCollection } from "../persisted/page-collection-definition";
-import { PersistedCollectionHost } from "../persisted/persisted-collection-host";
+import { CollectionHost } from "./collection-host";
 import { CollectionTabStrip } from "./view-tabs";
 import { ViewActionBar } from "./view-action-bar";
 import {
@@ -453,7 +453,7 @@ function CollectionViewsSurfaceInternal({
         />
       ) : null}
 
-      <PersistedCollectionHost
+      <CollectionHost
         activePresentationId={activeTab}
         definition={definition}
         onActivePresentationChange={selectTab}

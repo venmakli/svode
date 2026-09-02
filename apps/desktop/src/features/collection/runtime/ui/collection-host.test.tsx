@@ -5,7 +5,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 
 import { defineCollectionPresentation } from "../model/runtime";
 import type { CollectionStateController } from "../hooks/use-collection-state";
-import { CollectionHost } from "./collection-host";
+import { CollectionHost } from "../../ui/collection-host";
 
 interface Row {
   id: string;
@@ -100,6 +100,7 @@ test("feature-owned actions keep their positions and survive presentation switch
   expect(createPosition > contextualPosition).toBe(true);
   expect(trailingPosition > createPosition).toBe(true);
   expect(markup.match(/data-collection-presentation-toolbar/g)?.length).toBe(1);
+  expect(markup.includes('data-collection-definition="fixed"')).toBe(true);
 
   const switchedMarkup = renderToStaticMarkup(
     <TooltipProvider>

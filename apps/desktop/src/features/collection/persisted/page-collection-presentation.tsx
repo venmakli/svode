@@ -102,7 +102,6 @@ export function PageCollectionPresentation({
     onOpenEntry,
     onOpenNestedPeek,
     onOpenNestedCollection,
-    onOpenFullPage,
     onOpenPath,
     onDuplicateEntry,
     onDeleteEntry,
@@ -123,6 +122,7 @@ export function PageCollectionPresentation({
       <BoardView
         {...commonProps}
         query={query}
+        onOpenFullPage={onOpenFullPage}
         onSchemaChange={onSchemaChange}
         onUpdateView={onUpdateView}
         onCreateEntry={(title, asFolder, contextualDefaults) =>
@@ -134,6 +134,7 @@ export function PageCollectionPresentation({
       <CalendarView
         {...commonProps}
         calendarScope={calendarScope}
+        onOpenFullPage={onOpenFullPage}
         onSchemaChange={onSchemaChange}
         onUpdateView={onUpdateView}
         onCalendarScopeChange={onCalendarScopeChange}

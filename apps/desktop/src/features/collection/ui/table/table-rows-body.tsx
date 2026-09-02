@@ -8,6 +8,7 @@ import {
   SortableContext,
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
+import { useCallback, useRef } from "react";
 import { flexRender, type Table as ReactTable } from "@tanstack/react-table";
 import { TableBody, TableCell } from "@/components/ui/table";
 import { cn } from "@/shared/lib/utils";
@@ -35,7 +36,8 @@ export function TableRowsBody({
   projectPath,
   onOpenEntry,
   onOpenNestedPeek,
-  onOpenFullPage,
+  focusedPath,
+  onFocusRow,
   onOpenPath,
   onOpenRelationTarget,
   onDuplicateEntry,
@@ -54,7 +56,8 @@ export function TableRowsBody({
   projectPath?: string | null;
   onOpenEntry: (entry: Page) => void;
   onOpenNestedPeek: (entry: Page) => void;
-  onOpenFullPage: (entry: Page) => void;
+  focusedPath: string | null;
+  onFocusRow: (path: string) => void;
   onOpenPath: (path: string, spaceId?: string | null) => void;
   onOpenRelationTarget: (target: RelationOpenTarget) => void;
   onDuplicateEntry: (entry: Page) => void;
@@ -63,6 +66,33 @@ export function TableRowsBody({
   density?: "compact" | "default" | "spacious";
   wrapText?: boolean;
 }) {
+  const rowRefs = useRef(new Map<string, HTMLTableRowElement>());
+  const visibleRows = table.getRowModel().rows;
+  const moveFocus = useCallback(
+    (path: string, key: string) => {
+      const currentIndex = visibleRows.findIndex(
+        (row) => row.original.entry.path === path,
+      );
+      if (currentIndex < 0) return;
+      const nextIndex =
+        key === "Home"
+          ? 0
+          : key === "End"
+            ? visibleRows.length - 1
+            : Math.max(
+                0,
+                Math.min(
+                  visibleRows.length - 1,
+                  currentIndex + (key === "ArrowUp" ? -1 : 1),
+                ),
+              );
+      const nextPath = visibleRows[nextIndex]?.original.entry.path;
+      if (!nextPath) return;
+      onFocusRow(nextPath);
+      rowRefs.current.get(nextPath)?.focus();
+    },
+    [onFocusRow, visibleRows],
+  );
   const rowHeight =
     density === "compact"
       ? "h-[30px]"
@@ -85,21 +115,30 @@ export function TableRowsBody({
         strategy={verticalListSortingStrategy}
       >
         <TableBody>
-          {table.getRowModel().rows.map((row) => {
+          {visibleRows.map((row, index) => {
             const original = row.original;
+            const path = original.entry.path;
+            const selected = focusedPath === path;
             return (
               <SortableTableRow
-                key={original.entry.path}
+                key={path}
                 row={original}
                 disabled={readOnly || hasSort || original.child}
                 readOnly={readOnly}
                 rowHeightClassName={rowHeight}
+                selected={selected}
+                tabIndex={selected || (!focusedPath && index === 0) ? 0 : -1}
                 onOpen={() =>
                   original.nestedCollection
                     ? onOpenNestedPeek(original.entry)
                     : onOpenEntry(original.entry)
                 }
-                onOpenFullPage={() => onOpenFullPage(original.entry)}
+                onFocus={() => onFocusRow(path)}
+                onMoveFocus={(key) => moveFocus(path, key)}
+                registerRow={(element) => {
+                  if (element) rowRefs.current.set(path, element);
+                  else rowRefs.current.delete(path);
+                }}
                 onDuplicate={() => onDuplicateEntry(original.entry)}
                 onDelete={() => onDeleteEntry(original.entry)}
               >

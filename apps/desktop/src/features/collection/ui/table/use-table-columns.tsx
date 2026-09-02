@@ -16,7 +16,7 @@ import {
   normalizeSchema,
   resolveStandardPropertyColumn,
 } from "@/features/properties";
-import { PROPERTY_TYPE_ICONS } from "@/features/properties/column-menu";
+import { PROPERTY_TYPE_ICONS } from "@/features/properties";
 import { ColumnMenuPopover } from "./column-menu";
 import { PropertyCell, TitleCell } from "./cells";
 import { TITLE_ICON } from "./icons";
@@ -56,7 +56,7 @@ export function useTableColumns({
   onOpenEntry,
   onOpenNestedPeek,
   onOpenNestedCollection,
-  onOpenFullPage,
+  onSelectEntry,
   onOpenPath,
   onOpenRelationTarget,
   onRequestActors,
@@ -87,7 +87,7 @@ export function useTableColumns({
   onOpenEntry: (entry: Page) => void;
   onOpenNestedPeek: (entry: Page) => void;
   onOpenNestedCollection: (entry: Page) => void;
-  onOpenFullPage: (entry: Page) => void;
+  onSelectEntry: (entry: Page) => void;
   onOpenPath: (path: string, spaceId?: string | null) => void;
   onOpenRelationTarget: (target: RelationOpenTarget) => void;
   onRequestActors: (allTime: boolean) => Promise<ActorCandidate[]>;
@@ -115,7 +115,6 @@ export function useTableColumns({
             header: ({ header }) => (
               <ColumnHeader
                 readOnly={readOnly}
-                field="title"
                 label={label}
                 icon={TITLE_ICON}
                 open={openColumn === "title"}
@@ -157,12 +156,19 @@ export function useTableColumns({
                   nestedCollectionPaths,
                 )}
                 onToggle={() => setExpanded(row.original.entry.path)}
-                onOpen={() =>
-                  isNestedCollection(row.original.entry, nestedCollectionPaths)
-                    ? onOpenNestedPeek(row.original.entry)
-                    : onOpenEntry(row.original.entry)
-                }
-                onOpenFullPage={() => onOpenFullPage(row.original.entry)}
+                onOpen={() => {
+                  onSelectEntry(row.original.entry);
+                  if (
+                    isNestedCollection(
+                      row.original.entry,
+                      nestedCollectionPaths,
+                    )
+                  ) {
+                    onOpenNestedPeek(row.original.entry);
+                  } else {
+                    onOpenEntry(row.original.entry);
+                  }
+                }}
                 onOpenNested={() => onOpenNestedCollection(row.original.entry)}
               />
             ),
@@ -184,7 +190,6 @@ export function useTableColumns({
           header: ({ header }) => (
             <ColumnHeader
               readOnly={readOnly}
-              field={field}
               label={propertyDefinition?.label ?? field}
               icon={Icon}
               open={openColumn === field}
@@ -270,7 +275,7 @@ export function useTableColumns({
     nestedCollectionPaths,
     onCommitField,
     onOpenEntry,
-    onOpenFullPage,
+    onSelectEntry,
     onOpenRelationTarget,
     onOpenNestedPeek,
     onOpenNestedCollection,

@@ -15,8 +15,12 @@ export { CollectionQueryEditor } from "./runtime/ui/query-editor";
 export type { CollectionQueryEditorProps } from "./runtime/ui/query-editor";
 export { CollectionPresentationShell } from "./runtime/ui/presentation-shell";
 export type { CollectionPresentationShellProps } from "./runtime/ui/presentation-shell";
-export { CollectionHost } from "./runtime/ui/collection-host";
-export type { CollectionHostProps } from "./runtime/ui/collection-host";
+export { CollectionHost } from "./ui/collection-host";
+export type {
+  CollectionHostProps,
+  FixedCollectionHostProps,
+  SchemaBackedCollectionHostProps,
+} from "./ui/collection-host";
 export { CollectionCreateFlow } from "./runtime/ui/create-flow";
 export type {
   CollectionCreateFlowAction,

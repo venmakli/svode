@@ -41,7 +41,6 @@ export function GalleryView(props: GalleryViewProps) {
     spacePath,
     projectPath,
     onClearSearch,
-    onOpenFullPage,
     onOpenNestedCollection,
     onOpenPath,
     onDuplicateEntry,
@@ -163,7 +162,6 @@ export function GalleryView(props: GalleryViewProps) {
                           void commitField(entryToUpdate, column, value)
                   }
                   onOpen={openCard}
-                  onOpenFullPage={onOpenFullPage}
                   onOpenNestedCollection={onOpenNestedCollection}
                   onOpenPath={onOpenPath}
                   onDuplicate={onDuplicateEntry}

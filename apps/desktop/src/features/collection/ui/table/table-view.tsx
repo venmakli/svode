@@ -36,7 +36,6 @@ export function TableView(props: TableViewProps) {
     onOpenEntry,
     onOpenNestedPeek,
     onOpenNestedCollection,
-    onOpenFullPage,
     onOpenPath,
     onOpenRelationTarget,
     onDuplicateEntry,
@@ -71,7 +70,7 @@ export function TableView(props: TableViewProps) {
     onOpenEntry,
     onOpenNestedPeek: onOpenNestedPeek ?? onOpenEntry,
     onOpenNestedCollection,
-    onOpenFullPage,
+    onSelectEntry: (entry) => runtime.setFocusedPath(entry.path),
     onOpenPath,
     onOpenRelationTarget,
     onRequestActors: runtime.loadActors,
@@ -148,7 +147,8 @@ export function TableView(props: TableViewProps) {
               projectPath={projectPath}
               onOpenEntry={onOpenEntry}
               onOpenNestedPeek={onOpenNestedPeek ?? onOpenEntry}
-              onOpenFullPage={onOpenFullPage}
+              focusedPath={runtime.focusedPath}
+              onFocusRow={runtime.setFocusedPath}
               onOpenPath={onOpenPath}
               onOpenRelationTarget={onOpenRelationTarget}
               onDuplicateEntry={onDuplicateEntry}

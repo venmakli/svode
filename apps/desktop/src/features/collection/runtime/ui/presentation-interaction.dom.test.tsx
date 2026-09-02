@@ -147,6 +147,10 @@ test("neutral Table preserves row focus, activation, and nested action boundarie
       },
       properties: [
         {
+          capabilities: {
+            filter: { kind: "standard" },
+            sort: { kind: "standard" },
+          },
           getValue: (row) => row.name,
           key: "name",
           label: "Name",
@@ -202,6 +206,17 @@ test("neutral Table preserves row focus, activation, and nested action boundarie
       );
     });
     expect(dom.window.document.activeElement).toBe(second);
+    expect(second.getAttribute("aria-selected")).toBe("true");
+
+    const primary = second.querySelector<HTMLElement>(
+      "[data-collection-primary]",
+    )!;
+    await act(async () => {
+      primary.dispatchEvent(
+        new dom.window.MouseEvent("click", { bubbles: true }),
+      );
+    });
+    expect(activated).toEqual(["two"]);
 
     await act(async () => {
       second.dispatchEvent(
@@ -214,7 +229,7 @@ test("neutral Table preserves row focus, activation, and nested action boundarie
         new dom.window.MouseEvent("dblclick", { bubbles: true }),
       );
     });
-    expect(activated).toEqual(["two", "two"]);
+    expect(activated).toEqual(["two", "two", "two"]);
 
     const action = second.querySelector<HTMLElement>(
       "[data-collection-interactive]",
@@ -227,7 +242,18 @@ test("neutral Table preserves row focus, activation, and nested action boundarie
         }),
       );
     });
-    expect(activated).toEqual(["two", "two"]);
+    expect(activated).toEqual(["two", "two", "two"]);
+
+    const header =
+      dom.window.document.querySelector<HTMLElement>("thead button")!;
+    expect((header as HTMLButtonElement).disabled).toBe(false);
+    expect(header.outerHTML.includes("aria-haspopup")).toBe(true);
+    await act(async () => {
+      header.focus();
+      header.click();
+      await nextFrame(dom);
+    });
+    expect(header.getAttribute("data-state")).toBe("open");
   } finally {
     await act(async () => root.unmount());
     restoreGlobals();
@@ -235,7 +261,7 @@ test("neutral Table preserves row focus, activation, and nested action boundarie
   }
 });
 
-test("persisted List keeps entry, nested-control, keyboard, double-open, and context-menu contracts", async () => {
+test("persisted List keeps one activation contract across pointer and keyboard", async () => {
   const dom = new JSDOM(
     "<!doctype html><html><body><div id=app></div></body></html>",
     {
@@ -258,7 +284,6 @@ test("persisted List keeps entry, nested-control, keyboard, double-open, and con
   const opened: Array<{ nested: boolean; path: string }> = [];
   const moved: Array<{ offset: number; path: string }> = [];
   let nestedOpenCount = 0;
-  let fullOpenCount = 0;
   const root = createRoot(dom.window.document.getElementById("app")!);
 
   try {
@@ -288,9 +313,6 @@ test("persisted List keeps entry, nested-control, keyboard, double-open, and con
           onOpen={(rowEntry, nested) =>
             opened.push({ nested, path: rowEntry.path })
           }
-          onOpenFullPage={() => {
-            fullOpenCount += 1;
-          }}
           onOpenNestedCollection={() => {
             nestedOpenCount += 1;
           }}
@@ -343,7 +365,6 @@ test("persisted List keeps entry, nested-control, keyboard, double-open, and con
     });
     expect(moved).toEqual([{ offset: 1, path: "plans/roadmap.md" }]);
     expect(opened.length).toBe(2);
-    expect(fullOpenCount).toBe(1);
 
     await act(async () => {
       row.dispatchEvent(
@@ -364,7 +385,7 @@ test("persisted List keeps entry, nested-control, keyboard, double-open, and con
   }
 });
 
-test("shared Gallery card keeps open, nested-control, keyboard, double-open, and context-menu contracts", async () => {
+test("shared Gallery card keeps one activation contract across pointer and keyboard", async () => {
   const dom = new JSDOM(
     "<!doctype html><html><body><div id=app></div></body></html>",
     {
@@ -375,7 +396,6 @@ test("shared Gallery card keeps open, nested-control, keyboard, double-open, and
   const restoreGlobals = installDomGlobals(dom);
   const moved: string[] = [];
   let openCount = 0;
-  let doubleOpenCount = 0;
   let nestedCount = 0;
   const root = createRoot(dom.window.document.getElementById("app")!);
 
@@ -402,9 +422,6 @@ test("shared Gallery card keeps open, nested-control, keyboard, double-open, and
           cover={<div data-gallery-cover />}
           overlays={<div data-gallery-overlay />}
           contextMenu={<ContextMenuItem>Inspect</ContextMenuItem>}
-          onDoubleOpen={() => {
-            doubleOpenCount += 1;
-          }}
           onMoveFocus={(key) => moved.push(key)}
           onOpen={() => {
             openCount += 1;
@@ -458,7 +475,6 @@ test("shared Gallery card keeps open, nested-control, keyboard, double-open, and
 
     expect(openCount).toBe(3);
     expect(nestedCount).toBe(1);
-    expect(doubleOpenCount).toBe(1);
     expect(moved).toEqual(["Home", "ArrowRight"]);
     expect(Boolean(card.querySelector("[data-gallery-cover]"))).toBe(true);
     expect(Boolean(card.querySelector("[data-gallery-overlay]"))).toBe(true);
@@ -484,16 +500,21 @@ test("shared Gallery card keeps open, nested-control, keyboard, double-open, and
 
 function installDomGlobals(dom: JSDOM) {
   const values: Record<string, unknown> = {
+    cancelAnimationFrame: dom.window.cancelAnimationFrame.bind(dom.window),
+    CSS: dom.window.CSS ?? { escape: (value: string) => value },
     CustomEvent: dom.window.CustomEvent,
     DOMRect: dom.window.DOMRect,
+    DocumentFragment: dom.window.DocumentFragment,
     Element: dom.window.Element,
     Event: dom.window.Event,
+    FocusEvent: dom.window.FocusEvent,
     HTMLElement: dom.window.HTMLElement,
     IS_REACT_ACT_ENVIRONMENT: true,
     KeyboardEvent: dom.window.KeyboardEvent,
     MouseEvent: dom.window.MouseEvent,
     MutationObserver: dom.window.MutationObserver,
     Node: dom.window.Node,
+    NodeFilter: dom.window.NodeFilter,
     PointerEvent: dom.window.MouseEvent,
     ResizeObserver: class {
       disconnect() {}
@@ -523,4 +544,13 @@ function installDomGlobals(dom: JSDOM) {
       else Reflect.deleteProperty(globalThis, key);
     }
   };
+}
+
+function nextFrame(dom: JSDOM) {
+  return new Promise<void>((resolve) => {
+    dom.window.setTimeout(
+      () => dom.window.requestAnimationFrame(() => resolve()),
+      0,
+    );
+  });
 }

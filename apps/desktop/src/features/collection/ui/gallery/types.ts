@@ -34,7 +34,6 @@ export interface GalleryCardProps {
   onRequestActors: (allTime: boolean) => Promise<ActorCandidate[]>;
   onUpdateField?: (entry: Page, column: Column, value: unknown) => void;
   onOpen: (entry: Page, nestedCollection: boolean) => void;
-  onOpenFullPage: (entry: Page) => void;
   onOpenNestedCollection: (entry: Page) => void;
   onOpenPath: (path: string, spaceId?: string | null) => void;
   onDuplicate: (entry: Page) => void;

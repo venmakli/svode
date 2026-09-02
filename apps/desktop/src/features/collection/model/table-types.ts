@@ -54,7 +54,6 @@ export interface TableViewProps {
   onOpenEntry: (entry: Page) => void;
   onOpenNestedPeek?: (entry: Page) => void;
   onOpenNestedCollection: (entry: Page) => void;
-  onOpenFullPage: (entry: Page) => void;
   onOpenPath: (path: string, spaceId?: string | null) => void;
   onOpenRelationTarget: (target: RelationOpenTarget) => void;
   onDuplicateEntry: (entry: Page) => void;

@@ -24,6 +24,7 @@ export function createAttachmentsPresentationDescriptor({
   const properties: readonly CollectionPropertyDefinition<AttachmentRow>[] = [
     defineComputedCollectionProperty({
       capabilities: {
+        filter: { kind: "standard" },
         sort: { kind: "standard" },
       },
       featureId: "attachments",

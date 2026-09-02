@@ -40,6 +40,7 @@ export function useTableViewRuntime({
   onCreateEntry,
 }: TableViewProps) {
   const [editing, setEditing] = useState<TableEditingCell | null>(null);
+  const [focusedPath, setFocusedPath] = useState<string | null>(null);
   const [openColumn, setOpenColumn] = useState<string | null>(null);
   const [composerOpen, setComposerOpen] = useState(false);
   const [composerAsFolder, setComposerAsFolder] = useState(false);
@@ -111,6 +112,12 @@ export function useTableViewRuntime({
     ],
   );
   const hasSort = sort.length > 0;
+
+  useEffect(() => {
+    if (focusedPath && !rows.some((row) => row.entry.path === focusedPath)) {
+      setFocusedPath(null);
+    }
+  }, [focusedPath, rows]);
   const hasActorColumn = useMemo(
     () => schema.columns.some((column) => column.type === "actor"),
     [schema.columns],
@@ -248,6 +255,7 @@ export function useTableViewRuntime({
     filteredTopLevel,
     footerInputRef,
     footerRef,
+    focusedPath,
     handleAddColumn,
     handleCreate,
     handleDragEnd,
@@ -262,6 +270,7 @@ export function useTableViewRuntime({
     setComposerValue,
     setEditing,
     setExpanded,
+    setFocusedPath,
     setOpenColumn,
     showNested,
     updateViewPatch,

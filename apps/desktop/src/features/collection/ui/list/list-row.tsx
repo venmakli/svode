@@ -76,7 +76,6 @@ export function CollectionListRowContent({
   onUpdateField,
   onToggle,
   onOpen,
-  onOpenFullPage,
   onOpenNestedCollection,
   onOpenPath,
   onDuplicate,
@@ -105,7 +104,6 @@ export function CollectionListRowContent({
       style={{ paddingLeft: `${12 + row.level * 18}px` }}
       onFocusRow={() => onFocusRow(entry.path)}
       onOpen={() => onOpen(entry, row.nestedCollection)}
-      onDoubleOpen={() => onOpenFullPage(entry)}
       onMoveFocus={(key) => {
         if (key === "ArrowUp") onKeyboardMove(entry.path, -1);
         if (key === "ArrowDown") onKeyboardMove(entry.path, 1);

@@ -308,7 +308,6 @@ export function TitleCell({
   nested,
   onToggle,
   onOpen,
-  onOpenFullPage,
   onOpenNested,
 }: {
   row: CollectionTableRow;
@@ -318,7 +317,6 @@ export function TitleCell({
   nested: boolean;
   onToggle: () => void;
   onOpen: () => void;
-  onOpenFullPage: () => void;
   onOpenNested: () => void;
 }) {
   const conflictPath = pageNameConflictDisplayPath(row.entry);
@@ -339,10 +337,6 @@ export function TitleCell({
         title={m.table_open_entry_tooltip()}
         className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 rounded px-1 py-1 text-left hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         onClick={onOpen}
-        onDoubleClick={(event) => {
-          event.stopPropagation();
-          onOpenFullPage();
-        }}
       >
         <span className="flex min-w-0 flex-1 flex-col">
           <span className="truncate">{row.entry.meta.title}</span>

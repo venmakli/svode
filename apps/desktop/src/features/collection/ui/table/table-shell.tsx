@@ -24,8 +24,10 @@ import {
 } from "@/components/ui/table";
 import { cn } from "@/shared/lib/utils";
 import type { Page } from "@/features/page";
-import type { CollectionSchema } from "@/features/properties";
-import { PROPERTY_TYPE_ICONS } from "@/features/properties/column-menu";
+import {
+  PROPERTY_TYPE_ICONS,
+  type CollectionSchema,
+} from "@/features/properties";
 import { detailPageViewClassName } from "@/shared/ui/page-layout";
 import { TITLE_ICON } from "./icons";
 import { defaultColumnWidth } from "./utils";
@@ -41,14 +43,13 @@ export function ColumnHeader({
   onOpenChange,
   onResizeMouseDown,
 }: {
-  field: string;
   label: string;
   icon: ElementType;
   open: boolean;
   readOnly: boolean;
   children: ReactNode;
   onOpenChange: (open: boolean) => void;
-  onResizeMouseDown: (event: ReactMouseEvent) => void;
+  onResizeMouseDown?: (event: ReactMouseEvent) => void;
 }) {
   const trigger = (
     <button
@@ -78,15 +79,17 @@ export function ColumnHeader({
   return (
     <div className="relative h-full w-full">
       {readOnly ? trigger : cloneColumnMenu(children, trigger)}
-      <span
-        className="absolute -right-1 top-0 z-20 h-full w-2 cursor-col-resize"
-        onMouseDown={(event) => {
-          event.preventDefault();
-          event.stopPropagation();
-          onResizeMouseDown(event);
-        }}
-        onClick={(event) => event.stopPropagation()}
-      />
+      {onResizeMouseDown ? (
+        <span
+          className="absolute -right-1 top-0 z-20 h-full w-2 cursor-col-resize"
+          onMouseDown={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            onResizeMouseDown(event);
+          }}
+          onClick={(event) => event.stopPropagation()}
+        />
+      ) : null}
     </div>
   );
 }
