@@ -1597,7 +1597,7 @@
   "attachments_binary_unavailable": "Предпросмотр типа «{type}» пока недоступен. Исходный файл не изменён и остаётся доступен обработчику этого формата.",
   "attachments_add": "Добавить",
   "attachments_new_page": "Новая страница",
-  "attachments_import_file": "Импортировать файл…",
+  "attachments_import_file": "Добавить файл…",
   "attachments_read_only": "Этот владелец доступен только для чтения.",
   "page_surface_page": "Страница"
 }

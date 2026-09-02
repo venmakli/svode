@@ -29,7 +29,7 @@ const create = {
     {
       getState: () => ({ status: "idle" as const }),
       id: "import-file",
-      label: "Import file…",
+      label: "Add file…",
       run: () => undefined,
     },
   ],

@@ -1597,7 +1597,7 @@
   "attachments_binary_unavailable": "{type} preview is not available yet. The source remains unchanged and available to its owning viewer.",
   "attachments_add": "Add",
   "attachments_new_page": "New page",
-  "attachments_import_file": "Import file…",
+  "attachments_import_file": "Add file…",
   "attachments_read_only": "This owner is read-only.",
   "page_surface_page": "Page"
 }
