@@ -1,13 +1,13 @@
 import { expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { act } from "react";
+import { act, useState } from "react";
 import { JSDOM } from "jsdom";
 
 const isolatedDomProcess = process.env.SVODE_LFS_PICKER_DOM_PROCESS === "1";
 
 if (!isolatedDomProcess) {
-  test("LFS picker wheel ownership DOM scenario", () => {
+  test("LFS picker selection DOM scenario", () => {
     const child = spawnSync(
       process.execPath,
       ["test", fileURLToPath(import.meta.url)],
@@ -25,60 +25,65 @@ if (!isolatedDomProcess) {
     expect(child.status).toBe(0);
   });
 } else {
-  test("wheel scroll stays in the portaled LFS list", async () => {
+  test("group, item, and custom selections update the visible value", async () => {
     const dom = createDom();
     const restoreGlobals = installDomGlobals(dom);
     const { createRoot } = await import("react-dom/client");
     const { LfsExtensionPicker } = await import("./lfs-extension-picker");
     const root = createRoot(dom.window.document.getElementById("app")!);
 
-    try {
-      await act(async () => {
-        root.render(
+    function Harness() {
+      const [value, setValue] = useState("png, blend");
+      return (
+        <>
+          <output id="selection-value">{value}</output>
           <LfsExtensionPicker
-            value="png, jpg, jpeg, gif, webp, avif, heic, tif, tiff, psd, ai, sketch, mp3, wav, flac, m4a, ogg, mp4, mov, m4v, webm, avi, mkv, pdf, doc, docx, ppt, pptx, xls, xlsx, zip, 7z, rar"
-            onChange={() => undefined}
+            value={value}
+            onChange={setValue}
             disabled={false}
             invalid={false}
-          />,
-        );
+          />
+        </>
+      );
+    }
+
+    try {
+      await act(async () => {
+        root.render(<Harness />);
         await nextTurn();
       });
-      const input = dom.window.document.querySelector<HTMLInputElement>(
-        "#storage-lfs-extensions",
-      )!;
 
-      await act(async () => {
-        input.focus();
-        input.dispatchEvent(
-          new dom.window.MouseEvent("mousedown", {
-            bubbles: true,
-            cancelable: true,
-          }),
-        );
-        await nextFrame(dom);
-      });
+      const imageGroup = getButton(dom, "storage-lfs-group-images");
+      expect(imageGroup.dataset.state).toBe("indeterminate");
 
-      const list = dom.window.document.querySelector<HTMLDivElement>(
-        '[data-slot="combobox-list"]',
-      )!;
-      let escapedWheelEvents = 0;
-      const recordEscapedWheel = () => {
-        escapedWheelEvents += 1;
-      };
-      dom.window.document.addEventListener("wheel", recordEscapedWheel);
-      const wheel = new dom.window.WheelEvent("wheel", {
-        bubbles: true,
-        cancelable: true,
-        deltaY: 80,
-      });
+      await click(dom, imageGroup);
+      expect(selectedValues(dom)).toEqual([
+        "avif",
+        "blend",
+        "gif",
+        "heic",
+        "jpeg",
+        "jpg",
+        "png",
+        "tif",
+        "tiff",
+        "webp",
+      ]);
+      expect(imageGroup.dataset.state).toBe("checked");
 
-      list.dispatchEvent(wheel);
+      await click(dom, getButton(dom, "storage-lfs-group-images-toggle"));
+      const png = getButton(dom, "storage-lfs-extension-png");
+      expect(png.dataset.state).toBe("checked");
 
-      expect(list.scrollTop).toBe(80);
-      expect(wheel.defaultPrevented).toBe(true);
-      expect(escapedWheelEvents).toBe(0);
-      dom.window.document.removeEventListener("wheel", recordEscapedWheel);
+      await click(dom, png);
+      expect(selectedValues(dom).includes("png")).toBe(false);
+      expect(imageGroup.dataset.state).toBe("indeterminate");
+
+      await click(dom, getButton(dom, "storage-lfs-custom-blend"));
+      expect(selectedValues(dom).includes("blend")).toBe(false);
+      expect(
+        dom.window.document.querySelector("#storage-lfs-custom-blend"),
+      ).toBe(null);
     } finally {
       await act(async () => {
         root.unmount();
@@ -88,6 +93,29 @@ if (!isolatedDomProcess) {
       dom.window.close();
     }
   });
+}
+
+function getButton(dom: JSDOM, id: string): HTMLButtonElement {
+  const button = dom.window.document.querySelector<HTMLButtonElement>(`#${id}`);
+  if (!button) throw new Error(`Button #${id} was not rendered`);
+  return button;
+}
+
+async function click(dom: JSDOM, button: HTMLButtonElement) {
+  await act(async () => {
+    button.dispatchEvent(
+      new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }),
+    );
+    await nextTurn();
+  });
+}
+
+function selectedValues(dom: JSDOM): string[] {
+  return (
+    dom.window.document.querySelector("#selection-value")?.textContent ?? ""
+  )
+    .split(", ")
+    .filter(Boolean);
 }
 
 function createDom() {
@@ -101,30 +129,7 @@ function nextTurn() {
   return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
-async function nextFrame(dom: JSDOM) {
-  await nextTurn();
-  await new Promise((resolve) => dom.window.requestAnimationFrame(resolve));
-}
-
 function installDomGlobals(dom: JSDOM) {
-  Object.defineProperty(dom.window.HTMLElement.prototype, "scrollIntoView", {
-    configurable: true,
-    value: () => undefined,
-  });
-  Object.defineProperties(dom.window.HTMLElement.prototype, {
-    attachEvent: {
-      configurable: true,
-      value(this: HTMLElement, name: string, listener: EventListener) {
-        this.addEventListener(name.replace(/^on/, ""), listener);
-      },
-    },
-    detachEvent: {
-      configurable: true,
-      value(this: HTMLElement, name: string, listener: EventListener) {
-        this.removeEventListener(name.replace(/^on/, ""), listener);
-      },
-    },
-  });
   Object.defineProperty(dom.window, "matchMedia", {
     configurable: true,
     value: () => ({
@@ -142,11 +147,8 @@ function installDomGlobals(dom: JSDOM) {
     Event: dom.window.Event,
     FocusEvent: dom.window.FocusEvent,
     HTMLElement: dom.window.HTMLElement,
-    HTMLDivElement: dom.window.HTMLDivElement,
+    HTMLButtonElement: dom.window.HTMLButtonElement,
     HTMLInputElement: dom.window.HTMLInputElement,
-    InputEvent: dom.window.InputEvent,
-    IS_REACT_ACT_ENVIRONMENT: true,
-    KeyboardEvent: dom.window.KeyboardEvent,
     MouseEvent: dom.window.MouseEvent,
     MutationObserver: dom.window.MutationObserver,
     Node: dom.window.Node,
@@ -157,7 +159,6 @@ function installDomGlobals(dom: JSDOM) {
       observe() {}
       unobserve() {}
     },
-    WheelEvent: dom.window.WheelEvent,
     document: dom.window.document,
     getComputedStyle: dom.window.getComputedStyle.bind(dom.window),
     navigator: dom.window.navigator,
