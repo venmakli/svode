@@ -13,6 +13,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Field,
+  FieldContent,
   FieldDescription,
   FieldError,
   FieldLabel,
@@ -20,6 +21,11 @@ import {
   FieldSet,
 } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import {
+  InputGroup,
+  InputGroupAddon,
+  InputGroupInput,
+} from "@/components/ui/input-group";
 import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Switch } from "@/components/ui/switch";
@@ -28,6 +34,7 @@ import { GitRemoteAuthDialog } from "@/features/git";
 import type { AssetsStrategy, LfsState, SpaceGitType } from "@/features/space";
 import { isLfsStorageStrategy } from "../model/storage-strategy";
 import type { UseSpaceStorageSettingsResult } from "../hooks/use-space-storage-settings";
+import { LfsExtensionPicker } from "./lfs-extension-picker";
 import { StorageLfsPolicyWarning } from "./storage-lfs-policy-warning";
 
 interface StorageSettingsSectionProps {
@@ -451,31 +458,24 @@ function LfsRoutingFields({
   const thresholdIssue = settings.binaryRoutingIssue === "invalid-threshold";
 
   return (
-    <FieldSet className="gap-3 rounded-md border p-3">
+    <FieldSet className="gap-4 border-t pt-4">
       <FieldLegend variant="label">{m.storage_lfs_rules_title()}</FieldLegend>
-      <Field>
-        <FieldLabel htmlFor="storage-lfs-extensions">
-          {m.storage_lfs_extensions_label()}
-        </FieldLabel>
-        <Input
-          id="storage-lfs-extensions"
-          value={settings.lfsExtensions}
-          onChange={(event) => settings.setLfsExtensions(event.target.value)}
-          placeholder="psd, mp4, zip"
-          className="h-8 text-sm font-mono"
-          autoComplete="off"
-          spellCheck={false}
-          disabled={settings.applyingStrategy}
-          aria-invalid={extensionIssue || undefined}
-          aria-describedby={
-            extensionIssue ? "storage-lfs-rules-error" : undefined
-          }
-        />
-        <FieldDescription className="text-xs">
-          {m.storage_lfs_extensions_hint()}
-        </FieldDescription>
-      </Field>
-      <Field orientation="horizontal">
+      <LfsExtensionPicker
+        value={settings.lfsExtensions}
+        onChange={settings.setLfsExtensions}
+        disabled={settings.applyingStrategy}
+        invalid={extensionIssue}
+        describedBy={extensionIssue ? "storage-lfs-rules-error" : undefined}
+      />
+      <Field orientation="horizontal" className="items-start">
+        <FieldContent>
+          <FieldLabel htmlFor="storage-lfs-threshold-enabled">
+            {m.storage_lfs_threshold_label()}
+          </FieldLabel>
+          <FieldDescription className="text-xs">
+            {m.storage_lfs_threshold_hint()}
+          </FieldDescription>
+        </FieldContent>
         <Switch
           id="storage-lfs-threshold-enabled"
           checked={settings.lfsThresholdEnabled}
@@ -484,33 +484,32 @@ function LfsRoutingFields({
           }
           disabled={settings.applyingStrategy}
         />
-        <div className="flex min-w-0 flex-1 flex-col gap-1">
-          <FieldLabel htmlFor="storage-lfs-threshold-enabled">
-            {m.storage_lfs_threshold_label()}
-          </FieldLabel>
-          {settings.lfsThresholdEnabled && (
-            <div className="flex items-center gap-2">
-              <Input
-                aria-label={m.storage_lfs_threshold_input_label()}
-                type="number"
-                min="0.000001"
-                step="any"
-                value={settings.lfsThresholdMegabytes}
-                onChange={(event) =>
-                  settings.setLfsThresholdMegabytes(event.target.value)
-                }
-                className="h-8 w-28 text-sm"
-                disabled={settings.applyingStrategy}
-                aria-invalid={thresholdIssue || undefined}
-                aria-describedby={
-                  thresholdIssue ? "storage-lfs-rules-error" : undefined
-                }
-              />
-              <span className="text-xs text-muted-foreground">MB</span>
-            </div>
-          )}
-        </div>
       </Field>
+      {settings.lfsThresholdEnabled && (
+        <Field className="max-w-40">
+          <FieldLabel htmlFor="storage-lfs-threshold-size">
+            {m.storage_lfs_threshold_input_label()}
+          </FieldLabel>
+          <InputGroup>
+            <InputGroupInput
+              id="storage-lfs-threshold-size"
+              inputMode="decimal"
+              value={settings.lfsThresholdMegabytes}
+              onChange={(event) =>
+                settings.setLfsThresholdMegabytes(event.target.value)
+              }
+              disabled={settings.applyingStrategy}
+              aria-invalid={thresholdIssue || undefined}
+              aria-describedby={
+                thresholdIssue ? "storage-lfs-rules-error" : undefined
+              }
+            />
+            <InputGroupAddon align="inline-end">
+              {m.storage_lfs_threshold_unit()}
+            </InputGroupAddon>
+          </InputGroup>
+        </Field>
+      )}
       {issue && (
         <FieldError id="storage-lfs-rules-error" className="text-xs">
           {issue}

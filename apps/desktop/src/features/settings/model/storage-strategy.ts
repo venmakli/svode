@@ -18,10 +18,16 @@ export interface LfsRoutingDraft {
   thresholdMegabytes: string;
 }
 
-export type LfsRoutingDraftIssue =
+export type LfsExtensionDraftIssue =
   | "invalid-extension"
-  | "protected-extension"
-  | "invalid-threshold";
+  | "protected-extension";
+
+export type LfsRoutingDraftIssue = LfsExtensionDraftIssue | "invalid-threshold";
+
+export interface NormalizedLfsExtension {
+  extension: string | null;
+  issue: LfsExtensionDraftIssue | null;
+}
 
 export interface LfsRoutingDraftResult {
   config: BinaryRoutingConfig | null;
@@ -154,6 +160,17 @@ export function lfsRoutingDraftFromConfig(
   };
 }
 
+export function normalizeLfsExtension(value: string): NormalizedLfsExtension {
+  const extension = value.trim().replace(/^\.+/, "").toLowerCase();
+  if (!/^[a-z0-9][a-z0-9+_-]*$/.test(extension)) {
+    return { extension: null, issue: "invalid-extension" };
+  }
+  if (PROTECTED_LFS_EXTENSIONS.has(extension)) {
+    return { extension: null, issue: "protected-extension" };
+  }
+  return { extension, issue: null };
+}
+
 export function normalizeLfsRoutingDraft(
   draft: LfsRoutingDraft,
 ): LfsRoutingDraftResult {
@@ -161,19 +178,22 @@ export function normalizeLfsRoutingDraft(
     .split(/[\s,]+/)
     .map((value) => value.trim())
     .filter(Boolean);
-  const normalizedExtensions = extensionTokens.map((value) =>
-    value.replace(/^\.+/, "").toLowerCase(),
-  );
-  const extensions = [...new Set(normalizedExtensions)].sort();
-  if (
-    normalizedExtensions.some((extension) => extension.length === 0) ||
-    extensions.some((extension) => !/^[a-z0-9][a-z0-9+_-]*$/.test(extension))
-  ) {
+  const normalizedExtensions = extensionTokens.map(normalizeLfsExtension);
+  if (normalizedExtensions.some(({ issue }) => issue === "invalid-extension")) {
     return { config: null, issue: "invalid-extension" };
   }
-  if (extensions.some((extension) => PROTECTED_LFS_EXTENSIONS.has(extension))) {
+  if (
+    normalizedExtensions.some(({ issue }) => issue === "protected-extension")
+  ) {
     return { config: null, issue: "protected-extension" };
   }
+  const extensions = [
+    ...new Set(
+      normalizedExtensions.flatMap(({ extension }) =>
+        extension === null ? [] : [extension],
+      ),
+    ),
+  ].sort();
 
   let lfsThresholdBytes: number | null = null;
   if (draft.thresholdEnabled) {

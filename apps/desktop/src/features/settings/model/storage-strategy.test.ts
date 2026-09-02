@@ -7,6 +7,7 @@ import {
   canRunLfsRemoteDiagnostic,
   canShowLfsStatePanel,
   lfsRoutingDraftFromConfig,
+  normalizeLfsExtension,
   normalizeLfsRoutingDraft,
   sameBinaryRouting,
 } from "./storage-strategy";
@@ -246,6 +247,21 @@ test("LFS routing draft rejects protected and malformed extensions", () => {
       thresholdMegabytes: "0.0000001",
     }).issue,
   ).toBe("invalid-threshold");
+});
+
+test("single LFS extension input normalizes user-friendly values", () => {
+  expect(normalizeLfsExtension(" .BLEND ")).toEqual({
+    extension: "blend",
+    issue: null,
+  });
+  expect(normalizeLfsExtension("*.psd")).toEqual({
+    extension: null,
+    issue: "invalid-extension",
+  });
+  expect(normalizeLfsExtension(".svg")).toEqual({
+    extension: null,
+    issue: "protected-extension",
+  });
 });
 
 test("LFS routing draft round-trips a disabled threshold", () => {
