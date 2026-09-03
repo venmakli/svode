@@ -336,7 +336,6 @@ export function MediaImageViewer({
         source={source}
         title={title}
         toolbarActions={toolbarActions}
-        viewMode={viewState.mode}
       />
       <div
         ref={viewportRef}
@@ -433,7 +432,6 @@ function MediaImageToolbar({
   source,
   title,
   toolbarActions,
-  viewMode,
 }: {
   canUseActualSize: boolean;
   gifPlaying: boolean;
@@ -449,7 +447,6 @@ function MediaImageToolbar({
   source: MediaSourceDescriptor;
   title: string;
   toolbarActions?: ReactNode;
-  viewMode: MediaViewState["mode"];
 }) {
   return (
     <div className="flex shrink-0 items-center gap-2 border-b bg-background px-2 py-2">
@@ -466,33 +463,35 @@ function MediaImageToolbar({
       {source.animated ? (
         <ButtonGroup aria-label={m.media_animation_controls()}>
           <ToolbarButton
+            grouped
             label={gifPlaying ? m.media_pause() : m.media_play()}
             onClick={gifPlaying ? onGifPause : onGifPlay}
           >
             {gifPlaying ? <Pause /> : <Play />}
           </ToolbarButton>
-          <ToolbarButton label={m.media_replay()} onClick={onGifReplay}>
+          <ToolbarButton grouped label={m.media_replay()} onClick={onGifReplay}>
             <RefreshCw />
           </ToolbarButton>
         </ButtonGroup>
       ) : null}
       <ButtonGroup aria-label={m.media_zoom_controls()}>
-        <ToolbarButton label={m.media_zoom_out()} onClick={onZoomOut}>
+        <ToolbarButton grouped label={m.media_zoom_out()} onClick={onZoomOut}>
           <Minus />
         </ToolbarButton>
-        <ButtonGroupText className="min-w-14 justify-center px-2 text-xs tabular-nums">
-          {viewMode === "fit" ? m.media_fit() : `${Math.round(scale * 100)}%`}
+        <ButtonGroupText className="h-7 min-w-12 justify-center rounded-none px-2 text-xs font-normal tabular-nums">
+          {Math.round(scale * 100)}%
         </ButtonGroupText>
-        <ToolbarButton label={m.media_zoom_in()} onClick={onZoomIn}>
+        <ToolbarButton grouped label={m.media_zoom_in()} onClick={onZoomIn}>
           <Plus />
         </ToolbarButton>
       </ButtonGroup>
       <ButtonGroup aria-label={m.media_size_controls()}>
-        <ToolbarButton label={m.media_fit()} onClick={onFit}>
+        <ToolbarButton grouped label={m.media_fit()} onClick={onFit}>
           <Expand />
         </ToolbarButton>
         <ToolbarButton
           disabled={!canUseActualSize}
+          grouped
           label={m.media_actual_size()}
           onClick={onZoomOne}
         >
@@ -511,11 +510,13 @@ function MediaImageToolbar({
 function ToolbarButton({
   children,
   disabled,
+  grouped = false,
   label,
   onClick,
 }: {
   children: ReactNode;
   disabled?: boolean;
+  grouped?: boolean;
   label: string;
   onClick(): void;
 }) {
@@ -526,7 +527,7 @@ function ToolbarButton({
           type="button"
           disabled={disabled}
           size="icon-sm"
-          variant="ghost"
+          variant={grouped ? "outline" : "ghost"}
           aria-label={label}
           onClick={onClick}
         >
