@@ -46,6 +46,7 @@ export interface MediaSourceSessionDto {
   animated: boolean;
   intrinsicOversized: boolean;
   inlinePreview: boolean;
+  requiresRangeRequests: boolean;
   capabilityToken: string;
 }
 

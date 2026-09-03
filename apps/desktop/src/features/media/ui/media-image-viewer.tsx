@@ -9,27 +9,10 @@ import {
   type PointerEvent,
   type ReactNode,
 } from "react";
-import {
-  Expand,
-  FileImage,
-  FolderOpen,
-  Info,
-  Minus,
-  Pause,
-  Play,
-  Plus,
-  RefreshCw,
-} from "lucide-react";
+import { Expand, Minus, Pause, Play, Plus, RefreshCw } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { ButtonGroup, ButtonGroupText } from "@/components/ui/button-group";
-import {
-  Popover,
-  PopoverContent,
-  PopoverHeader,
-  PopoverTitle,
-  PopoverTrigger,
-} from "@/components/ui/popover";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Tooltip,
@@ -40,6 +23,7 @@ import * as m from "@/paraglide/messages.js";
 import { cn } from "@/shared/lib/utils";
 
 import type { MediaSourceDescriptor, MediaViewState } from "../model/types";
+import { MediaToolbar } from "./media-toolbar";
 
 const MIN_ZOOM = 0.05;
 const MAX_ZOOM = 4;
@@ -449,17 +433,12 @@ function MediaImageToolbar({
   toolbarActions?: ReactNode;
 }) {
   return (
-    <div className="flex shrink-0 items-center gap-2 border-b bg-background px-2 py-2">
-      <FileImage
-        className="size-4 shrink-0 text-muted-foreground"
-        aria-hidden
-      />
-      <div
-        className="min-w-16 flex-1 truncate text-sm font-medium"
-        title={title}
-      >
-        {title}
-      </div>
+    <MediaToolbar
+      onOpenExternal={onOpenExternal}
+      source={source}
+      title={title}
+      toolbarActions={toolbarActions}
+    >
       {source.animated ? (
         <ButtonGroup aria-label={m.media_animation_controls()}>
           <ToolbarButton
@@ -498,12 +477,7 @@ function MediaImageToolbar({
           <span className="text-[11px] font-semibold">1:1</span>
         </ToolbarButton>
       </ButtonGroup>
-      <MetadataPopover source={source} />
-      <ToolbarButton label={m.media_open_externally()} onClick={onOpenExternal}>
-        <FolderOpen />
-      </ToolbarButton>
-      {toolbarActions}
-    </div>
+    </MediaToolbar>
   );
 }
 
@@ -539,47 +513,6 @@ function ToolbarButton({
   );
 }
 
-function MetadataPopover({ source }: { source: MediaSourceDescriptor }) {
-  return (
-    <Popover>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <PopoverTrigger asChild>
-            <Button
-              type="button"
-              size="icon-sm"
-              variant="ghost"
-              aria-label={m.media_metadata()}
-            >
-              <Info />
-            </Button>
-          </PopoverTrigger>
-        </TooltipTrigger>
-        <TooltipContent>{m.media_metadata()}</TooltipContent>
-      </Tooltip>
-      <PopoverContent align="end" className="w-64">
-        <PopoverHeader>
-          <PopoverTitle>{m.media_metadata()}</PopoverTitle>
-        </PopoverHeader>
-        <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-sm">
-          <dt className="text-muted-foreground">{m.media_metadata_format()}</dt>
-          <dd className="truncate text-right">{formatName(source.format)}</dd>
-          <dt className="text-muted-foreground">
-            {m.media_metadata_dimensions()}
-          </dt>
-          <dd className="text-right">
-            {source.width && source.height
-              ? `${source.width} × ${source.height}`
-              : m.media_metadata_unavailable()}
-          </dd>
-          <dt className="text-muted-foreground">{m.media_metadata_size()}</dt>
-          <dd className="text-right">{formatMediaBytes(source.sizeBytes)}</dd>
-        </dl>
-      </PopoverContent>
-    </Popover>
-  );
-}
-
 export function maxSafeZoom(source: MediaSourceDescriptor) {
   if (!source.intrinsicOversized || !source.width || !source.height) {
     return MAX_ZOOM;
@@ -592,23 +525,4 @@ export function maxSafeZoom(source: MediaSourceDescriptor) {
       Math.sqrt(40_000_000 / (source.width * source.height)),
     ),
   );
-}
-
-export function formatMediaBytes(value: number) {
-  if (value < 1024) return `${value} B`;
-  const units = ["KB", "MB", "GB", "TB"] as const;
-  const exponent = Math.min(
-    Math.floor(Math.log(value) / Math.log(1024)),
-    units.length,
-  );
-  const scaled = value / 1024 ** exponent;
-  const formatted =
-    scaled < 10 && !Number.isInteger(scaled)
-      ? scaled.toFixed(1).replace(/\.0$/u, "")
-      : String(Math.round(scaled));
-  return `${formatted} ${units[exponent - 1]}`;
-}
-
-function formatName(format: MediaSourceDescriptor["format"]) {
-  return format === "three_gp" ? "3GP" : format.toUpperCase();
 }

@@ -16,7 +16,7 @@ export class MediaRuntimeSession {
     readonly targetKey: string,
     initialViewState: MediaViewState = DEFAULT_MEDIA_VIEW_STATE,
   ) {
-    this.viewState = { ...initialViewState };
+    this.viewState = cloneViewState(initialViewState);
   }
 
   get signal() {
@@ -59,11 +59,11 @@ export class MediaRuntimeSession {
   }
 
   getViewState() {
-    return { ...this.viewState };
+    return cloneViewState(this.viewState);
   }
 
   setViewState(viewState: MediaViewState) {
-    this.viewState = { ...viewState };
+    this.viewState = cloneViewState(viewState);
   }
 
   async destroy() {
@@ -73,7 +73,13 @@ export class MediaRuntimeSession {
     this.suspenders = [];
     const disposers = this.disposers.splice(0).reverse();
     this.destroyPromise = (async () => {
-      for (const disposer of disposers) await disposer();
+      for (const disposer of disposers) {
+        try {
+          await disposer();
+        } catch {
+          // Cleanup is best-effort per resource; later disposers still run.
+        }
+      }
     })();
     return this.destroyPromise;
   }
@@ -125,3 +131,10 @@ export class MediaSessionCoordinator {
 }
 
 export const mediaSessionCoordinator = new MediaSessionCoordinator();
+
+function cloneViewState(viewState: MediaViewState): MediaViewState {
+  return {
+    ...viewState,
+    playback: { ...viewState.playback },
+  };
+}

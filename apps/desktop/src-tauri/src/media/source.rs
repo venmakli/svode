@@ -185,6 +185,7 @@ pub(crate) struct MediaSourceDescriptor {
     pub animated: bool,
     pub intrinsic_oversized: bool,
     pub inline_preview: bool,
+    pub requires_range_requests: bool,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -287,6 +288,7 @@ pub(crate) fn inspect_media_source(
         animated: false,
         intrinsic_oversized: false,
         inline_preview: format.is_baseline_image(),
+        requires_range_requests: metadata.len() > FULL_RESPONSE_LIMIT,
     };
 
     let prefix = read_prefix(&path, metadata.len().min(HEADER_READ_LIMIT))?;
@@ -891,6 +893,7 @@ mod tests {
         assert_eq!(resolved.descriptor.width, Some(320));
         assert_eq!(resolved.descriptor.height, Some(200));
         assert!(resolved.descriptor.inline_preview);
+        assert!(!resolved.descriptor.requires_range_requests);
         assert_eq!(
             resolve_capability_source(&resolved.target, &resolved.descriptor).unwrap(),
             fs::canonicalize(temp.path().join("photo.png")).unwrap()
@@ -906,6 +909,26 @@ mod tests {
             ),
             Err(MediaSourceError::SourceChanged)
         ));
+    }
+
+    #[test]
+    fn playback_candidates_report_when_bounded_ranges_are_required() {
+        let temp = tempfile::tempdir().unwrap();
+        write_project(temp.path());
+        fs::write(temp.path().join("short.mp3"), b"ID3 fixture").unwrap();
+        let short = inspect_media_source(temp.path(), None, "short.mp3").unwrap();
+        assert_eq!(short.descriptor.family, MediaFamily::Audio);
+        assert!(!short.descriptor.inline_preview);
+        assert!(!short.descriptor.requires_range_requests);
+
+        let large_path = temp.path().join("large.mp4");
+        File::create(&large_path)
+            .unwrap()
+            .set_len(FULL_RESPONSE_LIMIT + 1)
+            .unwrap();
+        let large = inspect_media_source(temp.path(), None, "large.mp4").unwrap();
+        assert_eq!(large.descriptor.family, MediaFamily::Video);
+        assert!(large.descriptor.requires_range_requests);
     }
 
     #[test]

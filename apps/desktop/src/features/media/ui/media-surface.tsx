@@ -1,5 +1,5 @@
 import { useMemo, type ReactNode } from "react";
-import { FileImage, FileWarning, FolderOpen, RefreshCw } from "lucide-react";
+import { FileWarning, FolderOpen, RefreshCw } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -16,12 +16,16 @@ import * as m from "@/paraglide/messages.js";
 
 import { useMediaSession } from "../hooks/use-media-session";
 import {
+  mediaFamilyFromFormat,
   mediaDisplayName,
+  mediaFormatFromPath,
   normalizeRuntimePath,
   type MediaFailure,
   type MediaTarget,
 } from "../model/types";
 import { MediaImageViewer } from "./media-image-viewer";
+import { MediaPlaybackViewer } from "./media-playback-viewer";
+import { MediaFamilyIcon } from "./media-toolbar";
 
 export function MediaSurface({
   onClose,
@@ -70,6 +74,25 @@ export function MediaSurface({
 
   if (session.state.phase === "loading" || session.state.phase === "ready") {
     const source = session.state.source;
+    if (source.family !== "image") {
+      return (
+        <MediaPlaybackViewer
+          key={source.capabilityToken}
+          externalOpenError={session.externalOpenError}
+          loading={session.state.phase === "loading"}
+          onOpenExternal={session.openExternal}
+          onPlaybackError={session.reportPlaybackError}
+          onReady={session.markReady}
+          onRegisterExternalSuspender={session.registerExternalSuspender}
+          onRegisterRendererDisposer={session.registerRendererDisposer}
+          onViewStateChange={session.updateViewState}
+          source={source}
+          title={title}
+          toolbarActions={toolbarActions}
+          viewState={session.viewState}
+        />
+      );
+    }
     return (
       <MediaImageViewer
         externalOpenError={session.externalOpenError}
@@ -91,6 +114,7 @@ export function MediaSurface({
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
       <MediaFrameToolbar
+        family={mediaFamilyFromPath(path)}
         onOpenExternal={session.openExternal}
         title={title}
         toolbarActions={toolbarActions}
@@ -117,20 +141,19 @@ export function MediaSurface({
 }
 
 function MediaFrameToolbar({
+  family,
   onOpenExternal,
   title,
   toolbarActions,
 }: {
+  family: "image" | "audio" | "video";
   onOpenExternal(): void;
   title: string;
   toolbarActions?: ReactNode;
 }) {
   return (
     <div className="flex shrink-0 items-center gap-2 border-b bg-background px-2 py-2">
-      <FileImage
-        className="size-4 shrink-0 text-muted-foreground"
-        aria-hidden
-      />
+      <MediaFamilyIcon family={family} />
       <div
         className="min-w-0 flex-1 truncate text-sm font-medium"
         title={title}
@@ -150,6 +173,11 @@ function MediaFrameToolbar({
       {toolbarActions}
     </div>
   );
+}
+
+function mediaFamilyFromPath(path: string) {
+  const format = mediaFormatFromPath(path);
+  return format ? mediaFamilyFromFormat(format) : "image";
 }
 
 function MediaLoadingState() {
@@ -176,7 +204,10 @@ function MediaFailureState({
   onOpenExternal(): void;
   onRetry(): void;
 }) {
-  const externalOnly = failure.kind === "external_only";
+  const externalOnly =
+    failure.kind === "external_only" ||
+    failure.kind === "unsupported_codec" ||
+    failure.kind === "unusable_range";
   return (
     <Empty className="h-full border-0">
       <EmptyHeader>
@@ -214,6 +245,12 @@ function failureTitle(failure: MediaFailure) {
       return m.media_external_only_title();
     case "malformed":
       return m.media_malformed_title();
+    case "unsupported_codec":
+      return m.media_unsupported_codec_title();
+    case "unusable_range":
+      return m.media_unusable_range_title();
+    case "playback_error":
+      return m.media_playback_error_title();
     case "resource_limit":
       return m.media_resource_limit_title();
     case "source_changed":
@@ -233,6 +270,12 @@ function failureDescription(failure: MediaFailure) {
       return m.media_external_only_description();
     case "malformed":
       return m.media_malformed_description();
+    case "unsupported_codec":
+      return m.media_unsupported_codec_description();
+    case "unusable_range":
+      return m.media_unusable_range_description();
+    case "playback_error":
+      return m.media_playback_error_description();
     case "resource_limit":
       return m.media_resource_limit_description();
     case "source_changed":

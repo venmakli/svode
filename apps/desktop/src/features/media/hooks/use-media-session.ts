@@ -12,6 +12,7 @@ import {
   DEFAULT_MEDIA_VIEW_STATE,
   mediaTargetKey,
   type MediaFailure,
+  type MediaRuntimeMetadata,
   type MediaSessionState,
   type MediaSourceDescriptor,
   type MediaTarget,
@@ -34,6 +35,11 @@ export function useMediaSession(target: MediaTarget) {
   });
   const [viewState, setViewState] = useState<MediaViewState>({
     ...DEFAULT_MEDIA_VIEW_STATE,
+    playback: { ...DEFAULT_MEDIA_VIEW_STATE.playback },
+  });
+  const viewStateRef = useRef<MediaViewState>({
+    ...DEFAULT_MEDIA_VIEW_STATE,
+    playback: { ...DEFAULT_MEDIA_VIEW_STATE.playback },
   });
   const [externalOpenError, setExternalOpenError] = useState(false);
   const sessionRef = useRef<MediaRuntimeSession | null>(null);
@@ -48,7 +54,9 @@ export function useMediaSession(target: MediaTarget) {
 
     void (async () => {
       if (!(await mediaSessionCoordinator.activate(session))) return;
-      setViewState(session.getViewState());
+      const initialViewState = session.getViewState();
+      viewStateRef.current = initialViewState;
+      setViewState(initialViewState);
       try {
         const source = await loadMediaSource(stableTarget);
         if (session.signal.aborted) {
@@ -56,7 +64,7 @@ export function useMediaSession(target: MediaTarget) {
           return;
         }
         session.addDisposer(() => releaseMediaSource(source.capabilityToken));
-        if (!source.inlinePreview || source.family !== "image") {
+        if (source.family === "image" && !source.inlinePreview) {
           sessionRef.current = null;
           setState({
             failure: { kind: "external_only" },
@@ -72,7 +80,14 @@ export function useMediaSession(target: MediaTarget) {
           sessionRef.current = null;
           sourceRef.current = null;
           setState({
-            failure: { kind: "runtime_error" },
+            failure: {
+              kind:
+                source.family !== "image" && source.requiresRangeRequests
+                  ? "unusable_range"
+                  : source.family === "image"
+                    ? "runtime_error"
+                    : "playback_error",
+            },
             phase: "failed",
           });
           void mediaSessionCoordinator.release(session);
@@ -116,60 +131,75 @@ export function useMediaSession(target: MediaTarget) {
     (
       update: MediaViewState | ((current: MediaViewState) => MediaViewState),
     ) => {
-      setViewState((current) => {
-        const next = typeof update === "function" ? update(current) : update;
-        sessionRef.current?.setViewState(next);
-        return next;
-      });
+      const next =
+        typeof update === "function" ? update(viewStateRef.current) : update;
+      viewStateRef.current = next;
+      sessionRef.current?.setViewState(next);
+      setViewState(next);
     },
     [],
   );
 
   const markReady = useCallback(
-    (
-      source: MediaSourceDescriptor,
-      dimensions?: { width: number; height: number },
-    ) => {
+    (source: MediaSourceDescriptor, metadata?: MediaRuntimeMetadata) => {
       const session = sessionRef.current;
       if (
         !session ||
+        session.signal.aborted ||
         sourceRef.current?.capabilityToken !== source.capabilityToken
       ) {
         return;
       }
       session.clearLoadTimeout();
-      const readySource =
-        dimensions && (!source.width || !source.height)
-          ? { ...source, height: dimensions.height, width: dimensions.width }
-          : source;
+      const readySource = metadata
+        ? {
+            ...source,
+            durationSeconds: metadata.durationSeconds ?? source.durationSeconds,
+            height: metadata.height ?? source.height,
+            width: metadata.width ?? source.width,
+          }
+        : source;
       sourceRef.current = readySource;
       setState({ phase: "ready", source: readySource });
     },
     [],
   );
 
-  const reportImageError = useCallback(
-    async (source: MediaSourceDescriptor) => {
+  const reportSourceFailure = useCallback(
+    async (source: MediaSourceDescriptor, defaultFailure: MediaFailure) => {
       const session = sessionRef.current;
       if (
         !session ||
+        session.signal.aborted ||
         sourceRef.current?.capabilityToken !== source.capabilityToken
       ) {
         return;
       }
-      let failure: MediaFailure = { kind: "malformed" };
+      let failure = defaultFailure;
       try {
         await checkMediaSource(stableTarget, source.generation);
       } catch (error) {
         failure = asMediaFailure(error);
       }
-      if (sessionRef.current !== session) return;
+      if (sessionRef.current !== session || session.signal.aborted) return;
       sessionRef.current = null;
       sourceRef.current = null;
       setState({ failure, phase: "failed" });
       void mediaSessionCoordinator.release(session);
     },
     [stableTarget],
+  );
+
+  const reportImageError = useCallback(
+    (source: MediaSourceDescriptor) =>
+      reportSourceFailure(source, { kind: "malformed" }),
+    [reportSourceFailure],
+  );
+
+  const reportPlaybackError = useCallback(
+    (source: MediaSourceDescriptor, failure: MediaFailure) =>
+      reportSourceFailure(source, failure),
+    [reportSourceFailure],
   );
 
   const openExternal = useCallback(async () => {
@@ -185,25 +215,30 @@ export function useMediaSession(target: MediaTarget) {
   const prepareFullPageHandoff = useCallback(async () => {
     const session = sessionRef.current;
     if (!session) return;
+    await session.suspendForExternalOpen();
+    if (sessionRef.current !== session || session.signal.aborted) return;
     sessionRef.current = null;
     sourceRef.current = null;
     await mediaSessionCoordinator.handoff(session);
   }, []);
 
-  const registerRendererDisposer = useCallback((disposer: () => void) => {
-    const session = sessionRef.current;
-    if (!session) {
-      disposer();
-      return () => undefined;
-    }
-    return session.addDisposer(disposer);
-  }, []);
+  const registerRendererDisposer = useCallback(
+    (disposer: () => void | Promise<void>) => {
+      const session = sessionRef.current;
+      if (!session) {
+        void disposer();
+        return () => undefined;
+      }
+      return session.addDisposer(disposer);
+    },
+    [],
+  );
 
-  const registerExternalSuspender = useCallback((suspender: () => void) => {
-    return (
-      sessionRef.current?.addExternalSuspender(suspender) ?? (() => undefined)
-    );
-  }, []);
+  const registerExternalSuspender = useCallback(
+    (suspender: () => void | Promise<void>) =>
+      sessionRef.current?.addExternalSuspender(suspender) ?? (() => undefined),
+    [],
+  );
 
   return {
     externalOpenError,
@@ -213,6 +248,7 @@ export function useMediaSession(target: MediaTarget) {
     registerExternalSuspender,
     registerRendererDisposer,
     reportImageError,
+    reportPlaybackError,
     retry: () => setRetryKey((key) => key + 1),
     state,
     updateViewState,

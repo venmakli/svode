@@ -20,8 +20,16 @@ export interface MediaSourceDescriptor {
   animated: boolean;
   intrinsicOversized: boolean;
   inlinePreview: boolean;
+  requiresRangeRequests: boolean;
   capabilityToken: string;
   sourceUrl: string;
+  durationSeconds?: number;
+}
+
+export interface MediaRuntimeMetadata {
+  durationSeconds?: number;
+  height?: number;
+  width?: number;
 }
 
 export type MediaFailureKind =
@@ -31,7 +39,10 @@ export type MediaFailureKind =
   | "source_changed"
   | "source_missing"
   | "runtime_error"
-  | "external_only";
+  | "external_only"
+  | "unsupported_codec"
+  | "unusable_range"
+  | "playback_error";
 
 export interface MediaFailure {
   kind: MediaFailureKind;
@@ -42,11 +53,19 @@ export interface MediaFailure {
 
 export type MediaViewMode = "fit" | "custom";
 
+export interface MediaPlaybackViewState {
+  currentTime: number;
+  muted: boolean;
+  playbackRate: number;
+  volume: number;
+}
+
 export interface MediaViewState {
   mode: MediaViewMode;
   zoom: number;
   panX: number;
   panY: number;
+  playback: MediaPlaybackViewState;
 }
 
 export const DEFAULT_MEDIA_VIEW_STATE: MediaViewState = {
@@ -54,6 +73,12 @@ export const DEFAULT_MEDIA_VIEW_STATE: MediaViewState = {
   zoom: 1,
   panX: 0,
   panY: 0,
+  playback: {
+    currentTime: 0,
+    muted: false,
+    playbackRate: 1,
+    volume: 1,
+  },
 };
 
 export type MediaSessionState =
@@ -106,6 +131,42 @@ export function mediaFormatFromPath(path: string): MediaFormat | null {
       return extension;
     default:
       return null;
+  }
+}
+
+export function mediaFamilyFromFormat(
+  format: MediaFormat,
+): MediaSourceDescriptor["family"] {
+  switch (format) {
+    case "png":
+    case "jpeg":
+    case "webp":
+    case "gif":
+    case "svg":
+    case "avif":
+    case "ico":
+      return "image";
+    case "mp3":
+    case "wav":
+    case "m4a":
+    case "aac":
+    case "flac":
+    case "ogg":
+    case "opus":
+    case "wma":
+    case "aiff":
+      return "audio";
+    case "mp4":
+    case "m4v":
+    case "mov":
+    case "webm":
+    case "mkv":
+    case "avi":
+    case "wmv":
+    case "mpg":
+    case "mpeg":
+    case "three_gp":
+      return "video";
   }
 }
 

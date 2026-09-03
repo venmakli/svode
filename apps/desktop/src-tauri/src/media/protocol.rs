@@ -144,11 +144,7 @@ fn serve_capability(
         .transpose()?
         .map(|value| parse_single_range(value, len))
         .transpose()?;
-    let (status, start, end) = match range {
-        Some((start, end)) => (StatusCode::PARTIAL_CONTENT, start, end),
-        None if len <= FULL_RESPONSE_LIMIT => (StatusCode::OK, 0, len.saturating_sub(1)),
-        None => return Err(ProtocolFailure::FullResponseTooLarge),
-    };
+    let (status, start, end) = response_window(request.method() == Method::HEAD, range, len)?;
     let content_length = if len == 0 { 0 } else { end + 1 - start };
     let mut response = base_response(capability.descriptor.mime_type)
         .status(status)
@@ -173,6 +169,20 @@ fn serve_capability(
     resolve_capability_source(&capability.target, &capability.descriptor)
         .map_err(ProtocolFailure::Source)?;
     response.body(bytes).map_err(|_| ProtocolFailure::Io)
+}
+
+fn response_window(
+    head_only: bool,
+    range: Option<(u64, u64)>,
+    len: u64,
+) -> Result<(StatusCode, u64, u64), ProtocolFailure> {
+    match range {
+        Some((start, end)) => Ok((StatusCode::PARTIAL_CONTENT, start, end)),
+        None if head_only || len <= FULL_RESPONSE_LIMIT => {
+            Ok((StatusCode::OK, 0, len.saturating_sub(1)))
+        }
+        None => Err(ProtocolFailure::FullResponseTooLarge),
+    }
 }
 
 fn base_response(mime_type: &'static str) -> tauri::http::response::Builder {
@@ -269,6 +279,19 @@ mod tests {
         );
         assert!(parse_single_range("bytes=0-1,4-5", 100).is_err());
         assert!(parse_single_range("bytes=100-", 100).is_err());
+
+        let large_len = FULL_RESPONSE_LIMIT + RANGE_RESPONSE_LIMIT + 1;
+        let near_end =
+            parse_single_range(&format!("bytes={}-", large_len - 4096), large_len).unwrap();
+        assert_eq!(near_end, (large_len - 4096, large_len - 1));
+        assert!(matches!(
+            response_window(false, None, large_len),
+            Err(ProtocolFailure::FullResponseTooLarge)
+        ));
+        assert_eq!(
+            response_window(true, None, large_len).unwrap(),
+            (StatusCode::OK, 0, large_len - 1)
+        );
     }
 
     #[test]
@@ -304,6 +327,7 @@ mod tests {
                 inline_preview: true,
                 intrinsic_oversized: false,
                 mime_type: "image/png",
+                requires_range_requests: false,
                 size_bytes: 24,
                 width: Some(1),
             },

@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 
+import { DEFAULT_MEDIA_VIEW_STATE } from "./types";
 import { MediaRuntimeSession, mediaSessionCoordinator } from "./session";
 
 test("activating a Media target destroys the previous renderer before source", async () => {
@@ -23,7 +24,19 @@ test("activating a Media target destroys the previous renderer before source", a
 test("Peek handoff transfers image view state once after destroying the source", async () => {
   mediaSessionCoordinator.resetForTests();
   const peek = new MediaRuntimeSession(1, "space\0photo.png");
-  peek.setViewState({ mode: "custom", panX: 40, panY: 80, zoom: 1.5 });
+  peek.setViewState({
+    ...DEFAULT_MEDIA_VIEW_STATE,
+    mode: "custom",
+    panX: 40,
+    panY: 80,
+    playback: {
+      currentTime: 42,
+      muted: true,
+      playbackRate: 1.25,
+      volume: 0.4,
+    },
+    zoom: 1.5,
+  });
   expect(await mediaSessionCoordinator.activate(peek)).toBe(true);
   await mediaSessionCoordinator.handoff(peek);
   expect(peek.signal.aborted).toBe(true);
@@ -34,12 +47,19 @@ test("Peek handoff transfers image view state once after destroying the source",
     mode: "custom",
     panX: 40,
     panY: 80,
+    playback: {
+      currentTime: 42,
+      muted: true,
+      playbackRate: 1.25,
+      volume: 0.4,
+    },
     zoom: 1.5,
   });
 
   const reopened = new MediaRuntimeSession(3, "space\0photo.png");
   expect(await mediaSessionCoordinator.activate(reopened)).toBe(true);
   expect(reopened.getViewState().mode).toBe("fit");
+  expect(reopened.getViewState().playback.currentTime).toBe(0);
   await mediaSessionCoordinator.release(reopened);
 });
 
@@ -53,6 +73,20 @@ test("external open suspension pauses motion without revoking the session", asyn
   expect(pauses).toBe(1);
   expect(session.signal.aborted).toBe(false);
   await session.destroy();
+});
+
+test("renderer cleanup failure does not prevent source revocation", async () => {
+  const order: string[] = [];
+  const session = new MediaRuntimeSession(1, "space\0playback.mp4");
+  session.addDisposer(() => {
+    order.push("source");
+  });
+  session.addDisposer(() => {
+    order.push("renderer");
+    throw new Error("fixture cleanup failure");
+  });
+  await session.destroy();
+  expect(order).toEqual(["renderer", "source"]);
 });
 
 test("repeated open and close destroys every Media session", async () => {

@@ -3,11 +3,8 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 import { TooltipProvider } from "@/components/ui/tooltip";
 
-import {
-  MediaImageViewer,
-  formatMediaBytes,
-  maxSafeZoom,
-} from "./media-image-viewer";
+import { MediaImageViewer, maxSafeZoom } from "./media-image-viewer";
+import { formatMediaBytes } from "./media-toolbar";
 
 const svgSource = {
   animated: false,
@@ -19,6 +16,7 @@ const svgSource = {
   inlinePreview: true,
   intrinsicOversized: false,
   mimeType: "image/svg+xml",
+  requiresRangeRequests: false,
   sizeBytes: 1024,
   sourceUrl: "svode-media://localhost/opaque",
   width: 800,
@@ -38,7 +36,18 @@ test("SVG is composed only as an image resource", () => {
         onViewStateChange={() => undefined}
         source={svgSource}
         title="malicious.svg"
-        viewState={{ mode: "fit", panX: 0, panY: 0, zoom: 1 }}
+        viewState={{
+          mode: "fit",
+          panX: 0,
+          panY: 0,
+          playback: {
+            currentTime: 0,
+            muted: false,
+            playbackRate: 1,
+            volume: 1,
+          },
+          zoom: 1,
+        }}
       />
     </TooltipProvider>,
   );
