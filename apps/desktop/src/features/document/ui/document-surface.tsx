@@ -83,7 +83,6 @@ export function DocumentSurface({
         onRenderError={session.reportRendererError}
         onViewStateChange={session.updateViewState}
         pdf={session.state.pdf}
-        textIndex={session.state.textIndex}
         title={title}
         toolbarActions={toolbarActions}
         viewState={session.viewState}

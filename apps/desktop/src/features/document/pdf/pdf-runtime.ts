@@ -9,8 +9,10 @@ const PDF_IMAGE_PIXEL_LIMIT = 16_777_216;
 const PDF_LOAD_TIMEOUT_MS = 30_000;
 
 type PdfJsModule = typeof import("pdfjs-dist/legacy/build/pdf.mjs");
+type PdfJsViewerModule = typeof import("pdfjs-dist/web/pdf_viewer.mjs");
 
 let pdfJsPromise: Promise<PdfJsModule> | null = null;
+let pdfJsViewerPromise: Promise<PdfJsViewerModule> | null = null;
 
 export class PdfRuntimeFailure extends Error {
   constructor(
@@ -115,6 +117,18 @@ export async function getPdfJsRuntime() {
     return pdfjs;
   });
   return pdfJsPromise;
+}
+
+export function getPdfJsViewerRuntime() {
+  pdfJsViewerPromise ??= getPdfJsRuntime().then((pdfjs) => {
+    (
+      globalThis as typeof globalThis & {
+        pdfjsLib: PdfJsModule;
+      }
+    ).pdfjsLib = pdfjs;
+    return import("pdfjs-dist/web/pdf_viewer.mjs");
+  });
+  return pdfJsViewerPromise;
 }
 
 function pdfAssetUrl(directory: string) {

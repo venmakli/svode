@@ -1,14 +1,13 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, type ReactNode } from "react";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import * as m from "@/paraglide/messages.js";
 
-import type { DocumentViewState, PdfTextIndex } from "../model/types";
-import { PdfPage } from "./pdf-page";
+import type { DocumentViewState } from "../model/types";
 import { PdfThumbnails } from "./pdf-thumbnails";
-import { findPdfTextMatches } from "./pdf-text-index";
 import { PdfToolbar } from "./pdf-toolbar";
+import { usePdfJsViewer } from "./use-pdfjs-viewer";
 import "./pdf-viewer.css";
 
 export function PdfViewer({
@@ -17,7 +16,6 @@ export function PdfViewer({
   onRenderError,
   onViewStateChange,
   pdf,
-  textIndex,
   title,
   toolbarActions,
   viewState,
@@ -31,21 +29,10 @@ export function PdfViewer({
       | ((current: DocumentViewState) => DocumentViewState),
   ): void;
   pdf: PDFDocumentProxy;
-  textIndex: PdfTextIndex;
   title: string;
   toolbarActions?: ReactNode;
   viewState: DocumentViewState;
 }) {
-  const viewportRef = useRef<HTMLDivElement>(null);
-  const [viewportSize, setViewportSize] = useState({ height: 0, width: 0 });
-  const matches = useMemo(
-    () => findPdfTextMatches(textIndex, viewState.findQuery),
-    [textIndex, viewState.findQuery],
-  );
-  const activeFindIndex = matches.length
-    ? viewState.activeFindIndex % matches.length
-    : 0;
-
   useEffect(() => {
     if (viewState.pageNumber > pdf.numPages) {
       onViewStateChange((current) => ({
@@ -55,35 +42,29 @@ export function PdfViewer({
     }
   }, [onViewStateChange, pdf.numPages, viewState.pageNumber]);
 
-  useEffect(() => {
-    const viewport = viewportRef.current;
-    if (!viewport) return;
-    const update = () =>
-      setViewportSize({
-        height: viewport.clientHeight,
-        width: viewport.clientWidth,
-      });
-    const observer = new ResizeObserver(update);
-    observer.observe(viewport);
-    update();
-    return () => observer.disconnect();
-  }, []);
-
-  const setPage = (pageNumber: number) =>
-    onViewStateChange((current) => ({
-      ...current,
-      pageNumber: Math.min(Math.max(pageNumber, 1), pdf.numPages),
-    }));
-  const navigateFind = (direction: 1 | -1) => {
-    if (!matches.length) return;
-    const nextIndex =
-      (activeFindIndex + direction + matches.length) % matches.length;
-    onViewStateChange((current) => ({
-      ...current,
-      activeFindIndex: nextIndex,
-      pageNumber: matches[nextIndex].pageNumber,
-    }));
-  };
+  const setPage = useCallback(
+    (pageNumber: number) => {
+      const nextPage = Math.min(Math.max(pageNumber, 1), pdf.numPages);
+      if (nextPage === viewState.pageNumber) return;
+      onViewStateChange((current) => ({
+        ...current,
+        pageNumber: nextPage,
+      }));
+    },
+    [onViewStateChange, pdf.numPages, viewState.pageNumber],
+  );
+  const {
+    activeFindIndex,
+    containerRef,
+    findMatches,
+    navigateFind,
+    viewerElementRef,
+  } = usePdfJsViewer({
+    onRenderError,
+    onViewStateChange,
+    pdf,
+    viewState,
+  });
 
   return (
     <div
@@ -93,7 +74,7 @@ export function PdfViewer({
     >
       <PdfToolbar
         activeFindIndex={activeFindIndex}
-        findMatches={matches.length}
+        findMatches={findMatches}
         onFindNavigate={navigateFind}
         onOpenExternal={onOpenExternal}
         onPageChange={setPage}
@@ -121,23 +102,15 @@ export function PdfViewer({
             pdf={pdf}
           />
         ) : null}
-        <div
-          ref={viewportRef}
-          className="scrollbar-hide flex min-h-0 min-w-0 flex-1 items-start justify-center overflow-auto bg-muted/40 p-4"
-          aria-label={m.document_pdf_viewport()}
-          tabIndex={0}
-        >
-          <PdfPage
-            availableHeight={viewportSize.height}
-            availableWidth={viewportSize.width}
-            findQuery={viewState.findQuery}
-            onRenderError={onRenderError}
-            pageNumber={viewState.pageNumber}
-            pdf={pdf}
-            rotation={viewState.rotation}
-            zoom={viewState.zoom}
-            zoomMode={viewState.zoomMode}
-          />
+        <div className="relative min-h-0 min-w-0 flex-1 bg-muted/40">
+          <div
+            ref={containerRef}
+            className="document-pdf-viewport scrollbar-hide absolute inset-0 overflow-auto overscroll-contain"
+            aria-label={m.document_pdf_viewport()}
+            tabIndex={0}
+          >
+            <div ref={viewerElementRef} className="pdfViewer" />
+          </div>
         </div>
       </div>
     </div>

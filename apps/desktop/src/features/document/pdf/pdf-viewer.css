@@ -1,44 +1,9 @@
-.document-pdf-text-layer {
-  position: absolute;
-  inset: 0;
-  overflow: clip;
-  color-scheme: only light;
-  line-height: 1;
-  text-align: initial;
-  transform-origin: 0 0;
-  forced-color-adjust: none;
-  --min-font-size: 1;
-  --text-scale-factor: calc(var(--total-scale-factor) * var(--min-font-size));
-  --min-font-size-inv: calc(1 / var(--min-font-size));
+@import "pdfjs-dist/web/pdf_viewer.css" layer(pdfjs);
+
+.document-pdf-viewport {
+  padding-block: 1rem;
 }
 
-.document-pdf-text-layer :is(span, br) {
-  position: absolute;
-  color: transparent;
-  white-space: pre;
-  cursor: text;
-  transform-origin: 0% 0%;
-  user-select: text;
-}
-
-.document-pdf-text-layer > :not(.markedContent),
-.document-pdf-text-layer .markedContent span:not(.markedContent) {
-  z-index: 1;
-  font-size: calc(var(--text-scale-factor) * var(--font-height));
-  transform: rotate(var(--rotate)) scaleX(var(--scale-x))
-    scale(var(--min-font-size-inv));
-}
-
-.document-pdf-text-layer .markedContent {
-  display: contents;
-}
-
-.document-pdf-text-layer span[data-find-match="true"] {
-  border-radius: 2px;
-  background: color-mix(in srgb, var(--color-primary) 28%, transparent);
-}
-
-.document-pdf-text-layer ::selection {
-  color: transparent;
-  background: color-mix(in srgb, AccentColor 40%, transparent);
+.document-pdf-viewport .pdfViewer .page {
+  box-shadow: var(--shadow-sm);
 }

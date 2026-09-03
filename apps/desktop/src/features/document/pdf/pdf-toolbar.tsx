@@ -97,7 +97,7 @@ export function PdfToolbar({
           onPageChange={onPageChange}
           pageNumber={viewState.pageNumber}
         />
-        <ButtonGroupText className="h-8 rounded-none px-2 text-xs font-normal tabular-nums">
+        <ButtonGroupText className="h-7 rounded-none px-2 text-xs font-normal tabular-nums">
           {m.document_page_count({ count: String(pageCount) })}
         </ButtonGroupText>
         <TooltipButton
@@ -123,7 +123,7 @@ export function PdfToolbar({
         >
           <ZoomOut />
         </TooltipButton>
-        <ButtonGroupText className="h-8 min-w-12 justify-center rounded-none px-2 text-xs font-normal tabular-nums">
+        <ButtonGroupText className="h-7 min-w-12 justify-center rounded-none px-2 text-xs font-normal tabular-nums">
           {Math.round(viewState.zoom * 100)}%
         </ButtonGroupText>
         <TooltipButton
@@ -276,7 +276,7 @@ function PageNumberInput({
   };
   return (
     <Input
-      className="h-8 w-12 rounded-none px-1 text-center text-xs tabular-nums"
+      className="h-7 w-12 rounded-none px-1 text-center text-xs tabular-nums"
       aria-label={m.document_page_number()}
       inputMode="numeric"
       value={draft}
