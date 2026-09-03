@@ -7,12 +7,15 @@ export class DocumentRuntimeSession {
   private disposers: SessionDisposer[] = [];
   private destroyPromise: Promise<void> | null = null;
   private passwordHandler: ((password: string) => void) | null = null;
-  private viewState: DocumentViewState = { ...DEFAULT_DOCUMENT_VIEW_STATE };
+  private viewState: DocumentViewState;
 
   constructor(
     readonly id: number,
     readonly targetKey: string,
-  ) {}
+    initialViewState: DocumentViewState = DEFAULT_DOCUMENT_VIEW_STATE,
+  ) {
+    this.viewState = { ...initialViewState };
+  }
 
   get signal() {
     return this.controller.signal;

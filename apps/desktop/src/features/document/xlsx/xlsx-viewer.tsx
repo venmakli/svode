@@ -135,7 +135,7 @@ export function XlsxViewer({
   );
 }
 
-function XlsxCellInspector({
+export function XlsxCellInspector({
   inspection,
 }: {
   inspection: XlsxCellInspection | null;
@@ -147,27 +147,26 @@ function XlsxCellInspector({
       </span>
       {inspection ? (
         <>
-          <span className="shrink-0 text-muted-foreground">
-            {m.document_xlsx_cell_value()}
-          </span>
-          <span
-            className="min-w-0 flex-1 truncate"
-            title={inspection.displayValue}
-          >
-            {inspection.displayValue || m.document_xlsx_empty_cell()}
-          </span>
+          <div className="flex min-w-0 max-w-80 items-center gap-3">
+            <span className="shrink-0 text-muted-foreground">
+              {m.document_xlsx_cell_value()}
+            </span>
+            <span className="min-w-0 truncate" title={inspection.displayValue}>
+              {inspection.displayValue || m.document_xlsx_empty_cell()}
+            </span>
+          </div>
           {inspection.formula ? (
-            <>
+            <div className="flex min-w-0 flex-1 items-center gap-3">
               <span className="shrink-0 text-muted-foreground">
                 {m.document_xlsx_cell_formula()}
               </span>
               <code
-                className="min-w-0 max-w-[45%] truncate text-foreground"
+                className="min-w-0 flex-1 truncate text-foreground"
                 title={inspection.formula}
               >
                 {inspection.formula}
               </code>
-            </>
+            </div>
           ) : null}
         </>
       ) : (

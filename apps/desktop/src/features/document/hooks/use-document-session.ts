@@ -11,7 +11,9 @@ import {
   documentSessionCoordinator,
 } from "../model/session";
 import {
+  createDocumentViewState,
   DEFAULT_DOCUMENT_VIEW_STATE,
+  documentFormatFromPath,
   documentHasInlinePreview,
   documentTargetKey,
   type DocumentFailure,
@@ -63,7 +65,11 @@ export function useDocumentSession(target: DocumentTarget) {
   const targetKey = documentTargetKey(stableTarget);
 
   useEffect(() => {
-    const session = new DocumentRuntimeSession(nextSessionId++, targetKey);
+    const session = new DocumentRuntimeSession(
+      nextSessionId++,
+      targetKey,
+      createDocumentViewState(documentFormatFromPath(stableTarget.path)),
+    );
     sessionRef.current = session;
     setExternalOpenError(null);
     setState({ phase: "loading", progress: 0.05 });

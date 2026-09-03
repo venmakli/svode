@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 
+import { createDocumentViewState } from "./types";
 import { DocumentRuntimeSession, documentSessionCoordinator } from "./session";
 
 test("activating a new document destroys the previous live session", async () => {
@@ -44,6 +45,31 @@ test("peek handoff destroys its renderer and transfers view state once", async (
   expect(await documentSessionCoordinator.activate(reopened)).toBe(true);
   expect(reopened.getViewState().pageNumber).toBe(1);
   await documentSessionCoordinator.release(reopened);
+});
+
+test("XLSX opens at 100% while an explicit fit mode survives handoff", async () => {
+  documentSessionCoordinator.resetForTests();
+  const peek = new DocumentRuntimeSession(
+    1,
+    "space\0table.xlsx",
+    createDocumentViewState("xlsx"),
+  );
+  expect(peek.getViewState().zoom).toBe(1);
+  expect(peek.getViewState().zoomMode).toBe("custom");
+
+  expect(await documentSessionCoordinator.activate(peek)).toBe(true);
+  peek.setViewState({ ...peek.getViewState(), zoom: 0.37, zoomMode: "width" });
+  await documentSessionCoordinator.handoff(peek);
+
+  const fullPage = new DocumentRuntimeSession(
+    2,
+    "space\0table.xlsx",
+    createDocumentViewState("xlsx"),
+  );
+  expect(await documentSessionCoordinator.activate(fullPage)).toBe(true);
+  expect(fullPage.getViewState().zoom).toBe(0.37);
+  expect(fullPage.getViewState().zoomMode).toBe("width");
+  await documentSessionCoordinator.release(fullPage);
 });
 
 test("repeated open and close leaves every runtime session destroyed", async () => {

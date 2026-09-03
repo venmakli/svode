@@ -104,6 +104,15 @@ export const DEFAULT_DOCUMENT_VIEW_STATE: DocumentViewState = {
   zoomMode: "width",
 };
 
+export function createDocumentViewState(
+  format: DocumentFormat | null = null,
+): DocumentViewState {
+  return {
+    ...DEFAULT_DOCUMENT_VIEW_STATE,
+    zoomMode: format === "xlsx" ? "custom" : "width",
+  };
+}
+
 export type DocumentSessionState =
   | { phase: "loading"; progress: number }
   | {

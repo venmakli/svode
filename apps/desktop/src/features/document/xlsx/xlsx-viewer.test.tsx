@@ -5,7 +5,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { TooltipProvider } from "@/components/ui/tooltip";
 
 import { DEFAULT_DOCUMENT_VIEW_STATE } from "../model/types";
-import { XlsxViewer } from "./xlsx-viewer";
+import { XlsxCellInspector, XlsxViewer } from "./xlsx-viewer";
 
 test("XLSX surface exposes compact controls, inspector, and bounded sheet tabs", () => {
   const html = renderToStaticMarkup(
@@ -43,4 +43,20 @@ test("XLSX surface exposes compact controls, inspector, and bounded sheet tabs",
   ]) {
     expect(html.includes(label)).toBe(true);
   }
+});
+
+test("XLSX inspector keeps value compact and gives formula the remaining row", () => {
+  const html = renderToStaticMarkup(
+    <XlsxCellInspector
+      inspection={{
+        cellRef: "G12",
+        displayValue: "39.7%",
+        formula: "='Data'!$C$9/'Data'!$C$4-1",
+      }}
+    />,
+  );
+
+  expect(html.includes("max-w-80")).toBe(true);
+  expect(html.includes("min-w-0 flex-1 items-center")).toBe(true);
+  expect(html.indexOf("39.7%") < html.indexOf("Formula")).toBe(true);
 });
