@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/empty";
 import { Skeleton } from "@/components/ui/skeleton";
 import { probeDocumentTarget } from "@/features/document";
+import { probeMediaTarget } from "@/features/media";
 import { probeMarkedApp } from "../api/probe-app-marker";
 import { useArtifactResolution } from "../hooks/use-artifact-resolution";
 import { ArtifactRegistry } from "../model/registry";
@@ -107,6 +108,30 @@ async function loadDocumentSurface(): Promise<{
 
 const DocumentArtifactSurface = lazy(loadDocumentSurface);
 
+async function loadMediaSurface(): Promise<{
+  default: ArtifactSurfaceComponent;
+}> {
+  const { MediaSurface } = await import("@/features/media/app-shell");
+  return {
+    default: function MediaArtifactSurface({
+      projectPath,
+      spacePath,
+      target,
+    }: ArtifactSurfaceRenderProps) {
+      return (
+        <MediaSurface
+          path={target.path}
+          projectPath={projectPath ?? spacePath}
+          spaceId={target.spaceId}
+          spacePath={spacePath}
+        />
+      );
+    },
+  };
+}
+
+const MediaArtifactSurface = lazy(loadMediaSurface);
+
 function createFirstPartyArtifactRegistry(spacePath: string) {
   return new ArtifactRegistry<ArtifactSurfaceComponent>([
     {
@@ -121,6 +146,13 @@ function createFirstPartyArtifactRegistry(spacePath: string) {
       capabilities: { readOnly: true },
       probe: probeDocumentTarget,
       surface: DocumentArtifactSurface,
+    },
+    {
+      id: "media",
+      order: 175,
+      capabilities: { readOnly: true },
+      probe: probeMediaTarget,
+      surface: MediaArtifactSurface,
     },
     {
       id: "page",

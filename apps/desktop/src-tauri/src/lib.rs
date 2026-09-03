@@ -17,6 +17,7 @@ mod index;
 #[cfg(target_os = "macos")]
 mod macos_fullscreen;
 pub mod mcp;
+mod media;
 mod native_file_drop;
 mod process;
 mod properties;
@@ -66,6 +67,14 @@ pub fn run() {
         .manage(mcp::commands::McpConfigState::new())
         .manage(properties::ActorCatalogState::new())
         .manage(terminal::TerminalManager::new())
+        .manage(media::MediaSourceState::new())
+        .register_asynchronous_uri_scheme_protocol("svode-media", |context, request, responder| {
+            media::protocol::handle_media_protocol(
+                context.app_handle().clone(),
+                request,
+                responder,
+            );
+        })
         .menu(app_windows::build_initial_app_menu)
         .on_menu_event(|app, event| {
             app_windows::handle_menu_event(app, event.id().as_ref());
@@ -105,6 +114,10 @@ pub fn run() {
             document::commands::document_inspect_source,
             document::commands::document_read_source,
             document::commands::document_open_external,
+            media::commands::media_create_source,
+            media::commands::media_validate_source,
+            media::commands::media_revoke_source,
+            media::commands::media_open_external,
             agent_context::commands::agent_context_get_instructions,
             agent_context::commands::agent_context_refresh_instructions,
             actors::commands::actors_get_catalog,

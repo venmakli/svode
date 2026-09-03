@@ -27,6 +27,7 @@ const allowedFeatureSubpathExceptions = new Set([
   "@/features/collection/scope-surface",
   "@/features/document/app-shell",
   "@/features/editor/file-tree-sync",
+  "@/features/media/app-shell",
   "@/features/page/app-shell",
   "@/features/page/detail",
   "@/features/page/scope-surface",
