@@ -1,3 +1,4 @@
+import { lazy, Suspense } from "react";
 import { FileWarning, Maximize2, Paperclip, X } from "lucide-react";
 
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -16,9 +17,11 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useOpenArtifact } from "@/features/artifact";
 import { PagePeekSurface } from "@/features/page/detail";
 import { useOpenPage } from "@/features/page/navigation";
 import * as m from "@/paraglide/messages.js";
+import { cn } from "@/shared/lib/utils";
 
 import { useAttachmentPagePeek } from "../hooks/use-attachment-page-peek";
 import { attachmentKindLabel } from "../model/presentation";
@@ -27,6 +30,11 @@ import type {
   AttachmentOwnerRef,
   AttachmentRow,
 } from "../model/types";
+
+const DocumentSurface = lazy(async () => {
+  const module = await import("@/features/document/app-shell");
+  return { default: module.DocumentSurface };
+});
 
 export function AttachmentsPeek({
   owner,
@@ -40,6 +48,7 @@ export function AttachmentsPeek({
   onOpenChange(open: boolean): void;
 }) {
   const openPage = useOpenPage();
+  const openArtifact = useOpenArtifact();
   const resolvedSpacePath = target?.owner.spacePath ?? owner.spacePath;
   const resolvedProjectPath = target?.owner.projectPath ?? owner.projectPath;
   const page = useAttachmentPagePeek({
@@ -48,6 +57,7 @@ export function AttachmentsPeek({
     spacePath: resolvedSpacePath,
   });
   const loadedPage = page.state.phase === "ready" ? page.state.page : null;
+  const isDocument = target?.row.kind === "document";
 
   return (
     <Sheet open={Boolean(target)} onOpenChange={onOpenChange}>
@@ -55,7 +65,10 @@ export function AttachmentsPeek({
         side="right"
         showCloseButton={false}
         overlayClassName="bg-black/25 backdrop-blur-none supports-backdrop-filter:backdrop-blur-none"
-        className="gap-0 p-0 pt-2 pb-6 data-[side=right]:sm:max-w-none"
+        className={cn(
+          "gap-0 p-0 data-[side=right]:sm:max-w-none",
+          isDocument ? "pt-0 pb-0" : "pt-2 pb-6",
+        )}
         style={{ width: "min(1120px, max(720px, 66vw), 94vw)" }}
         onCloseAutoFocus={(event) => {
           event.preventDefault();
@@ -65,35 +78,42 @@ export function AttachmentsPeek({
         <SheetTitle className="sr-only">
           {target?.row.displayName ?? m.scope_surface_attachments()}
         </SheetTitle>
-        <div className="flex shrink-0 items-center justify-end gap-1 px-2 pb-2">
-          {loadedPage ? (
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className="h-7 rounded-lg px-2 text-xs text-muted-foreground hover:text-foreground"
-              onClick={() => {
-                onOpenChange(false);
-                openPage(loadedPage.path, owner.spaceId);
-              }}
-            >
-              <Maximize2 data-icon="inline-start" />
-              {m.attachments_full_page()}
-            </Button>
-          ) : null}
-          <SheetClose asChild>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-sm"
-              className="text-muted-foreground hover:text-foreground"
-            >
-              <X />
-              <span className="sr-only">{m.settings_cancel()}</span>
-            </Button>
-          </SheetClose>
-        </div>
-        <div className="scrollbar-hide min-h-0 flex-1 overflow-y-auto overflow-x-hidden">
+        {!isDocument ? (
+          <div className="flex shrink-0 items-center justify-end gap-1 px-2 pb-2">
+            {loadedPage ? (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-7 rounded-lg px-2 text-xs text-muted-foreground hover:text-foreground"
+                onClick={() => {
+                  onOpenChange(false);
+                  openPage(loadedPage.path, owner.spaceId);
+                }}
+              >
+                <Maximize2 data-icon="inline-start" />
+                {m.attachments_full_page()}
+              </Button>
+            ) : null}
+            <SheetClose asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                className="text-muted-foreground hover:text-foreground"
+              >
+                <X />
+                <span className="sr-only">{m.settings_cancel()}</span>
+              </Button>
+            </SheetClose>
+          </div>
+        ) : null}
+        <div
+          className={cn(
+            "min-h-0 flex-1 overflow-x-hidden",
+            isDocument ? "overflow-hidden" : "scrollbar-hide overflow-y-auto",
+          )}
+        >
           {target?.row.kind === "page" ? (
             page.state.phase === "ready" ? (
               <PagePeekSurface
@@ -141,12 +161,39 @@ export function AttachmentsPeek({
                 <Skeleton className="h-48 w-full" />
               </div>
             )
+          ) : target?.row.kind === "document" ? (
+            <Suspense fallback={<DocumentPeekLoadingState />}>
+              <DocumentSurface
+                path={target.row.path}
+                projectPath={resolvedProjectPath}
+                spaceId={target.owner.spaceId}
+                spacePath={resolvedSpacePath}
+                onClose={() => onOpenChange(false)}
+                onOpenFullPage={() => {
+                  onOpenChange(false);
+                  openArtifact({
+                    path: target.row.path,
+                    sourceShape: target.row.sourceShape,
+                    spaceId: target.owner.spaceId,
+                  });
+                }}
+              />
+            </Suspense>
           ) : target ? (
             <BinaryAvailability row={target.row} />
           ) : null}
         </div>
       </SheetContent>
     </Sheet>
+  );
+}
+
+function DocumentPeekLoadingState() {
+  return (
+    <div className="space-y-4 px-6 py-8" aria-label={m.document_loading()}>
+      <Skeleton className="h-10 w-2/3" />
+      <Skeleton className="h-48 w-full" />
+    </div>
   );
 }
 

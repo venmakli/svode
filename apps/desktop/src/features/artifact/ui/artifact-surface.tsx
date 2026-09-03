@@ -15,6 +15,7 @@ import {
   EmptyTitle,
 } from "@/components/ui/empty";
 import { Skeleton } from "@/components/ui/skeleton";
+import { probeDocumentTarget } from "@/features/document";
 import { probeMarkedApp } from "../api/probe-app-marker";
 import { useArtifactResolution } from "../hooks/use-artifact-resolution";
 import { ArtifactRegistry } from "../model/registry";
@@ -82,6 +83,30 @@ async function loadPageSurface(): Promise<{
 
 const PageArtifactSurface = lazy(loadPageSurface);
 
+async function loadDocumentSurface(): Promise<{
+  default: ArtifactSurfaceComponent;
+}> {
+  const { DocumentSurface } = await import("@/features/document/app-shell");
+  return {
+    default: function DocumentArtifactSurface({
+      projectPath,
+      spacePath,
+      target,
+    }: ArtifactSurfaceRenderProps) {
+      return (
+        <DocumentSurface
+          path={target.path}
+          projectPath={projectPath ?? spacePath}
+          spaceId={target.spaceId}
+          spacePath={spacePath}
+        />
+      );
+    },
+  };
+}
+
+const DocumentArtifactSurface = lazy(loadDocumentSurface);
+
 function createFirstPartyArtifactRegistry(spacePath: string) {
   return new ArtifactRegistry<ArtifactSurfaceComponent>([
     {
@@ -89,6 +114,13 @@ function createFirstPartyArtifactRegistry(spacePath: string) {
       order: 100,
       capabilities: {},
       probe: (target) => probeMarkedApp(target, spacePath),
+    },
+    {
+      id: "document",
+      order: 150,
+      capabilities: { readOnly: true },
+      probe: probeDocumentTarget,
+      surface: DocumentArtifactSurface,
     },
     {
       id: "page",

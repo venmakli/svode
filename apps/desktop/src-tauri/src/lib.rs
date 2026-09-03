@@ -8,6 +8,7 @@ mod app_windows;
 mod artifact;
 mod attachments;
 mod commands;
+mod document;
 mod error;
 mod files;
 mod git;
@@ -101,6 +102,9 @@ pub fn run() {
             attachments::commands::attachments_inspect_import_source,
             attachments::commands::attachments_import_file,
             artifact::commands::artifact_probe_app_marker,
+            document::commands::document_inspect_source,
+            document::commands::document_read_source,
+            document::commands::document_open_external,
             agent_context::commands::agent_context_get_instructions,
             agent_context::commands::agent_context_refresh_instructions,
             actors::commands::actors_get_catalog,

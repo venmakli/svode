@@ -25,6 +25,7 @@ const allowedFeatureSubpathExceptions = new Set([
   "@/features/artifact/app-shell",
   "@/features/collection/app-shell",
   "@/features/collection/scope-surface",
+  "@/features/document/app-shell",
   "@/features/editor/file-tree-sync",
   "@/features/page/app-shell",
   "@/features/page/detail",
@@ -357,6 +358,7 @@ export default tseslint.config(
       "**/node_modules/**",
       "**/*.gen.*",
       "**/paraglide/**",
+      "**/public/vendor/pdfjs/**",
     ],
   },
 );

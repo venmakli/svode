@@ -2,6 +2,7 @@ node_modules/
 dist/
 **/target/
 apps/desktop/src-tauri/binaries/
+apps/desktop/public/vendor/pdfjs/
 *.tsbuildinfo
 .DS_Store
 *.log
