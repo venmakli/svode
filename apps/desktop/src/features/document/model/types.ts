@@ -1,5 +1,6 @@
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import type { DocxDocument } from "@silurus/ooxml/docx";
+import type { PptxPresentation } from "@silurus/ooxml/pptx";
 import type { XlsxSelectionState, XlsxWorkbook } from "@silurus/ooxml/xlsx";
 
 export type DocumentFormat =
@@ -77,11 +78,24 @@ export interface XlsxTextIndex {
   truncated: boolean;
 }
 
+export interface PptxTextSlide {
+  slideIndex: number;
+  text: string;
+  notes?: string;
+}
+
+export interface PptxTextIndex {
+  slides: readonly PptxTextSlide[];
+  complete: boolean;
+  truncated: boolean;
+}
+
 export type DocumentZoomMode = "custom" | "page" | "width";
 export type PdfZoomMode = DocumentZoomMode;
 
 export interface DocumentViewState {
   pageNumber: number;
+  slideNumber: number;
   sheetIndex: number;
   spreadsheetSelection: XlsxSelectionState | null;
   zoom: number;
@@ -96,6 +110,7 @@ export const DEFAULT_DOCUMENT_VIEW_STATE: DocumentViewState = {
   activeFindIndex: 0,
   findQuery: "",
   pageNumber: 1,
+  slideNumber: 1,
   sheetIndex: 0,
   spreadsheetSelection: null,
   rotation: 0,
@@ -109,7 +124,8 @@ export function createDocumentViewState(
 ): DocumentViewState {
   return {
     ...DEFAULT_DOCUMENT_VIEW_STATE,
-    zoomMode: format === "xlsx" ? "custom" : "width",
+    zoomMode:
+      format === "xlsx" ? "custom" : format === "pptx" ? "page" : "width",
   };
 }
 
@@ -117,7 +133,7 @@ export type DocumentSessionState =
   | { phase: "loading"; progress: number }
   | {
       phase: "password";
-      format: "pdf" | "docx" | "xlsx";
+      format: "pdf" | "docx" | "xlsx" | "pptx";
       incorrect: boolean;
     }
   | {
@@ -140,6 +156,13 @@ export type DocumentSessionState =
       descriptor: DocumentSourceDescriptor;
       workbook: XlsxWorkbook;
       textIndex: XlsxTextIndex;
+    }
+  | {
+      phase: "ready";
+      format: "pptx";
+      descriptor: DocumentSourceDescriptor;
+      presentation: PptxPresentation;
+      textIndex: PptxTextIndex;
     }
   | { phase: "failed"; failure: DocumentFailure };
 
@@ -170,7 +193,12 @@ export function documentFormatFromPath(path: string): DocumentFormat | null {
 }
 
 export function documentHasInlinePreview(format: DocumentFormat) {
-  return format === "pdf" || format === "docx" || format === "xlsx";
+  return (
+    format === "pdf" ||
+    format === "docx" ||
+    format === "xlsx" ||
+    format === "pptx"
+  );
 }
 
 export function normalizeRuntimePath(value: string) {

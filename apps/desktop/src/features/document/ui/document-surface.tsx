@@ -31,6 +31,7 @@ import {
 import { DocxViewer } from "../docx/docx-viewer";
 import { PdfViewer } from "../pdf/pdf-viewer";
 import { XlsxViewer } from "../xlsx/xlsx-viewer";
+import { PptxViewer } from "../pptx/pptx-viewer";
 
 export function DocumentSurface({
   onClose,
@@ -78,6 +79,21 @@ export function DocumentSurface({
       : undefined;
 
   if (session.state.phase === "ready") {
+    if (session.state.format === "pptx") {
+      return (
+        <PptxViewer
+          externalOpenError={session.externalOpenError}
+          onOpenExternal={session.openExternal}
+          onRegisterRendererDisposer={session.registerRendererDisposer}
+          onRenderError={session.reportRendererError}
+          onViewStateChange={session.updateViewState}
+          presentation={session.state.presentation}
+          title={title}
+          toolbarActions={toolbarActions}
+          viewState={session.viewState}
+        />
+      );
+    }
     if (session.state.format === "xlsx") {
       return (
         <XlsxViewer

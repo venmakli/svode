@@ -36,6 +36,13 @@ import {
 } from "../xlsx/xlsx-runtime";
 import { extractXlsxText } from "../xlsx/xlsx-text-index";
 import {
+  isPptxAbortError,
+  openPptxPresentation,
+  PptxPasswordFailure,
+  PptxRuntimeFailure,
+} from "../pptx/pptx-runtime";
+import { extractPptxText } from "../pptx/pptx-text-index";
+import {
   isAbortError,
   openPdfDocument,
   PdfRuntimeFailure,
@@ -94,6 +101,63 @@ export function useDocumentSession(target: DocumentTarget) {
         );
         if (session.signal.aborted) return;
         setState({ phase: "loading", progress: 0.35 });
+        if (descriptor.format === "pptx") {
+          const loadPptx = async (password?: string) => {
+            if (session.signal.aborted) return;
+            setState({ phase: "loading", progress: 0.35 });
+            try {
+              const presentation = await openPptxPresentation({
+                bytes,
+                onLoading: (progress) => {
+                  if (!session.signal.aborted) {
+                    setState({ phase: "loading", progress });
+                  }
+                },
+                password,
+                session,
+              });
+              if (session.signal.aborted) return;
+              session.setPasswordHandler(null);
+              setState({
+                descriptor,
+                format: "pptx",
+                phase: "ready",
+                presentation,
+                textIndex: {
+                  complete: false,
+                  slides: [],
+                  truncated: false,
+                },
+              });
+              void extractPptxText(presentation, session.signal)
+                .then((textIndex) => {
+                  if (session.signal.aborted) return;
+                  setState((current) =>
+                    current.phase === "ready" &&
+                    current.format === "pptx" &&
+                    current.presentation === presentation
+                      ? { ...current, textIndex }
+                      : current,
+                  );
+                })
+                .catch(() => undefined);
+            } catch (error) {
+              if (session.signal.aborted || isPptxAbortError(error)) return;
+              if (error instanceof PptxPasswordFailure) {
+                setState({
+                  format: "pptx",
+                  incorrect: error.incorrect,
+                  phase: "password",
+                });
+                return;
+              }
+              setState({ failure: failureFromError(error), phase: "failed" });
+            }
+          };
+          session.setPasswordHandler((password) => void loadPptx(password));
+          await loadPptx();
+          return;
+        }
         if (descriptor.format === "xlsx") {
           const loadXlsx = async (password?: string) => {
             if (session.signal.aborted) return;
@@ -331,6 +395,9 @@ export function failureFromError(error: unknown): DocumentFailure {
     return { detail: error.message, kind: error.kind };
   }
   if (error instanceof XlsxRuntimeFailure) {
+    return { detail: error.message, kind: error.kind };
+  }
+  if (error instanceof PptxRuntimeFailure) {
     return { detail: error.message, kind: error.kind };
   }
   if (isDocumentFailure(error)) return error;

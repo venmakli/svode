@@ -72,6 +72,28 @@ test("XLSX opens at 100% while an explicit fit mode survives handoff", async () 
   await documentSessionCoordinator.release(fullPage);
 });
 
+test("PPTX opens fit to page and transfers the active slide on handoff", async () => {
+  documentSessionCoordinator.resetForTests();
+  const peek = new DocumentRuntimeSession(
+    1,
+    "space\0deck.pptx",
+    createDocumentViewState("pptx"),
+  );
+  expect(peek.getViewState().zoomMode).toBe("page");
+  expect(await documentSessionCoordinator.activate(peek)).toBe(true);
+  peek.setViewState({ ...peek.getViewState(), slideNumber: 7 });
+  await documentSessionCoordinator.handoff(peek);
+
+  const fullPage = new DocumentRuntimeSession(
+    2,
+    "space\0deck.pptx",
+    createDocumentViewState("pptx"),
+  );
+  expect(await documentSessionCoordinator.activate(fullPage)).toBe(true);
+  expect(fullPage.getViewState().slideNumber).toBe(7);
+  await documentSessionCoordinator.release(fullPage);
+});
+
 test("repeated open and close leaves every runtime session destroyed", async () => {
   documentSessionCoordinator.resetForTests();
   const sessions = Array.from(
