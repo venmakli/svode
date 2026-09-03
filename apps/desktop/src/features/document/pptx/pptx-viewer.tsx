@@ -57,7 +57,6 @@ export function PptxViewer({
     <div
       className="flex h-full min-h-0 flex-col overflow-hidden"
       data-document-viewer="pptx"
-      aria-label={`${title}: ${m.document_limited_preview()}`}
     >
       <PptxToolbar
         findMatches={findMatches}

@@ -1678,7 +1678,6 @@
   "document_xlsx_select_cell": "Select a cell to inspect its displayed value and source formula.",
   "document_xlsx_empty_cell": "Empty cell",
   "document_xlsx_canvas_fallback": "Spreadsheet preview requires canvas support.",
-  "document_limited_preview": "Limited preview",
   "document_hide_slide_navigation": "Hide slide navigation",
   "document_show_slide_navigation": "Show slide navigation",
   "document_previous_slide": "Previous slide",
@@ -1689,6 +1688,5 @@
   "document_pptx_slide_label": "Slide {number}",
   "document_pptx_viewport": "Presentation preview. Use Left and Right Arrow keys to move between slides.",
   "document_pptx_canvas_fallback": "Presentation preview requires canvas support.",
-  "document_pptx_limited_description": "Text reading order and complex PowerPoint content may differ in this preview.",
   "document_pptx_slide_limited": "Some content on this slide could not be displayed. Other slides remain available, and you can open the original externally."
 }

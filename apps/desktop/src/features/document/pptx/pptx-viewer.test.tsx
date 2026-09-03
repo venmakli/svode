@@ -11,7 +11,7 @@ const presentation = {
   slideCount: 3,
 } as PptxPresentation;
 
-test("PPTX surface exposes limited fidelity, slide navigation, and a named canvas", () => {
+test("PPTX surface omits a normal-state badge and exposes slide navigation", () => {
   const html = renderToStaticMarkup(
     <TooltipProvider>
       <PptxViewer
@@ -28,7 +28,7 @@ test("PPTX surface exposes limited fidelity, slide navigation, and a named canva
   );
 
   expect(html.includes('data-document-viewer="pptx"')).toBe(true);
-  expect(html.includes("Limited preview")).toBe(true);
+  expect(html.includes("Limited preview")).toBe(false);
   expect(html.includes('role="region"')).toBe(true);
   expect(html.includes('tabindex="0"')).toBe(true);
   expect(html.includes("Presentation slides")).toBe(true);

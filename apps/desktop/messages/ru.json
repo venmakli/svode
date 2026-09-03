@@ -1678,7 +1678,6 @@
   "document_xlsx_select_cell": "Выберите ячейку, чтобы увидеть отображаемое значение и исходную формулу.",
   "document_xlsx_empty_cell": "Пустая ячейка",
   "document_xlsx_canvas_fallback": "Для предпросмотра таблицы требуется поддержка canvas.",
-  "document_limited_preview": "Ограниченный просмотр",
   "document_hide_slide_navigation": "Скрыть навигацию по слайдам",
   "document_show_slide_navigation": "Показать навигацию по слайдам",
   "document_previous_slide": "Предыдущий слайд",
@@ -1689,6 +1688,5 @@
   "document_pptx_slide_label": "Слайд {number}",
   "document_pptx_viewport": "Предпросмотр презентации. Используйте стрелки влево и вправо для перехода между слайдами.",
   "document_pptx_canvas_fallback": "Для предпросмотра презентации требуется поддержка canvas.",
-  "document_pptx_limited_description": "Порядок чтения текста и сложные элементы PowerPoint могут отличаться в этом предпросмотре.",
   "document_pptx_slide_limited": "Часть содержимого этого слайда не удалось показать. Остальные слайды остаются доступны, а исходник можно открыть снаружи."
 }

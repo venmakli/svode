@@ -13,7 +13,6 @@ import {
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { ButtonGroup, ButtonGroupText } from "@/components/ui/button-group";
 import { Input } from "@/components/ui/input";
 import {
@@ -79,20 +78,11 @@ export function PptxToolbar({
       >
         {viewState.thumbnailsOpen ? <PanelLeftClose /> : <PanelLeftOpen />}
       </TooltipButton>
-      <div className="flex min-w-0 flex-1 items-center gap-2 px-1">
-        <div
-          className="min-w-0 flex-1 truncate text-sm font-medium"
-          title={title}
-        >
-          {title}
-        </div>
-        <Badge
-          variant="secondary"
-          className="shrink-0 font-normal"
-          title={m.document_pptx_limited_description()}
-        >
-          {m.document_limited_preview()}
-        </Badge>
+      <div
+        className="min-w-0 flex-1 truncate px-1 text-sm font-medium"
+        title={title}
+      >
+        {title}
       </div>
       <ButtonGroup className="shrink-0">
         <TooltipButton
