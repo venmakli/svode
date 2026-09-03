@@ -10,12 +10,7 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "@/components/ui/empty";
-import {
-  Sheet,
-  SheetClose,
-  SheetContent,
-  SheetTitle,
-} from "@/components/ui/sheet";
+import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useOpenArtifact } from "@/features/artifact";
 import { PagePeekSurface } from "@/features/page/detail";
@@ -80,32 +75,17 @@ export function AttachmentsPeek({
         </SheetTitle>
         {!isDocument ? (
           <div className="flex shrink-0 items-center justify-end gap-1 px-2 pb-2">
-            {loadedPage ? (
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="h-7 rounded-lg px-2 text-xs text-muted-foreground hover:text-foreground"
-                onClick={() => {
-                  onOpenChange(false);
-                  openPage(loadedPage.path, owner.spaceId);
-                }}
-              >
-                <Maximize2 data-icon="inline-start" />
-                {m.attachments_full_page()}
-              </Button>
-            ) : null}
-            <SheetClose asChild>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-sm"
-                className="text-muted-foreground hover:text-foreground"
-              >
-                <X />
-                <span className="sr-only">{m.settings_cancel()}</span>
-              </Button>
-            </SheetClose>
+            <PeekActions
+              onClose={() => onOpenChange(false)}
+              onExpand={
+                loadedPage
+                  ? () => {
+                      onOpenChange(false);
+                      openPage(loadedPage.path, owner.spaceId);
+                    }
+                  : undefined
+              }
+            />
           </div>
         ) : null}
         <div
@@ -156,7 +136,7 @@ export function AttachmentsPeek({
                 </Alert>
               </div>
             ) : (
-              <div className="space-y-4 px-6 py-8">
+              <div className="flex flex-col gap-4 px-6 py-8">
                 <Skeleton className="h-10 w-2/3" />
                 <Skeleton className="h-48 w-full" />
               </div>
@@ -177,6 +157,12 @@ export function AttachmentsPeek({
                     spaceId: target.owner.spaceId,
                   });
                 }}
+                renderToolbarActions={(actions) => (
+                  <PeekActions
+                    onClose={actions.onClose}
+                    onExpand={actions.onOpenFullPage}
+                  />
+                )}
               />
             </Suspense>
           ) : target ? (
@@ -188,9 +174,47 @@ export function AttachmentsPeek({
   );
 }
 
+function PeekActions({
+  onClose,
+  onExpand,
+}: {
+  onClose(): void;
+  onExpand?: () => void;
+}) {
+  return (
+    <div className="flex shrink-0 items-center gap-1">
+      {onExpand ? (
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="h-7 rounded-lg px-2 text-xs text-muted-foreground hover:text-foreground"
+          onClick={onExpand}
+        >
+          <Maximize2 data-icon="inline-start" />
+          {m.attachments_full_page()}
+        </Button>
+      ) : null}
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon-sm"
+        className="text-muted-foreground hover:text-foreground"
+        onClick={onClose}
+      >
+        <X />
+        <span className="sr-only">{m.settings_cancel()}</span>
+      </Button>
+    </div>
+  );
+}
+
 function DocumentPeekLoadingState() {
   return (
-    <div className="space-y-4 px-6 py-8" aria-label={m.document_loading()}>
+    <div
+      className="flex flex-col gap-4 px-6 py-8"
+      aria-label={m.document_loading()}
+    >
       <Skeleton className="h-10 w-2/3" />
       <Skeleton className="h-48 w-full" />
     </div>

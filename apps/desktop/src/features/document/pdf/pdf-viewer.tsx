@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -13,20 +13,17 @@ import "./pdf-viewer.css";
 
 export function PdfViewer({
   externalOpenError,
-  onClose,
   onOpenExternal,
-  onOpenFullPage,
   onRenderError,
   onViewStateChange,
   pdf,
   textIndex,
   title,
+  toolbarActions,
   viewState,
 }: {
   externalOpenError: string | null;
-  onClose?: () => void;
   onOpenExternal(): void;
-  onOpenFullPage?: () => void;
   onRenderError(error: unknown): void;
   onViewStateChange(
     update:
@@ -36,6 +33,7 @@ export function PdfViewer({
   pdf: PDFDocumentProxy;
   textIndex: PdfTextIndex;
   title: string;
+  toolbarActions?: ReactNode;
   viewState: DocumentViewState;
 }) {
   const viewportRef = useRef<HTMLDivElement>(null);
@@ -91,18 +89,18 @@ export function PdfViewer({
     <div
       className="flex h-full min-h-0 flex-col overflow-hidden"
       data-document-viewer="pdf"
+      aria-label={`${title}: ${m.document_read_only_preview()}`}
     >
       <PdfToolbar
         activeFindIndex={activeFindIndex}
         findMatches={matches.length}
-        onClose={onClose}
         onFindNavigate={navigateFind}
         onOpenExternal={onOpenExternal}
-        onOpenFullPage={onOpenFullPage}
         onPageChange={setPage}
         onViewStateChange={onViewStateChange}
         pageCount={pdf.numPages}
         title={title}
+        toolbarActions={toolbarActions}
         viewState={viewState}
       />
       {externalOpenError ? (

@@ -1,15 +1,12 @@
-import { useMemo, useState, type FormEvent } from "react";
+import { useMemo, useState, type FormEvent, type ReactNode } from "react";
 import {
   FileText,
   FileWarning,
   FolderOpen,
   KeyRound,
-  Maximize2,
   RefreshCw,
-  X,
 } from "lucide-react";
 
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Empty,
@@ -19,7 +16,7 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "@/components/ui/empty";
-import { Field, FieldLabel } from "@/components/ui/field";
+import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -40,6 +37,7 @@ export function DocumentSurface({
   projectPath,
   spaceId,
   spacePath,
+  renderToolbarActions,
 }: {
   onClose?: () => void;
   onOpenFullPage?: () => void;
@@ -47,6 +45,10 @@ export function DocumentSurface({
   projectPath: string;
   spaceId: string | null;
   spacePath: string;
+  renderToolbarActions?: (actions: {
+    onClose(): void;
+    onOpenFullPage(): void;
+  }) => ReactNode;
 }) {
   const target = useMemo<DocumentTarget>(
     () => ({
@@ -68,19 +70,22 @@ export function DocumentSurface({
         onOpenFullPage();
       }
     : undefined;
+  const toolbarActions =
+    renderToolbarActions && onClose && openFullPage
+      ? renderToolbarActions({ onClose, onOpenFullPage: openFullPage })
+      : undefined;
 
   if (session.state.phase === "ready") {
     return (
       <PdfViewer
         externalOpenError={session.externalOpenError}
-        onClose={onClose}
         onOpenExternal={session.openExternal}
-        onOpenFullPage={openFullPage}
         onRenderError={session.reportRendererError}
         onViewStateChange={session.updateViewState}
         pdf={session.state.pdf}
         textIndex={session.state.textIndex}
         title={title}
+        toolbarActions={toolbarActions}
         viewState={session.viewState}
       />
     );
@@ -89,10 +94,9 @@ export function DocumentSurface({
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
       <DocumentFrameToolbar
-        onClose={onClose}
         onOpenExternal={session.openExternal}
-        onOpenFullPage={openFullPage}
         title={title}
+        toolbarActions={toolbarActions}
       />
       {session.state.phase === "loading" ? (
         <DocumentLoadingState progress={session.state.progress} />
@@ -122,15 +126,13 @@ export function DocumentSurface({
 }
 
 function DocumentFrameToolbar({
-  onClose,
   onOpenExternal,
-  onOpenFullPage,
   title,
+  toolbarActions,
 }: {
-  onClose?: () => void;
   onOpenExternal(): void;
-  onOpenFullPage?: () => void;
   title: string;
+  toolbarActions?: ReactNode;
 }) {
   return (
     <div className="flex shrink-0 items-center gap-2 border-b bg-background px-2 py-2">
@@ -144,33 +146,17 @@ function DocumentFrameToolbar({
       >
         {title}
       </div>
-      <Badge variant="secondary">{m.document_read_only_preview()}</Badge>
       <Button
         type="button"
-        size="sm"
-        variant="outline"
+        size="icon-sm"
+        variant="ghost"
         onClick={onOpenExternal}
+        aria-label={m.document_open_externally()}
+        title={m.document_open_externally()}
       >
-        <FolderOpen data-icon="inline-start" />
-        {m.document_open_externally()}
+        <FolderOpen />
       </Button>
-      {onOpenFullPage ? (
-        <Button
-          type="button"
-          size="sm"
-          variant="ghost"
-          onClick={onOpenFullPage}
-        >
-          <Maximize2 data-icon="inline-start" />
-          {m.attachments_full_page()}
-        </Button>
-      ) : null}
-      {onClose ? (
-        <Button type="button" size="icon-sm" variant="ghost" onClick={onClose}>
-          <X />
-          <span className="sr-only">{m.settings_cancel()}</span>
-        </Button>
-      ) : null}
+      {toolbarActions}
     </div>
   );
 }
@@ -181,7 +167,7 @@ function DocumentLoadingState({ progress }: { progress: number }) {
       className="flex min-h-0 flex-1 flex-col items-center justify-center gap-5 px-8 py-12"
       aria-label={m.document_loading()}
     >
-      <div className="w-full max-w-md space-y-4">
+      <div className="flex w-full max-w-md flex-col gap-4">
         <Skeleton className="mx-auto size-12 rounded-xl" />
         <Skeleton className="mx-auto h-5 w-48" />
         <Progress
@@ -221,20 +207,23 @@ function DocumentPasswordState({
         </EmptyDescription>
       </EmptyHeader>
       <EmptyContent>
-        <form className="w-full space-y-3" onSubmit={submit}>
-          <Field data-invalid={incorrect || undefined}>
-            <FieldLabel htmlFor="document-password">
-              {m.document_password_label()}
-            </FieldLabel>
-            <Input
-              id="document-password"
-              autoComplete="current-password"
-              autoFocus
-              type="password"
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
-            />
-          </Field>
+        <form className="flex w-full flex-col gap-3" onSubmit={submit}>
+          <FieldGroup>
+            <Field data-invalid={incorrect || undefined}>
+              <FieldLabel htmlFor="document-password">
+                {m.document_password_label()}
+              </FieldLabel>
+              <Input
+                id="document-password"
+                aria-invalid={incorrect || undefined}
+                autoComplete="current-password"
+                autoFocus
+                type="password"
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+              />
+            </Field>
+          </FieldGroup>
           <div className="flex justify-center gap-2">
             <Button type="submit" disabled={!password}>
               {m.document_password_submit()}
