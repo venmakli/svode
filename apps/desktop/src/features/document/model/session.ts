@@ -21,9 +21,13 @@ export class DocumentRuntimeSession {
   addDisposer(disposer: SessionDisposer) {
     if (this.signal.aborted) {
       void disposer();
-      return;
+      return () => undefined;
     }
     this.disposers.push(disposer);
+    return () => {
+      const index = this.disposers.indexOf(disposer);
+      if (index >= 0) this.disposers.splice(index, 1);
+    };
   }
 
   setPasswordHandler(handler: ((password: string) => void) | null) {

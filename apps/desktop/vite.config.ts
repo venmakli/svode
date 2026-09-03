@@ -54,6 +54,9 @@ export default defineConfig(async () => {
         "@": path.resolve(__dirname, "./src"),
       },
     },
+    optimizeDeps: {
+      exclude: ["@silurus/ooxml"],
+    },
     clearScreen: false,
     server: {
       port: 1420,

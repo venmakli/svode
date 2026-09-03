@@ -28,6 +28,7 @@ import {
   type DocumentFailure,
   type DocumentTarget,
 } from "../model/types";
+import { DocxViewer } from "../docx/docx-viewer";
 import { PdfViewer } from "../pdf/pdf-viewer";
 
 export function DocumentSurface({
@@ -76,6 +77,21 @@ export function DocumentSurface({
       : undefined;
 
   if (session.state.phase === "ready") {
+    if (session.state.format === "docx") {
+      return (
+        <DocxViewer
+          docx={session.state.docx}
+          externalOpenError={session.externalOpenError}
+          onOpenExternal={session.openExternal}
+          onRegisterRendererDisposer={session.registerRendererDisposer}
+          onRenderError={session.reportRendererError}
+          onViewStateChange={session.updateViewState}
+          title={title}
+          toolbarActions={toolbarActions}
+          viewState={session.viewState}
+        />
+      );
+    }
     return (
       <PdfViewer
         externalOpenError={session.externalOpenError}

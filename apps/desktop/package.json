@@ -73,6 +73,7 @@
     "@radix-ui/react-popover": "^1.1.15",
     "@radix-ui/react-toolbar": "^1.1.11",
     "@radix-ui/react-tooltip": "^1.2.8",
+    "@silurus/ooxml": "^0.85.1",
     "@streamdown/code": "^1.1.1",
     "@svode/core": "workspace:*",
     "@svode/ui": "workspace:*",

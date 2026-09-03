@@ -1,4 +1,5 @@
 import type { PDFDocumentProxy } from "pdfjs-dist";
+import type { DocxDocument } from "@silurus/ooxml/docx";
 
 export type DocumentFormat =
   | "pdf"
@@ -54,12 +55,19 @@ export interface PdfTextIndex {
   truncated: boolean;
 }
 
-export type PdfZoomMode = "custom" | "page" | "width";
+export interface DocxTextIndex {
+  text: string;
+  complete: boolean;
+  truncated: boolean;
+}
+
+export type DocumentZoomMode = "custom" | "page" | "width";
+export type PdfZoomMode = DocumentZoomMode;
 
 export interface DocumentViewState {
   pageNumber: number;
   zoom: number;
-  zoomMode: PdfZoomMode;
+  zoomMode: DocumentZoomMode;
   rotation: 0 | 90 | 180 | 270;
   thumbnailsOpen: boolean;
   findQuery: string;
@@ -78,12 +86,20 @@ export const DEFAULT_DOCUMENT_VIEW_STATE: DocumentViewState = {
 
 export type DocumentSessionState =
   | { phase: "loading"; progress: number }
-  | { phase: "password"; incorrect: boolean }
+  | { phase: "password"; format: "pdf" | "docx"; incorrect: boolean }
   | {
       phase: "ready";
+      format: "pdf";
       descriptor: DocumentSourceDescriptor;
       pdf: PDFDocumentProxy;
       textIndex: PdfTextIndex;
+    }
+  | {
+      phase: "ready";
+      format: "docx";
+      descriptor: DocumentSourceDescriptor;
+      docx: DocxDocument;
+      textIndex: DocxTextIndex;
     }
   | { phase: "failed"; failure: DocumentFailure };
 
@@ -114,7 +130,7 @@ export function documentFormatFromPath(path: string): DocumentFormat | null {
 }
 
 export function documentHasInlinePreview(format: DocumentFormat) {
-  return format === "pdf";
+  return format === "pdf" || format === "docx";
 }
 
 export function normalizeRuntimePath(value: string) {

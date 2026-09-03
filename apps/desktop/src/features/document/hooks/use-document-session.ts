@@ -20,6 +20,13 @@ import {
   type DocumentViewState,
 } from "../model/types";
 import {
+  DocxPasswordFailure,
+  DocxRuntimeFailure,
+  isDocxAbortError,
+  openDocxDocument,
+} from "../docx/docx-runtime";
+import { extractDocxText } from "../docx/docx-text-index";
+import {
   isAbortError,
   openPdfDocument,
   PdfRuntimeFailure,
@@ -74,6 +81,48 @@ export function useDocumentSession(target: DocumentTarget) {
         );
         if (session.signal.aborted) return;
         setState({ phase: "loading", progress: 0.35 });
+        if (descriptor.format === "docx") {
+          const loadDocx = async (password?: string) => {
+            if (session.signal.aborted) return;
+            setState({ phase: "loading", progress: 0.35 });
+            try {
+              const docx = await openDocxDocument({
+                bytes,
+                onLoading: (progress) => {
+                  if (!session.signal.aborted) {
+                    setState({ phase: "loading", progress });
+                  }
+                },
+                password,
+                session,
+              });
+              if (session.signal.aborted) return;
+              session.setPasswordHandler(null);
+              setState({
+                descriptor,
+                docx,
+                format: "docx",
+                phase: "ready",
+                textIndex: extractDocxText(docx.document),
+              });
+            } catch (error) {
+              if (session.signal.aborted || isDocxAbortError(error)) return;
+              if (error instanceof DocxPasswordFailure) {
+                setState({
+                  format: "docx",
+                  incorrect: error.incorrect,
+                  phase: "password",
+                });
+                return;
+              }
+              setState({ failure: failureFromError(error), phase: "failed" });
+            }
+          };
+          session.setPasswordHandler((password) => void loadDocx(password));
+          await loadDocx();
+          return;
+        }
+
         const pdf = await openPdfDocument({
           bytes,
           onLoading: (progress) => {
@@ -83,18 +132,26 @@ export function useDocumentSession(target: DocumentTarget) {
           },
           onPassword: (incorrect) => {
             if (!session.signal.aborted) {
-              setState({ incorrect, phase: "password" });
+              setState({ format: "pdf", incorrect, phase: "password" });
             }
           },
           session,
         });
         if (session.signal.aborted) return;
         const initialIndex = { complete: false, pages: [], truncated: false };
-        setState({ descriptor, pdf, phase: "ready", textIndex: initialIndex });
+        setState({
+          descriptor,
+          format: "pdf",
+          pdf,
+          phase: "ready",
+          textIndex: initialIndex,
+        });
         void extractPdfText(pdf, session.signal, (textIndex) => {
           if (session.signal.aborted) return;
           setState((current) =>
-            current.phase === "ready" && current.pdf === pdf
+            current.phase === "ready" &&
+            current.format === "pdf" &&
+            current.pdf === pdf
               ? { ...current, textIndex }
               : current,
           );
@@ -171,10 +228,20 @@ export function useDocumentSession(target: DocumentTarget) {
     setState({ failure: failureFromError(error), phase: "failed" });
   }, []);
 
+  const registerRendererDisposer = useCallback((disposer: () => void) => {
+    const session = sessionRef.current;
+    if (!session) {
+      disposer();
+      return () => undefined;
+    }
+    return session.addDisposer(disposer);
+  }, []);
+
   return {
     externalOpenError,
     openExternal,
     prepareFullPageHandoff,
+    registerRendererDisposer,
     reportRendererError,
     retry: () => setRetryKey((key) => key + 1),
     state,
@@ -185,11 +252,14 @@ export function useDocumentSession(target: DocumentTarget) {
   };
 }
 
-function failureFromError(error: unknown): DocumentFailure {
-  if (isDocumentFailure(error)) return error;
+export function failureFromError(error: unknown): DocumentFailure {
   if (error instanceof PdfRuntimeFailure) {
     return { detail: error.message, kind: error.kind };
   }
+  if (error instanceof DocxRuntimeFailure) {
+    return { detail: error.message, kind: error.kind };
+  }
+  if (isDocumentFailure(error)) return error;
   return {
     detail: error instanceof Error ? error.message : String(error),
     kind: "renderer_error",

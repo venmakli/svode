@@ -1636,14 +1636,14 @@
   "document_loading": "Загрузка предпросмотра документа",
   "document_loading_progress": "Прогресс загрузки документа",
   "document_password_title": "Требуется пароль",
-  "document_password_description": "Введите пароль PDF, чтобы продолжить безопасный предпросмотр.",
-  "document_password_incorrect": "Этот пароль не открыл PDF. Попробуйте ещё раз.",
-  "document_password_label": "Пароль PDF",
+  "document_password_description": "Введите пароль документа, чтобы продолжить безопасный предпросмотр.",
+  "document_password_incorrect": "Этот пароль не открыл документ. Попробуйте ещё раз.",
+  "document_password_label": "Пароль документа",
   "document_password_submit": "Открыть предпросмотр",
   "document_external_only_title": "Для этого формата нет предпросмотра",
   "document_external_only_description": "Исходный файл не изменяется — его можно открыть в системном приложении.",
-  "document_malformed_title": "Не удалось прочитать PDF",
-  "document_malformed_description": "Файл повреждён или использует данные PDF, которые безопасный viewer не может декодировать.",
+  "document_malformed_title": "Не удалось прочитать документ",
+  "document_malformed_description": "Файл повреждён или использует данные, которые безопасный viewer не может декодировать.",
   "document_resource_limit_title": "Документ слишком большой для предпросмотра",
   "document_resource_limit_description": "Предпросмотр остановлен на безопасном лимите. Исходный файл не изменён.",
   "document_source_changed_title": "Документ изменился",
@@ -1669,5 +1669,6 @@
   "document_previous_result": "Предыдущее совпадение",
   "document_next_result": "Следующее совпадение",
   "document_pdf_viewport": "Предпросмотр PDF",
-  "document_pdf_pages": "Страницы PDF"
+  "document_pdf_pages": "Страницы PDF",
+  "document_docx_viewport": "Предпросмотр документа DOCX"
 }

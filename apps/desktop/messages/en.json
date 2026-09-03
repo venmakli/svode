@@ -1636,14 +1636,14 @@
   "document_loading": "Loading document preview",
   "document_loading_progress": "Document loading progress",
   "document_password_title": "Password required",
-  "document_password_description": "Enter the PDF password to continue the read-only preview.",
-  "document_password_incorrect": "That password did not unlock the PDF. Try again.",
-  "document_password_label": "PDF password",
+  "document_password_description": "Enter the document password to continue the read-only preview.",
+  "document_password_incorrect": "That password did not unlock the document. Try again.",
+  "document_password_label": "Document password",
   "document_password_submit": "Unlock preview",
   "document_external_only_title": "Preview is not available for this format",
   "document_external_only_description": "The source stays unchanged and can be opened with a system application.",
-  "document_malformed_title": "This PDF could not be read",
-  "document_malformed_description": "The file is malformed or uses PDF data the safe preview cannot decode.",
+  "document_malformed_title": "This document could not be read",
+  "document_malformed_description": "The file is malformed or uses data the safe preview cannot decode.",
   "document_resource_limit_title": "This document is too large to preview",
   "document_resource_limit_description": "The preview stopped at a safety limit. The original file is unchanged.",
   "document_source_changed_title": "This document changed",
@@ -1669,5 +1669,6 @@
   "document_previous_result": "Previous result",
   "document_next_result": "Next result",
   "document_pdf_viewport": "PDF document preview",
-  "document_pdf_pages": "PDF pages"
+  "document_pdf_pages": "PDF pages",
+  "document_docx_viewport": "DOCX document preview"
 }

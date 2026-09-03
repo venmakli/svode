@@ -58,3 +58,31 @@ test("repeated open and close leaves every runtime session destroyed", async () 
   }
   expect(sessions.every((session) => session.signal.aborted)).toBe(true);
 });
+
+test("session destroys a renderer before its borrowed document", async () => {
+  const session = new DocumentRuntimeSession(1, "space\0brief.docx");
+  const order: string[] = [];
+  session.addDisposer(() => {
+    order.push("document");
+  });
+  session.addDisposer(() => {
+    order.push("viewer");
+  });
+
+  await session.destroy();
+
+  expect(order).toEqual(["viewer", "document"]);
+});
+
+test("a renderer can unregister after local unmount", async () => {
+  const session = new DocumentRuntimeSession(1, "space\0brief.docx");
+  let destroyed = 0;
+  const unregister = session.addDisposer(() => {
+    destroyed += 1;
+  });
+
+  unregister();
+  await session.destroy();
+
+  expect(destroyed).toBe(0);
+});
