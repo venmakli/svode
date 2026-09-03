@@ -1670,5 +1670,12 @@
   "document_next_result": "Next result",
   "document_pdf_viewport": "PDF document preview",
   "document_pdf_pages": "PDF pages",
-  "document_docx_viewport": "DOCX document preview"
+  "document_docx_viewport": "DOCX document preview",
+  "document_xlsx_viewport": "Spreadsheet preview. Use Arrow keys to move between cells and Enter to move down.",
+  "document_xlsx_sheet_tabs": "Workbook sheets",
+  "document_xlsx_cell_value": "Value",
+  "document_xlsx_cell_formula": "Formula",
+  "document_xlsx_select_cell": "Select a cell to inspect its displayed value and source formula.",
+  "document_xlsx_empty_cell": "Empty cell",
+  "document_xlsx_canvas_fallback": "Spreadsheet preview requires canvas support."
 }

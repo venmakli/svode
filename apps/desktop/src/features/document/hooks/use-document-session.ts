@@ -27,6 +27,13 @@ import {
 } from "../docx/docx-runtime";
 import { extractDocxText } from "../docx/docx-text-index";
 import {
+  isXlsxAbortError,
+  openXlsxWorkbook,
+  XlsxPasswordFailure,
+  XlsxRuntimeFailure,
+} from "../xlsx/xlsx-runtime";
+import { extractXlsxText } from "../xlsx/xlsx-text-index";
+import {
   isAbortError,
   openPdfDocument,
   PdfRuntimeFailure,
@@ -81,6 +88,64 @@ export function useDocumentSession(target: DocumentTarget) {
         );
         if (session.signal.aborted) return;
         setState({ phase: "loading", progress: 0.35 });
+        if (descriptor.format === "xlsx") {
+          const loadXlsx = async (password?: string) => {
+            if (session.signal.aborted) return;
+            setState({ phase: "loading", progress: 0.35 });
+            try {
+              const workbook = await openXlsxWorkbook({
+                bytes,
+                onLoading: (progress) => {
+                  if (!session.signal.aborted) {
+                    setState({ phase: "loading", progress });
+                  }
+                },
+                password,
+                session,
+              });
+              if (session.signal.aborted) return;
+              session.setPasswordHandler(null);
+              setState({
+                descriptor,
+                format: "xlsx",
+                phase: "ready",
+                textIndex: {
+                  cells: [],
+                  complete: false,
+                  sheetNames: workbook.sheetNames,
+                  truncated: false,
+                },
+                workbook,
+              });
+              void extractXlsxText(workbook, session.signal)
+                .then((textIndex) => {
+                  if (session.signal.aborted) return;
+                  setState((current) =>
+                    current.phase === "ready" &&
+                    current.format === "xlsx" &&
+                    current.workbook === workbook
+                      ? { ...current, textIndex }
+                      : current,
+                  );
+                })
+                .catch(() => undefined);
+            } catch (error) {
+              if (session.signal.aborted || isXlsxAbortError(error)) return;
+              if (error instanceof XlsxPasswordFailure) {
+                setState({
+                  format: "xlsx",
+                  incorrect: error.incorrect,
+                  phase: "password",
+                });
+                return;
+              }
+              setState({ failure: failureFromError(error), phase: "failed" });
+            }
+          };
+          session.setPasswordHandler((password) => void loadXlsx(password));
+          await loadXlsx();
+          return;
+        }
         if (descriptor.format === "docx") {
           const loadDocx = async (password?: string) => {
             if (session.signal.aborted) return;
@@ -257,6 +322,9 @@ export function failureFromError(error: unknown): DocumentFailure {
     return { detail: error.message, kind: error.kind };
   }
   if (error instanceof DocxRuntimeFailure) {
+    return { detail: error.message, kind: error.kind };
+  }
+  if (error instanceof XlsxRuntimeFailure) {
     return { detail: error.message, kind: error.kind };
   }
   if (isDocumentFailure(error)) return error;

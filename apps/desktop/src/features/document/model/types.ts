@@ -1,5 +1,6 @@
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import type { DocxDocument } from "@silurus/ooxml/docx";
+import type { XlsxSelectionState, XlsxWorkbook } from "@silurus/ooxml/xlsx";
 
 export type DocumentFormat =
   | "pdf"
@@ -61,11 +62,28 @@ export interface DocxTextIndex {
   truncated: boolean;
 }
 
+export interface XlsxTextCell {
+  sheetIndex: number;
+  sheetName: string;
+  cellRef: string;
+  displayValue: string;
+  formula?: string;
+}
+
+export interface XlsxTextIndex {
+  sheetNames: readonly string[];
+  cells: readonly XlsxTextCell[];
+  complete: boolean;
+  truncated: boolean;
+}
+
 export type DocumentZoomMode = "custom" | "page" | "width";
 export type PdfZoomMode = DocumentZoomMode;
 
 export interface DocumentViewState {
   pageNumber: number;
+  sheetIndex: number;
+  spreadsheetSelection: XlsxSelectionState | null;
   zoom: number;
   zoomMode: DocumentZoomMode;
   rotation: 0 | 90 | 180 | 270;
@@ -78,6 +96,8 @@ export const DEFAULT_DOCUMENT_VIEW_STATE: DocumentViewState = {
   activeFindIndex: 0,
   findQuery: "",
   pageNumber: 1,
+  sheetIndex: 0,
+  spreadsheetSelection: null,
   rotation: 0,
   thumbnailsOpen: true,
   zoom: 1,
@@ -86,7 +106,11 @@ export const DEFAULT_DOCUMENT_VIEW_STATE: DocumentViewState = {
 
 export type DocumentSessionState =
   | { phase: "loading"; progress: number }
-  | { phase: "password"; format: "pdf" | "docx"; incorrect: boolean }
+  | {
+      phase: "password";
+      format: "pdf" | "docx" | "xlsx";
+      incorrect: boolean;
+    }
   | {
       phase: "ready";
       format: "pdf";
@@ -100,6 +124,13 @@ export type DocumentSessionState =
       descriptor: DocumentSourceDescriptor;
       docx: DocxDocument;
       textIndex: DocxTextIndex;
+    }
+  | {
+      phase: "ready";
+      format: "xlsx";
+      descriptor: DocumentSourceDescriptor;
+      workbook: XlsxWorkbook;
+      textIndex: XlsxTextIndex;
     }
   | { phase: "failed"; failure: DocumentFailure };
 
@@ -130,7 +161,7 @@ export function documentFormatFromPath(path: string): DocumentFormat | null {
 }
 
 export function documentHasInlinePreview(format: DocumentFormat) {
-  return format === "pdf" || format === "docx";
+  return format === "pdf" || format === "docx" || format === "xlsx";
 }
 
 export function normalizeRuntimePath(value: string) {

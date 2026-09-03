@@ -30,6 +30,7 @@ import {
 } from "../model/types";
 import { DocxViewer } from "../docx/docx-viewer";
 import { PdfViewer } from "../pdf/pdf-viewer";
+import { XlsxViewer } from "../xlsx/xlsx-viewer";
 
 export function DocumentSurface({
   onClose,
@@ -77,6 +78,21 @@ export function DocumentSurface({
       : undefined;
 
   if (session.state.phase === "ready") {
+    if (session.state.format === "xlsx") {
+      return (
+        <XlsxViewer
+          externalOpenError={session.externalOpenError}
+          onOpenExternal={session.openExternal}
+          onRegisterRendererDisposer={session.registerRendererDisposer}
+          onRenderError={session.reportRendererError}
+          onViewStateChange={session.updateViewState}
+          title={title}
+          toolbarActions={toolbarActions}
+          viewState={session.viewState}
+          workbook={session.state.workbook}
+        />
+      );
+    }
     if (session.state.format === "docx") {
       return (
         <DocxViewer

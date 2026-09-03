@@ -1670,5 +1670,12 @@
   "document_next_result": "Следующее совпадение",
   "document_pdf_viewport": "Предпросмотр PDF",
   "document_pdf_pages": "Страницы PDF",
-  "document_docx_viewport": "Предпросмотр документа DOCX"
+  "document_docx_viewport": "Предпросмотр документа DOCX",
+  "document_xlsx_viewport": "Предпросмотр таблицы. Используйте клавиши со стрелками для перемещения между ячейками и Enter для перехода вниз.",
+  "document_xlsx_sheet_tabs": "Листы книги",
+  "document_xlsx_cell_value": "Значение",
+  "document_xlsx_cell_formula": "Формула",
+  "document_xlsx_select_cell": "Выберите ячейку, чтобы увидеть отображаемое значение и исходную формулу.",
+  "document_xlsx_empty_cell": "Пустая ячейка",
+  "document_xlsx_canvas_fallback": "Для предпросмотра таблицы требуется поддержка canvas."
 }
