@@ -16,6 +16,7 @@ export interface SpaceInfo {
   path: string;
   hasSpaces: boolean;
   hasSchema: boolean;
+  hasApp?: boolean;
   lastOpened: string | null;
   status: SpaceStatus;
   lfsState: LfsState;
@@ -29,8 +30,9 @@ export interface TreeNode {
   description?: string | null;
   has_changes: boolean;
   has_schema: boolean;
+  has_app?: boolean;
   parent?: string | null;
-  kind?: "page" | "folder" | "collection";
+  kind?: "page" | "folder" | "collection" | "app";
   source_shape?: "file" | "directory";
   hasChildren?: boolean;
   has_children?: boolean;

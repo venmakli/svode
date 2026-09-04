@@ -17,7 +17,6 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { probeDocumentTarget } from "@/features/document";
 import { probeMediaTarget } from "@/features/media";
-import { probeMarkedApp } from "../api/probe-app-marker";
 import { useArtifactResolution } from "../hooks/use-artifact-resolution";
 import { ArtifactRegistry } from "../model/registry";
 import type {
@@ -132,14 +131,8 @@ async function loadMediaSurface(): Promise<{
 
 const MediaArtifactSurface = lazy(loadMediaSurface);
 
-function createFirstPartyArtifactRegistry(spacePath: string) {
+function createFirstPartyArtifactRegistry() {
   return new ArtifactRegistry<ArtifactSurfaceComponent>([
-    {
-      id: "app",
-      order: 100,
-      capabilities: {},
-      probe: (target) => probeMarkedApp(target, spacePath),
-    },
     {
       id: "document",
       order: 150,
@@ -183,10 +176,7 @@ export function ArtifactSurface({
   pageSessionKey,
   retainSurfaceDuringRetarget = false,
 }: ArtifactSurfaceProps) {
-  const registry = useMemo(
-    () => createFirstPartyArtifactRegistry(spacePath),
-    [spacePath],
-  );
+  const registry = useMemo(() => createFirstPartyArtifactRegistry(), []);
   const resolution = useArtifactResolution(registry, request, {
     retainPreviousResolution: retainSurfaceDuringRetarget,
   });

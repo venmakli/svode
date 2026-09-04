@@ -209,6 +209,14 @@ pub fn has_schema_capability(path: &Path, status: SpaceStatus) -> bool {
     matches!(status, SpaceStatus::Ready) && crate::files::tree::has_direct_schema(path)
 }
 
+/// Return the App capability signal for a directory-backed Space.
+///
+/// Presence of the exact direct `app.yaml` marker is authoritative before
+/// parsing so an invalid declaration can recover inside the App surface.
+pub fn has_app_capability(path: &Path, status: SpaceStatus) -> bool {
+    matches!(status, SpaceStatus::Ready) && crate::apps::manifest::has_direct_app_manifest(path)
+}
+
 /// Register direct git submodules from an existing project as Svode spaces.
 ///
 /// This is intentionally conservative: nested submodule paths are skipped
@@ -308,6 +316,7 @@ pub fn create_space(
         path: system_path::user_facing_path(&space_dir),
         has_spaces: false,
         has_schema: has_schema_capability(&space_dir, SpaceStatus::Ready),
+        has_app: has_app_capability(&space_dir, SpaceStatus::Ready),
         last_opened: None,
         status: SpaceStatus::Ready,
         lfs_state: LfsState::NotApplicable,
@@ -356,6 +365,7 @@ pub fn register_cloned_space(
                 path: system_path::user_facing_path(&space_dir),
                 has_spaces: cfg.spaces.as_ref().map(|s| !s.is_empty()).unwrap_or(false),
                 has_schema: has_schema_capability(&space_dir, SpaceStatus::Ready),
+                has_app: has_app_capability(&space_dir, SpaceStatus::Ready),
                 last_opened: None,
                 status: SpaceStatus::Ready,
                 lfs_state: LfsState::NotApplicable,
@@ -379,6 +389,7 @@ pub fn register_cloned_space(
         path: system_path::user_facing_path(&space_dir),
         has_spaces: cfg.spaces.as_ref().map(|s| !s.is_empty()).unwrap_or(false),
         has_schema: has_schema_capability(&space_dir, SpaceStatus::Ready),
+        has_app: has_app_capability(&space_dir, SpaceStatus::Ready),
         last_opened: None,
         status: SpaceStatus::Ready,
         lfs_state: LfsState::NotApplicable,
@@ -453,6 +464,7 @@ pub fn list_spaces(parent_path: &Path) -> Result<Vec<SpaceInfo>, AppError> {
                         .map(|s| !s.is_empty())
                         .unwrap_or(false),
                     has_schema: has_schema_capability(&space_path, status),
+                    has_app: has_app_capability(&space_path, status),
                     last_opened: None,
                     status,
                     lfs_state: LfsState::NotApplicable,
@@ -466,6 +478,7 @@ pub fn list_spaces(parent_path: &Path) -> Result<Vec<SpaceInfo>, AppError> {
                     path: system_path::user_facing_path(&space_path),
                     has_spaces: false,
                     has_schema: has_schema_capability(&space_path, status),
+                    has_app: has_app_capability(&space_path, status),
                     last_opened: None,
                     status,
                     lfs_state: LfsState::NotApplicable,

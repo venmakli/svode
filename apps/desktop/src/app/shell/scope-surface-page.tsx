@@ -7,6 +7,7 @@ import {
 } from "react";
 import { AgentContextSurface } from "@/features/agent-context";
 import { ActorsSurface } from "@/features/actors";
+import { appOwnerFromScopeOwner, AppSurface } from "@/features/apps";
 import {
   attachmentOwnerFromScopeOwner,
   AttachmentsSurface,
@@ -143,6 +144,9 @@ export function ScopeSurfacePage({
   const createContributions = useCallback(
     (readOnly: boolean) =>
       createScopeSurfaceContributions({
+        app: (context) => (
+          <AppSurface owner={appOwnerFromScopeOwner(context.owner)} />
+        ),
         attachments: (context) => (
           <AttachmentsSurface
             owner={attachmentOwnerFromScopeOwner(context.owner)}

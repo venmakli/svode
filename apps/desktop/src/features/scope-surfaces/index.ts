@@ -1,5 +1,6 @@
 export {
   createCollectionDirectoryOwner,
+  createAppDirectoryOwner,
   createRegisteredSpaceOwner,
 } from "./model/owners";
 export {

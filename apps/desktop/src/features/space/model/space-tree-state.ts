@@ -13,6 +13,7 @@ import {
   removeTreePath as removeTreePathPatch,
   treeRowParentPath,
   updateTreeFolderSchema,
+  updateTreeFolderApp,
   updateTreeNodeMeta,
   upsertTreeNode as upsertTreeNodePatch,
 } from "../lib/tree-patches";
@@ -29,6 +30,7 @@ import {
   type TreeParentCache,
   updateTreeNodeMetaInParents,
   updateTreeSchemaInParents,
+  updateTreeAppInParents,
   upsertTreeNodeInParent,
 } from "../lib/tree-cache";
 import {
@@ -108,6 +110,7 @@ export interface SpaceTreeState extends SpaceTreeDataState {
     folderPath: string,
     hasSchema: boolean,
   ) => void;
+  updateNodeApp: (spaceId: string, folderPath: string, hasApp: boolean) => void;
   markTreeDirty: (spaceId: string) => void;
   markTreeParentDirty: (spaceId: string, parentPath?: string | null) => void;
   loadExpandedPaths: (spaceId: string) => Promise<void>;
@@ -911,6 +914,46 @@ export function createSpaceTreeState<T extends SpaceTreeStoreState>(
         const tree = state.fileTrees[spaceId];
         if (!tree) return {};
         const next = updateTreeFolderSchema(tree, folderPath, hasSchema);
+        if (next === tree) return {};
+        return {
+          fileTrees: { ...state.fileTrees, [spaceId]: next },
+          treeCache: {
+            ...state.treeCache,
+            [spaceId]: { loadedAt: Date.now(), dirty: false },
+          },
+        };
+      });
+    },
+
+    updateNodeApp: (spaceId, folderPath, hasApp) => {
+      set((state) => {
+        const currentChildren = state.childrenByParentPath[spaceId];
+        if (currentChildren) {
+          const nextChildren = updateTreeAppInParents(
+            currentChildren,
+            folderPath,
+            hasApp,
+          );
+          if (!nextChildren || nextChildren === currentChildren) return {};
+          return {
+            childrenByParentPath: {
+              ...state.childrenByParentPath,
+              [spaceId]: nextChildren,
+            },
+            fileTrees: {
+              ...state.fileTrees,
+              [spaceId]: rebuildVisibleTree(state, spaceId, nextChildren),
+            },
+            treeCache: {
+              ...state.treeCache,
+              [spaceId]: { loadedAt: Date.now(), dirty: false },
+            },
+          };
+        }
+
+        const tree = state.fileTrees[spaceId];
+        if (!tree) return {};
+        const next = updateTreeFolderApp(tree, folderPath, hasApp);
         if (next === tree) return {};
         return {
           fileTrees: { ...state.fileTrees, [spaceId]: next },

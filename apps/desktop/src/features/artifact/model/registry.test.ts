@@ -32,22 +32,28 @@ test("uses deterministic priority instead of registration order", async () => {
       identity: { kind: "page", path: target.path, sourceShape: "directory" },
     };
   });
-  const app = adapter("app", 100, () => {
-    visited.push("app");
+  const document = adapter("document", 100, () => {
+    visited.push("document");
     return {
       status: "match",
-      identity: { kind: "app", path: target.path, sourceShape: "directory" },
+      identity: {
+        kind: "document",
+        path: target.path,
+        sourceShape: "directory",
+      },
     };
   });
-  const registry = new ArtifactRegistry([page, app]);
+  const registry = new ArtifactRegistry([page, document]);
 
   const result = await registry.resolve(target, new AbortController().signal);
 
-  expect(visited).toEqual(["app"]);
-  expect(result.status === "ready" ? result.identity.kind : null).toBe("app");
+  expect(visited).toEqual(["document"]);
+  expect(result.status === "ready" ? result.identity.kind : null).toBe(
+    "document",
+  );
 });
 
-test("invalid marker and probe failures stop Page fallback", async () => {
+test("probe failures stop lower-priority fallback", async () => {
   let pageProbes = 0;
   const page = adapter("page", 200, () => {
     pageProbes += 1;
@@ -57,11 +63,14 @@ test("invalid marker and probe failures stop Page fallback", async () => {
     };
   });
   const invalid = new ArtifactRegistry([
-    adapter("app", 100, () => ({ status: "error", reason: "invalid marker" })),
+    adapter("document", 100, () => ({
+      status: "error",
+      reason: "invalid source",
+    })),
     page,
   ]);
   const crashed = new ArtifactRegistry([
-    adapter("app", 100, () => {
+    adapter("document", 100, () => {
       throw new Error("probe failed");
     }),
     page,
@@ -69,12 +78,12 @@ test("invalid marker and probe failures stop Page fallback", async () => {
 
   expect(await invalid.resolve(target, new AbortController().signal)).toEqual({
     status: "error",
-    adapterId: "app",
-    reason: "invalid marker",
+    adapterId: "document",
+    reason: "invalid source",
   });
   expect(await crashed.resolve(target, new AbortController().signal)).toEqual({
     status: "error",
-    adapterId: "app",
+    adapterId: "document",
     reason: "probe failed",
   });
   expect(pageProbes).toBe(0);

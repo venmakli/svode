@@ -150,10 +150,15 @@ export function ScopeSurfaceHost({
     typeof header === "function" ? header(activeSurface.id) : header;
   const retainedReadme = readmeWasMountedRef.current && readmeSurface;
   const activeNonReadme = activeSurface.id === "readme" ? null : activeSurface;
+  const fillsAvailableSpace = activeSurface.fillAvailableSpace === true;
 
   return (
     <div
-      className="flex min-h-full flex-col"
+      className={
+        fillsAvailableSpace
+          ? "flex h-full min-h-0 flex-col"
+          : "flex min-h-full flex-col"
+      }
       aria-busy={surfaceTransitionPending}
       data-scope-surface-transition={
         surfaceTransitionPending ? "pending" : "idle"
@@ -192,11 +197,10 @@ export function ScopeSurfaceHost({
             }
           })();
         }}
+        fillAvailableSpace={fillsAvailableSpace}
       >
         <div
-          className={
-            surfaceTransitionPending ? "pointer-events-none" : undefined
-          }
+          className={`${fillsAvailableSpace ? "h-full min-h-0" : ""} ${surfaceTransitionPending ? "pointer-events-none" : ""}`}
         >
           {retainedReadme ? (
             <div hidden={activeSurface.id !== "readme"}>

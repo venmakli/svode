@@ -65,7 +65,12 @@ export function folderPathForNode(node: TreeNode): string | null {
   if (!path) return null;
   if (!path.endsWith(".md")) return path;
   if (isReadmeNodePath(path)) return dirname(path);
-  if (node.children.length > 0 || node.hasChildren || node.has_schema) {
+  if (
+    node.children.length > 0 ||
+    node.hasChildren ||
+    node.has_schema ||
+    node.has_app
+  ) {
     return dirname(path);
   }
   return null;
@@ -116,6 +121,7 @@ function mergeIncomingNode(existing: TreeNode, incoming: TreeNode): TreeNode {
   return {
     ...base,
     has_schema: existing.has_schema || incoming.has_schema,
+    has_app: existing.has_app || incoming.has_app,
     hasChildren: existing.hasChildren || incoming.hasChildren,
     children:
       existing.children.length > 0 ? existing.children : incoming.children,
@@ -294,6 +300,33 @@ export function updateTreeFolderSchema(
     description: null,
     has_changes: false,
     has_schema: true,
+    children: [],
+  });
+}
+
+export function updateTreeFolderApp(
+  nodes: TreeNode[],
+  folderPath: string,
+  hasApp: boolean,
+): TreeNode[] {
+  const normalized = normalizeTreePath(folderPath);
+  const next = replaceChild(
+    nodes,
+    (node) => folderPathForNode(node) === normalized,
+    (node) => ({ ...node, has_app: hasApp }),
+  );
+  if (next !== nodes || !hasApp || !normalized) return next;
+
+  return insertIntoParent(nodes, dirname(normalized), {
+    name: basename(normalized),
+    path: normalized,
+    title: basename(normalized),
+    icon: null,
+    description: null,
+    has_changes: false,
+    has_schema: false,
+    has_app: true,
+    kind: "app",
     children: [],
   });
 }

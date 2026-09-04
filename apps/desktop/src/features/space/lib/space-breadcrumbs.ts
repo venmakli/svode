@@ -3,7 +3,7 @@ import type { TreeNode } from "../model/types";
 export interface SpaceBreadcrumbSegment {
   label: string;
   path: string;
-  ownerKind: "collection" | null;
+  ownerKind: "collection" | "app-directory" | null;
 }
 
 function findNodeInTree(
@@ -38,19 +38,28 @@ export function buildSpaceBreadcrumbSegments(
     if (i < parts.length - 1) {
       const node = findNodeInTree(tree, cumPath);
       const isCollectionOwner = Boolean(node?.has_schema);
+      const isAppOwner = !isCollectionOwner && node?.kind === "app";
       segments.push({
         label: node?.title ?? part,
         path: isCollectionOwner
           ? cumPath
           : (node?.path ?? `${cumPath}/README.md`),
-        ownerKind: isCollectionOwner ? "collection" : null,
+        ownerKind: isCollectionOwner
+          ? "collection"
+          : isAppOwner
+            ? "app-directory"
+            : null,
       });
     } else {
       const node = findNodeInTree(tree, cumPath);
       segments.push({
         label: node?.title ?? part.replace(/\.md$/, ""),
         path: cumPath,
-        ownerKind: node?.has_schema ? "collection" : null,
+        ownerKind: node?.has_schema
+          ? "collection"
+          : node?.kind === "app"
+            ? "app-directory"
+            : null,
       });
     }
   }

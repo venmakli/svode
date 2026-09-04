@@ -56,6 +56,7 @@ function mergeTreeNode(existing: TreeNode, incoming: TreeNode): TreeNode {
   return {
     ...base,
     has_schema: existing.has_schema || incoming.has_schema,
+    has_app: existing.has_app || incoming.has_app,
     hasChildren: treeNodeHasChildren(existing) || treeNodeHasChildren(incoming),
     children: [],
   };
@@ -339,6 +340,49 @@ export function updateTreeSchemaInParents(
         hasChildren: Boolean(childrenByParentPath[normalized]?.length),
         parent: parentPath,
         kind: "collection",
+        children: [],
+      },
+    ];
+  });
+}
+
+export function updateTreeAppInParents(
+  childrenByParentPath: ChildrenByParentPath | undefined,
+  folderPath: string,
+  hasApp: boolean,
+): ChildrenByParentPath | undefined {
+  if (!childrenByParentPath) return childrenByParentPath;
+  const normalized = normalizeTreePath(folderPath);
+  const parentPath = dirname(normalized);
+
+  return mapParentChildren(childrenByParentPath, parentPath, (children) => {
+    let found = false;
+    const next = children.map((node) => {
+      if (treeParentKeyForNode(node) !== normalized) return node;
+      found = true;
+      return {
+        ...node,
+        has_app: hasApp,
+        hasChildren:
+          treeNodeHasChildren(node) ||
+          Boolean(childrenByParentPath[normalized]?.length),
+      };
+    });
+    if (found || !hasApp || !normalized) return next;
+    return [
+      ...next,
+      {
+        name: basename(normalized),
+        path: normalized,
+        title: basename(normalized),
+        icon: null,
+        description: null,
+        has_changes: false,
+        has_schema: false,
+        has_app: true,
+        hasChildren: Boolean(childrenByParentPath[normalized]?.length),
+        parent: parentPath,
+        kind: "app" as const,
         children: [],
       },
     ];

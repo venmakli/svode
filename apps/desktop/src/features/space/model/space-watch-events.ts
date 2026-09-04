@@ -3,7 +3,12 @@ export type SpaceFileEventName =
   | "file:changed"
   | "file:deleted";
 
-export type SpaceFileEventKind = "page" | "schema" | "folder" | "unknown";
+export type SpaceFileEventKind =
+  | "page"
+  | "schema"
+  | "app"
+  | "folder"
+  | "unknown";
 
 export interface SpaceFileEvent {
   space?: string;

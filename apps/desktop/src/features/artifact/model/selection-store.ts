@@ -85,13 +85,13 @@ function ownerTargetsEqual(left: ScopeOwnerTarget, right: ScopeOwnerTarget) {
   return (
     left.kind === right.kind &&
     left.spaceId === right.spaceId &&
-    (left.kind !== "collection" ||
-      (right.kind === "collection" && left.path === right.path))
+    (left.kind === "space" ||
+      (right.kind !== "space" && left.path === right.path))
   );
 }
 
 function ownerPath(owner: ScopeOwnerTarget): string | null {
-  return owner.kind === "collection" ? owner.path : null;
+  return owner.kind === "space" ? null : owner.path;
 }
 
 export function selectedContentPath(
@@ -180,7 +180,7 @@ export const useArtifactSelectionStore = create<ArtifactSelectionState>(
     openScopeOwner: (input, options) => {
       const state = get();
       const owner: ScopeOwnerTarget =
-        input.kind === "collection"
+        input.kind !== "space"
           ? { ...input, path: normalizeArtifactTargetPath(input.path) }
           : input;
       if (
@@ -216,7 +216,8 @@ export const useArtifactSelectionStore = create<ArtifactSelectionState>(
     retarget: (fromPath, inputPath, spaceId) =>
       set((state) => {
         const path = normalizeArtifactTargetPath(inputPath);
-        const targetSpaceId = spaceId ?? selectedContentSpaceId(state.selection);
+        const targetSpaceId =
+          spaceId ?? selectedContentSpaceId(state.selection);
         if (
           selectedContentPath(state.selection) !== fromPath ||
           selectedContentSpaceId(state.selection) !== targetSpaceId ||
@@ -241,7 +242,7 @@ export const useArtifactSelectionStore = create<ArtifactSelectionState>(
                   },
                 },
               }
-            : state.selection.request.owner.kind === "collection"
+            : state.selection.request.owner.kind !== "space"
               ? {
                   kind: "scope-owner",
                   request: {

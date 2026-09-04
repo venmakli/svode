@@ -1,9 +1,11 @@
 import { FileText } from "lucide-react";
 import { useCallback } from "react";
 import { ArtifactSurface } from "@/features/artifact/app-shell";
+import { AppSurface } from "@/features/apps";
 import { AttachmentsSurface } from "@/features/attachments";
 import {
   PageOwnerSurfaceProvider,
+  type PageAppSurfaceInput,
   type PageAttachmentsSurfaceInput,
 } from "@/features/page/owner-surface";
 import { useActiveContentSelection } from "@/features/artifact";
@@ -12,6 +14,7 @@ import { useSpace } from "@/features/space";
 import { EmptyProjectState } from "@/features/space/app-shell";
 import {
   createCollectionDirectoryOwner,
+  createAppDirectoryOwner,
   createRegisteredSpaceOwner,
   type ScopeOwnerKey,
 } from "@/features/scope-surfaces";
@@ -70,6 +73,19 @@ export function ActiveSpaceContent() {
     ),
     [],
   );
+  const renderPageApp = useCallback(
+    (pageOwner: PageAppSurfaceInput) => (
+      <AppSurface
+        owner={{
+          ownerPath: pageOwner.ownerPath,
+          projectPath: pageOwner.projectPath,
+          spaceId: pageOwner.spaceId,
+          spacePath: pageOwner.spacePath,
+        }}
+      />
+    ),
+    [],
+  );
   const artifactRequest =
     selection?.kind === "artifact" ? selection.request : null;
   const scopeOwnerRequest =
@@ -80,7 +96,8 @@ export function ActiveSpaceContent() {
     activeRootId;
   const selectedPath =
     artifactRequest?.intent.target.path ??
-    (scopeOwnerRequest?.owner.kind === "collection"
+    (scopeOwnerRequest?.owner.kind === "collection" ||
+    scopeOwnerRequest?.owner.kind === "app-directory"
       ? scopeOwnerRequest.owner.path
       : null);
   const tree = selectionSpaceId ? (fileTrees[selectionSpaceId] ?? []) : [];
@@ -112,6 +129,15 @@ export function ActiveSpaceContent() {
     (scopeOwnerRequest?.owner.kind === "collection" ||
       activeNodeSnapshot?.has_schema),
   );
+  const isAppOnlyOwner = Boolean(
+    selectedPath &&
+    activeSpace &&
+    selectionSpaceId &&
+    !isCollectionOwner &&
+    activeNodeSnapshot?.has_app === true &&
+    (scopeOwnerRequest?.owner.kind === "app-directory" ||
+      activeNodeSnapshot?.kind === "app"),
+  );
   const collectionSessionKey =
     scopeOwnerRequest?.key ?? selectedPath ?? "collection";
   const previousCollectionOwnerKey =
@@ -126,6 +152,7 @@ export function ActiveSpaceContent() {
     activePathRetarget.path === selectedPath &&
     activePathRetarget.spaceId === selectionSpaceId,
   );
+  const appSessionKey = scopeOwnerRequest?.key ?? selectedPath ?? "app";
 
   const activeContent =
     isCollectionOwner &&
@@ -142,6 +169,7 @@ export function ActiveSpaceContent() {
           ownerPath: collectionOwnerPath(selectedPath),
           status: activeSpace.status,
           hasSchema: true,
+          hasApp: activeNodeSnapshot?.has_app === true,
         })}
         presentation="full"
         routeState={collectionRouteState}
@@ -150,8 +178,32 @@ export function ActiveSpaceContent() {
         previousOwnerKey={previousCollectionOwnerKey}
         sessionKey={collectionSessionKey}
       />
+    ) : isAppOnlyOwner &&
+      activeSpace &&
+      selectionSpaceId &&
+      activeRootPath &&
+      selectedPath ? (
+      <ScopeSurfacePage
+        key={`app-session:${selectionSpaceId}:${appSessionKey}`}
+        owner={createAppDirectoryOwner({
+          spaceId: selectionSpaceId,
+          spacePath: activeSpace.path,
+          projectPath: activeRootPath,
+          ownerPath: collectionOwnerPath(selectedPath),
+          status: activeSpace.status,
+          hasApp: true,
+        })}
+        presentation="full"
+        openIntent={scopeOwnerRequest?.intent}
+        openRequestKey={scopeOwnerRequest?.key}
+        sessionKey={appSessionKey}
+      />
     ) : artifactRequest && activeSpace && selectionSpaceId ? (
-      <PageOwnerSurfaceProvider renderAttachments={renderPageAttachments}>
+      <PageOwnerSurfaceProvider
+        hasApp={activeNodeSnapshot?.has_app === true}
+        renderApp={renderPageApp}
+        renderAttachments={renderPageAttachments}
+      >
         <ArtifactSurface
           request={artifactRequest}
           spacePath={activeSpace.path}
@@ -174,6 +226,7 @@ export function ActiveSpaceContent() {
         projectPath: activeRootPath,
         status: selectedScopeHome.status,
         hasSchema: selectedScopeHome.hasSchema,
+        hasApp: selectedScopeHome.hasApp,
       });
       return (
         <div className="relative flex h-full flex-col overflow-hidden">

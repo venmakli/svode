@@ -6,6 +6,7 @@ import {
 } from "./active-surface";
 import {
   createCollectionDirectoryOwner,
+  createAppDirectoryOwner,
   createRegisteredSpaceOwner,
 } from "./owners";
 
@@ -55,4 +56,16 @@ test("uses readme for a registered space and collection for a collection owner",
       }),
     ),
   ).toBe("collection");
+  expect(
+    resolveDefaultScopeSurface(
+      createAppDirectoryOwner({
+        spaceId: "root",
+        projectPath: "/repo",
+        spacePath: "/repo",
+        ownerPath: "dashboard",
+        status: "ready",
+        hasApp: true,
+      }),
+    ),
+  ).toBe("app");
 });

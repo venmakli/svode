@@ -6,6 +6,7 @@ interface RegisteredSpaceOwnerInput {
   projectPath: string;
   status: "ready" | "missing" | "broken";
   hasSchema: boolean;
+  hasApp?: boolean;
 }
 
 interface CollectionDirectoryOwnerInput {
@@ -15,6 +16,16 @@ interface CollectionDirectoryOwnerInput {
   ownerPath: string;
   status: "ready" | "missing" | "broken";
   hasSchema: boolean;
+  hasApp?: boolean;
+}
+
+interface AppDirectoryOwnerInput {
+  spaceId: string;
+  spacePath: string;
+  projectPath: string;
+  ownerPath: string;
+  status: "ready" | "missing" | "broken";
+  hasApp: boolean;
 }
 
 export function createRegisteredSpaceOwner(
@@ -33,7 +44,11 @@ export function createRegisteredSpaceOwner(
     projectPath: input.projectPath,
     ownerPath: ".",
     readmePath: "README.md",
-    capabilities: input.hasSchema ? ["space", "collection"] : ["space"],
+    capabilities: [
+      "space",
+      ...(input.hasSchema ? (["collection"] as const) : []),
+      ...(input.hasApp ? (["app"] as const) : []),
+    ],
   };
 }
 
@@ -62,7 +77,36 @@ export function createCollectionDirectoryOwner(
     projectPath: input.projectPath,
     ownerPath,
     readmePath: `${ownerPath}/README.md`,
-    capabilities: ["collection"],
+    capabilities: ["collection", ...(input.hasApp ? (["app"] as const) : [])],
+  };
+}
+
+export function createAppDirectoryOwner(
+  input: AppDirectoryOwnerInput,
+): ScopeOwnerRef {
+  assertReadySpace(input.status);
+  if (!input.hasApp) {
+    throw new Error("App directory owners require a direct app.yaml");
+  }
+  assertIdentifier(input.spaceId, "spaceId");
+  assertAbsolutePath(input.projectPath, "projectPath");
+  assertAbsolutePath(input.spacePath, "spacePath");
+  const ownerPath = assertNormalizedOwnerPath(input.ownerPath);
+  if (ownerPath === ".") {
+    throw new Error(
+      "A root registered space must use registered-space identity",
+    );
+  }
+
+  return {
+    ownerKey: `app:${input.spaceId}:${ownerPath}`,
+    identityKind: "app-directory",
+    spaceId: input.spaceId,
+    spacePath: input.spacePath,
+    projectPath: input.projectPath,
+    ownerPath,
+    readmePath: `${ownerPath}/README.md`,
+    capabilities: ["app"],
   };
 }
 

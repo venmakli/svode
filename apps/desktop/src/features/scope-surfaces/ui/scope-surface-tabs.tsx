@@ -1,9 +1,4 @@
-import {
-  Tabs,
-  TabsContent,
-  TabsList,
-  TabsTrigger,
-} from "@/components/ui/tabs";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { detailPageToolbarClassName } from "@/shared/ui/page-layout";
 import type { ReactNode } from "react";
 import type { ScopeSurfaceContribution, ScopeSurfaceId } from "../model/types";
@@ -13,6 +8,7 @@ interface ScopeSurfaceTabsProps {
   value: ScopeSurfaceId;
   onValueChange: (surfaceId: ScopeSurfaceId) => void;
   children: ReactNode;
+  fillAvailableSpace?: boolean;
 }
 
 export function ScopeSurfaceTabs({
@@ -20,16 +16,17 @@ export function ScopeSurfaceTabs({
   value,
   onValueChange,
   children,
+  fillAvailableSpace = false,
 }: ScopeSurfaceTabsProps) {
   if (surfaces.length < 2) return children;
 
   return (
     <Tabs
       value={value}
-      onValueChange={(nextValue) =>
-        onValueChange(nextValue as ScopeSurfaceId)
+      onValueChange={(nextValue) => onValueChange(nextValue as ScopeSurfaceId)}
+      className={
+        fillAvailableSpace ? "flex min-h-0 flex-1 flex-col gap-0" : "gap-0"
       }
-      className="gap-0"
     >
       <div className={detailPageToolbarClassName}>
         <TabsList variant="line">
@@ -40,7 +37,12 @@ export function ScopeSurfaceTabs({
           ))}
         </TabsList>
       </div>
-      <TabsContent value={value} className="flex-none">
+      <TabsContent
+        value={value}
+        className={
+          fillAvailableSpace ? "min-h-0 flex-1 overflow-hidden" : "flex-none"
+        }
+      >
         {children}
       </TabsContent>
     </Tabs>

@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import {
   assertNormalizedOwnerPath,
+  createAppDirectoryOwner,
   createCollectionDirectoryOwner,
   createRegisteredSpaceOwner,
 } from "./owners";
@@ -38,6 +39,28 @@ test("collection directory owner uses normalized path in its transient key", () 
 
   expect(owner.ownerKey).toBe("collection:root:Команды/Design");
   expect(owner.readmePath).toBe("Команды/Design/README.md");
+});
+
+test("app-only directory owner keeps one path-owned identity", () => {
+  expect(
+    createAppDirectoryOwner({
+      spaceId: "root",
+      projectPath: "/repo",
+      spacePath: "/repo",
+      ownerPath: "tools/calculator",
+      status: "ready",
+      hasApp: true,
+    }),
+  ).toEqual({
+    ownerKey: "app:root:tools/calculator",
+    identityKind: "app-directory",
+    spaceId: "root",
+    projectPath: "/repo",
+    spacePath: "/repo",
+    ownerPath: "tools/calculator",
+    readmePath: "tools/calculator/README.md",
+    capabilities: ["app"],
+  });
 });
 
 test("normal host rejects unavailable spaces and unsafe owner paths", () => {

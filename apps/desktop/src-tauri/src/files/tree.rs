@@ -5,7 +5,7 @@ use std::io::{BufRead, BufReader};
 use std::path::Path;
 use std::time::Instant;
 
-use crate::artifact::app_marker::{AppMarkerProbe, probe_app_directory};
+use crate::apps::manifest::has_direct_app_manifest;
 use crate::artifact::identity::{MarkdownIdentityFacts, SourceShape, resolve_markdown_identity};
 use crate::error::AppError;
 use crate::files::frontmatter;
@@ -28,6 +28,8 @@ pub struct TreeNode {
     pub description: Option<String>,
     pub has_changes: bool,
     pub has_schema: bool,
+    #[serde(default)]
+    pub has_app: bool,
     pub kind: TreeChildKind,
     pub source_shape: SourceShape,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -41,6 +43,7 @@ pub enum TreeChildKind {
     Page,
     Folder,
     Collection,
+    App,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -52,6 +55,8 @@ pub struct TreeChildNode {
     pub description: Option<String>,
     pub has_changes: bool,
     pub has_schema: bool,
+    #[serde(default)]
+    pub has_app: bool,
     pub parent: Option<String>,
     #[serde(rename = "hasChildren")]
     pub has_children: bool,
@@ -63,13 +68,6 @@ pub struct TreeChildNode {
 
 fn is_readme_name(name: &str) -> bool {
     name.eq_ignore_ascii_case("readme.md")
-}
-
-fn app_marker_reserves_directory(base: &Path, directory: &Path) -> bool {
-    !matches!(
-        probe_app_directory(directory, base),
-        Ok(AppMarkerProbe::NoMatch)
-    )
 }
 
 /// Find a readme.md file inside a directory (case-insensitive).
@@ -403,6 +401,7 @@ fn read_dir_direct(
     } else {
         Some(parent_rel.to_string())
     };
+    let parent_has_app = has_direct_app_manifest(dir);
 
     for entry in entries {
         let name = entry.file_name().to_string_lossy().to_string();
@@ -438,12 +437,15 @@ fn read_dir_direct(
             let schema_rel = schema_path.strip_prefix(base).unwrap_or(&schema_path);
             let has_schema = has_direct_schema(&abs_path)
                 && !policy.is_ignored_rel(schema_rel, TreePathKind::File);
+            let app_path = abs_path.join("app.yaml");
+            let app_rel = app_path.strip_prefix(base).unwrap_or(&app_path);
+            let has_app = has_direct_app_manifest(&abs_path)
+                && !policy.is_ignored_rel(app_rel, TreePathKind::File);
             let readme = find_readme(base, &abs_path, policy);
-            let app_reserved =
-                !has_schema && readme.is_some() && app_marker_reserves_directory(base, &abs_path);
-            let (title, icon, description) = if app_reserved {
-                (name.clone(), None, None)
-            } else if let Some(ref readme_path) = readme {
+            if parent_has_app && !has_schema && !has_app && readme.is_none() {
+                continue;
+            }
+            let (title, icon, description) = if let Some(ref readme_path) = readme {
                 let (title, icon, description) = read_frontmatter_meta_head(readme_path);
                 if icon.is_none() && title.eq_ignore_ascii_case("readme") {
                     (name.clone(), None, None)
@@ -453,7 +455,7 @@ fn read_dir_direct(
             } else {
                 (name.clone(), None, None)
             };
-            let node_path = if !app_reserved && let Some(ref readme_path) = readme {
+            let node_path = if let Some(ref readme_path) = readme {
                 let readme_name = readme_path
                     .file_name()
                     .unwrap_or_default()
@@ -464,7 +466,7 @@ fn read_dir_direct(
             };
             let kind = if has_schema {
                 TreeChildKind::Collection
-            } else if readme.is_some() && !app_reserved {
+            } else if readme.is_some() {
                 debug_assert!(
                     resolve_markdown_identity(MarkdownIdentityFacts {
                         path: &node_path,
@@ -475,6 +477,8 @@ fn read_dir_direct(
                     .is_page()
                 );
                 TreeChildKind::Page
+            } else if has_app {
+                TreeChildKind::App
             } else {
                 TreeChildKind::Folder
             };
@@ -487,6 +491,7 @@ fn read_dir_direct(
                 description,
                 has_changes: false,
                 has_schema,
+                has_app,
                 parent: parent.clone(),
                 has_children: has_visible_direct_children(base, &abs_path, skip_dirs, policy)?,
                 kind,
@@ -512,6 +517,7 @@ fn read_dir_direct(
                 description,
                 has_changes: false,
                 has_schema: false,
+                has_app: false,
                 parent: parent.clone(),
                 has_children: false,
                 kind: TreeChildKind::Page,
@@ -531,6 +537,7 @@ fn has_visible_direct_children(
     skip_dirs: &HashSet<String>,
     policy: &TreeIgnorePolicy,
 ) -> Result<bool, AppError> {
+    let parent_has_app = has_direct_app_manifest(dir);
     for entry in fs::read_dir(dir)?.filter_map(|e| e.ok()) {
         let name = entry.file_name().to_string_lossy().to_string();
         let abs_path = entry.path();
@@ -557,7 +564,20 @@ fn has_visible_direct_children(
         }
 
         if meta.is_dir() {
-            if !skip_dirs.contains(&rel_path) {
+            let schema_path = abs_path.join("schema.yaml");
+            let app_path = abs_path.join("app.yaml");
+            let semantic_child = find_readme(base, &abs_path, policy).is_some()
+                || (has_direct_schema(&abs_path)
+                    && !policy.is_ignored_rel(
+                        schema_path.strip_prefix(base).unwrap_or(&schema_path),
+                        TreePathKind::File,
+                    ))
+                || (has_direct_app_manifest(&abs_path)
+                    && !policy.is_ignored_rel(
+                        app_path.strip_prefix(base).unwrap_or(&app_path),
+                        TreePathKind::File,
+                    ));
+            if !skip_dirs.contains(&rel_path) && (!parent_has_app || semantic_child) {
                 return Ok(true);
             }
         } else if meta.is_file() && name.ends_with(".md") && !is_readme_name(&name) {
@@ -609,6 +629,7 @@ fn read_dir_recursive(
     } else {
         repo_path_string(dir.strip_prefix(base).unwrap_or(dir))
     };
+    let parent_has_app = has_direct_app_manifest(dir);
 
     for entry in entries {
         let name = entry.file_name().to_string_lossy().to_string();
@@ -647,13 +668,16 @@ fn read_dir_recursive(
             let schema_rel = schema_path.strip_prefix(base).unwrap_or(&schema_path);
             let has_schema = has_direct_schema(&abs_path)
                 && !policy.is_ignored_rel(schema_rel, TreePathKind::File);
+            let app_path = abs_path.join("app.yaml");
+            let app_rel = app_path.strip_prefix(base).unwrap_or(&app_path);
+            let has_app = has_direct_app_manifest(&abs_path)
+                && !policy.is_ignored_rel(app_rel, TreePathKind::File);
             let readme = find_readme(base, &abs_path, policy);
-            let app_reserved =
-                !has_schema && readme.is_some() && app_marker_reserves_directory(base, &abs_path);
+            if parent_has_app && !has_schema && !has_app && readme.is_none() {
+                continue;
+            }
 
-            let (title, icon, description) = if app_reserved {
-                (name.clone(), None, None)
-            } else if let Some(ref rp) = readme {
+            let (title, icon, description) = if let Some(ref rp) = readme {
                 let (t, i, d) = read_frontmatter_meta(rp);
                 // If frontmatter missing, title falls back to "README" — use folder name instead
                 if i.is_none() && t.eq_ignore_ascii_case("readme") {
@@ -667,7 +691,7 @@ fn read_dir_recursive(
 
             // For document folders: path = "dir/README.md" (actual filename)
             // For bare folders: path = "dir" (no .md extension)
-            let node_path = if !app_reserved && let Some(ref rp) = readme {
+            let node_path = if let Some(ref rp) = readme {
                 let readme_name = rp.file_name().unwrap_or_default().to_string_lossy();
                 format!("{rel_path}/{readme_name}")
             } else {
@@ -689,10 +713,13 @@ fn read_dir_recursive(
                 description,
                 has_changes: false,
                 has_schema,
+                has_app,
                 kind: if has_schema {
                     TreeChildKind::Collection
-                } else if readme.is_some() && !app_reserved {
+                } else if readme.is_some() {
                     TreeChildKind::Page
+                } else if has_app {
+                    TreeChildKind::App
                 } else {
                     TreeChildKind::Folder
                 },
@@ -710,6 +737,7 @@ fn read_dir_recursive(
                 description,
                 has_changes: false,
                 has_schema: false,
+                has_app: false,
                 kind: TreeChildKind::Page,
                 source_shape: SourceShape::File,
                 name_conflict: None,
@@ -858,15 +886,15 @@ mod tests {
     }
 
     #[test]
-    fn marked_app_directory_with_readme_is_not_projected_as_a_page() {
+    fn app_capability_preserves_directory_backed_page_identity() {
         let tmp = TempDir::new().unwrap();
         write_doc(
             &tmp.path().join("dashboard").join("README.md"),
             "Dashboard docs",
         );
         fs::write(
-            tmp.path().join("dashboard").join("index.html"),
-            r#"<html><head><meta name="svode-app" content="1"></head></html>"#,
+            tmp.path().join("dashboard").join("app.yaml"),
+            "runtime:\n  type: static\n  publicRoot: public\n  entry: index.html\n",
         )
         .unwrap();
 
@@ -876,22 +904,23 @@ mod tests {
             .find(|node| node.name == "dashboard")
             .expect("dashboard");
 
-        assert_eq!(dashboard.path, "dashboard");
-        assert_eq!(dashboard.title, "dashboard");
-        assert_eq!(dashboard.kind, TreeChildKind::Folder);
+        assert_eq!(dashboard.path, "dashboard/README.md");
+        assert_eq!(dashboard.title, "Dashboard docs");
+        assert_eq!(dashboard.kind, TreeChildKind::Page);
+        assert!(dashboard.has_app);
         assert_eq!(dashboard.source_shape, SourceShape::Directory);
     }
 
     #[test]
-    fn invalid_app_marker_does_not_fall_back_to_page_projection() {
+    fn invalid_manifest_still_adds_capability_without_replacing_page() {
         let tmp = TempDir::new().unwrap();
         write_doc(
             &tmp.path().join("broken-app").join("README.md"),
             "Broken app docs",
         );
         fs::write(
-            tmp.path().join("broken-app").join("index.html"),
-            r#"<html><head><meta name="svode-app" content="2"></head></html>"#,
+            tmp.path().join("broken-app").join("app.yaml"),
+            "not: valid: yaml",
         )
         .unwrap();
 
@@ -901,26 +930,45 @@ mod tests {
             .find(|node| node.name == "broken-app")
             .expect("broken app");
 
-        assert_eq!(app.path, "broken-app");
-        assert_eq!(app.kind, TreeChildKind::Folder);
+        assert_eq!(app.path, "broken-app/README.md");
+        assert_eq!(app.kind, TreeChildKind::Page);
+        assert!(app.has_app);
     }
 
     #[test]
-    fn unmarked_index_keeps_the_existing_directory_backed_page_projection() {
+    fn app_only_directory_is_a_semantic_owner_and_hides_source_directories() {
         let tmp = TempDir::new().unwrap();
-        write_doc(&tmp.path().join("docs").join("README.md"), "Documentation");
-        fs::write(
-            tmp.path().join("docs").join("index.html"),
-            "<html><head><title>Docs</title></head></html>",
-        )
-        .unwrap();
+        let app = tmp.path().join("dashboard");
+        fs::create_dir_all(app.join("src/components")).unwrap();
+        fs::write(app.join("app.yaml"), "invalid").unwrap();
+        fs::write(app.join("src/main.ts"), "export {};").unwrap();
+        write_doc(&app.join("notes.md"), "Notes");
+        write_doc(&app.join("nested-page/README.md"), "Nested Page");
+        fs::create_dir_all(app.join("nested-app")).unwrap();
+        fs::write(app.join("nested-app/app.yaml"), "invalid").unwrap();
 
         let nodes = list_tree_children(tmp.path().to_str().unwrap(), None).expect("root");
-        let docs = nodes.iter().find(|node| node.name == "docs").expect("docs");
+        let dashboard = nodes
+            .iter()
+            .find(|node| node.name == "dashboard")
+            .expect("dashboard");
 
-        assert_eq!(docs.path, "docs/README.md");
-        assert_eq!(docs.title, "Documentation");
-        assert_eq!(docs.kind, TreeChildKind::Page);
+        assert_eq!(dashboard.path, "dashboard");
+        assert_eq!(dashboard.kind, TreeChildKind::App);
+        assert!(dashboard.has_app);
+        assert!(dashboard.has_children);
+
+        let children = list_tree_children(tmp.path().to_str().unwrap(), Some("dashboard"))
+            .expect("App children");
+        assert_eq!(
+            child_names_direct(&children),
+            vec![
+                "nested-app".to_string(),
+                "nested-page".to_string(),
+                "notes.md".to_string(),
+            ]
+        );
+        assert!(!child_names_direct(&children).contains(&"src".to_string()));
     }
 
     #[test]

@@ -118,15 +118,67 @@ test("nested schema events keep using the tree-node projection", async () => {
   expect(nestedUpdates).toEqual([["root", "tasks", true]]);
 });
 
+test("App marker events update root and nested capability without reading Pages", async () => {
+  const rootUpdates: Array<[string, boolean]> = [];
+  const nestedUpdates: Array<[string, string, boolean]> = [];
+  const store = createEventStore([], []);
+  store.patchSpaceAppCapability = (spaceId, hasApp) =>
+    rootUpdates.push([spaceId, hasApp]);
+  store.updateNodeApp = (spaceId, ownerPath, hasApp) =>
+    nestedUpdates.push([spaceId, ownerPath, hasApp]);
+  const readPage = async () => {
+    throw new Error("App marker events do not read Pages");
+  };
+
+  await applySpaceFileEvent({
+    eventName: "file:created",
+    getStore: () => store,
+    payload: { path: "app.yaml", kind: "app" },
+    readPage,
+    repairTree: () => undefined,
+    spaceId: "root",
+  });
+  await applySpaceFileEvent({
+    eventName: "file:created",
+    getStore: () => store,
+    payload: { path: "tools/app.yaml", kind: "app" },
+    readPage,
+    repairTree: () => undefined,
+    spaceId: "root",
+  });
+  await applySpaceFileEvent({
+    eventName: "file:deleted",
+    getStore: () => store,
+    payload: { path: "tools/app.yaml", kind: "app" },
+    readPage,
+    repairTree: () => undefined,
+    spaceId: "root",
+  });
+
+  expect(rootUpdates).toEqual([["root", true]]);
+  expect(nestedUpdates).toEqual([
+    ["root", "tools", true],
+    ["root", "tools", false],
+  ]);
+  expect(
+    repairParentPathForSpaceFileEvent({
+      path: "tools/app.yaml",
+      kind: "app",
+    }),
+  ).toBe("");
+});
+
 function createEventStore(
   rootUpdates: Array<[string, boolean]>,
   nestedUpdates: Array<[string, string, boolean]>,
 ): SpaceFileEventTreeStore {
   return {
+    patchSpaceAppCapability: () => undefined,
     patchSpaceSchemaCapability: (spaceId, hasSchema) =>
       rootUpdates.push([spaceId, hasSchema]),
     updateNodeSchema: (spaceId, ownerPath, hasSchema) =>
       nestedUpdates.push([spaceId, ownerPath, hasSchema]),
+    updateNodeApp: () => undefined,
     applyReadmeMeta: () => undefined,
     removeReadmeMeta: () => undefined,
     removeTreePath: () => undefined,

@@ -9,8 +9,17 @@ export interface PageAttachmentsSurfaceInput {
   spacePath: string;
 }
 
+export interface PageAppSurfaceInput {
+  ownerPath: string;
+  projectPath: string;
+  spaceId: string;
+  spacePath: string;
+}
+
 interface PageOwnerSurfaceContribution {
   renderAttachments(input: PageAttachmentsSurfaceInput): ReactNode;
+  hasApp?: boolean;
+  renderApp?(input: PageAppSurfaceInput): ReactNode;
 }
 
 const PageOwnerSurfaceContext =
@@ -18,12 +27,19 @@ const PageOwnerSurfaceContext =
 
 export function PageOwnerSurfaceProvider({
   children,
+  hasApp,
+  renderApp,
   renderAttachments,
 }: {
   children: ReactNode;
+  hasApp?: boolean;
+  renderApp?(input: PageAppSurfaceInput): ReactNode;
   renderAttachments(input: PageAttachmentsSurfaceInput): ReactNode;
 }) {
-  const value = useMemo(() => ({ renderAttachments }), [renderAttachments]);
+  const value = useMemo(
+    () => ({ hasApp, renderApp, renderAttachments }),
+    [hasApp, renderApp, renderAttachments],
+  );
   return (
     <PageOwnerSurfaceContext.Provider value={value}>
       {children}

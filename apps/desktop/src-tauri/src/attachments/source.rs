@@ -6,7 +6,6 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 
 use crate::AppError;
-use crate::artifact::app_marker::{AppMarkerProbe, probe_app_directory};
 use crate::artifact::identity::{
     ArtifactKind, MarkdownIdentityFacts, SourceShape, resolve_markdown_identity,
 };
@@ -189,12 +188,7 @@ pub(crate) fn resolve_attachment_owner(
             candidate.display()
         )));
     }
-    if has_direct_schema(&candidate)
-        || !matches!(
-            probe_app_directory(&candidate, &owner.space_path),
-            Ok(AppMarkerProbe::NoMatch)
-        )
-    {
+    if has_direct_schema(&candidate) {
         return Err(AppError::PathNotAccessible(format!(
             "path is not a directory-backed Page owner: {normalized}"
         )));
@@ -312,12 +306,6 @@ fn scan_direct_children(
 
         if metadata.is_dir() {
             if owner_has_schema || registered_spaces.contains(&name) || has_direct_schema(&path) {
-                continue;
-            }
-            if !matches!(
-                probe_app_directory(&path, owner_path),
-                Ok(AppMarkerProbe::NoMatch)
-            ) {
                 continue;
             }
             let Some(readme_path) = direct_readme(&path) else {
@@ -598,14 +586,15 @@ mod tests {
             "---\ntitle: Folder Page\n---\n",
         )
         .unwrap();
+        fs::write(root.join("folder-page/app.yaml"), "invalid").unwrap();
         fs::create_dir_all(root.join("collection")).unwrap();
         fs::write(root.join("collection/README.md"), "collection").unwrap();
         fs::write(root.join("collection/schema.yaml"), "columns: []").unwrap();
         fs::create_dir_all(root.join("bare")).unwrap();
         fs::create_dir_all(root.join("app")).unwrap();
         fs::write(
-            root.join("app/index.html"),
-            "<head><meta name=\"svode-app\" content=\"1\"></head>",
+            root.join("app/app.yaml"),
+            "runtime: { type: url, url: https://example.com }",
         )
         .unwrap();
 

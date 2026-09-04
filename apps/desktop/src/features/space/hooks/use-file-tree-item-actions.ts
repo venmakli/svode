@@ -45,6 +45,12 @@ export function useFileTreeItemActions({
       path,
       spaceId: targetSpaceId,
     });
+  const openAppOwner = (path: string, targetSpaceId: string) =>
+    openScopeOwner({
+      kind: "app-directory",
+      path,
+      spaceId: targetSpaceId,
+    });
   const activeContentPath = useActiveContentPath();
   const activeContentSpaceId = useActiveContentSpaceId();
   const {
@@ -71,14 +77,14 @@ export function useFileTreeItemActions({
     space?.path ?? (spaceId === activeRootId ? activeRootPath : null);
   const bareFolder = isBareFolder(node);
   const knownChildren = treeNodeHasChildren(node);
-  const expandable = bareFolder || knownChildren;
+  const expandable = node.has_app ? knownChildren : bareFolder || knownChildren;
   const childParentKey = treeParentKeyForNode(node);
   const childLoading = childParentKey
     ? (treeParentLoading[spaceId]?.[childParentKey] ?? false)
     : false;
   const isUnsaved = useEditorFilePendingWrite(spacePath, node.path);
   const isActive =
-    !bareFolder &&
+    (!bareFolder || node.has_app) &&
     activeContentPath === node.path &&
     activeContentSpaceId === spaceId;
   const expanded = expandedPaths[spaceId]?.includes(node.path) ?? false;
@@ -139,6 +145,7 @@ export function useFileTreeItemActions({
     onBeforeNavigation,
     openPage,
     openCollectionOwner,
+    openAppOwner,
     toggleExpanded,
   });
 

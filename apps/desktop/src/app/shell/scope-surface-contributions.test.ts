@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import {
   createCollectionDirectoryOwner,
+  createAppDirectoryOwner,
   createRegisteredSpaceOwner,
   resolveScopeSurfaceContributions,
 } from "@/features/scope-surfaces";
@@ -30,6 +31,14 @@ test("app registry exposes canonical Stage 7 surfaces for each owner", () => {
     status: "ready",
     hasSchema: true,
   });
+  const app = createAppDirectoryOwner({
+    spaceId: "root",
+    projectPath: "/repo",
+    spacePath: "/repo",
+    ownerPath: "dashboard",
+    status: "ready",
+    hasApp: true,
+  });
 
   expect(
     resolveScopeSurfaceContributions(contributions, hybridSpace, "full").map(
@@ -58,4 +67,9 @@ test("app registry exposes canonical Stage 7 surfaces for each owner", () => {
       ({ id }) => id,
     ),
   ).toEqual(["readme", "collection", "routines"]);
+  expect(
+    resolveScopeSurfaceContributions(contributions, app, "full").map(
+      ({ id }) => id,
+    ),
+  ).toEqual(["readme", "app"]);
 });

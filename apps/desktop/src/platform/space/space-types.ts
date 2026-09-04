@@ -37,6 +37,7 @@ export interface SpaceInfoDto {
   path: string;
   hasSpaces: boolean;
   hasSchema: boolean;
+  hasApp?: boolean;
   lastOpened: string | null;
   status: SpaceStatusDto;
   lfsState: LfsStateDto;

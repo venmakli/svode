@@ -1,6 +1,6 @@
 import type { ComponentType, ReactNode } from "react";
 
-export type ScopeCapability = "space" | "collection";
+export type ScopeCapability = "space" | "collection" | "app";
 
 export type ScopePresentation = "full" | "compact";
 
@@ -8,17 +8,19 @@ export type ScopeSurfaceId =
   | "readme"
   | "actors"
   | "attachments"
+  | "app"
   | "collection"
   | "routines"
   | "context";
 
 export type ScopeOwnerKey =
   | `space:${string}`
-  | `collection:${string}:${string}`;
+  | `collection:${string}:${string}`
+  | `app:${string}:${string}`;
 
 export interface ScopeOwnerRef {
   ownerKey: ScopeOwnerKey;
-  identityKind: "registered-space" | "collection-directory";
+  identityKind: "registered-space" | "collection-directory" | "app-directory";
   spaceId: string;
   spacePath: string;
   projectPath: string;
@@ -39,6 +41,7 @@ export interface ScopeSurfaceContribution {
   appliesTo: (owner: ScopeOwnerRef) => boolean;
   label: string;
   icon: ComponentType<{ className?: string }>;
+  fillAvailableSpace?: boolean;
   render: (context: ScopeSurfaceRenderContext) => ReactNode;
 }
 

@@ -70,6 +70,7 @@ export interface SpaceState extends SpaceTreeState {
     updates: { name?: string; icon?: string; description?: string },
   ) => void;
   patchSpaceSchemaCapability: (spaceId: string, hasSchema: boolean) => void;
+  patchSpaceAppCapability: (spaceId: string, hasApp: boolean) => void;
 }
 
 /** Active space id: nested space if selected, otherwise root project */
@@ -416,6 +417,17 @@ export const useSpaceStore = create<SpaceState>((set, get) => ({
       ),
       spaces: state.spaces.map((space) =>
         space.id === spaceId ? { ...space, hasSchema } : space,
+      ),
+    }));
+  },
+
+  patchSpaceAppCapability: (spaceId, hasApp) => {
+    set((state) => ({
+      rootSpaces: state.rootSpaces.map((space) =>
+        space.id === spaceId ? { ...space, hasApp } : space,
+      ),
+      spaces: state.spaces.map((space) =>
+        space.id === spaceId ? { ...space, hasApp } : space,
       ),
     }));
   },

@@ -5,7 +5,7 @@ import { JSDOM } from "jsdom";
 
 import { PageOwnerTabs } from "./page-owner-tabs";
 
-test("Page owner tabs gate deactivation and mount only the active scroll surface", async () => {
+test("Page owner tabs gate deactivation and round-trip through App without retaining scroll surfaces", async () => {
   const dom = new JSDOM(
     "<!doctype html><html><body><div id=app></div></body></html>",
     { pretendToBeVisual: true, url: "http://localhost/" },
@@ -15,7 +15,7 @@ test("Page owner tabs gate deactivation and mount only the active scroll surface
   const lifecycle: string[] = [];
   let allowChange = false;
 
-  function Surface({ id }: { id: "page" | "attachments" }) {
+  function Surface({ id }: { id: "page" | "app" | "attachments" }) {
     useEffect(() => {
       lifecycle.push(`mount:${id}`);
       return () => {
@@ -30,6 +30,7 @@ test("Page owner tabs gate deactivation and mount only the active scroll surface
       root.render(
         <PageOwnerTabs
           page={<Surface id="page" />}
+          app={<Surface id="app" />}
           attachments={<Surface id="attachments" />}
           prepareForPageDeactivation={async () => allowChange}
         />,
@@ -44,25 +45,21 @@ test("Page owner tabs gate deactivation and mount only the active scroll surface
 
     allowChange = true;
     await activateTab(dom, 1);
-    expect(activeSurface(dom)).toBe("attachments");
+    expect(activeSurface(dom)).toBe("app");
     expect(
       Array.from(dom.window.document.querySelectorAll("[data-surface]")).map(
         (node) => node.getAttribute("data-surface"),
       ),
-    ).toEqual(["attachments"]);
-    expect(lifecycle).toEqual([
-      "mount:page",
-      "unmount:page",
-      "mount:attachments",
-    ]);
+    ).toEqual(["app"]);
+    expect(lifecycle).toEqual(["mount:page", "unmount:page", "mount:app"]);
 
     await activateTab(dom, 0);
     expect(activeSurface(dom)).toBe("page");
     expect(lifecycle).toEqual([
       "mount:page",
       "unmount:page",
-      "mount:attachments",
-      "unmount:attachments",
+      "mount:app",
+      "unmount:app",
       "mount:page",
     ]);
   } finally {

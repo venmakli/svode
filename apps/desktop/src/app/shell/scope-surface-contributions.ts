@@ -3,6 +3,7 @@ import {
   FileText,
   ListChecks,
   Paperclip,
+  PanelsTopLeft,
   TableProperties,
   UsersRound,
 } from "lucide-react";
@@ -37,6 +38,16 @@ export function createScopeSurfaceContributions(
       render: renderers.readme ?? (() => null),
     },
     {
+      id: "app",
+      order: SCOPE_SURFACE_ORDER.app,
+      presentations: ["full", "compact"],
+      appliesTo: (owner) => hasScopeCapability(owner, "app"),
+      label: m.scope_surface_app(),
+      icon: PanelsTopLeft,
+      fillAvailableSpace: true,
+      render: renderers.app ?? unavailable,
+    },
+    {
       id: "attachments",
       order: SCOPE_SURFACE_ORDER.attachments,
       presentations: ["full"],
@@ -67,7 +78,9 @@ export function createScopeSurfaceContributions(
       id: "routines",
       order: SCOPE_SURFACE_ORDER.routines,
       presentations: ["full", "compact"],
-      appliesTo: () => true,
+      appliesTo: (owner) =>
+        hasScopeCapability(owner, "space") ||
+        hasScopeCapability(owner, "collection"),
       label: m.scope_surface_routines(),
       icon: ListChecks,
       render: renderers.routines ?? unavailable,

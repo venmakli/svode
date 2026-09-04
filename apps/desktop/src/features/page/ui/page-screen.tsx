@@ -307,6 +307,12 @@ export function PageScreen({
   const showAttachments = Boolean(
     attachmentOwnerPath && projectPath && pageOwnerSurface,
   );
+  const showApp = Boolean(
+    attachmentOwnerPath &&
+    projectPath &&
+    pageOwnerSurface?.hasApp &&
+    pageOwnerSurface.renderApp,
+  );
 
   function updateTitle(value: string) {
     if (pageSurface.readOnly) return;
@@ -321,7 +327,11 @@ export function PageScreen({
   }
 
   return (
-    <div className="flex min-h-full flex-col">
+    <div
+      className={
+        showApp ? "flex h-full min-h-0 flex-col" : "flex min-h-full flex-col"
+      }
+    >
       <div className={detailPageHeaderClassName}>
         <PageIdentityHeader
           title={currentPage.meta.title}
@@ -401,7 +411,7 @@ export function PageScreen({
           </div>
         ) : null}
       </div>
-      {showAttachments ? (
+      {showAttachments || showApp ? (
         <PageOwnerTabs
           prepareForPageDeactivation={pageSurface.prepareForNavigation}
           page={
@@ -418,18 +428,30 @@ export function PageScreen({
               onDocumentPathChange={handleManagedDocumentPathChange}
             />
           }
+          app={
+            showApp
+              ? pageOwnerSurface?.renderApp?.({
+                  ownerPath: attachmentOwnerPath!,
+                  projectPath: projectPath!,
+                  spaceId,
+                  spacePath,
+                })
+              : undefined
+          }
           attachments={
-            <>
-              <PageAccessRecovery className="mx-auto w-full max-w-5xl px-6 pb-4" />
-              {pageOwnerSurface?.renderAttachments({
-                contentPath: currentPage.path,
-                ownerPath: attachmentOwnerPath!,
-                projectPath: projectPath!,
-                readOnly: pageSurface.readOnly,
-                spaceId,
-                spacePath,
-              })}
-            </>
+            showAttachments ? (
+              <>
+                <PageAccessRecovery className="mx-auto w-full max-w-5xl px-6 pb-4" />
+                {pageOwnerSurface?.renderAttachments({
+                  contentPath: currentPage.path,
+                  ownerPath: attachmentOwnerPath!,
+                  projectPath: projectPath!,
+                  readOnly: pageSurface.readOnly,
+                  spaceId,
+                  spacePath,
+                })}
+              </>
+            ) : undefined
           }
         />
       ) : (

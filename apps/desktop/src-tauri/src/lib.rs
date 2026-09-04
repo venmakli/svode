@@ -5,6 +5,7 @@ mod agent_adapters;
 mod agent_context;
 mod agent_sessions;
 mod app_windows;
+mod apps;
 mod artifact;
 mod attachments;
 mod commands;
@@ -68,6 +69,7 @@ pub fn run() {
         .manage(properties::ActorCatalogState::new())
         .manage(terminal::TerminalManager::new())
         .manage(media::MediaSourceState::new())
+        .manage(apps::AppSourceState::new())
         .register_asynchronous_uri_scheme_protocol("svode-media", |context, request, responder| {
             media::protocol::handle_media_protocol(
                 context.app_handle().clone(),
@@ -110,7 +112,10 @@ pub fn run() {
             attachments::commands::attachments_list,
             attachments::commands::attachments_inspect_import_source,
             attachments::commands::attachments_import_file,
-            artifact::commands::artifact_probe_app_marker,
+            apps::commands::app_manifest_inspect,
+            apps::commands::app_source_revoke,
+            apps::commands::app_open_owner_directory,
+            apps::commands::app_open_browser,
             document::commands::document_inspect_source,
             document::commands::document_read_source,
             document::commands::document_open_external,

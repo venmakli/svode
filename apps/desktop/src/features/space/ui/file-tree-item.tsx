@@ -52,6 +52,7 @@ import {
   GripVertical,
   FileSymlink,
   Pencil,
+  PanelsTopLeft,
   Trash2,
 } from "lucide-react";
 import type { TreeNode } from "../model/types";
@@ -172,6 +173,8 @@ export function FileTreeItem({
     <span className="h-4 w-4 shrink-0 text-center leading-4">{node.icon}</span>
   ) : node.has_schema ? (
     <Database className="h-4 w-4 shrink-0 text-muted-foreground" />
+  ) : node.has_app ? (
+    <PanelsTopLeft className="h-4 w-4 shrink-0 text-muted-foreground" />
   ) : bareFolder ? (
     <FolderOpen className="h-4 w-4 shrink-0 text-muted-foreground" />
   ) : (
@@ -183,7 +186,9 @@ export function FileTreeItem({
       <FileGitIndicatorIcon
         spacePath={space.path}
         filePath={node.path}
-        isContainer={bareFolder || knownChildren || node.has_schema}
+        isContainer={
+          bareFolder || knownChildren || node.has_schema || node.has_app
+        }
         pendingWrite={isUnsaved}
       />
     </span>
@@ -236,7 +241,8 @@ export function FileTreeItem({
     </div>
   );
 
-  const hasDescription = !bareFolder && !!node.description?.trim();
+  const hasDescription =
+    (!bareFolder || node.has_app) && !!node.description?.trim();
   const hasMetadataTooltip = hasDescription || !!projectedConflictPath;
 
   const dragHandle = (

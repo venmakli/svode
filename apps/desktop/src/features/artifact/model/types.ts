@@ -1,6 +1,6 @@
 import type { ScopeOpenIntent } from "@/features/scope-surfaces";
 
-export type ArtifactKind = "page" | "document" | "media" | "app";
+export type ArtifactKind = "page" | "document" | "media";
 
 export type ArtifactSourceShape = "file" | "directory";
 
@@ -28,7 +28,8 @@ export interface ActiveArtifactOpenRequest {
 
 export type ScopeOwnerTarget =
   | { kind: "space"; spaceId: string | null }
-  | { kind: "collection"; spaceId: string | null; path: string };
+  | { kind: "collection"; spaceId: string | null; path: string }
+  | { kind: "app-directory"; spaceId: string | null; path: string };
 
 export interface ActiveScopeOwnerRequest {
   key: number;

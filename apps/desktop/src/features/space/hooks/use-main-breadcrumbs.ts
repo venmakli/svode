@@ -20,9 +20,9 @@ export function useMainBreadcrumbs() {
     segment: SpaceBreadcrumbSegment,
     targetSpaceId?: string,
   ) => {
-    if (segment.ownerKind === "collection") {
+    if (segment.ownerKind) {
       openScopeOwner({
-        kind: "collection",
+        kind: segment.ownerKind,
         path: segment.path,
         spaceId: targetSpaceId ?? null,
       });

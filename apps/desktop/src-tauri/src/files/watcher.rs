@@ -491,7 +491,6 @@ fn classify_attachment_invalidations(
     };
     let is_schema = name == "schema.yaml";
     let is_readme = name.eq_ignore_ascii_case("README.md");
-    let is_app_marker = name.eq_ignore_ascii_case("index.html") && components.len() >= 2;
     let is_folder = is_folder_content_tree_event(path, event_kind);
 
     if is_schema {
@@ -511,15 +510,11 @@ fn classify_attachment_invalidations(
         invalidations.dedup_by(|left, right| left.owner_path == right.owner_path);
         return invalidations;
     }
-    if is_readme || is_app_marker {
+    if is_readme {
         return vec![AttachmentInvalidation {
             owner_path: grandparent,
             path: relative,
-            kind: if is_readme {
-                AttachmentInvalidationKind::Page
-            } else {
-                AttachmentInvalidationKind::Boundary
-            },
+            kind: AttachmentInvalidationKind::Page,
         }];
     }
     if is_folder {
@@ -679,7 +674,10 @@ fn sync_index_for_watched_path(
     app: &AppHandle,
     origin: CollectionEventOrigin,
 ) {
-    if kind == ContentTreeEventKind::Folder {
+    if matches!(
+        kind,
+        ContentTreeEventKind::Folder | ContentTreeEventKind::App
+    ) {
         return;
     }
 
@@ -743,6 +741,7 @@ fn sync_index_for_visibility_change(
 enum ContentTreeEventKind {
     Page,
     Schema,
+    App,
     Folder,
 }
 
@@ -751,6 +750,7 @@ impl ContentTreeEventKind {
         match self {
             Self::Page => "page",
             Self::Schema => "schema",
+            Self::App => "app",
             Self::Folder => "folder",
         }
     }
@@ -774,8 +774,9 @@ fn classify_content_tree_event(
     event_kind: &EventKind,
 ) -> Option<ContentTreeEventClassification> {
     let tree_kind = path_kind(path, event_kind);
-    let is_root_schema = is_schema_path(path) && path.parent() == Some(space_root);
-    if policy.is_ignored_abs(path, tree_kind) && !is_root_schema {
+    let is_root_marker =
+        (is_schema_path(path) || is_app_manifest_path(path)) && path.parent() == Some(space_root);
+    if policy.is_ignored_abs(path, tree_kind) && !is_root_marker {
         return None;
     }
 
@@ -813,8 +814,10 @@ fn classify_membership_index_event(
     event_kind: &EventKind,
 ) -> Option<ContentTreeEventKind> {
     let kind = content_tree_event_kind(path, event_kind)?;
-    if kind == ContentTreeEventKind::Folder
-        || policy.is_system_ignored_abs(path, path_kind(path, event_kind))
+    if matches!(
+        kind,
+        ContentTreeEventKind::Folder | ContentTreeEventKind::App
+    ) || policy.is_system_ignored_abs(path, path_kind(path, event_kind))
     {
         return None;
     }
@@ -892,6 +895,9 @@ fn content_tree_event_kind(path: &Path, event_kind: &EventKind) -> Option<Conten
     if is_schema_path(path) {
         return Some(ContentTreeEventKind::Schema);
     }
+    if is_app_manifest_path(path) {
+        return Some(ContentTreeEventKind::App);
+    }
     if is_markdown_path(path) {
         return Some(ContentTreeEventKind::Page);
     }
@@ -922,7 +928,9 @@ fn event_kind_is_folder(event_kind: &EventKind) -> bool {
 fn affects_tree(kind: ContentTreeEventKind, event_kind: &EventKind) -> bool {
     match kind {
         ContentTreeEventKind::Page => !matches!(event_kind, EventKind::Modify(_)),
-        ContentTreeEventKind::Schema => !matches!(event_kind, EventKind::Modify(_)),
+        ContentTreeEventKind::Schema | ContentTreeEventKind::App => {
+            !matches!(event_kind, EventKind::Modify(_))
+        }
         ContentTreeEventKind::Folder => true,
     }
 }
@@ -932,7 +940,9 @@ fn affects_metadata(kind: ContentTreeEventKind, path: &Path, event_kind: &EventK
         ContentTreeEventKind::Page => {
             matches!(event_kind, EventKind::Modify(_)) || is_readme_path(path)
         }
-        ContentTreeEventKind::Schema | ContentTreeEventKind::Folder => false,
+        ContentTreeEventKind::Schema | ContentTreeEventKind::App | ContentTreeEventKind::Folder => {
+            false
+        }
     }
 }
 
@@ -984,7 +994,7 @@ fn queue_root_schema_transition(
 
 fn event_kind_for_path(event: &Event, path_index: usize) -> EventKind {
     let path = &event.paths[path_index];
-    if !is_schema_path(path) {
+    if !is_schema_path(path) && !is_app_manifest_path(path) {
         return event.kind;
     }
 
@@ -1030,7 +1040,7 @@ fn is_under_assets(path: &Path, space_root: &Path) -> bool {
 }
 
 fn is_document_or_schema(path: &Path) -> bool {
-    is_markdown_path(path) || is_schema_path(path)
+    is_markdown_path(path) || is_schema_path(path) || is_app_manifest_path(path)
 }
 
 fn is_markdown_path(path: &Path) -> bool {
@@ -1049,6 +1059,12 @@ fn is_schema_path(path: &Path) -> bool {
     path.file_name()
         .and_then(|name| name.to_str())
         .is_some_and(|name| name == "schema.yaml")
+}
+
+fn is_app_manifest_path(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name == "app.yaml")
 }
 
 #[cfg(test)]
@@ -1178,11 +1194,6 @@ mod tests {
             Path::new("/project/roadmap/schema.yaml"),
             &EventKind::Create(CreateKind::File),
         );
-        let app_marker = classify_attachment_invalidations(
-            root,
-            Path::new("/project/dashboard/index.html"),
-            &EventKind::Modify(ModifyKind::Any),
-        );
         let registry = classify_attachment_invalidations(
             root,
             Path::new("/project/.svode/config.json"),
@@ -1198,7 +1209,6 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![".", "roadmap"]
         );
-        assert_eq!(app_marker[0].owner_path, ".");
         assert_eq!(registry[0].owner_path, ".");
         assert_eq!(registry[0].kind, AttachmentInvalidationKind::Boundary);
     }
@@ -1548,6 +1558,32 @@ mod tests {
 
         assert_eq!(classification.rel_path, "schema.yaml");
         assert_eq!(classification.kind, ContentTreeEventKind::Schema);
+    }
+
+    #[test]
+    fn watcher_classifies_app_manifest_without_indexing_it() {
+        let tmp = TempDir::new().unwrap();
+        let manifest = tmp.path().join("dashboard/app.yaml");
+        std::fs::create_dir_all(manifest.parent().unwrap()).unwrap();
+        std::fs::write(&manifest, "invalid").unwrap();
+
+        let classification =
+            classify(&tmp, &manifest, EventKind::Create(CreateKind::File)).unwrap();
+
+        assert_eq!(classification.rel_path, "dashboard/app.yaml");
+        assert_eq!(classification.kind, ContentTreeEventKind::App);
+        assert!(classification.affects_tree);
+        assert!(!classification.affects_metadata);
+        assert!(
+            classify_membership_index_event(
+                tmp.path(),
+                &TreeIgnorePolicy::from_space_root(tmp.path()),
+                &child_folder_names(tmp.path()),
+                &manifest,
+                &EventKind::Create(CreateKind::File),
+            )
+            .is_none()
+        );
     }
 
     #[test]

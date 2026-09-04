@@ -24,7 +24,7 @@ export interface GitSaveScopeTreeNode {
   has_schema?: boolean;
   hasChildren?: boolean;
   has_children?: boolean;
-  kind?: "page" | "folder" | "collection";
+  kind?: "page" | "folder" | "collection" | "app";
   children?: readonly GitSaveScopeTreeNode[];
 }
 

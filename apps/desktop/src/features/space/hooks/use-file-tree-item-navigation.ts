@@ -18,6 +18,7 @@ interface UseFileTreeItemNavigationInput {
   onBeforeNavigation?: () => Promise<boolean>;
   openPage: (path: string, spaceId: string) => void;
   openCollectionOwner: (path: string, spaceId: string) => void;
+  openAppOwner: (path: string, spaceId: string) => void;
   toggleExpanded: (spaceId: string, path: string) => void;
 }
 
@@ -33,6 +34,7 @@ export function useFileTreeItemNavigation({
   onBeforeNavigation,
   openPage,
   openCollectionOwner,
+  openAppOwner,
   toggleExpanded,
 }: UseFileTreeItemNavigationInput) {
   async function activatePageNode() {
@@ -48,6 +50,8 @@ export function useFileTreeItemNavigation({
     }
     if (node.has_schema) {
       openCollectionOwner(node.path, spaceId);
+    } else if (node.kind === "app") {
+      openAppOwner(node.path, spaceId);
     } else {
       openPage(node.path, spaceId);
     }
@@ -58,7 +62,7 @@ export function useFileTreeItemNavigation({
       void activatePageNode();
       return;
     }
-    if (bareFolder) {
+    if (bareFolder && !node.has_app) {
       if (!expanded) void loadTreeChildren(spaceId, node.path);
       toggleExpanded(spaceId, node.path);
       return;

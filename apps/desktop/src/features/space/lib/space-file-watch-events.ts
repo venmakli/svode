@@ -29,6 +29,7 @@ export type QueuedSpaceFileEvent = {
 
 export interface SpaceFileEventTreeStore {
   patchSpaceSchemaCapability: (spaceId: string, hasSchema: boolean) => void;
+  patchSpaceAppCapability: (spaceId: string, hasApp: boolean) => void;
   applyReadmeMeta: (
     spaceId: string,
     path: string,
@@ -50,6 +51,7 @@ export interface SpaceFileEventTreeStore {
     folderPath: string,
     hasSchema: boolean,
   ) => void;
+  updateNodeApp: (spaceId: string, folderPath: string, hasApp: boolean) => void;
   upsertTreeNode: (spaceId: string, parentPath: string, node: TreeNode) => void;
 }
 
@@ -70,11 +72,16 @@ function isSchemaPath(path: string): boolean {
   return basename(path) === "schema.yaml";
 }
 
+function isAppManifestPath(path: string): boolean {
+  return basename(path) === "app.yaml";
+}
+
 export function inferSpaceFileEventKind(
   payload: SpaceFileEvent,
 ): SpaceFileEventKind {
   if (payload.kind) return payload.kind;
   if (isSchemaPath(payload.path)) return "schema";
+  if (isAppManifestPath(payload.path)) return "app";
   if (isMarkdownPath(payload.path)) return "page";
   if (payload.isDir) return "folder";
   return "unknown";
@@ -110,7 +117,7 @@ export function repairParentPathForSpaceFileEvent(
   const path = normalizeTreePath(payload.path);
   const kind = inferSpaceFileEventKind(payload);
 
-  if (kind === "schema") {
+  if (kind === "schema" || kind === "app") {
     return treeRowParentPath(folderPathForSchema(path));
   }
 
@@ -200,6 +207,20 @@ function updateSchemaCapability(
   store.updateNodeSchema(spaceId, ownerPath, hasSchema);
 }
 
+function updateAppCapability(
+  store: SpaceFileEventTreeStore,
+  spaceId: string,
+  manifestPath: string,
+  hasApp: boolean,
+) {
+  const ownerPath = folderPathForSchema(manifestPath);
+  if (!ownerPath) {
+    store.patchSpaceAppCapability(spaceId, hasApp);
+    return;
+  }
+  store.updateNodeApp(spaceId, ownerPath, hasApp);
+}
+
 async function applyCreatedSpaceFileEvent({
   getStore,
   payload,
@@ -214,6 +235,11 @@ async function applyCreatedSpaceFileEvent({
 
   if (kind === "schema") {
     updateSchemaCapability(store, spaceId, path, true);
+    return;
+  }
+
+  if (kind === "app") {
+    updateAppCapability(store, spaceId, path, true);
     return;
   }
 
@@ -238,11 +264,7 @@ async function applyCreatedSpaceFileEvent({
   const page = await readPage(path);
   if (isReadmePath(path)) {
     if (!dirname(path)) {
-      store.upsertTreeNode(
-        spaceId,
-        "",
-        watchedPageToTreeNode(path, page, ""),
-      );
+      store.upsertTreeNode(spaceId, "", watchedPageToTreeNode(path, page, ""));
       return;
     }
     store.applyReadmeMeta(
@@ -279,6 +301,8 @@ async function applyChangedSpaceFileEvent({
     updateSchemaCapability(store, spaceId, path, true);
     return;
   }
+
+  if (kind === "app") return;
 
   if (kind === "folder") {
     return;
@@ -318,6 +342,11 @@ function applyDeletedSpaceFileEvent({
 
   if (kind === "schema") {
     updateSchemaCapability(store, spaceId, path, false);
+    return;
+  }
+
+  if (kind === "app") {
+    updateAppCapability(store, spaceId, path, false);
     return;
   }
 

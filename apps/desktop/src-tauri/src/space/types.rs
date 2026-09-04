@@ -334,6 +334,8 @@ pub struct SpaceInfo {
     pub has_spaces: bool,
     #[serde(default)]
     pub has_schema: bool,
+    #[serde(default)]
+    pub has_app: bool,
     pub last_opened: Option<String>,
     pub status: SpaceStatus,
     #[serde(default)]
@@ -444,6 +446,7 @@ mod tests {
             path: "/tmp/space".to_string(),
             has_spaces: false,
             has_schema: true,
+            has_app: true,
             last_opened: None,
             status: SpaceStatus::Ready,
             lfs_state: LfsState::NotApplicable,
@@ -453,5 +456,7 @@ mod tests {
 
         assert_eq!(json.get("hasSchema"), Some(&serde_json::Value::Bool(true)));
         assert!(json.get("has_schema").is_none());
+        assert_eq!(json.get("hasApp"), Some(&serde_json::Value::Bool(true)));
+        assert!(json.get("has_app").is_none());
     }
 }
