@@ -114,6 +114,7 @@ pub enum GuardedExactPathPlan {
     Pending(ExactPathPendingReason),
 }
 
+#[derive(Clone)]
 struct PendingItem {
     op: Option<StructuralOp>,
     paths: Vec<PathBuf>,
@@ -121,6 +122,35 @@ struct PendingItem {
 
 struct PendingBatch {
     items: Vec<PendingItem>,
+}
+
+pub(crate) struct PendingSave {
+    pending: Arc<Mutex<HashMap<PathBuf, PendingBatch>>>,
+    space: PathBuf,
+    items: Vec<PendingItem>,
+}
+
+impl PendingSave {
+    pub fn paths(&self) -> Vec<PathBuf> {
+        dedupe_paths(self.items.iter().flat_map(|item| item.paths.clone()))
+    }
+
+    pub fn complete(&mut self) {
+        self.items.clear();
+    }
+}
+
+impl Drop for PendingSave {
+    fn drop(&mut self) {
+        if self.items.is_empty() {
+            return;
+        }
+        let mut map = self.pending.lock().unwrap();
+        map.entry(self.space.clone())
+            .or_insert_with(|| PendingBatch { items: Vec::new() })
+            .items
+            .append(&mut self.items);
+    }
 }
 
 pub struct AutocommitService {
@@ -133,6 +163,43 @@ pub struct AutocommitService {
 }
 
 impl AutocommitService {
+    pub(crate) fn begin_manual_save(
+        &self,
+        space: &Path,
+        anchors: Option<&[PathBuf]>,
+    ) -> PendingSave {
+        let mut map = self.pending.lock().unwrap();
+        let mut selected = Vec::new();
+        if let Some(batch) = map.get_mut(space) {
+            let ops = anchors.map(|anchors| {
+                batch
+                    .items
+                    .iter()
+                    .filter(|item| pending_item_touches(item, anchors))
+                    .filter_map(|item| item.op.clone())
+                    .collect::<Vec<_>>()
+            });
+            batch.items.retain(|item| {
+                let related = anchors.is_none_or(|anchors| {
+                    pending_item_touches(item, anchors)
+                        || item
+                            .op
+                            .as_ref()
+                            .is_some_and(|op| ops.as_ref().is_some_and(|ops| ops.contains(op)))
+                });
+                if related {
+                    selected.push(item.clone());
+                }
+                !related
+            });
+        }
+        PendingSave {
+            pending: self.pending.clone(),
+            space: space.to_path_buf(),
+            items: selected,
+        }
+    }
+
     pub fn new(app: AppHandle) -> Self {
         Self {
             app,
@@ -204,54 +271,6 @@ impl AutocommitService {
 
         dedupe_paths(batch.items.into_iter().flat_map(|item| item.paths))
     }
-
-    /// Drain only pending paths that belong to the explicit single-file save.
-    /// A pending item is related when it touches the saved file path directly,
-    /// or when it has the same structural operation as another touched item
-    /// (for example backlink source rewrites produced by the same rename).
-    pub fn take_related_pending_paths_for_space(
-        &self,
-        _project_path: &Path,
-        space_path: &Path,
-        anchor_paths: &[PathBuf],
-    ) -> Vec<PathBuf> {
-        if anchor_paths.is_empty() {
-            return Vec::new();
-        }
-
-        let mut map = self.pending.lock().unwrap();
-        let Some(batch) = map.get_mut(space_path) else {
-            return Vec::new();
-        };
-
-        let matching_ops: Vec<Option<StructuralOp>> = batch
-            .items
-            .iter()
-            .filter(|item| pending_item_touches(item, anchor_paths))
-            .map(|item| item.op.clone())
-            .collect();
-
-        if matching_ops.is_empty() {
-            return Vec::new();
-        }
-
-        let items = std::mem::take(&mut batch.items);
-        let (drained, kept) = split_related_pending_items(items, anchor_paths, &matching_ops);
-
-        if kept.is_empty() {
-            map.remove(space_path);
-        } else if let Some(batch) = map.get_mut(space_path) {
-            batch.items = kept;
-        }
-
-        dedupe_paths(drained)
-    }
-
-    /// Drop pending content/schema bookkeeping for one space before a manual
-    /// Save All. The commit itself stages the whole routed space/repo.
-    pub fn drop_pending_paths_for_space(&self, project_path: &Path, space_path: &Path) {
-        let _ = self.take_pending_paths_for_space(project_path, space_path);
-    }
 }
 
 fn pending_item_touches(item: &PendingItem, anchor_paths: &[PathBuf]) -> bool {
@@ -260,6 +279,7 @@ fn pending_item_touches(item: &PendingItem, anchor_paths: &[PathBuf]) -> bool {
         .any(|path| anchor_paths.iter().any(|anchor| path == anchor))
 }
 
+#[cfg(test)]
 fn split_related_pending_items(
     items: Vec<PendingItem>,
     anchor_paths: &[PathBuf],
@@ -1286,6 +1306,44 @@ fn aggregate_message(ops: &[StructuralOp]) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn failed_manual_save_restores_pending_and_success_retains_new_events() {
+        let space = std::path::PathBuf::from("/space");
+        let pending = std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
+        {
+            let _lease = super::PendingSave {
+                pending: pending.clone(),
+                space: space.clone(),
+                items: vec![super::PendingItem {
+                    op: None,
+                    paths: vec![space.join("old.md"), space.join("new.md")],
+                }],
+            };
+        }
+        assert_eq!(pending.lock().unwrap().get(&space).unwrap().items.len(), 1);
+        let items = pending.lock().unwrap().remove(&space).unwrap().items;
+        let mut lease = super::PendingSave {
+            pending: pending.clone(),
+            space: space.clone(),
+            items,
+        };
+        pending.lock().unwrap().insert(
+            space.clone(),
+            super::PendingBatch {
+                items: vec![super::PendingItem {
+                    op: None,
+                    paths: vec![space.join("later.md")],
+                }],
+            },
+        );
+        lease.complete();
+        drop(lease);
+        assert_eq!(
+            pending.lock().unwrap().get(&space).unwrap().items[0].paths,
+            vec![space.join("later.md")]
+        );
+    }
+
     use super::*;
     use crate::space::config::{write_git_user_policy, write_space_config};
     use crate::space::types::{GitSpaceConfig, GitUserPolicy, SpaceConfig};

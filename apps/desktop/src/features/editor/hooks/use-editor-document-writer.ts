@@ -18,6 +18,7 @@ import {
   getGitSpaceStatus,
   refreshGitSpaceStatus,
   resolveGitSaveAllScope,
+  retryPendingGitSave,
   selfPathsForGitSaveScope,
   type GitSaveScope,
   type GitSaveScopeLabel,
@@ -300,6 +301,12 @@ export function useEditorDocumentWriter({
   const handleSave = useCallback(async () => {
     if (!editor || !currentDocument || !spacePath) return;
 
+    const retry = retryPendingGitSave(spacePath, currentDocument);
+    if (retry) {
+      clearCommittedMarkers(await retry);
+      return;
+    }
+
     const status = getGitSpaceStatus(spacePath);
     const currentSurfaceDirty =
       useEditorStore.getState().hasUnsaved(spacePath, currentDocument) ||
@@ -324,13 +331,15 @@ export function useEditorDocumentWriter({
         onWriteAccessError &&
         (await onWriteAccessError(error, saveCurrentSurface))
       ) {
-        return;
+        throw error;
       }
       console.error("Failed to save document:", error);
       toast.error(m.editor_error_save());
+      throw error;
     }
   }, [
     cancelDebounce,
+    clearCommittedMarkers,
     currentDocument,
     editor,
     onWriteAccessError,
@@ -341,6 +350,11 @@ export function useEditorDocumentWriter({
 
   const handleSaveAll = useCallback(async () => {
     if (!spacePath) return;
+    const retry = retryPendingGitSave(spacePath);
+    if (retry) {
+      clearCommittedMarkers(await retry);
+      return;
+    }
     cancelDebounce();
     const saveAllScope = resolveGitSaveAllScope({
       activePath: currentDocument,
@@ -348,7 +362,7 @@ export function useEditorDocumentWriter({
     });
 
     if (!editor || !currentDocument) {
-      void commitSaveScopeAndMaybeSync(
+      await commitSaveScopeAndMaybeSync(
         spacePath,
         saveAllScope,
         [],
@@ -361,7 +375,7 @@ export function useEditorDocumentWriter({
       .getState()
       .hasUnsaved(spacePath, currentDocument);
     if (!isDirty) {
-      void commitSaveScopeAndMaybeSync(
+      await commitSaveScopeAndMaybeSync(
         spacePath,
         saveAllScope,
         [],
@@ -389,10 +403,11 @@ export function useEditorDocumentWriter({
       await saveAll();
     } catch (err) {
       if (onWriteAccessError && (await onWriteAccessError(err, saveAll))) {
-        return;
+        throw err;
       }
       console.error("Save-all failed:", err);
       toast.error(m.editor_error_save());
+      throw err;
     }
   }, [
     applySavedDocumentResult,

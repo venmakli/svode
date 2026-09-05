@@ -53,7 +53,7 @@ export function useCollectionSaveShortcuts({
           saveAllScope,
           [],
           projectPath ?? undefined,
-        );
+        ).catch(console.error);
         return;
       }
 

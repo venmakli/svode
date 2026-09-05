@@ -23,6 +23,33 @@ export interface GitCommitResult {
   committedPaths: string[];
 }
 
+const pointerRetries = new Map<
+  string,
+  { path: string | null; run: () => Promise<GitCommitResult | null> }
+>();
+
+export function retryPendingGitSave(spacePath: string, path?: string) {
+  const pending = pointerRetries.get(spacePath);
+  if (!pending || (path !== undefined && pending.path !== path)) return null;
+  return pending.run();
+}
+
+function retainPointerRetry(
+  error: unknown,
+  spacePath: string,
+  path: string | null,
+  run: () => Promise<GitCommitResult | null>,
+) {
+  if (
+    error &&
+    typeof error === "object" &&
+    "kind" in error &&
+    error.kind === "git_save_partial"
+  ) {
+    pointerRetries.set(spacePath, { path, run });
+  }
+}
+
 export interface GitAutoSyncOptions {
   onSyncOutcome?: (outcome: GitSyncOutcome) => void;
 }
@@ -128,8 +155,13 @@ export async function commitFileAndMaybeSync(
     };
   } catch (err) {
     console.error("git_commit_file failed:", err);
-    return null;
+    retainPointerRetry(err, spacePath, filePath, () =>
+      commitFileAndMaybeSync(spacePath, filePath, projectPath, options),
+    );
+    await refreshGitStatus(spacePath);
+    throw err;
   }
+  pointerRetries.delete(spacePath);
   if (await isAutoSyncEnabled(spacePath, projectPath)) {
     runAutoSync(spacePath, options);
   }
@@ -171,8 +203,13 @@ export async function commitAllSpace(
     };
   } catch (err) {
     console.error("git_commit_all failed:", err);
-    return null;
+    retainPointerRetry(err, spacePath, null, () =>
+      commitAllSpace(spacePath, projectPath, options),
+    );
+    await refreshGitStatus(spacePath);
+    throw err;
   }
+  pointerRetries.delete(spacePath);
   if (await isAutoSyncEnabled(spacePath, projectPath)) {
     runAutoSync(spacePath, options);
   }
@@ -214,8 +251,13 @@ export async function commitPathsAndMaybeSync(
     };
   } catch (err) {
     console.error("git_commit_paths failed:", err);
-    return null;
+    retainPointerRetry(err, spacePath, null, () =>
+      commitPathsAndMaybeSync(spacePath, targetPaths, projectPath, options),
+    );
+    await refreshGitStatus(spacePath);
+    throw err;
   }
+  pointerRetries.delete(spacePath);
   if (await isAutoSyncEnabled(spacePath, projectPath)) {
     runAutoSync(spacePath, options);
   }
@@ -229,6 +271,8 @@ export async function commitSaveScopeAndMaybeSync(
   projectPath?: string,
   options?: GitAutoSyncOptions,
 ): Promise<GitCommitResult | null> {
+  const retry = retryPendingGitSave(spacePath);
+  if (retry) return retry;
   try {
     await refreshGitStatus(spacePath);
   } catch (err) {

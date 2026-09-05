@@ -36,15 +36,6 @@ fn emit_space_synced(app: &AppHandle, key: &IndexKey) {
     );
 }
 
-fn invalidate_actor_repository(app: &AppHandle, repository: &Path) {
-    if let Err(error) = crate::actors::invalidate_repository(app, repository) {
-        tracing::warn!(
-            repository = %repository.display(),
-            "failed to invalidate actor catalog after successful Git operation: {error}"
-        );
-    }
-}
-
 async fn invalidate_actor_space(app: &AppHandle, space: &Path) {
     if let Err(error) = crate::actors::invalidate_space(app, space).await {
         tracing::warn!(
@@ -156,17 +147,6 @@ pub(crate) fn require_cli(state: &GitState) -> Result<GitCli, AppError> {
     state.cli.clone().ok_or(AppError::GitNotFound)
 }
 
-async fn stage_pending_paths(cli: &GitCli, repo: &Path, paths: &[PathBuf]) {
-    for abs_path in paths {
-        let rel = abs_path
-            .strip_prefix(repo)
-            .unwrap_or(abs_path)
-            .to_string_lossy()
-            .replace('\\', "/");
-        let _ = super::ops::add(cli, repo, &rel).await;
-    }
-}
-
 pub(crate) fn auto_commit_structural_enabled(space_path: &Path) -> bool {
     crate::space::config::effective_git_user_policy(space_path).auto_commit_structural
 }
@@ -217,6 +197,7 @@ fn drop_legacy_shared_git_policy(config_target: &Path) {
 pub struct GitState {
     pub(crate) cli: Option<GitCli>,
     locks: tokio::sync::Mutex<HashMap<PathBuf, Arc<tokio::sync::Mutex<()>>>>,
+    pub(crate) pending_manual_pointers: tokio::sync::Mutex<HashMap<String, String>>,
 }
 
 impl GitState {
@@ -231,6 +212,7 @@ impl GitState {
         Self {
             cli,
             locks: tokio::sync::Mutex::new(HashMap::new()),
+            pending_manual_pointers: tokio::sync::Mutex::new(HashMap::new()),
         }
     }
 
@@ -486,42 +468,33 @@ pub async fn git_commit_file(
     file_path: String,
 ) -> Result<GitStatus, AppError> {
     let path = PathBuf::from(&space_path);
-    let cli = state.cli()?;
-
-    if let Some(proj_path) = project_path.filter(|p| !p.is_empty()) {
-        let project = PathBuf::from(&proj_path);
-        // `.svode/AGENTS.md` is classified as a System change (stage 3.5
-        // temporary rule — see 03-autocommit.md). Route through the system
-        // commit path so the message is `Update agent instructions` and the
-        // commit is isolated from user content.
-        if file_path == ".svode/AGENTS.md" {
-            autocommit
-                .commit_system_manual_now(
-                    project,
-                    path.clone(),
-                    SystemCommitKind::AgentInstructions,
-                )
-                .await?;
-            return super::ops::status(cli, &path).await;
-        }
-        let (_, target_repo) = super::ops::resolve_target_repo(cli, &project, &path).await?;
-        let active_path = path.join(&file_path);
-        let pending_paths =
-            autocommit.take_related_pending_paths_for_space(&project, &path, &[active_path]);
-        let lock = state.get_lock(&target_repo).await;
-        let _guard = lock.lock().await;
-        stage_pending_paths(cli, &target_repo, &pending_paths).await;
-        super::ops::commit_file_routed(cli, &project, &path, &file_path).await?;
-        invalidate_actor_repository(&app, &target_repo);
-        // Return status of the space itself
-        super::ops::status(cli, &path).await
-    } else {
-        let lock = state.get_lock(&path).await;
-        let _guard = lock.lock().await;
-        super::ops::commit_file(cli, &path, &file_path).await?;
-        invalidate_actor_space(&app, &path).await;
-        super::ops::status(cli, &path).await
+    let project = project_path
+        .filter(|path| !path.is_empty())
+        .map(PathBuf::from);
+    if file_path == ".svode/AGENTS.md"
+        && let Some(project) = &project
+    {
+        super::access::require_repository_mutation(&app, &path).await?;
+        autocommit
+            .commit_system_manual_now(
+                project.clone(),
+                path.clone(),
+                SystemCommitKind::AgentInstructions,
+            )
+            .await?;
+        return super::ops::status(state.cli()?, &path).await;
     }
+    let result = super::manual_save::save(
+        &app,
+        &state,
+        &autocommit,
+        project.as_deref(),
+        &path,
+        Some(normalize_commit_paths(vec![file_path])?),
+    )
+    .await;
+    invalidate_actor_space(&app, &path).await;
+    result
 }
 
 #[tauri::command]
@@ -533,24 +506,13 @@ pub async fn git_commit_all(
     space_path: String,
 ) -> Result<GitStatus, AppError> {
     let path = PathBuf::from(&space_path);
-    let cli = state.cli()?;
-
-    if let Some(proj_path) = project_path.filter(|p| !p.is_empty()) {
-        let project = PathBuf::from(&proj_path);
-        let (_, target_repo) = super::ops::resolve_target_repo(cli, &project, &path).await?;
-        autocommit.drop_pending_paths_for_space(&project, &path);
-        let lock = state.get_lock(&target_repo).await;
-        let _guard = lock.lock().await;
-        super::ops::commit_all_routed(cli, &project, &path).await?;
-        invalidate_actor_repository(&app, &target_repo);
-        super::ops::status(cli, &path).await
-    } else {
-        let lock = state.get_lock(&path).await;
-        let _guard = lock.lock().await;
-        super::ops::commit_all(cli, &path).await?;
-        invalidate_actor_space(&app, &path).await;
-        super::ops::status(cli, &path).await
-    }
+    let project = project_path
+        .filter(|path| !path.is_empty())
+        .map(PathBuf::from);
+    let result =
+        super::manual_save::save(&app, &state, &autocommit, project.as_deref(), &path, None).await;
+    invalidate_actor_space(&app, &path).await;
+    result
 }
 
 #[tauri::command]
@@ -563,35 +525,20 @@ pub async fn git_commit_paths(
     file_paths: Vec<String>,
 ) -> Result<GitStatus, AppError> {
     let path = PathBuf::from(&space_path);
-    let cli = state.cli()?;
-    let file_paths = normalize_commit_paths(file_paths)?;
-
-    if file_paths.is_empty() {
-        return super::ops::status(cli, &path).await;
-    }
-
-    if let Some(proj_path) = project_path.filter(|p| !p.is_empty()) {
-        let project = PathBuf::from(&proj_path);
-        let (_, target_repo) = super::ops::resolve_target_repo(cli, &project, &path).await?;
-        let active_paths: Vec<PathBuf> = file_paths
-            .iter()
-            .map(|file_path| path.join(file_path))
-            .collect();
-        let pending_paths =
-            autocommit.take_related_pending_paths_for_space(&project, &path, &active_paths);
-        let lock = state.get_lock(&target_repo).await;
-        let _guard = lock.lock().await;
-        stage_pending_paths(cli, &target_repo, &pending_paths).await;
-        super::ops::commit_paths_routed(cli, &project, &path, &file_paths).await?;
-        invalidate_actor_repository(&app, &target_repo);
-        super::ops::status(cli, &path).await
-    } else {
-        let lock = state.get_lock(&path).await;
-        let _guard = lock.lock().await;
-        super::ops::commit_paths(cli, &path, &file_paths).await?;
-        invalidate_actor_space(&app, &path).await;
-        super::ops::status(cli, &path).await
-    }
+    let project = project_path
+        .filter(|path| !path.is_empty())
+        .map(PathBuf::from);
+    let result = super::manual_save::save(
+        &app,
+        &state,
+        &autocommit,
+        project.as_deref(),
+        &path,
+        Some(normalize_commit_paths(file_paths)?),
+    )
+    .await;
+    invalidate_actor_space(&app, &path).await;
+    result
 }
 
 #[tauri::command]

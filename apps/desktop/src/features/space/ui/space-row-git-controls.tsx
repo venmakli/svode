@@ -11,6 +11,7 @@ import {
   type SpaceSidebarGitCloneProgress,
 } from "@/features/git/sidebar";
 import type { LfsState } from "../model";
+import { RepositoryAccessPreflightDialog } from "@/features/git";
 import { LfsIndicatorIcon } from "./nav-space-indicators";
 
 interface SpaceRowGitControlsProps {
@@ -39,7 +40,10 @@ export function useSpaceRowGitControls({
   rootPath,
   spacePath,
 }: SpaceRowGitControlsProps) {
-  const { cloning, dirty, commitAll } = useSpaceSidebarGit(spacePath, rootPath);
+  const { cloning, dirty, commitAll, recovery } = useSpaceSidebarGit(
+    spacePath,
+    rootPath,
+  );
 
   return {
     cloning,
@@ -71,13 +75,18 @@ export function useSpaceRowGitControls({
           </p>
         </div>
       ) : null,
-    progress: cloning ? (
-      <div className="px-2 pb-1">
-        <Progress value={cloning.percent} className="h-1" />
-        <p className="mt-0.5 truncate text-[10px] text-muted-foreground">
-          {cloneProgressLabel(cloning)}
-        </p>
-      </div>
-    ) : null,
+    progress: (
+      <>
+        <RepositoryAccessPreflightDialog recovery={recovery} />
+        {cloning ? (
+          <div className="px-2 pb-1">
+            <Progress value={cloning.percent} className="h-1" />
+            <p className="mt-0.5 truncate text-[10px] text-muted-foreground">
+              {cloneProgressLabel(cloning)}
+            </p>
+          </div>
+        ) : null}
+      </>
+    ),
   };
 }

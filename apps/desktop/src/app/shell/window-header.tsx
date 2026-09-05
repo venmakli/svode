@@ -1,3 +1,4 @@
+import { ChangesControl, useMainChangesTarget } from "@/features/changes";
 import { useLayoutEffect, useRef } from "react";
 import { useMatches } from "@tanstack/react-router";
 import { PanelLeft, PanelRight } from "lucide-react";
@@ -9,7 +10,10 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { useSidebar } from "@/components/ui/sidebar";
-import { useActiveContentPath } from "@/features/artifact";
+import {
+  useActiveContentPath,
+  useActiveContentSelection,
+} from "@/features/artifact";
 import { selectActiveSpacePath, useSpace } from "@/features/space";
 import { useTrafficLightInset } from "./hooks/use-fullscreen";
 import { useShellStore } from "./model";
@@ -96,6 +100,8 @@ export function ShellChrome() {
 }
 
 export function WindowHeader() {
+  const changesTarget = useMainChangesTarget();
+  const { selection } = useActiveContentSelection();
   const detailController = useCollectionDetailController();
   const activeContentPath = useActiveContentPath();
   const toggleChatPanel = useShellStore((state) => state.toggleChatPanel);
@@ -152,6 +158,21 @@ export function WindowHeader() {
 
       <div className="flex shrink-0 items-center gap-1">
         {isSpaceRoute && <GitSyncStatusWidget />}
+        {isSpaceRoute &&
+        mainSurface === "content" &&
+        changesTarget &&
+        selection?.kind === "artifact" &&
+        changesTarget.sessionKey === selection.request.sessionKey &&
+        changesTarget.spacePath === activeSpacePath ? (
+          <ChangesControl
+            key={
+              selection?.kind === "artifact"
+                ? selection.request.sessionKey
+                : "owner"
+            }
+            target={changesTarget}
+          />
+        ) : null}
         {isSpaceRoute && mainSurface === "content" && activeSpacePath ? (
           <RepositoryWorkStatus
             key={activeSpacePath}

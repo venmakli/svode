@@ -1809,5 +1809,19 @@
   "document_pptx_slide_label": "Slide {number}",
   "document_pptx_viewport": "Presentation preview. Use Left and Right Arrow keys to move between slides.",
   "document_pptx_canvas_fallback": "Presentation preview requires canvas support.",
-  "document_pptx_slide_limited": "Some content on this slide could not be displayed. Other slides remain available, and you can open the original externally."
+  "document_pptx_slide_limited": "Some content on this slide could not be displayed. Other slides remain available, and you can open the original externally.",
+  "changes_title": "Changes",
+  "changes_scope_label": "Changes in {name}: {count}",
+  "changes_clean": "No changes",
+  "changes_save": "Save",
+  "changes_retry": "Retry",
+  "changes_load_failed": "Could not read changes. Try again.",
+  "changes_save_failed": "Could not save. Your changes remain available.",
+  "changes_partial": "Content saved. The parent repository pointer still needs saving. Retry to finish this step.",
+  "changes_index_only": "The file matches the last commit. Only its staged state differs; there is no content diff.",
+  "changes_truncated": "This file exceeds the preview limit.",
+  "changes_not_text": "Text comparison is unavailable for this file.",
+  "changes_access_pending": "Checking save availability…",
+  "changes_access_blocked": "Saving is unavailable. Restore access using the repository work status.",
+  "changes_conflict": "Resolve conflicts in the source Page, then save to continue the repository merge."
 }

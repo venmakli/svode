@@ -1,3 +1,4 @@
+import { ChangesControl } from "@/features/changes";
 import { useMemo, useState, type ReactNode } from "react";
 import { Maximize2, Star, StarOff, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -74,6 +75,7 @@ export function PagePeekSheet({
   const effectiveSpaceId = target?.spaceId ?? spaceId;
   const {
     page,
+    detailState,
     setPage,
     schemaResult,
     setSchemaResult,
@@ -197,7 +199,12 @@ export function PagePeekSheet({
           <>
             <PeekTopBar>
               <PagePeekControls
+                key={target?.page.path}
                 page={currentPage}
+                spacePath={
+                  detailState?.form === "leaf" ? effectiveSpacePath : undefined
+                }
+                projectPath={effectiveProjectPath}
                 onOpenFullPage={(pageToOpen) =>
                   onOpenFullPage(pageToOpen, effectiveSpaceId)
                 }
@@ -368,13 +375,30 @@ function PagePeekActions({
 
 function PagePeekControls({
   page,
+  spacePath,
+  projectPath,
   onOpenFullPage,
 }: {
   page: Page;
+  spacePath?: string;
+  projectPath?: string | null;
   onOpenFullPage: (page: Page) => void;
 }) {
   return (
     <div className="flex items-center gap-1">
+      {spacePath ? (
+        <ChangesControl
+          origin="peek"
+          target={{
+            kind: "page",
+            sourceShape: "file",
+            spacePath,
+            projectPath,
+            path: page.path,
+            name: page.meta.title,
+          }}
+        />
+      ) : null}
       <Button
         type="button"
         variant="ghost"

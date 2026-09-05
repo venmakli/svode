@@ -16,16 +16,16 @@ export function useEditorSaveShortcuts({
   useEffect(() => {
     if (disabled) return;
     const handler = (event: KeyboardEvent) => {
-      if (isTerminalKeyboardEvent(event)) return;
+      if (event.defaultPrevented || isTerminalKeyboardEvent(event)) return;
       const isSaveKey =
         (event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "s";
       if (!isSaveKey) return;
 
       event.preventDefault();
       if (event.shiftKey) {
-        void onSaveAll();
+        void Promise.resolve(onSaveAll()).catch(console.error);
       } else {
-        void onSave();
+        void Promise.resolve(onSave()).catch(console.error);
       }
     };
 

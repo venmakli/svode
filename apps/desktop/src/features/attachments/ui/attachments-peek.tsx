@@ -1,3 +1,4 @@
+import { ChangesControl } from "@/features/changes";
 import { lazy, Suspense } from "react";
 import { FileWarning, Maximize2, Paperclip, X } from "lucide-react";
 
@@ -82,6 +83,20 @@ export function AttachmentsPeek({
         </SheetTitle>
         {!isBinaryViewer ? (
           <div className="flex shrink-0 items-center justify-end gap-1 px-2 pb-2">
+            {loadedPage && target?.row.sourceShape === "file" ? (
+              <ChangesControl
+                key={target.row.path}
+                origin="peek"
+                target={{
+                  kind: "page",
+                  sourceShape: "file",
+                  spacePath: resolvedSpacePath,
+                  projectPath: resolvedProjectPath,
+                  path: loadedPage.path,
+                  name: loadedPage.meta.title,
+                }}
+              />
+            ) : null}
             <PeekActions
               onClose={() => onOpenChange(false)}
               onExpand={

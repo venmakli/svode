@@ -1,8 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { usePublishMainChangesTarget } from "@/features/changes";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { PlateDocumentEditor } from "@/features/editor";
-import { useOpenScopeOwner } from "@/features/artifact";
+import {
+  useOpenScopeOwner,
+  useActiveContentSelection,
+} from "@/features/artifact";
 import {
   deletePage as deletePageApi,
   duplicatePage as duplicatePageApi,
@@ -64,6 +68,7 @@ export function PageScreen({
   spaceId,
 }: PageScreenProps) {
   const pageSurface = usePageSurfaceSession();
+  const { selection } = useActiveContentSelection();
   const pageOwnerSurface = usePageOwnerSurfaceContribution();
   const openPage = useOpenPage();
   const openScopeOwner = useOpenScopeOwner();
@@ -108,6 +113,22 @@ export function PageScreen({
   const renderedPageTargetKey =
     adoptedPageTargetKeyRef.current ?? pageTargetKey;
   const currentPage = loadedPageKey === renderedPageTargetKey ? page : null;
+  usePublishMainChangesTarget(
+    currentPage && detailState
+      ? {
+          kind: "page",
+          projectPath,
+          sessionKey:
+            selection?.kind === "artifact"
+              ? selection.request.sessionKey
+              : undefined,
+          sourceShape: detailState.form === "leaf" ? "file" : "directory",
+          spacePath,
+          path: currentPage.path,
+          name: currentPage.meta.title,
+        }
+      : null,
+  );
   const pageName = usePageName({
     pagePath,
     page: currentPage,

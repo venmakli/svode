@@ -19,6 +19,7 @@ import { useEditorDocumentLoader } from "./use-editor-document-loader";
 import { useEditorDocumentWriter } from "./use-editor-document-writer";
 import { useEditorLinkValidation } from "./use-editor-link-validation";
 import { useEditorSaveShortcuts } from "./use-editor-save-shortcuts";
+import { registerPageSaveOwner } from "@/features/git/editor";
 import { useFileWatcher } from "./use-file-watcher";
 
 interface UsePlateDocumentSessionInput {
@@ -209,6 +210,14 @@ export function usePlateDocumentSession({
       readOnly,
       onWriteAccessError,
     });
+
+  useEffect(() => {
+    if (!currentDocument || !spacePath) return;
+    return registerPageSaveOwner(spacePath, currentDocument, {
+      save: handleSave,
+      saveAll: handleSaveAll,
+    });
+  }, [spacePath, currentDocument, handleSave, handleSaveAll]);
 
   useEditorSaveShortcuts({
     disabled: readOnly,

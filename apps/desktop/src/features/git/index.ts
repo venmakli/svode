@@ -17,6 +17,14 @@ export { getGitAvailability } from "./api/git-availability-actions";
 export { trackSpaceCloneProgress } from "./api/git-clone-progress-actions";
 export { getGitStatusSnapshot } from "./api/git-status-actions";
 export { saveGitRemoteCredentials } from "./api/git-actions";
+export { dispatchPageSave } from "./model/page-save-owner";
+export { useGitStore } from "./model/git-store";
+export { refreshGitStatus } from "./api/git-status-actions";
+export {
+  normalizeGitStatusPath,
+  isGitStatusPathDescendant,
+  containerPathForNodePath,
+} from "./model/git-paths";
 export { useRepositoryAccess } from "./hooks/use-repository-access";
 export {
   useRepositoryAccessPreflight,
@@ -39,6 +47,7 @@ export type {
   RepositoryAccessTargetView,
 } from "./model/repository-access-consumer";
 export { repositoryAccessIsEditable } from "./model/repository-access-consumer";
+export { repositoryAccessPresentation } from "./ui/repository-access-copy";
 export {
   gitAuthChallengeFromRemoteUrl,
   isGitAuthRequiredError,

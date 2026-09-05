@@ -1,6 +1,13 @@
 import { useEffect, useState } from "react";
-import { readPage as readPageApi } from "@/features/page/page-api";
-import { applyPageTitleOutcome, type Page } from "@/features/page";
+import {
+  readPage as readPageApi,
+  getPageDetailState,
+} from "@/features/page/page-api";
+import {
+  applyPageTitleOutcome,
+  type Page,
+  type PageDetailState,
+} from "@/features/page";
 import {
   usePageTitleOutcomeEffect,
   useRetargetPage,
@@ -20,6 +27,7 @@ export function usePagePeekLoader({
   spaceId: string;
 }) {
   const [page, setPage] = useState<Page | null>(target?.page ?? null);
+  const [detailState, setDetailState] = useState<PageDetailState | null>(null);
   const [schemaResult, setSchemaResult] = useState<PageSchemaResult | null>(
     null,
   );
@@ -39,6 +47,7 @@ export function usePagePeekLoader({
       queueMicrotask(() => {
         if (!cancelled) {
           setPage(null);
+          setDetailState(null);
           setSchemaResult(null);
           setLoadedTargetKey(null);
           setPathHandoff(null);
@@ -52,6 +61,7 @@ export function usePagePeekLoader({
     queueMicrotask(() => {
       if (!cancelled) {
         setPage(target.page);
+        setDetailState(null);
         setSchemaResult(null);
         setLoadedTargetKey(targetKey);
         setPathHandoff(null);
@@ -65,13 +75,17 @@ export function usePagePeekLoader({
     }
     void Promise.all([
       readPageApi({ spacePath, path: target.page.path }),
+      getPageDetailState({ spacePath, path: target.page.path }).catch(
+        () => null,
+      ),
       getPageSchema({ spacePath, filePath: target.page.path }).catch(
         () => null,
       ),
     ])
-      .then(([nextPage, nextSchemaResult]) => {
+      .then(([nextPage, nextDetailState, nextSchemaResult]) => {
         if (cancelled) return;
         setPage(nextPage);
+        setDetailState(nextDetailState);
         setSchemaResult(
           nextSchemaResult
             ? {
@@ -100,16 +114,13 @@ export function usePagePeekLoader({
         previousPath: titleOutcome.previousPath,
         path: titleOutcome.page.path,
       });
-      retargetPage(
-        titleOutcome.previousPath,
-        titleOutcome.page.path,
-        spaceId,
-      );
+      retargetPage(titleOutcome.previousPath, titleOutcome.page.path, spaceId);
     },
   });
 
   return {
     page,
+    detailState,
     setPage,
     schemaResult,
     setSchemaResult,

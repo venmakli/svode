@@ -1,6 +1,7 @@
 export type {
   CoverColorName,
   Page,
+  PageDetailState,
   PageCover,
   PageMeta,
   PageWarning,

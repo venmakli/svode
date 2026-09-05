@@ -90,7 +90,7 @@ export function useKeyboardShortcuts() {
             scope,
             [],
             activeRootPath ?? undefined,
-          );
+          ).catch(console.error);
         } else if (saveRoute === "actors") {
           const request = {
             projectPath: activeRootPath ?? activeScopeSpace.path,

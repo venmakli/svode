@@ -491,13 +491,14 @@ fn normalize_git_path(path: &str) -> Result<String, AppError> {
 
 /// Stage a specific file.
 pub async fn add(cli: &GitCli, space_dir: &Path, path: &str) -> Result<(), AppError> {
+    let literal = format!(":(literal){}", normalize_git_path(path)?);
     let out = cli
         .exec(
             space_dir,
             &[
                 "add",
                 "--",
-                path,
+                &literal,
                 LOCAL_DB_EXCLUDE_PATHSPEC,
                 LOCAL_CONFIG_EXCLUDE_PATHSPEC,
             ],
@@ -819,14 +820,13 @@ pub async fn submodule_target_matches_expected_head(
 
 /// Stage a specific file and auto-commit with a generated message.
 /// Returns `true` if a commit was actually created.
+#[cfg(test)]
 pub async fn commit_file(
     cli: &GitCli,
     space_dir: &Path,
     file_path: &str,
 ) -> Result<bool, AppError> {
-    add(cli, space_dir, file_path).await?;
-    let message = generate_commit_message(cli, space_dir).await?;
-    let created = commit(cli, space_dir, &message).await?;
+    let created = commit_paths(cli, space_dir, &[file_path.to_string()]).await?;
     if created {
         tracing::info!(
             "Auto-committed file {} in {}",
@@ -838,10 +838,15 @@ pub async fn commit_file(
 }
 
 /// Stage all changes and auto-commit with a generated message.
+#[cfg(test)]
 pub async fn commit_all(cli: &GitCli, space_dir: &Path) -> Result<bool, AppError> {
-    add_all(cli, space_dir).await?;
-    let message = generate_commit_message(cli, space_dir).await?;
-    let created = commit(cli, space_dir, &message).await?;
+    let paths = status(cli, space_dir)
+        .await?
+        .files
+        .into_iter()
+        .map(|file| file.path)
+        .collect::<Vec<_>>();
+    let created = commit_paths(cli, space_dir, &paths).await?;
     if created {
         tracing::info!("Auto-committed all in {}", space_dir.display());
     }
@@ -857,11 +862,39 @@ pub async fn commit_paths(
     if file_paths.is_empty() {
         return Ok(false);
     }
-    for file_path in file_paths {
+    let file_paths = file_paths
+        .iter()
+        .map(|path| normalize_git_path(path))
+        .collect::<Result<Vec<_>, _>>()?;
+    if status(cli, space_dir).await?.has_conflicts {
+        return Err(AppError::GitConflict(
+            "Resolve the repository merge before saving paths".into(),
+        ));
+    }
+    for file_path in &file_paths {
         add(cli, space_dir, file_path).await?;
     }
-    let message = generate_commit_message(cli, space_dir).await?;
-    let created = commit(cli, space_dir, &message).await?;
+    let message = generate_commit_message_for_paths(cli, space_dir, &file_paths).await?;
+    let mut args = vec!["commit", "--only", "-m", &message, "--"];
+    args.extend(file_paths.iter().map(String::as_str));
+    let out = cli
+        .exec_with_env(space_dir, &args, &[("GIT_LITERAL_PATHSPECS", "1")])
+        .await?;
+    let combined = format!("{}{}", out.stdout, out.stderr);
+    let created = out.exit_code == 0;
+    if !created
+        && ![
+            "nothing to commit",
+            "no changes added to commit",
+            "nothing added to commit",
+        ]
+        .iter()
+        .any(|message| combined.contains(message))
+    {
+        return Err(AppError::GitCommandFailed(
+            "Selected-path commit failed".into(),
+        ));
+    }
     if created {
         tracing::info!(
             "Auto-committed {} scoped path(s) in {}",
@@ -872,9 +905,16 @@ pub async fn commit_paths(
     Ok(created)
 }
 
-/// Generate a commit message based on staged changes.
-pub async fn generate_commit_message(cli: &GitCli, space_dir: &Path) -> Result<String, AppError> {
-    let out = cli.exec(space_dir, &["diff", "--cached", "--stat"]).await?;
+async fn generate_commit_message_for_paths(
+    cli: &GitCli,
+    space_dir: &Path,
+    paths: &[String],
+) -> Result<String, AppError> {
+    let mut args = vec!["diff", "--cached", "--stat", "--"];
+    args.extend(paths.iter().map(String::as_str));
+    let out = cli
+        .exec_with_env(space_dir, &args, &[("GIT_LITERAL_PATHSPECS", "1")])
+        .await?;
 
     if out.stdout.trim().is_empty() {
         return Ok("Update space".to_string());
@@ -885,8 +925,10 @@ pub async fn generate_commit_message(cli: &GitCli, space_dir: &Path) -> Result<S
     let mut deleted: Vec<String> = Vec::new();
 
     // Also check diff --cached --name-status for accurate categorization
+    let mut args = vec!["diff", "--cached", "--name-status", "-z", "--"];
+    args.extend(paths.iter().map(String::as_str));
     let name_status = cli
-        .exec(space_dir, &["diff", "--cached", "--name-status", "-z"])
+        .exec_with_env(space_dir, &args, &[("GIT_LITERAL_PATHSPECS", "1")])
         .await?;
     let records = parse_name_status_z(&name_status.stdout)?;
 
@@ -1391,99 +1433,6 @@ fn extract_block<'a>(
 
 // --- Routed commit ---
 
-/// Stage and commit a file, routing to the correct repo based on git type.
-pub async fn commit_file_routed(
-    cli: &GitCli,
-    project_path: &Path,
-    space_path: &Path,
-    file_path: &str,
-) -> Result<bool, AppError> {
-    let git_type = detect_space_git_type(cli, project_path, space_path).await?;
-    match git_type {
-        SpaceGitType::Inline => {
-            let space_folder = space_path
-                .file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_default();
-            let relative = format!("{}/{}", space_folder, file_path);
-            add(cli, project_path, &relative).await?;
-            let message = generate_commit_message(cli, project_path).await?;
-            commit(cli, project_path, &message).await
-        }
-        SpaceGitType::Independent => commit_file(cli, space_path, file_path).await,
-        SpaceGitType::Submodule => {
-            let created = commit_file(cli, space_path, file_path).await?;
-            if created {
-                submodule_update_pointer(cli, project_path, space_path).await?;
-            }
-            Ok(created)
-        }
-    }
-}
-
-/// Stage all and commit, routing to the correct repo based on git type.
-pub async fn commit_all_routed(
-    cli: &GitCli,
-    project_path: &Path,
-    space_path: &Path,
-) -> Result<bool, AppError> {
-    let git_type = detect_space_git_type(cli, project_path, space_path).await?;
-    match git_type {
-        SpaceGitType::Inline => {
-            let space_folder = space_path
-                .file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_default();
-            add(cli, project_path, &space_folder).await?;
-            let message = generate_commit_message(cli, project_path).await?;
-            commit(cli, project_path, &message).await
-        }
-        SpaceGitType::Independent => commit_all(cli, space_path).await,
-        SpaceGitType::Submodule => {
-            let created = commit_all(cli, space_path).await?;
-            if created {
-                submodule_update_pointer(cli, project_path, space_path).await?;
-            }
-            Ok(created)
-        }
-    }
-}
-
-/// Stage selected paths and commit, routing to the correct repo based on git type.
-pub async fn commit_paths_routed(
-    cli: &GitCli,
-    project_path: &Path,
-    space_path: &Path,
-    file_paths: &[String],
-) -> Result<bool, AppError> {
-    if file_paths.is_empty() {
-        return Ok(false);
-    }
-    let git_type = detect_space_git_type(cli, project_path, space_path).await?;
-    match git_type {
-        SpaceGitType::Inline => {
-            let space_folder = space_path
-                .file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_default();
-            for file_path in file_paths {
-                let relative = format!("{}/{}", space_folder, file_path);
-                add(cli, project_path, &relative).await?;
-            }
-            let message = generate_commit_message(cli, project_path).await?;
-            commit(cli, project_path, &message).await
-        }
-        SpaceGitType::Independent => commit_paths(cli, space_path, file_paths).await,
-        SpaceGitType::Submodule => {
-            let created = commit_paths(cli, space_path, file_paths).await?;
-            if created {
-                submodule_update_pointer(cli, project_path, space_path).await?;
-            }
-            Ok(created)
-        }
-    }
-}
-
 /// After committing inside a submodule, update the pointer in the parent repo.
 pub async fn submodule_update_pointer(
     cli: &GitCli,
@@ -1494,8 +1443,13 @@ pub async fn submodule_update_pointer(
         .file_name()
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_default();
-    add(cli, root_path, &space_folder).await?;
-    commit(cli, root_path, &format!("Update {}", space_folder)).await?;
+    commit_exact_path(
+        cli,
+        root_path,
+        &space_folder,
+        &format!("Update {}", space_folder),
+    )
+    .await?;
     Ok(())
 }
 

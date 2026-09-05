@@ -12,6 +12,8 @@ import {
 import { notifyGitSyncOutcome } from "./effects/git-notifications";
 
 export type { GitCommitResult } from "./api/git-actions";
+export { retryPendingGitSave } from "./api/git-actions";
+export { registerPageSaveOwner } from "./model/page-save-owner";
 export {
   dirtyPathsForGitSaveScope,
   gitSaveShortcutLabel,

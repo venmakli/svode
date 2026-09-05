@@ -41,6 +41,9 @@ pub enum AppError {
     #[error("Git command failed: {0}")]
     GitCommandFailed(String),
 
+    #[error("Content saved; parent pointer remains pending: {cause}")]
+    GitSavePartial { cause: Box<AppError> },
+
     #[error("Git conflict: {0}")]
     GitConflict(String),
 
@@ -106,6 +109,7 @@ impl AppError {
             AppError::AgentSpawnFailed(_) => "agent_spawn_failed",
             AppError::GitNotFound => "git_not_found",
             AppError::GitCommandFailed(_) => "git_command_failed",
+            AppError::GitSavePartial { .. } => "git_save_partial",
             AppError::GitConflict(_) => "git_conflict",
             AppError::GitAuthRequired(_) => "git_auth_required",
             AppError::RepositoryAccessDenied { .. } => "repository_access_denied",
@@ -130,6 +134,9 @@ impl Serialize for AppError {
         S: serde::Serializer,
     {
         match self {
+            AppError::GitSavePartial { cause } => {
+                serde_json::json!({ "kind": self.kind(), "childCommitted": true, "parentPointer": "pending", "cause": cause }).serialize(serializer)
+            }
             AppError::RepositoryAccessDenied {
                 repository_id,
                 status,
