@@ -12,6 +12,7 @@ interface PendingInspection {
 
 const inspections: PendingInspection[] = [];
 const revoked: string[] = [];
+const controls: string[] = [];
 const mock = (
   bunTest as unknown as {
     mock: { module(specifier: string, factory: () => unknown): void };
@@ -19,6 +20,20 @@ const mock = (
 ).mock;
 
 mock.module("../api/app-api", () => ({
+  controlAppProcess: (_owner: AppOwner, action: string) => {
+    controls.push(action);
+    return Promise.resolve({
+      status: "unavailable" as const,
+      ownerDirectory: "/repo/space/process",
+      runtimeType: "process" as const,
+      reason: "process_stopped",
+      process: {
+        managed: false,
+        hasSetup: false,
+        logs: { stdout: "", stderr: "" },
+      },
+    });
+  },
   inspectAppManifest: (owner: AppOwner) =>
     new Promise<AppManifestInspection>((resolve) => {
       inspections.push({ owner, resolve });
@@ -74,6 +89,38 @@ test("App session ignores stale resolution and revokes every static source", asy
   }
 });
 
+test("navigating away from a process App does not stop its child", async () => {
+  inspections.length = 0;
+  revoked.length = 0;
+  controls.length = 0;
+  const dom = new JSDOM(
+    "<!doctype html><html><body><div id=app></div></body></html>",
+    { pretendToBeVisual: true, url: "http://localhost/" },
+  );
+  const restoreGlobals = installDomGlobals(dom);
+  const root = createRoot(dom.window.document.getElementById("app")!);
+
+  try {
+    await act(async () => root.render(<Harness owner={owner("process")} />));
+    await act(async () => {
+      inspections[0]!.resolve(processReady());
+      await Promise.resolve();
+    });
+    expect(dom.window.document.body.textContent).toBe(
+      "ready:http://127.0.0.1:43000",
+    );
+
+    await act(async () => root.render(<Harness owner={owner("second")} />));
+    expect(controls).toEqual([]);
+    expect(revoked).toEqual([]);
+  } finally {
+    await act(async () => root.unmount());
+    expect(controls).toEqual([]);
+    restoreGlobals();
+    dom.window.close();
+  }
+});
+
 function Harness({ owner }: { owner: AppOwner }) {
   const { session } = useAppSession(owner);
   return (
@@ -100,6 +147,20 @@ function ready(ownerPath: "first" | "second", capabilityToken: string) {
     runtimeType: "static" as const,
     viewportUrl: `http://127.0.0.1:${ownerPath === "first" ? "42001" : "42002"}/index.html`,
     capabilityToken,
+  };
+}
+
+function processReady(): AppManifestInspection {
+  return {
+    status: "ready",
+    ownerDirectory: "/repo/space/process",
+    runtimeType: "process",
+    viewportUrl: "http://127.0.0.1:43000",
+    process: {
+      managed: true,
+      hasSetup: true,
+      logs: { stdout: "ready", stderr: "" },
+    },
   };
 }
 

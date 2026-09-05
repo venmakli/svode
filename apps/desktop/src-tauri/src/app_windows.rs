@@ -185,6 +185,7 @@ pub fn release_current_project_window(app: AppHandle, window: Window) {
     {
         app.state::<crate::routines::RoutineSchedulerState>()
             .stop_project(&project_id);
+        stop_project_apps(&app, &project_id);
     }
 }
 
@@ -319,6 +320,7 @@ pub fn register_current_project_window(app: &AppHandle, project_id: &str, window
     {
         app.state::<crate::routines::RoutineSchedulerState>()
             .stop_project(&previous);
+        stop_project_apps(app, &previous);
     }
     state.register_project_window(project_id, window_label);
 }
@@ -361,11 +363,23 @@ pub fn handle_window_event(app: &AppHandle, window: &Window, event: &WindowEvent
             if let Some(project_id) = window_state.remove_window(&label) {
                 app.state::<crate::routines::RoutineSchedulerState>()
                     .stop_project(&project_id);
+                stop_project_apps(app, &project_id);
             }
             active_state.remove_window(&label);
         }
         _ => {}
     }
+}
+
+fn stop_project_apps(app: &AppHandle, project_id: &str) {
+    let Ok(config_dir) = app_config_dir(app) else {
+        return;
+    };
+    let Ok(Some(project)) = registry::find_space(&config_dir, project_id) else {
+        return;
+    };
+    app.state::<crate::apps::AppProcessState>()
+        .stop_project(Path::new(&project.path));
 }
 
 pub fn handle_single_instance(app: &AppHandle, _args: Vec<String>, _cwd: String) {

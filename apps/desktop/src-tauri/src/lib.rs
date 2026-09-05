@@ -70,6 +70,7 @@ pub fn run() {
         .manage(terminal::TerminalManager::new())
         .manage(media::MediaSourceState::new())
         .manage(apps::AppSourceState::new())
+        .manage(apps::AppProcessState::new())
         .register_asynchronous_uri_scheme_protocol("svode-media", |context, request, responder| {
             media::protocol::handle_media_protocol(
                 context.app_handle().clone(),
@@ -113,6 +114,7 @@ pub fn run() {
             attachments::commands::attachments_inspect_import_source,
             attachments::commands::attachments_import_file,
             apps::commands::app_manifest_inspect,
+            apps::commands::app_process_control,
             apps::commands::app_source_revoke,
             apps::commands::app_open_owner_directory,
             apps::commands::app_open_browser,
@@ -347,6 +349,8 @@ pub fn run() {
             if let tauri::RunEvent::ExitRequested { .. } = event {
                 let terminal_manager = app_handle.state::<terminal::TerminalManager>();
                 terminal_manager.kill_all();
+                let app_processes = app_handle.state::<apps::AppProcessState>();
+                app_processes.kill_all();
 
                 if let Err(error) = native_file_drop::clear_materialized_file_drops(app_handle) {
                     tracing::warn!("failed to clear dropped-file cache during exit: {error}");

@@ -1,4 +1,5 @@
 use std::borrow::Cow;
+use std::collections::BTreeMap;
 use std::collections::HashSet;
 use std::ffi::OsStr;
 use std::fs;
@@ -35,12 +36,28 @@ pub(crate) struct AppManifestDiagnostic {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum ValidatedRuntime {
     Static { public_root: String, entry: String },
-    Process { url: String },
+    Process(AppProcessRuntime),
     Url { url: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct AppCommandRecipe {
+    pub argv: Vec<String>,
+    pub cwd: Option<String>,
+    pub inputs: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct AppProcessRuntime {
+    pub setup: Option<AppCommandRecipe>,
+    pub start: AppCommandRecipe,
+    pub url: String,
+    pub environment: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone)]
 pub(crate) struct ResolvedAppOwner {
+    pub project_path: PathBuf,
     pub owner_path: PathBuf,
 }
 
@@ -74,6 +91,7 @@ pub(crate) fn resolve_app_owner(
     let registered = resolve_registered_owner(project_path, space_id)?;
     if owner_path.trim().is_empty() || owner_path == "." {
         return Ok(ResolvedAppOwner {
+            project_path: registered.project_path,
             owner_path: registered.owner_path,
         });
     }
@@ -118,6 +136,7 @@ pub(crate) fn resolve_app_owner(
     }
 
     Ok(ResolvedAppOwner {
+        project_path: registered.project_path,
         owner_path: canonical,
     })
 }
@@ -353,38 +372,52 @@ fn validate_manifest_value(value: &Value) -> Result<ValidatedRuntime, Vec<AppMan
         }
         "process" => {
             reject_unknown(runtime, &["type", "setup", "start", "url"], "runtime")?;
-            if let Some(setup) = optional_mapping(runtime, "setup", "runtime.setup")? {
-                validate_command(setup, "runtime.setup", true)?;
+            let setup = if let Some(setup) = optional_mapping(runtime, "setup", "runtime.setup")? {
                 reject_unknown(setup, &["argv", "cwd", "inputs"], "runtime.setup")?;
-                if let Some(inputs) = get(setup, "inputs") {
-                    validate_relative_path_array(inputs, "runtime.setup.inputs")?;
-                }
-            }
+                Some(parse_command(setup, "runtime.setup", true)?)
+            } else {
+                None
+            };
             let start = required_mapping(runtime, "start", "runtime.start")?;
             reject_unknown(start, &["argv", "cwd"], "runtime.start")?;
-            validate_command(start, "runtime.start", true)?;
-            if let Some(environment) = get(root, "environment") {
+            let start = parse_command(start, "runtime.start", false)?;
+            let environment = if let Some(environment) = get(root, "environment") {
                 let environment = mapping(environment, "environment")?;
+                let mut parsed = BTreeMap::new();
                 for (key, value) in environment {
-                    if !matches!(key, Value::String(name) if !name.is_empty()) {
+                    let Value::String(name) = key else {
+                        return Err(vec![diagnostic(
+                            "invalid_schema",
+                            "environment",
+                            "environment names must be non-empty strings",
+                        )]);
+                    };
+                    if name.is_empty() {
                         return Err(vec![diagnostic(
                             "invalid_schema",
                             "environment",
                             "environment names must be non-empty strings",
                         )]);
                     }
-                    if !matches!(value, Value::String(_)) {
+                    let Value::String(value) = value else {
                         return Err(vec![diagnostic(
                             "invalid_schema",
                             "environment",
                             "environment values must be strings",
                         )]);
-                    }
+                    };
+                    parsed.insert(name.clone(), value.clone());
                 }
-            }
-            Ok(ValidatedRuntime::Process {
+                parsed
+            } else {
+                BTreeMap::new()
+            };
+            Ok(ValidatedRuntime::Process(AppProcessRuntime {
+                setup,
+                start,
                 url: required_http_url(runtime, "url", "runtime.url")?,
-            })
+                environment,
+            }))
         }
         _ => Err(vec![diagnostic(
             "invalid_value",
@@ -394,31 +427,63 @@ fn validate_manifest_value(value: &Value) -> Result<ValidatedRuntime, Vec<AppMan
     }
 }
 
-fn validate_command(
+fn parse_command(
     command: &serde_yml::Mapping,
     path: &str,
-    required: bool,
-) -> Result<(), Vec<AppManifestDiagnostic>> {
-    match get(command, "argv") {
-        Some(value) => validate_string_array(value, &format!("{path}.argv"), false),
-        None if required => Err(vec![diagnostic(
+    allow_inputs: bool,
+) -> Result<AppCommandRecipe, Vec<AppManifestDiagnostic>> {
+    let argv_value = get(command, "argv").ok_or_else(|| {
+        vec![diagnostic(
             "missing_field",
             format!("{path}.argv"),
             "argv is required",
-        )]),
-        None => Ok(()),
-    }?;
-    if let Some(cwd) = get(command, "cwd") {
-        let cwd = string(cwd, &format!("{path}.cwd"))?;
-        normalize_repo_relative(cwd, RootMode::Allow).map_err(|_| {
+        )]
+    })?;
+    validate_string_array(argv_value, &format!("{path}.argv"), false)?;
+    let Value::Sequence(argv_values) = argv_value else {
+        unreachable!("validated as a sequence")
+    };
+    let argv = argv_values
+        .iter()
+        .map(|value| match value {
+            Value::String(value) => value.clone(),
+            _ => unreachable!("validated as a string"),
+        })
+        .collect();
+    let cwd = if let Some(cwd) = get(command, "cwd") {
+        let cwd = string(cwd, &format!("{path}.cwd"))?.to_string();
+        normalize_repo_relative(&cwd, RootMode::Allow).map_err(|_| {
             vec![diagnostic(
                 "invalid_path",
                 format!("{path}.cwd"),
                 "cwd must be a normalized relative path",
             )]
         })?;
-    }
-    Ok(())
+        Some(cwd)
+    } else {
+        None
+    };
+    let inputs = if allow_inputs {
+        if let Some(inputs) = get(command, "inputs") {
+            validate_relative_path_array(inputs, &format!("{path}.inputs"))?;
+            let Value::Sequence(values) = inputs else {
+                unreachable!("validated as a sequence")
+            };
+            values
+                .iter()
+                .map(|value| match value {
+                    Value::String(value) => value.clone(),
+                    _ => unreachable!("validated as a string"),
+                })
+                .collect()
+        } else {
+            Vec::new()
+        }
+    } else {
+        Vec::new()
+    };
+
+    Ok(AppCommandRecipe { argv, cwd, inputs })
 }
 
 fn validate_string_array(
@@ -654,8 +719,19 @@ mod tests {
             validate_manifest_source(
                 "runtime:\n  type: process\n  start:\n    argv: [bun, run, dev]\n  url: http://127.0.0.1:3210\nenvironment:\n  TOKEN: ${TOKEN}\n"
             ),
-            Ok(ValidatedRuntime::Process { .. })
+            Ok(ValidatedRuntime::Process(_))
         ));
+
+        let process = validate_manifest_source(
+            "runtime:\n  type: process\n  setup:\n    argv: [tool, install]\n    cwd: packages/app\n    inputs: [package.json, lockfile]\n  start:\n    argv: [tool, serve, --port, '3210']\n  url: http://127.0.0.1:3210\n",
+        )
+        .unwrap();
+        let ValidatedRuntime::Process(process) = process else {
+            unreachable!()
+        };
+        assert_eq!(process.setup.unwrap().inputs, ["package.json", "lockfile"]);
+        assert_eq!(process.start.argv[1], "serve");
+        assert_eq!(process.url, "http://127.0.0.1:3210");
     }
 
     #[test]

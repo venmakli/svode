@@ -398,6 +398,7 @@ pub async fn open_project_folder(
 pub async fn delete_project(
     app: AppHandle,
     index_state: State<'_, IndexState>,
+    app_process_state: State<'_, crate::apps::AppProcessState>,
     id: String,
     delete_files: Option<bool>,
 ) -> Result<(), AppError> {
@@ -417,6 +418,7 @@ pub async fn delete_project(
     // releases file handles (Windows would otherwise refuse to remove the
     // directory).
     if let Some(sp_ref) = project_ref {
+        app_process_state.stop_project(Path::new(&sp_ref.path));
         index_state.close_project(Path::new(&sp_ref.path)).await;
     }
 

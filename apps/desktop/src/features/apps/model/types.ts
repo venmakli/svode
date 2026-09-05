@@ -6,6 +6,23 @@ export interface AppOwner {
 }
 
 export type AppRuntimeType = "static" | "process" | "url";
+export type AppProcessPhase = "setup" | "starting" | "waiting_for_url";
+export type AppProcessControlAction =
+  | "retry"
+  | "restart"
+  | "stop"
+  | "rerun_setup";
+
+export interface AppProcessLogs {
+  stdout: string;
+  stderr: string;
+}
+
+export interface AppProcessDetails {
+  managed: boolean;
+  hasSetup: boolean;
+  logs: AppProcessLogs;
+}
 
 export interface AppManifestDiagnostic {
   code: string;
@@ -30,14 +47,40 @@ export type AppSession =
   | {
       status: "unavailable";
       ownerDirectory: string;
-      runtimeType: AppRuntimeType;
+      runtimeType: Exclude<AppRuntimeType, "process">;
       reason: string;
       browserUrl?: string;
+      process?: never;
+    }
+  | {
+      status: "unavailable";
+      ownerDirectory: string;
+      runtimeType: "process";
+      reason: string;
+      browserUrl?: string;
+      process: AppProcessDetails;
+    }
+  | {
+      status: "launching";
+      ownerDirectory: string;
+      runtimeType: "process";
+      phase: AppProcessPhase;
+      browserUrl: string;
+      process: AppProcessDetails;
     }
   | {
       status: "ready";
       ownerDirectory: string;
-      runtimeType: "static" | "url";
+      runtimeType: Exclude<AppRuntimeType, "process">;
       viewportUrl: string;
       capabilityToken?: string;
+      process?: never;
+    }
+  | {
+      status: "ready";
+      ownerDirectory: string;
+      runtimeType: "process";
+      viewportUrl: string;
+      capabilityToken?: never;
+      process: AppProcessDetails;
     };

@@ -1,15 +1,18 @@
 use std::fs;
 use std::path::Path;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, State};
 use tauri_plugin_shell::ShellExt;
 
-use super::AppSourceState;
 use super::manifest::{
-    AppManifestDiagnostic, AppRuntimeType, ValidatedRuntime, read_and_validate_manifest,
-    resolve_app_owner,
+    AppManifestDiagnostic, AppProcessRuntime, AppRuntimeType, ValidatedRuntime,
+    read_and_validate_manifest, resolve_app_owner,
 };
+use super::process_runtime::{
+    AppProcessAction, AppProcessLogs, AppProcessPhase, AppProcessSnapshot,
+};
+use super::{AppProcessState, AppSourceState};
 use crate::AppError;
 use crate::system_path;
 
@@ -34,6 +37,18 @@ pub(crate) enum AppManifestInspection {
         viewport_url: String,
         #[serde(rename = "capabilityToken", skip_serializing_if = "Option::is_none")]
         capability_token: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        process: Option<AppProcessDetails>,
+    },
+    Launching {
+        #[serde(rename = "ownerDirectory")]
+        owner_directory: String,
+        #[serde(rename = "runtimeType")]
+        runtime_type: AppRuntimeType,
+        phase: AppProcessPhase,
+        #[serde(rename = "browserUrl")]
+        browser_url: String,
+        process: AppProcessDetails,
     },
     Unavailable {
         #[serde(rename = "ownerDirectory")]
@@ -43,12 +58,32 @@ pub(crate) enum AppManifestInspection {
         reason: &'static str,
         #[serde(rename = "browserUrl", skip_serializing_if = "Option::is_none")]
         browser_url: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        process: Option<AppProcessDetails>,
     },
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct AppProcessDetails {
+    managed: bool,
+    has_setup: bool,
+    logs: AppProcessLogs,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum AppProcessControlAction {
+    Retry,
+    Restart,
+    Stop,
+    RerunSetup,
 }
 
 #[tauri::command]
 pub(crate) async fn app_manifest_inspect(
-    state: State<'_, AppSourceState>,
+    source_state: State<'_, AppSourceState>,
+    process_state: State<'_, AppProcessState>,
     project_path: String,
     space_id: Option<String>,
     owner_path: String,
@@ -56,11 +91,13 @@ pub(crate) async fn app_manifest_inspect(
     let owner = resolve_app_owner(Path::new(&project_path), space_id.as_deref(), &owner_path)?;
     let owner_directory = system_path::user_facing_path(&owner.owner_path);
     let Some(manifest) = read_and_validate_manifest(&owner.owner_path)? else {
+        process_state.remove_owner(&owner.project_path, &owner.owner_path);
         return Ok(AppManifestInspection::Missing { owner_directory });
     };
     let runtime = match manifest {
         Ok(runtime) => runtime,
         Err(diagnostics) => {
+            process_state.remove_owner(&owner.project_path, &owner.owner_path);
             return Ok(AppManifestInspection::Invalid {
                 owner_directory,
                 diagnostics,
@@ -69,19 +106,38 @@ pub(crate) async fn app_manifest_inspect(
     };
 
     match runtime {
-        ValidatedRuntime::Url { url } => Ok(AppManifestInspection::Ready {
-            owner_directory,
-            runtime_type: AppRuntimeType::Url,
-            viewport_url: url,
-            capability_token: None,
-        }),
-        ValidatedRuntime::Process { url } => Ok(AppManifestInspection::Unavailable {
-            owner_directory,
-            runtime_type: AppRuntimeType::Process,
-            reason: "process_runtime_pending",
-            browser_url: Some(url),
-        }),
+        ValidatedRuntime::Url { url } => {
+            process_state.remove_owner(&owner.project_path, &owner.owner_path);
+            Ok(AppManifestInspection::Ready {
+                owner_directory,
+                runtime_type: AppRuntimeType::Url,
+                viewport_url: url,
+                capability_token: None,
+                process: None,
+            })
+        }
+        ValidatedRuntime::Process(runtime) => {
+            if !runtime.environment.is_empty() {
+                process_state.remove_owner(&owner.project_path, &owner.owner_path);
+                return Ok(AppManifestInspection::Unavailable {
+                    owner_directory,
+                    runtime_type: AppRuntimeType::Process,
+                    reason: "process_environment_pending",
+                    browser_url: Some(runtime.url),
+                    process: Some(AppProcessDetails {
+                        managed: false,
+                        has_setup: runtime.setup.is_some(),
+                        logs: AppProcessLogs::default(),
+                    }),
+                });
+            }
+            let url = runtime.url.clone();
+            let snapshot =
+                process_state.inspect_or_launch(&owner.project_path, &owner.owner_path, runtime);
+            Ok(process_inspection(owner_directory, url, snapshot))
+        }
         ValidatedRuntime::Static { public_root, entry } => {
+            process_state.remove_owner(&owner.project_path, &owner.owner_path);
             let declared_root = owner.owner_path.join(&public_root);
             let root_metadata = fs::symlink_metadata(&declared_root);
             if !matches!(root_metadata, Ok(ref metadata) if metadata.is_dir() && !metadata.file_type().is_symlink())
@@ -91,6 +147,7 @@ pub(crate) async fn app_manifest_inspect(
                     runtime_type: AppRuntimeType::Static,
                     reason: "static_public_root_unavailable",
                     browser_url: None,
+                    process: None,
                 });
             }
             let canonical_root = fs::canonicalize(&declared_root)?;
@@ -113,6 +170,7 @@ pub(crate) async fn app_manifest_inspect(
                     runtime_type: AppRuntimeType::Static,
                     reason: "static_entry_unavailable",
                     browser_url: None,
+                    process: None,
                 });
             }
             let canonical_entry = fs::canonicalize(&declared_entry)?;
@@ -126,14 +184,151 @@ pub(crate) async fn app_manifest_inspect(
                     }],
                 });
             }
-            let (token, viewport_url) = state.issue(canonical_root, &entry).await?;
+            let (token, viewport_url) = source_state.issue(canonical_root, &entry).await?;
             Ok(AppManifestInspection::Ready {
                 owner_directory,
                 runtime_type: AppRuntimeType::Static,
                 viewport_url,
                 capability_token: Some(token),
+                process: None,
             })
         }
+    }
+}
+
+#[tauri::command]
+pub(crate) async fn app_process_control(
+    process_state: State<'_, AppProcessState>,
+    project_path: String,
+    space_id: Option<String>,
+    owner_path: String,
+    action: AppProcessControlAction,
+) -> Result<AppManifestInspection, AppError> {
+    let owner = resolve_app_owner(Path::new(&project_path), space_id.as_deref(), &owner_path)?;
+    let owner_directory = system_path::user_facing_path(&owner.owner_path);
+
+    if matches!(action, AppProcessControlAction::Stop) {
+        let snapshot = process_state
+            .stop(&owner.project_path, &owner.owner_path)
+            .ok_or_else(|| AppError::General("App process is not running".to_string()))?;
+        let url = match &snapshot {
+            AppProcessSnapshot::Launching { .. } => unreachable!("stopped snapshot is terminal"),
+            AppProcessSnapshot::Ready { url, .. }
+            | AppProcessSnapshot::Failed { url, .. }
+            | AppProcessSnapshot::Stopped { url, .. } => url.clone(),
+        };
+        return Ok(process_inspection(owner_directory, url, snapshot));
+    }
+
+    let runtime = current_process_runtime(&owner.owner_path)?;
+    if !runtime.environment.is_empty() {
+        return Ok(AppManifestInspection::Unavailable {
+            owner_directory,
+            runtime_type: AppRuntimeType::Process,
+            reason: "process_environment_pending",
+            browser_url: Some(runtime.url),
+            process: Some(AppProcessDetails {
+                managed: false,
+                has_setup: runtime.setup.is_some(),
+                logs: AppProcessLogs::default(),
+            }),
+        });
+    }
+    let url = runtime.url.clone();
+    let action = match action {
+        AppProcessControlAction::Retry => AppProcessAction::Retry,
+        AppProcessControlAction::Restart => AppProcessAction::Restart,
+        AppProcessControlAction::RerunSetup => AppProcessAction::RerunSetup,
+        AppProcessControlAction::Stop => unreachable!(),
+    };
+    let snapshot = process_state.control(&owner.project_path, &owner.owner_path, runtime, action);
+    Ok(process_inspection(owner_directory, url, snapshot))
+}
+
+fn current_process_runtime(owner_path: &Path) -> Result<AppProcessRuntime, AppError> {
+    match read_and_validate_manifest(owner_path)? {
+        None => Err(AppError::FileNotFound("app.yaml".to_string())),
+        Some(Err(diagnostics)) => Err(AppError::General(
+            diagnostics
+                .first()
+                .map(|diagnostic| diagnostic.message.clone())
+                .unwrap_or_else(|| "app.yaml is invalid".to_string()),
+        )),
+        Some(Ok(ValidatedRuntime::Process(runtime))) => Ok(runtime),
+        Some(Ok(_)) => Err(AppError::General(
+            "App process controls require a process runtime".to_string(),
+        )),
+    }
+}
+
+fn process_inspection(
+    owner_directory: String,
+    declared_url: String,
+    snapshot: AppProcessSnapshot,
+) -> AppManifestInspection {
+    match snapshot {
+        AppProcessSnapshot::Launching {
+            phase,
+            has_setup,
+            logs,
+        } => AppManifestInspection::Launching {
+            owner_directory,
+            runtime_type: AppRuntimeType::Process,
+            phase,
+            browser_url: declared_url,
+            process: AppProcessDetails {
+                managed: true,
+                has_setup,
+                logs,
+            },
+        },
+        AppProcessSnapshot::Ready {
+            url,
+            managed,
+            has_setup,
+            logs,
+        } => AppManifestInspection::Ready {
+            owner_directory,
+            runtime_type: AppRuntimeType::Process,
+            viewport_url: url,
+            capability_token: None,
+            process: Some(AppProcessDetails {
+                managed,
+                has_setup,
+                logs,
+            }),
+        },
+        AppProcessSnapshot::Failed {
+            reason,
+            url,
+            has_setup,
+            logs,
+        } => AppManifestInspection::Unavailable {
+            owner_directory,
+            runtime_type: AppRuntimeType::Process,
+            reason,
+            browser_url: Some(url),
+            process: Some(AppProcessDetails {
+                managed: false,
+                has_setup,
+                logs,
+            }),
+        },
+        AppProcessSnapshot::Stopped {
+            url,
+            has_setup,
+            logs,
+        } => AppManifestInspection::Unavailable {
+            owner_directory,
+            runtime_type: AppRuntimeType::Process,
+            reason: "process_stopped",
+            browser_url: Some(url),
+            process: Some(AppProcessDetails {
+                managed: false,
+                has_setup,
+                logs,
+            }),
+        },
     }
 }
 

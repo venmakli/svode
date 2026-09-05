@@ -1,11 +1,23 @@
 import {
+  controlAppProcess as controlAppProcessDto,
   inspectAppManifest as inspectAppManifestDto,
   listenAppManifestChanges as listenAppManifestChangesDto,
   openAppOwnerDirectory as openAppOwnerDirectoryDto,
   openAppUrlInBrowser as openAppUrlInBrowserDto,
   revokeAppSource as revokeAppSourceDto,
 } from "@/platform/apps/apps-api";
-import type { AppManifestInspection, AppOwner } from "../model/types";
+import type {
+  AppManifestInspection,
+  AppOwner,
+  AppProcessControlAction,
+} from "../model/types";
+
+export function controlAppProcess(
+  owner: AppOwner,
+  action: AppProcessControlAction,
+): Promise<AppManifestInspection> {
+  return controlAppProcessDto(owner, action);
+}
 
 export async function inspectAppManifest(
   owner: AppOwner,

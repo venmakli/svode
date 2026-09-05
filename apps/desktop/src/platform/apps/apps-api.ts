@@ -15,6 +15,23 @@ export interface AppManifestDiagnosticDto {
 }
 
 export type AppRuntimeTypeDto = "static" | "process" | "url";
+export type AppProcessPhaseDto = "setup" | "starting" | "waiting_for_url";
+export type AppProcessControlActionDto =
+  | "retry"
+  | "restart"
+  | "stop"
+  | "rerun_setup";
+
+export interface AppProcessLogsDto {
+  stdout: string;
+  stderr: string;
+}
+
+export interface AppProcessDetailsDto {
+  managed: boolean;
+  hasSetup: boolean;
+  logs: AppProcessLogsDto;
+}
 
 export type AppManifestInspectionDto =
   | { status: "missing"; ownerDirectory: string }
@@ -29,13 +46,39 @@ export type AppManifestInspectionDto =
       runtimeType: Exclude<AppRuntimeTypeDto, "process">;
       viewportUrl: string;
       capabilityToken?: string;
+      process?: never;
+    }
+  | {
+      status: "ready";
+      ownerDirectory: string;
+      runtimeType: "process";
+      viewportUrl: string;
+      capabilityToken?: never;
+      process: AppProcessDetailsDto;
+    }
+  | {
+      status: "launching";
+      ownerDirectory: string;
+      runtimeType: "process";
+      phase: AppProcessPhaseDto;
+      browserUrl: string;
+      process: AppProcessDetailsDto;
     }
   | {
       status: "unavailable";
       ownerDirectory: string;
-      runtimeType: AppRuntimeTypeDto;
+      runtimeType: Exclude<AppRuntimeTypeDto, "process">;
       reason: string;
       browserUrl?: string;
+      process?: never;
+    }
+  | {
+      status: "unavailable";
+      ownerDirectory: string;
+      runtimeType: "process";
+      reason: string;
+      browserUrl?: string;
+      process: AppProcessDetailsDto;
     };
 
 interface AppFileEventDto {
@@ -64,6 +107,16 @@ export async function inspectAppManifest(
     backendOwner(owner),
   );
   return inspection;
+}
+
+export function controlAppProcess(
+  owner: AppOwnerDto,
+  action: AppProcessControlActionDto,
+): Promise<AppManifestInspectionDto> {
+  return invokeCommand("app_process_control", {
+    ...backendOwner(owner),
+    action,
+  });
 }
 
 export function revokeAppSource(capabilityToken: string): Promise<void> {

@@ -38,6 +38,7 @@ chrono-tz = "0.10"
 croner = "3.0.1"
 iana-time-zone = "0.1"
 regex = "1"
+reqwest = { version = "0.13", default-features = false, features = ["rustls"] }
 which = "7"
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite"] }
 opendal = { version = "0.58.1", features = ["services-s3"] }
