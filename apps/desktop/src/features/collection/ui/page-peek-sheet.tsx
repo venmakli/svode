@@ -171,6 +171,9 @@ export function PagePeekSheet({
                 peek: (
                   <PagePeekControls
                     page={currentPage}
+                    spacePath={effectiveSpacePath}
+                    projectPath={effectiveProjectPath}
+                    sourceShape="directory"
                     onOpenFullPage={(pageToOpen) =>
                       onOpenFullPage(
                         pageToOpen,
@@ -201,10 +204,11 @@ export function PagePeekSheet({
               <PagePeekControls
                 key={target?.page.path}
                 page={currentPage}
-                spacePath={
-                  detailState?.form === "leaf" ? effectiveSpacePath : undefined
-                }
+                spacePath={detailState ? effectiveSpacePath : undefined}
                 projectPath={effectiveProjectPath}
+                sourceShape={
+                  detailState?.form === "leaf" ? "file" : "directory"
+                }
                 onOpenFullPage={(pageToOpen) =>
                   onOpenFullPage(pageToOpen, effectiveSpaceId)
                 }
@@ -377,9 +381,11 @@ function PagePeekControls({
   page,
   spacePath,
   projectPath,
+  sourceShape,
   onOpenFullPage,
 }: {
   page: Page;
+  sourceShape: "file" | "directory";
   spacePath?: string;
   projectPath?: string | null;
   onOpenFullPage: (page: Page) => void;
@@ -391,7 +397,7 @@ function PagePeekControls({
           origin="peek"
           target={{
             kind: "page",
-            sourceShape: "file",
+            sourceShape,
             spacePath,
             projectPath,
             path: page.path,

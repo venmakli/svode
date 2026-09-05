@@ -22,6 +22,7 @@ import {
  */
 interface GitState {
   statuses: Record<string, GitStatus>;
+  statusErrors: Record<string, boolean>;
   syncing: Record<string, boolean>;
   syncError: Record<string, string>;
   cloning: Record<string, GitCloneProgress>;
@@ -47,6 +48,7 @@ export const useGitStore = create<GitState>((set) => {
 
   return {
     statuses: {},
+    statusErrors: {},
     syncing: {},
     syncError: {},
     cloning: {},
@@ -55,6 +57,7 @@ export const useGitStore = create<GitState>((set) => {
       refreshVersions[spacePath] = (refreshVersions[spacePath] ?? 0) + 1;
       set((s) => ({
         statuses: { ...s.statuses, [spacePath]: status },
+        statusErrors: { ...s.statusErrors, [spacePath]: false },
       }));
     },
 
@@ -66,8 +69,14 @@ export const useGitStore = create<GitState>((set) => {
         if (refreshVersions[spacePath] !== version) return;
         set((s) => ({
           statuses: { ...s.statuses, [spacePath]: status },
+          statusErrors: { ...s.statusErrors, [spacePath]: false },
         }));
       } catch (err) {
+        if (refreshVersions[spacePath] === version) {
+          set((s) => ({
+            statusErrors: { ...s.statusErrors, [spacePath]: true },
+          }));
+        }
         // Space may not have git initialized yet — leave previous status alone
         console.debug("git_status failed for", spacePath, err);
       }
@@ -77,10 +86,11 @@ export const useGitStore = create<GitState>((set) => {
       set((s) => {
         delete refreshVersions[spacePath];
         const { [spacePath]: _rmStatus, ...statuses } = s.statuses;
+        const { [spacePath]: _rmStatusError, ...statusErrors } = s.statusErrors;
         const { [spacePath]: _rmSync, ...syncing } = s.syncing;
         const { [spacePath]: _rmError, ...syncError } = s.syncError;
         const { [spacePath]: _rmClone, ...cloning } = s.cloning;
-        return { statuses, syncing, syncError, cloning };
+        return { statuses, statusErrors, syncing, syncError, cloning };
       }),
 
     setSyncing: (spacePath, syncing) =>

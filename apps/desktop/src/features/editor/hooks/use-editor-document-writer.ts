@@ -348,79 +348,84 @@ export function useEditorDocumentWriter({
     spacePath,
   ]);
 
-  const handleSaveAll = useCallback(async () => {
-    if (!spacePath) return;
-    const retry = retryPendingGitSave(spacePath);
-    if (retry) {
-      clearCommittedMarkers(await retry);
-      return;
-    }
-    cancelDebounce();
-    const saveAllScope = resolveGitSaveAllScope({
-      activePath: currentDocument,
-      tree: saveScopeTree,
-    });
+  const handleSaveAll = useCallback(
+    async (explicitScope?: GitSaveScope) => {
+      if (!spacePath) return;
+      const retry = retryPendingGitSave(spacePath);
+      if (retry) {
+        clearCommittedMarkers(await retry);
+        return;
+      }
+      cancelDebounce();
+      const saveAllScope =
+        explicitScope ??
+        resolveGitSaveAllScope({
+          activePath: currentDocument,
+          tree: saveScopeTree,
+        });
 
-    if (!editor || !currentDocument) {
-      await commitSaveScopeAndMaybeSync(
-        spacePath,
-        saveAllScope,
-        [],
-        projectPath ?? undefined,
-      ).then(clearCommittedMarkers);
-      return;
-    }
-
-    const isDirty = useEditorStore
-      .getState()
-      .hasUnsaved(spacePath, currentDocument);
-    if (!isDirty) {
-      await commitSaveScopeAndMaybeSync(
-        spacePath,
-        saveAllScope,
-        [],
-        projectPath ?? undefined,
-      ).then(clearCommittedMarkers);
-      return;
-    }
-
-    const saveAll = async () => {
-      const result = await performWrite(false);
-      if (!result) return;
-      applySavedDocumentResult(result, currentDocument, {
-        cacheCurrentDocument: false,
-      });
-      clearCommittedMarkers(
+      if (!editor || !currentDocument) {
         await commitSaveScopeAndMaybeSync(
           spacePath,
           saveAllScope,
-          [result.newPath ?? currentDocument],
+          [],
           projectPath ?? undefined,
-        ),
-      );
-    };
-    try {
-      await saveAll();
-    } catch (err) {
-      if (onWriteAccessError && (await onWriteAccessError(err, saveAll))) {
+        ).then(clearCommittedMarkers);
+        return;
+      }
+
+      const isDirty = useEditorStore
+        .getState()
+        .hasUnsaved(spacePath, currentDocument);
+      if (!isDirty) {
+        await commitSaveScopeAndMaybeSync(
+          spacePath,
+          saveAllScope,
+          [],
+          projectPath ?? undefined,
+        ).then(clearCommittedMarkers);
+        return;
+      }
+
+      const saveAll = async () => {
+        const result = await performWrite(false);
+        if (!result) return;
+        applySavedDocumentResult(result, currentDocument, {
+          cacheCurrentDocument: false,
+        });
+        clearCommittedMarkers(
+          await commitSaveScopeAndMaybeSync(
+            spacePath,
+            saveAllScope,
+            [result.newPath ?? currentDocument],
+            projectPath ?? undefined,
+          ),
+        );
+      };
+      try {
+        await saveAll();
+      } catch (err) {
+        if (onWriteAccessError && (await onWriteAccessError(err, saveAll))) {
+          throw err;
+        }
+        console.error("Save-all failed:", err);
+        toast.error(m.editor_error_save());
         throw err;
       }
-      console.error("Save-all failed:", err);
-      toast.error(m.editor_error_save());
-      throw err;
-    }
-  }, [
-    applySavedDocumentResult,
-    cancelDebounce,
-    clearCommittedMarkers,
-    currentDocument,
-    editor,
-    onWriteAccessError,
-    performWrite,
-    projectPath,
-    saveScopeTree,
-    spacePath,
-  ]);
+    },
+    [
+      applySavedDocumentResult,
+      cancelDebounce,
+      clearCommittedMarkers,
+      currentDocument,
+      editor,
+      onWriteAccessError,
+      performWrite,
+      projectPath,
+      saveScopeTree,
+      spacePath,
+    ],
+  );
 
   return {
     flushPendingSource,

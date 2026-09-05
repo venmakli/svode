@@ -96,3 +96,14 @@ const status: GitStatus = {
     { path: "outside.md", state: "modified" },
   ],
 };
+
+test("directory Page Peek keeps subtree Save all without loaded sidebar descendants", () => {
+  for (const tree of [[], [{ path: "hidden/README.md", children: [] }]]) {
+    const scope = resolveGitSaveAllScope({
+      activePath: "hidden/README.md",
+      tree,
+    });
+    expect(scope.kind).toBe("container");
+    expect(scope.path).toBe("hidden");
+  }
+});

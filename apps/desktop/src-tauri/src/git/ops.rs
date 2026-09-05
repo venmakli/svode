@@ -245,30 +245,52 @@ pub async fn init_with_optional_scaffold_commit(
 /// Get space git status by parsing `git status --porcelain=v2 --branch -z`.
 pub async fn status(cli: &GitCli, space_dir: &Path) -> Result<GitStatus, AppError> {
     let prefix = status_path_prefix(cli, space_dir).await?;
-    let out = cli
-        .exec(
-            space_dir,
-            &[
-                "status",
-                "--porcelain=v2",
-                "--branch",
-                "--untracked-files=all",
-                "-z",
-                "--",
-                ".",
-            ],
-        )
-        .await?;
-
-    if out.exit_code != 0 {
-        return Err(AppError::GitCommandFailed(format!(
-            "git status failed: {}",
-            out.stderr
-        )));
+    let (success, bytes) = super::cli::read_bounded(
+        cli,
+        space_dir,
+        &[
+            "status",
+            "--porcelain=v2",
+            "--branch",
+            "--untracked-files=all",
+            "--ignore-submodules=dirty",
+            "-z",
+            "--",
+            ".",
+        ],
+        4 * 1024 * 1024,
+    )
+    .await?;
+    if !success || bytes.len() > 4 * 1024 * 1024 {
+        return Err(AppError::GitCommandFailed(
+            "Repository status unavailable or exceeds the read limit".into(),
+        ));
     }
-
-    let mut status = parse_status_porcelain_v2_z(&out.stdout)?;
+    let output = String::from_utf8(bytes)
+        .map_err(|_| AppError::GitCommandFailed("Repository paths have invalid encoding".into()))?;
+    let mut status = parse_status_porcelain_v2_z(&output)?;
+    if status.files.len() > 20_000 {
+        return Err(AppError::GitCommandFailed(
+            "Repository status exceeds the item limit".into(),
+        ));
+    }
     strip_status_path_prefix(&mut status, &prefix)?;
+    status.files.retain(|file| {
+        let mut ancestor = space_dir.to_path_buf();
+        let parts: Vec<_> = file.path.split('/').collect();
+        for (index, part) in parts.iter().enumerate() {
+            ancestor.push(part);
+            if ancestor.join(".git").exists() {
+                return index + 1 == parts.len() && file.state != "untracked";
+            }
+        }
+        true
+    });
+    if status.files.is_empty() {
+        status.has_staged = false;
+        status.has_unstaged = false;
+        status.has_conflicts = false;
+    }
     Ok(status)
 }
 

@@ -1,9 +1,8 @@
-import { lazy, Suspense, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { FileDiff, LoaderCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Empty, EmptyHeader, EmptyTitle } from "@/components/ui/empty";
 import {
   Sheet,
   SheetContent,
@@ -13,7 +12,6 @@ import {
   SheetTitle,
   SheetTrigger,
 } from "@/components/ui/sheet";
-import { Skeleton } from "@/components/ui/skeleton";
 import {
   Tooltip,
   TooltipContent,
@@ -32,12 +30,9 @@ import {
   resolveInspectionScope,
   type ChangesTarget,
 } from "../model/scope";
-import { useWorkingTreeItem } from "../hooks/use-working-tree-item";
+import { createItemReader } from "../model/item-reader";
+import { ChangesBody } from "./changes-body";
 import { useChangesSave } from "../hooks/use-changes-save";
-
-const TextDiff = lazy(() =>
-  import("./text-diff").then((module) => ({ default: module.TextDiff })),
-);
 
 export function ChangesControl({
   target,
@@ -47,9 +42,8 @@ export function ChangesControl({
   origin?: "main" | "peek";
 }) {
   const scope = resolveInspectionScope(target);
-  if (scope.kind !== "file") return null;
   return (
-    <ExactChangesControl
+    <ScopeChangesControl
       key={`${origin}:${scope.spacePath}`}
       target={target}
       origin={origin}
@@ -57,7 +51,7 @@ export function ChangesControl({
   );
 }
 
-function ExactChangesControl({
+function ScopeChangesControl({
   target,
   origin,
 }: {
@@ -66,24 +60,26 @@ function ExactChangesControl({
 }) {
   const [open, setOpen] = useState(false);
   const status = useGitStore((state) => state.statuses[target.spacePath]);
-  const scope = useMemo(() => resolveInspectionScope(target), [target]);
+  const { kind, sourceShape, spacePath, path } = target;
+  const scope = useMemo(
+    () => resolveInspectionScope({ kind, sourceShape, spacePath, path }),
+    [kind, sourceShape, spacePath, path],
+  );
   const paths = inspectionPaths(scope, status);
   const dirty = paths.length > 0;
-  const conflict =
-    status?.files.some(
-      (file) => file.path === target.path && file.state === "conflict",
-    ) ?? false;
-  const patch = useWorkingTreeItem(
-    target.spacePath,
-    target.path,
-    status,
-    open && dirty && !conflict,
+  const statusError = useGitStore(
+    (state) => state.statusErrors[target.spacePath] ?? false,
   );
+  const reader = useMemo(() => createItemReader(), []);
   const save = useChangesSave(target, open);
   const hint =
     typeof navigator !== "undefined" && /Mac/i.test(navigator.platform)
-      ? "⌘S"
-      : "Ctrl+S";
+      ? scope.kind === "file"
+        ? "⌘S"
+        : "⇧⌘S"
+      : scope.kind === "file"
+        ? "Ctrl+S"
+        : "Ctrl+Shift+S";
   const label = m.changes_scope_label({
     name: target.name,
     count: String(paths.length),
@@ -136,56 +132,24 @@ function ExactChangesControl({
           <SheetDescription className="truncate">
             {target.name}
           </SheetDescription>
-          <p className="truncate text-xs text-muted-foreground">
-            {target.path}
-          </p>
+          {scope.path ? (
+            <p className="truncate text-xs text-muted-foreground">
+              {scope.path}
+            </p>
+          ) : null}
         </SheetHeader>
-        <div
-          className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden"
-          data-changes-body
-        >
-          {!status ? (
-            <Skeleton className="m-4 h-32" />
-          ) : !dirty ? (
-            <Empty>
-              <EmptyHeader>
-                <EmptyTitle>{m.changes_clean()}</EmptyTitle>
-              </EmptyHeader>
-            </Empty>
-          ) : conflict ? (
-            <Empty>
-              <EmptyHeader>
-                <EmptyTitle>{m.changes_conflict()}</EmptyTitle>
-              </EmptyHeader>
-            </Empty>
-          ) : patch.error ? (
-            <Alert>
-              <AlertDescription>{m.changes_load_failed()}</AlertDescription>
-              <Button variant="outline" onClick={patch.retry}>
-                {m.changes_retry()}
-              </Button>
-            </Alert>
-          ) : !patch.item ? (
-            <Skeleton className="m-4 h-32" />
-          ) : patch.item.state === "text" ? (
-            <Suspense fallback={<Skeleton className="m-4 h-32" />}>
-              <TextDiff item={patch.item} />
-            </Suspense>
-          ) : (
-            <Empty>
-              <EmptyHeader>
-                <EmptyTitle>
-                  {patch.item.state === "no_content_diff"
-                    ? m.changes_index_only()
-                    : patch.item.state === "truncated"
-                      ? m.changes_truncated()
-                      : m.changes_not_text()}
-                </EmptyTitle>
-              </EmptyHeader>
-            </Empty>
-          )}
-        </div>
-        {dirty || save.error ? (
+        {open ? (
+          <ChangesBody
+            key={`${scope.kind}:${scope.path}`}
+            scope={scope}
+            status={status}
+            error={statusError}
+            paths={paths}
+            reader={reader}
+            name={target.name}
+          />
+        ) : null}
+        {dirty || save.error || save.saving ? (
           <SheetFooter className="shrink-0 border-t">
             {save.error ? (
               <Alert variant="destructive">
@@ -206,8 +170,8 @@ function ExactChangesControl({
             <RepositoryAccessInlineRecovery recovery={save.recovery} />
             <RepositoryAccessPrimaryButton recovery={save.recovery} />
             <Button
-              disabled={!save.editable || save.saving}
-              onClick={() => void save.save()}
+              disabled={!save.editable || save.saving || statusError}
+              onClick={() => void save.save(scope.kind !== "file")}
             >
               {save.saving ? (
                 <LoaderCircle

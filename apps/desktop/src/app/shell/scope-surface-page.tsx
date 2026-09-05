@@ -1,3 +1,4 @@
+import { usePublishMainChangesTarget } from "@/features/changes";
 import {
   useCallback,
   useMemo,
@@ -31,6 +32,7 @@ import {
   PageSurfaceSessionProvider,
   ReadmeSurface,
   usePageSurfaceSession,
+  usePageDetailContext,
 } from "@/features/page/scope-surface";
 import { useOpenPage } from "@/features/page/navigation";
 import {
@@ -259,6 +261,25 @@ function ScopePageSurfaceHost({
   headerActions?: ReactNode;
 }) {
   const pageSurface = usePageSurfaceSession();
+  const detail = usePageDetailContext();
+  usePublishMainChangesTarget(
+    props.presentation === "full"
+      ? {
+          kind:
+            props.owner.identityKind === "registered-space"
+              ? props.owner.spacePath === props.owner.projectPath
+                ? "project"
+                : "space"
+              : "owner",
+          sourceShape: "directory",
+          spacePath: props.owner.spacePath,
+          projectPath: props.owner.projectPath,
+          sessionKey: props.openRequestKey,
+          path: props.owner.readmePath,
+          name: detail.page?.meta.title ?? detail.fallbackTitle,
+        }
+      : null,
+  );
   const contributions = useMemo(
     () => createContributions(pageSurface.readOnly),
     [createContributions, pageSurface.readOnly],

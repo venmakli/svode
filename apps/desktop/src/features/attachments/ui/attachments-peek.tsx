@@ -83,13 +83,13 @@ export function AttachmentsPeek({
         </SheetTitle>
         {!isBinaryViewer ? (
           <div className="flex shrink-0 items-center justify-end gap-1 px-2 pb-2">
-            {loadedPage && target?.row.sourceShape === "file" ? (
+            {loadedPage && target?.row.kind === "page" ? (
               <ChangesControl
                 key={target.row.path}
                 origin="peek"
                 target={{
                   kind: "page",
-                  sourceShape: "file",
+                  sourceShape: target.row.sourceShape,
                   spacePath: resolvedSpacePath,
                   projectPath: resolvedProjectPath,
                   path: loadedPage.path,

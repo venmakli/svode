@@ -137,6 +137,7 @@ test("selectFileChangeIndicator scopes same relative paths by space path", () =>
 test("refreshStatus replaces stale dirty files with a clean snapshot", async () => {
   useGitStore.setState({
     statuses: {},
+    statusErrors: {},
     syncing: {},
     syncError: {},
     cloning: {},
@@ -189,6 +190,7 @@ function gitStateBySpace(filesBySpace: Record<string, GitStatus["files"]>) {
         status(files),
       ]),
     ),
+    statusErrors: {},
     syncing: {},
     syncError: {},
     cloning: {},
@@ -213,3 +215,27 @@ function status(files: GitStatus["files"]): GitStatus {
     files,
   };
 }
+
+test("status failure retains the last snapshot and explicit retry clears its error", async () => {
+  const space = "/status-recovery";
+  const git = useGitStore.getState();
+  const status: GitStatus = {
+    branch: "main",
+    ahead: 0,
+    behind: 0,
+    hasStaged: false,
+    hasUnstaged: false,
+    hasConflicts: false,
+    tracking: null,
+    files: [],
+  };
+  git.applyStatus(space, status);
+  await git.refreshStatus(space, async () => {
+    throw new Error("Synthetic repository unavailable");
+  });
+  expect(useGitStore.getState().statuses[space]).toBe(status);
+  expect(useGitStore.getState().statusErrors[space]).toBe(true);
+  await git.refreshStatus(space, async () => status);
+  expect(useGitStore.getState().statusErrors[space]).toBe(false);
+  git.clear(space);
+});

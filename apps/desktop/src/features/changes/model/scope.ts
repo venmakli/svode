@@ -21,7 +21,9 @@ export interface InspectionScope {
   path: string;
 }
 
-export function resolveInspectionScope(target: ChangesTarget): InspectionScope {
+export function resolveInspectionScope(
+  target: Pick<ChangesTarget, "kind" | "spacePath" | "sourceShape" | "path">,
+): InspectionScope {
   if (target.kind === "space" || target.kind === "project")
     return { kind: "repository", spacePath: target.spacePath, path: "" };
   const path = normalizeGitStatusPath(target.path);
@@ -51,4 +53,19 @@ export function inspectionPaths(
         }),
     ),
   ];
+}
+
+export function inspectionSaveScope(target: ChangesTarget) {
+  const scope = resolveInspectionScope(target);
+  if (scope.kind === "repository")
+    return { kind: "space", path: "", label: "space" } as const;
+  if (scope.kind === "file")
+    return { kind: "file", path: scope.path, label: "page" } as const;
+  return {
+    kind: "container",
+    path: scope.path,
+    nodePath: target.path,
+    hasSchema: target.kind === "owner",
+    label: "folder",
+  } as const;
 }

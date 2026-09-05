@@ -1,6 +1,7 @@
+import type { GitSaveScope } from "./save-scope";
 export interface PageSaveOwner {
   save(): Promise<void>;
-  saveAll(): Promise<void>;
+  saveAll(scope?: GitSaveScope): Promise<void>;
 }
 
 const owners = new Map<string, PageSaveOwner[]>();
@@ -27,8 +28,13 @@ export async function dispatchPageSave(
   spacePath: string,
   path: string,
   all: boolean,
+  scope?: GitSaveScope,
 ) {
   const owner = owners.get(`${spacePath}\0${path}`)?.at(-1);
   if (!owner) throw new Error("Page save owner unavailable");
-  await (all ? owner.saveAll() : owner.save());
+  await (all ? owner.saveAll(scope) : owner.save());
+}
+
+export function hasPageSaveOwner(spacePath: string, path: string) {
+  return Boolean(owners.get(`${spacePath}\0${path}`)?.length);
 }

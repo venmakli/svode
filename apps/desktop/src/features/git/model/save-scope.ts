@@ -2,6 +2,7 @@ import type { GitStatus } from "./types";
 import {
   containerPathForNodePath,
   isGitStatusPathDescendant,
+  isReadmePath,
   joinGitStatusPath,
   normalizeGitStatusPath,
 } from "./git-paths";
@@ -39,6 +40,8 @@ export function resolveGitSaveAllScope(input: {
 
   const nodeChain = findNodeChain(input.tree, activePath);
   if (nodeChain.length === 0) {
+    if (isReadmePath(activePath))
+      return containerScopeFromNode({ path: activePath });
     return { kind: "file", path: activePath, label: "page" };
   }
 
@@ -123,6 +126,7 @@ function findNodeChain(
 function isContainerNode(node: GitSaveScopeTreeNode): boolean {
   const path = normalizeGitStatusPath(node.path);
   return (
+    isReadmePath(path) ||
     !path.endsWith(".md") ||
     node.has_schema === true ||
     node.hasChildren === true ||

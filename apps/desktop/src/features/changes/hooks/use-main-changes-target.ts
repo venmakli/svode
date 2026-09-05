@@ -27,7 +27,8 @@ export function usePublishMainChangesTarget(target: ChangesTarget | null) {
   const path = target?.path;
   const name = target?.name;
   useEffect(() => {
-    if (!kind || !sourceShape || !spacePath || !path || !name) return;
+    if (!kind || !sourceShape || !spacePath || path === undefined || !name)
+      return;
     const published = {
       kind,
       sourceShape,

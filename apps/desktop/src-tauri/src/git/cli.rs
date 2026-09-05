@@ -4,7 +4,7 @@ use std::process::{Command as StdCommand, Stdio};
 use std::time::Duration;
 
 use serde::Serialize;
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::process::Command;
 
 use crate::{AppError, process};
@@ -540,4 +540,42 @@ mod tests {
             ]
         );
     }
+}
+
+pub(crate) async fn read_bounded(
+    cli: &GitCli,
+    repo: &Path,
+    args: &[&str],
+    max_bytes: usize,
+) -> Result<(bool, Vec<u8>), AppError> {
+    let mut command = Command::new(cli.git_path());
+    crate::process::hide_tokio_window(&mut command);
+    cli.configure_process_env(&mut command);
+    command
+        .args(args)
+        .current_dir(repo)
+        .env("GIT_OPTIONAL_LOCKS", "0")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .kill_on_drop(true);
+    let mut child = command.spawn()?;
+    let result = tokio::time::timeout(Duration::from_secs(3), async {
+        let mut bytes = Vec::new();
+        child
+            .stdout
+            .take()
+            .unwrap()
+            .take((max_bytes + 1) as u64)
+            .read_to_end(&mut bytes)
+            .await?;
+        if bytes.len() > max_bytes {
+            child.kill().await?;
+            return Ok((false, bytes));
+        }
+        Ok::<_, std::io::Error>((child.wait().await?.success(), bytes))
+    })
+    .await
+    .map_err(|_| AppError::GitCommandFailed("Diff read timed out".into()))??;
+    Ok(result)
 }

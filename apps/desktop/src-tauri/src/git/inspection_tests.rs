@@ -111,6 +111,7 @@ async fn inspection_bounds_text_and_rejects_child_repository_and_symlink_escape(
     let (dir, cli) = repo().await;
     for (name, bytes, state) in [
         ("large.md", vec![b'a'; 600 * 1024], "truncated"),
+        ("large.pdf", vec![b'a'; 600 * 1024], "binary"),
         ("invalid.md", vec![255], "invalid_encoding"),
         ("binary.md", vec![0, 1], "binary"),
     ] {
@@ -179,4 +180,209 @@ async fn index_only_save_clears_selected_index_without_creating_commit() {
             .files
             .is_empty()
     );
+}
+
+#[tokio::test]
+async fn aggregate_scope_is_rechecked_and_exceptional_items_are_local() {
+    let (dir, cli) = repo().await;
+    std::fs::create_dir(dir.path().join("contract")).unwrap();
+    for name in [
+        "README.md",
+        "schema.yaml",
+        "app.yaml",
+        "source.ts",
+        "manual.pdf",
+    ] {
+        std::fs::write(dir.path().join("contract").join(name), "base\n").unwrap();
+    }
+    ops::commit_all(&cli, dir.path()).await.unwrap();
+    std::fs::write(dir.path().join("contract/source.ts"), "changed\n").unwrap();
+    cli.exec(
+        dir.path(),
+        &["mv", "contract/README.md", "contract/renamed.md"],
+    )
+    .await
+    .unwrap();
+    let scope = || {
+        serde_json::from_value(serde_json::json!({"kind": "directory", "path": "contract"}))
+            .unwrap()
+    };
+    let renamed = super::inspection::read_scoped_item(
+        &cli,
+        dir.path(),
+        "contract/renamed.md",
+        "1".into(),
+        Some(scope()),
+    )
+    .await
+    .unwrap();
+    let renamed = serde_json::to_value(renamed).unwrap();
+    assert_eq!(renamed["previousPath"], "contract/README.md");
+    let binary = super::inspection::read_scoped_item(
+        &cli,
+        dir.path(),
+        "contract/manual.pdf",
+        "1".into(),
+        Some(scope()),
+    )
+    .await
+    .unwrap();
+    assert_eq!(serde_json::to_value(binary).unwrap()["state"], "binary");
+    assert!(
+        super::inspection::read_scoped_item(
+            &cli,
+            dir.path(),
+            "outside.md",
+            "1".into(),
+            Some(scope())
+        )
+        .await
+        .is_err()
+    );
+    let missing = super::inspection::read_scoped_item(
+        &cli,
+        dir.path(),
+        "contract/gone.md",
+        "1".into(),
+        Some(scope()),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        serde_json::to_value(missing).unwrap()["state"],
+        "disappeared"
+    );
+    let root_scope =
+        serde_json::from_value(serde_json::json!({"kind": "repository", "path": ""})).unwrap();
+    assert!(
+        super::inspection::read_scoped_item(
+            &cli,
+            dir.path(),
+            "contract/source.ts",
+            "1".into(),
+            Some(root_scope)
+        )
+        .await
+        .is_ok()
+    );
+}
+
+#[tokio::test]
+async fn project_status_contains_inline_paths_and_gitlink_but_not_child_working_trees() {
+    let (dir, cli) = repo().await;
+    let (child, _) = repo().await;
+    std::fs::write(child.path().join("child.md"), "base\n").unwrap();
+    ops::commit_all(&cli, child.path()).await.unwrap();
+    let added = cli
+        .exec(
+            dir.path(),
+            &[
+                "-c",
+                "protocol.file.allow=always",
+                "submodule",
+                "add",
+                child.path().to_str().unwrap(),
+                "sub",
+            ],
+        )
+        .await
+        .unwrap();
+    assert_eq!(added.exit_code, 0, "{}", added.stderr);
+    std::fs::create_dir(dir.path().join("inline")).unwrap();
+    std::fs::write(dir.path().join("inline/README.md"), "base\n").unwrap();
+    ops::commit_all(&cli, dir.path()).await.unwrap();
+    std::fs::write(dir.path().join("sub/child.md"), "dirty child\n").unwrap();
+    std::fs::write(dir.path().join("inline/README.md"), "dirty inline\n").unwrap();
+    let independent = dir.path().join("independent");
+    std::fs::create_dir(&independent).unwrap();
+    cli.exec(&independent, &["init"]).await.unwrap();
+    std::fs::write(independent.join("note.md"), "independent\n").unwrap();
+    let status = ops::status(&cli, dir.path()).await.unwrap();
+    assert_eq!(
+        status
+            .files
+            .iter()
+            .map(|file| file.path.as_str())
+            .collect::<Vec<_>>(),
+        ["inline/README.md"]
+    );
+    let inline = ops::status(&cli, &dir.path().join("inline")).await.unwrap();
+    assert_eq!(inline.files[0].path, "README.md");
+    assert_eq!(
+        ops::status(&cli, &dir.path().join("sub"))
+            .await
+            .unwrap()
+            .files[0]
+            .path,
+        "child.md"
+    );
+    cli.exec(&dir.path().join("sub"), &["config", "user.name", "Test"])
+        .await
+        .unwrap();
+    cli.exec(
+        &dir.path().join("sub"),
+        &["config", "user.email", "test@example.com"],
+    )
+    .await
+    .unwrap();
+    ops::commit_all(&cli, &dir.path().join("sub"))
+        .await
+        .unwrap();
+    assert!(
+        ops::status(&cli, dir.path())
+            .await
+            .unwrap()
+            .files
+            .iter()
+            .any(|file| file.path == "sub")
+    );
+    let pointer = read_item(&cli, dir.path(), "sub", "1".into())
+        .await
+        .unwrap();
+    assert_eq!(serde_json::to_value(pointer).unwrap()["state"], "gitlink");
+}
+
+#[tokio::test]
+async fn conflicts_and_non_regular_sources_never_become_normal_text() {
+    let (dir, cli) = repo().await;
+    std::fs::write(dir.path().join("note.md"), "base\n").unwrap();
+    ops::commit_all(&cli, dir.path()).await.unwrap();
+    let base_branch = ops::status(&cli, dir.path()).await.unwrap().branch;
+    cli.exec(dir.path(), &["checkout", "-b", "other"])
+        .await
+        .unwrap();
+    std::fs::write(dir.path().join("note.md"), "other\n").unwrap();
+    ops::commit_all(&cli, dir.path()).await.unwrap();
+    cli.exec(dir.path(), &["checkout", &base_branch])
+        .await
+        .unwrap();
+    std::fs::write(dir.path().join("note.md"), "ours\n").unwrap();
+    ops::commit_all(&cli, dir.path()).await.unwrap();
+    assert_ne!(
+        cli.exec(dir.path(), &["merge", "other"])
+            .await
+            .unwrap()
+            .exit_code,
+        0
+    );
+    let item = read_item(&cli, dir.path(), "note.md", "1".into())
+        .await
+        .unwrap();
+    assert_eq!(serde_json::to_value(item).unwrap()["state"], "conflict");
+    #[cfg(unix)]
+    {
+        let pipe = dir.path().join("pipe");
+        assert!(
+            std::process::Command::new("mkfifo")
+                .arg(&pipe)
+                .status()
+                .unwrap()
+                .success()
+        );
+        assert!(
+            read_item(&cli, dir.path(), "pipe", "1".into())
+                .await
+                .is_err()
+        );
+    }
 }

@@ -80,3 +80,25 @@ test("Space and Project inspect only the supplied effective status snapshot", ()
     [],
   );
 });
+
+test("aggregate save scope is explicit even for owners absent from the sidebar", async () => {
+  const { inspectionSaveScope } = await import("./scope");
+  expect(
+    inspectionSaveScope({
+      ...target,
+      path: "hidden/README.md",
+      sourceShape: "directory",
+    }),
+  ).toEqual({
+    kind: "container",
+    path: "hidden",
+    nodePath: "hidden/README.md",
+    hasSchema: false,
+    label: "folder",
+  });
+  expect(inspectionSaveScope({ ...target, kind: "project" })).toEqual({
+    kind: "space",
+    path: "",
+    label: "space",
+  });
+});

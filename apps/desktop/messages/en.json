@@ -1823,5 +1823,22 @@
   "changes_not_text": "Text comparison is unavailable for this file.",
   "changes_access_pending": "Checking save availability…",
   "changes_access_blocked": "Saving is unavailable. Restore access using the repository work status.",
-  "changes_conflict": "Resolve conflicts in the source Page, then save to continue the repository merge."
+  "changes_conflict": "Resolve conflicts in the source Page, then save to continue the repository merge.",
+  "changes_updating": "Updating…",
+  "changes_renamed": "Moved from {path}. Both affected paths are included.",
+  "changes_bytes": "Previous: {before} bytes · Current: {after} bytes",
+  "changes_reveal": "Show file",
+  "changes_reveal_failed": "Could not show the source file.",
+  "changes_stats": "{added} added · {removed} removed",
+  "changes_modified": "Modified",
+  "changes_deleted": "Deleted",
+  "changes_added": "Added",
+  "changes_conflict_label": "Conflict",
+  "changes_invalid_encoding": "The file is not valid UTF-8. Text comparison is unavailable.",
+  "changes_disappeared": "This file is no longer available. The list will update with repository status.",
+  "changes_gitlink": "The saved revision of this Space changed. Open that Space to inspect its files.",
+  "changes_metadata": "The source type or repository metadata changed. Text comparison is unavailable.",
+  "changes_budget_limit": "The open previews reached the limit. Collapse other files and retry, or show the source file.",
+  "changes_repository_failed": "Repository status is unavailable. Retry to update the list.",
+  "changes_more": "Show more · {count} remaining"
 }

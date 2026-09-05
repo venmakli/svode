@@ -161,14 +161,17 @@ export function WindowHeader() {
         {isSpaceRoute &&
         mainSurface === "content" &&
         changesTarget &&
-        selection?.kind === "artifact" &&
-        changesTarget.sessionKey === selection.request.sessionKey &&
+        selection &&
+        changesTarget.sessionKey ===
+          (selection.kind === "artifact"
+            ? selection.request.sessionKey
+            : selection.request.key) &&
         changesTarget.spacePath === activeSpacePath ? (
           <ChangesControl
             key={
               selection?.kind === "artifact"
                 ? selection.request.sessionKey
-                : "owner"
+                : selection.request.key
             }
             target={changesTarget}
           />
