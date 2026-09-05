@@ -113,9 +113,17 @@ function ExactChangesControl({
       </Tooltip>
       <SheetContent
         side="right"
-        className="gap-0 data-[side=right]:sm:max-w-none"
+        className="data-[side=right]:gap-0 data-[side=right]:overflow-hidden data-[side=right]:rounded-xl data-[side=right]:border"
         style={{
-          width: origin === "peek" ? "min(600px, 88vw)" : "min(720px, 94vw)",
+          bottom: "0.75rem",
+          height: "auto",
+          maxWidth: "none",
+          right: "0.75rem",
+          top: "0.75rem",
+          width:
+            origin === "peek"
+              ? "min(26rem, calc(100vw - 1.5rem))"
+              : "min(30rem, calc(100vw - 1.5rem))",
         }}
         overlayClassName={
           origin === "peek"
