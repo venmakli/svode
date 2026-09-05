@@ -15,15 +15,18 @@ export function SettingsDialogs() {
 
   return (
     <>
-      <AppSettingsDialog
-        open={settingsDialog === "app"}
-        initialSection={settingsAppSection}
-        variablesContext={settingsAppVariablesContext ?? undefined}
-        enableLegacyAgentIntegration={ENABLE_LEGACY_AGENT_INTEGRATION}
-        onOpenChange={(open) => {
-          if (!open) closeSettings();
-        }}
-      />
+      {settingsDialog === "app" ? (
+        <AppSettingsDialog
+          key={settingsAppSection}
+          open
+          initialSection={settingsAppSection}
+          variablesContext={settingsAppVariablesContext ?? undefined}
+          enableLegacyAgentIntegration={ENABLE_LEGACY_AGENT_INTEGRATION}
+          onOpenChange={(open) => {
+            if (!open) closeSettings();
+          }}
+        />
+      ) : null}
       <SpaceSettingsDialog
         open={settingsDialog === "space"}
         initialSection={settingsSpaceDestination}

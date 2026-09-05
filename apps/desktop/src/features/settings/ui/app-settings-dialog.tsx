@@ -1,4 +1,4 @@
-import { useEffect, useState, type ComponentType } from "react";
+import { useState, type ComponentType } from "react";
 import * as m from "@/paraglide/messages.js";
 import {
   Dialog,
@@ -115,20 +115,12 @@ export function AppSettingsDialog({
 }: AppSettingsDialogProps) {
   const appearanceSettings = useAppSettingsAppearance();
   const aboutSettings = useAppSettingsAbout();
-  const [section, setSection] = useState<AppSettingsSection>("git-identity");
+  const [section, setSection] = useState<AppSettingsSection>(initialSection);
   const identitySettings = useGlobalIdentitySettings(open);
   const cliAgents = useCliAgents({
     open,
     enabled: enableLegacyAgentIntegration,
   });
-
-  useEffect(() => {
-    if (!open) return;
-    const resetSection = window.setTimeout(() => {
-      setSection(initialSection);
-    }, 0);
-    return () => window.clearTimeout(resetSection);
-  }, [initialSection, open]);
 
   const visibleNavItems = NAV_ITEMS.filter((item) =>
     item.show({ enableLegacyAgentIntegration }),
