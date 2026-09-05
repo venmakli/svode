@@ -7,6 +7,11 @@ import {
   Square,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import type { AppSession } from "../model/types";
 import { AppLoadingState, AppLogsPopover, AppRecovery } from "./app-state-ui";
 import * as m from "@/paraglide/messages.js";
@@ -79,55 +84,90 @@ export function ReadyAppViewport({
               onRerunSetup={onRerunSetup}
             />
           ) : null}
-          <Button
-            size="icon-sm"
-            variant="secondary"
-            aria-label={m.app_show_files()}
-            onClick={onShowFiles}
-          >
-            <FolderOpen />
-          </Button>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                size="icon-sm"
+                variant="secondary"
+                aria-label={m.app_show_files()}
+                onClick={onShowFiles}
+              >
+                <FolderOpen />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">{m.app_show_files()}</TooltipContent>
+          </Tooltip>
           {session.runtimeType !== "static" ? (
-            <Button
-              size="icon-sm"
-              variant="secondary"
-              aria-label={m.app_open_browser()}
-              onClick={() => onOpenBrowser(session.viewportUrl)}
-            >
-              <AppWindow />
-            </Button>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  size="icon-sm"
+                  variant="secondary"
+                  aria-label={m.app_open_browser()}
+                  onClick={() => onOpenBrowser(session.viewportUrl)}
+                >
+                  <AppWindow />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom">
+                {m.app_open_browser()}
+              </TooltipContent>
+            </Tooltip>
+          ) : null}
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                size="icon-sm"
+                variant="secondary"
+                aria-label={m.app_reload()}
+                onClick={() => {
+                  setFrameState("loading");
+                  setFrameKey((key) => key + 1);
+                }}
+              >
+                <RefreshCw />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">
+              {m.app_reload_tooltip()}
+            </TooltipContent>
+          </Tooltip>
+          {process?.managed ? (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  size="icon-sm"
+                  variant="destructive"
+                  aria-label={m.app_stop()}
+                  onClick={onStop}
+                >
+                  <Square />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom">
+                {m.app_stop_tooltip()}
+              </TooltipContent>
+            </Tooltip>
           ) : null}
           {process ? (
-            <Button
-              size="icon-sm"
-              variant="secondary"
-              aria-label={m.app_restart()}
-              onClick={onRestart}
-            >
-              <RotateCcw />
-            </Button>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  size="icon-sm"
+                  variant={process.managed ? "destructive" : "secondary"}
+                  aria-label={m.app_restart()}
+                  onClick={onRestart}
+                >
+                  <RotateCcw />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom">
+                {process.managed
+                  ? m.app_restart_tooltip()
+                  : m.app_restart_external_tooltip()}
+              </TooltipContent>
+            </Tooltip>
           ) : null}
-          {process?.managed ? (
-            <Button
-              size="icon-sm"
-              variant="destructive"
-              aria-label={m.app_stop()}
-              onClick={onStop}
-            >
-              <Square />
-            </Button>
-          ) : null}
-          <Button
-            size="icon-sm"
-            variant="secondary"
-            aria-label={m.app_reload()}
-            onClick={() => {
-              setFrameState("loading");
-              setFrameKey((key) => key + 1);
-            }}
-          >
-            <RefreshCw />
-          </Button>
         </div>
       ) : null}
     </div>

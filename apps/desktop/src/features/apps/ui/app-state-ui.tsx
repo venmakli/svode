@@ -31,6 +31,11 @@ import {
 } from "@/components/ui/popover";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import type { AppProcessLogs, AppProcessPhase } from "../model/types";
 import * as m from "@/paraglide/messages.js";
 
@@ -154,11 +159,20 @@ export function AppLogsPopover({
 }) {
   return (
     <Popover>
-      <PopoverTrigger asChild>
-        <Button size="icon-sm" variant="secondary" aria-label={m.app_logs()}>
-          <ScrollText />
-        </Button>
-      </PopoverTrigger>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <PopoverTrigger asChild>
+            <Button
+              size="icon-sm"
+              variant="secondary"
+              aria-label={m.app_logs()}
+            >
+              <ScrollText />
+            </Button>
+          </PopoverTrigger>
+        </TooltipTrigger>
+        <TooltipContent side="bottom">{m.app_logs()}</TooltipContent>
+      </Tooltip>
       <PopoverContent align="end" className="w-[min(32rem,calc(100vw-2rem))]">
         <PopoverHeader>
           <PopoverTitle>{m.app_logs()}</PopoverTitle>
