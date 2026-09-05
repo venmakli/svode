@@ -1,4 +1,5 @@
 pub(crate) mod commands;
+pub(crate) mod environment;
 pub(crate) mod manifest;
 pub(crate) mod process_runtime;
 pub(crate) mod static_server;

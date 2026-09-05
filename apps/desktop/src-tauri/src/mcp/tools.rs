@@ -752,8 +752,25 @@ pub fn definitions() -> Vec<ToolDefinition> {
             None,
         ),
         def(
+            "validate_app_manifest",
+            "Validate an exact UTF-8 app.yaml candidate with the same safe parser used by the Svode App host. Read-only: does not write files, launch a runtime, or read Variable/Secret values.",
+            schema(
+                &[(
+                    "yaml",
+                    json!({
+                        "type": "string",
+                        "maxLength": 65536,
+                        "description": "Complete app.yaml candidate as UTF-8 text."
+                    }),
+                )],
+                &["yaml"],
+            ),
+            read_only_ann(),
+            Some(validate_app_manifest_output_schema()),
+        ),
+        def(
             "get_svode_guide",
-            "Return agent-facing guidance for working with Svode Pages, owner README content, managed file assets, Collections, Collection items, metadata, and schema tools.",
+            "Return agent-facing guidance for working with Svode Pages, Apps, owner README content, managed file assets, Collections, Collection items, metadata, and schema tools.",
             obj(vec![]),
             read_only_ann(),
             None,
@@ -832,7 +849,40 @@ Property semantics:
 - relation columns use relation for the target collection path and optional relation_scope for a target outside the current scope. Omit relation_scope or set it null for the same scope; use "root" to target the project root; use {"type":"space","id":"<spaceId>"} to target a registered ready child space. Use list_spaces to discover space ids, and list_collections with that spaceId to discover target collection paths. two_way is supported for same-scope and root/child-space relations; the reverse column stores the reciprocal relation_scope.
 - relation values are Collection item path refs inside the target Collection, not row IDs. For cross-scope relations the value is still relative to the target Collection; the target scope lives in the schema column.
 - gallery views use card_cover. Board group_by should be status, select, or a single actor field.
-- For select/status fields, define options with useful colors/icons when possible."#
+- For select/status fields, define options with useful colors/icons when possible.
+
+Apps authoring:
+- An App is any registered Space/Page/Collection directory with one direct app.yaml. Choose exactly one runtime: static for repository-owned frontend files, process for a command started by Svode, or url for an already-running service. The host is generic; API admin tools, database UIs, installed frontend projects, existing local services, and URL-only tools use these same three recipes.
+- Static shape: `runtime: { type: static, publicRoot: public, entry: index.html }`. Process shape: `runtime: { type: process, start: { argv: [bun, run, dev] }, url: http://127.0.0.1:3210 }`; optional setup accepts argv, cwd, and relative inputs. URL shape: `runtime: { type: url, url: https://example.com }`. Use expanded YAML when readability matters.
+- Process `environment` is a top-level string-to-string mapping. Literal text and one or more `${NAME}` substitutions are supported; `$${NAME}` emits literal `${NAME}`. Names match `[A-Za-z_][A-Za-z0-9_]*`. No recursive expansion, defaults, functions, or expressions exist. Static and url Apps cannot declare environment.
+- Never write credentials into app.yaml. Convert credentials supplied in a prompt into `${NAME}` references and tell the user to provide values in Settings → Variables. Variable values stay on this device; Secret values stay in the OS Keychain, so a clone may require local setup.
+- Before writing app.yaml, call validate_app_manifest with the complete candidate; repair all diagnostics, write the exact validated YAML into the target owner directory, then read it back and validate again after edits. The validator is read-only and never launches setup/start or reads secret values. After a valid process App is opened, missing names block launch until the user creates each name or binds it to an existing entry. Changed values apply on the next setup/start or explicit restart."#
+}
+
+fn validate_app_manifest_output_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "valid": { "type": "boolean" },
+            "runtimeType": { "type": ["string", "null"], "enum": ["static", "process", "url", null] },
+            "settingsReferences": { "type": "array", "items": { "type": "string" } },
+            "diagnostics": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                        "code": { "type": "string" },
+                        "path": { "type": "string" },
+                        "message": { "type": "string" }
+                    },
+                    "required": ["code", "path", "message"]
+                }
+            }
+        },
+        "required": ["valid", "runtimeType", "settingsReferences", "diagnostics"]
+    })
 }
 
 fn def(
@@ -1811,6 +1861,28 @@ mod tests {
                 definition.name
             );
         }
+    }
+
+    #[test]
+    fn app_manifest_validation_contract_is_read_only_and_self_contained() {
+        let definition = definitions()
+            .into_iter()
+            .find(|definition| definition.name == "validate_app_manifest")
+            .expect("validate_app_manifest definition");
+
+        assert_eq!(is_mutating_tool(definition.name), Some(false));
+        assert_eq!(
+            definition.input_schema["properties"]["yaml"]["maxLength"],
+            65_536
+        );
+        assert_eq!(
+            definition.output_schema.as_ref().unwrap()["required"],
+            json!(["valid", "runtimeType", "settingsReferences", "diagnostics"])
+        );
+        assert!(definition.description.contains("does not write files"));
+        assert!(guide_text().contains("Apps authoring:"));
+        assert!(guide_text().contains("$${NAME}"));
+        assert!(guide_text().contains("OS Keychain"));
     }
 
     #[test]

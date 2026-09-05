@@ -1,6 +1,8 @@
 export * from "./hooks";
 export type {
   AppPreferences,
+  AppSettingsSection,
+  AppVariablesContext,
   AvailableAgent,
   SymlinkHealthReport,
 } from "./model";

@@ -36,6 +36,7 @@ test("ready App actions explain every icon and show a tooltip on hover", async (
             onRerunSetup={() => undefined}
             onShowFiles={() => undefined}
             onOpenBrowser={() => undefined}
+            onVariables={() => undefined}
           />
         </TooltipProvider>,
       );
@@ -50,6 +51,7 @@ test("ready App actions explain every icon and show a tooltip on hover", async (
 
     const actionLabels = [
       "Logs",
+      "Variables",
       "Show files",
       "Open in browser",
       "Reload page",

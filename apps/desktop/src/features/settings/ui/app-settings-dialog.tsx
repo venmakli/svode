@@ -26,6 +26,7 @@ import {
 } from "@/components/ui/breadcrumb";
 import {
   Info,
+  KeyRound,
   Keyboard,
   Paintbrush,
   PlugZap,
@@ -36,7 +37,7 @@ import { useAppSettingsAbout } from "../hooks/use-app-settings-about";
 import { useAppSettingsAppearance } from "../hooks/use-app-settings-appearance";
 import { useCliAgents } from "../hooks/use-cli-agents";
 import { useGlobalIdentitySettings } from "../hooks/use-global-identity-settings";
-import type { AppSettingsSection } from "../model";
+import type { AppSettingsSection, AppVariablesContext } from "../model";
 import {
   AppAboutSection,
   AppAppearanceSection,
@@ -45,6 +46,7 @@ import {
   AppShortcutsSection,
 } from "./app-settings-sections";
 import { McpIntegrationsSection } from "./mcp-section";
+import { AppVariablesSection } from "./app-variables-section";
 
 const NAV_ITEMS: {
   key: AppSettingsSection;
@@ -52,6 +54,12 @@ const NAV_ITEMS: {
   icon: ComponentType<{ className?: string }>;
   show: (options: { enableLegacyAgentIntegration: boolean }) => boolean;
 }[] = [
+  {
+    key: "variables",
+    label: () => m.settings_variables_title(),
+    icon: KeyRound,
+    show: () => true,
+  },
   {
     key: "git-identity",
     label: () => m.settings_profile(),
@@ -93,12 +101,16 @@ const NAV_ITEMS: {
 interface AppSettingsDialogProps {
   open: boolean;
   enableLegacyAgentIntegration: boolean;
+  initialSection?: AppSettingsSection;
+  variablesContext?: AppVariablesContext;
   onOpenChange: (open: boolean) => void;
 }
 
 export function AppSettingsDialog({
   open,
   enableLegacyAgentIntegration,
+  initialSection = "git-identity",
+  variablesContext,
   onOpenChange,
 }: AppSettingsDialogProps) {
   const appearanceSettings = useAppSettingsAppearance();
@@ -113,10 +125,10 @@ export function AppSettingsDialog({
   useEffect(() => {
     if (!open) return;
     const resetSection = window.setTimeout(() => {
-      setSection("git-identity");
+      setSection(initialSection);
     }, 0);
     return () => window.clearTimeout(resetSection);
-  }, [open]);
+  }, [initialSection, open]);
 
   const visibleNavItems = NAV_ITEMS.filter((item) =>
     item.show({ enableLegacyAgentIntegration }),
@@ -183,6 +195,9 @@ export function AppSettingsDialog({
               )}
               {section === "appearance" && (
                 <AppAppearanceSection settings={appearanceSettings} />
+              )}
+              {section === "variables" && (
+                <AppVariablesSection context={variablesContext} />
               )}
               {enableLegacyAgentIntegration && section === "cli-agents" && (
                 <AppCliAgentsSection

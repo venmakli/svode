@@ -14,6 +14,8 @@ use crate::attachments::source::resolve_registered_owner;
 use crate::files::tree::child_folder_names;
 use crate::repo_path::{RootMode, normalize_repo_relative};
 
+use super::environment;
+
 pub(crate) const APP_MANIFEST_NAME: &str = "app.yaml";
 const MAX_APP_MANIFEST_BYTES: u64 = 64 * 1024;
 
@@ -53,6 +55,7 @@ pub(crate) struct AppProcessRuntime {
     pub start: AppCommandRecipe,
     pub url: String,
     pub environment: BTreeMap<String, String>,
+    pub environment_declaration: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone)]
@@ -179,6 +182,13 @@ pub(crate) fn read_and_validate_manifest(
 pub(crate) fn validate_manifest_source(
     source: &str,
 ) -> Result<ValidatedRuntime, Vec<AppManifestDiagnostic>> {
+    if source.len() as u64 > MAX_APP_MANIFEST_BYTES {
+        return Err(vec![diagnostic(
+            "resource_limit",
+            "$",
+            "app.yaml exceeds the 64 KiB limit",
+        )]);
+    }
     validate_safe_yaml(source)?;
     let value = serde_yml::from_str::<Value>(source).map_err(|error| {
         vec![diagnostic(
@@ -399,6 +409,13 @@ fn validate_manifest_value(value: &Value) -> Result<ValidatedRuntime, Vec<AppMan
                             "environment names must be non-empty strings",
                         )]);
                     }
+                    if !environment::is_variable_name(name) {
+                        return Err(vec![diagnostic(
+                            "invalid_environment_name",
+                            format!("environment.{name}"),
+                            "environment names must match [A-Za-z_][A-Za-z0-9_]*",
+                        )]);
+                    }
                     let Value::String(value) = value else {
                         return Err(vec![diagnostic(
                             "invalid_schema",
@@ -408,6 +425,13 @@ fn validate_manifest_value(value: &Value) -> Result<ValidatedRuntime, Vec<AppMan
                     };
                     parsed.insert(name.clone(), value.clone());
                 }
+                environment::references(&parsed).map_err(|error| {
+                    vec![diagnostic(
+                        "invalid_environment_reference",
+                        "environment",
+                        error.message,
+                    )]
+                })?;
                 parsed
             } else {
                 BTreeMap::new()
@@ -416,7 +440,8 @@ fn validate_manifest_value(value: &Value) -> Result<ValidatedRuntime, Vec<AppMan
                 setup,
                 start,
                 url: required_http_url(runtime, "url", "runtime.url")?,
-                environment,
+                environment: environment.clone(),
+                environment_declaration: environment,
             }))
         }
         _ => Err(vec![diagnostic(
@@ -732,6 +757,27 @@ mod tests {
         assert_eq!(process.setup.unwrap().inputs, ["package.json", "lockfile"]);
         assert_eq!(process.start.argv[1], "serve");
         assert_eq!(process.url, "http://127.0.0.1:3210");
+    }
+
+    #[test]
+    fn validates_environment_reference_grammar_and_source_limit() {
+        for environment in [
+            "environment:\n  1TOKEN: value\n",
+            "environment:\n  TOKEN: ${TOKEN:-default}\n",
+            "environment:\n  TOKEN: ${env(TOKEN)}\n",
+        ] {
+            let source = format!(
+                "runtime:\n  type: process\n  start:\n    argv: [tool]\n  url: http://127.0.0.1:3210\n{environment}"
+            );
+            assert!(validate_manifest_source(&source).is_err());
+        }
+
+        assert_eq!(
+            validate_manifest_source(&" ".repeat(MAX_APP_MANIFEST_BYTES as usize + 1)).unwrap_err()
+                [0]
+            .code,
+            "resource_limit"
+        );
     }
 
     #[test]

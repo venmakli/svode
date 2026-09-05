@@ -1,5 +1,5 @@
 use std::path::Path;
-use std::sync::{Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard};
 
 use crate::error::AppError;
 
@@ -16,7 +16,7 @@ pub struct PreferenceMutation {
 
 #[derive(Default)]
 pub struct AppSettingsState {
-    operation_lock: Mutex<()>,
+    operation_lock: Arc<Mutex<()>>,
 }
 
 impl AppSettingsState {
@@ -29,9 +29,15 @@ impl AppSettingsState {
             .lock()
             .map_err(|_| AppError::General("app settings mutex poisoned".to_string()))
     }
+
+    pub(crate) fn operation_lock(&self) -> Arc<Mutex<()>> {
+        Arc::clone(&self.operation_lock)
+    }
 }
 
-fn read_app_settings_value(config_dir: &Path) -> Result<Option<serde_json::Value>, AppError> {
+pub(super) fn read_app_settings_value(
+    config_dir: &Path,
+) -> Result<Option<serde_json::Value>, AppError> {
     let path = config_dir.join("settings.json");
     if !path.exists() {
         return Ok(None);
@@ -41,7 +47,7 @@ fn read_app_settings_value(config_dir: &Path) -> Result<Option<serde_json::Value
     Ok(Some(serde_json::from_str(&data)?))
 }
 
-fn default_app_settings_value() -> Result<serde_json::Value, AppError> {
+pub(super) fn default_app_settings_value() -> Result<serde_json::Value, AppError> {
     Ok(serde_json::to_value(AppSettings::default())?)
 }
 
@@ -92,7 +98,10 @@ fn normalize_app_settings_value(
     Ok(value)
 }
 
-fn write_app_settings_value(config_dir: &Path, value: &serde_json::Value) -> Result<(), AppError> {
+pub(super) fn write_app_settings_value(
+    config_dir: &Path,
+    value: &serde_json::Value,
+) -> Result<(), AppError> {
     std::fs::create_dir_all(config_dir)?;
     let data = serde_json::to_string_pretty(value)?;
     std::fs::write(config_dir.join("settings.json"), data)?;

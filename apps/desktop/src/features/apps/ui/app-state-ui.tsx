@@ -2,6 +2,7 @@ import {
   AppWindow,
   FileWarning,
   FolderOpen,
+  KeyRound,
   RefreshCw,
   RotateCcw,
   ScrollText,
@@ -92,6 +93,7 @@ export function AppRecovery({
   onRerunSetup,
   onShowFiles,
   onOpenBrowser,
+  onVariables,
 }: {
   title: string;
   description: string;
@@ -101,6 +103,7 @@ export function AppRecovery({
   onRerunSetup?: () => void;
   onShowFiles(): void;
   onOpenBrowser?: () => void;
+  onVariables?: () => void;
 }) {
   return (
     <Empty className="h-full min-h-[20rem] border-0">
@@ -117,6 +120,15 @@ export function AppRecovery({
             <Button onClick={onRetry}>
               <RefreshCw data-icon="inline-start" />
               {m.app_retry()}
+            </Button>
+          ) : null}
+          {onVariables ? (
+            <Button
+              variant={onRetry ? "outline" : "default"}
+              onClick={onVariables}
+            >
+              <KeyRound data-icon="inline-start" />
+              {m.app_variables()}
             </Button>
           ) : null}
           {onRestart ? (
@@ -261,10 +273,10 @@ export function processFailureCopy(reason: string) {
       description: m.app_process_stopped_description(),
     };
   }
-  if (reason === "process_environment_pending") {
+  if (reason === "missing_app_variables") {
     return {
-      title: m.app_process_environment_pending_title(),
-      description: m.app_process_environment_pending_description(),
+      title: m.app_variables_missing_title(),
+      description: m.app_variables_missing_default_description(),
     };
   }
   if (reason.startsWith("setup_")) {

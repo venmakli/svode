@@ -6,6 +6,7 @@ test("classifies App Settings surfaces without promoting derived state to prefer
   expect(APP_SETTINGS_SECTION_KINDS).toEqual({
     "git-identity": "owner-setting",
     appearance: "app-preference",
+    variables: "owner-setting",
     "mcp-integrations": "owner-integration",
     "cli-agents": "command-derived",
     shortcuts: "read-only",

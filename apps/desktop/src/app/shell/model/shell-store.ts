@@ -9,6 +9,10 @@ import type {
   KnowledgeGraphOpenRequest,
   KnowledgeGraphState,
 } from "@/features/knowledge";
+import type {
+  AppSettingsSection,
+  AppVariablesContext,
+} from "@/features/settings";
 
 type SettingsDialog = "app" | "space" | null;
 export type SpaceSettingsDestination = "general" | "git";
@@ -23,6 +27,8 @@ export const SHELL_SIDEBAR_WIDTH_MAX = 420;
 interface ShellState {
   chatPanelOpen: boolean;
   settingsDialog: SettingsDialog;
+  settingsAppSection: AppSettingsSection;
+  settingsAppVariablesContext: AppVariablesContext | null;
   settingsSpacePath: string | null;
   settingsSpaceDestination: SpaceSettingsDestination;
   mainSurface: MainSurface;
@@ -35,7 +41,10 @@ interface ShellState {
   toggleChatPanel: () => void;
   closeChatPanel: () => void;
   commitSidebarWidth: (width: number) => void;
-  openAppSettings: () => void;
+  openAppSettings: (
+    section?: AppSettingsSection,
+    variablesContext?: AppVariablesContext,
+  ) => void;
   openSpaceSettings: (
     spacePath: string,
     destination?: SpaceSettingsDestination,
@@ -83,6 +92,8 @@ function persistSidebarWidth(width: number) {
 export const useShellStore = create<ShellState>((set) => ({
   chatPanelOpen: false,
   settingsDialog: null,
+  settingsAppSection: "git-identity",
+  settingsAppVariablesContext: null,
   settingsSpacePath: null,
   settingsSpaceDestination: "general",
   mainSurface: "content",
@@ -106,9 +117,11 @@ export const useShellStore = create<ShellState>((set) => ({
     set({ sidebarWidth });
   },
 
-  openAppSettings: () =>
+  openAppSettings: (section = "git-identity", variablesContext) =>
     set({
       settingsDialog: "app",
+      settingsAppSection: section,
+      settingsAppVariablesContext: variablesContext ?? null,
       settingsSpaceDestination: "general",
       settingsSpacePath: null,
     }),
@@ -123,6 +136,8 @@ export const useShellStore = create<ShellState>((set) => ({
   closeSettings: () =>
     set({
       settingsDialog: null,
+      settingsAppSection: "git-identity",
+      settingsAppVariablesContext: null,
       settingsSpaceDestination: "general",
       settingsSpacePath: null,
     }),

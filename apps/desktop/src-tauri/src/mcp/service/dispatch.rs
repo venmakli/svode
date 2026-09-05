@@ -88,6 +88,7 @@ async fn call_tool_inner(
     let execute = async {
         match name {
             "get_project_info" => project_tools::get_project_info(&app).await,
+            "validate_app_manifest" => apps::validate_app_manifest(decode(args)?).await,
             "list_spaces" => project_tools::list_spaces(&app).await,
             "list_pages" => documents::list_pages(&app, decode(args)?).await,
             "read_page" => documents::read_page(&app, decode(args)?).await,

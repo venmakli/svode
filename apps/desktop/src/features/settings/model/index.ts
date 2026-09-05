@@ -8,6 +8,13 @@ export {
   type AppSettingsSection,
   type AppSettingsSectionKind,
 } from "./app-settings-sections";
+export type {
+  AppVariableEntry,
+  AppVariableKind,
+  AppVariableReference,
+  AppVariablesCatalog,
+  AppVariablesContext,
+} from "./app-variables";
 export {
   APP_LOCALES,
   isAppLocale,

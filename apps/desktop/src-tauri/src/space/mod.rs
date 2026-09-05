@@ -1,3 +1,4 @@
+pub mod app_variables;
 pub mod config;
 pub mod merge;
 pub mod project;

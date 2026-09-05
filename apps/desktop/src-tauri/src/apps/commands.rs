@@ -2,9 +2,10 @@ use std::fs;
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_shell::ShellExt;
 
+use super::environment;
 use super::manifest::{
     AppManifestDiagnostic, AppProcessRuntime, AppRuntimeType, ValidatedRuntime,
     read_and_validate_manifest, resolve_app_owner,
@@ -14,6 +15,12 @@ use super::process_runtime::{
 };
 use super::{AppProcessState, AppSourceState};
 use crate::AppError;
+use crate::commands::app_variables::{APP_VARIABLES_CHANGED_EVENT, run_locked};
+use crate::space::app_variables::{
+    AppVariableOwnerContext, KeyringSecretStore, MissingAppVariable, clear_owner_usage,
+    resolve_environment,
+};
+use crate::space::settings::AppSettingsState;
 use crate::system_path;
 
 #[derive(Debug, Clone, Serialize)]
@@ -60,6 +67,8 @@ pub(crate) enum AppManifestInspection {
         browser_url: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         process: Option<AppProcessDetails>,
+        #[serde(rename = "missingVariables", skip_serializing_if = "Vec::is_empty")]
+        missing_variables: Vec<MissingAppVariable>,
     },
 }
 
@@ -82,6 +91,8 @@ pub(crate) enum AppProcessControlAction {
 
 #[tauri::command]
 pub(crate) async fn app_manifest_inspect(
+    app: AppHandle,
+    settings_state: State<'_, AppSettingsState>,
     source_state: State<'_, AppSourceState>,
     process_state: State<'_, AppProcessState>,
     project_path: String,
@@ -92,12 +103,14 @@ pub(crate) async fn app_manifest_inspect(
     let owner_directory = system_path::user_facing_path(&owner.owner_path);
     let Some(manifest) = read_and_validate_manifest(&owner.owner_path)? else {
         process_state.remove_owner(&owner.project_path, &owner.owner_path);
+        clear_variable_usage(&app, &settings_state, &owner.owner_path).await?;
         return Ok(AppManifestInspection::Missing { owner_directory });
     };
     let runtime = match manifest {
         Ok(runtime) => runtime,
         Err(diagnostics) => {
             process_state.remove_owner(&owner.project_path, &owner.owner_path);
+            clear_variable_usage(&app, &settings_state, &owner.owner_path).await?;
             return Ok(AppManifestInspection::Invalid {
                 owner_directory,
                 diagnostics,
@@ -108,6 +121,7 @@ pub(crate) async fn app_manifest_inspect(
     match runtime {
         ValidatedRuntime::Url { url } => {
             process_state.remove_owner(&owner.project_path, &owner.owner_path);
+            clear_variable_usage(&app, &settings_state, &owner.owner_path).await?;
             Ok(AppManifestInspection::Ready {
                 owner_directory,
                 runtime_type: AppRuntimeType::Url,
@@ -116,19 +130,23 @@ pub(crate) async fn app_manifest_inspect(
                 process: None,
             })
         }
-        ValidatedRuntime::Process(runtime) => {
-            if !runtime.environment.is_empty() {
+        ValidatedRuntime::Process(mut runtime) => {
+            let missing =
+                resolve_runtime_environment(&app, &settings_state, &owner.owner_path, &mut runtime)
+                    .await?;
+            if !missing.is_empty() {
                 process_state.remove_owner(&owner.project_path, &owner.owner_path);
                 return Ok(AppManifestInspection::Unavailable {
                     owner_directory,
                     runtime_type: AppRuntimeType::Process,
-                    reason: "process_environment_pending",
+                    reason: "missing_app_variables",
                     browser_url: Some(runtime.url),
                     process: Some(AppProcessDetails {
                         managed: false,
                         has_setup: runtime.setup.is_some(),
                         logs: AppProcessLogs::default(),
                     }),
+                    missing_variables: missing,
                 });
             }
             let url = runtime.url.clone();
@@ -138,6 +156,7 @@ pub(crate) async fn app_manifest_inspect(
         }
         ValidatedRuntime::Static { public_root, entry } => {
             process_state.remove_owner(&owner.project_path, &owner.owner_path);
+            clear_variable_usage(&app, &settings_state, &owner.owner_path).await?;
             let declared_root = owner.owner_path.join(&public_root);
             let root_metadata = fs::symlink_metadata(&declared_root);
             if !matches!(root_metadata, Ok(ref metadata) if metadata.is_dir() && !metadata.file_type().is_symlink())
@@ -148,6 +167,7 @@ pub(crate) async fn app_manifest_inspect(
                     reason: "static_public_root_unavailable",
                     browser_url: None,
                     process: None,
+                    missing_variables: Vec::new(),
                 });
             }
             let canonical_root = fs::canonicalize(&declared_root)?;
@@ -171,6 +191,7 @@ pub(crate) async fn app_manifest_inspect(
                     reason: "static_entry_unavailable",
                     browser_url: None,
                     process: None,
+                    missing_variables: Vec::new(),
                 });
             }
             let canonical_entry = fs::canonicalize(&declared_entry)?;
@@ -198,6 +219,8 @@ pub(crate) async fn app_manifest_inspect(
 
 #[tauri::command]
 pub(crate) async fn app_process_control(
+    app: AppHandle,
+    settings_state: State<'_, AppSettingsState>,
     process_state: State<'_, AppProcessState>,
     project_path: String,
     space_id: Option<String>,
@@ -220,18 +243,21 @@ pub(crate) async fn app_process_control(
         return Ok(process_inspection(owner_directory, url, snapshot));
     }
 
-    let runtime = current_process_runtime(&owner.owner_path)?;
-    if !runtime.environment.is_empty() {
+    let mut runtime = current_process_runtime(&owner.owner_path)?;
+    let missing =
+        resolve_runtime_environment(&app, &settings_state, &owner.owner_path, &mut runtime).await?;
+    if !missing.is_empty() {
         return Ok(AppManifestInspection::Unavailable {
             owner_directory,
             runtime_type: AppRuntimeType::Process,
-            reason: "process_environment_pending",
+            reason: "missing_app_variables",
             browser_url: Some(runtime.url),
             process: Some(AppProcessDetails {
                 managed: false,
                 has_setup: runtime.setup.is_some(),
                 logs: AppProcessLogs::default(),
             }),
+            missing_variables: missing,
         });
     }
     let url = runtime.url.clone();
@@ -313,6 +339,7 @@ fn process_inspection(
                 has_setup,
                 logs,
             }),
+            missing_variables: Vec::new(),
         },
         AppProcessSnapshot::Stopped {
             url,
@@ -328,8 +355,59 @@ fn process_inspection(
                 has_setup,
                 logs,
             }),
+            missing_variables: Vec::new(),
         },
     }
+}
+
+async fn clear_variable_usage(
+    app: &AppHandle,
+    settings_state: &AppSettingsState,
+    owner_path: &Path,
+) -> Result<(), AppError> {
+    let owner_key = system_path::user_facing_path(owner_path);
+    let config_dir = app
+        .path()
+        .app_config_dir()
+        .map_err(|error| AppError::General(error.to_string()))?;
+    let changed = run_locked(settings_state, move || {
+        clear_owner_usage(&config_dir, &owner_key)
+    })
+    .await?;
+    if changed {
+        let _ = app.emit(APP_VARIABLES_CHANGED_EVENT, ());
+    }
+    Ok(())
+}
+
+async fn resolve_runtime_environment(
+    app: &AppHandle,
+    settings_state: &AppSettingsState,
+    owner_path: &Path,
+    runtime: &mut AppProcessRuntime,
+) -> Result<Vec<MissingAppVariable>, AppError> {
+    let references = environment::references(&runtime.environment_declaration)
+        .map_err(|error| AppError::General(error.message))?;
+    let owner_directory = system_path::user_facing_path(owner_path);
+    let context = AppVariableOwnerContext {
+        owner_key: owner_directory.clone(),
+        owner_directory,
+        references,
+    };
+    let declaration = runtime.environment_declaration.clone();
+    let config_dir = app
+        .path()
+        .app_config_dir()
+        .map_err(|error| AppError::General(error.to_string()))?;
+    let resolved = run_locked(settings_state, move || {
+        resolve_environment(&config_dir, &context, &declaration, &KeyringSecretStore)
+    })
+    .await?;
+    if resolved.usage_changed {
+        let _ = app.emit(APP_VARIABLES_CHANGED_EVENT, ());
+    }
+    runtime.environment = resolved.environment;
+    Ok(resolved.missing)
 }
 
 #[tauri::command]

@@ -95,6 +95,7 @@ export function ScopeSurfacePage({
     (state) => state.openSessionsSurface,
   );
   const openSpaceSettings = useShellStore((state) => state.openSpaceSettings);
+  const openAppSettings = useShellStore((state) => state.openAppSettings);
   const openRepositorySettings = useCallback(
     (repositoryPath: string) => openSpaceSettings(repositoryPath, "git"),
     [openSpaceSettings],
@@ -144,9 +145,24 @@ export function ScopeSurfacePage({
   const createContributions = useCallback(
     (readOnly: boolean) =>
       createScopeSurfaceContributions({
-        app: (context) => (
-          <AppSurface owner={appOwnerFromScopeOwner(context.owner)} />
-        ),
+        app: (context) => {
+          const appOwner = appOwnerFromScopeOwner(context.owner);
+          return (
+            <AppSurface
+              owner={appOwner}
+              onOpenVariables={() =>
+                openAppSettings("variables", {
+                  ownerPath: appOwner.ownerPath,
+                  projectPath: appOwner.projectPath,
+                  spaceId:
+                    appOwner.projectPath === appOwner.spacePath
+                      ? null
+                      : appOwner.spaceId,
+                })
+              }
+            />
+          );
+        },
         attachments: (context) => (
           <AttachmentsSurface
             owner={attachmentOwnerFromScopeOwner(context.owner)}
@@ -186,6 +202,7 @@ export function ScopeSurfacePage({
       collectionRouteState,
       fallbackTitle,
       openRepositorySettings,
+      openAppSettings,
       openRoutineSession,
       owner,
       renderNested,

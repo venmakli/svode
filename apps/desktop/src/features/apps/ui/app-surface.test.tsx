@@ -112,3 +112,37 @@ test("process failure exposes logs and explicit setup recovery", () => {
   expect(html.includes("Logs")).toBe(true);
   expect(html.includes("Run setup again")).toBe(true);
 });
+
+test("missing Variables block launch and expose contextual Settings recovery", () => {
+  const html = renderToStaticMarkup(
+    <AppViewport
+      session={{
+        status: "unavailable",
+        ownerDirectory: "/repo/dashboard",
+        runtimeType: "process",
+        reason: "missing_app_variables",
+        browserUrl: "http://127.0.0.1:43000",
+        process: {
+          managed: false,
+          hasSetup: true,
+          logs: { stdout: "", stderr: "" },
+        },
+        missingVariables: [
+          { referenceName: "API_TOKEN", entryName: "API_TOKEN" },
+          { referenceName: "DATABASE_URL", entryName: "DATABASE_URL" },
+        ],
+      }}
+      onRetry={() => undefined}
+      onRestart={() => undefined}
+      onStop={() => undefined}
+      onRerunSetup={() => undefined}
+      onShowFiles={() => undefined}
+      onOpenBrowser={() => undefined}
+      onVariables={() => undefined}
+    />,
+  );
+
+  expect(html.includes("API_TOKEN, DATABASE_URL")).toBe(true);
+  expect(html.includes(">Variables<")).toBe(true);
+  expect(html.includes(">Retry<")).toBe(false);
+});

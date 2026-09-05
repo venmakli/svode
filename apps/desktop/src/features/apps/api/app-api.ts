@@ -2,6 +2,7 @@ import {
   controlAppProcess as controlAppProcessDto,
   inspectAppManifest as inspectAppManifestDto,
   listenAppManifestChanges as listenAppManifestChangesDto,
+  listenAppVariablesChanged as listenAppVariablesChangedDto,
   openAppOwnerDirectory as openAppOwnerDirectoryDto,
   openAppUrlInBrowser as openAppUrlInBrowserDto,
   revokeAppSource as revokeAppSourceDto,
@@ -30,6 +31,10 @@ export function listenAppManifestChanges(
   onChange: () => void,
 ): Promise<() => void> {
   return listenAppManifestChangesDto(owner, onChange);
+}
+
+export function listenAppVariablesChanged(onChange: () => void) {
+  return listenAppVariablesChangedDto(onChange);
 }
 
 export function openAppOwnerDirectory(owner: AppOwner): Promise<void> {

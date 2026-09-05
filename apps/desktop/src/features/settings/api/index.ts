@@ -4,6 +4,7 @@ export {
   setAppLocale,
   setAppTheme,
 } from "./app-settings-api";
+export * from "./app-variables-api";
 export { getAppVersion } from "./app-version-api";
 export { checkSymlinkHealth, listAvailableAgents } from "./agent-api";
 export * from "./mcp-api";

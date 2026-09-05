@@ -30,6 +30,11 @@ export interface AppManifestDiagnostic {
   message: string;
 }
 
+export interface MissingAppVariable {
+  referenceName: string;
+  entryName: string;
+}
+
 export type AppManifestInspection = Exclude<
   AppSession,
   { status: "loading" | "error" }
@@ -59,6 +64,7 @@ export type AppSession =
       reason: string;
       browserUrl?: string;
       process: AppProcessDetails;
+      missingVariables?: MissingAppVariable[];
     }
   | {
       status: "launching";

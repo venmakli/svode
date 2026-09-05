@@ -3,6 +3,7 @@ import {
   controlAppProcess,
   inspectAppManifest,
   listenAppManifestChanges,
+  listenAppVariablesChanged,
   revokeAppSource,
 } from "../api/app-api";
 import type {
@@ -84,6 +85,26 @@ export function useAppSession(owner: AppOwner) {
   );
 
   useEffect(() => {
+    if (
+      session.status !== "unavailable" ||
+      session.runtimeType !== "process" ||
+      session.reason !== "missing_app_variables"
+    ) {
+      return;
+    }
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    void listenAppVariablesChanged(() => refresh(false)).then((next) => {
+      if (disposed) next();
+      else unlisten = next;
+    });
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, [refresh, session]);
+
+  useEffect(() => {
     const delay =
       session.status === "launching"
         ? 250
@@ -119,7 +140,7 @@ export function useAppSession(owner: AppOwner) {
     if (
       session.status === "unavailable" &&
       session.runtimeType === "process" &&
-      session.reason !== "process_environment_pending"
+      session.reason !== "missing_app_variables"
     ) {
       runProcessControl("retry");
       return;

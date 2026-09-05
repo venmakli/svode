@@ -11,7 +11,13 @@ import {
 import { ReadyAppViewport } from "./ready-app-viewport";
 import * as m from "@/paraglide/messages.js";
 
-export function AppSurface({ owner }: { owner: AppOwner }) {
+export function AppSurface({
+  owner,
+  onOpenVariables,
+}: {
+  owner: AppOwner;
+  onOpenVariables(): void;
+}) {
   const { rerunSetup, restart, retry, session, stop } = useAppSession(owner);
 
   return (
@@ -23,6 +29,7 @@ export function AppSurface({ owner }: { owner: AppOwner }) {
       onRerunSetup={rerunSetup}
       onShowFiles={() => void openAppOwnerDirectory(owner)}
       onOpenBrowser={(url) => void openAppUrlInBrowser(url)}
+      onVariables={onOpenVariables}
     />
   );
 }
@@ -35,6 +42,7 @@ export function AppViewport({
   onRerunSetup,
   onShowFiles,
   onOpenBrowser,
+  onVariables,
 }: {
   session: AppSession;
   onRetry(): void;
@@ -43,6 +51,7 @@ export function AppViewport({
   onRerunSetup(): void;
   onShowFiles(): void;
   onOpenBrowser(url: string): void;
+  onVariables?(): void;
 }) {
   if (session.status === "loading") return <AppLoadingState />;
   if (session.status === "error") {
@@ -97,12 +106,21 @@ export function AppViewport({
       session.runtimeType === "process"
         ? processFailureCopy(session.reason)
         : undefined;
-    const canRetry = session.reason !== "process_environment_pending";
+    const needsVariables = session.reason === "missing_app_variables";
+    const canRetry = !needsVariables;
+    const missingNames =
+      session.runtimeType === "process"
+        ? (session.missingVariables?.map((item) => item.referenceName) ?? [])
+        : [];
     return (
       <AppRecovery
         title={processCopy?.title ?? m.app_unavailable_title()}
         description={
-          processCopy?.description ?? m.app_unavailable_description()
+          needsVariables && missingNames.length > 0
+            ? m.app_variables_missing_description({
+                names: missingNames.join(", "),
+              })
+            : (processCopy?.description ?? m.app_unavailable_description())
         }
         logs={session.process?.logs}
         onRetry={canRetry ? onRetry : undefined}
@@ -111,6 +129,11 @@ export function AppViewport({
         }
         onShowFiles={onShowFiles}
         onOpenBrowser={browserUrl ? () => onOpenBrowser(browserUrl) : undefined}
+        onVariables={
+          onVariables && (needsVariables || session.runtimeType === "process")
+            ? onVariables
+            : undefined
+        }
       />
     );
   }
@@ -124,6 +147,7 @@ export function AppViewport({
       onRerunSetup={onRerunSetup}
       onShowFiles={onShowFiles}
       onOpenBrowser={onOpenBrowser}
+      onVariables={onVariables ?? (() => undefined)}
     />
   );
 }

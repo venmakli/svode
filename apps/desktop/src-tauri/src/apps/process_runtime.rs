@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
@@ -409,7 +409,16 @@ async fn launch_process_flow(
 ) {
     if run_setup {
         let setup = runtime.setup.as_ref().expect("setup is present");
-        match run_setup_command(Arc::clone(&inner), config, &key, generation, setup).await {
+        match run_setup_command(
+            Arc::clone(&inner),
+            config,
+            &key,
+            generation,
+            setup,
+            &runtime.environment,
+        )
+        .await
+        {
             CommandOutcome::Success => {
                 let current_setup_key = setup_cache_key(&runtime, &key.owner_path);
                 let mut state = inner.lock().unwrap_or_else(|error| error.into_inner());
@@ -435,6 +444,7 @@ async fn launch_process_flow(
         generation,
         &key.owner_path,
         &runtime.start,
+        &runtime.environment,
     ) {
         Ok(child) => child,
         Err(error) => {
@@ -472,8 +482,16 @@ async fn run_setup_command(
     key: &AppProcessKey,
     generation: u64,
     recipe: &AppCommandRecipe,
+    environment: &BTreeMap<String, String>,
 ) -> CommandOutcome {
-    let child = match spawn_command(Arc::clone(&inner), key, generation, &key.owner_path, recipe) {
+    let child = match spawn_command(
+        Arc::clone(&inner),
+        key,
+        generation,
+        &key.owner_path,
+        recipe,
+        environment,
+    ) {
         Ok(child) => child,
         Err(error) => {
             append_system_error(&inner, key, generation, &error.to_string());
@@ -626,10 +644,12 @@ fn spawn_command(
     generation: u64,
     owner_path: &Path,
     recipe: &AppCommandRecipe,
+    environment: &BTreeMap<String, String>,
 ) -> std::io::Result<SharedChild> {
     let mut command = Command::new(&recipe.argv[0]);
     command
         .args(&recipe.argv[1..])
+        .envs(environment)
         .current_dir(
             recipe
                 .cwd
@@ -864,7 +884,7 @@ fn declaration_fingerprint(runtime: &AppProcessRuntime) -> String {
     hash_recipe(&mut hasher, runtime.setup.as_ref());
     hash_recipe(&mut hasher, Some(&runtime.start));
     hash_text(&mut hasher, &runtime.url);
-    for (name, value) in &runtime.environment {
+    for (name, value) in &runtime.environment_declaration {
         hash_text(&mut hasher, name);
         hash_text(&mut hasher, value);
     }
@@ -875,6 +895,10 @@ fn setup_cache_key(runtime: &AppProcessRuntime, owner_path: &Path) -> String {
     let mut hasher = Sha256::new();
     hash_text(&mut hasher, &owner_path.to_string_lossy());
     hash_text(&mut hasher, &declaration_fingerprint(runtime));
+    for (name, value) in &runtime.environment {
+        hash_text(&mut hasher, name);
+        hash_text(&mut hasher, value);
+    }
     if let Some(setup) = runtime.setup.as_ref() {
         for input in &setup.inputs {
             hash_text(&mut hasher, input);
@@ -973,6 +997,7 @@ mod tests {
             start,
             url,
             environment: Default::default(),
+            environment_declaration: Default::default(),
         }
     }
 
@@ -1091,6 +1116,73 @@ mod tests {
             assert!(Instant::now() < deadline, "managed child was not stopped");
             sleep(Duration::from_millis(20)).await;
         }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn passes_resolved_environment_to_setup_and_start_and_restarts_on_change() {
+        let temp = tempfile::tempdir().unwrap();
+        let project = temp.path().to_path_buf();
+        let owner = project.join("environment-app");
+        std::fs::create_dir(&owner).unwrap();
+        let state = AppProcessState::with_probe(test_config(), Arc::new(AlwaysReady));
+        let mut runtime = runtime(
+            "http://127.0.0.1:3210/".to_string(),
+            Some(shell("printf '%s' \"$APP_TOKEN\" > setup.env")),
+            shell("printf '%s' \"$APP_TOKEN\" > start.env; sleep 10"),
+        );
+        runtime
+            .environment
+            .insert("APP_TOKEN".to_string(), "first".to_string());
+        runtime
+            .environment_declaration
+            .insert("APP_TOKEN".to_string(), "${APP_TOKEN}".to_string());
+
+        wait_for_snapshot(&state, &project, &owner, &runtime, |snapshot| {
+            matches!(snapshot, AppProcessSnapshot::Ready { .. })
+        })
+        .await;
+        assert_eq!(
+            std::fs::read_to_string(owner.join("setup.env")).unwrap(),
+            "first"
+        );
+        assert_eq!(
+            std::fs::read_to_string(owner.join("start.env")).unwrap(),
+            "first"
+        );
+
+        runtime
+            .environment
+            .insert("APP_TOKEN".to_string(), "second".to_string());
+        assert!(matches!(
+            state.inspect_or_launch(&project, &owner, runtime.clone()),
+            AppProcessSnapshot::Ready { .. }
+        ));
+        assert_eq!(
+            std::fs::read_to_string(owner.join("start.env")).unwrap(),
+            "first"
+        );
+        state.control(&project, &owner, runtime.clone(), AppProcessAction::Restart);
+        wait_for_snapshot(&state, &project, &owner, &runtime, |snapshot| {
+            matches!(snapshot, AppProcessSnapshot::Ready { .. })
+        })
+        .await;
+        assert_eq!(
+            std::fs::read_to_string(owner.join("setup.env")).unwrap(),
+            "second"
+        );
+        let deadline = Instant::now() + Duration::from_secs(1);
+        while std::fs::read_to_string(owner.join("start.env")).unwrap() != "second" {
+            assert!(
+                Instant::now() < deadline,
+                "restarted process did not receive the changed environment"
+            );
+            sleep(Duration::from_millis(20)).await;
+        }
+        assert_eq!(
+            std::fs::read_to_string(owner.join("start.env")).unwrap(),
+            "second"
+        );
     }
 
     #[cfg(unix)]

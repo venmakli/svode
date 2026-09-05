@@ -2,6 +2,7 @@ import { useState } from "react";
 import {
   AppWindow,
   FolderOpen,
+  KeyRound,
   RefreshCw,
   RotateCcw,
   Square,
@@ -23,6 +24,7 @@ export function ReadyAppViewport({
   onRerunSetup,
   onShowFiles,
   onOpenBrowser,
+  onVariables,
 }: {
   session: Extract<AppSession, { status: "ready" }>;
   onRestart(): void;
@@ -30,6 +32,7 @@ export function ReadyAppViewport({
   onRerunSetup(): void;
   onShowFiles(): void;
   onOpenBrowser(url: string): void;
+  onVariables?(): void;
 }) {
   const [frameKey, setFrameKey] = useState(0);
   const [frameState, setFrameState] = useState<"loading" | "ready" | "error">(
@@ -83,6 +86,21 @@ export function ReadyAppViewport({
               canRerunSetup={process.hasSetup}
               onRerunSetup={onRerunSetup}
             />
+          ) : null}
+          {process && onVariables ? (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  size="icon-sm"
+                  variant="secondary"
+                  aria-label={m.app_variables()}
+                  onClick={onVariables}
+                >
+                  <KeyRound />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom">{m.app_variables()}</TooltipContent>
+            </Tooltip>
           ) : null}
           <Tooltip>
             <TooltipTrigger asChild>

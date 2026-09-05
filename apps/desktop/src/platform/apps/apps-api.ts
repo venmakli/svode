@@ -33,6 +33,11 @@ export interface AppProcessDetailsDto {
   logs: AppProcessLogsDto;
 }
 
+export interface MissingAppVariableDto {
+  referenceName: string;
+  entryName: string;
+}
+
 export type AppManifestInspectionDto =
   | { status: "missing"; ownerDirectory: string }
   | {
@@ -79,6 +84,7 @@ export type AppManifestInspectionDto =
       reason: string;
       browserUrl?: string;
       process: AppProcessDetailsDto;
+      missingVariables?: MissingAppVariableDto[];
     };
 
 interface AppFileEventDto {
@@ -151,4 +157,10 @@ export function listenAppManifestChanges(
   ]).then((unlisteners) => () => {
     for (const unlisten of unlisteners) unlisten();
   });
+}
+
+export function listenAppVariablesChanged(
+  onChange: () => void,
+): Promise<() => void> {
+  return listen<void>("app-settings:variables-changed", () => onChange());
 }

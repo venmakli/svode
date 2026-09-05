@@ -37,6 +37,7 @@ tokio::task_local! {
     static MCP_ROUTINE_CALLER: Option<crate::terminal::RoutineMcpCallerProvenance>;
 }
 
+mod apps;
 mod collections;
 mod context;
 mod dispatch;
@@ -78,6 +79,12 @@ const MCP_MUTATION_POLICY: McpMutationPolicy = McpMutationPolicy {
 struct SpaceArgs {
     #[serde(default)]
     space_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ValidateAppManifestArgs {
+    yaml: String,
 }
 
 #[derive(Debug, Deserialize)]
