@@ -6,6 +6,7 @@ pub mod clone;
 pub mod commands;
 pub mod dates;
 pub mod inspection;
+pub mod inspection_stats;
 #[cfg(test)]
 mod inspection_tests;
 pub(crate) mod manual_save;

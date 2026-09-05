@@ -1,12 +1,7 @@
 import { lazy, Suspense } from "react";
-import { Badge } from "@/components/ui/badge";
+import { AccordionItem, AccordionContent } from "@/components/ui/accordion";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import {
-  AccordionItem,
-  AccordionContent,
-  AccordionTrigger,
-} from "@/components/ui/accordion";
 import { Empty, EmptyHeader, EmptyTitle } from "@/components/ui/empty";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { FileGitState, GitStatus } from "@/features/git";
@@ -14,6 +9,8 @@ import * as m from "@/paraglide/messages.js";
 import { useWorkingTreeItem } from "../hooks/use-working-tree-item";
 import type { InspectionScope } from "../model/scope";
 import type { ItemReader } from "../model/item-reader";
+import type { InspectionItemStats } from "../api/inspection";
+import { ChangedItemHeader } from "./changed-item-header";
 
 const TextDiff = lazy(() =>
   import("./text-diff").then((module) => ({ default: module.TextDiff })),
@@ -28,6 +25,7 @@ export function ChangedItem({
   expanded,
   reader,
   exact = false,
+  stats,
 }: {
   scope: InspectionScope;
   path: string;
@@ -37,6 +35,7 @@ export function ChangedItem({
   expanded: boolean;
   reader: ItemReader;
   exact?: boolean;
+  stats?: InspectionItemStats;
 }) {
   const patch = useWorkingTreeItem(
     reader,
@@ -46,13 +45,6 @@ export function ChangedItem({
     expanded && state !== "conflict",
   );
   const item = patch.item;
-  const stats = item?.diff?.hunks.reduce(
-    (total, hunk) => ({
-      additions: total.additions + hunk.additionLines,
-      deletions: total.deletions + hunk.deletionLines,
-    }),
-    { additions: 0, deletions: 0 },
-  );
   const content = (
     <div className="flex min-w-0 flex-col gap-3" aria-busy={patch.updating}>
       {patch.updating && item ? (
@@ -130,28 +122,12 @@ export function ChangedItem({
   return (
     <AccordionItem value={path} data-changes-item={path}>
       <div className="sticky top-0 z-10 bg-background">
-        <AccordionTrigger
-          data-changes-item-trigger={path}
-          className="min-w-0 gap-2 px-4"
-        >
-          <span className="flex min-w-0 flex-1 flex-col gap-1">
-            <span className="truncate">{item?.title || name}</span>
-            <span className="truncate text-xs font-normal text-muted-foreground">
-              {path}
-            </span>
-          </span>
-          <span className="flex shrink-0 flex-col items-end gap-1">
-            <Badge variant="secondary">{stateLabel(state)}</Badge>
-            {stats ? (
-              <span className="text-xs font-normal text-muted-foreground">
-                {m.changes_stats({
-                  added: String(stats.additions),
-                  removed: String(stats.deletions),
-                })}
-              </span>
-            ) : null}
-          </span>
-        </AccordionTrigger>
+        <ChangedItemHeader
+          path={path}
+          name={item?.title || name}
+          state={state}
+          stats={stats}
+        />
       </div>
       <AccordionContent className="h-auto">
         {expanded ? content : null}
@@ -168,19 +144,6 @@ function ItemMessage({ children }: { children: React.ReactNode }) {
       </EmptyHeader>
     </Empty>
   );
-}
-
-function stateLabel(state: FileGitState) {
-  switch (state) {
-    case "modified":
-      return m.changes_modified();
-    case "deleted":
-      return m.changes_deleted();
-    case "untracked":
-      return m.changes_added();
-    case "conflict":
-      return m.changes_conflict_label();
-  }
 }
 
 function itemMessage(

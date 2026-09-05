@@ -179,7 +179,7 @@ function ScopeChangesControl({
                   data-icon="inline-start"
                 />
               ) : null}
-              {m.changes_save()}
+              {scope.kind === "file" ? m.changes_save() : m.changes_save_all()}
               <span className="ml-auto">{hint}</span>
             </Button>
           </SheetFooter>

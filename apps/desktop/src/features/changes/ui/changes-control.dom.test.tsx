@@ -227,7 +227,9 @@ if (process.env.SVODE_CHANGES_DOM !== "1") {
   test("aggregate Peek loads only expanded rows and preserves surviving focus, scope and save intent", async () => {
     const dom = createDom();
     const restore = installDomGlobals(dom);
+    await import("./text-diff");
     const reads: string[] = [];
+    const statistics: string[][] = [];
     const base = {
       branch: "main",
       ahead: 0,
@@ -243,7 +245,14 @@ if (process.env.SVODE_CHANGES_DOM !== "1") {
       "contract/broken.md",
       "contract/image.png",
       "outside.md",
-    ].map((path) => ({ path, state: "modified" as const }));
+    ].map((path) => ({
+      path,
+      state: path.endsWith("manual.pdf")
+        ? ("deleted" as const)
+        : path.endsWith("image.png")
+          ? ("untracked" as const)
+          : ("modified" as const),
+    }));
     let repositoryError = false;
     let itemError = true;
     mockNativeIpc(
@@ -263,6 +272,18 @@ if (process.env.SVODE_CHANGES_DOM !== "1") {
             lastKnownStatus: null,
             reason: null,
           };
+        if (command === "git_inspection_stats") {
+          const input = args as { paths: string[]; generation: string };
+          statistics.push(input.paths);
+          return {
+            generation: input.generation,
+            items: input.paths.map((path) => ({
+              path,
+              additions: path.endsWith("pdf") ? null : 2,
+              deletions: path.endsWith("pdf") ? null : 1,
+            })),
+          };
+        }
         if (command === "git_working_tree_item") {
           const input = args as {
             path: string;
@@ -278,9 +299,13 @@ if (process.env.SVODE_CHANGES_DOM !== "1") {
           return {
             ...input,
             generation: (args as { generation: string }).generation,
-            state: input.path.endsWith("pdf") ? "binary" : "no_content_diff",
-            before: null,
-            after: null,
+            state: input.path.endsWith("pdf")
+              ? "binary"
+              : input.path.endsWith("README.md")
+                ? "text"
+                : "no_content_diff",
+            before: input.path.endsWith("README.md") ? "Before\n" : null,
+            after: input.path.endsWith("README.md") ? "After\nAdded\n" : null,
             beforeBytes: 10,
             afterBytes: 20,
           };
@@ -294,6 +319,7 @@ if (process.env.SVODE_CHANGES_DOM !== "1") {
     const { registerPageSaveOwner } = await import("@/features/git/editor");
     const { refreshGitStatus } = await import("@/features/git");
     const scopes: unknown[] = [];
+    const { ThemeProvider } = await import("@/components/ui/theme-provider");
     let saveCurrent = 0;
     let failSave = true;
     const release = registerPageSaveOwner("/aggregate", "contract/README.md", {
@@ -314,9 +340,11 @@ if (process.env.SVODE_CHANGES_DOM !== "1") {
     ];
     const trigger = (path: string) =>
       triggers().find((node) => node.dataset.changesItemTrigger === path)!;
-    try {
-      await act(async () => {
-        root.render(
+    const counts = (path: string) =>
+      trigger(path).querySelector("[data-changes-stats]")?.textContent;
+    const renderWithTheme = (theme: "dark" | "light" | "system") =>
+      root.render(
+        <ThemeProvider theme={theme} setTheme={() => {}}>
           <TooltipProvider>
             <ChangesControl
               origin="peek"
@@ -328,8 +356,12 @@ if (process.env.SVODE_CHANGES_DOM !== "1") {
                 name: "Contract",
               }}
             />
-          </TooltipProvider>,
-        );
+          </TooltipProvider>
+        </ThemeProvider>,
+      );
+    try {
+      await act(async () => {
+        renderWithTheme("dark");
         await nextFrame(dom);
       });
       await act(async () => {
@@ -338,6 +370,21 @@ if (process.env.SVODE_CHANGES_DOM !== "1") {
       });
       expect(triggers().length).toBe(4);
       expect(reads).toEqual([]);
+      expect(statistics).toEqual([
+        [
+          "contract/README.md",
+          "contract/manual.pdf",
+          "contract/broken.md",
+          "contract/image.png",
+        ],
+      ]);
+      expect(counts("contract/README.md")).toBe("−1+2");
+      expect(doc.querySelector("[data-changes-summary]")?.textContent).toBe(
+        "−3+6*",
+      );
+      expect(trigger("contract/manual.pdf").hasAttribute("title")).toBe(false);
+      assert.ok(doc.querySelector('[data-slot="accordion"]'));
+      expect(doc.querySelector("diffs-container")).toBeNull();
       expect(
         triggers().every(
           (node) => node.getAttribute("aria-expanded") === "false",
@@ -352,11 +399,84 @@ if (process.env.SVODE_CHANGES_DOM !== "1") {
         await nextFrame(dom);
       });
       expect(reads).toEqual(["contract/README.md", "contract/manual.pdf"]);
+      expect(counts("contract/README.md")).toBe("−1+2");
+      assert.ok(
+        doc
+          .querySelector(
+            '[data-changes-item="contract/README.md"] diffs-container',
+          )
+          ?.shadowRoot?.querySelector("pre"),
+      );
+      const diffContainer = doc.querySelector(
+        '[data-changes-item="contract/README.md"] diffs-container',
+      )!;
+      const themeStyles = () =>
+        [...diffContainer.shadowRoot!.querySelectorAll("style")].find((node) =>
+          node.textContent?.includes("@layer rendered"),
+        )?.textContent ?? "";
+      expect(themeStyles().includes("color-scheme: dark;")).toBe(true);
+      for (const theme of ["light", "dark", "system", "dark"] as const) {
+        await act(async () => {
+          renderWithTheme(theme);
+          await nextFrame(dom);
+        });
+        expect(
+          doc.querySelector(
+            '[data-changes-item="contract/README.md"] diffs-container',
+          ),
+        ).toBe(diffContainer);
+        expect(
+          theme === "system"
+            ? !themeStyles().includes("color-scheme:")
+            : themeStyles().includes(`color-scheme: ${theme};`),
+        ).toBe(true);
+      }
+      expect(reads).toEqual(["contract/README.md", "contract/manual.pdf"]);
       expect(
         triggers().filter(
           (node) => node.getAttribute("aria-expanded") === "true",
         ).length,
       ).toBe(2);
+      await act(async () => {
+        trigger("contract/README.md").click();
+        await nextFrame(dom);
+      });
+      expect(trigger("contract/README.md").getAttribute("aria-expanded")).toBe(
+        "false",
+      );
+      expect(
+        doc.querySelector(
+          '[data-changes-item="contract/README.md"] > div diffs-container',
+        ),
+      ).toBeNull();
+      expect(trigger("contract/manual.pdf").getAttribute("aria-expanded")).toBe(
+        "true",
+      );
+      expect(reads.length).toBe(2);
+      expect(counts("contract/README.md")).toBe("−1+2");
+      await selectChangeFilter(dom, "Modified");
+      expect(triggers().map((node) => node.dataset.changesItemTrigger)).toEqual(
+        ["contract/README.md", "contract/broken.md"],
+      );
+      expect(doc.querySelector("[data-changes-summary]")?.textContent).toBe(
+        "−2+4",
+      );
+      expect(statistics.length).toBe(1);
+      await selectChangeFilter(dom, "All files");
+      expect(trigger("contract/manual.pdf").getAttribute("aria-expanded")).toBe(
+        "true",
+      );
+      expect(statistics.length).toBe(1);
+      await act(async () => {
+        trigger("contract/README.md").click();
+        await nextFrame(dom);
+      });
+      expect(reads).toEqual([
+        "contract/README.md",
+        "contract/manual.pdf",
+        "contract/manual.pdf",
+        "contract/README.md",
+      ]);
       await act(async () => {
         trigger("contract/broken.md").click();
         await nextFrame(dom);
@@ -424,6 +544,23 @@ if (process.env.SVODE_CHANGES_DOM !== "1") {
         doc.querySelector<HTMLButtonElement>(
           '[data-slot="sheet-footer"] button:last-child',
         )!;
+      await selectChangeFilter(dom, "Modified");
+      await act(async () => {
+        trigger("contract/broken.md").focus();
+        files = files.map((file) =>
+          file.path === "contract/broken.md"
+            ? { ...file, state: "deleted" as const }
+            : file,
+        );
+        await refreshGitStatus("/aggregate");
+        await nextFrame(dom);
+      });
+      expect(triggers().length).toBe(0);
+      expect(doc.activeElement).toBe(doc.querySelector("[data-changes-body]"));
+      expect(doc.querySelector("[data-changes-summary]")?.textContent).toBe(
+        "−0+0",
+      );
+      await selectChangeFilter(dom, "All files");
       expect(footer().textContent?.includes("Ctrl+Shift+S")).toBe(true);
       await act(async () => {
         footer().click();
@@ -491,11 +628,36 @@ if (process.env.SVODE_CHANGES_DOM !== "1") {
     let files = [
       { path: ".svode/config.json", state: "modified" },
       { path: "inline/note.md", state: "modified" },
+      ...Array.from({ length: 48 }, (_, index) => ({
+        path: `inline/note-${index}.md`,
+        state: "modified",
+      })),
+      { path: "removed.md", state: "deleted" },
     ];
+    const allPaths = files.map((file) => file.path);
+    const batches: number[] = [];
+    let finishStats: (() => void) | undefined;
     const commits: unknown[] = [];
     mockNativeIpc(
       (command, args) => {
         if (command === "git_status") return { ...base, files };
+        if (command === "git_inspection_stats") {
+          const input = args as { paths: string[]; generation: string };
+          batches.push(input.paths.length);
+          const response = {
+            generation: input.generation,
+            items: input.paths.map((path) => ({
+              path,
+              additions: path === "removed.md" ? 0 : 2,
+              deletions: path === "removed.md" ? 9 : 1,
+            })),
+          };
+          return input.paths.includes("removed.md")
+            ? new Promise((resolve) => {
+                finishStats = () => resolve(response);
+              })
+            : response;
+        }
         if (command === "repository_access_get")
           return {
             status: "local",
@@ -548,6 +710,50 @@ if (process.env.SVODE_CHANGES_DOM !== "1") {
           .click();
         await nextFrame(dom);
       });
+      const doc = dom.window.document;
+      expect(doc.querySelectorAll("[data-changes-item-trigger]").length).toBe(
+        50,
+      );
+      expect(batches).toEqual([50, 1]);
+      expect(doc.querySelector("[data-changes-summary]")).toBeNull();
+      assert.ok(doc.querySelector('[data-changes-toolbar] [role="status"]'));
+      await act(async () => {
+        finishStats!();
+        await nextFrame(dom);
+      });
+      expect(doc.querySelector("[data-changes-summary]")?.textContent).toBe(
+        "−59+100",
+      );
+      expect(
+        doc
+          .querySelector('[data-changes-toolbar] [role="combobox"]')
+          ?.textContent?.includes("51"),
+      ).toBe(true);
+      await selectChangeFilter(dom, "Deleted");
+      expect(doc.querySelectorAll("[data-changes-item-trigger]").length).toBe(
+        1,
+      );
+      expect(
+        doc
+          .querySelector("[data-changes-item-trigger]")
+          ?.getAttribute("data-changes-item-trigger"),
+      ).toBe("removed.md");
+      expect(doc.querySelector("[data-changes-summary]")?.textContent).toBe(
+        "−9+0",
+      );
+      await selectChangeFilter(dom, "Added");
+      expect(doc.querySelectorAll("[data-changes-item-trigger]").length).toBe(
+        0,
+      );
+      expect(
+        doc
+          .querySelector("[data-changes-body]")
+          ?.textContent?.includes("No files of this type"),
+      ).toBe(true);
+      expect(doc.querySelector("[data-changes-summary]")?.textContent).toBe(
+        "−0+0",
+      );
+      expect(batches).toEqual([50, 1]);
       await act(async () => {
         dom.window.dispatchEvent(
           new dom.window.KeyboardEvent("keydown", { key: "s", ctrlKey: true }),
@@ -574,7 +780,7 @@ if (process.env.SVODE_CHANGES_DOM !== "1") {
         filePaths: committed.filePaths,
       }).toEqual({
         spacePath: "/root-scope",
-        filePaths: [".svode/config.json", "inline/note.md"],
+        filePaths: allPaths,
       });
     } finally {
       await act(async () => {
@@ -605,6 +811,28 @@ function nextFrame(dom: JSDOM) {
   });
 }
 
+async function selectChangeFilter(dom: JSDOM, label: string) {
+  const doc = dom.window.document;
+  await act(async () => {
+    const trigger = doc.querySelector<HTMLElement>(
+      '[data-changes-toolbar] [role="combobox"]',
+    )!;
+    trigger.focus();
+    trigger.dispatchEvent(
+      new dom.window.KeyboardEvent("keydown", { key: "Enter", bubbles: true }),
+    );
+    await nextFrame(dom);
+  });
+  const options = [...doc.querySelectorAll<HTMLElement>('[role="option"]')];
+  const option = options.find((item) => item.textContent?.startsWith(label))!;
+  assert.ok(option);
+  assert.ok(option.querySelector("svg"));
+  await act(async () => {
+    option.click();
+    await nextFrame(dom);
+  });
+}
+
 function installDomGlobals(dom: JSDOM) {
   Object.defineProperty(dom.window.HTMLElement.prototype, "scrollIntoView", {
     configurable: true,
@@ -614,12 +842,20 @@ function installDomGlobals(dom: JSDOM) {
     cancelAnimationFrame: dom.window.cancelAnimationFrame.bind(dom.window),
     CSS: dom.window.CSS ?? { escape: (value: string) => value },
     CustomEvent: dom.window.CustomEvent,
+    customElements: dom.window.customElements,
+    CSSStyleSheet: class extends dom.window.CSSStyleSheet {
+      replaceSync() {}
+    },
     DOMRect: dom.window.DOMRect,
     DocumentFragment: dom.window.DocumentFragment,
     Element: dom.window.Element,
     Event: dom.window.Event,
     FocusEvent: dom.window.FocusEvent,
     HTMLElement: dom.window.HTMLElement,
+    HTMLButtonElement: dom.window.HTMLButtonElement,
+    HTMLPreElement: dom.window.HTMLPreElement,
+    HTMLStyleElement: dom.window.HTMLStyleElement,
+    SVGElement: dom.window.SVGElement,
     HTMLInputElement: dom.window.HTMLInputElement,
     IS_REACT_ACT_ENVIRONMENT: true,
     KeyboardEvent: dom.window.KeyboardEvent,

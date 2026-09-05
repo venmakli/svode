@@ -1,5 +1,7 @@
 import {
   getWorkingTreeItem,
+  getInspectionStats,
+  type InspectionItemStatsDto,
   type WorkingTreeItemDto,
 } from "@/platform/git/inspection-api";
 import { openArtifactInTool } from "@/platform/project-openers";
@@ -12,6 +14,8 @@ export type WorkingTreeItem = WorkingTreeItemDto & {
 };
 
 export const loadWorkingTreeItem = getWorkingTreeItem;
+export const loadInspectionStats = getInspectionStats;
+export type InspectionItemStats = InspectionItemStatsDto;
 
 export async function prepareTextDiff(
   item: WorkingTreeItem,

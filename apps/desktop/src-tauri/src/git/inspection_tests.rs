@@ -386,3 +386,203 @@ async fn conflicts_and_non_regular_sources_never_become_normal_text() {
         );
     }
 }
+
+#[tokio::test]
+async fn inspection_stats_cover_collapsed_files_without_mutating_the_index() {
+    use super::inspection_stats::read_stats;
+    let (dir, cli) = repo().await;
+    std::fs::create_dir(dir.path().join("contract")).unwrap();
+    std::fs::write(dir.path().join("contract/new.md"), "a\nb").unwrap();
+    let scope = || {
+        serde_json::from_value(serde_json::json!({"kind": "directory", "path": "contract"}))
+            .unwrap()
+    };
+    let initial = serde_json::to_value(
+        read_stats(
+            &cli,
+            dir.path(),
+            vec!["contract/new.md".into()],
+            "unborn".into(),
+            scope(),
+        )
+        .await
+        .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(initial["items"][0]["additions"], 2);
+    assert_eq!(initial["items"][0]["deletions"], 0);
+    for (path, content) in [
+        ("contract/note.md", "first\nsecond\n"),
+        ("contract/gone.md", "gone\n"),
+        ("contract/index.md", "same\n"),
+        ("contract/tab\tfile.md", "old\n"),
+        ("outside.md", "before\n"),
+    ] {
+        std::fs::write(dir.path().join(path), content).unwrap();
+    }
+    ops::commit_all(&cli, dir.path()).await.unwrap();
+    std::fs::write(dir.path().join("contract/note.md"), "staged\n").unwrap();
+    ops::add(&cli, dir.path(), "contract/note.md")
+        .await
+        .unwrap();
+    std::fs::write(
+        dir.path().join("contract/note.md"),
+        "first\nthird\nfourth\n",
+    )
+    .unwrap();
+    std::fs::write(dir.path().join("contract/index.md"), "staged\n").unwrap();
+    ops::add(&cli, dir.path(), "contract/index.md")
+        .await
+        .unwrap();
+    std::fs::write(dir.path().join("contract/index.md"), "same\n").unwrap();
+    std::fs::write(dir.path().join("contract/tab\tfile.md"), "new\n").unwrap();
+    std::fs::remove_file(dir.path().join("contract/gone.md")).unwrap();
+    std::fs::write(dir.path().join("contract/added.md"), "a\nb").unwrap();
+    std::fs::write(dir.path().join("contract/binary.bin"), [0, 1, 2]).unwrap();
+    std::fs::write(dir.path().join("outside.md"), "staged outside\n").unwrap();
+    ops::add(&cli, dir.path(), "outside.md").await.unwrap();
+    let index = cli
+        .exec(dir.path(), &["diff", "--cached"])
+        .await
+        .unwrap()
+        .stdout;
+    let paths = [
+        "note.md",
+        "gone.md",
+        "index.md",
+        "tab\tfile.md",
+        "added.md",
+        "binary.bin",
+    ];
+    let result = serde_json::to_value(
+        read_stats(
+            &cli,
+            dir.path(),
+            paths
+                .iter()
+                .map(|path| format!("contract/{path}"))
+                .collect(),
+            "closed".into(),
+            scope(),
+        )
+        .await
+        .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(result["generation"], "closed");
+    for (index, additions, deletions) in [(0, 2, 1), (1, 0, 1), (2, 0, 0), (3, 1, 1), (4, 2, 0)] {
+        assert_eq!(result["items"][index]["additions"], additions);
+        assert_eq!(result["items"][index]["deletions"], deletions);
+    }
+    assert!(result["items"][5]["additions"].is_null());
+    assert_eq!(
+        index,
+        cli.exec(dir.path(), &["diff", "--cached"])
+            .await
+            .unwrap()
+            .stdout
+    );
+    let inline_scope =
+        serde_json::from_value(serde_json::json!({"kind": "repository", "path": ""})).unwrap();
+    let inline = serde_json::to_value(
+        read_stats(
+            &cli,
+            &dir.path().join("contract"),
+            vec!["note.md".into()],
+            "inline".into(),
+            inline_scope,
+        )
+        .await
+        .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(inline["items"][0]["additions"], 2);
+    assert_eq!(inline["items"][0]["deletions"], 1);
+}
+
+#[tokio::test]
+async fn inspection_stats_enforce_scope_size_and_child_repository_boundaries() {
+    use super::inspection_stats::read_stats;
+    let (dir, cli) = repo().await;
+    std::fs::create_dir(dir.path().join("contract")).unwrap();
+    std::fs::write(
+        dir.path().join("contract/large.md"),
+        vec![b'a'; 512 * 1024 + 1],
+    )
+    .unwrap();
+    ops::commit_all(&cli, dir.path()).await.unwrap();
+    std::fs::write(dir.path().join("contract/large.md"), "small now\n").unwrap();
+    std::fs::write(
+        dir.path().join("contract/new-large.md"),
+        vec![b'a'; 512 * 1024 + 1],
+    )
+    .unwrap();
+    std::fs::create_dir(dir.path().join("contract/child")).unwrap();
+    cli.exec(&dir.path().join("contract/child"), &["init"])
+        .await
+        .unwrap();
+    std::fs::write(dir.path().join("contract/child/private.md"), "child\n").unwrap();
+    let scope = || {
+        serde_json::from_value(serde_json::json!({"kind": "directory", "path": "contract"}))
+            .unwrap()
+    };
+    let result = serde_json::to_value(
+        read_stats(
+            &cli,
+            dir.path(),
+            vec![
+                "contract/large.md".into(),
+                "contract/new-large.md".into(),
+                "contract/child/private.md".into(),
+            ],
+            "limits".into(),
+            scope(),
+        )
+        .await
+        .unwrap(),
+    )
+    .unwrap();
+    assert!(
+        result["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|item| item["additions"].is_null())
+    );
+    for path in ["../escape.md", "outside.md"] {
+        assert!(
+            read_stats(&cli, dir.path(), vec![path.into()], "scope".into(), scope())
+                .await
+                .is_err()
+        );
+    }
+    assert!(
+        read_stats(
+            &cli,
+            dir.path(),
+            vec!["contract/large.md".into(); 51],
+            "batch".into(),
+            scope()
+        )
+        .await
+        .is_err()
+    );
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink("child/private.md", dir.path().join("contract/link.md"))
+            .unwrap();
+        let result = serde_json::to_value(
+            read_stats(
+                &cli,
+                dir.path(),
+                vec!["contract/link.md".into()],
+                "link".into(),
+                scope(),
+            )
+            .await
+            .unwrap(),
+        )
+        .unwrap();
+        assert!(result["items"][0]["additions"].is_null());
+    }
+}

@@ -45,7 +45,7 @@ enum ScopeKind {
 }
 
 impl InspectionScope {
-    fn contains(&self, path: &str) -> Result<bool, AppError> {
+    pub(crate) fn contains(&self, path: &str) -> Result<bool, AppError> {
         let root = normalize_repo_relative(&self.path, RootMode::Allow)?;
         Ok(match self.kind {
             ScopeKind::File => root != "." && path == root,
@@ -357,7 +357,7 @@ pub(crate) async fn read_scoped_item(
     Ok(result)
 }
 
-fn is_binary_format(path: &str) -> bool {
+pub(crate) fn is_binary_format(path: &str) -> bool {
     let extension = Path::new(path)
         .extension()
         .and_then(|value| value.to_str())

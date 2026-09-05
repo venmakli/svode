@@ -283,6 +283,7 @@ pub fn run() {
             git::commands::git_fetch_status,
             git::commands::git_commit_file,
             git::inspection::git_working_tree_item,
+            git::inspection_stats::git_inspection_stats,
             git::commands::git_commit_all,
             git::commands::git_commit_paths,
             git::commands::git_sync,

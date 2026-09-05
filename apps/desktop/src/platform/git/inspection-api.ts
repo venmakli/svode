@@ -34,3 +34,21 @@ export function getWorkingTreeItem(
     scope,
   });
 }
+
+export interface InspectionItemStatsDto {
+  path: string;
+  additions: number | null;
+  deletions: number | null;
+}
+
+export function getInspectionStats(
+  spacePath: string,
+  paths: string[],
+  generation: string,
+  scope: { kind: "file" | "directory" | "repository"; path: string },
+) {
+  return invokeCommand<{ generation: string; items: InspectionItemStatsDto[] }>(
+    "git_inspection_stats",
+    { spacePath, paths, generation, scope },
+  );
+}
