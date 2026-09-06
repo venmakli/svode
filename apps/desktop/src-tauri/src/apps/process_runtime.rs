@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::ffi::OsStr;
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
@@ -14,6 +15,7 @@ use tokio::time::{Instant, sleep};
 
 use super::manifest::{AppCommandRecipe, AppProcessRuntime};
 use crate::process::hide_tokio_window;
+use crate::process::path_env::ProcessPath;
 
 const MAX_LOG_BYTES: usize = 64 * 1024;
 
@@ -155,6 +157,7 @@ pub(crate) struct AppProcessState {
     inner: Arc<Mutex<ProcessStateInner>>,
     readiness_probe: Arc<dyn UrlReadinessProbe>,
     config: ProcessRuntimeConfig,
+    search_path: Arc<ProcessPath>,
 }
 
 trait UrlReadinessProbe: Send + Sync {
@@ -184,12 +187,17 @@ impl AppProcessState {
             .user_agent("Svode-App-Readiness/1")
             .build()
             .expect("failed to build App readiness HTTP client");
-        Self::with_probe(config, Arc::new(HttpUrlReadinessProbe { client }))
+        Self::with_probe(
+            config,
+            Arc::new(HttpUrlReadinessProbe { client }),
+            ProcessPath::default(),
+        )
     }
 
     fn with_probe(
         config: ProcessRuntimeConfig,
         readiness_probe: Arc<dyn UrlReadinessProbe>,
+        search_path: ProcessPath,
     ) -> Self {
         Self {
             inner: Arc::new(Mutex::new(ProcessStateInner {
@@ -199,6 +207,7 @@ impl AppProcessState {
             })),
             readiness_probe,
             config,
+            search_path: Arc::new(search_path),
         }
     }
 
@@ -340,7 +349,22 @@ impl AppProcessState {
         let readiness_probe = Arc::clone(&self.readiness_probe);
         let config = self.config;
         let task_key = key.clone();
+        let search_path = Arc::clone(&self.search_path);
         tauri::async_runtime::spawn(async move {
+            let path = if runtime.environment.keys().any(|name| {
+                if cfg!(windows) {
+                    name.eq_ignore_ascii_case("PATH")
+                } else {
+                    name == "PATH"
+                }
+            }) {
+                None
+            } else {
+                search_path.get().await
+            };
+            if !entry_is_active(&inner, &task_key, generation) {
+                return;
+            }
             launch_process_flow(
                 inner,
                 readiness_probe,
@@ -349,6 +373,7 @@ impl AppProcessState {
                 generation,
                 runtime,
                 run_setup,
+                path,
             )
             .await;
         });
@@ -406,6 +431,7 @@ async fn launch_process_flow(
     generation: u64,
     runtime: AppProcessRuntime,
     run_setup: bool,
+    search_path: Option<&OsStr>,
 ) {
     if run_setup {
         let setup = runtime.setup.as_ref().expect("setup is present");
@@ -416,6 +442,7 @@ async fn launch_process_flow(
             generation,
             setup,
             &runtime.environment,
+            search_path,
         )
         .await
         {
@@ -445,6 +472,7 @@ async fn launch_process_flow(
         &key.owner_path,
         &runtime.start,
         &runtime.environment,
+        search_path,
     ) {
         Ok(child) => child,
         Err(error) => {
@@ -483,6 +511,7 @@ async fn run_setup_command(
     generation: u64,
     recipe: &AppCommandRecipe,
     environment: &BTreeMap<String, String>,
+    search_path: Option<&OsStr>,
 ) -> CommandOutcome {
     let child = match spawn_command(
         Arc::clone(&inner),
@@ -491,6 +520,7 @@ async fn run_setup_command(
         &key.owner_path,
         recipe,
         environment,
+        search_path,
     ) {
         Ok(child) => child,
         Err(error) => {
@@ -645,17 +675,20 @@ fn spawn_command(
     owner_path: &Path,
     recipe: &AppCommandRecipe,
     environment: &BTreeMap<String, String>,
+    search_path: Option<&OsStr>,
 ) -> std::io::Result<SharedChild> {
+    let cwd = recipe
+        .cwd
+        .as_deref()
+        .map_or_else(|| owner_path.to_path_buf(), |cwd| owner_path.join(cwd));
     let mut command = Command::new(&recipe.argv[0]);
+    if let Some(path) = search_path {
+        command.env("PATH", path);
+    }
     command
         .args(&recipe.argv[1..])
         .envs(environment)
-        .current_dir(
-            recipe
-                .cwd
-                .as_deref()
-                .map_or_else(|| owner_path.to_path_buf(), |cwd| owner_path.join(cwd)),
-        )
+        .current_dir(&cwd)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -674,7 +707,23 @@ fn spawn_command(
             "App process launch was superseded",
         ));
     }
-    let mut child = command.spawn()?;
+    let mut child = command.spawn().map_err(|error| {
+        let hint = if !cwd.is_dir() {
+            "The working directory does not exist or is not a directory."
+        } else if error.kind() == std::io::ErrorKind::NotFound {
+            "Check that the executable (and its interpreter) is installed and available on PATH."
+        } else {
+            "Check executable permissions and the working directory."
+        };
+        // Arguments and environment may contain secrets; include only program and cwd.
+        std::io::Error::new(
+            error.kind(),
+            format!(
+                "Cannot launch {:?} in {:?}: {error}. {hint}",
+                recipe.argv[0], cwd,
+            ),
+        )
+    })?;
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
     let child = Arc::new(Mutex::new(child));
@@ -1040,7 +1089,11 @@ mod tests {
         std::fs::create_dir(&owner).unwrap();
         std::fs::write(owner.join("input.lock"), "one").unwrap();
         let url = "http://127.0.0.1:3210/".to_string();
-        let state = AppProcessState::with_probe(test_config(), Arc::new(AlwaysReady));
+        let state = AppProcessState::with_probe(
+            test_config(),
+            Arc::new(AlwaysReady),
+            ProcessPath::fixed(None),
+        );
         let mut setup = shell("printf 'run\\n' >> setup.log");
         setup.inputs.push("input.lock".to_string());
         let runtime = runtime(url, Some(setup), shell("sleep 10"));
@@ -1125,7 +1178,11 @@ mod tests {
         let project = temp.path().to_path_buf();
         let owner = project.join("environment-app");
         std::fs::create_dir(&owner).unwrap();
-        let state = AppProcessState::with_probe(test_config(), Arc::new(AlwaysReady));
+        let state = AppProcessState::with_probe(
+            test_config(),
+            Arc::new(AlwaysReady),
+            ProcessPath::fixed(None),
+        );
         let mut runtime = runtime(
             "http://127.0.0.1:3210/".to_string(),
             Some(shell("printf '%s' \"$APP_TOKEN\" > setup.env")),
@@ -1187,6 +1244,107 @@ mod tests {
 
     #[cfg(unix)]
     #[tokio::test]
+    async fn setup_and_start_share_recovered_path_including_children_and_respect_overrides() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempfile::tempdir().unwrap();
+        let recovered_bin = temp.path().join("recovered bin");
+        let override_bin = temp.path().join("override bin");
+        for (bin, label) in [(&recovered_bin, "recovered"), (&override_bin, "explicit")] {
+            std::fs::create_dir(bin).unwrap();
+            let program = bin.join("svode-path-probe");
+            let helper = bin.join("svode-path-helper");
+            std::fs::write(&program, "#!/bin/sh\nexec svode-path-helper \"$@\"\n").unwrap();
+            std::fs::write(&helper, format!(
+                "#!/bin/sh\nphase=$1\nshift\nprintf '%s\\n' '{label}' \"$@\" > \"$phase.txt\"\nif [ \"$phase\" = start ]; then exec /bin/sleep 30; fi\n",
+            )).unwrap();
+            for path in [program, helper] {
+                std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+            }
+        }
+        let recovered_path = std::env::join_paths([
+            recovered_bin.as_path(),
+            Path::new("/usr/bin"),
+            Path::new("/bin"),
+        ])
+        .unwrap();
+        let literal = "$(touch injected); * ${PRIVATE}";
+        for (label, explicit) in [("recovered", false), ("explicit", true)] {
+            let owner = temp.path().join(label);
+            std::fs::create_dir(&owner).unwrap();
+            let recipe = |phase: &str| AppCommandRecipe {
+                argv: vec!["svode-path-probe".into(), phase.into(), literal.into()],
+                cwd: None,
+                inputs: Vec::new(),
+            };
+            let mut runtime = runtime(
+                "http://127.0.0.1:9/".into(),
+                Some(recipe("setup")),
+                recipe("start"),
+            );
+            if explicit {
+                runtime
+                    .environment
+                    .insert("PATH".into(), override_bin.to_str().unwrap().into());
+            }
+            let state = AppProcessState::with_probe(
+                test_config(),
+                Arc::new(AlwaysReady),
+                ProcessPath::fixed(Some(recovered_path.clone())),
+            );
+            wait_for_snapshot(&state, temp.path(), &owner, &runtime, |snapshot| {
+                matches!(snapshot, AppProcessSnapshot::Ready { managed: true, .. })
+            })
+            .await;
+            let expected = format!("{label}\n{literal}\n");
+            let deadline = Instant::now() + Duration::from_secs(2);
+            while std::fs::read_to_string(owner.join("start.txt"))
+                .ok()
+                .as_deref()
+                != Some(&expected)
+            {
+                assert!(
+                    Instant::now() < deadline,
+                    "start did not inherit expected PATH/argv"
+                );
+                sleep(Duration::from_millis(10)).await;
+            }
+            assert_eq!(
+                std::fs::read_to_string(owner.join("setup.txt")).unwrap(),
+                expected
+            );
+            assert!(!owner.join("injected").exists());
+            state.stop(temp.path(), &owner);
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn missing_working_directory_is_distinguished_from_missing_executable() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut start = shell("exit 0");
+        start.cwd = Some("missing-directory".into());
+        let runtime = runtime("http://127.0.0.1:9/".into(), None, start);
+        let state = AppProcessState::with_probe(
+            test_config(),
+            Arc::new(NeverReady),
+            ProcessPath::fixed(None),
+        );
+        let failed = wait_for_snapshot(&state, temp.path(), temp.path(), &runtime, |snapshot| {
+            matches!(snapshot, AppProcessSnapshot::Failed { .. })
+        })
+        .await;
+        let AppProcessSnapshot::Failed { reason, logs, .. } = failed else {
+            unreachable!()
+        };
+        assert_eq!(reason, "start_spawn_failed");
+        assert!(logs.stderr.contains("missing-directory"));
+        assert!(logs.stderr.contains("working directory does not exist"));
+        assert!(!logs.stderr.contains("available on PATH"));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
     async fn reports_start_failure_with_bounded_logs_and_can_retry() {
         let temp = tempfile::tempdir().unwrap();
         let project = temp.path().to_path_buf();
@@ -1197,7 +1355,11 @@ mod tests {
             None,
             shell("printf failure >&2; exit 7"),
         );
-        let state = AppProcessState::with_probe(test_config(), Arc::new(NeverReady));
+        let state = AppProcessState::with_probe(
+            test_config(),
+            Arc::new(NeverReady),
+            ProcessPath::fixed(None),
+        );
 
         let failed = wait_for_snapshot(&state, &project, &owner, &runtime, |snapshot| {
             matches!(snapshot, AppProcessSnapshot::Failed { .. })
@@ -1228,12 +1390,16 @@ mod tests {
             "http://127.0.0.1:3210/".to_string(),
             None,
             AppCommandRecipe {
-                argv: vec!["svode-command-that-does-not-exist".to_string()],
+                argv: vec![
+                    "svode-command-that-does-not-exist".to_string(),
+                    "private-argument".to_string(),
+                ],
                 cwd: None,
                 inputs: Vec::new(),
             },
         );
-        let state = AppProcessState::with_probe(config, Arc::new(NeverReady));
+        let state =
+            AppProcessState::with_probe(config, Arc::new(NeverReady), ProcessPath::fixed(None));
         let failed = wait_for_snapshot(&state, &project, &owner, &missing, |snapshot| {
             matches!(snapshot, AppProcessSnapshot::Failed { .. })
         })
@@ -1242,7 +1408,10 @@ mod tests {
             unreachable!()
         };
         assert_eq!(reason, "start_spawn_failed");
-        assert!(!logs.stderr.is_empty());
+        assert!(logs.stderr.contains("svode-command-that-does-not-exist"));
+        assert!(logs.stderr.contains(&owner.to_string_lossy().to_string()));
+        assert!(logs.stderr.contains("PATH"));
+        assert!(!logs.stderr.contains("private-argument"));
 
         let setup_timeout = runtime(
             "http://127.0.0.1:3210/".to_string(),
@@ -1276,7 +1445,11 @@ mod tests {
         let owner = project.join("app");
         std::fs::create_dir(&owner).unwrap();
         let runtime = runtime("https://example.com/app".to_string(), None, shell("exit 0"));
-        let state = AppProcessState::with_probe(test_config(), Arc::new(AlwaysReady));
+        let state = AppProcessState::with_probe(
+            test_config(),
+            Arc::new(AlwaysReady),
+            ProcessPath::fixed(None),
+        );
 
         let ready = wait_for_snapshot(&state, &project, &owner, &runtime, |snapshot| {
             matches!(snapshot, AppProcessSnapshot::Ready { managed: false, .. })
@@ -1322,7 +1495,11 @@ mod tests {
             None,
             shell("sleep 10"),
         );
-        let state = AppProcessState::with_probe(test_config(), Arc::new(AlwaysReady));
+        let state = AppProcessState::with_probe(
+            test_config(),
+            Arc::new(AlwaysReady),
+            ProcessPath::fixed(None),
+        );
         wait_for_snapshot(&state, &project, &owner, &runtime, |snapshot| {
             matches!(snapshot, AppProcessSnapshot::Ready { managed: true, .. })
         })

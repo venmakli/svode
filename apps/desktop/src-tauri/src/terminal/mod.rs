@@ -1394,32 +1394,8 @@ fn select_windows_shell(mut resolve: impl FnMut(&str) -> Option<String>) -> Shel
 
 #[cfg(not(windows))]
 fn default_shell() -> ShellCommand {
-    select_unix_shell(std::env::var("SHELL").ok().as_deref(), command_exists)
-}
-
-#[cfg(not(windows))]
-fn select_unix_shell(env_shell: Option<&str>, exists: impl Fn(&str) -> bool) -> ShellCommand {
-    if let Some(shell) = env_shell {
-        if !shell.trim().is_empty() && exists(shell) {
-            return ShellCommand {
-                program: shell.to_string(),
-                args: vec!["-l".to_string()],
-                kind: TerminalShellKind::Posix,
-            };
-        }
-    }
-    for candidate in ["/bin/zsh", "/bin/bash", "/bin/sh"] {
-        if exists(candidate) {
-            return ShellCommand {
-                program: candidate.to_string(),
-                args: vec!["-l".to_string()],
-                kind: TerminalShellKind::Posix,
-            };
-        }
-    }
-
     ShellCommand {
-        program: "/bin/sh".to_string(),
+        program: crate::process::shell::login_shell(),
         args: vec!["-l".to_string()],
         kind: TerminalShellKind::Posix,
     }
@@ -1532,16 +1508,6 @@ fn quote_cmd_terminal_path(path: &str) -> String {
     quoted
 }
 
-#[cfg(not(windows))]
-fn command_exists(command: &str) -> bool {
-    let path = std::path::Path::new(command);
-    if path.is_absolute() {
-        path.exists()
-    } else {
-        which::which(command).is_ok()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1594,36 +1560,6 @@ mod tests {
             routine_run_id: None,
             lifecycle_sink: None,
         }
-    }
-
-    #[cfg(not(windows))]
-    #[test]
-    fn unix_shell_prefers_valid_shell_env() {
-        let shell = select_unix_shell(Some("/custom/zsh"), |candidate| candidate == "/custom/zsh");
-
-        assert_eq!(
-            shell,
-            ShellCommand {
-                program: "/custom/zsh".to_string(),
-                args: vec!["-l".to_string()],
-                kind: TerminalShellKind::Posix,
-            }
-        );
-    }
-
-    #[cfg(not(windows))]
-    #[test]
-    fn unix_shell_falls_back_to_standard_shells() {
-        let shell = select_unix_shell(Some("/missing/shell"), |candidate| candidate == "/bin/bash");
-
-        assert_eq!(
-            shell,
-            ShellCommand {
-                program: "/bin/bash".to_string(),
-                args: vec!["-l".to_string()],
-                kind: TerminalShellKind::Posix,
-            }
-        );
     }
 
     #[cfg(windows)]
