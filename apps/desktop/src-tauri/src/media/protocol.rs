@@ -87,13 +87,14 @@ pub(crate) fn handle_media_protocol<R: Runtime>(
 ) {
     std::thread::spawn(move || {
         let path = request.uri().path().trim_start_matches('/');
-        let token = (!path.is_empty() && !path.contains('/'))
-            .then_some(path)
-            .unwrap_or_default()
-            .to_string();
+        let token = if !path.is_empty() && !path.contains('/') {
+            path
+        } else {
+            ""
+        };
         let state = app.state::<MediaSourceState>();
         let response = state
-            .get(&token)
+            .get(token)
             .ok_or(ProtocolFailure::NotFound)
             .and_then(|capability| {
                 serve_capability(&request, &capability).map_err(|error| {
@@ -103,7 +104,7 @@ pub(crate) fn handle_media_protocol<R: Runtime>(
                             | ProtocolFailure::Source(MediaSourceError::SourceMissing)
                             | ProtocolFailure::Source(MediaSourceError::SourceUnavailable)
                     ) {
-                        state.revoke(&token);
+                        state.revoke(token);
                     }
                     error
                 })

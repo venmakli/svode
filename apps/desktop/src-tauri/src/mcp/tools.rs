@@ -1709,7 +1709,7 @@ mod tests {
         );
         assert_eq!(
             create.input_schema["properties"]["definition"]["required"],
-            json!(["trigger", "action", "body"])
+            json!(["name", "trigger", "action", "body"])
         );
         let update = definitions
             .iter()

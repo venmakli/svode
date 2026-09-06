@@ -387,7 +387,7 @@ pub(crate) async fn create_managed(
     terminal_manager: &TerminalManager,
 ) -> Result<ManagedRoutineMutationResult, AppError> {
     if let Err(result) = validate_candidate(&owner, &definition, policy) {
-        return Ok(result);
+        return Ok(*result);
     }
     let name = managed_name(&definition).expect("validated managed Routine name");
     let repository = mutation_repository(git_state, &owner).await?;
@@ -404,7 +404,7 @@ pub(crate) async fn create_managed(
     let portable_id = ulid::Ulid::new().to_string().to_ascii_lowercase();
     let content = match serialize_candidate(&definition, &portable_id) {
         Ok(content) => content,
-        Err(result) => return Ok(result),
+        Err(result) => return Ok(*result),
     };
 
     let write_owner = owner.clone();
@@ -475,7 +475,7 @@ pub(crate) async fn update_managed(
     terminal_manager: &TerminalManager,
 ) -> Result<ManagedRoutineMutationResult, AppError> {
     if let Err(result) = validate_candidate(&owner, &definition, policy) {
-        return Ok(result);
+        return Ok(*result);
     }
     let name = managed_name(&definition)
         .expect("validated managed Routine name")
@@ -513,7 +513,7 @@ pub(crate) async fn update_managed(
     };
     let content = match serialize_candidate(&definition, &portable_id) {
         Ok(content) => content,
-        Err(result) => return Ok(result),
+        Err(result) => return Ok(*result),
     };
     let old_filename = row.filename.clone();
     let old_path = row.path.clone();
@@ -740,9 +740,9 @@ fn validate_candidate(
     owner: &ResolvedRoutineOwner,
     definition: &RoutineDefinition,
     policy: RoutineMutationPolicy,
-) -> Result<(), ManagedRoutineMutationResult> {
+) -> Result<(), Box<ManagedRoutineMutationResult>> {
     if managed_name(definition).is_none() {
-        return Err(ManagedRoutineMutationResult::Blocked {
+        return Err(Box::new(ManagedRoutineMutationResult::Blocked {
             code: RoutineMutationBlockedCode::Invalid,
             message: "routine name must contain 1 to 240 characters".into(),
             diagnostics: vec![
@@ -752,35 +752,35 @@ fn validate_candidate(
                 )
                 .field("name"),
             ],
-        });
+        }));
     }
     let diagnostics = candidate_diagnostics(owner, definition);
     if policy.require_valid_definition && !diagnostics.is_empty() {
-        return Err(ManagedRoutineMutationResult::Blocked {
+        return Err(Box::new(ManagedRoutineMutationResult::Blocked {
             code: RoutineMutationBlockedCode::Invalid,
             message: diagnostics
                 .first()
                 .map(|diagnostic| diagnostic.message.clone())
                 .unwrap_or_else(|| "routine definition is invalid".into()),
             diagnostics,
-        });
+        }));
     }
     if automatic_execution_enabled(definition) {
         if policy.caller == RoutineMutationCaller::RoutineMcp {
-            return Err(ManagedRoutineMutationResult::Blocked {
+            return Err(Box::new(ManagedRoutineMutationResult::Blocked {
                 code: RoutineMutationBlockedCode::RecursionGuard,
                 message: "a routine-launched MCP caller cannot save enabled automation".into(),
                 diagnostics: Vec::new(),
-            });
+            }));
         }
         if policy.caller != RoutineMutationCaller::Desktop && !policy.confirm_automatic_execution {
-            return Err(ManagedRoutineMutationResult::Blocked {
+            return Err(Box::new(ManagedRoutineMutationResult::Blocked {
                 code: RoutineMutationBlockedCode::AutomaticConfirmationRequired,
                 message:
                     "enabled schedule or event routines require confirmAutomaticExecution=true"
                         .into(),
                 diagnostics: Vec::new(),
-            });
+            }));
         }
     }
     Ok(())
@@ -789,7 +789,7 @@ fn validate_candidate(
 fn serialize_candidate(
     definition: &RoutineDefinition,
     portable_id: &str,
-) -> Result<Vec<u8>, ManagedRoutineMutationResult> {
+) -> Result<Vec<u8>, Box<ManagedRoutineMutationResult>> {
     let content = parser::serialize_definition(definition, portable_id).map_err(|message| {
         ManagedRoutineMutationResult::Blocked {
             code: RoutineMutationBlockedCode::Invalid,
@@ -798,14 +798,14 @@ fn serialize_candidate(
         }
     })?;
     if content.len() as u64 > parser::MAX_ROUTINE_BYTES {
-        return Err(ManagedRoutineMutationResult::Blocked {
+        return Err(Box::new(ManagedRoutineMutationResult::Blocked {
             code: RoutineMutationBlockedCode::Invalid,
             message: "routine definition exceeds the 1 MiB limit".into(),
             diagnostics: vec![RoutineDiagnostic::new(
                 "routine_definition_too_large",
                 "serialized routine definition exceeds the 1 MiB limit",
             )],
-        });
+        }));
     }
     Ok(content.into_bytes())
 }
@@ -1495,7 +1495,7 @@ mod tests {
         )
         .unwrap_err();
         assert!(matches!(
-            blocked,
+            *blocked,
             ManagedRoutineMutationResult::Blocked {
                 code: RoutineMutationBlockedCode::AutomaticConfirmationRequired,
                 ..
@@ -1531,7 +1531,7 @@ mod tests {
         )
         .unwrap_err();
         assert!(matches!(
-            blocked,
+            *blocked,
             ManagedRoutineMutationResult::Blocked {
                 code: RoutineMutationBlockedCode::RecursionGuard,
                 ..
@@ -1675,7 +1675,7 @@ mod tests {
         )
         .unwrap_err();
         assert!(matches!(
-            blocked,
+            *blocked,
             ManagedRoutineMutationResult::Blocked {
                 code: RoutineMutationBlockedCode::Invalid,
                 diagnostics,

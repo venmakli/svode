@@ -1,5 +1,51 @@
 # Changelog
 
+## [0.0.8] - 2026-09-06
+
+### Added
+
+- **Artifact surfaces.** Added a shared resolver and opening flow for Markdown Pages, Documents, and Media across full-page and Peek surfaces, preserving Project, Space, Collection, Routine, and Agent Context ownership.
+- **Repository work mode.** Added one repository-derived work status and shared access recovery for managed writes across Pages, Collections, Actors, Routines, and attachments.
+- **Attachments.** Added owner-scoped attachment tables for Projects, Spaces, and directory-backed Pages, with colocated Desktop, editor, and MCP imports, first-import Page conversion, and portable Git/LFS storage routing.
+- **Document previews.** Added read-only PDF, DOCX, XLSX, and PPTX viewers with format-local navigation and find, bounded loading, local renderer assets, and external-open recovery.
+- **Media viewers.** Added PNG, JPEG, WebP, GIF, and SVG previews with fit/zoom controls, plus native audio/video playback for formats supported by the current runtime.
+- **Apps.** Added an App tab to existing directory owners through a direct `app.yaml`, supporting local static files, managed process setup/start, and external URLs. Added Settings Variables, OS Keychain-backed secrets, and MCP guidance and validation for agent-authored Apps.
+- **Changes.** Added a right-side working-tree review drawer for Pages, Collections, Spaces, and Projects, with exact file or repository-subtree scope, text diffs, filters, totals, and a scope-matched save action that preserves unrelated staged changes.
+- **Routines and Actors.** Added guided creation flows, stable Routine identity across renames, local-time and fixed-timezone schedules, and owner-aware Routine MCP reads, CRUD, and explicit dispatch.
+
+### Changed
+
+- Ships the accepted and frozen Stage 8 snapshot, with canonical Page naming and frontend ownership while keeping Markdown files as the portable source of truth.
+- Converged schema-backed Page Collections and fixed Actors, Routines, Agent Context, and Attachments on one Collection presentation and interaction runtime.
+- Separated Collection membership from sidebar and global discovery visibility: hidden schema members remain available in their explicit Collection without exposing their content through Search, Knowledge, or backlinks.
+- Separated rebuildable indexes, Routine operational state, and local preferences into independent storage lifecycles; automatic Routine execution is controlled per owner.
+- Made the MCP sidecar a build-neutral bridge that reads the active desktop's tool catalog and protocol responses.
+- Standardized Yes/no properties on the `boolean` type with Checkbox or Switch display, and shared property settings across tables and Page property lists.
+
+### Fixed
+
+- Fixed language, appearance, Git identity, and MCP settings synchronization across windows, background-window responsiveness, and Settings reopen behavior.
+- Fixed automatic refresh of Agent Context, Actors, and Routines, while preserving selection, query, and detail state.
+- Improved Agent Context discovery, provenance, diagnostics, gallery layout, and complete Markdown detail rendering; corrected Search and Knowledge detail sizing.
+- Fixed Unicode filenames, same-container name uniqueness, title/path save races, and Collection rename updates across indexes, backlinks, and open Page sessions.
+- Fixed root-owner README Collection membership, first-click table activation, nested and full-page navigation, and consistent activation across all five Page Collection presentations.
+- Fixed LFS format selection, scrolling, and storage-rule controls, plus Page view-mode title, property, and header geometry.
+- Updated Document, Media, and App external opening to the supported Tauri Opener API and corrected release Clippy failures and the stale Routine MCP schema assertion.
+
+### Migration
+
+- Replace legacy `type: checkbox` columns in `schema.yaml` with `type: boolean`. Use optional `display: checkbox` or `display: switch`; existing boolean values need no conversion. The legacy type is rejected with an invalid-schema diagnostic.
+- Routine definitions now require a unique portable lowercase ULID `id`; legacy definitions without one need source repair or recreation before execution. Replace legacy `title` with `name`; managed creation and editing require a non-empty name, while external definitions without a name can use the filename as their display label.
+- Upgrading from the former mixed `index.db` storage resets local Routine pending events, checkpoints, run evidence, and automatic authority. Portable Routine definitions remain intact. Re-enable automatic execution for each intended owner after upgrading; old local runtime state is not imported, and downgrade continuity is unsupported.
+- Existing index snapshots rebuild automatically. Existing `.assets` references keep working; new managed imports use the owning directory without a bulk file migration.
+- Page MCP tools use canonical Page names; legacy document/entry tool aliases have been removed. Restart existing MCP client sessions to discover the current desktop catalog.
+
+### Compatibility
+
+- PDF and Office previews are read-only; global search across their contents is deferred. Preview fidelity and audio/video codec support depend on the format and runtime, with external-open fallback.
+- App viewports do not receive internal Svode/Tauri APIs. Managed process recipes execute with the current OS user's permissions.
+- Auto-update, Apple notarization, and platform code signing remain disabled for dogfood snapshots; installers are distributed through draft prereleases without `latest.json` or updater signatures.
+
 ## [0.0.7] - 2026-08-11
 
 ### Added
@@ -94,6 +140,7 @@
 - Established `CHANGELOG.md` as the source of truth for GitHub Release notes.
 - Kept Stage 5 on `0.0.x` dogfood snapshots; `0.1.0` remains deferred until the first internal baseline after manual dogfood.
 
+[0.0.8]: https://github.com/venmakli/svode/compare/v0.0.7...v0.0.8
 [0.0.7]: https://github.com/venmakli/svode/compare/v0.0.6...v0.0.7
 [0.0.6]: https://github.com/venmakli/svode/compare/v0.0.5...v0.0.6
 [0.0.5]: https://github.com/venmakli/svode/releases/tag/v0.0.5

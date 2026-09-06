@@ -3,7 +3,7 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
-use tauri_plugin_shell::ShellExt;
+use tauri_plugin_opener::OpenerExt;
 
 use super::environment;
 use super::manifest::{
@@ -423,8 +423,11 @@ pub(crate) fn app_open_owner_directory(
     owner_path: String,
 ) -> Result<(), AppError> {
     let owner = resolve_app_owner(Path::new(&project_path), space_id.as_deref(), &owner_path)?;
-    app.shell()
-        .open(system_path::user_facing_path(&owner.owner_path), None)
+    app.opener()
+        .open_path(
+            system_path::user_facing_path(&owner.owner_path),
+            None::<&str>,
+        )
         .map_err(|error| AppError::General(error.to_string()))
 }
 
@@ -435,7 +438,7 @@ pub(crate) fn app_open_browser(app: AppHandle, url: String) -> Result<(), AppErr
     if !matches!(parsed.scheme(), "http" | "https") || parsed.host_str().is_none() {
         return Err(AppError::PathNotAccessible("invalid App URL".to_string()));
     }
-    app.shell()
-        .open(url, None)
+    app.opener()
+        .open_url(url, None::<&str>)
         .map_err(|error| AppError::General(error.to_string()))
 }

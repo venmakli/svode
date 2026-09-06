@@ -2,7 +2,7 @@ use std::path::Path;
 
 use serde::Serialize;
 use tauri::{AppHandle, State};
-use tauri_plugin_shell::ShellExt;
+use tauri_plugin_opener::OpenerExt;
 
 use super::MediaSourceState;
 use super::source::{
@@ -66,7 +66,7 @@ pub(crate) fn media_open_external(
         space_id.as_deref(),
         &target_path,
     )?;
-    app.shell()
-        .open(system_path::user_facing_path(&path), None)
+    app.opener()
+        .open_path(system_path::user_facing_path(&path), None::<&str>)
         .map_err(|_| MediaSourceError::ExternalOpenFailed)
 }

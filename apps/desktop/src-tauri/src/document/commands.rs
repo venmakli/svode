@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use tauri::{AppHandle, ipc::Response};
-use tauri_plugin_shell::ShellExt;
+use tauri_plugin_opener::OpenerExt;
 
 use super::source::{
     DocumentSourceDescriptor, DocumentSourceError, inspect_document_source, read_document_source,
@@ -47,7 +47,7 @@ pub(crate) fn document_open_external(
         space_id.as_deref(),
         &target_path,
     )?;
-    app.shell()
-        .open(system_path::user_facing_path(&resolved.path), None)
+    app.opener()
+        .open_path(system_path::user_facing_path(&resolved.path), None::<&str>)
         .map_err(|_| DocumentSourceError::ExternalOpenFailed)
 }
