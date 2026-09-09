@@ -16,11 +16,17 @@ export type ScopeSurfaceId =
 export type ScopeOwnerKey =
   | `space:${string}`
   | `collection:${string}:${string}`
+  | `page:${string}:${string}`
   | `app:${string}:${string}`;
 
 export interface ScopeOwnerRef {
   ownerKey: ScopeOwnerKey;
-  identityKind: "registered-space" | "collection-directory" | "app-directory";
+  identityKind:
+    | "registered-space"
+    | "collection-directory"
+    | "app-directory"
+    | "page-file"
+    | "page-directory";
   spaceId: string;
   spacePath: string;
   projectPath: string;

@@ -4,7 +4,9 @@ import {
   createAppDirectoryOwner,
   createCollectionDirectoryOwner,
   createRegisteredSpaceOwner,
+  createPageOwner,
 } from "./owners";
+import { resolveDefaultScopeSurface } from "./active-surface";
 
 test("registered space keeps space identity and gains hybrid capabilities", () => {
   expect(
@@ -107,3 +109,52 @@ function expectThrows(action: () => unknown) {
   }
   expect(error instanceof Error).toBe(true);
 }
+
+test("Page identity follows explicit form facts, not a README suffix", () => {
+  const input = {
+    spaceId: "root",
+    projectPath: "/repo",
+    spacePath: "/repo",
+    status: "ready" as const,
+    contentPath: "Notes/Readme.md",
+  };
+  const leaf = createPageOwner({ ...input, form: "leaf" });
+  const folder = createPageOwner({
+    ...input,
+    form: "folder",
+    ownerPath: "Notes",
+    hasApp: true,
+  });
+  expect(leaf.identityKind).toBe("page-file");
+  expect(leaf.ownerKey).toBe("page:root:Notes/Readme.md");
+  expect(leaf.capabilities).toEqual([]);
+  expect(folder.identityKind).toBe("page-directory");
+  expect(folder.ownerKey).toBe("page:root:Notes");
+  expect(folder.readmePath).toBe(input.contentPath);
+  expect(folder.capabilities).toEqual(["app"]);
+  expect(resolveDefaultScopeSurface(leaf)).toBe("readme");
+  expect(resolveDefaultScopeSurface(folder)).toBe("readme");
+});
+
+test("Page owner rejects unavailable Space and inconsistent folder facts", () => {
+  const input = {
+    spaceId: "root",
+    projectPath: "/repo",
+    spacePath: "/repo",
+    status: "ready" as const,
+    contentPath: "Notes/README.md",
+    form: "folder" as const,
+    ownerPath: "Notes",
+    hasApp: false,
+  };
+  for (const changes of [
+    { status: "missing" as const },
+    { ownerPath: "." },
+    { contentPath: "Other/README.md" },
+    { contentPath: "Notes/body.md" },
+    { contentPath: "Notes/../README.md" },
+    { ownerPath: "/Notes" },
+  ]) {
+    expectThrows(() => createPageOwner({ ...input, ...changes }));
+  }
+});

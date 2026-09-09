@@ -1,7 +1,10 @@
 import { expect, test } from "bun:test";
 
 import { resolveStandardPropertyColumn } from "@/features/properties";
-import { createRegisteredSpaceOwner } from "@/features/scope-surfaces";
+import {
+  createRegisteredSpaceOwner,
+  createPageOwner,
+} from "@/features/scope-surfaces";
 
 import { isCurrentAttachmentsLoad } from "../hooks/use-attachments-source";
 import {
@@ -174,4 +177,27 @@ test("Attachments create intents follow direct Collection ownership", () => {
     reason: "Read-only",
     status: "disabled",
   });
+});
+
+test("Page owner mapping preserves root and child source normalization", () => {
+  for (const spacePath of ["/repo", "/repo/child"]) {
+    const owner = createPageOwner({
+      spaceId: "page-space",
+      spacePath,
+      projectPath: "/repo",
+      status: "ready",
+      form: "folder",
+      contentPath: "Notes/README.md",
+      ownerPath: "Notes",
+      hasApp: true,
+    });
+    const mapped = attachmentOwnerFromScopeOwner(owner);
+    expect(attachmentOwnerInput(mapped)).toEqual({
+      projectPath: "/repo",
+      spaceId: spacePath === "/repo" ? null : "page-space",
+      ownerPath: "Notes",
+    });
+    expect(mapped.hasDirectCollection).toBe(false);
+    expect(mapped.contentPath).toBe("Notes/README.md");
+  }
 });

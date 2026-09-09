@@ -110,6 +110,49 @@ export function createAppDirectoryOwner(
   };
 }
 
+type PageOwnerInput = {
+  spaceId: string;
+  spacePath: string;
+  projectPath: string;
+  status: "ready" | "missing" | "broken";
+  contentPath: string;
+} & ({ form: "leaf" } | { form: "folder"; ownerPath: string; hasApp: boolean });
+
+export function createPageOwner(input: PageOwnerInput): ScopeOwnerRef {
+  assertReadySpace(input.status);
+  assertIdentifier(input.spaceId, "spaceId");
+  assertAbsolutePath(input.projectPath, "projectPath");
+  assertAbsolutePath(input.spacePath, "spacePath");
+  const contentPath = assertNormalizedOwnerPath(input.contentPath);
+  const ownerPath =
+    input.form === "folder"
+      ? assertNormalizedOwnerPath(input.ownerPath)
+      : contentPath;
+  if (contentPath === "." || ownerPath === ".") {
+    throw new Error(
+      "A root registered space must use registered-space identity",
+    );
+  }
+  if (
+    input.form === "folder" &&
+    (contentPath.slice(0, contentPath.lastIndexOf("/")) !== ownerPath ||
+      contentPath.slice(contentPath.lastIndexOf("/") + 1).toLowerCase() !==
+        "readme.md")
+  ) {
+    throw new Error("Folder Page content must be its direct README.md");
+  }
+  return {
+    ownerKey: `page:${input.spaceId}:${ownerPath}`,
+    identityKind: input.form === "folder" ? "page-directory" : "page-file",
+    spaceId: input.spaceId,
+    spacePath: input.spacePath,
+    projectPath: input.projectPath,
+    ownerPath,
+    readmePath: contentPath,
+    capabilities: input.form === "folder" && input.hasApp ? ["app"] : [],
+  };
+}
+
 export function assertNormalizedOwnerPath(ownerPath: string): string {
   // Tree/watcher DTO paths are normalized by Rust normalize_repo_relative.
   // This guard prevents app composition from accepting a different path shape.

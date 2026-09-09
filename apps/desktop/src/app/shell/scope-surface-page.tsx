@@ -246,6 +246,7 @@ function ScopePageSurfaceHost({
   headerActions?: ReactNode;
 }) {
   const pageSurface = usePageSurfaceSession();
+  const detailController = useCollectionDetailController();
   const detail = usePageDetailContext();
   usePublishMainChangesTarget(
     props.presentation === "full"
@@ -283,11 +284,12 @@ function ScopePageSurfaceHost({
           }
         />
       )}
-      prepareForSurfaceChange={(currentSurfaceId) =>
-        currentSurfaceId === "readme"
+      prepareForSurfaceChange={async (currentSurfaceId) => {
+        if (!(await detailController.prepareForNavigation())) return false;
+        return currentSurfaceId === "readme"
           ? pageSurface.prepareForNavigation()
-          : true
-      }
+          : true;
+      }}
     />
   );
 }

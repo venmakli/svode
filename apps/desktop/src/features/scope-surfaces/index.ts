@@ -2,9 +2,11 @@ export {
   createCollectionDirectoryOwner,
   createAppDirectoryOwner,
   createRegisteredSpaceOwner,
+  createPageOwner,
 } from "./model/owners";
 export {
   hasScopeCapability,
+  supportsScopeAttachments,
   resolveScopeSurfaceContributions,
   SCOPE_SURFACE_ORDER,
 } from "./model/registry";

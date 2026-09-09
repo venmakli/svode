@@ -18,7 +18,7 @@ export function ScopeSurfaceTabs({
   children,
   fillAvailableSpace = false,
 }: ScopeSurfaceTabsProps) {
-  if (surfaces.length < 2) return children;
+  const showTabs = surfaces.length >= 2;
 
   return (
     <Tabs
@@ -28,17 +28,22 @@ export function ScopeSurfaceTabs({
         fillAvailableSpace ? "flex min-h-0 flex-1 flex-col gap-0" : "gap-0"
       }
     >
-      <div className={detailPageToolbarClassName}>
-        <TabsList variant="line">
-          {surfaces.map((surface) => (
-            <TabsTrigger key={surface.id} value={surface.id}>
-              {surface.label}
-            </TabsTrigger>
-          ))}
-        </TabsList>
-      </div>
+      {showTabs ? (
+        <div className={detailPageToolbarClassName}>
+          <TabsList variant="line">
+            {surfaces.map((surface) => (
+              <TabsTrigger key={surface.id} value={surface.id}>
+                {surface.label}
+              </TabsTrigger>
+            ))}
+          </TabsList>
+        </div>
+      ) : null}
       <TabsContent
         value={value}
+        {...(!showTabs
+          ? { role: undefined, "aria-labelledby": undefined }
+          : {})}
         className={
           fillAvailableSpace ? "min-h-0 flex-1 overflow-hidden" : "flex-none"
         }

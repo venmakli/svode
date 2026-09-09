@@ -22,6 +22,13 @@ export function hasScopeCapability(
   return owner.capabilities.includes(capability);
 }
 
+export function supportsScopeAttachments(owner: ScopeOwnerRef): boolean {
+  return (
+    owner.identityKind === "registered-space" ||
+    owner.identityKind === "page-directory"
+  );
+}
+
 export function resolveScopeSurfaceContributions(
   contributions: readonly ScopeSurfaceContribution[],
   owner: ScopeOwnerRef,

@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import {
   hasScopeCapability,
+  supportsScopeAttachments,
   ScopeSurfaceUnavailable,
   SCOPE_SURFACE_ORDER,
   type ScopeSurfaceContribution,
@@ -51,7 +52,7 @@ export function createScopeSurfaceContributions(
       id: "attachments",
       order: SCOPE_SURFACE_ORDER.attachments,
       presentations: ["full"],
-      appliesTo: (owner) => hasScopeCapability(owner, "space"),
+      appliesTo: supportsScopeAttachments,
       label: m.scope_surface_attachments(),
       icon: Paperclip,
       render: renderers.attachments ?? unavailable,

@@ -14,7 +14,8 @@ import type {
 } from "../model/types";
 import { ScopeSurfaceErrorBoundary } from "./scope-surface-error-boundary";
 import { ScopeSurfaceTabs } from "./scope-surface-tabs";
-import { useOptionalCollectionDetailController } from "@/features/collection/app-shell";
+import { toast } from "sonner";
+import * as m from "@/paraglide/messages.js";
 
 interface ScopeSurfaceHostProps {
   owner: ScopeOwnerRef;
@@ -54,7 +55,6 @@ export function ScopeSurfaceHost({
     () => resolveScopeSurfaceContributions(contributions, owner, presentation),
     [contributions, owner, presentation],
   );
-  const collectionDetailController = useOptionalCollectionDetailController();
   const storedSurfaceId = useScopeSurfaceStore(
     (state) => state.surfaceByOwnerKey[owner.ownerKey],
   );
@@ -175,12 +175,6 @@ export function ScopeSurfaceHost({
             setSurfaceTransitionPending(true);
             try {
               if (
-                collectionDetailController &&
-                !(await collectionDetailController.prepareForNavigation())
-              ) {
-                return;
-              }
-              if (
                 prepareForSurfaceChange &&
                 !(await prepareForSurfaceChange(activeSurface.id, surfaceId))
               ) {
@@ -191,6 +185,9 @@ export function ScopeSurfaceHost({
                 return;
               }
               onCompactSurfaceIdChange?.(surfaceId);
+            } catch (error) {
+              console.error(error);
+              toast.error(m.toast_error());
             } finally {
               surfaceTransitionPendingRef.current = false;
               setSurfaceTransitionPending(false);

@@ -1,5 +1,8 @@
 import type { CollectionActivationContext } from "@/features/collection";
-import type { ScopeOwnerRef } from "@/features/scope-surfaces";
+import {
+  supportsScopeAttachments,
+  type ScopeOwnerRef,
+} from "@/features/scope-surfaces";
 
 export type AttachmentKind = "page" | "document" | "media";
 export type AttachmentAvailability = "available" | "limited" | "external_only";
@@ -78,13 +81,18 @@ export function attachmentOwnerInput(
 export function attachmentOwnerFromScopeOwner(
   owner: ScopeOwnerRef,
 ): AttachmentOwnerRef {
-  if (owner.identityKind !== "registered-space" || owner.ownerPath !== ".") {
-    throw new Error("Attachments requires a registered Project/Space owner");
+  if (!supportsScopeAttachments(owner)) {
+    throw new Error(
+      "Attachments requires a registered Project/Space or folder Page owner",
+    );
   }
   return {
     contentPath: owner.readmePath,
     hasDirectCollection: owner.capabilities.includes("collection"),
-    identityKind: "registered-space",
+    identityKind:
+      owner.identityKind === "registered-space"
+        ? "registered-space"
+        : "page-directory",
     ownerKey: owner.ownerKey,
     ownerPath: owner.ownerPath,
     projectPath: owner.projectPath,
