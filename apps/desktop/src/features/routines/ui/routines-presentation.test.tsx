@@ -396,7 +396,7 @@ test("routines render the common toolbar and a single fixed All list", () => {
   const markup = renderToStaticMarkup(
     <TooltipProvider>
       <CollectionHost
-        trailingActions={
+        contextualActions={
           <RoutineAutomaticConsent
             enabled={false}
             error={null}
@@ -427,8 +427,8 @@ test("routines render the common toolbar and a single fixed All list", () => {
   expect(markup.includes("Active")).toBe(false);
   expect(markup.includes("Runs")).toBe(false);
   expect(queryPosition > -1).toBe(true);
-  expect(createPosition > queryPosition).toBe(true);
-  expect(authorityPosition > createPosition).toBe(true);
+  expect(authorityPosition > queryPosition).toBe(true);
+  expect(createPosition > authorityPosition).toBe(true);
   expect(markup.includes('data-orientation="vertical"')).toBe(false);
   expect(markup.includes("Add routine")).toBe(false);
   expect(markup.includes(">Add<")).toBe(true);

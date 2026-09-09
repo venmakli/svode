@@ -22,7 +22,7 @@ export function RoutinesSurface({
   const body =
     controller.collectionState.phase === "ready" ? (
       <CollectionHost
-        trailingActions={
+        contextualActions={
           <>
             <RoutineAutomaticConsentNotice
               automaticError={controller.automaticConsent.error}
