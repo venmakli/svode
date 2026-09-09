@@ -1725,7 +1725,6 @@
   "attachments_new_page": "New page",
   "attachments_import_file": "Add file…",
   "attachments_read_only": "This owner is read-only.",
-  "page_surface_page": "Page",
   "media_open_externally": "Open externally",
   "media_external_open_error": "The media file could not be opened in a system application.",
   "media_loading": "Loading media preview",
