@@ -1,7 +1,7 @@
 import { FileText } from "lucide-react";
 import { useCallback } from "react";
 import { ArtifactSurface } from "@/features/artifact/app-shell";
-import { AppSurface } from "@/features/apps";
+import { AppWithVariables } from "./app-with-variables";
 import { AttachmentsSurface } from "@/features/attachments";
 import {
   PageOwnerSurfaceProvider,
@@ -51,7 +51,6 @@ export function ActiveSpaceContent() {
   const { fileTrees, rootSpaces, spaces, activeRootId, activeRootPath } =
     useSpace();
   const openSpaceSettings = useShellStore((state) => state.openSpaceSettings);
-  const openAppSettings = useShellStore((state) => state.openAppSettings);
   const openRepositorySettings = useCallback(
     (repositoryPath: string) => openSpaceSettings(repositoryPath, "git"),
     [openSpaceSettings],
@@ -76,26 +75,16 @@ export function ActiveSpaceContent() {
   );
   const renderPageApp = useCallback(
     (pageOwner: PageAppSurfaceInput) => (
-      <AppSurface
+      <AppWithVariables
         owner={{
           ownerPath: pageOwner.ownerPath,
           projectPath: pageOwner.projectPath,
           spaceId: pageOwner.spaceId,
           spacePath: pageOwner.spacePath,
         }}
-        onOpenVariables={() =>
-          openAppSettings("variables", {
-            ownerPath: pageOwner.ownerPath,
-            projectPath: pageOwner.projectPath,
-            spaceId:
-              pageOwner.projectPath === pageOwner.spacePath
-                ? null
-                : pageOwner.spaceId,
-          })
-        }
       />
     ),
-    [openAppSettings],
+    [],
   );
   const artifactRequest =
     selection?.kind === "artifact" ? selection.request : null;

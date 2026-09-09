@@ -54,7 +54,9 @@ if (!isolatedSettingsDialogsDomProcess) {
       return (
         <div data-app-settings data-section={section}>
           <button onClick={() => setSection("changed")}>Change section</button>
-          <button onClick={() => onOpenChange(false)}>Close app settings</button>
+          <button onClick={() => onOpenChange(false)}>
+            Close app settings
+          </button>
         </div>
       );
     },
@@ -74,7 +76,6 @@ if (!isolatedSettingsDialogsDomProcess) {
     useShellStore.setState({
       settingsDialog: null,
       settingsAppSection: "git-identity",
-      settingsAppVariablesContext: null,
       settingsSpaceDestination: "general",
       settingsSpacePath: null,
     });
@@ -85,14 +86,12 @@ if (!isolatedSettingsDialogsDomProcess) {
         root.render(<SettingsDialogs />);
         await nextTurn();
       });
-      expect(dom.window.document.querySelector("[data-app-settings]")).toBeNull();
+      expect(
+        dom.window.document.querySelector("[data-app-settings]"),
+      ).toBeNull();
 
       await act(async () => {
-        useShellStore.getState().openAppSettings("variables", {
-          projectPath: "/project",
-          spaceId: null,
-          ownerPath: "admin",
-        });
+        useShellStore.getState().openAppSettings("variables");
         await nextTurn();
       });
       expect(
@@ -117,7 +116,9 @@ if (!isolatedSettingsDialogsDomProcess) {
         useShellStore.getState().closeSettings();
         await nextTurn();
       });
-      expect(dom.window.document.querySelector("[data-app-settings]")).toBeNull();
+      expect(
+        dom.window.document.querySelector("[data-app-settings]"),
+      ).toBeNull();
       expect(appSettingsUnmounts).toBe(1);
 
       await act(async () => {

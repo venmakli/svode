@@ -37,7 +37,7 @@ import { useAppSettingsAbout } from "../hooks/use-app-settings-about";
 import { useAppSettingsAppearance } from "../hooks/use-app-settings-appearance";
 import { useCliAgents } from "../hooks/use-cli-agents";
 import { useGlobalIdentitySettings } from "../hooks/use-global-identity-settings";
-import type { AppSettingsSection, AppVariablesContext } from "../model";
+import type { AppSettingsSection } from "../model";
 import {
   AppAboutSection,
   AppAppearanceSection,
@@ -102,7 +102,6 @@ interface AppSettingsDialogProps {
   open: boolean;
   enableLegacyAgentIntegration: boolean;
   initialSection?: AppSettingsSection;
-  variablesContext?: AppVariablesContext;
   onOpenChange: (open: boolean) => void;
 }
 
@@ -110,7 +109,6 @@ export function AppSettingsDialog({
   open,
   enableLegacyAgentIntegration,
   initialSection = "git-identity",
-  variablesContext,
   onOpenChange,
 }: AppSettingsDialogProps) {
   const appearanceSettings = useAppSettingsAppearance();
@@ -188,9 +186,7 @@ export function AppSettingsDialog({
               {section === "appearance" && (
                 <AppAppearanceSection settings={appearanceSettings} />
               )}
-              {section === "variables" && (
-                <AppVariablesSection context={variablesContext} />
-              )}
+              {section === "variables" && <AppVariablesSection />}
               {enableLegacyAgentIntegration && section === "cli-agents" && (
                 <AppCliAgentsSection
                   agents={cliAgents.agents}

@@ -5,7 +5,7 @@ import { JSDOM } from "jsdom";
 import { clearNativeMocks, mockNativeIpc } from "@/platform/native/testing";
 import { AppVariablesSection } from "./app-variables-section";
 
-test("renders redacted Secrets and creates then binds a missing App reference", async () => {
+test("global catalog edits a Secret without reading or replacing its value", async () => {
   const dom = new JSDOM(
     "<!doctype html><html><body><div id=app></div></body></html>",
     { pretendToBeVisual: true, url: "http://localhost/" },
@@ -50,15 +50,7 @@ test("renders redacted Secrets and creates then binds a missing App reference", 
 
   try {
     await act(async () => {
-      root.render(
-        <AppVariablesSection
-          context={{
-            projectPath: "/repo",
-            spaceId: null,
-            ownerPath: "admin",
-          }}
-        />,
-      );
+      root.render(<AppVariablesSection />);
       await nextTurn();
       await nextTurn();
     });
@@ -74,7 +66,9 @@ test("renders redacted Secrets and creates then binds a missing App reference", 
 
     const createButton = Array.from(
       dom.window.document.querySelectorAll<HTMLButtonElement>("button"),
-    ).find((button) => button.textContent?.includes("Create API_TOKEN"));
+    ).find(
+      (button) => button.getAttribute("aria-label") === "Edit SHARED_SECRET",
+    );
     await act(async () => {
       createButton?.click();
       await nextTurn();
@@ -91,17 +85,9 @@ test("renders redacted Secrets and creates then binds a missing App reference", 
 
     expect(mutations.map((mutation) => mutation.command)).toEqual([
       "upsert_app_variable",
-      "set_app_variable_binding",
     ]);
     expect(mutations[0]?.args).toEqual({
-      input: { name: "API_TOKEN", kind: "variable", value: "" },
-    });
-    expect(mutations[1]?.args).toEqual({
-      input: {
-        context: { projectPath: "/repo", spaceId: null, ownerPath: "admin" },
-        referenceName: "API_TOKEN",
-        entryName: "API_TOKEN",
-      },
+      input: { name: "SHARED_SECRET", kind: "secret" },
     });
   } finally {
     await act(async () => root.unmount());

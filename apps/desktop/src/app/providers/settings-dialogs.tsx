@@ -7,7 +7,6 @@ export function SettingsDialogs() {
   const {
     settingsDialog,
     settingsAppSection,
-    settingsAppVariablesContext,
     settingsSpaceDestination,
     settingsSpacePath,
     closeSettings,
@@ -20,7 +19,6 @@ export function SettingsDialogs() {
           key={settingsAppSection}
           open
           initialSection={settingsAppSection}
-          variablesContext={settingsAppVariablesContext ?? undefined}
           enableLegacyAgentIntegration={ENABLE_LEGACY_AGENT_INTEGRATION}
           onOpenChange={(open) => {
             if (!open) closeSettings();

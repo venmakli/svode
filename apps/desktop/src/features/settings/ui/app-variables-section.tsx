@@ -12,7 +12,6 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -24,20 +23,6 @@ import {
   EmptyTitle,
 } from "@/components/ui/empty";
 import {
-  Field,
-  FieldDescription,
-  FieldGroup,
-  FieldLabel,
-} from "@/components/ui/field";
-import { Input } from "@/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import {
   Table,
   TableBody,
   TableCell,
@@ -45,79 +30,32 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { AppVariableFields } from "./app-variable-fields";
+import {
+  createVariableDraft,
+  editVariableDraft,
+  canSaveVariableDraft,
+  variableDraftInput,
+  type VariableDraft,
+} from "../model/app-variable-draft";
 import { useAppVariables } from "../hooks/use-app-variables";
-import type {
-  AppVariableEntry,
-  AppVariableKind,
-  AppVariablesContext,
-} from "../model";
+import type { AppVariableEntry } from "../model";
 
-interface VariableDraft {
-  name: string;
-  kind: AppVariableKind;
-  value: string;
-  editing: boolean;
-  bindReference?: string;
-  preservesSecret: boolean;
-}
-
-export function AppVariablesSection({
-  context,
-}: {
-  context?: AppVariablesContext;
-}) {
-  const variables = useAppVariables(context);
+export function AppVariablesSection() {
+  const variables = useAppVariables();
   const [draft, setDraft] = useState<VariableDraft | null>(null);
   const entries = variables.catalog?.entries ?? [];
-  const unresolved = (variables.catalog?.context ?? []).filter(
-    (reference) => !reference.resolved,
-  );
-  const validName = draft ? /^[A-Za-z_][A-Za-z0-9_]*$/.test(draft.name) : false;
-  const canSave = Boolean(
-    draft &&
-    validName &&
-    (draft.kind === "variable" ||
-      draft.preservesSecret ||
-      draft.value.length > 0),
-  );
+  const canSave = Boolean(draft && canSaveVariableDraft(draft));
 
-  const entryNames = entries.map((entry) => entry.name);
-
-  function beginCreate(name = "", bindReference?: string) {
-    setDraft({
-      name,
-      kind: "variable",
-      value: "",
-      editing: false,
-      bindReference,
-      preservesSecret: false,
-    });
+  function beginCreate() {
+    setDraft(createVariableDraft());
   }
-
   function beginEdit(entry: AppVariableEntry) {
-    setDraft({
-      name: entry.name,
-      kind: entry.kind,
-      value: entry.kind === "variable" ? (entry.value ?? "") : "",
-      editing: true,
-      preservesSecret: entry.kind === "secret" && entry.hasValue,
-    });
+    setDraft(editVariableDraft(entry));
   }
-
   async function saveDraft() {
     if (!draft || !canSave) return;
-    await variables.save({
-      name: draft.name,
-      kind: draft.kind,
-      value:
-        draft.kind === "secret" && draft.preservesSecret && draft.value === ""
-          ? undefined
-          : draft.value,
-    });
-    if (draft.bindReference) {
-      await variables.bind(draft.bindReference, draft.name);
-    }
+    await variables.save(variableDraftInput(draft));
     setDraft(null);
   }
 
@@ -142,73 +80,6 @@ export function AppVariablesSection({
         </Button>
       </div>
 
-      {unresolved.length > 0 ? (
-        <Alert>
-          <KeyRound data-icon="inline-start" />
-          <AlertTitle>{m.settings_variables_missing_title()}</AlertTitle>
-          <AlertDescription className="flex flex-col gap-2">
-            <span>{m.settings_variables_missing_description()}</span>
-            {unresolved.map((reference) => (
-              <div
-                key={reference.referenceName}
-                className="flex flex-wrap items-center gap-2 rounded-md border bg-background p-2"
-              >
-                <code className="mr-auto text-xs">
-                  {reference.referenceName}
-                </code>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() =>
-                    beginCreate(
-                      reference.referenceName,
-                      reference.referenceName,
-                    )
-                  }
-                >
-                  {m.settings_variables_create_named({
-                    name: reference.referenceName,
-                  })}
-                </Button>
-                {entryNames.length > 0 ? (
-                  <Select
-                    value={
-                      entries.some(
-                        (entry) => entry.name === reference.entryName,
-                      )
-                        ? reference.entryName
-                        : undefined
-                    }
-                    onValueChange={(entryName) =>
-                      void variables.bind(reference.referenceName, entryName)
-                    }
-                    disabled={variables.pending}
-                  >
-                    <SelectTrigger
-                      size="sm"
-                      aria-label={m.settings_variables_select_existing({
-                        name: reference.referenceName,
-                      })}
-                    >
-                      <SelectValue
-                        placeholder={m.settings_variables_select()}
-                      />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {entryNames.map((name) => (
-                        <SelectItem key={name} value={name}>
-                          {name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                ) : null}
-              </div>
-            ))}
-          </AlertDescription>
-        </Alert>
-      ) : null}
-
       {draft ? (
         <Card>
           <CardHeader>
@@ -219,70 +90,12 @@ export function AppVariablesSection({
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <FieldGroup>
-              <Field data-invalid={draft.name.length > 0 && !validName}>
-                <FieldLabel htmlFor="app-variable-name">
-                  {m.settings_variables_name()}
-                </FieldLabel>
-                <Input
-                  id="app-variable-name"
-                  value={draft.name}
-                  disabled={draft.editing || variables.pending}
-                  spellCheck={false}
-                  onChange={(event) =>
-                    setDraft({
-                      ...draft,
-                      name: event.target.value.toUpperCase(),
-                    })
-                  }
-                />
-                <FieldDescription>
-                  {m.settings_variables_name_hint()}
-                </FieldDescription>
-              </Field>
-              <Field>
-                <FieldLabel>{m.settings_variables_kind()}</FieldLabel>
-                <ToggleGroup
-                  type="single"
-                  variant="outline"
-                  value={draft.kind}
-                  onValueChange={(kind) => {
-                    if (kind === "variable" || kind === "secret")
-                      setDraft({ ...draft, kind });
-                  }}
-                >
-                  <ToggleGroupItem value="variable">
-                    {m.settings_variables_kind_variable()}
-                  </ToggleGroupItem>
-                  <ToggleGroupItem value="secret">
-                    {m.settings_variables_kind_secret()}
-                  </ToggleGroupItem>
-                </ToggleGroup>
-              </Field>
-              <Field>
-                <FieldLabel htmlFor="app-variable-value">
-                  {m.settings_variables_value()}
-                </FieldLabel>
-                <Input
-                  id="app-variable-value"
-                  type={draft.kind === "secret" ? "password" : "text"}
-                  value={draft.value}
-                  disabled={variables.pending}
-                  placeholder={
-                    draft.kind === "secret" && draft.preservesSecret
-                      ? m.settings_variables_secret_unchanged()
-                      : undefined
-                  }
-                  onChange={(event) =>
-                    setDraft({ ...draft, value: event.target.value })
-                  }
-                />
-                <FieldDescription>
-                  {draft.kind === "secret"
-                    ? m.settings_variables_secret_hint()
-                    : m.settings_variables_value_hint()}
-                </FieldDescription>
-              </Field>
+            <div className="flex flex-col gap-4">
+              <AppVariableFields
+                draft={draft}
+                disabled={variables.pending}
+                onChange={setDraft}
+              />
               <div className="flex justify-end gap-2">
                 <Button
                   variant="outline"
@@ -292,13 +105,13 @@ export function AppVariablesSection({
                   {m.settings_cancel()}
                 </Button>
                 <Button
-                  onClick={() => void saveDraft()}
+                  onClick={() => void saveDraft().catch(() => undefined)}
                   disabled={!canSave || variables.pending}
                 >
                   {m.settings_save()}
                 </Button>
               </div>
-            </FieldGroup>
+            </div>
           </CardContent>
         </Card>
       ) : null}

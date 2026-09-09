@@ -14,24 +14,37 @@ import type {
   AppVariablesContext,
 } from "../model";
 
-export function useAppVariables(context?: AppVariablesContext) {
+export function useAppVariables(context?: AppVariablesContext, notify = true) {
   const [catalog, setCatalog] = useState<AppVariablesCatalog | null>(null);
+  const [loadError, setLoadError] = useState(false);
   const [pending, setPending] = useState(false);
   const generationRef = useRef(0);
+  const lifecycleRef = useRef(0);
+  const busyRef = useRef(false);
 
   const refresh = useCallback(async () => {
     const generation = ++generationRef.current;
-    const next = await getAppVariables(context);
-    if (generation === generationRef.current) setCatalog(next);
-    return next;
+    try {
+      const next = await getAppVariables(context);
+      if (generation === generationRef.current) {
+        setCatalog(next);
+        setLoadError(false);
+      }
+      return next;
+    } catch (error) {
+      if (generation === generationRef.current) setLoadError(true);
+      throw error;
+    }
   }, [context]);
 
   useEffect(() => {
     let disposed = false;
     let unlisten: (() => void) | undefined;
     void refresh().catch((error) => {
-      console.error("get_app_variables failed:", error);
-      toast.error(m.toast_error());
+      if (!disposed && notify) {
+        console.error("get_app_variables failed:", error);
+        toast.error(m.toast_error());
+      }
     });
     void listenAppVariablesChanged(() => {
       if (!disposed) {
@@ -50,30 +63,41 @@ export function useAppVariables(context?: AppVariablesContext) {
     return () => {
       disposed = true;
       generationRef.current += 1;
+      lifecycleRef.current += 1;
       unlisten?.();
     };
-  }, [refresh]);
+  }, [refresh, notify]);
 
   const mutate = useCallback(
     async (operation: () => Promise<void>) => {
+      if (busyRef.current) return;
+      const lifecycle = lifecycleRef.current;
+      busyRef.current = true;
       setPending(true);
       try {
         await operation();
-        await refresh();
-        toast.success(m.toast_settings_saved());
+        if (lifecycle !== lifecycleRef.current) return;
+        await refresh().catch(() => undefined);
+        if (notify && lifecycle === lifecycleRef.current)
+          toast.success(m.toast_settings_saved());
       } catch (error) {
-        console.error("App variable mutation failed:", error);
-        toast.error(m.toast_error());
+        if (notify && lifecycle === lifecycleRef.current) {
+          console.error("App variable mutation failed:", error);
+          toast.error(m.toast_error());
+        }
         throw error;
       } finally {
-        setPending(false);
+        busyRef.current = false;
+        if (lifecycle === lifecycleRef.current) setPending(false);
       }
     },
-    [refresh],
+    [refresh, notify],
   );
 
   return {
     catalog,
+    loadError,
+    refresh,
     pending,
     bind: (referenceName: string, entryName: string) => {
       if (!context) return Promise.resolve();

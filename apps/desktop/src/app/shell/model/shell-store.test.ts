@@ -52,20 +52,10 @@ test("repository recovery opens the exact space settings Git destination", () =>
   expect(useShellStore.getState().settingsSpacePath).toBeNull();
 });
 
-test("App recovery opens Variables with its owner context", () => {
-  const context = {
-    projectPath: "/project",
-    spaceId: "docs",
-    ownerPath: "admin",
-  };
-
-  useShellStore.getState().openAppSettings("variables", context);
-
+test("global Variables opens the full settings catalog", () => {
+  useShellStore.getState().openAppSettings("variables");
   expect(useShellStore.getState().settingsDialog).toBe("app");
   expect(useShellStore.getState().settingsAppSection).toBe("variables");
-  expect(useShellStore.getState().settingsAppVariablesContext).toEqual(context);
-
   useShellStore.getState().closeSettings();
   expect(useShellStore.getState().settingsAppSection).toBe("git-identity");
-  expect(useShellStore.getState().settingsAppVariablesContext).toBeNull();
 });

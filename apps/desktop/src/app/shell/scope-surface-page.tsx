@@ -8,7 +8,7 @@ import {
 } from "react";
 import { AgentContextSurface } from "@/features/agent-context";
 import { ActorsSurface } from "@/features/actors";
-import { appOwnerFromScopeOwner, AppSurface } from "@/features/apps";
+import { appOwnerFromScopeOwner } from "@/features/apps";
 import {
   attachmentOwnerFromScopeOwner,
   AttachmentsSurface,
@@ -46,6 +46,7 @@ import {
 import type { Page } from "@/features/page";
 import { createScopeSurfaceContributions } from "./scope-surface-contributions";
 import { useShellStore } from "./model";
+import { AppWithVariables } from "./app-with-variables";
 import { ScopeOwnerActions } from "./scope-owner-actions";
 
 interface ScopeSurfacePageProps {
@@ -97,7 +98,6 @@ export function ScopeSurfacePage({
     (state) => state.openSessionsSurface,
   );
   const openSpaceSettings = useShellStore((state) => state.openSpaceSettings);
-  const openAppSettings = useShellStore((state) => state.openAppSettings);
   const openRepositorySettings = useCallback(
     (repositoryPath: string) => openSpaceSettings(repositoryPath, "git"),
     [openSpaceSettings],
@@ -149,21 +149,7 @@ export function ScopeSurfacePage({
       createScopeSurfaceContributions({
         app: (context) => {
           const appOwner = appOwnerFromScopeOwner(context.owner);
-          return (
-            <AppSurface
-              owner={appOwner}
-              onOpenVariables={() =>
-                openAppSettings("variables", {
-                  ownerPath: appOwner.ownerPath,
-                  projectPath: appOwner.projectPath,
-                  spaceId:
-                    appOwner.projectPath === appOwner.spacePath
-                      ? null
-                      : appOwner.spaceId,
-                })
-              }
-            />
-          );
+          return <AppWithVariables owner={appOwner} name={fallbackTitle} />;
         },
         attachments: (context) => (
           <AttachmentsSurface
@@ -204,7 +190,6 @@ export function ScopeSurfacePage({
       collectionRouteState,
       fallbackTitle,
       openRepositorySettings,
-      openAppSettings,
       openRoutineSession,
       owner,
       renderNested,
