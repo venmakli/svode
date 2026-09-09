@@ -45,16 +45,16 @@ import { propertyFieldSavePolicy } from "../property-field-save";
 import { usePageName } from "../hooks/use-page-name";
 import { usePageSurfaceSession } from "../hooks/page-surface-context";
 import { PageAccessRecovery } from "./page-access-recovery";
-import { usePageOwnerSurfaceContribution } from "../hooks/page-owner-surface-context";
 import { pageAttachmentOwnerPath } from "../model/page-attachments";
 import * as m from "@/paraglide/messages.js";
-import { PageOwnerTabs } from "./page-owner-tabs";
+import type { PageSurfaceLayout } from "../model/page-surface-layout";
 
 interface PageScreenProps {
   spacePath: string;
   projectPath?: string | null;
   pagePath: string;
   spaceId: string;
+  renderSurface: (layout: PageSurfaceLayout) => React.ReactNode;
 }
 
 function getPageTargetKey(spacePath: string, pagePath: string) {
@@ -66,10 +66,10 @@ export function PageScreen({
   projectPath,
   pagePath,
   spaceId,
+  renderSurface,
 }: PageScreenProps) {
   const pageSurface = usePageSurfaceSession();
   const { selection } = useActiveContentSelection();
-  const pageOwnerSurface = usePageOwnerSurfaceContribution();
   const openPage = useOpenPage();
   const openScopeOwner = useOpenScopeOwner();
   const openPath = useCallback(
@@ -325,15 +325,6 @@ export function PageScreen({
     currentPage.path,
     detailState,
   );
-  const showAttachments = Boolean(
-    attachmentOwnerPath && projectPath && pageOwnerSurface,
-  );
-  const showApp = Boolean(
-    attachmentOwnerPath &&
-    projectPath &&
-    pageOwnerSurface?.hasApp &&
-    pageOwnerSurface.renderApp,
-  );
 
   function updateTitle(value: string) {
     if (pageSurface.readOnly) return;
@@ -347,148 +338,108 @@ export function PageScreen({
       });
   }
 
-  return (
-    <div
-      className={
-        showApp ? "flex h-full min-h-0 flex-col" : "flex min-h-full flex-col"
-      }
-    >
-      <div className={detailPageHeaderClassName}>
-        <PageIdentityHeader
-          title={currentPage.meta.title}
-          icon={currentPage.meta.icon}
-          description={currentPage.meta.description ?? ""}
-          cover={currentPage.meta.cover ?? null}
-          projectPath={projectPath ?? null}
-          spacePath={spacePath}
-          pagePath={currentPage.path}
-          onTitleChange={updateTitle}
-          titleError={pageName.titleError}
-          onIconChange={(value) =>
-            void updateField(currentPage, "icon", value).catch(handleError)
-          }
-          onDescriptionChange={(value) =>
-            void updateField(currentPage, "description", value).catch(
-              handleError,
-            )
-          }
-          onCoverChange={(cover) => void updateCover(cover).catch(handleError)}
-          onBodyFocus={() => undefined}
-          metadata={<PageSystemFields meta={currentPage.meta} />}
-          coverSize="compact"
-          readOnly={pageSurface.readOnly}
-          actions={
-            <PageDetailActions
-              page={currentPage}
-              spacePath={spacePath}
-              projectPath={projectPath}
-              spaceId={spaceId}
-              onConverted={(nextPage, nested) => {
-                setPage(nextPage);
-                setLoadedPageKey(getPageTargetKey(spacePath, nextPage.path));
-                if (nested) {
-                  openScopeOwner({
-                    kind: "collection",
-                    path: nextPage.path,
-                    spaceId,
-                  });
-                  void reloadTreePathParents(spaceId, [nextPage.path]);
-                } else {
-                  openPage(nextPage.path, spaceId);
-                }
-              }}
-              onDuplicatePage={(pageToDuplicate) =>
-                duplicateCurrentPage(pageToDuplicate)
-              }
-              onDeletePage={setDeletePage}
-              readOnly={pageSurface.readOnly}
-              runMutation={pageSurface.runMutation}
-            />
-          }
-        />
-        {schemaResult && schemaResult.schema.columns.length > 0 ? (
-          <div className="max-w-5xl">
-            <PropertyPanel
-              spacePath={spacePath}
-              projectPath={projectPath}
-              spaceId={spaceId}
-              filePath={currentPage.path}
-              pageLabel={currentPage.meta.title}
-              schemaResult={schemaResult}
-              values={currentPage.meta.extra ?? {}}
-              mode="full"
-              readOnly={pageSurface.readOnly}
-              onOpenPath={openPath}
-              onSchemaChange={setSchemaResult}
-              onValueChange={async (field, value) => {
-                const column = schemaResult.schema.columns.find(
-                  (item) => item.name === field,
-                );
-                await updateField(currentPage, field, value, {
-                  policy: column ? propertyFieldSavePolicy(column) : undefined,
+  const header = (
+    <div className={detailPageHeaderClassName}>
+      <PageIdentityHeader
+        title={currentPage.meta.title}
+        icon={currentPage.meta.icon}
+        description={currentPage.meta.description ?? ""}
+        cover={currentPage.meta.cover ?? null}
+        projectPath={projectPath ?? null}
+        spacePath={spacePath}
+        pagePath={currentPage.path}
+        onTitleChange={updateTitle}
+        titleError={pageName.titleError}
+        onIconChange={(value) =>
+          void updateField(currentPage, "icon", value).catch(handleError)
+        }
+        onDescriptionChange={(value) =>
+          void updateField(currentPage, "description", value).catch(handleError)
+        }
+        onCoverChange={(cover) => void updateCover(cover).catch(handleError)}
+        onBodyFocus={() => undefined}
+        metadata={<PageSystemFields meta={currentPage.meta} />}
+        coverSize="compact"
+        readOnly={pageSurface.readOnly}
+        actions={
+          <PageDetailActions
+            page={currentPage}
+            spacePath={spacePath}
+            projectPath={projectPath}
+            spaceId={spaceId}
+            onConverted={(nextPage, nested) => {
+              setPage(nextPage);
+              setLoadedPageKey(getPageTargetKey(spacePath, nextPage.path));
+              if (nested) {
+                openScopeOwner({
+                  kind: "collection",
+                  path: nextPage.path,
+                  spaceId,
                 });
-              }}
-            />
-          </div>
-        ) : null}
-      </div>
-      {showAttachments || showApp ? (
-        <PageOwnerTabs
-          prepareForPageDeactivation={pageSurface.prepareForNavigation}
-          page={
-            <PageBody
-              currentPage={currentPage}
-              pathHandoff={pathHandoff}
-              projectPath={projectPath}
-              readOnly={pageSurface.readOnly}
-              registerPersistence={pageSurface.registerPersistence}
-              recoverWriteError={pageSurface.recoverWriteError}
-              spaceId={spaceId}
-              spacePath={spacePath}
-              prepareManagedImport={pageSurface.prepareForNavigation}
-              onDocumentPathChange={handleManagedDocumentPathChange}
-            />
-          }
-          app={
-            showApp
-              ? pageOwnerSurface?.renderApp?.({
-                  ownerPath: attachmentOwnerPath!,
-                  projectPath: projectPath!,
-                  spaceId,
-                  spacePath,
-                })
-              : undefined
-          }
-          attachments={
-            showAttachments ? (
-              <>
-                <PageAccessRecovery className="mx-auto w-full max-w-5xl px-6 pb-4" />
-                {pageOwnerSurface?.renderAttachments({
-                  contentPath: currentPage.path,
-                  ownerPath: attachmentOwnerPath!,
-                  projectPath: projectPath!,
-                  readOnly: pageSurface.readOnly,
-                  spaceId,
-                  spacePath,
-                })}
-              </>
-            ) : undefined
-          }
-        />
-      ) : (
-        <PageBody
-          currentPage={currentPage}
-          pathHandoff={pathHandoff}
-          projectPath={projectPath}
-          readOnly={pageSurface.readOnly}
-          registerPersistence={pageSurface.registerPersistence}
-          recoverWriteError={pageSurface.recoverWriteError}
-          spaceId={spaceId}
-          spacePath={spacePath}
-          prepareManagedImport={pageSurface.prepareForNavigation}
-          onDocumentPathChange={handleManagedDocumentPathChange}
-        />
-      )}
+                void reloadTreePathParents(spaceId, [nextPage.path]);
+              } else {
+                openPage(nextPage.path, spaceId);
+              }
+            }}
+            onDuplicatePage={(pageToDuplicate) =>
+              duplicateCurrentPage(pageToDuplicate)
+            }
+            onDeletePage={setDeletePage}
+            readOnly={pageSurface.readOnly}
+            runMutation={pageSurface.runMutation}
+          />
+        }
+      />
+      {schemaResult && schemaResult.schema.columns.length > 0 ? (
+        <div className="max-w-5xl">
+          <PropertyPanel
+            spacePath={spacePath}
+            projectPath={projectPath}
+            spaceId={spaceId}
+            filePath={currentPage.path}
+            pageLabel={currentPage.meta.title}
+            schemaResult={schemaResult}
+            values={currentPage.meta.extra ?? {}}
+            mode="full"
+            readOnly={pageSurface.readOnly}
+            onOpenPath={openPath}
+            onSchemaChange={setSchemaResult}
+            onValueChange={async (field, value) => {
+              const column = schemaResult.schema.columns.find(
+                (item) => item.name === field,
+              );
+              await updateField(currentPage, field, value, {
+                policy: column ? propertyFieldSavePolicy(column) : undefined,
+              });
+            }}
+          />
+        </div>
+      ) : null}
+    </div>
+  );
+  const body = (
+    <PageBody
+      currentPage={currentPage}
+      pathHandoff={pathHandoff}
+      projectPath={projectPath}
+      readOnly={pageSurface.readOnly}
+      registerPersistence={pageSurface.registerPersistence}
+      recoverWriteError={pageSurface.recoverWriteError}
+      spaceId={spaceId}
+      spacePath={spacePath}
+      prepareManagedImport={pageSurface.prepareForNavigation}
+      onDocumentPathChange={handleManagedDocumentPathChange}
+    />
+  );
+
+  return (
+    <>
+      {renderSurface({
+        contentPath: currentPage.path,
+        directoryPath: attachmentOwnerPath,
+        header,
+        children: body,
+      })}
       <PageDeleteDialog
         page={pageSurface.readOnly ? null : deletePage}
         onOpenChange={(open) => {
@@ -500,7 +451,7 @@ export function PageScreen({
             .catch(handleError)
         }
       />
-    </div>
+    </>
   );
 }
 

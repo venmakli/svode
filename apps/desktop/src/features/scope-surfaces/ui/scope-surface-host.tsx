@@ -1,4 +1,11 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { resolveScopeSurfaceContributions } from "../model/registry";
 import {
   resolveActiveScopeSurface,
@@ -14,6 +21,7 @@ import type {
 } from "../model/types";
 import { ScopeSurfaceErrorBoundary } from "./scope-surface-error-boundary";
 import { ScopeSurfaceTabs } from "./scope-surface-tabs";
+import { useReadmeScrollRetention } from "../hooks/use-readme-scroll-retention";
 import { toast } from "sonner";
 import * as m from "@/paraglide/messages.js";
 
@@ -50,6 +58,10 @@ export function ScopeSurfaceHost({
   const [surfaceTransitionPending, setSurfaceTransitionPending] =
     useState(false);
   const surfaceTransitionPendingRef = useRef(false);
+  const currentOwnerKeyRef = useRef(owner.ownerKey);
+  useLayoutEffect(() => {
+    currentOwnerKeyRef.current = owner.ownerKey;
+  }, [owner.ownerKey]);
   const readmeWasMountedRef = useRef(false);
   const surfaces = useMemo(
     () => resolveScopeSurfaceContributions(contributions, owner, presentation),
@@ -74,9 +86,9 @@ export function ScopeSurfaceHost({
     (state) => state.applyOpenRequest,
   );
   const retargetOwner = useScopeSurfaceStore((state) => state.retargetOwner);
-  const effectiveStoredSurfaceId = storedSurfaceId ?? previousStoredSurfaceId;
+  const effectiveStoredSurfaceId = previousStoredSurfaceId ?? storedSurfaceId;
   const effectiveAppliedOpenRequestKey =
-    appliedOpenRequestKey ?? previousAppliedOpenRequestKey;
+    previousAppliedOpenRequestKey ?? appliedOpenRequestKey;
   const defaultSurfaceId = resolveDefaultScopeSurface(owner);
   const hasPendingOpenRequest =
     presentation === "full" &&
@@ -98,6 +110,9 @@ export function ScopeSurfaceHost({
     fallbackSurfaceId,
   );
   const readmeSurface = surfaces.find(({ id }) => id === "readme") ?? null;
+  const { hostRef, rememberReadmeScroll } = useReadmeScrollRetention(
+    activeSurface?.id,
+  );
   if (activeSurface?.id === "readme") readmeWasMountedRef.current = true;
 
   useEffect(() => {
@@ -154,6 +169,7 @@ export function ScopeSurfaceHost({
 
   return (
     <div
+      ref={hostRef}
       className={
         fillsAvailableSpace
           ? "flex h-full min-h-0 flex-col"
@@ -180,8 +196,9 @@ export function ScopeSurfaceHost({
               ) {
                 return;
               }
+              if (activeSurface.id === "readme") rememberReadmeScroll();
               if (presentation === "full") {
-                setStoredSurface(owner.ownerKey, surfaceId);
+                setStoredSurface(currentOwnerKeyRef.current, surfaceId);
                 return;
               }
               onCompactSurfaceIdChange?.(surfaceId);

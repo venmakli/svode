@@ -15,6 +15,7 @@ import {
   EmptyTitle,
 } from "@/components/ui/empty";
 import { Skeleton } from "@/components/ui/skeleton";
+import type { PageSurfaceLayout } from "@/features/page/app-shell";
 import { probeDocumentTarget } from "@/features/document";
 import { probeMediaTarget } from "@/features/media";
 import { useArtifactResolution } from "../hooks/use-artifact-resolution";
@@ -32,6 +33,7 @@ interface ArtifactSurfaceProps {
   spaceId: string;
   onOpenRepositorySettings?: (repositoryPath: string) => void;
   pageSessionKey?: string;
+  renderPageSurface: (layout: PageSurfaceLayout) => ReactNode;
   retainSurfaceDuringRetarget?: boolean;
 }
 
@@ -42,6 +44,7 @@ interface ArtifactSurfaceRenderProps {
   spaceId: string;
   onOpenRepositorySettings?: (repositoryPath: string) => void;
   pageSessionKey?: string;
+  renderPageSurface: (layout: PageSurfaceLayout) => ReactNode;
 }
 
 type ArtifactSurfaceComponent = ComponentType<ArtifactSurfaceRenderProps>;
@@ -59,6 +62,7 @@ async function loadPageSurface(): Promise<{
       spaceId,
       onOpenRepositorySettings,
       pageSessionKey,
+      renderPageSurface,
     }: ArtifactSurfaceRenderProps) {
       return (
         <PageSurfaceSessionProvider
@@ -74,6 +78,7 @@ async function loadPageSurface(): Promise<{
             projectPath={projectPath}
             pagePath={target.path}
             spaceId={spaceId}
+            renderSurface={renderPageSurface}
           />
         </PageSurfaceSessionProvider>
       );
@@ -174,6 +179,7 @@ export function ArtifactSurface({
   spaceId,
   onOpenRepositorySettings,
   pageSessionKey,
+  renderPageSurface,
   retainSurfaceDuringRetarget = false,
 }: ArtifactSurfaceProps) {
   const registry = useMemo(() => createFirstPartyArtifactRegistry(), []);
@@ -206,6 +212,7 @@ export function ArtifactSurface({
           spaceId={spaceId}
           onOpenRepositorySettings={onOpenRepositorySettings}
           pageSessionKey={pageSessionKey}
+          renderPageSurface={renderPageSurface}
         />
       </Suspense>
     </ArtifactSurfaceErrorBoundary>

@@ -8,11 +8,6 @@ import {
 } from "react";
 import { AgentContextSurface } from "@/features/agent-context";
 import { ActorsSurface } from "@/features/actors";
-import { appOwnerFromScopeOwner } from "@/features/apps";
-import {
-  attachmentOwnerFromScopeOwner,
-  AttachmentsSurface,
-} from "@/features/attachments";
 import { RoutinesSurface } from "@/features/routines";
 import {
   runCollectionNavigation,
@@ -46,7 +41,7 @@ import {
 import type { Page } from "@/features/page";
 import { createScopeSurfaceContributions } from "./scope-surface-contributions";
 import { useShellStore } from "./model";
-import { AppWithVariables } from "./app-with-variables";
+import { createScopeContentRenderers } from "./scope-content-renderers";
 import { ScopeOwnerActions } from "./scope-owner-actions";
 
 interface ScopeSurfacePageProps {
@@ -147,16 +142,7 @@ export function ScopeSurfacePage({
   const createContributions = useCallback(
     (readOnly: boolean) =>
       createScopeSurfaceContributions({
-        app: (context) => {
-          const appOwner = appOwnerFromScopeOwner(context.owner);
-          return <AppWithVariables owner={appOwner} name={fallbackTitle} />;
-        },
-        attachments: (context) => (
-          <AttachmentsSurface
-            owner={attachmentOwnerFromScopeOwner(context.owner)}
-            readOnly={readOnly}
-          />
-        ),
+        ...createScopeContentRenderers({ readOnly, name: fallbackTitle }),
         actors: (context) => (
           <ActorsSurface
             {...context}

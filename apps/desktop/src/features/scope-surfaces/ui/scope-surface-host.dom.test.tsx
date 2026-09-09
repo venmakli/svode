@@ -337,6 +337,11 @@ test("Page owner conversion and rename retain one Readme instance and applied re
     expect(editor.selectionStart).toBe(2);
     expect(editor.selectionEnd).toBe(8);
     await act(async () => activateTab(dom, "App"));
+    await act(async () => {
+      useScopeSurfaceStore
+        .getState()
+        .applyOpenRequest(renamed.ownerKey, 99, "readme");
+    });
     await act(async () => render(renamed, folder.ownerKey));
     expect(findTab(dom, "App").getAttribute("aria-selected")).toBe("true");
     expect(useScopeSurfaceStore.getState().openRequestKeyByOwnerKey).toEqual({
