@@ -715,10 +715,10 @@ fn ensure_compatible_reverse_with_scope(
 
 fn read_schema_at(path: &Path) -> Result<CollectionSchema, AppError> {
     let raw = fs::read_to_string(path)?;
-    let mut schema: CollectionSchema =
-        serde_yml::from_str(&raw).map_err(|e| schema_error(format!("invalid schema YAML: {e}")))?;
+    let mut schema: CollectionSchema = serde_yml::from_str(&raw)
+        .map_err(|e| schema_error(format!("{}: invalid schema YAML: {e}", path.display())))?;
     normalize_schema(&mut schema);
-    validate_schema(&schema)?;
+    validate_schema(&schema).map_err(|e| schema_error(format!("{}: {e}", path.display())))?;
     Ok(schema)
 }
 
@@ -1532,6 +1532,15 @@ fn rewrite_relation_paths_for_move_with_project_plan(
         return Ok(());
     }
 
+    if !relation_move_may_affect_collections(Path::new(space), &old_path, &new_path)? {
+        if authorized_paths.is_some_and(|paths| !paths.is_empty()) {
+            return Err(AppError::General(
+                "relation mutation plan changed before execution".to_string(),
+            ));
+        }
+        return Ok(());
+    }
+
     let space_path = Path::new(space);
     let new_abs = space_path.join(&new_path);
     let collection_rename = new_abs.is_dir() && new_abs.join(SCHEMA_FILE).is_file();
@@ -1617,6 +1626,9 @@ pub fn relation_move_mutation_paths_with_project(
         return Ok(Vec::new());
     }
     let space_path = Path::new(space);
+    if !relation_move_may_affect_collections(space_path, &old_path, &new_path)? {
+        return Ok(Vec::new());
+    }
     let old_abs = space_path.join(&old_path);
     let collection_rename = old_abs.is_dir() && old_abs.join(SCHEMA_FILE).is_file();
     let moved_paths =
@@ -1640,6 +1652,58 @@ pub fn relation_move_mutation_paths_with_project(
             })
             .collect(),
     )
+}
+
+// Check topology on both sides of the move, before or after filesystem rename.
+// A README owner or an empty nested collection is still a relation boundary;
+// neither schema parsing nor the indexed Markdown inventory can prove a no-op.
+fn relation_move_may_affect_collections(
+    space: &Path,
+    old_path: &str,
+    new_path: &str,
+) -> Result<bool, AppError> {
+    let child_spaces = child_folder_names(space);
+    for path in [old_path, new_path] {
+        let rel = Path::new(path);
+        if child_spaces
+            .iter()
+            .any(|child| rel.starts_with(child) || Path::new(child).starts_with(rel))
+        {
+            return Ok(true);
+        }
+        for ancestor in rel.parent().unwrap_or(Path::new("")).ancestors() {
+            if space.join(ancestor).join(SCHEMA_FILE).try_exists()? {
+                return Ok(true);
+            }
+        }
+        if moved_tree_has_collection_capability(&space.join(rel))? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn moved_tree_has_collection_capability(path: &Path) -> Result<bool, AppError> {
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(error.into()),
+    };
+    if metadata.file_type().is_symlink() {
+        return Ok(true);
+    }
+    if !metadata.is_dir() {
+        return Ok(false);
+    }
+    if path.join(SCHEMA_FILE).try_exists()? {
+        return Ok(true);
+    }
+    for child in fs::read_dir(path)? {
+        if moved_tree_has_collection_capability(&child?.path())? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 fn moved_markdown_path_pairs_before_move(

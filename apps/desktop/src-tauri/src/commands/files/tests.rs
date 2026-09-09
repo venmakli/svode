@@ -571,44 +571,175 @@ async fn title_update_renames_collection_tree_and_rebases_indexes_and_backlinks(
 }
 
 #[tokio::test]
-async fn title_update_keeps_filename_when_invalid_schema_blocks_safe_relation_rewrite() {
-    let tmp = TempDir::new().unwrap();
-    let root = tmp.path();
-    std::fs::create_dir_all(root.join(".git")).unwrap();
-    std::fs::create_dir_all(root.join("Broken collection")).unwrap();
-    std::fs::write(
-        root.join("Broken collection").join("schema.yaml"),
-        "columns:\n  - { name: Active, type: checkbox }\nviews: []\n",
-    )
-    .unwrap();
-    std::fs::write(root.join("Page.md"), "---\ntitle: Page\n---\nBody\n").unwrap();
-    let index_state = IndexState::new();
-    let nonces = WriteNonceRegistry::new();
+async fn title_update_ignores_unrelated_broken_schemas_for_standalone_pages() {
+    for project_aware in [false, true] {
+        for folder in [false, true] {
+            for broken_yaml in [
+                "columns:\n  - { name: Active, type: checkbox }\n",
+                "columns: [",
+            ] {
+                let tmp = TempDir::new().unwrap();
+                let root = tmp.path();
+                write_tree_config(&tmp, vec![], vec![]);
+                std::fs::create_dir_all(root.join(".git")).unwrap();
+                std::fs::create_dir_all(root.join("Broken collection")).unwrap();
+                let schema_path = root.join("Broken collection/schema.yaml");
+                std::fs::write(&schema_path, broken_yaml).unwrap();
+                std::fs::write(root.join("Broken collection/row.md"), "untouched").unwrap();
+                let path = if folder {
+                    "utp/partnerships/README.md"
+                } else {
+                    "utp/partnerships.md"
+                };
+                let expected = if folder {
+                    "utp/Партнёрства/README.md"
+                } else {
+                    "utp/Партнёрства.md"
+                };
+                std::fs::create_dir_all(root.join(path).parent().unwrap()).unwrap();
+                std::fs::write(
+                    root.join(path),
+                    "---\nid: stable-id\ntitle: Partnerships\nicon: book\n---\nBody\n",
+                )
+                .unwrap();
+                if folder {
+                    std::fs::write(root.join("utp/partnerships/child.md"), "Child").unwrap();
+                    std::fs::write(
+                        root.join("Source.md"),
+                        "[head](utp/partnerships/README.md) [child](utp/partnerships/child.md)",
+                    )
+                    .unwrap();
+                }
+                let index_state = IndexState::new();
+                if folder {
+                    let backlinks = index_state
+                        .backlinks_for(&IndexKey::Root(root.to_path_buf()))
+                        .await;
+                    backlinks.update_file(root, "Source.md").unwrap();
+                }
+                let nonces = WriteNonceRegistry::new();
+                let before = entry::read(root.to_str().unwrap(), path).unwrap();
+                let updated = update_entry_title_shared(
+                    WriteEntryAuthorization::Preauthorized,
+                    root.to_string_lossy().into_owned(),
+                    path.into(),
+                    "Партнёрства".into(),
+                    project_aware.then(|| root.to_string_lossy().into_owned()),
+                    &index_state,
+                    &nonces,
+                    None,
+                )
+                .await
+                .unwrap();
+                assert_eq!(updated.meta.title, "Партнёрства");
+                assert_eq!(updated.meta.extra.get("id"), before.meta.extra.get("id"));
+                assert_eq!(updated.meta.icon, before.meta.icon);
+                assert_eq!(updated.body, before.body);
+                assert_eq!(updated.path, expected);
+                assert!(updated.warnings.is_empty());
+                assert!(!root.join(path).exists());
+                assert_eq!(std::fs::read_to_string(&schema_path).unwrap(), broken_yaml);
+                assert_eq!(
+                    std::fs::read_to_string(root.join("Broken collection/row.md")).unwrap(),
+                    "untouched"
+                );
+                if folder {
+                    assert_eq!(
+                        std::fs::read_to_string(root.join("utp/Партнёрства/child.md")).unwrap(),
+                        "Child"
+                    );
+                    let source = std::fs::read_to_string(root.join("Source.md")).unwrap();
+                    assert!(source.contains("utp/Партнёрства/README.md"), "{source}");
+                    assert!(source.contains("utp/Партнёрства/child.md"), "{source}");
+                }
+            }
+        }
+    }
+}
 
-    let updated = update_entry_title_shared(
-        WriteEntryAuthorization::Preauthorized,
-        root.to_string_lossy().into_owned(),
-        "Page.md".to_string(),
-        "Renamed Page".to_string(),
-        None,
-        &index_state,
-        &nonces,
-        None,
-    )
-    .await
-    .expect("save title without unsafe filename rename");
-
-    assert_eq!(updated.meta.title, "Renamed Page");
-    assert_eq!(updated.path, "Page.md");
-    assert!(root.join("Page.md").is_file());
-    assert!(!root.join("renamed-page.md").exists());
-    assert_eq!(
-        updated
+#[tokio::test]
+async fn title_update_defers_relation_domain_rename_and_retries_the_same_title() {
+    for (path, capability, expected) in [
+        ("Page.md", "schema.yaml", "Renamed Page.md"),
+        (
+            "Tasks/Page.md",
+            "Tasks/schema.yaml",
+            "Tasks/Renamed Page.md",
+        ),
+        (
+            "Tasks/README.md",
+            "Tasks/schema.yaml",
+            "Renamed Page/README.md",
+        ),
+        (
+            "Folder/README.md",
+            "Folder/Nested/schema.yaml",
+            "Renamed Page/README.md",
+        ),
+    ] {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join(".git")).unwrap();
+        std::fs::create_dir_all(root.join("Broken collection")).unwrap();
+        let broken = root.join("Broken collection/schema.yaml");
+        std::fs::write(&broken, "columns:\n  - { name: Active, type: checkbox }\n").unwrap();
+        std::fs::create_dir_all(root.join(capability).parent().unwrap()).unwrap();
+        std::fs::write(root.join(capability), "columns: []\n").unwrap();
+        std::fs::create_dir_all(root.join(path).parent().unwrap()).unwrap();
+        std::fs::write(
+            root.join(path),
+            "---\nid: stable-id\ntitle: Page\n---\nBody\n",
+        )
+        .unwrap();
+        std::fs::write(root.join("Source.md"), format!("[Page]({path})")).unwrap();
+        let index_state = IndexState::new();
+        let nonces = WriteNonceRegistry::new();
+        let updated = update_entry_title_shared(
+            WriteEntryAuthorization::Preauthorized,
+            root.to_string_lossy().into_owned(),
+            path.into(),
+            "Renamed Page".into(),
+            None,
+            &index_state,
+            &nonces,
+            None,
+        )
+        .await
+        .unwrap();
+        assert_eq!(updated.meta.title, "Renamed Page");
+        assert_eq!(updated.path, path);
+        assert!(!root.join(expected).exists());
+        assert_eq!(
+            std::fs::read_to_string(root.join("Source.md")).unwrap(),
+            format!("[Page]({path})")
+        );
+        let warning = updated
             .warnings
-            .first()
-            .map(|warning| warning.kind.as_str()),
-        Some("filename_rename_deferred")
-    );
+            .iter()
+            .find(|w| w.kind == "filename_rename_deferred")
+            .unwrap();
+        assert_eq!(warning.path.as_deref(), Some(path));
+        assert!(warning.message.contains(broken.to_str().unwrap()));
+        assert!(warning.message.contains("checkbox"));
+        std::fs::write(&broken, "columns: []\n").unwrap();
+        let retried = update_entry_title_shared(
+            WriteEntryAuthorization::Preauthorized,
+            root.to_string_lossy().into_owned(),
+            path.into(),
+            "Renamed Page".into(),
+            None,
+            &index_state,
+            &nonces,
+            None,
+        )
+        .await
+        .unwrap();
+        assert_eq!(retried.path, expected);
+        assert_eq!(retried.meta.extra.get("id"), updated.meta.extra.get("id"));
+        assert_eq!(retried.body, updated.body);
+        assert!(retried.warnings.is_empty());
+        assert!(!root.join(path).exists());
+    }
 }
 
 #[tokio::test]
@@ -960,4 +1091,77 @@ async fn shared_rename_rejects_parent_change_and_preserves_sibling_position() {
         tree::read_order(space).get(".").unwrap(),
         &vec!["renamed.md".to_string(), "b.md".to_string()]
     );
+}
+
+#[tokio::test]
+async fn title_update_isolates_other_spaces_and_preserves_scoped_relation_rewrites() {
+    for with_relation in [false, true] {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        let child = root.join("spaces/design");
+        std::fs::create_dir_all(root.join(".git")).unwrap();
+        std::fs::create_dir_all(root.join("Tasks")).unwrap();
+        std::fs::create_dir_all(child.join("Decisions")).unwrap();
+        write_space_config(
+            root,
+            &SpaceConfig {
+                name: "Root".into(),
+                description: String::new(),
+                icon: "folder".into(),
+                spaces: Some(vec![crate::space::types::SpaceRef {
+                    id: "design".into(),
+                    path: "spaces/design".into(),
+                    repo: None,
+                }]),
+                agent: None,
+                defaults: None,
+                git: None,
+                assets: None,
+                tree: None,
+            },
+        )
+        .unwrap();
+        let child_schema = child.join("Decisions/schema.yaml");
+        let schema = if with_relation {
+            "columns:\n  - name: Task\n    type: relation\n    relation: Tasks\n    relation_scope: root\n"
+        } else {
+            "columns:\n  - { name: Active, type: checkbox }\n"
+        };
+        std::fs::write(&child_schema, schema).unwrap();
+        if with_relation {
+            std::fs::write(root.join("Tasks/schema.yaml"), "columns: []\n").unwrap();
+        }
+        std::fs::write(root.join("Tasks/Page.md"), "---\ntitle: Page\n---\nBody\n").unwrap();
+        std::fs::write(
+            child.join("Decisions/Decision.md"),
+            "---\ntitle: Decision\nTask: [Page.md]\n---\nBody\n",
+        )
+        .unwrap();
+        let index_state = IndexState::new();
+        let updated = update_entry_title_shared(
+            WriteEntryAuthorization::Preauthorized,
+            root.to_string_lossy().into_owned(),
+            "Tasks/Page.md".into(),
+            "Новое имя".into(),
+            Some(root.to_string_lossy().into_owned()),
+            &index_state,
+            &WriteNonceRegistry::new(),
+            None,
+        )
+        .await
+        .unwrap();
+        assert_eq!(updated.path, "Tasks/Новое имя.md");
+        assert!(updated.warnings.is_empty());
+        assert_eq!(std::fs::read_to_string(&child_schema).unwrap(), schema);
+        let row = entry::read(child.to_str().unwrap(), "Decisions/Decision.md").unwrap();
+        let expected = if with_relation {
+            "Новое имя.md"
+        } else {
+            "Page.md"
+        };
+        assert_eq!(
+            row.meta.extra["Task"].as_sequence().unwrap()[0].as_str(),
+            Some(expected)
+        );
+    }
 }

@@ -1699,7 +1699,7 @@
   "page_filename_allocated_description": "Желаемое имя файла занято; файл сохранён как {path}.",
   "page_filename_collision_description": "Отображаемое имя сохранено, но файл остался по пути {path}.",
   "page_filename_rename_deferred": "Имя файла не изменено",
-  "page_filename_rename_deferred_description": "Отображаемое имя сохранено, но зависимые метаданные не позволили безопасно переименовать файл. Файл остался по пути {path}.",
+  "page_filename_rename_deferred_description": "Отображаемое имя сохранено. Файл остался по пути {path}, поскольку не удалось проверить зависимости переименования. После исправления указанной ниже причины нажмите Enter в поле названия, чтобы повторить попытку.",
   "routines_filename_adjusted_description": "Routine безопасно сохранена как {path}.",
   "routines_filename_allocated_description": "Желаемое имя файла занято; Routine сохранена как {path}.",
   "routines_filename_collision_description": "Имя сохранено, но файл Routine остался по пути {path}.",

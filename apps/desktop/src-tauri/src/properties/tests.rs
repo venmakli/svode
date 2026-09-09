@@ -2928,3 +2928,71 @@ fn collection_integrity_is_empty_for_a_clean_collection() {
     assert!(report.errors.is_empty());
     assert!(report.warnings.is_empty());
 }
+
+#[test]
+fn standalone_relation_move_checks_both_owners_nested_capabilities_and_space_boundaries() {
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path();
+    write_test_space_config(
+        root,
+        Some(vec![SpaceRef {
+            id: "child".into(),
+            path: "spaces/child".into(),
+            repo: None,
+        }]),
+        None,
+    );
+    fs::create_dir_all(root.join("plain/sub")).unwrap();
+    fs::create_dir_all(root.join("collection")).unwrap();
+    fs::write(root.join("plain/README.md"), "Head").unwrap();
+    fs::write(root.join("plain/sub/page.md"), "Body").unwrap();
+    fs::write(root.join("collection/schema.yaml"), "columns: [").unwrap();
+    assert!(!relation_move_may_affect_collections(root, "plain", "renamed").unwrap());
+    assert!(
+        relation_move_may_affect_collections(root, "plain/sub/page.md", "collection/page.md")
+            .unwrap()
+    );
+    assert!(
+        relation_move_may_affect_collections(root, "collection/page.md", "plain/page.md").unwrap()
+    );
+    for (old, new) in [
+        ("spaces", "moved"),
+        ("plain", "spaces/child"),
+        ("spaces/child/page.md", "page.md"),
+    ] {
+        assert!(relation_move_may_affect_collections(root, old, new).unwrap());
+    }
+    fs::write(root.join("plain/sub/schema.yaml"), "columns: [").unwrap();
+    assert!(relation_move_may_affect_collections(root, "plain", "renamed").unwrap());
+    fs::rename(root.join("plain"), root.join("renamed")).unwrap();
+    assert!(relation_move_may_affect_collections(root, "plain", "renamed").unwrap());
+    fs::write(root.join("schema.yaml"), "columns: [").unwrap();
+    assert!(relation_move_may_affect_collections(root, "a.md", "b.md").unwrap());
+}
+
+#[test]
+fn standalone_relation_executor_revalidates_the_authorized_plan() {
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path();
+    fs::write(root.join("New.md"), "Body").unwrap();
+    let error = rewrite_relation_paths_for_move_with_authorized_plan(
+        root.to_str().unwrap(),
+        None,
+        "Old.md",
+        "New.md",
+        &[root.join("Unexpected.md")],
+    )
+    .unwrap_err();
+    assert!(error.to_string().contains("plan changed"));
+    fs::write(root.join("schema.yaml"), "columns: [").unwrap();
+    assert!(
+        rewrite_relation_paths_for_move_with_authorized_plan(
+            root.to_str().unwrap(),
+            None,
+            "Old.md",
+            "New.md",
+            &[],
+        )
+        .is_err()
+    );
+}

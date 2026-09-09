@@ -61,7 +61,7 @@ export function pageFilenameWarningFeedback(
     return {
       title: m.page_filename_rename_deferred(),
       description: warning.path
-        ? m.page_filename_rename_deferred_description({ path: warning.path })
+        ? `${m.page_filename_rename_deferred_description({ path: warning.path })} ${warning.message}`
         : warning.message,
     };
   }

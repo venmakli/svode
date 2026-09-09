@@ -299,7 +299,9 @@ pub(super) async fn update_entry_title_shared(
     autocommit: Option<&AutocommitService>,
 ) -> Result<Entry, AppError> {
     let current = entry::read(&space, &file_path)?;
-    if current.meta.title == title {
+    if current.meta.title == title
+        && entry::planned_write_rename(&space, &file_path, Some(&title), false)?.is_none()
+    {
         return Ok(current);
     }
     let result = write_entry_shared(
@@ -375,7 +377,7 @@ pub(super) async fn write_entry_shared(
     if project_aware && !skip_rename {
         ensure_backlinks_before_structural(index_state, project).await;
     }
-    let mut planned_paths = relation_mutation_paths;
+    let mut planned_paths = relation_mutation_paths.clone();
     if !skip_rename && write_plan.is_some() {
         planned_paths.extend(managed_attachment_policy_paths(&space, project));
     }
@@ -414,7 +416,7 @@ pub(super) async fn write_entry_shared(
         }
     };
     let mut result = scope_authorized_mutation_paths(authorized_paths.clone(), async {
-        entry::write(
+        entry::write_with_relation_plan(
             &space,
             &path,
             &content,
@@ -428,6 +430,8 @@ pub(super) async fn write_entry_shared(
                 Some(&backlink_index)
             },
             skip_rename,
+            project,
+            Some(&relation_mutation_paths),
         )
     })
     .await?;

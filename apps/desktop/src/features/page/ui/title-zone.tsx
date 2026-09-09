@@ -122,10 +122,20 @@ export function TitleZone({
     (e: KeyboardEvent<HTMLInputElement>) => {
       if (e.key === "Enter") {
         e.preventDefault();
+        if (!readOnly && !e.repeat && (titleDraft || defaultTitle) === title) {
+          onTitleChange(title);
+        }
         focusDescription();
       }
     },
-    [focusDescription],
+    [
+      defaultTitle,
+      focusDescription,
+      onTitleChange,
+      readOnly,
+      title,
+      titleDraft,
+    ],
   );
 
   const handleDescriptionKeyDown = useCallback(

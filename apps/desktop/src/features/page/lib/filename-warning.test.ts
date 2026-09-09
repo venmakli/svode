@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { getLocale, setLocale } from "@/paraglide/runtime.js";
 
 import {
   pageFilenameWarningFeedback,
@@ -34,15 +35,32 @@ test("page filename feedback distinguishes allocated and unapplied collisions", 
   expect(allocated?.description === unapplied?.description).toBe(false);
 });
 
-test("page filename feedback explains a safely deferred rename", () => {
-  const feedback = pageFilenameWarningFeedback({
-    kind: "filename_rename_deferred",
-    message: "dependent metadata is invalid",
-    path: "legacy.md",
-  });
-
-  expect(feedback?.description.includes("legacy.md")).toBe(true);
-  expect(Boolean(feedback?.title.length)).toBe(true);
+test("page filename feedback keeps schema diagnostics and retry guidance in EN/RU", async () => {
+  const originalLocale = getLocale();
+  try {
+    for (const locale of ["en", "ru"] as const) {
+      await setLocale(locale, { reload: false });
+      const warning = {
+        kind: "filename_rename_deferred",
+        message:
+          "/Project/spaces/design/Tasks/schema.yaml: unknown variant checkbox",
+        path: "legacy.md",
+      };
+      const feedback = pageFilenameWarningFeedback(warning);
+      expect(feedback?.description.includes("legacy.md")).toBe(true);
+      expect(feedback?.description.includes(warning.message)).toBe(true);
+      expect(feedback?.description.includes("Enter")).toBe(true);
+      expect(feedback?.title).toBe(
+        locale === "en" ? "Filename kept" : "Имя файла не изменено",
+      );
+      expect(
+        pageFilenameWarningFeedback({ ...warning, path: undefined })
+          ?.description,
+      ).toBe(warning.message);
+    }
+  } finally {
+    await setLocale(originalLocale, { reload: false });
+  }
 });
 
 test("page filename feedback ignores unrelated diagnostics", () => {

@@ -678,6 +678,34 @@ pub fn write(
     backlink_index: Option<&BacklinkIndex>,
     skip_rename: bool,
 ) -> Result<WriteResult, AppError> {
+    write_with_relation_plan(
+        space,
+        path,
+        content,
+        title,
+        icon,
+        extra,
+        _existing_id,
+        backlink_index,
+        skip_rename,
+        None,
+        None,
+    )
+}
+
+pub(crate) fn write_with_relation_plan(
+    space: &str,
+    path: &str,
+    content: &str,
+    title: Option<&str>,
+    icon: Option<&str>,
+    extra: Option<HashMap<String, serde_yml::Value>>,
+    _existing_id: Option<&str>,
+    backlink_index: Option<&BacklinkIndex>,
+    skip_rename: bool,
+    project_path: Option<&str>,
+    relation_paths: Option<&[PathBuf]>,
+) -> Result<WriteResult, AppError> {
     if title.is_some() || !skip_rename {
         return crate::files::naming::with_document_name_lock(space, || {
             write_inner(
@@ -690,6 +718,8 @@ pub fn write(
                 _existing_id,
                 backlink_index,
                 skip_rename,
+                project_path,
+                relation_paths,
             )
         });
     }
@@ -703,6 +733,8 @@ pub fn write(
         _existing_id,
         backlink_index,
         skip_rename,
+        project_path,
+        relation_paths,
     )
 }
 
@@ -716,6 +748,8 @@ fn write_inner(
     _existing_id: Option<&str>,
     backlink_index: Option<&BacklinkIndex>,
     skip_rename: bool,
+    project_path: Option<&str>,
+    relation_paths: Option<&[PathBuf]>,
 ) -> Result<WriteResult, AppError> {
     let abs_path = resolve(space, path);
 
@@ -902,14 +936,15 @@ fn write_inner(
                     let _ = fs::rename(&new_folder_abs, &old_folder_abs);
                     return Err(error);
                 }
-                if let Err(error) = crate::properties::rewrite_relation_paths_for_move(
-                    space,
+                rewrite_relations_after_fs_move_with_project(
+                    Path::new(space),
+                    project_path,
                     old_folder,
                     &new_folder_rel,
-                ) {
-                    let _ = fs::rename(&new_folder_abs, &old_folder_abs);
-                    return Err(error);
-                }
+                    &old_folder_abs,
+                    &new_folder_abs,
+                    relation_paths,
+                )?;
             } else {
                 fs::rename(&abs_path, &target_abs)?;
                 if let Err(error) = crate::properties::rename_template_slug_references(
@@ -920,14 +955,15 @@ fn write_inner(
                     let _ = fs::rename(&target_abs, &abs_path);
                     return Err(error);
                 }
-                if let Err(error) = crate::properties::rewrite_relation_paths_for_move(
-                    space,
+                rewrite_relations_after_fs_move_with_project(
+                    Path::new(space),
+                    project_path,
                     path,
                     &rename.new_path,
-                ) {
-                    let _ = fs::rename(&target_abs, &abs_path);
-                    return Err(error);
-                }
+                    &abs_path,
+                    &target_abs,
+                    relation_paths,
+                )?;
             }
             if let Some(warning) = filename_projection_warning(&projection, &rename.new_path) {
                 warnings.push(warning);

@@ -1699,7 +1699,7 @@
   "page_filename_allocated_description": "The preferred filename was occupied; the file was saved as {path}.",
   "page_filename_collision_description": "The display name was saved, but the file remains at {path}.",
   "page_filename_rename_deferred": "Filename kept",
-  "page_filename_rename_deferred_description": "The display name was saved, but dependent metadata prevented a safe rename. The file remains at {path}.",
+  "page_filename_rename_deferred_description": "The display name was saved. The file remains at {path} because rename dependencies could not be verified. After fixing the cause below, press Enter in the title field to retry.",
   "routines_filename_adjusted_description": "The routine was saved safely as {path}.",
   "routines_filename_allocated_description": "The preferred filename was occupied; the routine was saved as {path}.",
   "routines_filename_collision_description": "The name was saved, but the routine file remains at {path}.",

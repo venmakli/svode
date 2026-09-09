@@ -105,6 +105,65 @@ test("canonical title update keeps Enter focus in the description", async () => 
   }
 });
 
+test("Enter retries an unchanged title once while unchanged blur does not save", async () => {
+  const dom = new JSDOM(
+    "<!doctype html><html><body><div id=app></div></body></html>",
+    { pretendToBeVisual: true, url: "http://localhost/" },
+  );
+  const restoreGlobals = installDomGlobals(dom);
+  const changes: string[] = [];
+  const root = createRoot(dom.window.document.getElementById("app")!);
+  try {
+    await act(async () => {
+      root.render(
+        <TitleZone
+          title="Saved title"
+          icon={null}
+          description="Existing description"
+          fallbackEmoji="📄"
+          onTitleChange={(title) => changes.push(title)}
+          onIconChange={() => undefined}
+          onDescriptionChange={() => undefined}
+          onBodyFocus={() => undefined}
+        />,
+      );
+    });
+    const input = dom.window.document.querySelector<HTMLInputElement>("input")!;
+    await act(async () => {
+      input.focus();
+      input.blur();
+    });
+    expect(changes).toEqual([]);
+    await act(async () => {
+      input.focus();
+      input.dispatchEvent(
+        new dom.window.KeyboardEvent("keydown", {
+          bubbles: true,
+          key: "Enter",
+        }),
+      );
+      input.dispatchEvent(
+        new dom.window.KeyboardEvent("keydown", {
+          bubbles: true,
+          key: "Enter",
+          repeat: true,
+        }),
+      );
+      await new Promise((resolve) =>
+        dom.window.requestAnimationFrame(() => resolve(undefined)),
+      );
+    });
+    expect(changes).toEqual(["Saved title"]);
+    expect(dom.window.document.activeElement).toBe(
+      dom.window.document.querySelector("textarea"),
+    );
+  } finally {
+    await act(async () => root.unmount());
+    restoreGlobals();
+    dom.window.close();
+  }
+});
+
 test("read-only identity keeps its draft visible without emitting mutations", async () => {
   const dom = new JSDOM(
     "<!doctype html><html><body><div id=app></div></body></html>",
