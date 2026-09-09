@@ -576,6 +576,11 @@ async fn wait_for_readiness(
 
         if readiness_probe.is_reachable(&url).await {
             let managed = match try_wait(&child) {
+                Ok(Some(status)) if !status.success() => {
+                    append_exit_status(&inner, &key, generation, "start", status);
+                    set_failed(&inner, &key, generation, "start_exit_non_zero");
+                    return;
+                }
                 Ok(Some(_)) => false,
                 Ok(None) => true,
                 Err(error) => {
@@ -651,7 +656,10 @@ async fn monitor_ready_child(
             Ok(None) => continue,
             Ok(Some(status)) => {
                 clear_child(&inner, &key, generation, &child);
-                if readiness_probe.is_reachable(&url).await {
+                if !status.success() {
+                    append_exit_status(&inner, &key, generation, "start", status);
+                    set_failed(&inner, &key, generation, "start_exit_non_zero");
+                } else if readiness_probe.is_reachable(&url).await {
                     let _ = set_ready(&inner, &key, generation, false);
                 } else {
                     append_exit_status(&inner, &key, generation, "start", status);
@@ -1435,6 +1443,86 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn reachable_url_does_not_mask_start_failure_before_or_after_ready() {
+        for already_ready in [false, true] {
+            let temp = tempfile::tempdir().unwrap();
+            let project = temp.path().to_path_buf();
+            let owner = project.join("app");
+            std::fs::create_dir(&owner).unwrap();
+            let runtime = runtime("http://127.0.0.1:3210/".to_string(), None, shell("exit 1"));
+            let state = AppProcessState::with_probe(
+                test_config(),
+                Arc::new(AlwaysReady),
+                ProcessPath::fixed(None),
+            );
+            let key = AppProcessKey::new(&project, &owner);
+            let generation = 1;
+            state.inner.lock().unwrap().entries.insert(
+                key.clone(),
+                ProcessEntry {
+                    declaration_fingerprint: declaration_fingerprint(&runtime),
+                    generation,
+                    runtime: runtime.clone(),
+                    phase: if already_ready {
+                        ProcessPhase::Ready { managed: true }
+                    } else {
+                        ProcessPhase::Launching(AppProcessPhase::WaitingForUrl)
+                    },
+                    logs: ProcessLogBuffers::default(),
+                    child: None,
+                },
+            );
+            let child = spawn_command(
+                Arc::clone(&state.inner),
+                &key,
+                generation,
+                &owner,
+                &runtime.start,
+                &runtime.environment,
+                None,
+            )
+            .unwrap();
+            let deadline = Instant::now() + Duration::from_secs(2);
+            while try_wait(&child).unwrap().is_none() {
+                assert!(Instant::now() < deadline, "start command did not exit");
+                sleep(Duration::from_millis(10)).await;
+            }
+            if already_ready {
+                monitor_ready_child(
+                    Arc::clone(&state.inner),
+                    Arc::clone(&state.readiness_probe),
+                    state.config,
+                    key.clone(),
+                    generation,
+                    runtime.url.clone(),
+                    child,
+                )
+                .await;
+            } else {
+                wait_for_readiness(
+                    Arc::clone(&state.inner),
+                    Arc::clone(&state.readiness_probe),
+                    state.config,
+                    key.clone(),
+                    generation,
+                    runtime.url.clone(),
+                    child,
+                )
+                .await;
+            }
+            let AppProcessSnapshot::Failed { reason, logs, .. } =
+                state.inspect_or_launch(&project, &owner, runtime)
+            else {
+                panic!("reachable URL masked failed start (already_ready={already_ready})");
+            };
+            assert_eq!(reason, "start_exit_non_zero");
+            assert!(logs.stderr.contains("1"));
+            assert!(state.inner.lock().unwrap().entries[&key].child.is_none());
+        }
     }
 
     #[cfg(unix)]
