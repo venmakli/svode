@@ -39,6 +39,8 @@ impl AppSettingsState {
 pub(super) fn read_app_settings_value(
     config_dir: &Path,
 ) -> Result<Option<serde_json::Value>, AppError> {
+    svode_core::variables::files::check_pending(config_dir)
+        .map_err(|error| AppError::Storage(error.to_string()))?;
     let path = config_dir.join("settings.json");
     if !path.exists() {
         return Ok(None);
@@ -177,6 +179,10 @@ fn set_app_preference(
         )));
     }
 
+    let _guard = svode_core::variables::files::lock(config_dir)
+        .map_err(|error| AppError::Storage(error.to_string()))?;
+    svode_core::variables::files::check_pending(config_dir)
+        .map_err(|error| AppError::Storage(error.to_string()))?;
     let mut settings = read_app_settings_value(config_dir)?
         .map(Ok)
         .unwrap_or_else(default_app_settings_value)?;

@@ -84,9 +84,7 @@ fn scaffold_space_with_assets(
     write_space_config(path, &sp_config)?;
 
     // Local config
-    let local_config = super::types::LocalConfig::default();
-    let local_data = serde_json::to_string_pretty(&local_config)?;
-    std::fs::write(svode_dir.join("local.json"), local_data)?;
+    super::config::mutate_local_config(path, |_| Ok(()))?;
 
     ensure_readme(path, name)?;
 

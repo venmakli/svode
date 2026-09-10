@@ -1,8 +1,4 @@
-use std::collections::HashMap;
-use std::fs::{self, File, OpenOptions};
-use std::io::Write;
-use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::path::Path;
 
 use crate::error::AppError;
 
@@ -23,14 +19,16 @@ pub fn read_space_config(path: &Path) -> Result<SpaceConfig, AppError> {
 /// Write space config to {space_path}/.svode/config.json.
 pub fn write_space_config(path: &Path, config: &SpaceConfig) -> Result<(), AppError> {
     let dir = path.join(".svode");
-    std::fs::create_dir_all(&dir)?;
+    let _guard = svode_core::variables::files::lock(&dir).map_err(variables_error)?;
     let mut shared_config = config.clone();
     // Personal Git automation policy is local-only. Older versions stored it in
     // shared config; every shared config write now drops those legacy fields.
     shared_config.git = None;
-    let data = serde_json::to_string_pretty(&shared_config)?;
-    std::fs::write(dir.join("config.json"), data)?;
-    Ok(())
+    svode_core::variables::files::write_preserving_variables(
+        &dir.join("config.json"),
+        &serde_json::to_value(&shared_config)?,
+    )
+    .map_err(variables_error)
 }
 
 /// Read local config from {space_path}/.svode/local.json.
@@ -63,53 +61,25 @@ pub fn mutate_local_config<T>(
 
 fn write_local_config_locked(path: &Path, local: &LocalConfig) -> Result<(), AppError> {
     let dir = path.join(".svode");
-    fs::create_dir_all(&dir)?;
-    let data = serde_json::to_string_pretty(local)?;
-    let target = dir.join("local.json");
-    let temp = dir.join(format!("local.json.tmp-{}", ulid::Ulid::new()));
-    let result = (|| {
-        let mut file = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&temp)?;
-        file.write_all(data.as_bytes())?;
-        file.sync_all()?;
-        fs::rename(&temp, &target)?;
-        #[cfg(unix)]
-        if let Err(error) = File::open(&dir).and_then(|directory| directory.sync_all()) {
-            tracing::warn!(
-                "failed to sync local config directory {}: {error}",
-                dir.display()
-            );
-        }
-        Ok::<_, AppError>(())
-    })();
-    if result.is_err() {
-        let _ = fs::remove_file(temp);
-    }
-    result
+    svode_core::variables::files::write_preserving_variables(
+        &dir.join("local.json"),
+        &serde_json::to_value(local)?,
+    )
+    .map_err(variables_error)
 }
 
 fn with_local_config_lock<T>(
     path: &Path,
     operation: impl FnOnce() -> Result<T, AppError>,
 ) -> Result<T, AppError> {
-    static LOCKS: OnceLock<Mutex<HashMap<PathBuf, Arc<Mutex<()>>>>> = OnceLock::new();
-    let config_path = path.join(".svode").join("local.json");
-    let lock = {
-        let locks = LOCKS.get_or_init(|| Mutex::new(HashMap::new()));
-        let mut locks = locks
-            .lock()
-            .map_err(|_| AppError::General("local config lock registry poisoned".into()))?;
-        locks
-            .entry(config_path)
-            .or_insert_with(|| Arc::new(Mutex::new(())))
-            .clone()
-    };
-    let _guard = lock
-        .lock()
-        .map_err(|_| AppError::General("local config mutation lock poisoned".into()))?;
+    let directory = path.join(".svode");
+    let _guard = svode_core::variables::files::lock(&directory).map_err(variables_error)?;
+    svode_core::variables::files::check_pending(&directory).map_err(variables_error)?;
     operation()
+}
+
+fn variables_error(error: svode_core::variables::Error) -> AppError {
+    AppError::Storage(error.to_string())
 }
 
 /// Effective per-user Git policy from local-only config.
@@ -136,6 +106,7 @@ mod tests {
     use crate::space::types::{
         AgentSessionsLocalConfig, BINARY_ROUTING_VERSION, GitSpaceConfig, RoutinesLocalConfig,
     };
+    use std::sync::Arc;
 
     fn config_with_git() -> SpaceConfig {
         SpaceConfig {
@@ -368,5 +339,64 @@ mod tests {
             local.routines.unwrap().automatic_authority.get("owner"),
             Some(&true)
         );
+    }
+
+    #[test]
+    fn sibling_writers_preserve_latest_variables_and_reject_pending_transition() {
+        let temp = tempfile::tempdir().unwrap();
+        write_space_config(temp.path(), &config_with_git()).unwrap();
+        let stale = read_space_config(temp.path()).unwrap();
+        let context =
+            svode_core::variables::Context::new(temp.path(), None, &temp.path().join("library"))
+                .unwrap();
+        let owner = svode_core::variables::Owner::in_context(
+            &context,
+            &svode_core::variables::SourceOwner::Project,
+        )
+        .unwrap();
+        struct NoSecrets;
+        impl svode_core::variables::SecretStore for NoSecrets {
+            fn get(&self, _: &str) -> svode_core::variables::Result<Option<String>> {
+                panic!("ordinary fixture")
+            }
+            fn set(&self, _: &str, _: &str) -> svode_core::variables::Result<()> {
+                panic!("ordinary fixture")
+            }
+            fn remove(&self, _: &str) -> svode_core::variables::Result<()> {
+                panic!("ordinary fixture")
+            }
+        }
+        let service = svode_core::variables::Service::new(&NoSecrets);
+        for (name, mode) in [
+            ("PORTABLE", svode_core::variables::Mode::Git),
+            ("LOCAL", svode_core::variables::Mode::Local),
+        ] {
+            service
+                .save(
+                    &owner,
+                    svode_core::variables::Save {
+                        name: name.into(),
+                        mode,
+                        kind: svode_core::variables::Kind::Variable,
+                        value: Some(name.into()),
+                        revision: service.catalog(&owner).unwrap().revision,
+                        identity: None,
+                        keep: None,
+                    },
+                )
+                .unwrap();
+        }
+        let before = service.catalog(&owner).unwrap();
+        write_space_config(temp.path(), &stale).unwrap();
+        write_git_user_policy(temp.path(), &GitUserPolicy::default()).unwrap();
+        super::super::scaffold::scaffold_space(temp.path(), "Renamed", "", "").unwrap();
+        let after = service.catalog(&owner).unwrap();
+        assert_eq!(
+            serde_json::to_value(before.entries).unwrap(),
+            serde_json::to_value(after.entries).unwrap()
+        );
+        std::fs::write(temp.path().join(".svode/variables.pending.json"), "{}").unwrap();
+        assert!(write_space_config(temp.path(), &stale).is_err());
+        assert!(write_git_user_policy(temp.path(), &GitUserPolicy::default()).is_err());
     }
 }

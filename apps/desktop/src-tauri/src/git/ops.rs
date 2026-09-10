@@ -12,13 +12,22 @@ use crate::space::types::SpaceGitType;
 
 const GITIGNORE_TEMPLATE: &str = "# Svode local files
 .svode/local.json
+.svode/lfs-s3-agent.json
+.svode/variables.*
 .svode/*.db*
 ";
 
-const SVODE_LOCAL_IGNORE_ENTRIES: &[&str] = &[".svode/local.json", ".svode/*.db*"];
+const SVODE_LOCAL_IGNORE_ENTRIES: &[&str] = &[
+    ".svode/local.json",
+    ".svode/lfs-s3-agent.json",
+    ".svode/variables.*",
+    ".svode/*.db*",
+];
 
 const LOCAL_DB_EXCLUDE_PATHSPEC: &str = ":(exclude,glob)**/.svode/*.db*";
 const LOCAL_CONFIG_EXCLUDE_PATHSPEC: &str = ":(exclude,glob)**/.svode/local.json";
+const LOCAL_AGENT_EXCLUDE_PATHSPEC: &str = ":(exclude,glob)**/.svode/lfs-s3-agent.json";
+const VARIABLES_EXCLUDE_PATHSPEC: &str = ":(exclude,glob)**/.svode/variables.*";
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -511,6 +520,51 @@ fn normalize_git_path(path: &str) -> Result<String, AppError> {
     normalize_repo_relative(trimmed, RootMode::Reject)
 }
 
+fn is_local_variable_path(path: &str) -> bool {
+    let normalized = path.replace('\\', "/");
+    let parts = normalized.split('/').collect::<Vec<_>>();
+    parts.windows(2).any(|pair| {
+        pair[0] == ".svode"
+            && (matches!(pair[1], "local.json" | "lfs-s3-agent.json")
+                || pair[1].starts_with("variables."))
+    })
+}
+
+fn reject_local_variable_path(path: &str) -> Result<(), AppError> {
+    if is_local_variable_path(path) {
+        return Err(AppError::GitCommandFailed(
+            "Local Variables and agent files cannot be committed".into(),
+        ));
+    }
+    Ok(())
+}
+
+async fn reject_staged_local_variables(cli: &GitCli, repo: &Path) -> Result<(), AppError> {
+    let staged = cli
+        .exec(
+            repo,
+            &[
+                "diff",
+                "--cached",
+                "--name-only",
+                "--diff-filter=ACMRTUXB",
+                "-z",
+            ],
+        )
+        .await?;
+    if staged.exit_code != 0 {
+        return Err(AppError::GitCommandFailed(
+            "Cannot verify local file exclusions".into(),
+        ));
+    }
+    if staged.stdout.split('\0').any(is_local_variable_path) {
+        return Err(AppError::GitCommandFailed(
+            "Unstage local Variables or agent files before committing".into(),
+        ));
+    }
+    Ok(())
+}
+
 /// Stage a specific file.
 pub async fn add(cli: &GitCli, space_dir: &Path, path: &str) -> Result<(), AppError> {
     let literal = format!(":(literal){}", normalize_git_path(path)?);
@@ -523,6 +577,8 @@ pub async fn add(cli: &GitCli, space_dir: &Path, path: &str) -> Result<(), AppEr
                 &literal,
                 LOCAL_DB_EXCLUDE_PATHSPEC,
                 LOCAL_CONFIG_EXCLUDE_PATHSPEC,
+                LOCAL_AGENT_EXCLUDE_PATHSPEC,
+                VARIABLES_EXCLUDE_PATHSPEC,
             ],
         )
         .await?;
@@ -546,6 +602,8 @@ pub async fn add_all(cli: &GitCli, space_dir: &Path) -> Result<(), AppError> {
                 ".",
                 LOCAL_DB_EXCLUDE_PATHSPEC,
                 LOCAL_CONFIG_EXCLUDE_PATHSPEC,
+                LOCAL_AGENT_EXCLUDE_PATHSPEC,
+                VARIABLES_EXCLUDE_PATHSPEC,
             ],
         )
         .await?;
@@ -561,6 +619,7 @@ pub async fn add_all(cli: &GitCli, space_dir: &Path) -> Result<(), AppError> {
 /// Commit with a given message. Returns `Ok(false)` if there was nothing
 /// to commit, `Ok(true)` if a commit was created.
 pub async fn commit(cli: &GitCli, space_dir: &Path, message: &str) -> Result<bool, AppError> {
+    reject_staged_local_variables(cli, space_dir).await?;
     let out = cli.exec(space_dir, &["commit", "-m", message]).await?;
     if out.exit_code != 0 {
         let combined = format!("{}{}", out.stdout, out.stderr);
@@ -590,6 +649,7 @@ pub async fn commit_exact_path(
     message: &str,
 ) -> Result<bool, AppError> {
     let path = normalize_git_path(path)?;
+    reject_local_variable_path(&path)?;
     let known = cli
         .exec(repo, &["ls-files", "--error-unmatch", "--", &path])
         .await?;
@@ -608,7 +668,20 @@ pub async fn commit_exact_path(
     }
 
     let out = cli
-        .exec(repo, &["commit", "--only", "-m", message, "--", &path])
+        .exec(
+            repo,
+            &[
+                "commit",
+                "--only",
+                "-m",
+                message,
+                "--",
+                &format!(":(literal){path}"),
+                LOCAL_CONFIG_EXCLUDE_PATHSPEC,
+                LOCAL_AGENT_EXCLUDE_PATHSPEC,
+                VARIABLES_EXCLUDE_PATHSPEC,
+            ],
+        )
         .await?;
     if out.exit_code == 0 {
         return Ok(true);
@@ -888,6 +961,9 @@ pub async fn commit_paths(
         .iter()
         .map(|path| normalize_git_path(path))
         .collect::<Result<Vec<_>, _>>()?;
+    for path in &file_paths {
+        reject_local_variable_path(path)?;
+    }
     if status(cli, space_dir).await?.has_conflicts {
         return Err(AppError::GitConflict(
             "Resolve the repository merge before saving paths".into(),
@@ -898,10 +974,17 @@ pub async fn commit_paths(
     }
     let message = generate_commit_message_for_paths(cli, space_dir, &file_paths).await?;
     let mut args = vec!["commit", "--only", "-m", &message, "--"];
-    args.extend(file_paths.iter().map(String::as_str));
-    let out = cli
-        .exec_with_env(space_dir, &args, &[("GIT_LITERAL_PATHSPECS", "1")])
-        .await?;
+    let literal_paths = file_paths
+        .iter()
+        .map(|path| format!(":(literal){path}"))
+        .collect::<Vec<_>>();
+    args.extend(literal_paths.iter().map(String::as_str));
+    args.extend([
+        LOCAL_CONFIG_EXCLUDE_PATHSPEC,
+        LOCAL_AGENT_EXCLUDE_PATHSPEC,
+        VARIABLES_EXCLUDE_PATHSPEC,
+    ]);
+    let out = cli.exec(space_dir, &args).await?;
     let combined = format!("{}{}", out.stdout, out.stderr);
     let created = out.exit_code == 0;
     if !created
@@ -1322,7 +1405,8 @@ pub fn ensure_svode_gitignore(space_dir: &Path) -> Result<bool, AppError> {
 
 const INLINE_BLOCK_START: &str = "# svode:inline:start";
 const INLINE_BLOCK_END: &str = "# svode:inline:end";
-const INLINE_BLOCK_CONTENT: &str = "*/.svode/local.json\n*/.svode/*.db*";
+const INLINE_BLOCK_CONTENT: &str =
+    "*/.svode/local.json\n*/.svode/lfs-s3-agent.json\n*/.svode/variables.*\n*/.svode/*.db*";
 
 const SPACES_BLOCK_START: &str = "# svode:spaces:start";
 const SPACES_BLOCK_END: &str = "# svode:spaces:end";
@@ -1336,7 +1420,26 @@ pub fn ensure_inline_gitignore(project_path: &Path) -> Result<(), AppError> {
         String::new()
     };
 
-    if content.contains(INLINE_BLOCK_START) {
+    if let Some((before, block, after)) =
+        extract_block(&content, INLINE_BLOCK_START, INLINE_BLOCK_END)
+    {
+        let mut entries = block
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        for entry in INLINE_BLOCK_CONTENT.lines() {
+            if !entries.iter().any(|line| line.trim() == entry) {
+                entries.push(entry.to_string());
+            }
+        }
+        let updated = format!(
+            "{before}{INLINE_BLOCK_START}\n{}\n{INLINE_BLOCK_END}\n{after}",
+            entries.join("\n")
+        );
+        if updated != content {
+            std::fs::write(&gitignore, updated)?;
+        }
         return Ok(());
     }
 
@@ -2440,6 +2543,120 @@ mod tests {
             .unwrap();
         assert!(unstaged.stdout.contains(".svode/routines.db"));
         assert!(unstaged.stdout.contains("child/.svode/index.db-wal"));
+    }
+
+    #[tokio::test]
+    async fn variables_staging_and_commit_exclude_tracked_local_and_agent_files() {
+        let cli = GitCli::detect().expect("Git required for Variables acceptance");
+        for prefix in ["", "child/"] {
+            let tmp = TempDir::new().unwrap();
+            cli.exec(tmp.path(), &["init"]).await.unwrap();
+            cli.exec(
+                tmp.path(),
+                &["config", "user.email", "variables@example.test"],
+            )
+            .await
+            .unwrap();
+            cli.exec(tmp.path(), &["config", "user.name", "Variables Test"])
+                .await
+                .unwrap();
+            let directory = tmp.path().join(format!("{prefix}.svode"));
+            std::fs::create_dir_all(&directory).unwrap();
+            for name in [
+                "config.json",
+                "local.json",
+                "lfs-s3-agent.json",
+                "variables.lock",
+                "variables.pending.json",
+            ] {
+                std::fs::write(directory.join(name), "before").unwrap();
+            }
+            assert_eq!(
+                cli.exec(tmp.path(), &["add", "."]).await.unwrap().exit_code,
+                0
+            );
+            assert_eq!(
+                cli.exec(tmp.path(), &["commit", "-m", "Legacy tracked fixture"])
+                    .await
+                    .unwrap()
+                    .exit_code,
+                0
+            );
+            ensure_svode_gitignore(tmp.path()).unwrap();
+            ensure_inline_gitignore(tmp.path()).unwrap();
+            for name in [
+                "config.json",
+                "local.json",
+                "lfs-s3-agent.json",
+                "variables.lock",
+                "variables.pending.json",
+            ] {
+                std::fs::write(directory.join(name), "after").unwrap();
+            }
+            add_all(&cli, tmp.path()).await.unwrap();
+            let staged = cli
+                .exec(tmp.path(), &["diff", "--cached", "--name-only"])
+                .await
+                .unwrap();
+            assert!(staged.stdout.contains("config.json"));
+            for name in [
+                "local.json",
+                "lfs-s3-agent.json",
+                "variables.lock",
+                "variables.pending.json",
+            ] {
+                assert!(!staged.stdout.contains(name));
+            }
+            assert!(
+                commit_paths(&cli, tmp.path(), &[format!("{prefix}.svode")])
+                    .await
+                    .unwrap()
+            );
+            let committed = cli
+                .exec(tmp.path(), &["show", "--format=", "--name-only", "HEAD"])
+                .await
+                .unwrap();
+            assert_eq!(
+                committed.stdout.trim(),
+                format!("{prefix}.svode/config.json")
+            );
+            let local = format!("{prefix}.svode/local.json");
+            assert!(
+                commit_exact_path(&cli, tmp.path(), &local, "Forbidden")
+                    .await
+                    .is_err()
+            );
+            assert_eq!(
+                cli.exec(tmp.path(), &["add", "-f", "--", &local])
+                    .await
+                    .unwrap()
+                    .exit_code,
+                0
+            );
+            assert!(
+                commit(&cli, tmp.path(), "Forbidden staged file")
+                    .await
+                    .is_err()
+            );
+        }
+    }
+
+    #[test]
+    fn variables_ignore_upgrade_preserves_existing_inline_block_and_user_rules() {
+        let tmp = TempDir::new().unwrap();
+        let previous = "user-rule\n# svode:inline:start\n*/.svode/local.json\ncustom-local-rule\n# svode:inline:end\nafter-rule\n";
+        std::fs::write(tmp.path().join(".gitignore"), previous).unwrap();
+        ensure_inline_gitignore(tmp.path()).unwrap();
+        let updated = std::fs::read_to_string(tmp.path().join(".gitignore")).unwrap();
+        assert!(updated.contains("custom-local-rule\n"));
+        assert!(updated.ends_with("after-rule\n"));
+        assert!(updated.contains("*/.svode/lfs-s3-agent.json\n"));
+        assert!(updated.contains("*/.svode/variables.*\n"));
+        ensure_inline_gitignore(tmp.path()).unwrap();
+        assert_eq!(
+            updated,
+            std::fs::read_to_string(tmp.path().join(".gitignore")).unwrap()
+        );
     }
 
     #[tokio::test]
