@@ -485,6 +485,7 @@
   "settings_unsaved_description": "У вас есть несохранённые изменения. Что вы хотите сделать?",
   "settings_unsaved_save": "Сохранить",
   "settings_unsaved_discard": "Не сохранять",
+  "settings_project_label": "Проект",
   "settings_project_group": "Проект: {name}",
   "settings_owner_unavailable": "Эти настройки больше недоступны. Выберите раздел текущего проекта.",
   "settings_space_title": "Настройки: {name}",

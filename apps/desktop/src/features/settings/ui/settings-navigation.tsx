@@ -87,7 +87,10 @@ export function SettingsNavigation({
           </SelectContent>
         </Select>
       </div>
-      <Sidebar collapsible="none" className="hidden h-full shrink-0 md:flex">
+      <Sidebar
+        collapsible="none"
+        className="hidden h-full w-[220px] shrink-0 md:flex"
+      >
         <SidebarContent>
           {groups.map((group) => (
             <SidebarGroup key={group.label}>

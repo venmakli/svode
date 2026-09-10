@@ -36,7 +36,7 @@ export function SettingsDialog({
   enableLegacyAgentIntegration: boolean;
   onClose: () => void;
 }) {
-  const { activeRootPath, activeRootName, spaces } = useSpace();
+  const { activeRootPath, spaces } = useSpace();
   const { destination, navigate, close, registerLeaveGuard } =
     useSettingsNavigation(request, onClose);
   const [returnFocus] = useState(() =>
@@ -63,7 +63,7 @@ export function SettingsDialog({
   ];
   if (activeRootPath)
     groups.push({
-      label: m.settings_project_group({ name: activeRootName || "Project" }),
+      label: m.settings_project_label(),
       items: projectItems.map((item) => ({
         label: item.label,
         icon: item.icon,
@@ -94,7 +94,7 @@ export function SettingsDialog({
       }}
     >
       <DialogContent
-        className="w-[calc(100vw-2rem)] max-h-[calc(100dvh-2rem)] overflow-hidden p-0 md:max-w-[700px] lg:max-w-[800px]"
+        className="flex h-[90dvh] w-[90vw] max-w-none flex-col overflow-hidden p-0 sm:max-w-none"
         onCloseAutoFocus={(event) => {
           event.preventDefault();
           const target =
@@ -111,7 +111,7 @@ export function SettingsDialog({
           {m.settings_title()}
         </DialogDescription>
         <SidebarProvider
-          className="h-[480px] max-h-[calc(100dvh-2rem)] min-w-0 max-w-full flex-col items-stretch overflow-hidden md:flex-row"
+          className="min-h-0 min-w-0 max-w-full flex-1 flex-col items-stretch overflow-hidden md:flex-row"
           style={{ minHeight: 0 }}
         >
           <SettingsNavigation
