@@ -1,0 +1,19 @@
+[data-update-download] {
+  background-color: var(--logo-accent);
+  color: var(--logo-accent-foreground);
+  border-color: color-mix(in oklab, var(--foreground) 35%, transparent);
+}
+
+[data-update-download]:hover {
+  background-color: color-mix(
+    in oklab,
+    var(--logo-accent) 90%,
+    var(--foreground)
+  );
+}
+
+[data-update-download]:focus-visible {
+  border-color: var(--foreground);
+  outline: 2px solid var(--foreground);
+  outline-offset: 2px;
+}

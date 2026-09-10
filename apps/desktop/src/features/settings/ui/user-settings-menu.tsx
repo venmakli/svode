@@ -1,4 +1,4 @@
-import { useRef } from "react";
+import { useRef, type Ref } from "react";
 import { Monitor, Moon, Palette, Settings, Sun } from "lucide-react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import {
@@ -16,10 +16,12 @@ import {
   SidebarMenuItem,
 } from "@/components/ui/sidebar";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { DogfoodUpdateMenuItem } from "@/features/updates";
 import * as m from "@/paraglide/messages.js";
 import { useAppSettingsAppearance } from "../hooks/use-app-settings-appearance";
 
 interface UserSettingsMenuProps {
+  triggerRef?: Ref<HTMLButtonElement>;
   identityName: string | null;
   identityEmail: string | null;
   identityAvatarColor: string;
@@ -28,6 +30,7 @@ interface UserSettingsMenuProps {
 }
 
 export function UserSettingsMenu({
+  triggerRef,
   identityName,
   identityEmail,
   identityAvatarColor,
@@ -70,11 +73,11 @@ export function UserSettingsMenu({
   }
 
   return (
-    <SidebarMenu>
+    <SidebarMenu className="min-w-0 flex-1">
       <SidebarMenuItem>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <SidebarMenuButton data-settings-return-focus>
+            <SidebarMenuButton ref={triggerRef} data-settings-return-focus>
               {avatar(true)}
               <span className="truncate">{userName}</span>
             </SidebarMenuButton>
@@ -119,6 +122,7 @@ export function UserSettingsMenu({
                 {m.settings_title()}
                 <DropdownMenuShortcut>{shortcut}</DropdownMenuShortcut>
               </DropdownMenuItem>
+              <DogfoodUpdateMenuItem />
             </DropdownMenuGroup>
             <DropdownMenuSeparator />
             <DropdownMenuGroup

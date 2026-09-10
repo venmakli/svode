@@ -57,6 +57,7 @@ if (process.env.SVODE_USER_MENU_DOM_PROCESS !== "1") {
       removeEventListener() {},
     })) as unknown as typeof window.matchMedia;
     const { UserSettingsMenu } = await import("./user-settings-menu");
+    const { DogfoodUpdatesProvider } = await import("@/features/updates");
     const { AppPreferencesProvider, useAppTheme } =
       await import("../hooks/use-app-preferences");
     const { SidebarProvider } = await import("@/components/ui/sidebar");
@@ -152,7 +153,9 @@ if (process.env.SVODE_USER_MENU_DOM_PROCESS !== "1") {
       await act(async () => {
         root.render(
           <AppPreferencesProvider fallback={null}>
-            <Harness />
+            <DogfoodUpdatesProvider version="" buildCommit="">
+              <Harness />
+            </DogfoodUpdatesProvider>
           </AppPreferencesProvider>,
         );
         await settle();

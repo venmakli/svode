@@ -41,7 +41,8 @@ import {
   useGitAvailability,
 } from "@/features/git/app-shell";
 import { avatarColorFromEmail, useGlobalIdentity } from "@/features/identity";
-import { UserSettingsMenu, type AppSettingsSection } from "@/features/settings";
+import { type AppSettingsSection } from "@/features/settings";
+import { UserSettingsFooter } from "./user-settings-footer";
 import { setCurrentAppWindowTitle } from "@/platform/native/window";
 import {
   SHELL_SIDEBAR_WIDTH_DEFAULT,
@@ -206,7 +207,7 @@ function ShellLayoutContent({
   const sidebar = (
     <SpaceSidebar
       userMenu={
-        <UserSettingsMenu
+        <UserSettingsFooter
           identityName={identityName}
           identityEmail={identityEmail}
           identityAvatarColor={avatarColorFromEmail(identityEmail)}
