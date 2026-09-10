@@ -268,7 +268,7 @@ pub async fn set_assets_strategy(
     strategy: AssetsStrategy,
     binary_routing: BinaryRoutingConfig,
     s3_config: Option<AssetsS3Config>,
-    s3_bindings: Option<svode_s3::SecretBindings>,
+    s3_bindings: Option<svode_core::storage::s3::SecretBindings>,
     settings_state: State<'_, AppSettingsState>,
     git_state: State<'_, GitState>,
     index_state: State<'_, IndexState>,
@@ -321,7 +321,7 @@ pub async fn set_assets_strategy(
         let cfg = s3_config
             .as_ref()
             .ok_or_else(|| AppError::Storage("lfs-s3 requires endpoint/bucket/region".into()))?;
-        let saved = svode_s3::AgentConfig::read(&scope.repo_dir).ok();
+        let saved = svode_core::storage::s3::AgentConfig::read(&scope.repo_dir).ok();
         let bindings = match s3_bindings {
             Some(bindings) => bindings,
             None => match saved {
@@ -337,7 +337,11 @@ pub async fn set_assets_strategy(
                         "Select S3 Secrets explicitly for the new target".into(),
                     ));
                 }
-                None => return Err(AppError::Storage(svode_s3::SETUP_REQUIRED.into())),
+                None => {
+                    return Err(AppError::Storage(
+                        svode_core::storage::s3::SETUP_REQUIRED.into(),
+                    ));
+                }
             },
         };
         let directory = catalog_dir.clone();

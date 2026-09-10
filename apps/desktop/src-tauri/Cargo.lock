@@ -5185,7 +5185,6 @@ dependencies = [
  "sha2 0.10.9",
  "sqlx",
  "svode-core",
- "svode-s3",
  "tauri",
  "tauri-build",
  "tauri-plugin-dialog",
@@ -5215,16 +5214,6 @@ dependencies = [
  "sha2 0.10.9",
  "tempfile",
  "ulid",
-]
-
-[[package]]
-name = "svode-s3"
-version = "0.0.1"
-dependencies = [
- "keyring",
- "serde",
- "serde_json",
- "tempfile",
 ]
 
 [[package]]

@@ -10,7 +10,7 @@ use super::settings::{
     default_app_settings_value, read_app_settings_value, write_app_settings_value,
 };
 
-const KEYCHAIN_SERVICE: &str = svode_s3::VARIABLES_SERVICE;
+const KEYCHAIN_SERVICE: &str = svode_core::storage::s3::VARIABLES_SERVICE;
 const SETTINGS_KEY: &str = "variables";
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
@@ -376,11 +376,11 @@ pub(crate) fn resolve_environment(
 
 pub(crate) fn resolve_s3(
     config_dir: &Path,
-    bindings: &svode_s3::SecretBindings,
+    bindings: &svode_core::storage::s3::SecretBindings,
     secrets: &dyn SecretStore,
-) -> Result<svode_s3::Credentials, AppError> {
+) -> Result<svode_core::storage::s3::Credentials, AppError> {
     let (root, _) = read(config_dir)?;
-    svode_s3::resolve_pair(bindings, &root, |name| {
+    svode_core::storage::s3::resolve_pair(bindings, &root, |name| {
         secrets
             .get(name)
             .map_err(|_| "Keychain access failed".to_string())
@@ -422,7 +422,7 @@ fn project_catalog(
         .s3_owners
         .iter()
         .filter_map(|owner| {
-            svode_s3::AgentConfig::read(owner)
+            svode_core::storage::s3::AgentConfig::read(owner)
                 .ok()
                 .map(|config| (owner, config))
         })

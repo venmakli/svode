@@ -211,7 +211,7 @@ struct AgentState {
 
 impl AgentState {
     async fn load() -> Result<Self> {
-        Self::load_with(PathBuf::from("."), svode_s3::read_secret).await
+        Self::load_with(PathBuf::from("."), svode_core::storage::s3::read_secret).await
     }
 
     async fn load_with(
@@ -219,7 +219,8 @@ impl AgentState {
         get: impl FnMut(&str) -> std::result::Result<Option<String>, String> + Send + 'static,
     ) -> Result<Self> {
         let (cfg, secrets) = tokio::task::spawn_blocking(move || {
-            let cfg = svode_s3::AgentConfig::read(&repo).map_err(anyhow::Error::msg)?;
+            let cfg =
+                svode_core::storage::s3::AgentConfig::read(&repo).map_err(anyhow::Error::msg)?;
             let secrets = cfg.resolve_with(get).map_err(anyhow::Error::msg)?;
             Ok::<_, anyhow::Error>((cfg, secrets))
         })
@@ -304,14 +305,14 @@ mod tests {
             r#"{"variables":{"entries":{"ACCESS":{"kind":"secret"},"SECRET":{"kind":"secret"}}}}"#,
         )
         .unwrap();
-        let config = svode_s3::AgentConfig {
+        let config = svode_core::storage::s3::AgentConfig {
             version: 1,
             endpoint: "https://s3.example.test".into(),
             bucket: "assets".into(),
             region: "us-east-1".into(),
             prefix: Some("project/root".into()),
             catalog_path,
-            bindings: svode_s3::SecretBindings {
+            bindings: svode_core::storage::s3::SecretBindings {
                 access_key: "ACCESS".into(),
                 secret_key: "SECRET".into(),
             },
@@ -333,7 +334,7 @@ mod tests {
         })
         .await;
         assert!(result.err().unwrap().to_string().contains("Secret Key"));
-        std::fs::write(repo.path().join(svode_s3::CONFIG_REL), r#"{"endpoint":"https://s3.example.test","bucket":"assets","region":"us-east-1","keychainAccount":"old"}"#).unwrap();
+        std::fs::write(repo.path().join(svode_core::storage::s3::CONFIG_REL), r#"{"endpoint":"https://s3.example.test","bucket":"assets","region":"us-east-1","keychainAccount":"old"}"#).unwrap();
         let result = AgentState::load_with(repo.path().into(), |_| {
             panic!("must not read old credentials")
         })

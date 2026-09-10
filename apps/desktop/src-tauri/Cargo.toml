@@ -19,7 +19,6 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 tempfile = "3"
-svode-s3 = { path = "../../../crates/svode-s3" }
 svode-core = { path = "../../../crates/svode-core" }
 tauri = { version = "2", features = ["protocol-asset"] }
 tauri-plugin-shell = "2"

@@ -10,7 +10,7 @@ use opendal::{Operator, services::S3};
 use crate::error::AppError;
 use crate::process;
 
-pub const AGENT_CONFIG_REL: &str = svode_s3::CONFIG_REL;
+pub const AGENT_CONFIG_REL: &str = svode_core::storage::s3::CONFIG_REL;
 
 /// Managed `.gitignore` block that hides the agent config file. Kept tiny on
 /// purpose so it can sit alongside the existing `# svode:assets-ignore`

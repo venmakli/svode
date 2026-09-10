@@ -1,3 +1,5 @@
+//! Shared S3 bindings, local agent configuration and credential resolution.
+
 use std::io::Write;
 use std::path::{Path, PathBuf};
 

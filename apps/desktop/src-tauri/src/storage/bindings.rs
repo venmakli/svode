@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use serde::Serialize;
-use svode_s3::{AgentConfig, SecretBindings};
+use svode_core::storage::s3::{AgentConfig, SecretBindings};
 use tauri::{AppHandle, Manager, State};
 
 use crate::AppError;
@@ -51,7 +51,9 @@ pub(crate) fn saved_config(repo: &Path, target: &AssetsS3Config) -> Result<Agent
         || config.region != target.region
         || config.prefix.as_deref() != Some(target.prefix.as_str())
     {
-        return Err(AppError::Storage(svode_s3::SETUP_REQUIRED.into()));
+        return Err(AppError::Storage(
+            svode_core::storage::s3::SETUP_REQUIRED.into(),
+        ));
     }
     Ok(config)
 }
@@ -89,7 +91,7 @@ pub(crate) async fn get_s3_bindings(
             .config
             .s3
             .as_ref()
-            .ok_or_else(|| AppError::Storage(svode_s3::SETUP_REQUIRED.into()))
+            .ok_or_else(|| AppError::Storage(svode_core::storage::s3::SETUP_REQUIRED.into()))
             .and_then(|target| saved_config(&scope.repo_dir, target));
         let (bindings, result) = match config {
             Ok(config) => (
