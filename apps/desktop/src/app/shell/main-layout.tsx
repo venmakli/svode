@@ -40,8 +40,8 @@ import {
   useAppGitFocus,
   useGitAvailability,
 } from "@/features/git/app-shell";
-import { avatarColorFromEmail } from "@/features/identity";
-import { useEffectiveIdentity } from "@/features/identity/app-shell";
+import { avatarColorFromEmail, useGlobalIdentity } from "@/features/identity";
+import { UserSettingsMenu, type AppSettingsSection } from "@/features/settings";
 import { setCurrentAppWindowTitle } from "@/platform/native/window";
 import {
   SHELL_SIDEBAR_WIDTH_DEFAULT,
@@ -66,7 +66,7 @@ interface ShellLayoutContentProps {
   onBeforeNavigation: () => Promise<boolean>;
   onOpenSessions: () => void;
   onOpenSearch: () => void;
-  onOpenAppSettings: () => void;
+  onOpenAppSettings: (section?: AppSettingsSection) => void;
 }
 
 interface DesktopResizableShellProps {
@@ -96,7 +96,9 @@ function MainLayoutRuntime() {
     useSpace();
   const { openLastActiveRoot } = useSpaceActions();
   const { available, recheck } = useGitAvailability();
-  const { name: identityName, email: identityEmail } = useEffectiveIdentity();
+  const identity = useGlobalIdentity();
+  const identityName = identity?.name ?? null;
+  const identityEmail = identity?.email ?? null;
   const openAppSettings = useShellStore((state) => state.openAppSettings);
   const mainSurface = useShellStore((state) => state.mainSurface);
   const openContentSurface = useShellStore((state) => state.openContentSurface);
@@ -203,15 +205,20 @@ function ShellLayoutContent({
 
   const sidebar = (
     <SpaceSidebar
-      identityName={identityName}
-      identityEmail={identityEmail}
-      identityAvatarColor={avatarColorFromEmail(identityEmail)}
+      userMenu={
+        <UserSettingsMenu
+          identityName={identityName}
+          identityEmail={identityEmail}
+          identityAvatarColor={avatarColorFromEmail(identityEmail)}
+          onOpenProfile={() => onOpenAppSettings("git-identity")}
+          onOpenSettings={() => onOpenAppSettings()}
+        />
+      }
       mainSurface={mainSurface}
       onActivateContent={onActivateContent}
       onBeforeNavigation={onBeforeNavigation}
       onOpenSessions={onOpenSessions}
       onOpenSearch={onOpenSearch}
-      onOpenAppSettings={onOpenAppSettings}
     />
   );
 

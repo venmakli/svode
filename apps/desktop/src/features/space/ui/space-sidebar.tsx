@@ -1,5 +1,5 @@
-import { BotMessageSquare, ChevronsUpDown, Search } from "lucide-react";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import type { ReactNode } from "react";
+import { BotMessageSquare, Search } from "lucide-react";
 import {
   Sidebar,
   SidebarContent,
@@ -17,36 +17,22 @@ import * as m from "@/paraglide/messages.js";
 type MainSurface = "content" | "sessions" | "graph";
 
 interface SpaceSidebarProps {
-  identityName: string | null;
-  identityEmail: string | null;
-  identityAvatarColor: string;
+  userMenu: ReactNode;
   mainSurface: MainSurface;
   onActivateContent: () => void;
   onBeforeNavigation: () => Promise<boolean>;
   onOpenSessions: () => void;
   onOpenSearch: () => void;
-  onOpenAppSettings: () => void;
 }
 
 export function SpaceSidebar({
-  identityName,
-  identityEmail,
-  identityAvatarColor,
+  userMenu,
   mainSurface,
   onActivateContent,
   onBeforeNavigation,
   onOpenSessions,
   onOpenSearch,
-  onOpenAppSettings,
 }: SpaceSidebarProps) {
-  const userName = identityName || "User";
-  const initials = userName
-    .split(" ")
-    .map((w) => w[0])
-    .join("")
-    .slice(0, 2)
-    .toUpperCase();
-
   return (
     <Sidebar variant="sidebar" collapsible="offcanvas" className="!border-r-0">
       <SidebarHeader className="h-[44px] shrink-0 py-0" />
@@ -63,31 +49,7 @@ export function SpaceSidebar({
         />
       </SidebarContent>
 
-      <SidebarFooter>
-        <SidebarMenu>
-          <SidebarMenuItem>
-            <SidebarMenuButton
-              size="lg"
-              className="w-full"
-              onClick={onOpenAppSettings}
-            >
-              <Avatar className="size-8 rounded-lg after:rounded-lg">
-                <AvatarFallback
-                  className="rounded-lg text-xs font-medium text-white"
-                  style={{ backgroundColor: identityAvatarColor }}
-                >
-                  {initials}
-                </AvatarFallback>
-              </Avatar>
-              <div className="grid flex-1 text-left text-sm leading-tight">
-                <span className="truncate font-medium">{userName}</span>
-                <span className="truncate text-xs">{identityEmail ?? ""}</span>
-              </div>
-              <ChevronsUpDown className="ml-auto opacity-50" />
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-        </SidebarMenu>
-      </SidebarFooter>
+      <SidebarFooter>{userMenu}</SidebarFooter>
     </Sidebar>
   );
 }
