@@ -1,5 +1,5 @@
 import { useRef } from "react";
-import { Monitor, Moon, Settings, Sun } from "lucide-react";
+import { Monitor, Moon, Palette, Settings, Sun } from "lucide-react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import {
   DropdownMenu,
@@ -107,6 +107,9 @@ export function UserSettingsMenu({
                   </span>
                 </div>
               </DropdownMenuItem>
+            </DropdownMenuGroup>
+            <DropdownMenuSeparator />
+            <DropdownMenuGroup>
               <DropdownMenuItem
                 onSelect={() => {
                   destination.current = onOpenSettings;
@@ -122,7 +125,10 @@ export function UserSettingsMenu({
               className="flex items-center justify-between gap-2 px-1.5 py-1"
               aria-label={m.settings_theme_label()}
             >
-              <span className="text-sm">{m.settings_theme_label()}</span>
+              <span className="flex items-center gap-1.5 text-sm">
+                <Palette className="size-4 shrink-0" aria-hidden="true" />
+                {m.settings_theme_label()}
+              </span>
               <ToggleGroup
                 type="single"
                 size="sm"
