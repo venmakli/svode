@@ -5,7 +5,7 @@ import {
   useAppLocale,
   useAppVersion,
 } from "@/features/settings";
-import { DogfoodUpdateNotifier } from "@/features/updates";
+import { DogfoodUpdatesProvider } from "@/features/updates";
 import { getBuildCommit } from "@/platform/build-info";
 import { AppBootstrapScreen, IdentityGate } from "./identity-gate";
 
@@ -23,11 +23,10 @@ function LocalizedAppProviders() {
   const buildCommit = getBuildCommit();
 
   return (
-    <>
-      <DogfoodUpdateNotifier version={version} buildCommit={buildCommit} />
+    <DogfoodUpdatesProvider version={version} buildCommit={buildCommit}>
       <RootProjectMenuBridge />
       <IdentityGate />
       <Toaster />
-    </>
+    </DogfoodUpdatesProvider>
   );
 }

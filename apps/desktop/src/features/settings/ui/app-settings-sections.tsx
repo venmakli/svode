@@ -263,10 +263,7 @@ export function AppAboutSection({
           {buildCommit || m.settings_about_build_commit_unavailable()}
         </p>
       </div>
-      <DogfoodUpdateSettingsControls
-        version={version}
-        buildCommit={buildCommit}
-      />
+      <DogfoodUpdateSettingsControls />
       <a
         href={releaseUrl}
         target="_blank"

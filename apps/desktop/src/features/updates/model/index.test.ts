@@ -71,6 +71,32 @@ run("selectDogfoodUpdate allows same-version CI builds with a new commit", () =>
   assert(selected.id === "ci-build:0.0.5:new-commit:42:darwin", "id includes run id");
 });
 
+run("selectDogfoodUpdate excludes CI builds without a current commit", () => {
+  const selected = selectDogfoodUpdate(
+    feed([ciBuild("0.0.9", "new", "2026-06-19T00:00:00.000Z")]),
+    { version: "0.0.5", commit: "" },
+    "darwin",
+    NOW,
+  );
+  assert(selected === null, "unknown current commit must exclude CI builds");
+});
+
+run("selectDogfoodUpdate breaks equal-version ties by publication time", () => {
+  const selected = selectDogfoodUpdate(
+    feed([
+      stageRelease("0.0.9", "old", "2026-06-18T00:00:00.000Z"),
+      stageRelease("0.0.9", "new", "2026-06-19T00:00:00.000Z"),
+    ]),
+    { version: "0.0.5", commit: "current" },
+    "darwin",
+    NOW,
+  );
+  assert(
+    selected?.item.commit === "new",
+    "latest published build wins the tie",
+  );
+});
+
 function run(name: string, test: () => void) {
   test();
   console.log(`ok - ${name}`);

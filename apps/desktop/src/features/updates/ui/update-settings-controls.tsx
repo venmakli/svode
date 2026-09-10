@@ -3,26 +3,15 @@ import * as m from "@/paraglide/messages.js";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/shared/lib/utils";
-import { useDogfoodUpdateCheck } from "../hooks/use-dogfood-update-check";
+import { useDogfoodUpdates } from "../hooks/use-dogfood-updates";
 
-interface DogfoodUpdateSettingsControlsProps {
-  version: string;
-  buildCommit: string;
-}
-
-type DogfoodUpdateStatus = ReturnType<typeof useDogfoodUpdateCheck>["status"];
+type DogfoodUpdateStatus = ReturnType<typeof useDogfoodUpdates>["status"];
 type DogfoodUpdateKind = NonNullable<
-  ReturnType<typeof useDogfoodUpdateCheck>["update"]
+  ReturnType<typeof useDogfoodUpdates>["update"]
 >["item"]["kind"];
 
-export function DogfoodUpdateSettingsControls({
-  version,
-  buildCommit,
-}: DogfoodUpdateSettingsControlsProps) {
-  const updates = useDogfoodUpdateCheck({
-    currentVersion: version,
-    currentBuildCommit: buildCommit,
-  });
+export function DogfoodUpdateSettingsControls() {
+  const updates = useDogfoodUpdates();
   const availableUpdate = updates.update;
 
   return (
@@ -39,8 +28,8 @@ export function DogfoodUpdateSettingsControls({
         <Button
           variant="outline"
           size="sm"
-          onClick={() => void updates.check({ silent: false, force: true })}
-          disabled={updates.checking || !version}
+          onClick={() => void updates.check()}
+          disabled={updates.checking || !updates.canCheck}
         >
           <RefreshCw
             data-icon="inline-start"
@@ -54,7 +43,7 @@ export function DogfoodUpdateSettingsControls({
           <Button
             variant="secondary"
             size="sm"
-            onClick={() => void updates.openUpdate(availableUpdate)}
+            onClick={() => void updates.openUpdate()}
           >
             {m.updates_download()}
           </Button>
