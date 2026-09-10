@@ -137,6 +137,7 @@ export function SettingsDialog({
                 </Breadcrumb>
               </header>
               <AppSettingsContent
+                registerLeaveGuard={registerLeaveGuard}
                 section={appSection}
                 enableLegacyAgentIntegration={enableLegacyAgentIntegration}
               />

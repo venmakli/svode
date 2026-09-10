@@ -126,6 +126,7 @@ pub fn run() {
             commands::app_variables::get_app_variables,
             commands::app_variables::upsert_app_variable,
             commands::app_variables::remove_app_variable,
+            commands::app_variables::recover_app_variables,
             commands::app_variables::set_app_variable_binding,
             document::commands::document_inspect_source,
             document::commands::document_read_source,

@@ -54,7 +54,29 @@ if (process.env.SVODE_UNIFIED_SETTINGS_DOM !== "1") {
   mock.module("@/features/page/navigation", () => ({
     useOpenPage: () => noop,
   }));
+  const variableReads: unknown[] = [];
   mock.module("../api", () => ({
+    getAppVariables: async (_context: unknown, scope: unknown) => {
+      variableReads.push(scope);
+      return {
+        entries: [],
+        owners: [
+          {
+            owner: { scope: "project" },
+            label: "Project",
+            revision: "r1",
+            error: null,
+          },
+        ],
+        defaultOwner: { scope: "project" },
+        bindingRevision: "b1",
+      };
+    },
+    listenAppVariablesChanged: async () => noop,
+    upsertAppVariable: async () => {},
+    removeAppVariable: async () => {},
+    setAppVariableBinding: async () => {},
+    recoverAppVariables: async () => {},
     getSettingsSpaceConfig: (path: string) =>
       new Promise((resolve) => loads.set(path, resolve)),
   }));
@@ -258,7 +280,7 @@ if (process.env.SVODE_UNIFIED_SETTINGS_DOM !== "1") {
       });
     };
     const project = (
-      section: "general" | "git" | "storage" | "spaces",
+      section: "general" | "git" | "storage" | "spaces" | "variables",
       spacePath = "/project",
     ): SettingsDestination => ({ scope: "project", section, spacePath });
     try {
@@ -302,7 +324,7 @@ if (process.env.SVODE_UNIFIED_SETTINGS_DOM !== "1") {
       expect(navLabels.slice(0, 3)).toEqual([
         "Profile",
         "Appearance",
-        "Variables",
+        "Svode variables",
       ]);
       const compactSelect =
         dom.window.document.querySelector<HTMLElement>('[role="combobox"]')!;
@@ -395,6 +417,16 @@ if (process.env.SVODE_UNIFIED_SETTINGS_DOM !== "1") {
       expect(
         dom.window.document.body.textContent?.includes("no longer available"),
       ).toBe(true);
+      await draw(project("variables"));
+      expect(variableReads.at(-1)).toEqual({
+        projectPath: "/project",
+        spaceId: null,
+      });
+      await draw(project("variables", "/project/docs"));
+      expect(variableReads.at(-1)).toEqual({
+        projectPath: "/project",
+        spaceId: "docs",
+      });
       await draw(project("spaces"));
       await click("Create space");
       expect(

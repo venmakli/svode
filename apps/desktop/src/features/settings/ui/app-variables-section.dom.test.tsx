@@ -3,6 +3,7 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { JSDOM } from "jsdom";
 import { clearNativeMocks, mockNativeIpc } from "@/platform/native/testing";
+import { variableFixture, catalogFixture } from "../model/testing/variables";
 import { AppVariablesSection } from "./app-variables-section";
 
 test("global catalog edits a Secret without reading or replacing its value", async () => {
@@ -15,29 +16,26 @@ test("global catalog edits a Secret without reading or replacing its value", asy
   mockNativeIpc(
     (command, args) => {
       if (command === "get_app_variables") {
-        return {
-          entries: [
-            {
-              name: "SHARED_SECRET",
-              kind: "secret",
-              hasValue: true,
-              usedIn: [
-                { ownerDirectory: "/repo/admin", referenceName: "OTHER" },
-                {
-                  ownerDirectory: "/repo/space",
-                  referenceName: "S3 Secret Key",
-                },
-              ],
-            },
+        return catalogFixture(
+          [
+            variableFixture(
+              {
+                name: "SHARED_SECRET",
+                kind: "secret",
+                hasValue: true,
+                usedIn: [
+                  { ownerDirectory: "/repo/admin", referenceName: "OTHER" },
+                  {
+                    ownerDirectory: "/repo/space",
+                    referenceName: "S3 Secret Key",
+                  },
+                ],
+              },
+              { scope: "library" },
+            ),
           ],
-          context: [
-            {
-              referenceName: "API_TOKEN",
-              entryName: "API_TOKEN",
-              resolved: false,
-            },
-          ],
-        };
+          { scope: "library" },
+        );
       }
       if (
         command === "upsert_app_variable" ||
@@ -97,7 +95,13 @@ test("global catalog edits a Secret without reading or replacing its value", asy
       "upsert_app_variable",
     ]);
     expect(mutations[0]?.args).toEqual({
-      input: { name: "SHARED_SECRET", kind: "secret" },
+      input: {
+        source: { owner: { scope: "library" }, name: "SHARED_SECRET" },
+        mode: "local",
+        kind: "secret",
+        identity: "id-SHARED_SECRET",
+        revision: "r1",
+      },
     });
   } finally {
     await act(async () => root.unmount());

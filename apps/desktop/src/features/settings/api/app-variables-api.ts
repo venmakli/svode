@@ -1,43 +1,45 @@
-import {
-  getAppVariables as getAppVariablesDto,
-  listenAppVariablesChanged as listenAppVariablesChangedDto,
-  removeAppVariable as removeAppVariableDto,
-  setAppVariableBinding as setAppVariableBindingDto,
-  upsertAppVariable as upsertAppVariableDto,
-} from "@/platform/settings/app-variables-api";
+import * as transport from "@/platform/settings/app-variables-api";
 import type {
-  AppVariableKind,
   AppVariablesCatalog,
   AppVariablesContext,
-} from "../model";
-
+  SaveVariableInput,
+  VariableSource,
+  VariableScope,
+  VariableOwner,
+} from "../model/app-variables";
 export function getAppVariables(
   context?: AppVariablesContext,
+  scope?: VariableScope,
 ): Promise<AppVariablesCatalog> {
-  return getAppVariablesDto(context);
+  return transport.getAppVariables(context, scope);
 }
-
-export function upsertAppVariable(input: {
-  name: string;
-  kind: AppVariableKind;
-  value?: string;
-  intent?: "create" | "update-secret";
+export function upsertAppVariable(
+  input: SaveVariableInput & { scope?: VariableScope },
+) {
+  return transport.upsertAppVariable(input);
+}
+export function removeAppVariable(input: {
+  source: VariableSource;
+  scope?: VariableScope;
+  identity: string;
+  revision: string;
 }) {
-  return upsertAppVariableDto(input);
+  return transport.removeAppVariable(input);
 }
-
-export function removeAppVariable(name: string) {
-  return removeAppVariableDto(name);
+export function recoverAppVariables(
+  source?: VariableOwner,
+  scope?: VariableScope,
+) {
+  return transport.recoverAppVariables(source, scope);
 }
-
 export function setAppVariableBinding(input: {
   context: AppVariablesContext;
   referenceName: string;
-  entryName: string;
+  source: VariableSource | null;
+  revision: string;
 }) {
-  return setAppVariableBindingDto(input);
+  return transport.setAppVariableBinding(input);
 }
-
 export function listenAppVariablesChanged(handler: () => void) {
-  return listenAppVariablesChangedDto(handler);
+  return transport.listenAppVariablesChanged(handler);
 }

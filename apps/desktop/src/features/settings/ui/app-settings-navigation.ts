@@ -30,7 +30,7 @@ export const APP_SETTINGS_NAV_ITEMS: {
   },
   {
     key: "variables",
-    label: () => m.settings_variables_title(),
+    label: () => m.variables_library_title(),
     icon: KeyRound,
     show: () => true,
   },

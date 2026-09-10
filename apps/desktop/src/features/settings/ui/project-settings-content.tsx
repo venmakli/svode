@@ -1,3 +1,5 @@
+import { Button } from "@/components/ui/button";
+import { AppVariablesSection } from "./app-variables-section";
 import { useLayoutEffect, useState, type MouseEvent } from "react";
 import * as m from "@/paraglide/messages.js";
 import {
@@ -289,15 +291,37 @@ export function ProjectSettingsContent({
           )}
 
           {section === "spaces" && detailSpace && (
-            <SpaceGeneralSection
-              icon={generalSettings.icon}
-              name={generalSettings.name}
-              description={generalSettings.description}
-              onIconChange={generalSettings.handleIconChange}
-              onNameChange={generalSettings.setName}
-              onNameBlur={generalSettings.handleNameBlur}
-              onDescriptionChange={generalSettings.setDescription}
-              onDescriptionBlur={generalSettings.handleDescriptionBlur}
+            <>
+              <Button
+                variant="outline"
+                onClick={() =>
+                  onNavigate({
+                    scope: "project",
+                    spacePath,
+                    section: "variables",
+                  })
+                }
+              >
+                {m.settings_variables_title()}
+              </Button>
+              <SpaceGeneralSection
+                icon={generalSettings.icon}
+                name={generalSettings.name}
+                description={generalSettings.description}
+                onIconChange={generalSettings.handleIconChange}
+                onNameChange={generalSettings.setName}
+                onNameBlur={generalSettings.handleNameBlur}
+                onDescriptionChange={generalSettings.setDescription}
+                onDescriptionBlur={generalSettings.handleDescriptionBlur}
+              />
+            </>
+          )}
+
+          {section === "variables" && (
+            <AppVariablesSection
+              projectPath={projectPath}
+              spaceId={currentSpaceId}
+              registerLeaveGuard={registerLeaveGuard}
             />
           )}
 

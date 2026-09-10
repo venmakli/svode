@@ -167,7 +167,10 @@ export function useStorageS3({
       editing && entry
         ? editVariableDraft(entry)
         : {
-            ...createVariableDraft(entry ? "" : bindings[role]),
+            ...createVariableDraft(
+              entry ? "" : bindings[role],
+              variables.catalog ?? undefined,
+            ),
             kind: "secret" as const,
           };
     setEditor({ role, draft });
@@ -200,7 +203,6 @@ export function useStorageS3({
     try {
       await variables.save({
         ...variableDraftInput(editor.draft),
-        intent: editor.draft.editing ? "update-secret" : "create",
       });
       if (!current()) return false;
       setBindings((pair) => ({ ...pair, [editor.role]: editor.draft.name }));

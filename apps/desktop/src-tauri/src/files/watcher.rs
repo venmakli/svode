@@ -190,6 +190,7 @@ fn process_events(
     let mut any_tree_changed = false;
     let mut visibility_policy_changed = false;
     let mut membership_only_paths: HashMap<PathBuf, ContentTreeEventKind> = HashMap::new();
+    let mut variable_owners = BTreeSet::new();
     let mut agent_context_paths = BTreeSet::new();
     let mut agent_context_targets = BTreeSet::new();
     let mut routine_owner_paths = BTreeSet::new();
@@ -203,6 +204,18 @@ fn process_events(
     for event in events {
         for (path_index, path) in event.paths.iter().enumerate() {
             let event_kind = event_kind_for_path(event, path_index);
+            if path
+                .parent()
+                .is_some_and(|parent| parent.file_name().is_some_and(|name| name == ".svode"))
+                && path.file_name().is_some_and(|name| {
+                    matches!(
+                        name.to_str(),
+                        Some("config.json" | "local.json" | "variables.pending.json")
+                    )
+                })
+            {
+                variable_owners.insert(path.parent().unwrap().to_path_buf());
+            }
             for invalidation in classify_attachment_invalidations(space_root, path, &event_kind) {
                 attachment_invalidations
                     .entry(invalidation.owner_path)
@@ -320,6 +333,12 @@ fn process_events(
         });
     }
 
+    for owner_path in variable_owners {
+        let _ = app.emit(
+            crate::commands::app_variables::APP_VARIABLES_CHANGED_EVENT,
+            serde_json::json!({ "ownerPath": owner_path }),
+        );
+    }
     if any_dirty {
         let _ = app.emit(
             "space:dirty",

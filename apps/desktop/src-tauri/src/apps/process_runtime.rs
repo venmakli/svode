@@ -211,6 +211,22 @@ impl AppProcessState {
         }
     }
 
+    pub(crate) fn inspect_existing(
+        &self,
+        project_path: &Path,
+        owner_path: &Path,
+        runtime: &AppProcessRuntime,
+    ) -> Option<AppProcessSnapshot> {
+        let key = AppProcessKey::new(project_path, owner_path);
+        let fingerprint = declaration_fingerprint(runtime);
+        let inner = self.inner.lock().unwrap_or_else(|error| error.into_inner());
+        inner
+            .entries
+            .get(&key)
+            .filter(|entry| entry.declaration_fingerprint == fingerprint)
+            .map(snapshot)
+    }
+
     pub(crate) fn inspect_or_launch(
         &self,
         project_path: &Path,
@@ -1211,11 +1227,33 @@ mod tests {
             std::fs::read_to_string(owner.join("setup.env")).unwrap(),
             "first"
         );
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while std::fs::read_to_string(owner.join("start.env"))
+            .ok()
+            .as_deref()
+            != Some("first")
+        {
+            assert!(
+                Instant::now() < deadline,
+                "start did not record its environment"
+            );
+            sleep(Duration::from_millis(20)).await;
+        }
         assert_eq!(
             std::fs::read_to_string(owner.join("start.env")).unwrap(),
             "first"
         );
 
+        let mut unresolved = runtime.clone();
+        unresolved.environment.clear();
+        assert!(matches!(
+            state.inspect_existing(&project, &owner, &unresolved),
+            Some(AppProcessSnapshot::Ready { .. })
+        ));
+        assert_eq!(
+            std::fs::read_to_string(owner.join("start.env")).unwrap(),
+            "first"
+        );
         runtime
             .environment
             .insert("APP_TOKEN".to_string(), "second".to_string());

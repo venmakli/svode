@@ -1,3 +1,4 @@
+import type { SettingsLeaveGuard } from "../model/settings-destination";
 import { useAppSettingsAbout } from "../hooks/use-app-settings-about";
 import { useAppSettingsAppearance } from "../hooks/use-app-settings-appearance";
 import { useCliAgents } from "../hooks/use-cli-agents";
@@ -16,9 +17,11 @@ import { AppVariablesSection } from "./app-variables-section";
 export function AppSettingsContent({
   section,
   enableLegacyAgentIntegration,
+  registerLeaveGuard,
 }: {
   section: AppSettingsSection;
   enableLegacyAgentIntegration: boolean;
+  registerLeaveGuard: (guard: SettingsLeaveGuard) => () => void;
 }) {
   const appearanceSettings = useAppSettingsAppearance();
   const aboutSettings = useAppSettingsAbout();
@@ -32,7 +35,9 @@ export function AppSettingsContent({
       {section === "appearance" && (
         <AppAppearanceSection settings={appearanceSettings} />
       )}
-      {section === "variables" && <AppVariablesSection />}
+      {section === "variables" && (
+        <AppVariablesSection registerLeaveGuard={registerLeaveGuard} />
+      )}
       {enableLegacyAgentIntegration && section === "cli-agents" && (
         <AppCliAgentsSection
           agents={cliAgents.agents}

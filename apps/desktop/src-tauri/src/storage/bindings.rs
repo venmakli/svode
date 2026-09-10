@@ -152,26 +152,69 @@ pub(crate) fn catalog_dir(app: &AppHandle) -> Result<PathBuf, AppError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::space::app_variables::{AppVariableKind, AppVariableOwnerContext};
+    use crate::space::app_variables::{AppVariableKind, AppVariableOwnerContext, VariableScope};
     use std::collections::BTreeMap;
     use std::sync::Mutex;
+    use svode_core::variables::{
+        self as variables, Mode, Owner, Save, Service, SourceOwner, SourceReference,
+    };
 
     #[derive(Default)]
     struct Secrets(Mutex<BTreeMap<String, String>>);
     impl SecretStore for Secrets {
-        fn get(&self, name: &str) -> Result<Option<String>, AppError> {
+        fn get(&self, name: &str) -> variables::Result<Option<String>> {
             Ok(self.0.lock().unwrap().get(name).cloned())
         }
-        fn set(&self, name: &str, value: &str) -> Result<(), AppError> {
+        fn set(&self, name: &str, value: &str) -> variables::Result<()> {
             self.0.lock().unwrap().insert(name.into(), value.into());
             Ok(())
         }
-        fn remove(&self, name: &str) -> Result<(), AppError> {
+        fn remove(&self, name: &str) -> variables::Result<()> {
             self.0.lock().unwrap().remove(name);
             Ok(())
         }
     }
 
+    fn upsert(
+        config: &Path,
+        name: &str,
+        kind: AppVariableKind,
+        value: Option<&str>,
+        secrets: &dyn SecretStore,
+    ) -> Result<(), AppError> {
+        let owner = Owner::library(config).unwrap();
+        let service = Service::new(secrets);
+        let catalog = service.catalog(&owner).unwrap();
+        service
+            .save(
+                &owner,
+                Save {
+                    name: name.into(),
+                    mode: Mode::Local,
+                    kind,
+                    value: value.map(str::to_string),
+                    identity: catalog
+                        .entries
+                        .iter()
+                        .find(|e| e.name == name)
+                        .map(|e| e.identity.clone()),
+                    revision: catalog.revision,
+                    keep: None,
+                },
+            )
+            .map(|_| ())
+            .map_err(app_variables::storage_error)
+    }
+    fn remove(config: &Path, name: &str, secrets: &dyn SecretStore) -> Result<(), AppError> {
+        let owner = Owner::library(config).unwrap();
+        let service = Service::new(secrets);
+        let catalog = service.catalog(&owner).unwrap();
+        let entry = catalog.entries.iter().find(|e| e.name == name).unwrap();
+        service
+            .remove(&owner, name, &entry.identity, &catalog.revision)
+            .map(|_| ())
+            .map_err(app_variables::storage_error)
+    }
     fn target() -> AssetsS3Config {
         AssetsS3Config {
             endpoint: "https://s3.test".into(),
@@ -190,7 +233,7 @@ mod tests {
 
     fn enroll(dir: &Path, secrets: &Secrets) {
         for (_, name) in pair().roles() {
-            app_variables::upsert(
+            upsert(
                 dir,
                 name,
                 AppVariableKind::Secret,
@@ -206,19 +249,46 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let secrets = Secrets::default();
         enroll(dir.path(), &secrets);
+        let project = dir.path().join("project");
+        std::fs::create_dir_all(project.join(".svode")).unwrap();
+        std::fs::write(project.join(".svode/config.json"), "{}").unwrap();
+        let project = project.canonicalize().unwrap();
+        std::fs::create_dir_all(project.join("app")).unwrap();
         let app = AppVariableOwnerContext {
-            owner_key: "app-owner".into(),
-            owner_directory: "/project/app".into(),
+            scope: VariableScope {
+                project_path: project.to_str().unwrap().into(),
+                space_id: None,
+            },
+            owner_key: project.join("app").to_str().unwrap().into(),
+            owner_directory: project.join("app").to_str().unwrap().into(),
             references: vec!["TOKEN".into()],
         };
-        app_variables::bind(dir.path(), &app, "TOKEN", "SECRET").unwrap();
+        let catalog =
+            app_variables::get_catalog(dir.path(), Some(&app.scope), Some(&app), &secrets).unwrap();
+        app_variables::bind(
+            dir.path(),
+            &app,
+            "TOKEN",
+            Some(SourceReference {
+                owner: SourceOwner::Library,
+                name: "SECRET".into(),
+            }),
+            &catalog.binding_revision,
+            &secrets,
+        )
+        .unwrap();
         let cfg = prepare(dir.path(), &target(), pair(), &secrets).unwrap();
         let root = dir.path().join("project");
         let repo = root.join("repo-space");
         publish(dir.path(), &root, &cfg, &secrets).unwrap();
         publish(dir.path(), &repo, &cfg, &secrets).unwrap();
-        let catalog = app_variables::get_catalog(dir.path(), Some(&app), &secrets).unwrap();
-        let secret = catalog.entries.iter().find(|e| e.name == "SECRET").unwrap();
+        let catalog =
+            app_variables::get_catalog(dir.path(), Some(&app.scope), Some(&app), &secrets).unwrap();
+        let secret = catalog
+            .entries
+            .iter()
+            .find(|e| e.entry.name == "SECRET")
+            .unwrap();
         assert_eq!(secret.used_in.len(), 3);
         assert!(secret.used_in.iter().any(|u| u.reference_name == "TOKEN"));
         assert_eq!(
@@ -238,7 +308,20 @@ mod tests {
         let env =
             app_variables::resolve_environment(dir.path(), &app, &declaration, &secrets).unwrap();
         assert_eq!(env.environment["TOKEN"], "Bearer private-value");
-        assert!(app_variables::bind(dir.path(), &app, "S3 Secret Key", "SECRET").is_err());
+        assert!(
+            app_variables::bind(
+                dir.path(),
+                &app,
+                "S3 Secret Key",
+                Some(SourceReference {
+                    owner: SourceOwner::Library,
+                    name: "SECRET".into()
+                }),
+                &catalog.binding_revision,
+                &secrets
+            )
+            .is_err()
+        );
         let settings = std::fs::read_to_string(dir.path().join("settings.json")).unwrap();
         assert!(!settings.contains("private-value"));
         let clone = dir.path().join("clone");
@@ -254,7 +337,7 @@ mod tests {
         let repo = dir.path().join("repo");
         publish(dir.path(), &repo, &cfg, &secrets).unwrap();
         for value in ["first", "rotated"] {
-            app_variables::upsert(
+            upsert(
                 dir.path(),
                 "SECRET",
                 AppVariableKind::Secret,
@@ -270,7 +353,7 @@ mod tests {
             assert_eq!(desktop.secret_key, value);
             assert_eq!(desktop.secret_key, agent.secret_key);
         }
-        app_variables::remove(dir.path(), "SECRET", &secrets).unwrap();
+        remove(dir.path(), "SECRET", &secrets).unwrap();
         assert!(app_variables::resolve_s3(dir.path(), &pair(), &secrets).is_err());
         // Even an orphaned Keychain value must not make a removed entry usable.
         secrets.set("SECRET", "orphan").unwrap();
@@ -278,7 +361,7 @@ mod tests {
             cfg.resolve_with(|name| secrets.get(name).map_err(|e| e.to_string()))
                 .is_err()
         );
-        app_variables::upsert(
+        upsert(
             dir.path(),
             "SECRET",
             AppVariableKind::Variable,
@@ -291,7 +374,7 @@ mod tests {
             cfg.resolve_with(|name| secrets.get(name).map_err(|e| e.to_string()))
                 .is_err()
         );
-        app_variables::upsert(
+        upsert(
             dir.path(),
             "SECRET",
             AppVariableKind::Secret,
@@ -315,7 +398,7 @@ mod tests {
         let repo = dir.path().join("repo");
         let original = prepare(dir.path(), &target(), pair(), &secrets).unwrap();
         publish(dir.path(), &repo, &original, &secrets).unwrap();
-        app_variables::upsert(
+        upsert(
             dir.path(),
             "OTHER",
             AppVariableKind::Secret,
@@ -336,25 +419,25 @@ mod tests {
         secrets.remove("OTHER").unwrap();
         assert!(publish(dir.path(), &repo, &next, &secrets).is_err());
         assert_eq!(AgentConfig::read(&repo).unwrap(), original);
-        let catalog = app_variables::get_catalog(dir.path(), None, &secrets).unwrap();
+        let catalog = app_variables::get_catalog(dir.path(), None, None, &secrets).unwrap();
         assert!(
             catalog
                 .entries
                 .iter()
-                .find(|e| e.name == "OTHER")
+                .find(|e| e.entry.name == "OTHER")
                 .unwrap()
                 .used_in
                 .is_empty()
         );
         secrets.set("OTHER", "other").unwrap();
         publish(dir.path(), &repo, &next, &secrets).unwrap();
-        let catalog = app_variables::get_catalog(dir.path(), None, &secrets).unwrap();
+        let catalog = app_variables::get_catalog(dir.path(), None, None, &secrets).unwrap();
         assert_eq!(catalog.entries.len(), 3);
         assert!(
             catalog
                 .entries
                 .iter()
-                .find(|e| e.name == "SECRET")
+                .find(|e| e.entry.name == "SECRET")
                 .unwrap()
                 .used_in
                 .is_empty()

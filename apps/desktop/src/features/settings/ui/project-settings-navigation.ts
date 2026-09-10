@@ -5,6 +5,7 @@ import {
   Folder,
   GitBranch,
   HardDrive,
+  KeyRound,
   Settings,
 } from "lucide-react";
 import * as m from "@/paraglide/messages.js";
@@ -16,6 +17,12 @@ export function getProjectSettingsNavItems(
 ) {
   const items = [
     { key: "general", label: m.settings_general(), icon: Settings, show: true },
+    {
+      key: "variables",
+      label: m.settings_variables_title(),
+      icon: KeyRound,
+      show: true,
+    },
     { key: "spaces", label: m.settings_spaces(), icon: Folder, show: true },
     {
       key: "ai-agent",

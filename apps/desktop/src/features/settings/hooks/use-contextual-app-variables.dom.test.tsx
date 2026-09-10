@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import * as bunTest from "bun:test";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { act, useLayoutEffect } from "react";
+import { act, useLayoutEffect, useState } from "react";
 import { JSDOM } from "jsdom";
 import { clearNativeMocks, mockNativeIpc } from "@/platform/native/testing";
 import { emit } from "@/platform/native/events";
@@ -11,6 +11,8 @@ import type {
   AppVariablesCatalog,
   AppVariablesContext,
 } from "../model";
+import { variableFixture, catalogFixture } from "../model/testing/variables";
+import type { VariableSource } from "../model/app-variables";
 import type { useContextualAppVariables } from "./use-contextual-app-variables";
 
 if (process.env.SVODE_CONTEXTUAL_VARIABLES_TEST !== "1") {
@@ -76,7 +78,9 @@ if (process.env.SVODE_CONTEXTUAL_VARIABLES_TEST !== "1") {
         hasValue: true,
         usedIn: [],
       },
-    ];
+    ].map((e) =>
+      variableFixture({ ...e, kind: e.kind as "secret" | "variable" }),
+    );
     const bindings: Record<string, string> = {
       TOKEN: "SHARED",
       ALIAS: "SHARED",
@@ -94,13 +98,18 @@ if (process.env.SVODE_CONTEXTUAL_VARIABLES_TEST !== "1") {
     };
     function catalog(): AppVariablesCatalog {
       return {
-        entries: structuredClone(entries),
+        ...catalogFixture(structuredClone(entries)),
         context: fixture.references.map((referenceName) => {
           const entryName = bindings[referenceName] ?? referenceName;
           const entry = entries.find((item) => item.name === entryName);
           return {
             referenceName,
             entryName,
+            source: entry?.source ?? {
+              owner: { scope: "project" },
+              name: entryName,
+            },
+            explicit: Boolean(bindings[referenceName]),
             resolved: entry?.hasValue ?? false,
             kind: entry?.kind,
           };
@@ -120,23 +129,33 @@ if (process.env.SVODE_CONTEXTUAL_VARIABLES_TEST !== "1") {
         if (command === "upsert_app_variable") {
           await fixture.beforeSave?.();
           if (fixture.failSave) throw new Error("Keychain failed");
-          const entry = entries.find((item) => item.name === input.name);
-          const next: AppVariableEntry = {
-            name: String(input.name),
+          const source = input.source as VariableSource;
+          const entry = entries.find((item) => item.name === source.name);
+          const next: AppVariableEntry = variableFixture({
+            source,
+            name: source.name,
             kind: input.kind as "secret" | "variable",
-            hasValue: true,
+            mode: input.mode as "local" | "git",
+            hasValue:
+              input.kind === "variable" ||
+              Boolean(input.value) ||
+              Boolean(entry?.hasValue),
             usedIn: entry?.usedIn ?? [],
             ...(input.kind === "variable"
               ? { value: String(input.value) }
               : {}),
-          };
+          });
           if (entry) Object.assign(entry, next);
           else entries.push(next);
           return null;
         }
         if (command === "set_app_variable_binding") {
           if (fixture.failBind) throw new Error("binding failed");
-          bindings[String(input.referenceName)] = String(input.entryName);
+          if (input.source)
+            bindings[String(input.referenceName)] = (
+              input.source as VariableSource
+            ).name;
+          else delete bindings[String(input.referenceName)];
           return null;
         }
         throw new Error(`Unexpected ${command}`);
@@ -210,7 +229,14 @@ if (process.env.SVODE_CONTEXTUAL_VARIABLES_TEST !== "1") {
       expect(h.fixture.calls).toEqual([
         {
           command: "upsert_app_variable",
-          args: { name: "SHARED", kind: "secret" },
+          args: {
+            source: { owner: { scope: "project" }, name: "SHARED" },
+            mode: "local",
+            kind: "secret",
+            identity: "id-SHARED",
+            revision: "r1",
+            scope: context,
+          },
         },
       ]);
       await h.begin("EMPTY_SECRET");
@@ -239,7 +265,10 @@ if (process.env.SVODE_CONTEXTUAL_VARIABLES_TEST !== "1") {
         await h.state.submit();
       });
       expect(h.state.error).toBe("partial");
-      expect(h.state.editor?.savedEntry).toBe("LOCAL_URL");
+      expect(h.state.editor?.savedEntry).toEqual({
+        owner: { scope: "project" },
+        name: "LOCAL_URL",
+      });
       h.fixture.failBind = false;
       await act(async () => {
         await h.state.submit();
@@ -275,7 +304,7 @@ if (process.env.SVODE_CONTEXTUAL_VARIABLES_TEST !== "1") {
         await h.state.submit();
       });
       await h.begin("TOKEN", "binding");
-      await act(async () => h.state.selectEntry("OTHER_APP"));
+      await act(async () => h.state.selectEntry("project:OTHER_APP"));
       expect(h.state.stale).toBe(false);
       await act(async () => {
         await h.state.submit();
@@ -333,13 +362,15 @@ if (process.env.SVODE_CONTEXTUAL_VARIABLES_TEST !== "1") {
         await h.state.refresh();
       });
       await h.begin("URL");
-      h.fixture.entries.push({
-        name: "URL",
-        kind: "variable",
-        value: "external",
-        hasValue: true,
-        usedIn: [],
-      });
+      h.fixture.entries.push(
+        variableFixture({
+          name: "URL",
+          kind: "variable",
+          value: "external",
+          hasValue: true,
+          usedIn: [],
+        }),
+      );
       await act(async () => {
         await h.state.submit();
       });
@@ -414,7 +445,225 @@ if (process.env.SVODE_CONTEXTUAL_VARIABLES_TEST !== "1") {
     }
   });
 
-  test("dialog shows compact rows, hides immutable name and storage boilerplate, and keeps one editor", async () => {
+  test("Git Secret declaration saves without a value and remains missing; stale draft requires explicit review", async () => {
+    const h = await setup();
+    try {
+      await h.begin("URL");
+      await act(async () =>
+        h.state.updateDraft({
+          ...h.state.editor!.draft,
+          kind: "secret",
+          storage: "git",
+          value: "",
+        }),
+      );
+      await act(async () => {
+        await h.state.submit();
+      });
+      expect(h.fixture.calls[0]?.args.source).toEqual({
+        owner: { scope: "project" },
+        name: "URL",
+      });
+      expect(h.fixture.calls[0]?.args.kind).toBe("secret");
+      expect(h.fixture.calls[0]?.args.mode).toBe("git");
+      expect(h.fixture.calls[0]?.args.value).toBe(undefined);
+      expect(
+        h.state.references.find((r) => r.referenceName === "URL")?.resolved,
+      ).toBe(false);
+      await h.begin("TOKEN");
+      await act(async () =>
+        h.state.updateDraft({
+          ...h.state.editor!.draft,
+          value: "draft-secret",
+        }),
+      );
+      h.fixture.entries.find((e) => e.name === "SHARED")!.revision = "r2";
+      await act(async () => {
+        await h.state.refresh();
+      });
+      expect(h.state.stale).toBe(true);
+      expect(h.state.editor?.draft.value).toBe("draft-secret");
+      const writes = h.fixture.calls.length;
+      await act(async () => {
+        await h.state.submit();
+      });
+      expect(h.fixture.calls.length).toBe(writes);
+    } finally {
+      await h.cleanup();
+    }
+  });
+
+  test("storage and Secret controls require explicit declassification and allow unset Git declarations", async () => {
+    const { createRoot } = await import("react-dom/client");
+    const { AppVariableFields } = await import("../ui/app-variable-fields");
+    const {
+      createVariableDraft,
+      editVariableDraft,
+      canSaveVariableDraft,
+      variableDraftInput,
+    } = await import("../model/app-variable-draft");
+    const root = createRoot(dom.window.document.getElementById("app")!);
+    const catalog = catalogFixture([]);
+    let draft = createVariableDraft("KEY", catalog);
+    function Harness({ initial }: { initial: typeof draft }) {
+      const [value, setValue] = useState(initial);
+      useLayoutEffect(() => {
+        draft = value;
+      });
+      return (
+        <AppVariableFields draft={value} disabled={false} onChange={setValue} />
+      );
+    }
+    const click = async (text: string) =>
+      act(async () => {
+        Array.from(dom.window.document.querySelectorAll("button"))
+          .find((b) => b.textContent === text)!
+          .click();
+      });
+    const secret = async () =>
+      act(async () => {
+        dom.window.document
+          .querySelector<HTMLButtonElement>('[role="switch"]')!
+          .click();
+      });
+    try {
+      await act(async () => root.render(<Harness initial={draft} />));
+      expect(canSaveVariableDraft(draft)).toBe(true);
+      await secret();
+      expect(draft.storage).toBe("local");
+      expect(canSaveVariableDraft(draft)).toBe(false);
+      await click("Git");
+      expect(draft.kind).toBe("secret");
+      expect(canSaveVariableDraft(draft)).toBe(true);
+      expect(variableDraftInput(draft).value).toBe(undefined);
+      await secret();
+      expect(draft.storage).toBe("git");
+      expect(canSaveVariableDraft(draft)).toBe(true);
+      expect(variableDraftInput(draft).value).toBe("");
+      await act(async () =>
+        root.render(
+          <Harness
+            key="configured"
+            initial={editVariableDraft(
+              variableFixture({ name: "KEY", kind: "secret", mode: "git" }),
+            )}
+          />,
+        ),
+      );
+      expect(draft.value).toBe("");
+      expect(variableDraftInput(draft).value).toBe(undefined);
+      await secret();
+      expect(draft.value).toBe("");
+      expect(canSaveVariableDraft(draft)).toBe(false);
+      await click("Use an empty string");
+      expect(canSaveVariableDraft(draft)).toBe(true);
+      expect(variableDraftInput(draft).value).toBe("");
+    } finally {
+      await act(async () => root.unmount());
+    }
+  });
+
+  test("catalog edits the inherited owner, creates an own override, and preserves draft across revision review", async () => {
+    const { createRoot } = await import("react-dom/client");
+    const { useVariableCatalogEditor } =
+      await import("./use-variable-catalog-editor");
+    const scope = { projectPath: "/repo", spaceId: "child" };
+    const entry = variableFixture({
+      name: "KEY",
+      kind: "variable",
+      value: "project",
+      inherited: true,
+    });
+    let catalog = catalogFixture([entry], { scope: "space", id: "child" });
+    catalog.owners.push({
+      owner: { scope: "project" },
+      label: "Project",
+      revision: "r1",
+      error: null,
+    });
+    let guard!: () => boolean | Promise<boolean>;
+    const register = (next: typeof guard) => {
+      guard = next;
+      return () => {};
+    };
+    const deferred = deferredVoid();
+    const writes: unknown[] = [];
+    mockNativeIpc(
+      async (command, args) => {
+        if (command === "get_app_variables") return structuredClone(catalog);
+        if (command === "upsert_app_variable") {
+          writes.push(args);
+          await deferred.promise;
+          return null;
+        }
+        throw new Error(`Unexpected ${command}`);
+      },
+      { shouldMockEvents: true },
+    );
+    const root = createRoot(dom.window.document.getElementById("app")!);
+    let state!: ReturnType<typeof useVariableCatalogEditor>;
+    function Harness() {
+      const controller = useVariableCatalogEditor(scope, register);
+      useLayoutEffect(() => {
+        state = controller;
+      });
+      return null;
+    }
+    try {
+      await act(async () => {
+        root.render(<Harness />);
+        await tick();
+      });
+      await act(async () => state.begin(entry));
+      expect(state.draft?.owner).toEqual({ scope: "project" });
+      await act(async () =>
+        state.updateDraft({ ...state.draft!, value: "draft" }),
+      );
+      catalog = {
+        ...catalog,
+        entries: [{ ...entry, revision: "r2", value: "external" }],
+        owners: catalog.owners.map((o) =>
+          o.owner.scope === "project" ? { ...o, revision: "r2" } : o,
+        ),
+      };
+      await act(async () => {
+        await state.refresh();
+      });
+      expect(state.stale).toBe(true);
+      expect(state.draft?.value).toBe("draft");
+      await act(async () => {
+        await state.reviewLatest();
+      });
+      expect(state.stale).toBe(false);
+      expect(state.draft?.value).toBe("draft");
+      expect(state.draft?.revision).toBe("r2");
+      await act(async () => state.begin(entry, true));
+      expect(state.draft?.owner).toEqual({ scope: "space", id: "child" });
+      expect(state.draft?.identity).toBe(undefined);
+      expect(state.draft?.value).toBe("");
+      let save!: Promise<void>;
+      await act(async () => {
+        save = state.save();
+        await tick();
+      });
+      expect(await guard()).toBe(false);
+      await act(async () => state.cancel());
+      expect(state.draft !== null).toBe(true);
+      expect(writes.length).toBe(1);
+      await act(async () => {
+        deferred.resolve();
+        await save;
+      });
+      expect(await guard()).toBe(true);
+      expect(state.draft).toBeNull();
+    } finally {
+      deferred.resolve();
+      await act(async () => root.unmount());
+      clearNativeMocks();
+    }
+  });
+
+  test("dialog shows compact rows, storage and independent Secret control with one editor", async () => {
     const h = await setup();
     const { AppVariablesDialog } = await import("../ui/app-variables-dialog");
     try {
@@ -429,8 +678,12 @@ if (process.env.SVODE_CONTEXTUAL_VARIABLES_TEST !== "1") {
         await tick();
       });
       const document = dom.window.document;
-      expect(document.querySelector('[data-slot="dialog-title"]')?.textContent).toBe("Variables");
-      expect(document.querySelector('[data-slot="dialog-description"]')?.textContent).toBe("demo");
+      expect(
+        document.querySelector('[data-slot="dialog-title"]')?.textContent,
+      ).toBe("Variables");
+      expect(
+        document.querySelector('[data-slot="dialog-description"]')?.textContent,
+      ).toBe("demo");
       expect(document.querySelector('[role="dialog"]') !== null).toBe(true);
       expect(document.body.textContent?.includes("OTHER_APP")).toBe(false);
       await act(async () => {
@@ -445,7 +698,8 @@ if (process.env.SVODE_CONTEXTUAL_VARIABLES_TEST !== "1") {
       );
       expect(document.querySelectorAll('input[type="text"]').length).toBe(0);
       expect(document.body.textContent?.includes("/repo/")).toBe(false);
-      expect(document.body.textContent?.includes("OS Keychain")).toBe(false);
+      expect(document.querySelectorAll('[role="switch"]').length).toBe(1);
+      expect(document.body.textContent?.includes("Storage")).toBe(true);
       await act(async () => {
         Array.from(document.querySelectorAll("button"))
           .find((item) => item.textContent === "Cancel")!
@@ -467,6 +721,11 @@ function tick() {
 
 function installDomGlobals(dom: JSDOM) {
   const values: Record<string, unknown> = {
+    ResizeObserver: class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    },
     CustomEvent: dom.window.CustomEvent,
     Element: dom.window.Element,
     Event: dom.window.Event,

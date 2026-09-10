@@ -17,8 +17,8 @@ use super::{AppProcessState, AppSourceState};
 use crate::AppError;
 use crate::commands::app_variables::{APP_VARIABLES_CHANGED_EVENT, run_locked};
 use crate::space::app_variables::{
-    AppVariableOwnerContext, KeyringSecretStore, MissingAppVariable, clear_owner_usage,
-    resolve_environment,
+    AppVariableOwnerContext, KeyringSecretStore, MissingAppVariable, VariableScope,
+    clear_owner_usage, resolve_environment,
 };
 use crate::space::settings::AppSettingsState;
 use crate::system_path;
@@ -131,9 +131,20 @@ pub(crate) async fn app_manifest_inspect(
             })
         }
         ValidatedRuntime::Process(mut runtime) => {
-            let missing =
-                resolve_runtime_environment(&app, &settings_state, &owner.owner_path, &mut runtime)
-                    .await?;
+            if let Some(snapshot) =
+                process_state.inspect_existing(&owner.project_path, &owner.owner_path, &runtime)
+            {
+                return Ok(process_inspection(owner_directory, runtime.url, snapshot));
+            }
+            let missing = resolve_runtime_environment(
+                &app,
+                &settings_state,
+                &owner.project_path,
+                space_id.as_deref(),
+                &owner.owner_path,
+                &mut runtime,
+            )
+            .await?;
             if !missing.is_empty() {
                 process_state.remove_owner(&owner.project_path, &owner.owner_path);
                 return Ok(AppManifestInspection::Unavailable {
@@ -244,8 +255,15 @@ pub(crate) async fn app_process_control(
     }
 
     let mut runtime = current_process_runtime(&owner.owner_path)?;
-    let missing =
-        resolve_runtime_environment(&app, &settings_state, &owner.owner_path, &mut runtime).await?;
+    let missing = resolve_runtime_environment(
+        &app,
+        &settings_state,
+        &owner.project_path,
+        space_id.as_deref(),
+        &owner.owner_path,
+        &mut runtime,
+    )
+    .await?;
     if !missing.is_empty() {
         return Ok(AppManifestInspection::Unavailable {
             owner_directory,
@@ -383,6 +401,8 @@ async fn clear_variable_usage(
 async fn resolve_runtime_environment(
     app: &AppHandle,
     settings_state: &AppSettingsState,
+    project_path: &Path,
+    space_id: Option<&str>,
     owner_path: &Path,
     runtime: &mut AppProcessRuntime,
 ) -> Result<Vec<MissingAppVariable>, AppError> {
@@ -390,6 +410,10 @@ async fn resolve_runtime_environment(
         .map_err(|error| AppError::General(error.message))?;
     let owner_directory = system_path::user_facing_path(owner_path);
     let context = AppVariableOwnerContext {
+        scope: VariableScope {
+            project_path: project_path.to_string_lossy().into(),
+            space_id: space_id.map(str::to_string),
+        },
         owner_key: owner_directory.clone(),
         owner_directory,
         references,
@@ -399,10 +423,23 @@ async fn resolve_runtime_environment(
         .path()
         .app_config_dir()
         .map_err(|error| AppError::General(error.to_string()))?;
+    let unresolved: Vec<_> = context
+        .references
+        .iter()
+        .map(|name| MissingAppVariable {
+            reference_name: name.clone(),
+            entry_name: name.clone(),
+        })
+        .collect();
     let resolved = run_locked(settings_state, move || {
         resolve_environment(&config_dir, &context, &declaration, &KeyringSecretStore)
     })
-    .await?;
+    .await;
+    let resolved = match resolved {
+        Ok(resolved) => resolved,
+        Err(error) if unresolved.is_empty() => return Err(error),
+        Err(_) => return Ok(unresolved),
+    };
     if resolved.usage_changed {
         let _ = app.emit(APP_VARIABLES_CHANGED_EVENT, ());
     }

@@ -5,19 +5,27 @@ import {
   getAppVariables,
   listenAppVariablesChanged,
   removeAppVariable,
+  recoverAppVariables,
   setAppVariableBinding,
   upsertAppVariable,
 } from "../api";
 import type {
-  AppVariableKind,
+  AppVariableEntry,
   AppVariablesCatalog,
   AppVariablesContext,
 } from "../model";
+import type {
+  SaveVariableInput,
+  VariableSource,
+  VariableScope,
+  VariableOwner,
+} from "../model/app-variables";
 
 export function useAppVariables(
   context?: AppVariablesContext,
   notify = true,
   enabled = true,
+  scope?: VariableScope,
 ) {
   const [catalog, setCatalog] = useState<AppVariablesCatalog | null>(null);
   const [loadError, setLoadError] = useState(false);
@@ -29,7 +37,7 @@ export function useAppVariables(
   const refresh = useCallback(async () => {
     const generation = ++generationRef.current;
     try {
-      const next = await getAppVariables(context);
+      const next = await getAppVariables(context, scope);
       if (generation === generationRef.current) {
         setCatalog(next);
         setLoadError(false);
@@ -39,13 +47,15 @@ export function useAppVariables(
       if (generation === generationRef.current) setLoadError(true);
       throw error;
     }
-  }, [context]);
+  }, [context, scope]);
 
   useEffect(() => {
     if (!enabled) {
       setCatalog(null);
       return;
     }
+    setCatalog(null);
+    setLoadError(false);
     let disposed = false;
     let unlisten: (() => void) | undefined;
     void refresh().catch((error) => {
@@ -68,7 +78,12 @@ export function useAppVariables(
       .catch((error) => {
         console.error("Failed to subscribe to App variable changes:", error);
       });
+    const reconcile = () => {
+      if (!disposed) void refresh().catch(() => undefined);
+    };
+    window.addEventListener("focus", reconcile);
     return () => {
+      window.removeEventListener("focus", reconcile);
       disposed = true;
       generationRef.current += 1;
       lifecycleRef.current += 1;
@@ -107,18 +122,28 @@ export function useAppVariables(
     loadError,
     refresh,
     pending,
-    bind: (referenceName: string, entryName: string) => {
+    bind: (
+      referenceName: string,
+      source: VariableSource | null,
+      revision: string,
+    ) => {
       if (!context) return Promise.resolve();
       return mutate(() =>
-        setAppVariableBinding({ context, referenceName, entryName }),
+        setAppVariableBinding({ context, referenceName, source, revision }),
       );
     },
-    remove: (name: string) => mutate(() => removeAppVariable(name)),
-    save: (input: {
-      name: string;
-      kind: AppVariableKind;
-      value?: string;
-      intent?: "create" | "update-secret";
-    }) => mutate(() => upsertAppVariable(input)),
+    remove: (entry: AppVariableEntry) =>
+      mutate(() =>
+        removeAppVariable({
+          scope: context ?? scope,
+          source: entry.source,
+          identity: entry.identity,
+          revision: entry.revision,
+        }),
+      ),
+    recover: (source?: VariableOwner) =>
+      mutate(() => recoverAppVariables(source, context ?? scope)),
+    save: (input: SaveVariableInput) =>
+      mutate(() => upsertAppVariable({ ...input, scope: context ?? scope })),
   };
 }

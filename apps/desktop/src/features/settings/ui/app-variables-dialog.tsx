@@ -25,6 +25,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Separator } from "@/components/ui/separator";
 import { useContextualAppVariables } from "../hooks/use-contextual-app-variables";
 import type { AppVariablesContext } from "../model";
+import { sourceKey, sameSource, ownerKey } from "../model/app-variables";
 import { canSaveVariableDraft } from "../model/app-variable-draft";
 import { AppVariableFields } from "./app-variable-fields";
 
@@ -124,6 +125,15 @@ function ContextualVariables({
                   variant="outline"
                   disabled={pending}
                   onClick={() =>
+                    void variables.recover().catch(() => undefined)
+                  }
+                >
+                  {m.variables_recovery()}
+                </Button>
+                <Button
+                  variant="outline"
+                  disabled={pending}
+                  onClick={() =>
                     void variables.refresh().catch(() => undefined)
                   }
                 >
@@ -132,6 +142,24 @@ function ContextualVariables({
               </AlertDescription>
             </Alert>
           ) : null}
+          {variables.catalog?.owners
+            .filter((owner) => owner.error)
+            .map((owner) => (
+              <Alert key={owner.label} variant="destructive">
+                <AlertDescription>
+                  {owner.label}: {owner.error}
+                  <Button
+                    variant="outline"
+                    disabled={pending}
+                    onClick={() =>
+                      void variables.recover(owner.owner).catch(() => undefined)
+                    }
+                  >
+                    {m.variables_recovery()}
+                  </Button>
+                </AlertDescription>
+              </Alert>
+            ))}
           {!variables.catalog && !variables.loadError ? (
             <div
               role="status"
@@ -153,8 +181,8 @@ function ContextualVariables({
           ) : null}
           <ul className="flex min-w-0 flex-col gap-3">
             {variables.references.map((reference, index) => {
-              const entry = variables.catalog?.entries.find(
-                (item) => item.name === reference.entryName,
+              const entry = variables.catalog?.entries.find((item) =>
+                sameSource(item.source, reference.source),
               );
               const active = editor?.referenceName === reference.referenceName;
               return (
@@ -171,7 +199,14 @@ function ContextualVariables({
                         </code>
                         {!reference.resolved ? (
                           <Badge variant="outline">
-                            {m.settings_variables_missing()}
+                            {entry?.kind === "secret" && !entry.hasValue
+                              ? m.variables_unset_here()
+                              : m.settings_variables_missing()}
+                          </Badge>
+                        ) : null}
+                        {entry ? (
+                          <Badge variant="outline">
+                            {entry.mode === "git" ? "Git" : m.variables_local()}
                           </Badge>
                         ) : null}
                         {entry ? (
@@ -182,13 +217,13 @@ function ContextualVariables({
                           </span>
                         ) : null}
                       </div>
-                      {reference.entryName !== reference.referenceName ? (
+                      {
                         <p className="text-xs text-muted-foreground">
                           {m.app_variables_source({
-                            name: reference.entryName,
+                            name: `${entry?.source.owner.scope === "library" ? m.variables_library() : (entry?.ownerLabel ?? variables.catalog?.owners.find((o) => ownerKey(o.owner) === ownerKey(reference.source.owner))?.label ?? "")} · ${reference.entryName}`,
                           })}
                         </p>
-                      ) : null}
+                      }
                       {entry?.hasValue &&
                       !(active && editor?.mode === "value") ? (
                         <p className="whitespace-pre-wrap text-sm text-muted-foreground">
@@ -221,6 +256,19 @@ function ContextualVariables({
                           ? m.settings_variables_edit()
                           : m.app_variables_set()}
                       </Button>
+                      {context.spaceId &&
+                      entry?.source.owner.scope === "project" ? (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          disabled={pending || active || variables.loadError}
+                          onClick={() =>
+                            variables.begin(reference, "value", true)
+                          }
+                        >
+                          {m.variables_override()}
+                        </Button>
+                      ) : null}
                       <Button
                         size="sm"
                         variant="ghost"
@@ -228,7 +276,8 @@ function ContextualVariables({
                           pending ||
                           variables.loadError ||
                           active ||
-                          !variables.catalog?.entries.length
+                          (!variables.catalog?.entries.length &&
+                            !reference.explicit)
                         }
                         aria-label={m.settings_variables_select_existing({
                           name: reference.referenceName,
@@ -253,10 +302,17 @@ function ContextualVariables({
                           <AppVariableFields
                             compact
                             draft={editor.draft}
+                            collisionAlternatives={variables.catalog?.entries.filter(
+                              (e) =>
+                                sameSource(e.source, {
+                                  owner: editor.draft.owner,
+                                  name: editor.draft.name,
+                                }),
+                            )}
                             disabled={pending || Boolean(editor.savedEntry)}
                             onChange={variables.updateDraft}
                           />
-                          {(variables.entry?.usedIn.length ?? 0) > 1 ? (
+                          {(variables.entry?.usedIn.length ?? 0) > 0 ? (
                             <p className="text-xs text-muted-foreground wrap-anywhere">
                               {m.app_variables_shared_usage()}{" "}
                               {variables.entry?.usedIn
@@ -291,8 +347,10 @@ function ContextualVariables({
                             </FieldLabel>
                             <Select
                               value={
+                                editor.entryName === "inherit" ||
                                 variables.catalog?.entries.some(
-                                  (item) => item.name === editor.entryName,
+                                  (item) =>
+                                    sourceKey(item.source) === editor.entryName,
                                 )
                                   ? editor.entryName
                                   : ""
@@ -310,15 +368,36 @@ function ContextualVariables({
                               </SelectTrigger>
                               <SelectContent>
                                 <SelectGroup>
-                                  {variables.catalog?.entries.map((item) => (
-                                    <SelectItem
-                                      key={item.name}
-                                      value={item.name}
-                                      className="wrap-anywhere"
-                                    >
-                                      {item.name}
-                                    </SelectItem>
-                                  ))}
+                                  <SelectItem value="inherit">
+                                    {m.variables_inherit()}
+                                  </SelectItem>
+                                  {variables.catalog?.entries
+                                    .filter(
+                                      (item, i, all) =>
+                                        all.findIndex((e) =>
+                                          sameSource(e.source, item.source),
+                                        ) === i,
+                                    )
+                                    .map((item) => (
+                                      <SelectItem
+                                        key={sourceKey(item.source)}
+                                        value={sourceKey(item.source)}
+                                        disabled={item.collision}
+                                        className="wrap-anywhere"
+                                      >
+                                        {item.name} ·{" "}
+                                        {item.source.owner.scope === "library"
+                                          ? m.variables_library()
+                                          : item.ownerLabel}{" "}
+                                        ·{" "}
+                                        {item.mode === "git"
+                                          ? "Git"
+                                          : m.variables_local()}
+                                        {!item.hasValue
+                                          ? ` · ${m.variables_unset_here()}`
+                                          : ""}
+                                      </SelectItem>
+                                    ))}
                                 </SelectGroup>
                               </SelectContent>
                             </Select>
@@ -327,7 +406,19 @@ function ContextualVariables({
                       )}
                       {errorCopy ? (
                         <Alert variant="destructive">
-                          <AlertDescription>{errorCopy}</AlertDescription>
+                          <AlertDescription>
+                            {errorCopy}
+                            {variables.stale || variables.error === "stale" ? (
+                              <Button
+                                type="button"
+                                variant="outline"
+                                disabled={pending}
+                                onClick={() => void variables.reviewLatest()}
+                              >
+                                {m.variables_retry_draft()}
+                              </Button>
+                            ) : null}
+                          </AlertDescription>
                         </Alert>
                       ) : null}
                       <div className="flex flex-wrap justify-end gap-2">
@@ -352,8 +443,10 @@ function ContextualVariables({
                               (!canSaveVariableDraft(editor.draft) ||
                                 Boolean(variables.collision))) ||
                             (editor.mode === "binding" &&
+                              editor.entryName !== "inherit" &&
                               !variables.catalog?.entries.some(
-                                (item) => item.name === editor.entryName,
+                                (item) =>
+                                  sourceKey(item.source) === editor.entryName,
                               ))
                           }
                         >

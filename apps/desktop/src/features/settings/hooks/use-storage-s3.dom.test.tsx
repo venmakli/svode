@@ -6,6 +6,8 @@ import { act, useLayoutEffect } from "react";
 import { JSDOM } from "jsdom";
 import { clearNativeMocks, mockNativeIpc } from "@/platform/native/testing";
 import { emit } from "@/platform/native/events";
+import { variableFixture, catalogFixture } from "../model/testing/variables";
+import type { VariableSource } from "../model/app-variables";
 import type { AppVariableEntry } from "../model";
 import type { UseSpaceStorageSettingsResult } from "./use-space-storage-settings";
 
@@ -66,7 +68,12 @@ if (process.env.SVODE_S3_TEST !== "1") {
           value: "plain",
           usedIn: [],
         },
-      ] as AppVariableEntry[],
+      ].map((e) =>
+        variableFixture(
+          { ...e, kind: e.kind as "secret" | "variable" },
+          { scope: "library" },
+        ),
+      ) as AppVariableEntry[],
       bindings: saved ? { accessKey: "ACCESS", secretKey: "SECRET" } : null,
       calls: [] as { command: string; args: Record<string, unknown> }[],
       failSave: false,
@@ -125,31 +132,37 @@ if (process.env.SVODE_S3_TEST !== "1") {
         }
         if (command === "get_app_variables") {
           if (fixture.failCatalog) throw new Error("Keychain denied");
-          return { entries: structuredClone(fixture.entries) };
+          return catalogFixture(structuredClone(fixture.entries), {
+            scope: "library",
+          });
         }
         if (command === "upsert_app_variable") {
           fixture.calls.push({ command, args });
           await fixture.mutationGate;
           const input = args.input as {
-            name: string;
+            source: VariableSource;
+            identity?: string;
             kind: "secret";
             value?: string;
-            intent: string;
           };
           const existing = fixture.entries.find(
-            (item) => item.name === input.name,
+            (item) => item.name === input.source.name,
           );
-          if (input.intent === "create" && existing)
-            throw new Error("collision");
-          if (input.intent === "update-secret" && existing?.kind !== "secret")
+          if (!input.identity && existing) throw new Error("collision");
+          if (Boolean(input.identity) && existing?.kind !== "secret")
             throw new Error("changed");
           if (!existing)
-            fixture.entries.push({
-              name: input.name,
-              kind: "secret",
-              hasValue: true,
-              usedIn: [],
-            });
+            fixture.entries.push(
+              variableFixture(
+                {
+                  name: input.source.name,
+                  kind: "secret",
+                  hasValue: true,
+                  usedIn: [],
+                },
+                { scope: "library" },
+              ),
+            );
           return;
         }
         if (command === "check_s3_bindings") {
@@ -539,6 +552,11 @@ function deferred() {
 
 function installDomGlobals(dom: JSDOM) {
   const values: Record<string, unknown> = {
+    ResizeObserver: class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    },
     CustomEvent: dom.window.CustomEvent,
     DocumentFragment: dom.window.DocumentFragment,
     HTMLSelectElement: dom.window.HTMLSelectElement,

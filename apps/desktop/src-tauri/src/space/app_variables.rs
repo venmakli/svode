@@ -1,23 +1,37 @@
-use std::collections::{BTreeMap, BTreeSet};
-use std::path::Path;
-
+use crate::{AppError, apps::environment};
 use serde::{Deserialize, Serialize};
+use std::collections::{BTreeMap, BTreeSet};
+use std::path::{Path, PathBuf};
+use svode_core::variables::{self as core, Context, Owner, Service, SourceOwner, SourceReference};
 
-use crate::AppError;
-use crate::apps::environment;
+mod registry;
+pub(crate) use core::{KeyringSecretStore, Kind as AppVariableKind, SecretStore};
 
-use super::settings::{
-    default_app_settings_value, read_app_settings_value, write_app_settings_value,
-};
+pub(crate) fn storage_error(error: core::Error) -> AppError {
+    AppError::Storage(error.to_string())
+}
 
-const KEYCHAIN_SERVICE: &str = svode_core::storage::s3::VARIABLES_SERVICE;
-const SETTINGS_KEY: &str = "variables";
-
-#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum AppVariableKind {
-    Variable,
-    Secret,
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct VariableScope {
+    pub project_path: String,
+    pub space_id: Option<String>,
+}
+impl VariableScope {
+    pub fn context(&self, config: &Path) -> Result<Context, AppError> {
+        Context::new(
+            Path::new(&self.project_path),
+            self.space_id.as_deref(),
+            config,
+        )
+        .map_err(storage_error)
+    }
+    pub fn owner(&self) -> SourceOwner {
+        self.space_id
+            .as_ref()
+            .map(|id| SourceOwner::Space { id: id.clone() })
+            .unwrap_or(SourceOwner::Project)
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -27,343 +41,444 @@ pub(crate) struct AppVariableContextInput {
     pub space_id: Option<String>,
     pub owner_path: String,
 }
-
 #[derive(Debug, Clone)]
 pub(crate) struct AppVariableOwnerContext {
+    pub scope: VariableScope,
     pub owner_key: String,
     pub owner_directory: String,
     pub references: Vec<String>,
 }
-
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct AppVariableUsage {
     pub owner_directory: String,
     pub reference_name: String,
 }
-
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct AppVariableEntry {
-    pub name: String,
-    pub kind: AppVariableKind,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub value: Option<String>,
-    pub has_value: bool,
+    #[serde(flatten)]
+    pub entry: core::Entry,
+    pub source: SourceReference,
+    pub revision: core::Revision,
+    pub owner_label: String,
+    pub collision: bool,
+    pub inherited: bool,
     pub used_in: Vec<AppVariableUsage>,
 }
-
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct AppVariableReference {
     pub reference_name: String,
     pub entry_name: String,
+    pub source: SourceReference,
+    pub explicit: bool,
     pub resolved: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub kind: Option<AppVariableKind>,
+    pub error: Option<String>,
 }
-
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct CatalogOwner {
+    pub owner: SourceOwner,
+    pub label: String,
+    pub revision: Option<core::Revision>,
+    pub error: Option<String>,
+}
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct AppVariablesCatalog {
     pub entries: Vec<AppVariableEntry>,
+    pub owners: Vec<CatalogOwner>,
+    pub default_owner: SourceOwner,
+    pub binding_revision: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub context: Option<Vec<AppVariableReference>>,
 }
-
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct MissingAppVariable {
     pub reference_name: String,
     pub entry_name: String,
 }
-
 pub(crate) struct ResolvedAppEnvironment {
     pub environment: BTreeMap<String, String>,
     pub missing: Vec<MissingAppVariable>,
     pub usage_changed: bool,
 }
 
-#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-struct StoredVariables {
-    #[serde(default)]
-    entries: BTreeMap<String, StoredVariable>,
-    #[serde(default)]
-    apps: BTreeMap<String, StoredAppUsage>,
-    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
-    s3_owners: BTreeSet<std::path::PathBuf>,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
-struct StoredVariable {
-    kind: AppVariableKind,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    value: Option<String>,
-}
-
-#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-struct StoredAppUsage {
-    owner_directory: String,
-    #[serde(default)]
-    references: Vec<String>,
-    #[serde(default)]
-    bindings: BTreeMap<String, String>,
-}
-
-pub(crate) trait SecretStore {
-    fn get(&self, name: &str) -> Result<Option<String>, AppError>;
-    fn set(&self, name: &str, value: &str) -> Result<(), AppError>;
-    fn remove(&self, name: &str) -> Result<(), AppError>;
-}
-
-pub(crate) struct KeyringSecretStore;
-
-impl SecretStore for KeyringSecretStore {
-    fn get(&self, name: &str) -> Result<Option<String>, AppError> {
-        let entry = keyring::Entry::new(KEYCHAIN_SERVICE, name).map_err(|error| {
-            AppError::Storage(format!("Cannot access variable secret: {error}"))
-        })?;
-        match entry.get_password() {
-            Ok(value) => Ok(Some(value)),
-            Err(keyring::Error::NoEntry) => Ok(None),
-            Err(error) => Err(AppError::Storage(format!(
-                "Cannot read variable secret: {error}"
-            ))),
-        }
+pub(crate) fn owner(
+    config: &Path,
+    scope: Option<&VariableScope>,
+    source: &SourceOwner,
+) -> Result<Owner, AppError> {
+    match scope {
+        Some(scope) => Owner::in_context(&scope.context(config)?, source).map_err(storage_error),
+        None if *source == SourceOwner::Library => Owner::library(config).map_err(storage_error),
+        None => Err(storage_error(core::Error::InvalidOwner)),
     }
+}
 
-    fn set(&self, name: &str, value: &str) -> Result<(), AppError> {
-        keyring::Entry::new(KEYCHAIN_SERVICE, name)
-            .and_then(|entry| entry.set_password(value))
-            .map_err(|error| AppError::Storage(format!("Cannot save variable secret: {error}")))
-    }
-
-    fn remove(&self, name: &str) -> Result<(), AppError> {
-        let entry = keyring::Entry::new(KEYCHAIN_SERVICE, name).map_err(|error| {
-            AppError::Storage(format!("Cannot access variable secret: {error}"))
-        })?;
-        match entry.delete_credential() {
-            Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
-            Err(error) => Err(AppError::Storage(format!(
-                "Cannot remove variable secret: {error}"
-            ))),
-        }
+fn owner_label(scope: Option<&VariableScope>, source: &SourceOwner) -> String {
+    match source {
+        SourceOwner::Library => "Svode".into(),
+        SourceOwner::Project => scope.map(|s| s.project_path.clone()).unwrap_or_default(),
+        SourceOwner::Space { id } => scope
+            .and_then(|s| {
+                let root =
+                    core::files::read(&Path::new(&s.project_path).join(".svode/config.json"), true)
+                        .ok()?;
+                let space = root
+                    .get("spaces")?
+                    .as_array()?
+                    .iter()
+                    .find(|s| s.get("id").and_then(|v| v.as_str()) == Some(id))?;
+                space
+                    .get("name")
+                    .or_else(|| space.get("path"))?
+                    .as_str()
+                    .map(str::to_string)
+            })
+            .unwrap_or_else(|| id.clone()),
     }
 }
 
 pub(crate) fn get_catalog(
-    config_dir: &Path,
+    config: &Path,
+    scope: Option<&VariableScope>,
     context: Option<&AppVariableOwnerContext>,
     secrets: &dyn SecretStore,
 ) -> Result<AppVariablesCatalog, AppError> {
-    let (mut root, mut stored) = read(config_dir)?;
-    if context.is_some_and(|context| sync_usage(&mut stored, context)) {
-        write(config_dir, &mut root, &stored)?;
+    let prepared = context
+        .map(|c| registry::prepare_context(config, c, secrets))
+        .transpose()?;
+    let context = prepared.as_ref();
+    let registry = registry::read(config)?;
+    if let Some(scope) = scope {
+        scope.context(config)?;
     }
-    project_catalog(&stored, context, secrets)
-}
-
-pub(crate) fn clear_owner_usage(config_dir: &Path, owner_key: &str) -> Result<bool, AppError> {
-    let (mut root, mut stored) = read(config_dir)?;
-    let changed = stored.apps.remove(owner_key).is_some();
-    if changed {
-        write(config_dir, &mut root, &stored)?;
+    let default_owner = scope
+        .map(VariableScope::owner)
+        .unwrap_or(SourceOwner::Library);
+    let mut sources = vec![default_owner.clone()];
+    if scope.is_some_and(|s| s.space_id.is_some()) {
+        sources.push(SourceOwner::Project);
     }
-    Ok(changed)
-}
-
-#[derive(Debug, Clone, Copy, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub(crate) enum VariableWriteIntent {
-    Create,
-    UpdateSecret,
-}
-
-pub(crate) fn upsert_with_intent(
-    config_dir: &Path,
-    name: &str,
-    kind: AppVariableKind,
-    value: Option<&str>,
-    intent: Option<VariableWriteIntent>,
-    secrets: &dyn SecretStore,
-) -> Result<(), AppError> {
-    let (_, stored) = read(config_dir)?;
-    match intent {
-        Some(VariableWriteIntent::Create) if stored.entries.contains_key(name) => {
-            return Err(AppError::General(format!(
-                "Variable already exists: {name}"
-            )));
-        }
-        Some(VariableWriteIntent::UpdateSecret)
-            if kind != AppVariableKind::Secret
-                || !stored
-                    .entries
-                    .get(name)
-                    .is_some_and(|entry| entry.kind == AppVariableKind::Secret) =>
+    if context.is_some() {
+        sources.push(SourceOwner::Library);
+    }
+    let service = Service::new(secrets);
+    let mut entries = Vec::new();
+    let mut owners = Vec::new();
+    for source in sources {
+        let label = owner_label(scope, &source);
+        match owner(config, scope, &source).and_then(|o| service.catalog(&o).map_err(storage_error))
         {
-            return Err(AppError::General(format!(
-                "Secret changed or was removed: {name}"
-            )));
-        }
-        _ => {}
-    }
-    upsert(config_dir, name, kind, value, secrets)
-}
-
-pub(crate) fn upsert(
-    config_dir: &Path,
-    name: &str,
-    kind: AppVariableKind,
-    value: Option<&str>,
-    secrets: &dyn SecretStore,
-) -> Result<(), AppError> {
-    validate_name(name)?;
-    let (mut root, mut stored) = read(config_dir)?;
-    let previous = stored.entries.get(name).cloned();
-    match kind {
-        AppVariableKind::Variable => {
-            let value = value
-                .ok_or_else(|| AppError::General("A Variable value is required".to_string()))?;
-            stored.entries.insert(
-                name.to_string(),
-                StoredVariable {
-                    kind,
-                    value: Some(value.to_string()),
-                },
-            );
-            write(config_dir, &mut root, &stored)?;
-            if matches!(
-                previous,
-                Some(StoredVariable {
-                    kind: AppVariableKind::Secret,
-                    ..
-                })
-            ) {
-                secrets.remove(name)?;
-            }
-        }
-        AppVariableKind::Secret => {
-            let already_has_secret = secrets.get(name)?.is_some();
-            let secret = value.filter(|value| !value.is_empty());
-            if secret.is_none() && !already_has_secret {
-                return Err(AppError::General("A Secret value is required".to_string()));
-            }
-            if let Some(secret) = secret {
-                secrets.set(name, secret)?;
-            }
-            stored
-                .entries
-                .insert(name.to_string(), StoredVariable { kind, value: None });
-            if let Err(error) = write(config_dir, &mut root, &stored) {
-                if !already_has_secret {
-                    let _ = secrets.remove(name);
+            Ok(catalog) => {
+                owners.push(CatalogOwner {
+                    owner: source.clone(),
+                    label: label.clone(),
+                    revision: Some(catalog.revision.clone()),
+                    error: None,
+                });
+                for entry in catalog.entries {
+                    let reference = SourceReference {
+                        owner: source.clone(),
+                        name: entry.name.clone(),
+                    };
+                    let mut used_in = Vec::new();
+                    for usage in registry.usage.values() {
+                        if source != SourceOwner::Library
+                            && scope.is_none_or(|s| s.project_path != usage.scope.project_path)
+                        {
+                            continue;
+                        }
+                        for (name, selected) in &usage.sources {
+                            if selected == &reference {
+                                used_in.push(AppVariableUsage {
+                                    owner_directory: usage.owner_directory.clone(),
+                                    reference_name: name.clone(),
+                                });
+                            }
+                        }
+                    }
+                    // Deferred legacy mappings remain visible even while their projects are unavailable.
+                    if source == SourceOwner::Library {
+                        for (app, bindings) in &registry.bindings.owners {
+                            for (name, selected) in bindings {
+                                if selected == &reference
+                                    && !used_in.iter().any(|u| {
+                                        u.owner_directory
+                                            == registry
+                                                .usage
+                                                .get(app)
+                                                .map(|u| u.owner_directory.as_str())
+                                                .unwrap_or(app)
+                                            && u.reference_name == *name
+                                    })
+                                {
+                                    used_in.push(AppVariableUsage {
+                                        owner_directory: registry
+                                            .usage
+                                            .get(app)
+                                            .map(|u| u.owner_directory.clone())
+                                            .unwrap_or_else(|| app.clone()),
+                                        reference_name: name.clone(),
+                                    });
+                                }
+                            }
+                        }
+                        used_in.extend(s3_usage(config, &entry.name)?);
+                    }
+                    entries.push(AppVariableEntry {
+                        collision: catalog.collisions.contains(&entry.name),
+                        entry,
+                        source: reference,
+                        revision: catalog.revision.clone(),
+                        owner_label: label.clone(),
+                        inherited: source != default_owner,
+                        used_in,
+                    });
                 }
-                return Err(error);
             }
+            Err(error) => owners.push(CatalogOwner {
+                owner: source,
+                label,
+                revision: None,
+                error: Some(error.to_string()),
+            }),
         }
     }
-    Ok(())
-}
-
-pub(crate) fn remove(
-    config_dir: &Path,
-    name: &str,
-    secrets: &dyn SecretStore,
-) -> Result<(), AppError> {
-    validate_name(name)?;
-    let (mut root, mut stored) = read(config_dir)?;
-    let removed = stored.entries.remove(name);
-    write(config_dir, &mut root, &stored)?;
-    if matches!(
-        removed,
-        Some(StoredVariable {
-            kind: AppVariableKind::Secret,
-            ..
-        })
-    ) {
-        secrets.remove(name)?;
+    let mut catalog = AppVariablesCatalog {
+        entries,
+        owners,
+        default_owner,
+        binding_revision: registry::revision(&registry),
+        context: None,
+    };
+    if let Some(context) = context {
+        let bindings = registry
+            .bindings
+            .owners
+            .get(&context.owner_key)
+            .cloned()
+            .unwrap_or_default();
+        let hierarchy = context.scope.context(config)?;
+        let references: Vec<_> = context
+            .references
+            .iter()
+            .map(|name| {
+                let explicit = bindings.get(name);
+                let selected = explicit
+                    .cloned()
+                    .or_else(|| {
+                        catalog
+                            .owners
+                            .iter()
+                            .find(|o| o.owner == context.scope.owner() && o.error.is_some())
+                            .map(|o| SourceReference {
+                                owner: o.owner.clone(),
+                                name: name.clone(),
+                            })
+                    })
+                    .or_else(|| {
+                        catalog
+                            .entries
+                            .iter()
+                            .find(|e| {
+                                e.entry.name == *name && e.source.owner != SourceOwner::Library
+                            })
+                            .map(|e| e.source.clone())
+                    })
+                    .unwrap_or(SourceReference {
+                        owner: context.scope.owner(),
+                        name: name.clone(),
+                    });
+                let entry = catalog.entries.iter().find(|e| e.source == selected);
+                let result = service.resolve(&hierarchy, std::slice::from_ref(name), &bindings);
+                AppVariableReference {
+                    reference_name: name.clone(),
+                    entry_name: selected.name.clone(),
+                    source: selected,
+                    explicit: explicit.is_some(),
+                    resolved: result.is_ok(),
+                    kind: entry.map(|e| e.entry.kind),
+                    error: result.err().map(|e| e.to_string()),
+                }
+            })
+            .collect();
+        let changed = registry::sync(
+            config,
+            context,
+            references
+                .iter()
+                .map(|r| (r.reference_name.clone(), r.source.clone()))
+                .collect(),
+        )?;
+        if changed
+            && catalog
+                .owners
+                .iter()
+                .any(|o| o.owner == SourceOwner::Library && o.error.is_none())
+        {
+            let revision = service
+                .catalog(&Owner::library(config).map_err(storage_error)?)
+                .map_err(storage_error)?
+                .revision;
+            for entry in &mut catalog.entries {
+                if entry.source.owner == SourceOwner::Library {
+                    entry.revision = revision.clone();
+                }
+            }
+            for owner in &mut catalog.owners {
+                if owner.owner == SourceOwner::Library {
+                    owner.revision = Some(revision.clone());
+                }
+            }
+        }
+        // Include this read's current references before presenting shared-source impact.
+        // The persisted usage snapshot may describe an older manifest or directory.
+        for entry in &mut catalog.entries {
+            entry.used_in.retain(|usage| {
+                usage.owner_directory != context.owner_directory
+                    && usage.owner_directory != context.owner_key
+                    && registry
+                        .usage
+                        .get(&context.owner_key)
+                        .is_none_or(|previous| usage.owner_directory != previous.owner_directory)
+            });
+            entry.used_in.extend(
+                references
+                    .iter()
+                    .filter(|r| r.source == entry.source)
+                    .map(|r| AppVariableUsage {
+                        owner_directory: context.owner_directory.clone(),
+                        reference_name: r.reference_name.clone(),
+                    }),
+            );
+        }
+        catalog.context = Some(references);
+        catalog.binding_revision = registry::revision(&registry::read(config)?);
     }
-    Ok(())
+    Ok(catalog)
 }
 
 pub(crate) fn bind(
-    config_dir: &Path,
+    config: &Path,
     context: &AppVariableOwnerContext,
-    reference_name: &str,
-    entry_name: &str,
+    name: &str,
+    source: Option<SourceReference>,
+    revision: &str,
+    secrets: &dyn SecretStore,
 ) -> Result<(), AppError> {
-    validate_name(reference_name)?;
-    validate_name(entry_name)?;
-    let (mut root, mut stored) = read(config_dir)?;
-    if !context.references.iter().any(|name| name == reference_name) {
-        return Err(AppError::General(format!(
-            "App does not declare variable reference {reference_name}"
-        )));
+    let context = &registry::prepare_context(config, context, secrets)?;
+    if !context.references.iter().any(|r| r == name) {
+        return Err(storage_error(core::Error::InvalidName));
     }
-    if !stored.entries.contains_key(entry_name) {
-        return Err(AppError::General(format!(
-            "Variable entry does not exist: {entry_name}"
-        )));
+    if let Some(source) = &source {
+        let catalog = Service::new(secrets)
+            .catalog(&owner(config, Some(&context.scope), &source.owner)?)
+            .map_err(storage_error)?;
+        if !catalog.entries.iter().any(|e| e.name == source.name)
+            || catalog.collisions.contains(&source.name)
+        {
+            return Err(storage_error(core::Error::Missing));
+        }
     }
-    sync_usage(&mut stored, context);
-    let usage = stored
-        .apps
-        .get_mut(&context.owner_key)
-        .expect("usage synchronized");
-    if reference_name == entry_name {
-        usage.bindings.remove(reference_name);
-    } else {
-        usage
+    registry::update(config, |registry| {
+        if registry::revision(registry) != revision {
+            return Err(storage_error(core::Error::StaleRevision));
+        }
+        let bindings = registry
             .bindings
-            .insert(reference_name.to_string(), entry_name.to_string());
-    }
-    write(config_dir, &mut root, &stored)
+            .owners
+            .entry(context.owner_key.clone())
+            .or_default();
+        match source {
+            Some(source) => {
+                bindings.insert(name.into(), source);
+            }
+            None => {
+                bindings.remove(name);
+            }
+        }
+        Ok(())
+    })?;
+    Ok(())
+}
+
+pub(crate) fn clear_owner_usage(config: &Path, key: &str) -> Result<bool, AppError> {
+    let mut changed = false;
+    registry::update(config, |registry| {
+        let keys: Vec<_> = registry
+            .usage
+            .iter()
+            .filter(|(_, u)| u.owner_directory == key)
+            .map(|(key, _)| key.clone())
+            .collect();
+        changed = registry.bindings.owners.remove(key).is_some();
+        for key in keys {
+            registry.usage.remove(&key);
+            registry.bindings.owners.remove(&key);
+            changed = true;
+        }
+        Ok(())
+    })?;
+    Ok(changed)
 }
 
 pub(crate) fn resolve_environment(
-    config_dir: &Path,
+    config: &Path,
     context: &AppVariableOwnerContext,
     declaration: &BTreeMap<String, String>,
     secrets: &dyn SecretStore,
 ) -> Result<ResolvedAppEnvironment, AppError> {
-    let (mut root, mut stored) = read(config_dir)?;
-    let usage_changed = sync_usage(&mut stored, context);
-    if usage_changed {
-        write(config_dir, &mut root, &stored)?;
-    }
-    let usage = stored.apps.get(&context.owner_key);
-    let mut values = BTreeMap::new();
+    let context = &registry::prepare_context(config, context, secrets)?;
+    let registry = registry::read(config)?;
+    let bindings = registry
+        .bindings
+        .owners
+        .get(&context.owner_key)
+        .cloned()
+        .unwrap_or_default();
+    let hierarchy = context.scope.context(config)?;
+    let service = Service::new(secrets);
     let mut missing = Vec::new();
-    for reference_name in &context.references {
-        let entry_name = usage
-            .and_then(|usage| usage.bindings.get(reference_name))
-            .cloned()
-            .unwrap_or_else(|| reference_name.clone());
-        let value = match stored.entries.get(&entry_name) {
-            Some(StoredVariable {
-                kind: AppVariableKind::Variable,
-                value,
-            }) => value.clone(),
-            Some(StoredVariable {
-                kind: AppVariableKind::Secret,
-                ..
-            }) => secrets.get(&entry_name)?,
-            None => None,
-        };
-        if let Some(value) = value {
-            values.insert(reference_name.clone(), value);
-        } else {
-            missing.push(MissingAppVariable {
-                reference_name: reference_name.clone(),
-                entry_name,
-            });
+    let mut sources = BTreeMap::new();
+    let values = match service.resolve(&hierarchy, &context.references, &bindings) {
+        Ok(values) => values
+            .into_iter()
+            .map(|(name, resolved)| {
+                sources.insert(name.clone(), resolved.source);
+                (name, resolved.value)
+            })
+            .collect(),
+        Err(_) => {
+            for name in &context.references {
+                match service.resolve(&hierarchy, std::slice::from_ref(name), &bindings) {
+                    Ok(value) => {
+                        sources.insert(name.clone(), value[name].source.clone());
+                    }
+                    Err(_) => missing.push(MissingAppVariable {
+                        reference_name: name.clone(),
+                        entry_name: bindings
+                            .get(name)
+                            .map(|s| s.name.clone())
+                            .unwrap_or_else(|| name.clone()),
+                    }),
+                }
+            }
+            // A concurrent external edit cannot turn the failed snapshot into a partial success.
+            if missing.is_empty() {
+                return Err(storage_error(core::Error::StaleRevision));
+            }
+            BTreeMap::new()
         }
-    }
+    };
+    let usage_changed = registry::sync(config, context, sources)?;
     let environment = if missing.is_empty() {
         environment::resolve(declaration, &values)
-            .expect("all validated environment references were resolved")
+            .map_err(|_| storage_error(core::Error::Missing))?
     } else {
         BTreeMap::new()
     };
@@ -374,346 +489,64 @@ pub(crate) fn resolve_environment(
     })
 }
 
+// S3 remains an explicit library-only consumer until its scoped cutover.
 pub(crate) fn resolve_s3(
-    config_dir: &Path,
+    config: &Path,
     bindings: &svode_core::storage::s3::SecretBindings,
     secrets: &dyn SecretStore,
 ) -> Result<svode_core::storage::s3::Credentials, AppError> {
-    let (root, _) = read(config_dir)?;
+    core::files::check_pending(config).map_err(storage_error)?;
+    let root = core::files::read(&config.join("settings.json"), false).map_err(storage_error)?;
     svode_core::storage::s3::resolve_pair(bindings, &root, |name| {
         secrets
             .get(name)
-            .map_err(|_| "Keychain access failed".to_string())
+            .map_err(|_| "Keychain access failed".into())
     })
     .map_err(AppError::Storage)
 }
-
-pub(crate) fn register_s3_owner(config_dir: &Path, owner: &Path) -> Result<(), AppError> {
-    let (mut root, mut stored) = read(config_dir)?;
-    if stored.s3_owners.insert(owner.to_path_buf()) {
-        write(config_dir, &mut root, &stored)?;
-    }
-    Ok(())
-}
-
-fn project_catalog(
-    stored: &StoredVariables,
-    context: Option<&AppVariableOwnerContext>,
-    secrets: &dyn SecretStore,
-) -> Result<AppVariablesCatalog, AppError> {
-    let mut used_in: BTreeMap<&str, Vec<AppVariableUsage>> = BTreeMap::new();
-    for usage in stored.apps.values() {
-        for reference_name in &usage.references {
-            let entry_name = usage
-                .bindings
-                .get(reference_name)
-                .map(String::as_str)
-                .unwrap_or(reference_name);
-            used_in
-                .entry(entry_name)
-                .or_default()
-                .push(AppVariableUsage {
-                    owner_directory: usage.owner_directory.clone(),
-                    reference_name: reference_name.clone(),
-                });
-        }
-    }
-    let s3_configs = stored
-        .s3_owners
-        .iter()
-        .filter_map(|owner| {
-            svode_core::storage::s3::AgentConfig::read(owner)
-                .ok()
-                .map(|config| (owner, config))
-        })
-        .collect::<Vec<_>>();
-    for (owner, config) in &s3_configs {
-        for (role, entry_name) in config.bindings.roles() {
-            used_in
-                .entry(entry_name)
-                .or_default()
-                .push(AppVariableUsage {
-                    owner_directory: crate::system_path::user_facing_path(owner),
-                    reference_name: format!("S3 {role}"),
-                });
-        }
-    }
-    let mut entries = Vec::new();
-    for (name, entry) in &stored.entries {
-        let (value, has_value) = match entry.kind {
-            AppVariableKind::Variable => (entry.value.clone(), entry.value.is_some()),
-            AppVariableKind::Secret => (None, secrets.get(name)?.is_some()),
-        };
-        entries.push(AppVariableEntry {
-            name: name.clone(),
-            kind: entry.kind,
-            value,
-            has_value,
-            used_in: used_in.remove(name.as_str()).unwrap_or_default(),
-        });
-    }
-    let context = context.map(|context| {
-        let usage = stored.apps.get(&context.owner_key);
-        context
-            .references
-            .iter()
-            .map(|reference_name| {
-                let entry_name = usage
-                    .and_then(|usage| usage.bindings.get(reference_name))
-                    .cloned()
-                    .unwrap_or_else(|| reference_name.clone());
-                let entry = stored.entries.get(&entry_name);
-                let resolved = match entry {
-                    Some(StoredVariable {
-                        kind: AppVariableKind::Variable,
-                        value,
-                    }) => value.is_some(),
-                    Some(StoredVariable {
-                        kind: AppVariableKind::Secret,
-                        ..
-                    }) => secrets.get(&entry_name).ok().flatten().is_some(),
-                    None => false,
-                };
-                AppVariableReference {
-                    reference_name: reference_name.clone(),
-                    entry_name,
-                    resolved,
-                    kind: entry.map(|entry| entry.kind),
-                }
-            })
-            .collect()
-    });
-    Ok(AppVariablesCatalog { entries, context })
-}
-
-fn sync_usage(stored: &mut StoredVariables, context: &AppVariableOwnerContext) -> bool {
-    let references = context
-        .references
-        .iter()
-        .cloned()
-        .collect::<BTreeSet<_>>()
-        .into_iter()
-        .collect::<Vec<_>>();
-    if references.is_empty() {
-        return stored.apps.remove(&context.owner_key).is_some();
-    }
-    let usage = stored.apps.entry(context.owner_key.clone()).or_default();
-    let previous = usage.clone();
-    usage.owner_directory.clone_from(&context.owner_directory);
-    usage.references = references;
-    usage
-        .bindings
-        .retain(|reference, _| usage.references.contains(reference));
-    *usage != previous
-}
-
-fn validate_name(name: &str) -> Result<(), AppError> {
-    if environment::is_variable_name(name) {
-        Ok(())
-    } else {
-        Err(AppError::General(
-            "Variable names must match [A-Za-z_][A-Za-z0-9_]*".to_string(),
-        ))
-    }
-}
-
-fn read(config_dir: &Path) -> Result<(serde_json::Value, StoredVariables), AppError> {
-    let root = read_app_settings_value(config_dir)?
-        .map(Ok)
-        .unwrap_or_else(default_app_settings_value)?;
-    let stored = root
-        .get(SETTINGS_KEY)
+pub(crate) fn register_s3_owner(config: &Path, owner: &Path) -> Result<(), AppError> {
+    let _guard = core::files::lock(config).map_err(storage_error)?;
+    core::files::check_pending(config).map_err(storage_error)?;
+    let path = config.join("settings.json");
+    let mut root = core::files::read(&path, false).map_err(storage_error)?;
+    let mut owners: BTreeSet<PathBuf> = root
+        .pointer("/variables/s3Owners")
         .cloned()
         .map(serde_json::from_value)
         .transpose()?
         .unwrap_or_default();
-    Ok((root, stored))
+    if owners.insert(owner.to_path_buf()) {
+        if root.get("variables").is_none() {
+            root["variables"] = serde_json::json!({});
+        }
+        root["variables"]["s3Owners"] = serde_json::to_value(owners)?;
+        core::files::atomic_write(&path, &root).map_err(storage_error)?;
+    }
+    Ok(())
 }
-
-fn write(
-    config_dir: &Path,
-    root: &mut serde_json::Value,
-    stored: &StoredVariables,
-) -> Result<(), AppError> {
-    let root = root
-        .as_object_mut()
-        .ok_or_else(|| AppError::General("app settings root must be an object".to_string()))?;
-    root.insert(SETTINGS_KEY.to_string(), serde_json::to_value(stored)?);
-    write_app_settings_value(config_dir, &serde_json::Value::Object(root.clone()))
+fn s3_usage(config: &Path, name: &str) -> Result<Vec<AppVariableUsage>, AppError> {
+    let root = core::files::read(&config.join("settings.json"), false).map_err(storage_error)?;
+    let owners: BTreeSet<PathBuf> = root
+        .pointer("/variables/s3Owners")
+        .cloned()
+        .map(serde_json::from_value)
+        .transpose()?
+        .unwrap_or_default();
+    let mut usage = Vec::new();
+    for owner in owners {
+        if let Ok(config) = svode_core::storage::s3::AgentConfig::read(&owner) {
+            for (role, entry) in config.bindings.roles() {
+                if entry == name {
+                    usage.push(AppVariableUsage {
+                        owner_directory: crate::system_path::user_facing_path(&owner),
+                        reference_name: format!("S3 {role}"),
+                    });
+                }
+            }
+        }
+    }
+    Ok(usage)
 }
 
 #[cfg(test)]
-mod tests {
-    use std::sync::Mutex;
-
-    use tempfile::TempDir;
-
-    use super::*;
-
-    #[derive(Default)]
-    struct MemorySecrets(Mutex<BTreeMap<String, String>>);
-
-    impl SecretStore for MemorySecrets {
-        fn get(&self, name: &str) -> Result<Option<String>, AppError> {
-            Ok(self.0.lock().unwrap().get(name).cloned())
-        }
-
-        fn set(&self, name: &str, value: &str) -> Result<(), AppError> {
-            self.0
-                .lock()
-                .unwrap()
-                .insert(name.to_string(), value.to_string());
-            Ok(())
-        }
-
-        fn remove(&self, name: &str) -> Result<(), AppError> {
-            self.0.lock().unwrap().remove(name);
-            Ok(())
-        }
-    }
-
-    fn context(references: &[&str]) -> AppVariableOwnerContext {
-        AppVariableOwnerContext {
-            owner_key: "/project/admin".to_string(),
-            owner_directory: "/project/admin".to_string(),
-            references: references.iter().map(|value| value.to_string()).collect(),
-        }
-    }
-
-    #[test]
-    fn explicit_secret_writes_reject_collision_and_changed_kind() {
-        let directory = TempDir::new().unwrap();
-        let dir = directory.path();
-        let secrets = MemorySecrets::default();
-        upsert_with_intent(
-            dir,
-            "KEY",
-            AppVariableKind::Secret,
-            Some("original"),
-            Some(VariableWriteIntent::Create),
-            &secrets,
-        )
-        .unwrap();
-        assert!(
-            upsert_with_intent(
-                dir,
-                "KEY",
-                AppVariableKind::Secret,
-                Some("replacement"),
-                Some(VariableWriteIntent::Create),
-                &secrets
-            )
-            .is_err()
-        );
-        assert_eq!(secrets.get("KEY").unwrap().as_deref(), Some("original"));
-        upsert_with_intent(
-            dir,
-            "KEY",
-            AppVariableKind::Secret,
-            None,
-            Some(VariableWriteIntent::UpdateSecret),
-            &secrets,
-        )
-        .unwrap();
-        assert_eq!(secrets.get("KEY").unwrap().as_deref(), Some("original"));
-        upsert(
-            dir,
-            "KEY",
-            AppVariableKind::Variable,
-            Some("plain"),
-            &secrets,
-        )
-        .unwrap();
-        assert!(
-            upsert_with_intent(
-                dir,
-                "KEY",
-                AppVariableKind::Secret,
-                Some("replacement"),
-                Some(VariableWriteIntent::UpdateSecret),
-                &secrets
-            )
-            .is_err()
-        );
-        assert_eq!(
-            get_catalog(dir, None, &secrets).unwrap().entries[0].kind,
-            AppVariableKind::Variable
-        );
-        remove(dir, "KEY", &secrets).unwrap();
-        assert!(
-            upsert_with_intent(
-                dir,
-                "KEY",
-                AppVariableKind::Secret,
-                Some("replacement"),
-                Some(VariableWriteIntent::UpdateSecret),
-                &secrets
-            )
-            .is_err()
-        );
-    }
-
-    #[test]
-    fn stores_plain_values_but_never_serializes_secret_values() {
-        let directory = TempDir::new().unwrap();
-        let secrets = MemorySecrets::default();
-        upsert(
-            directory.path(),
-            "HOST",
-            AppVariableKind::Variable,
-            Some("localhost"),
-            &secrets,
-        )
-        .unwrap();
-        upsert(
-            directory.path(),
-            "TOKEN",
-            AppVariableKind::Secret,
-            Some("top-secret"),
-            &secrets,
-        )
-        .unwrap();
-
-        let source = std::fs::read_to_string(directory.path().join("settings.json")).unwrap();
-        assert!(source.contains("localhost"));
-        assert!(!source.contains("top-secret"));
-        let catalog = get_catalog(directory.path(), None, &secrets).unwrap();
-        assert_eq!(catalog.entries[1].value, None);
-        assert!(catalog.entries[1].has_value);
-    }
-
-    #[test]
-    fn resolves_bindings_tracks_usage_and_breaks_after_removal() {
-        let directory = TempDir::new().unwrap();
-        let secrets = MemorySecrets::default();
-        upsert(
-            directory.path(),
-            "SHARED_TOKEN",
-            AppVariableKind::Secret,
-            Some("secret"),
-            &secrets,
-        )
-        .unwrap();
-        let context = context(&["TOKEN"]);
-        bind(directory.path(), &context, "TOKEN", "SHARED_TOKEN").unwrap();
-        let declaration = BTreeMap::from([("TOKEN".to_string(), "Bearer ${TOKEN}".to_string())]);
-
-        let resolved =
-            resolve_environment(directory.path(), &context, &declaration, &secrets).unwrap();
-        assert_eq!(resolved.environment["TOKEN"], "Bearer secret");
-        assert!(
-            get_catalog(directory.path(), Some(&context), &secrets)
-                .unwrap()
-                .entries[0]
-                .used_in
-                .iter()
-                .any(|usage| usage.reference_name == "TOKEN")
-        );
-
-        remove(directory.path(), "SHARED_TOKEN", &secrets).unwrap();
-        let broken =
-            resolve_environment(directory.path(), &context, &declaration, &secrets).unwrap();
-        assert_eq!(broken.missing[0].entry_name, "SHARED_TOKEN");
-        assert!(broken.environment.is_empty());
-    }
-}
+mod tests;

@@ -107,6 +107,12 @@ impl Owner {
     pub fn in_context(context: &Context, source: &SourceOwner) -> Result<Self> {
         context.owner(source)
     }
+    pub fn scope_path(&self) -> Result<&Path> {
+        if self.library {
+            return Err(Error::InvalidOwner);
+        }
+        self.directory.parent().ok_or(Error::InvalidOwner)
+    }
     fn portable_path(&self) -> PathBuf {
         self.directory.join(if self.library {
             "settings.json"
@@ -317,6 +323,21 @@ impl<'a> Service<'a> {
             #[cfg(test)]
             interrupt: std::cell::Cell::new(0),
         }
+    }
+
+    /// Materializes the local copy identity before attaching device-local consumers.
+    pub fn local_identity(&self, owner: &Owner) -> Result<String> {
+        if owner.library {
+            return Err(Error::InvalidOwner);
+        }
+        let _guard = files::lock(&owner.directory)?;
+        let mut snapshot = Snapshot::read(owner)?;
+        if snapshot.local.get("variables").is_none() {
+            snapshot.local["variables"] =
+                serde_json::to_value(&snapshot.device).map_err(|_| Error::InvalidConfig)?;
+            files::atomic_write(&owner.local_path(), &snapshot.local)?;
+        }
+        Ok(snapshot.device.copy_id)
     }
 
     pub fn catalog(&self, owner: &Owner) -> Result<Catalog> {
