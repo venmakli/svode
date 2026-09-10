@@ -45,20 +45,27 @@ export function useSpaceStorageLfs({
     null,
   );
   const lfsRemoteDiagnosticInFlightRef = useRef(false);
+  const ownerKey = JSON.stringify([open, projectPath, currentSpaceId]);
+  const ownerKeyRef = useRef(ownerKey);
+  const stateReadRef = useRef(0);
+  ownerKeyRef.current = ownerKey;
 
   const loadLfsState = useCallback(async () => {
     if (!projectPath) return;
+    const request = ++stateReadRef.current;
     try {
       const state = await getLfsState({
         projectPath,
         spaceId: currentSpaceId,
       });
-      setLfsState(state);
+      if (ownerKeyRef.current === ownerKey && stateReadRef.current === request)
+        setLfsState(state);
     } catch (err) {
       console.warn("get_lfs_state failed:", err);
-      setLfsState("n/a");
+      if (ownerKeyRef.current === ownerKey && stateReadRef.current === request)
+        setLfsState("n/a");
     }
-  }, [projectPath, currentSpaceId]);
+  }, [projectPath, currentSpaceId, ownerKey]);
 
   const loadLfsAvailability = useCallback(async () => {
     try {

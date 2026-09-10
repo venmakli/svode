@@ -20,7 +20,9 @@ import {
   FieldLegend,
   FieldSet,
 } from "@/components/ui/field";
-import { Input } from "@/components/ui/input";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Skeleton } from "@/components/ui/skeleton";
+import { StorageS3Fields } from "./storage-s3-fields";
 import {
   InputGroup,
   InputGroupAddon,
@@ -41,17 +43,19 @@ interface StorageSettingsSectionProps {
   gitType: SpaceGitType | null;
   activeRootName: string | null;
   settings: UseSpaceStorageSettingsResult;
+  onOpenRoot: () => void;
 }
 
 export function StorageSettingsSection({
   gitType,
   activeRootName,
   settings,
+  onOpenRoot,
 }: StorageSettingsSectionProps) {
   const isRepoSpace =
     !settings.isRoot && (gitType === "independent" || gitType === "submodule");
 
-  if (gitType === "inline") {
+  if (settings.inheritedFromProject || gitType === "inline") {
     return (
       <div className="space-y-3 max-w-md">
         <div>
@@ -67,10 +71,33 @@ export function StorageSettingsSection({
           <p className="text-xs text-muted-foreground">
             {m.storage_inherited_hint()}
           </p>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={onOpenRoot}
+          >
+            {m.storage_open_project()}
+          </Button>
         </div>
       </div>
     );
   }
+
+  if (settings.storageConfigError) {
+    return (
+      <Alert variant="destructive">
+        <AlertDescription>
+          {m.storage_config_error()}
+          <Button variant="outline" onClick={settings.retryStorageConfig}>
+            {m.storage_lfs_retry()}
+          </Button>
+        </AlertDescription>
+      </Alert>
+    );
+  }
+  if (!settings.storageConfigLoaded)
+    return <Skeleton className="h-32 w-full" />;
 
   const storageOptions: {
     value: AssetsStrategy;
@@ -151,6 +178,8 @@ export function StorageSettingsSection({
             option.value !== settings.savedAssetsStrategy;
           const disabled =
             settings.applyingStrategy ||
+            settings.s3.pending ||
+            !!settings.s3.editor ||
             settings.binaryRoutingStatus === "unsupported" ||
             migrationDisabled ||
             (option.needsLfs && !settings.lfsAvailable);
@@ -243,137 +272,7 @@ export function StorageSettingsSection({
           </div>
         )}
       {settings.assetsStrategy === "lfs-s3" && (
-        <div className="space-y-3 rounded-md border p-3">
-          <div className="space-y-1">
-            <Label htmlFor="s3-endpoint" className="text-xs">
-              {m.storage_s3_endpoint()}
-            </Label>
-            <Input
-              id="s3-endpoint"
-              value={settings.s3Endpoint}
-              onChange={(event) => settings.setS3Endpoint(event.target.value)}
-              placeholder="https://s3.amazonaws.com"
-              className="h-8 text-sm"
-            />
-          </div>
-          <div className="grid grid-cols-2 gap-2">
-            <div className="space-y-1">
-              <Label htmlFor="s3-bucket" className="text-xs">
-                {m.storage_s3_bucket()}
-              </Label>
-              <Input
-                id="s3-bucket"
-                value={settings.s3Bucket}
-                onChange={(event) => settings.setS3Bucket(event.target.value)}
-                placeholder="my-assets"
-                className="h-8 text-sm"
-              />
-            </div>
-            <div className="space-y-1">
-              <Label htmlFor="s3-region" className="text-xs">
-                {m.storage_s3_region()}
-              </Label>
-              <Input
-                id="s3-region"
-                value={settings.s3Region}
-                onChange={(event) => settings.setS3Region(event.target.value)}
-                placeholder="us-east-1"
-                className="h-8 text-sm"
-              />
-            </div>
-          </div>
-          <div className="space-y-1">
-            <Label htmlFor="s3-prefix" className="text-xs">
-              {m.storage_s3_prefix()}
-            </Label>
-            <Input
-              id="s3-prefix"
-              value={settings.s3Prefix}
-              onChange={(event) => settings.setS3Prefix(event.target.value)}
-              placeholder="bigquest/root"
-              className="h-8 text-sm font-mono"
-              autoComplete="off"
-              spellCheck={false}
-            />
-            <p className="text-xs text-muted-foreground">
-              {m.storage_s3_prefix_hint()}
-            </p>
-          </div>
-          <div className="space-y-1">
-            <Label htmlFor="s3-access" className="text-xs">
-              {m.storage_s3_access_key()}
-            </Label>
-            <Input
-              id="s3-access"
-              value={settings.s3AccessKey}
-              onChange={(event) => settings.setS3AccessKey(event.target.value)}
-              placeholder={
-                settings.hasSavedS3Credentials ? m.storage_s3_creds_saved() : ""
-              }
-              className="h-8 text-sm font-mono"
-              autoComplete="off"
-              spellCheck={false}
-            />
-          </div>
-          <div className="space-y-1">
-            <Label htmlFor="s3-secret" className="text-xs">
-              {m.storage_s3_secret_key()}
-            </Label>
-            <Input
-              id="s3-secret"
-              type="password"
-              value={settings.s3SecretKey}
-              onChange={(event) => settings.setS3SecretKey(event.target.value)}
-              placeholder={
-                settings.hasSavedS3Credentials ? m.storage_s3_creds_saved() : ""
-              }
-              className="h-8 text-sm font-mono"
-              autoComplete="off"
-              spellCheck={false}
-            />
-          </div>
-          <div className="flex items-center gap-2">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => void settings.testS3()}
-              disabled={!settings.canTestS3}
-            >
-              {settings.s3TestState === "testing" && (
-                <Loader2 className="mr-1 size-3 animate-spin" />
-              )}
-              {m.storage_s3_check()}
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              onClick={() => void settings.saveS3()}
-              disabled={!canSaveVisibleS3}
-            >
-              {settings.applyingStrategy &&
-                settings.strategyInFlight === "lfs-s3" && (
-                  <Loader2 className="mr-1 size-3 animate-spin" />
-                )}
-              {m.storage_s3_save()}
-            </Button>
-            {settings.s3TestState === "ok" && (
-              <span className="text-xs text-green-600">
-                {m.storage_s3_test_ok()}
-              </span>
-            )}
-            {settings.s3TestState === "fail" && (
-              <span className="text-xs text-destructive">
-                {settings.s3TestError ?? m.storage_s3_test_failed()}
-              </span>
-            )}
-          </div>
-          {settings.hasSavedS3Credentials && (
-            <p className="text-xs text-muted-foreground">
-              {m.storage_s3_creds_hint()}
-            </p>
-          )}
-        </div>
+        <StorageS3Fields settings={settings} canSave={canSaveVisibleS3} />
       )}
 
       {lfsStatePanelStrategy && (

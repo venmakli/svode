@@ -37,6 +37,7 @@ export function upsertAppVariable(input: {
   name: string;
   kind: AppVariableKindDto;
   value?: string;
+  intent?: "create" | "update-secret";
 }): Promise<void> {
   return invokeCommand("upsert_app_variable", { input });
 }

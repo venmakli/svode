@@ -21,6 +21,7 @@ pub(crate) struct UpsertAppVariableInput {
     name: String,
     kind: AppVariableKind,
     value: Option<String>,
+    intent: Option<app_variables::VariableWriteIntent>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -53,11 +54,12 @@ pub(crate) async fn upsert_app_variable(
 ) -> Result<(), AppError> {
     let config_dir = config_dir(&app)?;
     run_locked(&state, move || {
-        app_variables::upsert(
+        app_variables::upsert_with_intent(
             &config_dir,
             &input.name,
             input.kind,
             input.value.as_deref(),
+            input.intent,
             &KeyringSecretStore,
         )
     })

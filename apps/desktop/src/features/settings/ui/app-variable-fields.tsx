@@ -18,11 +18,13 @@ export function AppVariableFields({
   disabled,
   onChange,
   compact = false,
+  fixedKind,
 }: {
   draft: VariableDraft;
   disabled: boolean;
   onChange(draft: VariableDraft): void;
   compact?: boolean;
+  fixedKind?: "secret";
 }) {
   const id = useId();
   const invalid = draft.name.length > 0 && !validVariableName(draft.name);
@@ -50,28 +52,32 @@ export function AppVariableFields({
           ) : null}
         </Field>
       ) : null}
-      <Field orientation={compact ? "horizontal" : "vertical"}>
-        <FieldLabel id={`${id}-kind`}>{m.settings_variables_kind()}</FieldLabel>
-        <ToggleGroup
-          type="single"
-          size="sm"
-          variant="outline"
-          value={draft.kind}
-          disabled={disabled}
-          aria-labelledby={`${id}-kind`}
-          onValueChange={(kind) => {
-            if (kind === "variable" || kind === "secret")
-              onChange({ ...draft, kind });
-          }}
-        >
-          <ToggleGroupItem value="variable">
-            {m.settings_variables_kind_variable()}
-          </ToggleGroupItem>
-          <ToggleGroupItem value="secret">
-            {m.settings_variables_kind_secret()}
-          </ToggleGroupItem>
-        </ToggleGroup>
-      </Field>
+      {!fixedKind && (
+        <Field orientation={compact ? "horizontal" : "vertical"}>
+          <FieldLabel id={`${id}-kind`}>
+            {m.settings_variables_kind()}
+          </FieldLabel>
+          <ToggleGroup
+            type="single"
+            size="sm"
+            variant="outline"
+            value={draft.kind}
+            disabled={disabled}
+            aria-labelledby={`${id}-kind`}
+            onValueChange={(kind) => {
+              if (kind === "variable" || kind === "secret")
+                onChange({ ...draft, kind });
+            }}
+          >
+            <ToggleGroupItem value="variable">
+              {m.settings_variables_kind_variable()}
+            </ToggleGroupItem>
+            <ToggleGroupItem value="secret">
+              {m.settings_variables_kind_secret()}
+            </ToggleGroupItem>
+          </ToggleGroup>
+        </Field>
+      )}
       <Field>
         <FieldLabel htmlFor={`${id}-value`}>
           {m.settings_variables_value()}

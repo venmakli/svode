@@ -1,10 +1,11 @@
 import {
   applyAssetsStrategy as applyPlatformAssetsStrategy,
-  checkS3Connection as checkPlatformS3Connection,
+  checkS3Bindings as checkPlatformS3Bindings,
   countAssets as countPlatformAssets,
   diagnoseLfsPolicy as diagnosePlatformLfsPolicy,
   diagnoseLfsRemote as diagnosePlatformLfsRemote,
   getAssetsConfig as getPlatformAssetsConfig,
+  getS3Bindings as getPlatformS3Bindings,
   getLfsState as getPlatformLfsState,
   hasS3Credentials as hasPlatformS3Credentials,
   listenLfsStateChanged as listenPlatformLfsStateChanged,
@@ -24,24 +25,27 @@ export interface SpacePoolInput extends Record<string, unknown> {
   spaceId: string | null;
 }
 
-export interface S3CredentialsInput extends Record<string, unknown> {
+export interface S3SecretBindings {
   accessKey: string;
   secretKey: string;
 }
 
-export interface CheckS3ConnectionInput extends Record<string, unknown> {
-  endpoint: string;
-  bucket: string;
-  region: string;
-  accessKey: string;
-  secretKey: string;
+export interface S3BindingState {
+  bindings: S3SecretBindings | null;
+  ready: boolean;
+  error: string | null;
+}
+
+export interface CheckS3BindingsInput extends SpacePoolInput {
+  target: AssetsS3Config;
+  bindings: S3SecretBindings;
 }
 
 export interface SetAssetsStrategyInput extends SpacePoolInput {
   strategy: AssetsStrategy;
   binaryRouting: BinaryRoutingConfig;
   s3Config: AssetsS3Config | null;
-  s3Credentials: S3CredentialsInput | null;
+  s3Bindings: S3SecretBindings | null;
 }
 
 export interface SetAssetsStrategyResult {
@@ -100,6 +104,10 @@ interface SettingsEvent<T> {
 type SettingsEventCallback<T> = (event: SettingsEvent<T>) => void;
 type SettingsUnlistenFn = () => void;
 
+export function getS3Bindings(input: SpacePoolInput): Promise<S3BindingState> {
+  return getPlatformS3Bindings(input);
+}
+
 export function hasS3Credentials(input: SpacePoolInput): Promise<boolean> {
   return hasPlatformS3Credentials(input);
 }
@@ -134,10 +142,8 @@ export function countAssets(input: SpacePoolInput): Promise<number> {
   return countPlatformAssets(input);
 }
 
-export function checkS3Connection(
-  input: CheckS3ConnectionInput,
-): Promise<boolean> {
-  return checkPlatformS3Connection(input);
+export function checkS3Bindings(input: CheckS3BindingsInput): Promise<boolean> {
+  return checkPlatformS3Bindings(input);
 }
 
 export function applyAssetsStrategy(

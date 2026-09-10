@@ -174,6 +174,44 @@ pub(crate) fn clear_owner_usage(config_dir: &Path, owner_key: &str) -> Result<bo
     Ok(changed)
 }
 
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub(crate) enum VariableWriteIntent {
+    Create,
+    UpdateSecret,
+}
+
+pub(crate) fn upsert_with_intent(
+    config_dir: &Path,
+    name: &str,
+    kind: AppVariableKind,
+    value: Option<&str>,
+    intent: Option<VariableWriteIntent>,
+    secrets: &dyn SecretStore,
+) -> Result<(), AppError> {
+    let (_, stored) = read(config_dir)?;
+    match intent {
+        Some(VariableWriteIntent::Create) if stored.entries.contains_key(name) => {
+            return Err(AppError::General(format!(
+                "Variable already exists: {name}"
+            )));
+        }
+        Some(VariableWriteIntent::UpdateSecret)
+            if kind != AppVariableKind::Secret
+                || !stored
+                    .entries
+                    .get(name)
+                    .is_some_and(|entry| entry.kind == AppVariableKind::Secret) =>
+        {
+            return Err(AppError::General(format!(
+                "Secret changed or was removed: {name}"
+            )));
+        }
+        _ => {}
+    }
+    upsert(config_dir, name, kind, value, secrets)
+}
+
 pub(crate) fn upsert(
     config_dir: &Path,
     name: &str,
@@ -540,6 +578,79 @@ mod tests {
             owner_directory: "/project/admin".to_string(),
             references: references.iter().map(|value| value.to_string()).collect(),
         }
+    }
+
+    #[test]
+    fn explicit_secret_writes_reject_collision_and_changed_kind() {
+        let directory = TempDir::new().unwrap();
+        let dir = directory.path();
+        let secrets = MemorySecrets::default();
+        upsert_with_intent(
+            dir,
+            "KEY",
+            AppVariableKind::Secret,
+            Some("original"),
+            Some(VariableWriteIntent::Create),
+            &secrets,
+        )
+        .unwrap();
+        assert!(
+            upsert_with_intent(
+                dir,
+                "KEY",
+                AppVariableKind::Secret,
+                Some("replacement"),
+                Some(VariableWriteIntent::Create),
+                &secrets
+            )
+            .is_err()
+        );
+        assert_eq!(secrets.get("KEY").unwrap().as_deref(), Some("original"));
+        upsert_with_intent(
+            dir,
+            "KEY",
+            AppVariableKind::Secret,
+            None,
+            Some(VariableWriteIntent::UpdateSecret),
+            &secrets,
+        )
+        .unwrap();
+        assert_eq!(secrets.get("KEY").unwrap().as_deref(), Some("original"));
+        upsert(
+            dir,
+            "KEY",
+            AppVariableKind::Variable,
+            Some("plain"),
+            &secrets,
+        )
+        .unwrap();
+        assert!(
+            upsert_with_intent(
+                dir,
+                "KEY",
+                AppVariableKind::Secret,
+                Some("replacement"),
+                Some(VariableWriteIntent::UpdateSecret),
+                &secrets
+            )
+            .is_err()
+        );
+        assert_eq!(
+            get_catalog(dir, None, &secrets).unwrap().entries[0].kind,
+            AppVariableKind::Variable
+        );
+        remove(dir, "KEY", &secrets).unwrap();
+        assert!(
+            upsert_with_intent(
+                dir,
+                "KEY",
+                AppVariableKind::Secret,
+                Some("replacement"),
+                Some(VariableWriteIntent::UpdateSecret),
+                &secrets
+            )
+            .is_err()
+        );
     }
 
     #[test]

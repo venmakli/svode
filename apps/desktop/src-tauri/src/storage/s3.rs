@@ -1,6 +1,4 @@
-//! S3-side helpers for the LFS S3 strategy: credential storage in the OS
-//! keychain, agent-config file management, and a real `check_s3_connection`
-//! that round-trips through OpenDAL.
+//! S3 target helpers, agent binary discovery and connection checks through OpenDAL.
 //!
 //! The split between this module and `strategy.rs` keeps strategy.rs focused
 //! on git/.gitattributes wiring while all S3-specific concerns live here.
@@ -8,20 +6,11 @@
 use std::path::{Path, PathBuf};
 
 use opendal::{Operator, services::S3};
-use serde::{Deserialize, Serialize};
 
 use crate::error::AppError;
 use crate::process;
-use crate::space::types::AssetsS3Config;
 
-/// Keychain service identifier — must match the constant in `lfs-dal`.
-pub const KEYCHAIN_SERVICE: &str = "app.svode.desktop.lfs-s3";
-
-/// Path of the agent config file (relative to the space root). The
-/// external lfs-dal binary reads this on init to learn the bucket and the
-/// keychain account name to query. Listed in `.gitignore` so secrets-by-
-/// proxy never leak to the remote.
-pub const AGENT_CONFIG_REL: &str = ".svode/lfs-s3-agent.json";
+pub const AGENT_CONFIG_REL: &str = svode_s3::CONFIG_REL;
 
 /// Managed `.gitignore` block that hides the agent config file. Kept tiny on
 /// purpose so it can sit alongside the existing `# svode:assets-ignore`
@@ -29,43 +18,6 @@ pub const AGENT_CONFIG_REL: &str = ".svode/lfs-s3-agent.json";
 const AGENT_IGNORE_START: &str = "# svode:lfs-s3-agent:start";
 const AGENT_IGNORE_END: &str = "# svode:lfs-s3-agent:end";
 const AGENT_IGNORE_BODY: &str = ".svode/lfs-s3-agent.json";
-
-/// Persisted shape of the agent config file. Mirrors the struct in
-/// `crates/lfs-dal/src/main.rs::AgentConfig`.
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AgentConfigFile {
-    pub endpoint: String,
-    pub bucket: String,
-    pub region: String,
-    pub keychain_account: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub prefix: Option<String>,
-}
-
-/// Secret blob stored in the keychain. JSON-serialized so we can extend
-/// without rotating the key (e.g. session token, expiry).
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AgentSecrets {
-    pub access_key: String,
-    pub secret_key: String,
-}
-
-/// Build a stable keychain account identifier for a given S3 target. We use
-/// `<bucket>@<endpoint-host>` so re-pointing a space at a different
-/// bucket creates a fresh entry instead of overwriting the previous one.
-pub fn keychain_account(cfg: &AssetsS3Config) -> String {
-    let host = cfg
-        .endpoint
-        .trim_start_matches("https://")
-        .trim_start_matches("http://")
-        .split('/')
-        .next()
-        .unwrap_or("")
-        .to_string();
-    format!("{}@{}", cfg.bucket, host)
-}
 
 fn slug_source(source: &str) -> String {
     let mut out = String::new();
@@ -149,62 +101,6 @@ pub fn normalize_prefix_path(prefix: &str, fallback: &str) -> String {
     } else {
         segments.join("/")
     }
-}
-
-/// Save credentials to the OS keychain. Runs on a blocking thread because
-/// `keyring` is sync.
-pub async fn save_credentials(account: String, secrets: AgentSecrets) -> Result<(), AppError> {
-    tokio::task::spawn_blocking(move || -> Result<(), AppError> {
-        let entry = keyring::Entry::new(KEYCHAIN_SERVICE, &account)
-            .map_err(|e| AppError::Storage(format!("keychain open: {e}")))?;
-        let payload = serde_json::to_string(&secrets)?;
-        entry
-            .set_password(&payload)
-            .map_err(|e| AppError::Storage(format!("keychain write: {e}")))?;
-        Ok(())
-    })
-    .await
-    .map_err(|e| AppError::Storage(format!("keychain task: {e}")))?
-}
-
-/// Delete credentials from the keychain. Missing entries are not an error —
-/// the desired post-state is "no credentials", which is already true.
-pub async fn clear_credentials(account: String) -> Result<(), AppError> {
-    tokio::task::spawn_blocking(move || -> Result<(), AppError> {
-        let entry = keyring::Entry::new(KEYCHAIN_SERVICE, &account)
-            .map_err(|e| AppError::Storage(format!("keychain open: {e}")))?;
-        match entry.delete_credential() {
-            Ok(()) => Ok(()),
-            Err(keyring::Error::NoEntry) => Ok(()),
-            Err(e) => Err(AppError::Storage(format!("keychain delete: {e}"))),
-        }
-    })
-    .await
-    .map_err(|e| AppError::Storage(format!("keychain task: {e}")))?
-}
-
-/// Write the agent config file to disk. Parent directory is created if
-/// missing.
-pub fn write_agent_config(space_dir: &Path, cfg: &AgentConfigFile) -> Result<(), AppError> {
-    let path = space_dir.join(AGENT_CONFIG_REL);
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    let json = serde_json::to_string_pretty(cfg)?;
-    std::fs::write(&path, json)?;
-    Ok(())
-}
-
-/// Read the agent config file. Returns `None` when the file does not exist.
-#[allow(dead_code)]
-pub fn read_agent_config(space_dir: &Path) -> Result<Option<AgentConfigFile>, AppError> {
-    let path = space_dir.join(AGENT_CONFIG_REL);
-    if !path.exists() {
-        return Ok(None);
-    }
-    let bytes = std::fs::read(&path)?;
-    let cfg: AgentConfigFile = serde_json::from_slice(&bytes)?;
-    Ok(Some(cfg))
 }
 
 /// Delete the agent config file. Missing file is fine.
@@ -380,8 +276,7 @@ fn rustc_host_triple() -> Option<String> {
         .find_map(|l| l.strip_prefix("host:").map(|v| v.trim().to_string()))
 }
 
-/// Build an OpenDAL operator from frontend-supplied credentials. Used by
-/// `check_s3_connection` so we can validate without going through the
+/// Build an OpenDAL operator from backend-resolved credentials, without the
 /// keychain round-trip.
 pub fn operator_for(
     endpoint: &str,
@@ -476,24 +371,6 @@ mod tests {
             normalize_prefix_path("///", "fallback/root"),
             "fallback/root"
         );
-    }
-
-    #[test]
-    fn agent_config_write_persists_prefix() -> Result<(), AppError> {
-        let temp = tempfile::tempdir()?;
-        let cfg = AgentConfigFile {
-            endpoint: "https://s3.example.test".to_string(),
-            bucket: "assets".to_string(),
-            region: "us-east-1".to_string(),
-            keychain_account: "assets@s3.example.test".to_string(),
-            prefix: Some("bigquest/root".to_string()),
-        };
-
-        write_agent_config(temp.path(), &cfg)?;
-
-        let saved = read_agent_config(temp.path())?.expect("agent config");
-        assert_eq!(saved.prefix.as_deref(), Some("bigquest/root"));
-        Ok(())
     }
 
     #[test]

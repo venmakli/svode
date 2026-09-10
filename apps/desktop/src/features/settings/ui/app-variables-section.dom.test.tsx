@@ -23,6 +23,10 @@ test("global catalog edits a Secret without reading or replacing its value", asy
               hasValue: true,
               usedIn: [
                 { ownerDirectory: "/repo/admin", referenceName: "OTHER" },
+                {
+                  ownerDirectory: "/repo/space",
+                  referenceName: "S3 Secret Key",
+                },
               ],
             },
           ],
@@ -62,6 +66,12 @@ test("global catalog edits a Secret without reading or replacing its value", asy
     );
     expect(
       dom.window.document.body.textContent?.includes("admin · OTHER"),
+    ).toBe(true);
+
+    expect(
+      dom.window.document.body.textContent?.includes(
+        "/repo/space · S3 Secret Key",
+      ),
     ).toBe(true);
 
     const createButton = Array.from(

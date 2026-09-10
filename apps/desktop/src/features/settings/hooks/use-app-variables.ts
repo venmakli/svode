@@ -14,7 +14,11 @@ import type {
   AppVariablesContext,
 } from "../model";
 
-export function useAppVariables(context?: AppVariablesContext, notify = true) {
+export function useAppVariables(
+  context?: AppVariablesContext,
+  notify = true,
+  enabled = true,
+) {
   const [catalog, setCatalog] = useState<AppVariablesCatalog | null>(null);
   const [loadError, setLoadError] = useState(false);
   const [pending, setPending] = useState(false);
@@ -38,6 +42,10 @@ export function useAppVariables(context?: AppVariablesContext, notify = true) {
   }, [context]);
 
   useEffect(() => {
+    if (!enabled) {
+      setCatalog(null);
+      return;
+    }
     let disposed = false;
     let unlisten: (() => void) | undefined;
     void refresh().catch((error) => {
@@ -66,7 +74,7 @@ export function useAppVariables(context?: AppVariablesContext, notify = true) {
       lifecycleRef.current += 1;
       unlisten?.();
     };
-  }, [refresh, notify]);
+  }, [refresh, notify, enabled]);
 
   const mutate = useCallback(
     async (operation: () => Promise<void>) => {
@@ -106,7 +114,11 @@ export function useAppVariables(context?: AppVariablesContext, notify = true) {
       );
     },
     remove: (name: string) => mutate(() => removeAppVariable(name)),
-    save: (input: { name: string; kind: AppVariableKind; value?: string }) =>
-      mutate(() => upsertAppVariable(input)),
+    save: (input: {
+      name: string;
+      kind: AppVariableKind;
+      value?: string;
+      intent?: "create" | "update-secret";
+    }) => mutate(() => upsertAppVariable(input)),
   };
 }

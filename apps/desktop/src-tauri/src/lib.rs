@@ -326,7 +326,6 @@ pub fn run() {
             storage::commands::count_assets,
             storage::commands::get_assets_config,
             storage::commands::set_assets_strategy,
-            storage::commands::check_s3_connection,
             storage::commands::has_s3_credentials,
             storage::bindings::get_s3_bindings,
             storage::bindings::check_s3_bindings,

@@ -164,12 +164,12 @@ export function AppVariablesSection() {
                         : m.settings_variables_missing()
                       : entry.value}
                   </TableCell>
-                  <TableCell className="max-w-52 whitespace-normal text-xs text-muted-foreground">
+                  <TableCell className="max-w-52 whitespace-normal break-all text-xs text-muted-foreground">
                     {entry.usedIn.length > 0
                       ? entry.usedIn
                           .map(
                             (usage) =>
-                              `${lastPathPart(usage.ownerDirectory)} · ${usage.referenceName}`,
+                              `${usage.referenceName.startsWith("S3 ") ? usage.ownerDirectory : lastPathPart(usage.ownerDirectory)} · ${usage.referenceName}`,
                           )
                           .join(", ")
                       : m.settings_variables_not_used()}

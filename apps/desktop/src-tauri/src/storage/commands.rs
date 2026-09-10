@@ -5,11 +5,11 @@ use std::time::Instant;
 use crate::commands::app_variables::{APP_VARIABLES_CHANGED_EVENT, run_locked};
 use crate::space::app_variables::KeyringSecretStore;
 use crate::space::settings::AppSettingsState;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 
 use super::assets::{self, Asset};
-use super::s3::{self, AgentSecrets};
+use super::s3;
 use super::scope::{resolve_effective_storage_scope, resolve_effective_storage_scope_for_key};
 use super::strategy::ApplyStrategyResult;
 use crate::error::AppError;
@@ -182,17 +182,6 @@ pub async fn get_assets_config(
     })
 }
 
-/// Optional S3 credentials supplied alongside `set_assets_strategy` when the
-/// user picks LfsS3 for the first time. We persist these to the OS keychain
-/// (never to disk) and only when both keys are present — passing `None` lets
-/// the existing keychain entry stand untouched.
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct S3CredentialInput {
-    pub access_key: String,
-    pub secret_key: String,
-}
-
 fn is_sync_strategy(strategy: AssetsStrategy) -> bool {
     !matches!(strategy, AssetsStrategy::Local)
 }
@@ -279,7 +268,6 @@ pub async fn set_assets_strategy(
     strategy: AssetsStrategy,
     binary_routing: BinaryRoutingConfig,
     s3_config: Option<AssetsS3Config>,
-    s3_credentials: Option<S3CredentialInput>,
     s3_bindings: Option<svode_s3::SecretBindings>,
     settings_state: State<'_, AppSettingsState>,
     git_state: State<'_, GitState>,
@@ -334,53 +322,32 @@ pub async fn set_assets_strategy(
             .as_ref()
             .ok_or_else(|| AppError::Storage("lfs-s3 requires endpoint/bucket/region".into()))?;
         let saved = svode_s3::AgentConfig::read(&scope.repo_dir).ok();
-        if saved.is_some() && s3_credentials.is_some() {
-            return Err(AppError::Storage(
-                "Update S3 Secrets through Variables".into(),
-            ));
-        }
         let bindings = match s3_bindings {
-            Some(bindings) => Some(bindings),
+            Some(bindings) => bindings,
             None => match saved {
                 Some(saved)
                     if saved.endpoint == cfg.endpoint
                         && saved.bucket == cfg.bucket
                         && saved.region == cfg.region =>
                 {
-                    Some(saved.bindings)
+                    saved.bindings
                 }
                 Some(_) => {
                     return Err(AppError::Storage(
                         "Select S3 Secrets explicitly for the new target".into(),
                     ));
                 }
-                None => None,
+                None => return Err(AppError::Storage(svode_s3::SETUP_REQUIRED.into())),
             },
         };
-        if let Some(bindings) = bindings {
-            if s3_credentials.is_some() {
-                return Err(AppError::Storage(
-                    "S3 bindings cannot be combined with raw credentials".into(),
-                ));
-            }
-            let directory = catalog_dir.clone();
-            let target = cfg.clone();
-            next_agent_config = Some(
-                run_locked(&settings_state, move || {
-                    super::bindings::prepare(&directory, &target, bindings, &KeyringSecretStore)
-                })
-                .await?,
-            );
-        } else if let Some(creds) = s3_credentials {
-            s3::save_credentials(
-                s3::keychain_account(cfg),
-                AgentSecrets {
-                    access_key: creds.access_key,
-                    secret_key: creds.secret_key,
-                },
-            )
-            .await?;
-        }
+        let directory = catalog_dir.clone();
+        let target = cfg.clone();
+        next_agent_config = Some(
+            run_locked(&settings_state, move || {
+                super::bindings::prepare(&directory, &target, bindings, &KeyringSecretStore)
+            })
+            .await?,
+        );
         Some(s3::resolve_agent_binary(&app)?)
     } else {
         None
@@ -396,18 +363,6 @@ pub async fn set_assets_strategy(
     )
     .await?;
 
-    // Tearing down LfsS3 — drop the keychain entry that the previous config
-    // referenced, if any. We read the previous config (not the new one) to
-    // know which account to delete.
-    if !matches!(strategy, AssetsStrategy::LfsS3) {
-        if let Some(prev) = config.assets.as_ref().and_then(|a| a.s3.as_ref()) {
-            let account = s3::keychain_account(prev);
-            if let Err(e) = s3::clear_credentials(account).await {
-                tracing::warn!("clear_credentials failed: {e}");
-            }
-        }
-    }
-
     config.assets = Some(AssetsSpaceConfig {
         strategy,
         binary_routing: Some(binary_routing),
@@ -421,32 +376,6 @@ pub async fn set_assets_strategy(
         })
         .await?;
         let _ = app.emit(APP_VARIABLES_CHANGED_EVENT, ());
-    } else if matches!(strategy, AssetsStrategy::LfsS3) {
-        let target = config
-            .assets
-            .as_ref()
-            .and_then(|assets| assets.s3.as_ref())
-            .expect("validated target")
-            .clone();
-        let repo = scope.repo_dir.clone();
-        run_locked(&settings_state, move || {
-            if svode_s3::AgentConfig::read(&repo).is_ok() {
-                return Err(AppError::Storage(
-                    "S3 bindings changed; reload Storage settings".into(),
-                ));
-            }
-            s3::write_agent_config(
-                &repo,
-                &s3::AgentConfigFile {
-                    endpoint: target.endpoint.clone(),
-                    bucket: target.bucket.clone(),
-                    region: target.region.clone(),
-                    keychain_account: s3::keychain_account(&target),
-                    prefix: Some(target.prefix.clone()),
-                },
-            )
-        })
-        .await?;
     }
 
     // Commit `.gitattributes` + `.gitignore` + `.svode/config.json` via the
@@ -488,17 +417,6 @@ pub async fn count_assets(
     let scope =
         resolve_effective_storage_scope(&index_state, &project, space_id.as_deref()).await?;
     assets::count_existing_asset_files(&scope.pool_dir)
-}
-
-#[tauri::command]
-pub async fn check_s3_connection(
-    endpoint: String,
-    bucket: String,
-    region: String,
-    access_key: String,
-    secret_key: String,
-) -> Result<bool, AppError> {
-    s3::check_connection(endpoint, bucket, region, access_key, secret_key).await
 }
 
 /// Tell the frontend whether the keychain currently holds credentials for

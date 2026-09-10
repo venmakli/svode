@@ -21,6 +21,7 @@ export function upsertAppVariable(input: {
   name: string;
   kind: AppVariableKind;
   value?: string;
+  intent?: "create" | "update-secret";
 }) {
   return upsertAppVariableDto(input);
 }

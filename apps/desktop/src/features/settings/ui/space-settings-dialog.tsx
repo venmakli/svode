@@ -193,6 +193,8 @@ export function SpaceSettingsDialog({
   }
 
   function handleSectionChange(nextSection: Section) {
+    if (storageSettings.applyingStrategy || storageSettings.s3.pending) return;
+    if (section === "storage") storageSettings.s3.cancel();
     if (gitDetail === "identity") {
       identitySettings.handleCancelIdentityEdit();
     }
@@ -215,6 +217,7 @@ export function SpaceSettingsDialog({
 
   function handleReturnToProjectSection(event: MouseEvent) {
     event.preventDefault();
+    if (storageSettings.applyingStrategy || storageSettings.s3.pending) return;
     if (gitDetail === "identity") {
       identitySettings.handleCancelIdentityEdit();
     }
@@ -286,7 +289,13 @@ export function SpaceSettingsDialog({
   const isGitIdentityDetail = section === "git" && gitDetail === "identity";
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        if (!storageSettings.applyingStrategy && !storageSettings.s3.pending)
+          onOpenChange(next);
+      }}
+    >
       <DialogContent className="overflow-hidden p-0 md:max-h-[500px] md:max-w-[700px] lg:max-w-[800px]">
         <DialogTitle className="sr-only">
           {m.sidebar_project_settings()}
@@ -537,6 +546,7 @@ export function SpaceSettingsDialog({
                     gitType={gitSettings.gitType}
                     activeRootName={activeRootName}
                     settings={storageSettings}
+                    onOpenRoot={() => setDetailSpaceId(null)}
                   />
                   {isRoot && (
                     <ProjectSpacePolicyList

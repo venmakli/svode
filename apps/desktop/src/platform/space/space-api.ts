@@ -26,24 +26,27 @@ export interface SpacePoolInputDto extends Record<string, unknown> {
   spaceId: string | null;
 }
 
-export interface S3CredentialsInputDto extends Record<string, unknown> {
+export interface S3SecretBindingsDto {
   accessKey: string;
   secretKey: string;
 }
 
-export interface CheckS3ConnectionInputDto extends Record<string, unknown> {
-  endpoint: string;
-  bucket: string;
-  region: string;
-  accessKey: string;
-  secretKey: string;
+export interface S3BindingStateDto {
+  bindings: S3SecretBindingsDto | null;
+  ready: boolean;
+  error: string | null;
+}
+
+export interface CheckS3BindingsInputDto extends SpacePoolInputDto {
+  target: AssetsS3ConfigDto;
+  bindings: S3SecretBindingsDto;
 }
 
 export interface SetAssetsStrategyInputDto extends SpacePoolInputDto {
   strategy: AssetsStrategyDto;
   binaryRouting: BinaryRoutingConfigDto;
   s3Config: AssetsS3ConfigDto | null;
-  s3Credentials: S3CredentialsInputDto | null;
+  s3Bindings: S3SecretBindingsDto | null;
 }
 
 export interface SetAssetsStrategyResultDto {
@@ -168,6 +171,12 @@ export function countAssets(input: SpacePoolInputDto): Promise<number> {
   return invokeCommand<number>("count_assets", input);
 }
 
+export function getS3Bindings(
+  input: SpacePoolInputDto,
+): Promise<S3BindingStateDto> {
+  return invokeCommand("get_s3_bindings", input);
+}
+
 export function hasS3Credentials(input: SpacePoolInputDto): Promise<boolean> {
   return invokeCommand<boolean>("has_s3_credentials", input);
 }
@@ -178,10 +187,10 @@ export function getAssetsConfig(
   return invokeCommand<EffectiveAssetsConfigDto>("get_assets_config", input);
 }
 
-export function checkS3Connection(
-  input: CheckS3ConnectionInputDto,
+export function checkS3Bindings(
+  input: CheckS3BindingsInputDto,
 ): Promise<boolean> {
-  return invokeCommand<boolean>("check_s3_connection", input);
+  return invokeCommand<boolean>("check_s3_bindings", input);
 }
 
 export function applyAssetsStrategy(
