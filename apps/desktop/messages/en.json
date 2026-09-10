@@ -485,6 +485,8 @@
   "settings_unsaved_description": "You have unsaved changes. What would you like to do?",
   "settings_unsaved_save": "Save",
   "settings_unsaved_discard": "Discard",
+  "settings_project_group": "Project: {name}",
+  "settings_owner_unavailable": "These settings are no longer available. Select a section for the current project.",
   "settings_space_title": "Settings: {name}",
   "settings_general": "General",
   "settings_spaces": "Spaces",

@@ -9,10 +9,11 @@ import type {
   KnowledgeGraphOpenRequest,
   KnowledgeGraphState,
 } from "@/features/knowledge";
-import type { AppSettingsSection } from "@/features/settings";
+import type {
+  AppSettingsSection,
+  SettingsDestination,
+} from "@/features/settings";
 
-type SettingsDialog = "app" | "space" | null;
-export type SpaceSettingsDestination = "general" | "git";
 export type MainSurface = "content" | "sessions" | "graph";
 
 const SIDEBAR_WIDTH_STORAGE_KEY = "svode:shell:sidebar-width";
@@ -23,10 +24,7 @@ export const SHELL_SIDEBAR_WIDTH_MAX = 420;
 
 interface ShellState {
   chatPanelOpen: boolean;
-  settingsDialog: SettingsDialog;
-  settingsAppSection: AppSettingsSection;
-  settingsSpacePath: string | null;
-  settingsSpaceDestination: SpaceSettingsDestination;
+  settingsDestination: SettingsDestination | null;
   mainSurface: MainSurface;
   agentSessionOpenRequest: AgentSessionOpenRequest | null;
   nextAgentSessionOpenRequestKey: number;
@@ -40,7 +38,7 @@ interface ShellState {
   openAppSettings: (section?: AppSettingsSection) => void;
   openSpaceSettings: (
     spacePath: string,
-    destination?: SpaceSettingsDestination,
+    destination?: "general" | "git",
   ) => void;
   closeSettings: () => void;
   openContentSurface: () => void;
@@ -84,10 +82,7 @@ function persistSidebarWidth(width: number) {
 
 export const useShellStore = create<ShellState>((set) => ({
   chatPanelOpen: false,
-  settingsDialog: null,
-  settingsAppSection: "git-identity",
-  settingsSpacePath: null,
-  settingsSpaceDestination: "general",
+  settingsDestination: null,
   mainSurface: "content",
   agentSessionOpenRequest: null,
   nextAgentSessionOpenRequestKey: 1,
@@ -110,27 +105,12 @@ export const useShellStore = create<ShellState>((set) => ({
   },
 
   openAppSettings: (section = "git-identity") =>
-    set({
-      settingsDialog: "app",
-      settingsAppSection: section,
-      settingsSpaceDestination: "general",
-      settingsSpacePath: null,
-    }),
+    set({ settingsDestination: { scope: "app", section } }),
 
-  openSpaceSettings: (spacePath, destination = "general") =>
-    set({
-      settingsDialog: "space",
-      settingsSpaceDestination: destination,
-      settingsSpacePath: spacePath,
-    }),
+  openSpaceSettings: (spacePath, section = "general") =>
+    set({ settingsDestination: { scope: "project", section, spacePath } }),
 
-  closeSettings: () =>
-    set({
-      settingsDialog: null,
-      settingsAppSection: "git-identity",
-      settingsSpaceDestination: "general",
-      settingsSpacePath: null,
-    }),
+  closeSettings: () => set({ settingsDestination: null }),
 
   openContentSurface: () => set({ mainSurface: "content" }),
   openSessionsSurface: (target) =>

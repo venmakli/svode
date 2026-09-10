@@ -37,14 +37,14 @@ if (!isolatedSettingsDialogsDomProcess) {
   let appSettingsUnmounts = 0;
 
   bunMock.module("@/features/settings", () => ({
-    AppSettingsDialog: ({
-      initialSection = "git-identity",
-      onOpenChange,
+    SettingsDialog: ({
+      destination,
+      onClose,
     }: {
-      initialSection?: string;
-      onOpenChange(open: boolean): void;
+      destination: { section: string };
+      onClose(): void;
     }) => {
-      const [section, setSection] = useState(initialSection);
+      const [section, setSection] = useState(destination.section);
       useEffect(() => {
         appSettingsMounts += 1;
         return () => {
@@ -54,13 +54,10 @@ if (!isolatedSettingsDialogsDomProcess) {
       return (
         <div data-app-settings data-section={section}>
           <button onClick={() => setSection("changed")}>Change section</button>
-          <button onClick={() => onOpenChange(false)}>
-            Close app settings
-          </button>
+          <button onClick={() => onClose()}>Close app settings</button>
         </div>
       );
     },
-    SpaceSettingsDialog: () => <div data-space-settings />,
   }));
 
   test("reopening App Settings does not retain the previous Variables lifecycle", async () => {
@@ -73,12 +70,7 @@ if (!isolatedSettingsDialogsDomProcess) {
       import("./settings-dialogs"),
       import("@/app/shell/model"),
     ]);
-    useShellStore.setState({
-      settingsDialog: null,
-      settingsAppSection: "git-identity",
-      settingsSpaceDestination: "general",
-      settingsSpacePath: null,
-    });
+    useShellStore.getState().closeSettings();
     const root = createRoot(dom.window.document.getElementById("app")!);
 
     try {

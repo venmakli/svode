@@ -74,7 +74,7 @@ export function UserSettingsMenu({
       <SidebarMenuItem>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <SidebarMenuButton>
+            <SidebarMenuButton data-settings-return-focus>
               {avatar(true)}
               <span className="truncate">{userName}</span>
             </SidebarMenuButton>

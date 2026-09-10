@@ -33,29 +33,28 @@ test("graph handoff transfers query, scope, and selection without replacing cont
 });
 
 test("repository recovery opens the exact space settings Git destination", () => {
-  useShellStore.setState({
-    settingsDialog: null,
-    settingsSpaceDestination: "general",
-    settingsSpacePath: null,
-  });
-
-  useShellStore.getState().openSpaceSettings("/project/spaces/docs", "git");
-
-  expect(useShellStore.getState().settingsDialog).toBe("space");
-  expect(useShellStore.getState().settingsSpaceDestination).toBe("git");
-  expect(useShellStore.getState().settingsSpacePath).toBe(
-    "/project/spaces/docs",
-  );
-
   useShellStore.getState().closeSettings();
-  expect(useShellStore.getState().settingsSpaceDestination).toBe("general");
-  expect(useShellStore.getState().settingsSpacePath).toBeNull();
+  useShellStore.getState().openSpaceSettings("/project/spaces/docs", "git");
+  expect(useShellStore.getState().settingsDestination).toEqual({
+    scope: "project",
+    section: "git",
+    spacePath: "/project/spaces/docs",
+  });
+  useShellStore.getState().openAppSettings();
+  expect(useShellStore.getState().settingsDestination).toEqual({
+    scope: "app",
+    section: "git-identity",
+  });
+  useShellStore.getState().closeSettings();
+  expect(useShellStore.getState().settingsDestination).toBeNull();
 });
 
 test("global Variables opens the full settings catalog", () => {
   useShellStore.getState().openAppSettings("variables");
-  expect(useShellStore.getState().settingsDialog).toBe("app");
-  expect(useShellStore.getState().settingsAppSection).toBe("variables");
+  expect(useShellStore.getState().settingsDestination).toEqual({
+    scope: "app",
+    section: "variables",
+  });
   useShellStore.getState().closeSettings();
-  expect(useShellStore.getState().settingsAppSection).toBe("git-identity");
+  expect(useShellStore.getState().settingsDestination).toBeNull();
 });

@@ -37,11 +37,10 @@ function isMacPlatform() {
 }
 
 export function ShellChrome() {
-  const { state, toggleSidebar, isMobile, openMobile } = useSidebar();
+  const { state, toggleSidebar } = useSidebar();
   const trafficLightInsetReserved = useTrafficLightInset();
   const chromeRef = useRef<HTMLDivElement>(null);
   const sidebarHidden = state === "collapsed";
-  const showProjectSettings = !sidebarHidden && (!isMobile || openMobile);
   const isMac = isMacPlatform();
   const reserveTrafficLights = isMac && trafficLightInsetReserved;
   const sidebarShortcutLabel = isMac ? "⌘B" : "Ctrl+B";
@@ -91,10 +90,7 @@ export function ShellChrome() {
           Toggle sidebar ({sidebarShortcutLabel})
         </TooltipContent>
       </Tooltip>
-      <ProjectSwitcher
-        className="min-w-0 flex-1"
-        showSettingsButton={showProjectSettings}
-      />
+      <ProjectSwitcher className="min-w-0 flex-1" />
     </div>
   );
 }

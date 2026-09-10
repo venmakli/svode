@@ -7,9 +7,7 @@ import {
   FolderOpen,
   FolderPlus,
   Home,
-  Settings as SettingsIcon,
 } from "lucide-react";
-import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -22,11 +20,6 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
 } from "@/components/ui/sidebar";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
 import { RootProjectDialogs, useRootProjectWorkflow } from "@/features/home";
 import { useSpace } from "@/features/space";
 import { cn } from "@/shared/lib/utils";
@@ -39,24 +32,13 @@ import {
 
 interface ProjectSwitcherProps {
   className?: string;
-  showSettingsButton?: boolean;
 }
 
-export function ProjectSwitcher({
-  className,
-  showSettingsButton = true,
-}: ProjectSwitcherProps) {
+export function ProjectSwitcher({ className }: ProjectSwitcherProps) {
   const navigate = useNavigate();
   const detailController = useCollectionDetailController();
-  const {
-    rootSpaces,
-    activeRootId,
-    activeRootName,
-    activeRootIcon,
-    activeRootPath,
-    goHome,
-  } = useSpace();
-  const openSpaceSettings = useShellStore((state) => state.openSpaceSettings);
+  const { rootSpaces, activeRootId, activeRootName, activeRootIcon, goHome } =
+    useSpace();
   const openContentSurface = useCallback(() => {
     useShellStore.getState().openContentSurface();
   }, []);
@@ -85,11 +67,6 @@ export function ProjectSwitcher({
       goHome();
       navigate({ to: "/" });
     });
-  }
-
-  function handleProjectSettings() {
-    if (!activeRootPath) return;
-    openSpaceSettings(activeRootPath);
   }
 
   return (
@@ -149,25 +126,6 @@ export function ProjectSwitcher({
             </DropdownMenu>
           </SidebarMenuItem>
         </SidebarMenu>
-        {showSettingsButton && (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                aria-label={m.sidebar_project_settings()}
-                variant="ghost"
-                size="icon-sm"
-                className="ml-auto"
-                onClick={handleProjectSettings}
-                disabled={!activeRootPath}
-              >
-                <SettingsIcon />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent side="bottom">
-              {m.sidebar_project_settings()}
-            </TooltipContent>
-          </Tooltip>
-        )}
       </div>
 
       <RootProjectDialogs
