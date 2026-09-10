@@ -6,12 +6,8 @@
 //! <https://github.com/git-lfs/git-lfs/blob/main/docs/custom-transfers.md>
 //! and ships LFS blobs to/from an S3-compatible bucket via OpenDAL.
 //!
-//! Configuration is read from `<cwd>/.svode/lfs-s3-agent.json` — git-lfs runs
-//! the agent with cwd = repo root, so this resolves naturally. Secrets
-//! (access/secret keys) live in the OS keychain under service
-//! `app.svode.desktop.lfs-s3` and the account name recorded in the config
-//! file. The Tauri host writes both pieces atomically when the user picks the
-//! `lfs-s3` strategy.
+//! Configuration is read from the repository's ignored local agent config.
+//! Each session resolves two Variables Secrets directly, without Desktop.
 
 use std::path::PathBuf;
 
@@ -19,34 +15,6 @@ use anyhow::{Context, Result, anyhow};
 use opendal::{Operator, services::S3};
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-
-const KEYCHAIN_SERVICE: &str = "app.svode.desktop.lfs-s3";
-const AGENT_CONFIG_PATH: &str = ".svode/lfs-s3-agent.json";
-
-/// On-disk config written by the Tauri host. Secrets live in the OS keychain
-/// — only the *lookup key* (`keychain_account`) is recorded here, so this
-/// file is safe to drop alongside the workspace if/when we ever loosen the
-/// .gitignore (we currently keep it untracked).
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct AgentConfig {
-    endpoint: String,
-    bucket: String,
-    region: String,
-    keychain_account: String,
-    /// Optional prefix inside the bucket — defaults to "lfs". Useful when one
-    /// bucket is shared across multiple workspaces.
-    #[serde(default)]
-    prefix: Option<String>,
-}
-
-/// Secret blob stored in the keychain. Two fields, JSON-encoded.
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct AgentSecrets {
-    access_key: String,
-    secret_key: String,
-}
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "event", rename_all = "lowercase")]
@@ -243,22 +211,17 @@ struct AgentState {
 
 impl AgentState {
     async fn load() -> Result<Self> {
-        let cfg_bytes = tokio::fs::read(AGENT_CONFIG_PATH)
-            .await
-            .with_context(|| format!("reading {AGENT_CONFIG_PATH}"))?;
-        let cfg: AgentConfig =
-            serde_json::from_slice(&cfg_bytes).context("parsing lfs-s3-agent.json")?;
+        Self::load_with(PathBuf::from("."), svode_s3::read_secret).await
+    }
 
-        let secrets = tokio::task::spawn_blocking({
-            let account = cfg.keychain_account.clone();
-            move || -> Result<AgentSecrets> {
-                let entry = keyring::Entry::new(KEYCHAIN_SERVICE, &account)
-                    .context("opening keychain entry")?;
-                let pw = entry.get_password().context("reading keychain password")?;
-                let s: AgentSecrets =
-                    serde_json::from_str(&pw).context("parsing keychain payload")?;
-                Ok(s)
-            }
+    async fn load_with(
+        repo: PathBuf,
+        get: impl FnMut(&str) -> std::result::Result<Option<String>, String> + Send + 'static,
+    ) -> Result<Self> {
+        let (cfg, secrets) = tokio::task::spawn_blocking(move || {
+            let cfg = svode_s3::AgentConfig::read(&repo).map_err(anyhow::Error::msg)?;
+            let secrets = cfg.resolve_with(get).map_err(anyhow::Error::msg)?;
+            Ok::<_, anyhow::Error>((cfg, secrets))
         })
         .await??;
 
@@ -325,5 +288,62 @@ impl AgentState {
             .to_str()
             .ok_or_else(|| anyhow!("non-utf8 temp path"))?
             .to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn standalone_session_resolves_shared_secrets_and_preserves_object_keys() {
+        let repo = tempfile::tempdir().unwrap();
+        let catalog_path = repo.path().join("settings.json");
+        std::fs::write(
+            &catalog_path,
+            r#"{"variables":{"entries":{"ACCESS":{"kind":"secret"},"SECRET":{"kind":"secret"}}}}"#,
+        )
+        .unwrap();
+        let config = svode_s3::AgentConfig {
+            version: 1,
+            endpoint: "https://s3.example.test".into(),
+            bucket: "assets".into(),
+            region: "us-east-1".into(),
+            prefix: Some("project/root".into()),
+            catalog_path,
+            bindings: svode_s3::SecretBindings {
+                access_key: "ACCESS".into(),
+                secret_key: "SECRET".into(),
+            },
+        };
+        config.write(repo.path()).unwrap();
+        let state = AgentState::load_with(repo.path().into(), |name| {
+            assert!(name == "ACCESS" || name == "SECRET");
+            Ok(Some("fixture-value".into()))
+        })
+        .await
+        .unwrap();
+        assert_eq!(state.object_key("abcdef"), "project/root/ab/cd/abcdef");
+        let result = AgentState::load_with(repo.path().into(), |name| {
+            if name == "SECRET" {
+                Err("denied".into())
+            } else {
+                Ok(Some("access".into()))
+            }
+        })
+        .await;
+        assert!(result.err().unwrap().to_string().contains("Secret Key"));
+        std::fs::write(repo.path().join(svode_s3::CONFIG_REL), r#"{"endpoint":"https://s3.example.test","bucket":"assets","region":"us-east-1","keychainAccount":"old"}"#).unwrap();
+        let result = AgentState::load_with(repo.path().into(), |_| {
+            panic!("must not read old credentials")
+        })
+        .await;
+        assert!(
+            result
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("Configure S3 again")
+        );
     }
 }

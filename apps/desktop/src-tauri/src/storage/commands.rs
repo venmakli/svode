@@ -2,8 +2,11 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 
+use crate::commands::app_variables::{APP_VARIABLES_CHANGED_EVENT, run_locked};
+use crate::space::app_variables::KeyringSecretStore;
+use crate::space::settings::AppSettingsState;
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 use super::assets::{self, Asset};
 use super::s3::{self, AgentSecrets};
@@ -277,6 +280,8 @@ pub async fn set_assets_strategy(
     binary_routing: BinaryRoutingConfig,
     s3_config: Option<AssetsS3Config>,
     s3_credentials: Option<S3CredentialInput>,
+    s3_bindings: Option<svode_s3::SecretBindings>,
+    settings_state: State<'_, AppSettingsState>,
     git_state: State<'_, GitState>,
     index_state: State<'_, IndexState>,
     autocommit: State<'_, Arc<AutocommitService>>,
@@ -322,17 +327,53 @@ pub async fn set_assets_strategy(
         None
     };
 
-    // For LfsS3 we need to (1) stash credentials in keychain and (2) resolve
-    // the bundled lfs-dal binary. Both happen *before* apply_strategy so any
-    // failure rolls back cleanly without leaving half-written git config.
+    let catalog_dir = super::bindings::catalog_dir(&app)?;
+    let mut next_agent_config = None;
     let lfs_dal_path = if matches!(strategy, AssetsStrategy::LfsS3) {
         let cfg = s3_config
             .as_ref()
             .ok_or_else(|| AppError::Storage("lfs-s3 requires endpoint/bucket/region".into()))?;
-        if let Some(creds) = s3_credentials {
-            let account = s3::keychain_account(cfg);
+        let saved = svode_s3::AgentConfig::read(&scope.repo_dir).ok();
+        if saved.is_some() && s3_credentials.is_some() {
+            return Err(AppError::Storage(
+                "Update S3 Secrets through Variables".into(),
+            ));
+        }
+        let bindings = match s3_bindings {
+            Some(bindings) => Some(bindings),
+            None => match saved {
+                Some(saved)
+                    if saved.endpoint == cfg.endpoint
+                        && saved.bucket == cfg.bucket
+                        && saved.region == cfg.region =>
+                {
+                    Some(saved.bindings)
+                }
+                Some(_) => {
+                    return Err(AppError::Storage(
+                        "Select S3 Secrets explicitly for the new target".into(),
+                    ));
+                }
+                None => None,
+            },
+        };
+        if let Some(bindings) = bindings {
+            if s3_credentials.is_some() {
+                return Err(AppError::Storage(
+                    "S3 bindings cannot be combined with raw credentials".into(),
+                ));
+            }
+            let directory = catalog_dir.clone();
+            let target = cfg.clone();
+            next_agent_config = Some(
+                run_locked(&settings_state, move || {
+                    super::bindings::prepare(&directory, &target, bindings, &KeyringSecretStore)
+                })
+                .await?,
+            );
+        } else if let Some(creds) = s3_credentials {
             s3::save_credentials(
-                account,
+                s3::keychain_account(cfg),
                 AgentSecrets {
                     access_key: creds.access_key,
                     secret_key: creds.secret_key,
@@ -373,6 +414,40 @@ pub async fn set_assets_strategy(
         s3: s3_config,
     });
     write_space_config(&scope.config_dir, &config)?;
+    if let Some(agent_config) = next_agent_config {
+        let repo = scope.repo_dir.clone();
+        run_locked(&settings_state, move || {
+            super::bindings::publish(&catalog_dir, &repo, &agent_config, &KeyringSecretStore)
+        })
+        .await?;
+        let _ = app.emit(APP_VARIABLES_CHANGED_EVENT, ());
+    } else if matches!(strategy, AssetsStrategy::LfsS3) {
+        let target = config
+            .assets
+            .as_ref()
+            .and_then(|assets| assets.s3.as_ref())
+            .expect("validated target")
+            .clone();
+        let repo = scope.repo_dir.clone();
+        run_locked(&settings_state, move || {
+            if svode_s3::AgentConfig::read(&repo).is_ok() {
+                return Err(AppError::Storage(
+                    "S3 bindings changed; reload Storage settings".into(),
+                ));
+            }
+            s3::write_agent_config(
+                &repo,
+                &s3::AgentConfigFile {
+                    endpoint: target.endpoint.clone(),
+                    bucket: target.bucket.clone(),
+                    region: target.region.clone(),
+                    keychain_account: s3::keychain_account(&target),
+                    prefix: Some(target.prefix.clone()),
+                },
+            )
+        })
+        .await?;
+    }
 
     // Commit `.gitattributes` + `.gitignore` + `.svode/config.json` via the
     // system-commit pipeline so it routes to the correct repo (inline → root,
@@ -438,19 +513,14 @@ pub async fn has_s3_credentials(
     let project = PathBuf::from(&project_path);
     let scope =
         resolve_effective_storage_scope(&index_state, &project, space_id.as_deref()).await?;
-    let Some(s3_cfg) = scope.config.s3 else {
+    let Some(target) = scope.config.s3 else {
         return Ok(false);
     };
-    let account = s3::keychain_account(&s3_cfg);
-    let present = tokio::task::spawn_blocking(move || {
-        let Ok(entry) = keyring::Entry::new(s3::KEYCHAIN_SERVICE, &account) else {
-            return false;
-        };
-        entry.get_password().is_ok()
+    tokio::task::spawn_blocking(move || {
+        super::bindings::resolve_saved(&scope.repo_dir, &target).map(|_| true)
     })
     .await
-    .unwrap_or(false);
-    Ok(present)
+    .map_err(|e| AppError::Storage(format!("S3 credentials task failed: {e}")))?
 }
 
 /// Resolve a markdown-embedded asset URL (relative to `document_abs_path`)

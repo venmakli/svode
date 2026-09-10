@@ -10,7 +10,7 @@ use super::settings::{
     default_app_settings_value, read_app_settings_value, write_app_settings_value,
 };
 
-const KEYCHAIN_SERVICE: &str = "app.svode.desktop.variables";
+const KEYCHAIN_SERVICE: &str = svode_s3::VARIABLES_SERVICE;
 const SETTINGS_KEY: &str = "variables";
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
@@ -91,6 +91,8 @@ struct StoredVariables {
     entries: BTreeMap<String, StoredVariable>,
     #[serde(default)]
     apps: BTreeMap<String, StoredAppUsage>,
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    s3_owners: BTreeSet<std::path::PathBuf>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
@@ -334,6 +336,28 @@ pub(crate) fn resolve_environment(
     })
 }
 
+pub(crate) fn resolve_s3(
+    config_dir: &Path,
+    bindings: &svode_s3::SecretBindings,
+    secrets: &dyn SecretStore,
+) -> Result<svode_s3::Credentials, AppError> {
+    let (root, _) = read(config_dir)?;
+    svode_s3::resolve_pair(bindings, &root, |name| {
+        secrets
+            .get(name)
+            .map_err(|_| "Keychain access failed".to_string())
+    })
+    .map_err(AppError::Storage)
+}
+
+pub(crate) fn register_s3_owner(config_dir: &Path, owner: &Path) -> Result<(), AppError> {
+    let (mut root, mut stored) = read(config_dir)?;
+    if stored.s3_owners.insert(owner.to_path_buf()) {
+        write(config_dir, &mut root, &stored)?;
+    }
+    Ok(())
+}
+
 fn project_catalog(
     stored: &StoredVariables,
     context: Option<&AppVariableOwnerContext>,
@@ -353,6 +377,26 @@ fn project_catalog(
                 .push(AppVariableUsage {
                     owner_directory: usage.owner_directory.clone(),
                     reference_name: reference_name.clone(),
+                });
+        }
+    }
+    let s3_configs = stored
+        .s3_owners
+        .iter()
+        .filter_map(|owner| {
+            svode_s3::AgentConfig::read(owner)
+                .ok()
+                .map(|config| (owner, config))
+        })
+        .collect::<Vec<_>>();
+    for (owner, config) in &s3_configs {
+        for (role, entry_name) in config.bindings.roles() {
+            used_in
+                .entry(entry_name)
+                .or_default()
+                .push(AppVariableUsage {
+                    owner_directory: crate::system_path::user_facing_path(owner),
+                    reference_name: format!("S3 {role}"),
                 });
         }
     }

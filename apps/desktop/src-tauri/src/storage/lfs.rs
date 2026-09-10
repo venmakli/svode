@@ -19,7 +19,6 @@ use crate::index::{IndexKey, IndexState};
 use crate::repo_path::{RootMode, normalize_repo_relative};
 use crate::space::types::{AssetsSpaceConfig, AssetsStrategy};
 
-use super::s3;
 use super::scope::{
     AssetsStorageScope, resolve_effective_storage_scope, resolve_effective_storage_scope_for_key,
 };
@@ -155,12 +154,10 @@ pub(crate) async fn probe_lfs_config(
             let Some(s3_cfg) = config.s3.as_ref() else {
                 return LfsState::MissingCreds;
             };
-            let account = s3::keychain_account(s3_cfg);
+            let target = s3_cfg.clone();
+            let repo = repo_dir.to_path_buf();
             let present = tokio::task::spawn_blocking(move || {
-                let Ok(entry) = keyring::Entry::new(s3::KEYCHAIN_SERVICE, &account) else {
-                    return false;
-                };
-                entry.get_password().is_ok()
+                super::bindings::resolve_saved(&repo, &target).is_ok()
             })
             .await
             .unwrap_or(false);
@@ -533,9 +530,8 @@ pub async fn repair_lfs(
     Ok(new_state)
 }
 
-/// IPC: lazily probe the LFS state for a pool. If the cached state is
-/// `NotApplicable` and the strategy actually requires LFS, this triggers a
-/// probe and caches the result; otherwise it returns the cached value.
+/// S3 readiness resolves the current Variables snapshot on every read.
+/// Active transfers keep their state; remote-provider probes remain cached.
 #[tauri::command]
 pub async fn get_lfs_state(
     app: AppHandle,
@@ -555,7 +551,10 @@ pub async fn get_lfs_state(
     }
 
     let cached = index_state.get_lfs_state(&scope.pool_key).await;
-    if !matches!(cached, LfsState::NotApplicable) {
+    if matches!(cached, LfsState::Pulling)
+        || (!matches!(scope.config.strategy, AssetsStrategy::LfsS3)
+            && !matches!(cached, LfsState::NotApplicable))
+    {
         return Ok(cached);
     }
 

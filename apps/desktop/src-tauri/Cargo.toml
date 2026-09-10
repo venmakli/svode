@@ -18,6 +18,8 @@ path = "src/bin/svode-mcp.rs"
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+tempfile = "3"
+svode-s3 = { path = "../../../crates/svode-s3" }
 tauri = { version = "2", features = ["protocol-asset"] }
 tauri-plugin-shell = "2"
 tauri-plugin-dialog = "2"
@@ -56,4 +58,3 @@ objc2-app-kit = { version = "0.3.2", default-features = false, features = ["NSBu
 objc2-foundation = { version = "0.3.2", default-features = false, features = ["NSArray", "NSNotification", "NSOperation", "NSString", "NSURL", "block2", "std"] }
 
 [dev-dependencies]
-tempfile = "3"

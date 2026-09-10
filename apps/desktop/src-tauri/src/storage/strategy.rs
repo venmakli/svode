@@ -555,24 +555,15 @@ pub async fn apply_strategy(
     }
 
     // --- LFS S3 custom transfer agent (lfs-dal) wiring/teardown. ---
-    // For LfsS3 we (a) write `.svode/lfs-s3-agent.json`, (b) ensure the
-    // agent config file is gitignored, and (c) configure git to use lfs-dal
+    // For LfsS3 we ensure the local agent config is ignored and configure
+    // Git to use lfs-dal. The caller publishes credentials after strategy apply
+    // and portable config persistence succeed. Configure lfs-dal
     // as the standalone transfer agent. For any other strategy we tear the
     // git config back down so a stale agent doesn't fire on push.
     if matches!(new, AssetsStrategy::LfsS3) {
-        let cfg = s3_config.expect("checked above");
         let bin = lfs_dal_path.expect("checked above");
 
         s3::ensure_agent_gitignore(space_dir)?;
-        let agent_cfg = s3::AgentConfigFile {
-            endpoint: cfg.endpoint.clone(),
-            bucket: cfg.bucket.clone(),
-            region: cfg.region.clone(),
-            keychain_account: s3::keychain_account(cfg),
-            prefix: Some(cfg.prefix.clone()),
-        };
-        s3::write_agent_config(space_dir, &agent_cfg)?;
-
         let bin = bin.canonicalize().unwrap_or_else(|_| bin.to_path_buf());
         if !bin.is_absolute() {
             return Err(AppError::Storage(format!(

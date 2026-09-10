@@ -5184,6 +5184,7 @@ dependencies = [
  "serde_yml",
  "sha2 0.10.9",
  "sqlx",
+ "svode-s3",
  "tauri",
  "tauri-build",
  "tauri-plugin-dialog",
@@ -5201,6 +5202,16 @@ dependencies = [
  "unicode-normalization",
  "unicode-segmentation",
  "which",
+]
+
+[[package]]
+name = "svode-s3"
+version = "0.0.1"
+dependencies = [
+ "keyring",
+ "serde",
+ "serde_json",
+ "tempfile",
 ]
 
 [[package]]

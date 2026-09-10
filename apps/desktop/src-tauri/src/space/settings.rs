@@ -1,3 +1,4 @@
+use std::io::Write;
 use std::path::Path;
 use std::sync::{Arc, Mutex, MutexGuard};
 
@@ -104,7 +105,12 @@ pub(super) fn write_app_settings_value(
 ) -> Result<(), AppError> {
     std::fs::create_dir_all(config_dir)?;
     let data = serde_json::to_string_pretty(value)?;
-    std::fs::write(config_dir.join("settings.json"), data)?;
+    let mut staged = tempfile::NamedTempFile::new_in(config_dir)?;
+    staged.write_all(data.as_bytes())?;
+    staged.as_file().sync_all()?;
+    staged
+        .persist(config_dir.join("settings.json"))
+        .map_err(|error| AppError::Io(error.error))?;
     Ok(())
 }
 
@@ -150,7 +156,12 @@ pub fn read_app_preferences(config_dir: &Path) -> Result<AppPreferences, AppErro
 pub fn write_app_settings(config_dir: &Path, settings: &AppSettings) -> Result<(), AppError> {
     std::fs::create_dir_all(config_dir)?;
     let data = serde_json::to_string_pretty(settings)?;
-    std::fs::write(config_dir.join("settings.json"), data)?;
+    let mut staged = tempfile::NamedTempFile::new_in(config_dir)?;
+    staged.write_all(data.as_bytes())?;
+    staged.as_file().sync_all()?;
+    staged
+        .persist(config_dir.join("settings.json"))
+        .map_err(|error| AppError::Io(error.error))?;
     Ok(())
 }
 
