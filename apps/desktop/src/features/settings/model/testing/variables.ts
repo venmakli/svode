@@ -9,10 +9,9 @@ export function variableFixture(
 ): AppVariableEntry {
   return {
     mode: "local",
-    identity: `id-${input.name}`,
     revision: "r1",
     source: { owner, name: input.name },
-    ownerLabel: owner.scope === "library" ? "Svode" : "Project",
+    ownerLabel: owner.scope === "global" ? "Svode" : "Project",
     collision: false,
     inherited: false,
     hasValue: true,
@@ -30,12 +29,12 @@ export function catalogFixture(
     bindingRevision: "b1",
     owners: [
       defaultOwner,
-      ...(defaultOwner.scope === "library"
+      ...(defaultOwner.scope === "global"
         ? []
-        : [{ scope: "library" } as const]),
+        : [{ scope: "global" } as const]),
     ].map((owner) => ({
       owner,
-      label: owner.scope === "library" ? "Svode" : "Project",
+      label: owner.scope === "global" ? "Svode" : "Project",
       revision: "r1",
       error: null,
     })),

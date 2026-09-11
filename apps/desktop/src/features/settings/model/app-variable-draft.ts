@@ -14,7 +14,6 @@ export interface VariableDraft {
   owner: VariableOwner;
   ownerLabel: string;
   revision: string;
-  identity?: string;
   keep?: VariableMode;
   value: string;
   editing: boolean;
@@ -26,7 +25,7 @@ export interface VariableDraft {
 export function createVariableDraft(
   name = "",
   catalog?: AppVariablesCatalog,
-  owner = catalog?.defaultOwner ?? ({ scope: "library" } as VariableOwner),
+  owner = catalog?.defaultOwner ?? ({ scope: "global" } as VariableOwner),
 ): VariableDraft {
   const target = catalog?.owners.find(
     (o) => ownerKey(o.owner) === ownerKey(owner),
@@ -54,7 +53,6 @@ export function editVariableDraft(entry: AppVariableEntry): VariableDraft {
     owner: entry.source.owner,
     ownerLabel: entry.ownerLabel,
     revision: entry.revision,
-    identity: entry.identity,
     keep: entry.collision ? entry.mode : undefined,
     value: entry.kind === "variable" ? (entry.value ?? "") : "",
     editing: true,
@@ -82,7 +80,7 @@ export function variableDraftInput(draft: VariableDraft): SaveVariableInput {
     source: { owner: draft.owner, name: draft.name },
     mode: draft.storage,
     kind: draft.kind,
-    identity: draft.identity,
+    operation: draft.editing ? "edit" : "create",
     revision: draft.revision,
     keep: draft.keep,
     value:

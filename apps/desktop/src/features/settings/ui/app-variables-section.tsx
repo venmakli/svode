@@ -29,7 +29,7 @@ interface Props {
 export function AppVariablesSection(props: Props) {
   return (
     <VariableCatalog
-      key={`${props.projectPath ?? "library"}:${props.spaceId ?? ""}`}
+      key={`${props.projectPath ?? "global"}:${props.spaceId ?? ""}`}
       {...props}
     />
   );
@@ -213,7 +213,7 @@ function VariableCatalog({ projectPath, spaceId, registerLeaveGuard }: Props) {
       <ul className="flex min-w-0 flex-col gap-3">
         {entries.map((entry, i) => (
           <li
-            key={`${sourceKey(entry.source)}:${entry.identity}:${entry.mode}`}
+            key={`${sourceKey(entry.source)}:${entry.mode}`}
             className="flex min-w-0 flex-col gap-2"
           >
             {i > 0 ? <Separator /> : null}
@@ -235,7 +235,7 @@ function VariableCatalog({ projectPath, spaceId, registerLeaveGuard }: Props) {
                 </div>
                 <p className="text-xs text-muted-foreground">
                   {entry.inherited ? `${m.variables_inherited()} · ` : ""}
-                  {entry.source.owner.scope === "library"
+                  {entry.source.owner.scope === "global"
                     ? m.variables_library()
                     : entry.ownerLabel}
                 </p>

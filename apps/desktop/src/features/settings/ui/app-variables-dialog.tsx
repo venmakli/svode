@@ -220,7 +220,7 @@ function ContextualVariables({
                       {
                         <p className="text-xs text-muted-foreground">
                           {m.app_variables_source({
-                            name: `${entry?.source.owner.scope === "library" ? m.variables_library() : (entry?.ownerLabel ?? variables.catalog?.owners.find((o) => ownerKey(o.owner) === ownerKey(reference.source.owner))?.label ?? "")} · ${reference.entryName}`,
+                            name: `${entry?.source.owner.scope === "global" ? m.variables_library() : (entry?.ownerLabel ?? variables.catalog?.owners.find((o) => ownerKey(o.owner) === ownerKey(reference.source.owner))?.label ?? "")} · ${reference.entryName}`,
                           })}
                         </p>
                       }
@@ -386,7 +386,7 @@ function ContextualVariables({
                                         className="wrap-anywhere"
                                       >
                                         {item.name} ·{" "}
-                                        {item.source.owner.scope === "library"
+                                        {item.source.owner.scope === "global"
                                           ? m.variables_library()
                                           : item.ownerLabel}{" "}
                                         ·{" "}

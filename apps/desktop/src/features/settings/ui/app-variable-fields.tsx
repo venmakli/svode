@@ -128,7 +128,7 @@ export function AppVariableFields({
                 : m.variables_git_hint()
               : draft.kind === "secret"
                 ? m.settings_variables_secret_hint()
-                : draft.owner.scope === "library"
+                : draft.owner.scope === "global"
                   ? m.settings_variables_value_hint()
                   : m.variables_scoped_local_hint()}
           </FieldDescription>
@@ -193,7 +193,7 @@ export function AppVariableFields({
     <FieldGroup className={cn("gap-4", compact && "gap-3")}>
       {showOwner ? (
         <p className="text-xs text-muted-foreground wrap-anywhere">
-          {draft.owner.scope === "library"
+          {draft.owner.scope === "global"
             ? m.variables_library()
             : draft.ownerLabel}
         </p>
@@ -224,7 +224,7 @@ export function AppVariableFields({
           </ToggleGroup>
         </Field>
       ) : null}
-      {draft.owner.scope === "library" ? (
+      {draft.owner.scope === "global" ? (
         <>
           <FieldGroup className="flex-row flex-wrap items-center gap-4">
             <span className="text-sm text-muted-foreground">

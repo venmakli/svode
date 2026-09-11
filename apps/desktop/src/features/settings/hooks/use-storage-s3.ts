@@ -174,7 +174,6 @@ export function useStorageS3({
     editor &&
     (editor.draft.editing
       ? editedEntry?.kind !== "secret" ||
-        editedEntry.identity !== editor.draft.identity ||
         editedEntry.revision !== editor.draft.revision
       : draftOwner?.revision !== editor.draft.revision);
   const canSave =
@@ -329,11 +328,7 @@ export function useStorageS3({
         );
         if (
           !owner?.revision ||
-          (draft.editing
-            ? !entry ||
-              entry.kind !== "secret" ||
-              entry.identity !== draft.identity
-            : Boolean(entry))
+          (draft.editing ? !entry || entry.kind !== "secret" : Boolean(entry))
         )
           throw new Error(m.storage_s3_secret_changed());
         setEditor({

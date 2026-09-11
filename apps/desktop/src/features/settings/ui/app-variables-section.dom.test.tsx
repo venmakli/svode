@@ -31,10 +31,10 @@ test("global catalog edits a Secret without reading or replacing its value", asy
                   },
                 ],
               },
-              { scope: "library" },
+              { scope: "global" },
             ),
           ],
-          { scope: "library" },
+          { scope: "global" },
         );
       }
       if (
@@ -96,11 +96,12 @@ test("global catalog edits a Secret without reading or replacing its value", asy
     ]);
     expect(mutations[0]?.args).toEqual({
       input: {
-        source: { owner: { scope: "library" }, name: "SHARED_SECRET" },
+        source: { owner: { scope: "global" }, name: "SHARED_SECRET" },
         mode: "local",
         kind: "secret",
-        identity: "id-SHARED_SECRET",
+
         revision: "r1",
+        operation: "edit",
       },
     });
   } finally {

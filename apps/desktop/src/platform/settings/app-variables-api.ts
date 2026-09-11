@@ -6,7 +6,7 @@ export type VariableModeDto = "local" | "git";
 export type VariableOwnerDto =
   | { scope: "project" }
   | { scope: "space"; id: string }
-  | { scope: "library" };
+  | { scope: "global" };
 export interface VariableSourceDto {
   owner: VariableOwnerDto;
   name: string;
@@ -26,7 +26,6 @@ export interface AppVariableEntryDto {
   name: string;
   kind: AppVariableKindDto;
   mode: VariableModeDto;
-  identity: string;
   revision: string;
   source: VariableSourceDto;
   ownerLabel: string;
@@ -63,7 +62,7 @@ export interface SaveVariableInputDto {
   kind: AppVariableKindDto;
   mode: VariableModeDto;
   value?: string;
-  identity?: string;
+  operation: "create" | "edit";
   revision: string;
   keep?: VariableModeDto;
 }
@@ -72,9 +71,9 @@ const APP_VARIABLES_CHANGED_EVENT = "app-settings:variables-changed";
 export function getAppVariables(
   context?: AppVariablesContextDto,
   scope?: VariableScopeDto,
-  includeLibrary = false,
+  includeGlobal = false,
 ): Promise<AppVariablesCatalogDto> {
-  return invokeCommand("get_app_variables", { context, scope, includeLibrary });
+  return invokeCommand("get_app_variables", { context, scope, includeGlobal });
 }
 export function upsertAppVariable(
   input: SaveVariableInputDto & { scope?: VariableScopeDto },
@@ -84,7 +83,6 @@ export function upsertAppVariable(
 export function removeAppVariable(input: {
   source: VariableSourceDto;
   scope?: VariableScopeDto;
-  identity: string;
   revision: string;
 }): Promise<void> {
   return invokeCommand("remove_app_variable", { input });

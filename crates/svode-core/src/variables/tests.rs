@@ -79,11 +79,11 @@ fn save(
     value: Option<&str>,
 ) -> Result<Change> {
     let catalog = service.catalog(owner)?;
-    let identity = catalog
-        .entries
-        .iter()
-        .find(|e| e.name == name)
-        .map(|e| e.identity.clone());
+    let operation = if catalog.entries.iter().any(|e| e.name == name) {
+        crate::variables::SaveOperation::Edit
+    } else {
+        crate::variables::SaveOperation::Create
+    };
     service.save(
         owner,
         Save {
@@ -92,7 +92,7 @@ fn save(
             kind,
             value: value.map(str::to_string),
             revision: catalog.revision,
-            identity,
+            operation,
             keep: None,
         },
     )
@@ -152,19 +152,12 @@ fn four_modes_round_trip_preserve_sections_and_never_project_secret_values() {
     .unwrap();
     let portable = raw(root.path(), "config.json");
     let local = raw(root.path(), "local.json");
-    assert!(portable["variables"]["entries"].get("LOCAL").is_none());
-    assert!(local["variables"]["entries"].get("GIT").is_none());
+    assert!(portable["variables"].get("LOCAL").is_none());
+    assert!(local["variables"].get("GIT").is_none());
     assert_eq!(portable["unrelated"]["retain"], true);
-    assert_eq!(
-        portable["variables"]["entries"]["GIT"]["value"],
-        "portable-value"
-    );
-    assert_eq!(local["variables"]["entries"]["LOCAL"]["value"], "");
-    assert!(
-        portable["variables"]["entries"]["GIT_SECRET"]
-            .get("value")
-            .is_none()
-    );
+    assert_eq!(portable["variables"]["GIT"]["value"], "portable-value");
+    assert_eq!(local["variables"]["LOCAL"]["value"], "");
+    assert!(portable["variables"]["GIT_SECRET"].get("value").is_none());
     let catalog = service.catalog(&owner).unwrap();
     assert_eq!(catalog.entries.len(), 4);
     for entry in &catalog.entries {
@@ -187,7 +180,7 @@ fn four_modes_round_trip_preserve_sections_and_never_project_secret_values() {
 }
 
 #[test]
-fn all_mode_and_kind_transitions_keep_identity_and_require_explicit_declassification() {
+fn all_mode_and_kind_transitions_preserve_values_and_require_explicit_declassification() {
     let modes = [
         (Mode::Local, Kind::Variable),
         (Mode::Git, Kind::Variable),
@@ -209,7 +202,6 @@ fn all_mode_and_kind_transitions_keep_identity_and_require_explicit_declassifica
                 Some("synthetic-original"),
             )
             .unwrap();
-            let old = service.catalog(&owner).unwrap().entries[0].identity.clone();
             if from_kind == Kind::Secret && to_kind == Kind::Variable {
                 assert_eq!(
                     save(&service, &owner, "TOKEN", to_mode, to_kind, None).unwrap_err(),
@@ -220,7 +212,6 @@ fn all_mode_and_kind_transitions_keep_identity_and_require_explicit_declassifica
                 save(&service, &owner, "TOKEN", to_mode, to_kind, None).unwrap();
             }
             let entry = service.catalog(&owner).unwrap().entries.remove(0);
-            assert_eq!(entry.identity, old);
             assert_eq!(entry.mode, to_mode);
             assert_eq!(entry.kind, to_kind);
             let expected = if from_kind == Kind::Secret && to_kind == Kind::Variable {
@@ -235,11 +226,14 @@ fn all_mode_and_kind_transitions_keep_identity_and_require_explicit_declassifica
             let portable = raw(root.path(), "config.json");
             let local = raw(root.path(), "local.json");
             assert_eq!(
-                portable["variables"]["entries"].get("TOKEN").is_some(),
+                portable["variables"].get("TOKEN").is_some(),
                 to_mode == Mode::Git
             );
             assert_eq!(
-                local["variables"]["entries"].get("TOKEN").is_some(),
+                local["variables"]
+                    .get("TOKEN")
+                    .and_then(|e| e.get("kind"))
+                    .is_some(),
                 to_mode == Mode::Local
             );
             if to_kind == Kind::Secret {
@@ -251,7 +245,7 @@ fn all_mode_and_kind_transitions_keep_identity_and_require_explicit_declassifica
 }
 
 #[test]
-fn scopes_clones_and_moved_owner_have_independent_local_identity() {
+fn scopes_clones_and_moved_owner_have_independent_refs() {
     let root = fixture();
     let other = fixture();
     let secrets = Secrets::default();
@@ -375,7 +369,7 @@ fn nearest_declaration_blocks_fallback_and_explicit_sources_remain_pinned() {
             .value,
         "parent"
     );
-    let library = Owner::library(&root.path().join("library")).unwrap();
+    let library = Owner::global(&root.path().join("library")).unwrap();
     save(
         &service,
         &library,
@@ -392,7 +386,7 @@ fn nearest_declaration_blocks_fallback_and_explicit_sources_remain_pinned() {
     let library_binding = BTreeMap::from([(
         "TOKEN".into(),
         SourceReference {
-            owner: SourceOwner::Library,
+            owner: SourceOwner::Global,
             name: "ONLY_LIBRARY".into(),
         },
     )]);
@@ -451,7 +445,7 @@ fn missing_git_secret_can_be_declared_but_not_turned_local_without_value() {
 }
 
 #[test]
-fn external_delete_kind_change_and_replacement_do_not_resurrect_orphans() {
+fn external_same_name_reuses_retained_ref_but_svode_recreation_does_not() {
     let root = fixture();
     let secrets = Secrets::default();
     let service = Service::new(&secrets);
@@ -466,20 +460,26 @@ fn external_delete_kind_change_and_replacement_do_not_resurrect_orphans() {
     )
     .unwrap();
     let mut config = raw(root.path(), "config.json");
-    config["variables"]["entries"]["TOKEN"]["id"] = json!(ulid::Ulid::new().to_string());
+    config["variables"] = json!({});
     files::atomic_write(&root.path().join(".svode/config.json"), &config).unwrap();
     assert_eq!(
         resolved(&service, root.path(), None, "TOKEN").unwrap_err(),
         Error::Missing
     );
-    config["variables"]["entries"]["TOKEN"]["kind"] = json!("variable");
-    config["variables"]["entries"]["TOKEN"]["value"] = json!("ordinary");
+    config["variables"] = json!({"TOKEN":{"kind":"secret"}});
+    files::atomic_write(&root.path().join(".svode/config.json"), &config).unwrap();
+    assert_eq!(
+        resolved(&service, root.path(), None, "TOKEN").unwrap(),
+        "old-value"
+    );
+    config["variables"]["TOKEN"]["kind"] = json!("variable");
+    config["variables"]["TOKEN"]["value"] = json!("ordinary");
     files::atomic_write(&root.path().join(".svode/config.json"), &config).unwrap();
     assert_eq!(
         resolved(&service, root.path(), None, "TOKEN").unwrap(),
         "ordinary"
     );
-    config["variables"]["entries"] = json!({});
+    config["variables"] = json!({});
     files::atomic_write(&root.path().join(".svode/config.json"), &config).unwrap();
     save(&service, &owner, "TOKEN", Mode::Git, Kind::Secret, None).unwrap();
     assert_eq!(
@@ -505,7 +505,7 @@ fn collision_requires_explicit_choice_and_never_silently_overwrites() {
         )
         .unwrap();
         let mut config = raw(root.path(), "config.json");
-        config["variables"] = json!({"version":1,"entries":{"TOKEN":{"id":ulid::Ulid::new().to_string(),"kind":"variable","value":"git"}}});
+        config["variables"] = json!({"TOKEN":{"kind":"variable","value":"git"}});
         files::atomic_write(&root.path().join(".svode/config.json"), &config).unwrap();
         assert_eq!(
             resolved(&service, root.path(), None, "TOKEN").unwrap_err(),
@@ -513,7 +513,7 @@ fn collision_requires_explicit_choice_and_never_silently_overwrites() {
         );
         let catalog = service.catalog(&owner).unwrap();
         assert_eq!(catalog.collisions, vec!["TOKEN"]);
-        let chosen = catalog.entries.iter().find(|e| e.mode == keep).unwrap();
+
         service
             .save(
                 &owner,
@@ -523,7 +523,7 @@ fn collision_requires_explicit_choice_and_never_silently_overwrites() {
                     kind: Kind::Variable,
                     value: None,
                     revision: catalog.revision,
-                    identity: Some(chosen.identity.clone()),
+                    operation: crate::variables::SaveOperation::Edit,
                     keep: Some(keep),
                 },
             )
@@ -556,7 +556,7 @@ fn stale_revision_and_corrupt_configs_fail_closed_without_discarding_draft_or_fi
                     kind: Kind::Variable,
                     value: Some("draft".into()),
                     revision: old.revision,
-                    identity: None,
+                    operation: crate::variables::SaveOperation::Create,
                     keep: None
                 }
             )
@@ -718,84 +718,12 @@ fn failed_cleanup_and_external_change_during_recovery_stay_explicit() {
 }
 
 #[test]
-fn library_keeps_existing_entries_accounts_usage_and_never_imports_values() {
-    let root = fixture();
-    let secrets = Secrets::default();
-    let library_path = root.path().join("library");
-    std::fs::create_dir(&library_path).unwrap();
-    let previous = json!({"appearance":{"theme":"dark"},"variables":{"entries":{"TOKEN":{"kind":"secret"}},"apps":{"/gone":{"ownerDirectory":"/gone","references":["TOKEN"],"bindings":{}}}}});
-    files::atomic_write(&library_path.join("settings.json"), &previous).unwrap();
-    secrets.set("TOKEN", "existing-secret").unwrap();
-    let service = Service::new(&secrets);
-    let library = Owner::library(&library_path).unwrap();
-    assert!(service.catalog(&library).unwrap().entries[0].has_value);
-    assert_eq!(
-        files::read(&library_path.join("settings.json"), true).unwrap(),
-        previous
-    );
-    save(
-        &service,
-        &library,
-        "TOKEN",
-        Mode::Local,
-        Kind::Secret,
-        Some("new-value"),
-    )
-    .unwrap();
-    assert_eq!(secrets.get("TOKEN").unwrap().unwrap(), "new-value");
-    let saved = files::read(&library_path.join("settings.json"), true).unwrap();
-    assert_eq!(saved["variables"]["apps"], previous["variables"]["apps"]);
-    assert_eq!(saved["appearance"], previous["appearance"]);
-    assert!(raw(root.path(), "config.json").get("variables").is_none());
-    assert!(
-        save(
-            &service,
-            &library,
-            "NEW",
-            Mode::Git,
-            Kind::Variable,
-            Some("value")
-        )
-        .is_err()
-    );
-}
-
-#[test]
-fn compatibility_is_versioned_idempotent_snapshot_only_and_deletion_stays_deleted() {
-    let old = json!({"apps":{"/missing/app":{"ownerDirectory":"/missing/app","references":["TOKEN","MISSING"],"bindings":{"TOKEN":"LIBRARY"}}}});
-    let mut normalized = normalize_app_bindings(&old, None).unwrap();
-    assert_eq!(normalized.owners["/missing/app"]["TOKEN"].name, "LIBRARY");
-    assert_eq!(
-        normalized.owners["/missing/app"]["MISSING"].owner,
-        SourceOwner::Library
-    );
-    normalized
-        .owners
-        .get_mut("/missing/app")
-        .unwrap()
-        .remove("TOKEN");
-    let normalized = normalize_app_bindings(&old, Some(normalized)).unwrap();
-    assert!(!normalized.owners["/missing/app"].contains_key("TOKEN"));
-    assert!(!normalized.owners.contains_key("/new-clone/app"));
-    let v1 = json!({"version":1,"endpoint":"https://s3.test","bucket":"bucket","region":"region","prefix":null,"catalogPath":"/config/settings.json","bindings":{"accessKey":"ACCESS","secretKey":"SECRET"}});
-    let normalized = normalize_s3_v1(&v1).unwrap();
-    assert_eq!(normalized.bindings.access_key.owner, SourceOwner::Library);
-    for invalid in [
-        json!({"keychainAccount":"legacy"}),
-        json!({"version":2}),
-        json!({"version":1}),
-    ] {
-        assert!(normalize_s3_v1(&invalid).is_err());
-    }
-}
-
-#[test]
 fn common_secret_pair_uses_scoped_and_library_sources_and_new_sessions_observe_rotation() {
     let root = fixture();
     let secrets = Secrets::default();
     let service = Service::new(&secrets);
     let project = owner(root.path(), None);
-    let library = Owner::library(&root.path().join("library")).unwrap();
+    let library = Owner::global(&root.path().join("library")).unwrap();
     save(
         &service,
         &project,
@@ -820,7 +748,7 @@ fn common_secret_pair_uses_scoped_and_library_sources_and_new_sessions_observe_r
             name: "ACCESS".into(),
         },
         secret_key: SourceReference {
-            owner: SourceOwner::Library,
+            owner: SourceOwner::Global,
             name: "SECRET".into(),
         },
     };
@@ -929,8 +857,7 @@ fn corrupted_recovery_cannot_publish_secret_plaintext_or_delete_another_namespac
     let path = root.path().join(".svode").join(files::PENDING_FILE);
     let original = files::read(&path, true).unwrap();
     let mut corrupt = original.clone();
-    corrupt["portable"]["variables"]["entries"]["TOKEN"]["value"] =
-        json!("must-never-be-published");
+    corrupt["portable"]["variables"]["TOKEN"]["value"] = json!("must-never-be-published");
     files::atomic_write(&path, &corrupt).unwrap();
     let reopened = Service::new(&secrets);
     assert_eq!(reopened.recover(&owner).unwrap_err(), Error::InvalidConfig);
@@ -1124,7 +1051,7 @@ fn config_lock_coordinates_processes_and_concurrent_saves_reject_stale_revision(
                         mode: Mode::Local,
                         kind: Kind::Variable,
                         value: Some(name.into()),
-                        identity: None,
+                        operation: crate::variables::SaveOperation::Create,
                         keep: None,
                         revision,
                     },
@@ -1142,4 +1069,365 @@ fn config_lock_coordinates_processes_and_concurrent_saves_reject_stale_revision(
             .iter()
             .any(|r| matches!(r, Err(Error::StaleRevision)))
     );
+}
+
+#[test]
+fn direct_maps_have_exact_shapes_and_metadata_names_remain_valid() {
+    let root = fixture();
+    let secrets = Secrets::default();
+    let service = Service::new(&secrets);
+    let project = owner(root.path(), None);
+    let global = Owner::global(&root.path().join("library")).unwrap();
+    let global_path = root.path().join("library/settings.json");
+    let unrelated =
+        json!({"appearance":{"theme":"dark"},"s3VariableOwners":[],"unknown":{"retain":true}});
+    files::atomic_write(&global_path, &unrelated).unwrap();
+    for name in ["entries", "version", "secrets", "copyId", "revision", "id"] {
+        save(
+            &service,
+            &project,
+            name,
+            Mode::Git,
+            Kind::Variable,
+            Some(""),
+        )
+        .unwrap();
+        save(
+            &service,
+            &global,
+            name,
+            Mode::Local,
+            Kind::Variable,
+            Some(""),
+        )
+        .unwrap();
+    }
+    let git = raw(root.path(), "config.json")["variables"].clone();
+    let global_map =
+        files::read(&root.path().join("library/settings.json"), true).unwrap()["variables"].clone();
+    let mut saved_global = files::read(&global_path, true).unwrap();
+    saved_global.as_object_mut().unwrap().remove("variables");
+    assert_eq!(saved_global, unrelated);
+    assert_eq!(git, global_map);
+    assert_eq!(git.as_object().unwrap().len(), 6);
+    for entry in git.as_object().unwrap().values() {
+        assert_eq!(*entry, json!({"kind":"variable", "value":""}));
+    }
+    save(
+        &service,
+        &project,
+        "TOKEN",
+        Mode::Git,
+        Kind::Secret,
+        Some("synthetic"),
+    )
+    .unwrap();
+    let local = raw(root.path(), "local.json");
+    let reference = local["variables"]["TOKEN"]["secretRef"].as_str().unwrap();
+    assert_eq!(local["variables"], json!({"TOKEN":{"secretRef":reference}}));
+    assert_eq!(
+        raw(root.path(), "config.json")["variables"]["TOKEN"],
+        json!({"kind":"secret"})
+    );
+    assert!(
+        !serde_json::to_string(&service.catalog(&project).unwrap())
+            .unwrap()
+            .contains(reference)
+    );
+    save(&service, &project, "TOKEN", Mode::Local, Kind::Secret, None).unwrap();
+    assert_eq!(
+        raw(root.path(), "local.json")["variables"]["TOKEN"],
+        json!({"kind":"secret","secretRef":reference})
+    );
+    assert!(
+        raw(root.path(), "config.json")["variables"]
+            .get("TOKEN")
+            .is_none()
+    );
+}
+
+#[test]
+fn global_rotation_recovery_and_recreation_only_resolve_the_published_ref() {
+    let root = fixture();
+    let secrets = Secrets::default();
+    let service = Service::new(&secrets);
+    let global = Owner::global(&root.path().join("library")).unwrap();
+    let path = root.path().join("library/settings.json");
+    secrets.set("TOKEN", "old-name-account").unwrap();
+    assert_eq!(
+        save(&service, &global, "TOKEN", Mode::Local, Kind::Secret, None).unwrap_err(),
+        Error::InvalidValue
+    );
+    save(
+        &service,
+        &global,
+        "TOKEN",
+        Mode::Local,
+        Kind::Secret,
+        Some("confirmed"),
+    )
+    .unwrap();
+    let before = files::read(&path, true).unwrap();
+    let old_ref = before["variables"]["TOKEN"]["secretRef"].as_str().unwrap();
+    secrets.fail_set.set(true);
+    assert_eq!(
+        save(
+            &service,
+            &global,
+            "TOKEN",
+            Mode::Local,
+            Kind::Secret,
+            Some("next")
+        )
+        .unwrap_err(),
+        Error::SecretStore
+    );
+    assert_eq!(files::read(&path, true).unwrap(), before);
+    secrets.fail_set.set(false);
+    service.interrupt.set(1);
+    assert_eq!(
+        save(
+            &service,
+            &global,
+            "TOKEN",
+            Mode::Local,
+            Kind::Secret,
+            Some("next")
+        )
+        .unwrap_err(),
+        Error::PendingRecovery
+    );
+    assert_eq!(files::read(&path, true).unwrap(), before);
+    assert_eq!(secrets.get(old_ref).unwrap().as_deref(), Some("confirmed"));
+    assert!(
+        !files::read(&root.path().join("library").join(files::PENDING_FILE), true)
+            .unwrap()
+            .to_string()
+            .contains("next")
+    );
+    let reopened = Service::new(&secrets);
+    reopened.recover(&global).unwrap();
+    assert!(reopened.recover(&global).unwrap().is_none());
+    assert!(secrets.get(old_ref).unwrap().is_none());
+    assert_eq!(
+        secrets.get("TOKEN").unwrap().as_deref(),
+        Some("old-name-account")
+    );
+    let pair = SecretPair {
+        access_key: SourceReference {
+            owner: SourceOwner::Global,
+            name: "TOKEN".into(),
+        },
+        secret_key: SourceReference {
+            owner: SourceOwner::Global,
+            name: "TOKEN".into(),
+        },
+    };
+    assert_eq!(
+        reopened
+            .resolve_secret_pair(&context(root.path(), None), &pair)
+            .unwrap()
+            .access_key,
+        "next"
+    );
+    let revision = reopened.catalog(&global).unwrap().revision;
+    reopened.remove(&global, "TOKEN", &revision).unwrap();
+    assert!(files::read(&path, true).unwrap().get("variables").is_none());
+    assert_eq!(
+        save(&reopened, &global, "TOKEN", Mode::Local, Kind::Secret, None).unwrap_err(),
+        Error::InvalidValue
+    );
+    save(
+        &reopened,
+        &global,
+        "TOKEN",
+        Mode::Local,
+        Kind::Secret,
+        Some("recreated"),
+    )
+    .unwrap();
+    let now = files::read(&path, true).unwrap();
+    assert_ne!(
+        now["variables"]["TOKEN"]["secretRef"],
+        before["variables"]["TOKEN"]["secretRef"]
+    );
+    assert_eq!(
+        reopened
+            .resolve_secret_pair(&context(root.path(), None), &pair)
+            .unwrap()
+            .access_key,
+        "recreated"
+    );
+    let account = now["variables"]["TOKEN"]["secretRef"].as_str().unwrap();
+    secrets.remove(account).unwrap();
+    assert!(!reopened.catalog(&global).unwrap().entries[0].has_value);
+    assert!(matches!(
+        reopened.resolve_secret_pair(&context(root.path(), None), &pair),
+        Err(Error::Missing)
+    ));
+}
+
+#[test]
+fn old_mixed_malformed_data_and_journals_are_rejected_without_mutation() {
+    let root = fixture();
+    let secrets = Secrets::default();
+    let service = Service::new(&secrets);
+    let project = owner(root.path(), None);
+    let global = Owner::global(&root.path().join("library")).unwrap();
+    let reference = "secret:01ARZ3NDEKTSV4RRFFQ69G5FAV";
+    for (target, path) in [
+        (&project, root.path().join(".svode/config.json")),
+        (&global, root.path().join("library/settings.json")),
+    ] {
+        for variables in [
+            json!({"version":1,"entries":{}}),
+            json!({"entries":{"KEY":{"kind":"variable","value":"old"}},"apps":{}}),
+            json!({"copyId":"old","secrets":{},"entries":{},"version":1}),
+            json!({"KEY":{"kind":"secret","value":"must-not-leak"}}),
+            json!({"KEY":{"kind":"variable"}}),
+            json!({"KEY":{"kind":"variable","value":null}}),
+            json!({"KEY":{"kind":"secret","secretRef":null}}),
+            json!({"KEY":{"kind":"variable","value":"v","id":"old"}}),
+            json!({"KEY":{"kind":"variable","value":"v","secretRef":reference}}),
+            json!({"KEY":{"secretRef":reference}}),
+            json!({"KEY":{"kind":"secret","secretRef":"KEY"}}),
+        ] {
+            let config = json!({"unrelated":true,"variables":variables});
+            files::atomic_write(&path, &config).unwrap();
+            assert!(service.catalog(target).is_err(), "invalid shape accepted");
+            assert_eq!(files::read(&path, true).unwrap(), config);
+            assert!(!path.parent().unwrap().join(files::PENDING_FILE).exists());
+        }
+        let journal_path = path.parent().unwrap().join(files::PENDING_FILE);
+        let old = json!({"version":1,"beforePortable":"old","beforeLocal":"old","portable":{},"local":{},"names":[],"publish":null,"cleanup":[],"stage":null});
+        files::atomic_write(&journal_path, &old).unwrap();
+        let before = files::read(&path, true).unwrap();
+        assert!(service.recover(target).is_err());
+        assert_eq!(files::read(&journal_path, true).unwrap(), old);
+        assert_eq!(files::read(&path, true).unwrap(), before);
+    }
+    assert!(secrets.values.borrow().is_empty());
+    assert_eq!(secrets.reads.get(), 0);
+}
+
+#[test]
+fn reads_and_noop_saves_never_materialize_empty_catalogs() {
+    let root = fixture();
+    let secrets = Secrets::default();
+    let service = Service::new(&secrets);
+    let project = owner(root.path(), None);
+    let global = Owner::global(&root.path().join("library")).unwrap();
+    assert!(service.catalog(&project).unwrap().entries.is_empty());
+    assert!(service.catalog(&global).unwrap().entries.is_empty());
+    assert!(raw(root.path(), "config.json").get("variables").is_none());
+    assert!(!root.path().join(".svode/local.json").exists());
+    assert!(!root.path().join("library/settings.json").exists());
+    save(
+        &service,
+        &project,
+        "KEY",
+        Mode::Git,
+        Kind::Variable,
+        Some("value"),
+    )
+    .unwrap();
+    let path = root.path().join(".svode/config.json");
+    let modified = std::fs::metadata(&path).unwrap().modified().unwrap();
+    assert!(
+        !save(&service, &project, "KEY", Mode::Git, Kind::Variable, None)
+            .unwrap()
+            .portable_changed
+    );
+    assert_eq!(
+        std::fs::metadata(&path).unwrap().modified().unwrap(),
+        modified
+    );
+    assert!(!root.path().join(".svode/local.json").exists());
+    let catalog = service.catalog(&project).unwrap();
+    for (name, operation) in [
+        ("KEY", SaveOperation::Create),
+        ("MISSING", SaveOperation::Edit),
+    ] {
+        assert_eq!(
+            service
+                .save(
+                    &project,
+                    Save {
+                        name: name.into(),
+                        mode: Mode::Git,
+                        kind: Kind::Variable,
+                        value: Some("value".into()),
+                        revision: catalog.revision.clone(),
+                        operation,
+                        keep: None
+                    }
+                )
+                .unwrap_err(),
+            Error::StaleRevision
+        );
+    }
+    service.remove(&project, "KEY", &catalog.revision).unwrap();
+    assert_eq!(
+        service
+            .remove(&project, "KEY", &catalog.revision)
+            .unwrap_err(),
+        Error::StaleRevision
+    );
+    assert!(raw(root.path(), "config.json").get("variables").is_none());
+}
+
+#[test]
+fn collision_choice_removes_the_discarded_secret_ref() {
+    for keep in [Mode::Git, Mode::Local] {
+        let root = fixture();
+        let secrets = Secrets::default();
+        let service = Service::new(&secrets);
+        let owner = owner(root.path(), None);
+        save(
+            &service,
+            &owner,
+            "KEY",
+            Mode::Local,
+            Kind::Secret,
+            Some("local-secret"),
+        )
+        .unwrap();
+        let local = raw(root.path(), "local.json");
+        let reference = local["variables"]["KEY"]["secretRef"].as_str().unwrap();
+        let mut config = raw(root.path(), "config.json");
+        config["variables"] = json!({"KEY":{"kind":"variable","value":"git"}});
+        files::atomic_write(&root.path().join(".svode/config.json"), &config).unwrap();
+        let catalog = service.catalog(&owner).unwrap();
+        assert_eq!(catalog.collisions, vec!["KEY"]);
+        service
+            .save(
+                &owner,
+                Save {
+                    name: "KEY".into(),
+                    mode: keep,
+                    kind: if keep == Mode::Git {
+                        Kind::Variable
+                    } else {
+                        Kind::Secret
+                    },
+                    value: None,
+                    revision: catalog.revision,
+                    operation: SaveOperation::Edit,
+                    keep: Some(keep),
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            resolved(&service, root.path(), None, "KEY").unwrap(),
+            if keep == Mode::Git {
+                "git"
+            } else {
+                "local-secret"
+            }
+        );
+        assert_eq!(
+            secrets.get(reference).unwrap().is_some(),
+            keep == Mode::Local
+        );
+    }
 }

@@ -317,10 +317,12 @@ mod tests {
     #[tokio::test]
     async fn standalone_session_resolves_shared_secrets_and_preserves_object_keys() {
         let repo = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(repo.path().join(".svode")).unwrap();
+        std::fs::write(repo.path().join(".svode/config.json"), "{}").unwrap();
         let catalog_path = repo.path().join("settings.json");
         std::fs::write(
             &catalog_path,
-            r#"{"variables":{"entries":{"ACCESS":{"kind":"secret"},"SECRET":{"kind":"secret"}}}}"#,
+            r#"{"variables":{"ACCESS":{"kind":"secret","secretRef":"secret:01ARZ3NDEKTSV4RRFFQ69G5FAV"},"SECRET":{"kind":"secret","secretRef":"secret:01ARZ3NDEKTSV4RRFFQ69G5FAW"}}}"#,
         )
         .unwrap();
         let config = svode_core::storage::s3::AgentConfig {
@@ -329,16 +331,16 @@ mod tests {
             bucket: "assets".into(),
             region: "us-east-1".into(),
             prefix: Some("project/root".into()),
-            library_directory: repo.path().into(),
-            project_path: None,
+            global_directory: repo.path().into(),
+            project_path: repo.path().into(),
             space_id: None,
             bindings: svode_core::storage::s3::SecretBindings {
                 access_key: svode_core::variables::SourceReference {
-                    owner: svode_core::variables::SourceOwner::Library,
+                    owner: svode_core::variables::SourceOwner::Global,
                     name: "ACCESS".into(),
                 },
                 secret_key: svode_core::variables::SourceReference {
-                    owner: svode_core::variables::SourceOwner::Library,
+                    owner: svode_core::variables::SourceOwner::Global,
                     name: "SECRET".into(),
                 },
             },
@@ -347,7 +349,7 @@ mod tests {
         let state = AgentState::load_with(
             repo.path().into(),
             Store(|name| {
-                assert!(name == "ACCESS" || name == "SECRET");
+                assert!(name.starts_with("secret:"));
                 Ok(Some("fixture-value".into()))
             }),
         )
@@ -357,7 +359,7 @@ mod tests {
         let result = AgentState::load_with(
             repo.path().into(),
             Store(|name| {
-                if name == "SECRET" {
+                if name == "secret:01ARZ3NDEKTSV4RRFFQ69G5FAW" {
                     Err("denied".into())
                 } else {
                     Ok(Some("access".into()))

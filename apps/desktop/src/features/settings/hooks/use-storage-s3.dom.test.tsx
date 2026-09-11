@@ -50,7 +50,7 @@ if (process.env.SVODE_S3_TEST !== "1") {
   };
   const event = "app-settings:variables-changed";
   const library = (name: string): VariableSource => ({
-    owner: { scope: "library" },
+    owner: { scope: "global" },
     name,
   });
   const project = (name: string): VariableSource => ({
@@ -79,7 +79,7 @@ if (process.env.SVODE_S3_TEST !== "1") {
       ].map((e) =>
         variableFixture(
           { ...e, kind: e.kind as "secret" | "variable" },
-          e.name === "PLAIN" ? { scope: "project" } : { scope: "library" },
+          e.name === "PLAIN" ? { scope: "project" } : { scope: "global" },
         ),
       ) as AppVariableEntry[],
       bindings: saved
@@ -146,8 +146,8 @@ if (process.env.SVODE_S3_TEST !== "1") {
             structuredClone(
               fixture.entries.filter(
                 (entry) =>
-                  entry.source.owner.scope !== "library" ||
-                  args.includeLibrary === true,
+                  entry.source.owner.scope !== "global" ||
+                  args.includeGlobal === true,
               ),
             ),
             (args.scope as { spaceId?: string })?.spaceId
@@ -163,16 +163,17 @@ if (process.env.SVODE_S3_TEST !== "1") {
           await fixture.mutationGate;
           const input = args.input as {
             source: VariableSource;
-            identity?: string;
             kind: "secret";
+            operation: "create" | "edit";
             mode: "local" | "git";
             value?: string;
           };
           const existing = fixture.entries.find((item) =>
             sameSource(item.source, input.source),
           );
-          if (!input.identity && existing) throw new Error("collision");
-          if (Boolean(input.identity) && existing?.kind !== "secret")
+          if (input.operation === "create" && existing)
+            throw new Error("collision");
+          if (input.operation === "edit" && existing?.kind !== "secret")
             throw new Error("changed");
           if (!existing)
             fixture.entries.push(
@@ -587,7 +588,7 @@ if (process.env.SVODE_S3_TEST !== "1") {
     }
   });
 
-  test("explicit reread preserves a stale draft and rejects replacement identity", async () => {
+  test("explicit reread preserves a stale draft and rejects a source changed to ordinary", async () => {
     const h = await setup(true);
     try {
       await act(async () => h.state.s3.begin("secretKey", true));
@@ -607,8 +608,7 @@ if (process.env.SVODE_S3_TEST !== "1") {
       expect(h.state.s3.editor!.draft.revision).toBe("r2");
       expect(h.state.s3.canSubmit).toBe(true);
       await act(async () => {
-        h.fixture.entries.find((e) => e.name === "SECRET")!.identity =
-          "replacement";
+        h.fixture.entries.find((e) => e.name === "SECRET")!.kind = "variable";
         await emit(event);
         await tick();
       });

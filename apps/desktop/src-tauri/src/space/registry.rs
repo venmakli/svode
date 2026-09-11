@@ -111,3 +111,34 @@ pub fn update_last_opened(config_dir: &Path, id: &str) -> Result<(), AppError> {
     }
     write_registry(config_dir, &registry)
 }
+
+/// Resolve the existing root registration; reading an App never registers a project.
+pub(crate) fn find_project_by_path(
+    config_dir: &Path,
+    path: &Path,
+) -> Result<RegistryEntry, AppError> {
+    let path = path.canonicalize()?;
+    let registry: SpaceRegistry =
+        serde_json::from_slice(&std::fs::read(config_dir.join("spaces.json"))?)?;
+    let mut matches = registry
+        .spaces
+        .iter()
+        .filter(|entry| Path::new(&entry.path).canonicalize().ok().as_ref() == Some(&path));
+    let project = matches
+        .next()
+        .ok_or_else(|| AppError::Storage("Project registration is unavailable".into()))?;
+    if matches.next().is_some()
+        || project.id.is_empty()
+        || registry
+            .spaces
+            .iter()
+            .filter(|entry| entry.id == project.id)
+            .count()
+            != 1
+    {
+        return Err(AppError::Storage(
+            "Project registration is ambiguous".into(),
+        ));
+    }
+    Ok(project.clone())
+}

@@ -26,7 +26,7 @@ export function useAppVariables(
   notify = true,
   enabled = true,
   scope?: VariableScope,
-  includeLibrary = false,
+  includeGlobal = false,
 ) {
   const [catalog, setCatalog] = useState<AppVariablesCatalog | null>(null);
   const [loadError, setLoadError] = useState(false);
@@ -38,7 +38,7 @@ export function useAppVariables(
   const refresh = useCallback(async () => {
     const generation = ++generationRef.current;
     try {
-      const next = await getAppVariables(context, scope, includeLibrary);
+      const next = await getAppVariables(context, scope, includeGlobal);
       if (generation === generationRef.current) {
         setCatalog(next);
         setLoadError(false);
@@ -48,7 +48,7 @@ export function useAppVariables(
       if (generation === generationRef.current) setLoadError(true);
       throw error;
     }
-  }, [context, scope, includeLibrary]);
+  }, [context, scope, includeGlobal]);
 
   useEffect(() => {
     busyRef.current = false;
@@ -142,7 +142,6 @@ export function useAppVariables(
         removeAppVariable({
           scope: context ?? scope,
           source: entry.source,
-          identity: entry.identity,
           revision: entry.revision,
         }),
       ),

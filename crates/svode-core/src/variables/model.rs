@@ -22,7 +22,7 @@ pub enum Mode {
 pub enum SourceOwner {
     Project,
     Space { id: String },
-    Library,
+    Global,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -118,7 +118,6 @@ impl SecretStore for KeyringSecretStore {
 #[serde(rename_all = "camelCase")]
 pub struct Entry {
     pub name: String,
-    pub identity: String,
     pub mode: Mode,
     pub kind: Kind,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -141,8 +140,7 @@ pub struct Save {
     pub kind: Kind,
     pub value: Option<String>,
     pub revision: Revision,
-    /// Identity from the edited declaration; None means create, never upsert.
-    pub identity: Option<String>,
+    pub operation: SaveOperation,
     /// Explicitly choose the declaration to retain in a local/Git collision.
     pub keep: Option<Mode>,
 }
@@ -163,48 +161,38 @@ pub struct Change {
     pub portable_changed: bool,
 }
 
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SaveOperation {
+    Create,
+    Edit,
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub(crate) struct Declaration {
-    pub id: String,
-    pub kind: Kind,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+pub(crate) struct StoredEntry {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kind: Option<Kind>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub value: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub secret_ref: Option<String>,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+pub(crate) type Section = BTreeMap<String, StoredEntry>;
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub(crate) struct Section {
-    pub version: u32,
-    #[serde(default)]
-    pub entries: BTreeMap<String, Declaration>,
-}
-impl Default for Section {
-    fn default() -> Self {
-        Self {
-            version: 1,
-            entries: BTreeMap::new(),
-        }
-    }
+pub struct SecretPair {
+    pub access_key: SourceReference,
+    pub secret_key: SourceReference,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub(crate) struct LocalSection {
-    pub version: u32,
-    pub copy_id: String,
-    #[serde(default)]
-    pub entries: BTreeMap<String, Declaration>,
-    #[serde(default)]
-    pub secrets: BTreeMap<String, String>,
-}
-impl Default for LocalSection {
-    fn default() -> Self {
-        Self {
-            version: 1,
-            copy_id: ulid::Ulid::new().to_string(),
-            entries: BTreeMap::new(),
-            secrets: BTreeMap::new(),
-        }
+impl SecretPair {
+    pub fn roles(&self) -> [(&'static str, &SourceReference); 2] {
+        [
+            ("Access Key", &self.access_key),
+            ("Secret Key", &self.secret_key),
+        ]
     }
 }

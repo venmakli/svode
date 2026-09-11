@@ -3,7 +3,7 @@ export type VariableMode = "local" | "git";
 export type VariableOwner =
   | { scope: "project" }
   | { scope: "space"; id: string }
-  | { scope: "library" };
+  | { scope: "global" };
 export interface VariableSource {
   owner: VariableOwner;
   name: string;
@@ -23,7 +23,6 @@ export interface AppVariableEntry {
   name: string;
   kind: AppVariableKind;
   mode: VariableMode;
-  identity: string;
   revision: string;
   source: VariableSource;
   ownerLabel: string;
@@ -60,7 +59,7 @@ export interface SaveVariableInput {
   kind: AppVariableKind;
   mode: VariableMode;
   value?: string;
-  identity?: string;
+  operation: "create" | "edit";
   revision: string;
   keep?: VariableMode;
 }

@@ -25,8 +25,8 @@ pub(crate) fn prepare(
         region: target.region.clone(),
         prefix: Some(target.prefix.clone()),
         bindings,
-        library_directory: catalog_dir.to_path_buf(),
-        project_path: Some(PathBuf::from(&scope.project_path)),
+        global_directory: catalog_dir.to_path_buf(),
+        project_path: PathBuf::from(&scope.project_path),
         space_id: scope.space_id.clone(),
     };
     config
@@ -201,7 +201,7 @@ mod tests {
         value: Option<&str>,
         secrets: &dyn SecretStore,
     ) -> Result<(), AppError> {
-        let owner = Owner::library(config).unwrap();
+        let owner = Owner::global(config).unwrap();
         let service = Service::new(secrets);
         let catalog = service.catalog(&owner).unwrap();
         service
@@ -212,11 +212,11 @@ mod tests {
                     mode: Mode::Local,
                     kind,
                     value: value.map(str::to_string),
-                    identity: catalog
-                        .entries
-                        .iter()
-                        .find(|e| e.name == name)
-                        .map(|e| e.identity.clone()),
+                    operation: if catalog.entries.iter().any(|e| e.name == name) {
+                        svode_core::variables::SaveOperation::Edit
+                    } else {
+                        svode_core::variables::SaveOperation::Create
+                    },
                     revision: catalog.revision,
                     keep: None,
                 },
@@ -225,12 +225,11 @@ mod tests {
             .map_err(app_variables::storage_error)
     }
     fn remove(config: &Path, name: &str, secrets: &dyn SecretStore) -> Result<(), AppError> {
-        let owner = Owner::library(config).unwrap();
+        let owner = Owner::global(config).unwrap();
         let service = Service::new(secrets);
         let catalog = service.catalog(&owner).unwrap();
-        let entry = catalog.entries.iter().find(|e| e.name == name).unwrap();
         service
-            .remove(&owner, name, &entry.identity, &catalog.revision)
+            .remove(&owner, name, &catalog.revision)
             .map(|_| ())
             .map_err(app_variables::storage_error)
     }
@@ -245,7 +244,7 @@ mod tests {
 
     fn library(name: &str) -> SourceReference {
         SourceReference {
-            owner: SourceOwner::Library,
+            owner: SourceOwner::Global,
             name: name.into(),
         }
     }
@@ -300,6 +299,8 @@ mod tests {
         let project = dir.path().join("project");
         std::fs::create_dir_all(project.join(".svode")).unwrap();
         std::fs::write(project.join(".svode/config.json"), "{}").unwrap();
+        crate::space::registry::add_space(dir.path(), "project", project.to_str().unwrap())
+            .unwrap();
         let project = project.canonicalize().unwrap();
         std::fs::create_dir_all(project.join("app")).unwrap();
         let app = AppVariableOwnerContext {
@@ -318,7 +319,7 @@ mod tests {
             &app,
             "TOKEN",
             Some(SourceReference {
-                owner: SourceOwner::Library,
+                owner: SourceOwner::Global,
                 name: "SECRET".into(),
             }),
             &catalog.binding_revision,
@@ -362,7 +363,7 @@ mod tests {
                 &app,
                 "S3 Secret Key",
                 Some(SourceReference {
-                    owner: SourceOwner::Library,
+                    owner: SourceOwner::Global,
                     name: "SECRET".into()
                 }),
                 &catalog.binding_revision,
@@ -454,7 +455,7 @@ mod tests {
                         kind: AppVariableKind::Secret,
                         value: Some(project_name.into()),
                         revision: service.catalog(&owner).unwrap().revision,
-                        identity: None,
+                        operation: svode_core::variables::SaveOperation::Create,
                         keep: None,
                     },
                 )
@@ -532,7 +533,12 @@ mod tests {
             &secrets,
         )
         .unwrap();
-        secrets.remove("OTHER").unwrap();
+        let settings =
+            svode_core::variables::files::read(&dir.path().join("settings.json"), true).unwrap();
+        let reference = settings["variables"]["OTHER"]["secretRef"]
+            .as_str()
+            .unwrap();
+        secrets.remove(reference).unwrap();
         assert!(publish(dir.path(), &repo, &next, &secrets).is_err());
         assert_eq!(AgentConfig::read(&repo).unwrap(), original);
         let catalog = app_variables::get_catalog(dir.path(), None, None, &secrets).unwrap();
@@ -545,7 +551,7 @@ mod tests {
                 .used_in
                 .is_empty()
         );
-        secrets.set("OTHER", "other").unwrap();
+        secrets.set(reference, "other").unwrap();
         publish(dir.path(), &repo, &next, &secrets).unwrap();
         let catalog = app_variables::get_catalog(dir.path(), None, None, &secrets).unwrap();
         assert_eq!(catalog.entries.len(), 3);

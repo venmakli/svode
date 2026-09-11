@@ -19,6 +19,13 @@ impl SecretStore for Secrets {
     }
 }
 fn project(path: &Path) {
+    let config = path.parent().unwrap().join("library");
+    crate::space::registry::add_space(
+        &config,
+        &ulid::Ulid::new().to_string(),
+        path.to_str().unwrap(),
+    )
+    .unwrap();
     fs::create_dir_all(path.join(".svode")).unwrap();
     fs::create_dir_all(path.join("child/.svode")).unwrap();
     fs::write(
@@ -55,11 +62,11 @@ fn put(
     let owner = owner(config, scope, &source).unwrap();
     let service = Service::new(secrets);
     let catalog = service.catalog(&owner).unwrap();
-    let identity = catalog
-        .entries
-        .iter()
-        .find(|e| e.name == name)
-        .map(|e| e.identity.clone());
+    let operation = if catalog.entries.iter().any(|e| e.name == name) {
+        svode_core::variables::SaveOperation::Edit
+    } else {
+        svode_core::variables::SaveOperation::Create
+    };
     service
         .save(
             &owner,
@@ -69,7 +76,7 @@ fn put(
                 kind,
                 value: value.map(str::to_string),
                 revision: catalog.revision,
-                identity,
+                operation,
                 keep: None,
             },
         )
@@ -102,7 +109,7 @@ fn scoped_apps_isolate_projects_and_stop_at_missing_nearest_declaration() {
     put(
         &config,
         None,
-        SourceOwner::Library,
+        SourceOwner::Global,
         "KEY",
         Mode::Local,
         Kind::Variable,
@@ -150,62 +157,25 @@ fn scoped_apps_isolate_projects_and_stop_at_missing_nearest_declaration() {
     assert_eq!(run(&config, &child, &secrets).environment["KEY"], "project");
 }
 #[test]
-fn legacy_snapshot_is_normalized_before_new_usage_and_removed_binding_stays_removed() {
+fn old_registry_is_rejected_and_context_read_does_not_materialize_variables() {
     let dir = tempfile::tempdir().unwrap();
     let config = dir.path().join("library");
     let root = dir.path().join("project");
     project(&root);
-    fs::create_dir_all(&config).unwrap();
-    let old = app(&root, false, &["KEY", "MISSING"]);
-    let secrets = Secrets::default();
-    fs::write(config.join("settings.json"), json!({"variables":{"entries":{"KEY":{"kind":"variable","value":"legacy"}},"apps":{old.owner_key.clone():{"ownerDirectory":old.owner_key,"references":["KEY", "MISSING"]},"/unavailable/app":{"ownerDirectory":"/unavailable/app","references":["KEY"]}}}}).to_string()).unwrap();
-    put(
-        &config,
-        Some(&old.scope),
-        SourceOwner::Project,
-        "KEY",
-        Mode::Local,
-        Kind::Variable,
-        Some("scoped"),
-        &secrets,
-    );
-    assert_eq!(run(&config, &old, &secrets).missing.len(), 1);
-    let catalog = get_catalog(&config, Some(&old.scope), Some(&old), &secrets).unwrap();
+    let app = app(&root, false, &["KEY"]);
+    let before = fs::read(root.join(".svode/config.json")).unwrap();
+    let context = registry::prepare_context(&config, &app).unwrap();
+    assert!(!context.owner_key.is_empty());
+    assert!(!root.join(".svode/local.json").exists());
+    assert!(!config.join("settings.json").exists());
+    assert_eq!(fs::read(root.join(".svode/config.json")).unwrap(), before);
+    let old = json!({"appVariableRegistry":{"bindings":{"version":1,"legacyNormalized":true,"owners":{}},"usage":{}}}).to_string();
+    fs::write(config.join("settings.json"), &old).unwrap();
+    assert!(registry::prepare_context(&config, &app).is_err());
     assert_eq!(
-        catalog.context.as_ref().unwrap()[0].source.owner,
-        SourceOwner::Library
+        fs::read_to_string(config.join("settings.json")).unwrap(),
+        old
     );
-    assert!(
-        registry::read(&config)
-            .unwrap()
-            .bindings
-            .owners
-            .contains_key("/unavailable/app")
-    );
-    bind(
-        &config,
-        &old,
-        "KEY",
-        None,
-        &catalog.binding_revision,
-        &secrets,
-    )
-    .unwrap();
-    let single = AppVariableOwnerContext {
-        references: vec!["KEY".into()],
-        ..old.clone()
-    };
-    assert_eq!(run(&config, &single, &secrets).environment["KEY"], "scoped");
-    assert_eq!(run(&config, &single, &secrets).environment["KEY"], "scoped");
-    let clone = dir.path().join("clone");
-    project(&clone);
-    assert_eq!(
-        run(&config, &app(&clone, false, &["KEY"]), &secrets)
-            .missing
-            .len(),
-        1
-    );
-    assert!(!config.join("unavailable").exists());
 }
 #[test]
 fn catalog_revision_survives_usage_projection_and_stale_edit_does_not_overwrite() {
@@ -218,7 +188,7 @@ fn catalog_revision_survives_usage_projection_and_stale_edit_does_not_overwrite(
     put(
         &config,
         None,
-        SourceOwner::Library,
+        SourceOwner::Global,
         "KEY",
         Mode::Local,
         Kind::Variable,
@@ -229,9 +199,9 @@ fn catalog_revision_survives_usage_projection_and_stale_edit_does_not_overwrite(
     let entry = catalog
         .entries
         .iter()
-        .find(|e| e.source.owner == SourceOwner::Library)
+        .find(|e| e.source.owner == SourceOwner::Global)
         .unwrap();
-    let owner = Owner::library(&config).unwrap();
+    let owner = Owner::global(&config).unwrap();
     let service = Service::new(&secrets);
     assert_eq!(entry.revision, service.catalog(&owner).unwrap().revision);
     let input = |revision: Revision| Save {
@@ -239,7 +209,7 @@ fn catalog_revision_survives_usage_projection_and_stale_edit_does_not_overwrite(
         mode: Mode::Local,
         kind: Kind::Variable,
         value: Some("after".into()),
-        identity: Some(entry.entry.identity.clone()),
+        operation: core::SaveOperation::Edit,
         revision,
         keep: None,
     };
@@ -300,7 +270,7 @@ fn local_bindings_follow_scope_move_but_never_a_replacement_clone_at_the_same_pa
     put(
         &config,
         None,
-        SourceOwner::Library,
+        SourceOwner::Global,
         "KEY",
         Mode::Local,
         Kind::Secret,
@@ -313,7 +283,7 @@ fn local_bindings_follow_scope_move_but_never_a_replacement_clone_at_the_same_pa
         &original,
         "KEY",
         Some(SourceReference {
-            owner: SourceOwner::Library,
+            owner: SourceOwner::Global,
             name: "KEY".into(),
         }),
         &catalog.binding_revision,
@@ -326,12 +296,25 @@ fn local_bindings_follow_scope_move_but_never_a_replacement_clone_at_the_same_pa
     );
     let moved = dir.path().join("renamed");
     fs::rename(&root, &moved).unwrap();
+    let mut registration = crate::space::registry::read_registry(&config).unwrap();
+    registration
+        .spaces
+        .iter_mut()
+        .find(|s| Path::new(&s.path) == root)
+        .unwrap()
+        .path = moved.to_str().unwrap().into();
+    crate::space::registry::write_registry(&config, &registration).unwrap();
     assert_eq!(
         run(&config, &app(&moved, false, &["KEY"]), &secrets).environment["KEY"],
         "synthetic"
     );
     project(&root);
-    assert_eq!(run(&config, &original, &secrets).missing.len(), 1);
+    assert_eq!(
+        run(&config, &app(&root, false, &["KEY"]), &secrets)
+            .missing
+            .len(),
+        1
+    );
     assert!(
         clear_owner_usage(
             &config,
@@ -414,6 +397,7 @@ fn app_runtime_reads_git_clone_checkout_and_collision_without_global_fallback() 
         dir.path(),
         &["clone", root.to_str().unwrap(), clone.to_str().unwrap()],
     );
+    crate::space::registry::add_space(&config, "clone", clone.to_str().unwrap()).unwrap();
     let cloned = app(&clone, false, &["PUBLIC", "KEY"]);
     assert_eq!(
         run(&config, &cloned, &secrets).missing[0].reference_name,
@@ -453,7 +437,7 @@ fn app_runtime_reads_git_clone_checkout_and_collision_without_global_fallback() 
     assert_eq!(run(&config, &single, &secrets).environment["PUBLIC"], "v1");
     let path = clone.join(".svode/local.json");
     let mut local = core::files::read(&path, false).unwrap();
-    local["variables"]["entries"]["PUBLIC"] =
+    local["variables"]["PUBLIC"] =
         json!({"id":ulid::Ulid::new().to_string(), "kind":"variable", "value":"conflict"});
     core::files::atomic_write(&path, &local).unwrap();
     assert!(run(&config, &single, &secrets).environment.is_empty());
@@ -518,7 +502,7 @@ fn source_picker_includes_library_without_polluting_scoped_settings_catalog() {
     for source in [
         SourceOwner::Project,
         SourceOwner::Space { id: "child".into() },
-        SourceOwner::Library,
+        SourceOwner::Global,
     ] {
         put(
             &config,
@@ -534,7 +518,7 @@ fn source_picker_includes_library_without_polluting_scoped_settings_catalog() {
     put(
         &config,
         None,
-        SourceOwner::Library,
+        SourceOwner::Global,
         "DADATA_API_KEY",
         Mode::Local,
         Kind::Secret,
@@ -554,18 +538,57 @@ fn source_picker_includes_library_without_polluting_scoped_settings_catalog() {
             .iter()
             .find(|e| e.entry.name == "DADATA_API_KEY")
             .unwrap();
-        assert_eq!(library.source.owner, SourceOwner::Library);
+        assert_eq!(library.source.owner, SourceOwner::Global);
         assert!(library.entry.has_value && library.entry.value.is_none());
-        assert!(!serde_json::to_string(&catalog).unwrap().contains("df107-secret-value-must-not-appear"));
+        assert!(
+            !serde_json::to_string(&catalog)
+                .unwrap()
+                .contains("df107-secret-value-must-not-appear")
+        );
         let settings = get_catalog(&config, Some(&scope), None, &secrets).unwrap();
         assert!(
             settings
                 .entries
                 .iter()
-                .all(|e| e.source.owner != SourceOwner::Library)
+                .all(|e| e.source.owner != SourceOwner::Global)
         );
     }
     let library = get_source_catalog(&config, None, &secrets).unwrap();
     assert_eq!(library.owners.len(), 1);
     assert_eq!(library.entries.len(), 2);
+}
+
+#[test]
+fn app_owner_keys_follow_registered_child_path_and_distinguish_root() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = dir.path().join("library");
+    let root = dir.path().join("project");
+    project(&root);
+    let root_app = app(&root, false, &["KEY"]);
+    let child_app = app(&root, true, &["KEY"]);
+    let root_key = registry::prepare_context(&config, &root_app)
+        .unwrap()
+        .owner_key;
+    let child_key = registry::prepare_context(&config, &child_app)
+        .unwrap()
+        .owner_key;
+    assert_ne!(root_key, child_key);
+    fs::rename(root.join("child"), root.join("renamed-space")).unwrap();
+    let path = root.join(".svode/config.json");
+    let mut value = core::files::read(&path, true).unwrap();
+    value["spaces"][0]["path"] = json!("renamed-space");
+    core::files::atomic_write(&path, &value).unwrap();
+    let moved = AppVariableOwnerContext {
+        owner_directory: root.join("renamed-space/app").to_str().unwrap().into(),
+        ..child_app
+    };
+    assert_eq!(
+        registry::prepare_context(&config, &moved)
+            .unwrap()
+            .owner_key,
+        child_key
+    );
+    assert!(!root.join(".svode/local.json").exists());
+    assert!(!root.join("renamed-space/.svode/local.json").exists());
+    assert!(!config.join("settings.json").exists());
 }

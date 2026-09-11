@@ -114,14 +114,14 @@ pub(crate) fn owner(
 ) -> Result<Owner, AppError> {
     match scope {
         Some(scope) => Owner::in_context(&scope.context(config)?, source).map_err(storage_error),
-        None if *source == SourceOwner::Library => Owner::library(config).map_err(storage_error),
+        None if *source == SourceOwner::Global => Owner::global(config).map_err(storage_error),
         None => Err(storage_error(core::Error::InvalidOwner)),
     }
 }
 
 fn owner_label(scope: Option<&VariableScope>, source: &SourceOwner) -> String {
     match source {
-        SourceOwner::Library => "Svode".into(),
+        SourceOwner::Global => "Svode".into(),
         SourceOwner::Project => scope.map(|s| s.project_path.clone()).unwrap_or_default(),
         SourceOwner::Space { id } => scope
             .and_then(|s| {
@@ -164,11 +164,11 @@ fn read_catalog(
     config: &Path,
     scope: Option<&VariableScope>,
     context: Option<&AppVariableOwnerContext>,
-    include_library: bool,
+    include_global: bool,
     secrets: &dyn SecretStore,
 ) -> Result<AppVariablesCatalog, AppError> {
     let prepared = context
-        .map(|c| registry::prepare_context(config, c, secrets))
+        .map(|c| registry::prepare_context(config, c))
         .transpose()?;
     let context = prepared.as_ref();
     let registry = registry::read(config)?;
@@ -177,13 +177,13 @@ fn read_catalog(
     }
     let default_owner = scope
         .map(VariableScope::owner)
-        .unwrap_or(SourceOwner::Library);
+        .unwrap_or(SourceOwner::Global);
     let mut sources = vec![default_owner.clone()];
     if scope.is_some_and(|s| s.space_id.is_some()) {
         sources.push(SourceOwner::Project);
     }
-    if include_library && default_owner != SourceOwner::Library {
-        sources.push(SourceOwner::Library);
+    if include_global && default_owner != SourceOwner::Global {
+        sources.push(SourceOwner::Global);
     }
     let service = Service::new(secrets);
     let mut entries = Vec::new();
@@ -205,45 +205,24 @@ fn read_catalog(
                         name: entry.name.clone(),
                     };
                     let mut used_in = Vec::new();
-                    for usage in registry.usage.values() {
-                        if source != SourceOwner::Library
+                    for (app_key, usage) in &registry.usage {
+                        if source != SourceOwner::Global
                             && scope.is_none_or(|s| s.project_path != usage.scope.project_path)
                         {
                             continue;
                         }
                         for (name, selected) in &usage.sources {
+                            let selected = registry
+                                .bindings
+                                .owners
+                                .get(app_key)
+                                .and_then(|bindings| bindings.get(name))
+                                .unwrap_or(selected);
                             if selected == &reference {
                                 used_in.push(AppVariableUsage {
                                     owner_directory: usage.owner_directory.clone(),
                                     reference_name: name.clone(),
                                 });
-                            }
-                        }
-                    }
-                    // Deferred legacy mappings remain visible even while their projects are unavailable.
-                    if source == SourceOwner::Library {
-                        for (app, bindings) in &registry.bindings.owners {
-                            for (name, selected) in bindings {
-                                if selected == &reference
-                                    && !used_in.iter().any(|u| {
-                                        u.owner_directory
-                                            == registry
-                                                .usage
-                                                .get(app)
-                                                .map(|u| u.owner_directory.as_str())
-                                                .unwrap_or(app)
-                                            && u.reference_name == *name
-                                    })
-                                {
-                                    used_in.push(AppVariableUsage {
-                                        owner_directory: registry
-                                            .usage
-                                            .get(app)
-                                            .map(|u| u.owner_directory.clone())
-                                            .unwrap_or_else(|| app.clone()),
-                                        reference_name: name.clone(),
-                                    });
-                                }
                             }
                         }
                     }
@@ -304,7 +283,7 @@ fn read_catalog(
                             .entries
                             .iter()
                             .find(|e| {
-                                e.entry.name == *name && e.source.owner != SourceOwner::Library
+                                e.entry.name == *name && e.source.owner != SourceOwner::Global
                             })
                             .map(|e| e.source.clone())
                     })
@@ -337,19 +316,19 @@ fn read_catalog(
             && catalog
                 .owners
                 .iter()
-                .any(|o| o.owner == SourceOwner::Library && o.error.is_none())
+                .any(|o| o.owner == SourceOwner::Global && o.error.is_none())
         {
             let revision = service
-                .catalog(&Owner::library(config).map_err(storage_error)?)
+                .catalog(&Owner::global(config).map_err(storage_error)?)
                 .map_err(storage_error)?
                 .revision;
             for entry in &mut catalog.entries {
-                if entry.source.owner == SourceOwner::Library {
+                if entry.source.owner == SourceOwner::Global {
                     entry.revision = revision.clone();
                 }
             }
             for owner in &mut catalog.owners {
-                if owner.owner == SourceOwner::Library {
+                if owner.owner == SourceOwner::Global {
                     owner.revision = Some(revision.clone());
                 }
             }
@@ -359,7 +338,6 @@ fn read_catalog(
         for entry in &mut catalog.entries {
             entry.used_in.retain(|usage| {
                 usage.owner_directory != context.owner_directory
-                    && usage.owner_directory != context.owner_key
                     && registry
                         .usage
                         .get(&context.owner_key)
@@ -389,7 +367,7 @@ pub(crate) fn bind(
     revision: &str,
     secrets: &dyn SecretStore,
 ) -> Result<(), AppError> {
-    let context = &registry::prepare_context(config, context, secrets)?;
+    let context = &registry::prepare_context(config, context)?;
     if !context.references.iter().any(|r| r == name) {
         return Err(storage_error(core::Error::InvalidName));
     }
@@ -434,7 +412,6 @@ pub(crate) fn clear_owner_usage(config: &Path, key: &str) -> Result<bool, AppErr
             .filter(|(_, u)| u.owner_directory == key)
             .map(|(key, _)| key.clone())
             .collect();
-        changed = registry.bindings.owners.remove(key).is_some();
         for key in keys {
             registry.usage.remove(&key);
             registry.bindings.owners.remove(&key);
@@ -451,7 +428,7 @@ pub(crate) fn resolve_environment(
     declaration: &BTreeMap<String, String>,
     secrets: &dyn SecretStore,
 ) -> Result<ResolvedAppEnvironment, AppError> {
-    let context = &registry::prepare_context(config, context, secrets)?;
+    let context = &registry::prepare_context(config, context)?;
     let registry = registry::read(config)?;
     let bindings = registry
         .bindings
@@ -513,16 +490,13 @@ pub(crate) fn register_s3_owner(config: &Path, owner: &Path) -> Result<(), AppEr
     let path = config.join("settings.json");
     let mut root = core::files::read(&path, false).map_err(storage_error)?;
     let mut owners: BTreeSet<PathBuf> = root
-        .pointer("/variables/s3Owners")
+        .get("s3VariableOwners")
         .cloned()
         .map(serde_json::from_value)
         .transpose()?
         .unwrap_or_default();
     if owners.insert(owner.to_path_buf()) {
-        if root.get("variables").is_none() {
-            root["variables"] = serde_json::json!({});
-        }
-        root["variables"]["s3Owners"] = serde_json::to_value(owners)?;
+        root["s3VariableOwners"] = serde_json::to_value(owners)?;
         core::files::atomic_write(&path, &root).map_err(storage_error)?;
     }
     Ok(())
@@ -534,7 +508,7 @@ fn s3_usage(
 ) -> Result<Vec<AppVariableUsage>, AppError> {
     let root = core::files::read(&config.join("settings.json"), false).map_err(storage_error)?;
     let owners: BTreeSet<PathBuf> = root
-        .pointer("/variables/s3Owners")
+        .get("s3VariableOwners")
         .cloned()
         .map(serde_json::from_value)
         .transpose()?
@@ -542,23 +516,15 @@ fn s3_usage(
     let mut usage = Vec::new();
     for owner in owners {
         if let Ok(agent) = svode_core::storage::s3::AgentConfig::read(&owner) {
-            if agent.library_directory.canonicalize().ok() != config.canonicalize().ok() {
+            if agent.global_directory.canonicalize().ok() != config.canonicalize().ok() {
                 continue;
             }
             for (role, entry) in agent.bindings.roles() {
                 let same_project = scope.is_some_and(|scope| {
-                    agent
-                        .project_path
-                        .as_deref()
-                        .zip(
-                            Path::new(&scope.project_path)
-                                .canonicalize()
-                                .ok()
-                                .as_deref(),
-                        )
-                        .is_some_and(|(a, b)| a.canonicalize().ok().as_deref() == Some(b))
+                    agent.project_path.canonicalize().ok()
+                        == Path::new(&scope.project_path).canonicalize().ok()
                 });
-                if entry == reference && (reference.owner == SourceOwner::Library || same_project) {
+                if entry == reference && (reference.owner == SourceOwner::Global || same_project) {
                     usage.push(AppVariableUsage {
                         owner_directory: crate::system_path::user_facing_path(&owner),
                         reference_name: format!("S3 {role}"),

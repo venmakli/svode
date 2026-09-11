@@ -68,7 +68,6 @@ export function useContextualAppVariables(context: AppVariablesContext) {
         !editor.savedEntry &&
         (editor.draft.editing
           ? !entry ||
-            entry.identity !== editor.draft.identity ||
             entry.revision !== editor.draft.revision ||
             !sameSource(currentReference.source, editor.originalSource)
           : variables.catalog?.owners.find(
@@ -218,9 +217,7 @@ export function useContextualAppVariables(context: AppVariablesContext) {
           !reference ||
           !target?.revision ||
           (editor.draft.editing &&
-            (!entry ||
-              entry.identity !== editor.draft.identity ||
-              !sameSource(reference.source, editor.originalSource)))
+            (!entry || !sameSource(reference.source, editor.originalSource)))
         ) {
           setError("stale");
           return;

@@ -233,8 +233,9 @@ if (process.env.SVODE_CONTEXTUAL_VARIABLES_TEST !== "1") {
             source: { owner: { scope: "project" }, name: "SHARED" },
             mode: "local",
             kind: "secret",
-            identity: "id-SHARED",
+
             revision: "r1",
+            operation: "edit",
             scope: context,
           },
         },
@@ -658,7 +659,6 @@ if (process.env.SVODE_CONTEXTUAL_VARIABLES_TEST !== "1") {
       expect(state.draft?.revision).toBe("r2");
       await act(async () => state.begin(entry, true));
       expect(state.draft?.owner).toEqual({ scope: "space", id: "child" });
-      expect(state.draft?.identity).toBe(undefined);
       expect(state.draft?.value).toBe("");
       let save!: Promise<void>;
       await act(async () => {

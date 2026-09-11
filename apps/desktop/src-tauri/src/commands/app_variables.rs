@@ -14,27 +14,26 @@ use tauri::{AppHandle, Emitter, Manager, State};
 pub(crate) const APP_VARIABLES_CHANGED_EVENT: &str = "app-settings:variables-changed";
 
 #[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct UpsertAppVariableInput {
     scope: Option<VariableScope>,
     source: SourceReference,
     mode: core::Mode,
     kind: core::Kind,
     value: Option<String>,
-    identity: Option<String>,
+    operation: core::SaveOperation,
     revision: core::Revision,
     keep: Option<core::Mode>,
 }
 #[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct RemoveAppVariableInput {
     scope: Option<VariableScope>,
     source: SourceReference,
-    identity: String,
     revision: core::Revision,
 }
 #[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct AppVariableBindingInput {
     context: AppVariableContextInput,
     reference_name: String,
@@ -48,13 +47,13 @@ pub(crate) async fn get_app_variables(
     state: State<'_, AppSettingsState>,
     context: Option<AppVariableContextInput>,
     scope: Option<VariableScope>,
-    include_library: Option<bool>,
+    include_global: Option<bool>,
 ) -> Result<AppVariablesCatalog, AppError> {
     let config = config_dir(&app)?;
     run_locked(&state, move || {
         let context = context.map(resolve_context).transpose()?;
         let scope = context.as_ref().map(|c| &c.scope).or(scope.as_ref());
-        if include_library == Some(true) && context.is_none() {
+        if include_global == Some(true) && context.is_none() {
             app_variables::get_source_catalog(&config, scope, &KeyringSecretStore)
         } else {
             app_variables::get_catalog(&config, scope, context.as_ref(), &KeyringSecretStore)
@@ -80,7 +79,7 @@ pub(crate) async fn upsert_app_variable(
                     kind: input.kind,
                     value: input.value,
                     revision: input.revision,
-                    identity: input.identity,
+                    operation: input.operation,
                     keep: input.keep,
                 },
             )
@@ -108,7 +107,7 @@ pub(crate) async fn remove_app_variable(
     let result = run_locked(&state, move || {
         let owner = app_variables::owner(&config, input.scope.as_ref(), &input.source.owner)?;
         Service::new(&KeyringSecretStore)
-            .remove(&owner, &input.source.name, &input.identity, &input.revision)
+            .remove(&owner, &input.source.name, &input.revision)
             .map_err(storage_error)
     })
     .await;
@@ -132,7 +131,7 @@ pub(crate) async fn recover_app_variables(
     let config = config_dir(&app)?;
     let result = run_locked(&state, move || {
         let sources = source.map(|s| vec![s]).unwrap_or_else(|| {
-            let mut sources = vec![SourceOwner::Library];
+            let mut sources = vec![SourceOwner::Global];
             if let Some(scope) = &scope {
                 sources.push(SourceOwner::Project);
                 if scope.space_id.is_some() {

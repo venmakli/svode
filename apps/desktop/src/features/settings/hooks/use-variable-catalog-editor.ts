@@ -49,9 +49,7 @@ export function useVariableCatalogEditor(
   const stale = Boolean(
     draft &&
     (draft.editing
-      ? !currentEntry ||
-        currentEntry.identity !== draft.identity ||
-        currentEntry.revision !== draft.revision
+      ? !currentEntry || currentEntry.revision !== draft.revision
       : catalog?.owners.find((o) => ownerKey(o.owner) === ownerKey(draft.owner))
           ?.revision !== draft.revision),
   );
@@ -147,7 +145,7 @@ export function useVariableCatalogEditor(
         );
         if (
           !target?.revision ||
-          (draft.editing && (!entry || entry.identity !== draft.identity)) ||
+          (draft.editing && !entry) ||
           (!draft.editing && entry)
         )
           throw new Error("Source changed");

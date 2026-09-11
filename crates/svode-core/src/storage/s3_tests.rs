@@ -42,8 +42,8 @@ fn fixture() -> (tempfile::TempDir, AgentConfig, Secrets) {
         bucket: "bucket".into(),
         region: "region".into(),
         prefix: Some("original/objects".into()),
-        library_directory: dir.path().join("library"),
-        project_path: Some(dir.path().canonicalize().unwrap()),
+        global_directory: dir.path().join("library"),
+        project_path: dir.path().canonicalize().unwrap(),
         space_id: Some("child".into()),
         bindings: SecretBindings {
             access_key: source(SourceOwner::Project, "KEY"),
@@ -72,11 +72,11 @@ fn save(
                 kind,
                 value: value.map(str::to_string),
                 revision: catalog.revision,
-                identity: catalog
-                    .entries
-                    .iter()
-                    .find(|e| e.name == source.name)
-                    .map(|e| e.identity.clone()),
+                operation: if catalog.entries.iter().any(|e| e.name == source.name) {
+                    crate::variables::SaveOperation::Edit
+                } else {
+                    crate::variables::SaveOperation::Create
+                },
                 keep: None,
             },
         )
@@ -126,7 +126,7 @@ fn scoped_pair_pins_sources_and_refreshes_only_new_sessions() {
         "rotated"
     );
     assert_eq!(old.secret_key, "space");
-    config.bindings.secret_key = source(SourceOwner::Library, "KEY");
+    config.bindings.secret_key = source(SourceOwner::Global, "KEY");
     save(
         &config,
         &secrets,
@@ -148,47 +148,26 @@ fn scoped_pair_pins_sources_and_refreshes_only_new_sessions() {
     assert!(config.resolve_with_store(&secrets).is_err());
 }
 #[test]
-fn v1_normalizes_without_project_or_desktop_and_writer_only_emits_v2() {
-    let (dir, config, secrets) = fixture();
-    let reference = source(SourceOwner::Library, "KEY");
-    save(
-        &config,
-        &secrets,
-        &reference,
-        Mode::Local,
-        Kind::Secret,
-        Some("private"),
-    );
-    let old = json!({"version":1,"endpoint":config.endpoint,"bucket":config.bucket,"region":config.region,"prefix":config.prefix,
-        "catalogPath":config.library_directory.join("settings.json"),"bindings":{"accessKey":"KEY","secretKey":"KEY"}});
-    std::fs::write(dir.path().join(CONFIG_REL), old.to_string()).unwrap();
-    let decoded = AgentConfig::read(dir.path()).unwrap();
-    assert_eq!(decoded.project_path, None);
-    assert_eq!(decoded.bindings.access_key, reference);
-    assert_eq!(
-        decoded.resolve_with_store(&secrets).unwrap().access_key,
-        "private"
-    );
-    decoded.write(dir.path()).unwrap();
-    let written = std::fs::read_to_string(dir.path().join(CONFIG_REL)).unwrap();
-    assert!(!written.contains("private") && !written.contains("catalogPath"));
-    assert_eq!(AgentConfig::read(dir.path()).unwrap(), decoded);
-    for kind in [Kind::Variable, Kind::Secret] {
-        save(
-            &config,
-            &secrets,
-            &reference,
-            Mode::Local,
-            kind,
-            Some("new"),
-        );
+fn v1_and_library_alias_are_rejected_without_rewriting() {
+    let (dir, config, _) = fixture();
+    let inputs = [
+        json!({"version":1,"endpoint":config.endpoint,"bucket":config.bucket,"region":config.region,"prefix":config.prefix,
+            "catalogPath":config.global_directory.join("settings.json"),"bindings":{"accessKey":"KEY","secretKey":"KEY"}}),
+        {
+            let mut value = serde_json::to_value(&config).unwrap();
+            value["bindings"]["accessKey"]["owner"] = json!({"scope":"library"});
+            value
+        },
+    ];
+    for input in inputs {
+        let bytes = input.to_string();
+        std::fs::write(dir.path().join(CONFIG_REL), &bytes).unwrap();
+        assert!(AgentConfig::read(dir.path()).is_err());
         assert_eq!(
-            decoded.resolve_with_store(&secrets).is_ok(),
-            kind == Kind::Secret
+            std::fs::read_to_string(dir.path().join(CONFIG_REL)).unwrap(),
+            bytes
         );
     }
-    std::fs::write(config.library_directory.join("settings.json"), "{}").unwrap();
-    assert!(decoded.resolve_with_store(&secrets).is_err());
 }
 #[test]
 fn failure_collision_and_clone_never_fall_back_or_publish_values() {
@@ -223,11 +202,7 @@ fn failure_collision_and_clone_never_fall_back_or_publish_values() {
     let path = dir.path().join("child/.svode/local.json");
     let mut local: serde_json::Value =
         serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
-    let portable: serde_json::Value = serde_json::from_slice(
-        &std::fs::read(dir.path().join("child/.svode/config.json")).unwrap(),
-    )
-    .unwrap();
-    local["variables"]["entries"]["KEY"] = portable["variables"]["entries"]["KEY"].clone();
+    local["variables"]["KEY"]["kind"] = json!("secret");
     std::fs::write(&path, local.to_string()).unwrap();
     assert!(
         config
@@ -246,7 +221,7 @@ fn failure_collision_and_clone_never_fall_back_or_publish_values() {
         .unwrap();
     }
     let mut cloned = config;
-    cloned.project_path = Some(clone.path().into());
+    cloned.project_path = clone.path().into();
     assert!(cloned.resolve_with_store(&secrets).is_err());
     assert!(AgentConfig::read(clone.path()).is_err());
 }
@@ -295,7 +270,7 @@ fn standalone_process_reads_scoped_sources_without_desktop() {
     save(
         &config,
         &secrets,
-        &source(SourceOwner::Library, "ACCESS"),
+        &source(SourceOwner::Global, "ACCESS"),
         Mode::Local,
         Kind::Secret,
         Some("project"),
@@ -303,7 +278,7 @@ fn standalone_process_reads_scoped_sources_without_desktop() {
     save(
         &config,
         &secrets,
-        &source(SourceOwner::Library, "SECRET"),
+        &source(SourceOwner::Global, "SECRET"),
         Mode::Local,
         Kind::Secret,
         Some("child"),
@@ -313,12 +288,7 @@ fn standalone_process_reads_scoped_sources_without_desktop() {
         serde_json::to_vec(&*secrets.0.borrow()).unwrap(),
     )
     .unwrap();
-    for version in [2, 1] {
-        if version == 1 {
-            let old = json!({"version":1,"endpoint":config.endpoint,"bucket":config.bucket,"region":config.region,"prefix":config.prefix,
-            "catalogPath":config.library_directory.join("settings.json"),"bindings":{"accessKey":"ACCESS","secretKey":"SECRET"}});
-            std::fs::write(dir.path().join(CONFIG_REL), old.to_string()).unwrap();
-        }
+    {
         let output = std::process::Command::new(std::env::current_exe().unwrap())
             .args([
                 "--exact",

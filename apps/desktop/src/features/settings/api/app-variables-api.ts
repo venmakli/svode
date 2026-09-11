@@ -10,9 +10,9 @@ import type {
 export function getAppVariables(
   context?: AppVariablesContext,
   scope?: VariableScope,
-  includeLibrary = false,
+  includeGlobal = false,
 ): Promise<AppVariablesCatalog> {
-  return transport.getAppVariables(context, scope, includeLibrary);
+  return transport.getAppVariables(context, scope, includeGlobal);
 }
 export function upsertAppVariable(
   input: SaveVariableInput & { scope?: VariableScope },
@@ -22,7 +22,6 @@ export function upsertAppVariable(
 export function removeAppVariable(input: {
   source: VariableSource;
   scope?: VariableScope;
-  identity: string;
   revision: string;
 }) {
   return transport.removeAppVariable(input);

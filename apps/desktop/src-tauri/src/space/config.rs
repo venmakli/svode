@@ -380,7 +380,7 @@ mod tests {
                         kind: svode_core::variables::Kind::Variable,
                         value: Some(name.into()),
                         revision: service.catalog(&owner).unwrap().revision,
-                        identity: None,
+                        operation: svode_core::variables::SaveOperation::Create,
                         keep: None,
                     },
                 )
