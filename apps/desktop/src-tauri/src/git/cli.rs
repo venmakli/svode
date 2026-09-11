@@ -76,7 +76,28 @@ impl GitCli {
         args: &[&str],
         extra_env: &[(&str, &str)],
     ) -> Result<GitOutput, AppError> {
-        tracing::debug!("git {} (in {})", args.join(" "), space_dir.display());
+        self.exec_logged(space_dir, args, extra_env, true).await
+    }
+
+    /// Hooks and filters may print private config data even with nonsecret arguments.
+    pub(crate) async fn exec_redacted(
+        &self,
+        space_dir: &Path,
+        args: &[&str],
+    ) -> Result<GitOutput, AppError> {
+        self.exec_logged(space_dir, args, &[], false).await
+    }
+
+    async fn exec_logged(
+        &self,
+        space_dir: &Path,
+        args: &[&str],
+        extra_env: &[(&str, &str)],
+        log_output: bool,
+    ) -> Result<GitOutput, AppError> {
+        if log_output {
+            tracing::debug!("git {} (in {})", args.join(" "), space_dir.display());
+        }
 
         let git_args = args_with_quote_path(args);
         let mut cmd = Command::new(&self.git_path);
@@ -101,7 +122,7 @@ impl GitCli {
             exit_code: output.status.code().unwrap_or(-1),
         };
 
-        if result.exit_code != 0 {
+        if log_output && result.exit_code != 0 {
             tracing::debug!(
                 "git {} exited with code {}: {}",
                 args.join(" "),

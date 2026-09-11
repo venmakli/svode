@@ -666,13 +666,13 @@ pub(crate) async fn commit_exact_path_receipt(
     let path = normalize_git_path(path)?;
     reject_local_variable_path(&path)?;
     let known = cli
-        .exec(repo, &["ls-files", "--error-unmatch", "--", &path])
+        .exec_redacted(repo, &["ls-files", "--error-unmatch", "--", &path])
         .await?;
     let prepared_intent_to_add = known.exit_code != 0;
 
     if prepared_intent_to_add {
         let prepared = cli
-            .exec(repo, &["add", "--intent-to-add", "--", &path])
+            .exec_redacted(repo, &["add", "--intent-to-add", "--", &path])
             .await?;
         if prepared.exit_code != 0 {
             return Err(AppError::GitCommandFailed(format!(
@@ -683,7 +683,7 @@ pub(crate) async fn commit_exact_path_receipt(
     }
 
     let out = cli
-        .exec(
+        .exec_redacted(
             repo,
             &[
                 "-c",
@@ -709,7 +709,7 @@ pub(crate) async fn commit_exact_path_receipt(
             (oid.len() >= 40 && oid.bytes().all(|b| b.is_ascii_hexdigit())).then(|| oid.to_string())
         });
         let oid = if let Some(oid) = oid {
-            cli.exec(
+            cli.exec_redacted(
                 repo,
                 &["rev-parse", "--verify", &format!("{oid}^{{commit}}")],
             )
@@ -724,7 +724,7 @@ pub(crate) async fn commit_exact_path_receipt(
     }
 
     if prepared_intent_to_add {
-        let cleanup = cli.exec(repo, &["reset", "--", &path]).await?;
+        let cleanup = cli.exec_redacted(repo, &["reset", "--", &path]).await?;
         if cleanup.exit_code != 0 {
             return Err(AppError::GitCommandFailed(format!(
                 "git commit failed: {}; target index cleanup failed: {}",

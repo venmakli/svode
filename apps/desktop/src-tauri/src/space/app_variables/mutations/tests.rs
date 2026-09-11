@@ -496,6 +496,25 @@ async fn safety_skips_preserve_target_and_staged_bytes() {
 
 #[tokio::test]
 async fn git_failure_and_missing_git_leave_successful_crud_without_secret_diagnostics() {
+    #[derive(Clone)]
+    struct Capture(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+    impl std::io::Write for Capture {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let capture = Capture(Default::default());
+    let output = capture.clone();
+    let subscriber = tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::DEBUG)
+        .with_ansi(false)
+        .with_writer(move || output.clone())
+        .finish();
+    let _logs = tracing::subscriber::set_default(subscriber);
     for missing in [false, true] {
         let mut f = Fixture::new("root", true, true, true, true).await;
         let before = f.before().await;
@@ -533,6 +552,11 @@ async fn git_failure_and_missing_git_leave_successful_crud_without_secret_diagno
         let repeat = f.save("DECLARATION", Mode::Git, Kind::Secret, None).await;
         assert!(repeat.effect.is_none());
     }
+    assert!(
+        !String::from_utf8(capture.0.lock().unwrap().clone())
+            .unwrap()
+            .contains("synthetic-secret")
+    );
 }
 fn fail_commit(repo: &Path) {
     #[cfg(unix)]
