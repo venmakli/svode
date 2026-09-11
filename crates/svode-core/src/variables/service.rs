@@ -679,6 +679,7 @@ impl Service<'_> {
                 names,
                 revision: snapshot.revision,
                 portable_changed: false,
+                portable_digest: None,
             });
         }
         let journal = Journal {
@@ -765,6 +766,15 @@ impl Service<'_> {
             names: journal.names.clone(),
             revision: Revision(files::digest(&json!([journal.portable, journal.local]))),
             portable_changed: !owner.global && journal.before_portable != next_portable,
+            portable_digest: (!owner.global).then(|| {
+                use sha2::{Digest, Sha256};
+                format!(
+                    "{:x}",
+                    Sha256::digest(
+                        serde_json::to_vec_pretty(&journal.portable).expect("JSON value")
+                    )
+                )
+            }),
         })
     }
 }

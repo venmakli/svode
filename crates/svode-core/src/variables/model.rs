@@ -159,6 +159,9 @@ pub struct Change {
     pub names: Vec<String>,
     pub revision: Revision,
     pub portable_changed: bool,
+    /// Exact published portable bytes, private to in-process effect adapters.
+    #[serde(skip)]
+    pub portable_digest: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]

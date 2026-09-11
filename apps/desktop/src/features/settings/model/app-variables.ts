@@ -1,3 +1,5 @@
+export type { VariableMutationResultDto as VariableMutationResult } from "@/platform/settings/app-variables-api";
+
 export type AppVariableKind = "variable" | "secret";
 export type VariableMode = "local" | "git";
 export type VariableOwner =

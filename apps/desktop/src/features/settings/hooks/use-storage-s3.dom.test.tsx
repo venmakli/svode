@@ -1,4 +1,7 @@
 import { expect, test } from "bun:test";
+import { toast } from "sonner";
+import * as m from "@/paraglide/messages.js";
+import type { VariableMutationResult } from "../model/app-variables";
 import * as bunTest from "bun:test";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
@@ -87,6 +90,10 @@ if (process.env.SVODE_S3_TEST !== "1") {
         : null,
       calls: [] as { command: string; args: Record<string, unknown> }[],
       failSave: false,
+      mutationResult: {
+        effects: [],
+        recoveryError: null,
+      } as VariableMutationResult,
       failCatalog: false,
       checkGate: null as Promise<void> | null,
       mutationGate: null as Promise<void> | null,
@@ -188,7 +195,7 @@ if (process.env.SVODE_S3_TEST !== "1") {
                 input.source.owner,
               ),
             );
-          return;
+          return fixture.mutationResult;
         }
         if (command === "check_s3_bindings") {
           fixture.calls.push({ command, args });
@@ -256,6 +263,18 @@ if (process.env.SVODE_S3_TEST !== "1") {
   test("old target survives; draft check and failed save retry reuse explicitly created Secrets", async () => {
     const h = await setup();
     try {
+      toast.dismiss();
+      h.fixture.mutationResult = {
+        effects: [
+          {
+            ownerPath: "/repo",
+            config: { status: "failed", message: "sanitized" },
+            rootPointer: null,
+          },
+        ],
+        recoveryError: null,
+      };
+
       expect(h.state.s3Prefix).toBe("same/objects");
       expect(h.state.s3.bindings.accessKey.name).toBe("");
       expect(h.state.canSaveS3).toBe(false);
@@ -273,6 +292,15 @@ if (process.env.SVODE_S3_TEST !== "1") {
         await h.state.s3.submit();
       });
       expect(h.state.s3.bindings.accessKey.name).toBe("NEW_ACCESS");
+      expect(
+        toast
+          .getToasts()
+          .some(
+            (item) =>
+              "title" in item &&
+              item.title === m.app_variables_git_commit_failed(),
+          ),
+      ).toBe(true);
       expect(h.fixture.bindings).toBe(null);
       await act(async () => h.state.s3.select("secretKey", library("SECRET")));
       await act(async () => {

@@ -1,4 +1,7 @@
 import { expect, test } from "bun:test";
+import { toast } from "sonner";
+import * as m from "@/paraglide/messages.js";
+import type { VariableMutationResult } from "../model/app-variables";
 import * as bunTest from "bun:test";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
@@ -91,6 +94,10 @@ if (process.env.SVODE_CONTEXTUAL_VARIABLES_TEST !== "1") {
       bindings,
       failLoad: false,
       failSave: false,
+      mutationResult: {
+        effects: [],
+        recoveryError: null,
+      } as VariableMutationResult,
       failBind: false,
       beforeGet: undefined as (() => Promise<unknown>) | undefined,
       beforeSave: undefined as (() => Promise<unknown>) | undefined,
@@ -147,7 +154,7 @@ if (process.env.SVODE_CONTEXTUAL_VARIABLES_TEST !== "1") {
           });
           if (entry) Object.assign(entry, next);
           else entries.push(next);
-          return null;
+          return fixture.mutationResult;
         }
         if (command === "set_app_variable_binding") {
           if (fixture.failBind) throw new Error("binding failed");
@@ -253,6 +260,18 @@ if (process.env.SVODE_CONTEXTUAL_VARIABLES_TEST !== "1") {
   test("create then bind retries only the binding after partial success", async () => {
     const h = await setup();
     try {
+      toast.dismiss();
+      h.fixture.mutationResult = {
+        effects: [
+          {
+            ownerPath: "/repo",
+            config: { status: "failed", message: "sanitized" },
+            rootPointer: null,
+          },
+        ],
+        recoveryError: null,
+      };
+
       await h.begin("URL");
       await act(async () =>
         h.state.updateDraft({
@@ -266,6 +285,15 @@ if (process.env.SVODE_CONTEXTUAL_VARIABLES_TEST !== "1") {
         await h.state.submit();
       });
       expect(h.state.error).toBe("partial");
+      expect(
+        toast
+          .getToasts()
+          .some(
+            (item) =>
+              "title" in item &&
+              item.title === m.app_variables_git_commit_failed(),
+          ),
+      ).toBe(true);
       expect(h.state.editor?.savedEntry).toEqual({
         owner: { scope: "project" },
         name: "LOCAL_URL",

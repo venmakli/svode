@@ -4,6 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use svode_core::variables::{self as core, Context, Owner, Service, SourceOwner, SourceReference};
 
+pub(crate) mod mutations;
 mod registry;
 pub(crate) use core::{KeyringSecretStore, Kind as AppVariableKind, SecretStore};
 

@@ -19,6 +19,7 @@ import type {
   VariableSource,
   VariableScope,
   VariableOwner,
+  VariableMutationResult,
 } from "../model/app-variables";
 
 export function useAppVariables(
@@ -95,17 +96,31 @@ export function useAppVariables(
   }, [refresh, notify, enabled]);
 
   const mutate = useCallback(
-    async (operation: () => Promise<void>) => {
+    async (operation: () => Promise<void | VariableMutationResult>) => {
       if (busyRef.current) return;
       const lifecycle = lifecycleRef.current;
       busyRef.current = true;
       setPending(true);
       try {
-        await operation();
-        if (lifecycle !== lifecycleRef.current) return;
+        const result = await operation();
+        if (lifecycle !== lifecycleRef.current) return result;
         await refresh().catch(() => undefined);
-        if (notify && lifecycle === lifecycleRef.current)
+        if (lifecycle !== lifecycleRef.current) return result;
+        const configFailed = result?.effects.some(
+          (effect) => effect.config.status === "failed",
+        );
+        const pointerFailed = result?.effects.some(
+          (effect) => effect.rootPointer?.status === "failed",
+        );
+        if (configFailed) toast.warning(m.app_variables_git_commit_failed());
+        if (pointerFailed) toast.warning(m.app_variables_git_pointer_failed());
+        if (result?.recoveryError) {
+          if (!notify) toast.error(m.app_variables_recovery_failed());
+          throw new Error(result.recoveryError);
+        }
+        if (notify && !configFailed && !pointerFailed)
           toast.success(m.toast_settings_saved());
+        return result;
       } catch (error) {
         if (notify && lifecycle === lifecycleRef.current) {
           console.error("App variable mutation failed:", error);

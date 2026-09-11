@@ -1,5 +1,6 @@
 use crate::apps::environment;
 use crate::apps::manifest::{ValidatedRuntime, read_and_validate_manifest, resolve_app_owner};
+use crate::space::app_variables::mutations::{self, Mutation, VariableMutationResult};
 use crate::space::app_variables::{
     self, AppVariableContextInput, AppVariableOwnerContext, AppVariablesCatalog,
     KeyringSecretStore, VariableScope, storage_error,
@@ -66,60 +67,59 @@ pub(crate) async fn upsert_app_variable(
     app: AppHandle,
     state: State<'_, AppSettingsState>,
     input: UpsertAppVariableInput,
-) -> Result<(), AppError> {
-    let config = config_dir(&app)?;
-    let result = run_locked(&state, move || {
-        let owner = app_variables::owner(&config, input.scope.as_ref(), &input.source.owner)?;
-        Service::new(&KeyringSecretStore)
-            .save(
-                &owner,
-                core::Save {
-                    name: input.source.name,
-                    mode: input.mode,
-                    kind: input.kind,
-                    value: input.value,
-                    revision: input.revision,
-                    operation: input.operation,
-                    keep: input.keep,
-                },
-            )
-            .map_err(storage_error)
+) -> Result<VariableMutationResult, AppError> {
+    let mutation = run_mutation(
+        &app,
+        &state,
+        input.scope,
+        input.source.owner,
+        move |owner| {
+            Service::new(&KeyringSecretStore)
+                .save(
+                    owner,
+                    core::Save {
+                        name: input.source.name,
+                        mode: input.mode,
+                        kind: input.kind,
+                        value: input.value,
+                        revision: input.revision,
+                        operation: input.operation,
+                        keep: input.keep,
+                    },
+                )
+                .map(Some)
+                .map_err(storage_error)
+        },
+    )
+    .await?;
+    Ok(VariableMutationResult {
+        effects: mutation.effect.into_iter().collect(),
+        recovery_error: None,
     })
-    .await;
-    // Failed multi-store publication can itself require consumers to enter recovery.
-    match &result {
-        Ok(change) => {
-            let _ = app.emit(APP_VARIABLES_CHANGED_EVENT, change);
-        }
-        Err(_) => {
-            let _ = app.emit(APP_VARIABLES_CHANGED_EVENT, ());
-        }
-    }
-    result.map(|_| ())
 }
 #[tauri::command]
 pub(crate) async fn remove_app_variable(
     app: AppHandle,
     state: State<'_, AppSettingsState>,
     input: RemoveAppVariableInput,
-) -> Result<(), AppError> {
-    let config = config_dir(&app)?;
-    let result = run_locked(&state, move || {
-        let owner = app_variables::owner(&config, input.scope.as_ref(), &input.source.owner)?;
-        Service::new(&KeyringSecretStore)
-            .remove(&owner, &input.source.name, &input.revision)
-            .map_err(storage_error)
+) -> Result<VariableMutationResult, AppError> {
+    let mutation = run_mutation(
+        &app,
+        &state,
+        input.scope,
+        input.source.owner,
+        move |owner| {
+            Service::new(&KeyringSecretStore)
+                .remove(owner, &input.source.name, &input.revision)
+                .map(Some)
+                .map_err(storage_error)
+        },
+    )
+    .await?;
+    Ok(VariableMutationResult {
+        effects: mutation.effect.into_iter().collect(),
+        recovery_error: None,
     })
-    .await;
-    match &result {
-        Ok(change) => {
-            let _ = app.emit(APP_VARIABLES_CHANGED_EVENT, change);
-        }
-        Err(_) => {
-            let _ = app.emit(APP_VARIABLES_CHANGED_EVENT, ());
-        }
-    }
-    result.map(|_| ())
 }
 #[tauri::command]
 pub(crate) async fn recover_app_variables(
@@ -127,28 +127,69 @@ pub(crate) async fn recover_app_variables(
     state: State<'_, AppSettingsState>,
     scope: Option<VariableScope>,
     source: Option<SourceOwner>,
-) -> Result<(), AppError> {
-    let config = config_dir(&app)?;
-    let result = run_locked(&state, move || {
-        let sources = source.map(|s| vec![s]).unwrap_or_else(|| {
-            let mut sources = vec![SourceOwner::Global];
-            if let Some(scope) = &scope {
-                sources.push(SourceOwner::Project);
-                if scope.space_id.is_some() {
-                    sources.push(scope.owner());
-                }
+) -> Result<VariableMutationResult, AppError> {
+    let sources = source.map(|s| vec![s]).unwrap_or_else(|| {
+        let mut sources = vec![SourceOwner::Global];
+        if let Some(scope) = &scope {
+            sources.push(SourceOwner::Project);
+            if scope.space_id.is_some() {
+                sources.push(scope.owner());
             }
-            sources
-        });
-        for source in sources {
-            Service::new(&KeyringSecretStore)
-                .recover(&app_variables::owner(&config, scope.as_ref(), &source)?)
-                .map_err(storage_error)?;
         }
-        Ok(())
+        sources
+    });
+    Ok(mutations::recover_in_order(sources, |source| {
+        run_mutation(&app, &state, scope.clone(), source, |owner| {
+            Service::new(&KeyringSecretStore)
+                .recover(owner)
+                .map_err(storage_error)
+        })
     })
+    .await)
+}
+
+async fn run_mutation(
+    app: &AppHandle,
+    state: &AppSettingsState,
+    scope: Option<VariableScope>,
+    source: SourceOwner,
+    operation: impl FnOnce(&core::Owner) -> Result<Option<core::Change>, AppError> + Send + 'static,
+) -> Result<Mutation, AppError> {
+    let config = config_dir(app)?;
+    let project = scope
+        .as_ref()
+        .map(|s| std::path::PathBuf::from(&s.project_path));
+    let result = async {
+        let owner = run_locked(state, move || {
+            app_variables::owner(&config, scope.as_ref(), &source)
+        })
+        .await?;
+        let write_owner = owner.clone();
+        let git = app.state::<crate::git::GitState>();
+        mutations::apply(
+            &owner,
+            project.as_deref(),
+            &git,
+            run_locked(state, move || operation(&write_owner)),
+            |cli, space, repo| {
+                crate::git::autocommit::publish_exact_path_commit(app, cli, space, repo)
+            },
+        )
+        .await
+    }
     .await;
-    let _ = app.emit(APP_VARIABLES_CHANGED_EVENT, ());
+    // Partial publication must invalidate readers even when recovery has not finished.
+    match &result {
+        Ok(Mutation {
+            change: Some(change),
+            ..
+        }) => {
+            let _ = app.emit(APP_VARIABLES_CHANGED_EVENT, change);
+        }
+        _ => {
+            let _ = app.emit(APP_VARIABLES_CHANGED_EVENT, ());
+        }
+    }
     result
 }
 #[tauri::command]

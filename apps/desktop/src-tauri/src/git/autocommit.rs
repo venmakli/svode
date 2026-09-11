@@ -370,17 +370,7 @@ impl AutocommitService {
         repo: &Path,
         path: &str,
     ) -> Result<GuardedExactPathPlan, AppError> {
-        if !background_commit_allowed(repo, CommitIntent::SystemConfig) {
-            return Ok(classify_guarded_exact_path_preflight(false, false, false));
-        }
-        if ops::exact_path_has_changes(cli, repo, path).await? {
-            return Ok(classify_guarded_exact_path_preflight(true, true, false));
-        }
-        Ok(classify_guarded_exact_path_preflight(
-            true,
-            false,
-            ops::has_staged_changes(cli, repo).await?,
-        ))
+        plan_guarded_system_exact_path(cli, repo, path).await
     }
 
     /// Capture background eligibility for an exact-path structural commit in
@@ -395,24 +385,7 @@ impl AutocommitService {
         path: &str,
         allow_registered_unborn_submodule: bool,
     ) -> Result<GuardedExactPathPlan, AppError> {
-        if !background_commit_allowed(repo, CommitIntent::StructuralLifecycle) {
-            return Ok(classify_guarded_exact_path_preflight(false, false, false));
-        }
-        let mut target_dirty = ops::exact_path_has_changes(cli, repo, path).await?;
-        if target_dirty
-            && allow_registered_unborn_submodule
-            && ops::is_registered_unborn_submodule_target(cli, repo, path).await?
-        {
-            target_dirty = false;
-        }
-        if target_dirty {
-            return Ok(classify_guarded_exact_path_preflight(true, true, false));
-        }
-        Ok(classify_guarded_exact_path_preflight(
-            true,
-            false,
-            ops::has_staged_changes(cli, repo).await?,
-        ))
+        plan_guarded_structural_exact_path(cli, repo, path, allow_registered_unborn_submodule).await
     }
 
     /// Complete a previously planned background exact-path commit.
@@ -428,29 +401,13 @@ impl AutocommitService {
         plan: GuardedExactPathPlan,
         target_matches_expected: bool,
     ) -> ExactPathPersistenceOutcome {
-        if let GuardedExactPathPlan::Pending(reason) = plan {
-            return ExactPathPersistenceOutcome::Pending { reason };
+        let outcome =
+            finish_guarded_exact_path(cli, repo, path, message, plan, target_matches_expected)
+                .await;
+        if outcome == ExactPathPersistenceOutcome::Committed {
+            publish_exact_path_commit(&self.app, cli, space_path, repo);
         }
-        if !target_matches_expected {
-            return ExactPathPersistenceOutcome::Pending {
-                reason: ExactPathPendingReason::TargetChanged,
-            };
-        }
-        match ops::has_staged_changes(cli, repo).await {
-            Ok(true) => {
-                return ExactPathPersistenceOutcome::Pending {
-                    reason: ExactPathPendingReason::IndexInterference,
-                };
-            }
-            Ok(false) => {}
-            Err(error) => {
-                return ExactPathPersistenceOutcome::Failed {
-                    message: error.to_string(),
-                };
-            }
-        }
-        self.commit_exact_path_with_effects(cli, space_path, repo, path, message)
-            .await
+        outcome
     }
 
     /// Manual exact-path save. Background policy is intentionally ignored;
@@ -475,29 +432,11 @@ impl AutocommitService {
         path: &str,
         message: &str,
     ) -> ExactPathPersistenceOutcome {
-        match ops::commit_exact_path(cli, repo, path, message).await {
-            Ok(true) => {
-                emit_committed(&self.app, space_path, repo);
-                if is_auto_sync_enabled(repo) {
-                    let cli = cli.clone();
-                    let repo = repo.to_path_buf();
-                    tauri::async_runtime::spawn(async move {
-                        if let Err(error) = crate::git::sync::sync(&cli, &repo).await {
-                            tracing::warn!(
-                                "auto-sync (exact path) failed for {}: {}",
-                                repo.display(),
-                                error
-                            );
-                        }
-                    });
-                }
-                ExactPathPersistenceOutcome::Committed
-            }
-            Ok(false) => ExactPathPersistenceOutcome::Clean,
-            Err(error) => ExactPathPersistenceOutcome::Failed {
-                message: error.to_string(),
-            },
+        let outcome = exact_path_outcome(cli, repo, path, message).await;
+        if outcome == ExactPathPersistenceOutcome::Committed {
+            publish_exact_path_commit(&self.app, cli, space_path, repo);
         }
+        outcome
     }
 
     /// Commit an explicit touched-path set with a fixed operational message.
@@ -620,6 +559,171 @@ impl AutocommitService {
                 FLUSH_ALL_TIMEOUT_SECS
             );
         }
+    }
+}
+
+pub(crate) async fn plan_guarded_system_exact_path(
+    cli: &super::cli::GitCli,
+    repo: &Path,
+    path: &str,
+) -> Result<GuardedExactPathPlan, AppError> {
+    if !background_commit_allowed(repo, CommitIntent::SystemConfig) {
+        return Ok(classify_guarded_exact_path_preflight(false, false, false));
+    }
+    if ops::exact_path_has_changes(cli, repo, path).await? {
+        return Ok(classify_guarded_exact_path_preflight(true, true, false));
+    }
+    Ok(classify_guarded_exact_path_preflight(
+        true,
+        false,
+        ops::has_staged_changes(cli, repo).await?,
+    ))
+}
+pub(crate) async fn plan_guarded_structural_exact_path(
+    cli: &super::cli::GitCli,
+    repo: &Path,
+    path: &str,
+    allow_registered_unborn_submodule: bool,
+) -> Result<GuardedExactPathPlan, AppError> {
+    if !background_commit_allowed(repo, CommitIntent::StructuralLifecycle) {
+        return Ok(classify_guarded_exact_path_preflight(false, false, false));
+    }
+    let mut target_dirty = ops::exact_path_has_changes(cli, repo, path).await?;
+    if target_dirty
+        && allow_registered_unborn_submodule
+        && ops::is_registered_unborn_submodule_target(cli, repo, path).await?
+    {
+        target_dirty = false;
+    }
+    if target_dirty {
+        return Ok(classify_guarded_exact_path_preflight(true, true, false));
+    }
+    Ok(classify_guarded_exact_path_preflight(
+        true,
+        false,
+        ops::has_staged_changes(cli, repo).await?,
+    ))
+}
+pub(crate) struct ExactPathCommitResult {
+    pub outcome: ExactPathPersistenceOutcome,
+    pub oid: Option<String>,
+}
+impl From<ExactPathPersistenceOutcome> for ExactPathCommitResult {
+    fn from(outcome: ExactPathPersistenceOutcome) -> Self {
+        Self { outcome, oid: None }
+    }
+}
+pub(crate) async fn finish_guarded_exact_path(
+    cli: &super::cli::GitCli,
+    repo: &Path,
+    path: &str,
+    message: &str,
+    plan: GuardedExactPathPlan,
+    target_matches_expected: bool,
+) -> ExactPathPersistenceOutcome {
+    finish_guarded_exact_path_receipt(cli, repo, path, message, plan, target_matches_expected)
+        .await
+        .outcome
+}
+pub(crate) async fn finish_guarded_exact_path_receipt(
+    cli: &super::cli::GitCli,
+    repo: &Path,
+    path: &str,
+    message: &str,
+    plan: GuardedExactPathPlan,
+    target_matches_expected: bool,
+) -> ExactPathCommitResult {
+    if let GuardedExactPathPlan::Pending(reason) = plan {
+        return ExactPathPersistenceOutcome::Pending { reason }.into();
+    }
+    if !target_matches_expected {
+        return ExactPathPersistenceOutcome::Pending {
+            reason: ExactPathPendingReason::TargetChanged,
+        }
+        .into();
+    }
+    match ops::has_staged_changes(cli, repo).await {
+        Ok(true) => {
+            return ExactPathPersistenceOutcome::Pending {
+                reason: ExactPathPendingReason::IndexInterference,
+            }
+            .into();
+        }
+        Ok(false) => {}
+        Err(error) => {
+            return ExactPathPersistenceOutcome::Failed {
+                message: error.to_string(),
+            }
+            .into();
+        }
+    }
+    exact_path_receipt(cli, repo, path, message).await
+}
+async fn exact_path_receipt(
+    cli: &super::cli::GitCli,
+    repo: &Path,
+    path: &str,
+    message: &str,
+) -> ExactPathCommitResult {
+    match ops::commit_exact_path_receipt(cli, repo, path, message).await {
+        Ok(Some(receipt)) => ExactPathCommitResult {
+            outcome: ExactPathPersistenceOutcome::Committed,
+            oid: receipt.oid,
+        },
+        Ok(None) => ExactPathPersistenceOutcome::Clean.into(),
+        Err(error) => ExactPathPersistenceOutcome::Failed {
+            message: error.to_string(),
+        }
+        .into(),
+    }
+}
+async fn exact_path_outcome(
+    cli: &super::cli::GitCli,
+    repo: &Path,
+    path: &str,
+    message: &str,
+) -> ExactPathPersistenceOutcome {
+    exact_path_receipt(cli, repo, path, message).await.outcome
+}
+pub(crate) fn publish_exact_path_commit(
+    app: &AppHandle,
+    cli: &super::cli::GitCli,
+    space_path: &Path,
+    repo: &Path,
+) {
+    dispatch_exact_path_commit(
+        space_path,
+        repo,
+        |space, repo| emit_committed(app, space, repo),
+        |repo| {
+            let app = app.clone();
+            let cli = cli.clone();
+            let repo = repo.to_path_buf();
+            tauri::async_runtime::spawn(async move {
+                let git = app.state::<GitState>();
+                let lock = git.get_lock(&repo).await;
+                let _guard = lock.lock().await;
+                if let Err(error) = crate::git::sync::sync(&cli, &repo).await {
+                    tracing::warn!(
+                        "auto-sync (exact path) failed for {}: {}",
+                        repo.display(),
+                        error
+                    );
+                }
+            });
+        },
+    );
+}
+
+pub(crate) fn dispatch_exact_path_commit(
+    space: &Path,
+    repo: &Path,
+    emit: impl FnOnce(&Path, &Path),
+    sync: impl FnOnce(&Path),
+) {
+    emit(space, repo);
+    if is_auto_sync_enabled(repo) {
+        sync(repo);
     }
 }
 

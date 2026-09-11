@@ -648,6 +648,21 @@ pub async fn commit_exact_path(
     path: &str,
     message: &str,
 ) -> Result<bool, AppError> {
+    Ok(commit_exact_path_receipt(cli, repo, path, message)
+        .await?
+        .is_some())
+}
+
+pub(crate) struct ExactPathCommitReceipt {
+    pub oid: Option<String>,
+}
+
+pub(crate) async fn commit_exact_path_receipt(
+    cli: &GitCli,
+    repo: &Path,
+    path: &str,
+    message: &str,
+) -> Result<Option<ExactPathCommitReceipt>, AppError> {
     let path = normalize_git_path(path)?;
     reject_local_variable_path(&path)?;
     let known = cli
@@ -671,7 +686,10 @@ pub async fn commit_exact_path(
         .exec(
             repo,
             &[
+                "-c",
+                "core.abbrev=40",
                 "commit",
+                "--no-quiet",
                 "--only",
                 "-m",
                 message,
@@ -684,7 +702,25 @@ pub async fn commit_exact_path(
         )
         .await?;
     if out.exit_code == 0 {
-        return Ok(true);
+        // Read the OID printed by this commit, not a later (possibly foreign) HEAD.
+        let oid = out.stdout.lines().rev().find_map(|line| {
+            let header = line.strip_prefix('[')?.split_once(']')?.0;
+            let oid = header.split_whitespace().last()?;
+            (oid.len() >= 40 && oid.bytes().all(|b| b.is_ascii_hexdigit())).then(|| oid.to_string())
+        });
+        let oid = if let Some(oid) = oid {
+            cli.exec(
+                repo,
+                &["rev-parse", "--verify", &format!("{oid}^{{commit}}")],
+            )
+            .await
+            .ok()
+            .filter(|out| out.exit_code == 0)
+            .map(|out| out.stdout.trim().to_string())
+        } else {
+            None
+        };
+        return Ok(Some(ExactPathCommitReceipt { oid }));
     }
 
     if prepared_intent_to_add {
@@ -703,7 +739,7 @@ pub async fn commit_exact_path(
         || combined.contains("no changes added to commit")
         || combined.contains("nothing added to commit")
     {
-        return Ok(false);
+        return Ok(None);
     }
     Err(AppError::GitCommandFailed(format!(
         "git commit --only failed: {}",

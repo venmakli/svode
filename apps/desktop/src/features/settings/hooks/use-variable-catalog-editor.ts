@@ -53,7 +53,7 @@ export function useVariableCatalogEditor(
       : catalog?.owners.find((o) => ownerKey(o.owner) === ownerKey(draft.owner))
           ?.revision !== draft.revision),
   );
-  async function perform(operation: () => Promise<void>) {
+  async function perform(operation: () => Promise<unknown>) {
     if (busy.current) return false;
     busy.current = true;
     setWorking(true);

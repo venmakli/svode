@@ -1911,5 +1911,8 @@
   "variables_known_usage": "Known usage",
   "variables_reload_review": "The source was reloaded. Review the current value below before saving your draft.",
   "variables_scoped_local_hint": "Stored only on this device and not shared through Git.",
-  "variables_edit_title": "Edit variable"
+  "variables_edit_title": "Edit variable",
+  "app_variables_git_commit_failed": "Variables saved, but the Git commit failed. Save the pending changes through Git.",
+  "app_variables_git_pointer_failed": "Variables committed in the space, but the project pointer commit failed. Save the pending project changes through Git.",
+  "app_variables_recovery_failed": "Recovery is incomplete. Completed changes are saved; review the remaining variable error."
 }

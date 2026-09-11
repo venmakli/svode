@@ -324,7 +324,7 @@ if (process.env.SVODE_UNIFIED_SETTINGS_DOM !== "1") {
       expect(navLabels.slice(0, 3)).toEqual([
         "Profile",
         "Appearance",
-        "Svode variables",
+        "Global variables",
       ]);
       const compactSelect =
         dom.window.document.querySelector<HTMLElement>('[role="combobox"]')!;

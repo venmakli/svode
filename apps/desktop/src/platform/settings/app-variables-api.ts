@@ -67,6 +67,27 @@ export interface SaveVariableInputDto {
   keep?: VariableModeDto;
 }
 
+export type VariableGitOutcomeDto =
+  | { status: "committed" | "clean" }
+  | {
+      status: "pending";
+      reason:
+        | "policy_off"
+        | "target_dirty"
+        | "index_staged"
+        | "target_changed"
+        | "index_interference";
+    }
+  | { status: "failed"; message: string };
+export interface VariableMutationResultDto {
+  effects: Array<{
+    ownerPath: string;
+    config: VariableGitOutcomeDto;
+    rootPointer: VariableGitOutcomeDto | null;
+  }>;
+  recoveryError: string | null;
+}
+
 const APP_VARIABLES_CHANGED_EVENT = "app-settings:variables-changed";
 export function getAppVariables(
   context?: AppVariablesContextDto,
@@ -77,20 +98,20 @@ export function getAppVariables(
 }
 export function upsertAppVariable(
   input: SaveVariableInputDto & { scope?: VariableScopeDto },
-): Promise<void> {
+): Promise<VariableMutationResultDto> {
   return invokeCommand("upsert_app_variable", { input });
 }
 export function removeAppVariable(input: {
   source: VariableSourceDto;
   scope?: VariableScopeDto;
   revision: string;
-}): Promise<void> {
+}): Promise<VariableMutationResultDto> {
   return invokeCommand("remove_app_variable", { input });
 }
 export function recoverAppVariables(
   source?: VariableOwnerDto,
   scope?: VariableScopeDto,
-): Promise<void> {
+): Promise<VariableMutationResultDto> {
   return invokeCommand("recover_app_variables", { source, scope });
 }
 export function setAppVariableBinding(input: {
