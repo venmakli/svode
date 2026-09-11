@@ -18,7 +18,7 @@ import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { AppVariableFields } from "./app-variable-fields";
 import { useVariableCatalogEditor } from "../hooks/use-variable-catalog-editor";
-import { sourceKey, sameSource } from "../model/app-variables";
+import { sourceKey, sameSource, ownerKey } from "../model/app-variables";
 import type { SettingsLeaveGuard } from "../model/settings-destination";
 
 interface Props {
@@ -54,28 +54,38 @@ function VariableCatalog({ projectPath, spaceId, registerLeaveGuard }: Props) {
     >
       <div className="flex items-start justify-between gap-3">
         <div className="flex min-w-0 flex-col gap-1">
-          <h2 className="text-sm font-medium">
-            {scope ? m.settings_variables_title() : m.variables_library_title()}
+          <h2 className="text-sm font-medium wrap-anywhere">
+            {draft
+              ? draft.editing
+                ? m.settings_variables_edit_named({ name: draft.name })
+                : m.settings_variables_add()
+              : scope
+                ? m.settings_variables_title()
+                : m.variables_library_title()}
           </h2>
-          <p className="text-sm text-muted-foreground">
-            {scope ? m.variables_scope_description() : m.variables_library()}
-          </p>
+          {!scope || (!draft && scope.spaceId) ? (
+            <p className="text-sm text-muted-foreground">
+              {scope ? m.variables_scope_description() : m.variables_library()}
+            </p>
+          ) : null}
         </div>
-        <Button
-          size="sm"
-          disabled={
-            pending ||
-            !catalog ||
-            variables.loadError ||
-            !catalog.owners.find(
-              (o) => o.owner.scope === catalog.defaultOwner.scope,
-            )?.revision
-          }
-          onClick={() => variables.begin()}
-        >
-          <Plus data-icon="inline-start" />
-          {m.settings_variables_add()}
-        </Button>
+        {!draft ? (
+          <Button
+            size="sm"
+            disabled={
+              pending ||
+              !catalog ||
+              variables.loadError ||
+              !catalog.owners.find(
+                (o) => o.owner.scope === catalog.defaultOwner.scope,
+              )?.revision
+            }
+            onClick={() => variables.begin()}
+          >
+            <Plus data-icon="inline-start" />
+            {m.settings_variables_add()}
+          </Button>
+        ) : null}
       </div>
       {!catalog && !variables.loadError ? (
         <Skeleton
@@ -124,7 +134,7 @@ function VariableCatalog({ projectPath, spaceId, registerLeaveGuard }: Props) {
         ))}
       {draft ? (
         <form
-          className="flex min-w-0 flex-col gap-4"
+          className="flex w-full min-w-0 max-w-xl flex-col gap-4"
           onSubmit={(event) => {
             event.preventDefault();
             void variables.save();
@@ -132,6 +142,10 @@ function VariableCatalog({ projectPath, spaceId, registerLeaveGuard }: Props) {
         >
           <AppVariableFields
             draft={draft}
+            showOwner={Boolean(
+              catalog &&
+              ownerKey(draft.owner) !== ownerKey(catalog.defaultOwner),
+            )}
             collisionAlternatives={catalog?.entries.filter((e) =>
               sameSource(e.source, { owner: draft.owner, name: draft.name }),
             )}
@@ -185,10 +199,11 @@ function VariableCatalog({ projectPath, spaceId, registerLeaveGuard }: Props) {
               {pending ? m.app_variables_saving() : m.settings_save()}
             </Button>
           </div>
-          <Separator />
         </form>
       ) : null}
+      {draft && entries.length > 0 ? <Separator /> : null}
       {catalog &&
+      !draft &&
       !entries.length &&
       !variables.loadError &&
       !catalog.owners.some((o) => o.error) ? (

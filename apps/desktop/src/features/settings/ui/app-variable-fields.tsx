@@ -1,5 +1,6 @@
 import { useId } from "react";
 import * as m from "@/paraglide/messages.js";
+import { cn } from "@/shared/lib/utils";
 import {
   Field,
   FieldDescription,
@@ -22,6 +23,7 @@ export function AppVariableFields({
   disabled,
   onChange,
   compact = false,
+  showOwner = true,
   fixedKind,
   collisionAlternatives,
 }: {
@@ -29,18 +31,21 @@ export function AppVariableFields({
   disabled: boolean;
   onChange(draft: VariableDraft): void;
   compact?: boolean;
+  showOwner?: boolean;
   fixedKind?: "secret";
   collisionAlternatives?: AppVariableEntry[];
 }) {
   const id = useId();
   const invalid = draft.name.length > 0 && !validVariableName(draft.name);
   return (
-    <FieldGroup className={compact ? "gap-3" : undefined}>
-      <p className="text-xs text-muted-foreground wrap-anywhere">
-        {draft.owner.scope === "library"
-          ? m.variables_library()
-          : draft.ownerLabel}
-      </p>
+    <FieldGroup className={cn("gap-4", compact && "gap-3")}>
+      {showOwner ? (
+        <p className="text-xs text-muted-foreground wrap-anywhere">
+          {draft.owner.scope === "library"
+            ? m.variables_library()
+            : draft.ownerLabel}
+        </p>
+      ) : null}
       {!draft.editing ? (
         <Field data-invalid={invalid}>
           <FieldLabel htmlFor={`${id}-name`}>
@@ -49,6 +54,9 @@ export function AppVariableFields({
           <Input
             id={`${id}-name`}
             value={draft.name}
+            autoFocus={!compact}
+            placeholder="API_TOKEN"
+            aria-describedby={invalid ? `${id}-name-hint` : undefined}
             disabled={disabled || draft.editing}
             aria-invalid={invalid}
             spellCheck={false}
@@ -56,8 +64,8 @@ export function AppVariableFields({
               onChange({ ...draft, name: event.target.value.toUpperCase() })
             }
           />
-          {!compact || invalid ? (
-            <FieldDescription>
+          {invalid ? (
+            <FieldDescription id={`${id}-name-hint`}>
               {m.settings_variables_name_hint()}
             </FieldDescription>
           ) : null}
@@ -89,58 +97,53 @@ export function AppVariableFields({
           </ToggleGroup>
         </Field>
       ) : null}
-      <Field orientation={compact ? "horizontal" : "vertical"}>
-        <FieldLabel id={`${id}-storage`}>{m.variables_storage()}</FieldLabel>
-        {draft.owner.scope === "library" ? (
-          <span className="text-sm">{m.variables_local()}</span>
-        ) : (
-          <ToggleGroup
-            type="single"
-            size="sm"
-            variant="outline"
-            value={draft.storage}
-            disabled={disabled}
-            aria-labelledby={`${id}-storage`}
-            onValueChange={(storage) => {
-              if (storage === "local" || storage === "git")
-                onChange({ ...draft, storage });
-            }}
-          >
-            <ToggleGroupItem value="local">
-              {m.variables_local()}
-            </ToggleGroupItem>
-            <ToggleGroupItem value="git">Git</ToggleGroupItem>
-          </ToggleGroup>
-        )}
-      </Field>
-      <Field orientation="horizontal">
-        <FieldLabel htmlFor={`${id}-secret`}>{m.variables_secret()}</FieldLabel>
-        <Switch
-          id={`${id}-secret`}
-          checked={draft.kind === "secret"}
-          disabled={disabled || Boolean(fixedKind)}
-          onCheckedChange={(secret) =>
-            onChange({
-              ...draft,
-              kind: secret ? "secret" : "variable",
-              value:
-                !secret && draft.originalKind === "secret" ? "" : draft.value,
-              explicitOrdinary: secret
-                ? draft.explicitOrdinary
-                : draft.originalKind !== "secret",
-            })
-          }
-        />
-      </Field>
-      <p className="text-xs text-muted-foreground">
-        {draft.storage === "git"
-          ? draft.kind === "secret"
-            ? m.variables_git_secret_hint()
-            : m.variables_git_hint()
-          : draft.kind === "secret"
-            ? m.settings_variables_secret_hint()
-            : m.settings_variables_value_hint()}
-      </p>
+      <FieldGroup className="flex-row flex-wrap items-center gap-4">
+        <Field orientation="horizontal" className="w-auto gap-3">
+          <FieldLabel id={`${id}-storage`}>{m.variables_storage()}</FieldLabel>
+          {draft.owner.scope === "library" ? (
+            <span className="text-sm">{m.variables_local()}</span>
+          ) : (
+            <ToggleGroup
+              type="single"
+              size="sm"
+              variant="outline"
+              value={draft.storage}
+              disabled={disabled}
+              aria-labelledby={`${id}-storage`}
+              onValueChange={(storage) => {
+                if (storage === "local" || storage === "git")
+                  onChange({ ...draft, storage });
+              }}
+            >
+              <ToggleGroupItem value="local">
+                {m.variables_local()}
+              </ToggleGroupItem>
+              <ToggleGroupItem value="git">Git</ToggleGroupItem>
+            </ToggleGroup>
+          )}
+        </Field>
+        <Field orientation="horizontal" className="w-auto gap-3">
+          <FieldLabel htmlFor={`${id}-secret`}>
+            {m.variables_secret()}
+          </FieldLabel>
+          <Switch
+            id={`${id}-secret`}
+            checked={draft.kind === "secret"}
+            disabled={disabled || Boolean(fixedKind)}
+            onCheckedChange={(secret) =>
+              onChange({
+                ...draft,
+                kind: secret ? "secret" : "variable",
+                value:
+                  !secret && draft.originalKind === "secret" ? "" : draft.value,
+                explicitOrdinary: secret
+                  ? draft.explicitOrdinary
+                  : draft.originalKind !== "secret",
+              })
+            }
+          />
+        </Field>
+      </FieldGroup>
       {draft.keep ? (
         <p role="status" className="text-sm">
           {m.variables_collision_keep({
@@ -177,7 +180,8 @@ export function AppVariableFields({
         </FieldLabel>
         <Input
           id={`${id}-value`}
-          autoFocus={compact}
+          autoFocus={compact || draft.editing}
+          aria-describedby={`${id}-value-hint`}
           type={draft.kind === "secret" ? "password" : "text"}
           value={draft.value}
           disabled={disabled}
@@ -196,6 +200,17 @@ export function AppVariableFields({
             })
           }
         />
+        <FieldDescription id={`${id}-value-hint`}>
+          {draft.storage === "git"
+            ? draft.kind === "secret"
+              ? m.variables_git_secret_hint()
+              : m.variables_git_hint()
+            : draft.kind === "secret"
+              ? m.settings_variables_secret_hint()
+              : draft.owner.scope === "library"
+                ? m.settings_variables_value_hint()
+                : m.variables_scoped_local_hint()}
+        </FieldDescription>
         {draft.kind === "secret" && draft.preservesSecret ? (
           <FieldDescription>{m.app_variables_keep_secret()}</FieldDescription>
         ) : null}
