@@ -72,8 +72,9 @@ const APP_VARIABLES_CHANGED_EVENT = "app-settings:variables-changed";
 export function getAppVariables(
   context?: AppVariablesContextDto,
   scope?: VariableScopeDto,
+  includeLibrary = false,
 ): Promise<AppVariablesCatalogDto> {
-  return invokeCommand("get_app_variables", { context, scope });
+  return invokeCommand("get_app_variables", { context, scope, includeLibrary });
 }
 export function upsertAppVariable(
   input: SaveVariableInputDto & { scope?: VariableScopeDto },

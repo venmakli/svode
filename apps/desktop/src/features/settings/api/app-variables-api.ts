@@ -10,8 +10,9 @@ import type {
 export function getAppVariables(
   context?: AppVariablesContext,
   scope?: VariableScope,
+  includeLibrary = false,
 ): Promise<AppVariablesCatalog> {
-  return transport.getAppVariables(context, scope);
+  return transport.getAppVariables(context, scope, includeLibrary);
 }
 export function upsertAppVariable(
   input: SaveVariableInput & { scope?: VariableScope },

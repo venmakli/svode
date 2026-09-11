@@ -506,3 +506,66 @@ fn catalog_includes_current_shared_usage_and_removes_stale_references() {
     assert_eq!(catalog.entries[0].used_in.len(), 1);
     assert_eq!(catalog.entries[0].used_in[0].reference_name, "KEY");
 }
+
+#[test]
+fn source_picker_includes_library_without_polluting_scoped_settings_catalog() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = dir.path().join("library");
+    let root = dir.path().join("project");
+    project(&root);
+    let scope = app(&root, true, &[]).scope;
+    let secrets = Secrets::default();
+    for source in [
+        SourceOwner::Project,
+        SourceOwner::Space { id: "child".into() },
+        SourceOwner::Library,
+    ] {
+        put(
+            &config,
+            Some(&scope),
+            source,
+            "KEY",
+            Mode::Local,
+            Kind::Secret,
+            Some("df107-secret-value-must-not-appear"),
+            &secrets,
+        );
+    }
+    put(
+        &config,
+        None,
+        SourceOwner::Library,
+        "DADATA_API_KEY",
+        Mode::Local,
+        Kind::Secret,
+        Some("df107-secret-value-must-not-appear"),
+        &secrets,
+    );
+    for child in [true, false] {
+        let scope = VariableScope {
+            space_id: child.then(|| "child".into()),
+            ..scope.clone()
+        };
+        let catalog = get_source_catalog(&config, Some(&scope), &secrets).unwrap();
+        assert_eq!(catalog.default_owner, scope.owner());
+        assert_eq!(catalog.entries.len(), if child { 4 } else { 3 });
+        let library = catalog
+            .entries
+            .iter()
+            .find(|e| e.entry.name == "DADATA_API_KEY")
+            .unwrap();
+        assert_eq!(library.source.owner, SourceOwner::Library);
+        assert!(library.entry.has_value && library.entry.value.is_none());
+        assert!(!serde_json::to_string(&catalog).unwrap().contains("df107-secret-value-must-not-appear"));
+        let settings = get_catalog(&config, Some(&scope), None, &secrets).unwrap();
+        assert!(
+            settings
+                .entries
+                .iter()
+                .all(|e| e.source.owner != SourceOwner::Library)
+        );
+    }
+    let library = get_source_catalog(&config, None, &secrets).unwrap();
+    assert_eq!(library.owners.len(), 1);
+    assert_eq!(library.entries.len(), 2);
+}

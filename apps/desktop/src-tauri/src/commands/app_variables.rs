@@ -48,12 +48,17 @@ pub(crate) async fn get_app_variables(
     state: State<'_, AppSettingsState>,
     context: Option<AppVariableContextInput>,
     scope: Option<VariableScope>,
+    include_library: Option<bool>,
 ) -> Result<AppVariablesCatalog, AppError> {
     let config = config_dir(&app)?;
     run_locked(&state, move || {
         let context = context.map(resolve_context).transpose()?;
         let scope = context.as_ref().map(|c| &c.scope).or(scope.as_ref());
-        app_variables::get_catalog(&config, scope, context.as_ref(), &KeyringSecretStore)
+        if include_library == Some(true) && context.is_none() {
+            app_variables::get_source_catalog(&config, scope, &KeyringSecretStore)
+        } else {
+            app_variables::get_catalog(&config, scope, context.as_ref(), &KeyringSecretStore)
+        }
     })
     .await
 }

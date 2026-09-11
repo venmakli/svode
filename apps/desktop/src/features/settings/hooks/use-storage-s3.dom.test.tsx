@@ -143,7 +143,13 @@ if (process.env.SVODE_S3_TEST !== "1") {
         if (command === "get_app_variables") {
           if (fixture.failCatalog) throw new Error("Keychain denied");
           return catalogFixture(
-            structuredClone(fixture.entries),
+            structuredClone(
+              fixture.entries.filter(
+                (entry) =>
+                  entry.source.owner.scope !== "library" ||
+                  args.includeLibrary === true,
+              ),
+            ),
             (args.scope as { spaceId?: string })?.spaceId
               ? {
                   scope: "space",

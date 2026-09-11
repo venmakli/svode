@@ -50,7 +50,7 @@ export function useStorageS3({
     () => ({ projectPath, spaceId }),
     [projectPath, spaceId],
   );
-  const variables = useAppVariables(undefined, false, open, scope);
+  const variables = useAppVariables(undefined, false, open, scope, true);
   const owner = JSON.stringify([open, projectPath, spaceId]);
   const ownerRef = useRef(owner);
   ownerRef.current = owner;

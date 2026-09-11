@@ -149,6 +149,24 @@ pub(crate) fn get_catalog(
     context: Option<&AppVariableOwnerContext>,
     secrets: &dyn SecretStore,
 ) -> Result<AppVariablesCatalog, AppError> {
+    read_catalog(config, scope, context, context.is_some(), secrets)
+}
+
+pub(crate) fn get_source_catalog(
+    config: &Path,
+    scope: Option<&VariableScope>,
+    secrets: &dyn SecretStore,
+) -> Result<AppVariablesCatalog, AppError> {
+    read_catalog(config, scope, None, true, secrets)
+}
+
+fn read_catalog(
+    config: &Path,
+    scope: Option<&VariableScope>,
+    context: Option<&AppVariableOwnerContext>,
+    include_library: bool,
+    secrets: &dyn SecretStore,
+) -> Result<AppVariablesCatalog, AppError> {
     let prepared = context
         .map(|c| registry::prepare_context(config, c, secrets))
         .transpose()?;
@@ -164,7 +182,7 @@ pub(crate) fn get_catalog(
     if scope.is_some_and(|s| s.space_id.is_some()) {
         sources.push(SourceOwner::Project);
     }
-    if context.is_some() {
+    if include_library && default_owner != SourceOwner::Library {
         sources.push(SourceOwner::Library);
     }
     let service = Service::new(secrets);
