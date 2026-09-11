@@ -48,16 +48,13 @@ function VariableCatalog({ projectPath, spaceId, registerLeaveGuard }: Props) {
         !catalog.entries.some((own) => !own.inherited && own.name === e.name),
     ) ?? [];
   return (
-    <section
-      className="flex w-full min-w-0 max-w-3xl flex-col gap-4"
-      aria-busy={pending}
-    >
+    <section className="flex w-full min-w-0 flex-col gap-4" aria-busy={pending}>
       <div className="flex items-start justify-between gap-3">
         <div className="flex min-w-0 flex-col gap-1">
           <h2 className="text-sm font-medium wrap-anywhere">
             {draft
               ? draft.editing
-                ? m.settings_variables_edit_named({ name: draft.name })
+                ? m.variables_edit_title()
                 : m.settings_variables_add()
               : scope
                 ? m.settings_variables_title()
@@ -134,7 +131,7 @@ function VariableCatalog({ projectPath, spaceId, registerLeaveGuard }: Props) {
         ))}
       {draft ? (
         <form
-          className="flex w-full min-w-0 max-w-xl flex-col gap-4"
+          className="flex w-full min-w-0 flex-col gap-4"
           onSubmit={(event) => {
             event.preventDefault();
             void variables.save();

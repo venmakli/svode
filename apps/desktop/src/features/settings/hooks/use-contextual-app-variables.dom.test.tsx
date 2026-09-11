@@ -516,9 +516,17 @@ if (process.env.SVODE_CONTEXTUAL_VARIABLES_TEST !== "1") {
     }
     const click = async (text: string) =>
       act(async () => {
-        Array.from(dom.window.document.querySelectorAll("button"))
-          .find((b) => b.textContent === text)!
-          .click();
+        const button = Array.from(
+          dom.window.document.querySelectorAll("button"),
+        ).find((b) => b.textContent === text)!;
+        if (button.getAttribute("role") === "tab") {
+          button.dispatchEvent(
+            new dom.window.MouseEvent("mousedown", {
+              bubbles: true,
+              button: 0,
+            }),
+          );
+        } else button.click();
       });
     const secret = async () =>
       act(async () => {
@@ -538,6 +546,11 @@ if (process.env.SVODE_CONTEXTUAL_VARIABLES_TEST !== "1") {
       expect(variableDraftInput(draft).value).toBe(undefined);
       await secret();
       expect(draft.storage).toBe("git");
+      expect(draft.name).toBe("KEY");
+      expect(
+        dom.window.document.querySelector('[role="tab"][aria-selected="true"]')
+          ?.textContent,
+      ).toBe("Git");
       expect(canSaveVariableDraft(draft)).toBe(true);
       expect(variableDraftInput(draft).value).toBe("");
       await act(async () =>
@@ -550,6 +563,12 @@ if (process.env.SVODE_CONTEXTUAL_VARIABLES_TEST !== "1") {
           />,
         ),
       );
+      const nameInput =
+        dom.window.document.querySelector<HTMLInputElement>(
+          'input[id$="-name"]',
+        )!;
+      expect(nameInput.value).toBe("KEY");
+      expect(nameInput.disabled).toBe(true);
       expect(draft.value).toBe("");
       expect(variableDraftInput(draft).value).toBe(undefined);
       await secret();
@@ -699,7 +718,9 @@ if (process.env.SVODE_CONTEXTUAL_VARIABLES_TEST !== "1") {
       expect(document.querySelectorAll('input[type="text"]').length).toBe(0);
       expect(document.body.textContent?.includes("/repo/")).toBe(false);
       expect(document.querySelectorAll('[role="switch"]').length).toBe(1);
-      expect(document.body.textContent?.includes("Storage")).toBe(true);
+      expect(
+        document.querySelector('[role="tablist"]')?.getAttribute("aria-label"),
+      ).toBe("Storage");
       await act(async () => {
         Array.from(document.querySelectorAll("button"))
           .find((item) => item.textContent === "Cancel")!

@@ -1908,5 +1908,6 @@
   "variables_remove_inheritance": "Deleting this space variable restores project inheritance for references without an explicit source. Explicit bindings will become missing.",
   "variables_known_usage": "Known usage",
   "variables_reload_review": "The source was reloaded. Review the current value below before saving your draft.",
-  "variables_scoped_local_hint": "Stored only on this device and not shared through Git."
+  "variables_scoped_local_hint": "Stored only on this device and not shared through Git.",
+  "variables_edit_title": "Edit variable"
 }
