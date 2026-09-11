@@ -58,11 +58,13 @@ function VariableCatalog({ projectPath, spaceId, registerLeaveGuard }: Props) {
                 : m.settings_variables_add()
               : scope
                 ? m.settings_variables_title()
-                : m.variables_library_title()}
+                : m.variables_global_title()}
           </h2>
           {!scope || (!draft && scope.spaceId) ? (
             <p className="text-sm text-muted-foreground">
-              {scope ? m.variables_scope_description() : m.variables_library()}
+              {scope
+                ? m.variables_scope_description()
+                : m.variables_global_description()}
             </p>
           ) : null}
         </div>
@@ -117,7 +119,10 @@ function VariableCatalog({ projectPath, spaceId, registerLeaveGuard }: Props) {
           <Alert key={owner.label} variant="destructive">
             <AlertDescription>
               <span className="wrap-anywhere">
-                {owner.label}: {owner.error}
+                {owner.owner.scope === "global"
+                  ? m.variables_global()
+                  : owner.label}
+                : {owner.error}
               </span>
               <Button
                 variant="outline"
@@ -236,7 +241,7 @@ function VariableCatalog({ projectPath, spaceId, registerLeaveGuard }: Props) {
                 <p className="text-xs text-muted-foreground">
                   {entry.inherited ? `${m.variables_inherited()} · ` : ""}
                   {entry.source.owner.scope === "global"
-                    ? m.variables_library()
+                    ? m.variables_global()
                     : entry.ownerLabel}
                 </p>
                 <p className="whitespace-pre-wrap text-sm">

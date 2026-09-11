@@ -157,6 +157,9 @@ export function AppVariableFields({
           ) : null}
         </Field>
       </FieldGroup>
+      {draft.editing && draft.owner.scope === "global" ? (
+        <FieldDescription>{m.variables_global_edit_hint()}</FieldDescription>
+      ) : null}
       {draft.keep ? (
         <p role="status" className="text-sm">
           {m.variables_collision_keep({
@@ -194,7 +197,7 @@ export function AppVariableFields({
       {showOwner ? (
         <p className="text-xs text-muted-foreground wrap-anywhere">
           {draft.owner.scope === "global"
-            ? m.variables_library()
+            ? m.variables_global()
             : draft.ownerLabel}
         </p>
       ) : null}

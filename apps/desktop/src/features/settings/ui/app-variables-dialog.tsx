@@ -147,7 +147,10 @@ function ContextualVariables({
             .map((owner) => (
               <Alert key={owner.label} variant="destructive">
                 <AlertDescription>
-                  {owner.label}: {owner.error}
+                  {owner.owner.scope === "global"
+                    ? m.variables_global()
+                    : owner.label}
+                  : {owner.error}
                   <Button
                     variant="outline"
                     disabled={pending}
@@ -220,7 +223,7 @@ function ContextualVariables({
                       {
                         <p className="text-xs text-muted-foreground">
                           {m.app_variables_source({
-                            name: `${entry?.source.owner.scope === "global" ? m.variables_library() : (entry?.ownerLabel ?? variables.catalog?.owners.find((o) => ownerKey(o.owner) === ownerKey(reference.source.owner))?.label ?? "")} · ${reference.entryName}`,
+                            name: `${reference.source.owner.scope === "global" ? m.variables_global() : (entry?.ownerLabel ?? variables.catalog?.owners.find((o) => ownerKey(o.owner) === ownerKey(reference.source.owner))?.label ?? "")} · ${reference.entryName}`,
                           })}
                         </p>
                       }
@@ -387,7 +390,7 @@ function ContextualVariables({
                                       >
                                         {item.name} ·{" "}
                                         {item.source.owner.scope === "global"
-                                          ? m.variables_library()
+                                          ? m.variables_global()
                                           : item.ownerLabel}{" "}
                                         ·{" "}
                                         {item.mode === "git"

@@ -107,7 +107,10 @@ export function StorageS3Fields({
             <Alert key={ownerKey(owner.owner)} variant="destructive">
               <AlertDescription>
                 <span className="break-words">
-                  {owner.label}: {owner.error}
+                  {owner.owner.scope === "global"
+                    ? m.variables_global()
+                    : owner.label}
+                  : {owner.error}
                 </span>
                 <Button
                   type="button"
@@ -195,7 +198,14 @@ export function StorageS3Fields({
                       <SelectGroup>
                         {name && entry?.kind !== "secret" && (
                           <SelectItem value={selectedKey} disabled>
-                            {name}
+                            {name} ·{" "}
+                            {source.owner.scope === "global"
+                              ? m.variables_global()
+                              : s3.variables.catalog?.owners.find(
+                                  (owner) =>
+                                    ownerKey(owner.owner) ===
+                                    ownerKey(source.owner),
+                                )?.label}
                           </SelectItem>
                         )}
                         {s3.entries
@@ -214,7 +224,11 @@ export function StorageS3Fields({
                               value={sourceKey(item.source)}
                               className="break-all"
                             >
-                              {item.name} · {item.ownerLabel} ·{" "}
+                              {item.name} ·{" "}
+                              {item.source.owner.scope === "global"
+                                ? m.variables_global()
+                                : item.ownerLabel}{" "}
+                              ·{" "}
                               {item.mode === "git"
                                 ? "Git"
                                 : m.variables_local()}
