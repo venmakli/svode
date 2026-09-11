@@ -211,17 +211,23 @@ struct AgentState {
 
 impl AgentState {
     async fn load() -> Result<Self> {
-        Self::load_with(PathBuf::from("."), svode_core::storage::s3::read_secret).await
+        Self::load_with(
+            PathBuf::from("."),
+            svode_core::variables::KeyringSecretStore,
+        )
+        .await
     }
 
     async fn load_with(
         repo: PathBuf,
-        get: impl FnMut(&str) -> std::result::Result<Option<String>, String> + Send + 'static,
+        secrets: impl svode_core::variables::SecretStore + Send + 'static,
     ) -> Result<Self> {
         let (cfg, secrets) = tokio::task::spawn_blocking(move || {
             let cfg =
                 svode_core::storage::s3::AgentConfig::read(&repo).map_err(anyhow::Error::msg)?;
-            let secrets = cfg.resolve_with(get).map_err(anyhow::Error::msg)?;
+            let secrets = cfg
+                .resolve_with_store(&secrets)
+                .map_err(anyhow::Error::msg)?;
             Ok::<_, anyhow::Error>((cfg, secrets))
         })
         .await??;
@@ -296,6 +302,18 @@ impl AgentState {
 mod tests {
     use super::*;
 
+    struct Store(fn(&str) -> Result<Option<String>, String>);
+    impl svode_core::variables::SecretStore for Store {
+        fn get(&self, name: &str) -> svode_core::variables::Result<Option<String>> {
+            (self.0)(name).map_err(|_| svode_core::variables::Error::SecretStore)
+        }
+        fn set(&self, _: &str, _: &str) -> svode_core::variables::Result<()> {
+            unreachable!()
+        }
+        fn remove(&self, _: &str) -> svode_core::variables::Result<()> {
+            unreachable!()
+        }
+    }
     #[tokio::test]
     async fn standalone_session_resolves_shared_secrets_and_preserves_object_keys() {
         let repo = tempfile::tempdir().unwrap();
@@ -306,38 +324,53 @@ mod tests {
         )
         .unwrap();
         let config = svode_core::storage::s3::AgentConfig {
-            version: 1,
+            version: 2,
             endpoint: "https://s3.example.test".into(),
             bucket: "assets".into(),
             region: "us-east-1".into(),
             prefix: Some("project/root".into()),
-            catalog_path,
+            library_directory: repo.path().into(),
+            project_path: None,
+            space_id: None,
             bindings: svode_core::storage::s3::SecretBindings {
-                access_key: "ACCESS".into(),
-                secret_key: "SECRET".into(),
+                access_key: svode_core::variables::SourceReference {
+                    owner: svode_core::variables::SourceOwner::Library,
+                    name: "ACCESS".into(),
+                },
+                secret_key: svode_core::variables::SourceReference {
+                    owner: svode_core::variables::SourceOwner::Library,
+                    name: "SECRET".into(),
+                },
             },
         };
         config.write(repo.path()).unwrap();
-        let state = AgentState::load_with(repo.path().into(), |name| {
-            assert!(name == "ACCESS" || name == "SECRET");
-            Ok(Some("fixture-value".into()))
-        })
+        let state = AgentState::load_with(
+            repo.path().into(),
+            Store(|name| {
+                assert!(name == "ACCESS" || name == "SECRET");
+                Ok(Some("fixture-value".into()))
+            }),
+        )
         .await
         .unwrap();
         assert_eq!(state.object_key("abcdef"), "project/root/ab/cd/abcdef");
-        let result = AgentState::load_with(repo.path().into(), |name| {
-            if name == "SECRET" {
-                Err("denied".into())
-            } else {
-                Ok(Some("access".into()))
-            }
-        })
+        let result = AgentState::load_with(
+            repo.path().into(),
+            Store(|name| {
+                if name == "SECRET" {
+                    Err("denied".into())
+                } else {
+                    Ok(Some("access".into()))
+                }
+            }),
+        )
         .await;
         assert!(result.err().unwrap().to_string().contains("Secret Key"));
         std::fs::write(repo.path().join(svode_core::storage::s3::CONFIG_REL), r#"{"endpoint":"https://s3.example.test","bucket":"assets","region":"us-east-1","keychainAccount":"old"}"#).unwrap();
-        let result = AgentState::load_with(repo.path().into(), |_| {
-            panic!("must not read old credentials")
-        })
+        let result = AgentState::load_with(
+            repo.path().into(),
+            Store(|_| panic!("must not read old credentials")),
+        )
         .await;
         assert!(
             result

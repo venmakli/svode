@@ -228,8 +228,8 @@ pub(crate) fn get_catalog(
                                 }
                             }
                         }
-                        used_in.extend(s3_usage(config, &entry.name)?);
                     }
+                    used_in.extend(s3_usage(config, scope, &reference)?);
                     entries.push(AppVariableEntry {
                         collision: catalog.collisions.contains(&entry.name),
                         entry,
@@ -489,21 +489,6 @@ pub(crate) fn resolve_environment(
     })
 }
 
-// S3 remains an explicit library-only consumer until its scoped cutover.
-pub(crate) fn resolve_s3(
-    config: &Path,
-    bindings: &svode_core::storage::s3::SecretBindings,
-    secrets: &dyn SecretStore,
-) -> Result<svode_core::storage::s3::Credentials, AppError> {
-    core::files::check_pending(config).map_err(storage_error)?;
-    let root = core::files::read(&config.join("settings.json"), false).map_err(storage_error)?;
-    svode_core::storage::s3::resolve_pair(bindings, &root, |name| {
-        secrets
-            .get(name)
-            .map_err(|_| "Keychain access failed".into())
-    })
-    .map_err(AppError::Storage)
-}
 pub(crate) fn register_s3_owner(config: &Path, owner: &Path) -> Result<(), AppError> {
     let _guard = core::files::lock(config).map_err(storage_error)?;
     core::files::check_pending(config).map_err(storage_error)?;
@@ -524,7 +509,11 @@ pub(crate) fn register_s3_owner(config: &Path, owner: &Path) -> Result<(), AppEr
     }
     Ok(())
 }
-fn s3_usage(config: &Path, name: &str) -> Result<Vec<AppVariableUsage>, AppError> {
+fn s3_usage(
+    config: &Path,
+    scope: Option<&VariableScope>,
+    reference: &SourceReference,
+) -> Result<Vec<AppVariableUsage>, AppError> {
     let root = core::files::read(&config.join("settings.json"), false).map_err(storage_error)?;
     let owners: BTreeSet<PathBuf> = root
         .pointer("/variables/s3Owners")
@@ -534,9 +523,24 @@ fn s3_usage(config: &Path, name: &str) -> Result<Vec<AppVariableUsage>, AppError
         .unwrap_or_default();
     let mut usage = Vec::new();
     for owner in owners {
-        if let Ok(config) = svode_core::storage::s3::AgentConfig::read(&owner) {
-            for (role, entry) in config.bindings.roles() {
-                if entry == name {
+        if let Ok(agent) = svode_core::storage::s3::AgentConfig::read(&owner) {
+            if agent.library_directory.canonicalize().ok() != config.canonicalize().ok() {
+                continue;
+            }
+            for (role, entry) in agent.bindings.roles() {
+                let same_project = scope.is_some_and(|scope| {
+                    agent
+                        .project_path
+                        .as_deref()
+                        .zip(
+                            Path::new(&scope.project_path)
+                                .canonicalize()
+                                .ok()
+                                .as_deref(),
+                        )
+                        .is_some_and(|(a, b)| a.canonicalize().ok().as_deref() == Some(b))
+                });
+                if entry == reference && (reference.owner == SourceOwner::Library || same_project) {
                     usage.push(AppVariableUsage {
                         owner_directory: crate::system_path::user_facing_path(&owner),
                         reference_name: format!("S3 {role}"),

@@ -7,7 +7,7 @@ import { JSDOM } from "jsdom";
 import { clearNativeMocks, mockNativeIpc } from "@/platform/native/testing";
 import { emit } from "@/platform/native/events";
 import { variableFixture, catalogFixture } from "../model/testing/variables";
-import type { VariableSource } from "../model/app-variables";
+import { sameSource, type VariableSource } from "../model/app-variables";
 import type { AppVariableEntry } from "../model";
 import type { UseSpaceStorageSettingsResult } from "./use-space-storage-settings";
 
@@ -49,6 +49,14 @@ if (process.env.SVODE_S3_TEST !== "1") {
     prefix: "same/objects",
   };
   const event = "app-settings:variables-changed";
+  const library = (name: string): VariableSource => ({
+    owner: { scope: "library" },
+    name,
+  });
+  const project = (name: string): VariableSource => ({
+    owner: { scope: "project" },
+    name,
+  });
 
   async function setup(saved = false, strategy: "local" | "lfs-s3" = "lfs-s3") {
     let state!: UseSpaceStorageSettingsResult;
@@ -71,10 +79,12 @@ if (process.env.SVODE_S3_TEST !== "1") {
       ].map((e) =>
         variableFixture(
           { ...e, kind: e.kind as "secret" | "variable" },
-          { scope: "library" },
+          e.name === "PLAIN" ? { scope: "project" } : { scope: "library" },
         ),
       ) as AppVariableEntry[],
-      bindings: saved ? { accessKey: "ACCESS", secretKey: "SECRET" } : null,
+      bindings: saved
+        ? { accessKey: library("ACCESS"), secretKey: library("SECRET") }
+        : null,
       calls: [] as { command: string; args: Record<string, unknown> }[],
       failSave: false,
       failCatalog: false,
@@ -105,10 +115,10 @@ if (process.env.SVODE_S3_TEST !== "1") {
           return { git: true, gitLfs: true };
         if (command === "get_lfs_state")
           return fixture.bindings &&
-            Object.values(fixture.bindings).every((name) =>
+            Object.values(fixture.bindings).every((source) =>
               fixture.entries.some(
                 (entry) =>
-                  entry.name === name &&
+                  sameSource(entry.source, source) &&
                   entry.kind === "secret" &&
                   entry.hasValue,
               ),
@@ -132,9 +142,15 @@ if (process.env.SVODE_S3_TEST !== "1") {
         }
         if (command === "get_app_variables") {
           if (fixture.failCatalog) throw new Error("Keychain denied");
-          return catalogFixture(structuredClone(fixture.entries), {
-            scope: "library",
-          });
+          return catalogFixture(
+            structuredClone(fixture.entries),
+            (args.scope as { spaceId?: string })?.spaceId
+              ? {
+                  scope: "space",
+                  id: (args.scope as { spaceId: string }).spaceId,
+                }
+              : { scope: "project" },
+          );
         }
         if (command === "upsert_app_variable") {
           fixture.calls.push({ command, args });
@@ -143,10 +159,11 @@ if (process.env.SVODE_S3_TEST !== "1") {
             source: VariableSource;
             identity?: string;
             kind: "secret";
+            mode: "local" | "git";
             value?: string;
           };
-          const existing = fixture.entries.find(
-            (item) => item.name === input.source.name,
+          const existing = fixture.entries.find((item) =>
+            sameSource(item.source, input.source),
           );
           if (!input.identity && existing) throw new Error("collision");
           if (Boolean(input.identity) && existing?.kind !== "secret")
@@ -157,10 +174,11 @@ if (process.env.SVODE_S3_TEST !== "1") {
                 {
                   name: input.source.name,
                   kind: "secret",
-                  hasValue: true,
+                  hasValue: Boolean(input.value),
+                  mode: input.mode,
                   usedIn: [],
                 },
-                { scope: "library" },
+                input.source.owner,
               ),
             );
           return;
@@ -232,7 +250,7 @@ if (process.env.SVODE_S3_TEST !== "1") {
     const h = await setup();
     try {
       expect(h.state.s3Prefix).toBe("same/objects");
-      expect(h.state.s3.bindings.accessKey).toBe("");
+      expect(h.state.s3.bindings.accessKey.name).toBe("");
       expect(h.state.canSaveS3).toBe(false);
       await act(async () => {
         h.state.s3.begin("accessKey", false);
@@ -247,9 +265,9 @@ if (process.env.SVODE_S3_TEST !== "1") {
       await act(async () => {
         await h.state.s3.submit();
       });
-      expect(h.state.s3.bindings.accessKey).toBe("NEW_ACCESS");
+      expect(h.state.s3.bindings.accessKey.name).toBe("NEW_ACCESS");
       expect(h.fixture.bindings).toBe(null);
-      await act(async () => h.state.s3.select("secretKey", "SECRET"));
+      await act(async () => h.state.s3.select("secretKey", library("SECRET")));
       await act(async () => {
         await h.state.testS3();
       });
@@ -258,8 +276,8 @@ if (process.env.SVODE_S3_TEST !== "1") {
         (call) => call.command === "check_s3_bindings",
       )!;
       expect(check.args.bindings).toEqual({
-        accessKey: "NEW_ACCESS",
-        secretKey: "SECRET",
+        accessKey: project("NEW_ACCESS"),
+        secretKey: library("SECRET"),
       });
       expect(JSON.stringify(check.args).includes("private-test-value")).toBe(
         false,
@@ -269,13 +287,13 @@ if (process.env.SVODE_S3_TEST !== "1") {
         await h.state.saveS3();
       });
       expect(h.fixture.bindings).toBe(null);
-      expect(h.state.s3.bindings.accessKey).toBe("NEW_ACCESS");
+      expect(h.state.s3.bindings.accessKey.name).toBe("NEW_ACCESS");
       h.fixture.failSave = false;
       await act(async () => {
         await h.state.saveS3();
         await tick();
       });
-      expect(h.fixture.bindings?.accessKey).toBe("NEW_ACCESS");
+      expect(h.fixture.bindings?.accessKey.name).toBe("NEW_ACCESS");
       expect(
         h.fixture.calls.filter((call) => call.command === "upsert_app_variable")
           .length,
@@ -289,7 +307,7 @@ if (process.env.SVODE_S3_TEST !== "1") {
       ).toBe(false);
       await h.render(null, false);
       await h.render();
-      expect(h.state.s3.bindings.accessKey).toBe("NEW_ACCESS");
+      expect(h.state.s3.bindings.accessKey.name).toBe("NEW_ACCESS");
       await act(async () => {
         await h.state.testS3();
       });
@@ -389,7 +407,7 @@ if (process.env.SVODE_S3_TEST !== "1") {
         await checking;
       });
       expect(h.state.s3.testState).toBe("idle");
-      expect(h.state.s3.bindings.secretKey).toBe("SECRET");
+      expect(h.state.s3.bindings.secretKey.name).toBe("SECRET");
       await act(async () => {
         h.fixture.entries.find((item) => item.name === "SECRET")!.kind =
           "variable";
@@ -409,7 +427,7 @@ if (process.env.SVODE_S3_TEST !== "1") {
       await act(async () => {
         h.state.setS3Prefix("new-prefix");
       });
-      expect(h.state.s3.bindings.secretKey).toBe("SECRET");
+      expect(h.state.s3.bindings.secretKey.name).toBe("SECRET");
     } finally {
       await h.cleanup();
     }
@@ -442,7 +460,7 @@ if (process.env.SVODE_S3_TEST !== "1") {
         await saving;
       });
       expect(h.state.s3.editor).toBe(null);
-      expect(h.state.s3.bindings.secretKey).toBe("");
+      expect(h.state.s3.bindings.secretKey.name).toBe("");
       expect(h.state.s3.pending).toBe(false);
       await h.render("inline");
       expect(h.state.canSaveS3).toBe(false);
@@ -459,7 +477,7 @@ if (process.env.SVODE_S3_TEST !== "1") {
     const h = await setup(true);
     try {
       await act(async () => {
-        h.state.s3.select("accessKey", "SECRET");
+        h.state.s3.select("accessKey", library("SECRET"));
       });
       await act(async () => {
         h.state.s3.begin("secretKey", true);
@@ -485,7 +503,7 @@ if (process.env.SVODE_S3_TEST !== "1") {
         h.state.s3.retry();
         await tick();
       });
-      expect(h.state.s3.bindings.accessKey).toBe("SECRET");
+      expect(h.state.s3.bindings.accessKey.name).toBe("SECRET");
       expect(h.state.s3.editor!.draft.value).toBe("unsaved");
       const gate = deferred();
       h.fixture.bindingGate = gate.promise;
@@ -498,7 +516,101 @@ if (process.env.SVODE_S3_TEST !== "1") {
         gate.resolve();
         await tick();
       });
-      expect(h.state.s3.bindings.secretKey).toBe("");
+      expect(h.state.s3.bindings.secretKey.name).toBe("");
+    } finally {
+      await h.cleanup();
+    }
+  });
+
+  test("same-name sources stay pinned and empty Git Secrets block S3", async () => {
+    const h = await setup(true);
+    const child: VariableSource = {
+      owner: { scope: "space", id: "child" },
+      name: "SECRET",
+    };
+    try {
+      await h.render("child");
+      await act(async () => {
+        h.fixture.entries.push(
+          variableFixture(
+            { name: "SECRET", kind: "secret", mode: "git", hasValue: false },
+            child.owner,
+          ),
+        );
+        h.fixture.entries.push(
+          variableFixture({ name: "SECRET", kind: "secret" }),
+        );
+        await emit(event);
+        await tick();
+      });
+      expect(h.state.s3.bindings.secretKey).toEqual(library("SECRET"));
+      expect(h.state.canSaveS3).toBe(true);
+      await act(async () => h.state.s3.select("secretKey", child));
+      expect(h.state.canSaveS3).toBe(false);
+      await act(async () => h.state.s3.begin("secretKey", true));
+      expect(h.state.s3.editor!.draft.owner).toEqual(child.owner);
+      expect(h.state.s3.editor!.draft.storage).toBe("git");
+      expect(h.state.s3.canSubmit).toBe(true);
+      await act(async () => h.state.s3.cancel());
+      await act(async () => {
+        h.fixture.entries.find((e) => sameSource(e.source, child))!.hasValue =
+          true;
+        await emit(event);
+        await tick();
+      });
+      expect(h.state.canSaveS3).toBe(true);
+      await act(async () => h.state.s3.begin("secretKey", false));
+      expect(h.state.s3.editor!.draft.owner).toEqual(child.owner);
+      await act(async () =>
+        h.state.s3.updateDraft({
+          ...h.state.s3.editor!.draft,
+          name: "DECLARATION",
+          storage: "git",
+        }),
+      );
+      await act(async () => {
+        await h.state.s3.submit();
+      });
+      expect(h.state.s3.bindings.secretKey).toEqual({
+        owner: child.owner,
+        name: "DECLARATION",
+      });
+      expect(h.state.canSaveS3).toBe(false);
+    } finally {
+      await h.cleanup();
+    }
+  });
+
+  test("explicit reread preserves a stale draft and rejects replacement identity", async () => {
+    const h = await setup(true);
+    try {
+      await act(async () => h.state.s3.begin("secretKey", true));
+      await act(async () =>
+        h.state.s3.updateDraft({ ...h.state.s3.editor!.draft, value: "draft" }),
+      );
+      await act(async () => {
+        h.fixture.entries.find((e) => e.name === "SECRET")!.revision = "r2";
+        await emit(event);
+        await tick();
+      });
+      expect(h.state.s3.canSubmit).toBe(false);
+      await act(async () => {
+        await h.state.s3.reviewLatest();
+      });
+      expect(h.state.s3.editor!.draft.value).toBe("draft");
+      expect(h.state.s3.editor!.draft.revision).toBe("r2");
+      expect(h.state.s3.canSubmit).toBe(true);
+      await act(async () => {
+        h.fixture.entries.find((e) => e.name === "SECRET")!.identity =
+          "replacement";
+        await emit(event);
+        await tick();
+      });
+      await act(async () => {
+        await h.state.s3.reviewLatest();
+      });
+      expect(h.state.s3.canSubmit).toBe(false);
+      expect(h.state.s3.editor!.draft.value).toBe("draft");
     } finally {
       await h.cleanup();
     }
@@ -512,8 +624,8 @@ if (process.env.SVODE_S3_TEST !== "1") {
         await h.state.selectStrategy("lfs-s3");
       });
       await act(async () => {
-        h.state.s3.select("accessKey", "ACCESS");
-        h.state.s3.select("secretKey", "SECRET");
+        h.state.s3.select("accessKey", library("ACCESS"));
+        h.state.s3.select("secretKey", library("SECRET"));
       });
       expect(h.state.canSaveS3).toBe(true);
       await act(async () => {
@@ -530,8 +642,8 @@ if (process.env.SVODE_S3_TEST !== "1") {
       expect(save.args.spaceId).toBe("repo-space");
       expect(save.args.s3Config).toEqual(target);
       expect(save.args.s3Bindings).toEqual({
-        accessKey: "ACCESS",
-        secretKey: "SECRET",
+        accessKey: library("ACCESS"),
+        secretKey: library("SECRET"),
       });
     } finally {
       await h.cleanup();

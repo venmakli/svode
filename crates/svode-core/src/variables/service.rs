@@ -12,18 +12,28 @@ use std::{
 
 /// Validated hierarchy; source paths are resolved again for each operation.
 pub struct Context {
-    project: PathBuf,
+    project: Option<PathBuf>,
     space_id: Option<String>,
     library: PathBuf,
 }
 
 impl Context {
+    /// An explicit library context for inputs that have no project reference.
+    pub fn library(library: &Path) -> Result<Self> {
+        Owner::library(library)?;
+        Ok(Self {
+            project: None,
+            space_id: None,
+            library: library.to_path_buf(),
+        })
+    }
+
     pub fn new(project: &Path, space_id: Option<&str>, library: &Path) -> Result<Self> {
         if !project.is_absolute() || !library.is_absolute() {
             return Err(Error::InvalidOwner);
         }
         let context = Self {
-            project: project.canonicalize().map_err(|_| Error::InvalidOwner)?,
+            project: Some(project.canonicalize().map_err(|_| Error::InvalidOwner)?),
             space_id: space_id.map(str::to_string),
             library: library.to_path_buf(),
         };
@@ -37,12 +47,15 @@ impl Context {
     fn owner(&self, owner: &SourceOwner) -> Result<Owner> {
         match owner {
             SourceOwner::Library => Owner::library(&self.library),
-            SourceOwner::Project => Owner::scoped(&self.project),
+            SourceOwner::Project => {
+                Owner::scoped(self.project.as_deref().ok_or(Error::InvalidOwner)?)
+            }
             SourceOwner::Space { id } => {
                 if self.space_id.as_ref() != Some(id) {
                     return Err(Error::InvalidOwner);
                 }
-                let config = files::read(&self.project.join(".svode/config.json"), true)?;
+                let project = self.project.as_deref().ok_or(Error::InvalidOwner)?;
+                let config = files::read(&project.join(".svode/config.json"), true)?;
                 let spaces = config
                     .get("spaces")
                     .and_then(Value::as_array)
@@ -66,12 +79,11 @@ impl Context {
                 {
                     return Err(Error::InvalidOwner);
                 }
-                let path = self
-                    .project
+                let path = project
                     .join(relative)
                     .canonicalize()
                     .map_err(|_| Error::InvalidOwner)?;
-                if path == self.project || !path.starts_with(&self.project) {
+                if path == project || !path.starts_with(project) {
                     return Err(Error::InvalidOwner);
                 }
                 Owner::scoped(&path)

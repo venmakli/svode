@@ -19,6 +19,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
+import { sourceKey, sameSource, ownerKey } from "../model/app-variables";
 import type { UseSpaceStorageSettingsResult } from "../hooks/use-space-storage-settings";
 import { AppVariableFields } from "./app-variable-fields";
 
@@ -100,6 +101,37 @@ export function StorageS3Fields({
             </AlertDescription>
           </Alert>
         )}
+        {s3.variables.catalog?.owners
+          .filter((owner) => owner.error)
+          .map((owner) => (
+            <Alert key={ownerKey(owner.owner)} variant="destructive">
+              <AlertDescription>
+                <span className="break-words">
+                  {owner.label}: {owner.error}
+                </span>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={disabled}
+                  onClick={() =>
+                    void s3.variables.recover(owner.owner).catch(s3.retry)
+                  }
+                >
+                  {m.variables_recovery()}
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={disabled}
+                  onClick={s3.retry}
+                >
+                  {m.storage_lfs_retry()}
+                </Button>
+              </AlertDescription>
+            </Alert>
+          ))}
         {!s3.loaded ? (
           <div
             role="status"
@@ -121,18 +153,32 @@ export function StorageS3Fields({
               </Alert>
             )}
             {roles.map(({ key, label }) => {
-              const name = s3.bindings[key];
-              const entry = s3.entries.find((item) => item.name === name);
+              const source = s3.bindings[key];
+              const name = source.name;
+              const selectedKey = name ? sourceKey(source) : "";
+              const entry =
+                s3.entries.find(
+                  (item) =>
+                    sameSource(item.source, source) && item.kind === "secret",
+                ) ?? s3.entries.find((item) => sameSource(item.source, source));
               const missing = Boolean(
-                name && (entry?.kind !== "secret" || !entry.hasValue),
+                name &&
+                (entry?.kind !== "secret" ||
+                  !entry.hasValue ||
+                  entry.collision),
               );
               const active = s3.editor?.role === key;
               return (
                 <Field key={key} data-invalid={missing}>
                   <FieldLabel htmlFor={`s3-${key}-source`}>{label}</FieldLabel>
                   <Select
-                    value={name}
-                    onValueChange={(value) => s3.select(key, value)}
+                    value={selectedKey}
+                    onValueChange={(value) => {
+                      const selected = s3.entries.find(
+                        (item) => sourceKey(item.source) === value,
+                      );
+                      if (selected) s3.select(key, selected.source);
+                    }}
                     disabled={disabled || !!s3.editor}
                   >
                     <SelectTrigger
@@ -148,21 +194,34 @@ export function StorageS3Fields({
                     <SelectContent>
                       <SelectGroup>
                         {name && entry?.kind !== "secret" && (
-                          <SelectItem value={name} disabled>
+                          <SelectItem value={selectedKey} disabled>
                             {name}
                           </SelectItem>
                         )}
                         {s3.entries
-                          .filter((item) => item.kind === "secret")
+                          .filter(
+                            (item, index, entries) =>
+                              item.kind === "secret" &&
+                              entries.findIndex(
+                                (other) =>
+                                  sameSource(other.source, item.source) &&
+                                  other.kind === "secret",
+                              ) === index,
+                          )
                           .map((item) => (
                             <SelectItem
-                              key={item.name}
-                              value={item.name}
+                              key={sourceKey(item.source)}
+                              value={sourceKey(item.source)}
                               className="break-all"
                             >
-                              {item.name}
+                              {item.name} · {item.ownerLabel} ·{" "}
+                              {item.mode === "git"
+                                ? "Git"
+                                : m.variables_local()}
+                              {item.collision &&
+                                ` · ${m.app_variables_collision()}`}
                               {!item.hasValue &&
-                                ` · ${m.settings_variables_missing()}`}
+                                ` · ${m.variables_unset_here()}`}
                             </SelectItem>
                           ))}
                       </SelectGroup>
@@ -243,15 +302,26 @@ export function StorageS3Fields({
                         onChange={s3.updateDraft}
                         compact
                         fixedKind="secret"
+                        collisionAlternatives={s3.collisionAlternatives}
                       />
                       {(s3.collision || s3.stale || s3.editorError) && (
                         <FieldError>
                           {s3.collision
                             ? m.app_variables_collision()
                             : s3.stale
-                              ? m.storage_s3_secret_changed()
+                              ? m.app_variables_stale()
                               : s3.editorError}
                         </FieldError>
+                      )}
+                      {s3.stale && (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          disabled={disabled}
+                          onClick={() => void s3.reviewLatest()}
+                        >
+                          {m.variables_retry_draft()}
+                        </Button>
                       )}
                       <div className="flex flex-wrap gap-2">
                         <Button

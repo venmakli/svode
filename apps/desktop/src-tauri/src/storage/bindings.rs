@@ -13,21 +13,25 @@ use crate::space::types::AssetsS3Config;
 
 pub(crate) fn prepare(
     catalog_dir: &Path,
+    scope: &crate::space::app_variables::VariableScope,
     target: &AssetsS3Config,
     bindings: SecretBindings,
     secrets: &dyn SecretStore,
 ) -> Result<AgentConfig, AppError> {
-    app_variables::resolve_s3(catalog_dir, &bindings, secrets)?;
     let config = AgentConfig {
-        version: 1,
+        version: 2,
         endpoint: target.endpoint.clone(),
         bucket: target.bucket.clone(),
         region: target.region.clone(),
         prefix: Some(target.prefix.clone()),
         bindings,
-        catalog_path: catalog_dir.join("settings.json"),
+        library_directory: catalog_dir.to_path_buf(),
+        project_path: Some(PathBuf::from(&scope.project_path)),
+        space_id: scope.space_id.clone(),
     };
-    config.validate().map_err(AppError::Storage)?;
+    config
+        .resolve_with_store(secrets)
+        .map_err(AppError::Storage)?;
     Ok(config)
 }
 
@@ -37,7 +41,9 @@ pub(crate) fn publish(
     config: &AgentConfig,
     secrets: &dyn SecretStore,
 ) -> Result<(), AppError> {
-    app_variables::resolve_s3(catalog_dir, &config.bindings, secrets)?;
+    config
+        .resolve_with_store(secrets)
+        .map_err(AppError::Storage)?;
     // Usage stores only the owner location. Both roles are always read from
     // the single atomically published agent config, including after a failure.
     app_variables::register_s3_owner(catalog_dir, repo)?;
@@ -129,8 +135,21 @@ pub(crate) async fn check_s3_bindings(
         return Err(AppError::StrategyInherited);
     }
     let catalog_dir = catalog_dir(&app)?;
+    let variable_scope = crate::space::app_variables::VariableScope {
+        project_path,
+        space_id,
+    };
+    let draft_target = target.clone();
     let credentials = run_locked(&state, move || {
-        app_variables::resolve_s3(&catalog_dir, &bindings, &KeyringSecretStore)
+        prepare(
+            &catalog_dir,
+            &variable_scope,
+            &draft_target,
+            bindings,
+            &KeyringSecretStore,
+        )?
+        .resolve_with_store(&KeyringSecretStore)
+        .map_err(AppError::Storage)
     })
     .await?;
     super::s3::check_connection(
@@ -224,10 +243,39 @@ mod tests {
         }
     }
 
+    fn library(name: &str) -> SourceReference {
+        SourceReference {
+            owner: SourceOwner::Library,
+            name: name.into(),
+        }
+    }
+    fn prepare(
+        config: &Path,
+        target: &AssetsS3Config,
+        bindings: SecretBindings,
+        secrets: &dyn SecretStore,
+    ) -> Result<AgentConfig, AppError> {
+        let project = config.join("project");
+        std::fs::create_dir_all(project.join(".svode")).unwrap();
+        let path = project.join(".svode/config.json");
+        if !path.exists() {
+            std::fs::write(path, "{}").unwrap();
+        }
+        super::prepare(
+            config,
+            &VariableScope {
+                project_path: project.to_str().unwrap().into(),
+                space_id: None,
+            },
+            target,
+            bindings,
+            secrets,
+        )
+    }
     fn pair() -> SecretBindings {
         SecretBindings {
-            access_key: "ACCESS".into(),
-            secret_key: "SECRET".into(),
+            access_key: library("ACCESS"),
+            secret_key: library("SECRET"),
         }
     }
 
@@ -235,7 +283,7 @@ mod tests {
         for (_, name) in pair().roles() {
             upsert(
                 dir,
-                name,
+                &name.name,
                 AppVariableKind::Secret,
                 Some("private-value"),
                 secrets,
@@ -345,22 +393,19 @@ mod tests {
                 &secrets,
             )
             .unwrap();
-            let desktop = app_variables::resolve_s3(dir.path(), &pair(), &secrets).unwrap();
+            let desktop = cfg.resolve_with_store(&secrets).unwrap();
             let agent = AgentConfig::read(&repo)
                 .unwrap()
-                .resolve_with(|name| secrets.get(name).map_err(|e| e.to_string()))
+                .resolve_with_store(&secrets)
                 .unwrap();
             assert_eq!(desktop.secret_key, value);
             assert_eq!(desktop.secret_key, agent.secret_key);
         }
         remove(dir.path(), "SECRET", &secrets).unwrap();
-        assert!(app_variables::resolve_s3(dir.path(), &pair(), &secrets).is_err());
+        assert!(cfg.resolve_with_store(&secrets).is_err());
         // Even an orphaned Keychain value must not make a removed entry usable.
         secrets.set("SECRET", "orphan").unwrap();
-        assert!(
-            cfg.resolve_with(|name| secrets.get(name).map_err(|e| e.to_string()))
-                .is_err()
-        );
+        assert!(cfg.resolve_with_store(&secrets).is_err());
         upsert(
             dir.path(),
             "SECRET",
@@ -370,10 +415,7 @@ mod tests {
         )
         .unwrap();
         assert!(prepare(dir.path(), &target(), pair(), &secrets).is_err());
-        assert!(
-            cfg.resolve_with(|name| secrets.get(name).map_err(|e| e.to_string()))
-                .is_err()
-        );
+        assert!(cfg.resolve_with_store(&secrets).is_err());
         upsert(
             dir.path(),
             "SECRET",
@@ -383,11 +425,85 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            cfg.resolve_with(|name| secrets.get(name).map_err(|e| e.to_string()))
-                .unwrap()
-                .secret_key,
+            cfg.resolve_with_store(&secrets).unwrap().secret_key,
             "recovered"
         );
+    }
+
+    #[test]
+    fn scoped_usage_and_resolution_do_not_leak_between_projects() {
+        let dir = tempfile::tempdir().unwrap();
+        let secrets = Secrets::default();
+        for project_name in ["first", "second"] {
+            let project = dir.path().join(project_name);
+            std::fs::create_dir_all(project.join(".svode")).unwrap();
+            std::fs::write(project.join(".svode/config.json"), "{}").unwrap();
+            let scope = VariableScope {
+                project_path: project.to_str().unwrap().into(),
+                space_id: None,
+            };
+            let context = scope.context(dir.path()).unwrap();
+            let owner = Owner::in_context(&context, &SourceOwner::Project).unwrap();
+            let service = Service::new(&secrets);
+            service
+                .save(
+                    &owner,
+                    Save {
+                        name: "KEY".into(),
+                        mode: Mode::Git,
+                        kind: AppVariableKind::Secret,
+                        value: Some(project_name.into()),
+                        revision: service.catalog(&owner).unwrap().revision,
+                        identity: None,
+                        keep: None,
+                    },
+                )
+                .unwrap();
+            let source = SourceReference {
+                owner: SourceOwner::Project,
+                name: "KEY".into(),
+            };
+            let config = super::prepare(
+                dir.path(),
+                &scope,
+                &target(),
+                SecretBindings {
+                    access_key: source.clone(),
+                    secret_key: source,
+                },
+                &secrets,
+            )
+            .unwrap();
+            publish(dir.path(), &project, &config, &secrets).unwrap();
+            assert_eq!(
+                AgentConfig::read(&project)
+                    .unwrap()
+                    .resolve_with_store(&secrets)
+                    .unwrap()
+                    .access_key,
+                project_name
+            );
+        }
+        for project_name in ["first", "second"] {
+            let scope = VariableScope {
+                project_path: dir.path().join(project_name).to_str().unwrap().into(),
+                space_id: None,
+            };
+            let catalog =
+                app_variables::get_catalog(dir.path(), Some(&scope), None, &secrets).unwrap();
+            let entry = catalog
+                .entries
+                .iter()
+                .find(|e| e.entry.name == "KEY")
+                .unwrap();
+            assert_eq!(entry.used_in.len(), 2);
+            assert!(
+                entry
+                    .used_in
+                    .iter()
+                    .all(|usage| usage.owner_directory.ends_with(project_name))
+            );
+        }
     }
 
     #[test]
@@ -410,8 +526,8 @@ mod tests {
             dir.path(),
             &target(),
             SecretBindings {
-                access_key: "ACCESS".into(),
-                secret_key: "OTHER".into(),
+                access_key: library("ACCESS"),
+                secret_key: library("OTHER"),
             },
             &secrets,
         )
@@ -443,7 +559,7 @@ mod tests {
                 .is_empty()
         );
         assert_eq!(
-            AgentConfig::read(&repo).unwrap().bindings.secret_key,
+            AgentConfig::read(&repo).unwrap().bindings.secret_key.name,
             "OTHER"
         );
         let mut changed_target = target();
@@ -457,7 +573,8 @@ mod tests {
             saved_config(&repo, &changed_target)
                 .unwrap()
                 .bindings
-                .secret_key,
+                .secret_key
+                .name,
             "OTHER"
         );
     }

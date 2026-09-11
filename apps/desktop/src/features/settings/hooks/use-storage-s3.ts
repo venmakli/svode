@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as m from "@/paraglide/messages.js";
 import type { AssetsS3Config } from "@/features/space";
 import {
@@ -15,6 +15,11 @@ import {
   variableDraftInput,
   type VariableDraft,
 } from "../model/app-variable-draft";
+import {
+  sameSource,
+  ownerKey,
+  type VariableSource,
+} from "../model/app-variables";
 import { useAppVariables } from "./use-app-variables";
 
 export type S3TestState = "idle" | "testing" | "ok" | "fail";
@@ -23,7 +28,10 @@ interface SecretEditor {
   role: Role;
   draft: VariableDraft;
 }
-const emptyBindings: S3SecretBindings = { accessKey: "", secretKey: "" };
+const emptyBindings: S3SecretBindings = {
+  accessKey: { owner: { scope: "project" }, name: "" },
+  secretKey: { owner: { scope: "project" }, name: "" },
+};
 
 export function useStorageS3({
   open,
@@ -38,7 +46,11 @@ export function useStorageS3({
   target: AssetsS3Config;
   enabled: boolean;
 }) {
-  const variables = useAppVariables(undefined, false, open);
+  const scope = useMemo(
+    () => ({ projectPath, spaceId }),
+    [projectPath, spaceId],
+  );
+  const variables = useAppVariables(undefined, false, open, scope);
   const owner = JSON.stringify([open, projectPath, spaceId]);
   const ownerRef = useRef(owner);
   ownerRef.current = owner;
@@ -124,21 +136,47 @@ export function useStorageS3({
 
   const entries = variables.catalog?.entries ?? [];
   const loaded = open && loadedOwner === owner && variables.catalog !== null;
-  const available = (name: string) =>
+  const available = (source: VariableSource) =>
     entries.some(
       (entry) =>
-        entry.name === name && entry.kind === "secret" && entry.hasValue,
+        sameSource(entry.source, source) &&
+        entry.kind === "secret" &&
+        entry.hasValue &&
+        !entry.collision,
     );
   const pairAvailable =
     available(bindings.accessKey) && available(bindings.secretKey);
   const collision =
     editor &&
     !editor.draft.editing &&
-    entries.some((entry) => entry.name === editor.draft.name);
+    entries.some((entry) =>
+      sameSource(entry.source, {
+        owner: editor.draft.owner,
+        name: editor.draft.name,
+      }),
+    );
   const editedEntry = editor
-    ? entries.find((entry) => entry.name === editor.draft.name)
+    ? entries.find(
+        (entry) =>
+          sameSource(entry.source, {
+            owner: editor.draft.owner,
+            name: editor.draft.name,
+          }) &&
+          (!editor.draft.keep || entry.mode === editor.draft.keep),
+      )
     : undefined;
-  const stale = editor?.draft.editing && editedEntry?.kind !== "secret";
+  const draftOwner = editor
+    ? variables.catalog?.owners.find(
+        (owner) => ownerKey(owner.owner) === ownerKey(editor.draft.owner),
+      )
+    : undefined;
+  const stale =
+    editor &&
+    (editor.draft.editing
+      ? editedEntry?.kind !== "secret" ||
+        editedEntry.identity !== editor.draft.identity ||
+        editedEntry.revision !== editor.draft.revision
+      : draftOwner?.revision !== editor.draft.revision);
   const canSave =
     enabled &&
     loaded &&
@@ -161,14 +199,17 @@ export function useStorageS3({
       loadError
     )
       return;
-    const entry = entries.find((item) => item.name === bindings[role]);
+    const entry = entries.find(
+      (item) =>
+        sameSource(item.source, bindings[role]) && item.kind === "secret",
+    );
     if (editing && entry?.kind !== "secret") return;
     const draft =
       editing && entry
         ? editVariableDraft(entry)
         : {
             ...createVariableDraft(
-              entry ? "" : bindings[role],
+              entry ? "" : bindings[role].name,
               variables.catalog ?? undefined,
             ),
             kind: "secret" as const,
@@ -205,7 +246,10 @@ export function useStorageS3({
         ...variableDraftInput(editor.draft),
       });
       if (!current()) return false;
-      setBindings((pair) => ({ ...pair, [editor.role]: editor.draft.name }));
+      setBindings((pair) => ({
+        ...pair,
+        [editor.role]: { owner: editor.draft.owner, name: editor.draft.name },
+      }));
       setEditor(null);
       return true;
     } catch (error) {
@@ -249,6 +293,14 @@ export function useStorageS3({
     collision,
     stale,
     editedEntry,
+    collisionAlternatives: editor
+      ? entries.filter((entry) =>
+          sameSource(entry.source, {
+            owner: editor.draft.owner,
+            name: editor.draft.name,
+          }),
+        )
+      : [],
     testState,
     testError,
     canSave,
@@ -258,6 +310,50 @@ export function useStorageS3({
     submit,
     test,
     invalidateCheck,
+    async reviewLatest() {
+      if (!editor || busy.current) return;
+      const lifecycle = generation.current;
+      const draft = editor.draft;
+      busy.current = true;
+      setPending(true);
+      try {
+        const latest = await variables.refresh();
+        if (generation.current !== lifecycle) return;
+        const entry = latest.entries.find(
+          (item) =>
+            sameSource(item.source, { owner: draft.owner, name: draft.name }) &&
+            (!draft.keep || item.mode === draft.keep),
+        );
+        const owner = latest.owners.find(
+          (owner) => ownerKey(owner.owner) === ownerKey(draft.owner),
+        );
+        if (
+          !owner?.revision ||
+          (draft.editing
+            ? !entry ||
+              entry.kind !== "secret" ||
+              entry.identity !== draft.identity
+            : Boolean(entry))
+        )
+          throw new Error(m.storage_s3_secret_changed());
+        setEditor({
+          ...editor,
+          draft: {
+            ...draft,
+            revision: entry?.revision ?? owner.revision,
+            preservesSecret: entry?.hasValue ?? false,
+          },
+        });
+        setEditorError(null);
+      } catch (error) {
+        if (generation.current === lifecycle) setEditorError(errorText(error));
+      } finally {
+        if (generation.current === lifecycle) {
+          busy.current = false;
+          setPending(false);
+        }
+      }
+    },
     canSubmit: Boolean(
       editor &&
       !pending &&
@@ -267,10 +363,10 @@ export function useStorageS3({
       !variables.loadError &&
       canSaveVariableDraft(editor.draft),
     ),
-    select(role: Role, name: string) {
+    select(role: Role, source: VariableSource) {
       if (busy.current || editor || !enabled) return;
       invalidateCheck();
-      setBindings((pair) => ({ ...pair, [role]: name }));
+      setBindings((pair) => ({ ...pair, [role]: source }));
     },
     updateDraft(draft: VariableDraft) {
       if (!editor || busy.current) return;

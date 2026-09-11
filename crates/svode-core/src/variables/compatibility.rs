@@ -71,11 +71,20 @@ pub fn normalize_app_bindings(
     Ok(result)
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SecretPair {
     pub access_key: SourceReference,
     pub secret_key: SourceReference,
+}
+
+impl SecretPair {
+    pub fn roles(&self) -> [(&'static str, &SourceReference); 2] {
+        [
+            ("Access Key", &self.access_key),
+            ("Secret Key", &self.secret_key),
+        ]
+    }
 }
 
 #[derive(Debug, Clone)]

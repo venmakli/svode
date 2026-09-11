@@ -50,6 +50,8 @@ export function useAppVariables(
   }, [context, scope]);
 
   useEffect(() => {
+    busyRef.current = false;
+    setPending(false);
     if (!enabled) {
       setCatalog(null);
       return;
@@ -110,8 +112,10 @@ export function useAppVariables(
         }
         throw error;
       } finally {
-        busyRef.current = false;
-        if (lifecycle === lifecycleRef.current) setPending(false);
+        if (lifecycle === lifecycleRef.current) {
+          busyRef.current = false;
+          setPending(false);
+        }
       }
     },
     [refresh, notify],

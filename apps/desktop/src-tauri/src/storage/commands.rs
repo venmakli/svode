@@ -344,11 +344,21 @@ pub async fn set_assets_strategy(
                 }
             },
         };
+        let variable_scope = crate::space::app_variables::VariableScope {
+            project_path: project_path.clone(),
+            space_id: space_id.clone(),
+        };
         let directory = catalog_dir.clone();
         let target = cfg.clone();
         next_agent_config = Some(
             run_locked(&settings_state, move || {
-                super::bindings::prepare(&directory, &target, bindings, &KeyringSecretStore)
+                super::bindings::prepare(
+                    &directory,
+                    &variable_scope,
+                    &target,
+                    bindings,
+                    &KeyringSecretStore,
+                )
             })
             .await?,
         );

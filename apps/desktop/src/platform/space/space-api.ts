@@ -1,3 +1,4 @@
+import type { VariableSourceDto } from "@/platform/settings/app-variables-api";
 import { invokeCommand } from "@/platform/native/invoke";
 import {
   listen,
@@ -27,8 +28,8 @@ export interface SpacePoolInputDto extends Record<string, unknown> {
 }
 
 export interface S3SecretBindingsDto {
-  accessKey: string;
-  secretKey: string;
+  accessKey: VariableSourceDto;
+  secretKey: VariableSourceDto;
 }
 
 export interface S3BindingStateDto {

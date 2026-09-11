@@ -1,3 +1,4 @@
+import type { VariableSource } from "../model/app-variables";
 import {
   applyAssetsStrategy as applyPlatformAssetsStrategy,
   checkS3Bindings as checkPlatformS3Bindings,
@@ -26,8 +27,8 @@ export interface SpacePoolInput extends Record<string, unknown> {
 }
 
 export interface S3SecretBindings {
-  accessKey: string;
-  secretKey: string;
+  accessKey: VariableSource;
+  secretKey: VariableSource;
 }
 
 export interface S3BindingState {
