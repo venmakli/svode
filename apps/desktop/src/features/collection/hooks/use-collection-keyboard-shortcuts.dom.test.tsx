@@ -32,7 +32,61 @@ test("read-only collection shortcuts keep navigation and block mutations", async
   }
 });
 
-function Harness({ calls }: { calls: string[] }) {
+for (const modifier of ["ctrlKey", "metaKey"] as const) {
+  test(`${modifier}+Shift+N stays unhandled while ordinary create still works`, async () => {
+    const dom = new JSDOM(
+      "<!doctype html><html><body><div id=app></div></body></html>",
+      { pretendToBeVisual: true, url: "http://localhost/" },
+    );
+    const restoreGlobals = installDomGlobals(dom);
+    const calls: string[] = [];
+    const root = createRoot(dom.window.document.getElementById("app")!);
+
+    try {
+      await act(async () => {
+        root.render(<Harness calls={calls} readOnly={false} />);
+      });
+
+      for (const key of ["n", "N", "т", "Т"]) {
+        const event = new dom.window.KeyboardEvent("keydown", {
+          bubbles: true,
+          cancelable: true,
+          [modifier]: true,
+          key,
+          shiftKey: true,
+        });
+        act(() => {
+          dom.window.dispatchEvent(event);
+        });
+        expect(event.defaultPrevented).toBe(false);
+      }
+      expect(calls).toEqual([]);
+
+      act(() => {
+        dom.window.dispatchEvent(
+          new dom.window.KeyboardEvent("keydown", {
+            bubbles: true,
+            [modifier]: true,
+            key: "n",
+          }),
+        );
+      });
+      expect(calls).toEqual(["focus-create:false", "create:false"]);
+    } finally {
+      await act(async () => root.unmount());
+      restoreGlobals();
+      dom.window.close();
+    }
+  });
+}
+
+function Harness({
+  calls,
+  readOnly = true,
+}: {
+  calls: string[];
+  readOnly?: boolean;
+}) {
   useCollectionKeyboardShortcuts({
     activeTab: "first",
     views: [
@@ -61,7 +115,7 @@ function Harness({ calls }: { calls: string[] }) {
         path: "new.md",
       };
     },
-    readOnly: true,
+    readOnly,
   });
   return null;
 }

@@ -105,9 +105,13 @@ export function TableView(props: TableViewProps) {
         onKeyDown={(event) => {
           if (isEditableTarget(event.target)) return;
           if (readOnly) return;
-          if (event.ctrlKey && event.key.toLowerCase() === "n") {
+          if (
+            event.ctrlKey &&
+            !event.shiftKey &&
+            event.key.toLowerCase() === "n"
+          ) {
             event.preventDefault();
-            runtime.openComposer(event.shiftKey);
+            runtime.openComposer(false);
             return;
           }
         }}

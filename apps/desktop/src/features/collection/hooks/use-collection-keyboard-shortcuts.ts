@@ -71,12 +71,6 @@ export function useCollectionKeyboardShortcuts({
         void createEntry(false).catch(handleError);
         return;
       }
-      if (event.shiftKey && event.key.toLowerCase() === "n") {
-        event.preventDefault();
-        if (readOnly) return;
-        if (focusActiveViewCreate(true)) return;
-        void createEntry(true).catch(handleError);
-      }
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);

@@ -248,7 +248,7 @@ fn build_file_menu(
         MENU_NEW_WINDOW,
         "New Window",
         true,
-        Some("CmdOrCtrl+Shift+N"),
+        None::<&str>,
     )?)?;
     file.append(&MenuItem::with_id(
         app,
