@@ -23,14 +23,17 @@ import {
 
 import { ToolbarButton } from './toolbar';
 
-export function MoreToolbarButton(props: DropdownMenuProps) {
+export function MoreToolbarButton({
+  tooltip = 'Insert',
+  ...props
+}: DropdownMenuProps & { tooltip?: string }) {
   const editor = useEditorRef();
   const [open, setOpen] = React.useState(false);
 
   return (
     <DropdownMenu open={open} onOpenChange={setOpen} modal={false} {...props}>
       <DropdownMenuTrigger asChild>
-        <ToolbarButton pressed={open} tooltip="Insert">
+        <ToolbarButton pressed={open} tooltip={tooltip} aria-label={tooltip}>
           <MoreHorizontalIcon />
         </ToolbarButton>
       </DropdownMenuTrigger>

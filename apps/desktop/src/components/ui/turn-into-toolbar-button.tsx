@@ -145,7 +145,10 @@ export const turnIntoItems = [
     : []),
 ];
 
-export function TurnIntoToolbarButton(props: DropdownMenuProps) {
+export function TurnIntoToolbarButton({
+  tooltip = 'Turn into',
+  ...props
+}: DropdownMenuProps & { tooltip?: string }) {
   const editor = useEditorRef();
   const [open, setOpen] = React.useState(false);
 
@@ -166,7 +169,8 @@ export function TurnIntoToolbarButton(props: DropdownMenuProps) {
         <ToolbarButton
           className="min-w-[125px]"
           pressed={open}
-          tooltip="Turn into"
+          tooltip={tooltip}
+          aria-label={tooltip}
           isDropdown
         >
           {selectedItem.label}

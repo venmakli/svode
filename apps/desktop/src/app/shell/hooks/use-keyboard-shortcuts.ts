@@ -1,3 +1,4 @@
+import { matchesPhysicalShortcut } from "@/shared/lib/keyboard-shortcuts";
 import { useEffect } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { toast } from "sonner";
@@ -119,13 +120,7 @@ export function useKeyboardShortcuts() {
       }
 
       // Cmd/Ctrl+P - open project command palette.
-      if (
-        activeRootPath &&
-        isMeta &&
-        e.key.toLowerCase() === "p" &&
-        !e.shiftKey &&
-        !e.altKey
-      ) {
+      if (activeRootPath && matchesPhysicalShortcut(e, "KeyP")) {
         e.preventDefault();
         toggleCommandPalette();
       }
@@ -137,7 +132,7 @@ export function useKeyboardShortcuts() {
       }
 
       // Cmd+Shift+O — go to home / all projects
-      if (isMeta && e.shiftKey && e.key === "o") {
+      if (matchesPhysicalShortcut(e, "KeyO", true)) {
         e.preventDefault();
         void runCollectionNavigation(detailController, () => {
           goHome();

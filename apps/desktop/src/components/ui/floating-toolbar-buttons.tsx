@@ -28,7 +28,12 @@ import { SuggestionToolbarButton } from "./suggestion-toolbar-button";
 import { ToolbarGroup } from "./toolbar";
 import { TurnIntoToolbarButton } from "./turn-into-toolbar-button";
 
-export function FloatingToolbarButtons() {
+export function FloatingToolbarButtons({ labels = {} }: {
+  labels?: Partial<Record<
+    "bold" | "italic" | "underline" | "strikethrough" |
+    "code" | "link" | "turnInto" | "more", string
+  >>;
+}) {
   const readOnly = useEditorReadOnly();
 
   return (
@@ -45,37 +50,51 @@ export function FloatingToolbarButtons() {
           )}
 
           <ToolbarGroup>
-            <TurnIntoToolbarButton />
+            <TurnIntoToolbarButton tooltip={labels.turnInto} />
 
-            <MarkToolbarButton nodeType={KEYS.bold} tooltip="Bold (⌘+B)">
+            <MarkToolbarButton
+              nodeType={KEYS.bold}
+              aria-label={labels.bold}
+              tooltip={labels.bold ?? "Bold (⌘+B)"}
+            >
               <BoldIcon />
             </MarkToolbarButton>
 
-            <MarkToolbarButton nodeType={KEYS.italic} tooltip="Italic (⌘+I)">
+            <MarkToolbarButton
+              nodeType={KEYS.italic}
+              aria-label={labels.italic}
+              tooltip={labels.italic ?? "Italic (⌘+I)"}
+            >
               <ItalicIcon />
             </MarkToolbarButton>
 
             <MarkToolbarButton
               nodeType={KEYS.underline}
-              tooltip="Underline (⌘+U)"
+              aria-label={labels.underline}
+              tooltip={labels.underline ?? "Underline (⌘+U)"}
             >
               <UnderlineIcon />
             </MarkToolbarButton>
 
             <MarkToolbarButton
               nodeType={KEYS.strikethrough}
-              tooltip="Strikethrough (⌘+⇧+M)"
+              aria-label={labels.strikethrough}
+              tooltip={labels.strikethrough ?? "Strikethrough (⌘+⇧+M)"}
             >
               <StrikethroughIcon />
             </MarkToolbarButton>
 
-            <MarkToolbarButton nodeType={KEYS.code} tooltip="Code (⌘+E)">
+            <MarkToolbarButton
+              nodeType={KEYS.code}
+              aria-label={labels.code}
+              tooltip={labels.code ?? "Code (⌘+E)"}
+            >
               <Code2Icon />
             </MarkToolbarButton>
 
             {ENABLE_PLATE_ADVANCED_BLOCKS && <InlineEquationToolbarButton />}
 
-            <LinkToolbarButton />
+            <LinkToolbarButton aria-label={labels.link} tooltip={labels.link} />
           </ToolbarGroup>
         </>
       )}
@@ -88,7 +107,7 @@ export function FloatingToolbarButtons() {
           </>
         )}
 
-        {!readOnly && <MoreToolbarButton />}
+        {!readOnly && <MoreToolbarButton tooltip={labels.more} />}
       </ToolbarGroup>
     </>
   );

@@ -45,6 +45,8 @@ import { MentionElement } from "@/components/ui/mention-node";
 import { ConflictPlugin } from "../conflict/conflict-plugin";
 import { PageLinkElement } from "../ui/page-link-element";
 import { PageLinkInputElement } from "../ui/page-link-input-element";
+import { FloatingToolbar } from "@/components/ui/floating-toolbar";
+import { FloatingToolbarButtons } from "./floating-toolbar-buttons";
 import { PageLinkFloatingToolbar } from "../ui/page-link-toolbar";
 
 const ProductLinkKit = [
@@ -107,7 +109,17 @@ export const EditorKit = [
   ...MarkdownKit,
 
   ...BlockPlaceholderKit,
-  ...FloatingToolbarKit,
+  ...FloatingToolbarKit.map((plugin) =>
+    plugin.configure({
+      render: {
+        afterEditable: () => (
+          <FloatingToolbar>
+            <FloatingToolbarButtons />
+          </FloatingToolbar>
+        ),
+      },
+    }),
+  ),
 ];
 
 export type MyEditor = TPlateEditor<Value, (typeof EditorKit)[number]>;

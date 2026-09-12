@@ -1,3 +1,5 @@
+import { matchesPhysicalShortcut } from "@/shared/lib/keyboard-shortcuts";
+import { isTerminalKeyboardEvent } from "@/features/terminal";
 import { useEffect, useRef, useState } from "react";
 import * as m from "@/paraglide/messages.js";
 import { FolderPlus, FolderOpen, FolderGit2 } from "lucide-react";
@@ -60,7 +62,7 @@ export function HomePage() {
   // Keyboard shortcut: Cmd+N to create project
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
-      if ((e.metaKey || e.ctrlKey) && e.key === "n") {
+      if (!isTerminalKeyboardEvent(e) && matchesPhysicalShortcut(e, "KeyN")) {
         e.preventDefault();
         setCreateDialogOpen(true);
       }
