@@ -33,6 +33,9 @@ if (!isolatedSettingsDialogsDomProcess) {
       mock: { module(specifier: string, factory: () => unknown): void };
     }
   ).mock;
+  bunMock.module("./settings-shortcuts", () => ({
+    settingsShortcutGroups: [],
+  }));
   let appSettingsMounts = 0;
   let appSettingsUnmounts = 0;
 

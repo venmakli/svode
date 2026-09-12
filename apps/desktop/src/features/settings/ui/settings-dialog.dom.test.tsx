@@ -245,6 +245,7 @@ if (process.env.SVODE_UNIFIED_SETTINGS_DOM !== "1") {
       await act(async () => {
         root.render(
           <SettingsDialog
+            shortcutGroups={[]}
             destination={request}
             enableLegacyAgentIntegration={legacy}
             onClose={() => {

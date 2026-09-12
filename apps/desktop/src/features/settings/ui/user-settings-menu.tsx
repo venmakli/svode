@@ -1,3 +1,5 @@
+import { shortcutLabel } from "@/shared/lib/shortcut-description";
+import { settingsShortcut } from "../model/shortcuts";
 import { useRef, type Ref } from "react";
 import { Monitor, Moon, Palette, Settings, Sun } from "lucide-react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -46,7 +48,7 @@ export function UserSettingsMenu({
     .join("")
     .slice(0, 2)
     .toUpperCase();
-  const shortcut = /Mac/i.test(navigator.platform) ? "⌘," : "Ctrl+,";
+  const shortcut = shortcutLabel(settingsShortcut);
   const modes = [
     { value: "light", label: m.common_theme_light(), icon: Sun },
     { value: "dark", label: m.common_theme_dark(), icon: Moon },

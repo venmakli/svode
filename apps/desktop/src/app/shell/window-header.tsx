@@ -1,3 +1,5 @@
+import { shortcutLabel } from "@/shared/lib/shortcut-description";
+import { sidebarShortcut } from "./model/shortcut-descriptions";
 import { ChangesControl, useMainChangesTarget } from "@/features/changes";
 import { useLayoutEffect, useRef } from "react";
 import { useMatches } from "@tanstack/react-router";
@@ -43,7 +45,7 @@ export function ShellChrome() {
   const sidebarHidden = state === "collapsed";
   const isMac = isMacPlatform();
   const reserveTrafficLights = isMac && trafficLightInsetReserved;
-  const sidebarShortcutLabel = isMac ? "⌘B" : "Ctrl+B";
+  const sidebarShortcutLabel = shortcutLabel(sidebarShortcut);
 
   useLayoutEffect(() => {
     const node = chromeRef.current;
@@ -87,7 +89,7 @@ export function ShellChrome() {
           </Button>
         </TooltipTrigger>
         <TooltipContent side="bottom">
-          Toggle sidebar ({sidebarShortcutLabel})
+          {sidebarShortcut.label()} ({sidebarShortcutLabel})
         </TooltipContent>
       </Tooltip>
       <ProjectSwitcher className="min-w-0 flex-1" />

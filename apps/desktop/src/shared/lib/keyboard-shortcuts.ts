@@ -24,13 +24,3 @@ export function matchesPhysicalShortcut(
     event.code === code
   );
 }
-
-export function formatModShortcut(
-  key: string,
-  shift = false,
-  mac = isMacKeyboardPlatform(),
-): string {
-  return mac
-    ? `${shift ? "⇧" : ""}⌘${key}`
-    : `Ctrl+${shift ? "Shift+" : ""}${key}`;
-}

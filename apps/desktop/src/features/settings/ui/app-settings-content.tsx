@@ -1,3 +1,4 @@
+import type { ShortcutGroup } from "@/shared/lib/shortcut-description";
 import type { SettingsLeaveGuard } from "../model/settings-destination";
 import { useAppSettingsAbout } from "../hooks/use-app-settings-about";
 import { useAppSettingsAppearance } from "../hooks/use-app-settings-appearance";
@@ -9,18 +10,20 @@ import {
   AppAppearanceSection,
   AppCliAgentsSection,
   AppGitIdentitySection,
-  AppShortcutsSection,
 } from "./app-settings-sections";
+import { AppShortcutsSection } from "./app-shortcuts-section";
 import { McpIntegrationsSection } from "./mcp-section";
 import { AppVariablesSection } from "./app-variables-section";
 
 export function AppSettingsContent({
   section,
   enableLegacyAgentIntegration,
+  shortcutGroups,
   registerLeaveGuard,
 }: {
   section: AppSettingsSection;
   enableLegacyAgentIntegration: boolean;
+  shortcutGroups: readonly ShortcutGroup[];
   registerLeaveGuard: (guard: SettingsLeaveGuard) => () => void;
 }) {
   const appearanceSettings = useAppSettingsAppearance();
@@ -46,7 +49,9 @@ export function AppSettingsContent({
         />
       )}
       {section === "mcp-integrations" && <McpIntegrationsSection />}
-      {section === "shortcuts" && <AppShortcutsSection />}
+      {section === "shortcuts" && (
+        <AppShortcutsSection groups={shortcutGroups} />
+      )}
       {section === "about" && <AppAboutSection {...aboutSettings} />}
     </div>
   );

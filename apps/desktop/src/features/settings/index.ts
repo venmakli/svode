@@ -1,4 +1,5 @@
 export * from "./hooks";
+export { settingsShortcut } from "./model/shortcuts";
 export type {
   AppPreferences,
   AppSettingsSection,

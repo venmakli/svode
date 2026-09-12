@@ -240,12 +240,6 @@ export function AppCliAgentsSection({
   );
 }
 
-export function AppShortcutsSection() {
-  return (
-    <p className="text-sm text-muted-foreground">{m.settings_shortcuts()}</p>
-  );
-}
-
 export function AppAboutSection({
   version,
   buildCommit,

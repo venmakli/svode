@@ -1,3 +1,4 @@
+export { collectionShortcuts } from "./model/shortcuts";
 export { calendarScopes } from "./model/calendar-utils";
 export {
   useCollectionDetailController,

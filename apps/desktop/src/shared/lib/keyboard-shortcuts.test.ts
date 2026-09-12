@@ -1,7 +1,6 @@
 import { expect, test } from "bun:test";
 import { JSDOM } from "jsdom";
 import {
-  formatModShortcut,
   matchesPhysicalShortcut,
 } from "./keyboard-shortcuts";
 
@@ -55,9 +54,3 @@ for (const mac of [true, false]) {
     });
   }
 }
-test("platform shortcut labels preserve the actual key", () => {
-  expect(formatModShortcut("X", true, true)).toBe("⇧⌘X");
-  expect(formatModShortcut("X", true, false)).toBe("Ctrl+Shift+X");
-  expect(formatModShortcut("B", false, true)).toBe("⌘B");
-  expect(formatModShortcut("B", false, false)).toBe("Ctrl+B");
-});

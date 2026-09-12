@@ -1,3 +1,4 @@
+import type { ShortcutGroup } from "@/shared/lib/shortcut-description";
 import { useState } from "react";
 import * as m from "@/paraglide/messages.js";
 import {
@@ -30,10 +31,12 @@ import {
 export function SettingsDialog({
   destination: request,
   enableLegacyAgentIntegration,
+  shortcutGroups,
   onClose,
 }: {
   destination: SettingsDestination;
   enableLegacyAgentIntegration: boolean;
+  shortcutGroups: readonly ShortcutGroup[];
   onClose: () => void;
 }) {
   const { activeRootPath, spaces } = useSpace();
@@ -137,6 +140,7 @@ export function SettingsDialog({
                 </Breadcrumb>
               </header>
               <AppSettingsContent
+                shortcutGroups={shortcutGroups}
                 registerLeaveGuard={registerLeaveGuard}
                 section={appSection}
                 enableLegacyAgentIntegration={enableLegacyAgentIntegration}

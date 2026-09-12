@@ -1,3 +1,4 @@
+export { homeShortcuts } from "./model/shortcuts";
 export { HomePage } from "./ui/home-page";
 export { RootProjectDialogs } from "./ui/root-project-dialogs";
 export { RootProjectMenuBridge } from "./ui/root-project-menu-bridge";
