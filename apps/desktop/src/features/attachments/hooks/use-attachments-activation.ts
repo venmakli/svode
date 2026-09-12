@@ -1,6 +1,5 @@
 import { useCallback, useState } from "react";
 
-import { useOpenScopeOwner } from "@/features/artifact";
 import type { CollectionActivationContext } from "@/features/collection";
 import * as m from "@/paraglide/messages.js";
 
@@ -17,7 +16,6 @@ import type {
 import { useAttachmentsSource } from "./use-attachments-source";
 
 export function useAttachmentsActivation(owner: AttachmentOwnerRef) {
-  const openOwner = useOpenScopeOwner();
   const [peekTarget, setPeekTarget] =
     useState<AttachmentActivationRequest | null>(null);
   const reconcile = useCallback((snapshot: AttachmentsSnapshot) => {
@@ -31,15 +29,6 @@ export function useAttachmentsActivation(owner: AttachmentOwnerRef) {
       const snapshot = source.state.snapshot;
       const current = currentAttachmentRow(snapshot, row);
       if (!current) throw new Error(m.attachments_source_stale());
-      if (current.kind === "collection" || current.kind === "app") {
-        if (!current.ownerPath) throw new Error(m.attachments_source_stale());
-        openOwner({
-          kind: current.kind === "collection" ? "collection" : "app-directory",
-          path: current.ownerPath,
-          spaceId: owner.spaceId,
-        });
-        return;
-      }
       setPeekTarget({
         activation,
         mode: "peek",
@@ -48,7 +37,7 @@ export function useAttachmentsActivation(owner: AttachmentOwnerRef) {
         sourceGeneration: snapshot.generation,
       });
     },
-    [openOwner, owner.spaceId, source.state],
+    [source.state],
   );
   return {
     source,

@@ -139,17 +139,9 @@ test("typed activation and source refresh reject stale owner, marker and request
     }
     for (const row of [collection, app]) {
       await act(async () => current.onActivate(row, { rowId: row.key }));
-      const selection = getActiveContentSelection().selection;
-      expect(selection?.kind).toBe("scope-owner");
-      if (selection?.kind === "scope-owner") {
-        expect(selection.request.owner).toEqual({
-          kind: row.kind === "collection" ? "collection" : "app-directory",
-          path: row.ownerPath!,
-          spaceId: "root",
-        });
-        expect(selection.request.intent).toEqual({ kind: "default" });
-      }
-      expect(current.peekTarget).toBe(null);
+      expect(getActiveContentSelection().selection).toBe(null);
+      expect(current.peekTarget?.row).toEqual(row);
+      await act(async () => current.closePeek());
     }
     let first!: Promise<void>;
     let second!: Promise<void>;

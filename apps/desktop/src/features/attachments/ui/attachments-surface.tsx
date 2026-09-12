@@ -30,15 +30,20 @@ import {
   attachmentsPresentationState,
   createAttachmentsPresentationDescriptor,
 } from "../model/presentation";
-import type { AttachmentOwnerRef } from "../model/types";
+import type {
+  AttachmentOwnerRef,
+  AttachmentOwnerPeekRenderer,
+} from "../model/types";
 import { AttachmentsPeek } from "./attachments-peek";
 
 function AttachmentsOwnerSurface({
   owner,
   readOnly,
+  renderOwnerPeek,
 }: {
   owner: AttachmentOwnerRef;
   readOnly: boolean;
+  renderOwnerPeek: AttachmentOwnerPeekRenderer;
 }) {
   const { source, onActivate, peekTarget, closePeek } =
     useAttachmentsActivation(owner);
@@ -99,6 +104,7 @@ function AttachmentsOwnerSurface({
       )}
       <AttachmentsPeek
         owner={owner}
+        renderOwnerPeek={renderOwnerPeek}
         readOnly={readOnly}
         target={peekTarget}
         onOpenChange={(open) => {
@@ -168,6 +174,7 @@ function SourceRefreshDiagnostic({
 export function AttachmentsSurface(props: {
   owner: AttachmentOwnerRef;
   readOnly: boolean;
+  renderOwnerPeek: AttachmentOwnerPeekRenderer;
 }) {
   return <AttachmentsOwnerSurface key={props.owner.ownerKey} {...props} />;
 }

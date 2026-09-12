@@ -5,6 +5,8 @@ import {
   type CollectionRouteState,
 } from "@/features/collection/app-shell";
 
+const COLLECTION_ROUTE_CHANGE_EVENT = "svode:collection-route-changed";
+
 interface CollectionRouteSnapshot {
   viewName: string | null;
   calendarScope: CalendarScope | null;
@@ -21,7 +23,14 @@ export function useCollectionRouteState(): CollectionRouteState {
       setSnapshot(readCollectionRouteSnapshot());
     }
     window.addEventListener("popstate", syncFromLocation);
-    return () => window.removeEventListener("popstate", syncFromLocation);
+    window.addEventListener(COLLECTION_ROUTE_CHANGE_EVENT, syncFromLocation);
+    return () => {
+      window.removeEventListener("popstate", syncFromLocation);
+      window.removeEventListener(
+        COLLECTION_ROUTE_CHANGE_EVENT,
+        syncFromLocation,
+      );
+    };
   }, []);
 
   const updateViewName = useCallback((viewName: string | null) => {
@@ -84,6 +93,7 @@ function writeCollectionRoutePatch(
     "",
     `${url.pathname}${url.search}${url.hash}`,
   );
+  window.dispatchEvent(new Event(COLLECTION_ROUTE_CHANGE_EVENT));
   return readCollectionRouteSnapshot();
 }
 

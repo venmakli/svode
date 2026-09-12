@@ -1,5 +1,5 @@
 import { ChangesControl } from "@/features/changes";
-import { lazy, Suspense, useEffect, useRef } from "react";
+import { lazy, Suspense, useCallback, useEffect, useRef } from "react";
 import { FileWarning, Maximize2, Paperclip, X } from "lucide-react";
 
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -24,6 +24,7 @@ import { attachmentKindLabel } from "../model/presentation";
 import type {
   AttachmentActivationRequest,
   AttachmentOwnerRef,
+  AttachmentOwnerPeekRenderer,
   AttachmentRow,
 } from "../model/types";
 
@@ -42,12 +43,26 @@ export function AttachmentsPeek({
   readOnly,
   target,
   onOpenChange,
+  renderOwnerPeek: OwnerPeek,
 }: {
   owner: AttachmentOwnerRef;
   readOnly: boolean;
   target: AttachmentActivationRequest | null;
   onOpenChange(open: boolean): void;
+  renderOwnerPeek: AttachmentOwnerPeekRenderer;
 }) {
+  const closeGuardRef = useRef<(() => Promise<boolean>) | null>(null);
+  const registerCloseGuard = useCallback((guard: () => Promise<boolean>) => {
+    closeGuardRef.current = guard;
+    return () => {
+      if (closeGuardRef.current === guard) closeGuardRef.current = null;
+    };
+  }, []);
+  const close = async (afterClose?: () => void) => {
+    if (closeGuardRef.current && !(await closeGuardRef.current())) return;
+    onOpenChange(false);
+    afterClose?.();
+  };
   const activationRef = useRef(target?.activation);
   useEffect(() => {
     if (target) activationRef.current = target.activation;
@@ -62,12 +77,19 @@ export function AttachmentsPeek({
     spacePath: resolvedSpacePath,
   });
   const loadedPage = page.state.phase === "ready" ? page.state.page : null;
+  const isOwner =
+    target?.row.kind === "collection" || target?.row.kind === "app";
   const isDocument = target?.row.kind === "document";
   const isMedia = target?.row.kind === "media";
   const isBinaryViewer = isDocument || isMedia;
 
   return (
-    <Sheet open={Boolean(target)} onOpenChange={onOpenChange}>
+    <Sheet
+      open={Boolean(target)}
+      onOpenChange={(open) => {
+        if (!open) void close();
+      }}
+    >
       <SheetContent
         side="right"
         showCloseButton={false}
@@ -85,7 +107,7 @@ export function AttachmentsPeek({
         <SheetTitle className="sr-only">
           {target?.row.displayName ?? m.scope_surface_attachments()}
         </SheetTitle>
-        {!isBinaryViewer ? (
+        {!isBinaryViewer && !isOwner ? (
           <div className="flex shrink-0 items-center justify-end gap-1 px-2 pb-2">
             {loadedPage && target?.row.kind === "page" ? (
               <ChangesControl
@@ -122,7 +144,19 @@ export function AttachmentsPeek({
               : "scrollbar-hide overflow-y-auto",
           )}
         >
-          {target?.row.kind === "page" ? (
+          {isOwner && target ? (
+            <OwnerPeek
+              target={target}
+              spaceId={owner.spaceId}
+              registerCloseGuard={registerCloseGuard}
+              renderActions={(onOpenFullPage) => (
+                <PeekActions
+                  onClose={() => void close()}
+                  onExpand={() => void close(onOpenFullPage)}
+                />
+              )}
+            />
+          ) : target?.row.kind === "page" ? (
             page.state.phase === "ready" ? (
               <PagePeekSurface
                 readOnly={readOnly}

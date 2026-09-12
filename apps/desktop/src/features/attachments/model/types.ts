@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import type { CollectionActivationContext } from "@/features/collection";
 import {
   supportsScopeAttachments,
@@ -128,3 +129,14 @@ function normalizeRuntimePath(value: string): string {
     ? normalized.toLowerCase()
     : normalized;
 }
+
+export interface AttachmentOwnerPeekContext {
+  target: AttachmentActivationRequest;
+  spaceId: string;
+  renderActions(onOpenFullPage: () => void): ReactNode;
+  registerCloseGuard(guard: () => Promise<boolean>): () => void;
+}
+
+export type AttachmentOwnerPeekRenderer = (
+  context: AttachmentOwnerPeekContext,
+) => ReactNode;

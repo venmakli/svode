@@ -1,6 +1,7 @@
 import { usePublishMainChangesTarget } from "@/features/changes";
 import {
   useCallback,
+  useEffect,
   useMemo,
   useState,
   type ComponentProps,
@@ -56,6 +57,7 @@ interface ScopeSurfacePageProps {
   compactSurfaceState?: CollectionPeekSurfaceState;
   fallbackTitle?: string;
   fallbackIcon?: string | null;
+  registerNavigationGuard?: (guard: () => Promise<boolean>) => () => void;
 }
 
 export function ScopeSurfacePage({
@@ -70,6 +72,7 @@ export function ScopeSurfacePage({
   compactSurfaceState,
   fallbackTitle,
   fallbackIcon,
+  registerNavigationGuard,
 }: ScopeSurfacePageProps) {
   const [compactViewName, setCompactViewName] = useState<string | null>(null);
   const [compactCalendarScope, setCompactCalendarScope] =
@@ -204,6 +207,7 @@ export function ScopeSurfacePage({
           owner={owner}
           presentation={presentation}
           createContributions={createContributions}
+          registerNavigationGuard={registerNavigationGuard}
           headerActions={headerActions}
           openIntent={openIntent}
           openRequestKey={openRequestKey}
@@ -224,16 +228,26 @@ export function ScopeSurfacePage({
 function ScopePageSurfaceHost({
   createContributions,
   headerActions,
+  registerNavigationGuard,
   ...props
 }: Omit<ComponentProps<typeof ScopeSurfaceHost>, "contributions" | "header"> & {
   createContributions: (
     readOnly: boolean,
   ) => ComponentProps<typeof ScopeSurfaceHost>["contributions"];
   headerActions?: ReactNode;
+  registerNavigationGuard?: (guard: () => Promise<boolean>) => () => void;
 }) {
   const pageSurface = usePageSurfaceSession();
   const detailController = useCollectionDetailController();
   const detail = usePageDetailContext();
+  useEffect(
+    () =>
+      registerNavigationGuard?.(async () => {
+        if (!(await detailController.prepareForNavigation())) return false;
+        return pageSurface.prepareForNavigation();
+      }),
+    [detailController, pageSurface, registerNavigationGuard],
+  );
   usePublishMainChangesTarget(
     props.presentation === "full"
       ? {

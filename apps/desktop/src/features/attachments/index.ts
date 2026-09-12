@@ -11,6 +11,8 @@ export type {
   AttachmentAvailability,
   AttachmentKind,
   AttachmentOwnerRef,
+  AttachmentOwnerPeekContext,
+  AttachmentOwnerPeekRenderer,
   AttachmentRow,
   AttachmentsSnapshot,
   AttachmentsSourceState,

@@ -1,4 +1,5 @@
-import type { ReactNode } from "react";
+import { lazy, Suspense, type ReactNode } from "react";
+import { Skeleton } from "@/components/ui/skeleton";
 import { appOwnerFromScopeOwner } from "@/features/apps";
 import {
   attachmentOwnerFromScopeOwner,
@@ -6,6 +7,11 @@ import {
 } from "@/features/attachments";
 import type { ScopeSurfaceContribution } from "@/features/scope-surfaces";
 import { AppWithVariables } from "./app-with-variables";
+
+const AttachmentOwnerPeek = lazy(async () => {
+  const module = await import("./attachment-owner-peek");
+  return { default: module.AttachmentOwnerPeek };
+});
 
 export function createScopeContentRenderers({
   readOnly,
@@ -26,6 +32,11 @@ export function createScopeContentRenderers({
         <AttachmentsSurface
           owner={attachmentOwnerFromScopeOwner(owner)}
           readOnly={readOnly}
+          renderOwnerPeek={(context) => (
+            <Suspense fallback={<Skeleton className="m-6 h-48" />}>
+              <AttachmentOwnerPeek key={context.target.row.key} {...context} />
+            </Suspense>
+          )}
         />
       </>
     ),
