@@ -1,5 +1,5 @@
 import { ChangesControl } from "@/features/changes";
-import { lazy, Suspense } from "react";
+import { lazy, Suspense, useEffect, useRef } from "react";
 import { FileWarning, Maximize2, Paperclip, X } from "lucide-react";
 
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -48,6 +48,10 @@ export function AttachmentsPeek({
   target: AttachmentActivationRequest | null;
   onOpenChange(open: boolean): void;
 }) {
+  const activationRef = useRef(target?.activation);
+  useEffect(() => {
+    if (target) activationRef.current = target.activation;
+  }, [target]);
   const openPage = useOpenPage();
   const openArtifact = useOpenArtifact();
   const resolvedSpacePath = target?.owner.spacePath ?? owner.spacePath;
@@ -75,7 +79,7 @@ export function AttachmentsPeek({
         style={{ width: "min(1120px, max(720px, 66vw), 94vw)" }}
         onCloseAutoFocus={(event) => {
           event.preventDefault();
-          restoreAttachmentFocus(target?.activation);
+          restoreAttachmentFocus(activationRef.current);
         }}
       >
         <SheetTitle className="sr-only">

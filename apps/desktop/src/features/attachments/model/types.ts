@@ -4,13 +4,23 @@ import {
   type ScopeOwnerRef,
 } from "@/features/scope-surfaces";
 
-export type AttachmentKind = "page" | "document" | "media";
+export type AttachmentKind =
+  | "page"
+  | "collection"
+  | "app"
+  | "document"
+  | "media";
 export type AttachmentAvailability = "available" | "limited" | "external_only";
 
 export interface AttachmentRow {
   key: string;
   path: string;
   sourceShape: "file" | "directory";
+  contentPath: string | null;
+  ownerPath: string | null;
+  sourcePath: string;
+  hasApp: boolean;
+  icon: string | null;
   kind: AttachmentKind;
   format: string;
   availability: AttachmentAvailability;

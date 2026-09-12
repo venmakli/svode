@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useMemo } from "react";
 import { AlertTriangle, Paperclip } from "lucide-react";
 
 import {
@@ -19,76 +19,40 @@ import {
   CollectionHost,
   defineCollectionPresentation,
   useCollectionState,
-  type CollectionActivationContext,
   type CollectionInstance,
 } from "@/features/collection";
 import * as m from "@/paraglide/messages.js";
 
-import { useAttachmentsSource } from "../hooks/use-attachments-source";
+import { useAttachmentsActivation } from "../hooks/use-attachments-activation";
+import { AttachmentIcon } from "./attachment-icon";
 import { useAttachmentsCreate } from "../hooks/use-attachments-create";
 import {
   attachmentsPresentationState,
   createAttachmentsPresentationDescriptor,
 } from "../model/presentation";
-import type {
-  AttachmentActivationRequest,
-  AttachmentOwnerRef,
-  AttachmentRow,
-  AttachmentsSnapshot,
-} from "../model/types";
+import type { AttachmentOwnerRef } from "../model/types";
 import { AttachmentsPeek } from "./attachments-peek";
 
-export function AttachmentsSurface({
+function AttachmentsOwnerSurface({
   owner,
   readOnly,
 }: {
   owner: AttachmentOwnerRef;
   readOnly: boolean;
 }) {
-  const [peekTarget, setPeekTarget] =
-    useState<AttachmentActivationRequest | null>(null);
-  const reconcilePeek = useCallback((snapshot: AttachmentsSnapshot) => {
-    setPeekTarget((current) => {
-      if (!current || current.sourceGeneration === snapshot.generation) {
-        return current;
-      }
-      const row = snapshot.rows.find(
-        (candidate) =>
-          candidate.key === current.row.key &&
-          candidate.path === current.row.path,
-      );
-      return row
-        ? { ...current, row, sourceGeneration: snapshot.generation }
-        : null;
-    });
-  }, []);
-  const source = useAttachmentsSource(owner, reconcilePeek);
+  const { source, onActivate, peekTarget, closePeek } =
+    useAttachmentsActivation(owner);
   const create = useAttachmentsCreate({
     owner,
     readOnly,
     refresh: source.refresh,
   });
-  const onActivate = useCallback(
-    (row: AttachmentRow, activation: CollectionActivationContext) => {
-      if (source.state.phase !== "ready") {
-        throw new Error(m.attachments_source_stale());
-      }
-      const current = source.state.snapshot.rows.find(
-        (candidate) => candidate.key === row.key && candidate.path === row.path,
-      );
-      if (!current) throw new Error(m.attachments_source_stale());
-      setPeekTarget({
-        activation,
-        mode: "peek",
-        owner: source.state.snapshot.owner,
-        row: current,
-        sourceGeneration: source.state.snapshot.generation,
-      });
-    },
-    [source.state],
-  );
   const presentation = defineCollectionPresentation({
-    descriptor: createAttachmentsPresentationDescriptor({ create, onActivate }),
+    descriptor: createAttachmentsPresentationDescriptor({
+      create,
+      onActivate,
+      renderLeading: (row) => <AttachmentIcon row={row} />,
+    }),
     state: attachmentsPresentationState(source.state, {
       blockingError: (
         <SourceError
@@ -138,7 +102,7 @@ export function AttachmentsSurface({
         readOnly={readOnly}
         target={peekTarget}
         onOpenChange={(open) => {
-          if (!open) setPeekTarget(null);
+          if (!open) closePeek();
         }}
       />
     </div>
@@ -199,4 +163,11 @@ function SourceRefreshDiagnostic({
       </AlertAction>
     </Alert>
   );
+}
+
+export function AttachmentsSurface(props: {
+  owner: AttachmentOwnerRef;
+  readOnly: boolean;
+}) {
+  return <AttachmentsOwnerSurface key={props.owner.ownerKey} {...props} />;
 }

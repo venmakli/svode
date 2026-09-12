@@ -9,7 +9,10 @@ use crate::AppError;
 use crate::artifact::identity::{
     ArtifactKind, MarkdownIdentityFacts, SourceShape, resolve_markdown_identity,
 };
-use crate::files::tree::{child_folder_names, has_direct_schema, read_frontmatter_meta_head};
+use crate::files::tree::{
+    child_folder_names, has_direct_schema, read_frontmatter_meta_head,
+    read_frontmatter_meta_head_with_fallback,
+};
 use crate::git::dates::derive_date_overrides;
 use crate::repo_path::{RootMode, normalize_repo_relative};
 use crate::space::config::read_space_config;
@@ -25,13 +28,28 @@ pub(crate) enum AttachmentAvailability {
     ExternalOnly,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum AttachmentKind {
+    Page,
+    Collection,
+    App,
+    Document,
+    Media,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct AttachmentItem {
     pub key: String,
     pub path: String,
     pub source_shape: SourceShape,
-    pub kind: ArtifactKind,
+    pub kind: AttachmentKind,
+    pub content_path: Option<String>,
+    pub owner_path: Option<String>,
+    pub source_path: String,
+    pub has_app: bool,
+    pub icon: Option<String>,
     pub format: String,
     pub availability: AttachmentAvailability,
     pub display_name: String,
@@ -193,7 +211,7 @@ pub(crate) fn resolve_attachment_owner(
             "path is not a directory-backed Page owner: {normalized}"
         )));
     }
-    let readme = direct_readme(&candidate).ok_or_else(|| {
+    let readme = direct_readme(&candidate)?.ok_or_else(|| {
         AppError::PathNotAccessible(format!(
             "directory-backed Page owner has no README.md: {normalized}"
         ))
@@ -240,12 +258,12 @@ pub(crate) async fn list_registered_owner(
         scan_direct_children(&owner.owner_path, &owner.owner_relative_path)?;
     let source_paths = items
         .iter()
-        .map(|item| item.path.clone())
+        .map(|item| item.source_path.clone())
         .collect::<Vec<_>>();
     let overrides = derive_date_overrides(&owner.space_path, &source_paths).await;
     for item in &mut items {
         if let Some(updated) = overrides
-            .get(&item.path)
+            .get(&item.source_path)
             .and_then(|override_value| override_value.updated.as_ref())
         {
             item.modified.clone_from(updated);
@@ -257,7 +275,7 @@ pub(crate) async fn list_registered_owner(
             .cmp(&right.display_name.to_lowercase())
             .then_with(|| left.path.cmp(&right.path))
     });
-    let generation = snapshot_generation(&items);
+    let generation = snapshot_generation(&items, &diagnostics)?;
 
     Ok(AttachmentsSnapshot {
         owner: AttachmentOwnerIdentity {
@@ -305,39 +323,105 @@ fn scan_direct_children(
         }
 
         if metadata.is_dir() {
-            if owner_has_schema || registered_spaces.contains(&name) || has_direct_schema(&path) {
+            if registered_spaces.contains(&name) {
                 continue;
             }
-            let Some(readme_path) = direct_readme(&path) else {
+            let schema = path.join("schema.yaml");
+            let app = path.join("app.yaml");
+            let readme = match direct_readme(&path) {
+                Ok(readme) => readme,
+                Err(_) => {
+                    diagnostics.push(AttachmentSourceDiagnostic {
+                        code: "metadata_unavailable",
+                        path: name,
+                    });
+                    continue;
+                }
+            };
+            // A linked marker/head must not project an owner outside this source.
+            if [&schema, &app]
+                .into_iter()
+                .chain(readme.iter())
+                .any(|source| {
+                    fs::symlink_metadata(source).is_ok_and(|meta| meta.file_type().is_symlink())
+                })
+            {
+                continue;
+            }
+            let has_schema = schema.is_file();
+            let has_app = app.is_file();
+            let readme = readme.filter(|source| source.is_file());
+            if owner_has_schema && readme.is_some() {
+                continue;
+            }
+            let kind = if has_schema {
+                AttachmentKind::Collection
+            } else if readme.is_some() {
+                AttachmentKind::Page
+            } else if has_app {
+                AttachmentKind::App
+            } else {
                 continue;
             };
-            let readme_metadata = match fs::symlink_metadata(&readme_path) {
+            let owner_path = normalized_direct_path(owner_relative_path, &name, None)?;
+            let content_path = readme
+                .as_ref()
+                .map(|source| {
+                    normalized_direct_path(
+                        owner_relative_path,
+                        &name,
+                        source.file_name().and_then(|name| name.to_str()),
+                    )
+                })
+                .transpose()?;
+            let source = readme
+                .as_ref()
+                .unwrap_or(if has_schema { &schema } else { &app });
+            let source_metadata = match fs::symlink_metadata(source) {
                 Ok(metadata) if metadata.is_file() && !metadata.file_type().is_symlink() => {
                     metadata
                 }
-                _ => continue,
+                _ => {
+                    diagnostics.push(AttachmentSourceDiagnostic {
+                        code: "metadata_unavailable",
+                        path: owner_path,
+                    });
+                    continue;
+                }
             };
-            let source_path =
-                normalized_direct_path(owner_relative_path, &name, Some("README.md"))?;
-            let identity = resolve_markdown_identity(MarkdownIdentityFacts {
-                path: &source_path,
-                source_shape: SourceShape::Directory,
-                collection_root: None,
-                agent_context: false,
-            });
-            if !identity.is_page() {
-                continue;
-            }
-            let (display_name, _, _) = read_frontmatter_meta_head(&readme_path);
+            let source_path = normalized_direct_path(
+                owner_relative_path,
+                &name,
+                source.file_name().and_then(|name| name.to_str()),
+            )?;
+            let (display_name, icon) = readme.as_ref().map_or_else(
+                || (name.clone(), None),
+                |source| {
+                    let (title, icon, _) =
+                        read_frontmatter_meta_head_with_fallback(source, name.clone());
+                    (title, icon)
+                },
+            );
+            let item_path = content_path.clone().unwrap_or_else(|| owner_path.clone());
+            let kind_key = match kind {
+                AttachmentKind::Page => "page",
+                AttachmentKind::Collection => "collection",
+                _ => "app",
+            };
             items.push(AttachmentItem {
-                key: format!("page:{source_path}"),
-                path: source_path,
+                key: format!("{kind_key}:{item_path}"),
+                path: item_path,
+                content_path,
+                owner_path: Some(owner_path),
+                source_path,
+                has_app,
+                icon,
                 source_shape: SourceShape::Directory,
-                kind: ArtifactKind::Page,
-                format: "markdown".to_string(),
+                kind,
+                format: if readme.is_some() { "markdown" } else { "" }.to_string(),
                 availability: AttachmentAvailability::Available,
                 display_name,
-                modified: modified_time(&readme_metadata),
+                modified: modified_time(&source_metadata),
                 size_bytes: None,
             });
             continue;
@@ -366,12 +450,17 @@ fn scan_direct_children(
             if !identity.is_page() {
                 continue;
             }
-            let (display_name, _, _) = read_frontmatter_meta_head(&path);
+            let (display_name, icon, _) = read_frontmatter_meta_head(&path);
             items.push(AttachmentItem {
                 key: format!("page:{source_path}"),
+                content_path: Some(source_path.clone()),
+                owner_path: None,
+                source_path: source_path.clone(),
+                has_app: false,
+                icon,
                 path: source_path,
                 source_shape: SourceShape::File,
-                kind: ArtifactKind::Page,
+                kind: AttachmentKind::Page,
                 format: "markdown".to_string(),
                 availability: AttachmentAvailability::Available,
                 display_name,
@@ -386,9 +475,18 @@ fn scan_direct_children(
         };
         items.push(AttachmentItem {
             key: format!("{}:{source_path}", kind.as_str()),
+            content_path: Some(source_path.clone()),
+            owner_path: None,
+            source_path: source_path.clone(),
+            has_app: false,
+            icon: None,
             path: source_path,
             source_shape: SourceShape::File,
-            kind,
+            kind: if kind == ArtifactKind::Document {
+                AttachmentKind::Document
+            } else {
+                AttachmentKind::Media
+            },
             format: extension,
             availability,
             display_name: name,
@@ -453,17 +551,16 @@ fn classify_binary_extension(extension: &str) -> Option<(ArtifactKind, Attachmen
     .then_some((ArtifactKind::Media, AttachmentAvailability::Limited))
 }
 
-fn direct_readme(directory: &Path) -> Option<PathBuf> {
-    fs::read_dir(directory)
-        .ok()?
-        .filter_map(Result::ok)
-        .find_map(|entry| {
-            entry
-                .file_name()
-                .to_string_lossy()
-                .eq_ignore_ascii_case("README.md")
-                .then_some(entry.path())
-        })
+fn direct_readme(directory: &Path) -> Result<Option<PathBuf>, std::io::Error> {
+    let mut entries = fs::read_dir(directory)?.collect::<Result<Vec<_>, _>>()?;
+    entries.sort_by_key(|entry| entry.file_name());
+    Ok(entries.into_iter().find_map(|entry| {
+        entry
+            .file_name()
+            .to_string_lossy()
+            .eq_ignore_ascii_case("README.md")
+            .then_some(entry.path())
+    }))
 }
 
 fn normalized_direct_path(
@@ -520,20 +617,17 @@ fn is_agent_context_source(name: &str) -> bool {
     )
 }
 
-fn snapshot_generation(items: &[AttachmentItem]) -> String {
+fn snapshot_generation(
+    items: &[AttachmentItem],
+    diagnostics: &[AttachmentSourceDiagnostic],
+) -> Result<String, AppError> {
     let mut hasher = Sha256::new();
-    for item in items {
-        hasher.update(item.key.as_bytes());
-        hasher.update([0]);
-        hasher.update(item.modified.as_bytes());
-        hasher.update([0]);
-        hasher.update(item.size_bytes.unwrap_or_default().to_le_bytes());
-    }
+    hasher.update(serde_json::to_vec(&(items, diagnostics))?);
     let digest = hasher.finalize();
-    digest[..8]
+    Ok(digest[..8]
         .iter()
         .map(|byte| format!("{byte:02x}"))
-        .collect()
+        .collect())
 }
 
 #[cfg(test)]
@@ -610,16 +704,18 @@ mod tests {
         assert_eq!(
             paths,
             vec![
+                "app",
+                "collection/README.md",
                 "folder-page/README.md",
                 "guide.pdf",
                 "photo.PNG",
                 "roadmap.md"
             ]
         );
-        assert_eq!(snapshot.items[0].display_name, "Folder Page");
-        assert_eq!(snapshot.items[1].kind, ArtifactKind::Document);
-        assert_eq!(snapshot.items[2].kind, ArtifactKind::Media);
-        assert!(snapshot.items[3].size_bytes.is_none());
+        assert_eq!(snapshot.items[2].display_name, "Folder Page");
+        assert_eq!(snapshot.items[3].kind, AttachmentKind::Document);
+        assert_eq!(snapshot.items[4].kind, AttachmentKind::Media);
+        assert!(snapshot.items[5].size_bytes.is_none());
     }
 
     #[tokio::test]
@@ -636,6 +732,119 @@ mod tests {
 
         assert_eq!(snapshot.items.len(), 1);
         assert_eq!(snapshot.items[0].path, "deck.pptx");
+    }
+
+    #[test]
+    fn mixed_owner_matrix_preserves_identity_metadata_and_parent_schema_routing() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        for (name, head, schema, app) in [
+            ("page", true, false, false),
+            ("page-app", true, false, true),
+            ("collection", true, true, false),
+            ("collection-app", true, true, true),
+            ("missing-head", false, true, false),
+            ("missing-head-app", false, true, true),
+            ("app", false, false, true),
+        ] {
+            let dir = root.join(name);
+            fs::create_dir(&dir).unwrap();
+            if head {
+                fs::write(dir.join("readme.md"), "---\ntitle: Custom\nicon: 🌱\n---\n").unwrap();
+            }
+            if schema {
+                fs::write(dir.join("schema.yaml"), "invalid: [").unwrap();
+            }
+            if app {
+                fs::write(dir.join("app.yaml"), "invalid: [").unwrap();
+            }
+        }
+        fs::write(root.join("leaf.md"), "---\nicon: '  '\n---\n").unwrap();
+        let (rows, diagnostics) = scan_direct_children(root, ".").unwrap();
+        assert!(diagnostics.is_empty());
+        assert_eq!(rows.len(), 8);
+        let page = rows
+            .iter()
+            .find(|row| row.path == "page-app/readme.md")
+            .unwrap();
+        assert_eq!(page.kind, AttachmentKind::Page);
+        assert!(page.has_app);
+        assert_eq!(page.content_path.as_deref(), Some("page-app/readme.md"));
+        assert_eq!(page.owner_path.as_deref(), Some("page-app"));
+        assert_eq!(page.icon.as_deref(), Some("🌱"));
+        let collection = rows
+            .iter()
+            .find(|row| row.path == "collection-app/readme.md")
+            .unwrap();
+        assert_eq!(collection.kind, AttachmentKind::Collection);
+        assert!(collection.has_app);
+        let missing = rows.iter().find(|row| row.path == "missing-head").unwrap();
+        assert_eq!(missing.kind, AttachmentKind::Collection);
+        assert!(missing.content_path.is_none());
+        assert_eq!(missing.source_path, "missing-head/schema.yaml");
+        let app = rows.iter().find(|row| row.path == "app").unwrap();
+        assert_eq!(app.kind, AttachmentKind::App);
+        assert!(app.content_path.is_none());
+        assert_eq!(app.source_path, "app/app.yaml");
+        assert!(rows.iter().all(|row| row.size_bytes.is_none()));
+        let generation = snapshot_generation(&rows, &diagnostics).unwrap();
+        let mut changed = rows.clone();
+        changed[0].icon = Some("✨".into());
+        assert_ne!(
+            generation,
+            snapshot_generation(&changed, &diagnostics).unwrap()
+        );
+        changed = rows.clone();
+        changed[0].has_app = !changed[0].has_app;
+        assert_ne!(
+            generation,
+            snapshot_generation(&changed, &diagnostics).unwrap()
+        );
+        assert_ne!(
+            generation,
+            snapshot_generation(
+                &rows,
+                &[AttachmentSourceDiagnostic {
+                    code: "metadata_unavailable",
+                    path: "gone".into()
+                }]
+            )
+            .unwrap()
+        );
+        for schema in ["columns: []", "invalid: ["] {
+            fs::write(root.join("schema.yaml"), schema).unwrap();
+            let (rows, _) = scan_direct_children(root, ".").unwrap();
+            assert_eq!(rows.len(), 3);
+            assert!(rows.iter().all(|row| row.content_path.is_none()));
+        }
+        fs::remove_file(root.join("schema.yaml")).unwrap();
+        assert_eq!(scan_direct_children(root, ".").unwrap().0.len(), 8);
+        fs::write(root.join("app/readme.md"), "---\ninvalid: [\n---\n").unwrap();
+        let (rows, _) = scan_direct_children(root, ".").unwrap();
+        let app = rows
+            .iter()
+            .find(|row| row.owner_path.as_deref() == Some("app"))
+            .unwrap();
+        assert_eq!(app.kind, AttachmentKind::Page);
+        assert_eq!(app.display_name, "app");
+        assert!(app.icon.is_none());
+        assert!(app.has_app);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn linked_markers_heads_and_directories_never_become_rows() {
+        use std::os::unix::fs::symlink;
+        let temp = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        fs::write(outside.path().join("source"), "outside").unwrap();
+        for marker in ["README.md", "schema.yaml", "app.yaml"] {
+            let dir = temp.path().join(marker);
+            fs::create_dir(&dir).unwrap();
+            symlink(outside.path().join("source"), dir.join(marker)).unwrap();
+        }
+        symlink(outside.path(), temp.path().join("linked")).unwrap();
+        assert!(scan_direct_children(temp.path(), ".").unwrap().0.is_empty());
     }
 
     #[test]
@@ -736,7 +945,14 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert_eq!(snapshot.owner.owner_path, "roadmap");
-        assert_eq!(paths, vec!["roadmap/brief.pdf", "roadmap/task.md"]);
+        assert_eq!(
+            paths,
+            vec![
+                "roadmap/brief.pdf",
+                "roadmap/nested-collection/README.md",
+                "roadmap/task.md"
+            ]
+        );
         assert!(resolve_attachment_owner(temp.path(), None, Some("child-space")).is_err());
         assert!(
             resolve_attachment_owner(temp.path(), None, Some("roadmap/nested-collection")).is_err()

@@ -1713,6 +1713,8 @@
   "attachments_property_type": "Type",
   "attachments_property_modified": "Modified",
   "attachments_property_size": "Size",
+  "attachments_type_collection": "Collection",
+  "attachments_type_app": "App",
   "attachments_type_page": "Page",
   "attachments_type_document": "Document",
   "attachments_type_media": "Media",

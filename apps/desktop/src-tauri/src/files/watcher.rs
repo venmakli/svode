@@ -512,7 +512,7 @@ fn classify_attachment_invalidations(
     let is_readme = name.eq_ignore_ascii_case("README.md");
     let is_folder = is_folder_content_tree_event(path, event_kind);
 
-    if is_schema {
+    if is_schema || name == "app.yaml" {
         let mut invalidations = vec![AttachmentInvalidation {
             owner_path: parent.clone(),
             path: relative.clone(),
@@ -1092,6 +1092,23 @@ mod tests {
     use crate::space::config::write_space_config;
     use crate::space::types::{SpaceConfig, TreeSpaceConfig};
     use tempfile::TempDir;
+
+    #[test]
+    fn app_marker_invalidates_its_owner_and_containing_snapshot() {
+        let root = Path::new("/project");
+        for kind in [
+            EventKind::Create(CreateKind::File),
+            EventKind::Remove(RemoveKind::File),
+        ] {
+            let invalidations =
+                classify_attachment_invalidations(root, &root.join("folder/app.yaml"), &kind);
+            let owners = invalidations
+                .iter()
+                .map(|item| item.owner_path.as_str())
+                .collect::<Vec<_>>();
+            assert_eq!(owners, vec![".", "folder"]);
+        }
+    }
 
     #[test]
     fn routine_paths_are_classified_by_exact_owner() {

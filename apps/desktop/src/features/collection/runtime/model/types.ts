@@ -18,6 +18,7 @@ export type CollectionPresentationLayout<Row> =
   | {
       kind: "table";
       primaryProperty: string;
+      renderLeading?(row: Row): ReactNode;
       visibleProperties: readonly string[];
       density?: "compact" | "comfortable";
     }

@@ -139,6 +139,11 @@ test("neutral Table preserves row focus, activation, and nested action boundarie
       layout: {
         kind: "table",
         primaryProperty: "name",
+        renderLeading: () => (
+          <span aria-hidden data-leading>
+            📄
+          </span>
+        ),
         visibleProperties: ["name"],
       },
       onActivate: (row) => {
@@ -209,6 +214,9 @@ test("neutral Table preserves row focus, activation, and nested action boundarie
         new dom.window.MouseEvent("click", { bubbles: true }),
       );
     });
+    expect(
+      primary.querySelector("[data-leading]")?.getAttribute("aria-hidden"),
+    ).toBe("true");
     expect(pointerDown.defaultPrevented).toBe(true);
     expect(second.getAttribute("aria-selected")).toBe("true");
     expect(activated).toEqual(["two"]);

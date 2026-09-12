@@ -202,6 +202,18 @@ export function CollectionPresentationItem({
                 layout.density === "compact" ? "compact" : "default",
               )
             : renderContext.renderProperty(propertyKey);
+          const leading =
+            propertyKey === layout.primaryProperty
+              ? layout.renderLeading?.(row)
+              : null;
+          const content = leading ? (
+            <span className="flex min-w-0 items-center gap-2">
+              {leading}
+              <span className="min-w-0 truncate">{value}</span>
+            </span>
+          ) : (
+            value
+          );
           const primaryActivator =
             propertyKey === layout.primaryProperty &&
             activationEnabled &&
@@ -222,10 +234,10 @@ export function CollectionPresentationItem({
                   data-collection-interactive
                   data-collection-primary
                 >
-                  {value}
+                  {content}
                 </button>
               ) : (
-                value
+                content
               )}
               {propertyKey === layout.primaryProperty && activationError ? (
                 <CollectionInlineDiagnostic message={activationError} />

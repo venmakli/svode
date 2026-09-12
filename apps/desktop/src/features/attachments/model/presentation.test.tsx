@@ -1,4 +1,8 @@
 import { expect, test } from "bun:test";
+import { renderToStaticMarkup } from "react-dom/server";
+import { applyCollectionQuery } from "@/features/collection";
+import { AttachmentIcon } from "../ui/attachment-icon";
+import { attachmentKindLabel } from "./presentation";
 
 import { resolveStandardPropertyColumn } from "@/features/properties";
 import {
@@ -16,6 +20,11 @@ import { createAttachmentsPresentationDescriptor } from "./presentation";
 import { createAttachmentsCreateCapability } from "./create";
 
 const page: AttachmentRow = {
+  contentPath: "roadmap.md",
+  sourcePath: "roadmap.md",
+  ownerPath: null,
+  icon: null,
+  hasApp: false,
   availability: "available",
   displayName: "Roadmap",
   format: "markdown",
@@ -199,5 +208,71 @@ test("Page owner mapping preserves root and child source normalization", () => {
     });
     expect(mapped.hasDirectCollection).toBe(false);
     expect(mapped.contentPath).toBe("Notes/README.md");
+  }
+});
+
+test("mixed row types use standard filter and size applicability with stable icons", () => {
+  const descriptor = createAttachmentsPresentationDescriptor({
+    create,
+    onActivate: () => undefined,
+  });
+  const rows: AttachmentRow[] = [
+    "page",
+    "collection",
+    "app",
+    "document",
+    "media",
+  ].map((kind, i) => ({
+    ...page,
+    kind: kind as AttachmentRow["kind"],
+    key: String(i),
+    path: String(i),
+  }));
+  for (const row of rows) {
+    const result = applyCollectionQuery({
+      descriptor,
+      rows,
+      query: {
+        search: "",
+        filters: [
+          {
+            propertyKey: "type",
+            operator: "eq",
+            value: attachmentKindLabel(row.kind),
+          },
+        ],
+        sort: [],
+      },
+    });
+    expect(result.rows.map((item) => item.kind)).toEqual([row.kind]);
+    expect(descriptor.properties[3]?.getApplicability?.(row)?.status).toBe(
+      row.kind === "document" || row.kind === "media"
+        ? "applicable"
+        : "unavailable",
+    );
+  }
+  for (const [kind, hasApp, format, fallback] of [
+    ["page", false, "markdown", "file-text"],
+    ["page", true, "markdown", "panels-top-left"],
+    ["collection", true, "markdown", "database"],
+    ["app", true, "", "panels-top-left"],
+    ["document", false, "pdf", "file-text"],
+    ["media", false, "png", "file-image"],
+    ["media", false, "mp3", "music"],
+    ["media", false, "mp4", "video"],
+    ["media", false, "unknown", "file"],
+  ] as const) {
+    for (const icon of [null, "", "  ", "\u0001"]) {
+      const markup = renderToStaticMarkup(
+        <AttachmentIcon row={{ ...page, kind, hasApp, format, icon }} />,
+      );
+      expect(markup.includes(`lucide-${fallback}`)).toBe(true);
+      expect(markup.includes('aria-hidden="true"')).toBe(true);
+    }
+    const custom = renderToStaticMarkup(
+      <AttachmentIcon row={{ ...page, kind, hasApp, format, icon: "🌱" }} />,
+    );
+    expect(custom.includes("🌱")).toBe(true);
+    expect(custom.includes("<svg")).toBe(false);
   }
 });

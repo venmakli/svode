@@ -119,6 +119,13 @@ pub(crate) fn read_frontmatter_meta_head(
         .to_string_lossy()
         .to_string();
 
+    read_frontmatter_meta_head_with_fallback(abs_path, fallback)
+}
+
+pub(crate) fn read_frontmatter_meta_head_with_fallback(
+    abs_path: &Path,
+    fallback: String,
+) -> (String, Option<String>, Option<String>) {
     let Ok(file) = fs::File::open(abs_path) else {
         return (fallback, None, None);
     };

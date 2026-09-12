@@ -86,6 +86,7 @@ export function useAttachmentsSource(
     });
     return () => {
       cancelled = true;
+      requestGenerationRef.current += 1;
     };
   }, [ownerKey, refresh]);
 

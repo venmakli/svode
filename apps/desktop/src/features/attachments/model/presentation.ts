@@ -17,7 +17,9 @@ export const ATTACHMENTS_PRESENTATION_ID = "all";
 export function createAttachmentsPresentationDescriptor({
   create,
   onActivate,
+  renderLeading,
 }: {
+  renderLeading?: (row: AttachmentRow) => ReactNode;
   create: CollectionCreateCapability;
   onActivate(
     row: AttachmentRow,
@@ -48,6 +50,8 @@ export function createAttachmentsPresentationDescriptor({
       standard: {
         options: [
           { color: "blue", name: m.attachments_type_page() },
+          { color: "purple", name: m.attachments_type_collection() },
+          { color: "green", name: m.attachments_type_app() },
           { color: "purple", name: m.attachments_type_document() },
           { color: "orange", name: m.attachments_type_media() },
         ],
@@ -78,9 +82,9 @@ export function createAttachmentsPresentationDescriptor({
         standard: { display: "bytes", type: "number" },
       }),
       getApplicability: (row) =>
-        row.kind === "page"
-          ? { label: "—", status: "unavailable" }
-          : { status: "applicable" },
+        row.kind === "document" || row.kind === "media"
+          ? { status: "applicable" }
+          : { label: "—", status: "unavailable" },
     },
   ];
 
@@ -93,6 +97,7 @@ export function createAttachmentsPresentationDescriptor({
       density: "compact",
       kind: "table",
       primaryProperty: "name",
+      ...(renderLeading ? { renderLeading } : {}),
       visibleProperties: ["name", "type", "modified", "size"],
     },
     onActivate,
@@ -134,6 +139,8 @@ export function attachmentsPresentationState(
 export function attachmentKindLabel(kind: AttachmentRow["kind"]) {
   if (kind === "page") return m.attachments_type_page();
   if (kind === "document") return m.attachments_type_document();
-  return m.attachments_type_media();
+  if (kind === "media") return m.attachments_type_media();
+  if (kind === "collection") return m.attachments_type_collection();
+  return m.attachments_type_app();
 }
 import type { ReactNode } from "react";

@@ -1,7 +1,12 @@
 import { invokeCommand } from "@/platform/native/invoke";
 import { listen, type UnlistenFn } from "@/platform/native/events";
 
-export type AttachmentKindDto = "page" | "document" | "media";
+export type AttachmentKindDto =
+  | "page"
+  | "collection"
+  | "app"
+  | "document"
+  | "media";
 export type AttachmentAvailabilityDto =
   | "available"
   | "limited"
@@ -11,6 +16,11 @@ export interface AttachmentItemDto {
   key: string;
   path: string;
   sourceShape: "file" | "directory";
+  contentPath: string | null;
+  ownerPath: string | null;
+  sourcePath: string;
+  hasApp: boolean;
+  icon: string | null;
   kind: AttachmentKindDto;
   format: string;
   availability: AttachmentAvailabilityDto;

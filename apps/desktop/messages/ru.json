@@ -1713,6 +1713,8 @@
   "attachments_property_type": "Тип",
   "attachments_property_modified": "Изменено",
   "attachments_property_size": "Размер",
+  "attachments_type_collection": "Коллекция",
+  "attachments_type_app": "Приложение",
   "attachments_type_page": "Страница",
   "attachments_type_document": "Документ",
   "attachments_type_media": "Медиа",
