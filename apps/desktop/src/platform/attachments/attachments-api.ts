@@ -5,6 +5,7 @@ export type AttachmentKindDto =
   | "page"
   | "collection"
   | "app"
+  | "directory"
   | "document"
   | "media";
 export type AttachmentAvailabilityDto =
@@ -20,6 +21,7 @@ export interface AttachmentItemDto {
   ownerPath: string | null;
   sourcePath: string;
   hasApp: boolean;
+  hasChildren?: boolean;
   icon: string | null;
   kind: AttachmentKindDto;
   format: string;
@@ -72,6 +74,7 @@ export type AttachmentOwnerLifecycleEventDto =
     };
 
 export function listAttachments(input: {
+  branchPath?: string;
   projectPath: string;
   spaceId: string | null;
   ownerPath: string;

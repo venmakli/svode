@@ -85,12 +85,28 @@ if (process.env.SVODE_ATTACHMENT_OWNER_PEEK_TEST !== "1") {
     const { mockNativeIpc, clearNativeMocks } =
       await import("@/platform/native/testing");
     let snapshotTarget: AttachmentActivationRequest;
-    mockNativeIpc((command) =>
+    let directoryChild = false;
+    mockNativeIpc((command, args) =>
       command === "attachments_list"
         ? {
             owner: snapshotTarget.owner,
             generation: snapshotTarget.sourceGeneration,
-            items: [snapshotTarget.row],
+            items:
+              args && "branchPath" in args
+                ? directoryChild
+                  ? [
+                      {
+                        ...snapshotTarget.row,
+                        key: "app:child/tool",
+                        path: "child/tool",
+                        ownerPath: "child/tool",
+                        kind: "app",
+                        hasApp: true,
+                        displayName: "Tool",
+                      },
+                    ]
+                  : []
+                : [snapshotTarget.row],
             diagnostics: [],
           }
         : 1,
@@ -128,7 +144,7 @@ if (process.env.SVODE_ATTACHMENT_OWNER_PEEK_TEST !== "1") {
     }
     const root = createRoot(dom.window.document.getElementById("app")!);
     try {
-      for (const kind of ["collection", "app"] as const) {
+      for (const kind of ["collection", "app", "directory"] as const) {
         canClose = false;
         const row = {
           key: kind + ":child",
@@ -138,7 +154,7 @@ if (process.env.SVODE_ATTACHMENT_OWNER_PEEK_TEST !== "1") {
           sourcePath: "child/schema.yaml",
           sourceShape: "directory" as const,
           kind,
-          hasApp: true,
+          hasApp: kind !== "directory",
           icon: null,
           displayName: "Child",
           modified: "",
@@ -176,6 +192,55 @@ if (process.env.SVODE_ATTACHMENT_OWNER_PEEK_TEST !== "1") {
         const dialog = dom.window.document.querySelector('[role="dialog"]')!;
         expect(Boolean(dialog)).toBe(true);
         expect(getActiveContentSelection().selection).toEqual(before);
+        if (kind === "directory") {
+          expect(dialog.textContent?.includes("No available items")).toBe(true);
+          expect(dialog.querySelector("[data-owner]")).toBeNull();
+          expect(
+            [...dialog.querySelectorAll("button")].some((button) =>
+              button.textContent?.includes("Expand"),
+            ),
+          ).toBe(false);
+          const close = [...dialog.querySelectorAll("button")].find((button) =>
+            button.textContent?.includes("Cancel"),
+          )!;
+          await act(async () => close.click());
+          expect(getActiveContentSelection().selection).toEqual(before);
+          expect(
+            dom.window.document.querySelector('[role="dialog"]'),
+          ).toBeNull();
+          directoryChild = true;
+          const origin = dom.window.document.querySelector<HTMLElement>(
+            '[data-collection-row="directory:child"]',
+          )!;
+          await act(async () =>
+            origin
+              .querySelector<HTMLElement>("[data-collection-primary]")!
+              .click(),
+          );
+          await act(async () =>
+            dom.window.document
+              .querySelector<HTMLElement>(
+                '[role="dialog"] [data-collection-primary]',
+              )!
+              .click(),
+          );
+          expect(
+            dom.window.document
+              .querySelector('[role="dialog"] [data-owner]')
+              ?.getAttribute("data-surface"),
+          ).toBe("app");
+          canClose = true;
+          const nestedClose = [
+            ...dom.window.document.querySelectorAll<HTMLElement>(
+              '[role="dialog"] button',
+            ),
+          ].find((button) => button.textContent?.includes("Cancel"))!;
+          await act(async () => nestedClose.click());
+          await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
+          expect(dom.window.document.activeElement?.getAttribute("data-collection-row")).toBe("directory:child");
+          expect(getActiveContentSelection().selection).toEqual(before);
+          continue;
+        }
         expect(
           dialog.querySelector("[data-owner]")?.getAttribute("data-surface"),
         ).toBe(kind === "app" ? "app" : "readme");

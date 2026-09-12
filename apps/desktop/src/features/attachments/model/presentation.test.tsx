@@ -10,7 +10,6 @@ import {
   createPageOwner,
 } from "@/features/scope-surfaces";
 
-import { isCurrentAttachmentsLoad } from "../hooks/use-attachments-source";
 import {
   attachmentOwnerFromScopeOwner,
   attachmentOwnerInput,
@@ -155,12 +154,6 @@ test("registered owner input distinguishes Project root from child Space", () =>
   });
 });
 
-test("stale owner and superseded requests cannot publish snapshots", () => {
-  expect(isCurrentAttachmentsLoad("owner:a", "owner:a", 4, 4)).toBe(true);
-  expect(isCurrentAttachmentsLoad("owner:b", "owner:a", 4, 4)).toBe(false);
-  expect(isCurrentAttachmentsLoad("owner:a", "owner:a", 3, 4)).toBe(false);
-});
-
 test("Attachments create intents follow direct Collection ownership", () => {
   const standaloneOwner = createAttachmentsCreateCapability({
     hasDirectCollection: false,
@@ -220,6 +213,7 @@ test("mixed row types use standard filter and size applicability with stable ico
     "page",
     "collection",
     "app",
+    "directory",
     "document",
     "media",
   ].map((kind, i) => ({
@@ -256,6 +250,7 @@ test("mixed row types use standard filter and size applicability with stable ico
     ["page", true, "markdown", "panels-top-left"],
     ["collection", true, "markdown", "database"],
     ["app", true, "", "panels-top-left"],
+    ["directory", false, "", "folder-open"],
     ["document", false, "pdf", "file-text"],
     ["media", false, "png", "file-image"],
     ["media", false, "mp3", "music"],
@@ -275,4 +270,20 @@ test("mixed row types use standard filter and size applicability with stable ico
     expect(custom.includes("🌱")).toBe(true);
     expect(custom.includes("<svg")).toBe(false);
   }
+});
+
+test("Attachments sort ties use content paths without changing typed row identity", () => {
+  const descriptor = createAttachmentsPresentationDescriptor({
+    onActivate: () => {},
+  });
+  const rows = [
+    { ...page, key: "page:a", path: "a" },
+    { ...page, key: "app:z", path: "z", kind: "app" as const },
+  ];
+  const result = applyCollectionQuery({
+    descriptor,
+    rows,
+    query: { search: "", filters: [], sort: [] },
+  });
+  expect(result.rows.map((row) => row.path)).toEqual(["a", "z"]);
 });

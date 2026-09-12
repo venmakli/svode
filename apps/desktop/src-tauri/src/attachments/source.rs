@@ -34,6 +34,7 @@ pub(crate) enum AttachmentKind {
     Page,
     Collection,
     App,
+    Directory,
     Document,
     Media,
 }
@@ -49,6 +50,7 @@ pub(crate) struct AttachmentItem {
     pub owner_path: Option<String>,
     pub source_path: String,
     pub has_app: bool,
+    pub has_children: bool,
     pub icon: Option<String>,
     pub format: String,
     pub availability: AttachmentAvailability,
@@ -179,20 +181,7 @@ pub(crate) fn resolve_attachment_owner(
     }
 
     let normalized = normalize_repo_relative(requested, RootMode::Reject)?;
-    ensure_owner_path_has_no_symlink_components(&owner.space_path, Path::new(&normalized))?;
-    let first_component = Path::new(&normalized)
-        .components()
-        .next()
-        .map(|component| component.as_os_str().to_string_lossy().to_string());
-    if first_component
-        .as_ref()
-        .is_some_and(|component| child_folder_names(&owner.space_path).contains(component))
-    {
-        return Err(AppError::PathNotAccessible(format!(
-            "attachment owner crosses a registered Space boundary: {normalized}"
-        )));
-    }
-
+    ensure_owner_path_components(&owner.space_path, Path::new(&normalized))?;
     let candidate = owner.space_path.join(&normalized);
     let metadata = fs::symlink_metadata(&candidate).map_err(|error| {
         AppError::PathNotAccessible(format!(
@@ -233,12 +222,18 @@ pub(crate) fn resolve_attachment_owner(
     Ok(owner)
 }
 
-fn ensure_owner_path_has_no_symlink_components(
-    space_path: &Path,
-    relative: &Path,
-) -> Result<(), AppError> {
+fn ensure_owner_path_components(space_path: &Path, relative: &Path) -> Result<(), AppError> {
     let mut current = space_path.to_path_buf();
     for component in relative.components() {
+        let name = component.as_os_str().to_string_lossy();
+        if is_system_source(&name)
+            || is_agent_context_source(&name)
+            || child_folder_names(&current).contains(name.as_ref())
+        {
+            return Err(AppError::PathNotAccessible(
+                "attachment owner crosses an excluded boundary".into(),
+            ));
+        }
         current.push(component.as_os_str());
         let metadata = fs::symlink_metadata(&current)?;
         if metadata.file_type().is_symlink() {
@@ -254,10 +249,77 @@ fn ensure_owner_path_has_no_symlink_components(
 pub(crate) async fn list_registered_owner(
     owner: ResolvedRegisteredOwner,
 ) -> Result<AttachmentsSnapshot, AppError> {
-    let (mut items, diagnostics) =
-        scan_direct_children(&owner.owner_path, &owner.owner_relative_path)?;
+    list_owner_snapshot(owner, true).await
+}
+
+pub(crate) async fn list_attachment_branch(
+    owner: ResolvedRegisteredOwner,
+    branch_path: &str,
+) -> Result<AttachmentsSnapshot, AppError> {
+    let normalized = normalize_repo_relative(branch_path, RootMode::Reject)?;
+    let relative = Path::new(&normalized)
+        .strip_prefix(if owner.owner_relative_path == "." {
+            Path::new("")
+        } else {
+            Path::new(&owner.owner_relative_path)
+        })
+        .map_err(|_| AppError::PathNotAccessible("attachment branch escapes owner".into()))?;
+    if relative.as_os_str().is_empty() {
+        return Err(AppError::PathNotAccessible(
+            "attachment branch must be a descendant".into(),
+        ));
+    }
+    let mut current = owner.owner_path.clone();
+    for component in relative.components() {
+        let name = component.as_os_str().to_string_lossy();
+        if is_system_source(&name)
+            || is_agent_context_source(&name)
+            || child_folder_names(&current).contains(name.as_ref())
+        {
+            return Err(AppError::PathNotAccessible(
+                "attachment branch crosses an excluded boundary".into(),
+            ));
+        }
+        current.push(component);
+        let metadata = fs::symlink_metadata(&current)?;
+        if !metadata.is_dir() || metadata.file_type().is_symlink() {
+            return Err(AppError::PathNotAccessible(
+                "attachment branch is not a regular directory".into(),
+            ));
+        }
+        let readme = direct_readme(&current)?;
+        for marker in [current.join("schema.yaml"), current.join("app.yaml")]
+            .iter()
+            .chain(readme.iter())
+        {
+            if fs::symlink_metadata(marker).is_ok_and(|meta| meta.file_type().is_symlink()) {
+                return Err(AppError::PathNotAccessible(
+                    "attachment branch has a linked marker".into(),
+                ));
+            }
+        }
+    }
+    let root_relative = owner.owner_relative_path.clone();
+    let mut branch = owner;
+    branch.owner_path = current;
+    branch.owner_relative_path = normalized;
+    let mut snapshot = list_owner_snapshot(branch, false).await?;
+    snapshot.owner.owner_path = root_relative;
+    Ok(snapshot)
+}
+
+async fn list_owner_snapshot(
+    owner: ResolvedRegisteredOwner,
+    root_schema_routing: bool,
+) -> Result<AttachmentsSnapshot, AppError> {
+    let (mut items, diagnostics) = scan_mixed_children(
+        &owner.owner_path,
+        &owner.owner_relative_path,
+        root_schema_routing,
+    )?;
     let source_paths = items
         .iter()
+        .filter(|item| item.kind != AttachmentKind::Directory)
         .map(|item| item.source_path.clone())
         .collect::<Vec<_>>();
     let overrides = derive_date_overrides(&owner.space_path, &source_paths).await;
@@ -291,11 +353,20 @@ pub(crate) async fn list_registered_owner(
     })
 }
 
+#[cfg(test)]
 fn scan_direct_children(
     owner_path: &Path,
     owner_relative_path: &str,
 ) -> Result<(Vec<AttachmentItem>, Vec<AttachmentSourceDiagnostic>), AppError> {
-    let owner_has_schema = has_direct_schema(owner_path);
+    scan_mixed_children(owner_path, owner_relative_path, true)
+}
+
+fn scan_mixed_children(
+    owner_path: &Path,
+    owner_relative_path: &str,
+    root_schema_routing: bool,
+) -> Result<(Vec<AttachmentItem>, Vec<AttachmentSourceDiagnostic>), AppError> {
+    let owner_has_schema = root_schema_routing && has_direct_schema(owner_path);
     let registered_spaces = child_folder_names(owner_path);
     let mut entries = fs::read_dir(owner_path)?.collect::<Result<Vec<_>, _>>()?;
     entries.sort_by_key(|entry| entry.file_name().to_string_lossy().to_lowercase());
@@ -304,7 +375,7 @@ fn scan_direct_children(
 
     for entry in entries {
         let name = entry.file_name().to_string_lossy().into_owned();
-        if is_system_source(&name) {
+        if is_system_source(&name) || is_agent_context_source(&name) {
             continue;
         }
         let path = entry.path();
@@ -361,7 +432,7 @@ fn scan_direct_children(
             } else if has_app {
                 AttachmentKind::App
             } else {
-                continue;
+                AttachmentKind::Directory
             };
             let owner_path = normalized_direct_path(owner_relative_path, &name, None)?;
             let content_path = readme
@@ -374,11 +445,18 @@ fn scan_direct_children(
                     )
                 })
                 .transpose()?;
-            let source = readme
-                .as_ref()
-                .unwrap_or(if has_schema { &schema } else { &app });
+            let source = readme.as_ref().unwrap_or(if has_schema {
+                &schema
+            } else if has_app {
+                &app
+            } else {
+                &path
+            });
             let source_metadata = match fs::symlink_metadata(source) {
-                Ok(metadata) if metadata.is_file() && !metadata.file_type().is_symlink() => {
+                Ok(metadata)
+                    if (metadata.is_file() || kind == AttachmentKind::Directory)
+                        && !metadata.file_type().is_symlink() =>
+                {
                     metadata
                 }
                 _ => {
@@ -389,11 +467,15 @@ fn scan_direct_children(
                     continue;
                 }
             };
-            let source_path = normalized_direct_path(
-                owner_relative_path,
-                &name,
-                source.file_name().and_then(|name| name.to_str()),
-            )?;
+            let source_path = if kind == AttachmentKind::Directory {
+                owner_path.clone()
+            } else {
+                normalized_direct_path(
+                    owner_relative_path,
+                    &name,
+                    source.file_name().and_then(|name| name.to_str()),
+                )?
+            };
             let (display_name, icon) = readme.as_ref().map_or_else(
                 || (name.clone(), None),
                 |source| {
@@ -406,6 +488,7 @@ fn scan_direct_children(
             let kind_key = match kind {
                 AttachmentKind::Page => "page",
                 AttachmentKind::Collection => "collection",
+                AttachmentKind::Directory => "directory",
                 _ => "app",
             };
             items.push(AttachmentItem {
@@ -415,6 +498,7 @@ fn scan_direct_children(
                 owner_path: Some(owner_path),
                 source_path,
                 has_app,
+                has_children: has_mixed_child_hint(&path),
                 icon,
                 source_shape: SourceShape::Directory,
                 kind,
@@ -457,6 +541,7 @@ fn scan_direct_children(
                 owner_path: None,
                 source_path: source_path.clone(),
                 has_app: false,
+                has_children: false,
                 icon,
                 path: source_path,
                 source_shape: SourceShape::File,
@@ -479,6 +564,7 @@ fn scan_direct_children(
             owner_path: None,
             source_path: source_path.clone(),
             has_app: false,
+            has_children: false,
             icon: None,
             path: source_path,
             source_shape: SourceShape::File,
@@ -549,6 +635,35 @@ fn classify_binary_extension(extension: &str) -> Option<(ArtifactKind, Attachmen
             | "ico"
     )
     .then_some((ArtifactKind::Media, AttachmentAvailability::Limited))
+}
+
+fn has_mixed_child_hint(directory: &Path) -> bool {
+    let Ok(entries) = fs::read_dir(directory) else {
+        return true;
+    };
+    let registered = child_folder_names(directory);
+    entries.into_iter().any(|entry| {
+        let Ok(entry) = entry else {
+            return true;
+        };
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if is_system_source(&name) || is_agent_context_source(&name) || registered.contains(&name) {
+            return false;
+        }
+        let Ok(kind) = entry.file_type() else {
+            return true;
+        };
+        if kind.is_symlink() {
+            return false;
+        }
+        kind.is_dir()
+            || (kind.is_file()
+                && (entry
+                    .path()
+                    .extension()
+                    .is_some_and(|ext| ext.eq_ignore_ascii_case("md"))
+                    || classify_binary_path(&entry.path()).is_some()))
+    })
 }
 
 fn direct_readme(directory: &Path) -> Result<Option<PathBuf>, std::io::Error> {
@@ -705,6 +820,7 @@ mod tests {
             paths,
             vec![
                 "app",
+                "bare",
                 "collection/README.md",
                 "folder-page/README.md",
                 "guide.pdf",
@@ -712,10 +828,10 @@ mod tests {
                 "roadmap.md"
             ]
         );
-        assert_eq!(snapshot.items[2].display_name, "Folder Page");
-        assert_eq!(snapshot.items[3].kind, AttachmentKind::Document);
-        assert_eq!(snapshot.items[4].kind, AttachmentKind::Media);
-        assert!(snapshot.items[5].size_bytes.is_none());
+        assert_eq!(snapshot.items[3].display_name, "Folder Page");
+        assert_eq!(snapshot.items[4].kind, AttachmentKind::Document);
+        assert_eq!(snapshot.items[5].kind, AttachmentKind::Media);
+        assert!(snapshot.items[6].size_bytes.is_none());
     }
 
     #[tokio::test]
@@ -847,6 +963,45 @@ mod tests {
         assert!(scan_direct_children(temp.path(), ".").unwrap().0.is_empty());
     }
 
+    #[tokio::test]
+    async fn directory_hint_and_metadata_follow_first_child_without_recursive_membership() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        write_config(root, None);
+        fs::create_dir(root.join("bare")).unwrap();
+        fs::write(root.join("schema.yaml"), "invalid: [").unwrap();
+        let owner = resolve_registered_owner(root, None).unwrap();
+        let empty = list_registered_owner(owner.clone()).await.unwrap();
+        assert_eq!(empty.items.len(), 1);
+        let directory = &empty.items[0];
+        assert_eq!(directory.kind, AttachmentKind::Directory);
+        assert_eq!(directory.source_path, "bare");
+        assert_eq!(
+            directory.modified,
+            modified_time(&fs::metadata(root.join("bare")).unwrap())
+        );
+        assert!(!directory.has_children);
+        assert!(directory.size_bytes.is_none());
+        fs::write(root.join("bare/README.md"), "---\nicon: 📁\n---\n").unwrap();
+        fs::write(root.join("bare/child.pdf"), "pdf").unwrap();
+        // Root schema routes the new Page away; branch projection still includes it.
+        assert!(
+            list_registered_owner(owner.clone())
+                .await
+                .unwrap()
+                .items
+                .is_empty()
+        );
+        fs::remove_file(root.join("bare/README.md")).unwrap();
+        let changed = list_registered_owner(owner.clone()).await.unwrap();
+        assert_eq!(changed.items.len(), 1);
+        assert!(changed.items[0].has_children);
+        assert_ne!(changed.generation, empty.generation);
+        let branch = list_attachment_branch(owner, "bare").await.unwrap();
+        assert_eq!(branch.items.len(), 1);
+        assert_eq!(branch.items[0].kind, AttachmentKind::Document);
+    }
+
     #[test]
     fn resolver_requires_an_exact_ready_registered_space() {
         let temp = tempfile::tempdir().expect("temp dir");
@@ -954,9 +1109,124 @@ mod tests {
             ]
         );
         assert!(resolve_attachment_owner(temp.path(), None, Some("child-space")).is_err());
+        fs::create_dir_all(temp.path().join(".hidden")).unwrap();
+        fs::write(temp.path().join(".hidden/README.md"), "hidden").unwrap();
+        assert!(resolve_attachment_owner(temp.path(), None, Some(".hidden")).is_err());
         assert!(
             resolve_attachment_owner(temp.path(), None, Some("roadmap/nested-collection")).is_err()
         );
+    }
+
+    #[tokio::test]
+    async fn branches_keep_mixed_children_and_enforce_original_owner() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        write_config(
+            root,
+            Some(vec![SpaceRef {
+                id: "child".into(),
+                path: "child-space".into(),
+                repo: None,
+            }]),
+        );
+        for path in [
+            "page/collection/directory/app",
+            "child-space",
+            "sibling",
+            "page/.hidden",
+        ] {
+            fs::create_dir_all(root.join(path)).unwrap();
+        }
+        for (path, body) in [
+            ("page/README.md", "page"),
+            ("page/collection/README.md", "collection"),
+            ("page/collection/schema.yaml", "invalid: ["),
+            ("page/collection/child.md", "child"),
+            ("page/collection/directory/app/app.yaml", "invalid: ["),
+            ("page/collection/directory/file.pdf", "pdf"),
+            ("page/collection/directory/image.png", "png"),
+            ("page/collection/directory/sound.mp3", "mp3"),
+            ("page/collection/directory/movie.mp4", "mp4"),
+            ("page/collection/directory/AGENTS.md", "system"),
+        ] {
+            fs::write(root.join(path), body).unwrap();
+        }
+        let owner = resolve_attachment_owner(root, None, Some("page")).unwrap();
+        let root_rows = list_registered_owner(owner.clone()).await.unwrap();
+        assert_eq!(root_rows.items.len(), 1);
+        let collection = list_attachment_branch(owner.clone(), "page/collection")
+            .await
+            .unwrap();
+        assert_eq!(collection.owner.owner_path, "page");
+        assert_eq!(collection.items.len(), 2);
+        assert!(
+            collection
+                .items
+                .iter()
+                .any(|row| row.kind == AttachmentKind::Page)
+        );
+        assert!(
+            collection
+                .items
+                .iter()
+                .any(|row| row.kind == AttachmentKind::Directory)
+        );
+        let directory = list_attachment_branch(owner.clone(), "page/collection/directory")
+            .await
+            .unwrap();
+        assert_eq!(directory.items.len(), 5);
+        assert!(
+            directory
+                .items
+                .iter()
+                .any(|row| row.kind == AttachmentKind::App)
+        );
+        assert!(
+            directory
+                .items
+                .iter()
+                .all(|row| !row.path.ends_with("AGENTS.md"))
+        );
+        assert!(
+            list_attachment_branch(owner.clone(), "sibling")
+                .await
+                .is_err()
+        );
+        assert!(
+            list_attachment_branch(owner.clone(), "page/.hidden")
+                .await
+                .is_err()
+        );
+        assert!(
+            list_attachment_branch(owner.clone(), "page/../sibling")
+                .await
+                .is_err()
+        );
+        let root_owner = resolve_registered_owner(root, None).unwrap();
+        assert!(
+            list_attachment_branch(root_owner, "child-space")
+                .await
+                .is_err()
+        );
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(root.join("sibling"), root.join("page/linked")).unwrap();
+            assert!(
+                list_attachment_branch(owner.clone(), "page/linked")
+                    .await
+                    .is_err()
+            );
+            std::os::unix::fs::symlink(
+                root.join("page/README.md"),
+                root.join("page/collection/directory/README.md"),
+            )
+            .unwrap();
+            assert!(
+                list_attachment_branch(owner, "page/collection/directory")
+                    .await
+                    .is_err()
+            );
+        }
     }
 
     #[test]

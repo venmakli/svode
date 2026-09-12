@@ -12,20 +12,26 @@ use super::managed_import::{
     ManagedImportResult, ManagedImportSourceInfo, MutationOrigin, execute_managed_import,
     inspect_import_source, plan_managed_import,
 };
-use super::source::{AttachmentsSnapshot, list_registered_owner, resolve_attachment_owner};
+use super::source::{
+    AttachmentsSnapshot, list_attachment_branch, list_registered_owner, resolve_attachment_owner,
+};
 
 #[tauri::command]
 pub(crate) async fn attachments_list(
     project_path: String,
     space_id: Option<String>,
     owner_path: Option<String>,
+    branch_path: Option<String>,
 ) -> Result<AttachmentsSnapshot, AppError> {
     let owner = resolve_attachment_owner(
         Path::new(&project_path),
         space_id.as_deref(),
         owner_path.as_deref(),
     )?;
-    list_registered_owner(owner).await
+    match branch_path {
+        Some(path) => list_attachment_branch(owner, &path).await,
+        None => list_registered_owner(owner).await,
+    }
 }
 
 #[tauri::command]

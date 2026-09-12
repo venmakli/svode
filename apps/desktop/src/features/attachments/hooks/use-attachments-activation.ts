@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import type { CollectionActivationContext } from "@/features/collection";
 import * as m from "@/paraglide/messages.js";
@@ -22,11 +22,18 @@ export function useAttachmentsActivation(owner: AttachmentOwnerRef) {
     setPeekTarget((current) => reconcileAttachmentPeek(current, snapshot));
   }, []);
   const source = useAttachmentsSource(owner, reconcile);
+  const { retainPeekTarget } = source;
+  const peekRow = peekTarget?.row;
+  useEffect(
+    () => (peekRow ? retainPeekTarget(peekRow) : undefined),
+    [peekRow, retainPeekTarget],
+  );
   const onActivate = useCallback(
     (row: AttachmentRow, activation: CollectionActivationContext) => {
       if (source.state.phase !== "ready")
         throw new Error(m.attachments_source_stale());
-      const snapshot = source.state.snapshot;
+      const snapshot = source.inventory();
+      if (!snapshot) throw new Error(m.attachments_source_stale());
       const current = currentAttachmentRow(snapshot, row);
       if (!current) throw new Error(m.attachments_source_stale());
       setPeekTarget({
@@ -37,7 +44,7 @@ export function useAttachmentsActivation(owner: AttachmentOwnerRef) {
         sourceGeneration: snapshot.generation,
       });
     },
-    [source.state],
+    [source],
   );
   return {
     source,

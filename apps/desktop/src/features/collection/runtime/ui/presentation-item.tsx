@@ -1,5 +1,8 @@
 import { useCallback, useId, useMemo, useState } from "react";
 
+import { ChevronRight } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { cn } from "@/shared/lib/utils";
 import { TableCell } from "@/components/ui/table";
 import * as m from "@/paraglide/messages.js";
 
@@ -27,6 +30,7 @@ import {
 
 interface CollectionPresentationItemProps {
   descriptor: CollectionPresentationDescriptor<unknown>;
+  depth?: number;
   activationFocusFallback?(): HTMLElement | null;
   instanceKey: string;
   row: unknown;
@@ -41,6 +45,7 @@ interface CollectionPresentationItemProps {
 
 export function CollectionPresentationItem({
   descriptor,
+  depth = 0,
   activationFocusFallback,
   instanceKey,
   row,
@@ -178,6 +183,7 @@ export function CollectionPresentationItem({
 
   if (descriptor.layout.kind === "table") {
     const layout = descriptor.layout;
+    const branch = layout.hierarchy?.getBranch(row);
     return (
       <CollectionTableRow
         rowRef={(element) => registerRow(rowId, element)}
@@ -206,14 +212,62 @@ export function CollectionPresentationItem({
             propertyKey === layout.primaryProperty
               ? layout.renderLeading?.(row)
               : null;
-          const content = leading ? (
+          const primary = propertyKey === layout.primaryProperty;
+          const content = (
             <span className="flex min-w-0 items-center gap-2">
-              {leading}
+              {!layout.hierarchy ? leading : null}
               <span className="min-w-0 truncate">{value}</span>
             </span>
-          ) : (
-            value
           );
+          const disclosure =
+            primary && branch ? (
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                className="group/disclosure relative shrink-0"
+                data-collection-interactive
+                aria-expanded={branch.expanded}
+                aria-label={
+                  branch.expanded
+                    ? m.collection_collapse_row({
+                        name: layout.hierarchy!.getLabel(row),
+                      })
+                    : m.collection_expand_row({
+                        name: layout.hierarchy!.getLabel(row),
+                      })
+                }
+                onClick={(event) => {
+                  event.stopPropagation();
+                  layout.hierarchy!.onToggle(row);
+                }}
+              >
+                <span
+                  className={cn(
+                    "inline-flex",
+                    branch.expanded
+                      ? "invisible"
+                      : "group-hover/row:invisible group-focus-within/disclosure:invisible",
+                  )}
+                >
+                  {leading}
+                </span>
+                <ChevronRight
+                  className={cn(
+                    "absolute",
+                    branch.expanded
+                      ? "rotate-90"
+                      : "invisible group-hover/row:visible group-focus-within/disclosure:visible",
+                  )}
+                />
+              </Button>
+            ) : primary && leading && layout.hierarchy ? (
+              <span
+                className="inline-flex shrink-0 items-center justify-center"
+                style={{ width: layout.hierarchy ? 28 : 16 }}
+              >
+                {leading}
+              </span>
+            ) : null;
           const primaryActivator =
             propertyKey === layout.primaryProperty &&
             activationEnabled &&
@@ -227,18 +281,28 @@ export function CollectionPresentationItem({
                   : "min-w-32 border-r px-2 py-0"
               }
             >
-              {primaryActivator ? (
-                <button
-                  type="button"
-                  className="flex h-7 w-full min-w-0 items-center rounded px-1 text-left hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                  data-collection-interactive
-                  data-collection-primary
-                >
-                  {content}
-                </button>
-              ) : (
-                content
-              )}
+              <div
+                className="flex min-w-0 items-center gap-1"
+                style={
+                  primary && layout.hierarchy
+                    ? { paddingInlineStart: depth * 20 }
+                    : undefined
+                }
+              >
+                {disclosure}
+                {primaryActivator ? (
+                  <button
+                    type="button"
+                    className="flex h-7 w-full min-w-0 items-center rounded px-1 text-left hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    data-collection-interactive
+                    data-collection-primary
+                  >
+                    {content}
+                  </button>
+                ) : (
+                  content
+                )}
+              </div>
               {propertyKey === layout.primaryProperty && activationError ? (
                 <CollectionInlineDiagnostic message={activationError} />
               ) : null}

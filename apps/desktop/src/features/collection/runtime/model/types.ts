@@ -18,6 +18,15 @@ export type CollectionPresentationLayout<Row> =
   | {
       kind: "table";
       primaryProperty: string;
+      hierarchy?: {
+        getBranch(row: Row): {
+          expanded: boolean;
+          rows: readonly Row[];
+          status?: ReactNode;
+        } | null;
+        getLabel(row: Row): string;
+        onToggle(row: Row): void;
+      };
       renderLeading?(row: Row): ReactNode;
       visibleProperties: readonly string[];
       density?: "compact" | "comfortable";
@@ -126,6 +135,7 @@ export interface CollectionQueryDescriptor<Row> {
   fixedPredicate?(row: Row): boolean;
   defaultSort?: readonly CollectionSortDescriptor[];
   defaultCompare?(left: Row, right: Row): number;
+  getSortTieBreakId?(row: Row): string;
 }
 
 export interface CollectionQueryState {

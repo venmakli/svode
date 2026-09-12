@@ -1,3 +1,5 @@
+import { DirectoryPeekTable } from "./directory-peek-table";
+import { attachmentHierarchy } from "./attachment-hierarchy";
 import { useMemo } from "react";
 import { AlertTriangle, Paperclip } from "lucide-react";
 
@@ -55,6 +57,7 @@ function AttachmentsOwnerSurface({
   const presentation = defineCollectionPresentation({
     descriptor: createAttachmentsPresentationDescriptor({
       create,
+      hierarchy: attachmentHierarchy(source),
       onActivate,
       renderLeading: (row) => <AttachmentIcon row={row} />,
     }),
@@ -107,6 +110,18 @@ function AttachmentsOwnerSurface({
         renderOwnerPeek={renderOwnerPeek}
         readOnly={readOnly}
         target={peekTarget}
+        directoryContent={
+          peekTarget?.row.kind === "directory" && peekTarget.row.ownerPath ? (
+            <DirectoryPeekTable
+              key={peekTarget.row.ownerPath}
+              path={peekTarget.row.ownerPath}
+              ownerKey={owner.ownerKey}
+              source={source}
+              origin={peekTarget.activation}
+              onActivate={onActivate}
+            />
+          ) : undefined
+        }
         onOpenChange={(open) => {
           if (!open) closePeek();
         }}

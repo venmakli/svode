@@ -11,9 +11,14 @@ import {
   attachmentOwnerInput,
   sameRuntimePath,
   type AttachmentOwnerRef,
+  type AttachmentRow,
   type AttachmentsSnapshot,
-  type AttachmentsSourceState,
 } from "../model/types";
+
+import {
+  AttachmentSourceSession,
+  type AttachmentSourceView,
+} from "../model/source-session";
 
 const INVALIDATION_COALESCE_MS = 80;
 
@@ -27,73 +32,62 @@ export function useAttachmentsSource(
   const ownerPath = ownerInput.ownerPath;
   const spaceId = ownerInput.spaceId;
   const spacePath = owner.spacePath;
-  const [state, setState] = useState<AttachmentsSourceState>({
-    phase: "initial",
+  const [view, setView] = useState<AttachmentSourceView>({
+    state: { phase: "initial" },
+    branches: new Map(),
+    expanded: new Set(),
   });
-  const activeOwnerKeyRef = useRef(ownerKey);
-  const requestGenerationRef = useRef(0);
+  const sessionRef = useRef<AttachmentSourceSession | null>(null);
   const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
   const refresh = useCallback(async () => {
-    const requestGeneration = ++requestGenerationRef.current;
-    try {
-      const snapshot = await getAttachmentsSnapshot({
-        ownerPath,
-        projectPath,
-        spaceId,
-      });
-      if (
-        !isCurrentAttachmentsLoad(
-          activeOwnerKeyRef.current,
-          ownerKey,
-          requestGeneration,
-          requestGenerationRef.current,
-        )
-      ) {
-        return;
-      }
-      onSnapshot?.(snapshot);
-      setState({ phase: "ready", refreshError: null, snapshot });
-    } catch (error) {
-      if (
-        !isCurrentAttachmentsLoad(
-          activeOwnerKeyRef.current,
-          ownerKey,
-          requestGeneration,
-          requestGenerationRef.current,
-        )
-      ) {
-        return;
-      }
-      const message = attachmentErrorMessage(error);
-      setState((current) =>
-        current.phase === "ready"
-          ? { ...current, refreshError: message }
-          : { message, phase: "blocking_error" },
-      );
-    }
-  }, [onSnapshot, ownerKey, ownerPath, projectPath, spaceId]);
+    await sessionRef.current?.refresh();
+  }, []);
+  const loadBranch = useCallback(async (path: string) => {
+    await sessionRef.current?.loadBranch(path);
+  }, []);
+  const toggle = useCallback((path: string) => {
+    sessionRef.current?.toggle(path);
+  }, []);
+  const observeBranch = useCallback(
+    (path: string) => sessionRef.current?.observe(path),
+    [],
+  );
+  const retainPeekTarget = useCallback(
+    (row: AttachmentRow) => sessionRef.current?.retainPeekTarget(row),
+    [],
+  );
+  const inventory = useCallback(
+    () => sessionRef.current?.inventory() ?? null,
+    [],
+  );
 
   useEffect(() => {
-    activeOwnerKeyRef.current = ownerKey;
-    requestGenerationRef.current += 1;
-    let cancelled = false;
+    const session = new AttachmentSourceSession(
+      { ownerPath, projectPath, spaceId },
+      getAttachmentsSnapshot,
+      (next, snapshot) => {
+        setView(next);
+        if (snapshot) onSnapshot?.(snapshot);
+      },
+    );
+    sessionRef.current = session;
     queueMicrotask(() => {
-      if (!cancelled) {
-        setState({ phase: "initial" });
-        void refresh();
+      if (sessionRef.current === session) {
+        setView(session.current);
+        void session.refreshRoot();
       }
     });
     return () => {
-      cancelled = true;
-      requestGenerationRef.current += 1;
+      session.dispose();
+      if (sessionRef.current === session) sessionRef.current = null;
     };
-  }, [ownerKey, refresh]);
+  }, [ownerKey, ownerPath, projectPath, spaceId, onSnapshot]);
 
   useEffect(() => {
     let cancelled = false;
     const unlisten: Array<() => void> = [];
     const scheduleRefresh = () => {
+      sessionRef.current?.invalidate();
       if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current);
       refreshTimerRef.current = setTimeout(() => {
         refreshTimerRef.current = null;
@@ -103,7 +97,11 @@ export function useAttachmentsSource(
     void Promise.all([
       subscribeAttachmentsInvalidated((event) => {
         if (
-          event.ownerPath === ownerPath &&
+          (ownerPath === "." ||
+            event.ownerPath === ownerPath ||
+            event.ownerPath.startsWith(`${ownerPath}/`) ||
+            ownerPath.startsWith(`${event.ownerPath}/`) ||
+            event.ownerPath === ".") &&
           sameRuntimePath(event.spacePath, spacePath)
         ) {
           scheduleRefresh();
@@ -137,19 +135,15 @@ export function useAttachmentsSource(
     };
   }, [ownerPath, projectPath, refresh, spaceId, spacePath]);
 
-  return { refresh, state };
-}
-
-export function isCurrentAttachmentsLoad(
-  activeOwnerKey: string,
-  requestOwnerKey: string,
-  requestGeneration: number,
-  currentRequestGeneration: number,
-) {
-  return (
-    activeOwnerKey === requestOwnerKey &&
-    requestGeneration === currentRequestGeneration
-  );
+  return {
+    refresh,
+    loadBranch,
+    toggle,
+    inventory,
+    observeBranch,
+    retainPeekTarget,
+    ...view,
+  };
 }
 
 function lifecycleAffectsOwner(
@@ -168,10 +162,4 @@ function lifecycleAffectsOwner(
       : event.spaceId === owner.spaceId;
   }
   return ownerIsRoot || event.spaceId === owner.spaceId;
-}
-
-function attachmentErrorMessage(error: unknown) {
-  if (error instanceof Error && error.message) return error.message;
-  if (typeof error === "string" && error) return error;
-  return "Attachments source unavailable";
 }

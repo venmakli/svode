@@ -89,7 +89,7 @@ test("typed activation and source refresh reject stale owner, marker and request
       owner: {
         projectPath: "/repo",
         spacePath,
-        spaceId: null,
+        spaceId: spacePath === "/repo" ? null : "other",
         ownerPath: ".",
         repositoryPath: "/repo",
       },

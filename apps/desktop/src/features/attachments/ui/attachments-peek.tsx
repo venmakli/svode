@@ -1,5 +1,12 @@
 import { ChangesControl } from "@/features/changes";
-import { lazy, Suspense, useCallback, useEffect, useRef } from "react";
+import {
+  type ReactNode,
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useRef,
+} from "react";
 import { FileWarning, Maximize2, Paperclip, X } from "lucide-react";
 
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -44,7 +51,9 @@ export function AttachmentsPeek({
   target,
   onOpenChange,
   renderOwnerPeek: OwnerPeek,
+  directoryContent,
 }: {
+  directoryContent?: ReactNode;
   owner: AttachmentOwnerRef;
   readOnly: boolean;
   target: AttachmentActivationRequest | null;
@@ -144,7 +153,9 @@ export function AttachmentsPeek({
               : "scrollbar-hide overflow-y-auto",
           )}
         >
-          {isOwner && target ? (
+          {target?.row.kind === "directory" ? (
+            directoryContent
+          ) : isOwner && target ? (
             <OwnerPeek
               target={target}
               spaceId={owner.spaceId}

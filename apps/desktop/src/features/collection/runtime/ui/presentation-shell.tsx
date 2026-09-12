@@ -1,8 +1,16 @@
-import { useCallback, useMemo, useRef, useState } from "react";
+import {
+  Fragment,
+  useCallback,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
 import {
   Table,
   TableBody,
+  TableCell,
   TableHead,
   TableHeader,
   TableRow,
@@ -49,6 +57,8 @@ import {
   CollectionReadySignals,
   CollectionSourceEmpty,
 } from "./presentation-states";
+
+import { collectionVisibleRows } from "../model/hierarchy";
 
 const cardGap = 14;
 const emptyRows: readonly unknown[] = [];
@@ -104,7 +114,38 @@ export function CollectionPresentationShell({
         : null,
     [descriptor, query, state],
   );
-  const rows = queryResult?.rows ?? emptyRows;
+  const visible = useMemo(
+    () =>
+      collectionVisibleRows(descriptor, queryResult?.rows ?? emptyRows, query),
+    [descriptor, queryResult, query],
+  );
+  const rows = useMemo(() => visible.map((item) => item.row), [visible]);
+  const previousVisible = useRef(visible);
+  const focusedRow = useRef<string | null>(null);
+  const resolveFallback = useCallback(
+    (rowId: string) => {
+      const item = previousVisible.current.find(
+        (item) => descriptor.getRowId(item.row) === rowId,
+      );
+      for (const ancestor of [...(item?.ancestors ?? [])].reverse()) {
+        const element = rowRefs.current.get(ancestor);
+        if (element) return element;
+      }
+      return surfaceRef.current;
+    },
+    [descriptor],
+  );
+  useLayoutEffect(() => {
+    const id = focusedRow.current;
+    if (
+      id &&
+      !rows.some((row) => descriptor.getRowId(row) === id) &&
+      document.activeElement === document.body
+    ) {
+      resolveFallback(id)?.focus();
+    }
+    previousVisible.current = visible;
+  }, [descriptor, resolveFallback, rows, visible]);
   const rowIds = useMemo(
     () => rows.map((row) => descriptor.getRowId(row)),
     [descriptor, rows],
@@ -214,21 +255,61 @@ export function CollectionPresentationShell({
   const items = rows.map((row, index) => {
     const rowId = rowIds[index]!;
     const selected = effectiveSelectedRowId === rowId;
+    const branch =
+      descriptor.layout.kind === "table"
+        ? descriptor.layout.hierarchy?.getBranch(row)
+        : null;
     return (
-      <CollectionPresentationItem
-        key={rowId}
-        descriptor={descriptor}
-        activationFocusFallback={() => surfaceRef.current}
-        instanceKey={instanceKey}
-        row={row}
-        rowId={rowId}
-        selected={selected}
-        tabIndex={selected || (!effectiveSelectedRowId && index === 0) ? 0 : -1}
-        onFocus={selectRow}
-        onInteractionError={onInteractionError}
-        onMoveFocus={moveFocus}
-        registerRow={registerRow}
-      />
+      <Fragment key={rowId}>
+        <CollectionPresentationItem
+          descriptor={descriptor}
+          activationFocusFallback={() => {
+            for (const ancestor of [
+              ...(visible[index]?.ancestors ?? []),
+            ].reverse()) {
+              const element = rowRefs.current.get(ancestor);
+              if (element) return element;
+            }
+            return surfaceRef.current;
+          }}
+          depth={visible[index]?.ancestors.length ?? 0}
+          instanceKey={instanceKey}
+          row={row}
+          rowId={rowId}
+          selected={selected}
+          tabIndex={
+            selected || (!effectiveSelectedRowId && index === 0) ? 0 : -1
+          }
+          onFocus={(id) => {
+            focusedRow.current = id;
+            selectRow(id);
+          }}
+          onInteractionError={onInteractionError}
+          onMoveFocus={moveFocus}
+          registerRow={registerRow}
+        />
+        {branch?.expanded &&
+        branch.status &&
+        descriptor.layout.kind === "table" ? (
+          <TableRow data-collection-branch-status={rowId}>
+            <TableCell
+              colSpan={
+                descriptor.layout.visibleProperties.length +
+                (descriptor.rowActions?.length ? 1 : 0)
+              }
+            >
+              <div
+                style={{
+                  paddingInlineStart:
+                    ((visible[index]?.ancestors.length ?? 0) + 1) * 20,
+                }}
+              >
+                {branch.status}
+              </div>
+            </TableCell>
+          </TableRow>
+        ) : null}
+      </Fragment>
     );
   });
 
@@ -245,6 +326,12 @@ export function CollectionPresentationShell({
         className,
       )}
       data-collection-surface
+      onFocusCapture={(event) => {
+        const row = (event.target as HTMLElement).closest<HTMLElement>(
+          "[data-collection-row]",
+        );
+        focusedRow.current = row?.dataset.collectionRow ?? null;
+      }}
       tabIndex={-1}
     >
       <CollectionReadySignals

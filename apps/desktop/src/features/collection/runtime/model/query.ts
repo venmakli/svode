@@ -313,8 +313,8 @@ function compareRowIds<Row>(
   right: Row,
 ): number {
   return compareCodeUnits(
-    descriptor.getRowId(left),
-    descriptor.getRowId(right),
+    descriptor.query.getSortTieBreakId?.(left) ?? descriptor.getRowId(left),
+    descriptor.query.getSortTieBreakId?.(right) ?? descriptor.getRowId(right),
   );
 }
 

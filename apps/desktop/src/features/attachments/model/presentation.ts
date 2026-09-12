@@ -18,9 +18,14 @@ export function createAttachmentsPresentationDescriptor({
   create,
   onActivate,
   renderLeading,
+  hierarchy,
 }: {
+  hierarchy?: Extract<
+    CollectionPresentationDescriptor<AttachmentRow>["layout"],
+    { kind: "table" }
+  >["hierarchy"];
   renderLeading?: (row: AttachmentRow) => ReactNode;
-  create: CollectionCreateCapability;
+  create?: CollectionCreateCapability;
   onActivate(
     row: AttachmentRow,
     context: CollectionActivationContext,
@@ -52,6 +57,7 @@ export function createAttachmentsPresentationDescriptor({
           { color: "blue", name: m.attachments_type_page() },
           { color: "purple", name: m.attachments_type_collection() },
           { color: "green", name: m.attachments_type_app() },
+          { color: "gray", name: m.attachments_type_directory() },
           { color: "purple", name: m.attachments_type_document() },
           { color: "orange", name: m.attachments_type_media() },
         ],
@@ -97,12 +103,14 @@ export function createAttachmentsPresentationDescriptor({
       density: "compact",
       kind: "table",
       primaryProperty: "name",
+      hierarchy,
       ...(renderLeading ? { renderLeading } : {}),
       visibleProperties: ["name", "type", "modified", "size"],
     },
     onActivate,
     properties,
     query: {
+      getSortTieBreakId: (row) => row.path,
       defaultSort: [{ direction: "asc", propertyKey: "name" }],
       getSearchText: (row) =>
         `${row.displayName} ${attachmentKindLabel(row.kind)}`,
@@ -137,6 +145,7 @@ export function attachmentsPresentationState(
 }
 
 export function attachmentKindLabel(kind: AttachmentRow["kind"]) {
+  if (kind === "directory") return m.attachments_type_directory();
   if (kind === "page") return m.attachments_type_page();
   if (kind === "document") return m.attachments_type_document();
   if (kind === "media") return m.attachments_type_media();

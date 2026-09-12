@@ -9,6 +9,7 @@ export type AttachmentKind =
   | "page"
   | "collection"
   | "app"
+  | "directory"
   | "document"
   | "media";
 export type AttachmentAvailability = "available" | "limited" | "external_only";
@@ -21,6 +22,7 @@ export interface AttachmentRow {
   ownerPath: string | null;
   sourcePath: string;
   hasApp: boolean;
+  hasChildren?: boolean;
   icon: string | null;
   kind: AttachmentKind;
   format: string;
@@ -74,6 +76,7 @@ export type AttachmentsSourceState =
     };
 
 export interface AttachmentOwnerInput {
+  branchPath?: string;
   projectPath: string;
   spaceId: string | null;
   ownerPath: string;

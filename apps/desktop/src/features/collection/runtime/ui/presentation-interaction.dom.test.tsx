@@ -10,7 +10,11 @@ import { CollectionListRowContent } from "../../ui/list/list-row";
 import { CollectionPresentationGalleryCard } from "../../ui/presentation-gallery-card";
 import { EMPTY_COLLECTION_QUERY } from "../model/query";
 import { defineCollectionPresentation } from "../model/runtime";
-import type { CollectionActivationContext } from "../model/types";
+import type {
+  CollectionActivationContext,
+  CollectionPresentationDescriptor,
+  CollectionQueryState,
+} from "../model/types";
 import { CollectionPresentationShell } from "./presentation-shell";
 
 interface Row {
@@ -509,6 +513,182 @@ test("shared Gallery card keeps one activation contract across pointer and keybo
   } finally {
     await act(async () => root.unmount());
     restoreGlobals();
+    dom.window.close();
+  }
+});
+
+test("opt-in Table hierarchy keeps root query, sibling sort, disclosure and focus in one host", async () => {
+  const dom = new JSDOM("<div id='app'></div>", {
+    pretendToBeVisual: true,
+    url: "http://localhost/",
+  });
+  const restore = installDomGlobals(dom);
+  const root = createRoot(dom.window.document.getElementById("app")!);
+  const expanded = new Set<string>();
+  let roots: Row[] = [
+    { id: "parent", name: "Parent" },
+    { id: "other", name: "Other" },
+  ];
+  const branches = new Map<string, Row[]>([
+    [
+      "parent",
+      [
+        { id: "z", name: "Zulu" },
+        { id: "nested", name: "Alpha" },
+      ],
+    ],
+    ["nested", [{ id: "leaf", name: "Leaf" }]],
+  ]);
+  let query: CollectionQueryState = EMPTY_COLLECTION_QUERY;
+  const activations: CollectionActivationContext[] = [];
+  const descriptor: CollectionPresentationDescriptor<Row> = {
+    id: "hierarchy",
+    label: "Hierarchy",
+    getRowId: (row) => row.id,
+    properties: [
+      {
+        key: "name",
+        label: "Name",
+        origin: "owner_defined",
+        owner: { kind: "feature", featureId: "test" },
+        getValue: (row) => row.name,
+        semantics: { kind: "standard", standard: { type: "text" } },
+        capabilities: {
+          sort: { kind: "standard" },
+          filter: { kind: "standard" },
+        },
+      },
+    ],
+    query: {
+      getSearchText: (row) => row.name,
+      defaultSort: [{ propertyKey: "name", direction: "asc" }],
+    },
+    onActivate: (_row, context) => {
+      activations.push(context);
+    },
+    layout: {
+      kind: "table",
+      primaryProperty: "name",
+      visibleProperties: ["name"],
+      renderLeading: () => <span aria-hidden>📁</span>,
+      hierarchy: {
+        getLabel: (row) => row.name,
+        getBranch: (row) =>
+          branches.has(row.id)
+            ? {
+                expanded: expanded.has(row.id),
+                rows: branches.get(row.id)!,
+                status:
+                  row.id === "nested" ? (
+                    <span>Branch diagnostic</span>
+                  ) : undefined,
+              }
+            : null,
+        onToggle: (row) => {
+          if (expanded.has(row.id)) expanded.delete(row.id);
+          else expanded.add(row.id);
+          render();
+        },
+      },
+    },
+  };
+  const render = () =>
+    root.render(
+      <CollectionPresentationShell
+        instanceKey="tree-test"
+        presentation={defineCollectionPresentation({
+          descriptor,
+          state: { phase: "ready", rows: roots },
+        })}
+        query={query}
+        onQueryChange={(next) => {
+          query = next;
+          render();
+        }}
+      />,
+    );
+  const rows = () =>
+    [
+      ...dom.window.document.querySelectorAll<HTMLElement>(
+        "[data-collection-row]",
+      ),
+    ].map((element) => element.dataset.collectionRow);
+  const element = (id: string) =>
+    dom.window.document.querySelector<HTMLElement>(
+      `[data-collection-row="${id}"]`,
+    )!;
+  const toggle = (id: string) =>
+    element(id).querySelector<HTMLElement>("[aria-expanded]")!;
+  try {
+    await act(async () => render());
+    expect(rows()).toEqual(["other", "parent"]);
+    await act(async () => toggle("parent").click());
+    expect(rows()).toEqual(["other", "parent", "nested", "z"]);
+    expect(activations.length).toBe(0);
+    expect(toggle("parent").getAttribute("aria-expanded")).toBe("true");
+    await act(async () => toggle("nested").click());
+    expect(rows()).toEqual(["other", "parent", "nested", "leaf", "z"]);
+    expect(dom.window.document.querySelectorAll("table").length).toBe(1);
+    expect(dom.window.document.querySelectorAll("thead").length).toBe(1);
+    expect(
+      dom.window.document
+        .querySelector("[data-collection-branch-status]")
+        ?.getAttribute("tabindex"),
+    ).toBeNull();
+    await act(async () => {
+      element("nested").focus();
+      element("nested").dispatchEvent(
+        new dom.window.KeyboardEvent("keydown", {
+          key: "ArrowDown",
+          bubbles: true,
+        }),
+      );
+    });
+    expect(dom.window.document.activeElement).toBe(element("leaf"));
+    await act(async () =>
+      element("leaf").dispatchEvent(
+        new dom.window.KeyboardEvent("keydown", {
+          key: "Enter",
+          bubbles: true,
+        }),
+      ),
+    );
+    expect(activations.length).toBe(1);
+    await act(async () => toggle("nested").click());
+    expect(dom.window.document.activeElement).toBe(element("nested"));
+    expect(activations[0]!.fallbackFocus?.()).toBe(element("nested"));
+    await act(async () => {
+      query = {
+        ...EMPTY_COLLECTION_QUERY,
+        search: "Parent",
+        sort: [{ propertyKey: "name", direction: "desc" }],
+      };
+      render();
+    });
+    expect(rows()).toEqual(["parent", "z", "nested"]);
+    await act(async () => {
+      query = { ...EMPTY_COLLECTION_QUERY, search: "Leaf" };
+      render();
+    });
+    expect(rows()).toEqual([]);
+    await act(async () => {
+      query = EMPTY_COLLECTION_QUERY;
+      render();
+    });
+    expect(rows()).toEqual(["other", "parent", "nested", "z"]);
+    await act(async () => {
+      element("z").focus();
+      roots = [{ id: "other", name: "Other" }];
+      render();
+    });
+    expect(
+      dom.window.document.activeElement?.hasAttribute(
+        "data-collection-surface",
+      ),
+    ).toBe(true);
+  } finally {
+    await act(async () => root.unmount());
+    restore();
     dom.window.close();
   }
 });
