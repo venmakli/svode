@@ -43,7 +43,7 @@ export function StorageS3Fields({
   return (
     <fieldset disabled={disabled} className="min-w-0">
       <FieldGroup>
-        <Field>
+        <Field className="max-w-md">
           <FieldLabel htmlFor="s3-endpoint">
             {m.storage_s3_endpoint()}
           </FieldLabel>
@@ -54,7 +54,7 @@ export function StorageS3Fields({
             placeholder="https://s3.amazonaws.com"
           />
         </Field>
-        <Field>
+        <Field className="max-w-md">
           <FieldLabel htmlFor="s3-bucket">{m.storage_s3_bucket()}</FieldLabel>
           <Input
             id="s3-bucket"
@@ -63,7 +63,7 @@ export function StorageS3Fields({
             placeholder="my-assets"
           />
         </Field>
-        <Field>
+        <Field className="max-w-md">
           <FieldLabel htmlFor="s3-region">{m.storage_s3_region()}</FieldLabel>
           <Input
             id="s3-region"
@@ -72,7 +72,7 @@ export function StorageS3Fields({
             placeholder="us-east-1"
           />
         </Field>
-        <Field>
+        <Field className="max-w-md">
           <FieldLabel htmlFor="s3-prefix">{m.storage_s3_prefix()}</FieldLabel>
           <Input
             id="s3-prefix"
@@ -188,7 +188,7 @@ export function StorageS3Fields({
                       id={`s3-${key}-source`}
                       aria-invalid={missing}
                       aria-describedby={missing ? `s3-${key}-error` : undefined}
-                      className="w-full min-w-0"
+                      className="w-full min-w-0 max-w-md"
                     >
                       <SelectValue
                         placeholder={m.settings_variables_select()}
@@ -314,7 +314,6 @@ export function StorageS3Fields({
                         draft={s3.editor.draft}
                         disabled={disabled}
                         onChange={s3.updateDraft}
-                        compact
                         fixedKind="secret"
                         collisionAlternatives={s3.collisionAlternatives}
                       />

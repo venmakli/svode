@@ -144,7 +144,7 @@ export function StorageSettingsSection({
       : null;
 
   const storageControls = (
-    <div className="space-y-4 max-w-md">
+    <div className="flex w-full min-w-0 flex-col gap-4 [&>*:not(fieldset)]:max-w-md">
       <div>
         <Label className="text-sm font-medium">{m.storage_title()}</Label>
         <p className="mt-1 text-xs text-muted-foreground">
@@ -309,7 +309,7 @@ export function StorageSettingsSection({
 
   if (isRepoSpace) {
     return (
-      <div className="flex max-w-md flex-col gap-4">
+      <div className="flex w-full min-w-0 flex-col gap-4 [&>:first-child]:max-w-md">
         <RepositoryProjectSetting
           activeRootName={activeRootName}
           settings={settings}
