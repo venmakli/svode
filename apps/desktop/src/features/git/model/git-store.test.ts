@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import {
   selectFileChangeIndicator,
+  selectIndicator,
   selectSpaceRootChangeIndicator,
   selectTreeNodeChangeIndicator,
   useGitStore,
@@ -9,6 +10,43 @@ import type { GitStatus } from "./types";
 
 const SPACE_PATH = "/tmp/svode-space";
 const OTHER_SPACE_PATH = "/tmp/other-svode-space";
+
+test("sync activity belongs to the space and leaves file and folder states intact", () => {
+  const state = {
+    ...gitStateBySpace({ [SPACE_PATH]: [], [OTHER_SPACE_PATH]: [] }),
+    syncing: { [SPACE_PATH]: true },
+  };
+
+  expect(selectIndicator(state, SPACE_PATH)).toBe("syncing");
+  expect(selectIndicator(state, OTHER_SPACE_PATH)).toBe("clean");
+  expect(selectFileChangeIndicator(state, SPACE_PATH, "docs/page.md")).toEqual({
+    kind: "clean",
+  });
+  expect(
+    selectTreeNodeChangeIndicator(state, SPACE_PATH, {
+      path: "docs/README.md",
+      isContainer: true,
+    }),
+  ).toEqual({ kind: "clean" });
+
+  const files: GitStatus["files"] = [
+    { path: "docs/changed.md", state: "modified" },
+    { path: "conflict.md", state: "conflict" },
+  ];
+  const idle = gitState(files);
+  const syncing = { ...idle, syncing: { [SPACE_PATH]: true } };
+  for (const path of ["docs/changed.md", "conflict.md", "pending.md"]) {
+    expect(
+      selectFileChangeIndicator(syncing, SPACE_PATH, path, path === "pending.md"),
+    ).toEqual(
+      selectFileChangeIndicator(idle, SPACE_PATH, path, path === "pending.md"),
+    );
+  }
+  const folder = { path: "docs/README.md", isContainer: true };
+  expect(selectTreeNodeChangeIndicator(syncing, SPACE_PATH, folder)).toEqual(
+    selectTreeNodeChangeIndicator(idle, SPACE_PATH, folder),
+  );
+});
 
 test("selectFileChangeIndicator marks untracked leaf files", () => {
   const state = gitState([{ path: "drafts/new.md", state: "untracked" }]);

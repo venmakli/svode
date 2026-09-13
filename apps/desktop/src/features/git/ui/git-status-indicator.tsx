@@ -92,7 +92,7 @@ function IndicatorIcon({
           <TooltipTrigger asChild>
             <RefreshCw
               aria-label={label}
-              className="h-3 w-3 animate-spin text-muted-foreground"
+              className="size-3! animate-spin text-muted-foreground"
             />
           </TooltipTrigger>
           <TooltipContent side="right">{label}</TooltipContent>
@@ -125,7 +125,7 @@ function IndicatorIcon({
           <TooltipTrigger asChild>
             <RefreshCw
               aria-label={label}
-              className="h-3 w-3 animate-spin text-muted-foreground"
+              className="size-3! animate-spin text-muted-foreground"
             />
           </TooltipTrigger>
           <TooltipContent side="right">{label}</TooltipContent>

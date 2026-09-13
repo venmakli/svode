@@ -136,7 +136,6 @@ export type FileChangeIndicator =
       scope: "self" | "descendants" | "mixed";
       state?: FileGitState;
     }
-  | { kind: "syncing" }
   | { kind: "conflict" }
   | { kind: "error"; message: string };
 
@@ -151,7 +150,6 @@ type DirtyFileChangeReason = DirtyFileChangeIndicator["reason"];
 type DirtyFileChangeScope = DirtyFileChangeIndicator["scope"];
 
 const CLEAN_FILE_INDICATOR: FileChangeIndicator = { kind: "clean" };
-const SYNCING_FILE_INDICATOR: FileChangeIndicator = { kind: "syncing" };
 const CONFLICT_FILE_INDICATOR: FileChangeIndicator = { kind: "conflict" };
 const DIRTY_FILE_INDICATORS = new Map<string, DirtyFileChangeIndicator>();
 
@@ -175,7 +173,7 @@ export function selectFileIndicator(
   state: GitState,
   spacePath: string,
   filePath: string,
-): "clean" | "dirty" | "conflict" | "syncing" {
+): "clean" | "dirty" | "conflict" {
   const indicator = selectFileChangeIndicator(state, spacePath, filePath);
   return indicator.kind === "error" ? "clean" : indicator.kind;
 }
@@ -278,7 +276,6 @@ function selectFileTargetChangeIndicator(
     );
   }
 
-  if (state.syncing[spacePath]) return SYNCING_FILE_INDICATOR;
   return CLEAN_FILE_INDICATOR;
 }
 
