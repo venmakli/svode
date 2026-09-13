@@ -67,13 +67,8 @@ export function TerminalPanelHost() {
         onOpenAutoFocus={(event) => event.preventDefault()}
         onCloseAutoFocus={(event) => event.preventDefault()}
         onPointerDownOutside={(event) => {
-          // The header button owns its toggle; dismissing first would reopen it.
-          if (
-            event.target instanceof Element &&
-            event.target.closest("[data-terminal-toggle]")
-          ) {
-            event.preventDefault();
-          }
+          // Keep the terminal available while working or starting a drag outside.
+          event.preventDefault();
         }}
         onFocusOutside={(event) => event.preventDefault()}
         onEscapeKeyDown={(event) => event.preventDefault()}

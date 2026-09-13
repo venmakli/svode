@@ -68,6 +68,9 @@ test("drawer keeps its terminal mounted across hide, reopen, and position change
           side={side}
           inert={!open}
           aria-describedby={undefined}
+          onPointerDownOutside={(event) => event.preventDefault()}
+          onFocusOutside={(event) => event.preventDefault()}
+          onEscapeKeyDown={(event) => event.preventDefault()}
         >
           <SheetTitle>Terminal</SheetTitle>
           <button onClick={toggleSide}>Move</button>
@@ -117,7 +120,7 @@ test("drawer keeps its terminal mounted across hide, reopen, and position change
         new dom.window.MouseEvent("pointerdown", { bubbles: true }),
       );
     });
-    expect(dismissals).toBe(1);
+    expect(dismissals).toBe(0);
     expect(disposals).toBe(0);
   } finally {
     await act(async () => root.unmount());
