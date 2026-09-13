@@ -9,6 +9,7 @@ import {
 } from '@platejs/selection/react';
 import { resizeLengthClampStatic } from '@platejs/resizable';
 import {
+  getTableColumnCount,
   setCellBackground,
   setTableColSize,
   setTableMarginLeft,
@@ -154,6 +155,30 @@ function useTableResizeContext() {
   return context;
 }
 
+function useResolvedTableColSizes(disableOverrides = false) {
+  const { getOptions } = useEditorPlugin(TablePlugin);
+  const { initialTableWidth = 0, minColumnWidth = 0 } = getOptions();
+  const columnCount = useElementSelector(
+    ([node]) => getTableColumnCount(node as TTableElement),
+    [],
+    { key: KEYS.table }
+  );
+  const transformColSizes = React.useCallback(
+    (sizes: number[]) => {
+      const fallback = Math.max(
+        minColumnWidth,
+        initialTableWidth && columnCount ? initialTableWidth / columnCount : 120
+      );
+      return Array.from(
+        { length: columnCount },
+        (_, index) => sizes[index] || fallback
+      );
+    },
+    [columnCount, initialTableWidth, minColumnWidth]
+  );
+  return useTableColSizes({ disableOverrides, transformColSizes });
+}
+
 function useTableResizeController({
   deferColumnResize,
   dragIndicatorRef,
@@ -175,7 +200,7 @@ function useTableResizeController({
 }) {
   const { editor, getOptions } = useEditorPlugin(TablePlugin);
   const { disableMarginLeft = false, minColumnWidth = 0 } = getOptions();
-  const colSizes = useTableColSizes({ disableOverrides: true });
+  const colSizes = useResolvedTableColSizes(true);
   const colSizesRef = React.useRef(colSizes);
   const activeHandleKeyRef = React.useRef<string | null>(null);
   const activeRowElementRef = React.useRef<HTMLTableRowElement | null>(null);
@@ -568,7 +593,7 @@ export const TableElement = withHOC(
       (editor) => editor.getApi(TablePlugin).table.isSelectingCell(),
       []
     );
-    const colSizes = useTableColSizes();
+    const colSizes = useResolvedTableColSizes();
     const controlColumnWidth = hasControls ? TABLE_CONTROL_COLUMN_WIDTH : 0;
     const dragIndicatorRef = React.useRef<HTMLDivElement>(null);
     const hoverIndicatorRef = React.useRef<HTMLDivElement>(null);

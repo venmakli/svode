@@ -93,7 +93,7 @@ if (process.env.SVODE_PLATE53_DOM !== "1") {
     const root = createRoot(document.getElementById("app")!);
     const changes: string[] = [];
     const source =
-      "| Header |\\n| --- |\\n| before [Страница](page.md) after |".replaceAll(
+      "| Header | Details |\\n| --- | --- |\\n| before [Страница](page.md) after | tail |".replaceAll(
         "\\n",
         "\n",
       );
@@ -113,6 +113,10 @@ if (process.env.SVODE_PLATE53_DOM !== "1") {
       expect(
         document.querySelector("table")?.textContent?.replace(/\s+/g, " "),
       ).toContain("before Страница after");
+      expect(document.querySelector("table")!.style.width).toBe("640px");
+      expect(
+        document.querySelector("colgroup col")!.getAttribute("style"),
+      ).toContain("width: 320px");
       expect(changes).toEqual([]);
       expect(
         document
@@ -157,6 +161,14 @@ if (process.env.SVODE_PLATE53_DOM !== "1") {
       expect(changes.at(-1)).toContain(
         "edited before [Страница](page.md) after",
       );
+      await act(async () => {
+        mountedEditor!.tf.setNodes({ colSizes: [480, 160] }, { at: [0] });
+      });
+      expect(
+        document
+          .querySelector("colgroup col:last-child")!
+          .getAttribute("style"),
+      ).toContain("width: 160px");
       const saved = changes.at(-1)!;
       await act(async () => {
         root.render(
@@ -170,6 +182,7 @@ if (process.env.SVODE_PLATE53_DOM !== "1") {
           </TooltipProvider>,
         );
       });
+      expect(document.querySelector("table")!.style.width).toBe("640px");
       const writes = changes.length;
       await act(async () => {
         mountedEditor!.tf.insertText("blocked ", {
