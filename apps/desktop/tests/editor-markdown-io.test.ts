@@ -14,6 +14,7 @@ import { MediaKit } from "../src/components/editor/plugins/media-kit";
 import { TableKit } from "../src/components/editor/plugins/table-kit";
 import { deserializeImportedMarkdown } from "../src/components/ui/import-toolbar-button";
 import { deserializeWithConflicts } from "../src/features/editor/conflict/parse-conflicts";
+import { loadProgrammaticEditorValue } from "../src/features/editor/model/programmatic-editor-load";
 import {
   deserializeEditorMarkdownInsertion,
   normalizeMarkdownForPlate,
@@ -85,6 +86,27 @@ function createMarkdownEditor() {
     ],
   });
 }
+
+test("table inline links survive programmatic normalization and two round trips", () => {
+  const editor = createMarkdownEditor();
+  const markdown =
+    "| Header | Links |\n| --- | --- |\n| Unicode | \u200b[Страница](page.md)\u200b and [Other](other.md) after |\n";
+  let source = markdown;
+  for (let round = 0; round < 3; round += 1) {
+    loadProgrammaticEditorValue(
+      editor,
+      deserializeWithConflicts(editor, source),
+    );
+    editor.tf.normalize({ force: true });
+    expect(JSON.stringify(editor.children)).toContain('"url":"page.md"');
+    expect(JSON.stringify(editor.children)).toContain('"url":"other.md"');
+    expect(JSON.stringify(editor.children)).toContain("Страница");
+    source = editor.getApi(MarkdownPlugin).markdown.serialize();
+    expect(source).toContain(
+      "\u200b[Страница](page.md)\u200b and [Other](other.md) after",
+    );
+  }
+});
 
 function isTextNode(node: PlateNode): boolean {
   return typeof node.text === "string" && !Array.isArray(node.children);
@@ -181,13 +203,10 @@ test("merge conflict accepted branch uses the same markdown insertion boundary",
 test("toolbar markdown import decision delegates to the injected editor insertion boundary", () => {
   const editor = createMarkdownEditor();
   let importedText: string | null = null;
-  const value = deserializeImportedMarkdown(
-    fixtures.gfmTableBareBr,
-    (text) => {
-      importedText = text;
-      return deserializeEditorMarkdownInsertion(editor, text);
-    },
-  );
+  const value = deserializeImportedMarkdown(fixtures.gfmTableBareBr, (text) => {
+    importedText = text;
+    return deserializeEditorMarkdownInsertion(editor, text);
+  });
   const result = validateStructure(value);
 
   expect(importedText).toBe(fixtures.gfmTableBareBr);

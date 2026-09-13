@@ -38,7 +38,8 @@ export interface MyTextBlockElement
   )[];
 }
 
-export interface MyBlockquoteElement extends MyTextBlockElement {
+export interface MyBlockquoteElement extends MyBlockElement {
+  children: MyValue;
   type: typeof KEYS.blockquote;
 }
 

@@ -128,6 +128,28 @@ export const insertBlock = (
       return;
     }
 
+    if (type === KEYS.blockquote) {
+      const insertPath = PathApi.next(path);
+      editor.tf.insertNodes(
+        {
+          type,
+          children: [editor.api.create.block({ type: KEYS.p })],
+        },
+        { at: insertPath },
+      );
+      if (isCurrentBlockEmpty && !isSameBlockType) {
+        const remove = () => editor.tf.removeNodes({ at: path });
+        const withoutSuggestions =
+          editor.getApi(SuggestionPlugin)?.suggestion?.withoutSuggestions;
+        if (withoutSuggestions) withoutSuggestions(remove);
+        else remove();
+      }
+      const quotePath =
+        isCurrentBlockEmpty && !isSameBlockType ? path : insertPath;
+      const start = editor.api.start(quotePath.concat([0]));
+      if (start) editor.tf.select(start);
+      return;
+    }
     if (type in insertBlockMap) {
       insertBlockMap[type](editor, type, mediaAdapter);
     } else {
@@ -192,6 +214,12 @@ export const setBlockType = (
   { at }: { at?: Path } = {},
 ) => {
   editor.tf.withoutNormalizing(() => {
+    if (type === KEYS.blockquote) {
+      const target = at ?? editor.selection;
+      if (!target || editor.api.some({ at: target, match: { type } })) return;
+      editor.tf.toggleBlock(type, { ...(at ? { at } : {}), wrap: true });
+      return;
+    }
     const setEntry = (entry: NodeEntry<TElement>) => {
       const [node, path] = entry;
 

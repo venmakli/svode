@@ -9,7 +9,6 @@ export const IndentKit = [
       targetPlugins: [
         ...KEYS.heading,
         KEYS.p,
-        KEYS.blockquote,
         KEYS.codeBlock,
         KEYS.toggle,
         KEYS.img,

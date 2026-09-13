@@ -7,7 +7,6 @@ export const BaseIndentKit = [
       targetPlugins: [
         ...KEYS.heading,
         KEYS.p,
-        KEYS.blockquote,
         KEYS.codeBlock,
         KEYS.toggle,
       ],

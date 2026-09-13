@@ -11,7 +11,6 @@ export const BaseListKit = [
       targetPlugins: [
         ...KEYS.heading,
         KEYS.p,
-        KEYS.blockquote,
         KEYS.codeBlock,
         KEYS.toggle,
       ],

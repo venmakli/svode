@@ -561,10 +561,13 @@ export const TableElement = withHOC(
     );
     const hasControls = !readOnly && !isSelectionAreaVisible;
     const {
-      isSelectingCell,
       marginLeft,
       props: tableProps,
     } = useTableElement();
+    const isSelectingCell = useEditorSelector(
+      (editor) => editor.getApi(TablePlugin).table.isSelectingCell(),
+      []
+    );
     const colSizes = useTableColSizes();
     const controlColumnWidth = hasControls ? TABLE_CONTROL_COLUMN_WIDTH : 0;
     const dragIndicatorRef = React.useRef<HTMLDivElement>(null);
@@ -1004,6 +1007,7 @@ export function TableRowElement({
     element,
     type: element.type,
     canDropNode: ({ dragEntry, dropEntry }) =>
+      !!dragEntry &&
       PathApi.equals(
         PathApi.parent(dragEntry[1]),
         PathApi.parent(dropEntry[1])

@@ -42,7 +42,10 @@ export function BlockContextMenu({ children }: { children: React.ReactNode }) {
             });
           }
 
-          editor.tf.toggleBlock(type, { at: path });
+          editor.tf.toggleBlock(type, {
+            at: path,
+            wrap: type === KEYS.blockquote,
+          });
         });
     },
     [editor],
