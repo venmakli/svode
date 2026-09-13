@@ -1,6 +1,6 @@
-import type { PointerEvent as ReactPointerEvent } from "react";
-import { useRef } from "react";
-import { PanelBottomClose, SquareTerminal } from "lucide-react";
+import { PanelBottom, PanelRight, X } from "lucide-react";
+import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
+import { useTerminalDrawerLayout } from "../hooks/use-terminal-drawer-layout";
 import { Button } from "@/components/ui/button";
 import {
   Tooltip,
@@ -22,87 +22,125 @@ export function TerminalPanelHost() {
   useTerminalEventBridge();
   useTerminalRootLifecycle();
 
-  const hostRef = useRef<HTMLDivElement>(null);
+  const { side, ratio, toggleSide, resizeHandlers } = useTerminalDrawerLayout();
+  const moveLabel =
+    side === "right" ? m.terminal_move_bottom() : m.terminal_move_right();
   const panelOpen = useTerminalStore((state) => state.panelOpen);
-  const panelRatio = useTerminalStore((state) => state.panelRatio);
-  const setPanelRatio = useTerminalStore((state) => state.setPanelRatio);
   const tabs = useTerminalStore((state) => state.tabs);
   const activeTabId = useTerminalStore((state) => state.activeTabId);
   const closePanel = useTerminalStore((state) => state.closePanel);
   const { projectTarget, spaceTargets } = useTerminalTargets();
   useTerminalAgentSessionSync(projectTarget?.path ?? null);
 
-  function handleResizeStart(event: ReactPointerEvent<HTMLDivElement>) {
-    if (!panelOpen) return;
-    const parent = hostRef.current?.parentElement;
-    if (!parent) return;
-
-    event.preventDefault();
-    event.currentTarget.setPointerCapture(event.pointerId);
-    const parentRect = parent.getBoundingClientRect();
-
-    function handlePointerMove(moveEvent: globalThis.PointerEvent) {
-      const nextHeight = parentRect.bottom - moveEvent.clientY;
-      setPanelRatio(nextHeight / parentRect.height);
-    }
-
-    function handlePointerUp() {
-      window.removeEventListener("pointermove", handlePointerMove);
-      window.removeEventListener("pointerup", handlePointerUp);
-    }
-
-    window.addEventListener("pointermove", handlePointerMove);
-    window.addEventListener("pointerup", handlePointerUp);
-  }
-
   return (
-    <div
-      ref={hostRef}
-      className={cn(
-        "shrink-0 overflow-hidden border-t bg-card transition-[height]",
-        panelOpen ? "min-h-44" : "h-0 min-h-0 border-t-0",
-      )}
-      style={{ height: panelOpen ? `${panelRatio * 100}%` : 0 }}
+    <Sheet
+      open={panelOpen}
+      modal={false}
+      onOpenChange={(open) => {
+        if (!open) closePanel();
+      }}
     >
-      <div
-        role="separator"
-        aria-orientation="horizontal"
-        className="flex h-1 cursor-row-resize items-center justify-center bg-border/60"
-        onPointerDown={handleResizeStart}
-      />
-      <div className="flex h-9 items-center gap-1 border-b bg-muted/40">
-        <div className="flex h-9 shrink-0 items-center pl-3 pr-1 text-muted-foreground">
-          <SquareTerminal className="size-4" />
+      <SheetContent
+        forceMount
+        side={side}
+        showCloseButton={false}
+        aria-describedby={undefined}
+        inert={!panelOpen}
+        data-terminal-drawer
+        className="gap-0 rounded-xl border data-[state=closed]:hidden"
+        style={{
+          top: side === "right" ? "0.75rem" : "auto",
+          right: "0.75rem",
+          bottom: "0.75rem",
+          left: side === "right" ? "auto" : "0.75rem",
+          width:
+            side === "right"
+              ? `max(min(20rem, calc(100vw - 1.5rem)), calc((100vw - 1.5rem) * ${ratio}))`
+              : "auto",
+          height:
+            side === "bottom"
+              ? `max(min(11rem, calc(100vh - 1.5rem)), calc((100vh - 1.5rem) * ${ratio}))`
+              : "auto",
+          maxWidth: "calc(100vw - 1.5rem)",
+          maxHeight: "calc(100vh - 1.5rem)",
+        }}
+        onOpenAutoFocus={(event) => event.preventDefault()}
+        onCloseAutoFocus={(event) => event.preventDefault()}
+        onPointerDownOutside={(event) => {
+          // The header button owns its toggle; dismissing first would reopen it.
+          if (
+            event.target instanceof Element &&
+            event.target.closest("[data-terminal-toggle]")
+          ) {
+            event.preventDefault();
+          }
+        }}
+        onFocusOutside={(event) => event.preventDefault()}
+        onEscapeKeyDown={(event) => event.preventDefault()}
+      >
+        <SheetTitle className="sr-only">{m.terminal_title()}</SheetTitle>
+        <div
+          role="separator"
+          tabIndex={panelOpen ? 0 : -1}
+          aria-label={m.terminal_resize()}
+          aria-orientation={side === "right" ? "vertical" : "horizontal"}
+          aria-valuemin={22}
+          aria-valuemax={72}
+          aria-valuenow={Math.round(ratio * 100)}
+          className={cn(
+            "absolute touch-none rounded-sm hover:bg-border focus-visible:bg-border focus-visible:outline-none",
+            side === "right"
+              ? "inset-y-3 -left-1 w-2 cursor-col-resize"
+              : "inset-x-3 -top-1 h-2 cursor-row-resize",
+          )}
+          {...resizeHandlers}
+        />
+        <div className="flex h-10 shrink-0 items-center gap-1 rounded-t-xl border-b bg-muted/40 px-1">
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                aria-label={moveLabel}
+                onClick={toggleSide}
+              >
+                {side === "right" ? <PanelBottom /> : <PanelRight />}
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>{moveLabel}</TooltipContent>
+          </Tooltip>
+          <div className="flex min-w-0 flex-1 items-center gap-1">
+            <TerminalTabStrip tabs={tabs} activeTabId={activeTabId} />
+            <TerminalTargetMenu project={projectTarget} spaces={spaceTargets} />
+            <div className="min-w-2 flex-1" />
+          </div>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                aria-label={m.terminal_hide_panel()}
+                onClick={closePanel}
+              >
+                <X />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="top">
+              {m.terminal_hide_panel()}
+            </TooltipContent>
+          </Tooltip>
         </div>
-        <div className="flex min-w-0 flex-1 items-center gap-1">
-          <TerminalTabStrip tabs={tabs} activeTabId={activeTabId} />
-          <TerminalTargetMenu project={projectTarget} spaces={spaceTargets} />
-          <div className="min-w-2 flex-1" />
+        <div className="relative min-h-0 flex-1 overflow-hidden rounded-b-xl bg-background">
+          {tabs.map((tab) => (
+            <TerminalPane
+              key={tab.id}
+              tab={tab}
+              active={tab.id === activeTabId}
+              panelOpen={panelOpen}
+            />
+          ))}
         </div>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              aria-label={m.terminal_hide_panel()}
-              onClick={closePanel}
-            >
-              <PanelBottomClose />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent side="top">{m.terminal_hide_panel()}</TooltipContent>
-        </Tooltip>
-      </div>
-      <div className="relative h-[calc(100%-2.5rem)] overflow-hidden bg-background">
-        {tabs.map((tab) => (
-          <TerminalPane
-            key={tab.id}
-            tab={tab}
-            active={tab.id === activeTabId}
-            panelOpen={panelOpen}
-          />
-        ))}
-      </div>
-    </div>
+      </SheetContent>
+    </Sheet>
   );
 }

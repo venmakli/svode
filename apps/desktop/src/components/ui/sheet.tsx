@@ -58,7 +58,7 @@ function SheetContent({
   overlayClassName?: string
 }) {
   return (
-    <SheetPortal>
+    <SheetPortal forceMount={props.forceMount}>
       <SheetOverlay className={overlayClassName} />
       <SheetPrimitive.Content
         data-slot="sheet-content"

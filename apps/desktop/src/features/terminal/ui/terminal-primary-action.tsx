@@ -24,6 +24,7 @@ export function TerminalPrimaryAction({ target }: TerminalPrimaryActionProps) {
           variant={panelOpen ? "secondary" : "outline"}
           size="icon-sm"
           aria-label={m.terminal_toggle()}
+          data-terminal-toggle
           disabled={!target}
           onClick={() => void togglePanel(target)}
         >
