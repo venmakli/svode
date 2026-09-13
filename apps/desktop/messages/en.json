@@ -279,6 +279,7 @@
   "project_new_title": "New project",
   "project_name_label": "Name",
   "project_name_placeholder": "Project name",
+  "editor_add_icon": "Add icon",
   "project_icon_label": "Icon",
   "project_description_label": "Description",
   "project_description_placeholder": "Optional description",

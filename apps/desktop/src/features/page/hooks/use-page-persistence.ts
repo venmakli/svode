@@ -27,7 +27,11 @@ export function usePagePersistence({
   const persistenceRef = useRef(
     new Map<
       symbol,
-      { kind: PagePersistenceKind; flush: PagePersistenceFlush }
+      {
+        kind: PagePersistenceKind;
+        flush: PagePersistenceFlush;
+        retry?: PagePersistenceFlush;
+      }
     >(),
   );
   const accessBlockedRef = useRef(false);
@@ -39,9 +43,13 @@ export function usePagePersistence({
   const [persistenceError, setPersistenceError] = useState<string | null>(null);
 
   const registerPersistence = useCallback(
-    (kind: PagePersistenceKind, flush: PagePersistenceFlush) => {
+    (
+      kind: PagePersistenceKind,
+      flush: PagePersistenceFlush,
+      retry?: PagePersistenceFlush,
+    ) => {
       const key = Symbol(kind);
-      persistenceRef.current.set(key, { kind, flush });
+      persistenceRef.current.set(key, { kind, flush, retry });
       return () => persistenceRef.current.delete(key);
     },
     [],
@@ -60,7 +68,8 @@ export function usePagePersistence({
       return true;
     } catch (error) {
       const retry = async () => {
-        for (const participant of participants) await participant.flush();
+        for (const participant of participants)
+          await (participant.retry ?? participant.flush)();
         accessBlockedRef.current = false;
         setPersistenceError(null);
         retryPersistenceRef.current = null;

@@ -12,7 +12,6 @@ import * as m from "@/paraglide/messages.js";
 import { detailPageBodyClassName } from "@/shared/ui/page-layout";
 import { usePageDetailContext } from "../hooks/page-detail-context";
 import { usePageSurfaceSession } from "../hooks/page-surface-context";
-import { PageAccessRecovery } from "./page-access-recovery";
 import type { ReactNode } from "react";
 
 export function ReadmeSurface() {
@@ -84,12 +83,7 @@ export function ReadmeSurface() {
       />
     );
   }
-  return (
-    <>
-      <PageAccessRecovery className="mx-auto w-full max-w-5xl px-6 pt-4" />
-      {content}
-    </>
-  );
+  return <>{content}</>;
 }
 
 function ReadmeSurfaceSkeleton() {

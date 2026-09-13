@@ -7,6 +7,11 @@ export interface PageFieldSavePolicy {
   delayMs?: number;
 }
 
+export interface SavePageFieldOptions {
+  policy?: PageFieldSavePolicy;
+  flush?: boolean;
+}
+
 export type PageFieldSaveMode = PageFieldSavePolicy["mode"];
 
 export function pageFieldSavePolicy(field: string): PageFieldSavePolicy {
@@ -82,7 +87,10 @@ export function mergeSavedPageField(
     };
   }
   if (field === "cover") {
-    return { ...current, meta: { ...nextMeta, cover: saved.meta.cover ?? null } };
+    return {
+      ...current,
+      meta: { ...nextMeta, cover: saved.meta.cover ?? null },
+    };
   }
 
   const extra = { ...current.meta.extra };

@@ -21,10 +21,11 @@ export function AttachmentOwnerPeek({
   registerCloseGuard,
 }: AttachmentOwnerPeekContext) {
   const { row } = target;
+  const ownerKind = target.ownerSession?.kind ?? row.kind;
   const openOwner = useOpenScopeOwner();
   const fullPageRoute = useCollectionRouteState();
   const [surfaceId, setSurfaceId] = useState<ScopeSurfaceId>(
-    row.kind === "app" ? "app" : "readme",
+    ownerKind === "app" ? "app" : "readme",
   );
   const [viewName, setViewName] = useState<string | null>(null);
   const [calendarScope, setCalendarScope] = useState<CalendarScope | null>(
@@ -48,7 +49,7 @@ export function AttachmentOwnerPeek({
     hasApp: row.hasApp,
   };
   const owner =
-    row.kind === "collection"
+    ownerKind === "collection"
       ? createCollectionDirectoryOwner({ ...facts, hasSchema: true })
       : createAppDirectoryOwner(facts);
   if (row.contentPath) owner.readmePath = row.contentPath;
@@ -64,7 +65,7 @@ export function AttachmentOwnerPeek({
           }
           openOwner(
             {
-              kind: row.kind === "collection" ? "collection" : "app-directory",
+              kind: ownerKind === "collection" ? "collection" : "app-directory",
               path: row.ownerPath!,
               spaceId,
             },
@@ -78,7 +79,7 @@ export function AttachmentOwnerPeek({
           presentation="compact"
           routeState={routeState}
           compactSurfaceState={{ surfaceId, onSurfaceIdChange: setSurfaceId }}
-          sessionKey={row.key}
+          sessionKey={target.ownerSession?.key ?? row.key}
           fallbackTitle={row.displayName}
           fallbackIcon={row.icon}
           registerNavigationGuard={registerCloseGuard}

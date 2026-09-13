@@ -34,6 +34,7 @@ interface PageSurfaceSessionContextValue {
   registerPersistence: (
     kind: PagePersistenceKind,
     flush: PagePersistenceFlush,
+    retry?: PagePersistenceFlush,
   ) => () => void;
   retryPersistence: () => Promise<void>;
   runMutation: (operation: () => Promise<void>) => Promise<void>;

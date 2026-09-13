@@ -143,6 +143,53 @@ test("typed activation and source refresh reject stale owner, marker and request
       expect(current.peekTarget?.row).toEqual(row);
       await act(async () => current.closePeek());
     }
+    for (const missing of [collection, app]) {
+      const missingHead = {
+        ...missing,
+        sourceShape: "directory" as const,
+        contentPath: null,
+        ownerPath: "child",
+      };
+      let refresh!: Promise<void>;
+      await act(async () => {
+        refresh = current.source.refresh();
+      });
+      await act(async () => {
+        pending.shift()!(snapshot("missing", [missingHead]));
+        await refresh;
+      });
+      await act(async () =>
+        current.onActivate(missingHead, { rowId: missingHead.key }),
+      );
+      const identity = current.peekTarget?.ownerSession;
+      const ready = {
+        ...missingHead,
+        key: missing.kind === "app" ? "page:child/README.md" : missingHead.key,
+        kind:
+          missing.kind === "app" ? ("page" as const) : ("collection" as const),
+        path: "child/README.md",
+        contentPath: "child/README.md",
+        hasApp: missing.kind === "app",
+        displayName: "Saved",
+        icon: "🚀",
+      };
+      await act(async () => {
+        refresh = current.source.refresh();
+      });
+      await act(async () => {
+        pending.shift()!(snapshot("created", [ready]));
+        await refresh;
+      });
+      expect(current.peekTarget?.row).toEqual(ready);
+      expect(current.peekTarget?.ownerSession).toEqual(identity);
+      expect(current.source.inventory()?.rows).toEqual([ready]);
+      await act(async () => current.closePeek());
+      await act(async () => current.onActivate(ready, { rowId: ready.key }));
+      expect(current.peekTarget?.ownerSession?.kind).toBe(
+        missing.kind === "app" ? undefined : "collection",
+      );
+      await act(async () => current.closePeek());
+    }
     let first!: Promise<void>;
     let second!: Promise<void>;
     await act(async () => {

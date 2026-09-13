@@ -10,7 +10,15 @@ import { cn } from "@/shared/lib/utils";
 
 import { usePageSurfaceSession } from "../hooks/page-surface-context";
 
-export function PageAccessRecovery({ className }: { className?: string }) {
+export function PageAccessRecovery({
+  className,
+  error,
+  onRetry,
+}: {
+  className?: string;
+  error?: string | null;
+  onRetry?: () => Promise<void>;
+}) {
   const session = usePageSurfaceSession();
   const statusRef = useRef<HTMLDivElement>(null);
   const returnFocusRef = useRef<HTMLElement | null>(null);
@@ -18,7 +26,7 @@ export function PageAccessRecovery({ className }: { className?: string }) {
   const visible =
     (session.recovery.open &&
       session.recovery.pending?.placement === "inline") ||
-    Boolean(session.persistenceError);
+    Boolean(session.persistenceError || error);
 
   useEffect(() => {
     if (visible && !wasVisibleRef.current) {
@@ -54,16 +62,23 @@ export function PageAccessRecovery({ className }: { className?: string }) {
           <RepositoryAccessPrimaryButton recovery={session.recovery} />
         </div>
       ) : null}
-      {session.persistenceError ? (
+      {session.persistenceError || error ? (
         <Alert variant="destructive">
           <AlertTitle>{m.page_surface_save_error_title()}</AlertTitle>
           <AlertDescription className="flex flex-col items-start gap-2">
-            <span>{session.persistenceError}</span>
+            <span>{session.persistenceError ?? error}</span>
             <Button
               type="button"
               variant="outline"
               size="sm"
-              onClick={() => void session.retryPersistence()}
+              disabled={Boolean(onRetry) && session.readOnly}
+              onClick={() =>
+                void (onRetry && !session.persistenceError
+                  ? onRetry()
+                      .then(() => session.prepareForNavigation())
+                      .catch(() => undefined)
+                  : session.retryPersistence())
+              }
             >
               {m.page_surface_save_retry()}
             </Button>

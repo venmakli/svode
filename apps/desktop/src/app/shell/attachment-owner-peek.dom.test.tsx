@@ -236,8 +236,14 @@ if (process.env.SVODE_ATTACHMENT_OWNER_PEEK_TEST !== "1") {
             ),
           ].find((button) => button.textContent?.includes("Cancel"))!;
           await act(async () => nestedClose.click());
-          await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
-          expect(dom.window.document.activeElement?.getAttribute("data-collection-row")).toBe("directory:child");
+          await act(async () => {
+            await new Promise((resolve) => setTimeout(resolve, 20));
+          });
+          expect(
+            dom.window.document.activeElement?.getAttribute(
+              "data-collection-row",
+            ),
+          ).toBe("directory:child");
           expect(getActiveContentSelection().selection).toEqual(before);
           continue;
         }
@@ -253,6 +259,35 @@ if (process.env.SVODE_ATTACHMENT_OWNER_PEEK_TEST !== "1") {
               dialog.querySelector("[data-owner] button") as HTMLElement
             ).click();
           });
+        // Authoritative refresh can change source kind/path after first metadata save.
+        const beforeHeader = dialog.querySelector("[data-owner]");
+        snapshotTarget = {
+          ...snapshotTarget,
+          sourceGeneration: "readme-created",
+          row: {
+            ...snapshotTarget.row,
+            kind: kind === "app" ? "page" : "collection",
+            key:
+              kind === "app" ? "page:child/README.md" : snapshotTarget.row.key,
+            path: kind === "app" ? "child/README.md" : snapshotTarget.row.path,
+            contentPath:
+              kind === "app"
+                ? "child/README.md"
+                : snapshotTarget.row.contentPath,
+            icon: "🚀",
+            displayName: "Saved metadata",
+          },
+        };
+        await act(async () => {
+          dom.window.dispatchEvent(new dom.window.Event("focus"));
+          await new Promise((resolve) => setTimeout(resolve, 150));
+        });
+        expect(
+          dom.window.document.querySelector('[role="dialog"] [data-owner]'),
+        ).toBe(beforeHeader);
+        expect(beforeHeader?.getAttribute("data-surface")).toBe(
+          kind === "app" ? "app" : "collection",
+        );
         const fullPage = [...dialog.querySelectorAll("button")].find(
           (button) =>
             button.textContent?.includes("Expand") ||

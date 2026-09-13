@@ -19,6 +19,10 @@ interface PageIdentityHeaderProps {
   onCoverChange: (cover: PageCover | null) => void;
   onBodyFocus: () => void;
   titleClassName?: string;
+  titleReadOnly?: boolean;
+  fallbackEmoji?: string | null;
+  onActivateIdentity?: () => void;
+  hideCover?: boolean;
   actions?: ReactNode;
   metadata?: ReactNode;
   coverSize?: "default" | "compact";
@@ -40,6 +44,10 @@ export function PageIdentityHeader({
   onCoverChange,
   onBodyFocus,
   titleClassName,
+  titleReadOnly,
+  fallbackEmoji,
+  onActivateIdentity,
+  hideCover = false,
   actions,
   metadata,
   coverSize = "default",
@@ -63,11 +71,18 @@ export function PageIdentityHeader({
         className={cn(
           "flex min-w-0 items-start justify-between gap-4",
           titleClassName,
+          titleReadOnly,
+          fallbackEmoji,
+          onActivateIdentity,
+          (hideCover = false),
         )}
       >
         <div className="min-w-0 flex-1">
           <TitleZone
             title={title}
+            titleReadOnly={titleReadOnly}
+            fallbackEmoji={fallbackEmoji}
+            onActivateIdentity={onActivateIdentity}
             icon={icon}
             description={description}
             onTitleChange={onTitleChange}
@@ -78,10 +93,10 @@ export function PageIdentityHeader({
             readOnly={readOnly}
           />
         </div>
-        {actions || metadata || !cover ? (
+        {actions || metadata || (!cover && !hideCover) ? (
           <div className="flex max-w-[22rem] shrink-0 flex-col items-end text-right">
             <div className="flex h-8 items-center justify-end">
-              {!readOnly ? (
+              {!readOnly && !hideCover ? (
                 <CoverPicker
                   cover={cover}
                   projectPath={projectPath}

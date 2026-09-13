@@ -39,6 +39,10 @@ export function useAttachmentsActivation(owner: AttachmentOwnerRef) {
       setPeekTarget({
         activation,
         mode: "peek",
+        ownerSession:
+          current.kind === "app" || current.kind === "collection"
+            ? { key: current.key, kind: current.kind }
+            : undefined,
         owner: snapshot.owner,
         row: current,
         sourceGeneration: snapshot.generation,

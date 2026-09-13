@@ -14,6 +14,7 @@ import {
   patchPageField,
   rollbackPageField,
   type PageFieldSavePolicy,
+  type SavePageFieldOptions,
 } from "../model/field-save";
 
 interface PendingFieldSave {
@@ -31,10 +32,7 @@ export interface PageFieldSaveContext {
   policy: PageFieldSavePolicy;
 }
 
-export interface SavePageFieldOptions {
-  policy?: PageFieldSavePolicy;
-  flush?: boolean;
-}
+export type { SavePageFieldOptions } from "../model/field-save";
 
 export interface PageFieldSaveController {
   save: (
@@ -57,10 +55,7 @@ export function usePageFieldSave({
 }: {
   spacePath: string;
   projectPath?: string | null;
-  applyPageUpdate: (
-    pagePath: string,
-    update: (page: Page) => Page,
-  ) => void;
+  applyPageUpdate: (pagePath: string, update: (page: Page) => Page) => void;
   deferTitlePathAdoption?: boolean;
   onSaved?: (page: Page, context: PageFieldSaveContext) => void;
   onError?: (error: unknown, context: PageFieldSaveContext) => void;

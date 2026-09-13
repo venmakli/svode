@@ -32,6 +32,7 @@ import type {
   AttachmentActivationRequest,
   AttachmentOwnerRef,
   AttachmentOwnerPeekRenderer,
+  AttachmentOwnerPeekContext,
   AttachmentRow,
 } from "../model/types";
 
@@ -50,7 +51,7 @@ export function AttachmentsPeek({
   readOnly,
   target,
   onOpenChange,
-  renderOwnerPeek: OwnerPeek,
+  renderOwnerPeek,
   directoryContent,
 }: {
   directoryContent?: ReactNode;
@@ -87,7 +88,9 @@ export function AttachmentsPeek({
   });
   const loadedPage = page.state.phase === "ready" ? page.state.page : null;
   const isOwner =
-    target?.row.kind === "collection" || target?.row.kind === "app";
+    Boolean(target?.ownerSession) ||
+    target?.row.kind === "collection" ||
+    target?.row.kind === "app";
   const isDocument = target?.row.kind === "document";
   const isMedia = target?.row.kind === "media";
   const isBinaryViewer = isDocument || isMedia;
@@ -156,7 +159,8 @@ export function AttachmentsPeek({
           {target?.row.kind === "directory" ? (
             directoryContent
           ) : isOwner && target ? (
-            <OwnerPeek
+            <OwnerPeekContent
+              renderOwnerPeek={renderOwnerPeek}
               target={target}
               spaceId={owner.spaceId}
               registerCloseGuard={registerCloseGuard}
@@ -355,4 +359,13 @@ export function restoreAttachmentFocus(
     const target = activation?.returnFocus?.() ?? activation?.fallbackFocus?.();
     target?.focus();
   });
+}
+
+function OwnerPeekContent({
+  renderOwnerPeek,
+  ...context
+}: AttachmentOwnerPeekContext & {
+  renderOwnerPeek: AttachmentOwnerPeekRenderer;
+}) {
+  return renderOwnerPeek(context);
 }

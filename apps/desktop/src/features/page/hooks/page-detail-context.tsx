@@ -25,6 +25,7 @@ import {
   useRetargetPage,
 } from "./use-page-navigation";
 import { handleError } from "../lib/errors";
+import { useReadmeWrites } from "./use-readme-writes";
 import { useOptionalPageSurfaceSession } from "./page-surface-context";
 
 export type ReadmeStatus = "loading" | "ready" | "missing" | "error";
@@ -40,6 +41,9 @@ export interface PageDetailContextValue {
   schemaResult: PageSchemaResult | null;
   status: ReadmeStatus;
   error: string | null;
+  writeError: string | null;
+  retryWrites: () => Promise<void>;
+  metadataDrafts: ReadonlyMap<string, { value: unknown }>;
   fallbackTitle: string;
   fallbackIcon: string | null;
   reload: () => Promise<void>;
@@ -102,13 +106,18 @@ export function PageDetailProvider({
     reloadTreePathParent,
     reloadTreePathParents,
   } = useSpaceTreeSync();
+  const activeSpaceRef = useRef(spacePath);
+  useEffect(() => {
+    activeSpaceRef.current = spacePath;
+  }, [spacePath]);
   const applyPageUpdate = useCallback(
     (pagePath: string, update: (current: Page) => Page) => {
+      if (activeSpaceRef.current !== spacePath) return;
       setPage((current) =>
         current?.path === pagePath ? update(current) : current,
       );
     },
-    [],
+    [spacePath],
   );
   const { flush: flushMetadata, save: saveField } = usePageFieldSave({
     spacePath,
@@ -133,16 +142,7 @@ export function PageDetailProvider({
         ]).catch(handleError);
       }
     },
-    recoverFromError: pageSurface
-      ? (saveError, _context, retry) =>
-          pageSurface.recoverWriteError(saveError, retry)
-      : undefined,
   });
-
-  useEffect(() => {
-    if (!pageSurface) return;
-    return pageSurface.registerPersistence("metadata", flushMetadata);
-  }, [flushMetadata, pageSurface]);
 
   usePageTitleOutcomeEffect({
     scopePath: spacePath,
@@ -157,11 +157,7 @@ export function PageDetailProvider({
         previousPath: titleOutcome.previousPath,
         path: titleOutcome.page.path,
       });
-      retargetPage(
-        titleOutcome.previousPath,
-        titleOutcome.page.path,
-        spaceId,
-      );
+      retargetPage(titleOutcome.previousPath, titleOutcome.page.path, spaceId);
     },
   });
 
@@ -213,29 +209,41 @@ export function PageDetailProvider({
     };
   }, [readmePath, reload]);
 
-  const createReadme = useCallback(async () => {
+  const create = useCallback(async () => {
+    const sequence = reloadSequenceRef.current;
+    let nextPage: Page;
     try {
-      const created = await createPage({
-        spacePath,
-        parentPath: ownerPath === "." ? "" : ownerPath,
-        title: resolvedFallbackTitle,
-        asReadme: true,
-        projectPath,
-      });
-      const nextPage = created;
-      const nextSchema = await loadSchema();
-      setPage(nextPage);
-      setSchemaResult(nextSchema);
-      setError(null);
-      setStatus("ready");
-      await reloadTreePathParent(spaceId, readmePath);
-      await reloadTreeParent(spaceId, ownerPath === "." ? "" : ownerPath);
-      return nextPage;
-    } catch (createError) {
-      setError(String(createError));
-      setStatus("error");
-      throw createError;
+      nextPage = await readPage({ spacePath, path: readmePath });
+    } catch (readError) {
+      if (!isReadmeMissingError(readError, readmePath)) throw readError;
+      try {
+        nextPage = await createPage({
+          spacePath,
+          parentPath: ownerPath === "." ? "" : ownerPath,
+          title: resolvedFallbackTitle,
+          asReadme: true,
+          projectPath,
+        });
+      } catch (createError) {
+        // Another writer or a partially successful create may have made the head.
+        nextPage = await readPage({ spacePath, path: readmePath }).catch(() => {
+          throw createError;
+        });
+      }
     }
+    if (sequence !== reloadSequenceRef.current)
+      throw new Error("Page target changed");
+    setPage(nextPage);
+    setError(null);
+    setStatus("ready");
+    void loadSchema().then((nextSchema) => {
+      if (sequence === reloadSequenceRef.current) setSchemaResult(nextSchema);
+    });
+    void reloadTreePathParent(spaceId, readmePath).catch(handleError);
+    void reloadTreeParent(spaceId, ownerPath === "." ? "" : ownerPath).catch(
+      handleError,
+    );
+    return nextPage;
   }, [
     loadSchema,
     ownerPath,
@@ -248,38 +256,91 @@ export function PageDetailProvider({
     spacePath,
   ]);
 
-  const updateField = useCallback(
+  const save = useCallback(
     async (
+      target: Page,
       field: string,
-      value: unknown,
-      options: SavePageFieldOptions = {},
+      fieldValue: unknown,
+      options: SavePageFieldOptions,
     ) => {
-      if (pageSurface?.readOnly) return;
-      const target = page ?? (await createReadme());
       const column = schemaResult?.schema.columns.find(
         (item) => item.name === field,
       );
-      const save = async () => {
-        await saveField(target, field, value, {
-          flush: options.flush ?? !page,
-          policy:
-            options.policy ??
-            (column ? propertyFieldSavePolicy(column) : undefined),
-        });
-      };
-      if (field === "title" && options.flush && pageSurface) {
-        await pageSurface.runMutation(save);
-        return;
-      }
-      await save();
+      await saveField(target, field, fieldValue, {
+        ...options,
+        policy:
+          options.policy ??
+          (column ? propertyFieldSavePolicy(column) : undefined),
+      });
     },
-    [createReadme, page, pageSurface, saveField, schemaResult],
+    [saveField, schemaResult],
+  );
+  const writes = useReadmeWrites({
+    targetKey: `${spacePath}:${readmePath}`,
+    page,
+    canWrite:
+      !pageSurface?.readOnly && (status === "missing" || status === "ready"),
+    create,
+    save,
+    flushFields: flushMetadata,
+  });
+  const {
+    createReadme: ensureReadme,
+    updateField: writeField,
+    flush,
+    retry,
+    drafts,
+    writeError,
+  } = writes;
+  const createReadme = useCallback(async () => {
+    try {
+      return await ensureReadme();
+    } catch (writeError) {
+      await pageSurface?.recoverWriteError(writeError, retry);
+      throw writeError;
+    }
+  }, [ensureReadme, pageSurface, retry]);
+  const retryWrites = useCallback(async () => {
+    try {
+      await retry();
+    } catch (writeError) {
+      await pageSurface?.recoverWriteError(writeError, retry);
+      throw writeError;
+    }
+  }, [pageSurface, retry]);
+  const updateField = useCallback(
+    async (
+      field: string,
+      fieldValue: unknown,
+      options: SavePageFieldOptions = {},
+    ) => {
+      if (field === "title" && options.flush && pageSurface) {
+        await pageSurface.runMutation(() =>
+          writeField(field, fieldValue, options),
+        );
+      } else {
+        try {
+          await writeField(field, fieldValue, options);
+        } catch (writeError) {
+          await pageSurface?.recoverWriteError(writeError, retry);
+          throw writeError;
+        }
+      }
+    },
+    [pageSurface, retry, writeField],
+  );
+  useEffect(
+    () => pageSurface?.registerPersistence("metadata", flush, retry),
+    [flush, pageSurface, retry],
   );
 
   const value = useMemo<PageDetailContextValue>(
     () => ({
       page,
       setPage,
+      writeError,
+      retryWrites,
+      metadataDrafts: drafts,
       schemaResult,
       status,
       error,
@@ -299,6 +360,9 @@ export function PageDetailProvider({
     [
       createReadme,
       page,
+      drafts,
+      retryWrites,
+      writeError,
       error,
       fallbackIcon,
       onOpenPath,

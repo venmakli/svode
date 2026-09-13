@@ -20,6 +20,7 @@ interface TitleZoneProps {
   onDescriptionChange: (description: string) => void;
   onBodyFocus: () => void;
   readOnly?: boolean;
+  titleReadOnly?: boolean;
   hideDescription?: boolean;
   fallbackIcon?: LucideIcon;
   fallbackEmoji?: string | null;
@@ -37,6 +38,7 @@ export function TitleZone({
   onDescriptionChange,
   onBodyFocus,
   readOnly = false,
+  titleReadOnly = readOnly,
   hideDescription = false,
   fallbackIcon: FallbackIcon,
   fallbackEmoji,
@@ -122,7 +124,11 @@ export function TitleZone({
     (e: KeyboardEvent<HTMLInputElement>) => {
       if (e.key === "Enter") {
         e.preventDefault();
-        if (!readOnly && !e.repeat && (titleDraft || defaultTitle) === title) {
+        if (
+          !titleReadOnly &&
+          !e.repeat &&
+          (titleDraft || defaultTitle) === title
+        ) {
           onTitleChange(title);
         }
         focusDescription();
@@ -132,7 +138,7 @@ export function TitleZone({
       defaultTitle,
       focusDescription,
       onTitleChange,
-      readOnly,
+      titleReadOnly,
       title,
       titleDraft,
     ],
@@ -185,7 +191,13 @@ export function TitleZone({
               onChange={onIconChange}
               size="md"
               placeholder={
-                <SmilePlus className="size-6 text-muted-foreground/40" />
+                <>
+                  <span className="sr-only">{m.editor_add_icon()}</span>
+                  <SmilePlus
+                    aria-hidden
+                    className="size-6 text-muted-foreground/40"
+                  />
+                </>
               }
             />
           )}
@@ -197,11 +209,11 @@ export function TitleZone({
             ref={titleRef}
             type="text"
             value={titleDraft}
-            readOnly={readOnly}
+            readOnly={titleReadOnly}
             aria-invalid={titleError ? true : undefined}
             aria-describedby={titleError ? titleErrorId : undefined}
             onFocus={
-              readOnly
+              titleReadOnly
                 ? undefined
                 : () => {
                     isTitleFocusedRef.current = true;
@@ -209,11 +221,11 @@ export function TitleZone({
             }
             onBlur={() => {
               isTitleFocusedRef.current = false;
-              if (readOnly) return;
+              if (titleReadOnly) return;
               const nextTitle = titleDraft || defaultTitle;
               if (nextTitle !== title) onTitleChange(nextTitle);
             }}
-            onClick={readOnly ? onActivateIdentity : undefined}
+            onClick={titleReadOnly ? onActivateIdentity : undefined}
             onChange={(e) => {
               const next = e.target.value;
               setTitleDraft(next);
@@ -247,6 +259,7 @@ export function TitleZone({
               isDescriptionFocusedRef.current = false;
               if (!descriptionDraft.trim()) setIsEditingDescription(false);
             }}
+            aria-label={m.editor_description_placeholder()}
             placeholder={m.editor_description_placeholder()}
             className={cn(
               "min-h-5 resize-none overflow-hidden bg-transparent text-[13px] leading-5 text-muted-foreground outline-none",

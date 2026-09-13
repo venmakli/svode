@@ -1,22 +1,28 @@
 import type { ReactNode } from "react";
-import { Database } from "lucide-react";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import * as m from "@/paraglide/messages.js";
 import { PropertyPanel } from "@/features/properties/panel";
 import { detailPageHeaderClassName } from "@/shared/ui/page-layout";
-import { usePageDetailContext } from "@/features/page/scope-surface";
+import {
+  PageAccessRecovery,
+  usePageDetailContext,
+} from "@/features/page/scope-surface";
 import {
   handleError,
   PageIdentityHeader,
   PageIdentityHeaderSkeleton,
   PageSystemFields,
-  TitleZone,
 } from "@/features/page/detail";
 
 export function ScopeOwnerHeader({
   actions,
   readOnly = false,
+  showReadError = true,
 }: {
   actions?: ReactNode;
   readOnly?: boolean;
+  showReadError?: boolean;
 }) {
   const context = usePageDetailContext();
   const { page, schemaResult } = context;
@@ -25,6 +31,8 @@ export function ScopeOwnerHeader({
     return <ScopeOwnerHeaderSkeleton actions={actions} />;
   }
 
+  const metadataReadOnly =
+    readOnly || (context.status !== "missing" && context.status !== "ready");
   const canCreateReadme = context.status === "missing" && !readOnly;
   const createReadme = () => {
     if (canCreateReadme) void context.createReadme().catch(handleError);
@@ -32,53 +40,67 @@ export function ScopeOwnerHeader({
 
   return (
     <div className={detailPageHeaderClassName}>
-      {page ? (
-        <PageIdentityHeader
-          title={page.meta.title}
-          icon={page.meta.icon}
-          description={page.meta.description ?? ""}
-          cover={page.meta.cover ?? null}
-          projectPath={context.projectPath}
-          spacePath={context.spacePath}
-          pagePath={context.readmePath}
-          onTitleChange={(value) =>
-            void context
-              .updateField("title", value, { flush: true })
-              .catch(handleError)
-          }
-          onIconChange={(value) =>
-            void context.updateField("icon", value).catch(handleError)
-          }
-          onDescriptionChange={(value) =>
-            void context.updateField("description", value).catch(handleError)
-          }
-          onCoverChange={(value) =>
-            void context.updateCover(value).catch(handleError)
-          }
-          onBodyFocus={() => undefined}
-          actions={actions}
-          metadata={<PageSystemFields meta={page.meta} />}
-          coverSize="compact"
-          readOnly={readOnly}
-        />
-      ) : (
-        <div className="max-w-4xl">
-          <TitleZone
-            title={context.fallbackTitle}
-            icon={null}
-            description=""
-            readOnly
-            hideDescription
-            fallbackIcon={Database}
-            fallbackEmoji={context.fallbackIcon}
-            onActivateIdentity={createReadme}
-            onTitleChange={createReadme}
-            onIconChange={createReadme}
-            onDescriptionChange={() => undefined}
-            onBodyFocus={() => undefined}
-          />
-        </div>
-      )}
+      <PageIdentityHeader
+        title={page?.meta.title ?? context.fallbackTitle}
+        icon={
+          (context.metadataDrafts.get("icon")?.value as string | undefined) ??
+          page?.meta.icon ??
+          null
+        }
+        description={
+          (context.metadataDrafts.get("description")?.value as
+            | string
+            | undefined) ??
+          page?.meta.description ??
+          ""
+        }
+        cover={page?.meta.cover ?? null}
+        projectPath={context.projectPath}
+        spacePath={context.spacePath}
+        pagePath={context.readmePath}
+        onTitleChange={(value) =>
+          void context
+            .updateField("title", value, { flush: true })
+            .catch(handleError)
+        }
+        onIconChange={(value) =>
+          void context.updateField("icon", value).catch(handleError)
+        }
+        onDescriptionChange={(value) =>
+          void context.updateField("description", value).catch(handleError)
+        }
+        onCoverChange={(value) =>
+          void context.updateCover(value).catch(handleError)
+        }
+        onBodyFocus={() => undefined}
+        actions={actions}
+        metadata={page ? <PageSystemFields meta={page.meta} /> : undefined}
+        hideCover={!page}
+        titleReadOnly={!page || metadataReadOnly}
+        fallbackEmoji={!page ? context.fallbackIcon : null}
+        onActivateIdentity={canCreateReadme ? createReadme : undefined}
+        coverSize="compact"
+        readOnly={metadataReadOnly}
+      />
+      <PageAccessRecovery
+        error={context.writeError}
+        onRetry={context.writeError ? context.retryWrites : undefined}
+      />
+      {showReadError && context.status === "error" ? (
+        <Alert variant="destructive">
+          <AlertDescription className="flex flex-col items-start gap-2">
+            <span>{context.error}</span>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={readOnly}
+              onClick={() => void context.reload().catch(handleError)}
+            >
+              {m.page_surface_save_retry()}
+            </Button>
+          </AlertDescription>
+        </Alert>
+      ) : null}
       {page && schemaResult?.schema.columns.length ? (
         <div className="max-w-5xl">
           <PropertyPanel

@@ -274,9 +274,10 @@ function ScopePageSurfaceHost({
     <ScopeSurfaceHost
       {...props}
       contributions={contributions}
-      header={() => (
+      header={(activeSurfaceId) => (
         <ScopeOwnerHeader
           readOnly={pageSurface.readOnly}
+          showReadError={activeSurfaceId !== "readme"}
           actions={
             headerActions ?? (
               <ScopeOwnerActions readOnly={pageSurface.readOnly} />
@@ -284,11 +285,9 @@ function ScopePageSurfaceHost({
           }
         />
       )}
-      prepareForSurfaceChange={async (currentSurfaceId) => {
+      prepareForSurfaceChange={async () => {
         if (!(await detailController.prepareForNavigation())) return false;
-        return currentSurfaceId === "readme"
-          ? pageSurface.prepareForNavigation()
-          : true;
+        return pageSurface.prepareForNavigation();
       }}
     />
   );

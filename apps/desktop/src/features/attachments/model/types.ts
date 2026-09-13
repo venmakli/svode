@@ -62,6 +62,7 @@ export interface AttachmentActivationRequest {
   row: AttachmentRow;
   owner: ResolvedAttachmentOwner;
   mode: "peek";
+  ownerSession?: { key: string; kind: "app" | "collection" };
   sourceGeneration: string;
   activation: CollectionActivationContext;
 }
