@@ -17,6 +17,8 @@ export { getGitAvailability } from "./api/git-availability-actions";
 export { trackSpaceCloneProgress } from "./api/git-clone-progress-actions";
 export { getGitStatusSnapshot } from "./api/git-status-actions";
 export { saveGitRemoteCredentials } from "./api/git-actions";
+export { gitSaveErrorFromError, type GitSaveError } from "./api/git-save-error";
+export { gitSaveErrorDescription } from "./ui/git-save-error-copy";
 export { dispatchPageSave, hasPageSaveOwner } from "./model/page-save-owner";
 export { useGitStore } from "./model/git-store";
 export { refreshGitStatus } from "./api/git-status-actions";

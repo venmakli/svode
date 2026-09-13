@@ -793,6 +793,484 @@ if (process.env.SVODE_CHANGES_DOM !== "1") {
       dom.window.close();
     }
   });
+  test("save errors retain safe localized causes, pending intent and parent-only retry", async () => {
+    const dom = createDom();
+    const restore = installDomGlobals(dom);
+    const { getLocale, setLocale } = await import("@/paraglide/runtime.js");
+    const originalLocale = getLocale();
+    const { ChangesControl } = await import("./changes-control");
+    const { TooltipProvider } = await import("@/components/ui/tooltip");
+    const { ThemeProvider } = await import("@/components/ui/theme-provider");
+    const { refreshGitStatus } = await import("@/features/git");
+    const base = {
+      branch: "main",
+      ahead: 0,
+      behind: 0,
+      hasStaged: true,
+      hasUnstaged: true,
+      hasConflicts: false,
+      tracking: null,
+    };
+    const paths = ["Исследования/README.md", "zadachi-komplaens/a.md"];
+    const changedFiles = () =>
+      paths.map((path) => ({ path, state: "untracked" }));
+    let files = changedFiles();
+    let error: unknown = null;
+    let finish: (() => void) | null = null;
+    let delayed = false;
+    const commits: unknown[] = [];
+    const calls: string[] = [];
+    const logs: unknown[][] = [];
+    const originalError = console.error;
+    console.error = (...args) => {
+      logs.push(args);
+    };
+    mockNativeIpc(
+      (command, args) => {
+        calls.push(command);
+        if (command === "git_status") return { ...base, files };
+        if (command === "repository_access_get")
+          return {
+            status: "local",
+            repositoryId: "df118-repo",
+            generation: 1,
+            checkedAt: null,
+            expiresAt: null,
+            lastKnownStatus: null,
+            reason: null,
+          };
+        if (command === "git_inspection_stats") {
+          const input = args as { paths: string[]; generation: string };
+          return {
+            generation: input.generation,
+            items: input.paths.map((path) => ({
+              path,
+              additions: 1,
+              deletions: 0,
+            })),
+          };
+        }
+        if (command === "git_get_user_policy") return { autoSync: false };
+        if (command === "git_commit_paths") {
+          commits.push(args);
+          const result = () => {
+            if (error) throw error;
+            files = [];
+            return { ...base, files };
+          };
+          return delayed
+            ? new Promise((resolve, reject) => {
+                finish = () => {
+                  try {
+                    resolve(result());
+                  } catch (cause) {
+                    reject(cause);
+                  }
+                };
+              })
+            : result();
+        }
+        throw new Error(`Unexpected ${command}`);
+      },
+      { shouldMockEvents: true },
+    );
+    const root = createRoot(dom.window.document.getElementById("app")!);
+    const doc = dom.window.document;
+    const save = () =>
+      doc.querySelector<HTMLButtonElement>(
+        '[data-slot="sheet-footer"] button:last-child',
+      )!;
+    const alert = () =>
+      doc.querySelector('[data-slot="sheet-footer"] [role="alert"]');
+    const render = (theme: "light" | "dark") =>
+      root.render(
+        <ThemeProvider theme={theme} setTheme={() => {}}>
+          <TooltipProvider>
+            <ChangesControl
+              origin="peek"
+              target={{
+                kind: "space",
+                sourceShape: "directory",
+                spacePath: "/df118",
+                projectPath: "/df118-parent",
+                path: "README.md",
+                name: "Research",
+              }}
+            />
+          </TooltipProvider>
+        </ThemeProvider>,
+      );
+    try {
+      await act(async () => {
+        render("light");
+        await nextFrame(dom);
+      });
+      await act(async () => {
+        doc.querySelector<HTMLButtonElement>("[data-changes-trigger]")!.click();
+        await nextFrame(dom);
+      });
+      const cases = [
+        {
+          stage: "prepare",
+          reason: "command_failed",
+          exitCode: 23,
+          pathCount: 2,
+          pathSample: paths[1],
+        },
+        {
+          stage: "verify",
+          reason: "paths_not_prepared",
+          exitCode: null,
+          pathCount: 1,
+          pathSample: `Исследования/${"я".repeat(300)}.md`,
+        },
+        {
+          stage: "commit",
+          reason: "command_failed",
+          exitCode: 1,
+          pathCount: 2,
+          pathSample: paths[0],
+        },
+      ];
+      for (const locale of ["en", "ru"] as const) {
+        await act(async () => {
+          await setLocale(locale, { reload: false });
+          render(locale === "en" ? "light" : "dark");
+          await nextFrame(dom);
+        });
+        for (const cause of cases) {
+          error = {
+            kind: "git_save_failed",
+            ...cause,
+            stderr: "SECRET_HOOK",
+            stdout: "SECRET_HOOK",
+            message: "/Users/private/SECRET_HOOK",
+          };
+          await act(async () => {
+            save().focus();
+            save().click();
+            await nextFrame(dom);
+          });
+          const content = alert()?.textContent ?? "";
+          expect(
+            content.includes(
+              locale === "en"
+                ? "Your changes remain available"
+                : "Изменения остаются доступны",
+            ),
+          ).toBe(true);
+          expect(
+            content.includes(
+              locale === "en"
+                ? cause.stage === "prepare"
+                  ? "Could not prepare"
+                  : cause.stage === "verify"
+                    ? "Could not confirm"
+                    : "Could not create"
+                : cause.stage === "prepare"
+                  ? "Не удалось подготовить"
+                  : cause.stage === "verify"
+                    ? "Не удалось подтвердить"
+                    : "Не удалось создать",
+            ),
+          ).toBe(true);
+          expect(content.includes("SECRET_HOOK")).toBe(false);
+          expect(content.includes("/Users/")).toBe(false);
+          expect(doc.activeElement).toBe(save());
+          expect(save().disabled).toBe(false);
+          expect(
+            doc.querySelectorAll("[data-changes-item-trigger]").length,
+          ).toBe(2);
+          if (cause.stage === "verify") {
+            expect(content.includes("…")).toBe(true);
+            expect(content.length < 600).toBe(true);
+            expect(
+              alert()
+                ?.querySelector('[data-slot="alert-description"]')
+                ?.className.includes("overflow-wrap:anywhere"),
+            ).toBe(true);
+          }
+        }
+        error = {
+          kind: "git_command_failed",
+          message: "SECRET_HOOK permission denied /Users/private",
+        };
+        await act(async () => {
+          save().click();
+          await nextFrame(dom);
+        });
+        expect(
+          alert()?.textContent?.includes(
+            locale === "en" ? "The cause is unknown" : "Причина не определена",
+          ),
+        ).toBe(true);
+        expect(doc.body.textContent?.includes("SECRET_HOOK")).toBe(false);
+        expect(calls.includes("repository_access_verify")).toBe(false);
+      }
+      delayed = true;
+      error = {
+        kind: "git_save_partial",
+        cause: { kind: "git_save_failed", ...cases[2], pathSample: "child" },
+      };
+      const before = commits.length;
+      await act(async () => {
+        save().click();
+        save().click();
+        dom.window.dispatchEvent(
+          new dom.window.KeyboardEvent("keydown", {
+            key: "s",
+            ctrlKey: true,
+            shiftKey: true,
+          }),
+        );
+        await nextFrame(dom);
+      });
+      expect(commits.length).toBe(before + 1);
+      expect(save().disabled).toBe(true);
+      expect(alert()).toBeNull();
+      await act(async () => {
+        files = [];
+        finish!();
+        await nextFrame(dom);
+      });
+      expect(alert()?.textContent?.includes("Содержимое сохранено")).toBe(true);
+      expect(alert()?.textContent?.includes("Не удалось создать коммит")).toBe(
+        true,
+      );
+      expect(save().disabled).toBe(false);
+      const originalIntent = commits.at(-1);
+      await act(async () => {
+        doc.dispatchEvent(
+          new dom.window.KeyboardEvent("keydown", {
+            key: "Escape",
+            bubbles: true,
+          }),
+        );
+        await nextFrame(dom);
+      });
+      expect(doc.querySelector('[role="dialog"]')).toBeNull();
+      await act(async () => {
+        doc.querySelector<HTMLButtonElement>("[data-changes-trigger]")!.click();
+        await nextFrame(dom);
+      });
+      expect(alert()?.textContent?.includes("Содержимое сохранено")).toBe(true);
+      expect(save().disabled).toBe(false);
+      delayed = false;
+      error = null;
+      await act(async () => {
+        dom.window.dispatchEvent(
+          new dom.window.KeyboardEvent("keydown", {
+            key: "s",
+            ctrlKey: true,
+            shiftKey: true,
+          }),
+        );
+        await nextFrame(dom);
+      });
+      expect(commits.at(-1)).toEqual(originalIntent);
+      expect((commits.at(-1) as { filePaths: string[] }).filePaths).toEqual(
+        paths,
+      );
+      expect(commits.length).toBe(before + 2);
+      expect(doc.querySelector('[data-slot="sheet-footer"]')).toBeNull();
+      assert.ok(doc.querySelector('[role="dialog"]'));
+      expect(JSON.stringify(logs).includes("SECRET_HOOK")).toBe(false);
+      files = changedFiles();
+      await act(async () => {
+        await refreshGitStatus("/df118");
+        await nextFrame(dom);
+      });
+      error = { kind: "git_save_partial", cause: "SECRET_HOOK" };
+      await act(async () => {
+        save().click();
+        await nextFrame(dom);
+      });
+      expect(alert()?.textContent?.includes("Содержимое сохранено")).toBe(true);
+      expect(alert()?.textContent?.includes("Причина не определена")).toBe(
+        true,
+      );
+      error = null;
+      await act(async () => {
+        save().click();
+        await nextFrame(dom);
+      });
+    } finally {
+      await act(async () => {
+        root.unmount();
+        await nextFrame(dom);
+      });
+      await setLocale(originalLocale, { reload: false });
+      console.error = originalError;
+      clearNativeMocks();
+      restore();
+      dom.window.close();
+    }
+  });
+
+  test("switching Changes targets and sessions discards prior errors and late recovery", async () => {
+    const dom = createDom();
+    const restore = installDomGlobals(dom);
+    const { ChangesControl } = await import("./changes-control");
+    const { TooltipProvider } = await import("@/components/ui/tooltip");
+    const { registerPageSaveOwner } = await import("@/features/git/editor");
+    mockNativeIpc(
+      (command, args) => {
+        if (command === "git_status")
+          return {
+            branch: "main",
+            ahead: 0,
+            behind: 0,
+            hasStaged: false,
+            hasUnstaged: true,
+            hasConflicts: false,
+            tracking: null,
+            files: ["old.md", "new.md"].map((path) => ({
+              path,
+              state: "modified",
+            })),
+          };
+        if (command === "repository_access_get")
+          return {
+            status: "local",
+            repositoryId: "df118-switch",
+            generation: 1,
+            checkedAt: null,
+            expiresAt: null,
+            lastKnownStatus: null,
+            reason: null,
+          };
+        if (command === "git_working_tree_item")
+          return {
+            ...(args as object),
+            state: "no_content_diff",
+            before: "same",
+            after: "same",
+          };
+        throw new Error(`Unexpected ${command}`);
+      },
+      { shouldMockEvents: true },
+    );
+    let rejectOld: ((error: unknown) => void) | null = null;
+    let newSaves = 0;
+    const releases = [
+      registerPageSaveOwner("/df118-switch", "old.md", {
+        save: () =>
+          new Promise((_, reject) => {
+            rejectOld = reject;
+          }),
+        saveAll: async () => {},
+      }),
+      registerPageSaveOwner("/df118-switch", "new.md", {
+        save: async () => {
+          newSaves++;
+          throw {
+            kind: "git_save_failed",
+            stage: "prepare",
+            reason: "paths_not_prepared",
+            pathCount: 1,
+            pathSample: "new.md",
+          };
+        },
+        saveAll: async () => {},
+      }),
+    ];
+    const root = createRoot(dom.window.document.getElementById("app")!);
+    const doc = dom.window.document;
+    const render = (path: string, sessionKey = 1) =>
+      root.render(
+        <TooltipProvider>
+          <ChangesControl
+            target={{
+              kind: "page",
+              sourceShape: "file",
+              spacePath: "/df118-switch",
+              path,
+              name: path,
+              sessionKey,
+            }}
+          />
+        </TooltipProvider>,
+      );
+    const save = () =>
+      doc.querySelector<HTMLButtonElement>(
+        '[data-slot="sheet-footer"] button:last-child',
+      )!;
+    const alert = () =>
+      doc.querySelector('[data-slot="sheet-footer"] [role="alert"]');
+    try {
+      await act(async () => {
+        render("old.md");
+        await nextFrame(dom);
+      });
+      await act(async () => {
+        doc.querySelector<HTMLButtonElement>("[data-changes-trigger]")!.click();
+        await nextFrame(dom);
+      });
+      await act(async () => {
+        save().click();
+        await nextFrame(dom);
+      });
+      expect(save().disabled).toBe(true);
+      await act(async () => {
+        render("new.md");
+        await nextFrame(dom);
+      });
+      assert.ok(doc.querySelector('[role="dialog"]'));
+      expect(save().disabled).toBe(false);
+      await act(async () => {
+        save().click();
+        await nextFrame(dom);
+      });
+      expect(alert()?.textContent?.includes("new.md")).toBe(true);
+      await act(async () => {
+        rejectOld!({
+          kind: "git_save_partial",
+          cause: {
+            kind: "repository_access_denied",
+            repositoryId: "df118-switch",
+            status: "read_only",
+            reason: "auth_required",
+          },
+        });
+        await nextFrame(dom);
+      });
+      expect(alert()?.textContent?.includes("new.md")).toBe(true);
+      expect(alert()?.textContent?.includes("Content saved")).toBe(false);
+      expect(
+        doc.querySelectorAll('[data-slot="sheet-footer"] button').length,
+      ).toBe(1);
+      await act(async () => {
+        render("new.md", 2);
+        await nextFrame(dom);
+      });
+      expect(alert()).toBeNull();
+      expect(save().disabled).toBe(false);
+      await act(async () => {
+        save().click();
+        await nextFrame(dom);
+      });
+      expect(newSaves).toBe(2);
+      await act(async () => {
+        render("old.md", 3);
+        await nextFrame(dom);
+      });
+      expect(alert()).toBeNull();
+      await act(async () => {
+        render("new.md", 2);
+        await nextFrame(dom);
+      });
+      expect(alert()).toBeNull();
+    } finally {
+      await act(async () => {
+        root.unmount();
+        await nextFrame(dom);
+      });
+      releases.forEach((release) => release());
+      clearNativeMocks();
+      restore();
+      dom.window.close();
+    }
+  });
 }
 
 function createDom() {

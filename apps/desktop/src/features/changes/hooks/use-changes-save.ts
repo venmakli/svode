@@ -7,6 +7,8 @@ import {
   repositoryAccessIsEditable,
   useRepositoryAccess,
   useRepositoryAccessPreflight,
+  gitSaveErrorFromError,
+  type GitSaveError,
 } from "@/features/git";
 import * as m from "@/paraglide/messages.js";
 import { commitSaveScopeAndMaybeSync } from "@/features/git/editor";
@@ -16,19 +18,48 @@ import type { ChangesTarget } from "../model/scope";
 export function useChangesSave(target: ChangesTarget, open: boolean) {
   const access = useRepositoryAccess(target.spacePath);
   const recovery = useRepositoryAccessPreflight();
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<"failed" | "partial" | null>(null);
+  const targetKey = JSON.stringify([
+    target.spacePath,
+    target.projectPath,
+    target.kind,
+    target.sourceShape,
+    target.path,
+    target.sessionKey,
+  ]);
+  const [state, setState] = useState<{
+    key: string;
+    saving: boolean;
+    error: GitSaveError | null;
+  } | null>(null);
+  if (state && state.key !== targetKey) setState(null);
   const busy = useRef(false);
+  const active = useRef<{ key: string } | null>(null);
+  const closeRecovery = recovery.close;
+  useEffect(() => {
+    active.current = { key: targetKey };
+    busy.current = false;
+    return () => {
+      active.current = null;
+      closeRecovery();
+    };
+  }, [targetKey, closeRecovery]);
   const statusError = useGitStore(
     (state) => state.statusErrors[target.spacePath] ?? false,
   );
   const editable = repositoryAccessIsEditable(access);
   const save = useCallback(
     async function saveIntent(all = false): Promise<void> {
-      if (busy.current || !editable || statusError) return;
+      const owner = active.current;
+      if (
+        !owner ||
+        owner.key !== targetKey ||
+        busy.current ||
+        !editable ||
+        statusError
+      )
+        return;
       busy.current = true;
-      setSaving(true);
-      setError(null);
+      setState({ key: targetKey, saving: true, error: null });
       try {
         const aggregate = resolveInspectionScope(target).kind !== "file";
         if (hasPageSaveOwner(target.spacePath, target.path)) {
@@ -51,18 +82,11 @@ export function useChangesSave(target: ChangesTarget, open: boolean) {
           await dispatchPageSave(target.spacePath, target.path, all);
         }
       } catch (error) {
-        const partial = Boolean(
-          error &&
-          typeof error === "object" &&
-          "kind" in error &&
-          error.kind === "git_save_partial",
-        );
-        setError(partial ? "partial" : "failed");
-        const cause =
-          partial && error && typeof error === "object" && "cause" in error
-            ? error.cause
-            : error;
-        await recovery.recoverFromError(cause, {
+        if (active.current !== owner) return;
+        const failure = gitSaveErrorFromError(error);
+        const partial = failure.outcome === "partial";
+        setState({ key: targetKey, saving: true, error: failure });
+        await recovery.recoverFromError(error, {
           intentKey: `changes:${target.spacePath}:${target.path}`,
           intentLabel: m.changes_save(),
           continuation: "explicit",
@@ -80,11 +104,15 @@ export function useChangesSave(target: ChangesTarget, open: boolean) {
           continue: () => saveIntent(all),
         });
       } finally {
-        busy.current = false;
-        setSaving(false);
+        if (active.current === owner) {
+          busy.current = false;
+          setState((previous) =>
+            previous ? { ...previous, saving: false } : null,
+          );
+        }
       }
     },
-    [editable, recovery, target, statusError],
+    [editable, recovery, target, targetKey, statusError],
   );
   useEffect(() => {
     if (!open) return;
@@ -103,5 +131,12 @@ export function useChangesSave(target: ChangesTarget, open: boolean) {
     window.addEventListener("keydown", handler, true);
     return () => window.removeEventListener("keydown", handler, true);
   }, [open, save, target.kind]);
-  return { access, editable, recovery, saving, error, save };
+  return {
+    access,
+    editable,
+    recovery,
+    save,
+    saving: state?.key === targetKey && state.saving,
+    error: state?.key === targetKey ? state.error : null,
+  };
 }

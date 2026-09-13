@@ -1,13 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
-import { FileDiff, LoaderCircle } from "lucide-react";
+import { FileDiff } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Alert, AlertDescription } from "@/components/ui/alert";
 import {
   Sheet,
   SheetContent,
   SheetDescription,
-  SheetFooter,
   SheetHeader,
   SheetTitle,
   SheetTrigger,
@@ -17,13 +15,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import {
-  RepositoryAccessInlineRecovery,
-  RepositoryAccessPrimaryButton,
-  refreshGitStatus,
-  repositoryAccessPresentation,
-  useGitStore,
-} from "@/features/git";
+import { refreshGitStatus, useGitStore } from "@/features/git";
 import * as m from "@/paraglide/messages.js";
 import {
   inspectionPaths,
@@ -32,6 +24,7 @@ import {
 } from "../model/scope";
 import { createItemReader } from "../model/item-reader";
 import { ChangesBody } from "./changes-body";
+import { ChangesSaveFooter } from "./changes-save-footer";
 import { useChangesSave } from "../hooks/use-changes-save";
 
 export function ChangesControl({
@@ -72,14 +65,6 @@ function ScopeChangesControl({
   );
   const reader = useMemo(() => createItemReader(), []);
   const save = useChangesSave(target, open);
-  const hint =
-    typeof navigator !== "undefined" && /Mac/i.test(navigator.platform)
-      ? scope.kind === "file"
-        ? "⌘S"
-        : "⇧⌘S"
-      : scope.kind === "file"
-        ? "Ctrl+S"
-        : "Ctrl+Shift+S";
   const label = m.changes_scope_label({
     name: target.name,
     count: String(paths.length),
@@ -149,41 +134,12 @@ function ScopeChangesControl({
             name={target.name}
           />
         ) : null}
-        {dirty || save.error || save.saving ? (
-          <SheetFooter className="shrink-0 border-t">
-            {save.error ? (
-              <Alert variant="destructive">
-                <AlertDescription>
-                  {save.error === "partial"
-                    ? m.changes_partial()
-                    : m.changes_save_failed()}
-                </AlertDescription>
-              </Alert>
-            ) : null}
-            {!save.editable ? (
-              <p className="text-sm text-muted-foreground">
-                {save.access.loading || save.access.verifying
-                  ? m.changes_access_pending()
-                  : repositoryAccessPresentation(save.access).description}
-              </p>
-            ) : null}
-            <RepositoryAccessInlineRecovery recovery={save.recovery} />
-            <RepositoryAccessPrimaryButton recovery={save.recovery} />
-            <Button
-              disabled={!save.editable || save.saving || statusError}
-              onClick={() => void save.save(scope.kind !== "file")}
-            >
-              {save.saving ? (
-                <LoaderCircle
-                  className="animate-spin"
-                  data-icon="inline-start"
-                />
-              ) : null}
-              {scope.kind === "file" ? m.changes_save() : m.changes_save_all()}
-              <span className="ml-auto">{hint}</span>
-            </Button>
-          </SheetFooter>
-        ) : null}
+        <ChangesSaveFooter
+          save={save}
+          dirty={dirty}
+          statusError={statusError}
+          fileScope={scope.kind === "file"}
+        />
       </SheetContent>
     </Sheet>
   );

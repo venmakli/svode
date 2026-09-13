@@ -13,6 +13,7 @@ import type {
   UnpushedCommitDto,
 } from "./git-types";
 import type { SpaceGitTypeDto } from "@/platform/space/space-types";
+import { rethrowGitSaveError } from "./save-errors";
 
 export interface GetSpaceGitTypeInputDto extends Record<string, unknown> {
   projectPath: string;
@@ -91,7 +92,7 @@ export function commitGitFile(input: {
     projectPath: input.projectPath ?? null,
     spacePath: input.spacePath,
     filePath: input.filePath,
-  });
+  }).catch(rethrowGitSaveError);
 }
 
 export function commitGitAll(input: {
@@ -101,7 +102,7 @@ export function commitGitAll(input: {
   return invokeCommand<GitStatusDto>("git_commit_all", {
     projectPath: input.projectPath ?? null,
     spacePath: input.spacePath,
-  });
+  }).catch(rethrowGitSaveError);
 }
 
 export function commitGitPaths(input: {
@@ -113,7 +114,7 @@ export function commitGitPaths(input: {
     projectPath: input.projectPath ?? null,
     spacePath: input.spacePath,
     filePaths: input.filePaths,
-  });
+  }).catch(rethrowGitSaveError);
 }
 
 export function continueGitResolve(spacePath: string): Promise<void> {
