@@ -11,6 +11,9 @@ pub mod inspection_stats;
 mod inspection_tests;
 pub(crate) mod manual_save;
 pub mod ops;
+mod staging;
+#[cfg(test)]
+mod staging_tests;
 pub mod sync;
 
 pub use commands::GitState;

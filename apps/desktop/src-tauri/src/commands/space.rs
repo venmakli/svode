@@ -665,8 +665,8 @@ pub async fn create_space(
                 } else {
                     ops::register_local_submodule_metadata(&cli, parent, &folder_name).await?;
                     if root_structural_autocommit {
-                        let _ = ops::add(&cli, parent, ".svode/config.json").await;
-                        let _ = ops::add(&cli, parent, ".gitmodules").await;
+                        ops::add(&cli, parent, ".svode/config.json").await?;
+                        ops::add(&cli, parent, ".gitmodules").await?;
                         let _ = ops::commit(&cli, parent, &root_message).await?;
                     }
                 }

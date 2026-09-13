@@ -335,7 +335,15 @@ impl AutocommitService {
             return Ok(());
         }
 
-        do_commit_system(&self.app, &project_path, &space_path, git_type, kind).await
+        do_commit_system(
+            &self.app,
+            &project_path,
+            &space_path,
+            git_type,
+            kind,
+            CommitIntent::SystemConfig,
+        )
+        .await
     }
 
     /// Commit a system-level change from an explicit user save path. Manual
@@ -358,7 +366,15 @@ impl AutocommitService {
             return Ok(());
         }
 
-        do_commit_system(&self.app, &project_path, &space_path, git_type, kind).await
+        do_commit_system(
+            &self.app,
+            &project_path,
+            &space_path,
+            git_type,
+            kind,
+            CommitIntent::ManualExplicit,
+        )
+        .await
     }
 
     /// Capture background exact-path eligibility before the owning mutation.
@@ -743,6 +759,92 @@ fn classify_guarded_exact_path_preflight(
     }
 }
 
+async fn commit_prepared_paths(
+    cli: &super::cli::GitCli,
+    repo: &Path,
+    paths: &[String],
+    message: &str,
+    intent: CommitIntent,
+    optional: bool,
+) -> Result<bool, AppError> {
+    if !background_commit_allowed(repo, intent) {
+        return Ok(false);
+    }
+    let mut scopes = Vec::new();
+    for path in paths {
+        if optional && !repo.join(path).exists() {
+            let known = cli
+                .exec_redacted(
+                    repo,
+                    &[
+                        "ls-files",
+                        "--error-unmatch",
+                        "--",
+                        &format!(":(literal){path}"),
+                    ],
+                )
+                .await?;
+            if known.exit_code == 1 {
+                let staged = super::staging::exec(
+                    cli,
+                    repo,
+                    &[
+                        "diff",
+                        "--cached",
+                        "--name-only",
+                        "-z",
+                        "--",
+                        &format!(":(literal){path}"),
+                    ],
+                    "prepare",
+                    std::slice::from_ref(path),
+                )
+                .await?;
+                if staged.exit_code != 0 {
+                    return Err(super::staging::failure(
+                        "prepare",
+                        "inventory_failed",
+                        Some(staged.exit_code),
+                        std::slice::from_ref(path),
+                    ));
+                }
+                if staged.stdout.is_empty() {
+                    continue;
+                }
+            }
+            if known.exit_code != 0 && known.exit_code != 1 {
+                return Err(super::staging::failure(
+                    "prepare",
+                    "inventory_failed",
+                    Some(known.exit_code),
+                    std::slice::from_ref(path),
+                ));
+            }
+        }
+        scopes.push(path.clone());
+    }
+    let concrete = super::staging::resolve(cli, repo, &scopes).await?;
+    if concrete.is_empty() {
+        return Ok(false);
+    }
+    super::staging::prepare(cli, repo, &concrete).await?;
+    ops::commit(cli, repo, message).await
+}
+
+async fn commit_parent_pointer(
+    cli: &super::cli::GitCli,
+    root: &Path,
+    child: &Path,
+    intent: CommitIntent,
+) -> Result<bool, AppError> {
+    if !background_commit_allowed(root, intent) {
+        return Ok(false);
+    }
+    let path =
+        crate::repo_path::repo_relative_from_base(root, child, crate::repo_path::RootMode::Reject)?;
+    ops::commit_exact_path(cli, root, &path, &format!("Update {path}")).await
+}
+
 /// Stage the paths for a system-kind commit, relative to the space root, and
 /// commit under the right repo lock. `space_path` may equal `project_path`
 /// for root-level spaces (inline).
@@ -765,54 +867,37 @@ async fn do_commit_paths(
 
     let lock = git_state.get_lock(repo).await;
     let guard = lock.lock().await;
-    for abs_path in &paths {
-        let rel = abs_path
-            .strip_prefix(repo)
-            .unwrap_or(abs_path)
-            .to_string_lossy()
-            .replace('\\', "/");
-        let _ = ops::add(&cli, repo, &rel).await;
-    }
-    let created = ops::commit(&cli, repo, message).await?;
+    let paths = paths
+        .iter()
+        .map(|path| {
+            crate::repo_path::repo_relative_from_base(
+                repo,
+                path,
+                crate::repo_path::RootMode::Reject,
+            )
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let created = commit_prepared_paths(
+        &cli,
+        repo,
+        &paths,
+        message,
+        CommitIntent::StructuralLifecycle,
+        false,
+    )
+    .await?;
     drop(guard);
 
     if created {
-        emit_committed(app, space_path, repo);
-
-        if needs_pointer_update {
-            let root_lock = git_state.get_lock(project_path).await;
-            let _root_guard = root_lock.lock().await;
-            ops::submodule_update_pointer(&cli, project_path, space_path).await?;
-            emit_committed(app, space_path, project_path);
-        }
-
-        if is_auto_sync_enabled(repo) {
-            let cli_sync = cli.clone();
-            let sync_target = repo.to_path_buf();
-            tauri::async_runtime::spawn(async move {
-                if let Err(e) = crate::git::sync::sync(&cli_sync, &sync_target).await {
-                    tracing::warn!(
-                        "auto-sync (paths) failed for {}: {}",
-                        sync_target.display(),
-                        e
-                    );
-                }
-            });
-        }
-
-        if needs_pointer_update && is_auto_sync_enabled(project_path) {
-            let cli_sync = cli.clone();
-            let root = project_path.to_path_buf();
-            tauri::async_runtime::spawn(async move {
-                if let Err(e) = crate::git::sync::sync(&cli_sync, &root).await {
-                    tracing::warn!(
-                        "auto-sync (paths, root) failed for {}: {}",
-                        root.display(),
-                        e
-                    );
-                }
-            });
-        }
+        finish_commit(
+            app,
+            &cli,
+            project_path,
+            space_path,
+            repo,
+            needs_pointer_update.then_some(CommitIntent::StructuralLifecycle),
+        )
+        .await?;
     }
 
     Ok(())
@@ -824,96 +909,51 @@ async fn do_commit_system(
     space_path: &Path,
     git_type: SpaceGitType,
     kind: SystemCommitKind,
+    intent: CommitIntent,
 ) -> Result<(), AppError> {
     let git_state = app.state::<GitState>();
     let cli = git_state.cli.clone().ok_or(AppError::GitNotFound)?;
     let message = kind.message();
     let paths = kind.paths();
 
-    let space_folder = space_path
-        .file_name()
-        .map(|n| n.to_string_lossy().to_string())
-        .unwrap_or_default();
-
-    let (created, target_repo): (bool, PathBuf) = match git_type {
-        SpaceGitType::Inline => {
-            let lock = git_state.get_lock(project_path).await;
-            let _guard = lock.lock().await;
-            for rel in paths {
-                let staged = if space_path == project_path {
-                    (*rel).to_string()
-                } else {
-                    format!("{}/{}", space_folder, rel)
-                };
-                // Ignore add errors for paths that may not exist (e.g. `.claude`
-                // when no CLI integration is active) — they just contribute
-                // nothing to the commit.
-                let _ = ops::add(&cli, project_path, &staged).await;
-            }
-            let c = ops::commit(&cli, project_path, message).await?;
-            if c {
-                emit_committed(app, space_path, project_path);
-            }
-            (c, project_path.to_path_buf())
-        }
-        SpaceGitType::Independent => {
-            let lock = git_state.get_lock(space_path).await;
-            let _guard = lock.lock().await;
-            for rel in paths {
-                let _ = ops::add(&cli, space_path, rel).await;
-            }
-            let c = ops::commit(&cli, space_path, message).await?;
-            if c {
-                emit_committed(app, space_path, space_path);
-            }
-            (c, space_path.to_path_buf())
-        }
-        SpaceGitType::Submodule => {
-            let lock = git_state.get_lock(space_path).await;
-            let _guard = lock.lock().await;
-            for rel in paths {
-                let _ = ops::add(&cli, space_path, rel).await;
-            }
-            let c = ops::commit(&cli, space_path, message).await?;
-            drop(_guard);
-            if c {
-                emit_committed(app, space_path, space_path);
-                let root_lock = git_state.get_lock(project_path).await;
-                let _root_guard = root_lock.lock().await;
-                ops::submodule_update_pointer(&cli, project_path, space_path).await?;
-                emit_committed(app, space_path, project_path);
-            }
-            (c, space_path.to_path_buf())
-        }
-    };
-
+    let target_repo = policy_path_for_git_type(project_path, space_path, git_type).to_path_buf();
+    let paths = paths
+        .iter()
+        .map(|path| {
+            crate::repo_path::repo_relative_from_base(
+                &target_repo,
+                &space_path.join(path),
+                crate::repo_path::RootMode::Reject,
+            )
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let lock = git_state.get_lock(&target_repo).await;
+    let guard = lock.lock().await;
+    let created = commit_prepared_paths(
+        &cli,
+        &target_repo,
+        &paths,
+        message,
+        intent,
+        matches!(kind, SystemCommitKind::CliIntegration),
+    )
+    .await?;
+    drop(guard);
     if created {
-        if is_auto_sync_enabled(&target_repo) {
-            let cli_sync = cli.clone();
-            let sync_target = target_repo.clone();
-            tauri::async_runtime::spawn(async move {
-                if let Err(e) = crate::git::sync::sync(&cli_sync, &sync_target).await {
-                    tracing::warn!(
-                        "auto-sync (system) failed for {}: {}",
-                        sync_target.display(),
-                        e
-                    );
-                }
-            });
-        }
-        if matches!(git_type, SpaceGitType::Submodule) && is_auto_sync_enabled(project_path) {
-            let cli_sync = cli.clone();
-            let root = project_path.to_path_buf();
-            tauri::async_runtime::spawn(async move {
-                if let Err(e) = crate::git::sync::sync(&cli_sync, &root).await {
-                    tracing::warn!(
-                        "auto-sync (system, root) failed for {}: {}",
-                        root.display(),
-                        e
-                    );
-                }
-            });
-        }
+        let pointer_intent = if matches!(intent, CommitIntent::ManualExplicit) {
+            intent
+        } else {
+            CommitIntent::StructuralLifecycle
+        };
+        finish_commit(
+            app,
+            &cli,
+            project_path,
+            space_path,
+            &target_repo,
+            matches!(git_type, SpaceGitType::Submodule).then_some(pointer_intent),
+        )
+        .await?;
     }
 
     Ok(())
@@ -952,8 +992,7 @@ async fn do_commit_scaffold(
             if !background_commit_allowed(project_path, CommitIntent::StructuralLifecycle) {
                 return Ok(());
             }
-            ops::add(&cli, project_path, ".gitignore").await?;
-            ops::add(&cli, project_path, &rel).await?;
+            let mut paths = vec![".gitignore".into(), rel];
             if include_readme {
                 let readme = if space_path == project_path {
                     "README.md".to_string()
@@ -961,12 +1000,20 @@ async fn do_commit_scaffold(
                     format!("{}/README.md", space_folder)
                 };
                 if project_path.join(&readme).exists() {
-                    ops::add(&cli, project_path, &readme).await?;
+                    paths.push(readme);
                 }
             }
-            let created = ops::commit(&cli, project_path, message).await?;
+            let created = commit_prepared_paths(
+                &cli,
+                project_path,
+                &paths,
+                message,
+                CommitIntent::StructuralLifecycle,
+                false,
+            )
+            .await?;
             if created {
-                emit_committed(app, space_path, project_path);
+                finish_commit(app, &cli, project_path, space_path, project_path, None).await?;
             }
         }
         SpaceGitType::Independent => {
@@ -976,14 +1023,21 @@ async fn do_commit_scaffold(
             if !background_commit_allowed(space_path, CommitIntent::StructuralLifecycle) {
                 return Ok(());
             }
-            ops::add(&cli, space_path, ".gitignore").await?;
-            ops::add(&cli, space_path, ".svode").await?;
+            let mut paths = vec![".gitignore".into(), ".svode".into()];
             if include_readme && space_path.join("README.md").exists() {
-                ops::add(&cli, space_path, "README.md").await?;
+                paths.push("README.md".into());
             }
-            let created = ops::commit(&cli, space_path, message).await?;
+            let created = commit_prepared_paths(
+                &cli,
+                space_path,
+                &paths,
+                message,
+                CommitIntent::StructuralLifecycle,
+                false,
+            )
+            .await?;
             if created {
-                emit_committed(app, space_path, space_path);
+                finish_commit(app, &cli, project_path, space_path, space_path, None).await?;
             }
         }
         SpaceGitType::Submodule => {
@@ -993,23 +1047,84 @@ async fn do_commit_scaffold(
             if !background_commit_allowed(space_path, CommitIntent::StructuralLifecycle) {
                 return Ok(());
             }
-            ops::add(&cli, space_path, ".gitignore").await?;
-            ops::add(&cli, space_path, ".svode").await?;
+            let mut paths = vec![".gitignore".into(), ".svode".into()];
             if include_readme && space_path.join("README.md").exists() {
-                ops::add(&cli, space_path, "README.md").await?;
+                paths.push("README.md".into());
             }
-            let created = ops::commit(&cli, space_path, message).await?;
+            let created = commit_prepared_paths(
+                &cli,
+                space_path,
+                &paths,
+                message,
+                CommitIntent::StructuralLifecycle,
+                false,
+            )
+            .await?;
             drop(_guard);
             if created {
-                emit_committed(app, space_path, space_path);
-                let root_lock = git_state.get_lock(project_path).await;
-                let _root_guard = root_lock.lock().await;
-                ops::submodule_update_pointer(&cli, project_path, space_path).await?;
-                emit_committed(app, space_path, project_path);
+                finish_commit(
+                    app,
+                    &cli,
+                    project_path,
+                    space_path,
+                    space_path,
+                    Some(CommitIntent::StructuralLifecycle),
+                )
+                .await?;
             }
         }
     }
 
+    Ok(())
+}
+
+async fn finish_commit(
+    app: &AppHandle,
+    cli: &super::cli::GitCli,
+    project: &Path,
+    space: &Path,
+    repo: &Path,
+    pointer_intent: Option<CommitIntent>,
+) -> Result<(), AppError> {
+    emit_committed(app, space, repo);
+    let pointer = if let Some(intent) = pointer_intent {
+        let state = app.state::<GitState>();
+        let lock = state.get_lock(project).await;
+        let _guard = lock.lock().await;
+        commit_parent_pointer(cli, project, space, intent).await
+    } else {
+        Ok(false)
+    };
+    // Child history remains published even when the separate root step fails.
+    schedule_committed_sync(cli, repo);
+    if pointer? {
+        emit_committed(app, space, project);
+        schedule_committed_sync(cli, project);
+    }
+    Ok(())
+}
+
+fn schedule_committed_sync(cli: &super::cli::GitCli, repo: &Path) {
+    if !is_auto_sync_enabled(repo) {
+        return;
+    }
+    let cli = cli.clone();
+    let repo = repo.to_path_buf();
+    tauri::async_runtime::spawn(async move {
+        if let Err(error) = sync_if_committed(&cli, &repo, true).await {
+            tracing::warn!(kind = error.kind(), "auto-sync after commit failed");
+        }
+    });
+}
+
+async fn sync_if_committed(
+    cli: &super::cli::GitCli,
+    repo: &Path,
+    created: bool,
+) -> Result<(), AppError> {
+    if created && is_auto_sync_enabled(repo) {
+        crate::git::sync::sync(cli, repo).await?;
+    }
     Ok(())
 }
 
@@ -1451,6 +1566,452 @@ mod tests {
     use super::*;
     use crate::space::config::{write_git_user_policy, write_space_config};
     use crate::space::types::{GitSpaceConfig, GitUserPolicy, SpaceConfig};
+
+    #[tokio::test]
+    async fn staging_consumers_execute_all_policy_combinations_and_routing() {
+        use crate::git::staging_tests::{cli, git, repo, write};
+        let cli = cli();
+        for structural in [false, true] {
+            for system in [false, true] {
+                for sync in [false, true] {
+                    for kind in [
+                        SpaceGitType::Inline,
+                        SpaceGitType::Independent,
+                        SpaceGitType::Submodule,
+                    ] {
+                        let root_tmp = repo(&cli, true).await;
+                        let child_tmp = repo(&cli, true).await;
+                        let root = root_tmp.path();
+                        let child = if kind == SpaceGitType::Inline {
+                            root.join("Исследования")
+                        } else {
+                            child_tmp.path().to_path_buf()
+                        };
+                        let target = policy_path_for_git_type(root, &child, kind);
+                        write_local_git_policy(
+                            target,
+                            GitUserPolicy {
+                                auto_sync: sync,
+                                auto_commit_structural: structural,
+                                auto_commit_system: system,
+                            },
+                        );
+                        for (intent, name, expected) in [
+                            (
+                                CommitIntent::StructuralLifecycle,
+                                "zadachi-komplaens/lifecycle.md",
+                                structural,
+                            ),
+                            (
+                                CommitIntent::SystemConfig,
+                                "Исследования/.svode/config.json",
+                                system,
+                            ),
+                            (
+                                CommitIntent::ContentWorkspace,
+                                "documents/content.md",
+                                false,
+                            ),
+                            (CommitIntent::ManualExplicit, "manual.md", true),
+                        ] {
+                            let abs = child.join(name);
+                            let path = crate::repo_path::repo_relative_from_base(
+                                target,
+                                &abs,
+                                crate::repo_path::RootMode::Reject,
+                            )
+                            .unwrap();
+                            write(target, &path, "source mutation\n");
+                            let head = git(&cli, target, &["rev-parse", "HEAD"]).await;
+                            let index = git(&cli, target, &["ls-files", "--stage", "-z"]).await;
+                            assert_eq!(
+                                commit_prepared_paths(
+                                    &cli,
+                                    target,
+                                    &[path.clone()],
+                                    "Policy fixture",
+                                    intent,
+                                    false
+                                )
+                                .await
+                                .unwrap(),
+                                expected
+                            );
+                            assert_eq!(is_auto_sync_enabled(target), sync);
+                            if expected {
+                                assert_ne!(git(&cli, target, &["rev-parse", "HEAD"]).await, head);
+                                assert_eq!(
+                                    git(&cli, target, &["show", &format!("HEAD:{path}")]).await,
+                                    "source mutation\n"
+                                );
+                            } else {
+                                assert_eq!(git(&cli, target, &["rev-parse", "HEAD"]).await, head);
+                                assert_eq!(
+                                    git(&cli, target, &["ls-files", "--stage", "-z"]).await,
+                                    index
+                                );
+                            }
+                            assert_eq!(std::fs::read_to_string(abs).unwrap(), "source mutation\n");
+                        }
+                        // The same caller reads fresh policy, rather than retaining its previous skip.
+                        let path = "switched/.svode/config.json".to_string();
+                        write(target, &path, "switched\n");
+                        write_local_git_policy(
+                            target,
+                            GitUserPolicy {
+                                auto_sync: sync,
+                                auto_commit_structural: false,
+                                auto_commit_system: false,
+                            },
+                        );
+                        assert!(
+                            !commit_prepared_paths(
+                                &cli,
+                                target,
+                                &[path.clone()],
+                                "Off",
+                                CommitIntent::SystemConfig,
+                                false
+                            )
+                            .await
+                            .unwrap()
+                        );
+                        write_local_git_policy(
+                            target,
+                            GitUserPolicy {
+                                auto_sync: sync,
+                                auto_commit_structural: false,
+                                auto_commit_system: true,
+                            },
+                        );
+                        assert!(
+                            commit_prepared_paths(
+                                &cli,
+                                target,
+                                &[path],
+                                "On",
+                                CommitIntent::SystemConfig,
+                                false
+                            )
+                            .await
+                            .unwrap()
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn staging_failure_stops_system_and_structural_commits_with_staged_siblings() {
+        use crate::git::staging_tests::{cli, fault_cli, git, repo, write};
+        let real = cli();
+        for intent in [
+            CommitIntent::StructuralLifecycle,
+            CommitIntent::SystemConfig,
+        ] {
+            let tmp = repo(&real, true).await;
+            let root = tmp.path();
+            write_local_git_policy(
+                root,
+                GitUserPolicy {
+                    auto_sync: true,
+                    auto_commit_structural: true,
+                    auto_commit_system: true,
+                },
+            );
+            write(root, "sibling.md", "staged sibling\n");
+            git(&real, root, &["add", "sibling.md"]).await;
+            let head = git(&real, root, &["rev-parse", "HEAD"]).await;
+            let index = git(&real, root, &["ls-files", "--stage", "-z"]).await;
+            write(root, "Исследования/config.json", "source mutation\n");
+            let fault = tempfile::TempDir::new().unwrap();
+            let broken = fault_cli(
+                fault.path(),
+                &real,
+                "for arg in \"$@\"; do if [ \"$arg\" = add ]; then exit 31; fi; done",
+            );
+            assert!(
+                commit_prepared_paths(
+                    &broken,
+                    root,
+                    &["Исследования/config.json".into()],
+                    "Must fail",
+                    intent,
+                    false
+                )
+                .await
+                .is_err()
+            );
+            assert_eq!(git(&real, root, &["rev-parse", "HEAD"]).await, head);
+            assert_eq!(
+                git(&real, root, &["ls-files", "--stage", "-z"]).await,
+                index
+            );
+            assert_eq!(
+                std::fs::read_to_string(root.join("Исследования/config.json")).unwrap(),
+                "source mutation\n"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn optional_cli_absence_is_not_a_failed_expected_target() {
+        use crate::git::staging_tests::{cli, git, repo, write};
+        let cli = cli();
+        let tmp = repo(&cli, true).await;
+        let root = tmp.path();
+        write_local_git_policy(
+            root,
+            GitUserPolicy {
+                auto_sync: false,
+                auto_commit_structural: false,
+                auto_commit_system: true,
+            },
+        );
+        write(root, "CLAUDE.md", "instructions\n");
+        let paths = SystemCommitKind::CliIntegration
+            .paths()
+            .iter()
+            .map(|p| p.to_string())
+            .collect::<Vec<_>>();
+        assert!(
+            commit_prepared_paths(&cli, root, &paths, "CLI", CommitIntent::SystemConfig, true)
+                .await
+                .unwrap()
+        );
+        assert_eq!(
+            git(&cli, root, &["show", "HEAD:CLAUDE.md"]).await,
+            "instructions\n"
+        );
+        assert!(
+            commit_prepared_paths(
+                &cli,
+                root,
+                &["expected-missing.md".into()],
+                "Failure",
+                CommitIntent::SystemConfig,
+                false
+            )
+            .await
+            .is_err()
+        );
+        std::fs::remove_file(root.join("CLAUDE.md")).unwrap();
+        ops::add(&cli, root, "CLAUDE.md").await.unwrap();
+        assert!(
+            commit_prepared_paths(
+                &cli,
+                root,
+                &paths,
+                "Remove CLI",
+                CommitIntent::SystemConfig,
+                true
+            )
+            .await
+            .unwrap()
+        );
+        assert!(
+            !git(&cli, root, &["ls-tree", "-r", "--name-only", "HEAD"])
+                .await
+                .contains("CLAUDE.md")
+        );
+    }
+
+    #[tokio::test]
+    async fn child_success_root_policy_off_then_manual_pointer_only_retry() {
+        use crate::git::staging_tests::{cli, git, repo, write};
+        let cli = cli();
+        for root_on in [false, true] {
+            let tmp = repo(&cli, true).await;
+            let root = tmp.path();
+            let child = root.join("Исследования");
+            std::fs::create_dir(&child).unwrap();
+            git(&cli, &child, &["init"]).await;
+            git(&cli, &child, &["config", "user.name", "Test"]).await;
+            git(&cli, &child, &["config", "user.email", "test@example.test"]).await;
+            write(&child, "README.md", "child baseline\n");
+            ops::commit_paths(&cli, &child, &["README.md".into()])
+                .await
+                .unwrap();
+            write(
+                root,
+                ".gitmodules",
+                "[submodule \"Исследования\"]\n\tpath = Исследования\n\turl = ./Исследования\n",
+            );
+            ops::commit_paths(&cli, root, &[".gitmodules".into(), "Исследования".into()])
+                .await
+                .unwrap();
+            write_local_git_policy(
+                root,
+                GitUserPolicy {
+                    auto_sync: true,
+                    auto_commit_structural: root_on,
+                    auto_commit_system: false,
+                },
+            );
+            write_local_git_policy(
+                &child,
+                GitUserPolicy {
+                    auto_sync: false,
+                    auto_commit_structural: false,
+                    auto_commit_system: true,
+                },
+            );
+            write(&child, ".svode/config.json", "child config\n");
+            assert!(
+                commit_prepared_paths(
+                    &cli,
+                    &child,
+                    &[".svode/config.json".into()],
+                    "Child system",
+                    CommitIntent::SystemConfig,
+                    false
+                )
+                .await
+                .unwrap()
+            );
+            let child_head = git(&cli, &child, &["rev-parse", "HEAD"]).await;
+            let root_head = git(&cli, root, &["rev-parse", "HEAD"]).await;
+            let root_index = git(&cli, root, &["ls-files", "--stage", "-z"]).await;
+            assert_eq!(
+                commit_parent_pointer(&cli, root, &child, CommitIntent::StructuralLifecycle)
+                    .await
+                    .unwrap(),
+                root_on
+            );
+            if !root_on {
+                assert_eq!(git(&cli, root, &["rev-parse", "HEAD"]).await, root_head);
+                assert_eq!(
+                    git(&cli, root, &["ls-files", "--stage", "-z"]).await,
+                    root_index
+                );
+                assert!(
+                    commit_parent_pointer(&cli, root, &child, CommitIntent::ManualExplicit)
+                        .await
+                        .unwrap()
+                );
+            }
+            assert_eq!(git(&cli, &child, &["rev-parse", "HEAD"]).await, child_head);
+            assert_eq!(
+                git(&cli, root, &["rev-parse", "HEAD:Исследования"]).await,
+                child_head
+            );
+            assert!(
+                !commit_parent_pointer(&cli, root, &child, CommitIntent::ManualExplicit)
+                    .await
+                    .unwrap()
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn autosync_requires_a_created_commit_and_its_own_flag() {
+        use crate::git::staging_tests::{cli, git, repo, write};
+        let cli = cli();
+        for sync in [false, true] {
+            let tmp = repo(&cli, true).await;
+            let root = tmp.path();
+            let remote = tempfile::TempDir::new().unwrap();
+            git(&cli, remote.path(), &["init", "--bare"]).await;
+            git(
+                &cli,
+                root,
+                &["remote", "add", "origin", remote.path().to_str().unwrap()],
+            )
+            .await;
+            let branch = git(&cli, root, &["branch", "--show-current"]).await;
+            let branch = branch.trim();
+            git(&cli, root, &["push", "-u", "origin", branch]).await;
+            let before = git(&cli, remote.path(), &["rev-parse", branch]).await;
+            write_local_git_policy(
+                root,
+                GitUserPolicy {
+                    auto_sync: sync,
+                    auto_commit_structural: false,
+                    auto_commit_system: false,
+                },
+            );
+            write(root, "manual.md", "manual\n");
+            let created = ops::commit_paths(&cli, root, &["manual.md".into()])
+                .await
+                .unwrap();
+            sync_if_committed(&cli, root, false).await.unwrap();
+            assert_eq!(
+                git(&cli, remote.path(), &["rev-parse", branch]).await,
+                before
+            );
+            sync_if_committed(&cli, root, created).await.unwrap();
+            let remote_head = git(&cli, remote.path(), &["rev-parse", branch]).await;
+            if sync {
+                assert_eq!(remote_head, git(&cli, root, &["rev-parse", "HEAD"]).await);
+            } else {
+                assert_eq!(remote_head, before);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn scaffold_and_readme_scopes_use_the_same_preparation_and_structural_gate() {
+        use crate::git::staging_tests::{cli, git, repo, write};
+        let cli = cli();
+        for enabled in [false, true] {
+            for prefix in ["", "Исследования/", "zadachi-komplaens/"] {
+                let tmp = repo(&cli, true).await;
+                let root = tmp.path();
+                write_local_git_policy(
+                    root,
+                    GitUserPolicy {
+                        auto_sync: false,
+                        auto_commit_structural: enabled,
+                        auto_commit_system: !enabled,
+                    },
+                );
+                write(root, &format!("{prefix}.svode/config.json"), "config\n");
+                write(root, &format!("{prefix}.svode/index.db"), "local\n");
+                write(root, &format!("{prefix}README.md"), "readme\n");
+                ops::ensure_svode_gitignore(root).unwrap();
+                let before = git(&cli, root, &["ls-files", "--stage", "-z"]).await;
+                let paths = vec![".gitignore".into(), format!("{prefix}.svode")];
+                assert_eq!(
+                    commit_prepared_paths(
+                        &cli,
+                        root,
+                        &paths,
+                        "Scaffold",
+                        CommitIntent::StructuralLifecycle,
+                        false
+                    )
+                    .await
+                    .unwrap(),
+                    enabled
+                );
+                let tree = git(&cli, root, &["ls-tree", "-r", "--name-only", "HEAD"]).await;
+                assert_eq!(tree.contains("config.json"), enabled);
+                assert!(!tree.contains("index.db"));
+                assert!(!tree.contains("README.md"));
+                if !enabled {
+                    assert_eq!(
+                        git(&cli, root, &["ls-files", "--stage", "-z"]).await,
+                        before
+                    );
+                }
+                assert_eq!(
+                    commit_prepared_paths(
+                        &cli,
+                        root,
+                        &[format!("{prefix}README.md")],
+                        "Readme",
+                        CommitIntent::StructuralLifecycle,
+                        false
+                    )
+                    .await
+                    .unwrap(),
+                    enabled
+                );
+            }
+        }
+    }
 
     fn s(x: &str) -> String {
         x.to_string()

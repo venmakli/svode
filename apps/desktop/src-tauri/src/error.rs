@@ -41,6 +41,15 @@ pub enum AppError {
     #[error("Git command failed: {0}")]
     GitCommandFailed(String),
 
+    #[error("Git save failed during {stage}: {reason} ({path_count} paths)")]
+    GitSaveFailed {
+        stage: &'static str,
+        reason: &'static str,
+        exit_code: Option<i32>,
+        path_count: usize,
+        path_sample: Option<String>,
+    },
+
     #[error("Content saved; parent pointer remains pending: {cause}")]
     GitSavePartial { cause: Box<AppError> },
 
@@ -109,6 +118,7 @@ impl AppError {
             AppError::AgentSpawnFailed(_) => "agent_spawn_failed",
             AppError::GitNotFound => "git_not_found",
             AppError::GitCommandFailed(_) => "git_command_failed",
+            AppError::GitSaveFailed { .. } => "git_save_failed",
             AppError::GitSavePartial { .. } => "git_save_partial",
             AppError::GitConflict(_) => "git_conflict",
             AppError::GitAuthRequired(_) => "git_auth_required",
@@ -134,6 +144,9 @@ impl Serialize for AppError {
         S: serde::Serializer,
     {
         match self {
+            AppError::GitSaveFailed { stage, reason, exit_code, path_count, path_sample } => {
+                serde_json::json!({ "kind": self.kind(), "stage": stage, "reason": reason, "exitCode": exit_code, "pathCount": path_count, "pathSample": path_sample }).serialize(serializer)
+            }
             AppError::GitSavePartial { cause } => {
                 serde_json::json!({ "kind": self.kind(), "childCommitted": true, "parentPointer": "pending", "cause": cause }).serialize(serializer)
             }

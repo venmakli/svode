@@ -31,6 +31,10 @@ pub struct GitCli {
 }
 
 impl GitCli {
+    #[cfg(test)]
+    pub(crate) fn for_test(git_path: PathBuf) -> Self {
+        Self { git_path }
+    }
     /// Detect git binary and LFS availability.
     pub fn detect() -> Result<Self, AppError> {
         let git_path = resolve_git_binary()?;

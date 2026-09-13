@@ -24,11 +24,6 @@ const SVODE_LOCAL_IGNORE_ENTRIES: &[&str] = &[
     ".svode/*.db*",
 ];
 
-const LOCAL_DB_EXCLUDE_PATHSPEC: &str = ":(exclude,glob)**/.svode/*.db*";
-const LOCAL_CONFIG_EXCLUDE_PATHSPEC: &str = ":(exclude,glob)**/.svode/local.json";
-const LOCAL_AGENT_EXCLUDE_PATHSPEC: &str = ":(exclude,glob)**/.svode/lfs-s3-agent.json";
-const VARIABLES_EXCLUDE_PATHSPEC: &str = ":(exclude,glob)**/.svode/variables.*";
-
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GitStatus {
@@ -521,13 +516,7 @@ fn normalize_git_path(path: &str) -> Result<String, AppError> {
 }
 
 fn is_local_variable_path(path: &str) -> bool {
-    let normalized = path.replace('\\', "/");
-    let parts = normalized.split('/').collect::<Vec<_>>();
-    parts.windows(2).any(|pair| {
-        pair[0] == ".svode"
-            && (matches!(pair[1], "local.json" | "lfs-s3-agent.json")
-                || pair[1].starts_with("variables."))
-    })
+    super::staging::local(&path.replace('\\', "/"))
 }
 
 fn reject_local_variable_path(path: &str) -> Result<(), AppError> {
@@ -541,16 +530,7 @@ fn reject_local_variable_path(path: &str) -> Result<(), AppError> {
 
 async fn reject_staged_local_variables(cli: &GitCli, repo: &Path) -> Result<(), AppError> {
     let staged = cli
-        .exec(
-            repo,
-            &[
-                "diff",
-                "--cached",
-                "--name-only",
-                "--diff-filter=ACMRTUXB",
-                "-z",
-            ],
-        )
+        .exec_redacted(repo, &["diff", "--cached", "--name-only", "-z"])
         .await?;
     if staged.exit_code != 0 {
         return Err(AppError::GitCommandFailed(
@@ -565,74 +545,34 @@ async fn reject_staged_local_variables(cli: &GitCli, repo: &Path) -> Result<(), 
     Ok(())
 }
 
-/// Stage a specific file.
+/// Stage the allowed concrete entries in a file or directory selection.
 pub async fn add(cli: &GitCli, space_dir: &Path, path: &str) -> Result<(), AppError> {
-    let literal = format!(":(literal){}", normalize_git_path(path)?);
-    let out = cli
-        .exec(
-            space_dir,
-            &[
-                "add",
-                "--",
-                &literal,
-                LOCAL_DB_EXCLUDE_PATHSPEC,
-                LOCAL_CONFIG_EXCLUDE_PATHSPEC,
-                LOCAL_AGENT_EXCLUDE_PATHSPEC,
-                VARIABLES_EXCLUDE_PATHSPEC,
-            ],
-        )
-        .await?;
-    if out.exit_code != 0 {
-        return Err(AppError::GitCommandFailed(format!(
-            "git add failed: {}",
-            out.stderr
-        )));
-    }
-    Ok(())
+    let paths = super::staging::resolve(cli, space_dir, &[path.to_string()]).await?;
+    super::staging::prepare(cli, space_dir, &paths)
+        .await
+        .map(|_| ())
 }
 
-/// Stage all changes.
+/// Stage all allowed changes without changing already staged local entries.
 pub async fn add_all(cli: &GitCli, space_dir: &Path) -> Result<(), AppError> {
-    let out = cli
-        .exec(
-            space_dir,
-            &[
-                "add",
-                "--",
-                ".",
-                LOCAL_DB_EXCLUDE_PATHSPEC,
-                LOCAL_CONFIG_EXCLUDE_PATHSPEC,
-                LOCAL_AGENT_EXCLUDE_PATHSPEC,
-                VARIABLES_EXCLUDE_PATHSPEC,
-            ],
-        )
-        .await?;
-    if out.exit_code != 0 {
-        return Err(AppError::GitCommandFailed(format!(
-            "git add failed: {}",
-            out.stderr
-        )));
-    }
-    Ok(())
+    add(cli, space_dir, ".").await
 }
 
-/// Commit with a given message. Returns `Ok(false)` if there was nothing
-/// to commit, `Ok(true)` if a commit was created.
+/// Commit the index. A no-op is established before invoking hooks.
 pub async fn commit(cli: &GitCli, space_dir: &Path, message: &str) -> Result<bool, AppError> {
     reject_staged_local_variables(cli, space_dir).await?;
-    let out = cli.exec(space_dir, &["commit", "-m", message]).await?;
+    if !super::staging::has_changes(cli, space_dir, &[]).await? {
+        return Ok(false);
+    }
+    let out =
+        super::staging::exec(cli, space_dir, &["commit", "-m", message], "commit", &[]).await?;
     if out.exit_code != 0 {
-        let combined = format!("{}{}", out.stdout, out.stderr);
-        if combined.contains("nothing to commit")
-            || combined.contains("no changes added to commit")
-            || combined.contains("nothing added to commit")
-        {
-            return Ok(false);
-        }
-        return Err(AppError::GitCommandFailed(format!(
-            "git commit failed: {}",
-            out.stderr
-        )));
+        return Err(super::staging::failure(
+            "commit",
+            "command_failed",
+            Some(out.exit_code),
+            &[],
+        ));
     }
     Ok(true)
 }
@@ -665,20 +605,64 @@ pub(crate) async fn commit_exact_path_receipt(
 ) -> Result<Option<ExactPathCommitReceipt>, AppError> {
     let path = normalize_git_path(path)?;
     reject_local_variable_path(&path)?;
+    let literal = format!(":(literal){path}");
+    let paths = std::slice::from_ref(&path);
     let known = cli
-        .exec_redacted(repo, &["ls-files", "--error-unmatch", "--", &path])
+        .exec_redacted(repo, &["ls-files", "--error-unmatch", "--", &literal])
         .await?;
     let prepared_intent_to_add = known.exit_code != 0;
 
+    if !prepared_intent_to_add {
+        let head = super::staging::exec(
+            cli,
+            repo,
+            &["rev-parse", "--verify", "HEAD"],
+            "verify",
+            paths,
+        )
+        .await?;
+        if head.exit_code == 0 {
+            let diff = super::staging::exec(
+                cli,
+                repo,
+                &[
+                    "diff",
+                    "--quiet",
+                    "--no-ext-diff",
+                    "--ignore-submodules=dirty",
+                    "HEAD",
+                    "--",
+                    &literal,
+                ],
+                "verify",
+                paths,
+            )
+            .await?;
+            match diff.exit_code {
+                0 => return Ok(None),
+                1 => {}
+                code => {
+                    return Err(super::staging::failure(
+                        "verify",
+                        "verification_failed",
+                        Some(code),
+                        paths,
+                    ));
+                }
+            }
+        }
+    }
     if prepared_intent_to_add {
         let prepared = cli
-            .exec_redacted(repo, &["add", "--intent-to-add", "--", &path])
+            .exec_redacted(repo, &["add", "--intent-to-add", "--", &literal])
             .await?;
         if prepared.exit_code != 0 {
-            return Err(AppError::GitCommandFailed(format!(
-                "git add --intent-to-add failed: {}",
-                prepared.stderr
-            )));
+            return Err(super::staging::failure(
+                "prepare",
+                "command_failed",
+                Some(prepared.exit_code),
+                paths,
+            ));
         }
     }
 
@@ -695,9 +679,6 @@ pub(crate) async fn commit_exact_path_receipt(
                 message,
                 "--",
                 &format!(":(literal){path}"),
-                LOCAL_CONFIG_EXCLUDE_PATHSPEC,
-                LOCAL_AGENT_EXCLUDE_PATHSPEC,
-                VARIABLES_EXCLUDE_PATHSPEC,
             ],
         )
         .await?;
@@ -724,27 +705,23 @@ pub(crate) async fn commit_exact_path_receipt(
     }
 
     if prepared_intent_to_add {
-        let cleanup = cli.exec_redacted(repo, &["reset", "--", &path]).await?;
+        let cleanup = cli.exec_redacted(repo, &["reset", "--", &literal]).await?;
         if cleanup.exit_code != 0 {
-            return Err(AppError::GitCommandFailed(format!(
-                "git commit failed: {}; target index cleanup failed: {}",
-                out.stderr.trim(),
-                cleanup.stderr.trim()
-            )));
+            return Err(super::staging::failure(
+                "commit",
+                "target_cleanup_failed",
+                Some(cleanup.exit_code),
+                paths,
+            ));
         }
     }
 
-    let combined = format!("{}{}", out.stdout, out.stderr);
-    if combined.contains("nothing to commit")
-        || combined.contains("no changes added to commit")
-        || combined.contains("nothing added to commit")
-    {
-        return Ok(None);
-    }
-    Err(AppError::GitCommandFailed(format!(
-        "git commit --only failed: {}",
-        out.stderr
-    )))
+    Err(super::staging::failure(
+        "commit",
+        "command_failed",
+        Some(out.exit_code),
+        paths,
+    ))
 }
 
 /// Whether the repository index contains any changes relative to `HEAD`.
@@ -993,57 +970,37 @@ pub async fn commit_paths(
     if file_paths.is_empty() {
         return Ok(false);
     }
-    let file_paths = file_paths
-        .iter()
-        .map(|path| normalize_git_path(path))
-        .collect::<Result<Vec<_>, _>>()?;
-    for path in &file_paths {
-        reject_local_variable_path(path)?;
+    let file_paths = super::staging::resolve(cli, space_dir, file_paths).await?;
+    if file_paths.is_empty() {
+        return Ok(false);
     }
     if status(cli, space_dir).await?.has_conflicts {
         return Err(AppError::GitConflict(
             "Resolve the repository merge before saving paths".into(),
         ));
     }
-    for file_path in &file_paths {
-        add(cli, space_dir, file_path).await?;
+    let prepared = super::staging::prepare(cli, space_dir, &file_paths).await?;
+    if !super::staging::has_changes(cli, space_dir, &file_paths).await? {
+        return Ok(false);
     }
     let message = generate_commit_message_for_paths(cli, space_dir, &file_paths).await?;
+    super::staging::verify(cli, space_dir, &file_paths, &prepared).await?;
     let mut args = vec!["commit", "--only", "-m", &message, "--"];
     let literal_paths = file_paths
         .iter()
         .map(|path| format!(":(literal){path}"))
         .collect::<Vec<_>>();
     args.extend(literal_paths.iter().map(String::as_str));
-    args.extend([
-        LOCAL_CONFIG_EXCLUDE_PATHSPEC,
-        LOCAL_AGENT_EXCLUDE_PATHSPEC,
-        VARIABLES_EXCLUDE_PATHSPEC,
-    ]);
-    let out = cli.exec(space_dir, &args).await?;
-    let combined = format!("{}{}", out.stdout, out.stderr);
-    let created = out.exit_code == 0;
-    if !created
-        && ![
-            "nothing to commit",
-            "no changes added to commit",
-            "nothing added to commit",
-        ]
-        .iter()
-        .any(|message| combined.contains(message))
-    {
-        return Err(AppError::GitCommandFailed(
-            "Selected-path commit failed".into(),
+    let out = super::staging::exec(cli, space_dir, &args, "commit", &file_paths).await?;
+    if out.exit_code != 0 {
+        return Err(super::staging::failure(
+            "commit",
+            "command_failed",
+            Some(out.exit_code),
+            &file_paths,
         ));
     }
-    if created {
-        tracing::info!(
-            "Auto-committed {} scoped path(s) in {}",
-            file_paths.len(),
-            space_dir.display()
-        );
-    }
-    Ok(created)
+    Ok(true)
 }
 
 async fn generate_commit_message_for_paths(
@@ -1051,11 +1008,13 @@ async fn generate_commit_message_for_paths(
     space_dir: &Path,
     paths: &[String],
 ) -> Result<String, AppError> {
+    let literal_paths = paths
+        .iter()
+        .map(|path| format!(":(literal){path}"))
+        .collect::<Vec<_>>();
     let mut args = vec!["diff", "--cached", "--stat", "--"];
-    args.extend(paths.iter().map(String::as_str));
-    let out = cli
-        .exec_with_env(space_dir, &args, &[("GIT_LITERAL_PATHSPECS", "1")])
-        .await?;
+    args.extend(literal_paths.iter().map(String::as_str));
+    let out = cli.exec_redacted(space_dir, &args).await?;
 
     if out.stdout.trim().is_empty() {
         return Ok("Update space".to_string());
@@ -1067,10 +1026,8 @@ async fn generate_commit_message_for_paths(
 
     // Also check diff --cached --name-status for accurate categorization
     let mut args = vec!["diff", "--cached", "--name-status", "-z", "--"];
-    args.extend(paths.iter().map(String::as_str));
-    let name_status = cli
-        .exec_with_env(space_dir, &args, &[("GIT_LITERAL_PATHSPECS", "1")])
-        .await?;
+    args.extend(literal_paths.iter().map(String::as_str));
+    let name_status = cli.exec_redacted(space_dir, &args).await?;
     let records = parse_name_status_z(&name_status.stdout)?;
 
     if staged_changes_touch_sensitive_collection(space_dir, &records) {
