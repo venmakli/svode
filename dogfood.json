@@ -7,6 +7,22 @@
       "version": "0.0.8",
       "commit": "23d8471f66b0b1441fea8aaeb3e8b4c58a7f63c2",
       "sourceRef": "main",
+      "runId": 34739573096,
+      "publishedAt": "2026-09-13T05:41:40.353Z",
+      "expiresAt": "2026-09-16T05:41:40.353Z",
+      "platforms": {
+        "windows": {
+          "url": "https://github.com/venmakli/svode/actions/runs/34739573096/artifacts/10312364032",
+          "fallbackUrl": "https://github.com/venmakli/svode/actions/runs/34739573096",
+          "artifactName": "Svode-windows-nsis"
+        }
+      }
+    },
+    {
+      "kind": "ci-build",
+      "version": "0.0.8",
+      "commit": "23d8471f66b0b1441fea8aaeb3e8b4c58a7f63c2",
+      "sourceRef": "main",
       "runId": 34739545657,
       "publishedAt": "2026-09-13T05:40:15.871Z",
       "expiresAt": "2026-09-16T05:40:15.871Z",
