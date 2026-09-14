@@ -258,7 +258,15 @@ async fn inspect_schema(connection: &mut SqliteConnection) -> Result<bool, AppEr
     Ok(format!("{:x}", hash.finalize()) == expected)
 }
 
-pub(super) async fn cleanup(directory: &Path) -> Result<(), AppError> {
+#[cfg(test)]
+async fn cleanup(directory: &Path) -> Result<(), AppError> {
+    cleanup_with_owner(directory, None).await
+}
+
+pub(super) async fn cleanup_with_owner(
+    directory: &Path,
+    owner: Option<&super::lifecycle::CleanupOwner>,
+) -> Result<(), AppError> {
     // The lifecycle owner supplies the canonical directory. Never traverse a
     // replacement symlink or discover candidates recursively in sibling owners.
     if fs::symlink_metadata(directory)?.file_type().is_symlink()
@@ -267,6 +275,9 @@ pub(super) async fn cleanup(directory: &Path) -> Result<(), AppError> {
         return Ok(());
     }
     for entry in fs::read_dir(directory)? {
+        if owner.is_some_and(|owner| owner.is_closed()) {
+            return Ok(());
+        }
         let entry = entry?;
         let name = entry.file_name();
         let Some(generation) = name
@@ -283,15 +294,27 @@ pub(super) async fn cleanup(directory: &Path) -> Result<(), AppError> {
             continue;
         }
         let result = async {
-            let owner = directory.to_path_buf();
+            let source_directory = directory.to_path_buf();
             let stamp = generation.to_string();
-            let snapshot = tokio::task::spawn_blocking(move || Snapshot::capture(&owner, &stamp))
-                .await
-                .map_err(|_| AppError::Index("quarantine inspection worker failed".into()))??;
-            if derived(&snapshot).await? {
-                tokio::task::spawn_blocking(move || snapshot.delete())
+            let snapshot =
+                tokio::task::spawn_blocking(move || Snapshot::capture(&source_directory, &stamp))
                     .await
-                    .map_err(|_| AppError::Index("quarantine removal worker failed".into()))??;
+                    .map_err(|_| AppError::Index("quarantine inspection worker failed".into()))??;
+            if derived(&snapshot).await? {
+                let deletion = match owner {
+                    Some(owner) => match owner.authorize_deletion().await {
+                        Some(guard) => Some(guard),
+                        None => return Ok(()),
+                    },
+                    None => None,
+                };
+                tokio::task::spawn_blocking(move || {
+                    // Retain authorization if the async awaiter is cancelled.
+                    let _deletion = deletion;
+                    snapshot.delete()
+                })
+                .await
+                .map_err(|_| AppError::Index("quarantine removal worker failed".into()))??;
                 tracing::info!(
                     store = "index",
                     generation,
