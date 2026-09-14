@@ -40,7 +40,7 @@ import {
   useAppGitFocus,
   useGitAvailability,
 } from "@/features/git/app-shell";
-import { avatarColorFromEmail, useGlobalIdentity } from "@/features/identity";
+import { useGlobalIdentity } from "@/features/identity";
 import { type AppSettingsSection } from "@/features/settings";
 import { UserSettingsFooter } from "./user-settings-footer";
 import { setCurrentAppWindowTitle } from "@/platform/native/window";
@@ -210,7 +210,6 @@ function ShellLayoutContent({
         <UserSettingsFooter
           identityName={identityName}
           identityEmail={identityEmail}
-          identityAvatarColor={avatarColorFromEmail(identityEmail)}
           onOpenProfile={() => onOpenAppSettings("git-identity")}
           onOpenSettings={() => onOpenAppSettings()}
         />

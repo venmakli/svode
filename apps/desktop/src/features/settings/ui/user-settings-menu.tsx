@@ -1,3 +1,4 @@
+import { humanAvatar } from "@/features/identity";
 import { shortcutLabel } from "@/shared/lib/shortcut-description";
 import { settingsShortcut } from "../model/shortcuts";
 import { useRef, type Ref } from "react";
@@ -26,7 +27,6 @@ interface UserSettingsMenuProps {
   triggerRef?: Ref<HTMLButtonElement>;
   identityName: string | null;
   identityEmail: string | null;
-  identityAvatarColor: string;
   onOpenProfile: () => void;
   onOpenSettings: () => void;
 }
@@ -35,19 +35,16 @@ export function UserSettingsMenu({
   triggerRef,
   identityName,
   identityEmail,
-  identityAvatarColor,
   onOpenProfile,
   onOpenSettings,
 }: UserSettingsMenuProps) {
   const destination = useRef<(() => void) | null>(null);
   const { theme, themePending, handleThemeChange } = useAppSettingsAppearance();
   const userName = identityName || "User";
-  const initials = userName
-    .split(" ")
-    .map((word) => word[0])
-    .join("")
-    .slice(0, 2)
-    .toUpperCase();
+  const presentation = humanAvatar({
+    name: identityName,
+    email: identityEmail,
+  });
   const shortcut = shortcutLabel(settingsShortcut);
   const modes = [
     { value: "light", label: m.common_theme_light(), icon: Sun },
@@ -65,10 +62,10 @@ export function UserSettingsMenu({
         }
       >
         <AvatarFallback
-          className="rounded-lg text-xs font-medium text-white"
-          style={{ backgroundColor: identityAvatarColor }}
+          className="rounded-lg text-xs font-medium"
+          style={presentation.style}
         >
-          {initials}
+          {presentation.initials}
         </AvatarFallback>
       </Avatar>
     );

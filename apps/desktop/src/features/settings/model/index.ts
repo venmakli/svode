@@ -31,7 +31,6 @@ export {
   fanoutEntryHasOverride,
   fanoutEntrySummarySource,
   identityDraftFromRepoIdentity,
-  identityInitials,
   identitySummary,
   identitySummarySource,
   identityText,

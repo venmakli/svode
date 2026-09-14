@@ -37,17 +37,6 @@ export function compareActorsByDefault(
   );
 }
 
-export function actorInitials(actor: ActorCatalogRow) {
-  const initials = actor.displayName
-    .trim()
-    .split(/\s+/u)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((part) => Array.from(part)[0]?.toUpperCase() ?? "")
-    .join("");
-  return initials || actor.canonicalEmail.slice(0, 2).toUpperCase();
-}
-
 export function visibleActorAliases(actor: ActorCatalogRow): ActorAlias[] {
   const seen = new Set<string>();
   return actor.aliases.filter((alias) => {

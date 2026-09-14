@@ -1,6 +1,7 @@
+import { humanAvatar } from "@/features/identity";
 import { useEffect, useMemo, useState } from "react";
 import { X } from "lucide-react";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -23,9 +24,6 @@ import {
   actorDisplayName,
   actorIsMe,
   actorLastCommitAt,
-  gravatarUrl,
-  hashIndex,
-  initialsForActor,
   isValidEmail,
   normalizeActorValues,
   resolveActorCandidate,
@@ -320,28 +318,11 @@ function ActorInline({ actor }: { actor: ActorCandidate }) {
 }
 
 function ActorAvatar({ actor }: { actor: ActorCandidate }) {
-  const color = ["blue", "green", "purple", "orange", "pink"][
-    hashIndex(actor.email, 5)
-  ];
+  const avatar = humanAvatar(actor);
   return (
     <Avatar size="sm" className="shrink-0">
-      <AvatarImage src={gravatarUrl(actor.email)} alt="" />
-      <AvatarFallback
-        className={cn(
-          "text-[10px] font-medium",
-          color === "blue" &&
-            "bg-(--property-blue-soft) text-(--property-blue)",
-          color === "green" &&
-            "bg-(--property-green-soft) text-(--property-green)",
-          color === "purple" &&
-            "bg-(--property-purple-soft) text-(--property-purple)",
-          color === "orange" &&
-            "bg-(--property-orange-soft) text-(--property-orange)",
-          color === "pink" &&
-            "bg-(--property-pink-soft) text-(--property-pink)",
-        )}
-      >
-        {initialsForActor(actor)}
+      <AvatarFallback className="text-[10px] font-medium" style={avatar.style}>
+        {avatar.initials}
       </AvatarFallback>
     </Avatar>
   );

@@ -21,7 +21,6 @@ test("identitySummary shows global effective identity without local draft values
   expect(summary.source).toBe("global");
   expect(summary.hasRepoOverride).toBe(false);
   expect(summary.text).toBe("venmak.li <kamnevin@gmail.com>");
-  expect(summary.initials).toBe("V");
   expect(identityDraftFromRepoIdentity(result)).toEqual({
     name: "",
     email: "",
@@ -66,7 +65,6 @@ test("identitySummary exposes partial overrides and missing identities", () => {
   const missingSummary = identitySummary(missing, false);
   expect(missingSummary.source).toBe("missing");
   expect(missingSummary.text).toBe(null);
-  expect(missingSummary.initials).toBe("?");
 });
 
 test("fanout helpers label only nested repository overrides as replace targets", () => {

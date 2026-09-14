@@ -7,7 +7,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
-  avatarColorFromEmail,
+  humanAvatar,
   type FanoutPreviewEntry,
   type RepoIdentityResult,
 } from "@/features/identity";
@@ -116,6 +116,7 @@ export function IdentitySection({
   setFanoutSelected,
 }: Props) {
   const summary = identitySummary(repoIdentity, isRoot);
+  const avatar = humanAvatar(summary.identity);
   const showFanout = isRoot && fanoutPreview.length > 0;
   const fanoutCount = selectedFanoutCount(fanoutPreview, fanoutSelected);
   const identityTitle =
@@ -158,14 +159,10 @@ export function IdentitySection({
           <div className="flex min-w-0 flex-1 items-start gap-3">
             <Avatar size="sm" className="mt-0.5">
               <AvatarFallback
-                style={{
-                  backgroundColor: avatarColorFromEmail(
-                    summary.identity?.email,
-                  ),
-                }}
-                className="text-xs font-medium text-white"
+                style={avatar.style}
+                className="text-xs font-medium"
               >
-                {summary.initials}
+                {avatar.initials}
               </AvatarFallback>
             </Avatar>
             <div className="flex min-w-0 flex-col gap-1">

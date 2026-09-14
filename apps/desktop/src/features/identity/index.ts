@@ -1,4 +1,4 @@
-export { avatarColorFromEmail, AVATAR_COLORS } from "./lib";
+export { humanAvatar } from "./lib/avatar-presentation";
 export { IdentityDialog } from "./ui/identity-dialog";
 export type {
   FanoutPreviewEntry,

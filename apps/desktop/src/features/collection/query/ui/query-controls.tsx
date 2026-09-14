@@ -1,3 +1,4 @@
+import { humanAvatar } from "@/features/identity";
 import { useState } from "react";
 import {
   AlertTriangle,
@@ -41,11 +42,7 @@ import type {
   PropertyType,
 } from "@/features/properties";
 import { PropertyBadge } from "@/features/properties/display";
-import {
-  actorDisplayName,
-  initialsForActor,
-  resolveActorCandidate,
-} from "@/features/properties";
+import { actorDisplayName, resolveActorCandidate } from "@/features/properties";
 import * as m from "@/paraglide/messages.js";
 import {
   filterOpsForField,
@@ -405,35 +402,42 @@ function ActorChecklist({
         />
       </div>
       <div className="flex max-h-44 flex-col overflow-auto">
-        {visible.map((actor) => (
-          <label
-            key={actor.email}
-            className="flex cursor-default items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-muted"
-          >
-            <Checkbox
-              checked={selected.has(actor.email.trim().toLowerCase())}
-              onCheckedChange={(checked) => {
-                if (checked) {
-                  onChange([...values, actor.email]);
-                  return;
-                }
-                const canonical = actor.email.trim().toLowerCase();
-                onChange(
-                  values.filter(
-                    (value) =>
-                      resolveActorCandidate(value, actors)
-                        .email.trim()
-                        .toLowerCase() !== canonical,
-                  ),
-                );
-              }}
-            />
-            <Avatar className="size-6">
-              <AvatarFallback>{initialsForActor(actor)}</AvatarFallback>
-            </Avatar>
-            <span className="min-w-0 truncate">{actorDisplayName(actor)}</span>
-          </label>
-        ))}
+        {visible.map((actor) => {
+          const avatar = humanAvatar(actor);
+          return (
+            <label
+              key={actor.email}
+              className="flex cursor-default items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-muted"
+            >
+              <Checkbox
+                checked={selected.has(actor.email.trim().toLowerCase())}
+                onCheckedChange={(checked) => {
+                  if (checked) {
+                    onChange([...values, actor.email]);
+                    return;
+                  }
+                  const canonical = actor.email.trim().toLowerCase();
+                  onChange(
+                    values.filter(
+                      (value) =>
+                        resolveActorCandidate(value, actors)
+                          .email.trim()
+                          .toLowerCase() !== canonical,
+                    ),
+                  );
+                }}
+              />
+              <Avatar className="size-6">
+                <AvatarFallback style={avatar.style}>
+                  {avatar.initials}
+                </AvatarFallback>
+              </Avatar>
+              <span className="min-w-0 truncate">
+                {actorDisplayName(actor)}
+              </span>
+            </label>
+          );
+        })}
       </div>
     </div>
   );

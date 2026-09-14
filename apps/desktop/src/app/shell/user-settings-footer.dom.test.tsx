@@ -127,7 +127,6 @@ if (process.env.SVODE_UPDATE_FOOTER_DOM_PROCESS !== "1") {
                   <UserSettingsFooter
                     identityName={name}
                     identityEmail="user@example.test"
-                    identityAvatarColor="#123456"
                     onOpenProfile={() => destinations.push("profile")}
                     onOpenSettings={() => destinations.push("settings")}
                   />

@@ -21,18 +21,11 @@ export interface IdentitySummary {
   source: IdentitySummarySource;
   hasRepoOverride: boolean;
   text: string | null;
-  initials: string;
 }
 
 export function identityText(identity: GitIdentity | null): string | null {
   if (!identity) return null;
   return `${identity.name} <${identity.email}>`;
-}
-
-export function identityInitials(identity: GitIdentity | null): string {
-  const source = identity?.name || identity?.email || "";
-  const first = source.trim().charAt(0);
-  return first ? first.toLocaleUpperCase() : "?";
 }
 
 export function repoIdentityHasOverride(
@@ -68,7 +61,6 @@ export function identitySummary(
     source,
     hasRepoOverride,
     text: identityText(identity),
-    initials: identityInitials(identity),
   };
 }
 

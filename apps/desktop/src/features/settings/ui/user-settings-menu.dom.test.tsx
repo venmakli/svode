@@ -56,6 +56,7 @@ if (process.env.SVODE_USER_MENU_DOM_PROCESS !== "1") {
       addEventListener() {},
       removeEventListener() {},
     })) as unknown as typeof window.matchMedia;
+    const { humanAvatar } = await import("@/features/identity");
     const { UserSettingsMenu } = await import("./user-settings-menu");
     const { DogfoodUpdatesProvider } = await import("@/features/updates");
     const { AppPreferencesProvider, useAppTheme } =
@@ -102,7 +103,6 @@ if (process.env.SVODE_USER_MENU_DOM_PROCESS !== "1") {
           <UserSettingsMenu
             identityName={name}
             identityEmail={email}
-            identityAvatarColor="#123456"
             onOpenProfile={() => setDestination("profile")}
             onOpenSettings={() => setDestination("settings")}
           />
@@ -180,6 +180,17 @@ if (process.env.SVODE_USER_MENU_DOM_PROCESS !== "1") {
       expect(
         doc.querySelector('[data-slot="dropdown-menu-shortcut"]')?.textContent,
       ).toBe("Ctrl+,");
+      const avatars = [
+        ...doc.querySelectorAll<HTMLElement>('[data-slot="avatar-fallback"]'),
+      ];
+      expect(avatars.length).toBe(2);
+      for (const avatar of avatars) {
+        expect(avatar.textContent).toBe(humanAvatar({ name, email }).initials);
+        expect(avatar.getAttribute("style")).toBe(
+          avatars[0].getAttribute("style"),
+        );
+      }
+      expect(doc.querySelector("img, [data-slot=avatar-image]")).toBeNull();
       expect(mode("System").getAttribute("aria-checked")).toBe("true");
       await key(doc.activeElement!, "ArrowDown");
       await key(doc.activeElement!, "ArrowDown");

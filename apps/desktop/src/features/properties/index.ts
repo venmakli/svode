@@ -70,7 +70,6 @@ export {
 export {
   PROPERTY_TYPES,
   actorDisplayName,
-  initialsForActor,
   isDateRangeValue,
   isEmptyValue,
   isSensitiveColumn,

@@ -2,7 +2,6 @@ import { expect, test } from "bun:test";
 
 import {
   actorActivityEndDate,
-  actorInitials,
   buildActorHeatmapCells,
   compareActorsByDefault,
   defaultActorActivityYear,
@@ -63,7 +62,6 @@ test("actor identity helpers keep only non-canonical aliases", () => {
     displayName: "Ada Lovelace",
   });
 
-  expect(actorInitials(row)).toBe("AL");
   expect(visibleActorAliases(row)).toEqual([
     { email: "old@test", line: 2, name: "Ada" },
   ]);
