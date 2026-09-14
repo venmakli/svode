@@ -17,7 +17,7 @@ pub const AGENT_CONFIG_REL: &str = svode_core::storage::s3::CONFIG_REL;
 /// block without confusion.
 const AGENT_IGNORE_START: &str = "# svode:lfs-s3-agent:start";
 const AGENT_IGNORE_END: &str = "# svode:lfs-s3-agent:end";
-const AGENT_IGNORE_BODY: &str = ".svode/lfs-s3-agent.json";
+const AGENT_IGNORE_BODY: &str = crate::git::local_policy::S3_AGENT;
 
 fn slug_source(source: &str) -> String {
     let mut out = String::new();

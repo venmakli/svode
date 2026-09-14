@@ -69,16 +69,6 @@ fn within(path: &str, scope: &str) -> bool {
             .is_some_and(|rest| rest.starts_with('/'))
 }
 
-pub(super) fn local(path: &str) -> bool {
-    let parts = path.split('/').collect::<Vec<_>>();
-    parts.windows(2).any(|p| {
-        p[0] == ".svode"
-            && (p[1].contains(".db")
-                || p[1].starts_with("variables.")
-                || matches!(p[1], "local.json" | "lfs-s3-agent.json"))
-    })
-}
-
 /// Enumerate through Git, which owns ignore rules, tracked deletions and repository boundaries.
 pub(super) async fn resolve(
     cli: &GitCli,
@@ -93,7 +83,7 @@ pub(super) async fn resolve(
         })
         .collect::<Result<Vec<_>, _>>()?;
     for scope in &scopes {
-        if local(scope) {
+        if super::local_policy::contains(scope) {
             return Err(failure(
                 "prepare",
                 "local_file_excluded",
@@ -137,7 +127,7 @@ pub(super) async fn resolve(
             return Err(failure("prepare", "target_unavailable", None, &[scope]));
         }
         for path in matches {
-            if !local(path) {
+            if !super::local_policy::contains(path) {
                 selected.insert(path.clone());
             }
         }

@@ -91,7 +91,7 @@ pub(crate) async fn save(
             .await?
             .files
             .into_iter()
-            .filter(|file| !super::staging::local(&file.path))
+            .filter(|file| !super::local_policy::contains(&file.path))
             .map(|file| file.path)
             .collect(),
     };

@@ -9,6 +9,9 @@ pub mod inspection;
 pub mod inspection_stats;
 #[cfg(test)]
 mod inspection_tests;
+pub(crate) mod local_policy;
+#[cfg(test)]
+mod local_policy_tests;
 pub(crate) mod manual_save;
 pub mod ops;
 mod staging;

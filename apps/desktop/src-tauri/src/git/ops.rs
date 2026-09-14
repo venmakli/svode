@@ -10,20 +10,6 @@ use crate::properties;
 use crate::repo_path::{RootMode, normalize_repo_relative};
 use crate::space::types::SpaceGitType;
 
-const GITIGNORE_TEMPLATE: &str = "# Svode local files
-.svode/local.json
-.svode/lfs-s3-agent.json
-.svode/variables.*
-.svode/*.db*
-";
-
-const SVODE_LOCAL_IGNORE_ENTRIES: &[&str] = &[
-    ".svode/local.json",
-    ".svode/lfs-s3-agent.json",
-    ".svode/variables.*",
-    ".svode/*.db*",
-];
-
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GitStatus {
@@ -279,7 +265,14 @@ pub async fn status(cli: &GitCli, space_dir: &Path) -> Result<GitStatus, AppErro
         ));
     }
     strip_status_path_prefix(&mut status, &prefix)?;
+    let local_conflicts = status
+        .files
+        .iter()
+        .any(|file| super::local_policy::contains(&file.path) && file.state == "conflict");
     status.files.retain(|file| {
+        if super::local_policy::contains(&file.path) {
+            return false;
+        }
         let mut ancestor = space_dir.to_path_buf();
         let parts: Vec<_> = file.path.split('/').collect();
         for (index, part) in parts.iter().enumerate() {
@@ -293,7 +286,7 @@ pub async fn status(cli: &GitCli, space_dir: &Path) -> Result<GitStatus, AppErro
     if status.files.is_empty() {
         status.has_staged = false;
         status.has_unstaged = false;
-        status.has_conflicts = false;
+        status.has_conflicts = local_conflicts;
     }
     Ok(status)
 }
@@ -516,7 +509,7 @@ fn normalize_git_path(path: &str) -> Result<String, AppError> {
 }
 
 fn is_local_variable_path(path: &str) -> bool {
-    super::staging::local(&path.replace('\\', "/"))
+    super::local_policy::contains(&path.replace('\\', "/"))
 }
 
 fn reject_local_variable_path(path: &str) -> Result<(), AppError> {
@@ -1364,11 +1357,14 @@ pub fn ensure_svode_gitignore(space_dir: &Path) -> Result<bool, AppError> {
     };
 
     if content.is_empty() {
-        std::fs::write(&gitignore, GITIGNORE_TEMPLATE)?;
+        std::fs::write(
+            &gitignore,
+            &format!("# Svode local files\n{}\n", super::local_policy::rules("")),
+        )?;
         return Ok(true);
     }
 
-    let missing: Vec<&str> = SVODE_LOCAL_IGNORE_ENTRIES
+    let missing: Vec<&str> = super::local_policy::ENTRIES
         .iter()
         .copied()
         .filter(|entry| {
@@ -1398,14 +1394,12 @@ pub fn ensure_svode_gitignore(space_dir: &Path) -> Result<bool, AppError> {
 
 const INLINE_BLOCK_START: &str = "# svode:inline:start";
 const INLINE_BLOCK_END: &str = "# svode:inline:end";
-const INLINE_BLOCK_CONTENT: &str =
-    "*/.svode/local.json\n*/.svode/lfs-s3-agent.json\n*/.svode/variables.*\n*/.svode/*.db*";
-
 const SPACES_BLOCK_START: &str = "# svode:spaces:start";
 const SPACES_BLOCK_END: &str = "# svode:spaces:end";
 
 /// Ensure the inline wildcard block exists in root .gitignore.
 pub fn ensure_inline_gitignore(project_path: &Path) -> Result<(), AppError> {
+    let inline_rules = super::local_policy::rules("*/");
     let gitignore = project_path.join(".gitignore");
     let content = if gitignore.exists() {
         std::fs::read_to_string(&gitignore)?
@@ -1421,7 +1415,7 @@ pub fn ensure_inline_gitignore(project_path: &Path) -> Result<(), AppError> {
             .filter(|line| !line.trim().is_empty())
             .map(str::to_owned)
             .collect::<Vec<_>>();
-        for entry in INLINE_BLOCK_CONTENT.lines() {
+        for entry in inline_rules.lines() {
             if !entries.iter().any(|line| line.trim() == entry) {
                 entries.push(entry.to_string());
             }
@@ -1442,7 +1436,7 @@ pub fn ensure_inline_gitignore(project_path: &Path) -> Result<(), AppError> {
     }
     new_content.push_str(&format!(
         "{}\n{}\n{}\n",
-        INLINE_BLOCK_START, INLINE_BLOCK_CONTENT, INLINE_BLOCK_END
+        INLINE_BLOCK_START, inline_rules, INLINE_BLOCK_END
     ));
     std::fs::write(&gitignore, new_content)?;
     Ok(())
