@@ -39,7 +39,7 @@ test("one Unicode letter, name/email fallback, and missing identity are locale i
     expect(humanAvatar({ name, email }).initials).toBe(expected);
   expect(humanAvatar(null)).toEqual({
     initials: "?",
-    style: { backgroundColor: "#9CA3AF", color: "#000000" },
+    style: { backgroundColor: "#9CA3AF", color: "#FFFFFF" },
   });
   expect(
     humanAvatar({ name: "Ada", email: " \t " }).style.backgroundColor,
@@ -49,23 +49,11 @@ test("one Unicode letter, name/email fallback, and missing identity are locale i
   expect(source.email).toBe(" ADA@example.test ");
 });
 
-test("foreground meets normal-text contrast on every preserved background in either theme", () => {
+test("foreground stays white across the palette and missing identity", () => {
   for (const [id] of golden) {
-    const { style } = humanAvatar({ email: `person${id}@example.test` });
-    const rgb = style.backgroundColor
-      .match(/[\da-f]{2}/gi)!
-      .map((hex) => parseInt(hex, 16) / 255);
-    const linear = rgb.map((value) =>
-      value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4,
+    expect(humanAvatar({ email: `person${id}@example.test` }).style.color).toBe(
+      "#FFFFFF",
     );
-    const luminance = linear.reduce(
-      (sum, value, index) => sum + value * [0.2126, 0.7152, 0.0722][index],
-      0,
-    );
-    const contrast =
-      style.color === "#000000"
-        ? (luminance + 0.05) / 0.05
-        : 1.05 / (luminance + 0.05);
-    expect(contrast >= 4.5).toBe(true);
   }
+  expect(humanAvatar(null).style.color).toBe("#FFFFFF");
 });

@@ -35,15 +35,5 @@ export function humanAvatar(
   const backgroundColor = emailKey
     ? AVATAR_COLORS[hashFnv1a(emailKey) % AVATAR_COLORS.length]
     : NEUTRAL_GRAY;
-  const channels = [1, 3, 5].map((offset) => {
-    const channel =
-      parseInt(backgroundColor.slice(offset, offset + 2), 16) / 255;
-    return channel <= 0.04045
-      ? channel / 12.92
-      : ((channel + 0.055) / 1.055) ** 2.4;
-  });
-  const luminance =
-    channels[0] * 0.2126 + channels[1] * 0.7152 + channels[2] * 0.0722;
-  const color = luminance > 0.179 ? "#000000" : "#FFFFFF";
-  return { initials, style: { backgroundColor, color } };
+  return { initials, style: { backgroundColor, color: "#FFFFFF" } };
 }
