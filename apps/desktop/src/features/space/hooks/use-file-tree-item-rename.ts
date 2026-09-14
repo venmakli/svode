@@ -1,3 +1,4 @@
+import { useSpaceStore } from "../model/space-store";
 import {
   useEffect,
   useRef,
@@ -114,6 +115,9 @@ export function useFileTreeItemRename({
           to: newPath,
           projectPath: activeRootPath,
         });
+        useSpaceStore
+          .getState()
+          .handoffTreePath(space.path, node.path, newPath);
         if (modifiedFiles.length > 0) {
           markEditorFilesStale(space.path, modifiedFiles);
           suppressEditorFileEvents(space.path, modifiedFiles);

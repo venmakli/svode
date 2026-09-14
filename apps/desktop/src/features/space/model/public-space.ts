@@ -33,6 +33,7 @@ export type SpaceTreeSyncState = Pick<
   | "fileTrees"
   | "childrenByParentPath"
   | "loadTreeChildren"
+  | "handoffTreePath"
   | "reloadTreeParent"
   | "reloadTreePathParent"
   | "reloadTreePathParents"
@@ -72,6 +73,7 @@ function selectTreeSyncState(state: SpaceState): SpaceTreeSyncState {
     fileTrees: state.fileTrees,
     childrenByParentPath: state.childrenByParentPath,
     loadTreeChildren: state.loadTreeChildren,
+    handoffTreePath: state.handoffTreePath,
     reloadTreeParent: state.reloadTreeParent,
     reloadTreePathParent: state.reloadTreePathParent,
     reloadTreePathParents: state.reloadTreePathParents,
@@ -128,9 +130,7 @@ export function registerRootSpace(space: SpaceInfo): void {
   });
 }
 
-export function selectActiveSpaceId(
-  state: SpacePublicState,
-): string | null {
+export function selectActiveSpaceId(state: SpacePublicState): string | null {
   return state.activeSpaceId ?? state.activeRootId;
 }
 

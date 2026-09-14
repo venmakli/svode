@@ -208,7 +208,6 @@ export function usePageFieldSave({
               });
             },
           );
-          if (versionsRef.current.get(key) !== version) return null;
           if (field === "title") {
             if (updated.path !== requestPath) {
               recordPageFieldSavePathAlias(
@@ -220,6 +219,7 @@ export function usePageFieldSave({
             publishPageFilenameWarnings(updated.warnings);
             publishPageTitleOutcome(spacePath, requestPath, updated);
           }
+          if (versionsRef.current.get(key) !== version) return null;
           const outcomeContext =
             requestPath === context.previousPage.path
               ? context

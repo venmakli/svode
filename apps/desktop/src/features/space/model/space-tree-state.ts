@@ -1,3 +1,8 @@
+import {
+  createTreeExpansionCoordinator,
+  projectExpansionPaths,
+  remapTreePath,
+} from "./tree-expansion-state";
 import type { TreeNode } from "./types";
 import { logTiming, nowMs } from "@/shared/lib/performance";
 import * as spaceActions from "../api/space-store-actions";
@@ -43,6 +48,7 @@ export type RefreshTreeOptions = { continuePending?: boolean };
 export type LoadTreeChildrenOptions = { force?: boolean };
 
 export interface SpaceTreeDataState {
+  treeLifetimes: Record<string, object>;
   fileTrees: Record<string, TreeNode[]>;
   childrenByParentPath: Record<string, ChildrenByParentPath>;
   treeCache: Record<string, { loadedAt: number; dirty: boolean }>;
@@ -113,6 +119,7 @@ export interface SpaceTreeState extends SpaceTreeDataState {
   updateNodeApp: (spaceId: string, folderPath: string, hasApp: boolean) => void;
   markTreeDirty: (spaceId: string) => void;
   markTreeParentDirty: (spaceId: string, parentPath?: string | null) => void;
+  handoffTreePath: (spacePath: string, from: string, to: string) => void;
   loadExpandedPaths: (spaceId: string) => Promise<void>;
   applySidebarTreeExpansion: (
     spaceIds: string[],
@@ -169,11 +176,6 @@ function withoutRecordKey<T>(record: Record<string, T>, key: string) {
   return next;
 }
 
-function sameStringArray(left: string[] | undefined, right: string[]) {
-  if (!left || left.length !== right.length) return false;
-  return left.every((value, index) => value === right[index]);
-}
-
 async function runLimited<T>(
   items: T[],
   limit: number,
@@ -195,6 +197,7 @@ async function runLimited<T>(
 
 export function createEmptySpaceTreeState(): SpaceTreeDataState {
   return {
+    treeLifetimes: {},
     fileTrees: {},
     childrenByParentPath: {},
     treeCache: {},
@@ -211,6 +214,7 @@ export function createEmptyLoadedSpaceTreeState(): Omit<
   "expandedPaths"
 > {
   return {
+    treeLifetimes: {},
     fileTrees: {},
     childrenByParentPath: {},
     treeCache: {},
@@ -226,6 +230,7 @@ export function removeSpaceTreeState(
   spaceId: string,
 ): SpaceTreeDataState {
   return {
+    treeLifetimes: withoutRecordKey(state.treeLifetimes, spaceId),
     fileTrees: withoutRecordKey(state.fileTrees, spaceId),
     childrenByParentPath: withoutRecordKey(state.childrenByParentPath, spaceId),
     treeCache: withoutRecordKey(state.treeCache, spaceId),
@@ -347,6 +352,75 @@ export function createSpaceTreeState<T extends SpaceTreeStoreState>(
   set: SpaceTreeSet<T>,
   get: SpaceTreeGet<T>,
 ): SpaceTreeState {
+  function scopeId(scope: string) {
+    return [...get().rootSpaces, ...get().spaces].find(
+      (space) => space.path === scope,
+    )?.id;
+  }
+  const expansion = createTreeExpansionCoordinator({
+    read: spaceActions.getSpaceExpandedPaths,
+    write: spaceActions.saveSpaceExpandedPaths,
+    project: (scope, paths) =>
+      projectExpansionPaths(
+        paths,
+        get().childrenByParentPath[scopeId(scope) ?? ""],
+      ),
+    publish: (scope, paths) => {
+      const id = scopeId(scope);
+      if (
+        !id ||
+        (scope !== get().activeRootPath &&
+          !get().spaces.some((space) => space.path === scope))
+      )
+        return;
+      const next = projectExpansionPaths(paths, get().childrenByParentPath[id]);
+      set((state) => ({
+        expandedPaths: { ...state.expandedPaths, [id]: next },
+        fileTrees: state.childrenByParentPath[id]
+          ? {
+              ...state.fileTrees,
+              [id]: buildLoadedTree(state.childrenByParentPath[id], next),
+            }
+          : state.fileTrees,
+      }));
+    },
+  });
+  const expansionIntents = new Map<string, number>();
+  function editExpansion(
+    id: string,
+    edit: (paths: string[]) => string[],
+    userIntent = true,
+  ) {
+    if (userIntent)
+      expansionIntents.set(id, (expansionIntents.get(id) ?? 0) + 1);
+    const scope = findSpacePath(get(), id);
+    if (!scope) return;
+    expansion.update(
+      scope,
+      (paths) =>
+        projectExpansionPaths(edit(paths), get().childrenByParentPath[id]),
+      get().expandedPaths[id],
+    );
+  }
+  function lifetime(id: string) {
+    if (!get().treeLifetimes[id]) {
+      set((state) => ({ treeLifetimes: { ...state.treeLifetimes, [id]: {} } }));
+    }
+    const token = get().treeLifetimes[id];
+    const scope = findSpacePath(get(), id);
+    const root = get().activeRootPath;
+    return () =>
+      get().treeLifetimes[id] === token &&
+      findSpacePath(get(), id) === scope &&
+      get().activeRootPath === root;
+  }
+  function projectExpansion(id: string) {
+    const paths = get().expandedPaths[id];
+    if (!paths) return;
+    const next = projectExpansionPaths(paths, get().childrenByParentPath[id]);
+    if (JSON.stringify(paths) !== JSON.stringify(next))
+      editExpansion(id, (current) => current, false);
+  }
   return {
     ...createEmptySpaceTreeState(),
 
@@ -382,6 +456,7 @@ export function createSpaceTreeState<T extends SpaceTreeStoreState>(
       const spacePath = findSpacePath(get(), id);
       if (!spacePath) return;
 
+      const isCurrent = lifetime(id);
       const startedAt = nowMs();
       const hadCachedTree = isSpaceTreeLoaded(get(), id);
       const alreadyPending = hadCachedTree
@@ -394,6 +469,7 @@ export function createSpaceTreeState<T extends SpaceTreeStoreState>(
       set((state) => createTreeActivityPatch(state, id, hadCachedTree, true));
       try {
         const tree = await spaceActions.listSpaceContentTree(spacePath);
+        if (!isCurrent()) return;
         nodeCount = countTreeNodes(tree);
         const loadedAt = Date.now();
         const childrenByParent = flattenChildrenByParentPath(tree);
@@ -417,6 +493,7 @@ export function createSpaceTreeState<T extends SpaceTreeStoreState>(
         }));
       } catch (err) {
         status = "error";
+        if (!isCurrent()) return;
         console.error("Failed to load file tree:", err);
         if (!hadCachedTree) {
           set((s) => ({
@@ -424,11 +501,14 @@ export function createSpaceTreeState<T extends SpaceTreeStoreState>(
           }));
         }
       } finally {
-        set((s) =>
-          hadCachedTree
-            ? { treeRefreshing: withoutRecordKey(s.treeRefreshing, id) }
-            : { treeLoading: withoutRecordKey(s.treeLoading, id) },
-        );
+        if (isCurrent()) {
+          projectExpansion(id);
+          set((s) =>
+            hadCachedTree
+              ? { treeRefreshing: withoutRecordKey(s.treeRefreshing, id) }
+              : { treeLoading: withoutRecordKey(s.treeLoading, id) },
+          );
+        }
         logTiming("tree.refresh.repair", startedAt, {
           spaceId: id,
           status,
@@ -440,18 +520,19 @@ export function createSpaceTreeState<T extends SpaceTreeStoreState>(
     ensureTreeLoaded: async (spaceId: string) => {
       const initialSpacePath = findSpacePath(get(), spaceId);
       if (!initialSpacePath) return;
+      const isCurrent = lifetime(spaceId);
 
       if (!hasSpaceExpandedPaths(get(), spaceId)) {
         await get().loadExpandedPaths(spaceId);
       }
 
-      if (findSpacePath(get(), spaceId) !== initialSpacePath) return;
+      if (!isCurrent()) return;
 
       if (shouldValidateTreeParent(get(), spaceId, ROOT_TREE_PARENT)) {
         await get().loadTreeChildren(spaceId, ROOT_TREE_PARENT);
       }
 
-      if (findSpacePath(get(), spaceId) !== initialSpacePath) return;
+      if (!isCurrent()) return;
 
       const expanded = get().expandedPaths[spaceId] ?? [];
       const parentsToLoad = expanded.filter(
@@ -463,7 +544,13 @@ export function createSpaceTreeState<T extends SpaceTreeStoreState>(
         parentsToLoad,
         EXPANDED_TREE_LOAD_CONCURRENCY,
         async (path) => {
-          if (findSpacePath(get(), spaceId) !== initialSpacePath) return;
+          if (!isCurrent()) return;
+          if (
+            !(get().expandedPaths[spaceId] ?? []).some(
+              (current) => treeParentKey(current) === treeParentKey(path),
+            )
+          )
+            return;
           await get().loadTreeChildren(spaceId, path);
         },
       );
@@ -472,7 +559,9 @@ export function createSpaceTreeState<T extends SpaceTreeStoreState>(
     ensureTreePathVisible: async (spaceId: string, path: string) => {
       const initialSpacePath = findSpacePath(get(), spaceId);
       if (!initialSpacePath) return;
+      const isCurrent = lifetime(spaceId);
 
+      let expectedIntent = expansionIntents.get(spaceId) ?? 0;
       const normalizedPath = normalizeTreePath(path);
       if (!normalizedPath || isSystemIgnoredTreePath(normalizedPath)) return;
 
@@ -480,14 +569,15 @@ export function createSpaceTreeState<T extends SpaceTreeStoreState>(
         await get().loadExpandedPaths(spaceId);
       }
 
-      if (findSpacePath(get(), spaceId) !== initialSpacePath) return;
+      if (!isCurrent()) return;
 
       await get().loadTreeChildren(spaceId, ROOT_TREE_PARENT);
 
-      if (findSpacePath(get(), spaceId) !== initialSpacePath) return;
-
-      const expanded = new Set(get().expandedPaths[spaceId] ?? []);
-      let changed = false;
+      if (
+        !isCurrent() ||
+        (expansionIntents.get(spaceId) ?? 0) !== expectedIntent
+      )
+        return;
 
       for (const folderPath of ancestorFolderPathsForTreePath(normalizedPath)) {
         const parentPath = dirname(folderPath);
@@ -497,7 +587,7 @@ export function createSpaceTreeState<T extends SpaceTreeStoreState>(
           await get().loadTreeChildren(spaceId, parentKey);
         }
 
-        if (findSpacePath(get(), spaceId) !== initialSpacePath) return;
+        if (!isCurrent()) return;
 
         const nodePath = findNodePathForFolder(
           get().childrenByParentPath[spaceId]?.[parentKey],
@@ -505,32 +595,13 @@ export function createSpaceTreeState<T extends SpaceTreeStoreState>(
         );
         if (!nodePath) break;
 
-        if (!expanded.has(nodePath)) {
-          expanded.add(nodePath);
-          changed = true;
-        }
+        if ((expansionIntents.get(spaceId) ?? 0) !== expectedIntent) return;
+        editExpansion(spaceId, (paths) => [...paths, nodePath]);
+        expectedIntent = expansionIntents.get(spaceId) ?? 0;
 
         await get().loadTreeChildren(spaceId, nodePath);
 
-        if (findSpacePath(get(), spaceId) !== initialSpacePath) return;
-      }
-
-      if (!changed) return;
-
-      const next = Array.from(expanded);
-      set((state) => ({
-        expandedPaths: { ...state.expandedPaths, [spaceId]: next },
-        fileTrees: {
-          ...state.fileTrees,
-          [spaceId]: state.childrenByParentPath[spaceId]
-            ? buildLoadedTree(state.childrenByParentPath[spaceId], next)
-            : (state.fileTrees[spaceId] ?? []),
-        },
-      }));
-
-      const spacePath = findSpacePath(get(), spaceId);
-      if (spacePath) {
-        spaceActions.saveSpaceExpandedPaths(spacePath, next).catch(() => {});
+        if (!isCurrent()) return;
       }
     },
 
@@ -538,6 +609,7 @@ export function createSpaceTreeState<T extends SpaceTreeStoreState>(
       const spacePath = findSpacePath(get(), spaceId);
       if (!spacePath) return;
 
+      const isCurrent = lifetime(spaceId);
       const parentKey = treeParentKey(parentPath);
       if (
         !options?.force &&
@@ -571,6 +643,7 @@ export function createSpaceTreeState<T extends SpaceTreeStoreState>(
           spacePath,
           parentKey || null,
         );
+        if (!isCurrent()) return;
         nodeCount = children.length;
         const loadedAt = Date.now();
         set((state) => {
@@ -608,6 +681,7 @@ export function createSpaceTreeState<T extends SpaceTreeStoreState>(
         });
       } catch (err) {
         status = "error";
+        if (!isCurrent()) return;
         console.error("Failed to load tree children:", err);
         if (isRootParent && !hadCachedTree) {
           set((s) => ({
@@ -615,28 +689,33 @@ export function createSpaceTreeState<T extends SpaceTreeStoreState>(
           }));
         }
       } finally {
-        set((state) => {
-          const nextParentLoading = {
-            ...(state.treeParentLoading[spaceId] ?? {}),
-          };
-          delete nextParentLoading[parentKey];
-          return {
-            ...(isRootParent
-              ? hadCachedTree
-                ? {
-                    treeRefreshing: withoutRecordKey(
-                      state.treeRefreshing,
-                      spaceId,
-                    ),
-                  }
-                : { treeLoading: withoutRecordKey(state.treeLoading, spaceId) }
-              : {}),
-            treeParentLoading: {
-              ...state.treeParentLoading,
-              [spaceId]: nextParentLoading,
-            },
-          };
-        });
+        if (isCurrent()) {
+          projectExpansion(spaceId);
+          set((state) => {
+            const nextParentLoading = {
+              ...(state.treeParentLoading[spaceId] ?? {}),
+            };
+            delete nextParentLoading[parentKey];
+            return {
+              ...(isRootParent
+                ? hadCachedTree
+                  ? {
+                      treeRefreshing: withoutRecordKey(
+                        state.treeRefreshing,
+                        spaceId,
+                      ),
+                    }
+                  : {
+                      treeLoading: withoutRecordKey(state.treeLoading, spaceId),
+                    }
+                : {}),
+              treeParentLoading: {
+                ...state.treeParentLoading,
+                [spaceId]: nextParentLoading,
+              },
+            };
+          });
+        }
         logTiming("tree.children", startedAt, {
           spaceId,
           parentScope: parentKey ? "child" : "root",
@@ -1011,89 +1090,101 @@ export function createSpaceTreeState<T extends SpaceTreeStoreState>(
       }));
     },
 
-    loadExpandedPaths: async (spaceId: string) => {
-      const spacePath = findSpacePath(get(), spaceId);
-      if (!spacePath) return;
-      try {
-        const paths = await spaceActions.getSpaceExpandedPaths(spacePath);
-        set((s) => ({
-          expandedPaths: { ...s.expandedPaths, [spaceId]: paths },
-          fileTrees: s.childrenByParentPath[spaceId]
-            ? {
-                ...s.fileTrees,
-                [spaceId]: buildLoadedTree(
-                  s.childrenByParentPath[spaceId],
-                  paths,
-                ),
-              }
-            : s.fileTrees,
-        }));
-      } catch {
-        // ignore — no persisted state
+    handoffTreePath: (scope, previous, canonical) => {
+      const from = treeParentKey(previous);
+      const to = treeParentKey(canonical);
+      if (!from || !to || from === to) return;
+      const id = scopeId(scope);
+      if (
+        id &&
+        (scope === get().activeRootPath ||
+          get().spaces.some((space) => space.path === scope))
+      ) {
+        set((state) => {
+          const children = Object.fromEntries(
+            Object.entries(state.childrenByParentPath[id] ?? {}).map(
+              ([parent, nodes]) => [
+                remapTreePath(parent, from, to),
+                nodes.map((node) => ({
+                  ...node,
+                  path: remapTreePath(node.path, from, to),
+                })),
+              ],
+            ),
+          );
+          const oldParent = treeRowParentPath(previous);
+          const newParent = treeRowParentPath(canonical);
+          if (
+            oldParent !== null &&
+            newParent !== null &&
+            oldParent !== newParent
+          ) {
+            const moved =
+              children[oldParent]?.filter(
+                (node) => treeParentKey(node.path) === to,
+              ) ?? [];
+            if (children[oldParent])
+              children[oldParent] = children[oldParent].filter(
+                (node) => treeParentKey(node.path) !== to,
+              );
+            if (children[newParent])
+              children[newParent] = [...children[newParent], ...moved];
+          }
+          return {
+            treeLifetimes: { ...state.treeLifetimes, [id]: {} },
+            childrenByParentPath: {
+              ...state.childrenByParentPath,
+              [id]: children,
+            },
+            treeParentCache: { ...state.treeParentCache, [id]: {} },
+            treeCache: {
+              ...state.treeCache,
+              [id]: { loadedAt: 0, dirty: true },
+            },
+            treeParentLoading: { ...state.treeParentLoading, [id]: {} },
+            treeLoading: withoutRecordKey(state.treeLoading, id),
+            treeRefreshing: withoutRecordKey(state.treeRefreshing, id),
+          };
+        });
       }
+      expansion.update(
+        scope,
+        (paths) =>
+          projectExpansionPaths(
+            paths.map((path) => remapTreePath(path, from, to)),
+            id ? get().childrenByParentPath[id] : undefined,
+          ),
+        id ? get().expandedPaths[id] : undefined,
+      );
+    },
+
+    loadExpandedPaths: async (spaceId: string) => {
+      const isCurrent = lifetime(spaceId);
+      const scope = findSpacePath(get(), spaceId);
+      if (scope) await expansion.load(scope, get().expandedPaths[spaceId]);
+      if (isCurrent()) projectExpansion(spaceId);
     },
 
     applySidebarTreeExpansion: (spaceIds, action) => {
-      const state = get();
-      const uniqueSpaceIds = Array.from(new Set(spaceIds));
-      const nextExpandedPaths = { ...state.expandedPaths };
-      const nextFileTrees = { ...state.fileTrees };
-      const changedSpaceIds: string[] = [];
-
-      for (const spaceId of uniqueSpaceIds) {
+      for (const id of new Set(spaceIds)) {
         const next = sidebarTreeExpansionPaths(
           action,
-          state.childrenByParentPath[spaceId],
+          get().childrenByParentPath[id],
         );
-        const current = state.expandedPaths[spaceId] ?? [];
-
-        if (sameStringArray(current, next)) continue;
-
-        nextExpandedPaths[spaceId] = next;
-        if (state.childrenByParentPath[spaceId]) {
-          nextFileTrees[spaceId] = buildLoadedTree(
-            state.childrenByParentPath[spaceId],
-            next,
-          );
-        }
-        changedSpaceIds.push(spaceId);
-      }
-
-      if (changedSpaceIds.length === 0) return;
-
-      set({
-        expandedPaths: nextExpandedPaths,
-        fileTrees: nextFileTrees,
-      });
-
-      for (const spaceId of changedSpaceIds) {
-        const spacePath = findSpacePath(get(), spaceId);
-        if (spacePath) {
-          spaceActions
-            .saveSpaceExpandedPaths(spacePath, nextExpandedPaths[spaceId] ?? [])
-            .catch(() => {});
-        }
+        editExpansion(id, () => next);
       }
     },
 
     toggleExpanded: (spaceId: string, path: string) => {
-      const current = get().expandedPaths[spaceId] ?? [];
-      const next = current.includes(path)
-        ? current.filter((p) => p !== path)
-        : [...current, path];
-      set((s) => ({
-        expandedPaths: { ...s.expandedPaths, [spaceId]: next },
-        fileTrees: {
-          ...s.fileTrees,
-          [spaceId]: s.childrenByParentPath[spaceId]
-            ? buildLoadedTree(s.childrenByParentPath[spaceId], next)
-            : (s.fileTrees[spaceId] ?? []),
-        },
-      }));
-      const spacePath = findSpacePath(get(), spaceId);
-      if (spacePath) {
-        spaceActions.saveSpaceExpandedPaths(spacePath, next).catch(() => {});
-      }
+      const identity = treeParentKey(path);
+      const expanded = (get().expandedPaths[spaceId] ?? []).some(
+        (current) => treeParentKey(current) === identity,
+      );
+      editExpansion(spaceId, (paths) =>
+        expanded
+          ? paths.filter((current) => treeParentKey(current) !== identity)
+          : [...paths, path],
+      );
     },
 
     moveContentItem: async (
@@ -1103,6 +1194,7 @@ export function createSpaceTreeState<T extends SpaceTreeStoreState>(
     ) => {
       const spacePath = findSpacePath(get(), spaceId);
       if (!spacePath) throw new Error("Space not found");
+      const isCurrent = lifetime(spaceId);
       const oldParent = treeRowParentPath(from);
       const newPath = await spaceActions.moveSpaceTreeItem({
         spacePath,
@@ -1110,6 +1202,9 @@ export function createSpaceTreeState<T extends SpaceTreeStoreState>(
         toParent,
         projectPath: get().activeRootPath,
       });
+      const current = isCurrent();
+      get().handoffTreePath(spacePath, from, newPath);
+      if (!current) return newPath;
       const newParent = treeRowParentPath(newPath);
       get().removeTreePath(spaceId, from);
       await get().reloadTreeParents(spaceId, [oldParent, newParent, toParent]);

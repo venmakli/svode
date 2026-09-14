@@ -1,3 +1,4 @@
+import { getSpaceTreeSyncSnapshot } from "@/features/space";
 import {
   inferArtifactSourceShape,
   openArtifact,
@@ -28,11 +29,7 @@ export function openPage(
   );
 }
 
-export function retargetPage(
-  fromPath: string,
-  path: string,
-  spaceId?: string,
-) {
+export function retargetPage(fromPath: string, path: string, spaceId?: string) {
   retargetActiveContent(fromPath, path, spaceId);
 }
 
@@ -41,6 +38,11 @@ export function publishPageTitleOutcome(
   previousPath: string,
   page: Page,
 ) {
+  getSpaceTreeSyncSnapshot().handoffTreePath(
+    scopePath,
+    previousPath,
+    page.path,
+  );
   usePageTitleOutcomeStore
     .getState()
     .publishTitleOutcome(scopePath, previousPath, page);
