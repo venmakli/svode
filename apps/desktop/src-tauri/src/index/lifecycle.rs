@@ -55,6 +55,43 @@ pub(super) async fn open(
     .map_err(|error| AppError::Index(format!("index initializer task failed: {error}")))?
 }
 
+pub(super) async fn cleanup(pools: OwnedMutexGuard<IndexPools>, key: IndexKey, pool: SqlitePool) {
+    // A replaced pool is closed before its successor is published under this
+    // same lock. A late reconciliation can never authorize successor cleanup.
+    let task = tokio::spawn(async move {
+        if pool.is_closed() {
+            return;
+        }
+        let Some(path) = pools.owners.get(&key) else {
+            return;
+        };
+        if path.file_name().is_none_or(|name| name != "index.db") {
+            return;
+        }
+        let ready = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM knowledge_manifest WHERE singleton = 1 AND failure_count = 0
+             AND NOT EXISTS (SELECT 1 FROM knowledge_source_manifest WHERE diagnostic_code NOT IN ('excluded_secret_like', 'oversized_source'))"
+        ).fetch_one(&pool).await;
+        if !matches!(ready, Ok(1)) {
+            return;
+        }
+        tracing::info!(store = "index", owner = %path.display(), "source reconciliation complete; checking incompatible families");
+        if super::retention::cleanup(path.parent().unwrap())
+            .await
+            .is_err()
+        {
+            tracing::warn!(
+                store = "index",
+                "quarantine inventory failed; cleanup will retry after reconciliation"
+            );
+        }
+        drop(pools);
+    });
+    if task.await.is_err() {
+        tracing::warn!(store = "index", "quarantine cleanup worker failed");
+    }
+}
+
 pub(super) async fn close(
     mut pools: OwnedMutexGuard<IndexPools>,
     key: Option<&IndexKey>,
@@ -77,7 +114,7 @@ pub(super) async fn close(
         for path in paths {
             if let Some(pool) = pools.physical.get(&path) {
                 tracing::info!(store = "index", "closing index pool");
-                pool.close().await;
+                super::db::close_pool(pool).await;
             }
             pools.physical.remove(&path);
         }
@@ -185,6 +222,11 @@ mod tests {
                 .bind(format!("owner-{i}")).execute(&routines).await.unwrap();
             let dir = state.dir_for_key(key).await.unwrap();
             crate::space::config::mutate_local_config(&dir, |local| {
+                if i == 0 {
+                    local.agent_sessions = Some(crate::space::types::AgentSessionsLocalConfig {
+                        pinned_session_ids: vec!["codex:retained-pin".into()],
+                    });
+                }
                 local
                     .routines
                     .as_mut()
@@ -208,11 +250,54 @@ mod tests {
         for (i, key) in keys.iter().enumerate() {
             let dir = state.dir_for_key(key).await.unwrap();
             let local_before = std::fs::read(dir.join(".svode/local.json")).unwrap();
+            let old = dir.join(".svode/index.db.incompatible-1");
+            let old_pool = sqlx::sqlite::SqlitePoolOptions::new()
+                .max_connections(1)
+                .connect_with(
+                    sqlx::sqlite::SqliteConnectOptions::new()
+                        .filename(&old)
+                        .create_if_missing(true),
+                )
+                .await
+                .unwrap();
+            sqlx::raw_sql(include_str!("fixtures/index-v15.sql"))
+                .execute(&old_pool)
+                .await
+                .unwrap();
+            db::close_pool(&old_pool).await;
+            std::fs::write(dir.join("page.md"), "# Preserved searchable content").unwrap();
+            let owner = dir.join(format!("owner-{i}"));
+            std::fs::create_dir_all(&owner).unwrap();
+            std::fs::write(
+                owner.join("schema.yaml"),
+                "name: Retained owner\nproperties: []\n",
+            )
+            .unwrap();
             state.close_key(key).await;
             let index = state.get_or_create(key).await.unwrap();
             assert_eq!(
                 db::schema_status(&index).await.unwrap(),
                 db::SchemaStatus::Current
+            );
+            state.run_full_reindex(key).await.unwrap();
+            assert!(!old.exists());
+            assert_eq!(
+                sqlx::query_scalar::<_, i64>(
+                    "SELECT COUNT(*) FROM entries WHERE file_path = 'page.md'"
+                )
+                .fetch_one(&index)
+                .await
+                .unwrap(),
+                1
+            );
+            assert_eq!(
+                sqlx::query_scalar::<_, i64>(
+                    "SELECT COUNT(*) FROM knowledge_documents WHERE source_path = 'page.md'"
+                )
+                .fetch_one(&index)
+                .await
+                .unwrap(),
+                1
             );
             let routines = state.get_or_create_routines(key).await.unwrap();
             assert_eq!(sqlx::query_as::<_, (String, String, String, String, String)>(
@@ -244,7 +329,8 @@ mod tests {
             .unwrap();
         sqlx::raw_sql("CREATE TABLE schema_version (version INTEGER); INSERT INTO schema_version VALUES (16);")
             .execute(&old).await.unwrap();
-        old.close().await;
+        db::close_pool(&old).await;
+        assert_eq!(old.size(), 0, "pool close returned with live connections");
         let mut tasks = Vec::new();
         for _ in 0..24 {
             let state = state.clone();
@@ -330,7 +416,7 @@ mod tests {
         let partial = db::create_pool(&path).await.unwrap();
         sqlx::raw_sql("CREATE TABLE schema_version (version INTEGER); CREATE TABLE unknown_evidence (value TEXT); INSERT INTO unknown_evidence VALUES ('keep');")
             .execute(&partial).await.unwrap();
-        partial.close().await;
+        db::close_pool(&partial).await;
         let state = IndexState::new();
         let key = IndexKey::Root(temp.path().to_path_buf());
         state.get_or_create(&key).await.unwrap();

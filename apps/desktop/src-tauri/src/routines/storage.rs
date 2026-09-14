@@ -55,11 +55,11 @@ pub(crate) async fn open_pool(
                 )))
             }
             Ok(SchemaStatus::Uninitialized) => {
-                pool.close().await;
+                db::close_pool(&pool).await;
                 replace_unreadable(db_path, previously_created).await
             }
             Err(error) if db::is_corrupt_database_error(&error) => {
-                pool.close().await;
+                db::close_pool(&pool).await;
                 replace_unreadable(db_path, previously_created).await
             }
             Err(error) => Err(error),

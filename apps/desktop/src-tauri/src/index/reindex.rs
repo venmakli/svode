@@ -1283,15 +1283,18 @@ pub async fn full_reindex(
     space_dir: &Path,
     skip_top_level: &[String],
 ) -> Result<(), AppError> {
-    full_reindex_for_target(pool, space_dir, space_dir, skip_top_level).await
+    full_reindex_for_target(pool, space_dir, space_dir, skip_top_level)
+        .await
+        .map(|_| ())
 }
 
+/// Returns whether the committed projection had no source build/scan failures.
 pub async fn full_reindex_for_target(
     pool: &SqlitePool,
     project_dir: &Path,
     space_dir: &Path,
     skip_top_level: &[String],
-) -> Result<(), AppError> {
+) -> Result<bool, AppError> {
     tracing::debug!("full reindex of space: {}", space_dir.display());
 
     // ── Phase 1: filesystem walk + parse, no locks held ──────────────────
@@ -1485,7 +1488,7 @@ pub async fn full_reindex_for_target(
         assets.len(),
         assets_skipped
     );
-    Ok(())
+    Ok(entries_skipped + assets_skipped + knowledge_failures + scan_failure_count == 0)
 }
 
 /// Insert a pre-built asset row. Pure SQL — no FS access.

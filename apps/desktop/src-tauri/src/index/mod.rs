@@ -4,6 +4,8 @@ pub mod knowledge;
 mod lifecycle;
 pub mod reconcile;
 pub mod reindex;
+mod retention;
+mod retention_wal;
 pub mod search;
 pub mod update;
 
@@ -154,7 +156,7 @@ fn read_child_space_name(space_dir: &Path, folder_name: &str) -> String {
 
 async fn initialize_index_pool(pool: SqlitePool) -> Result<SqlitePool, AppError> {
     if let Err(error) = db::ensure_schema(&pool).await {
-        pool.close().await;
+        db::close_pool(&pool).await;
         return Err(error);
     }
     Ok(pool)
@@ -168,11 +170,11 @@ async fn open_prepared_pool(db_path: &Path) -> Result<SqlitePool, AppError> {
                 Ok(db::SchemaStatus::Current) => return Ok(pool),
                 Ok(db::SchemaStatus::Uninitialized) => return initialize_index_pool(pool).await,
                 Ok(db::SchemaStatus::Incompatible(found)) => {
-                    pool.close().await;
+                    db::close_pool(&pool).await;
                     (db::QuarantineReason::Incompatible, found)
                 }
                 Err(error) => {
-                    pool.close().await;
+                    db::close_pool(&pool).await;
                     if !db::is_corrupt_database_error(&error) {
                         return Err(error);
                     }
@@ -1148,8 +1150,17 @@ impl IndexState {
         let _guard = lock.lock().await;
         flag.store(true, Ordering::SeqCst);
         let _flag_guard = ReindexActiveGuard(flag);
-        reindex::full_reindex_for_target(&pool, key.project(), &dir, &skip).await?;
-        self.sync_routine_projection(key).await
+        let complete = reindex::full_reindex_for_target(&pool, key.project(), &dir, &skip).await?;
+        self.sync_routine_projection(key).await?;
+        if complete {
+            self.cleanup_reconciled_index(key, &pool).await;
+        }
+        Ok(())
+    }
+
+    async fn cleanup_reconciled_index(&self, key: &IndexKey, pool: &SqlitePool) {
+        let pools = self.pools.clone().lock_owned().await;
+        lifecycle::cleanup(pools, key.clone(), pool.clone()).await;
     }
 
     /// Get an existing pool for the key, or open one (creating the DB

@@ -440,7 +440,7 @@ async fn open_writable_cache_pool(db_path: &Path) -> Result<sqlx::SqlitePool, Ap
         Ok(pool) => match ensure_cache_schema(&pool).await {
             Ok(()) => Ok(pool),
             Err(error) if crate::index::db::is_corrupt_database_error(&error) => {
-                pool.close().await;
+                crate::index::db::close_pool(&pool).await;
                 replace_corrupt_cache(db_path).await
             }
             Err(error) => {

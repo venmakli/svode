@@ -322,6 +322,7 @@ pub(crate) async fn reconcile_pool(
     )
     .await?;
     tx.commit().await?;
+    state.cleanup_reconciled_index(key, &pool).await;
     Ok(ReconcileOutcome::Applied)
 }
 

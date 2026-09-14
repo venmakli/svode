@@ -105,6 +105,18 @@ pub async fn create_pool(db_path: &Path) -> Result<SqlitePool, AppError> {
     Ok(pool)
 }
 
+/// SQLx 0.8 can publish a returning idle connection after the final idle
+/// sweep in close(). Drain that late return before moving SQLite families.
+pub(crate) async fn close_pool(pool: &SqlitePool) {
+    loop {
+        pool.close().await;
+        if pool.size() == 0 {
+            return;
+        }
+        tokio::task::yield_now().await;
+    }
+}
+
 pub(crate) fn is_corrupt_database_error(error: &AppError) -> bool {
     let message = error.to_string().to_ascii_lowercase();
     message.contains("database disk image is malformed")
@@ -122,32 +134,65 @@ pub(crate) fn quarantine_database_family(
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis();
-    let mut quarantined = Vec::new();
-    for suffix in ["", "-wal", "-shm", "-journal"] {
-        let source = if suffix.is_empty() {
-            db_path.to_path_buf()
-        } else {
-            db_path.with_file_name(format!(
-                "{}{}",
-                db_path
-                    .file_name()
-                    .and_then(|name| name.to_str())
-                    .unwrap_or("index.db"),
-                suffix
+    quarantine_database_family_at(db_path, reason, stamp)
+}
+
+fn quarantine_database_family_at(
+    db_path: &Path,
+    reason: QuarantineReason,
+    mut stamp: u128,
+) -> Result<Vec<std::path::PathBuf>, AppError> {
+    let name = db_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| AppError::Index("invalid database filename".into()))?;
+    let sources = ["", "-wal", "-shm", "-journal"]
+        .map(|suffix| db_path.with_file_name(format!("{name}{suffix}")));
+    let backups = loop {
+        let candidates = sources.each_ref().map(|source| {
+            source.with_file_name(format!(
+                "{}.{}-{stamp}",
+                source.file_name().unwrap().to_string_lossy(),
+                reason.as_str()
             ))
-        };
-        if !source.exists() {
-            continue;
+        });
+        let mut occupied = false;
+        for candidate in &candidates {
+            match std::fs::symlink_metadata(candidate) {
+                Ok(_) => occupied = true,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error.into()),
+            }
         }
-        let backup = source.with_file_name(format!(
-            "{}.{}-{stamp}",
-            source
-                .file_name()
-                .and_then(|name| name.to_str())
-                .unwrap_or("index.db"),
-            reason.as_str(),
-        ));
-        std::fs::rename(&source, &backup)?;
+        if !occupied {
+            break candidates;
+        }
+        stamp = stamp
+            .checked_add(1)
+            .ok_or_else(|| AppError::Index("quarantine timestamp exhausted".into()))?;
+    };
+    let mut quarantined = Vec::new();
+    for (source, backup) in sources.iter().zip(backups) {
+        match std::fs::symlink_metadata(source) {
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(error.into()),
+        }
+        // Reserve the destination without replacing another generation. The
+        // owning runtime serializes writers; interruption leaves either the
+        // source or its backup, plus an incomplete reservation to preserve.
+        drop(
+            std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&backup)?,
+        );
+        std::fs::rename(source, &backup).map_err(|error| {
+            AppError::Index(format!(
+                "quarantine rename {} failed: {error}",
+                source.display()
+            ))
+        })?;
         quarantined.push(backup);
     }
     Ok(quarantined)
@@ -382,6 +427,96 @@ mod tests {
     use super::*;
 
     #[tokio::test]
+    async fn close_drains_connection_returned_after_final_idle_sweep() {
+        use std::sync::{
+            Arc,
+            atomic::{AtomicBool, Ordering},
+        };
+        let armed = Arc::new(AtomicBool::new(false));
+        let entered = Arc::new(tokio::sync::Notify::new());
+        let resume = Arc::new(tokio::sync::Semaphore::new(0));
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .after_release({
+                let armed = armed.clone();
+                let entered = entered.clone();
+                let resume = resume.clone();
+                move |_, _| {
+                    let armed = armed.clone();
+                    let entered = entered.clone();
+                    let resume = resume.clone();
+                    Box::pin(async move {
+                        if armed.load(Ordering::SeqCst) {
+                            entered.notify_one();
+                            resume.acquire().await.unwrap().forget();
+                        }
+                        Ok(true)
+                    })
+                }
+            })
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        let connection = pool.acquire().await.unwrap();
+        armed.store(true, Ordering::SeqCst);
+        drop(connection);
+        entered.notified().await;
+        let closer = {
+            let pool = pool.clone();
+            tokio::spawn(async move { close_pool(&pool).await })
+        };
+        pool.close_event().await;
+        resume.add_permits(1);
+        closer.await.unwrap();
+        assert_eq!(pool.size(), 0);
+    }
+
+    #[test]
+    fn timestamp_collision_preserves_every_existing_family_member() {
+        let temp = tempfile::tempdir().unwrap();
+        let main = temp.path().join("index.db");
+        for suffix in ["", "-wal", "-shm", "-journal"] {
+            std::fs::write(
+                temp.path().join(format!("index.db{suffix}")),
+                format!("new{suffix}"),
+            )
+            .unwrap();
+            std::fs::write(
+                temp.path()
+                    .join(format!("index.db{suffix}.incompatible-42")),
+                format!("old{suffix}"),
+            )
+            .unwrap();
+        }
+        std::fs::write(temp.path().join("index.db-shm.incompatible-43"), "orphan").unwrap();
+        let moved =
+            quarantine_database_family_at(&main, QuarantineReason::Incompatible, 42).unwrap();
+        assert_eq!(moved.len(), 4);
+        for suffix in ["", "-wal", "-shm", "-journal"] {
+            assert_eq!(
+                std::fs::read_to_string(
+                    temp.path()
+                        .join(format!("index.db{suffix}.incompatible-42"))
+                )
+                .unwrap(),
+                format!("old{suffix}")
+            );
+            assert_eq!(
+                std::fs::read_to_string(
+                    temp.path()
+                        .join(format!("index.db{suffix}.incompatible-44"))
+                )
+                .unwrap(),
+                format!("new{suffix}")
+            );
+        }
+        assert_eq!(
+            std::fs::read_to_string(temp.path().join("index.db-shm.incompatible-43")).unwrap(),
+            "orphan"
+        );
+    }
+
+    #[tokio::test]
     async fn failed_schema_creation_rolls_back_all_ddl_and_retry_succeeds() {
         let pool = SqlitePoolOptions::new()
             .max_connections(1)
@@ -444,7 +579,7 @@ mod tests {
             .execute(&legacy)
             .await
             .unwrap();
-        legacy.close().await;
+        close_pool(&legacy).await;
 
         let replacement = crate::index::open_prepared_pool(&db_path).await.unwrap();
 
@@ -496,7 +631,7 @@ mod tests {
             .execute(&legacy)
             .await
             .unwrap();
-        legacy.close().await;
+        close_pool(&legacy).await;
 
         let replacement = crate::index::open_prepared_pool(&db_path).await.unwrap();
 
