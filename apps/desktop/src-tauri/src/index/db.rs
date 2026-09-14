@@ -194,8 +194,9 @@ pub async fn ensure_schema(pool: &SqlitePool) -> Result<(), AppError> {
         }
     }
 
+    let mut transaction = pool.begin().await?;
     sqlx::query("CREATE TABLE schema_version (version INTEGER NOT NULL)")
-        .execute(pool)
+        .execute(&mut *transaction)
         .await?;
 
     let ddl = [
@@ -363,13 +364,15 @@ pub async fn ensure_schema(pool: &SqlitePool) -> Result<(), AppError> {
     ];
 
     for stmt in ddl {
-        sqlx::query(stmt).execute(pool).await?;
+        sqlx::query(stmt).execute(&mut *transaction).await?;
     }
 
     sqlx::query("INSERT INTO schema_version (version) VALUES (?)")
         .bind(SCHEMA_VERSION)
-        .execute(pool)
+        .execute(&mut *transaction)
         .await?;
+
+    transaction.commit().await?;
 
     Ok(())
 }
@@ -377,6 +380,31 @@ pub async fn ensure_schema(pool: &SqlitePool) -> Result<(), AppError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn failed_schema_creation_rolls_back_all_ddl_and_retry_succeeds() {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        sqlx::query("PRAGMA max_page_count = 2")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert!(ensure_schema(&pool).await.is_err());
+        assert_eq!(
+            schema_status(&pool).await.unwrap(),
+            SchemaStatus::Uninitialized
+        );
+        sqlx::query("PRAGMA max_page_count = 10000")
+            .execute(&pool)
+            .await
+            .unwrap();
+        ensure_schema(&pool).await.unwrap();
+        assert_eq!(schema_status(&pool).await.unwrap(), SchemaStatus::Current);
+        pool.close().await;
+    }
 
     #[tokio::test]
     async fn corrupt_index_is_quarantined_before_fresh_schema_creation() {

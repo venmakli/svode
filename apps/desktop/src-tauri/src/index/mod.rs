@@ -1,6 +1,7 @@
 pub mod commands;
 pub mod db;
 pub mod knowledge;
+mod lifecycle;
 pub mod reconcile;
 pub mod reindex;
 pub mod search;
@@ -151,52 +152,56 @@ fn read_child_space_name(space_dir: &Path, folder_name: &str) -> String {
     }
 }
 
-async fn open_prepared_pool(db_path: &Path) -> Result<SqlitePool, AppError> {
-    match db::create_pool(db_path).await {
-        Ok(pool) => match db::schema_status(&pool).await {
-            Ok(db::SchemaStatus::Current) => Ok(pool),
-            Ok(db::SchemaStatus::Uninitialized) => {
-                db::ensure_schema(&pool).await?;
-                Ok(pool)
-            }
-            Ok(db::SchemaStatus::Incompatible(found)) => {
-                pool.close().await;
-                tracing::info!(
-                    "quarantining incompatible derived index at {} (found {:?}, expected {})",
-                    db_path.display(),
-                    found,
-                    db::SCHEMA_VERSION
-                );
-                db::quarantine_database_family(db_path, db::QuarantineReason::Incompatible)?;
-                let replacement = db::create_pool(db_path).await?;
-                db::ensure_schema(&replacement).await?;
-                Ok(replacement)
-            }
-            Err(error) if db::is_corrupt_database_error(&error) => {
-                pool.close().await;
-                tracing::warn!(
-                    "quarantining corrupt derived index at {}",
-                    db_path.display()
-                );
-                db::quarantine_database_family(db_path, db::QuarantineReason::Corrupt)?;
-                let replacement = db::create_pool(db_path).await?;
-                db::ensure_schema(&replacement).await?;
-                Ok(replacement)
-            }
-            Err(error) => Err(error),
-        },
-        Err(error) if db::is_corrupt_database_error(&error) => {
-            tracing::warn!(
-                "quarantining corrupt derived index at {}",
-                db_path.display()
-            );
-            db::quarantine_database_family(db_path, db::QuarantineReason::Corrupt)?;
-            let replacement = db::create_pool(db_path).await?;
-            db::ensure_schema(&replacement).await?;
-            Ok(replacement)
-        }
-        Err(error) => Err(error),
+async fn initialize_index_pool(pool: SqlitePool) -> Result<SqlitePool, AppError> {
+    if let Err(error) = db::ensure_schema(&pool).await {
+        pool.close().await;
+        return Err(error);
     }
+    Ok(pool)
+}
+
+async fn open_prepared_pool(db_path: &Path) -> Result<SqlitePool, AppError> {
+    let (reason, found) = match db::create_pool(db_path).await {
+        Ok(pool) => {
+            let status = db::schema_status(&pool).await;
+            match status {
+                Ok(db::SchemaStatus::Current) => return Ok(pool),
+                Ok(db::SchemaStatus::Uninitialized) => return initialize_index_pool(pool).await,
+                Ok(db::SchemaStatus::Incompatible(found)) => {
+                    pool.close().await;
+                    (db::QuarantineReason::Incompatible, found)
+                }
+                Err(error) => {
+                    pool.close().await;
+                    if !db::is_corrupt_database_error(&error) {
+                        return Err(error);
+                    }
+                    (db::QuarantineReason::Corrupt, None)
+                }
+            }
+        }
+        Err(error) if db::is_corrupt_database_error(&error) => {
+            (db::QuarantineReason::Corrupt, None)
+        }
+        Err(error) => return Err(error),
+    };
+    tracing::warn!(
+        store = "index",
+        owner = %db_path.display(),
+        ?reason,
+        ?found,
+        expected = db::SCHEMA_VERSION,
+        "quarantining index database family; source rebuild required"
+    );
+    db::quarantine_database_family(db_path, reason)?;
+    let replacement = initialize_index_pool(db::create_pool(db_path).await?).await?;
+    tracing::info!(
+        store = "index",
+        owner = %db_path.display(),
+        expected = db::SCHEMA_VERSION,
+        "replacement index schema ready; source reconciliation pending"
+    );
+    Ok(replacement)
 }
 
 /// Resolve `abs_path` to the index pool that owns it plus the relative path
@@ -265,7 +270,7 @@ fn normalize_abs_path(path: &Path) -> Option<PathBuf> {
 /// Holds one pool per `IndexKey` — root project + each ready child space —
 /// plus matching reindex serialization locks and runtime backlink indices.
 pub struct IndexState {
-    pools: Mutex<HashMap<IndexKey, SqlitePool>>,
+    pools: Arc<Mutex<lifecycle::IndexPools>>,
     routine_pools: Mutex<HashMap<IndexKey, SqlitePool>>,
     routine_storage_locks: Mutex<HashMap<IndexKey, Arc<Mutex<()>>>>,
     /// Per-key serialization lock for `full_reindex`. Two rapid `open_project`
@@ -306,7 +311,7 @@ impl Drop for ReindexActiveGuard {
 impl IndexState {
     pub fn new() -> Self {
         Self {
-            pools: Mutex::new(HashMap::new()),
+            pools: Arc::new(Mutex::new(lifecycle::IndexPools::default())),
             routine_pools: Mutex::new(HashMap::new()),
             routine_storage_locks: Mutex::new(HashMap::new()),
             reindex_locks: Mutex::new(HashMap::new()),
@@ -1150,23 +1155,12 @@ impl IndexState {
     /// Get an existing pool for the key, or open one (creating the DB
     /// file and schema if necessary).
     pub async fn get_or_create(&self, key: &IndexKey) -> Result<SqlitePool, AppError> {
-        {
-            let pools = self.pools.lock().await;
-            if let Some(pool) = pools.get(key) {
-                return Ok(pool.clone());
-            }
+        let pools = self.pools.clone().lock_owned().await;
+        if let Some(pool) = pools.get(key) {
+            return Ok(pool);
         }
-
         let dir = self.dir_for_key(key).await?;
-        let db_path = dir.join(".svode").join("index.db");
-        let pool = open_prepared_pool(&db_path).await?;
-
-        let mut pools = self.pools.lock().await;
-        if let Some(existing) = pools.get(key) {
-            return Ok(existing.clone());
-        }
-        pools.insert(key.clone(), pool.clone());
-        Ok(pool)
+        lifecycle::open(pools, key.clone(), dir).await
     }
 
     /// Get (or create) the operational routines store paired with this index
@@ -1233,7 +1227,7 @@ impl IndexState {
     /// to avoid creating or migrating derived storage as a side effect of an
     /// open/search gesture.
     pub(crate) async fn existing_pool(&self, key: &IndexKey) -> Option<SqlitePool> {
-        self.pools.lock().await.get(key).cloned()
+        self.pools.lock().await.get(key)
     }
 
     /// Get (or create) the runtime backlink index for this key. Lazy-build:
@@ -1255,14 +1249,11 @@ impl IndexState {
 
     /// Drop the pool and runtime backlink index for a key.
     async fn close_key(&self, key: &IndexKey) {
-        let pool = {
-            let mut pools = self.pools.lock().await;
-            pools.remove(key)
-        };
-        if let Some(pool) = pool {
-            tracing::info!("closing index pool for {:?}", key);
-            pool.close().await;
-        }
+        lifecycle::close(self.pools.clone().lock_owned().await, Some(key), None).await;
+        self.close_key_runtime(key).await;
+    }
+
+    async fn close_key_runtime(&self, key: &IndexKey) {
         let routine_pool = self.routine_pools.lock().await.remove(key);
         if let Some(pool) = routine_pool {
             tracing::info!("closing routines pool for {:?}", key);
@@ -1344,14 +1335,8 @@ impl IndexState {
 
     /// Close every pool belonging to `project`.
     pub async fn close_project(&self, project: &Path) {
-        let mut keys_to_close: HashSet<IndexKey> = {
-            let pools = self.pools.lock().await;
-            pools
-                .keys()
-                .filter(|k| k.project() == project)
-                .cloned()
-                .collect()
-        };
+        let mut keys_to_close =
+            lifecycle::close(self.pools.clone().lock_owned().await, None, Some(project)).await;
         keys_to_close.extend(
             self.routine_pools
                 .lock()
@@ -1361,7 +1346,7 @@ impl IndexState {
                 .cloned(),
         );
         for key in keys_to_close {
-            self.close_key(&key).await;
+            self.close_key_runtime(&key).await;
         }
         self.spaces_cache.lock().await.remove(project);
     }
