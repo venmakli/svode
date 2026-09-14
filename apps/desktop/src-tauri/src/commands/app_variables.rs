@@ -164,6 +164,9 @@ async fn run_mutation(
             app_variables::owner(&config, scope.as_ref(), &source)
         })
         .await?;
+        if let (Some(project), Ok(path)) = (project.as_deref(), owner.scope_path()) {
+            crate::git::local_repair::repair_scope_best_effort(app, project, path).await;
+        }
         let write_owner = owner.clone();
         let git = app.state::<crate::git::GitState>();
         mutations::apply(

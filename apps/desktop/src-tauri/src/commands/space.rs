@@ -10,7 +10,7 @@ use crate::git::autocommit::{AutocommitService, SystemCommitKind};
 use crate::git::commands::{
     GitState, auto_commit_structural_enabled, init_repo_with_policy, require_cli,
 };
-use crate::git::ops;
+use crate::git::{local_repair, ops};
 use crate::index::IndexState;
 use crate::space::{config, project, registry, settings, symlinks, types::*};
 use crate::storage::lfs::LfsState;
@@ -237,6 +237,11 @@ pub async fn create_project(
 ) -> Result<SpaceInfo, AppError> {
     let sp_path = Path::new(&path);
 
+    if sp_path.join(".git").symlink_metadata().is_ok() {
+        require_repository_mutation(&app, sp_path).await?;
+        local_repair::require_scope_repair(&app, sp_path, sp_path).await?;
+    }
+
     // Check if project already exists at this path
     if sp_path.join(".svode").join("config.json").exists() {
         return Err(AppError::ProjectAlreadyExists(path.clone()));
@@ -309,7 +314,8 @@ pub async fn open_project_folder(
         || preauthorized_readme_repair
         || allow_automatic_repository_repairs(&app, sp_path).await;
     let gitignore_changed = if had_git_before && repairs_allowed {
-        ops::ensure_svode_gitignore(sp_path)?
+        local_repair::repair_scope(&app, sp_path, sp_path).await?
+            == local_repair::RepairOutcome::Changed
     } else {
         false
     };
@@ -378,6 +384,8 @@ pub async fn open_project_folder(
             }
         }
     }
+
+    local_repair::repair_project(&app, sp_path).await;
 
     Ok(SpaceInfo {
         id,
@@ -459,7 +467,8 @@ pub async fn open_project(
     let has_git = project_path.join(".git").exists();
     let repairs_allowed = !has_git || allow_automatic_repository_repairs(&app, &project_path).await;
     let gitignore_changed = if repairs_allowed {
-        ops::ensure_svode_gitignore(&project_path)?
+        local_repair::repair_scope(&app, &project_path, &project_path).await?
+            == local_repair::RepairOutcome::Changed
     } else {
         false
     };
@@ -576,6 +585,7 @@ pub async fn create_space(
 ) -> Result<SpaceInfo, AppError> {
     let parent = Path::new(&parent_path);
     require_repository_mutation(&app, parent).await?;
+    local_repair::require_scope_repair(&app, parent, parent).await?;
     let folder_name = project::normalize_space_folder(&folder_name)?;
     let info = project::create_space(parent, &name, &icon, &folder_name)?;
     let space_dir = parent.join(&folder_name);
@@ -693,6 +703,7 @@ pub async fn delete_space(
 ) -> Result<(), AppError> {
     let parent = Path::new(&parent_path);
     require_repository_mutation(&app, parent).await?;
+    local_repair::repair_scope_best_effort(&app, parent, parent).await;
 
     // Look up folder name + detect git type before deletion so we know which
     // commit message to use in the root repo.
@@ -776,6 +787,9 @@ pub async fn register_cloned_space(
     let info =
         project::register_cloned_space(path, &folder_name, &fallback_name, &fallback_icon, repo)?;
 
+    local_repair::repair_project(&app, path).await;
+    local_repair::repair_scope_best_effort(&app, path, &space_dir).await;
+
     if !svode_existed_before || !readme_existed_before {
         let commit_result = if !svode_existed_before && readme_existed_before {
             autocommit
@@ -831,7 +845,8 @@ pub async fn project_clone(
 
     let (id, mut cfg) = project::open_project_folder(&config_dir, &path)?;
     refresh_recent_projects_menu(&app);
-    let gitignore_changed = ops::ensure_svode_gitignore(&path)?;
+    let gitignore_changed = local_repair::repair_scope(&app, &path, &path).await?
+        == local_repair::RepairOutcome::Changed;
     let imported_submodules = import_existing_submodules_if_possible(&git_state, &path).await;
     if imported_submodules > 0 {
         cfg = config::read_space_config(&path)?;
@@ -876,6 +891,8 @@ pub async fn project_clone(
             }
         }
     }
+
+    local_repair::repair_project(&app, &path).await;
 
     Ok(SpaceInfo {
         id,
@@ -936,6 +953,9 @@ pub async fn ensure_space_scaffold(
             crate::space::scaffold::scaffold_space(path, &fallback_name, "", "")?;
         }
     }
+
+    local_repair::repair_project(&app, Path::new(&project_path)).await;
+    local_repair::repair_scope_best_effort(&app, Path::new(&project_path), path).await;
 
     if !svode_existed_before || !readme_existed_before {
         let commit_result = if !svode_existed_before && readme_existed_before {
@@ -1134,7 +1154,10 @@ pub async fn clone_missing_space(
         {
             tracing::warn!("scaffold_space_git_identity failed after clone: {e}");
         }
-        if root_mutation_allowed {
+        if root_mutation_allowed
+            && local_repair::repair_scope(&app, &parent, &parent).await?
+                != local_repair::RepairOutcome::Skipped
+        {
             ops::add_independent_gitignore(&parent, &space_ref.path)?;
         } else {
             tracing::warn!(
@@ -1191,6 +1214,8 @@ pub async fn clone_missing_space(
             return Err(AppError::SpaceNotFound(space_id));
         }
     }
+
+    local_repair::repair_scope_best_effort(&app, &parent, &space_dir).await;
 
     // Scaffold .svode/ and README.md if not present
     let svode_dir = space_dir.join(".svode");

@@ -13,15 +13,16 @@ use crate::terminal::TerminalManager;
 
 #[tauri::command]
 pub async fn agent_sessions_list(
+    app: AppHandle,
     state: State<'_, AgentSessionsState>,
     terminal_manager: State<'_, TerminalManager>,
     project_path: String,
 ) -> Result<AgentSessionsListResult, AppError> {
+    let root = super::scope::normalize_project_path(&project_path)?;
+    crate::git::local_repair::repair_scope_best_effort(&app, &root, &root).await;
     let state = state.inner().clone();
     let terminal_manager = terminal_manager.inner().clone();
-    let project_key = super::scope::normalize_project_path(&project_path)?
-        .to_string_lossy()
-        .into_owned();
+    let project_key = root.to_string_lossy().into_owned();
     let reads = state.reads.clone();
     reads
         .run(
@@ -44,15 +45,16 @@ pub async fn agent_sessions_list(
 
 #[tauri::command]
 pub async fn agent_sessions_refresh(
+    app: AppHandle,
     state: State<'_, AgentSessionsState>,
     terminal_manager: State<'_, TerminalManager>,
     project_path: String,
 ) -> Result<AgentSessionsListResult, AppError> {
+    let root = super::scope::normalize_project_path(&project_path)?;
+    crate::git::local_repair::repair_scope_best_effort(&app, &root, &root).await;
     let state = state.inner().clone();
     let terminal_manager = terminal_manager.inner().clone();
-    let project_key = super::scope::normalize_project_path(&project_path)?
-        .to_string_lossy()
-        .into_owned();
+    let project_key = root.to_string_lossy().into_owned();
     let reads = state.reads.clone();
     reads
         .run(
@@ -75,11 +77,14 @@ pub async fn agent_sessions_refresh(
 
 #[tauri::command]
 pub async fn agent_sessions_hot_status(
+    app: AppHandle,
     state: State<'_, AgentSessionsState>,
     terminal_manager: State<'_, TerminalManager>,
     project_path: String,
     session_ids: Vec<String>,
 ) -> Result<AgentSessionsHotStatusResult, AppError> {
+    let root = super::scope::normalize_project_path(&project_path)?;
+    crate::git::local_repair::repair_scope_best_effort(&app, &root, &root).await;
     let state = state.inner().clone();
     let terminal_manager = terminal_manager.inner().clone();
     run_blocking(move || {
@@ -97,12 +102,15 @@ pub async fn agent_sessions_hot_status(
 
 #[tauri::command]
 pub async fn agent_sessions_set_pinned(
+    app: AppHandle,
     state: State<'_, AgentSessionsState>,
     terminal_manager: State<'_, TerminalManager>,
     project_path: String,
     session_id: String,
     pinned: bool,
 ) -> Result<AgentSessionsPinResult, AppError> {
+    let root = super::scope::normalize_project_path(&project_path)?;
+    crate::git::local_repair::repair_scope_best_effort(&app, &root, &root).await;
     let state = state.inner().clone();
     let terminal_manager = terminal_manager.inner().clone();
     run_blocking(move || {
@@ -125,6 +133,8 @@ pub async fn agent_sessions_reenter(
     project_path: String,
     session_id: String,
 ) -> Result<AgentSessionReentryResult, AppError> {
+    let root = super::scope::normalize_project_path(&project_path)?;
+    crate::git::local_repair::repair_scope_best_effort(&app, &root, &root).await;
     let state = state.inner().clone();
     let terminal_manager = terminal_manager.inner().clone();
     run_blocking(move || {

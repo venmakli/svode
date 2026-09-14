@@ -417,6 +417,7 @@ impl AutocommitService {
         plan: GuardedExactPathPlan,
         target_matches_expected: bool,
     ) -> ExactPathPersistenceOutcome {
+        super::local_repair::repair_locked_best_effort(&self.app, cli, repo).await;
         let outcome =
             finish_guarded_exact_path(cli, repo, path, message, plan, target_matches_expected)
                 .await;
@@ -448,6 +449,7 @@ impl AutocommitService {
         path: &str,
         message: &str,
     ) -> ExactPathPersistenceOutcome {
+        super::local_repair::repair_locked_best_effort(&self.app, cli, repo).await;
         let outcome = exact_path_outcome(cli, repo, path, message).await;
         if outcome == ExactPathPersistenceOutcome::Committed {
             publish_exact_path_commit(&self.app, cli, space_path, repo);
@@ -856,6 +858,7 @@ async fn do_commit_paths(
     paths: Vec<PathBuf>,
     message: &str,
 ) -> Result<(), AppError> {
+    super::local_repair::repair_scope_best_effort(app, project_path, space_path).await;
     let git_state = app.state::<GitState>();
     let cli = git_state.cli.clone().ok_or(AppError::GitNotFound)?;
 
@@ -911,6 +914,7 @@ async fn do_commit_system(
     kind: SystemCommitKind,
     intent: CommitIntent,
 ) -> Result<(), AppError> {
+    super::local_repair::repair_scope_best_effort(app, project_path, space_path).await;
     let git_state = app.state::<GitState>();
     let cli = git_state.cli.clone().ok_or(AppError::GitNotFound)?;
     let message = kind.message();
@@ -969,6 +973,12 @@ async fn do_commit_scaffold(
         return Ok(());
     }
 
+    if super::local_repair::repair_scope(app, project_path, space_path).await?
+        == super::local_repair::RepairOutcome::Skipped
+    {
+        return Ok(());
+    }
+
     let git_state = app.state::<GitState>();
     let cli = git_state.cli.clone().ok_or(AppError::GitNotFound)?;
     let git_type = ops::detect_space_git_type(&cli, project_path, space_path).await?;
@@ -983,10 +993,8 @@ async fn do_commit_scaffold(
             let lock = git_state.get_lock(project_path).await;
             let _guard = lock.lock().await;
             let rel = if space_path == project_path {
-                ops::ensure_svode_gitignore(project_path)?;
                 ".svode".to_string()
             } else {
-                ops::ensure_inline_gitignore(project_path)?;
                 format!("{}/.svode", space_folder)
             };
             if !background_commit_allowed(project_path, CommitIntent::StructuralLifecycle) {
@@ -1019,7 +1027,6 @@ async fn do_commit_scaffold(
         SpaceGitType::Independent => {
             let lock = git_state.get_lock(space_path).await;
             let _guard = lock.lock().await;
-            ops::ensure_svode_gitignore(space_path)?;
             if !background_commit_allowed(space_path, CommitIntent::StructuralLifecycle) {
                 return Ok(());
             }
@@ -1043,7 +1050,6 @@ async fn do_commit_scaffold(
         SpaceGitType::Submodule => {
             let lock = git_state.get_lock(space_path).await;
             let _guard = lock.lock().await;
-            ops::ensure_svode_gitignore(space_path)?;
             if !background_commit_allowed(space_path, CommitIntent::StructuralLifecycle) {
                 return Ok(());
             }

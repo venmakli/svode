@@ -249,13 +249,21 @@ pub async fn git_check_availability(
 
 #[tauri::command]
 pub async fn git_init_space(
+    app: AppHandle,
     state: State<'_, GitState>,
     space_path: String,
 ) -> Result<(), AppError> {
     let path = PathBuf::from(&space_path);
+    if path.join(".git").symlink_metadata().is_ok() {
+        super::access::require_repository_mutation(&app, &path).await?;
+        super::local_repair::require_scope_repair(&app, &path, &path).await?;
+    }
     let lock = state.get_lock(&path).await;
     let _guard = lock.lock().await;
-    init_repo_with_policy(state.cli()?, &path).await
+    init_repo_with_policy(state.cli()?, &path).await?;
+    drop(_guard);
+    super::local_repair::repair_project(&app, &path).await;
+    Ok(())
 }
 
 #[tauri::command]
@@ -277,6 +285,8 @@ pub async fn git_clone_space(
         std::fs::create_dir_all(parent_dir)?;
     }
 
+    super::local_repair::require_scope_repair(&app, &project_dir, &project_dir).await?;
+
     if git_type == "submodule" {
         let cli = require_cli(&state)?;
         let lock = state.get_lock(&project_dir).await;
@@ -293,6 +303,7 @@ pub async fn git_clone_space(
             crate::space::scaffold::scaffold_repository_space(&target, &space_folder, "", "")?;
         }
         drop(_guard);
+        super::local_repair::repair_scope_best_effort(&app, &project_dir, &target).await;
         if !svode_existed_before || !readme_existed_before {
             let commit_result = if !svode_existed_before && readme_existed_before {
                 autocommit.commit_scaffold(project_dir, target).await
@@ -314,6 +325,8 @@ pub async fn git_clone_space(
         let _guard = lock.lock().await;
         super::clone::clone_with_progress(&cli, &app, &url, &target).await?;
         super::ops::add_independent_gitignore(&project_dir, &space_folder)?;
+        drop(_guard);
+        super::local_repair::repair_scope_best_effort(&app, &project_dir, &target).await;
     }
     Ok(())
 }

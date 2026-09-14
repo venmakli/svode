@@ -65,7 +65,6 @@ pub fn run() {
         .manage(git::GitState::new())
         .manage(identity::IdentityState::new())
         .manage(git::access::RepositoryAccessState::new())
-        .manage(index::IndexState::new())
         .manage(routines::RoutineSchedulerState::new())
         .manage(app_windows::AppWindowState::new())
         .manage(space::settings::AppSettingsState::new())
@@ -92,6 +91,7 @@ pub fn run() {
             app_windows::handle_window_event(app, window, event);
         })
         .setup(|app| {
+            app.manage(index::IndexState::for_runtime(app.handle().clone()));
             let service = Arc::new(git::autocommit::AutocommitService::new(
                 app.handle().clone(),
             ));

@@ -30,6 +30,7 @@ pub(crate) async fn save(
                 .collect::<Result<Vec<_>, _>>()
         })
         .transpose()?;
+    super::local_repair::repair_scope_best_effort(app, project.unwrap_or(space), space).await;
     let key = format!("{}:{requested:?}", space.display());
     let lock = state.get_lock(&repo).await;
     let _guard = lock.lock().await;

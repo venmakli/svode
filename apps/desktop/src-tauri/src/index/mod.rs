@@ -272,6 +272,7 @@ fn normalize_abs_path(path: &Path) -> Option<PathBuf> {
 /// Holds one pool per `IndexKey` — root project + each ready child space —
 /// plus matching reindex serialization locks and runtime backlink indices.
 pub struct IndexState {
+    runtime: Option<AppHandle>,
     pools: Arc<Mutex<lifecycle::IndexPools>>,
     routine_pools: Mutex<HashMap<IndexKey, SqlitePool>>,
     routine_storage_locks: Mutex<HashMap<IndexKey, Arc<Mutex<()>>>>,
@@ -313,6 +314,7 @@ impl Drop for ReindexActiveGuard {
 impl IndexState {
     pub fn new() -> Self {
         Self {
+            runtime: None,
             pools: Arc::new(Mutex::new(lifecycle::IndexPools::default())),
             routine_pools: Mutex::new(HashMap::new()),
             routine_storage_locks: Mutex::new(HashMap::new()),
@@ -322,6 +324,19 @@ impl IndexState {
             backlinks: Mutex::new(HashMap::new()),
             spaces_cache: Mutex::new(HashMap::new()),
             lfs_states: Mutex::new(HashMap::new()),
+        }
+    }
+
+    pub fn for_runtime(app: AppHandle) -> Self {
+        Self {
+            runtime: Some(app),
+            ..Self::new()
+        }
+    }
+
+    async fn repair_store_scope(&self, key: &IndexKey, dir: &Path) {
+        if let Some(app) = &self.runtime {
+            crate::git::local_repair::repair_scope_best_effort(app, key.project(), dir).await;
         }
     }
 
@@ -1171,6 +1186,7 @@ impl IndexState {
             return Ok(pool);
         }
         let dir = self.dir_for_key(key).await?;
+        self.repair_store_scope(key, &dir).await;
         lifecycle::open(pools, key.clone(), dir).await
     }
 
@@ -1195,6 +1211,7 @@ impl IndexState {
         }
 
         let dir = self.dir_for_key(key).await?;
+        self.repair_store_scope(key, &dir).await;
         let previously_created = crate::routines::authority::storage_was_created(&dir)?;
         let outcome = crate::routines::storage::open_pool(
             &crate::routines::storage::database_path(&dir),
@@ -1285,6 +1302,7 @@ impl IndexState {
     /// writes share the per-pool lock and advance generation, so a stale
     /// reconciliation plan retries instead of overwriting newer rows.
     pub async fn open_project(&self, app: &AppHandle, project: &Path) -> Result<(), AppError> {
+        crate::git::local_repair::repair_project(app, project).await;
         let cfg = config::read_space_config(project)?;
         let cache = ProjectSpacesCache::from_config(project, &cfg);
         let ready_ids: Vec<String> = cache
@@ -1414,6 +1432,13 @@ impl IndexState {
             return;
         }
 
+        crate::git::local_repair::repair_scope_best_effort(
+            app,
+            project,
+            &project.join(folder_name),
+        )
+        .await;
+
         let key = IndexKey::Space {
             project: project.to_path_buf(),
             space_id: space_id.to_string(),
@@ -1487,6 +1512,9 @@ impl IndexState {
         };
         match new_status {
             SpaceStatus::Ready => {
+                if let Ok(dir) = self.dir_for_key(&key).await {
+                    crate::git::local_repair::repair_scope_best_effort(app, project, &dir).await;
+                }
                 if let Err(e) = self.get_or_create(&key).await {
                     tracing::warn!("status_changed→Ready: get_or_create failed: {e}");
                     return;
@@ -1519,6 +1547,7 @@ impl IndexState {
         app: &AppHandle,
         project: &Path,
     ) -> Result<(), AppError> {
+        crate::git::local_repair::repair_project(app, project).await;
         let cfg = config::read_space_config(project)?;
         let fresh = ProjectSpacesCache::from_config(project, &cfg);
 
