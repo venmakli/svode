@@ -92,6 +92,7 @@ export function useSpaceFileWatch() {
           store.markTreeParentDirty(spaceId, parentPath);
           await store.loadTreeChildren(spaceId, parentPath, { force: true });
         }
+        await store.ensureTreeLoaded(spaceId);
       }
     };
 

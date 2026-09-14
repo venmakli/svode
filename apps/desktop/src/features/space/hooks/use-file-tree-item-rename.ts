@@ -103,6 +103,9 @@ export function useFileTreeItemRename({
     }
 
     renameInFlightRef.current = true;
+    const finishTreeMutation = useSpaceStore
+      .getState()
+      .beginTreePathMutation(space.path);
     try {
       if (bareFolder) {
         const parent = node.path.includes("/")
@@ -122,6 +125,7 @@ export function useFileTreeItemRename({
           markEditorFilesStale(space.path, modifiedFiles);
           suppressEditorFileEvents(space.path, modifiedFiles);
         }
+        finishTreeMutation();
         removeTreePath(spaceId, node.path);
         await reloadTreeParents(spaceId, [parent]);
       } else {
@@ -137,6 +141,7 @@ export function useFileTreeItemRename({
           suppressEditorFileEvents(space.path, [node.path, page.path]);
         }
         publishPageTitleOutcome(space.path, node.path, page);
+        finishTreeMutation();
         patchPageTreeMeta(
           spaceId,
           node.path,
@@ -165,6 +170,7 @@ export function useFileTreeItemRename({
       console.error("Failed to rename:", err);
       toast.error(m.toast_error());
     } finally {
+      finishTreeMutation();
       renameInFlightRef.current = false;
     }
     setIsEditing(false);

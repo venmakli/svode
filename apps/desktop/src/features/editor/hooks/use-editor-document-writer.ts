@@ -1,3 +1,4 @@
+import { getSpaceTreeSyncSnapshot } from "@/features/space";
 import { useCallback, useEffect, useRef } from "react";
 import { MarkdownPlugin } from "@platejs/markdown";
 import type { PlateEditor } from "platejs/react";
@@ -143,13 +144,25 @@ export function useEditorDocumentWriter({
         }
 
         const markdown = editor.getApi(MarkdownPlugin).markdown.serialize();
-        const result = await writePage({
-          spacePath,
-          path,
-          content: markdown,
-          skipRename,
-          projectPath: projectPath ?? null,
-        });
+        const tree = getSpaceTreeSyncSnapshot();
+        const finishTreeMutation = skipRename
+          ? undefined
+          : tree.beginTreePathMutation(spacePath);
+        let result: WritePageResult;
+        try {
+          result = await writePage({
+            spacePath,
+            path,
+            content: markdown,
+            skipRename,
+            projectPath: projectPath ?? null,
+          });
+
+          if (result.newPath)
+            tree.handoffTreePath(spacePath, path, result.newPath);
+        } finally {
+          finishTreeMutation?.();
+        }
 
         if (result.writeNonce) {
           ownNoncesRef.current.add(result.writeNonce);

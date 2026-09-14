@@ -1,3 +1,4 @@
+import { getSpaceTreeSyncSnapshot } from "@/features/space";
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import { updatePageField } from "../api/page-api";
 import {
@@ -184,6 +185,7 @@ export function usePageFieldSave({
         rollbackOnError?: boolean;
       } = {}) => {
         let requestPath = page.path;
+        let finishTreeMutation: (() => void) | undefined;
         try {
           if (field === "title" && options.flush) {
             await flushPendingPageFields();
@@ -199,6 +201,9 @@ export function usePageFieldSave({
                 pathAliasesRef.current,
                 page.path,
               );
+              if (field === "title")
+                finishTreeMutation =
+                  getSpaceTreeSyncSnapshot().beginTreePathMutation(spacePath);
               return updatePageField({
                 spacePath,
                 filePath: requestPath,
@@ -218,6 +223,7 @@ export function usePageFieldSave({
             }
             publishPageFilenameWarnings(updated.warnings);
             publishPageTitleOutcome(spacePath, requestPath, updated);
+            finishTreeMutation?.();
           }
           if (versionsRef.current.get(key) !== version) return null;
           const outcomeContext =
@@ -249,6 +255,7 @@ export function usePageFieldSave({
           onSaved?.(updated, outcomeContext);
           return result;
         } catch (error) {
+          finishTreeMutation?.();
           if (versionsRef.current.get(key) === version) {
             const rollbackPath = resolvePageFieldSavePath(
               pathAliasesRef.current,

@@ -153,11 +153,6 @@ export function useEditorSaveResultHandler({
       clearUnsaved(spacePath, currentDocument);
 
       if (result.newPath) {
-        getSpaceTreeSyncSnapshot().handoffTreePath(
-          spacePath,
-          currentDocument,
-          result.newPath,
-        );
         deleteCachedDocumentValue(currentDocument, spacePath);
         if (editor) {
           setCachedDocumentValue(spacePath, result.newPath, editor.children);

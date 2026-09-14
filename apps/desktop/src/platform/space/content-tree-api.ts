@@ -1,6 +1,17 @@
 import { invokeCommand } from "@/platform/native/invoke";
 import type { TreeNodeDto } from "./space-types";
 
+export function treeLoadTargetFailure(
+  error: unknown,
+): { kind: "missing" | "hidden"; path: string } | null {
+  if (typeof error !== "object" || error === null) return null;
+  const value = error as Record<string, unknown>;
+  return (value.kind === "missing" || value.kind === "hidden") &&
+    typeof value.path === "string"
+    ? { kind: value.kind, path: value.path }
+    : null;
+}
+
 export function createContentTreeFolder(input: {
   space: string;
   parentPath: string | null;

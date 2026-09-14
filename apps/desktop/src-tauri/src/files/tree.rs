@@ -319,28 +319,89 @@ pub fn build_tree(space: &str) -> Result<Vec<TreeNode>, AppError> {
     result
 }
 
+#[derive(Debug, Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum TreeLoadError {
+    Missing {
+        path: String,
+    },
+    Hidden {
+        path: String,
+    },
+    Unavailable {
+        message: String,
+        #[serde(skip)]
+        source: AppError,
+    },
+}
+
+impl From<AppError> for TreeLoadError {
+    fn from(error: AppError) -> Self {
+        Self::Unavailable {
+            message: error.to_string(),
+            source: error,
+        }
+    }
+}
+
+impl From<std::io::Error> for TreeLoadError {
+    fn from(error: std::io::Error) -> Self {
+        AppError::Io(error).into()
+    }
+}
+
 pub fn list_tree_children(
     space: &str,
     parent_path: Option<&str>,
 ) -> Result<Vec<TreeChildNode>, AppError> {
+    list_tree_children_checked(space, parent_path).map_err(|error| match error {
+        TreeLoadError::Missing { path } | TreeLoadError::Hidden { path } => {
+            AppError::FileNotFound(path)
+        }
+        TreeLoadError::Unavailable { source, .. } => source,
+    })
+}
+
+pub fn list_tree_children_checked(
+    space: &str,
+    parent_path: Option<&str>,
+) -> Result<Vec<TreeChildNode>, TreeLoadError> {
     let root = Path::new(space);
-    if !root.is_dir() {
-        return Err(AppError::FileNotFound(space.to_string()));
-    }
-
+    // Missing targets only authorize cleanup while the owning root is readable.
+    fs::read_dir(root)?;
     let parent_rel = normalize_tree_parent_path(parent_path)?;
-    let dir = if parent_rel == "." {
-        root.to_path_buf()
-    } else {
-        root.join(&parent_rel)
-    };
-    if !dir.is_dir() {
-        return Err(AppError::FileNotFound(parent_rel));
-    }
-
     let policy = TreeIgnorePolicy::from_space_root(root);
-    if parent_rel != "." && policy.is_ignored_rel(Path::new(&parent_rel), TreePathKind::Directory) {
-        return Err(AppError::FileNotFound(parent_rel));
+    let skip_dirs = child_folder_names(root);
+    let mut dir = root.to_path_buf();
+    if parent_rel != "." {
+        let mut relative = std::path::PathBuf::new();
+        for component in Path::new(&parent_rel).components() {
+            relative.push(component);
+            dir.push(component);
+            let path = repo_path_string(&relative);
+            if skip_dirs.contains(&path)
+                || policy.is_ignored_rel(&relative, TreePathKind::Directory)
+            {
+                return Err(TreeLoadError::Hidden { path });
+            }
+            match fs::symlink_metadata(&dir) {
+                Ok(meta) if meta.file_type().is_symlink() => {
+                    return Err(TreeLoadError::Hidden { path });
+                }
+                Ok(meta) if meta.is_dir() => {
+                    fs::read_dir(&dir)?;
+                }
+                Ok(_) => {
+                    fs::read_dir(root)?;
+                    return Err(TreeLoadError::Missing { path });
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    fs::read_dir(root)?;
+                    return Err(TreeLoadError::Missing { path });
+                }
+                Err(error) => return Err(error.into()),
+            }
+        }
     }
 
     let order = read_order(root);
@@ -401,7 +462,7 @@ fn read_dir_direct(
     policy: &TreeIgnorePolicy,
 ) -> Result<Vec<TreeChildNode>, AppError> {
     let mut nodes: Vec<TreeChildNode> = Vec::new();
-    let entries: Vec<fs::DirEntry> = fs::read_dir(dir)?.filter_map(|e| e.ok()).collect();
+    let entries: Vec<fs::DirEntry> = fs::read_dir(dir)?.collect::<Result<_, _>>()?;
     let order_key = if parent_rel == "." { "." } else { parent_rel };
     let parent = if parent_rel == "." {
         None
@@ -808,6 +869,62 @@ mod tests {
             ),
         )
         .unwrap();
+    }
+
+    #[test]
+    fn checked_tree_distinguishes_missing_policy_and_unavailable_root() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path().to_str().unwrap();
+        write_tree_config(&tmp, vec!["hidden"], vec![]);
+        fs::write(tmp.path().join("file"), "not a directory").unwrap();
+        for path in ["gone/README.md", "gone/nested", "file/child"] {
+            assert!(matches!(
+                list_tree_children_checked(root, Some(path)),
+                Err(TreeLoadError::Missing { .. })
+            ));
+        }
+        assert!(matches!(
+            list_tree_children_checked(root, Some("hidden/child")),
+            Err(TreeLoadError::Hidden { .. })
+        ));
+        assert!(matches!(
+            list_tree_children_checked(&format!("{root}/absent-root"), Some("gone")),
+            Err(TreeLoadError::Unavailable { .. })
+        ));
+        assert!(matches!(
+            list_tree_children_checked(root, Some("../escape")),
+            Err(TreeLoadError::Unavailable { .. })
+        ));
+        assert_eq!(
+            serde_json::to_value(TreeLoadError::Missing {
+                path: "gone".into()
+            })
+            .unwrap(),
+            serde_json::json!({"kind": "missing", "path": "gone"})
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn checked_tree_preserves_denied_ancestor_and_symlink_boundaries() {
+        use std::os::unix::fs::{PermissionsExt, symlink};
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path().to_str().unwrap();
+        let denied = tmp.path().join("denied");
+        fs::create_dir(&denied).unwrap();
+        fs::set_permissions(&denied, fs::Permissions::from_mode(0)).unwrap();
+        let result = list_tree_children_checked(root, Some("denied/missing"));
+        let enforced = fs::read_dir(&denied).is_err();
+        fs::set_permissions(&denied, fs::Permissions::from_mode(0o700)).unwrap();
+        if enforced {
+            assert!(matches!(result, Err(TreeLoadError::Unavailable { .. })));
+        }
+        symlink(tmp.path().join("absent"), tmp.path().join("link")).unwrap();
+        assert!(matches!(
+            list_tree_children_checked(root, Some("link/missing")),
+            Err(TreeLoadError::Hidden { .. })
+        ));
+        assert!(list_tree_children_checked(root, Some("denied")).is_ok());
     }
 
     #[test]

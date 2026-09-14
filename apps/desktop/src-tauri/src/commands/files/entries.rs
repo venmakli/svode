@@ -35,7 +35,7 @@ pub fn list_entries(space: String) -> Result<Vec<TreeNode>, AppError> {
 pub fn list_tree_children(
     space: String,
     parent_path: Option<String>,
-) -> Result<Vec<tree::TreeChildNode>, AppError> {
+) -> Result<Vec<tree::TreeChildNode>, tree::TreeLoadError> {
     let started = Instant::now();
     let space_name = path_name(&space);
     let parent_scope = if parent_path
@@ -48,7 +48,7 @@ pub fn list_tree_children(
     } else {
         "root"
     };
-    let result = tree::list_tree_children(&space, parent_path.as_deref());
+    let result = tree::list_tree_children_checked(&space, parent_path.as_deref());
     let duration_ms = started.elapsed().as_millis() as u64;
 
     match &result {
@@ -67,7 +67,7 @@ pub fn list_tree_children(
             space = %space_name,
             parent_scope,
             duration_ms,
-            error_kind = error.kind(),
+            error = ?error,
             "list_tree_children failed"
         ),
     }
