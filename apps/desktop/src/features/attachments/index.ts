@@ -18,3 +18,5 @@ export type {
   AttachmentsSourceState,
   ResolvedAttachmentOwner,
 } from "./model/types";
+
+export { AttachmentsPeek } from "./ui/attachments-peek";

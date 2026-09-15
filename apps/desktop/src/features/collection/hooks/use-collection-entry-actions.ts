@@ -112,28 +112,34 @@ export function useCollectionEntryActions({
     return nextEntry;
   }
 
-  async function duplicateRow(entryToDuplicate: Page) {
+  async function duplicateRow(
+    entryToDuplicate: Page,
+    target = { spacePath, projectPath, spaceId },
+  ) {
     const duplicated = await duplicatePageApi({
-      spacePath,
+      spacePath: target.spacePath,
       filePath: entryToDuplicate.path,
-      projectPath: projectPath ?? null,
+      projectPath: target.projectPath ?? null,
     });
     publishPageFilenameWarnings(duplicated.warnings);
     refreshEntries();
-    await reloadTreeParent(spaceId, collectionPath);
-    openPage(duplicated.path, spaceId);
+    await reloadTreePathParent(target.spaceId, duplicated.path);
+    openPage(duplicated.path, target.spaceId);
   }
 
-  async function deleteRow(entryToDelete: Page) {
+  async function deleteRow(
+    entryToDelete: Page,
+    target = { spacePath, projectPath, spaceId },
+  ) {
     await deletePageApi({
-      spacePath,
+      spacePath: target.spacePath,
       path: entryToDelete.path,
-      projectPath: projectPath ?? null,
+      projectPath: target.projectPath ?? null,
     });
     setDeleteEntry(null);
     refreshEntries();
-    removeTreePath(spaceId, entryToDelete.path);
-    await reloadTreePathParent(spaceId, entryToDelete.path);
+    removeTreePath(target.spaceId, entryToDelete.path);
+    await reloadTreePathParent(target.spaceId, entryToDelete.path);
   }
 
   async function duplicateDetailEntry(entryToDuplicate: Page) {

@@ -230,3 +230,54 @@ function expectAttachmentRejected(
   }
   expect(rejected).toBe(true);
 }
+
+test("DF-122 full/compact parity includes eligible Page Attachments and preserves labels and order", () => {
+  const base = {
+    spaceId: "root",
+    spacePath: "/repo",
+    projectPath: "/repo",
+    status: "ready" as const,
+  };
+  const owners = [
+    createPageOwner({ ...base, form: "leaf", contentPath: "Notes.md" }),
+    createPageOwner({ ...base, form: "leaf", contentPath: "README-like.md" }),
+    ...[false, true].flatMap((hasApp) => [
+      createPageOwner({
+        ...base,
+        form: "folder",
+        ownerPath: "Notes",
+        contentPath: "Notes/README.md",
+        hasApp,
+      }),
+      createCollectionDirectoryOwner({
+        ...base,
+        ownerPath: "Tasks",
+        hasSchema: true,
+        hasApp,
+      }),
+    ]),
+    createAppDirectoryOwner({ ...base, ownerPath: "Tool", hasApp: true }),
+  ];
+  const contributions = createScopeSurfaceContributions();
+  const expected = [
+    ["readme"],
+    ["readme"],
+    ["readme", "attachments"],
+    ["readme", "collection", "routines"],
+    ["readme", "app", "attachments"],
+    ["readme", "app", "collection", "routines"],
+    ["readme", "app"],
+  ];
+  owners.forEach((owner, index) => {
+    const full = resolveScopeSurfaceContributions(contributions, owner, "full");
+    const compact = resolveScopeSurfaceContributions(
+      contributions,
+      owner,
+      "compact",
+    );
+    expect(compact.map((surface) => surface.id)).toEqual(expected[index]);
+    expect(compact.map(({ id, label }) => ({ id, label }))).toEqual(
+      full.map(({ id, label }) => ({ id, label })),
+    );
+  });
+});

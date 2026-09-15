@@ -22,3 +22,5 @@ export type {
   CollectionPeekSurfaceState,
   CollectionRouteState,
 } from "./model/types";
+
+export { PagePeekSheet } from "./ui/page-peek-sheet";

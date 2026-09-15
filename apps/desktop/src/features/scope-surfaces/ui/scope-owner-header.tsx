@@ -19,8 +19,12 @@ export function ScopeOwnerHeader({
   actions,
   readOnly = false,
   showReadError = true,
+  metadataBefore,
+  presentation = "full",
 }: {
   actions?: ReactNode;
+  metadataBefore?: ReactNode;
+  presentation?: "full" | "compact";
   readOnly?: boolean;
   showReadError?: boolean;
 }) {
@@ -74,7 +78,12 @@ export function ScopeOwnerHeader({
         }
         onBodyFocus={() => undefined}
         actions={actions}
-        metadata={page ? <PageSystemFields meta={page.meta} /> : undefined}
+        metadata={
+          <>
+            {metadataBefore}
+            {page ? <PageSystemFields meta={page.meta} /> : null}
+          </>
+        }
         hideCover={!page}
         titleReadOnly={!page || metadataReadOnly}
         fallbackEmoji={!page ? context.fallbackIcon : null}
@@ -112,7 +121,7 @@ export function ScopeOwnerHeader({
             pageLabel={page.meta.title}
             schemaResult={schemaResult}
             values={page.meta.extra ?? {}}
-            mode="full"
+            mode={presentation === "compact" ? "peek" : "full"}
             readOnly={readOnly}
             onOpenPath={context.onOpenPath}
             onValueChange={context.updateField}

@@ -6,6 +6,14 @@ type ActiveSurfaceDeactivationHandler = () =>
 
 class ActiveSurfaceDeactivationOwner {
   private registration = 0;
+  private supplemental = new Set<ActiveSurfaceDeactivationHandler>();
+
+  registerSupplemental(handler: ActiveSurfaceDeactivationHandler) {
+    this.supplemental.add(handler);
+    return () => {
+      this.supplemental.delete(handler);
+    };
+  }
   private handler: ActiveSurfaceDeactivationHandler | null = null;
   private inFlight: Promise<ActiveSurfaceDeactivationResult> | null = null;
 
@@ -20,11 +28,16 @@ class ActiveSurfaceDeactivationOwner {
   }
 
   prepare(): Promise<ActiveSurfaceDeactivationResult> | null {
-    if (!this.handler) return null;
+    if (!this.handler && this.supplemental.size === 0) return null;
     if (this.inFlight) return this.inFlight;
-    const handler = this.handler;
+    const handlers = [...this.supplemental].reverse();
+    if (this.handler) handlers.push(this.handler);
     const promise = Promise.resolve()
-      .then(handler)
+      .then(async () => {
+        for (const handler of handlers)
+          if ((await handler()) !== "ready") return "blocked" as const;
+        return "ready" as const;
+      })
       .catch(() => "blocked" as const)
       .finally(() => {
         if (this.inFlight === promise) this.inFlight = null;
@@ -44,4 +57,10 @@ export function registerActiveContentDeactivation(
 
 export function prepareActiveContentDeactivation() {
   return activeSurfaceDeactivationOwner.prepare();
+}
+
+export function registerSupplementalContentDeactivation(
+  handler: ActiveSurfaceDeactivationHandler,
+) {
+  return activeSurfaceDeactivationOwner.registerSupplemental(handler);
 }

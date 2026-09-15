@@ -1,3 +1,4 @@
+import { useActiveContentSelection } from "@/features/artifact";
 import { useState } from "react";
 import type { PageSurfaceLayout } from "@/features/page/app-shell";
 import {
@@ -28,6 +29,7 @@ export function PageScopeSurface({
   hasApp,
   sessionKey,
 }: PageScopeSurfaceProps) {
+  const { selection } = useActiveContentSelection();
   const pageSurface = usePageSurfaceSession();
   const detailController = useCollectionDetailController();
   const owner = createPageOwner({
@@ -66,6 +68,11 @@ export function PageScopeSurface({
       contributions={contributions}
       sessionKey={sessionKey}
       openRequestKey={sessionKey}
+      openIntent={
+        selection?.kind === "artifact"
+          ? selection.request.intent.scopeOpenIntent
+          : undefined
+      }
       previousOwnerKey={ownerKeys.previous}
       prepareForSurfaceChange={async (currentSurfaceId) => {
         if (!(await detailController.prepareForNavigation())) return false;

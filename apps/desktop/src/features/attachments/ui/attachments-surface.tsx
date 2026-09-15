@@ -47,7 +47,7 @@ function AttachmentsOwnerSurface({
   readOnly: boolean;
   renderOwnerPeek: AttachmentOwnerPeekRenderer;
 }) {
-  const { source, onActivate, peekTarget, closePeek } =
+  const { source, onActivate, peekTarget, closePeek, retargetPeek } =
     useAttachmentsActivation(owner);
   const create = useAttachmentsCreate({
     owner,
@@ -110,6 +110,7 @@ function AttachmentsOwnerSurface({
         renderOwnerPeek={renderOwnerPeek}
         readOnly={readOnly}
         target={peekTarget}
+        onContentPathChange={retargetPeek}
         directoryContent={
           peekTarget?.row.kind === "directory" && peekTarget.row.ownerPath ? (
             <DirectoryPeekTable

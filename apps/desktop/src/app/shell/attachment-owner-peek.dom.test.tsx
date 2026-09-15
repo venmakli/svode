@@ -87,29 +87,39 @@ if (process.env.SVODE_ATTACHMENT_OWNER_PEEK_TEST !== "1") {
     let snapshotTarget: AttachmentActivationRequest;
     let directoryChild = false;
     mockNativeIpc((command, args) =>
-      command === "attachments_list"
-        ? {
-            owner: snapshotTarget.owner,
-            generation: snapshotTarget.sourceGeneration,
-            items:
-              args && "branchPath" in args
-                ? directoryChild
-                  ? [
-                      {
-                        ...snapshotTarget.row,
-                        key: "app:child/tool",
-                        path: "child/tool",
-                        ownerPath: "child/tool",
-                        kind: "app",
-                        hasApp: true,
-                        displayName: "Tool",
-                      },
-                    ]
-                  : []
-                : [snapshotTarget.row],
-            diagnostics: [],
-          }
-        : 1,
+      command === "get_entry_detail_state"
+        ? { form: "nestedCollection", subpageCount: 0, otherFileCount: 0 }
+        : command === "path_exists"
+          ? String(args && "path" in args ? args.path : "").endsWith(
+              "app.yaml",
+            ) ||
+            (String(args && "path" in args ? args.path : "").endsWith(
+              "schema.yaml",
+            ) &&
+              snapshotTarget.row.kind === "collection")
+          : command === "attachments_list"
+            ? {
+                owner: snapshotTarget.owner,
+                generation: snapshotTarget.sourceGeneration,
+                items:
+                  args && "branchPath" in args
+                    ? directoryChild
+                      ? [
+                          {
+                            ...snapshotTarget.row,
+                            key: "app:child/tool",
+                            path: "child/tool",
+                            ownerPath: "child/tool",
+                            kind: "app",
+                            hasApp: true,
+                            displayName: "Tool",
+                          },
+                        ]
+                      : []
+                    : [snapshotTarget.row],
+                diagnostics: [],
+              }
+            : 1,
     );
     const { AttachmentOwnerPeek } = await import("./attachment-owner-peek");
     const { useCollectionRouteState } =
@@ -302,7 +312,16 @@ if (process.env.SVODE_ATTACHMENT_OWNER_PEEK_TEST !== "1") {
         canClose = true;
         await act(async () => fullPage.click());
         const selection = getActiveContentSelection().selection;
-        expect(selection?.kind).toBe("scope-owner");
+        expect(selection?.kind).toBe(
+          kind === "collection" ? "scope-owner" : "artifact",
+        );
+        if (selection?.kind === "artifact") {
+          expect(selection.request.intent.target.path).toBe("child/README.md");
+          expect(selection.request.intent.scopeOpenIntent).toEqual({
+            kind: "target",
+            surfaceId: "app",
+          });
+        }
         if (selection?.kind === "scope-owner") {
           expect(selection.request.owner).toEqual({
             kind: kind === "collection" ? "collection" : "app-directory",

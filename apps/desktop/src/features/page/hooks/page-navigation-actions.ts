@@ -8,6 +8,7 @@ import type { Page } from "../model";
 import { usePageTitleOutcomeStore } from "./page-title-outcome-store";
 
 export interface OpenPageOptions {
+  scopeOpenIntent?: import("@/features/scope-surfaces").ScopeOpenIntent;
   reveal?: boolean;
 }
 
@@ -25,7 +26,7 @@ export function openPage(
       sourceShape: inferArtifactSourceShape(path),
       semanticHint: { kind: "page" },
     },
-    { reveal: options?.reveal },
+    { reveal: options?.reveal, scopeOpenIntent: options?.scopeOpenIntent },
   );
 }
 

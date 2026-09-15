@@ -33,18 +33,12 @@ export function reconcileAttachmentPeek(
     snapshot.rows.find(
       (candidate) =>
         current.ownerSession &&
-        !current.row.contentPath &&
-        candidate.contentPath &&
         current.row.ownerPath &&
         candidate.ownerPath === current.row.ownerPath &&
         candidate.sourceShape === "directory" &&
-        (current.row.kind === "collection"
-          ? candidate.kind === "collection"
-          : current.row.kind === "app" &&
-            candidate.kind === "page" &&
-            candidate.hasApp),
+        ["page", "collection", "app"].includes(candidate.kind),
     );
-  if (current.ownerSession?.kind === "app" && !row?.hasApp) return null;
+  if (row?.kind === "app" && !row.hasApp) return null;
   return row
     ? { ...current, row, sourceGeneration: snapshot.generation }
     : null;

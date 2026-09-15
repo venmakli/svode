@@ -40,7 +40,9 @@ export function useAttachmentsActivation(owner: AttachmentOwnerRef) {
         activation,
         mode: "peek",
         ownerSession:
-          current.kind === "app" || current.kind === "collection"
+          current.kind === "app" ||
+          current.kind === "collection" ||
+          current.kind === "page"
             ? { key: current.key, kind: current.kind }
             : undefined,
         owner: snapshot.owner,
@@ -50,10 +52,28 @@ export function useAttachmentsActivation(owner: AttachmentOwnerRef) {
     },
     [source],
   );
+  const retargetPeek = useCallback((path: string) => {
+    setPeekTarget((current) => {
+      if (!current || current.row.path === path) return current;
+      const folder = /\/readme\.md$/i.test(path);
+      return {
+        ...current,
+        row: {
+          ...current.row,
+          key: `page:${path}`,
+          path,
+          contentPath: path,
+          ownerPath: folder ? path.slice(0, path.lastIndexOf("/")) : null,
+          sourceShape: folder ? "directory" : "file",
+        },
+      };
+    });
+  }, []);
   return {
     source,
     onActivate,
     peekTarget,
     closePeek: () => setPeekTarget(null),
+    retargetPeek,
   };
 }

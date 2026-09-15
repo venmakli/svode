@@ -62,7 +62,7 @@ export interface AttachmentActivationRequest {
   row: AttachmentRow;
   owner: ResolvedAttachmentOwner;
   mode: "peek";
-  ownerSession?: { key: string; kind: "app" | "collection" };
+  ownerSession?: { key: string; kind: "app" | "collection" | "page" };
   sourceGeneration: string;
   activation: CollectionActivationContext;
 }
@@ -137,7 +137,8 @@ function normalizeRuntimePath(value: string): string {
 export interface AttachmentOwnerPeekContext {
   target: AttachmentActivationRequest;
   spaceId: string;
-  renderActions(onOpenFullPage: () => void): ReactNode;
+  renderActions(onOpenFullPage: () => Promise<boolean>): ReactNode;
+  onContentPathChange?: (path: string) => void;
   registerCloseGuard(guard: () => Promise<boolean>): () => void;
 }
 

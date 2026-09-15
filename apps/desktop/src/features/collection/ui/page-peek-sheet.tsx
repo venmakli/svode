@@ -1,27 +1,21 @@
 import { ChangesControl } from "@/features/changes";
-import { useMemo, useState, type ReactNode } from "react";
 import { Maximize2, Star, StarOff, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
-import {
-  Sheet,
-  SheetClose,
-  SheetContent,
-  SheetTitle,
-} from "@/components/ui/sheet";
-import { cn } from "@/shared/lib/utils";
+import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import type { Page } from "@/features/page";
-import { PageDetailActions, PagePeekSurface } from "@/features/page/detail";
+import { PageDetailActions } from "@/features/page/detail";
+import {
+  usePageSurfaceSession,
+  usePageDetailContext,
+} from "@/features/page/scope-surface";
+import {
+  usePeekNavigation,
+  type ScopePeekRenderer,
+} from "@/features/scope-surfaces";
 import { handleError } from "../hooks/error-feedback";
-import { resolveLoadedPeekPage, usePagePeekLoader } from "../hooks";
-import type {
-  CollectionPeekSurfaceState,
-  CollectionRouteState,
-  PagePeekTarget,
-} from "../model";
-import type { CalendarScope } from "../model/calendar-types";
-import { useOptionalCollectionDetailController } from "../app-shell";
+import type { PagePeekTarget } from "../model";
 import * as m from "@/paraglide/messages.js";
 
 interface PagePeekSheetProps {
@@ -31,281 +25,117 @@ interface PagePeekSheetProps {
   projectPath?: string | null;
   spaceId: string;
   onOpenChange: (open: boolean) => void;
-  onOpenFullPage: (
-    page: Page,
-    spaceId?: string | null,
-    viewName?: string | null,
-    surfaceId?: CollectionPeekSurfaceState["surfaceId"],
-  ) => void;
   onOpenPath: (path: string, spaceId?: string | null) => void;
   onDuplicatePage: (page: Page) => void;
   onDeletePage: (page: Page) => void;
   onConvertedPage: (page: Page, nested: boolean) => void;
   onSetTemplateDefault?: (slug: string | null) => Promise<void>;
   onDuplicateTemplate?: (page: Page) => Promise<void>;
-  renderNested: (
-    page: Page,
-    actions: ReactNode,
-    routeState: CollectionRouteState,
-    surfaceState: CollectionPeekSurfaceState,
-    sessionKey: string,
-  ) => ReactNode;
+  renderPeek: ScopePeekRenderer;
 }
 
-export function PagePeekSheet({
-  readOnly,
-  target,
-  spacePath,
-  projectPath,
-  spaceId,
-  onOpenChange,
-  onOpenFullPage,
-  onOpenPath,
-  onDuplicatePage,
-  onDeletePage,
-  onConvertedPage,
-  onSetTemplateDefault,
-  onDuplicateTemplate,
-  renderNested,
-}: PagePeekSheetProps) {
-  const detailController = useOptionalCollectionDetailController();
-  const open = Boolean(target);
-  const effectiveSpacePath = target?.spacePath ?? spacePath;
-  const effectiveProjectPath = target?.projectPath ?? projectPath;
-  const effectiveSpaceId = target?.spaceId ?? spaceId;
-  const {
-    page,
-    detailState,
-    setPage,
-    schemaResult,
-    setSchemaResult,
-    loadedTargetKey,
-    pathHandoff,
-    targetKey,
-  } = usePagePeekLoader({
-    target,
-    spacePath: effectiveSpacePath,
-    spaceId: effectiveSpaceId,
-  });
-
-  const contentClassName = useMemo(
-    () =>
-      cn(
-        "gap-0 p-0 pt-2 pb-6 data-[side=right]:sm:max-w-none",
-        "shadow-[-24px_0_60px_color-mix(in_oklch,black_20%,transparent)]",
-      ),
-    [],
+export function PagePeekSheet(props: PagePeekSheetProps) {
+  const navigation = usePeekNavigation(
+    props.target,
+    (target) => `${target.spacePath ?? props.spacePath}:${target.page.path}`,
   );
-
-  const currentPage = resolveLoadedPeekPage(
-    target,
-    page,
-    loadedTargetKey,
-    targetKey,
-  );
-  const detailActions =
-    currentPage && !target?.nested ? (
-      <PagePeekActions
-        page={currentPage}
-        readOnly={readOnly}
-        onDuplicatePage={onDuplicatePage}
-        onDeletePage={onDeletePage}
-        onConvertedPage={onConvertedPage}
-        template={target?.template}
-        onSetTemplateDefault={onSetTemplateDefault}
-        onDuplicateTemplate={onDuplicateTemplate}
-        spacePath={effectiveSpacePath}
-        projectPath={effectiveProjectPath}
-        spaceId={effectiveSpaceId}
-      />
-    ) : null;
-
+  const { target, leave, registerNavigationGuard } = navigation;
+  const spacePath = target?.spacePath ?? props.spacePath;
+  const spaceId = target?.spaceId ?? props.spaceId;
+  const projectPath = target?.projectPath ?? props.projectPath ?? spacePath;
+  const close = () => {
+    navigation.dismiss();
+    props.onOpenChange(false);
+  };
   return (
     <Sheet
-      open={open}
-      onOpenChange={(nextOpen) => {
-        if (nextOpen || !detailController) {
-          onOpenChange(nextOpen);
-          return;
-        }
-        void detailController.prepareForNavigation().then((canClose) => {
-          if (canClose) {
-            onOpenChange(false);
-          }
-        });
+      open={Boolean(target)}
+      onOpenChange={(open) => {
+        if (!open) void leave(() => close());
       }}
     >
       <SheetContent
         side="right"
         showCloseButton={false}
         overlayClassName="bg-black/25 backdrop-blur-none supports-backdrop-filter:backdrop-blur-none"
-        className={contentClassName}
+        className="gap-0 p-0 pt-2 pb-6 data-[side=right]:sm:max-w-none"
         style={{ width: "min(1120px, max(720px, 66vw), 94vw)" }}
       >
         <SheetTitle className="sr-only">
-          {currentPage?.meta.title ?? m.collection_open_in_peek()}
+          {target?.page.meta.title ?? m.collection_open_in_peek()}
         </SheetTitle>
-
-        {target?.nested && currentPage ? (
-          <NestedScopePeek
-            key={targetKey ?? undefined}
-            page={currentPage}
-            sessionKey={targetKey ?? `${effectiveSpaceId}:${target.page.path}`}
-            renderActions={({ surfaceId, viewName }) => {
-              const detail = (
+        {target
+          ? props.renderPeek({
+              path: target.page.path,
+              spacePath,
+              spaceId,
+              projectPath,
+              sessionKey: navigation.sessionKey,
+              onContentPathChange: (path) =>
+                navigation.adoptIdentity(`${spacePath}:${path}`),
+              fallbackTitle: target.page.meta.title,
+              registerNavigationGuard,
+              metadataBefore: target.template ? (
+                <Badge variant="secondary">
+                  {m.collection_template_badge()}
+                </Badge>
+              ) : null,
+              renderHeaderActions: (page, readOnly) => (
                 <PagePeekActions
-                  page={currentPage}
+                  {...props}
+                  page={page}
                   readOnly={readOnly}
-                  onDuplicatePage={onDuplicatePage}
-                  onDeletePage={onDeletePage}
-                  onConvertedPage={onConvertedPage}
+                  spacePath={spacePath}
+                  spaceId={spaceId}
+                  projectPath={projectPath}
                   template={target.template}
-                  onSetTemplateDefault={onSetTemplateDefault}
-                  onDuplicateTemplate={onDuplicateTemplate}
-                  spacePath={effectiveSpacePath}
-                  projectPath={effectiveProjectPath}
-                  spaceId={effectiveSpaceId}
                 />
-              );
-              return {
-                peek: (
-                  <PagePeekControls
-                    page={currentPage}
-                    spacePath={effectiveSpacePath}
-                    projectPath={effectiveProjectPath}
-                    sourceShape="directory"
-                    onOpenFullPage={(pageToOpen) =>
-                      onOpenFullPage(
-                        pageToOpen,
-                        effectiveSpaceId,
-                        viewName,
-                        surfaceId,
-                      )
+              ),
+              renderActions: (openFull, owner) => (
+                <div className="flex items-center gap-1">
+                  {owner ? (
+                    <ChangesControl
+                      origin="peek"
+                      target={{
+                        kind: "page",
+                        sourceShape:
+                          owner.identityKind === "page-file"
+                            ? "file"
+                            : "directory",
+                        spacePath,
+                        projectPath,
+                        path: owner.readmePath,
+                        name: target.page.meta.title,
+                      }}
+                    />
+                  ) : null}
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    disabled={!owner}
+                    onClick={() =>
+                      void leave(async () => {
+                        if (await openFull()) close();
+                      })
                     }
-                  />
-                ),
-                detail: target.template ? (
-                  <div className="flex items-center gap-2">
-                    <Badge variant="secondary">
-                      {m.collection_template_badge()}
-                    </Badge>
-                    {detail}
-                  </div>
-                ) : (
-                  detail
-                ),
-              };
-            }}
-            renderNested={renderNested}
-          />
-        ) : currentPage ? (
-          <>
-            <PeekTopBar>
-              <PagePeekControls
-                key={target?.page.path}
-                page={currentPage}
-                spacePath={detailState ? effectiveSpacePath : undefined}
-                projectPath={effectiveProjectPath}
-                sourceShape={
-                  detailState?.form === "leaf" ? "file" : "directory"
-                }
-                onOpenFullPage={(pageToOpen) =>
-                  onOpenFullPage(pageToOpen, effectiveSpaceId)
-                }
-              />
-            </PeekTopBar>
-            <PeekScrollSurface>
-              <PagePeekSurface
-                readOnly={readOnly}
-                page={currentPage}
-                schemaResult={schemaResult}
-                spacePath={effectiveSpacePath}
-                projectPath={effectiveProjectPath}
-                spaceId={effectiveSpaceId}
-                pagePathHandoff={pathHandoff}
-                actions={detailActions}
-                metadataBefore={
-                  target?.template ? (
-                    <Badge variant="secondary">
-                      {m.collection_template_badge()}
-                    </Badge>
-                  ) : null
-                }
-                onOpenPath={onOpenPath}
-                onPageChange={setPage}
-                onSchemaChange={setSchemaResult}
-              />
-            </PeekScrollSurface>
-          </>
-        ) : null}
+                  >
+                    <Maximize2 data-icon="inline-start" />
+                    Full page
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    onClick={() => void leave(() => close())}
+                  >
+                    <X />
+                    <span className="sr-only">{m.settings_cancel()}</span>
+                  </Button>
+                </div>
+              ),
+            })
+          : null}
       </SheetContent>
     </Sheet>
-  );
-}
-
-function NestedScopePeek({
-  page,
-  sessionKey,
-  renderActions,
-  renderNested,
-}: {
-  page: Page;
-  sessionKey: string;
-  renderActions: (state: {
-    surfaceId: CollectionPeekSurfaceState["surfaceId"];
-    viewName: string | null;
-  }) => { peek: ReactNode; detail: ReactNode };
-  renderNested: PagePeekSheetProps["renderNested"];
-}) {
-  const [viewName, setViewName] = useState<string | null>(null);
-  const [calendarScope, setCalendarScope] = useState<CalendarScope | null>(
-    null,
-  );
-  const [surfaceId, setSurfaceId] =
-    useState<CollectionPeekSurfaceState["surfaceId"]>("readme");
-  const routeState = useMemo<CollectionRouteState>(
-    () => ({
-      viewName,
-      onViewNameChange: setViewName,
-      calendarScope,
-      onCalendarScopeChange: setCalendarScope,
-    }),
-    [calendarScope, viewName],
-  );
-  const actions = renderActions({ surfaceId, viewName });
-
-  return (
-    <>
-      <PeekTopBar>{actions.peek}</PeekTopBar>
-      <PeekScrollSurface>
-        {renderNested(
-          page,
-          actions.detail,
-          routeState,
-          {
-            surfaceId,
-            onSurfaceIdChange: setSurfaceId,
-          },
-          sessionKey,
-        )}
-      </PeekScrollSurface>
-    </>
-  );
-}
-
-function PeekTopBar({ children }: { children: ReactNode }) {
-  return (
-    <div className="flex shrink-0 items-center justify-end px-2 pb-2">
-      {children}
-    </div>
-  );
-}
-
-function PeekScrollSurface({ children }: { children: ReactNode }) {
-  return (
-    <div className="scrollbar-hide min-h-0 flex-1 overflow-y-auto overflow-x-hidden">
-      {children}
-    </div>
   );
 }
 
@@ -334,6 +164,8 @@ function PagePeekActions({
   projectPath?: string | null;
   spaceId: string;
 }) {
+  const session = usePageSurfaceSession();
+  const detail = usePageDetailContext();
   const templateDefaultAction =
     !readOnly && template && onSetTemplateDefault ? (
       template.isDefault ? (
@@ -358,74 +190,39 @@ function PagePeekActions({
   return (
     <PageDetailActions
       page={page}
+      runMutation={session.runMutation}
       spacePath={spacePath}
       projectPath={projectPath}
       spaceId={spaceId}
-      onConverted={onConvertedPage}
+      onConverted={(nextPage, nested) => {
+        detail.adoptPage(nextPage);
+        onConvertedPage(nextPage, nested);
+      }}
       onDuplicatePage={(pageToDuplicate) => {
         if (template && onDuplicateTemplate) {
-          void onDuplicateTemplate(pageToDuplicate).catch(handleError);
+          void session
+            .runMutation(() => onDuplicateTemplate(pageToDuplicate))
+            .catch(handleError);
           return;
         }
-        onDuplicatePage(pageToDuplicate);
+        void session
+          .prepareForNavigation()
+          .then((ready) => {
+            if (ready) onDuplicatePage(pageToDuplicate);
+          })
+          .catch(handleError);
       }}
-      onDeletePage={onDeletePage}
+      onDeletePage={(pageToDelete) => {
+        void session
+          .prepareForNavigation()
+          .then((ready) => {
+            if (ready) onDeletePage(pageToDelete);
+          })
+          .catch(handleError);
+      }}
       actionItemsBeforeDuplicate={templateDefaultAction}
       duplicateLabel={template ? m.collection_template_duplicate() : undefined}
       readOnly={readOnly}
     />
-  );
-}
-
-function PagePeekControls({
-  page,
-  spacePath,
-  projectPath,
-  sourceShape,
-  onOpenFullPage,
-}: {
-  page: Page;
-  sourceShape: "file" | "directory";
-  spacePath?: string;
-  projectPath?: string | null;
-  onOpenFullPage: (page: Page) => void;
-}) {
-  return (
-    <div className="flex items-center gap-1">
-      {spacePath ? (
-        <ChangesControl
-          origin="peek"
-          target={{
-            kind: "page",
-            sourceShape,
-            spacePath,
-            projectPath,
-            path: page.path,
-            name: page.meta.title,
-          }}
-        />
-      ) : null}
-      <Button
-        type="button"
-        variant="ghost"
-        size="sm"
-        className="h-7 rounded-lg px-2 text-xs text-muted-foreground hover:text-foreground"
-        onClick={() => onOpenFullPage(page)}
-      >
-        <Maximize2 data-icon="inline-start" />
-        Full page
-      </Button>
-      <SheetClose asChild>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-sm"
-          className="text-muted-foreground hover:text-foreground"
-        >
-          <X />
-          <span className="sr-only">{m.settings_cancel()}</span>
-        </Button>
-      </SheetClose>
-    </div>
   );
 }

@@ -51,3 +51,8 @@ export type {
   OpenScopeOwnerOptions,
   ScopeOwnerTarget,
 } from "./model/types";
+
+export {
+  registerSupplementalContentDeactivation,
+  prepareActiveContentDeactivation,
+} from "./model/active-surface-deactivation";

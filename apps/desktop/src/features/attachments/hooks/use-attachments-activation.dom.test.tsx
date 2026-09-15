@@ -186,10 +186,54 @@ test("typed activation and source refresh reject stale owner, marker and request
       await act(async () => current.closePeek());
       await act(async () => current.onActivate(ready, { rowId: ready.key }));
       expect(current.peekTarget?.ownerSession?.kind).toBe(
-        missing.kind === "app" ? undefined : "collection",
+        missing.kind === "app" ? "page" : "collection",
       );
       await act(async () => current.closePeek());
     }
+    let handoffRefresh!: Promise<void>;
+    await act(async () => {
+      handoffRefresh = current.source.refresh();
+    });
+    await act(async () => {
+      pending.shift()!(snapshot("leaf", [page]));
+      await handoffRefresh;
+    });
+    await act(async () => current.onActivate(page, { rowId: page.key }));
+    const pageSession = current.peekTarget?.ownerSession;
+    await act(async () => current.retargetPeek("Renamed/README.md"));
+    const moved = {
+      ...page,
+      key: "page:Renamed/README.md",
+      path: "Renamed/README.md",
+      contentPath: "Renamed/README.md",
+      ownerPath: "Renamed",
+      sourceShape: "directory" as const,
+    };
+    await act(async () => {
+      handoffRefresh = current.source.refresh();
+    });
+    await act(async () => {
+      pending.shift()!(snapshot("moved", [moved]));
+      await handoffRefresh;
+    });
+    expect(current.peekTarget?.row.path).toBe(moved.path);
+    expect(current.peekTarget?.ownerSession).toEqual(pageSession);
+    const converted = {
+      ...moved,
+      key: "collection:Renamed",
+      kind: "collection" as const,
+      hasApp: true,
+    };
+    await act(async () => {
+      handoffRefresh = current.source.refresh();
+    });
+    await act(async () => {
+      pending.shift()!(snapshot("converted", [converted]));
+      await handoffRefresh;
+    });
+    expect(current.peekTarget?.row.kind).toBe("collection");
+    expect(current.peekTarget?.ownerSession).toEqual(pageSession);
+    await act(async () => current.closePeek());
     let first!: Promise<void>;
     let second!: Promise<void>;
     await act(async () => {

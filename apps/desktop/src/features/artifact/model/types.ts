@@ -17,6 +17,7 @@ export interface ArtifactOpenTarget {
 }
 
 export interface ArtifactOpenIntent {
+  scopeOpenIntent?: ScopeOpenIntent;
   target: ArtifactOpenTarget;
 }
 
@@ -55,6 +56,7 @@ export interface ContentPathRetarget {
 }
 
 export interface OpenArtifactOptions {
+  scopeOpenIntent?: ScopeOpenIntent;
   reveal?: boolean;
 }
 

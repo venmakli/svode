@@ -157,6 +157,15 @@ export function ScopeSurfaceHost({
     effectiveStoredSurfaceId,
   ]);
 
+  useEffect(() => {
+    if (
+      presentation === "compact" &&
+      activeSurface &&
+      compactSurfaceId !== activeSurface.id
+    )
+      onCompactSurfaceIdChange?.(activeSurface.id);
+  }, [presentation, activeSurface, compactSurfaceId, onCompactSurfaceIdChange]);
+
   if (!activeSurface) {
     return <>{typeof header === "function" ? null : header}</>;
   }

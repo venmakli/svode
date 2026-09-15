@@ -32,7 +32,6 @@ import {
 } from "@/features/page/scope-surface";
 import { useOpenPage } from "@/features/page/navigation";
 import {
-  createCollectionDirectoryOwner,
   ScopeOwnerHeader,
   ScopeSurfaceHost,
   type ScopeOpenIntent,
@@ -43,6 +42,7 @@ import type { Page } from "@/features/page";
 import { createScopeSurfaceContributions } from "./scope-surface-contributions";
 import { useShellStore } from "./model";
 import { createScopeContentRenderers } from "./scope-content-renderers";
+import { CompactScopePeek } from "./compact-scope-peek";
 import { ScopeOwnerActions } from "./scope-owner-actions";
 
 interface ScopeSurfacePageProps {
@@ -50,6 +50,9 @@ interface ScopeSurfacePageProps {
   presentation: ScopePresentation;
   routeState?: CollectionViewsSurfaceProps["routeState"];
   headerActions?: ReactNode;
+  renderHeaderActions?: (page: Page, readOnly: boolean) => ReactNode;
+  metadataBefore?: ReactNode;
+  onContentPathChange?: (path: string) => void;
   openIntent?: ScopeOpenIntent;
   openRequestKey?: number;
   previousOwnerKey?: ScopeOwnerRef["ownerKey"];
@@ -65,6 +68,9 @@ export function ScopeSurfacePage({
   presentation,
   routeState,
   headerActions,
+  renderHeaderActions,
+  metadataBefore,
+  onContentPathChange,
   openIntent,
   openRequestKey,
   previousOwnerKey,
@@ -113,35 +119,6 @@ export function ScopeSurfacePage({
       openPage(path, spaceId ?? owner.spaceId),
     [openPage, owner.spaceId],
   );
-  const renderNested = useCallback(
-    (
-      page: Page,
-      actions: ReactNode,
-      nestedRouteState: CollectionRouteState,
-      nestedSurfaceState: CollectionPeekSurfaceState,
-      nestedSessionKey: string,
-    ) => {
-      const nestedOwner = createCollectionDirectoryOwner({
-        spaceId: owner.spaceId,
-        spacePath: owner.spacePath,
-        projectPath: owner.projectPath,
-        ownerPath: collectionOwnerPath(page.path),
-        status: "ready",
-        hasSchema: true,
-      });
-      return (
-        <ScopeSurfacePage
-          owner={nestedOwner}
-          presentation="compact"
-          routeState={nestedRouteState}
-          compactSurfaceState={nestedSurfaceState}
-          headerActions={actions}
-          sessionKey={nestedSessionKey}
-        />
-      );
-    },
-    [owner.projectPath, owner.spaceId, owner.spacePath],
-  );
   const createContributions = useCallback(
     (readOnly: boolean) =>
       createScopeSurfaceContributions({
@@ -171,7 +148,9 @@ export function ScopeSurfacePage({
             pagePath={owner.readmePath}
             spaceId={owner.spaceId}
             routeState={collectionRouteState}
-            renderNested={renderNested}
+            renderPeek={(context) => (
+              <CompactScopePeek key={context.sessionKey} {...context} />
+            )}
           />
         ),
       }),
@@ -181,7 +160,6 @@ export function ScopeSurfacePage({
       openRepositorySettings,
       openRoutineSession,
       owner,
-      renderNested,
     ],
   );
   return (
@@ -191,7 +169,7 @@ export function ScopeSurfacePage({
       onOpenRepositorySettings={openRepositorySettings}
       registerGlobalDeactivation={presentation === "full"}
       spacePath={owner.spacePath}
-      targetKey={previousOwnerKey ?? owner.ownerKey}
+      targetKey={String(sessionKey ?? previousOwnerKey ?? owner.ownerKey)}
     >
       <PageDetailProvider
         spacePath={owner.spacePath}
@@ -209,6 +187,9 @@ export function ScopeSurfacePage({
           createContributions={createContributions}
           registerNavigationGuard={registerNavigationGuard}
           headerActions={headerActions}
+          renderHeaderActions={renderHeaderActions}
+          metadataBefore={metadataBefore}
+          onContentPathChange={onContentPathChange}
           openIntent={openIntent}
           openRequestKey={openRequestKey}
           previousOwnerKey={previousOwnerKey}
@@ -228,6 +209,9 @@ export function ScopeSurfacePage({
 function ScopePageSurfaceHost({
   createContributions,
   headerActions,
+  renderHeaderActions,
+  metadataBefore,
+  onContentPathChange,
   registerNavigationGuard,
   ...props
 }: Omit<ComponentProps<typeof ScopeSurfaceHost>, "contributions" | "header"> & {
@@ -235,11 +219,18 @@ function ScopePageSurfaceHost({
     readOnly: boolean,
   ) => ComponentProps<typeof ScopeSurfaceHost>["contributions"];
   headerActions?: ReactNode;
+  renderHeaderActions?: (page: Page, readOnly: boolean) => ReactNode;
+  metadataBefore?: ReactNode;
+  onContentPathChange?: (path: string) => void;
   registerNavigationGuard?: (guard: () => Promise<boolean>) => () => void;
 }) {
   const pageSurface = usePageSurfaceSession();
   const detailController = useCollectionDetailController();
   const detail = usePageDetailContext();
+  useEffect(() => {
+    if (detail.page && detail.page.path !== props.owner.readmePath)
+      onContentPathChange?.(detail.page.path);
+  }, [detail.page, props.owner.readmePath, onContentPathChange]);
   useEffect(
     () =>
       registerNavigationGuard?.(async () => {
@@ -277,9 +268,15 @@ function ScopePageSurfaceHost({
       header={(activeSurfaceId) => (
         <ScopeOwnerHeader
           readOnly={pageSurface.readOnly}
+          metadataBefore={metadataBefore}
+          presentation={props.presentation}
           showReadError={activeSurfaceId !== "readme"}
           actions={
-            headerActions ?? (
+            detail.page && renderHeaderActions ? (
+              renderHeaderActions(detail.page, pageSurface.readOnly)
+            ) : headerActions !== undefined ? (
+              headerActions
+            ) : (
               <ScopeOwnerActions readOnly={pageSurface.readOnly} />
             )
           }
@@ -291,9 +288,4 @@ function ScopePageSurfaceHost({
       }}
     />
   );
-}
-
-function collectionOwnerPath(path: string) {
-  const normalized = path.replaceAll("\\", "/");
-  return normalized.replace(/\/readme\.md$/i, "");
 }

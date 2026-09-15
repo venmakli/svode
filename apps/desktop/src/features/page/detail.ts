@@ -4,7 +4,6 @@ export {
   PageIdentityHeader,
   PageIdentityHeaderSkeleton,
 } from "./ui/page-identity-header";
-export { PagePeekSurface } from "./ui/page-peek-surface";
 export { PageSubpages } from "./ui/page-subpages";
 export { PageSystemFields } from "./ui/page-system-fields";
 export { TitleZone } from "./ui/title-zone";

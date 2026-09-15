@@ -153,7 +153,8 @@ export const useArtifactSelectionStore = create<ArtifactSelectionState>(
       if (
         state.selection?.kind === "artifact" &&
         artifactTargetsEqual(state.selection.request.intent.target, target) &&
-        !options?.reveal
+        !options?.reveal &&
+        !options?.scopeOpenIntent
       ) {
         return;
       }
@@ -163,7 +164,12 @@ export const useArtifactSelectionStore = create<ArtifactSelectionState>(
           request: {
             key: nextOpenRequestKey++,
             sessionKey: nextArtifactSessionKey++,
-            intent: { target },
+            intent: {
+              target,
+              ...(options?.scopeOpenIntent
+                ? { scopeOpenIntent: options.scopeOpenIntent }
+                : {}),
+            },
           },
         },
         activeRevealRequest: options?.reveal

@@ -1,15 +1,7 @@
-import { ChangesControl } from "@/features/changes";
-import {
-  type ReactNode,
-  lazy,
-  Suspense,
-  useCallback,
-  useEffect,
-  useRef,
-} from "react";
-import { FileWarning, Maximize2, Paperclip, X } from "lucide-react";
+import { usePeekNavigation } from "@/features/scope-surfaces";
+import { type ReactNode, lazy, Suspense, useEffect, useRef } from "react";
+import { Maximize2, Paperclip, X } from "lucide-react";
 
-import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
   Empty,
@@ -21,12 +13,9 @@ import {
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useOpenArtifact } from "@/features/artifact";
-import { PagePeekSurface } from "@/features/page/detail";
-import { useOpenPage } from "@/features/page/navigation";
 import * as m from "@/paraglide/messages.js";
 import { cn } from "@/shared/lib/utils";
 
-import { useAttachmentPagePeek } from "../hooks/use-attachment-page-peek";
 import { attachmentKindLabel } from "../model/presentation";
 import type {
   AttachmentActivationRequest,
@@ -48,47 +37,43 @@ const MediaSurface = lazy(async () => {
 
 export function AttachmentsPeek({
   owner,
-  readOnly,
-  target,
+  target: requestedTarget,
   onOpenChange,
   renderOwnerPeek,
   directoryContent,
+  onContentPathChange,
 }: {
   directoryContent?: ReactNode;
+  onContentPathChange?: (path: string) => void;
   owner: AttachmentOwnerRef;
   readOnly: boolean;
   target: AttachmentActivationRequest | null;
   onOpenChange(open: boolean): void;
   renderOwnerPeek: AttachmentOwnerPeekRenderer;
 }) {
-  const closeGuardRef = useRef<(() => Promise<boolean>) | null>(null);
-  const registerCloseGuard = useCallback((guard: () => Promise<boolean>) => {
-    closeGuardRef.current = guard;
-    return () => {
-      if (closeGuardRef.current === guard) closeGuardRef.current = null;
-    };
-  }, []);
-  const close = async (afterClose?: () => void) => {
-    if (closeGuardRef.current && !(await closeGuardRef.current())) return;
-    onOpenChange(false);
-    afterClose?.();
-  };
+  const navigation = usePeekNavigation(
+    requestedTarget,
+    (next) =>
+      `${next.owner.spacePath}:${next.ownerSession?.key ?? next.row.key}`,
+  );
+  const target = navigation.target;
+  const registerCloseGuard = navigation.registerNavigationGuard;
+  const close = (afterClose?: () => void) =>
+    navigation.leave(() => {
+      navigation.dismiss();
+      onOpenChange(false);
+      afterClose?.();
+    });
   const activationRef = useRef(target?.activation);
   useEffect(() => {
     if (target) activationRef.current = target.activation;
   }, [target]);
-  const openPage = useOpenPage();
   const openArtifact = useOpenArtifact();
   const resolvedSpacePath = target?.owner.spacePath ?? owner.spacePath;
   const resolvedProjectPath = target?.owner.projectPath ?? owner.projectPath;
-  const page = useAttachmentPagePeek({
-    row: target?.row ?? null,
-    spaceId: owner.spaceId,
-    spacePath: resolvedSpacePath,
-  });
-  const loadedPage = page.state.phase === "ready" ? page.state.page : null;
   const isOwner =
     Boolean(target?.ownerSession) ||
+    target?.row.kind === "page" ||
     target?.row.kind === "collection" ||
     target?.row.kind === "app";
   const isDocument = target?.row.kind === "document";
@@ -121,31 +106,7 @@ export function AttachmentsPeek({
         </SheetTitle>
         {!isBinaryViewer && !isOwner ? (
           <div className="flex shrink-0 items-center justify-end gap-1 px-2 pb-2">
-            {loadedPage && target?.row.kind === "page" ? (
-              <ChangesControl
-                key={target.row.path}
-                origin="peek"
-                target={{
-                  kind: "page",
-                  sourceShape: target.row.sourceShape,
-                  spacePath: resolvedSpacePath,
-                  projectPath: resolvedProjectPath,
-                  path: loadedPage.path,
-                  name: loadedPage.meta.title,
-                }}
-              />
-            ) : null}
-            <PeekActions
-              onClose={() => onOpenChange(false)}
-              onExpand={
-                loadedPage
-                  ? () => {
-                      onOpenChange(false);
-                      openPage(loadedPage.path, owner.spaceId);
-                    }
-                  : undefined
-              }
-            />
+            <PeekActions onClose={() => void close()} />
           </div>
         ) : null}
         <div
@@ -153,7 +114,9 @@ export function AttachmentsPeek({
             "min-h-0 flex-1 overflow-x-hidden",
             isBinaryViewer
               ? "overflow-hidden"
-              : "scrollbar-hide overflow-y-auto",
+              : isOwner
+                ? "overflow-hidden"
+                : "scrollbar-hide overflow-y-auto",
           )}
         >
           {target?.row.kind === "directory" ? (
@@ -162,62 +125,23 @@ export function AttachmentsPeek({
             <OwnerPeekContent
               renderOwnerPeek={renderOwnerPeek}
               target={target}
-              spaceId={owner.spaceId}
+              spaceId={target.owner.spaceId ?? owner.spaceId}
               registerCloseGuard={registerCloseGuard}
+              onContentPathChange={onContentPathChange}
               renderActions={(onOpenFullPage) => (
                 <PeekActions
                   onClose={() => void close()}
-                  onExpand={() => void close(onOpenFullPage)}
+                  onExpand={() =>
+                    void navigation.leave(async () => {
+                      if (await onOpenFullPage()) {
+                        navigation.dismiss();
+                        onOpenChange(false);
+                      }
+                    })
+                  }
                 />
               )}
             />
-          ) : target?.row.kind === "page" ? (
-            page.state.phase === "ready" ? (
-              <PagePeekSurface
-                readOnly={readOnly}
-                page={page.state.page}
-                schemaResult={page.state.schemaResult}
-                spacePath={resolvedSpacePath}
-                projectPath={resolvedProjectPath}
-                spaceId={owner.spaceId}
-                pagePathHandoff={page.state.pathHandoff}
-                onOpenPath={(path, spaceId) =>
-                  openPage(path, spaceId ?? owner.spaceId)
-                }
-                onPageChange={(update) =>
-                  page.setState((current) => {
-                    if (current.phase !== "ready") return current;
-                    const nextPage =
-                      typeof update === "function"
-                        ? update(current.page)
-                        : update;
-                    return nextPage ? { ...current, page: nextPage } : current;
-                  })
-                }
-                onSchemaChange={(schemaResult) =>
-                  page.setState((current) =>
-                    current.phase === "ready"
-                      ? { ...current, schemaResult }
-                      : current,
-                  )
-                }
-              />
-            ) : page.state.phase === "error" ? (
-              <div className="px-6 py-4">
-                <Alert variant="destructive">
-                  <FileWarning />
-                  <AlertDescription>{page.state.message}</AlertDescription>
-                  <Button size="sm" variant="outline" onClick={page.retry}>
-                    {m.attachments_retry()}
-                  </Button>
-                </Alert>
-              </div>
-            ) : (
-              <div className="flex flex-col gap-4 px-6 py-8">
-                <Skeleton className="h-10 w-2/3" />
-                <Skeleton className="h-48 w-full" />
-              </div>
-            )
           ) : target?.row.kind === "document" ? (
             <Suspense fallback={<DocumentPeekLoadingState />}>
               <DocumentSurface

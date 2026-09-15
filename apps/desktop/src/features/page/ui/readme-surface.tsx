@@ -71,15 +71,15 @@ export function ReadmeSurface() {
         bodyOnlyMeta={context.page.meta}
         initialPage={context.page}
         initialPageSpacePath={context.spacePath}
-        onDocumentPathChange={(path) =>
-          context.setPage((current) =>
-            current ? { ...current, path } : current,
-          )
-        }
+        onDocumentPathChange={context.adoptPath}
         documentPathHandoff={context.pathHandoff}
         readOnly={pageSurface.readOnly}
         registerPersistence={pageSurface.registerPersistence}
         onWriteAccessError={pageSurface.recoverWriteError}
+        prepareManagedImport={async () => {
+          if (!(await pageSurface.prepareForNavigation()))
+            throw new Error(m.page_surface_save_error());
+        }}
       />
     );
   }

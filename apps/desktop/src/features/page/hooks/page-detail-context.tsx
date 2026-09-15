@@ -37,6 +37,8 @@ export interface PagePathHandoff {
 
 export interface PageDetailContextValue {
   page: Page | null;
+  adoptPage: (page: Page) => void;
+  adoptPath: (path: string) => void;
   setPage: React.Dispatch<React.SetStateAction<Page | null>>;
   schemaResult: PageSchemaResult | null;
   status: ReadmeStatus;
@@ -160,6 +162,27 @@ export function PageDetailProvider({
       retargetPage(titleOutcome.previousPath, titleOutcome.page.path, spaceId);
     },
   });
+
+  const adoptPage = useCallback(
+    (nextPage: Page) => {
+      adoptedReadmePathRef.current = nextPage.path;
+      setPathHandoff({
+        previousPath: page?.path ?? readmePath,
+        path: nextPage.path,
+      });
+      setPage(nextPage);
+      setStatus("ready");
+    },
+    [page?.path, readmePath],
+  );
+  const adoptPath = useCallback(
+    (path: string) => {
+      adoptedReadmePathRef.current = path;
+      setPathHandoff({ previousPath: page?.path ?? readmePath, path });
+      setPage((current) => (current ? { ...current, path } : current));
+    },
+    [page?.path, readmePath],
+  );
 
   const loadSchema = useCallback(async () => {
     const nextSchema = await getPageSchema({
@@ -338,6 +361,8 @@ export function PageDetailProvider({
     () => ({
       page,
       setPage,
+      adoptPage,
+      adoptPath,
       writeError,
       retryWrites,
       metadataDrafts: drafts,
@@ -359,6 +384,8 @@ export function PageDetailProvider({
     }),
     [
       createReadme,
+      adoptPage,
+      adoptPath,
       page,
       drafts,
       retryWrites,

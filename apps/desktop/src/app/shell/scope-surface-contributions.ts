@@ -51,7 +51,7 @@ export function createScopeSurfaceContributions(
     {
       id: "attachments",
       order: SCOPE_SURFACE_ORDER.attachments,
-      presentations: ["full"],
+      presentations: ["full", "compact"],
       appliesTo: supportsScopeAttachments,
       label: m.scope_surface_attachments(),
       icon: Paperclip,
