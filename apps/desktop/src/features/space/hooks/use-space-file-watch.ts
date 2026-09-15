@@ -11,6 +11,7 @@ import {
   applySpaceFileEvent,
   isSameSpaceFileEvent,
   repairParentPathForSpaceFileEvent,
+  repairPathsForSpaceFileEvent,
   shouldApplySpaceFileEvent,
   SPACE_FILE_EVENT_BATCH_MS,
   SPACE_FILE_EVENT_NAMES,
@@ -118,15 +119,19 @@ export function useSpaceFileWatch() {
             continue;
           }
           if (payload.affectsTree) {
-            queueRepair(spaceId, repairParentPathForSpaceFileEvent(payload));
+            const loaded =
+              useSpaceStore.getState().childrenByParentPath[spaceId] ?? {};
+            for (const path of repairPathsForSpaceFileEvent(payload)) {
+              if (path === "" || Object.hasOwn(loaded, path))
+                queueRepair(spaceId, path);
+            }
           }
           try {
             await applySpaceFileEvent({
               eventName,
               getStore: () => useSpaceStore.getState(),
               payload,
-              readPage: (pagePath) =>
-                readWatchedSpacePage(spacePath, pagePath),
+              readPage: (pagePath) => readWatchedSpacePage(spacePath, pagePath),
               repairTree: (parentPath) => queueRepair(spaceId, parentPath),
               spaceId,
             });
@@ -154,6 +159,14 @@ export function useSpaceFileWatch() {
     ) => {
       const target = resolveEventTarget(payload);
       if (!target) return;
+      if (
+        payload.affectsTree &&
+        shouldApplySpaceFileEvent(payload, target.spacePath)
+      ) {
+        for (const path of repairPathsForSpaceFileEvent(payload)) {
+          useSpaceStore.getState().markTreeParentDirty(target.spaceId, path);
+        }
+      }
       queue.push({ eventName, payload, ...target });
       if (timer) clearTimeout(timer);
       timer = setTimeout(flushQueue, SPACE_FILE_EVENT_BATCH_MS);

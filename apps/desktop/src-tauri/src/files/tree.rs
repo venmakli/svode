@@ -5,7 +5,7 @@ use std::io::{BufRead, BufReader};
 use std::path::Path;
 use std::time::Instant;
 
-use crate::apps::manifest::has_direct_app_manifest;
+use crate::artifact::children::{DirectoryFacts, DirectoryKind, is_regular_source};
 use crate::artifact::identity::{MarkdownIdentityFacts, SourceShape, resolve_markdown_identity};
 use crate::error::AppError;
 use crate::files::frontmatter;
@@ -72,22 +72,26 @@ fn is_readme_name(name: &str) -> bool {
 
 /// Find a readme.md file inside a directory (case-insensitive).
 /// Returns the absolute path if found.
-fn find_readme(base: &Path, dir: &Path, policy: &TreeIgnorePolicy) -> Option<std::path::PathBuf> {
-    fs::read_dir(dir)
-        .ok()?
-        .filter_map(|e| e.ok())
-        .find_map(|e| {
-            let name = e.file_name();
-            let path = e.path();
-            if !is_readme_name(&name.to_string_lossy()) || !path.is_file() {
-                return None;
-            }
-            let rel = path.strip_prefix(base).unwrap_or(&path);
-            if policy.is_ignored_rel(rel, TreePathKind::File) {
-                return None;
-            }
-            Some(path)
-        })
+fn find_readme(
+    base: &Path,
+    dir: &Path,
+    policy: &TreeIgnorePolicy,
+) -> Result<Option<std::path::PathBuf>, std::io::Error> {
+    for entry in fs::read_dir(dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if !is_readme_name(&entry.file_name().to_string_lossy()) {
+            continue;
+        }
+        let rel = path.strip_prefix(base).unwrap_or(&path);
+        if policy.is_ignored_rel(rel, TreePathKind::File) {
+            continue;
+        }
+        if entry.file_type()?.is_file() {
+            return Ok(Some(path));
+        }
+    }
+    Ok(None)
 }
 
 /// Read sidebar metadata from frontmatter. Falls back to filename without .md on error.
@@ -377,6 +381,7 @@ pub fn list_tree_children_checked(
         let mut relative = std::path::PathBuf::new();
         for component in Path::new(&parent_rel).components() {
             relative.push(component);
+            let parent_has_app = directory_facts(root, &dir, &policy)?.0.has_app;
             dir.push(component);
             let path = repo_path_string(&relative);
             if skip_dirs.contains(&path)
@@ -390,6 +395,12 @@ pub fn list_tree_children_checked(
                 }
                 Ok(meta) if meta.is_dir() => {
                     fs::read_dir(&dir)?;
+                    if !directory_facts(root, &dir, &policy)?
+                        .0
+                        .is_child_of(parent_has_app)
+                    {
+                        return Err(TreeLoadError::Hidden { path });
+                    }
                 }
                 Ok(_) => {
                     fs::read_dir(root)?;
@@ -453,6 +464,36 @@ pub(crate) fn normalize_tree_parent_path(parent_path: Option<&str>) -> Result<St
     Ok(normalized)
 }
 
+fn tree_directory_kind(facts: DirectoryFacts) -> TreeChildKind {
+    match facts.kind() {
+        DirectoryKind::Collection => TreeChildKind::Collection,
+        DirectoryKind::Page => TreeChildKind::Page,
+        DirectoryKind::App => TreeChildKind::App,
+        DirectoryKind::Directory => TreeChildKind::Folder,
+    }
+}
+
+fn directory_facts(
+    base: &Path,
+    dir: &Path,
+    policy: &TreeIgnorePolicy,
+) -> Result<(DirectoryFacts, Option<std::path::PathBuf>), std::io::Error> {
+    let visible_marker = |name: &str| {
+        let path = dir.join(name);
+        is_regular_source(&path)
+            && !policy.is_ignored_rel(path.strip_prefix(base).unwrap_or(&path), TreePathKind::File)
+    };
+    let readme = find_readme(base, dir, policy)?;
+    Ok((
+        DirectoryFacts {
+            has_head: readme.is_some(),
+            has_schema: visible_marker("schema.yaml"),
+            has_app: visible_marker("app.yaml"),
+        },
+        readme,
+    ))
+}
+
 fn read_dir_direct(
     base: &Path,
     dir: &Path,
@@ -469,7 +510,7 @@ fn read_dir_direct(
     } else {
         Some(parent_rel.to_string())
     };
-    let parent_has_app = has_direct_app_manifest(dir);
+    let parent_has_app = directory_facts(base, dir, policy)?.0.has_app;
 
     for entry in entries {
         let name = entry.file_name().to_string_lossy().to_string();
@@ -501,16 +542,10 @@ fn read_dir_direct(
                 continue;
             }
 
-            let schema_path = abs_path.join("schema.yaml");
-            let schema_rel = schema_path.strip_prefix(base).unwrap_or(&schema_path);
-            let has_schema = has_direct_schema(&abs_path)
-                && !policy.is_ignored_rel(schema_rel, TreePathKind::File);
-            let app_path = abs_path.join("app.yaml");
-            let app_rel = app_path.strip_prefix(base).unwrap_or(&app_path);
-            let has_app = has_direct_app_manifest(&abs_path)
-                && !policy.is_ignored_rel(app_rel, TreePathKind::File);
-            let readme = find_readme(base, &abs_path, policy);
-            if parent_has_app && !has_schema && !has_app && readme.is_none() {
+            let (facts, readme) = directory_facts(base, &abs_path, policy)?;
+            let has_schema = facts.has_schema;
+            let has_app = facts.has_app;
+            if !facts.is_child_of(parent_has_app) {
                 continue;
             }
             let (title, icon, description) = if let Some(ref readme_path) = readme {
@@ -532,24 +567,7 @@ fn read_dir_direct(
             } else {
                 rel_path.clone()
             };
-            let kind = if has_schema {
-                TreeChildKind::Collection
-            } else if readme.is_some() {
-                debug_assert!(
-                    resolve_markdown_identity(MarkdownIdentityFacts {
-                        path: &node_path,
-                        source_shape: SourceShape::Directory,
-                        collection_root: None,
-                        agent_context: false,
-                    })
-                    .is_page()
-                );
-                TreeChildKind::Page
-            } else if has_app {
-                TreeChildKind::App
-            } else {
-                TreeChildKind::Folder
-            };
+            let kind = tree_directory_kind(facts);
 
             nodes.push(TreeChildNode {
                 name,
@@ -605,8 +623,9 @@ fn has_visible_direct_children(
     skip_dirs: &HashSet<String>,
     policy: &TreeIgnorePolicy,
 ) -> Result<bool, AppError> {
-    let parent_has_app = has_direct_app_manifest(dir);
-    for entry in fs::read_dir(dir)?.filter_map(|e| e.ok()) {
+    let parent_has_app = directory_facts(base, dir, policy)?.0.has_app;
+    for entry in fs::read_dir(dir)? {
+        let entry = entry?;
         let name = entry.file_name().to_string_lossy().to_string();
         let abs_path = entry.path();
 
@@ -632,20 +651,11 @@ fn has_visible_direct_children(
         }
 
         if meta.is_dir() {
-            let schema_path = abs_path.join("schema.yaml");
-            let app_path = abs_path.join("app.yaml");
-            let semantic_child = find_readme(base, &abs_path, policy).is_some()
-                || (has_direct_schema(&abs_path)
-                    && !policy.is_ignored_rel(
-                        schema_path.strip_prefix(base).unwrap_or(&schema_path),
-                        TreePathKind::File,
-                    ))
-                || (has_direct_app_manifest(&abs_path)
-                    && !policy.is_ignored_rel(
-                        app_path.strip_prefix(base).unwrap_or(&app_path),
-                        TreePathKind::File,
-                    ));
-            if !skip_dirs.contains(&rel_path) && (!parent_has_app || semantic_child) {
+            if skip_dirs.contains(&rel_path) {
+                continue;
+            }
+            let (facts, _) = directory_facts(base, &abs_path, policy)?;
+            if facts.is_child_of(parent_has_app) {
                 return Ok(true);
             }
         } else if meta.is_file() && name.ends_with(".md") && !is_readme_name(&name) {
@@ -697,7 +707,7 @@ fn read_dir_recursive(
     } else {
         repo_path_string(dir.strip_prefix(base).unwrap_or(dir))
     };
-    let parent_has_app = has_direct_app_manifest(dir);
+    let parent_has_app = directory_facts(base, dir, policy)?.0.has_app;
 
     for entry in entries {
         let name = entry.file_name().to_string_lossy().to_string();
@@ -732,16 +742,10 @@ fn read_dir_recursive(
                 continue;
             }
 
-            let schema_path = abs_path.join("schema.yaml");
-            let schema_rel = schema_path.strip_prefix(base).unwrap_or(&schema_path);
-            let has_schema = has_direct_schema(&abs_path)
-                && !policy.is_ignored_rel(schema_rel, TreePathKind::File);
-            let app_path = abs_path.join("app.yaml");
-            let app_rel = app_path.strip_prefix(base).unwrap_or(&app_path);
-            let has_app = has_direct_app_manifest(&abs_path)
-                && !policy.is_ignored_rel(app_rel, TreePathKind::File);
-            let readme = find_readme(base, &abs_path, policy);
-            if parent_has_app && !has_schema && !has_app && readme.is_none() {
+            let (facts, readme) = directory_facts(base, &abs_path, policy)?;
+            let has_schema = facts.has_schema;
+            let has_app = facts.has_app;
+            if !facts.is_child_of(parent_has_app) {
                 continue;
             }
 
@@ -782,15 +786,7 @@ fn read_dir_recursive(
                 has_changes: false,
                 has_schema,
                 has_app,
-                kind: if has_schema {
-                    TreeChildKind::Collection
-                } else if readme.is_some() {
-                    TreeChildKind::Page
-                } else if has_app {
-                    TreeChildKind::App
-                } else {
-                    TreeChildKind::Folder
-                },
+                kind: tree_directory_kind(facts),
                 source_shape: SourceShape::Directory,
                 name_conflict: None,
                 children,
@@ -869,6 +865,40 @@ mod tests {
             ),
         )
         .unwrap();
+    }
+
+    #[test]
+    fn app_policy_matches_listing_hint_fallback_and_stale_branch_access() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        fs::create_dir_all(root.join("app/public/deep")).unwrap();
+        fs::write(root.join("app/app.yaml"), "invalid").unwrap();
+        fs::write(root.join("app/public/deep/README.md"), "deep").unwrap();
+        fs::write(root.join("app/binary.pdf"), "binary").unwrap();
+        let space = root.to_str().unwrap();
+        assert!(!list_tree_children(space, None).unwrap()[0].has_children);
+        assert!(list_tree_children(space, Some("app")).unwrap().is_empty());
+        assert!(build_tree(space).unwrap()[0].children.is_empty());
+        assert!(matches!(
+            list_tree_children_checked(space, Some("app/public/deep")),
+            Err(TreeLoadError::Hidden { .. })
+        ));
+        fs::write(root.join("app/public/readme.md"), "Public").unwrap();
+        assert!(list_tree_children(space, None).unwrap()[0].has_children);
+        assert_eq!(
+            list_tree_children(space, Some("app")).unwrap()[0].path,
+            "app/public/readme.md"
+        );
+        assert!(list_tree_children_checked(space, Some("app/public/deep")).is_ok());
+        fs::write(root.join(".gitignore"), "app/public/readme.md").unwrap();
+        assert!(list_tree_children(space, Some("app")).unwrap().is_empty());
+        assert!(matches!(
+            list_tree_children_checked(space, Some("app/public")),
+            Err(TreeLoadError::Hidden { .. })
+        ));
+        fs::write(root.join(".gitignore"), "app/app.yaml").unwrap();
+        assert!(!list_tree_children(space, None).unwrap()[0].has_app);
+        assert_eq!(list_tree_children(space, Some("app")).unwrap().len(), 1);
     }
 
     #[test]

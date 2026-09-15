@@ -398,3 +398,34 @@ test("late parent listing cannot restore a removed branch after subsequent inval
   expect(get().fileTrees.root.map((item) => item.path)).toEqual(["valid"]);
   expect(get().expandedPaths.root).toEqual(["valid"]);
 });
+
+test("watcher invalidation rejects old child response and retains collapsed intent", async () => {
+  const { get, set } = fixture(["app"]);
+  set({
+    childrenByParentPath: {
+      root: { "": [node("app")], app: [node("app/public")] },
+    },
+    treeParentCache: {
+      root: {
+        "": { loadedAt: 1, dirty: false },
+        app: { loadedAt: 1, dirty: false },
+      },
+    },
+  });
+  const old = deferred<TreeNode[]>();
+  const fresh = deferred<TreeNode[]>();
+  list = () => old.promise;
+  const pending = get().loadTreeChildren("root", "app", { force: true });
+  get().markTreeParentDirty("root", "app");
+  set({ expandedPaths: { root: [] } });
+  list = () => fresh.promise;
+  const reload = get().loadTreeChildren("root", "app", { force: true });
+  old.resolve([node("app/public")]);
+  await pending;
+  expect(get().treeParentLoading.root?.app).toBe(true);
+  fresh.resolve([]);
+  await reload;
+  expect(get().childrenByParentPath.root?.app).toEqual([]);
+  expect(get().expandedPaths.root).toEqual([]);
+  expect(get().treeParentLoading.root?.app).toBeUndefined();
+});

@@ -1156,6 +1156,11 @@ export function createSpaceTreeState<T extends SpaceTreeStoreState>(
 
     markTreeParentDirty: (spaceId, parentPath) => {
       const parentKey = treeParentKey(parentPath);
+      const affected = (path: string) =>
+        parentKey === ROOT_TREE_PARENT || under(path, parentKey);
+      for (const path of Object.keys(get().treeParentLoading[spaceId] ?? {})) {
+        if (affected(path)) requests.delete(requestKey(spaceId, path));
+      }
       suppressed.set(
         spaceId,
         (suppressed.get(spaceId) ?? []).filter(
@@ -1167,6 +1172,14 @@ export function createSpaceTreeState<T extends SpaceTreeStoreState>(
         ),
       );
       set((s) => ({
+        treeParentLoading: {
+          ...s.treeParentLoading,
+          [spaceId]: Object.fromEntries(
+            Object.entries(s.treeParentLoading[spaceId] ?? {}).filter(
+              ([path]) => !affected(path),
+            ),
+          ),
+        },
         treeCache: {
           ...s.treeCache,
           [spaceId]: {
@@ -1180,7 +1193,14 @@ export function createSpaceTreeState<T extends SpaceTreeStoreState>(
         treeParentCache: {
           ...s.treeParentCache,
           [spaceId]: {
-            ...(s.treeParentCache[spaceId] ?? {}),
+            ...Object.fromEntries(
+              Object.entries(s.treeParentCache[spaceId] ?? {}).map(
+                ([path, cache]) => [
+                  path,
+                  affected(path) ? { ...cache, dirty: true } : cache,
+                ],
+              ),
+            ),
             [parentKey]: {
               loadedAt: s.treeParentCache[spaceId]?.[parentKey]?.loadedAt ?? 0,
               dirty: true,

@@ -6,6 +6,7 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 
 use crate::AppError;
+use crate::artifact::children::{DirectoryFacts, DirectoryKind, is_regular_source};
 use crate::artifact::identity::{
     ArtifactKind, MarkdownIdentityFacts, SourceShape, resolve_markdown_identity,
 };
@@ -280,6 +281,7 @@ pub(crate) async fn list_attachment_branch(
                 "attachment branch crosses an excluded boundary".into(),
             ));
         }
+        let parent_has_app = is_regular_source(&current.join("app.yaml"));
         current.push(component);
         let metadata = fs::symlink_metadata(&current)?;
         if !metadata.is_dir() || metadata.file_type().is_symlink() {
@@ -287,16 +289,15 @@ pub(crate) async fn list_attachment_branch(
                 "attachment branch is not a regular directory".into(),
             ));
         }
-        let readme = direct_readme(&current)?;
-        for marker in [current.join("schema.yaml"), current.join("app.yaml")]
-            .iter()
-            .chain(readme.iter())
-        {
-            if fs::symlink_metadata(marker).is_ok_and(|meta| meta.file_type().is_symlink()) {
-                return Err(AppError::PathNotAccessible(
-                    "attachment branch has a linked marker".into(),
-                ));
-            }
+        let Some((facts, _)) = directory_facts(&current)? else {
+            return Err(AppError::PathNotAccessible(
+                "attachment branch has a linked marker".into(),
+            ));
+        };
+        if !facts.is_child_of(parent_has_app) {
+            return Err(AppError::PathNotAccessible(
+                "attachment branch is hidden inside App".into(),
+            ));
         }
     }
     let root_relative = owner.owner_relative_path.clone();
@@ -367,6 +368,7 @@ fn scan_mixed_children(
     root_schema_routing: bool,
 ) -> Result<(Vec<AttachmentItem>, Vec<AttachmentSourceDiagnostic>), AppError> {
     let owner_has_schema = root_schema_routing && has_direct_schema(owner_path);
+    let owner_has_app = is_regular_source(&owner_path.join("app.yaml"));
     let registered_spaces = child_folder_names(owner_path);
     let mut entries = fs::read_dir(owner_path)?.collect::<Result<Vec<_>, _>>()?;
     entries.sort_by_key(|entry| entry.file_name().to_string_lossy().to_lowercase());
@@ -399,8 +401,9 @@ fn scan_mixed_children(
             }
             let schema = path.join("schema.yaml");
             let app = path.join("app.yaml");
-            let readme = match direct_readme(&path) {
-                Ok(readme) => readme,
+            let (facts, readme) = match directory_facts(&path) {
+                Ok(Some(facts)) => facts,
+                Ok(None) => continue,
                 Err(_) => {
                     diagnostics.push(AttachmentSourceDiagnostic {
                         code: "metadata_unavailable",
@@ -409,30 +412,19 @@ fn scan_mixed_children(
                     continue;
                 }
             };
-            // A linked marker/head must not project an owner outside this source.
-            if [&schema, &app]
-                .into_iter()
-                .chain(readme.iter())
-                .any(|source| {
-                    fs::symlink_metadata(source).is_ok_and(|meta| meta.file_type().is_symlink())
-                })
-            {
+            if !facts.is_child_of(owner_has_app) {
                 continue;
             }
-            let has_schema = schema.is_file();
-            let has_app = app.is_file();
-            let readme = readme.filter(|source| source.is_file());
+            let has_schema = facts.has_schema;
+            let has_app = facts.has_app;
             if owner_has_schema && readme.is_some() {
                 continue;
             }
-            let kind = if has_schema {
-                AttachmentKind::Collection
-            } else if readme.is_some() {
-                AttachmentKind::Page
-            } else if has_app {
-                AttachmentKind::App
-            } else {
-                AttachmentKind::Directory
+            let kind = match facts.kind() {
+                DirectoryKind::Collection => AttachmentKind::Collection,
+                DirectoryKind::Page => AttachmentKind::Page,
+                DirectoryKind::App => AttachmentKind::App,
+                DirectoryKind::Directory => AttachmentKind::Directory,
             };
             let owner_path = normalized_direct_path(owner_relative_path, &name, None)?;
             let content_path = readme
@@ -642,6 +634,7 @@ fn has_mixed_child_hint(directory: &Path) -> bool {
         return true;
     };
     let registered = child_folder_names(directory);
+    let parent_has_app = is_regular_source(&directory.join("app.yaml"));
     entries.into_iter().any(|entry| {
         let Ok(entry) = entry else {
             return true;
@@ -656,14 +649,44 @@ fn has_mixed_child_hint(directory: &Path) -> bool {
         if kind.is_symlink() {
             return false;
         }
-        kind.is_dir()
-            || (kind.is_file()
-                && (entry
-                    .path()
-                    .extension()
-                    .is_some_and(|ext| ext.eq_ignore_ascii_case("md"))
-                    || classify_binary_path(&entry.path()).is_some()))
+        if kind.is_dir() {
+            return match directory_facts(&entry.path()) {
+                Ok(Some((facts, _))) => facts.is_child_of(parent_has_app),
+                Ok(None) => false,
+                Err(_) => true,
+            };
+        }
+        kind.is_file()
+            && (entry
+                .path()
+                .extension()
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("md"))
+                || classify_binary_path(&entry.path()).is_some())
     })
+}
+
+fn directory_facts(
+    directory: &Path,
+) -> Result<Option<(DirectoryFacts, Option<PathBuf>)>, std::io::Error> {
+    let readme = direct_readme(directory)?;
+    let schema = directory.join("schema.yaml");
+    let app = directory.join("app.yaml");
+    if [&schema, &app]
+        .into_iter()
+        .chain(readme.iter())
+        .any(|source| fs::symlink_metadata(source).is_ok_and(|meta| meta.file_type().is_symlink()))
+    {
+        return Ok(None);
+    }
+    let readme = readme.filter(|source| is_regular_source(source));
+    Ok(Some((
+        DirectoryFacts {
+            has_head: readme.is_some(),
+            has_schema: is_regular_source(&schema),
+            has_app: is_regular_source(&app),
+        },
+        readme,
+    )))
 }
 
 fn direct_readme(directory: &Path) -> Result<Option<PathBuf>, std::io::Error> {
@@ -750,6 +773,97 @@ mod tests {
     use super::*;
     use crate::space::config::write_space_config;
     use crate::space::types::{SpaceConfig, SpaceRef};
+
+    #[tokio::test]
+    async fn app_semantic_children_share_hints_routing_and_branch_guards() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        write_config(root, None);
+        for path in [
+            "app/public/deep",
+            "app/semantic/ordinary",
+            "app/nested",
+            "app/collection",
+        ] {
+            fs::create_dir_all(root.join(path)).unwrap();
+        }
+        for (path, body) in [
+            ("app/app.yaml", "invalid: ["),
+            ("app/public/deep/README.md", "Grandchild"),
+            ("app/semantic/readme.md", "Page"),
+            ("app/nested/app.yaml", "invalid"),
+            ("app/collection/schema.yaml", "invalid"),
+            ("app/notes.md", "Notes"),
+            ("app/photo.png", "binary"),
+        ] {
+            fs::write(root.join(path), body).unwrap();
+        }
+        let rows = scan_mixed_children(&root.join("app"), "app", false)
+            .unwrap()
+            .0;
+        assert_eq!(
+            rows.iter().map(|row| row.path.as_str()).collect::<Vec<_>>(),
+            vec![
+                "app/collection",
+                "app/nested",
+                "app/notes.md",
+                "app/photo.png",
+                "app/semantic/readme.md"
+            ]
+        );
+        assert!(has_mixed_child_hint(&root.join("app")));
+        assert!(!has_mixed_child_hint(&root.join("app/nested")));
+        assert!(
+            scan_mixed_children(&root.join("app/semantic"), "app/semantic", false)
+                .unwrap()
+                .0[0]
+                .path
+                .ends_with("ordinary")
+        );
+        let owner = || resolve_registered_owner(root, None).unwrap();
+        assert!(
+            list_attachment_branch(owner(), "app/public/deep")
+                .await
+                .is_err()
+        );
+        fs::write(root.join("app/public/README.md"), "Public").unwrap();
+        assert!(
+            list_attachment_branch(owner(), "app/public/deep")
+                .await
+                .is_ok()
+        );
+        fs::remove_file(root.join("app/public/README.md")).unwrap();
+        assert!(list_attachment_branch(owner(), "app/public").await.is_err());
+        fs::write(root.join("app/schema.yaml"), "invalid: [").unwrap();
+        let routed = scan_mixed_children(&root.join("app"), "app", true)
+            .unwrap()
+            .0;
+        assert!(!routed.iter().any(|row| row.kind == AttachmentKind::Page));
+        assert!(routed.iter().any(|row| row.path == "app/photo.png"));
+        assert!(routed.iter().any(|row| row.path == "app/nested"));
+        assert!(
+            scan_mixed_children(&root.join("app"), "app", false)
+                .unwrap()
+                .0
+                .iter()
+                .any(|row| row.path == "app/notes.md")
+        );
+    }
+
+    #[test]
+    fn app_source_only_hint_is_empty_and_binary_remains_eligible() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        fs::create_dir_all(root.join("src/deep")).unwrap();
+        fs::write(root.join("app.yaml"), "invalid").unwrap();
+        fs::write(root.join("src/deep/README.md"), "not traversed").unwrap();
+        assert!(scan_mixed_children(root, ".", false).unwrap().0.is_empty());
+        assert!(!has_mixed_child_hint(root));
+        fs::write(root.join("asset.pdf"), "binary").unwrap();
+        fs::write(root.join(".gitignore"), "asset.pdf").unwrap();
+        assert!(has_mixed_child_hint(root));
+        assert_eq!(scan_mixed_children(root, ".", false).unwrap().0.len(), 1);
+    }
 
     fn write_config(path: &Path, spaces: Option<Vec<SpaceRef>>) {
         fs::create_dir_all(path).expect("owner directory");

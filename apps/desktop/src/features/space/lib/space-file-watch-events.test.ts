@@ -3,6 +3,7 @@ import {
   applySpaceFileEvent,
   inferSpaceFileEventKind,
   repairParentPathForSpaceFileEvent,
+  repairPathsForSpaceFileEvent,
   type SpaceFileEventTreeStore,
 } from "./space-file-watch-events";
 
@@ -186,3 +187,16 @@ function createEventStore(
     upsertTreeNode: () => undefined,
   };
 }
+
+test("marker and head refresh owner children, row and parent hint", () => {
+  for (const marker of ["app.yaml", "schema.yaml", "README.md"]) {
+    expect(
+      repairPathsForSpaceFileEvent({ path: `app/public/${marker}` }),
+    ).toEqual(["app", "", "app/public"]);
+  }
+  expect(repairPathsForSpaceFileEvent({ path: "app/notes.md" })).toEqual([
+    "app",
+    "",
+  ]);
+  expect(repairPathsForSpaceFileEvent({ path: "app.yaml" })).toEqual([""]);
+});

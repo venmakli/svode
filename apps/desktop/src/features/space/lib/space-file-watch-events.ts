@@ -124,6 +124,20 @@ export function repairParentPathForSpaceFileEvent(
   return treeRowParentPath(path) ?? normalizeTreePath(payload.parentPath);
 }
 
+export function repairPathsForSpaceFileEvent(
+  payload: SpaceFileEvent,
+): string[] {
+  const parent = repairParentPathForSpaceFileEvent(payload) ?? "";
+  const paths = new Set([parent]);
+  // Reload the row carrying this parent's child hint as well as its children.
+  if (parent) paths.add(treeRowParentPath(parent) ?? "");
+  const kind = inferSpaceFileEventKind(payload);
+  if (kind === "app" || kind === "schema" || isReadmePath(payload.path)) {
+    paths.add(dirname(normalizeTreePath(payload.path)));
+  }
+  return [...paths];
+}
+
 export function watchedPageToTreeNode(
   pagePath: string,
   page: WatchedSpacePage,
