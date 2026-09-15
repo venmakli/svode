@@ -56,6 +56,7 @@ import {
   Trash2,
 } from "lucide-react";
 import type { TreeNode } from "../model/types";
+import { getArtifactPresentationKind } from "@/features/artifact";
 import { FileGitIndicatorIcon } from "@/features/git/sidebar";
 import { cn } from "@/shared/lib/utils";
 import { useFileTreeItemActions } from "../hooks/use-file-tree-item-actions";
@@ -169,13 +170,18 @@ export function FileTreeItem({
     opacity: isDragging ? 0.4 : undefined,
   };
 
+  const presentationKind = getArtifactPresentationKind({
+    hasSchema: node.has_schema,
+    hasApp: node.has_app ?? false,
+    hasPage: !bareFolder,
+  });
   const iconElement = node.icon ? (
     <span className="h-4 w-4 shrink-0 text-center leading-4">{node.icon}</span>
-  ) : node.has_schema ? (
+  ) : presentationKind === "collection" ? (
     <Database className="h-4 w-4 shrink-0 text-muted-foreground" />
-  ) : node.has_app ? (
+  ) : presentationKind === "app" ? (
     <PanelsTopLeft className="h-4 w-4 shrink-0 text-muted-foreground" />
-  ) : bareFolder ? (
+  ) : presentationKind === "directory" ? (
     <FolderOpen className="h-4 w-4 shrink-0 text-muted-foreground" />
   ) : (
     <FileText className="h-4 w-4 shrink-0" />

@@ -1,3 +1,4 @@
+import { getArtifactPresentationKind } from "@/features/artifact";
 import type {
   CollectionActivationContext,
   CollectionCreateCapability,
@@ -49,7 +50,7 @@ export function createAttachmentsPresentationDescriptor({
         sort: { kind: "standard" },
       },
       featureId: "attachments",
-      getValue: (row) => attachmentKindLabel(row.kind),
+      getValue: (row) => attachmentKindLabel(row),
       key: "type",
       label: m.attachments_property_type(),
       standard: {
@@ -112,8 +113,7 @@ export function createAttachmentsPresentationDescriptor({
     query: {
       getSortTieBreakId: (row) => row.path,
       defaultSort: [{ direction: "asc", propertyKey: "name" }],
-      getSearchText: (row) =>
-        `${row.displayName} ${attachmentKindLabel(row.kind)}`,
+      getSearchText: (row) => `${row.displayName} ${attachmentKindLabel(row)}`,
     },
   };
 }
@@ -144,7 +144,17 @@ export function attachmentsPresentationState(
   };
 }
 
-export function attachmentKindLabel(kind: AttachmentRow["kind"]) {
+export function attachmentPresentationKind(row: AttachmentRow) {
+  if (row.kind === "document" || row.kind === "media") return row.kind;
+  return getArtifactPresentationKind({
+    hasSchema: row.kind === "collection",
+    hasApp: row.hasApp || row.kind === "app",
+    hasPage: row.kind === "page",
+  });
+}
+
+export function attachmentKindLabel(row: AttachmentRow) {
+  const kind = attachmentPresentationKind(row);
   if (kind === "directory") return m.attachments_type_directory();
   if (kind === "page") return m.attachments_type_page();
   if (kind === "document") return m.attachments_type_document();

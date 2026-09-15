@@ -1,3 +1,4 @@
+export { getArtifactPresentationKind } from "./model/presentation";
 export {
   closeActiveContent,
   getActiveContentPath,

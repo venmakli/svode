@@ -344,7 +344,7 @@ function BinaryAvailability({ row }: { row: AttachmentRow }) {
         <EmptyTitle>{row.displayName}</EmptyTitle>
         <EmptyDescription>
           {m.attachments_binary_unavailable({
-            type: attachmentKindLabel(row.kind),
+            type: attachmentKindLabel(row),
           })}
         </EmptyDescription>
       </EmptyHeader>

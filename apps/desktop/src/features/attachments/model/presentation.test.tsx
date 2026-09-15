@@ -3,6 +3,8 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { applyCollectionQuery } from "@/features/collection";
 import { AttachmentIcon } from "../ui/attachment-icon";
 import { attachmentKindLabel } from "./presentation";
+import { getArtifactPresentationKind } from "@/features/artifact";
+import * as m from "@/paraglide/messages.js";
 
 import { resolveStandardPropertyColumn } from "@/features/properties";
 import {
@@ -46,6 +48,72 @@ const create = {
   ],
   label: "Add",
 };
+
+test("App presentation unifies query values and sidebar facts without changing identity", () => {
+  const descriptor = createAttachmentsPresentationDescriptor({
+    onActivate: () => undefined,
+  });
+  const matrix = [
+    ["page", false, "page", m.attachments_type_page()],
+    ["page", true, "app", m.attachments_type_app()],
+    ["collection", false, "collection", m.attachments_type_collection()],
+    ["collection", true, "collection", m.attachments_type_collection()],
+    ["app", true, "app", m.attachments_type_app()],
+    ["directory", false, "directory", m.attachments_type_directory()],
+  ] as const;
+  const rows = matrix.map(
+    ([kind, hasApp], i): AttachmentRow => ({
+      ...page,
+      kind,
+      hasApp,
+      key: `${kind}:${i}`,
+      path: String(i),
+    }),
+  );
+  const original = structuredClone(rows);
+  for (const [i, [kind, hasApp, presentationKind, label]] of matrix.entries()) {
+    const row = rows[i]!;
+    expect(
+      getArtifactPresentationKind({
+        hasSchema: kind === "collection",
+        hasApp,
+        hasPage: kind === "page",
+      }),
+    ).toBe(presentationKind);
+    expect(attachmentKindLabel(row)).toBe(label);
+    expect(descriptor.getRowId(row)).toBe(row.key);
+    const matching = rows.filter((_, index) => matrix[index]![3] === label);
+    for (const query of [
+      { search: label, filters: [], sort: [] },
+      {
+        search: "",
+        filters: [{ propertyKey: "type", operator: "eq", value: label }],
+        sort: [],
+      },
+    ]) {
+      expect(applyCollectionQuery({ descriptor, rows, query }).rows).toEqual(
+        matching,
+      );
+    }
+  }
+  const ascending = [rows[0], rows[2], rows[3], rows[1], rows[4], rows[5]];
+  expect(
+    applyCollectionQuery({
+      descriptor,
+      rows: [...rows].reverse(),
+      query: {
+        search: "",
+        filters: [],
+        sort: [{ propertyKey: "type", direction: "asc" }],
+      },
+    }).rows,
+  ).toEqual(ascending);
+  const pageApp = rows[1]!;
+  expect(attachmentKindLabel({ ...pageApp, hasApp: false })).toBe(
+    m.attachments_type_page(),
+  );
+  expect(rows).toEqual(original);
+});
 
 test("fixed Attachments Table is Property-driven and query-capable", () => {
   const descriptor = createAttachmentsPresentationDescriptor({
@@ -232,7 +300,7 @@ test("mixed row types use standard filter and size applicability with stable ico
           {
             propertyKey: "type",
             operator: "eq",
-            value: attachmentKindLabel(row.kind),
+            value: attachmentKindLabel(row),
           },
         ],
         sort: [],

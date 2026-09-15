@@ -10,17 +10,19 @@ import {
 } from "lucide-react";
 
 import type { AttachmentRow } from "../model/types";
+import { attachmentPresentationKind } from "../model/presentation";
 
 export function AttachmentIcon({ row }: { row: AttachmentRow }) {
   const icon = row.icon?.trim();
+  const kind = attachmentPresentationKind(row);
   const Fallback =
-    row.kind === "directory"
+    kind === "directory"
       ? FolderOpen
-      : row.kind === "collection"
+      : kind === "collection"
         ? Database
-        : row.hasApp || row.kind === "app"
+        : kind === "app"
           ? PanelsTopLeft
-          : row.kind !== "media"
+          : kind !== "media"
             ? FileText
             : /^(png|jpg|jpeg|webp|gif|svg|avif|ico)$/u.test(row.format)
               ? FileImage
