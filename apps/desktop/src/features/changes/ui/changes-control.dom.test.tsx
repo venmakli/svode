@@ -793,7 +793,7 @@ if (process.env.SVODE_CHANGES_DOM !== "1") {
       dom.window.close();
     }
   });
-  test("save errors retain safe localized causes, pending intent and parent-only retry", async () => {
+  test("save errors retain safe localized causes and optional parent failure preserves child success", async () => {
     const dom = createDom();
     const restore = installDomGlobals(dom);
     const { getLocale, setLocale } = await import("@/paraglide/runtime.js");
@@ -801,7 +801,6 @@ if (process.env.SVODE_CHANGES_DOM !== "1") {
     const { ChangesControl } = await import("./changes-control");
     const { TooltipProvider } = await import("@/components/ui/tooltip");
     const { ThemeProvider } = await import("@/components/ui/theme-provider");
-    const { refreshGitStatus } = await import("@/features/git");
     const base = {
       branch: "main",
       ahead: 0,
@@ -816,6 +815,7 @@ if (process.env.SVODE_CHANGES_DOM !== "1") {
       paths.map((path) => ({ path, state: "untracked" }));
     let files = changedFiles();
     let error: unknown = null;
+    let parent: object | undefined;
     let finish: (() => void) | null = null;
     let delayed = false;
     const commits: unknown[] = [];
@@ -856,7 +856,7 @@ if (process.env.SVODE_CHANGES_DOM !== "1") {
           const result = () => {
             if (error) throw error;
             files = [];
-            return { ...base, files };
+            return { ...base, files, parent };
           };
           return delayed
             ? new Promise((resolve, reject) => {
@@ -1008,9 +1008,11 @@ if (process.env.SVODE_CHANGES_DOM !== "1") {
         expect(calls.includes("repository_access_verify")).toBe(false);
       }
       delayed = true;
-      error = {
-        kind: "git_save_partial",
-        cause: { kind: "git_save_failed", ...cases[2], pathSample: "child" },
+      error = null;
+      parent = {
+        repository: "/project",
+        pointer: "pending",
+        error: { kind: "repository_access_denied", status: "read_only" },
       };
       const before = commits.length;
       await act(async () => {
@@ -1029,34 +1031,18 @@ if (process.env.SVODE_CHANGES_DOM !== "1") {
       expect(save().disabled).toBe(true);
       expect(alert()).toBeNull();
       await act(async () => {
-        files = [];
         finish!();
         await nextFrame(dom);
       });
-      expect(alert()?.textContent?.includes("Содержимое сохранено")).toBe(true);
-      expect(alert()?.textContent?.includes("Не удалось создать коммит")).toBe(
-        true,
+      expect(alert()).toBeNull();
+      expect(doc.querySelector('[data-slot="sheet-footer"]')).toBeNull();
+      const { useGitStore } = await import("@/features/git");
+      expect(useGitStore.getState().publications["/df118"]?.child).toBe(
+        "local",
       );
-      expect(save().disabled).toBe(false);
-      const originalIntent = commits.at(-1);
-      await act(async () => {
-        doc.dispatchEvent(
-          new dom.window.KeyboardEvent("keydown", {
-            key: "Escape",
-            bubbles: true,
-          }),
-        );
-        await nextFrame(dom);
-      });
-      expect(doc.querySelector('[role="dialog"]')).toBeNull();
-      await act(async () => {
-        doc.querySelector<HTMLButtonElement>("[data-changes-trigger]")!.click();
-        await nextFrame(dom);
-      });
-      expect(alert()?.textContent?.includes("Содержимое сохранено")).toBe(true);
-      expect(save().disabled).toBe(false);
-      delayed = false;
-      error = null;
+      expect(
+        useGitStore.getState().publications["/df118"]?.parent.error?.status,
+      ).toBe("read_only");
       await act(async () => {
         dom.window.dispatchEvent(
           new dom.window.KeyboardEvent("keydown", {
@@ -1067,33 +1053,10 @@ if (process.env.SVODE_CHANGES_DOM !== "1") {
         );
         await nextFrame(dom);
       });
-      expect(commits.at(-1)).toEqual(originalIntent);
-      expect((commits.at(-1) as { filePaths: string[] }).filePaths).toEqual(
-        paths,
-      );
-      expect(commits.length).toBe(before + 2);
-      expect(doc.querySelector('[data-slot="sheet-footer"]')).toBeNull();
+      expect(commits.length).toBe(before + 1);
       assert.ok(doc.querySelector('[role="dialog"]'));
       expect(JSON.stringify(logs).includes("SECRET_HOOK")).toBe(false);
-      files = changedFiles();
-      await act(async () => {
-        await refreshGitStatus("/df118");
-        await nextFrame(dom);
-      });
-      error = { kind: "git_save_partial", cause: "SECRET_HOOK" };
-      await act(async () => {
-        save().click();
-        await nextFrame(dom);
-      });
-      expect(alert()?.textContent?.includes("Содержимое сохранено")).toBe(true);
-      expect(alert()?.textContent?.includes("Причина не определена")).toBe(
-        true,
-      );
-      error = null;
-      await act(async () => {
-        save().click();
-        await nextFrame(dom);
-      });
+      useGitStore.getState().clear("/df118");
     } finally {
       await act(async () => {
         root.unmount();

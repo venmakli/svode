@@ -441,3 +441,310 @@ async fn ref_or_target_change_during_proof_requires_a_new_attempt() {
         assert_eq!(git(&f.remote, &["rev-parse", "main"]), before);
     }
 }
+
+#[tokio::test]
+async fn parent_permission_is_optional_after_child_save_and_publication() {
+    for denied in ["unknown", "read_only"] {
+        let f = Fixture::new();
+        let store = f._temp.path().join("access.json");
+        let access = crate::git::access::RepositoryAccessState::new();
+        access
+            .record_writable_evidence(&f.cli, &f.child, &store)
+            .await
+            .unwrap();
+        access
+            .require_mutation(&f.cli, &f.child, &store)
+            .await
+            .unwrap();
+        std::fs::write(f.child.join("note"), "child saved").unwrap();
+        assert!(
+            crate::git::ops::commit_paths(&f.cli, &f.child, &["note".into()])
+                .await
+                .unwrap()
+        );
+        let head = git(&f.child, &["rev-parse", "HEAD"]);
+        let root_refs = git(&f.root, &["show-ref"]);
+        let index_path = git(
+            &f.root,
+            &["rev-parse", "--path-format=absolute", "--git-path", "index"],
+        );
+        let index = std::fs::read(&index_path).unwrap();
+        let mut permission = access
+            .require_mutation(&f.cli, &f.root, &store)
+            .await
+            .map(|_| ());
+        if denied == "read_only" {
+            std::fs::write(
+                f.remote.join("hooks/pre-receive"),
+                "#!/bin/sh\necho 'permission denied' >&2\nexit 1\n",
+            )
+            .unwrap();
+            std::fs::set_permissions(
+                f.remote.join("hooks/pre-receive"),
+                std::fs::Permissions::from_mode(0o755),
+            )
+            .unwrap();
+            let snapshot = access.verify(&f.cli, &f.root, &store).await.unwrap();
+            assert_eq!(
+                snapshot.status,
+                crate::git::access::RepositoryAccessStatus::ReadOnly
+            );
+            permission = access
+                .require_mutation(&f.cli, &f.root, &store)
+                .await
+                .map(|_| ());
+        }
+        let local = crate::git::publication_flow::parent_step_locked(
+            &f.cli, &f.child, &f.root, &head, false, false, permission,
+        )
+        .await;
+        let local = serde_json::to_value(local).unwrap();
+        assert_eq!(local["error"]["status"], denied);
+        assert_eq!(git(&f.root, &["show-ref"]), root_refs);
+        assert_eq!(std::fs::read(&index_path).unwrap(), index);
+        let child = crate::git::sync::sync(&f.cli, &f.child).await.unwrap();
+        assert!(matches!(
+            child,
+            crate::git::sync::SyncResult::Success { .. }
+        ));
+        let permission = access
+            .require_mutation(&f.cli, &f.root, &store)
+            .await
+            .map(|_| ());
+        let outcome = crate::git::publication_flow::parent_step_locked(
+            &f.cli, &f.child, &f.root, &head, false, true, permission,
+        )
+        .await;
+        assert_eq!(
+            serde_json::to_value(outcome).unwrap()["error"]["status"],
+            denied
+        );
+        assert_eq!(git(&f.source, &["rev-parse", "main"]), head);
+        assert_eq!(git(&f.root, &["show-ref"]), root_refs);
+        assert_eq!(std::fs::read(&index_path).unwrap(), index);
+    }
+}
+
+#[tokio::test]
+async fn restart_remote_evidence_and_pointer_only_retry_preserve_child_and_staged_content() {
+    let f = Fixture::new();
+    commit(&f.child, "note", "child save");
+    let head = git(&f.child, &["rev-parse", "HEAD"]);
+    assert!(
+        !super::head_is_published(&f.cli, &f.child, &head)
+            .await
+            .unwrap()
+    );
+    git(&f.child, &["push", "origin", "main"]);
+    git(&f.child, &["update-ref", "-d", "refs/remotes/origin/main"]);
+    let refs = git(&f.child, &["show-ref"]);
+    assert!(
+        super::head_is_published(&f.cli, &f.child, &head)
+            .await
+            .unwrap()
+    );
+    assert_eq!(git(&f.child, &["show-ref"]), refs);
+    std::fs::write(f.root.join("other"), "staged").unwrap();
+    git(&f.root, &["add", "other"]);
+    std::fs::write(f.root.join("other"), "working copy").unwrap();
+    // Keep root dirty for the local pointer phase, then remove the unrelated
+    // work only from this fixture before exercising pull/push.
+    let local = crate::git::publication_flow::parent_step_locked(
+        &f.cli,
+        &f.child,
+        &f.root,
+        &head,
+        false,
+        false,
+        Ok(()),
+    )
+    .await;
+    assert_eq!(serde_json::to_value(local).unwrap()["pointer"], "local");
+    assert_eq!(git(&f.root, &["show", ":other"]), "staged");
+    assert_eq!(
+        std::fs::read_to_string(f.root.join("other")).unwrap(),
+        "working copy"
+    );
+    git(&f.root, &["reset", "--", "other"]);
+    std::fs::remove_file(f.root.join("other")).unwrap();
+    for _ in 0..2 {
+        let report = crate::git::publication_flow::parent_step_locked(
+            &f.cli,
+            &f.child,
+            &f.root,
+            &head,
+            false,
+            true,
+            Ok(()),
+        )
+        .await;
+        assert_eq!(
+            serde_json::to_value(report).unwrap()["pointer"],
+            "published"
+        );
+        assert_eq!(git(&f.child, &["rev-parse", "HEAD"]), head);
+    }
+    assert!(
+        super::head_is_published(&f.cli, &f.root, &git(&f.root, &["rev-parse", "HEAD"]))
+            .await
+            .unwrap()
+    );
+    git(&f.source, &["update-ref", "-d", "refs/heads/main"]);
+    assert!(
+        super::head_is_published(&f.cli, &f.child, &head)
+            .await
+            .is_err()
+    );
+}
+
+#[tokio::test]
+async fn late_parent_rejection_and_policy_skip_keep_child_published() {
+    let f = Fixture::new();
+    commit(&f.child, "note", "published child");
+    git(&f.child, &["push", "origin", "main"]);
+    let head = git(&f.child, &["rev-parse", "HEAD"]);
+    let root = git(&f.root, &["rev-parse", "HEAD"]);
+    let report = crate::git::publication_flow::parent_step_locked(
+        &f.cli,
+        &f.child,
+        &f.root,
+        &head,
+        true,
+        true,
+        Ok(()),
+    )
+    .await;
+    assert_eq!(serde_json::to_value(report).unwrap()["policySkipped"], true);
+    assert_eq!(git(&f.root, &["rev-parse", "HEAD"]), root);
+    std::fs::write(
+        f.remote.join("hooks/pre-receive"),
+        "#!/bin/sh\necho 'permission denied' >&2\nexit 1\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(
+        f.remote.join("hooks/pre-receive"),
+        std::fs::Permissions::from_mode(0o755),
+    )
+    .unwrap();
+    let report = crate::git::publication_flow::parent_step_locked(
+        &f.cli,
+        &f.child,
+        &f.root,
+        &head,
+        false,
+        true,
+        Ok(()),
+    )
+    .await;
+    let report = serde_json::to_value(report).unwrap();
+    assert_eq!(report["pointer"], "local");
+    assert!(report.get("error").is_some() || report["result"]["type"] == "authRequired");
+    assert_eq!(git(&f.source, &["rev-parse", "main"]), head);
+    assert_eq!(git(&f.remote, &["rev-parse", "main"]), root);
+    std::fs::remove_file(f.remote.join("hooks/pre-receive")).unwrap();
+    let report = crate::git::publication_flow::parent_step_locked(
+        &f.cli,
+        &f.child,
+        &f.root,
+        &head,
+        false,
+        true,
+        Ok(()),
+    )
+    .await;
+    assert_eq!(
+        serde_json::to_value(report).unwrap()["pointer"],
+        "published"
+    );
+    assert_eq!(git(&f.child, &["rev-parse", "HEAD"]), head);
+}
+
+#[tokio::test]
+async fn parent_retry_rejects_changed_head_or_remote_target() {
+    let f = Fixture::new();
+    let head = git(&f.child, &["rev-parse", "HEAD"]);
+    let target = crate::git::publication_flow::publication_target(&f.cli, &f.child, &f.root)
+        .await
+        .unwrap();
+    crate::git::publication_flow::validate_parent_target(&f.cli, &f.child, &head, &f.root, &target)
+        .await
+        .unwrap();
+    git(
+        &f.root,
+        &[
+            "remote",
+            "set-url",
+            "origin",
+            "https://changed.invalid/root.git",
+        ],
+    );
+    assert!(
+        crate::git::publication_flow::validate_parent_target(
+            &f.cli, &f.child, &head, &f.root, &target
+        )
+        .await
+        .is_err()
+    );
+    git(
+        &f.root,
+        &["remote", "set-url", "origin", f.remote.to_str().unwrap()],
+    );
+    commit(&f.child, "note", "new local work");
+    assert!(
+        crate::git::publication_flow::validate_parent_target(
+            &f.cli, &f.child, &head, &f.root, &target
+        )
+        .await
+        .is_err()
+    );
+}
+
+#[tokio::test]
+async fn parent_conflict_preserves_published_child_and_allows_retry_after_resolution() {
+    let f = Fixture::new();
+    let other = f._temp.path().join("collaborator");
+    git(
+        f._temp.path(),
+        &["clone", f.remote.to_str().unwrap(), other.to_str().unwrap()],
+    );
+    git(&other, &["config", "user.name", "Fixture"]);
+    git(&other, &["config", "user.email", "fixture@example.test"]);
+    commit(&other, "note", "remote root");
+    git(&other, &["push", "origin", "main"]);
+    commit(&f.root, "note", "local root");
+    commit(&f.child, "note", "published child");
+    git(&f.child, &["push", "origin", "main"]);
+    let head = git(&f.child, &["rev-parse", "HEAD"]);
+    let outcome = crate::git::publication_flow::parent_step_locked(
+        &f.cli,
+        &f.child,
+        &f.root,
+        &head,
+        false,
+        true,
+        Ok(()),
+    )
+    .await;
+    let outcome = serde_json::to_value(outcome).unwrap();
+    assert_eq!(outcome["result"]["type"], "conflict");
+    assert_eq!(outcome["pointer"], "local");
+    assert_eq!(git(&f.source, &["rev-parse", "main"]), head);
+    std::fs::write(f.root.join("note"), "resolved root").unwrap();
+    git(&f.root, &["add", "note"]);
+    git(&f.root, &["commit", "--no-edit"]);
+    let outcome = crate::git::publication_flow::parent_step_locked(
+        &f.cli,
+        &f.child,
+        &f.root,
+        &head,
+        false,
+        true,
+        Ok(()),
+    )
+    .await;
+    assert_eq!(
+        serde_json::to_value(outcome).unwrap()["pointer"],
+        "published"
+    );
+    assert_eq!(git(&f.child, &["rev-parse", "HEAD"]), head);
+}

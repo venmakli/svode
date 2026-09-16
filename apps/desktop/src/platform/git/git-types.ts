@@ -13,6 +13,7 @@ export interface FileGitStatusDto {
 }
 
 export interface GitStatusDto {
+  parent?: ParentPublicationDto;
   branch: string;
   ahead: number;
   behind: number;
@@ -60,6 +61,7 @@ export type SyncResultDto =
 export interface ParentPublicationDto {
   repository: string;
   pointer: "pending" | "local" | "published";
+  target?: string;
   result?: SyncResultDto;
   error?: { kind: string; [key: string]: unknown };
   policySkipped?: boolean;
@@ -75,4 +77,10 @@ export interface CloneProgressDto {
   spacePath: string;
   phase: string;
   percent: number;
+}
+
+export interface PublicationStatusDto {
+  childHead: string;
+  child: "local" | "published" | "unpublished";
+  parent: ParentPublicationDto;
 }

@@ -2,12 +2,14 @@ import type {
   GitAuthChallengeDto,
   GitAvailabilityDto,
   GitStatusDto,
+  ParentPublicationDto,
   SyncResultDto,
 } from "@/platform/git/git-types";
 import type {
   GitAuthChallenge,
   GitAvailability,
   GitStatus,
+  ParentPublication,
   SyncResult,
 } from "../model";
 
@@ -46,12 +48,7 @@ export function toSyncResult(dto: SyncResultDto): SyncResult {
         ...(dto.publishedHead ? { publishedHead: dto.publishedHead } : {}),
         ...(dto.parent
           ? {
-              parent: {
-                ...dto.parent,
-                ...(dto.parent.result
-                  ? { result: toSyncResult(dto.parent.result) }
-                  : { result: undefined }),
-              },
+              parent: toParentPublication(dto.parent),
             }
           : {}),
       };
@@ -77,4 +74,10 @@ export function toGitAuthChallenge(dto: GitAuthChallengeDto): GitAuthChallenge {
     providerHint: dto.providerHint,
     detail: dto.detail,
   };
+}
+
+export function toParentPublication(
+  dto: ParentPublicationDto,
+): ParentPublication {
+  return { ...dto, result: dto.result ? toSyncResult(dto.result) : undefined };
 }

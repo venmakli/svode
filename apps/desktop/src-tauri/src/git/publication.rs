@@ -503,3 +503,106 @@ async fn prove(cli: &GitCli, repo: &Path, snapshot: &Snapshot) -> Result<NativeE
 #[cfg(test)]
 #[path = "publication_tests.rs"]
 mod tests;
+
+/// Read fresh remote history without pushing, probing capability or changing user refs.
+pub(crate) async fn head_is_published(
+    cli: &GitCli,
+    repo: &Path,
+    expected: &str,
+) -> Result<bool, AppError> {
+    let branch = super::ops::current_branch(cli, repo).await?;
+    if branch == "HEAD" {
+        return Ok(false);
+    }
+    let configured = cli
+        .exec(
+            repo,
+            &["config", "--get", &format!("branch.{branch}.remote")],
+        )
+        .await?;
+    let remote = if configured.exit_code == 0 {
+        configured.stdout.trim()
+    } else {
+        "origin"
+    };
+    if remote == "." {
+        return Ok(false);
+    }
+    let merge = cli
+        .exec(
+            repo,
+            &["config", "--get", &format!("branch.{branch}.merge")],
+        )
+        .await?;
+    let reference = if merge.exit_code == 0 {
+        merge.stdout.trim().to_owned()
+    } else {
+        format!("refs/heads/{branch}")
+    };
+    let urls = sensitive(cli, repo, &["remote", "get-url", "--all", remote]).await?;
+    if urls.exit_code != 0 || urls.stdout.lines().count() != 1 {
+        return Ok(false);
+    }
+    let url = urls.stdout.trim();
+    let url = if !url.contains(':') && Path::new(url).is_relative() {
+        repo.join(url).to_string_lossy().into_owned()
+    } else {
+        url.to_owned()
+    };
+    let temp = tempfile::tempdir()?;
+    let proof = temp.path().join("proof");
+    let clone = sensitive(
+        cli,
+        repo,
+        &[
+            "clone",
+            "--shared",
+            "--no-checkout",
+            "--",
+            &repo.to_string_lossy(),
+            &proof.to_string_lossy(),
+        ],
+    )
+    .await?;
+    if clone.exit_code != 0 {
+        return Err(blocked(
+            repo,
+            None,
+            PublicationBlockReason::SourceUnavailable,
+        ));
+    }
+    let fetched = sensitive(
+        cli,
+        &proof,
+        &[
+            "fetch",
+            "--no-tags",
+            "--no-recurse-submodules",
+            "--",
+            &url,
+            &reference,
+        ],
+    )
+    .await?;
+    if fetched.exit_code != 0 {
+        return Err(blocked(
+            repo,
+            None,
+            PublicationBlockReason::SourceUnavailable,
+        ));
+    }
+    let out = cli
+        .exec(
+            &proof,
+            &["merge-base", "--is-ancestor", expected, "FETCH_HEAD"],
+        )
+        .await?;
+    if out.exit_code > 1 {
+        return Err(blocked(
+            repo,
+            None,
+            PublicationBlockReason::RevisionUnavailable,
+        ));
+    }
+    Ok(out.exit_code == 0 && super::ops::repository_head_oid(cli, repo).await? == expected)
+}

@@ -6,6 +6,7 @@ import {
 } from "@/platform/native/events";
 import type {
   CloneProgressDto,
+  PublicationStatusDto,
   GitAvailabilityDto,
   GitStatusDto,
   GitUserPolicyDto,
@@ -120,8 +121,8 @@ export function commitGitPaths(input: {
   }).catch(rethrowGitSaveError);
 }
 
-export function continueGitResolve(spacePath: string): Promise<void> {
-  return invokeCommand<void>("git_resolve_continue", { spacePath });
+export function continueGitResolve(spacePath: string): Promise<SyncResultDto> {
+  return invokeCommand<SyncResultDto>("git_resolve_continue", { spacePath });
 }
 
 export function publishGit(spacePath: string): Promise<GitStatusDto> {
@@ -214,4 +215,28 @@ export function getUnpushedCommits(
   return invokeCommand<UnpushedCommitDto[]>("git_unpushed_commits", {
     spacePath,
   });
+}
+
+export function getGitPublicationStatus(spacePath: string) {
+  return invokeCommand<PublicationStatusDto | null>("git_publication_status", {
+    spacePath,
+  });
+}
+
+export function retryGitParent(input: {
+  spacePath: string;
+  expectedHead: string;
+  expectedParent: string;
+  expectedTarget: string;
+}) {
+  return invokeCommand<PublicationStatusDto>("git_retry_parent", input);
+}
+
+export function listenGitPublication(
+  handler: (event: PublicationStatusDto & { spacePath: string }) => void,
+) {
+  return listen<PublicationStatusDto & { spacePath: string }>(
+    "git:publication",
+    (event) => handler(event.payload),
+  );
 }

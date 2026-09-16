@@ -55,9 +55,6 @@ pub enum AppError {
         path_sample: Option<String>,
     },
 
-    #[error("Content saved; parent pointer remains pending: {cause}")]
-    GitSavePartial { cause: Box<AppError> },
-
     #[error("Git conflict: {0}")]
     GitConflict(String),
 
@@ -126,7 +123,6 @@ impl AppError {
             AppError::GitPublicationBlocked { .. } => "git_publication_blocked",
             AppError::GitBranchBlocked { .. } => "git_branch_blocked",
             AppError::GitSaveFailed { .. } => "git_save_failed",
-            AppError::GitSavePartial { .. } => "git_save_partial",
             AppError::GitConflict(_) => "git_conflict",
             AppError::GitAuthRequired(_) => "git_auth_required",
             AppError::RepositoryAccessDenied { .. } => "repository_access_denied",
@@ -159,9 +155,6 @@ impl Serialize for AppError {
             }
             AppError::GitSaveFailed { stage, reason, exit_code, path_count, path_sample } => {
                 serde_json::json!({ "kind": self.kind(), "stage": stage, "reason": reason, "exitCode": exit_code, "pathCount": path_count, "pathSample": path_sample }).serialize(serializer)
-            }
-            AppError::GitSavePartial { cause } => {
-                serde_json::json!({ "kind": self.kind(), "childCommitted": true, "parentPointer": "pending", "cause": cause }).serialize(serializer)
             }
             AppError::RepositoryAccessDenied {
                 repository_id,

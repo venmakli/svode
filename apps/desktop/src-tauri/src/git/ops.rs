@@ -1522,26 +1522,6 @@ fn extract_block<'a>(
 
 // --- Routed commit ---
 
-/// After committing inside a submodule, update the pointer in the parent repo.
-pub async fn submodule_update_pointer(
-    cli: &GitCli,
-    root_path: &Path,
-    space_path: &Path,
-) -> Result<(), AppError> {
-    let space_folder = space_path
-        .file_name()
-        .map(|n| n.to_string_lossy().to_string())
-        .unwrap_or_default();
-    commit_exact_path(
-        cli,
-        root_path,
-        &space_folder,
-        &format!("Update {}", space_folder),
-    )
-    .await?;
-    Ok(())
-}
-
 /// Current branch name (via `git rev-parse --abbrev-ref HEAD`).
 pub async fn current_branch(cli: &GitCli, space_dir: &Path) -> Result<String, AppError> {
     let out = cli

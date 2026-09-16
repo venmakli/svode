@@ -1,4 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useParentPublication } from "./use-parent-publication";
+import { isFullSyncSuccess } from "../model/publication";
+import { refreshGitPublication } from "../api/git-publication-actions";
+import { useCallback, useEffect, useMemo, useState, useRef } from "react";
 import { toast } from "sonner";
 import {
   getGitOutgoingCommits,
@@ -21,6 +24,7 @@ import { selectActiveSpacePath, useSpace } from "@/features/space";
 import * as m from "@/paraglide/messages.js";
 
 export interface GitSyncWidget {
+  parent: ReturnType<typeof useParentPublication>;
   visible: boolean;
   open: boolean;
   setOpen: (open: boolean) => void;
@@ -49,6 +53,20 @@ export interface GitSyncWidget {
 
 export function useGitSyncWidget(): GitSyncWidget {
   const spacePath = useSpace(selectActiveSpacePath);
+  const parent = useParentPublication(spacePath);
+  const activePath = useRef(spacePath);
+  useEffect(() => {
+    activePath.current = spacePath;
+    setOpen(false);
+    setAuthOpenState(false);
+    setAuthSaving(false);
+    setAuthChallenge(null);
+    setAuthError(null);
+    setCommits([]);
+    setRemoteChecked(false);
+    setCheckingRemote(false);
+    setLoadingCommits(false);
+  }, [spacePath]);
   const activeRootPath = useSpace((state) => state.activeRootPath);
   const status = useGitStore((state) =>
     spacePath ? state.statuses[spacePath] : undefined,
@@ -85,14 +103,15 @@ export function useGitSyncWidget(): GitSyncWidget {
     setCheckingRemote(true);
     try {
       const next = await refreshGitSyncRemoteStatus(spacePath);
+      if (activePath.current !== spacePath) return null;
       setRemoteChecked(true);
       return next;
     } catch (err) {
       console.debug("git fetch/status failed:", err);
-      setRemoteChecked(false);
+      if (activePath.current === spacePath) setRemoteChecked(false);
       return null;
     } finally {
-      setCheckingRemote(false);
+      if (activePath.current === spacePath) setCheckingRemote(false);
     }
   }, [spacePath]);
 
@@ -107,6 +126,7 @@ export function useGitSyncWidget(): GitSyncWidget {
 
     try {
       const config = await getGitSyncWidgetConfig(spacePath, activeRootPath);
+      if (activePath.current !== spacePath) return;
       setHasRemote(config.hasRemote);
       setAutoSyncState(config.autoSync);
       if (config.hasRemote) {
@@ -116,6 +136,7 @@ export function useGitSyncWidget(): GitSyncWidget {
         setCommits([]);
       }
     } catch (err) {
+      if (activePath.current !== spacePath) return;
       console.debug("git sync widget config failed:", err);
       setHasRemote(false);
       setAutoSyncState(false);
@@ -138,8 +159,17 @@ export function useGitSyncWidget(): GitSyncWidget {
       if (cancelled) return;
       if (committedSpacePath !== spacePath) return;
       void refreshRemote();
+      void refreshGitPublication(spacePath).catch(() => {});
       if (open) {
-        void loadOutgoingCommits(spacePath, setCommits, setLoadingCommits);
+        void loadOutgoingCommits(
+          spacePath,
+          (value) => {
+            if (activePath.current === spacePath) setCommits(value);
+          },
+          (value) => {
+            if (activePath.current === spacePath) setLoadingCommits(value);
+          },
+        );
       }
     }).then((unlisten) => {
       if (cancelled) unlisten();
@@ -156,18 +186,29 @@ export function useGitSyncWidget(): GitSyncWidget {
     if (!spacePath) return;
 
     setOpen(true);
+    void refreshGitPublication(spacePath).catch(() => {});
     const freshStatus = await refreshRemote();
+    if (activePath.current !== spacePath) return;
     if (!freshStatus) {
       setCommits([]);
       return;
     }
-    await loadOutgoingCommits(spacePath, setCommits, setLoadingCommits);
+    await loadOutgoingCommits(
+      spacePath,
+      (value) => {
+        if (activePath.current === spacePath) setCommits(value);
+      },
+      (value) => {
+        if (activePath.current === spacePath) setLoadingCommits(value);
+      },
+    );
   }, [refreshRemote, spacePath]);
 
   const syncNow = useCallback(async () => {
     if (!spacePath) return;
 
     const outcome = await syncGitNow(spacePath);
+    if (activePath.current !== spacePath) return;
     if (outcome.type === "AuthRequired") {
       if (outcome.challenge) {
         setAuthChallenge(outcome.challenge);
@@ -179,7 +220,7 @@ export function useGitSyncWidget(): GitSyncWidget {
       return;
     }
     notifyGitSyncOutcome(outcome);
-    if (outcome.type === "Success") {
+    if (isFullSyncSuccess(outcome)) {
       toast.success(m.git_sync_success());
       setOpen(false);
       setCommits([]);
@@ -206,8 +247,10 @@ export function useGitSyncWidget(): GitSyncWidget {
           username: credentials.username,
           password: credentials.password,
         });
+        if (activePath.current !== spacePath) return;
         const outcome = await syncGitNow(spacePath);
-        if (outcome.type === "Success") {
+        if (activePath.current !== spacePath) return;
+        if (isFullSyncSuccess(outcome)) {
           toast.success(m.git_sync_success());
           setAuthOpenState(false);
           setAuthChallenge(null);
@@ -226,9 +269,10 @@ export function useGitSyncWidget(): GitSyncWidget {
         setAuthChallenge(null);
       } catch (err) {
         console.error("git credential save/retry failed:", err);
-        setAuthError(m.git_remote_auth_save_failed());
+        if (activePath.current === spacePath)
+          setAuthError(m.git_remote_auth_save_failed());
       } finally {
-        setAuthSaving(false);
+        if (activePath.current === spacePath) setAuthSaving(false);
       }
     },
     [authChallenge, authSaving, refreshRemote, spacePath],
@@ -263,7 +307,8 @@ export function useGitSyncWidget(): GitSyncWidget {
   );
 
   return {
-    visible: !!spacePath && (hasRemote || !!syncError),
+    parent,
+    visible: !!spacePath && (hasRemote || !!syncError || !!parent.publication),
     open,
     setOpen,
     branch: branchLabel(status),

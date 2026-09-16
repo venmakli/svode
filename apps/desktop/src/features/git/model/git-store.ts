@@ -4,6 +4,7 @@ import type {
   FileGitStatus,
   GitCloneProgress,
   GitStatus,
+  GitPublicationStatus,
 } from "./types";
 import {
   containerPathForNodePath,
@@ -21,6 +22,11 @@ import {
  * - `syncError` is set when sync fails (auth/network) → indicator goes to `✕`.
  */
 interface GitState {
+  publications: Record<string, GitPublicationStatus>;
+  setPublication: (
+    path: string,
+    publication: GitPublicationStatus | null,
+  ) => void;
   statuses: Record<string, GitStatus>;
   statusErrors: Record<string, boolean>;
   syncing: Record<string, boolean>;
@@ -50,6 +56,14 @@ export const useGitStore = create<GitState>((set) => {
   const refreshVersions: Record<string, number> = {};
 
   return {
+    publications: {},
+    setPublication: (path, publication) =>
+      set((s) => {
+        const publications = { ...s.publications };
+        if (publication) publications[path] = publication;
+        else delete publications[path];
+        return { publications };
+      }),
     statuses: {},
     statusErrors: {},
     syncing: {},
@@ -89,6 +103,7 @@ export const useGitStore = create<GitState>((set) => {
     clear: (spacePath) =>
       set((s) => {
         delete refreshVersions[spacePath];
+        const { [spacePath]: _rmPublication, ...publications } = s.publications;
         const { [spacePath]: _rmStatus, ...statuses } = s.statuses;
         const { [spacePath]: _rmStatusError, ...statusErrors } = s.statusErrors;
         const { [spacePath]: _rmSync, ...syncing } = s.syncing;
@@ -96,6 +111,7 @@ export const useGitStore = create<GitState>((set) => {
         const { [spacePath]: _rmBranchError, ...branchError } = s.branchError;
         const { [spacePath]: _rmClone, ...cloning } = s.cloning;
         return {
+          publications,
           statuses,
           statusErrors,
           syncing,

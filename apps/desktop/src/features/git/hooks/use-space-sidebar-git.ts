@@ -3,7 +3,6 @@ import { toast } from "sonner";
 import * as m from "@/paraglide/messages.js";
 import { useRepositoryAccessPreflight } from "./use-repository-access-preflight";
 import { commitAllSpace } from "../api/git-actions";
-import { notifyGitSyncOutcome } from "../effects/git-notifications";
 import { useGitStore, type GitCloneProgress } from "../model";
 import { useGitWatch } from "./use-git-watch";
 
@@ -32,9 +31,7 @@ export function useSpaceSidebarGit(
   const commitAll = useCallback(() => {
     const run = async () => {
       try {
-        await commitAllSpace(spacePath, projectPath, {
-          onSyncOutcome: notifyGitSyncOutcome,
-        });
+        await commitAllSpace(spacePath, projectPath);
         setPending(false);
       } catch (error) {
         setPending(true);

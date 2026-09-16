@@ -58,6 +58,7 @@ export type SyncResult =
 export interface ParentPublication {
   repository: string;
   pointer: "pending" | "local" | "published";
+  target?: string;
   result?: SyncResult;
   error?: { kind: string; [key: string]: unknown };
   policySkipped?: boolean;
@@ -91,4 +92,10 @@ export interface GitUnpushedCommit {
   message: string;
   author: string;
   timestamp: string;
+}
+
+export interface GitPublicationStatus {
+  childHead: string;
+  child: "local" | "published" | "unpublished";
+  parent: ParentPublication;
 }

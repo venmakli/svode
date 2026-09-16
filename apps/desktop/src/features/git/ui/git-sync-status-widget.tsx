@@ -1,3 +1,4 @@
+import { GitPublicationResult } from "./git-publication-result";
 import { AlertTriangle, GitBranch, RefreshCw } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -27,7 +28,10 @@ export function GitSyncStatusWidget() {
 
   if (!sync.visible) return null;
 
-  const busy = sync.syncing || sync.checkingRemote;
+  const busy = sync.syncing || sync.checkingRemote || sync.parent.busy;
+  const pendingParent =
+    sync.parent.publication &&
+    sync.parent.publication.parent.pointer !== "published";
   const hasSyncError = !!sync.syncError;
   const tooltip = hasSyncError
     ? m.git_status_error()
@@ -63,7 +67,7 @@ export function GitSyncStatusWidget() {
             >
               {busy ? (
                 <RefreshCw data-icon="inline-start" className="animate-spin" />
-              ) : hasSyncError ? (
+              ) : hasSyncError || pendingParent ? (
                 <AlertTriangle data-icon="inline-start" />
               ) : null}
               <span>{counterLabel(sync.incoming)}↓</span>
@@ -83,7 +87,13 @@ export function GitSyncStatusWidget() {
             </DialogDescription>
           </DialogHeader>
 
-          <div className="flex min-w-0 flex-col gap-3">
+          <div className="flex min-w-0 flex-col gap-3 max-h-[65vh] overflow-y-auto">
+            {sync.parent.publication && (
+              <GitPublicationResult
+                publication={sync.parent.publication}
+                error={sync.parent.error}
+              />
+            )}
             {hasSyncError && (
               <Alert variant="destructive">
                 <AlertTriangle />
@@ -166,20 +176,37 @@ export function GitSyncStatusWidget() {
           </div>
 
           <DialogFooter className="min-w-0">
-            <Button
-              className="w-full sm:w-auto"
-              onClick={sync.syncNow}
-              disabled={sync.syncing}
-            >
-              {sync.syncing && (
-                <RefreshCw data-icon="inline-start" className="animate-spin" />
-              )}
-              {m.git_sync_action()}
-            </Button>
+            {sync.parent.action !== "none" && (
+              <Button
+                className="w-full sm:w-auto"
+                onClick={
+                  sync.parent.action === "sync" ? sync.syncNow : sync.parent.run
+                }
+                disabled={busy}
+              >
+                {sync.syncing && (
+                  <RefreshCw
+                    data-icon="inline-start"
+                    className="animate-spin"
+                  />
+                )}
+                {sync.parent.action === "sync"
+                  ? m.git_sync_action()
+                  : sync.parent.label}
+              </Button>
+            )}
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
+      <GitRemoteAuthDialog
+        open={sync.parent.authOpen}
+        challenge={sync.parent.challenge}
+        saving={sync.parent.busy}
+        error={sync.parent.error}
+        onOpenChange={sync.parent.setAuthOpen}
+        onSaveAndRetry={sync.parent.saveAuthAndRetry}
+      />
       <GitRemoteAuthDialog
         open={sync.authOpen}
         challenge={sync.authChallenge}

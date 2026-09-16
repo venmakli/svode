@@ -196,7 +196,6 @@ fn drop_legacy_shared_git_policy(config_target: &Path) {
 pub struct GitState {
     pub(crate) cli: Option<GitCli>,
     locks: tokio::sync::Mutex<HashMap<PathBuf, Arc<tokio::sync::Mutex<()>>>>,
-    pub(crate) pending_manual_pointers: tokio::sync::Mutex<HashMap<String, String>>,
 }
 
 impl GitState {
@@ -211,7 +210,6 @@ impl GitState {
         Self {
             cli,
             locks: tokio::sync::Mutex::new(HashMap::new()),
-            pending_manual_pointers: tokio::sync::Mutex::new(HashMap::new()),
         }
     }
 
@@ -493,7 +491,7 @@ pub async fn git_commit_file(
     project_path: Option<String>,
     space_path: String,
     file_path: String,
-) -> Result<GitStatus, AppError> {
+) -> Result<super::publication_flow::SaveReport, AppError> {
     let path = PathBuf::from(&space_path);
     let project = project_path
         .filter(|path| !path.is_empty())
@@ -509,7 +507,10 @@ pub async fn git_commit_file(
                 SystemCommitKind::AgentInstructions,
             )
             .await?;
-        return super::ops::status(state.cli()?, &path).await;
+        return Ok(super::publication_flow::SaveReport {
+            status: super::ops::status(state.cli()?, &path).await?,
+            parent: None,
+        });
     }
     let result = super::manual_save::save(
         &app,
@@ -531,7 +532,7 @@ pub async fn git_commit_all(
     autocommit: State<'_, Arc<AutocommitService>>,
     project_path: Option<String>,
     space_path: String,
-) -> Result<GitStatus, AppError> {
+) -> Result<super::publication_flow::SaveReport, AppError> {
     let path = PathBuf::from(&space_path);
     let project = project_path
         .filter(|path| !path.is_empty())
@@ -550,7 +551,7 @@ pub async fn git_commit_paths(
     project_path: Option<String>,
     space_path: String,
     file_paths: Vec<String>,
-) -> Result<GitStatus, AppError> {
+) -> Result<super::publication_flow::SaveReport, AppError> {
     let path = PathBuf::from(&space_path);
     let project = project_path
         .filter(|path| !path.is_empty())
@@ -911,4 +912,30 @@ mod tests {
         assert_eq!(value["accessReason"], "mutation_plan_changed");
         assert!(value.get("message").is_none());
     }
+}
+
+#[tauri::command]
+pub async fn git_publication_status(
+    app: AppHandle,
+    space_path: String,
+) -> Result<Option<super::publication_flow::PublicationStatus>, AppError> {
+    super::publication_flow::inspect(&app, Path::new(&space_path)).await
+}
+
+#[tauri::command]
+pub async fn git_retry_parent(
+    app: AppHandle,
+    space_path: String,
+    expected_head: String,
+    expected_parent: String,
+    expected_target: String,
+) -> Result<super::publication_flow::PublicationStatus, AppError> {
+    super::publication_flow::retry_parent(
+        &app,
+        Path::new(&space_path),
+        &expected_head,
+        Path::new(&expected_parent),
+        &expected_target,
+    )
+    .await
 }

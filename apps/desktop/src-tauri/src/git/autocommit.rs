@@ -1100,7 +1100,10 @@ async fn finish_commit(
         Ok(false)
     };
     schedule_committed_sync(app, repo);
-    if pointer? {
+    if pointer.unwrap_or_else(|error| {
+        tracing::warn!(kind = error.kind(), "child saved; project pointer pending");
+        false
+    }) {
         emit_committed(app, space, project);
         // With child auto-sync enabled, its pipeline owns the parent step.
         // Otherwise root policy may publish only already available pointers.

@@ -12,7 +12,6 @@ import {
 import { notifyGitSyncOutcome } from "./effects/git-notifications";
 
 export type { GitCommitResult } from "./api/git-actions";
-export { retryPendingGitSave } from "./api/git-actions";
 export { registerPageSaveOwner } from "./model/page-save-owner";
 export {
   dirtyPathsForGitSaveScope,
@@ -25,7 +24,7 @@ export {
   type GitSaveScopeTreeNode,
 } from "./model";
 
-const notifyAutoSync: GitAutoSyncOptions = {
+const notifyResolve: GitAutoSyncOptions = {
   onSyncOutcome: notifyGitSyncOutcome,
 };
 
@@ -34,19 +33,14 @@ export function commitFileAndMaybeSync(
   filePath: string,
   projectPath?: string,
 ): Promise<GitCommitResult | null> {
-  return commitFileAndMaybeSyncAction(
-    spacePath,
-    filePath,
-    projectPath,
-    notifyAutoSync,
-  );
+  return commitFileAndMaybeSyncAction(spacePath, filePath, projectPath);
 }
 
 export function commitAllSpace(
   spacePath: string,
   projectPath?: string,
 ): Promise<GitCommitResult | null> {
-  return commitAllSpaceAction(spacePath, projectPath, notifyAutoSync);
+  return commitAllSpaceAction(spacePath, projectPath);
 }
 
 export function commitSaveScopeAndMaybeSync(
@@ -60,12 +54,11 @@ export function commitSaveScopeAndMaybeSync(
     scope,
     extraPaths,
     projectPath,
-    notifyAutoSync,
   );
 }
 
 export function continueGitResolve(spacePath: string): Promise<void> {
-  return continueGitResolveAction(spacePath, notifyAutoSync);
+  return continueGitResolveAction(spacePath, notifyResolve);
 }
 
 export async function syncSpace(spacePath: string): Promise<void> {

@@ -1,3 +1,4 @@
+import { listenPublicationOutcomes } from "../api/git-publication-actions";
 import { useEffect, useRef } from "react";
 import {
   getSpaceSnapshot,
@@ -20,6 +21,18 @@ import {
 export function useAppGitFocus() {
   const activePath = useSpace((s) => selectActiveSpacePath(s));
   const activeRootPath = useSpace((s) => s.activeRootPath);
+  useEffect(() => {
+    let disposed = false;
+    let stop: (() => void) | undefined;
+    void listenPublicationOutcomes().then((unlisten) => {
+      if (disposed) unlisten();
+      else stop = unlisten;
+    });
+    return () => {
+      disposed = true;
+      stop?.();
+    };
+  }, []);
   const lastSynced = useRef<string | null>(null);
 
   // Silent sync-on-open for the active space only.

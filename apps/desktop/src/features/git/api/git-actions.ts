@@ -1,3 +1,7 @@
+import {
+  recordSavedPublication,
+  recordSyncPublication,
+} from "./git-publication-actions";
 import { gitBranchErrorMessage } from "./git-branch-error";
 import { useGitStore } from "../model";
 import {
@@ -24,34 +28,9 @@ export interface GitCommitResult {
   committedPaths: string[];
 }
 
-const pointerRetries = new Map<
-  string,
-  { path: string | null; run: () => Promise<GitCommitResult | null> }
->();
-
-export function retryPendingGitSave(spacePath: string, path?: string) {
-  const pending = pointerRetries.get(spacePath);
-  if (!pending || (path !== undefined && pending.path !== path)) return null;
-  return pending.run();
-}
-
-function retainPointerRetry(
-  error: unknown,
-  spacePath: string,
-  path: string | null,
-  run: () => Promise<GitCommitResult | null>,
-) {
-  const branchMessage = gitBranchErrorMessage(error);
-  if (branchMessage)
-    useGitStore.getState().setBranchError(spacePath, branchMessage);
-  if (
-    error &&
-    typeof error === "object" &&
-    "kind" in error &&
-    error.kind === "git_save_partial"
-  ) {
-    pointerRetries.set(spacePath, { path, run });
-  }
+function retainBranchError(error: unknown, spacePath: string) {
+  const message = gitBranchErrorMessage(error);
+  if (message) useGitStore.getState().setBranchError(spacePath, message);
 }
 
 export interface GitAutoSyncOptions {
@@ -72,10 +51,8 @@ export function saveGitRemoteCredentials({
   return saveGitHttpCredentials({ remoteUrl, username, password });
 }
 
-function runAutoSync(spacePath: string, options?: GitAutoSyncOptions): void {
-  void syncSpace(spacePath, true).then((outcome) => {
-    options?.onSyncOutcome?.(outcome);
-  });
+function runAutoSync(spacePath: string): void {
+  void syncSpace(spacePath, true);
 }
 
 /**
@@ -107,10 +84,11 @@ export async function syncSpace(
   git.setBranchError(spacePath, null);
   try {
     const result = toSyncResult(await syncGit(spacePath, background));
+    recordSyncPublication(spacePath, result);
     switch (result.type) {
       case "Success":
         // Refresh status to clear any local indicators (file `↻`).
-        await refreshGitStatus(spacePath);
+        await refreshGitStatus(spacePath).catch(() => {});
         return result;
       case "NoRemote":
         // Silent — no remote configured is a normal state.
@@ -145,17 +123,16 @@ export async function commitFileAndMaybeSync(
   spacePath: string,
   filePath: string,
   projectPath?: string,
-  options?: GitAutoSyncOptions,
 ): Promise<GitCommitResult | null> {
   let result: GitCommitResult;
   try {
-    const status = toGitStatus(
-      await commitGitFile({
-        projectPath,
-        spacePath,
-        filePath,
-      }),
-    );
+    const saved = await commitGitFile({
+      projectPath,
+      spacePath,
+      filePath,
+    });
+    recordSavedPublication(spacePath, saved);
+    const status = toGitStatus(saved);
     useGitStore.getState().applyStatus(spacePath, status);
     result = {
       status,
@@ -165,16 +142,13 @@ export async function commitFileAndMaybeSync(
     };
   } catch (err) {
     console.error("git_commit_file failed:", err);
-    retainPointerRetry(err, spacePath, filePath, () =>
-      commitFileAndMaybeSync(spacePath, filePath, projectPath, options),
-    );
+    retainBranchError(err, spacePath);
     await refreshGitStatus(spacePath);
     throw err;
   }
-  pointerRetries.delete(spacePath);
   useGitStore.getState().setBranchError(spacePath, null);
   if (await isAutoSyncEnabled(spacePath, projectPath)) {
-    runAutoSync(spacePath, options);
+    runAutoSync(spacePath);
   }
   return result;
 }
@@ -188,7 +162,6 @@ export async function commitFileAndMaybeSync(
 export async function commitAllSpace(
   spacePath: string,
   projectPath?: string,
-  options?: GitAutoSyncOptions,
 ): Promise<GitCommitResult | null> {
   const previousDirtyPaths =
     useGitStore
@@ -196,12 +169,12 @@ export async function commitAllSpace(
       .statuses[spacePath]?.files.map((file) => file.path) ?? [];
   let result: GitCommitResult;
   try {
-    const status = toGitStatus(
-      await commitGitAll({
-        projectPath,
-        spacePath,
-      }),
-    );
+    const saved = await commitGitAll({
+      projectPath,
+      spacePath,
+    });
+    recordSavedPublication(spacePath, saved);
+    const status = toGitStatus(saved);
     useGitStore.getState().applyStatus(spacePath, status);
     const stillDirty = new Set(
       status.files.map((file) => normalizeGitStatusPath(file.path)),
@@ -214,16 +187,13 @@ export async function commitAllSpace(
     };
   } catch (err) {
     console.error("git_commit_all failed:", err);
-    retainPointerRetry(err, spacePath, null, () =>
-      commitAllSpace(spacePath, projectPath, options),
-    );
+    retainBranchError(err, spacePath);
     await refreshGitStatus(spacePath);
     throw err;
   }
-  pointerRetries.delete(spacePath);
   useGitStore.getState().setBranchError(spacePath, null);
   if (await isAutoSyncEnabled(spacePath, projectPath)) {
-    runAutoSync(spacePath, options);
+    runAutoSync(spacePath);
   }
   return result;
 }
@@ -232,7 +202,6 @@ export async function commitPathsAndMaybeSync(
   spacePath: string,
   filePaths: string[],
   projectPath?: string,
-  options?: GitAutoSyncOptions,
 ): Promise<GitCommitResult | null> {
   const targetPaths = uniqueGitStatusPaths(filePaths);
   if (targetPaths.length === 0) return null;
@@ -245,13 +214,13 @@ export async function commitPathsAndMaybeSync(
     [];
   let result: GitCommitResult;
   try {
-    const status = toGitStatus(
-      await commitGitPaths({
-        projectPath,
-        spacePath,
-        filePaths: targetPaths,
-      }),
-    );
+    const saved = await commitGitPaths({
+      projectPath,
+      spacePath,
+      filePaths: targetPaths,
+    });
+    recordSavedPublication(spacePath, saved);
+    const status = toGitStatus(saved);
     useGitStore.getState().applyStatus(spacePath, status);
     const stillDirty = new Set(status.files.map((file) => file.path));
     result = {
@@ -263,16 +232,13 @@ export async function commitPathsAndMaybeSync(
     };
   } catch (err) {
     console.error("git_commit_paths failed:", err);
-    retainPointerRetry(err, spacePath, null, () =>
-      commitPathsAndMaybeSync(spacePath, targetPaths, projectPath, options),
-    );
+    retainBranchError(err, spacePath);
     await refreshGitStatus(spacePath);
     throw err;
   }
-  pointerRetries.delete(spacePath);
   useGitStore.getState().setBranchError(spacePath, null);
   if (await isAutoSyncEnabled(spacePath, projectPath)) {
-    runAutoSync(spacePath, options);
+    runAutoSync(spacePath);
   }
   return result;
 }
@@ -282,10 +248,7 @@ export async function commitSaveScopeAndMaybeSync(
   scope: GitSaveScope,
   extraPaths: string[],
   projectPath?: string,
-  options?: GitAutoSyncOptions,
 ): Promise<GitCommitResult | null> {
-  const retry = retryPendingGitSave(spacePath);
-  if (retry) return retry;
   try {
     await refreshGitStatus(spacePath);
   } catch (err) {
@@ -297,16 +260,17 @@ export async function commitSaveScopeAndMaybeSync(
     scope,
     extraPaths,
   );
-  return commitPathsAndMaybeSync(spacePath, filePaths, projectPath, options);
+  return commitPathsAndMaybeSync(spacePath, filePaths, projectPath);
 }
 
 export async function continueGitResolve(
   spacePath: string,
   options?: GitAutoSyncOptions,
 ): Promise<void> {
-  await continuePlatformGitResolve(spacePath);
+  const outcome = toSyncResult(await continuePlatformGitResolve(spacePath));
+  recordSyncPublication(spacePath, outcome);
   await refreshGitStatus(spacePath);
-  runAutoSync(spacePath, options);
+  options?.onSyncOutcome?.(outcome);
 }
 
 /**
@@ -317,24 +281,7 @@ export async function syncOnOpen(
   projectPath?: string | null,
 ): Promise<void> {
   if (!(await isAutoSyncEnabled(spacePath, projectPath))) return;
-  const git = useGitStore.getState();
-  git.setSyncing(spacePath, true);
-  // Clear any stuck error from a previous session — a fresh open should
-  // re-evaluate the state rather than show the last failure forever.
-  git.setSyncError(spacePath, null);
-  git.setBranchError(spacePath, null);
-  try {
-    const result = toSyncResult(await syncGit(spacePath, true));
-    if (result.type === "Success") {
-      await refreshGitStatus(spacePath);
-    }
-  } catch (err) {
-    console.debug("sync on open failed (silent):", err);
-    const branchMessage = gitBranchErrorMessage(err);
-    if (branchMessage) git.setBranchError(spacePath, branchMessage);
-  } finally {
-    git.setSyncing(spacePath, false);
-  }
+  await syncSpace(spacePath, true);
 }
 
 function uniqueGitStatusPaths(paths: readonly string[]): string[] {

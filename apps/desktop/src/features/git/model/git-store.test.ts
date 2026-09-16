@@ -223,6 +223,8 @@ function gitState(files: GitStatus["files"]) {
 
 function gitStateBySpace(filesBySpace: Record<string, GitStatus["files"]>) {
   return {
+    publications: {},
+    setPublication: () => undefined,
     statuses: Object.fromEntries(
       Object.entries(filesBySpace).map(([spacePath, files]) => [
         spacePath,

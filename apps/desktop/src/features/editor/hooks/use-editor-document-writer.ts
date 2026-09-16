@@ -19,7 +19,6 @@ import {
   getGitSpaceStatus,
   refreshGitSpaceStatus,
   resolveGitSaveAllScope,
-  retryPendingGitSave,
   selfPathsForGitSaveScope,
   type GitSaveScope,
   type GitSaveScopeLabel,
@@ -314,12 +313,6 @@ export function useEditorDocumentWriter({
   const handleSave = useCallback(async () => {
     if (!editor || !currentDocument || !spacePath) return;
 
-    const retry = retryPendingGitSave(spacePath, currentDocument);
-    if (retry) {
-      clearCommittedMarkers(await retry);
-      return;
-    }
-
     const status = getGitSpaceStatus(spacePath);
     const currentSurfaceDirty =
       useEditorStore.getState().hasUnsaved(spacePath, currentDocument) ||
@@ -352,7 +345,6 @@ export function useEditorDocumentWriter({
     }
   }, [
     cancelDebounce,
-    clearCommittedMarkers,
     currentDocument,
     editor,
     onWriteAccessError,
@@ -364,11 +356,6 @@ export function useEditorDocumentWriter({
   const handleSaveAll = useCallback(
     async (explicitScope?: GitSaveScope) => {
       if (!spacePath) return;
-      const retry = retryPendingGitSave(spacePath);
-      if (retry) {
-        clearCommittedMarkers(await retry);
-        return;
-      }
       cancelDebounce();
       const saveAllScope =
         explicitScope ??
