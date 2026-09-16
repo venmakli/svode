@@ -105,6 +105,103 @@ fn commit(repo: &Path, file: &str, value: &str) {
 }
 
 #[tokio::test]
+async fn content_only_sync_does_not_contact_unchanged_submodule_sources() {
+    let f = Fixture::new();
+    commit(&f.root, "note", "documentation only");
+    let script = format!(
+        "#!/bin/sh\nexport GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1\nfor arg do\nif [ \"$arg\" = '{}' ]; then echo 'unchanged child must not be contacted' >&2; exit 99; fi\ndone\nexec git -c protocol.file.allow=always \"$@\"\n",
+        f.source.display()
+    );
+    std::fs::write(f.cli.git_path(), script).unwrap();
+    let result = super::super::sync::sync(&f.cli, &f.root).await;
+    assert!(
+        matches!(result, Ok(super::super::sync::SyncResult::Success { .. })),
+        "{result:?}"
+    );
+    assert_eq!(
+        git(&f.remote, &["rev-parse", "main"]),
+        git(&f.root, &["rev-parse", "HEAD"])
+    );
+}
+
+#[tokio::test]
+async fn source_proof_reuses_local_objects_without_downloading_known_history() {
+    let f = Fixture::new();
+    commit(&f.child, "note", "published child");
+    git(&f.child, &["push", "origin", "main"]);
+    f.pointer();
+    let report = f._temp.path().join("downloaded-objects");
+    let script = format!(
+        "#!/bin/sh\nexport GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1\ngit -c protocol.file.allow=always \"$@\"\nresult=$?\ncase \"$PWD\" in */source-*) case \" $* \" in *' fetch '*) git count-objects -v > '{}' ;; esac ;; esac\nexit $result\n",
+        report.display()
+    );
+    std::fs::write(f.cli.git_path(), script).unwrap();
+    assert_eq!(f.push().await.unwrap().exit_code, 0);
+    let objects = std::fs::read_to_string(report).unwrap();
+    assert!(objects.lines().any(|line| line == "count: 0"), "{objects}");
+    assert!(
+        objects.lines().any(|line| line == "in-pack: 0"),
+        "{objects}"
+    );
+}
+
+#[tokio::test]
+async fn merge_cannot_hide_an_unpublished_gitlink() {
+    let f = Fixture::new();
+    git(&f.root, &["checkout", "-b", "side"]);
+    commit(&f.child, "note", "unpublished merge child");
+    f.pointer();
+    git(&f.root, &["checkout", "main"]);
+    commit(&f.root, "note", "main documentation");
+    git(&f.root, &["merge", "--no-edit", "side"]);
+    let before = git(&f.remote, &["rev-parse", "main"]);
+    assert!(matches!(
+        f.push().await,
+        Err(AppError::GitPublicationBlocked {
+            reason: PublicationBlockReason::RevisionUnavailable,
+            ..
+        })
+    ));
+    assert_eq!(git(&f.remote, &["rev-parse", "main"]), before);
+}
+
+#[tokio::test]
+async fn source_proof_fetches_missing_remote_continuation_and_prunes_copied_local_refs() {
+    let f = Fixture::new();
+    commit(&f.child, "note", "published revision");
+    git(&f.child, &["push", "origin", "main"]);
+    f.pointer();
+    let external = f._temp.path().join("external");
+    git(
+        f._temp.path(),
+        &[
+            "clone",
+            f.source.to_str().unwrap(),
+            external.to_str().unwrap(),
+        ],
+    );
+    git(&external, &["config", "user.name", "Fixture"]);
+    git(&external, &["config", "user.email", "fixture@example.test"]);
+    commit(&external, "other", "remote continuation");
+    git(&external, &["push", "origin", "main"]);
+    let refs = git(&f.child, &["show-ref"]);
+    assert_eq!(f.push().await.unwrap().exit_code, 0);
+    assert_eq!(git(&f.child, &["show-ref"]), refs);
+
+    commit(&f.child, "note", "local only revision");
+    git(&f.child, &["branch", "local-only"]);
+    git(&f.child, &["tag", "local-only-tag"]);
+    f.pointer();
+    assert!(matches!(
+        f.push().await,
+        Err(AppError::GitPublicationBlocked {
+            reason: PublicationBlockReason::RevisionUnavailable,
+            ..
+        })
+    ));
+}
+
+#[tokio::test]
 async fn child_must_be_reachable_from_project_source_and_fresh_clone_works() {
     let f = Fixture::new();
     let before = git(&f.remote, &["rev-parse", "main"]);

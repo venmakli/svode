@@ -4,6 +4,9 @@ import {
 } from "@/platform/git/git-api";
 import { useGitStore, type GitStatus } from "../model";
 import { toGitStatus } from "./git-mappers";
+import { gitSyncErrorMessage } from "./git-sync-error";
+
+const remoteRefreshes = new Map<string, Promise<GitStatus>>();
 
 export async function getGitStatusSnapshot(
   spacePath: string,
@@ -23,17 +26,25 @@ export async function fetchGitStatusSnapshot(
   return toGitStatus(await fetchPlatformGitStatus(spacePath));
 }
 
-export async function refreshGitRemoteStatus(
-  spacePath: string,
-): Promise<GitStatus> {
+export function refreshGitRemoteStatus(spacePath: string): Promise<GitStatus> {
+  const active = remoteRefreshes.get(spacePath);
+  if (active) return active;
+  const refresh = fetchRemoteStatus(spacePath).finally(() => {
+    remoteRefreshes.delete(spacePath);
+  });
+  remoteRefreshes.set(spacePath, refresh);
+  return refresh;
+}
+
+async function fetchRemoteStatus(spacePath: string): Promise<GitStatus> {
   const git = useGitStore.getState();
   try {
     const status = await fetchGitStatusSnapshot(spacePath);
     git.applyStatus(spacePath, status);
-    git.setSyncError(spacePath, null);
+    git.setRemoteError(spacePath, null);
     return status;
   } catch (err) {
-    git.setSyncError(spacePath, String(err));
+    git.setRemoteError(spacePath, gitSyncErrorMessage(err));
     throw err;
   }
 }

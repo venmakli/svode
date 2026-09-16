@@ -79,5 +79,12 @@ export function toGitAuthChallenge(dto: GitAuthChallengeDto): GitAuthChallenge {
 export function toParentPublication(
   dto: ParentPublicationDto,
 ): ParentPublication {
-  return { ...dto, result: dto.result ? toSyncResult(dto.result) : undefined };
+  return {
+    ...dto,
+    error:
+      typeof dto.error === "string"
+        ? { kind: "git_command_failed", message: dto.error }
+        : dto.error,
+    result: dto.result ? toSyncResult(dto.result) : undefined,
+  };
 }

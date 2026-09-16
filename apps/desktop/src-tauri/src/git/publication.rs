@@ -340,13 +340,17 @@ async fn prove(cli: &GitCli, repo: &Path, snapshot: &Snapshot) -> Result<NativeE
     let mut sources = BTreeMap::new();
     let mut proven = BTreeSet::new();
     for commit in commits.lines() {
+        let (modules_changed, changed_links) = changed_gitlinks(cli, &proof, commit).await?;
+        if !modules_changed && changed_links.is_empty() {
+            continue;
+        }
         let tree = checked(cli, &proof, &["ls-tree", "-r", "-z", commit]).await?;
         let links: Vec<_> = tree
             .split('\0')
             .filter_map(|record| {
                 let (meta, path) = record.split_once('\t')?;
                 let oid = meta.strip_prefix("160000 commit ")?;
-                Some((path, oid))
+                (modules_changed || changed_links.contains(path)).then_some((path, oid))
             })
             .collect();
         if links.is_empty() {
@@ -419,13 +423,31 @@ async fn prove(cli: &GitCli, repo: &Path, snapshot: &Snapshot) -> Result<NativeE
             }
             if !sources.contains_key(&source) {
                 let source_repo = temp.path().join(format!("source-{}", sources.len()));
-                std::fs::create_dir(&source_repo)?;
-                checked(cli, &source_repo, &["init", "--bare"]).await?;
+                // Borrow existing objects for negotiation, without trusting the
+                // copied refs as publication evidence. Pruning the explicit
+                // refspecs below replaces them with this source's current refs.
+                let cloned = sensitive(
+                    cli,
+                    temp.path(),
+                    &[
+                        "clone",
+                        "--shared",
+                        "--bare",
+                        "--",
+                        &child.to_string_lossy(),
+                        &source_repo.to_string_lossy(),
+                    ],
+                )
+                .await?;
+                if cloned.exit_code != 0 {
+                    return Err(blocked(repo, Some(path), PublicationBlockReason::RevisionUnavailable));
+                }
                 let out = sensitive(
                     cli,
                     &source_repo,
                     &[
                         "fetch",
+                        "--prune",
                         "--no-tags",
                         "--no-recurse-submodules",
                         "--",
@@ -498,6 +520,47 @@ async fn prove(cli: &GitCli, repo: &Path, snapshot: &Snapshot) -> Result<NativeE
         }
     }
     Ok(evidence)
+}
+
+/// Inspect every parent of a merge, and the empty tree for an initial commit.
+/// A source edit revalidates the links in that historical .gitmodules context.
+async fn changed_gitlinks(
+    cli: &GitCli,
+    repo: &Path,
+    commit: &str,
+) -> Result<(bool, BTreeSet<String>), AppError> {
+    let diff = checked(
+        cli,
+        repo,
+        &[
+            "diff-tree",
+            "--root",
+            "-m",
+            "-r",
+            "--raw",
+            "-z",
+            "--no-commit-id",
+            "--no-renames",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--ignore-submodules=none",
+            commit,
+        ],
+    )
+    .await?;
+    let mut records = diff.split_terminator('\0');
+    let mut modules_changed = false;
+    let mut links = BTreeSet::new();
+    while let Some(meta) = records.next() {
+        let path = records
+            .next()
+            .ok_or_else(|| blocked(repo, None, PublicationBlockReason::Configuration))?;
+        modules_changed |= path == ".gitmodules";
+        if meta.split_whitespace().nth(1) == Some("160000") {
+            links.insert(path.to_owned());
+        }
+    }
+    Ok((modules_changed, links))
 }
 
 #[cfg(test)]

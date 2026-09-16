@@ -1,4 +1,3 @@
-import { useGitStore } from "../model";
 import { isAutoSyncEnabled, syncOnOpen, syncSpace } from "./git-actions";
 import { refreshGitRemoteStatus } from "./git-status-actions";
 
@@ -22,7 +21,6 @@ export async function refreshGitOnWindowFocus(
       await syncSpace(spacePath, true);
     }
   } catch (err) {
-    useGitStore.getState().setSyncError(spacePath, String(err));
     console.debug("git fetch/status on focus failed:", err);
   }
 }

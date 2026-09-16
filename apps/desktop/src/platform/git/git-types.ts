@@ -63,7 +63,7 @@ export interface ParentPublicationDto {
   pointer: "pending" | "local" | "published";
   target?: string;
   result?: SyncResultDto;
-  error?: { kind: string; [key: string]: unknown };
+  error?: string | { kind: string; [key: string]: unknown };
   policySkipped?: boolean;
 }
 

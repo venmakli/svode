@@ -32,7 +32,8 @@ export function GitSyncStatusWidget() {
   const pendingParent =
     sync.parent.publication &&
     sync.parent.publication.parent.pointer !== "published";
-  const hasSyncError = !!sync.syncError;
+  const error = sync.syncError ?? sync.remoteError;
+  const hasSyncError = !!error;
   const tooltip = hasSyncError
     ? m.git_status_error()
     : busy
@@ -97,11 +98,8 @@ export function GitSyncStatusWidget() {
             {hasSyncError && (
               <Alert variant="destructive">
                 <AlertTriangle />
-                <AlertDescription>
-                  {sync.branchError ??
-                    (sync.remoteChecked
-                      ? m.git_sync_error_description()
-                      : m.git_sync_remote_unchecked_description())}
+                <AlertDescription className="whitespace-pre-wrap break-words">
+                  {error}
                 </AlertDescription>
               </Alert>
             )}
@@ -129,7 +127,13 @@ export function GitSyncStatusWidget() {
                 {m.git_sync_outgoing_section()}
               </div>
               <div className="max-h-[240px] min-w-0 overflow-y-auto overflow-x-hidden rounded-md border">
-                {sync.loadingCommits ? (
+                {!sync.remoteChecked ? (
+                  <p className="p-4 text-sm text-muted-foreground">
+                    {sync.checkingRemote
+                      ? m.git_sync_remote_checking()
+                      : m.git_sync_outgoing_unchecked()}
+                  </p>
+                ) : sync.loadingCommits ? (
                   <p className="p-4 text-sm text-muted-foreground">
                     {m.git_unpushed_loading()}
                   </p>

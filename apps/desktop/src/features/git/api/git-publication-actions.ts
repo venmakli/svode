@@ -47,7 +47,19 @@ export function recordSyncPublication(path: string, outcome: GitSyncOutcome) {
   }
 }
 
-export async function refreshGitPublication(path: string) {
+const publicationRefreshes = new Map<string, Promise<void>>();
+
+export function refreshGitPublication(path: string): Promise<void> {
+  const active = publicationRefreshes.get(path);
+  if (active) return active;
+  const refresh = inspectPublication(path).finally(() => {
+    publicationRefreshes.delete(path);
+  });
+  publicationRefreshes.set(path, refresh);
+  return refresh;
+}
+
+async function inspectPublication(path: string) {
   const before = useGitStore.getState().publications[path];
   const dto = await getGitPublicationStatus(path);
   if (useGitStore.getState().publications[path] !== before) return;

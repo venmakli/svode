@@ -20,7 +20,11 @@ import {
   commitPathsAndMaybeSync,
   syncOnOpen,
   continueGitResolve,
+  syncSpace,
 } from "./git-actions";
+import { refreshGitRemoteStatus } from "./git-status-actions";
+import { gitSyncErrorMessage } from "./git-sync-error";
+import { toParentPublication } from "./git-mappers";
 import type { GitPublicationStatus, ParentPublication } from "../model/types";
 
 if (process.env.SVODE_PUBLICATION_TEST !== "1") {
@@ -58,6 +62,179 @@ if (process.env.SVODE_PUBLICATION_TEST !== "1") {
     tracking: "origin/main",
     files: [],
   };
+
+  test("sync cause survives successful and failed counter refreshes", async () => {
+    let failFetch = false;
+    let fetches = 0;
+    mockNativeIpc(async (command) => {
+      if (command === "git_sync")
+        throw {
+          kind: "git_publication_blocked",
+          reason: "revision_unavailable",
+          child: "develop",
+        };
+      if (command === "git_fetch_status") {
+        fetches++;
+        if (failFetch) throw "git fetch failed: connection timed out";
+        return status;
+      }
+      throw new Error(command);
+    });
+    try {
+      const outcome = await syncSpace(path);
+      expect(outcome.type).toBe("Failed");
+      const cause = useGitStore.getState().syncError[path];
+      expect(cause.includes("develop")).toBe(true);
+      expect(cause.includes("[object Object]")).toBe(false);
+      await Promise.all([
+        refreshGitRemoteStatus(path),
+        refreshGitRemoteStatus(path),
+      ]);
+      expect(fetches).toBe(1);
+      expect(useGitStore.getState().syncError[path]).toBe(cause);
+      failFetch = true;
+      await refreshGitRemoteStatus(path).catch(() => {});
+      expect(useGitStore.getState().syncError[path]).toBe(cause);
+      expect(
+        useGitStore
+          .getState()
+          .remoteError[path].includes("connection timed out"),
+      ).toBe(true);
+      failFetch = false;
+      await refreshGitRemoteStatus(path);
+      expect(useGitStore.getState().remoteError[path] === undefined).toBe(true);
+      expect(useGitStore.getState().syncError[path]).toBe(cause);
+    } finally {
+      clearNativeMocks();
+      useGitStore.getState().clear(path);
+    }
+  });
+
+  test("overlapping sync triggers share a flight and a later save is still published", async () => {
+    let release!: () => void;
+    let started!: () => void;
+    const entered = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    const pending = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let syncCalls = 0;
+    mockNativeIpc(async (command) => {
+      if (command === "git_sync") {
+        syncCalls++;
+        if (syncCalls === 1) {
+          started();
+          await pending;
+        }
+        return { type: "success", publishedHead: String(syncCalls) };
+      }
+      if (command === "git_status" || command === "git_commit_file")
+        return status;
+      if (command === "git_get_user_policy") return { autoSync: true };
+      throw new Error(command);
+    });
+    try {
+      const first = syncSpace(path, true);
+      await entered;
+      const second = syncSpace(path, true);
+      expect(first).toBe(second);
+      await commitFileAndMaybeSync(path, "README.md");
+      expect(syncCalls).toBe(1);
+      expect(useGitStore.getState().syncing[path]).toBe(true);
+      release();
+      await first;
+      expect(syncCalls).toBe(2);
+      expect(useGitStore.getState().syncing[path] === undefined).toBe(true);
+    } finally {
+      release();
+      clearNativeMocks();
+      useGitStore.getState().clear(path);
+    }
+  });
+
+  test("opening the project waits for a running child publication", async () => {
+    for (const rootPath of ["/project", "C:\\project"]) {
+      const childPath = `${rootPath}${rootPath.includes("\\") ? "\\" : "/"}child`;
+      let release!: () => void;
+      let started!: () => void;
+      const entered = new Promise<void>((resolve) => {
+        started = resolve;
+      });
+      const pending = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const calls: string[] = [];
+      mockNativeIpc(async (command, args) => {
+        if (command === "git_get_user_policy") return { autoSync: true };
+        if (command === "git_status") return status;
+        if (command === "git_sync") {
+          const target = String((args as { spacePath: string }).spacePath);
+          calls.push(target);
+          if (target === childPath) {
+            started();
+            await pending;
+          }
+          return { type: "success", publishedHead: "published" };
+        }
+        throw new Error(command);
+      });
+      try {
+        const child = syncSpace(childPath, true);
+        await entered;
+        const parent = syncOnOpen(rootPath, rootPath);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(calls).toEqual([childPath]);
+        release();
+        await Promise.all([child, parent]);
+        expect(calls).toEqual([childPath, rootPath]);
+      } finally {
+        release();
+        clearNativeMocks();
+        useGitStore.getState().clear(childPath);
+        useGitStore.getState().clear(rootPath);
+      }
+    }
+  });
+
+  test("publication reasons and parent Git stderr remain readable in both locales", async () => {
+    const locale = getLocale();
+    try {
+      for (const language of ["en", "ru"] as const) {
+        await setLocale(language, { reload: false });
+        const reasons = new Set<string>();
+        for (const reason of [
+          "configuration",
+          "uninitialized_child",
+          "source_unavailable",
+          "revision_unavailable",
+          "target_changed",
+        ]) {
+          const copy = gitSyncErrorMessage({
+            kind: "git_publication_blocked",
+            reason,
+            child: "develop",
+            stderr: "SECRET",
+          });
+          expect(copy.includes("develop")).toBe(true);
+          expect(copy.includes("SECRET")).toBe(false);
+          reasons.add(copy);
+        }
+        expect(reasons.size).toBe(5);
+        const parent = toParentPublication({
+          repository: "/project",
+          pointer: "local",
+          error:
+            "git push failed: https://user:SECRET@example.test/repo rejected by hook",
+        });
+        const copy = publicationCopy({ ...publication, parent });
+        expect(copy.reason?.includes("rejected by hook")).toBe(true);
+        expect(copy.reason?.includes("SECRET")).toBe(false);
+      }
+    } finally {
+      await setLocale(locale, { reload: false });
+    }
+  });
 
   test("file/all/paths save succeeds with denied parent and does not claim publication", async () => {
     const calls: string[] = [];

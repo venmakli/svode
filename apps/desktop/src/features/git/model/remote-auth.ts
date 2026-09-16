@@ -81,7 +81,7 @@ function providerHintFromRemoteUrl(remoteUrl: string | null): string | null {
   return null;
 }
 
-function redactUrlCredentials(text: string): string {
+export function redactUrlCredentials(text: string): string {
   let out = "";
   let rest = text;
   while (true) {

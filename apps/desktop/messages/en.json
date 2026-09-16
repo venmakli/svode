@@ -2024,5 +2024,13 @@
   "git_publication_continue": "Continue project sync",
   "git_publication_target_changed": "The publication target changed. Review the current repository and retry.",
   "git_publication_revision_unavailable": "A Space revision is unavailable from the project source. Publish it to that source before updating the project.",
-  "git_publication_source_unavailable": "The project source or publication configuration could not be verified. Check the remote settings and connection, then retry."
+  "git_publication_source_unavailable": "The project source or publication configuration could not be verified. Check the remote settings and connection, then retry.",
+  "git_sync_publication_configuration": "Cannot determine the publication destination. Check the branch, remote and submodule settings, then retry.",
+  "git_sync_publication_uninitialized": "The required submodule is not initialized. Clone it before publishing this version.",
+  "git_sync_publication_source_unavailable": "Cannot verify the submodule source. Check access and the connection to its remote, then retry.",
+  "git_sync_conflict_recovery": "Resolve the merge conflicts before retrying synchronization.",
+  "git_sync_remote_checking": "Checking remote status…",
+  "git_sync_outgoing_unchecked": "The outgoing commit list is unavailable until remote status is checked.",
+  "git_sync_access_read_only": "This repository is read-only. Publishing requires write access.",
+  "git_sync_access_unknown": "Verify write access to this repository in Git settings, then retry."
 }

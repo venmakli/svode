@@ -3,6 +3,8 @@ import {
   recordSyncPublication,
 } from "./git-publication-actions";
 import { gitBranchErrorMessage } from "./git-branch-error";
+import { gitSyncErrorMessage } from "./git-sync-error";
+import { isGitStatusPathDescendant } from "../model/git-paths";
 import { useGitStore } from "../model";
 import {
   commitGitAll,
@@ -52,8 +54,22 @@ export function saveGitRemoteCredentials({
 }
 
 function runAutoSync(spacePath: string): void {
+  const active = syncs.get(spacePath);
+  if (active) {
+    // A save arriving during a sync must get its own subsequent publication.
+    active.request.again = true;
+    return;
+  }
   void syncSpace(spacePath, true);
 }
+
+const syncs = new Map<
+  string,
+  {
+    promise: Promise<GitSyncOutcome>;
+    request: { background: boolean; again: boolean };
+  }
+>();
 
 /**
  * Read the local per-user auto-sync policy (default: false).
@@ -74,12 +90,42 @@ export async function isAutoSyncEnabled(
  * Run pull+push for the space and return a typed outcome to callers.
  * Updates per-space syncing/error state in the git store.
  */
-export async function syncSpace(
+export function syncSpace(
   spacePath: string,
   background = false,
 ): Promise<GitSyncOutcome> {
+  const active = syncs.get(spacePath);
+  if (active) {
+    if (!background && active.request.background) {
+      active.request.background = false;
+      active.request.again = true;
+    }
+    return active.promise;
+  }
+  const request = { background, again: false };
+  useGitStore.getState().setSyncing(spacePath, true);
+  const promise = Promise.resolve()
+    .then(async () => {
+      let result: GitSyncOutcome;
+      do {
+        request.again = false;
+        result = await runSync(spacePath, request.background);
+      } while (request.again);
+      return result;
+    })
+    .finally(() => {
+      syncs.delete(spacePath);
+      useGitStore.getState().setSyncing(spacePath, false);
+    });
+  syncs.set(spacePath, { request, promise });
+  return promise;
+}
+
+async function runSync(
+  spacePath: string,
+  background: boolean,
+): Promise<GitSyncOutcome> {
   const git = useGitStore.getState();
-  git.setSyncing(spacePath, true);
   git.setSyncError(spacePath, null);
   git.setBranchError(spacePath, null);
   try {
@@ -87,6 +133,7 @@ export async function syncSpace(
     recordSyncPublication(spacePath, result);
     switch (result.type) {
       case "Success":
+        git.setRemoteError(spacePath, null);
         // Refresh status to clear any local indicators (file `↻`).
         await refreshGitStatus(spacePath).catch(() => {});
         return result;
@@ -105,11 +152,9 @@ export async function syncSpace(
     console.error("git_sync failed:", err);
     const branchMessage = gitBranchErrorMessage(err);
     if (branchMessage) git.setBranchError(spacePath, branchMessage);
-    const message = branchMessage ?? String(err);
+    const message = gitSyncErrorMessage(err);
     git.setSyncError(spacePath, branchMessage ? null : message);
     return { type: "Failed", message };
-  } finally {
-    git.setSyncing(spacePath, false);
   }
 }
 
@@ -281,6 +326,14 @@ export async function syncOnOpen(
   projectPath?: string | null,
 ): Promise<void> {
   if (!(await isAutoSyncEnabled(spacePath, projectPath))) return;
+  if (spacePath === projectPath) {
+    // A child save already owns its parent publication step. Opening that
+    // project waits for this result before attempting another root sync.
+    const children = [...syncs.entries()]
+      .filter(([path]) => isGitStatusPathDescendant(path, spacePath))
+      .map(([, flight]) => flight.promise);
+    if (children.length > 0) await Promise.all(children);
+  }
   await syncSpace(spacePath, true);
 }
 

@@ -178,6 +178,7 @@ test("refreshStatus replaces stale dirty files with a clean snapshot", async () 
     statusErrors: {},
     syncing: {},
     syncError: {},
+    remoteError: {},
     branchError: {},
     cloning: {},
   });
@@ -234,6 +235,7 @@ function gitStateBySpace(filesBySpace: Record<string, GitStatus["files"]>) {
     statusErrors: {},
     syncing: {},
     syncError: {},
+    remoteError: {},
     branchError: {},
     cloning: {},
     applyStatus: () => undefined,
@@ -241,6 +243,7 @@ function gitStateBySpace(filesBySpace: Record<string, GitStatus["files"]>) {
     clear: () => undefined,
     setSyncing: () => undefined,
     setSyncError: () => undefined,
+    setRemoteError: () => undefined,
     setBranchError: () => undefined,
     setCloning: () => undefined,
   };

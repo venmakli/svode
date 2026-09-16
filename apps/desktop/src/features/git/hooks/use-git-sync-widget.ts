@@ -1,6 +1,7 @@
 import { useParentPublication } from "./use-parent-publication";
 import { isFullSyncSuccess } from "../model/publication";
 import { refreshGitPublication } from "../api/git-publication-actions";
+import { gitSyncErrorMessage } from "../api/git-sync-error";
 import { useCallback, useEffect, useMemo, useState, useRef } from "react";
 import { toast } from "sonner";
 import {
@@ -34,6 +35,7 @@ export interface GitSyncWidget {
   remoteChecked: boolean;
   checkingRemote: boolean;
   syncError: string | null;
+  remoteError: string | null;
   branchError: string | null;
   syncing: boolean;
   autoSync: boolean;
@@ -81,6 +83,9 @@ export function useGitSyncWidget(): GitSyncWidget {
     spacePath
       ? (state.branchError[spacePath] ?? state.syncError[spacePath] ?? null)
       : null,
+  );
+  const remoteError = useGitStore((state) =>
+    spacePath ? (state.remoteError[spacePath] ?? null) : null,
   );
 
   const [hasRemote, setHasRemote] = useState(false);
@@ -308,7 +313,9 @@ export function useGitSyncWidget(): GitSyncWidget {
 
   return {
     parent,
-    visible: !!spacePath && (hasRemote || !!syncError || !!parent.publication),
+    visible:
+      !!spacePath &&
+      (hasRemote || !!syncError || !!remoteError || !!parent.publication),
     open,
     setOpen,
     branch: branchLabel(status),
@@ -316,7 +323,8 @@ export function useGitSyncWidget(): GitSyncWidget {
     outgoing: counters.outgoing,
     remoteChecked,
     checkingRemote,
-    syncError,
+    syncError: syncError ? gitSyncErrorMessage(syncError) : null,
+    remoteError,
     branchError,
     syncing,
     autoSync,

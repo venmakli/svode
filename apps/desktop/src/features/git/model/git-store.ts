@@ -31,6 +31,7 @@ interface GitState {
   statusErrors: Record<string, boolean>;
   syncing: Record<string, boolean>;
   syncError: Record<string, string>;
+  remoteError: Record<string, string>;
   branchError: Record<string, string>;
   cloning: Record<string, GitCloneProgress>;
 
@@ -46,6 +47,7 @@ interface GitState {
 
   setSyncing: (spacePath: string, syncing: boolean) => void;
   setSyncError: (spacePath: string, error: string | null) => void;
+  setRemoteError: (spacePath: string, error: string | null) => void;
 
   setBranchError: (spacePath: string, error: string | null) => void;
 
@@ -68,6 +70,7 @@ export const useGitStore = create<GitState>((set) => {
     statusErrors: {},
     syncing: {},
     syncError: {},
+    remoteError: {},
     branchError: {},
     cloning: {},
 
@@ -108,6 +111,7 @@ export const useGitStore = create<GitState>((set) => {
         const { [spacePath]: _rmStatusError, ...statusErrors } = s.statusErrors;
         const { [spacePath]: _rmSync, ...syncing } = s.syncing;
         const { [spacePath]: _rmError, ...syncError } = s.syncError;
+        const { [spacePath]: _rmRemoteError, ...remoteError } = s.remoteError;
         const { [spacePath]: _rmBranchError, ...branchError } = s.branchError;
         const { [spacePath]: _rmClone, ...cloning } = s.cloning;
         return {
@@ -116,6 +120,7 @@ export const useGitStore = create<GitState>((set) => {
           statusErrors,
           syncing,
           syncError,
+          remoteError,
           branchError,
           cloning,
         };
@@ -143,6 +148,14 @@ export const useGitStore = create<GitState>((set) => {
         if (error) next[spacePath] = error;
         else delete next[spacePath];
         return { branchError: next };
+      }),
+
+    setRemoteError: (spacePath, error) =>
+      set((s) => {
+        const next = { ...s.remoteError };
+        if (error) next[spacePath] = error;
+        else delete next[spacePath];
+        return { remoteError: next };
       }),
 
     setCloning: (spacePath, progress) =>
@@ -197,7 +210,11 @@ export function selectIndicator(
   // A failed clone leaves `cloning.error` populated until the user dismisses
   // it — show `error` (✕) rather than keeping the spinner.
   if (cloning) return cloning.error ? "error" : "cloning";
-  if (state.branchError[spacePath] || state.syncError[spacePath])
+  if (
+    state.branchError[spacePath] ||
+    state.syncError[spacePath] ||
+    state.remoteError[spacePath]
+  )
     return "error";
   const status = state.statuses[spacePath];
   if (status?.hasConflicts) return "conflict";
