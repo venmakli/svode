@@ -17,8 +17,6 @@ serde_json = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-std", "io-util", "fs"] }
 opendal = { version = "0.55", features = ["services-s3"] }
 anyhow = "1"
-
-[dev-dependencies]
 tempfile = "3"
 
 [profile.release]

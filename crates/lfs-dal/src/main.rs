@@ -16,6 +16,8 @@ use opendal::{Operator, services::S3};
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
+mod download;
+
 #[derive(Debug, Deserialize)]
 #[serde(tag = "event", rename_all = "lowercase")]
 enum Request {
@@ -283,18 +285,10 @@ impl AgentState {
             .await
             .with_context(|| format!("S3 download {key}"))?;
 
-        let tmp_dir = PathBuf::from(".git/lfs/tmp/lfs-dal");
-        tokio::fs::create_dir_all(&tmp_dir)
-            .await
-            .with_context(|| format!("creating {}", tmp_dir.display()))?;
-        let out_path = tmp_dir.join(oid);
-        tokio::fs::write(&out_path, buf.to_vec())
-            .await
-            .with_context(|| format!("writing {}", out_path.display()))?;
-        Ok(out_path
-            .to_str()
-            .ok_or_else(|| anyhow!("non-utf8 temp path"))?
-            .to_string())
+        tokio::task::spawn_blocking(move || {
+            download::stage(std::path::Path::new("."), buf.to_vec().as_slice())
+        })
+        .await?
     }
 }
 
