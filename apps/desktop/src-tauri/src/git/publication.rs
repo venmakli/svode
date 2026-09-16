@@ -55,6 +55,7 @@ async fn snapshot(
     let mut args = vec![
         "push",
         "--dry-run",
+        "--no-verify",
         "--porcelain",
         "--recurse-submodules=no",
     ];

@@ -104,6 +104,268 @@ fn commit(repo: &Path, file: &str, value: &str) {
     git(repo, &["commit", "-m", value]);
 }
 
+fn counting_hook(repo: &Path, body: &str) -> PathBuf {
+    let hooks = PathBuf::from(git(
+        repo,
+        &["rev-parse", "--path-format=absolute", "--git-path", "hooks"],
+    ));
+    std::fs::create_dir_all(&hooks).unwrap();
+    let hook = hooks.join("pre-push");
+    std::fs::write(
+        &hook,
+        format!("#!/bin/sh\nprintf 'hook\\n' >> \"$(dirname \"$0\")/pre-push-calls\"\n{body}\n"),
+    )
+    .unwrap();
+    std::fs::set_permissions(hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let calls = hooks.join("pre-push-calls");
+    std::fs::write(&calls, "").unwrap();
+    calls
+}
+
+fn hook_count(calls: &Path) -> usize {
+    std::fs::read_to_string(calls).unwrap().lines().count()
+}
+
+#[tokio::test]
+async fn discovery_hooks_drop_from_three_to_one_and_noop_runs_none() {
+    let f = Fixture::new();
+    let calls = counting_hook(&f.root, "cat >/dev/null");
+    commit(&f.root, "note", "baseline hook workload");
+    let before = git(&f.remote, &["rev-parse", "main"]);
+    for expected in 1..=2 {
+        git(
+            &f.root,
+            &[
+                "push",
+                "--dry-run",
+                "--porcelain",
+                "--recurse-submodules=no",
+            ],
+        );
+        assert_eq!(hook_count(&calls), expected);
+        assert_eq!(git(&f.remote, &["rev-parse", "main"]), before);
+    }
+    git(&f.root, &["push", "--recurse-submodules=check"]);
+    assert_eq!(hook_count(&calls), 3);
+
+    commit(&f.root, "note", "fixed hook workload");
+    std::fs::write(&calls, "").unwrap();
+    let before = git(&f.remote, &["rev-parse", "main"]);
+    for _ in 0..2 {
+        assert!(
+            super::snapshot(&f.cli, &f.root, false)
+                .await
+                .unwrap()
+                .is_ok()
+        );
+        assert_eq!(hook_count(&calls), 0);
+        assert_eq!(git(&f.remote, &["rev-parse", "main"]), before);
+    }
+    assert_eq!(f.push().await.unwrap().exit_code, 0);
+    assert_eq!(hook_count(&calls), 1);
+    assert_eq!(
+        git(&f.remote, &["rev-parse", "main"]),
+        git(&f.root, &["rev-parse", "HEAD"])
+    );
+
+    std::fs::write(&calls, "").unwrap();
+    assert_eq!(f.push().await.unwrap().exit_code, 0);
+    assert_eq!(hook_count(&calls), 0);
+}
+
+#[tokio::test]
+async fn every_publisher_runs_real_hooks_once_and_preserves_rejection() {
+    use crate::git::{ops, sync};
+    for publisher in ["push", "publish", "sync", "first-sync", "resolve"] {
+        for reject in [false, true] {
+            let f = Fixture::new();
+            commit(&f.root, "note", "outgoing content");
+            if matches!(publisher, "publish" | "first-sync") {
+                git(&f.remote, &["update-ref", "-d", "refs/heads/main"]);
+                git(&f.root, &["branch", "--unset-upstream"]);
+            }
+            if publisher == "resolve" {
+                git(&f.root, &["checkout", "-b", "side", "HEAD~1"]);
+                commit(&f.root, "side", "side change");
+                git(&f.root, &["checkout", "main"]);
+                git(&f.root, &["merge", "--no-commit", "side"]);
+            }
+            let before = git(&f.remote, &["for-each-ref"]);
+            let calls = counting_hook(
+                &f.root,
+                if reject {
+                    "cat >/dev/null\necho 'fixture hook declined publication' >&2\nexit 1"
+                } else {
+                    "cat >/dev/null"
+                },
+            );
+            let result = match publisher {
+                "push" => ops::push(&f.cli, &f.root).await,
+                "publish" => ops::push_set_upstream(&f.cli, &f.root).await,
+                "sync" | "first-sync" => sync::sync(&f.cli, &f.root).await.map(|result| {
+                    assert!(
+                        matches!(result, sync::SyncResult::Success { .. }),
+                        "{result:?}"
+                    );
+                }),
+                "resolve" => sync::resolve_and_continue(&f.cli, &f.root)
+                    .await
+                    .map(|result| {
+                        assert!(
+                            matches!(result, sync::SyncResult::Success { .. }),
+                            "{result:?}"
+                        );
+                    }),
+                _ => unreachable!(),
+            };
+            assert_eq!(
+                hook_count(&calls),
+                1,
+                "{publisher}, reject={reject}: {result:?}"
+            );
+            if reject {
+                let error = result.unwrap_err().to_string();
+                assert!(
+                    error.contains("fixture hook declined publication"),
+                    "{publisher}: {error}"
+                );
+                assert_eq!(git(&f.remote, &["for-each-ref"]), before);
+                counting_hook(&f.root, "cat >/dev/null");
+                if matches!(publisher, "publish" | "first-sync") {
+                    ops::push_set_upstream(&f.cli, &f.root).await.unwrap();
+                } else {
+                    ops::push(&f.cli, &f.root).await.unwrap();
+                }
+                assert_eq!(hook_count(&calls), 1);
+            } else {
+                result.unwrap();
+            }
+            assert_eq!(
+                git(&f.remote, &["rev-parse", "main"]),
+                git(&f.root, &["rev-parse", "HEAD"])
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn rejecting_parent_hook_preserves_child_success_and_pointer_retry() {
+    let f = Fixture::new();
+    let child_calls = counting_hook(&f.child, "cat >/dev/null");
+    commit(&f.child, "note", "published child content");
+    crate::git::sync::sync(&f.cli, &f.child).await.unwrap();
+    let head = git(&f.child, &["rev-parse", "HEAD"]);
+    let before = git(&f.remote, &["rev-parse", "main"]);
+    let root_calls = counting_hook(
+        &f.root,
+        "cat >/dev/null\necho 'fixture hook declined publication' >&2\nexit 1",
+    );
+    let report = crate::git::publication_flow::parent_step_locked(
+        &f.cli,
+        &f.child,
+        &f.root,
+        &head,
+        false,
+        true,
+        Ok(()),
+    )
+    .await;
+    let report = serde_json::to_value(report).unwrap();
+    assert_eq!(report["pointer"], "local");
+    assert!(
+        report
+            .to_string()
+            .contains("fixture hook declined publication"),
+        "{report}"
+    );
+    assert_eq!(git(&f.remote, &["rev-parse", "main"]), before);
+    assert_eq!(git(&f.source, &["rev-parse", "main"]), head);
+    assert_eq!(hook_count(&root_calls), 1);
+    counting_hook(&f.root, "cat >/dev/null");
+    let report = crate::git::publication_flow::parent_step_locked(
+        &f.cli,
+        &f.child,
+        &f.root,
+        &head,
+        false,
+        true,
+        Ok(()),
+    )
+    .await;
+    assert_eq!(
+        serde_json::to_value(report).unwrap()["pointer"],
+        "published"
+    );
+    assert_eq!(hook_count(&root_calls), 1);
+    assert_eq!(hook_count(&child_calls), 1);
+    assert_eq!(
+        git(&f.remote, &["rev-parse", "main:Пространство one"]),
+        head
+    );
+}
+
+#[tokio::test]
+#[ignore = "requires Git LFS; run explicitly for publication changes"]
+async fn lfs_upload_runs_only_on_real_push_and_fresh_recipient_gets_content() {
+    let f = Fixture::new();
+    assert!(
+        f.cli.lfs_available(),
+        "Git LFS is required for publication regression acceptance"
+    );
+    git(&f.root, &["lfs", "install", "--local"]);
+    let hook = std::fs::read_to_string(f.root.join(".git/hooks/pre-push")).unwrap();
+    let calls = counting_hook(&f.root, &hook);
+    git(&f.root, &["lfs", "track", "*.bin"]);
+    git(&f.root, &["add", ".gitattributes"]);
+    let content = "fixture LFS content\n".repeat(1024);
+    std::fs::write(f.root.join("asset.bin"), &content).unwrap();
+    git(&f.root, &["add", "asset.bin"]);
+    git(&f.root, &["commit", "-m", "LFS payload"]);
+    let pointer = git(&f.root, &["show", "HEAD:asset.bin"]);
+    assert!(pointer.starts_with("version https://git-lfs.github.com/spec/v1\n"));
+    let oid = pointer
+        .lines()
+        .find_map(|line| line.strip_prefix("oid sha256:"))
+        .unwrap();
+    let remote_object = f
+        .remote
+        .join("lfs/objects")
+        .join(&oid[..2])
+        .join(&oid[2..4])
+        .join(oid);
+    let before = git(&f.remote, &["rev-parse", "main"]);
+    for _ in 0..2 {
+        assert!(
+            super::snapshot(&f.cli, &f.root, false)
+                .await
+                .unwrap()
+                .is_ok()
+        );
+        assert_eq!(hook_count(&calls), 0);
+        assert!(!remote_object.exists());
+        assert_eq!(git(&f.remote, &["rev-parse", "main"]), before);
+    }
+    let out = f.push().await.unwrap();
+    assert_eq!(out.exit_code, 0, "{}", out.stderr);
+    assert_eq!(hook_count(&calls), 1);
+    assert_eq!(std::fs::read_to_string(remote_object).unwrap(), content);
+    let recipient = f._temp.path().join("recipient");
+    git(
+        f._temp.path(),
+        &[
+            "clone",
+            f.remote.to_str().unwrap(),
+            recipient.to_str().unwrap(),
+        ],
+    );
+    git(&recipient, &["lfs", "install", "--local"]);
+    git(&recipient, &["lfs", "pull"]);
+    assert_eq!(
+        std::fs::read_to_string(recipient.join("asset.bin")).unwrap(),
+        content
+    );
+}
+
 #[tokio::test]
 async fn content_only_sync_does_not_contact_unchanged_submodule_sources() {
     let f = Fixture::new();
