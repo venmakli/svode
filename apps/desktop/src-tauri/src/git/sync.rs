@@ -22,6 +22,7 @@ pub enum SyncResult {
     },
 }
 
+#[cfg(test)]
 pub(crate) async fn sync_if_enabled(
     cli: &GitCli,
     repo: &Path,
@@ -42,9 +43,12 @@ pub async fn sync(cli: &GitCli, space_dir: &Path) -> Result<SyncResult, AppError
     if remote_out.stdout.trim().is_empty() {
         return Ok(SyncResult::NoRemote);
     }
+    let target = super::operations::Snapshot::read(cli, space_dir)
+        .await?
+        .transport;
 
     if upstream_ref(cli, space_dir).await?.is_none() {
-        return sync_without_upstream(cli, space_dir).await;
+        return sync_without_upstream(cli, space_dir, &target).await;
     }
 
     // Pull
@@ -70,6 +74,7 @@ pub async fn sync(cli: &GitCli, space_dir: &Path) -> Result<SyncResult, AppError
     }
 
     // Push
+    validate_transport(cli, space_dir, &target).await?;
     let (push_out, published_head) =
         super::publication::push_snapshot(cli, space_dir, false).await?;
     if push_out.exit_code != 0 {
@@ -89,7 +94,11 @@ pub async fn sync(cli: &GitCli, space_dir: &Path) -> Result<SyncResult, AppError
     })
 }
 
-async fn sync_without_upstream(cli: &GitCli, space_dir: &Path) -> Result<SyncResult, AppError> {
+async fn sync_without_upstream(
+    cli: &GitCli,
+    space_dir: &Path,
+    target: &str,
+) -> Result<SyncResult, AppError> {
     match super::ops::fetch_remote(cli, space_dir).await {
         Ok(false) => return Ok(SyncResult::NoRemote),
         Ok(true) => {}
@@ -137,6 +146,7 @@ async fn sync_without_upstream(cli: &GitCli, space_dir: &Path) -> Result<SyncRes
         }
     }
 
+    validate_transport(cli, space_dir, target).await?;
     let (out, published_head) = super::publication::push_snapshot(cli, space_dir, true).await?;
     if out.exit_code != 0 {
         return remote_error_to_sync_result(
@@ -150,6 +160,21 @@ async fn sync_without_upstream(cli: &GitCli, space_dir: &Path) -> Result<SyncRes
     Ok(SyncResult::Success {
         published_head: published_head.unwrap_or_default(),
     })
+}
+
+pub(crate) async fn validate_transport(
+    cli: &GitCli,
+    repo: &Path,
+    expected: &str,
+) -> Result<(), AppError> {
+    if super::operations::Snapshot::read(cli, repo)
+        .await?
+        .transport
+        != expected
+    {
+        return Err(super::operations::target_changed(repo));
+    }
+    Ok(())
 }
 
 async fn upstream_ref(cli: &GitCli, space_dir: &Path) -> Result<Option<String>, AppError> {
@@ -243,6 +268,9 @@ pub async fn conflict_files(cli: &GitCli, space_dir: &Path) -> Result<Vec<String
 
 /// Resolve conflicts: stage all and commit, then push.
 pub async fn resolve_and_continue(cli: &GitCli, space_dir: &Path) -> Result<SyncResult, AppError> {
+    let target = super::operations::Snapshot::read(cli, space_dir)
+        .await?
+        .transport;
     // Stage all resolved files
     let add_out = cli.exec(space_dir, &["add", "."]).await?;
     if add_out.exit_code != 0 {
@@ -262,6 +290,7 @@ pub async fn resolve_and_continue(cli: &GitCli, space_dir: &Path) -> Result<Sync
     }
 
     // Push
+    validate_transport(cli, space_dir, &target).await?;
     let (push_out, published_head) =
         super::publication::push_snapshot(cli, space_dir, false).await?;
     if push_out.exit_code != 0 {

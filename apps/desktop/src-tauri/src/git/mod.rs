@@ -17,6 +17,7 @@ mod local_policy_tests;
 pub(crate) mod local_repair;
 pub(crate) mod manual_save;
 pub mod ops;
+pub(crate) mod operations;
 pub(crate) mod publication;
 pub(crate) mod publication_flow;
 mod published_pointer;

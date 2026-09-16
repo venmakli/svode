@@ -713,15 +713,7 @@ pub(crate) fn publish_exact_path_commit(
         space_path,
         repo,
         |space, repo| emit_committed(app, space, repo),
-        |repo| {
-            let app = app.clone();
-            let repo = repo.to_path_buf();
-            tauri::async_runtime::spawn(async move {
-                if let Err(error) = super::publication_flow::sync(&app, &repo, true, false).await {
-                    tracing::warn!(kind = error.kind(), "auto-sync (exact path) failed");
-                }
-            });
-        },
+        |repo| schedule_committed_sync(app, repo),
     );
 }
 
@@ -2113,57 +2105,49 @@ mod tests {
     }
 
     #[test]
-    fn submodule_mailmap_and_root_pointer_policies_are_independent() {
-        for child_system in [false, true] {
-            for root_structural in [false, true] {
-                for child_sync in [false, true] {
-                    for root_sync in [false, true] {
-                        let temp = tempfile::tempdir().expect("temp dir");
-                        let root = temp.path().join("project");
-                        let child = root.join("space");
-                        std::fs::create_dir_all(&child).expect("create policy roots");
-                        write_local_git_policy(
-                            &root,
-                            GitUserPolicy {
-                                auto_sync: root_sync,
-                                auto_commit_structural: root_structural,
-                                auto_commit_system: false,
-                            },
-                        );
-                        write_local_git_policy(
-                            &child,
-                            GitUserPolicy {
-                                auto_sync: child_sync,
-                                auto_commit_structural: false,
-                                auto_commit_system: child_system,
-                            },
-                        );
-
-                        let child_plan = classify_guarded_exact_path_preflight(
-                            background_commit_allowed(&child, CommitIntent::SystemConfig),
-                            false,
-                            false,
-                        );
-                        let root_plan = classify_guarded_exact_path_preflight(
-                            background_commit_allowed(&root, CommitIntent::StructuralLifecycle),
-                            false,
-                            false,
-                        );
-                        assert_eq!(child_plan == GuardedExactPathPlan::Eligible, child_system);
-                        assert_eq!(root_plan == GuardedExactPathPlan::Eligible, root_structural);
-                        assert_eq!(is_auto_sync_enabled(&child), child_sync);
-                        assert_eq!(is_auto_sync_enabled(&root), root_sync);
-
-                        // Root eligibility never upgrades a system-policy-pending
-                        // child mutation into an automatic `.mailmap` commit.
-                        let root_can_follow_created_child = child_plan
-                            == GuardedExactPathPlan::Eligible
-                            && root_plan == GuardedExactPathPlan::Eligible;
-                        assert_eq!(
-                            root_can_follow_created_child,
-                            child_system && root_structural
-                        );
+    fn all_64_child_root_policy_tuples_preserve_each_commit_and_sync_intent() {
+        for child_bits in 0..8 {
+            for root_bits in 0..8 {
+                let temp = tempfile::tempdir().unwrap();
+                let root = temp.path().join("project");
+                let child = root.join("space");
+                std::fs::create_dir_all(&child).unwrap();
+                for (repo, bits) in [(&child, child_bits), (&root, root_bits)] {
+                    write_local_git_policy(repo, GitUserPolicy {
+                        auto_sync: bits & 4 != 0,
+                        auto_commit_structural: bits & 2 != 0,
+                        auto_commit_system: bits & 1 != 0,
+                    });
+                    for (intent, expected) in [
+                        (CommitIntent::ContentWorkspace, false),
+                        (CommitIntent::ManualExplicit, true),
+                        (CommitIntent::StructuralLifecycle, bits & 2 != 0),
+                        (CommitIntent::SystemConfig, bits & 1 != 0),
+                    ] {
+                        let created = background_commit_allowed(repo, intent);
+                        assert_eq!(created, expected, "tuple {child_bits}/{root_bits}");
+                        let mut triggers = 0;
+                        // Production callbacks are dispatched only for a commit receipt.
+                        if created {
+                            dispatch_exact_path_commit(repo, repo, |_, _| {}, |_| triggers += 1);
+                        }
+                        assert_eq!(triggers, usize::from(expected && bits & 4 != 0));
                     }
+                    assert_eq!(super::super::operations::Intent::Sync { background: true }.admitted(repo), bits & 4 != 0);
+                    assert!(super::super::operations::Intent::Sync { background: false }.admitted(repo));
+                    assert!(super::super::operations::Intent::Push.admitted(repo));
+                    assert!(super::super::operations::Intent::Publish.admitted(repo));
+                }
+                // A local structural/system child commit permits a local pointer
+                // via Troot regardless of Sroot or Yroot. Parent process groups
+                // separately check new vs pre-existing pointer publication.
+                for (intent, child_allowed) in [
+                    (CommitIntent::StructuralLifecycle, child_bits & 2 != 0),
+                    (CommitIntent::SystemConfig, child_bits & 1 != 0),
+                ] {
+                    let allowed = background_commit_allowed(&child, intent)
+                        && background_commit_allowed(&root, CommitIntent::StructuralLifecycle);
+                    assert_eq!(allowed, child_allowed && root_bits & 2 != 0);
                 }
             }
         }

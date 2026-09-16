@@ -71,9 +71,6 @@ pub(crate) fn is_git_auth_error(stderr: &str) -> bool {
 
 pub(crate) fn is_git_no_remote_error(stderr: &str) -> bool {
     stderr.contains("No configured push destination")
-        || stderr.contains("does not appear to be a git repository")
-        || stderr.contains("Could not read from remote repository")
-        || stderr.contains("Repository not found")
 }
 
 pub(crate) fn git_remote_command_error(command: &str, stderr: &str) -> AppError {
@@ -2378,13 +2375,21 @@ mod tests {
     }
 
     #[test]
-    fn classifies_missing_remote_errors() {
+    fn transport_failure_does_not_prove_missing_remote() {
         let err = git_remote_command_error(
             "git fetch",
             "fatal: 'origin' does not appear to be a git repository",
         );
 
-        assert!(matches!(err, AppError::GitNoRemote));
+        assert!(matches!(err, AppError::GitCommandFailed(_)));
+        for message in [
+            "ssh: Could not resolve hostname fixture.invalid: nodename nor servname provided\nfatal: Could not read from remote repository.",
+            "fatal: Repository not found",
+            "fatal: unable to access remote: Could not resolve host",
+        ] {
+            assert!(matches!(git_remote_command_error("git fetch", message), AppError::GitCommandFailed(_)));
+        }
+        assert!(matches!(git_remote_command_error("git push", "fatal: No configured push destination."), AppError::GitNoRemote));
     }
 
     #[test]

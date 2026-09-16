@@ -195,6 +195,7 @@ fn drop_legacy_shared_git_policy(config_target: &Path) {
 
 pub struct GitState {
     pub(crate) cli: Option<GitCli>,
+    pub(crate) operations: Arc<super::operations::Operations>,
     locks: tokio::sync::Mutex<HashMap<PathBuf, Arc<tokio::sync::Mutex<()>>>>,
 }
 
@@ -209,6 +210,7 @@ impl GitState {
         };
         Self {
             cli,
+            operations: Arc::default(),
             locks: tokio::sync::Mutex::new(HashMap::new()),
         }
     }
@@ -423,32 +425,9 @@ pub async fn git_set_remote(
 #[tauri::command]
 pub async fn git_push(
     app: AppHandle,
-    state: State<'_, GitState>,
-    access_state: State<'_, super::access::RepositoryAccessState>,
     space_path: String,
-) -> Result<GitStatus, AppError> {
-    let path = PathBuf::from(&space_path);
-    let repository = super::access::resolve_repository(state.cli()?, &path).await?;
-    let lock = state.get_lock(&repository).await;
-    let _guard = lock.lock().await;
-    let cli = state.cli()?;
-    if let Err(error) = super::ops::push(cli, &path).await {
-        if !matches!(error, AppError::GitPublicationBlocked { .. } | AppError::GitBranchBlocked { .. }) {
-            invalidate_repository_access(&app, &access_state, cli, &path).await;
-        }
-        return Err(error);
-    }
-    let store_path = super::access::access_store_path(&app)?;
-    match access_state
-        .record_writable_evidence(cli, &path, &store_path)
-        .await
-    {
-        Ok(snapshot) => publish_repository_access(&app, &snapshot),
-        Err(error) => {
-            tracing::warn!("failed to record repository write evidence after push: {error}");
-        }
-    }
-    super::ops::status(cli, &path).await
+) -> Result<GitStatus, super::operations::SharedError> {
+    super::publication_flow::push(&app, Path::new(&space_path), false).await
 }
 
 #[tauri::command]
@@ -574,7 +553,7 @@ pub async fn git_sync(
     app: AppHandle,
     space_path: String,
     background: Option<bool>,
-) -> Result<super::publication_flow::SyncReport, AppError> {
+) -> Result<super::publication_flow::SyncReport, super::operations::SharedError> {
     super::publication_flow::sync(&app, Path::new(&space_path), background.unwrap_or(false), false).await
 }
 
@@ -671,7 +650,7 @@ pub async fn git_conflict_files(
 pub async fn git_resolve_continue(
     app: AppHandle,
     space_path: String,
-) -> Result<super::publication_flow::SyncReport, AppError> {
+) -> Result<super::publication_flow::SyncReport, super::operations::SharedError> {
     super::publication_flow::sync(&app, Path::new(&space_path), false, true).await
 }
 
@@ -812,32 +791,9 @@ pub async fn git_unpushed_commits(
 #[tauri::command]
 pub async fn git_publish(
     app: AppHandle,
-    state: State<'_, GitState>,
-    access_state: State<'_, super::access::RepositoryAccessState>,
     space_path: String,
-) -> Result<GitStatus, AppError> {
-    let path = PathBuf::from(&space_path);
-    let repository = super::access::resolve_repository(state.cli()?, &path).await?;
-    let lock = state.get_lock(&repository).await;
-    let _guard = lock.lock().await;
-    let cli = state.cli()?;
-    if let Err(error) = super::ops::push_set_upstream(cli, &path).await {
-        if !matches!(error, AppError::GitPublicationBlocked { .. } | AppError::GitBranchBlocked { .. }) {
-            invalidate_repository_access(&app, &access_state, cli, &path).await;
-        }
-        return Err(error);
-    }
-    let store_path = super::access::access_store_path(&app)?;
-    match access_state
-        .record_writable_evidence(cli, &path, &store_path)
-        .await
-    {
-        Ok(snapshot) => publish_repository_access(&app, &snapshot),
-        Err(error) => {
-            tracing::warn!("failed to record repository write evidence after publish: {error}");
-        }
-    }
-    super::ops::status(cli, &path).await
+) -> Result<GitStatus, super::operations::SharedError> {
+    super::publication_flow::push(&app, Path::new(&space_path), true).await
 }
 
 #[tauri::command]
@@ -929,7 +885,7 @@ pub async fn git_retry_parent(
     expected_head: String,
     expected_parent: String,
     expected_target: String,
-) -> Result<super::publication_flow::PublicationStatus, AppError> {
+) -> Result<super::publication_flow::PublicationStatus, super::operations::SharedError> {
     super::publication_flow::retry_parent(
         &app,
         Path::new(&space_path),
