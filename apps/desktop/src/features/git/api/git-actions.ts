@@ -73,7 +73,7 @@ export function saveGitRemoteCredentials({
 }
 
 function runAutoSync(spacePath: string, options?: GitAutoSyncOptions): void {
-  void syncSpace(spacePath).then((outcome) => {
+  void syncSpace(spacePath, true).then((outcome) => {
     options?.onSyncOutcome?.(outcome);
   });
 }
@@ -97,13 +97,16 @@ export async function isAutoSyncEnabled(
  * Run pull+push for the space and return a typed outcome to callers.
  * Updates per-space syncing/error state in the git store.
  */
-export async function syncSpace(spacePath: string): Promise<GitSyncOutcome> {
+export async function syncSpace(
+  spacePath: string,
+  background = false,
+): Promise<GitSyncOutcome> {
   const git = useGitStore.getState();
   git.setSyncing(spacePath, true);
   git.setSyncError(spacePath, null);
   git.setBranchError(spacePath, null);
   try {
-    const result = toSyncResult(await syncGit(spacePath));
+    const result = toSyncResult(await syncGit(spacePath, background));
     switch (result.type) {
       case "Success":
         // Refresh status to clear any local indicators (file `↻`).
@@ -321,7 +324,7 @@ export async function syncOnOpen(
   git.setSyncError(spacePath, null);
   git.setBranchError(spacePath, null);
   try {
-    const result = toSyncResult(await syncGit(spacePath));
+    const result = toSyncResult(await syncGit(spacePath, true));
     if (result.type === "Success") {
       await refreshGitStatus(spacePath);
     }

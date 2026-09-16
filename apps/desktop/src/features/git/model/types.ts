@@ -50,10 +50,18 @@ export interface GitRemoteAuthCredentials {
 }
 
 export type SyncResult =
-  | { type: "Success" }
+  | { type: "Success"; publishedHead?: string; parent?: ParentPublication }
   | { type: "Conflict"; files: string[] }
   | { type: "NoRemote" }
   | { type: "AuthRequired"; challenge: GitAuthChallenge | null };
+
+export interface ParentPublication {
+  repository: string;
+  pointer: "pending" | "local" | "published";
+  result?: SyncResult;
+  error?: { kind: string; [key: string]: unknown };
+  policySkipped?: boolean;
+}
 
 export type GitSyncOutcome = SyncResult | { type: "Failed"; message: string };
 

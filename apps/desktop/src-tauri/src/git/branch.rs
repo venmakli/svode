@@ -94,7 +94,7 @@ async fn module_branch(
 }
 
 /// Discover old-form and absorbed direct submodules through Git and exact paths.
-async fn parent(cli: &GitCli, repo: &Path) -> Result<Option<PathBuf>, AppError> {
+pub(crate) async fn parent(cli: &GitCli, repo: &Path) -> Result<Option<PathBuf>, AppError> {
     let Some(directory) = repo.parent() else {
         return Ok(None);
     };

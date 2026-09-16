@@ -40,6 +40,8 @@ pub enum AppError {
 
     #[error("Git command failed: {0}")]
     GitCommandFailed(String),
+    #[error("Project publication blocked: {reason:?}")]
+    GitPublicationBlocked { repository: String, child: Option<String>, reason: crate::git::publication::PublicationBlockReason },
 
     #[error("Git branch preparation blocked: {reason:?}. Restore the branch and local work in Git, then retry.")]
     GitBranchBlocked { reason: crate::git::branch::BranchBlockReason },
@@ -121,6 +123,7 @@ impl AppError {
             AppError::AgentSpawnFailed(_) => "agent_spawn_failed",
             AppError::GitNotFound => "git_not_found",
             AppError::GitCommandFailed(_) => "git_command_failed",
+            AppError::GitPublicationBlocked { .. } => "git_publication_blocked",
             AppError::GitBranchBlocked { .. } => "git_branch_blocked",
             AppError::GitSaveFailed { .. } => "git_save_failed",
             AppError::GitSavePartial { .. } => "git_save_partial",
@@ -148,6 +151,9 @@ impl Serialize for AppError {
         S: serde::Serializer,
     {
         match self {
+            AppError::GitPublicationBlocked { repository, child, reason } => {
+                serde_json::json!({ "kind": self.kind(), "repository": repository, "child": child, "reason": reason }).serialize(serializer)
+            }
             AppError::GitBranchBlocked { reason } => {
                 serde_json::json!({ "kind": self.kind(), "reason": reason }).serialize(serializer)
             }

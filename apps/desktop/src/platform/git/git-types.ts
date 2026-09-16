@@ -52,10 +52,18 @@ export interface GitAuthChallengeDto {
 }
 
 export type SyncResultDto =
-  | { type: "success" }
+  | { type: "success"; publishedHead?: string; parent?: ParentPublicationDto }
   | { type: "conflict"; files: string[] }
   | { type: "noRemote" }
   | { type: "authRequired"; challenge?: GitAuthChallengeDto | null };
+
+export interface ParentPublicationDto {
+  repository: string;
+  pointer: "pending" | "local" | "published";
+  result?: SyncResultDto;
+  error?: { kind: string; [key: string]: unknown };
+  policySkipped?: boolean;
+}
 
 export interface GitUserPolicyDto {
   autoSync: boolean;

@@ -895,7 +895,7 @@ pub(crate) fn access_store_path(app: &AppHandle) -> Result<PathBuf, AppError> {
     Ok(config_dir.join(ACCESS_STORE_FILE))
 }
 
-async fn resolve_repository(cli: &GitCli, space_path: &Path) -> Result<PathBuf, AppError> {
+pub(crate) async fn resolve_repository(cli: &GitCli, space_path: &Path) -> Result<PathBuf, AppError> {
     let output = cli
         .exec(space_path, &["rev-parse", "--show-toplevel"])
         .await?;

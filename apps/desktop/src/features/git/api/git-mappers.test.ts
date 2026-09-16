@@ -38,3 +38,24 @@ test("toSyncResult maps backend camelCase sync results", () => {
     files: ["README.md"],
   });
 });
+
+test("child publication retains a separately targeted parent failure", () => {
+  const result = toSyncResult({
+    type: "success",
+    publishedHead: "child-sha",
+    parent: {
+      repository: "/project",
+      pointer: "local",
+      error: {
+        kind: "git_publication_blocked",
+        reason: "revision_unavailable",
+      },
+    },
+  });
+  expect(result.type).toBe("Success");
+  if (result.type !== "Success") throw new Error("Expected child success");
+  expect(result.publishedHead).toBe("child-sha");
+  expect(result.parent?.repository).toBe("/project");
+  expect(result.parent?.error?.kind).toBe("git_publication_blocked");
+  expect(result.parent?.pointer).toBe("local");
+});

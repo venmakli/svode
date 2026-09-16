@@ -705,7 +705,7 @@ async fn exact_path_outcome(
 }
 pub(crate) fn publish_exact_path_commit(
     app: &AppHandle,
-    cli: &super::cli::GitCli,
+    _cli: &super::cli::GitCli,
     space_path: &Path,
     repo: &Path,
 ) {
@@ -715,18 +715,10 @@ pub(crate) fn publish_exact_path_commit(
         |space, repo| emit_committed(app, space, repo),
         |repo| {
             let app = app.clone();
-            let cli = cli.clone();
             let repo = repo.to_path_buf();
             tauri::async_runtime::spawn(async move {
-                let git = app.state::<GitState>();
-                let lock = git.get_lock(&repo).await;
-                let _guard = lock.lock().await;
-                if let Err(error) = crate::git::sync::sync(&cli, &repo).await {
-                    tracing::warn!(
-                        "auto-sync (exact path) failed for {}: {}",
-                        repo.display(),
-                        error
-                    );
+                if let Err(error) = super::publication_flow::sync(&app, &repo, true, false).await {
+                    tracing::warn!(kind = error.kind(), "auto-sync (exact path) failed");
                 }
             });
         },
@@ -1096,44 +1088,40 @@ async fn finish_commit(
     emit_committed(app, space, repo);
     let pointer = if let Some(intent) = pointer_intent {
         let state = app.state::<GitState>();
+        let child_lock = state.get_lock(repo).await;
+        let _child_guard = child_lock.lock().await;
         let lock = state.get_lock(project).await;
         let _guard = lock.lock().await;
-        commit_parent_pointer(cli, project, space, intent).await
+        match super::access::require_repository_mutation(app, project).await {
+            Ok(_) => commit_parent_pointer(cli, project, space, intent).await,
+            Err(error) => Err(error),
+        }
     } else {
         Ok(false)
     };
-    // Child history remains published even when the separate root step fails.
-    schedule_committed_sync(cli, repo);
+    schedule_committed_sync(app, repo);
     if pointer? {
         emit_committed(app, space, project);
-        schedule_committed_sync(cli, project);
+        // With child auto-sync enabled, its pipeline owns the parent step.
+        // Otherwise root policy may publish only already available pointers.
+        if !is_auto_sync_enabled(repo) {
+            schedule_committed_sync(app, project);
+        }
     }
     Ok(())
 }
 
-fn schedule_committed_sync(cli: &super::cli::GitCli, repo: &Path) {
-    if !is_auto_sync_enabled(repo) {
-        return;
-    }
-    let cli = cli.clone();
+fn schedule_committed_sync(app: &AppHandle, repo: &Path) {
+    if !is_auto_sync_enabled(repo) { return; }
+    let app = app.clone();
     let repo = repo.to_path_buf();
     tauri::async_runtime::spawn(async move {
-        if let Err(error) = sync_if_committed(&cli, &repo, true).await {
+        if let Err(error) = super::publication_flow::sync(&app, &repo, true, false).await {
             tracing::warn!(kind = error.kind(), "auto-sync after commit failed");
         }
     });
 }
 
-async fn sync_if_committed(
-    cli: &super::cli::GitCli,
-    repo: &Path,
-    created: bool,
-) -> Result<(), AppError> {
-    if created && is_auto_sync_enabled(repo) {
-        crate::git::sync::sync(cli, repo).await?;
-    }
-    Ok(())
-}
 
 fn emit_committed(app: &AppHandle, space_path: &Path, repo_path: &Path) {
     if let Err(error) = crate::actors::invalidate_repository(app, repo_path) {
@@ -1943,12 +1931,12 @@ mod tests {
             let created = ops::commit_paths(&cli, root, &["manual.md".into()])
                 .await
                 .unwrap();
-            sync_if_committed(&cli, root, false).await.unwrap();
+            super::super::sync::sync_if_enabled(&cli, root, false).await.unwrap();
             assert_eq!(
                 git(&cli, remote.path(), &["rev-parse", branch]).await,
                 before
             );
-            sync_if_committed(&cli, root, created).await.unwrap();
+            super::super::sync::sync_if_enabled(&cli, root, created).await.unwrap();
             let remote_head = git(&cli, remote.path(), &["rev-parse", branch]).await;
             if sync {
                 assert_eq!(remote_head, git(&cli, root, &["rev-parse", "HEAD"]).await);

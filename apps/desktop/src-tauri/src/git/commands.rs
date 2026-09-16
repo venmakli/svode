@@ -8,7 +8,6 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use super::autocommit::{AutocommitService, SystemCommitKind};
 use super::cli::{GitAvailability, GitCli};
 use super::ops::{GitStatus, UnpushedCommit};
-use super::sync::SyncResult;
 use crate::AppError;
 use crate::index::{IndexKey, IndexState};
 use crate::repo_path::{RootMode, normalize_repo_relative, repo_relative_from_base};
@@ -45,7 +44,7 @@ async fn invalidate_actor_space(app: &AppHandle, space: &Path) {
     }
 }
 
-async fn invalidate_repository_access(
+pub(crate) async fn invalidate_repository_access(
     app: &AppHandle,
     access_state: &super::access::RepositoryAccessState,
     cli: &GitCli,
@@ -224,9 +223,14 @@ impl GitState {
     /// Get or create a per-space lock. Public so other modules
     /// (like the space creation flow) can serialize git work too.
     pub(crate) async fn get_lock(&self, path: &Path) -> Arc<tokio::sync::Mutex<()>> {
+        let canonical = std::fs::canonicalize(path).unwrap_or_else(|_| {
+            path.parent().and_then(|parent| std::fs::canonicalize(parent).ok())
+                .zip(path.file_name()).map(|(parent, name)| parent.join(name))
+                .unwrap_or_else(|| path.to_path_buf())
+        });
         let mut locks = self.locks.lock().await;
         locks
-            .entry(path.to_path_buf())
+            .entry(canonical)
             .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
             .clone()
     }
@@ -340,7 +344,8 @@ pub async fn git_get_remote(
     space_path: String,
 ) -> Result<Option<String>, AppError> {
     let path = PathBuf::from(&space_path);
-    let lock = state.get_lock(&path).await;
+    let repository = super::access::resolve_repository(state.cli()?, &path).await?;
+    let lock = state.get_lock(&repository).await;
     let _guard = lock.lock().await;
     super::ops::get_remote(state.cli()?, &path).await
 }
@@ -364,7 +369,8 @@ pub async fn git_set_remote(
         .map(|(project, space_id)| (PathBuf::from(project), space_id.to_string()));
 
     let cli = require_cli(&state)?;
-    let lock = state.get_lock(&path).await;
+    let repository = super::access::resolve_repository(state.cli()?, &path).await?;
+    let lock = state.get_lock(&repository).await;
     let _guard = lock.lock().await;
     super::ops::set_remote(&cli, &path, &url).await?;
     drop(_guard);
@@ -424,11 +430,14 @@ pub async fn git_push(
     space_path: String,
 ) -> Result<GitStatus, AppError> {
     let path = PathBuf::from(&space_path);
-    let lock = state.get_lock(&path).await;
+    let repository = super::access::resolve_repository(state.cli()?, &path).await?;
+    let lock = state.get_lock(&repository).await;
     let _guard = lock.lock().await;
     let cli = state.cli()?;
     if let Err(error) = super::ops::push(cli, &path).await {
-        invalidate_repository_access(&app, &access_state, cli, &path).await;
+        if !matches!(error, AppError::GitPublicationBlocked { .. } | AppError::GitBranchBlocked { .. }) {
+            invalidate_repository_access(&app, &access_state, cli, &path).await;
+        }
         return Err(error);
     }
     let store_path = super::access::access_store_path(&app)?;
@@ -450,7 +459,8 @@ pub async fn git_status(
     space_path: String,
 ) -> Result<GitStatus, AppError> {
     let path = PathBuf::from(&space_path);
-    let lock = state.get_lock(&path).await;
+    let repository = super::access::resolve_repository(state.cli()?, &path).await?;
+    let lock = state.get_lock(&repository).await;
     let _guard = lock.lock().await;
     super::ops::status(state.cli()?, &path).await
 }
@@ -463,7 +473,8 @@ pub async fn git_fetch_status(
     space_path: String,
 ) -> Result<GitStatus, AppError> {
     let path = PathBuf::from(&space_path);
-    let lock = state.get_lock(&path).await;
+    let repository = super::access::resolve_repository(state.cli()?, &path).await?;
+    let lock = state.get_lock(&repository).await;
     let _guard = lock.lock().await;
     let cli = state.cli()?;
     if let Err(error) = super::ops::fetch_remote(cli, &path).await {
@@ -560,84 +571,65 @@ pub async fn git_commit_paths(
 #[tauri::command]
 pub async fn git_sync(
     app: AppHandle,
-    state: State<'_, GitState>,
-    access_state: State<'_, super::access::RepositoryAccessState>,
-    index_state: State<'_, IndexState>,
     space_path: String,
-) -> Result<SyncResult, AppError> {
-    let path = PathBuf::from(&space_path);
-    let lock = state.get_lock(&path).await;
-    let _guard = lock.lock().await;
-    let cli = state.cli()?;
-    let result = match super::sync::sync(cli, &path).await {
-        Ok(result) => result,
+    background: Option<bool>,
+) -> Result<super::publication_flow::SyncReport, AppError> {
+    super::publication_flow::sync(&app, Path::new(&space_path), background.unwrap_or(false), false).await
+}
+
+pub(crate) async fn refresh_synced_repository(app: &AppHandle, cli: &GitCli, path: &Path) {
+    let access_state = app.state::<super::access::RepositoryAccessState>();
+    let index_state = app.state::<IndexState>();
+    let evidence = async {
+        let store_path = super::access::access_store_path(app)?;
+        access_state
+            .record_writable_evidence(cli, path, &store_path)
+            .await
+    }
+    .await;
+    match evidence {
+        Ok(snapshot) => publish_repository_access(&app, &snapshot),
         Err(error) => {
-            if !matches!(error, AppError::GitBranchBlocked { .. }) {
-                invalidate_repository_access(&app, &access_state, cli, &path).await;
-            }
-            return Err(error);
-        }
-    };
-    if matches!(result, SyncResult::AuthRequired { .. }) {
-        invalidate_repository_access(&app, &access_state, cli, &path).await;
-    }
-
-    // On a successful pull (Success means pull+push completed), refresh the
-    // SQLite index for any files that the merge brought in or modified, then
-    // emit `space:synced`. The canonical source of `space:synced` is the
-    // git-sync flow — emit AFTER reindex so consumers see a fresh index.
-    if matches!(result, SyncResult::Success) {
-        let store_path = super::access::access_store_path(&app)?;
-        match access_state
-            .record_writable_evidence(cli, &path, &store_path)
-            .await
-        {
-            Ok(snapshot) => publish_repository_access(&app, &snapshot),
-            Err(error) => {
-                tracing::warn!("failed to record repository write evidence after sync: {error}");
-            }
-        }
-        let key = index_state
-            .key_for_space_dir(&path)
-            .await
-            .unwrap_or_else(|| IndexKey::Root(path.clone()));
-        let changed = super::ops::diff_after_pull(cli, &path).await.ok();
-        if let Some(changed) = &changed {
-            if !changed.is_empty() {
-                if let Err(e) =
-                    crate::index::update::reindex_after_pull(&index_state, &key, changed.clone())
-                        .await
-                {
-                    tracing::warn!("reindex_after_pull failed: {e}");
-                }
-            }
-        }
-        // Root pulls may introduce new inline spaces in `SpaceConfig.spaces`
-        // — open pools for newcomers (5.4). For non-root keys, this is a
-        // no-op since child spaces don't carry their own `spaces` list under
-        // the flat-space invariant.
-        if let IndexKey::Root(ref project) = key {
-            if let Err(e) = index_state.refresh_after_root_pull(&app, project).await {
-                tracing::warn!("refresh_after_root_pull failed: {e}");
-            }
-        }
-        index_state
-            .invalidate_project_backlinks(key.project())
-            .await;
-        invalidate_actor_space(&app, &path).await;
-        if let Some(changed) = &changed {
-            emit_sync_domain_invalidations(&app, &index_state, &key, &path, changed).await;
-        }
-        emit_space_synced(&app, &key);
-        // Explicit-trigger LFS auto-pull: if the merge brought in pointer
-        // files under `.assets/` and credentials are present, fetch the
-        // bytes in the background (Stage 3.5 Phase 8 §8.5 / Q8c).
-        if let Some(changed) = changed {
-            crate::storage::lfs::maybe_auto_pull_after_sync(&app, &key, &path, &changed);
+            tracing::warn!("failed to record repository write evidence after sync: {error}");
         }
     }
-
-    Ok(result)
+    let key = index_state
+        .key_for_space_dir(&path)
+        .await
+        .unwrap_or_else(|| IndexKey::Root(path.to_path_buf()));
+    let changed = super::ops::diff_after_pull(cli, &path).await.ok();
+    if let Some(changed) = &changed {
+        if !changed.is_empty() {
+            if let Err(e) =
+                crate::index::update::reindex_after_pull(&index_state, &key, changed.clone()).await
+            {
+                tracing::warn!("reindex_after_pull failed: {e}");
+            }
+        }
+    }
+    // Root pulls may introduce new inline spaces in `SpaceConfig.spaces`
+    // — open pools for newcomers (5.4). For non-root keys, this is a
+    // no-op since child spaces don't carry their own `spaces` list under
+    // the flat-space invariant.
+    if let IndexKey::Root(ref project) = key {
+        if let Err(e) = index_state.refresh_after_root_pull(&app, project).await {
+            tracing::warn!("refresh_after_root_pull failed: {e}");
+        }
+    }
+    index_state
+        .invalidate_project_backlinks(key.project())
+        .await;
+    invalidate_actor_space(&app, &path).await;
+    if let Some(changed) = &changed {
+        emit_sync_domain_invalidations(&app, &index_state, &key, &path, changed).await;
+    }
+    emit_space_synced(&app, &key);
+    // Explicit-trigger LFS auto-pull: if the merge brought in pointer
+    // files under `.assets/` and credentials are present, fetch the
+    // bytes in the background (Stage 3.5 Phase 8 §8.5 / Q8c).
+    if let Some(changed) = changed {
+        crate::storage::lfs::maybe_auto_pull_after_sync(&app, &key, &path, &changed);
+    }
 }
 
 #[tauri::command]
@@ -668,7 +660,8 @@ pub async fn git_conflict_files(
     space_path: String,
 ) -> Result<Vec<String>, AppError> {
     let path = PathBuf::from(&space_path);
-    let lock = state.get_lock(&path).await;
+    let repository = super::access::resolve_repository(state.cli()?, &path).await?;
+    let lock = state.get_lock(&repository).await;
     let _guard = lock.lock().await;
     super::sync::conflict_files(state.cli()?, &path).await
 }
@@ -676,74 +669,9 @@ pub async fn git_conflict_files(
 #[tauri::command]
 pub async fn git_resolve_continue(
     app: AppHandle,
-    state: State<'_, GitState>,
-    access_state: State<'_, super::access::RepositoryAccessState>,
-    index_state: State<'_, IndexState>,
     space_path: String,
-) -> Result<SyncResult, AppError> {
-    let path = PathBuf::from(&space_path);
-    let lock = state.get_lock(&path).await;
-    let _guard = lock.lock().await;
-    let cli = state.cli()?;
-    let result = match super::sync::resolve_and_continue(cli, &path).await {
-        Ok(result) => result,
-        Err(error) => {
-            invalidate_repository_access(&app, &access_state, cli, &path).await;
-            return Err(error);
-        }
-    };
-    if matches!(result, SyncResult::AuthRequired { .. }) {
-        invalidate_repository_access(&app, &access_state, cli, &path).await;
-    }
-
-    // After conflict resolution + merge commit + push, the space tree
-    // has changed; refresh the index for the diff against the previous HEAD,
-    // then emit `space:synced`.
-    if matches!(result, SyncResult::Success) {
-        let store_path = super::access::access_store_path(&app)?;
-        match access_state
-            .record_writable_evidence(cli, &path, &store_path)
-            .await
-        {
-            Ok(snapshot) => publish_repository_access(&app, &snapshot),
-            Err(error) => tracing::warn!(
-                "failed to record repository write evidence after conflict resolution: {error}"
-            ),
-        }
-        let key = index_state
-            .key_for_space_dir(&path)
-            .await
-            .unwrap_or_else(|| IndexKey::Root(path.clone()));
-        let changed = super::ops::diff_after_pull(cli, &path).await.ok();
-        if let Some(changed) = &changed {
-            if !changed.is_empty() {
-                if let Err(e) =
-                    crate::index::update::reindex_after_pull(&index_state, &key, changed.clone())
-                        .await
-                {
-                    tracing::warn!("reindex_after_pull failed: {e}");
-                }
-            }
-        }
-        if let IndexKey::Root(ref project) = key {
-            if let Err(e) = index_state.refresh_after_root_pull(&app, project).await {
-                tracing::warn!("refresh_after_root_pull failed: {e}");
-            }
-        }
-        index_state
-            .invalidate_project_backlinks(key.project())
-            .await;
-        invalidate_actor_space(&app, &path).await;
-        if let Some(changed) = &changed {
-            emit_sync_domain_invalidations(&app, &index_state, &key, &path, changed).await;
-        }
-        emit_space_synced(&app, &key);
-        if let Some(changed) = changed {
-            crate::storage::lfs::maybe_auto_pull_after_sync(&app, &key, &path, &changed);
-        }
-    }
-
-    Ok(result)
+) -> Result<super::publication_flow::SyncReport, AppError> {
+    super::publication_flow::sync(&app, Path::new(&space_path), false, true).await
 }
 
 async fn emit_sync_domain_invalidations(
@@ -839,7 +767,8 @@ pub async fn git_merge_abort(
     space_path: String,
 ) -> Result<(), AppError> {
     let path = PathBuf::from(&space_path);
-    let lock = state.get_lock(&path).await;
+    let repository = super::access::resolve_repository(state.cli()?, &path).await?;
+    let lock = state.get_lock(&repository).await;
     let _guard = lock.lock().await;
     super::sync::merge_abort(state.cli()?, &path).await
 }
@@ -873,7 +802,8 @@ pub async fn git_unpushed_commits(
     space_path: String,
 ) -> Result<Vec<UnpushedCommit>, AppError> {
     let path = PathBuf::from(&space_path);
-    let lock = state.get_lock(&path).await;
+    let repository = super::access::resolve_repository(state.cli()?, &path).await?;
+    let lock = state.get_lock(&repository).await;
     let _guard = lock.lock().await;
     super::ops::unpushed_commits(state.cli()?, &path).await
 }
@@ -886,11 +816,14 @@ pub async fn git_publish(
     space_path: String,
 ) -> Result<GitStatus, AppError> {
     let path = PathBuf::from(&space_path);
-    let lock = state.get_lock(&path).await;
+    let repository = super::access::resolve_repository(state.cli()?, &path).await?;
+    let lock = state.get_lock(&repository).await;
     let _guard = lock.lock().await;
     let cli = state.cli()?;
     if let Err(error) = super::ops::push_set_upstream(cli, &path).await {
-        invalidate_repository_access(&app, &access_state, cli, &path).await;
+        if !matches!(error, AppError::GitPublicationBlocked { .. } | AppError::GitBranchBlocked { .. }) {
+            invalidate_repository_access(&app, &access_state, cli, &path).await;
+        }
         return Err(error);
     }
     let store_path = super::access::access_store_path(&app)?;

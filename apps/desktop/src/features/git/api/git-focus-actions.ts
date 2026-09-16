@@ -19,7 +19,7 @@ export async function refreshGitOnWindowFocus(
       (await isAutoSyncEnabled(spacePath, projectPath)) &&
       (status.ahead > 0 || status.behind > 0)
     ) {
-      await syncSpace(spacePath);
+      await syncSpace(spacePath, true);
     }
   } catch (err) {
     useGitStore.getState().setSyncError(spacePath, String(err));

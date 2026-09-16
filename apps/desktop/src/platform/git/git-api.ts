@@ -71,8 +71,11 @@ export function pushGit(spacePath: string): Promise<GitStatusDto> {
   return invokeCommand<GitStatusDto>("git_push", { spacePath });
 }
 
-export function syncGit(spacePath: string): Promise<SyncResultDto> {
-  return invokeCommand<SyncResultDto>("git_sync", { spacePath });
+export function syncGit(
+  spacePath: string,
+  background = false,
+): Promise<SyncResultDto> {
+  return invokeCommand<SyncResultDto>("git_sync", { spacePath, background });
 }
 
 export function saveGitHttpCredentials(input: {

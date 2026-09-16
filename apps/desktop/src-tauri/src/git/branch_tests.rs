@@ -387,7 +387,7 @@ async fn root_pull_never_checks_out_child_even_with_recursion_enabled() {
     let before = f.snapshot();
     assert!(matches!(
         super::super::sync::sync(&f.cli, &f.root).await.unwrap(),
-        super::super::sync::SyncResult::Success
+        super::super::sync::SyncResult::Success { .. }
     ));
     assert_eq!(f.snapshot(), before);
     assert_eq!(git(&f.child, &["branch", "--show-current"]), "develop");

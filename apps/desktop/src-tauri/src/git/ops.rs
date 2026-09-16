@@ -191,7 +191,7 @@ pub async fn set_remote(cli: &GitCli, space_dir: &Path, url: &str) -> Result<(),
 
 /// Push current branch silently. Used by explicit publish and policy-gated focus push.
 pub async fn push(cli: &GitCli, space_dir: &Path) -> Result<(), AppError> {
-    let out = cli.exec(space_dir, &["push"]).await?;
+    let out = super::publication::push(cli, space_dir, false).await?;
     if out.exit_code != 0 {
         let stderr = out.stderr.trim();
         return Err(git_remote_command_error("git push", stderr));
@@ -1558,10 +1558,7 @@ pub async fn current_branch(cli: &GitCli, space_dir: &Path) -> Result<String, Ap
 
 /// Push with --set-upstream origin <current-branch>.
 pub async fn push_set_upstream(cli: &GitCli, space_dir: &Path) -> Result<(), AppError> {
-    let branch = current_branch(cli, space_dir).await?;
-    let out = cli
-        .exec(space_dir, &["push", "-u", "origin", &branch])
-        .await?;
+    let out = super::publication::push(cli, space_dir, true).await?;
     if out.exit_code != 0 {
         let stderr = out.stderr.trim();
         if (stderr.contains("rejected")

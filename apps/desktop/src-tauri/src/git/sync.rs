@@ -9,10 +9,28 @@ use crate::AppError;
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase", tag = "type")]
 pub enum SyncResult {
-    Success,
-    Conflict { files: Vec<String> },
+    Success {
+        #[serde(rename = "publishedHead")]
+        published_head: String,
+    },
+    Conflict {
+        files: Vec<String>,
+    },
     NoRemote,
-    AuthRequired { challenge: GitAuthChallenge },
+    AuthRequired {
+        challenge: GitAuthChallenge,
+    },
+}
+
+pub(crate) async fn sync_if_enabled(
+    cli: &GitCli,
+    repo: &Path,
+    requested: bool,
+) -> Result<Option<SyncResult>, AppError> {
+    if !requested || !crate::space::config::effective_git_user_policy(repo).auto_sync {
+        return Ok(None);
+    }
+    sync(cli, repo).await.map(Some)
 }
 
 /// Pull then push. Handle conflicts, no-remote, and auth errors.
@@ -52,7 +70,8 @@ pub async fn sync(cli: &GitCli, space_dir: &Path) -> Result<SyncResult, AppError
     }
 
     // Push
-    let push_out = cli.exec(space_dir, &["push"]).await?;
+    let (push_out, published_head) =
+        super::publication::push_snapshot(cli, space_dir, false).await?;
     if push_out.exit_code != 0 {
         let stderr = push_out.stderr.trim();
 
@@ -65,7 +84,9 @@ pub async fn sync(cli: &GitCli, space_dir: &Path) -> Result<SyncResult, AppError
     }
 
     tracing::info!("Synced space {}", space_dir.display());
-    Ok(SyncResult::Success)
+    Ok(SyncResult::Success {
+        published_head: published_head.unwrap_or_default(),
+    })
 }
 
 async fn sync_without_upstream(cli: &GitCli, space_dir: &Path) -> Result<SyncResult, AppError> {
@@ -116,23 +137,19 @@ async fn sync_without_upstream(cli: &GitCli, space_dir: &Path) -> Result<SyncRes
         }
     }
 
-    match super::ops::push_set_upstream(cli, space_dir).await {
-        Ok(()) => {
-            tracing::info!("Synced space {}", space_dir.display());
-            Ok(SyncResult::Success)
-        }
-        Err(AppError::GitAuthRequired(detail)) => {
-            auth_required(
-                cli,
-                space_dir,
-                GitRemoteOperation::FirstPush,
-                Some(detail.as_str()),
-            )
-            .await
-        }
-        Err(AppError::GitNoRemote) => Ok(SyncResult::NoRemote),
-        Err(err) => Err(err),
+    let (out, published_head) = super::publication::push_snapshot(cli, space_dir, true).await?;
+    if out.exit_code != 0 {
+        return remote_error_to_sync_result(
+            cli,
+            space_dir,
+            GitRemoteOperation::FirstPush,
+            super::ops::git_remote_command_error("git push", &out.stderr),
+        )
+        .await;
     }
+    Ok(SyncResult::Success {
+        published_head: published_head.unwrap_or_default(),
+    })
 }
 
 async fn upstream_ref(cli: &GitCli, space_dir: &Path) -> Result<Option<String>, AppError> {
@@ -245,7 +262,8 @@ pub async fn resolve_and_continue(cli: &GitCli, space_dir: &Path) -> Result<Sync
     }
 
     // Push
-    let push_out = cli.exec(space_dir, &["push"]).await?;
+    let (push_out, published_head) =
+        super::publication::push_snapshot(cli, space_dir, false).await?;
     if push_out.exit_code != 0 {
         let stderr = push_out.stderr.trim();
         if super::ops::is_git_auth_error(stderr) {
@@ -257,7 +275,9 @@ pub async fn resolve_and_continue(cli: &GitCli, space_dir: &Path) -> Result<Sync
     }
 
     tracing::info!("Resolved conflicts and pushed in {}", space_dir.display());
-    Ok(SyncResult::Success)
+    Ok(SyncResult::Success {
+        published_head: published_head.unwrap_or_default(),
+    })
 }
 
 /// Abort current merge.

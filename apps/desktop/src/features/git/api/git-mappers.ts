@@ -41,7 +41,20 @@ export function toSyncResult(dto: SyncResultDto): SyncResult {
     case "conflict":
       return { type: "Conflict", files: [...dto.files] };
     case "success":
-      return { type: "Success" };
+      return {
+        type: "Success",
+        ...(dto.publishedHead ? { publishedHead: dto.publishedHead } : {}),
+        ...(dto.parent
+          ? {
+              parent: {
+                ...dto.parent,
+                ...(dto.parent.result
+                  ? { result: toSyncResult(dto.parent.result) }
+                  : { result: undefined }),
+              },
+            }
+          : {}),
+      };
     case "noRemote":
       return { type: "NoRemote" };
     case "authRequired":
