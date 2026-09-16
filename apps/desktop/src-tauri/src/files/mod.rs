@@ -1,3 +1,4 @@
+pub(crate) mod actor_observation;
 pub mod backlinks;
 pub mod entry;
 pub(crate) mod filename;

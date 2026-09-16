@@ -1,4 +1,5 @@
 pub mod access;
+pub(crate) mod actor_sources;
 pub mod auth;
 pub mod autocommit;
 pub mod cli;

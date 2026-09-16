@@ -20,6 +20,7 @@ use crate::routines::{
 
 struct WatcherHandle {
     _watcher: RecommendedWatcher,
+    _actors: super::actor_observation::ActorObservation,
     /// Send a signal to stop the debounce thread.
     stop_tx: mpsc::Sender<()>,
     ref_count: usize,
@@ -69,6 +70,24 @@ impl FileWatcher {
             .watch(&space_path, RecursiveMode::Recursive)
             .map_err(|e| AppError::Watcher(e.to_string()))?;
 
+        let actors = {
+            let git_state = app.state::<crate::git::commands::GitState>();
+            crate::git::commands::require_cli(&git_state).and_then(|cli| {
+                let actor_app = app.clone();
+                super::actor_observation::ActorObservation::start(
+                    cli,
+                    space_path.clone(),
+                    move |repository| {
+                        if let Err(error) =
+                            crate::actors::invalidate_repository(&actor_app, repository)
+                        {
+                            tracing::warn!("actor observation invalidation failed: {error}");
+                        }
+                    },
+                )
+            })?
+        };
+
         // Spawn debounce thread
         let sp = space.clone();
         let root_schema_present = has_direct_schema(&space_path);
@@ -91,6 +110,7 @@ impl FileWatcher {
             space,
             WatcherHandle {
                 _watcher: watcher,
+                _actors: actors,
                 stop_tx,
                 ref_count: 1,
             },
@@ -195,7 +215,6 @@ fn process_events(
     let mut agent_context_targets = BTreeSet::new();
     let mut routine_owner_paths = BTreeSet::new();
     let mut agent_actor_owners = BTreeSet::new();
-    let mut actor_repository_spaces = BTreeSet::new();
     let mut attachment_invalidations =
         BTreeMap::<String, BTreeMap<String, AttachmentInvalidationKind>>::new();
     let space_root = Path::new(space);
@@ -234,9 +253,6 @@ fn process_events(
                     .is_none()
             {
                 membership_only_paths.insert(path.clone(), kind);
-            }
-            if actor_repository_source_path(space_root, path) {
-                actor_repository_spaces.insert(space_root.to_path_buf());
             }
             if let Some(owner_path) = routine_owner_for_path(space_root, path)
                 && !is_under_child_space(&owner_path, &skip_dirs)
@@ -322,17 +338,6 @@ fn process_events(
     for owner in agent_actor_owners {
         crate::agent_actors::commands::emit_catalog_invalidation(app, &owner);
     }
-    for space in actor_repository_spaces {
-        tauri::async_runtime::block_on(async {
-            if let Err(error) = crate::actors::invalidate_space(app, &space).await {
-                tracing::warn!(
-                    space = %space.display(),
-                    "failed to invalidate actor repository from watcher: {error}"
-                );
-            }
-        });
-    }
-
     for owner_path in variable_owners {
         let _ = app.emit(
             crate::commands::app_variables::APP_VARIABLES_CHANGED_EVENT,
@@ -672,18 +677,6 @@ fn agent_actor_owner_for_path(space_root: &Path, path: &Path) -> Option<PathBuf>
         return None;
     };
     Some(space_root.join(normalized.strip_suffix(suffix)?))
-}
-
-fn actor_repository_source_path(space_root: &Path, path: &Path) -> bool {
-    let Some(relative) = relative_watched_path(space_root, path) else {
-        return false;
-    };
-    relative == ".mailmap"
-        || matches!(
-            relative.as_str(),
-            ".git/config" | ".git/HEAD" | ".git/packed-refs"
-        )
-        || relative.starts_with(".git/refs/")
 }
 
 fn sync_index_for_watched_path(
@@ -1141,16 +1134,27 @@ mod tests {
     }
 
     #[test]
-    fn actor_repository_source_is_root_scoped() {
-        let root = Path::new("/project");
-        assert!(actor_repository_source_path(
-            root,
-            Path::new("/project/.git/refs/heads/main")
-        ));
-        assert!(!actor_repository_source_path(
-            root,
-            Path::new("/project/docs/.git/HEAD")
-        ));
+    fn git_metadata_never_becomes_content_tree_events() {
+        let temp = tempfile::tempdir().unwrap();
+        let policy = TreeIgnorePolicy::from_space_root(temp.path());
+        for relative in [
+            ".git",
+            ".git/refs",
+            ".git/config",
+            ".git/modules/child/HEAD",
+        ] {
+            let path = temp.path().join(relative);
+            assert!(
+                classify_content_tree_event(
+                    temp.path(),
+                    &policy,
+                    &HashSet::new(),
+                    &path,
+                    &EventKind::Create(CreateKind::Folder)
+                )
+                .is_none()
+            );
+        }
     }
 
     fn write_tree_config(tmp: &TempDir, exclude: Vec<&str>, include: Vec<&str>) {
