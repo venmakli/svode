@@ -30,6 +30,7 @@ export interface GitSyncWidget {
   remoteChecked: boolean;
   checkingRemote: boolean;
   syncError: string | null;
+  branchError: string | null;
   syncing: boolean;
   autoSync: boolean;
   savingAutoSync: boolean;
@@ -55,8 +56,13 @@ export function useGitSyncWidget(): GitSyncWidget {
   const syncing = useGitStore((state) =>
     spacePath ? state.syncing[spacePath] === true : false,
   );
+  const branchError = useGitStore((state) =>
+    spacePath ? (state.branchError[spacePath] ?? null) : null,
+  );
   const syncError = useGitStore((state) =>
-    spacePath ? (state.syncError[spacePath] ?? null) : null,
+    spacePath
+      ? (state.branchError[spacePath] ?? state.syncError[spacePath] ?? null)
+      : null,
   );
 
   const [hasRemote, setHasRemote] = useState(false);
@@ -257,7 +263,7 @@ export function useGitSyncWidget(): GitSyncWidget {
   );
 
   return {
-    visible: !!spacePath && hasRemote,
+    visible: !!spacePath && (hasRemote || !!syncError),
     open,
     setOpen,
     branch: branchLabel(status),
@@ -266,6 +272,7 @@ export function useGitSyncWidget(): GitSyncWidget {
     remoteChecked,
     checkingRemote,
     syncError,
+    branchError,
     syncing,
     autoSync,
     savingAutoSync,

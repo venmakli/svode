@@ -14,6 +14,7 @@ import {
   type GitAuthChallenge,
   type GitRemoteAuthCredentials,
 } from "@/features/git";
+import { gitBranchErrorMessage } from "@/features/git";
 import { useSpaceStore, type SpaceGitType } from "../model";
 import {
   cloneAndRegisterSpace,
@@ -168,7 +169,9 @@ export function useCreateSpaceDialog({
         }
 
         console.error("git_clone_space failed:", err);
-        toast.error(m.git_clone_failed());
+        toast.error(m.git_clone_failed(), {
+          description: gitBranchErrorMessage(err) ?? undefined,
+        });
         setCloneProgress(null);
       } finally {
         unlisten();

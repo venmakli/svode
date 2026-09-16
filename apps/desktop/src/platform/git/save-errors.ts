@@ -1,3 +1,4 @@
+import { toGitBranchBlockDto } from "./branch-errors";
 import { toRepositoryAccessDeniedDto } from "./repository-access-api";
 
 export interface GitSaveFailureDto {
@@ -34,6 +35,8 @@ export function rethrowGitSaveError(error: unknown): never {
 }
 
 function safeCause(error: unknown) {
+  const branch = toGitBranchBlockDto(error);
+  if (branch) return branch;
   const failure = toGitSaveFailureDto(error);
   if (failure) return { kind: "git_save_failed", ...failure };
   const denial = toRepositoryAccessDeniedDto(error);

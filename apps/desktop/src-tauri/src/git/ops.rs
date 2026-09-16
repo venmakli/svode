@@ -115,6 +115,7 @@ pub async fn list_submodules(
             project_path,
             &[
                 "config",
+                "-z",
                 "-f",
                 ".gitmodules",
                 "--get-regexp",
@@ -123,8 +124,9 @@ pub async fn list_submodules(
         )
         .await?;
 
+    if out.exit_code == 1 { return Ok(Vec::new()); }
     if out.exit_code != 0 {
-        return Ok(Vec::new());
+        return Err(AppError::GitCommandFailed("Cannot read .gitmodules".into()));
     }
 
     Ok(parse_submodule_config_output(&out.stdout))
@@ -139,15 +141,15 @@ fn parse_submodule_config_output(stdout: &str) -> Vec<SubmoduleConfig> {
 
     let mut by_name: BTreeMap<String, PartialSubmodule> = BTreeMap::new();
 
-    for line in stdout.lines() {
-        let Some((key, value)) = line.split_once(char::is_whitespace) else {
+    for line in stdout.split('\0') {
+        let Some((key, value)) = line.split_once('\n') else {
             continue;
         };
         let Some(rest) = key.strip_prefix("submodule.") else {
             continue;
         };
 
-        let value = value.trim().to_string();
+        let value = value.to_string();
         if let Some(name) = rest.strip_suffix(".path") {
             by_name.entry(name.to_string()).or_default().path = Some(value);
         } else if let Some(name) = rest.strip_suffix(".url") {
@@ -540,6 +542,7 @@ async fn reject_staged_local_variables(cli: &GitCli, repo: &Path) -> Result<(), 
 
 /// Stage the allowed concrete entries in a file or directory selection.
 pub async fn add(cli: &GitCli, space_dir: &Path, path: &str) -> Result<(), AppError> {
+    super::branch::prepare_existing(cli, space_dir).await?;
     let paths = super::staging::resolve(cli, space_dir, &[path.to_string()]).await?;
     super::staging::prepare(cli, space_dir, &paths)
         .await
@@ -553,6 +556,7 @@ pub async fn add_all(cli: &GitCli, space_dir: &Path) -> Result<(), AppError> {
 
 /// Commit the index. A no-op is established before invoking hooks.
 pub async fn commit(cli: &GitCli, space_dir: &Path, message: &str) -> Result<bool, AppError> {
+    super::branch::prepare_existing(cli, space_dir).await?;
     reject_staged_local_variables(cli, space_dir).await?;
     if !super::staging::has_changes(cli, space_dir, &[]).await? {
         return Ok(false);
@@ -596,6 +600,7 @@ pub(crate) async fn commit_exact_path_receipt(
     path: &str,
     message: &str,
 ) -> Result<Option<ExactPathCommitReceipt>, AppError> {
+    super::branch::prepare_existing(cli, repo).await?;
     let path = normalize_git_path(path)?;
     reject_local_variable_path(&path)?;
     let literal = format!(":(literal){path}");
@@ -963,6 +968,7 @@ pub async fn commit_paths(
     if file_paths.is_empty() {
         return Ok(false);
     }
+    super::branch::prepare_existing(cli, space_dir).await?;
     let file_paths = super::staging::resolve(cli, space_dir, file_paths).await?;
     if file_paths.is_empty() {
         return Ok(false);
@@ -1207,28 +1213,9 @@ pub async fn detect_space_git_type(
         return Ok(SpaceGitType::Independent);
     }
 
-    let config_out = cli
-        .exec(
-            project_path,
-            &["config", "-f", ".gitmodules", "--get-regexp", "path"],
-        )
-        .await?;
-    if config_out.exit_code != 0 {
-        return Ok(SpaceGitType::Independent);
-    }
-
-    let space_folder = space_path
-        .file_name()
-        .map(|n| n.to_string_lossy().to_string())
-        .unwrap_or_default();
-
-    for line in config_out.stdout.lines() {
-        // Format: "submodule.<name>.path <value>"
-        if let Some(path_val) = line.split_whitespace().nth(1) {
-            if path_val == space_folder {
-                return Ok(SpaceGitType::Submodule);
-            }
-        }
+    let relative = crate::repo_path::repo_relative_from_base(project_path, space_path, RootMode::Reject)?;
+    if list_submodules(cli, project_path).await?.iter().any(|module| module.path == relative) {
+        return Ok(SpaceGitType::Submodule);
     }
 
     Ok(SpaceGitType::Independent)
@@ -1255,19 +1242,9 @@ pub async fn get_submodule_url(
     root_path: &Path,
     space_folder: &str,
 ) -> Result<Option<String>, AppError> {
-    let key = format!("submodule.{}.url", space_folder);
-    let out = cli
-        .exec(root_path, &["config", "-f", ".gitmodules", "--get", &key])
-        .await?;
-    if out.exit_code != 0 {
-        return Ok(None);
-    }
-    let url = out.stdout.trim().to_string();
-    if url.is_empty() {
-        Ok(None)
-    } else {
-        Ok(Some(url))
-    }
+    Ok(list_submodules(cli, root_path).await?.into_iter()
+        .find(|module| module.path == space_folder)
+        .and_then(|module| module.url))
 }
 
 /// Record a direct child as a submodule without running `git submodule add`.

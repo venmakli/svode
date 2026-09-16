@@ -1,3 +1,4 @@
+import { gitBranchErrorMessage } from "./git-branch-error";
 import { useGitStore } from "../model";
 import {
   commitGitAll,
@@ -40,6 +41,9 @@ function retainPointerRetry(
   path: string | null,
   run: () => Promise<GitCommitResult | null>,
 ) {
+  const branchMessage = gitBranchErrorMessage(error);
+  if (branchMessage)
+    useGitStore.getState().setBranchError(spacePath, branchMessage);
   if (
     error &&
     typeof error === "object" &&
@@ -97,6 +101,7 @@ export async function syncSpace(spacePath: string): Promise<GitSyncOutcome> {
   const git = useGitStore.getState();
   git.setSyncing(spacePath, true);
   git.setSyncError(spacePath, null);
+  git.setBranchError(spacePath, null);
   try {
     const result = toSyncResult(await syncGit(spacePath));
     switch (result.type) {
@@ -117,8 +122,10 @@ export async function syncSpace(spacePath: string): Promise<GitSyncOutcome> {
     }
   } catch (err) {
     console.error("git_sync failed:", err);
-    const message = String(err);
-    git.setSyncError(spacePath, message);
+    const branchMessage = gitBranchErrorMessage(err);
+    if (branchMessage) git.setBranchError(spacePath, branchMessage);
+    const message = branchMessage ?? String(err);
+    git.setSyncError(spacePath, branchMessage ? null : message);
     return { type: "Failed", message };
   } finally {
     git.setSyncing(spacePath, false);
@@ -162,6 +169,7 @@ export async function commitFileAndMaybeSync(
     throw err;
   }
   pointerRetries.delete(spacePath);
+  useGitStore.getState().setBranchError(spacePath, null);
   if (await isAutoSyncEnabled(spacePath, projectPath)) {
     runAutoSync(spacePath, options);
   }
@@ -210,6 +218,7 @@ export async function commitAllSpace(
     throw err;
   }
   pointerRetries.delete(spacePath);
+  useGitStore.getState().setBranchError(spacePath, null);
   if (await isAutoSyncEnabled(spacePath, projectPath)) {
     runAutoSync(spacePath, options);
   }
@@ -258,6 +267,7 @@ export async function commitPathsAndMaybeSync(
     throw err;
   }
   pointerRetries.delete(spacePath);
+  useGitStore.getState().setBranchError(spacePath, null);
   if (await isAutoSyncEnabled(spacePath, projectPath)) {
     runAutoSync(spacePath, options);
   }
@@ -309,6 +319,7 @@ export async function syncOnOpen(
   // Clear any stuck error from a previous session — a fresh open should
   // re-evaluate the state rather than show the last failure forever.
   git.setSyncError(spacePath, null);
+  git.setBranchError(spacePath, null);
   try {
     const result = toSyncResult(await syncGit(spacePath));
     if (result.type === "Success") {
@@ -316,6 +327,8 @@ export async function syncOnOpen(
     }
   } catch (err) {
     console.debug("sync on open failed (silent):", err);
+    const branchMessage = gitBranchErrorMessage(err);
+    if (branchMessage) git.setBranchError(spacePath, branchMessage);
   } finally {
     git.setSyncing(spacePath, false);
   }

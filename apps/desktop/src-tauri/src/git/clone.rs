@@ -150,6 +150,17 @@ pub async fn submodule_add_with_progress(
     url: &str,
     space_folder: &str,
 ) -> Result<(), AppError> {
+    let target = project_path.join(space_folder);
+    if let Some(existing) = super::ops::list_submodules(cli, project_path)
+        .await?
+        .into_iter()
+        .find(|item| item.path == space_folder)
+    {
+        if existing.url.as_deref() != Some(url) {
+            return Err(AppError::FileAlreadyExists(target.display().to_string()));
+        }
+        return super::branch::materialize(cli, project_path, &target, space_folder).await;
+    }
     let target_str = project_path
         .join(space_folder)
         .to_str()
@@ -252,6 +263,7 @@ pub async fn submodule_add_with_progress(
         )));
     }
 
+    super::branch::prepare(cli, project_path, &target_dir, true).await?;
     Ok(())
 }
 

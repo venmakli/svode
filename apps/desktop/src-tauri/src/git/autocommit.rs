@@ -825,6 +825,7 @@ async fn commit_prepared_paths(
         }
         scopes.push(path.clone());
     }
+    super::branch::prepare_existing(cli, repo).await?;
     let concrete = super::staging::resolve(cli, repo, &scopes).await?;
     if concrete.is_empty() {
         return Ok(false);

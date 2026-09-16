@@ -289,6 +289,8 @@ pub async fn git_clone_space(
 
     if git_type == "submodule" {
         let cli = require_cli(&state)?;
+        let child_lock = state.get_lock(&target).await;
+        let child_guard = child_lock.lock().await;
         let lock = state.get_lock(&project_dir).await;
         let _guard = lock.lock().await;
         super::clone::submodule_add_with_progress(&cli, &app, &project_dir, &url, &space_folder)
@@ -303,6 +305,7 @@ pub async fn git_clone_space(
             crate::space::scaffold::scaffold_repository_space(&target, &space_folder, "", "")?;
         }
         drop(_guard);
+        drop(child_guard);
         super::local_repair::repair_scope_best_effort(&app, &project_dir, &target).await;
         if !svode_existed_before || !readme_existed_before {
             let commit_result = if !svode_existed_before && readme_existed_before {
@@ -569,7 +572,9 @@ pub async fn git_sync(
     let result = match super::sync::sync(cli, &path).await {
         Ok(result) => result,
         Err(error) => {
-            invalidate_repository_access(&app, &access_state, cli, &path).await;
+            if !matches!(error, AppError::GitBranchBlocked { .. }) {
+                invalidate_repository_access(&app, &access_state, cli, &path).await;
+            }
             return Err(error);
         }
     };

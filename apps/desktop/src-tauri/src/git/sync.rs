@@ -17,6 +17,8 @@ pub enum SyncResult {
 
 /// Pull then push. Handle conflicts, no-remote, and auth errors.
 pub async fn sync(cli: &GitCli, space_dir: &Path) -> Result<SyncResult, AppError> {
+    super::branch::prepare_existing(cli, space_dir).await?;
+    super::branch::ensure_no_operation(cli, space_dir).await?;
     // Check if remote is configured
     let remote_out = cli.exec(space_dir, &["remote"]).await?;
     if remote_out.stdout.trim().is_empty() {
@@ -28,7 +30,22 @@ pub async fn sync(cli: &GitCli, space_dir: &Path) -> Result<SyncResult, AppError
     }
 
     // Pull
-    let pull_out = cli.exec(space_dir, &["pull", "--no-rebase"]).await?;
+    let pull_out = cli
+        .exec(
+            space_dir,
+            &[
+                "-c",
+                "submodule.recurse=false",
+                "-c",
+                "rebase.autoStash=false",
+                "-c",
+                "merge.autoStash=false",
+                "pull",
+                "--no-rebase",
+                "--no-recurse-submodules",
+            ],
+        )
+        .await?;
 
     if pull_out.exit_code != 0 {
         return handle_pull_failure(cli, space_dir, &pull_out.stderr, &pull_out.stdout).await;
@@ -77,7 +94,22 @@ async fn sync_without_upstream(cli: &GitCli, space_dir: &Path) -> Result<SyncRes
 
     if super::ops::remote_branch_exists(cli, space_dir, &branch).await? {
         let pull_out = cli
-            .exec(space_dir, &["pull", "--no-rebase", "origin", &branch])
+            .exec(
+                space_dir,
+                &[
+                    "-c",
+                    "submodule.recurse=false",
+                    "-c",
+                    "rebase.autoStash=false",
+                    "-c",
+                    "merge.autoStash=false",
+                    "pull",
+                    "--no-rebase",
+                    "--no-recurse-submodules",
+                    "origin",
+                    &branch,
+                ],
+            )
             .await?;
         if pull_out.exit_code != 0 {
             return handle_pull_failure(cli, space_dir, &pull_out.stderr, &pull_out.stdout).await;

@@ -78,6 +78,7 @@ pub(crate) async fn save(
         access::require_repository_mutation(app, project).await?;
     }
     access::require_repository_mutation(app, &repo).await?;
+    super::branch::prepare_existing(&cli, &repo).await?;
 
     let anchors = requested.as_ref().map(|paths| {
         paths

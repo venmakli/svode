@@ -88,9 +88,10 @@ export function GitSyncStatusWidget() {
               <Alert variant="destructive">
                 <AlertTriangle />
                 <AlertDescription>
-                  {sync.remoteChecked
-                    ? m.git_sync_error_description()
-                    : m.git_sync_remote_unchecked_description()}
+                  {sync.branchError ??
+                    (sync.remoteChecked
+                      ? m.git_sync_error_description()
+                      : m.git_sync_remote_unchecked_description())}
                 </AlertDescription>
               </Alert>
             )}

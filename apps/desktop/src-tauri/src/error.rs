@@ -41,6 +41,9 @@ pub enum AppError {
     #[error("Git command failed: {0}")]
     GitCommandFailed(String),
 
+    #[error("Git branch preparation blocked: {reason:?}. Restore the branch and local work in Git, then retry.")]
+    GitBranchBlocked { reason: crate::git::branch::BranchBlockReason },
+
     #[error("Git save failed during {stage}: {reason} ({path_count} paths)")]
     GitSaveFailed {
         stage: &'static str,
@@ -118,6 +121,7 @@ impl AppError {
             AppError::AgentSpawnFailed(_) => "agent_spawn_failed",
             AppError::GitNotFound => "git_not_found",
             AppError::GitCommandFailed(_) => "git_command_failed",
+            AppError::GitBranchBlocked { .. } => "git_branch_blocked",
             AppError::GitSaveFailed { .. } => "git_save_failed",
             AppError::GitSavePartial { .. } => "git_save_partial",
             AppError::GitConflict(_) => "git_conflict",
@@ -144,6 +148,9 @@ impl Serialize for AppError {
         S: serde::Serializer,
     {
         match self {
+            AppError::GitBranchBlocked { reason } => {
+                serde_json::json!({ "kind": self.kind(), "reason": reason }).serialize(serializer)
+            }
             AppError::GitSaveFailed { stage, reason, exit_code, path_count, path_sample } => {
                 serde_json::json!({ "kind": self.kind(), "stage": stage, "reason": reason, "exitCode": exit_code, "pathCount": path_count, "pathSample": path_sample }).serialize(serializer)
             }

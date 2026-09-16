@@ -1165,53 +1165,14 @@ pub async fn clone_missing_space(
             );
         }
     } else {
-        // Check .gitmodules for submodule
-        let gitmodules = parent.join(".gitmodules");
-        if gitmodules.exists() {
-            let content = std::fs::read_to_string(&gitmodules)?;
-            if content.contains(&format!("path = {}", space_ref.path)) {
-                let cli = require_cli(&git_state)?;
-                let lock = git_state.get_lock(&parent).await;
-                let _guard = lock.lock().await;
-                let out = cli
-                    .exec_with_env(
-                        &parent,
-                        &["submodule", "update", "--init", &space_ref.path],
-                        &[("GIT_LFS_SKIP_SMUDGE", "1")],
-                    )
-                    .await?;
-                if out.exit_code != 0 {
-                    return Err(AppError::GitCommandFailed(format!(
-                        "git submodule update --init failed: {}",
-                        out.stderr
-                    )));
-                }
-                // Checkout default branch in the submodule
-                let space_lock = git_state.get_lock(&space_dir).await;
-                let _space_guard = space_lock.lock().await;
-                let branch_out = cli
-                    .exec(&space_dir, &["symbolic-ref", "refs/remotes/origin/HEAD"])
-                    .await?;
-                if branch_out.exit_code == 0 {
-                    let branch = branch_out
-                        .stdout
-                        .trim()
-                        .strip_prefix("refs/remotes/origin/")
-                        .unwrap_or("main");
-                    let _ = cli.exec(&space_dir, &["checkout", branch]).await;
-                }
-                if let Err(e) =
-                    crate::identity::scaffold_space_git_identity(&cli, &space_dir, &parent).await
-                {
-                    tracing::warn!(
-                        "scaffold_space_git_identity failed after submodule update: {e}"
-                    );
-                }
-            } else {
-                return Err(AppError::SpaceNotFound(space_id));
-            }
-        } else {
-            return Err(AppError::SpaceNotFound(space_id));
+        let cli = require_cli(&git_state)?;
+        let space_lock = git_state.get_lock(&space_dir).await;
+        let _space_guard = space_lock.lock().await;
+        let root_lock = git_state.get_lock(&parent).await;
+        let _root_guard = root_lock.lock().await;
+        crate::git::branch::materialize(&cli, &parent, &space_dir, &space_ref.path).await?;
+        if let Err(e) = crate::identity::scaffold_space_git_identity(&cli, &space_dir, &parent).await {
+            tracing::warn!("scaffold_space_git_identity failed after submodule update: {e}");
         }
     }
 

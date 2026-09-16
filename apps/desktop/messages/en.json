@@ -1992,5 +1992,15 @@
   "shortcuts_editor": "Editor and saving",
   "shortcuts_collections": "Collections",
   "shortcuts_editor_context": "Formatting and history: in editable text. Save commands apply to their current scope. Outside Terminal.",
-  "shortcuts_collection_context": "In a collection, outside text input."
+  "shortcuts_collection_context": "In a collection, outside text input.",
+  "git_branch_configuration": "The working branch settings for this space are ambiguous.",
+  "git_branch_root_detached": "The submodule follows the project branch, but the project has a detached HEAD.",
+  "git_branch_remote_unavailable": "The space remote branch could not be checked. Check the connection and authentication.",
+  "git_branch_missing_branch": "The configured branch or remote default branch is missing.",
+  "git_branch_local_changes": "Branch switching stopped: the detached checkout has unsaved or untracked files.",
+  "git_branch_operation_in_progress": "Branch switching stopped: a Git operation is still in progress.",
+  "git_branch_local_history": "Branch switching stopped: the detached HEAD has local commits outside the selected remote branch.",
+  "git_branch_incompatible_branch": "The local branch or upstream is incompatible with the expected working branch.",
+  "git_branch_checkout_failed": "Git could not safely check out the working branch.",
+  "git_branch_recovery": "Preserve your local work and restore the working branch/upstream using Git or a terminal, then retry."
 }

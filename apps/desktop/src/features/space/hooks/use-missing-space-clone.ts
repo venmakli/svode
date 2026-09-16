@@ -1,11 +1,12 @@
 import { useCallback } from "react";
 import { toast } from "sonner";
 import * as m from "@/paraglide/messages.js";
-import { trackSpaceCloneProgress } from "@/features/git";
 import {
-  cloneMissingSpace,
-  removeMissingSpace,
-} from "../api/space-actions";
+  gitBranchErrorMessage,
+  trackSpaceCloneProgress,
+  useGitStore,
+} from "@/features/git";
+import { cloneMissingSpace, removeMissingSpace } from "../api/space-actions";
 
 export function useMissingSpaceClone(
   rootPath: string | null,
@@ -24,10 +25,20 @@ export function useMissingSpaceClone(
         progress.complete();
       } catch (err) {
         console.error("clone_missing_space failed:", err);
+        const branchMessage = gitBranchErrorMessage(err);
+        if (branchMessage) {
+          useGitStore.getState().setBranchError(spacePath, branchMessage);
+          void loadSpaces(rootPath).catch((error) => {
+            console.error("Failed to refresh partial materialization:", error);
+          });
+        }
         const message =
-          typeof err === "string" ? err : ((err as Error)?.message ?? "error");
+          branchMessage ??
+          (typeof err === "string"
+            ? err
+            : ((err as Error)?.message ?? "error"));
         progress?.fail(message);
-        toast.error(m.git_clone_failed());
+        toast.error(m.git_clone_failed(), { description: message });
       } finally {
         progress?.dispose();
       }

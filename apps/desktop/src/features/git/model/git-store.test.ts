@@ -178,6 +178,7 @@ test("refreshStatus replaces stale dirty files with a clean snapshot", async () 
     statusErrors: {},
     syncing: {},
     syncError: {},
+    branchError: {},
     cloning: {},
   });
   const store = useGitStore.getState();
@@ -231,12 +232,14 @@ function gitStateBySpace(filesBySpace: Record<string, GitStatus["files"]>) {
     statusErrors: {},
     syncing: {},
     syncError: {},
+    branchError: {},
     cloning: {},
     applyStatus: () => undefined,
     refreshStatus: async () => undefined,
     clear: () => undefined,
     setSyncing: () => undefined,
     setSyncError: () => undefined,
+    setBranchError: () => undefined,
     setCloning: () => undefined,
   };
 }

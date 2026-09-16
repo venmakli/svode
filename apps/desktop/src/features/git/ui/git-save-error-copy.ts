@@ -2,6 +2,7 @@ import * as m from "@/paraglide/messages.js";
 import type { GitSaveError } from "../api/git-save-error";
 
 export function gitSaveErrorDescription(error: GitSaveError): string {
+  if (error.branchMessage) return error.branchMessage;
   const cause = error.cause;
   if (!cause) return m.git_save_cause_unknown();
   const stage = {
