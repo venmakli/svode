@@ -5,6 +5,22 @@
     {
       "kind": "ci-build",
       "version": "0.0.8",
+      "commit": "a120b457ca760af6183544426ae5acec60002538",
+      "sourceRef": "main",
+      "runId": 35067069468,
+      "publishedAt": "2026-09-16T07:28:07.523Z",
+      "expiresAt": "2026-09-19T07:28:07.523Z",
+      "platforms": {
+        "linux": {
+          "url": "https://github.com/venmakli/svode/actions/runs/35067069468/artifacts/10434334331",
+          "fallbackUrl": "https://github.com/venmakli/svode/actions/runs/35067069468",
+          "artifactName": "Svode-linux-deb"
+        }
+      }
+    },
+    {
+      "kind": "ci-build",
+      "version": "0.0.8",
       "commit": "7babe4b80b73318f70af29c9d7da3ff19b29b8a9",
       "sourceRef": "main",
       "runId": 34964780393,
@@ -51,64 +67,6 @@
           "url": "https://github.com/venmakli/svode/actions/runs/34798899011/artifacts/10331332955",
           "fallbackUrl": "https://github.com/venmakli/svode/actions/runs/34798899011",
           "artifactName": "Svode-macos-dmg"
-        }
-      }
-    },
-    {
-      "kind": "ci-build",
-      "version": "0.0.8",
-      "commit": "23d8471f66b0b1441fea8aaeb3e8b4c58a7f63c2",
-      "sourceRef": "main",
-      "runId": 34739573096,
-      "publishedAt": "2026-09-13T05:41:40.353Z",
-      "expiresAt": "2026-09-16T05:41:40.353Z",
-      "platforms": {
-        "windows": {
-          "url": "https://github.com/venmakli/svode/actions/runs/34739573096/artifacts/10312364032",
-          "fallbackUrl": "https://github.com/venmakli/svode/actions/runs/34739573096",
-          "artifactName": "Svode-windows-nsis"
-        }
-      }
-    },
-    {
-      "kind": "ci-build",
-      "version": "0.0.8",
-      "commit": "23d8471f66b0b1441fea8aaeb3e8b4c58a7f63c2",
-      "sourceRef": "main",
-      "runId": 34739545657,
-      "publishedAt": "2026-09-13T05:40:15.871Z",
-      "expiresAt": "2026-09-16T05:40:15.871Z",
-      "platforms": {
-        "darwin": {
-          "url": "https://github.com/venmakli/svode/actions/runs/34739545657/artifacts/10312049654",
-          "fallbackUrl": "https://github.com/venmakli/svode/actions/runs/34739545657",
-          "artifactName": "Svode-macos-dmg"
-        }
-      }
-    },
-    {
-      "kind": "ci-build",
-      "version": "0.0.8",
-      "commit": "56b377e9e5f285540de5a104a9e01ec81379b675",
-      "sourceRef": "main",
-      "runId": 34738077837,
-      "publishedAt": "2026-09-13T05:04:05.197Z",
-      "expiresAt": "2026-09-16T05:04:05.197Z",
-      "platforms": {
-        "linux": {
-          "url": "https://github.com/venmakli/svode/actions/runs/34738077837/artifacts/10311467497",
-          "fallbackUrl": "https://github.com/venmakli/svode/actions/runs/34738077837",
-          "artifactName": "Svode-linux-deb"
-        },
-        "darwin": {
-          "url": "https://github.com/venmakli/svode/actions/runs/34738077837/artifacts/10311632760",
-          "fallbackUrl": "https://github.com/venmakli/svode/actions/runs/34738077837",
-          "artifactName": "Svode-macos-dmg"
-        },
-        "windows": {
-          "url": "https://github.com/venmakli/svode/actions/runs/34738077837/artifacts/10311682828",
-          "fallbackUrl": "https://github.com/venmakli/svode/actions/runs/34738077837",
-          "artifactName": "Svode-windows-nsis"
         }
       }
     }
