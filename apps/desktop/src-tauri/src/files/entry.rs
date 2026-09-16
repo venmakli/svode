@@ -2659,6 +2659,50 @@ mod tests {
     }
 
     #[test]
+    fn body_only_save_preserves_boundary_and_metadata_bytes_on_disk() {
+        let tmp = TempDir::new().unwrap();
+        let ws = tmp.path().to_str().unwrap();
+        let path = resolve(ws, "note.md");
+        for eol in ["\n", "\r\n"] {
+            let metadata =
+                format!("---{eol}title: 'Note'{eol}# Keep comment{eol}custom: [a, b]{eol}---");
+            for closing_eol in ["", eol] {
+                let initial = format!("{metadata}{closing_eol}");
+                let original_body = if closing_eol.is_empty() {
+                    String::new()
+                } else {
+                    format!("## Original{eol}")
+                };
+                fs::write(&path, format!("{initial}{original_body}")).unwrap();
+                assert_eq!(read(ws, "note.md").unwrap().body, original_body);
+                let mut prefix = initial;
+                for body in [
+                    "",
+                    "## Контекст\n",
+                    "Paragraph\n",
+                    "- Item\n",
+                    "```rust\nlet x = 1;\n```\n",
+                    "",
+                ] {
+                    if !body.is_empty() && !prefix.ends_with('\n') {
+                        prefix.push('\n');
+                    }
+                    for _ in 0..2 {
+                        write(ws, "note.md", body, None, None, None, None, None, true).unwrap();
+                        let bytes = fs::read(&path).unwrap();
+                        assert_eq!(&bytes[..prefix.len()], prefix.as_bytes());
+                        assert_eq!(&bytes[prefix.len()..], body.as_bytes());
+                        let reopened = read(ws, "note.md").unwrap();
+                        assert_eq!(reopened.body, body);
+                        assert_eq!(reopened.meta.title, "Note");
+                        assert!(reopened.warnings.is_empty());
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
     fn test_write_body_only_preserves_malformed_frontmatter_as_content() {
         let tmp = TempDir::new().unwrap();
         let ws = tmp.path().to_str().unwrap();

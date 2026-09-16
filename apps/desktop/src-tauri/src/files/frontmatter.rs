@@ -66,7 +66,14 @@ pub fn parse_status(content: &str) -> ParseStatus {
 
 pub fn replace_body_preserving_frontmatter(content: &str, body: &str) -> Result<String, AppError> {
     let parts = split_frontmatter(content)?;
-    Ok(format!("{}{}", &content[..parts.body_start], body))
+    let prefix = &content[..parts.body_start];
+    let separator =
+        if parts.body_start == content.len() && !prefix.ends_with('\n') && !body.is_empty() {
+            "\n"
+        } else {
+            ""
+        };
+    Ok(format!("{prefix}{separator}{body}"))
 }
 
 fn split_frontmatter(content: &str) -> Result<FrontmatterParts<'_>, AppError> {
@@ -97,7 +104,9 @@ fn split_frontmatter(content: &str) -> Result<FrontmatterParts<'_>, AppError> {
     let yaml_str = &after_first[..end_pos];
     let closing_start = yaml_start + end_pos + 1;
     let closing_end = closing_start + FRONTMATTER_DELIMITER.len();
-    let body_start = if content[closing_end..].starts_with('\n') {
+    let body_start = if content[closing_end..].starts_with("\r\n") {
+        closing_end + 2
+    } else if content[closing_end..].starts_with('\n') {
         closing_end + 1
     } else {
         closing_end
@@ -380,6 +389,45 @@ Body
         match parse_status(raw) {
             ParseStatus::Malformed { body, .. } => assert_eq!(body, raw),
             _ => panic!("expected malformed status"),
+        }
+    }
+
+    #[test]
+    fn body_boundary_roundtrips_lf_crlf_and_eof() {
+        let bodies = [
+            "",
+            "## Контекст\n",
+            "Paragraph\n",
+            "- Item\n",
+            "```rust\nlet x = 1;\n```\n",
+        ];
+        for eol in ["\n", "\r\n"] {
+            let metadata =
+                format!("---{eol}title: 'Note'{eol}# Keep comment{eol}custom: [a, b]{eol}---");
+            for closing_eol in ["", eol] {
+                let prefix = format!("{metadata}{closing_eol}");
+                assert_eq!(parse(&prefix).unwrap().1, "");
+                for body in bodies {
+                    let separator = if closing_eol.is_empty() && !body.is_empty() {
+                        "\n"
+                    } else {
+                        ""
+                    };
+                    let expected = format!("{prefix}{separator}{body}");
+                    let mut raw = prefix.clone();
+                    for _ in 0..2 {
+                        raw = replace_body_preserving_frontmatter(&raw, body).unwrap();
+                        assert_eq!(raw, expected);
+                        assert_eq!(parse(&raw).unwrap().1, body);
+                    }
+                }
+            }
+            let raw = format!("{metadata}{eol}{eol}## Old{eol}");
+            assert_eq!(parse(&raw).unwrap().1, format!("{eol}## Old{eol}"));
+            assert_eq!(
+                replace_body_preserving_frontmatter(&raw, "").unwrap(),
+                format!("{metadata}{eol}")
+            );
         }
     }
 
