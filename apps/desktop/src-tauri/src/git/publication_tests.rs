@@ -1,6 +1,8 @@
 #![cfg(unix)]
 #[path = "operation_tests.rs"]
 mod operation_tests;
+#[path = "publication_reuse_tests.rs"]
+mod reuse_tests;
 use super::*;
 use std::{os::unix::fs::PermissionsExt, path::PathBuf, process::Command};
 

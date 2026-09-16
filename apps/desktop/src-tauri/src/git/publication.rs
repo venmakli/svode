@@ -36,114 +36,9 @@ async fn sensitive(cli: &GitCli, repo: &Path, args: &[&str]) -> Result<GitOutput
         .await
 }
 
-#[derive(Debug, PartialEq, Eq)]
-struct Snapshot {
-    destination: String,
-    updates: BTreeMap<String, String>,
-    config: String,
-    head: String,
-    remote: String,
-    remote_refs: String,
-}
-
-async fn snapshot(
-    cli: &GitCli,
-    repo: &Path,
-    first: bool,
-) -> Result<Result<Snapshot, GitOutput>, AppError> {
-    let branch = super::ops::current_branch(cli, repo).await?;
-    let mut args = vec![
-        "push",
-        "--dry-run",
-        "--no-verify",
-        "--porcelain",
-        "--recurse-submodules=no",
-    ];
-    if first {
-        args.extend(["origin", &branch]);
-    }
-    let out = sensitive(cli, repo, &args).await?;
-    if out.exit_code != 0 {
-        return Ok(Err(out));
-    }
-    let head = checked(cli, repo, &["rev-parse", "HEAD"]).await?;
-    let mut includes_head = false;
-    let mut destination = None;
-    let mut updates = BTreeMap::new();
-    for line in out.stdout.lines() {
-        if let Some(url) = line.strip_prefix("To ") {
-            if destination.replace(url.to_owned()).is_some() {
-                return Err(blocked(repo, None, PublicationBlockReason::Configuration));
-            }
-        } else if let Some((flag, rest)) = line.split_once('\t') {
-            let mapping = rest.split('\t').next().unwrap_or_default();
-            let (source, target) = mapping
-                .split_once(':')
-                .ok_or_else(|| blocked(repo, None, PublicationBlockReason::Configuration))?;
-            if source.is_empty() || !target.starts_with("refs/") || flag == "+" || flag == "-" {
-                return Err(blocked(repo, None, PublicationBlockReason::Configuration));
-            }
-            let oid = checked(cli, repo, &["rev-parse", "--verify", source]).await?;
-            includes_head |= oid == head;
-            if flag != "=" {
-                updates.insert(target.into(), oid);
-            }
-        }
-    }
-    if !includes_head {
-        return Err(blocked(repo, None, PublicationBlockReason::Configuration));
-    }
-    let destination =
-        destination.ok_or_else(|| blocked(repo, None, PublicationBlockReason::Configuration))?;
-    let mut remote = "origin".to_owned();
-    if !first {
-        for key in [
-            format!("branch.{branch}.remote"),
-            "remote.pushDefault".into(),
-            format!("branch.{branch}.pushRemote"),
-        ] {
-            let value = cli.exec(repo, &["config", "--get", &key]).await?;
-            if value.exit_code == 0 {
-                remote = value.stdout.trim_end().into();
-            }
-        }
-    }
-    let urls = sensitive(
-        cli,
-        repo,
-        &["remote", "get-url", "--push", "--all", &remote],
-    )
-    .await?;
-    if urls.exit_code != 0 || urls.stdout.lines().collect::<Vec<_>>() != [destination.as_str()] {
-        return Err(blocked(repo, None, PublicationBlockReason::Configuration));
-    }
-    let advertised = sensitive(
-        cli,
-        repo,
-        &[
-            "ls-remote",
-            "--refs",
-            "--heads",
-            "--tags",
-            "--",
-            &destination,
-        ],
-    )
-    .await?;
-    if advertised.exit_code != 0 {
-        return Ok(Err(advertised));
-    }
-    let mut refs: Vec<_> = advertised.stdout.lines().collect();
-    refs.sort_unstable();
-    Ok(Ok(Snapshot {
-        destination,
-        remote,
-        remote_refs: refs.join("\n"),
-        updates,
-        config: checked(cli, repo, &["config", "--null", "--list", "--show-origin"]).await?,
-        head,
-    }))
-}
+#[path = "publication_snapshot.rs"]
+mod discovery;
+use discovery::{Snapshot, snapshot};
 
 struct NativeEvidence {
     git: PathBuf,
@@ -186,9 +81,7 @@ pub(crate) async fn push_snapshot(
     } else {
         None
     };
-    if snapshot(cli, repo, first).await?.ok().as_ref() != Some(&fixed) {
-        return Err(blocked(repo, None, PublicationBlockReason::TargetChanged));
-    }
+    fixed.revalidate(cli, repo, first).await?;
     if let Some(evidence) = &evidence {
         for (source, expected) in &evidence.sources {
             let current = sensitive(
@@ -314,33 +207,69 @@ async fn prove(cli: &GitCli, repo: &Path, snapshot: &Snapshot) -> Result<NativeE
     if out.exit_code != 0 {
         return Err(blocked(repo, None, PublicationBlockReason::Configuration));
     }
-    let out = sensitive(
-        cli,
-        &proof,
-        &[
-            "fetch",
-            "--no-tags",
-            "--no-recurse-submodules",
-            "origin",
-            "+refs/heads/*:refs/remotes/origin/*",
-        ],
-    )
-    .await?;
-    if out.exit_code != 0 {
+    let heads: BTreeSet<_> = snapshot
+        .remote_refs
+        .lines()
+        .filter_map(|line| {
+            let (oid, reference) = line.split_once('\t')?;
+            reference.starts_with("refs/heads/").then_some(oid)
+        })
+        .collect();
+    let tips: BTreeSet<_> = snapshot.updates.values().map(String::as_str).collect();
+    let closure = tips.union(&heads).copied().collect::<Vec<_>>().join("\n") + "\n";
+    let locally_complete =
+        snapshot.complete_repository() && complete_history(cli, &proof, &closure).await?;
+    if !locally_complete {
+        let mut args = vec!["fetch", "--no-tags", "--no-recurse-submodules"];
+        if proof.join(".git/shallow").exists() {
+            args.push("--unshallow");
+        }
+        args.extend(["origin", "+refs/heads/*:refs/remotes/origin/*"]);
+        let out = sensitive(cli, &proof, &args).await?;
+        if out.exit_code != 0 {
+            return Err(blocked(
+                repo,
+                None,
+                PublicationBlockReason::SourceUnavailable,
+            ));
+        }
+        if proof.join(".git/shallow").exists() || !complete_history(cli, &proof, &closure).await? {
+            return Err(blocked(
+                repo,
+                None,
+                PublicationBlockReason::RevisionUnavailable,
+            ));
+        }
+    }
+    // Subtract exactly the fresh advertisement, never copied tracking refs or
+    // a later fetch's independently observed branch tips.
+    let revisions = tips
+        .into_iter()
+        .map(str::to_owned)
+        .chain(heads.into_iter().map(|oid| format!("^{oid}")))
+        .collect::<Vec<_>>()
+        .join("\n")
+        + "\n";
+    let commits = cli
+        .exec_sensitive_with_stdin(
+            &proof,
+            &["rev-list", "--stdin"],
+            &[("GIT_NO_LAZY_FETCH", "1")],
+            Some(&revisions),
+            Duration::from_secs(120),
+        )
+        .await?;
+    if commits.exit_code != 0 {
         return Err(blocked(
             repo,
             None,
-            PublicationBlockReason::SourceUnavailable,
+            PublicationBlockReason::RevisionUnavailable,
         ));
     }
-    let tips: Vec<_> = snapshot.updates.values().map(String::as_str).collect();
-    let mut args = vec!["rev-list"];
-    args.extend(tips);
-    args.extend(["--not", "--remotes=origin"]);
-    let commits = checked(cli, &proof, &args).await?;
     let mut sources = BTreeMap::new();
     let mut proven = BTreeSet::new();
-    for commit in commits.lines() {
+    let mut native_refs = BTreeSet::new();
+    for commit in commits.stdout.lines() {
         let (modules_changed, changed_links) = changed_gitlinks(cli, &proof, commit).await?;
         if !modules_changed && changed_links.is_empty() {
             continue;
@@ -399,6 +328,7 @@ async fn prove(cli: &GitCli, repo: &Path, snapshot: &Snapshot) -> Result<NativeE
                     PublicationBlockReason::UninitializedChild,
                 ));
             }
+            let child = std::fs::canonicalize(&child)?;
             let names: Vec<_> = modules
                 .split('\0')
                 .filter_map(|entry| {
@@ -441,7 +371,11 @@ async fn prove(cli: &GitCli, repo: &Path, snapshot: &Snapshot) -> Result<NativeE
                 )
                 .await?;
                 if cloned.exit_code != 0 {
-                    return Err(blocked(repo, Some(path), PublicationBlockReason::RevisionUnavailable));
+                    return Err(blocked(
+                        repo,
+                        Some(path),
+                        PublicationBlockReason::RevisionUnavailable,
+                    ));
                 }
                 let out = sensitive(
                     cli,
@@ -514,13 +448,34 @@ async fn prove(cli: &GitCli, repo: &Path, snapshot: &Snapshot) -> Result<NativeE
             // Native --check reads local remote refs. These unique, disposable
             // refs convey the fresh source proof without replacing origin/*.
             let reference = format!("refs/remotes/{namespace}/{oid}");
-            evidence
-                .refs
-                .push((child.clone(), reference.clone(), oid.into()));
-            checked(cli, &child, &["update-ref", &reference, oid, ""]).await?;
+            if native_refs.insert((child.clone(), oid.to_owned())) {
+                evidence
+                    .refs
+                    .push((child.clone(), reference.clone(), oid.into()));
+                checked(cli, &child, &["update-ref", &reference, oid, ""]).await?;
+            }
         }
     }
     Ok(evidence)
+}
+
+async fn complete_history(cli: &GitCli, repo: &Path, revisions: &str) -> Result<bool, AppError> {
+    let out = cli
+        .exec_sensitive_with_stdin(
+            repo,
+            &[
+                "rev-list",
+                "--objects",
+                "--quiet",
+                "--missing=error",
+                "--stdin",
+            ],
+            &[("GIT_NO_LAZY_FETCH", "1")],
+            Some(revisions),
+            Duration::from_secs(120),
+        )
+        .await?;
+    Ok(out.exit_code == 0)
 }
 
 /// Inspect every parent of a merge, and the empty tree for an initial commit.
