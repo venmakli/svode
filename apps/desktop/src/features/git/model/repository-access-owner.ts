@@ -39,6 +39,7 @@ export class RepositoryAccessOwner {
     string,
     Promise<RepositoryAccessSnapshot | null>
   >();
+  private readonly invalidatedReads = new Set<string>();
   private readonly expiryTimers = new Map<
     string,
     ReturnType<typeof setTimeout>
@@ -82,23 +83,35 @@ export class RepositoryAccessOwner {
       this.setPathState(spacePath, { ...current, loading: true, error: null });
     }
 
+    const readState = this.ensurePathState(spacePath);
+    const isCurrentRead = () => {
+      const latest = this.ensurePathState(spacePath);
+      return (
+        latest.snapshot === readState.snapshot &&
+        latest.verifying === readState.verifying &&
+        latest.error === readState.error
+      );
+    };
     const promise = this.api.load(spacePath).then(
       (snapshot) => {
-        this.publish(spacePath, snapshot, { clearError: true });
-        return this.repositorySnapshots.get(snapshot.repositoryId) ?? snapshot;
+        if (isCurrentRead())
+          this.publish(spacePath, snapshot, { clearError: true });
+        return this.ensurePathState(spacePath).snapshot;
       },
       (error: unknown) => {
-        this.setPathState(spacePath, {
-          ...this.ensurePathState(spacePath),
-          error: errorMessage(error),
-          loading: false,
-        });
+        if (isCurrentRead())
+          this.updateRepositoryState(spacePath, (state) => ({
+            ...state,
+            error: errorMessage(error),
+            loading: false,
+          }));
         return null;
       },
     );
     this.readFlights.set(key, promise);
     void promise.finally(() => {
       if (this.readFlights.get(key) === promise) this.readFlights.delete(key);
+      if (this.invalidatedReads.delete(key)) void this.refresh(spacePath);
     });
     return promise;
   }
@@ -112,6 +125,7 @@ export class RepositoryAccessOwner {
     const existing = this.verifyFlights.get(key);
     if (existing) return existing;
 
+    const initialSnapshot = this.ensurePathState(spacePath).snapshot;
     this.updateRepositoryState(spacePath, (state) => ({
       ...state,
       error: null,
@@ -120,13 +134,22 @@ export class RepositoryAccessOwner {
     }));
     const promise = this.api.verify(spacePath).then(
       (snapshot) => {
-        this.publish(spacePath, snapshot, { clearError: true });
+        this.publish(spacePath, snapshot, {
+          clearError: true,
+          verifying: false,
+        });
         return this.repositorySnapshots.get(snapshot.repositoryId) ?? snapshot;
       },
       (error: unknown) => {
         this.updateRepositoryState(spacePath, (state) => ({
           ...state,
-          error: errorMessage(error),
+          error:
+            state.snapshot &&
+            state.snapshot.generation > (initialSnapshot?.generation ?? 0) &&
+            (state.snapshot.status === "writable" ||
+              state.snapshot.status === "local")
+              ? null
+              : errorMessage(error),
           loading: false,
           verifying: false,
         }));
@@ -144,7 +167,10 @@ export class RepositoryAccessOwner {
   handleInvalidation(repositoryId: string): void {
     const paths = this.repositoryPaths.get(repositoryId);
     const path = paths?.values().next().value;
-    if (path) void this.refresh(path);
+    if (!path) return;
+    const key = `repository:${repositoryId}`;
+    if (this.readFlights.has(key)) this.invalidatedReads.add(key);
+    else void this.refresh(path);
   }
 
   dispose(): void {
@@ -179,12 +205,15 @@ export class RepositoryAccessOwner {
   private publish(
     spacePath: string,
     snapshot: RepositoryAccessSnapshot,
-    options: { clearError: boolean },
+    options: { clearError: boolean; verifying?: boolean },
   ): void {
     const current = this.repositorySnapshots.get(snapshot.repositoryId);
     if (current && current.generation > snapshot.generation) {
       this.attachPath(spacePath, current.repositoryId);
-      this.applySnapshotToPaths(current, options);
+      this.applySnapshotToPaths(current, {
+        clearError: false,
+        verifying: options.verifying,
+      });
       return;
     }
 
@@ -213,7 +242,7 @@ export class RepositoryAccessOwner {
 
   private applySnapshotToPaths(
     snapshot: RepositoryAccessSnapshot,
-    options: { clearError: boolean },
+    options: { clearError: boolean; verifying?: boolean },
   ): void {
     const paths = this.repositoryPaths.get(snapshot.repositoryId);
     if (!paths) return;
@@ -225,7 +254,7 @@ export class RepositoryAccessOwner {
         loading: false,
         snapshot,
         spacePath: path,
-        verifying: false,
+        verifying: options.verifying ?? current.verifying,
       });
       if (!sameView(current, next)) {
         this.pathStates.set(path, next);

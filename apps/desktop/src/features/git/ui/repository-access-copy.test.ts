@@ -120,3 +120,54 @@ function snapshot(
     status: "unknown",
   };
 }
+
+test("a failed verification is actionable even if the last read observed checking", () => {
+  const presentation = repositoryAccessPresentation({
+    error: "Verification unavailable",
+    loading: false,
+    snapshot: { ...snapshot(null), status: "checking" },
+    verifying: false,
+  });
+  expect(presentation.status).toBe("error");
+  expect(presentation.action).toBe("verify");
+});
+
+test("both locales distinguish expiry, denial and runtime failure", async () => {
+  const originalLocale = getLocale();
+  try {
+    for (const locale of ["en", "ru"] as const) {
+      await setLocale(locale, { reload: false });
+      const input = {
+        error: null,
+        loading: false,
+        snapshot: snapshot("expired"),
+        verifying: false,
+      };
+      const expired = repositoryAccessPresentation(input);
+      const denied = repositoryAccessPresentation({
+        ...input,
+        snapshot: { ...snapshot(null), status: "read_only" },
+      });
+      const error = repositoryAccessPresentation({
+        ...input,
+        error: "Verification unavailable",
+      });
+      expect(
+        new Set([expired.statusLabel, denied.statusLabel, error.statusLabel])
+          .size,
+      ).toBe(3);
+      expect(
+        expired.description.includes(
+          locale === "ru"
+            ? "не означает потерю прав"
+            : "does not mean you lost write access",
+        ),
+      ).toBe(true);
+      expect(expired.action).toBe("verify");
+      expect(denied.action).toBe("authenticate");
+      expect(error.action).toBe("verify");
+    }
+  } finally {
+    await setLocale(originalLocale, { reload: false });
+  }
+});

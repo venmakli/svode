@@ -13,7 +13,7 @@ if (!isolatedProcess) {
   test("repository work status DOM scenarios", () => {
     const child = spawnSync(
       process.execPath,
-      ["test", fileURLToPath(import.meta.url)],
+      ["test", "--timeout", "30000", fileURLToPath(import.meta.url)],
       {
         env: { ...process.env, SVODE_REPOSITORY_WORK_STATUS_DOM: "1" },
         encoding: "utf8",
@@ -23,7 +23,7 @@ if (!isolatedProcess) {
       throw new Error([child.stdout, child.stderr].filter(Boolean).join("\n"));
     }
     expect(child.status).toBe(0);
-  });
+  }, 30_000);
 } else {
   test("repository work status keeps one compact exact-target recovery control", async () => {
     const dom = createDom();
@@ -121,7 +121,9 @@ if (!isolatedProcess) {
 
       const childTrigger = workStatusTrigger(dom);
       expect(childTrigger.dataset.repositoryWorkStatusState).toBe("unknown");
-      expect(childTrigger.textContent.includes("View only")).toBe(true);
+      expect(childTrigger.textContent.includes("Access not confirmed")).toBe(
+        true,
+      );
       expect(
         childTrigger.getAttribute("aria-label")?.includes("Independent Space"),
       ).toBe(true);
@@ -166,9 +168,221 @@ if (!isolatedProcess) {
       dom.window.close();
     }
   });
+
+  test("header, Settings and contextual recovery agree through expiry, verify, denial and error in both locales", async () => {
+    const dom = createDom();
+    const restoreGlobals = installDomGlobals(dom);
+    const { RepositoryWorkStatus } = await import("./repository-work-status");
+    const { RepositoryAccessSummary } =
+      await import("./repository-access-summary");
+    const { RepositoryAccessInlineRecovery, RepositoryAccessPrimaryButton } =
+      await import("./repository-access-preflight");
+    const { useRepositoryAccessPreflight } =
+      await import("../hooks/use-repository-access-preflight");
+    const { repositoryAccessOwner } =
+      await import("../model/repository-access-owner");
+    const { setLocale } = await import("@/paraglide/runtime.js");
+    const root = createRoot(dom.window.document.getElementById("app")!);
+    let status: "unknown" | "writable" | "read_only" = "unknown";
+    let failure = false;
+    let generation = 100;
+    let verifyCount = 0;
+    let continued = 0;
+    let finish!: () => void;
+    const result = (path: string) => ({
+      ...snapshot(path, status, ++generation),
+      reason: status === "unknown" ? "expired" : null,
+    });
+    mockNativeIpc(
+      (command, args) => {
+        const path = String((args as { spacePath?: string })?.spacePath);
+        if (command === "repository_access_get") {
+          if (failure) throw new Error("Access runtime unavailable");
+          return result(path);
+        }
+        if (command === "repository_access_verify") {
+          verifyCount++;
+          return new Promise((resolve) => {
+            finish = () => {
+              status = "writable";
+              resolve(result(path));
+            };
+          });
+        }
+        throw new Error(`Unexpected command: ${command}`);
+      },
+      { shouldMockEvents: true },
+    );
+    function Surfaces({ path }: { path: string }) {
+      const recovery = useRepositoryAccessPreflight();
+      return (
+        <>
+          <RepositoryWorkStatus
+            contextName="Long repository name"
+            displayPath={path}
+            repositoryPath={path}
+            onOpenRepositorySettings={() => undefined}
+          />
+          <RepositoryAccessSummary
+            ownerKind="independent"
+            ownerName="Long repository name"
+            displayPath={path}
+            repositoryPath={path}
+            remoteUrl="https://example.test/repo.git"
+            onEditRemote={() => undefined}
+          />
+          <button
+            data-begin
+            onClick={() =>
+              void recovery.request({
+                intentKey: "save",
+                intentLabel: "Save",
+                placement: "inline",
+                continuation: "explicit",
+                continue: () => {
+                  continued++;
+                },
+                targets: [
+                  {
+                    repositoryPath: path,
+                    displayName: "Exact target",
+                    displayPath: path,
+                  },
+                ],
+              })
+            }
+          >
+            Save
+          </button>
+          <RepositoryAccessInlineRecovery recovery={recovery} />
+          <RepositoryAccessPrimaryButton recovery={recovery} />
+        </>
+      );
+    }
+    const assertStatus = (expected: string) => {
+      expect(workStatusTrigger(dom).dataset.repositoryWorkStatusState).toBe(
+        expected,
+      );
+      const surfaces = dom.window.document.querySelectorAll<HTMLElement>(
+        "[data-repository-access-status]",
+      );
+      expect(surfaces.length).toBe(2);
+      for (const surface of surfaces)
+        expect(surface.dataset.repositoryAccessStatus).toBe(expected);
+    };
+    try {
+      for (const locale of ["en", "ru"] as const) {
+        status = "unknown";
+        failure = false;
+        const path = `/integrated-${locale}`;
+        await setLocale(locale, { reload: false });
+        await act(async () => {
+          root.render(<Surfaces key={locale} path={path} />);
+          await nextFrame(dom);
+        });
+        await act(async () => {
+          dom.window.document
+            .querySelector<HTMLButtonElement>("[data-begin]")!
+            .click();
+          await nextFrame(dom);
+        });
+        assertStatus("unknown");
+        expect(
+          workStatusTrigger(dom)
+            .getAttribute("aria-label")
+            ?.includes(
+              locale === "ru"
+                ? "Доступ не подтверждён"
+                : "Access not confirmed",
+            ),
+        ).toBe(true);
+        expect(
+          dom.window.document.body.textContent.includes(
+            locale === "ru"
+              ? "не означает потерю прав"
+              : "does not mean you lost write access",
+          ),
+        ).toBe(true);
+        await act(async () => {
+          workStatusTrigger(dom).click();
+          await nextFrame(dom);
+        });
+        const verify = Array.from(
+          popover(dom)!.querySelectorAll<HTMLButtonElement>("button"),
+        ).find((button) =>
+          button.textContent?.includes(
+            locale === "ru" ? "Проверить снова" : "Check again",
+          ),
+        )!;
+        const before = verifyCount;
+        await act(async () => {
+          verify.click();
+          await nextFrame(dom);
+        });
+        assertStatus("checking");
+        expect(verifyCount).toBe(before + 1);
+        expect(workStatusTrigger(dom).getAttribute("aria-busy")).toBe("true");
+        await act(async () => {
+          finish();
+          await nextFrame(dom);
+        });
+        expect(workStatusTrigger(dom).dataset.repositoryWorkStatusState).toBe(
+          "writable",
+        );
+        expect(
+          Boolean(
+            dom.window.document.querySelector("[data-repository-access-ready]"),
+          ),
+        ).toBe(true);
+        expect(continued).toBe(0);
+        await act(async () => {
+          popover(dom)!.dispatchEvent(
+            new dom.window.KeyboardEvent("keydown", {
+              key: "Escape",
+              bubbles: true,
+              cancelable: true,
+            }),
+          );
+          await nextFrame(dom);
+        });
+        expect(dom.window.document.activeElement).toBe(workStatusTrigger(dom));
+        status = "read_only";
+        await act(async () => {
+          await repositoryAccessOwner.refresh(path);
+        });
+        assertStatus("read_only");
+        expect(
+          workStatusTrigger(dom)
+            .getAttribute("aria-label")
+            ?.includes(locale === "ru" ? "Только просмотр" : "View only"),
+        ).toBe(true);
+        failure = true;
+        await act(async () => {
+          await repositoryAccessOwner.refresh(path);
+        });
+        assertStatus("error");
+        expect(
+          workStatusTrigger(dom)
+            .getAttribute("aria-label")
+            ?.includes(
+              locale === "ru"
+                ? "Ошибка проверки доступа"
+                : "Access check failed",
+            ),
+        ).toBe(true);
+      }
+    } finally {
+      await act(async () => root.unmount());
+      repositoryAccessOwner.dispose();
+      await setLocale("en", { reload: false });
+      clearNativeMocks();
+      restoreGlobals();
+      dom.window.close();
+    }
+  });
 }
 
-type AccessStatus = "local" | "writable" | "unknown";
+type AccessStatus = "local" | "writable" | "unknown" | "read_only";
 
 function snapshot(path: string, status: AccessStatus, generation: number) {
   return {

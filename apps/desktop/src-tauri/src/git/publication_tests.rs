@@ -837,17 +837,11 @@ async fn parent_permission_is_optional_after_child_save_and_publication() {
             .await
             .map(|_| ());
         if denied == "read_only" {
-            std::fs::write(
-                f.remote.join("hooks/pre-receive"),
-                "#!/bin/sh\necho 'permission denied' >&2\nexit 1\n",
-            )
-            .unwrap();
-            std::fs::set_permissions(
-                f.remote.join("hooks/pre-receive"),
-                std::fs::Permissions::from_mode(0o755),
-            )
-            .unwrap();
-            let snapshot = access.verify(&f.cli, &f.root, &store).await.unwrap();
+            let wrapper = f._temp.path().join("git-denial");
+            std::fs::write(&wrapper, "#!/bin/sh\nexport GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1\nfor arg in \"$@\"; do if [ \"$arg\" = push ]; then echo 'remote: Write access to repository not granted.' >&2; exit 1; fi; done\nexec git -c protocol.file.allow=always \"$@\"\n").unwrap();
+            std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o755)).unwrap();
+            let denial_cli = GitCli::for_test(wrapper);
+            let snapshot = access.verify(&denial_cli, &f.root, &store).await.unwrap();
             assert_eq!(
                 snapshot.status,
                 crate::git::access::RepositoryAccessStatus::ReadOnly

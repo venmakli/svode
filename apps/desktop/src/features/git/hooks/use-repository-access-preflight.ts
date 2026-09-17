@@ -71,7 +71,9 @@ export function useRepositoryAccessPreflight() {
     blockers.length === 0 &&
     pending.continuation === "explicit";
   const checking = blockers.some(
-    ({ access }) => access.verifying || access.snapshot?.status === "checking",
+    ({ access }) =>
+      access.verifying ||
+      (!access.error && access.snapshot?.status === "checking"),
   );
   const busy = acting || pending?.phase === "loading" || checking;
   const open = pending?.phase === "ready";
@@ -125,7 +127,8 @@ export function useRepositoryAccessPreflight() {
         repositoryAccessOwner.getSnapshot,
       ).filter(
         ({ access }) =>
-          access.verifying || access.snapshot?.status === "checking",
+          access.verifying ||
+          (!access.error && access.snapshot?.status === "checking"),
       );
       if (checkingTargets.length === 0) return;
       await Promise.all(

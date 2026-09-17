@@ -369,3 +369,140 @@ async fn routine_service_ref_failure_and_uncertain_success_keep_claim_semantics(
         assert_eq!(fixture.user_state().await, before);
     }
 }
+
+#[tokio::test]
+async fn evidence_deadline_starts_after_delayed_probe_and_exact_readback() {
+    struct FileClock(PathBuf);
+    impl Clock for FileClock {
+        fn now_unix(&self) -> i64 {
+            fs::read_to_string(&self.0).unwrap().trim().parse().unwrap()
+        }
+    }
+    for outcome in ["success", "denied", "readback"] {
+        let fixture = Fixture::new(&format!(r#"
+if [ "$1" = push ]; then
+  echo 2000000 > .git/clock
+  if [ '{outcome}' = denied ]; then echo 'remote: Write access to repository not granted.' >&2; exit 1; fi
+  if [ '{outcome}' = readback ]; then
+    git "$@" || exit
+    touch .git/pushed
+    echo 'connection reset' >&2
+    exit 1
+  fi
+fi
+if [ "$1" = ls-remote ] && [ -f .git/pushed ]; then echo 3000000 > .git/clock; fi
+"#)).await;
+        let clock_path = fixture.repo.join(".git/clock");
+        fs::write(&clock_path, "1000000").unwrap();
+        let state = RepositoryAccessState::with_clock(Arc::new(FileClock(clock_path)));
+        let store = fixture._temp.path().join("access.json");
+        let result = state
+            .verify(&fixture.cli, &fixture.repo, &store)
+            .await
+            .unwrap();
+        let finished = if outcome == "readback" {
+            3_000_000
+        } else {
+            2_000_000
+        };
+        assert_eq!(result.checked_at, Some(finished));
+        assert_eq!(result.expires_at, Some(finished + 604_800));
+        assert_eq!(
+            result.status,
+            if outcome == "denied" {
+                RepositoryAccessStatus::ReadOnly
+            } else {
+                RepositoryAccessStatus::Writable
+            }
+        );
+        let calls = fixture.calls();
+        state
+            .snapshot(&fixture.cli, &fixture.repo, &store)
+            .await
+            .unwrap();
+        let _ = state
+            .require_mutation(&fixture.cli, &fixture.repo, &store)
+            .await;
+        let later = fixture.calls();
+        assert_eq!(
+            later
+                .iter()
+                .filter(|c| c.as_str() == "push" || c.as_str() == "ls-remote")
+                .count(),
+            calls
+                .iter()
+                .filter(|c| c.as_str() == "push" || c.as_str() == "ls-remote")
+                .count()
+        );
+    }
+}
+
+#[tokio::test]
+async fn late_probe_cannot_replace_new_push_evidence_or_changed_origin() {
+    for changed_origin in [false, true] {
+        let fixture = Fixture::new(
+            r#"
+if [ "$1" = push ]; then
+  touch .git/probe-wait
+  while [ ! -f .git/probe-release ]; do sleep 0.01; done
+  echo 'remote: Write access to repository not granted.' >&2
+  exit 1
+fi
+"#,
+        )
+        .await;
+        let store = fixture._temp.path().join("access.json");
+        let state = Arc::new(RepositoryAccessState::new());
+        state
+            .record_writable_evidence(&fixture.real, &fixture.repo, &store)
+            .await
+            .unwrap();
+        let pending = {
+            let state = state.clone();
+            let cli = fixture.cli.clone();
+            let repo = fixture.repo.clone();
+            let store = store.clone();
+            tokio::spawn(async move { state.verify(&cli, &repo, &store).await })
+        };
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while !fixture.repo.join(".git/probe-wait").exists() {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .unwrap();
+        let newer = if changed_origin {
+            ok(
+                &fixture.real,
+                &fixture.repo,
+                &["remote", "set-url", "origin", "changed"],
+            )
+            .await;
+            state
+                .invalidate(&fixture.real, &fixture.repo)
+                .await
+                .unwrap();
+            state
+                .snapshot(&fixture.real, &fixture.repo, &store)
+                .await
+                .unwrap()
+        } else {
+            state
+                .record_writable_evidence(&fixture.real, &fixture.repo, &store)
+                .await
+                .unwrap()
+        };
+        let bytes = fs::read(&store).unwrap();
+        fs::write(fixture.repo.join(".git/probe-release"), "").unwrap();
+        let completed = pending.await.unwrap().unwrap();
+        assert_eq!(completed, newer);
+        assert_eq!(fs::read(&store).unwrap(), bytes);
+        assert_eq!(
+            state
+                .require_mutation(&fixture.real, &fixture.repo, &store)
+                .await
+                .is_ok(),
+            !changed_origin
+        );
+    }
+}

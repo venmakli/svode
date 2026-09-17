@@ -1,6 +1,10 @@
 import { expect, test } from "bun:test";
 
-import { repositoryAccessIsEditable } from "./repository-access-consumer";
+import {
+  repositoryAccessIsEditable,
+  allowsRepositoryMutation,
+  blockingRepositoryAccessTargets,
+} from "./repository-access-consumer";
 import type { RepositoryAccessView } from "./repository-access-owner";
 
 test("repository work mode is editable only for settled positive snapshots", () => {
@@ -25,6 +29,28 @@ test("repository work mode is editable only for settled positive snapshots", () 
   expect(
     repositoryAccessIsEditable({ ...view("unknown"), snapshot: null }),
   ).toBe(false);
+});
+
+test("contextual preflight never authorizes historical writable while checking or failed", () => {
+  for (const access of [
+    { ...view("writable"), verifying: true },
+    { ...view("writable"), loading: true },
+    { ...view("writable"), error: "read failed" },
+  ]) {
+    expect(allowsRepositoryMutation(access)).toBe(false);
+    expect(
+      blockingRepositoryAccessTargets([
+        {
+          access,
+          target: {
+            displayName: "Target",
+            displayPath: "/repo",
+            repositoryPath: "/repo",
+          },
+        },
+      ]).length,
+    ).toBe(1);
+  }
 });
 
 function view(

@@ -155,8 +155,10 @@ function repositoryWorkStatusLabel(
     case "checking":
       return m.repository_work_status_checking();
     case "read_only":
-    case "unknown":
-    case "error":
       return m.repository_work_status_read_only();
+    case "unknown":
+      return m.git_access_status_unknown_label();
+    case "error":
+      return m.git_access_status_error_label();
   }
 }

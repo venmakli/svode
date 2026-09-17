@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -16,7 +17,7 @@ const ACCESS_STORE_FILE: &str = "repository-access.json";
 const ACCESS_STORE_VERSION: u32 = 1;
 const MAX_EVIDENCE_ENTRIES: usize = 128;
 const PROBE_TIMEOUT: Duration = Duration::from_secs(30);
-pub(crate) const ACCESS_EVIDENCE_TTL_SECONDS: i64 = 24 * 60 * 60;
+pub(crate) const ACCESS_EVIDENCE_TTL_SECONDS: i64 = 7 * 24 * 60 * 60;
 
 const SERVICE_AUTHOR_NAME: &str = "Svode Access Probe";
 const SERVICE_AUTHOR_EMAIL: &str = "access@svode.invalid";
@@ -144,6 +145,7 @@ impl Clock for SystemClock {
 
 pub struct RepositoryAccessState {
     clock: Arc<dyn Clock>,
+    generation: AtomicU64,
     snapshots: Mutex<HashMap<PathBuf, Arc<PublishedSnapshot>>>,
     probe_locks: Mutex<HashMap<PathBuf, Arc<AsyncMutex<()>>>>,
     persistence_lock: Mutex<()>,
@@ -157,6 +159,7 @@ impl RepositoryAccessState {
     fn with_clock(clock: Arc<dyn Clock>) -> Self {
         Self {
             clock,
+            generation: AtomicU64::new(0),
             snapshots: Mutex::new(HashMap::new()),
             probe_locks: Mutex::new(HashMap::new()),
             persistence_lock: Mutex::new(()),
@@ -300,7 +303,7 @@ impl RepositoryAccessState {
             RemoteInspection::Remote(remote) => remote,
         };
 
-        self.publish(
+        let checking = self.publish(
             &repository,
             Some(remote.fingerprint.clone()),
             RepositoryAccessSnapshot {
@@ -320,20 +323,58 @@ impl RepositoryAccessState {
         let installation_id = match self.ensure_installation_id(store_path) {
             Ok(installation_id) => installation_id,
             Err(error) => {
-                self.publish_probe_error(&repository, &repository_id, &remote.fingerprint)?;
+                self.publish_probe_error(
+                    &repository,
+                    &repository_id,
+                    &remote.fingerprint,
+                    checking.generation,
+                )?;
                 return Err(error);
             }
         };
         let installation_hash = stable_hash(&installation_id);
-        let checked_at = self.clock.now_unix();
+        let started_at = self.clock.now_unix();
         let result =
-            match probe_remote(cli, &repository, &remote, &installation_hash, checked_at).await {
+            match probe_remote(cli, &repository, &remote, &installation_hash, started_at).await {
                 Ok(result) => result,
                 Err(error) => {
-                    self.publish_probe_error(&repository, &repository_id, &remote.fingerprint)?;
+                    self.publish_probe_error(
+                        &repository,
+                        &repository_id,
+                        &remote.fingerprint,
+                        checking.generation,
+                    )?;
                     return Err(error);
                 }
             };
+        let checked_at = self.clock.now_unix();
+        let current_remote = match inspect_remote(cli, &repository).await {
+            Ok(remote) => remote,
+            Err(error) => {
+                self.publish_probe_error(
+                    &repository,
+                    &repository_id,
+                    &remote.fingerprint,
+                    checking.generation,
+                )?;
+                return Err(error);
+            }
+        };
+        if !matches!(current_remote, RemoteInspection::Remote(current) if current.fingerprint == remote.fingerprint)
+        {
+            {
+                let mut snapshots = self.snapshots.lock().map_err(|_| {
+                    AppError::General("repository access snapshot lock poisoned".into())
+                })?;
+                if snapshots
+                    .get(&repository)
+                    .is_some_and(|current| current.snapshot.generation == checking.generation)
+                {
+                    snapshots.remove(&repository);
+                }
+            }
+            return self.snapshot(cli, &repository, store_path).await;
+        }
         let snapshot = RepositoryAccessSnapshot {
             repository_id,
             generation: 0,
@@ -347,7 +388,13 @@ impl RepositoryAccessState {
             .then_some(checked_at.saturating_add(ACCESS_EVIDENCE_TTL_SECONDS)),
             last_known_status: None,
         };
-        self.persist_and_publish(&repository, &remote.fingerprint, snapshot, store_path)
+        self.persist_and_publish(
+            &repository,
+            &remote.fingerprint,
+            snapshot,
+            store_path,
+            Some(checking.generation),
+        )
     }
 
     /// Authorize a managed mutation from local repository state only.
@@ -488,6 +535,7 @@ impl RepositoryAccessState {
                 last_known_status: None,
             },
             store_path,
+            None,
         )
     }
 
@@ -516,15 +564,23 @@ impl RepositoryAccessState {
         &self,
         repository: &Path,
         remote_fingerprint: Option<String>,
-        mut snapshot: RepositoryAccessSnapshot,
+        snapshot: RepositoryAccessSnapshot,
     ) -> Result<RepositoryAccessSnapshot, AppError> {
         let mut snapshots = self
             .snapshots
             .lock()
             .map_err(|_| AppError::General("repository access snapshot lock poisoned".into()))?;
-        snapshot.generation = snapshots
-            .get(repository)
-            .map_or(1, |current| current.snapshot.generation.saturating_add(1));
+        Ok(self.publish_locked(&mut snapshots, repository, remote_fingerprint, snapshot))
+    }
+
+    fn publish_locked(
+        &self,
+        snapshots: &mut HashMap<PathBuf, Arc<PublishedSnapshot>>,
+        repository: &Path,
+        remote_fingerprint: Option<String>,
+        mut snapshot: RepositoryAccessSnapshot,
+    ) -> RepositoryAccessSnapshot {
+        snapshot.generation = self.generation.fetch_add(1, Ordering::Relaxed) + 1;
         snapshots.insert(
             repository.to_path_buf(),
             Arc::new(PublishedSnapshot {
@@ -532,7 +588,7 @@ impl RepositoryAccessState {
                 snapshot: snapshot.clone(),
             }),
         );
-        Ok(snapshot)
+        snapshot
     }
 
     fn persist_and_publish(
@@ -541,7 +597,22 @@ impl RepositoryAccessState {
         remote_fingerprint: &str,
         snapshot: RepositoryAccessSnapshot,
         store_path: &Path,
+        expected_generation: Option<u64>,
     ) -> Result<RepositoryAccessSnapshot, AppError> {
+        let mut snapshots = self
+            .snapshots
+            .lock()
+            .map_err(|_| AppError::General("repository access snapshot lock poisoned".into()))?;
+        if let Some(expected) = expected_generation {
+            let current = snapshots.get(repository).ok_or_else(|| {
+                AppError::General(
+                    "Repository access changed during verification. Check again.".into(),
+                )
+            })?;
+            if current.snapshot.generation != expected {
+                return Ok(current.snapshot.clone());
+            }
+        }
         let persist_result = (|| {
             let _guard = self.persistence_lock.lock().map_err(|_| {
                 AppError::General("repository access persistence lock poisoned".into())
@@ -560,7 +631,12 @@ impl RepositoryAccessState {
             trim_evidence(&mut store.evidence);
             write_store_file(store_path, &store)
         })();
-        let published = self.publish(repository, Some(remote_fingerprint.to_string()), snapshot)?;
+        let published = self.publish_locked(
+            &mut snapshots,
+            repository,
+            Some(remote_fingerprint.to_string()),
+            snapshot,
+        );
         if let Err(error) = persist_result {
             tracing::warn!("failed to persist repository access evidence: {error}");
         }
@@ -572,8 +648,20 @@ impl RepositoryAccessState {
         repository: &Path,
         repository_id: &str,
         remote_fingerprint: &str,
-    ) -> Result<RepositoryAccessSnapshot, AppError> {
-        self.publish(
+        expected_generation: u64,
+    ) -> Result<(), AppError> {
+        let mut snapshots = self
+            .snapshots
+            .lock()
+            .map_err(|_| AppError::General("repository access snapshot lock poisoned".into()))?;
+        if !snapshots
+            .get(repository)
+            .is_some_and(|current| current.snapshot.generation == expected_generation)
+        {
+            return Ok(());
+        }
+        self.publish_locked(
+            &mut snapshots,
             repository,
             Some(remote_fingerprint.to_string()),
             RepositoryAccessSnapshot {
@@ -585,7 +673,8 @@ impl RepositoryAccessState {
                 expires_at: None,
                 last_known_status: None,
             },
-        )
+        );
+        Ok(())
     }
 
     fn read_store(&self, store_path: &Path) -> Result<AccessStore, AppError> {
@@ -895,7 +984,10 @@ pub(crate) fn access_store_path(app: &AppHandle) -> Result<PathBuf, AppError> {
     Ok(config_dir.join(ACCESS_STORE_FILE))
 }
 
-pub(crate) async fn resolve_repository(cli: &GitCli, space_path: &Path) -> Result<PathBuf, AppError> {
+pub(crate) async fn resolve_repository(
+    cli: &GitCli,
+    space_path: &Path,
+) -> Result<PathBuf, AppError> {
     let output = cli
         .exec(space_path, &["rev-parse", "--show-toplevel"])
         .await?;
@@ -1925,6 +2017,84 @@ mod tests {
             expired.last_known_status,
             Some(RepositoryAccessStatus::Writable)
         );
+    }
+
+    #[tokio::test]
+    async fn seven_day_evidence_preserves_legacy_expiry_and_renews_only_on_success() {
+        let temp = TempDir::new().unwrap();
+        let repository = temp.path().join("repository");
+        let remote = temp.path().join("remote.git");
+        let cli = GitCli::detect().unwrap();
+        init_repository(&cli, &repository).await;
+        init_bare(&cli, &remote).await;
+        add_origin(&cli, &repository, &remote).await;
+        let clock = Arc::new(TestClock::new(1_000));
+        let store = temp.path().join("access.json");
+        let state = test_state(clock.clone());
+        let initial = state
+            .record_writable_evidence(&cli, &repository, &store)
+            .await
+            .unwrap();
+        assert_eq!(initial.expires_at, Some(1_000 + 604_800));
+        let bytes = fs::read(&store).unwrap();
+        for now in [1_001, 1_000 + 604_799, 1_000 + 604_800, 1_000 + 604_801] {
+            clock.set(now);
+            let restarted = test_state(clock.clone());
+            let snapshot = restarted.snapshot(&cli, &repository, &store).await.unwrap();
+            assert_eq!(snapshot.checked_at, initial.checked_at);
+            assert_eq!(snapshot.expires_at, initial.expires_at);
+            assert_eq!(
+                restarted
+                    .require_mutation(&cli, &repository, &store)
+                    .await
+                    .is_ok(),
+                now < 605_800
+            );
+            assert_eq!(fs::read(&store).unwrap(), bytes);
+        }
+        // Legacy evidence keeps its recorded one-day deadline, including after restart.
+        let mut legacy = read_store_file(&store).unwrap();
+        legacy
+            .evidence
+            .get_mut(&initial.repository_id)
+            .unwrap()
+            .expires_at = Some(87_400);
+        write_store_file(&store, &legacy).unwrap();
+        for now in [87_399, 87_400, 87_401] {
+            clock.set(now);
+            let restarted = test_state(clock.clone());
+            let snapshot = restarted.snapshot(&cli, &repository, &store).await.unwrap();
+            assert_eq!(snapshot.expires_at, Some(87_400));
+            assert_eq!(
+                restarted
+                    .require_mutation(&cli, &repository, &store)
+                    .await
+                    .is_ok(),
+                now < 87_400
+            );
+        }
+        clock.set(900_000);
+        let renewed = state
+            .record_writable_evidence(&cli, &repository, &store)
+            .await
+            .unwrap();
+        assert_eq!(renewed.checked_at, Some(900_000));
+        assert_eq!(renewed.expires_at, Some(1_504_800));
+        let before = renewed.generation;
+        state.invalidate(&cli, &repository).await.unwrap();
+        let reread = state.snapshot(&cli, &repository, &store).await.unwrap();
+        assert!(reread.generation > before);
+        assert_eq!(reread.checked_at, renewed.checked_at);
+        git_ok(
+            &cli,
+            &repository,
+            &["remote", "set-url", "origin", "changed"],
+        )
+        .await;
+        state.invalidate(&cli, &repository).await.unwrap();
+        let changed = state.snapshot(&cli, &repository, &store).await.unwrap();
+        assert!(changed.generation > reread.generation);
+        assert_eq!(changed.reason, Some(RepositoryAccessReason::RemoteChanged));
     }
 
     #[tokio::test]

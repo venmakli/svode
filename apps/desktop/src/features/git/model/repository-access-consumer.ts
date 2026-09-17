@@ -27,17 +27,15 @@ export interface RepositoryAccessTargetView {
 
 export function allowsRepositoryMutation(view: RepositoryAccessView) {
   return (
-    view.snapshot?.status === "local" || view.snapshot?.status === "writable"
+    !view.error &&
+    !view.loading &&
+    !view.verifying &&
+    (view.snapshot?.status === "local" || view.snapshot?.status === "writable")
   );
 }
 
 export function repositoryAccessIsEditable(view: RepositoryAccessView) {
-  return (
-    !view.error &&
-    !view.loading &&
-    !view.verifying &&
-    allowsRepositoryMutation(view)
-  );
+  return allowsRepositoryMutation(view);
 }
 
 export function dedupeRepositoryAccessTargets(

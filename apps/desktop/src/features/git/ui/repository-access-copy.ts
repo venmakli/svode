@@ -26,7 +26,7 @@ export function repositoryAccessPresentation({
   snapshot: RepositoryAccessSnapshot | null;
   verifying: boolean;
 }): RepositoryAccessPresentation {
-  if (verifying || snapshot?.status === "checking") {
+  if (verifying || (!error && snapshot?.status === "checking")) {
     return {
       action: "none",
       actionLabel: m.git_access_action_checking(),
