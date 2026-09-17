@@ -1204,3 +1204,97 @@ async fn origin_counters_are_independent_of_other_upstream_and_detect_deleted_br
             .is_empty()
     );
 }
+
+#[tokio::test]
+async fn waiting_counters_keep_remote_facts_after_save_without_claiming_new_head_published() {
+    for tracking_changed in [false, true] {
+        let f = Fixture::new();
+        policy(&f.child, 7);
+        policy(&f.root, 7);
+        commit(&f.child, "note", "first save");
+        let owner = Arc::new(Operations::default());
+        let gate = Arc::new(Notify::new());
+        let (tx, rx) = oneshot::channel();
+        let first = start(
+            &owner,
+            &f,
+            &f.child,
+            sync_intent(true),
+            Run {
+                published: Some(tx),
+                after: Some(gate.clone()),
+                ..Run::default()
+            },
+        );
+        rx.await.unwrap();
+        let published = git(&f.source, &["rev-parse", "main"]);
+        let fetches = Arc::new(AtomicUsize::new(0));
+        let reader = start(
+            &owner,
+            &f,
+            &f.child,
+            Intent::FetchStatus,
+            Run {
+                calls: fetches.clone(),
+                ..Run::default()
+            },
+        );
+        owner.wait_for_readers(&f.child, 2).await;
+        commit(&f.child, "note", "second save");
+        if tracking_changed {
+            git(
+                &f.child,
+                &["update-ref", "refs/remotes/origin/main", "HEAD"],
+            );
+        }
+        gate.notify_one();
+        first.await.unwrap().unwrap();
+        let Output::Status(status) = reader.await.unwrap().unwrap() else {
+            panic!("expected counters");
+        };
+        assert_eq!((status.ahead, status.behind), (1, 0));
+        assert_eq!(
+            fetches.load(Ordering::SeqCst),
+            usize::from(tracking_changed)
+        );
+        assert_eq!(git(&f.source, &["rev-parse", "main"]), published);
+
+        let Output::Inspection(read) = start(
+            &owner,
+            &f,
+            &f.child,
+            Intent::InspectPublication,
+            Run::default(),
+        )
+        .await
+        .unwrap()
+        .unwrap() else {
+            panic!("expected inspection");
+        };
+        let status = read.status.unwrap();
+        assert_eq!(status.child, "unpublished");
+        assert!(matches!(
+            status.parent.pointer,
+            publication_flow::PointerState::Pending
+        ));
+        assert!(status.inspection_error.is_none());
+
+        start(
+            &owner,
+            &f,
+            &f.child,
+            Intent::FetchStatus,
+            Run {
+                calls: fetches.clone(),
+                ..Run::default()
+            },
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(
+            fetches.load(Ordering::SeqCst),
+            usize::from(tracking_changed) + 1
+        );
+    }
+}

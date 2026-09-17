@@ -117,7 +117,14 @@ pub(crate) async fn fetch_status(
     previous: Option<&Completion>,
     current: &Snapshot,
 ) -> Result<(GitStatus, bool), AppError> {
-    let fetched = if covered_sync(previous, current).is_some() {
+    // A new local commit invalidates publication proof, not the remote facts
+    // already observed by the operation this reader was waiting for. Recompute
+    // counts against the current HEAD; inspection keeps its exact snapshot gate.
+    let observed = previous
+        .filter(|done| current.same_remote_observation(&done.after))
+        .and_then(Completion::sync_report)
+        .is_some_and(|report| report.remote_status.is_some());
+    let fetched = if observed {
         false
     } else {
         ops::fetch_remote(cli, repo).await?

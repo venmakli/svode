@@ -239,6 +239,23 @@ impl Snapshot {
         })
     }
 
+    pub(crate) fn same_remote_observation(&self, observed: &Self) -> bool {
+        let refs = |snapshot: &Self| {
+            snapshot
+                .refs
+                .lines()
+                .filter(|line| {
+                    let name = line.split_once(' ').map(|(_, name)| name).unwrap_or("");
+                    name != "HEAD" && name != snapshot.branch
+                })
+                .map(str::to_owned)
+                .collect::<Vec<_>>()
+        };
+        self.target == observed.target
+            && self.branch == observed.branch
+            && refs(self) == refs(observed)
+    }
+
     // Only the current branch and remote tracking refs may have changed in our
     // own successful pull/push. Other sources require another admitted pass.
     pub(crate) fn publication_covers(&self, before: &Self, published: &str) -> bool {
@@ -501,7 +518,11 @@ impl Operations {
                 {
                     return done.result.clone();
                 }
-                if intent.reader() && current == done.after {
+                if intent.reader()
+                    && (current == done.after
+                        || (intent == Intent::FetchStatus
+                            && current.same_remote_observation(&done.after)))
+                {
                     previous = Some(done.clone());
                 }
             } else if matches!(intent, Intent::Sync { .. }) || intent.reader() {
