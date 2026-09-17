@@ -758,17 +758,7 @@ async fn apply_indexed_entry_dates(
     let Ok(pool) = pool_for_space(app, context, space_id, space).await else {
         return;
     };
-    let Ok(Some((created, updated))) = sqlx::query_as::<_, (String, String)>(
-        "SELECT created, updated FROM entries WHERE file_path = ?",
-    )
-    .bind(normalized)
-    .fetch_optional(&pool)
-    .await
-    else {
-        return;
-    };
-    entry.meta.created = created;
-    entry.meta.updated = updated;
+    crate::index::page_dates::apply_indexed_dates(&pool, &normalized, entry).await;
 }
 
 fn index_key_for_context(context: &ActiveProjectContext, space_id: Option<&str>) -> IndexKey {
@@ -859,6 +849,68 @@ mod tests {
         assert!(!owner.is_page());
         assert_eq!(item.page_role, Some(PageRole::CollectionItem));
         assert!(item.is_page());
+    }
+
+    #[tokio::test]
+    async fn page_read_dates_preserve_mcp_roles_and_source_facts() {
+        let temp = tempfile::tempdir().unwrap();
+        let space = temp.path().to_str().unwrap();
+        fs::create_dir_all(temp.path().join("tasks")).unwrap();
+        fs::create_dir_all(temp.path().join("folder")).unwrap();
+        fs::write(
+            temp.path().join("tasks/schema.yaml"),
+            "columns: []\nviews: []\n",
+        )
+        .unwrap();
+        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
+        sqlx::query(
+            "CREATE TABLE entries (file_path TEXT PRIMARY KEY, created TEXT, updated TEXT)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        for path in [
+            "leaf.md",
+            "folder/README.md",
+            "tasks/item.md",
+            "tasks/README.md",
+            "README.md",
+        ] {
+            let source = "---\ntitle: [malformed\n---\nOriginal body\n";
+            fs::write(temp.path().join(path), source).unwrap();
+            let normalized = validate_markdown_path(path).unwrap();
+            ensure_inside(temp.path(), &normalized).unwrap();
+            match path {
+                "tasks/item.md" => require_collection_item(space, path).unwrap(),
+                "tasks/README.md" => {
+                    require_owner(space, path, ContentOwnerKind::Collection).unwrap()
+                }
+                "README.md" => require_owner(space, path, ContentOwnerKind::Space).unwrap(),
+                _ => require_standalone_page(space, path).unwrap(),
+            }
+            if path.starts_with("tasks/") || path == "README.md" {
+                assert_eq!(
+                    require_standalone_page(space, path).unwrap_err().code,
+                    "NOT_A_STANDALONE_PAGE"
+                );
+            }
+            let mut page = entry::read(space, path).unwrap();
+            let mut expected = serde_json::to_value(&page).unwrap();
+            sqlx::query("INSERT INTO entries VALUES (?, 'indexed-created', 'indexed-updated')")
+                .bind(path)
+                .execute(&pool)
+                .await
+                .unwrap();
+            crate::index::page_dates::apply_indexed_dates(&pool, &normalized, &mut page).await;
+            expected["meta"]["created"] = "indexed-created".into();
+            expected["meta"]["updated"] = "indexed-updated".into();
+            assert_eq!(serde_json::to_value(page).unwrap(), expected);
+            assert_eq!(fs::read_to_string(temp.path().join(path)).unwrap(), source);
+        }
+        assert!(validate_markdown_path("../outside.md").is_err());
+        assert!(entry::read(space, "missing.md").is_err());
+        assert!(!temp.path().join(".svode").exists());
+        assert!(!temp.path().join(".git").exists());
     }
 
     #[test]

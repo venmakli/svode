@@ -2,6 +2,7 @@ pub mod commands;
 pub mod db;
 pub mod knowledge;
 mod lifecycle;
+pub(crate) mod page_dates;
 pub mod reconcile;
 pub mod reindex;
 mod retention;

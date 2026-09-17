@@ -170,8 +170,7 @@ pub async fn read_entry(
     index_state: State<'_, IndexState>,
 ) -> Result<Entry, AppError> {
     let mut entry = entry::read(&space, &path)?;
-    let dates = indexed_entry_dates(&index_state, &space, &path).await;
-    apply_indexed_dates(&mut entry, dates);
+    apply_indexed_entry_dates(&index_state, &space, &path, &mut entry).await;
     Ok(entry)
 }
 

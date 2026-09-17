@@ -113,29 +113,22 @@ fn root_path_for_head(path: &str) -> &str {
     path
 }
 
-async fn indexed_entry_dates(
+async fn apply_indexed_entry_dates(
     index_state: &IndexState,
     space: &str,
     path: &str,
-) -> Option<(String, String)> {
-    let normalized = normalize_repo_relative(path, RootMode::Reject).ok()?;
-    let key = index_state.key_for_space_dir(Path::new(space)).await?;
-    let pool = index_state.get_or_create(&key).await.ok()?;
-    sqlx::query_as::<_, (String, String)>(
-        "SELECT created, updated FROM entries WHERE file_path = ?",
-    )
-    .bind(normalized)
-    .fetch_optional(&pool)
-    .await
-    .ok()
-    .flatten()
-}
-
-fn apply_indexed_dates(entry: &mut Entry, dates: Option<(String, String)>) {
-    if let Some((created, updated)) = dates {
-        entry.meta.created = created;
-        entry.meta.updated = updated;
-    }
+    entry: &mut Entry,
+) {
+    let Ok(normalized) = normalize_repo_relative(path, RootMode::Reject) else {
+        return;
+    };
+    let Some(key) = index_state.key_for_space_dir(Path::new(space)).await else {
+        return;
+    };
+    let Ok(pool) = index_state.get_or_create(&key).await else {
+        return;
+    };
+    index::page_dates::apply_indexed_dates(&pool, &normalized, entry).await;
 }
 
 #[derive(Debug, Clone, Serialize)]

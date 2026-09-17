@@ -4,6 +4,37 @@ use crate::space::types::{SpaceConfig, TreeSpaceConfig};
 use sqlx::SqlitePool;
 use tempfile::TempDir;
 
+#[tokio::test]
+async fn page_read_dates_without_registered_pool_preserve_all_native_roles() {
+    let tmp = TempDir::new().unwrap();
+    let state = IndexState::new();
+    let space = tmp.path().to_str().unwrap();
+    fs::create_dir_all(tmp.path().join("tasks")).unwrap();
+    fs::create_dir_all(tmp.path().join("folder")).unwrap();
+    fs::write(
+        tmp.path().join("tasks/schema.yaml"),
+        "columns: []\nviews: []\n",
+    )
+    .unwrap();
+    for path in [
+        "leaf.md",
+        "folder/README.md",
+        "tasks/item.md",
+        "tasks/README.md",
+        "README.md",
+    ] {
+        let source = "Body without frontmatter\n";
+        fs::write(tmp.path().join(path), source).unwrap();
+        let mut page = entry::read(space, path).unwrap();
+        let expected = serde_json::to_value(&page).unwrap();
+        apply_indexed_entry_dates(&state, space, path, &mut page).await;
+        assert_eq!(serde_json::to_value(page).unwrap(), expected);
+        assert_eq!(fs::read_to_string(tmp.path().join(path)).unwrap(), source);
+    }
+    assert!(!tmp.path().join(".svode").exists());
+    assert!(!tmp.path().join(".git").exists());
+}
+
 fn write_tree_config(tmp: &TempDir, exclude: Vec<&str>, include: Vec<&str>) {
     write_space_config(
         tmp.path(),
