@@ -984,7 +984,7 @@ async fn probe_remote(
         });
     }
 
-    let failure = classify_failure(&output);
+    let failure = classify_failure(&output, ServiceRefStage::Push);
     if matches!(
         failure.reason,
         Some(RepositoryAccessReason::OfflineOrTimeout | RepositoryAccessReason::AmbiguousRejection)
@@ -1051,7 +1051,7 @@ async fn claim_remote_routine(
         });
     }
 
-    let failure = classify_failure(&output);
+    let failure = classify_failure(&output, ServiceRefStage::Push);
     let readback = read_remote_ref(cli, repository, &remote.push_url, &reference).await?;
     if routine_claim_readback_confirms(&new_oid, &readback) {
         return Ok(RoutineClaimResult::Claimed {
@@ -1207,7 +1207,10 @@ async fn read_remote_ref(
         )
         .await?;
     if output.exit_code != 0 {
-        return Ok(RemoteRead::Failure(classify_failure(&output)));
+        return Ok(RemoteRead::Failure(classify_failure(
+            &output,
+            ServiceRefStage::Read,
+        )));
     }
     let oid = output
         .stdout
@@ -1274,7 +1277,13 @@ async fn create_service_commit(
     Ok(commit.stdout.trim().to_string())
 }
 
-fn classify_failure(output: &GitOutput) -> ProbeResult {
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ServiceRefStage {
+    Read,
+    Push,
+}
+
+fn classify_failure(output: &GitOutput, stage: ServiceRefStage) -> ProbeResult {
     let detail = format!("{}\n{}", output.stderr, output.stdout).to_ascii_lowercase();
     let reason = if output.exit_code == -2
         || contains_any(
@@ -1318,11 +1327,18 @@ fn classify_failure(output: &GitOutput) -> ProbeResult {
     } else if contains_any(
         &detail,
         &[
-            "permission denied",
-            "write access to repository not granted",
-            "not allowed to push",
+            "hook declined",
+            "pre-receive hook",
+            "pre-push hook",
+            "non-fast-forward",
+            "denycurrentbranch",
+            "denynonfastforwards",
+            "denydeletes",
+            "branch is currently checked out",
         ],
     ) {
+        RepositoryAccessReason::AmbiguousRejection
+    } else if stage == ServiceRefStage::Push && explicit_remote_write_denial(&output.stderr) {
         return ProbeResult {
             status: RepositoryAccessStatus::ReadOnly,
             reason: None,
@@ -1334,6 +1350,22 @@ fn classify_failure(output: &GitOutput) -> ProbeResult {
         status: RepositoryAccessStatus::Unknown,
         reason: Some(reason),
     }
+}
+
+fn explicit_remote_write_denial(stderr: &str) -> bool {
+    // Free-form local/hook diagnostics and generic rejection summaries are not
+    // evidence of repository permissions. Accept only explicit remote answers.
+    stderr.lines().any(|line| {
+        let line = line.trim().to_ascii_lowercase();
+        let Some(message) = line.strip_prefix("remote:") else {
+            return false;
+        };
+        matches!(
+            message.trim().trim_end_matches('.'),
+            "write access to repository not granted"
+                | "you are not allowed to push code to this project"
+        )
+    })
 }
 
 fn exact_lease(reference: &str, expected: &str) -> String {
@@ -1499,6 +1531,10 @@ fn stable_hash(value: &str) -> String {
 fn opaque_id(prefix: &str, value: &str) -> String {
     format!("{prefix}-{}", stable_hash(value))
 }
+
+#[cfg(all(test, unix))]
+#[path = "access_probe_tests.rs"]
+mod probe_tests;
 
 #[cfg(test)]
 mod tests {
@@ -1959,7 +1995,7 @@ mod tests {
             (
                 GitOutput {
                     stdout: String::new(),
-                    stderr: "write access to repository not granted".into(),
+                    stderr: "remote: Write access to repository not granted.".into(),
                     exit_code: 1,
                 },
                 RepositoryAccessStatus::ReadOnly,
@@ -1976,7 +2012,7 @@ mod tests {
             ),
         ];
         for (output, status, reason) in cases {
-            let classified = classify_failure(&output);
+            let classified = classify_failure(&output, ServiceRefStage::Push);
             assert_eq!(classified.status, status);
             assert_eq!(classified.reason, reason);
         }
