@@ -7,6 +7,7 @@ import {
 import { saveGitRemoteCredentials } from "../api/git-actions";
 import {
   useGitStore,
+  selectPublication,
   type GitAuthChallenge,
   type GitRemoteAuthCredentials,
 } from "../model";
@@ -16,7 +17,7 @@ import * as m from "@/paraglide/messages.js";
 
 export function useParentPublication(spacePath: string | null) {
   const publication = useGitStore((s) =>
-    spacePath ? s.publications[spacePath] : undefined,
+    spacePath ? selectPublication(s, spacePath) : undefined,
   );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -115,7 +116,7 @@ export function useParentPublication(spacePath: string | null) {
     action,
     label,
     busy,
-    error,
+    error: error ?? publication?.inspectionError ?? null,
     run,
     authOpen,
     setAuthOpen,

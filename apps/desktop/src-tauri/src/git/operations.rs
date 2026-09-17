@@ -50,6 +50,8 @@ pub(crate) enum Intent {
     Push,
     Publish,
     Resolve,
+    FetchStatus,
+    InspectPublication,
     RetryParent {
         head: String,
         parent: PathBuf,
@@ -58,6 +60,10 @@ pub(crate) enum Intent {
 }
 
 impl Intent {
+    pub(crate) fn reader(&self) -> bool {
+        matches!(self, Self::FetchStatus | Self::InspectPublication)
+    }
+
     fn covers(&self, other: &Self) -> bool {
         self == other
             || matches!(
@@ -90,6 +96,7 @@ pub(crate) enum Output {
     Sync(SyncReport),
     Status(GitStatus),
     Parent(PublicationStatus),
+    Inspection(super::readers::PublicationRead),
 }
 
 /// Local observations only; never a replacement for publication's remote proof.
@@ -248,6 +255,7 @@ pub(crate) struct Request {
     pub(crate) intent: Intent,
     pub(crate) snapshot: Snapshot,
     pub(crate) parent: Option<(PathBuf, Option<Snapshot>)>,
+    pub(crate) previous: Option<Completion>,
 }
 
 #[derive(Clone)]
@@ -257,6 +265,7 @@ pub(crate) struct ParentEvidence {
     pub(crate) after: Snapshot,
     pub(crate) result: super::sync::SyncResult,
     pub(crate) background: bool,
+    pub(crate) remote_status: Option<GitStatus>,
 }
 
 #[derive(Clone)]
@@ -265,6 +274,16 @@ pub(crate) struct Completion {
     pub(crate) before: Snapshot,
     pub(crate) after: Snapshot,
     pub(crate) parent: Option<ParentEvidence>,
+    pub(crate) read_sync: Option<SyncReport>,
+}
+
+impl Completion {
+    pub(crate) fn sync_report(&self) -> Option<&SyncReport> {
+        match &self.result {
+            Ok(Output::Sync(report)) => Some(report),
+            _ => self.read_sync.as_ref(),
+        }
+    }
 }
 
 struct Flight {
@@ -362,6 +381,7 @@ impl Operations {
             None
         };
         let mut snapshot = original.clone();
+        let mut previous = None;
         loop {
             let mut waiting = if let Some(flight) = flights.get(&repo) {
                 vec![flight.clone()]
@@ -384,6 +404,7 @@ impl Operations {
                     intent,
                     snapshot,
                     parent,
+                    previous,
                 };
                 let (sender, _) = watch::channel(None);
                 let flight = Arc::new(Flight {
@@ -403,6 +424,7 @@ impl Operations {
                             before: fallback.clone(),
                             after: fallback,
                             parent: None,
+                            read_sync: None,
                         },
                     };
                     let mut flights = owner.flights.lock().await;
@@ -442,7 +464,14 @@ impl Operations {
             if waiting[0].request.repo == repo {
                 let flight = &waiting[0];
                 let done = &completed[0];
-                if flight.request.intent.covers(&intent)
+                let inspection_current = match &done.result {
+                    Ok(Output::Inspection(read)) if intent == Intent::InspectPublication => {
+                        read.is_current(&cli).await?
+                    }
+                    _ => true,
+                };
+                if inspection_current
+                    && flight.request.intent.covers(&intent)
                     && current == done.after
                     && (snapshot == done.before
                         || snapshot == flight.request.snapshot
@@ -453,7 +482,10 @@ impl Operations {
                 {
                     return done.result.clone();
                 }
-            } else if matches!(intent, Intent::Sync { .. }) {
+                if intent.reader() && current == done.after {
+                    previous = Some(done.clone());
+                }
+            } else if matches!(intent, Intent::Sync { .. }) || intent.reader() {
                 let evidence = completed
                     .iter()
                     .map(|done| done.parent.as_ref())
@@ -461,7 +493,7 @@ impl Operations {
                 if let Some(evidence) = evidence {
                     let permitted = evidence.iter().all(|e| {
                         e.repo == repo
-                            && (!e.background || intent.background())
+                            && (!e.background || intent.background() || intent.reader())
                             && e.before.target == original.target
                             && matches!(e.result, super::sync::SyncResult::Success { .. })
                     });
@@ -472,10 +504,21 @@ impl Operations {
                                 &last.result
                             {
                                 if current.publication_covers(&last.before, published_head) {
-                                    return Ok(Output::Sync(SyncReport {
+                                    let report = SyncReport {
                                         child: last.result.clone(),
                                         parent: None,
-                                    }));
+                                        remote_status: last.remote_status.clone(),
+                                    };
+                                    if !intent.reader() {
+                                        return Ok(Output::Sync(report));
+                                    }
+                                    previous = Some(Completion {
+                                        result: Ok(Output::Sync(report)),
+                                        before: last.before.clone(),
+                                        after: last.after.clone(),
+                                        parent: None,
+                                        read_sync: None,
+                                    });
                                 }
                             }
                         }

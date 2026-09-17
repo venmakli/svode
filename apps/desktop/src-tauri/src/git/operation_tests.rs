@@ -73,9 +73,38 @@ async fn execute(cli: crate::git::cli::GitCli, request: Request, run: Run) -> Co
         }
         if !request.intent.admitted(&request.repo) {
             return Ok(Output::Sync(publication_flow::SyncReport {
+                remote_status: None,
                 child: SyncResult::NoRemote,
                 parent: None,
             }));
+        }
+        if request.intent == Intent::FetchStatus {
+            let (status, fetched) = crate::git::readers::fetch_status(
+                &cli,
+                &request.repo,
+                request.previous.as_ref(),
+                &before,
+            )
+            .await?;
+            if fetched {
+                run.calls.fetch_add(1, Ordering::SeqCst);
+            }
+            return Ok(Output::Status(status));
+        }
+        if request.intent == Intent::InspectPublication {
+            let parent = crate::git::branch::parent(&cli, &request.repo)
+                .await?
+                .unwrap();
+            return crate::git::readers::inspect(
+                &cli,
+                &request.repo,
+                &parent,
+                request.previous.as_ref(),
+                &before,
+                Ok(()),
+            )
+            .await
+            .map(Output::Inspection);
         }
         run.calls.fetch_add(1, Ordering::SeqCst);
         let child = match request.intent {
@@ -127,11 +156,18 @@ async fn execute(cli: crate::git::cli::GitCli, request: Request, run: Run) -> Co
                     after: Snapshot::read(&cli, parent).await?,
                     result: result.clone(),
                     background: request.intent.background(),
+                    remote_status: crate::git::readers::sync_status(
+                        &cli,
+                        parent,
+                        outcome.result.as_ref().unwrap(),
+                    )
+                    .await,
                 });
             }
             parent_outcome = Some(outcome);
         }
         Ok(Output::Sync(publication_flow::SyncReport {
+            remote_status: crate::git::readers::sync_status(&cli, &request.repo, &child).await,
             child,
             parent: parent_outcome,
         }))
@@ -146,9 +182,15 @@ async fn execute(cli: crate::git::cli::GitCli, request: Request, run: Run) -> Co
     }
     Completion {
         result: result.map_err(Into::into),
+        read_sync: crate::git::readers::covered_sync(request.previous.as_ref(), &before).cloned(),
         before,
         after,
-        parent: evidence,
+        parent: evidence.or_else(|| {
+            request
+                .previous
+                .as_ref()
+                .and_then(|done| done.parent.clone())
+        }),
     }
 }
 
@@ -910,5 +952,255 @@ async fn transport_change_during_pull_does_not_redirect_the_following_push() {
     assert_eq!(
         std::fs::read_to_string(f.root.join("incoming")).unwrap(),
         "incoming change"
+    );
+}
+
+#[tokio::test]
+async fn readers_join_child_and_parent_without_fetch_then_independent_focus_reads_again() {
+    let f = Fixture::new();
+    let commands = f._temp.path().join("reader-commands");
+    std::fs::write(f._temp.path().join("git-test"), format!("#!/bin/sh\nexport GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1\nfor arg in \"$@\"; do case \"$arg\" in fetch|pull|push|ls-remote) echo \"$arg\" >> '{}'; break;; esac; done\nexec git -c protocol.file.allow=always \"$@\"\n", commands.display())).unwrap();
+    commit(&f.child, "note", "reader coverage");
+    policy(&f.child, 7);
+    policy(&f.root, 7);
+    let owner = Arc::new(Operations::default());
+    let gate = Arc::new(Notify::new());
+    let (tx, rx) = oneshot::channel();
+    let sync = start(
+        &owner,
+        &f,
+        &f.child,
+        sync_intent(true),
+        Run {
+            entered: Some(tx),
+            before: Some(gate.clone()),
+            ..Run::default()
+        },
+    );
+    rx.await.unwrap();
+    let fetches = Arc::new(AtomicUsize::new(0));
+    let root = start(
+        &owner,
+        &f,
+        &f.root,
+        Intent::FetchStatus,
+        Run {
+            calls: fetches.clone(),
+            ..Run::default()
+        },
+    );
+    owner.wait_for_parent_reader(&f.root).await;
+    let child = start(
+        &owner,
+        &f,
+        &f.child,
+        Intent::FetchStatus,
+        Run {
+            calls: fetches.clone(),
+            ..Run::default()
+        },
+    );
+    let inspection = start(
+        &owner,
+        &f,
+        &f.child,
+        Intent::InspectPublication,
+        Run::default(),
+    );
+    owner.wait_for_readers(&f.child, 4).await;
+    gate.notify_one();
+    sync.await.unwrap().unwrap();
+    for reader in [root, child] {
+        let Output::Status(status) = reader.await.unwrap().unwrap() else {
+            panic!("status")
+        };
+        assert_eq!((status.ahead, status.behind), (0, 0));
+    }
+    let Output::Inspection(read) = inspection.await.unwrap().unwrap() else {
+        panic!("inspection")
+    };
+    let status = read.status.unwrap();
+    assert_eq!(status.child, "published");
+    assert!(matches!(
+        status.parent.pointer,
+        publication_flow::PointerState::Published
+    ));
+    assert!(status.inspection_error.is_none());
+    assert_eq!(fetches.load(Ordering::SeqCst), 0);
+    let remote_commands = std::fs::read_to_string(&commands).unwrap();
+    assert_eq!(remote_commands.lines().count(), 12, "{remote_commands}");
+
+    start(
+        &owner,
+        &f,
+        &f.root,
+        Intent::FetchStatus,
+        Run {
+            calls: fetches.clone(),
+            ..Run::default()
+        },
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(fetches.load(Ordering::SeqCst), 1);
+    let restarted = Arc::new(Operations::default());
+    start(
+        &restarted,
+        &f,
+        &f.root,
+        Intent::FetchStatus,
+        Run {
+            calls: fetches.clone(),
+            ..Run::default()
+        },
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(fetches.load(Ordering::SeqCst), 2);
+}
+
+#[tokio::test]
+async fn origin_reader_does_not_reuse_push_to_another_destination() {
+    let f = Fixture::new();
+    let other = f._temp.path().join("other.git");
+    git(
+        f._temp.path(),
+        &[
+            "clone",
+            "--bare",
+            f.root.to_str().unwrap(),
+            other.to_str().unwrap(),
+        ],
+    );
+    git(
+        &f.root,
+        &[
+            "remote",
+            "set-url",
+            "--push",
+            "origin",
+            other.to_str().unwrap(),
+        ],
+    );
+    commit(&f.root, "note", "other destination");
+    let owner = Arc::new(Operations::default());
+    let gate = Arc::new(Notify::new());
+    let (tx, rx) = oneshot::channel();
+    let sync = start(
+        &owner,
+        &f,
+        &f.root,
+        sync_intent(false),
+        Run {
+            entered: Some(tx),
+            before: Some(gate.clone()),
+            ..Run::default()
+        },
+    );
+    rx.await.unwrap();
+    let fetches = Arc::new(AtomicUsize::new(0));
+    let reader = start(
+        &owner,
+        &f,
+        &f.root,
+        Intent::FetchStatus,
+        Run {
+            calls: fetches.clone(),
+            ..Run::default()
+        },
+    );
+    owner.wait_for_readers(&f.root, 2).await;
+    gate.notify_one();
+    let Output::Sync(report) = sync.await.unwrap().unwrap() else {
+        panic!("sync")
+    };
+    assert!(report.remote_status.is_none());
+    let Output::Status(status) = reader.await.unwrap().unwrap() else {
+        panic!("reader")
+    };
+    assert_eq!(status.ahead, 1);
+    assert_eq!(fetches.load(Ordering::SeqCst), 1);
+    assert_ne!(
+        git(&f.remote, &["rev-parse", "main"]),
+        git(&other, &["rev-parse", "main"])
+    );
+}
+
+#[tokio::test]
+async fn publication_inspection_retains_unknown_remote_and_parent_freshness() {
+    let f = Fixture::new();
+    let current = Snapshot::read(&f.cli, &f.child).await.unwrap();
+    let read = crate::git::readers::inspect(&f.cli, &f.child, &f.root, None, &current, Ok(()))
+        .await
+        .unwrap();
+    assert!(read.is_current(&f.cli).await.unwrap());
+    commit(&f.root, "note", "root changed");
+    assert!(!read.is_current(&f.cli).await.unwrap());
+    git(
+        &f.child,
+        &[
+            "remote",
+            "set-url",
+            "origin",
+            f._temp.path().join("missing.git").to_str().unwrap(),
+        ],
+    );
+    let current = Snapshot::read(&f.cli, &f.child).await.unwrap();
+    let read = crate::git::readers::inspect(&f.cli, &f.child, &f.root, None, &current, Ok(()))
+        .await
+        .unwrap();
+    let status = read.status.unwrap();
+    assert_eq!(status.child, "unknown");
+    assert!(status.inspection_error.is_some());
+}
+
+#[tokio::test]
+async fn origin_counters_are_independent_of_other_upstream_and_detect_deleted_branch() {
+    let f = Fixture::new();
+    let other = f._temp.path().join("tracking.git");
+    git(
+        f._temp.path(),
+        &[
+            "clone",
+            "--bare",
+            f.root.to_str().unwrap(),
+            other.to_str().unwrap(),
+        ],
+    );
+    git(
+        &f.root,
+        &["remote", "add", "other", other.to_str().unwrap()],
+    );
+    git(&f.root, &["fetch", "other"]);
+    git(&f.root, &["branch", "--set-upstream-to=other/main"]);
+    commit(&f.root, "note", "origin only");
+    git(&f.root, &["push", "origin", "main"]);
+    let owner = Arc::new(Operations::default());
+    let Output::Status(status) = start(&owner, &f, &f.root, Intent::FetchStatus, Run::default())
+        .await
+        .unwrap()
+        .unwrap()
+    else {
+        panic!("status")
+    };
+    assert_eq!(status.ahead, 0);
+    assert_eq!(status.tracking.as_deref(), Some("other/main"));
+    git(&f.remote, &["update-ref", "-d", "refs/heads/main"]);
+    let Output::Status(status) = start(&owner, &f, &f.root, Intent::FetchStatus, Run::default())
+        .await
+        .unwrap()
+        .unwrap()
+    else {
+        panic!("status")
+    };
+    assert!(status.ahead > 0);
+    assert_eq!(status.behind, 0);
+    assert!(
+        !crate::git::ops::unpushed_commits(&f.cli, &f.root)
+            .await
+            .unwrap()
+            .is_empty()
     );
 }

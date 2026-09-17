@@ -11,17 +11,25 @@ import type {
 import {
   gitAuthChallengeFromRemoteUrl,
   useGitStore,
+  selectPublication,
   type GitSyncOutcome,
 } from "../model";
+import { gitSyncErrorMessage } from "./git-sync-error";
 import { toParentPublication } from "./git-mappers";
 
 function apply(path: string, dto: PublicationStatusDto | null) {
-  useGitStore
-    .getState()
-    .setPublication(
-      path,
-      dto ? { ...dto, parent: toParentPublication(dto.parent) } : null,
-    );
+  useGitStore.getState().setPublication(
+    path,
+    dto
+      ? {
+          ...dto,
+          inspectionError: dto.inspectionError
+            ? gitSyncErrorMessage(dto.inspectionError)
+            : undefined,
+          parent: toParentPublication(dto.parent),
+        }
+      : null,
+  );
 }
 
 export function recordSavedPublication(path: string, dto: GitStatusDto) {
@@ -47,22 +55,11 @@ export function recordSyncPublication(path: string, outcome: GitSyncOutcome) {
   }
 }
 
-const publicationRefreshes = new Map<string, Promise<void>>();
-
-export function refreshGitPublication(path: string): Promise<void> {
-  const active = publicationRefreshes.get(path);
-  if (active) return active;
-  const refresh = inspectPublication(path).finally(() => {
-    publicationRefreshes.delete(path);
-  });
-  publicationRefreshes.set(path, refresh);
-  return refresh;
-}
-
-async function inspectPublication(path: string) {
-  const before = useGitStore.getState().publications[path];
+export async function refreshGitPublication(path: string): Promise<void> {
+  const current = useGitStore.getState().beginPublicationRead(path);
+  const before = selectPublication(useGitStore.getState(), path);
   const dto = await getGitPublicationStatus(path);
-  if (useGitStore.getState().publications[path] !== before) return;
+  if (!current()) return;
   if (
     dto &&
     before?.childHead === dto.childHead &&
@@ -70,6 +67,7 @@ async function inspectPublication(path: string) {
     !dto.parent.error
   ) {
     dto.parent.error = before.parent.error;
+    dto.parent.policySkipped = before.parent.policySkipped;
     if (before.parent.result?.type === "Conflict")
       dto.parent.result = {
         type: "conflict",
@@ -86,7 +84,7 @@ async function inspectPublication(path: string) {
 
 export async function retryParentPublication(
   path: string,
-  pending = useGitStore.getState().publications[path],
+  pending = selectPublication(useGitStore.getState(), path),
 ) {
   if (!pending?.childHead || !pending.parent.target) {
     await refreshGitPublication(path);
@@ -98,7 +96,8 @@ export async function retryParentPublication(
     expectedParent: pending.parent.repository,
     expectedTarget: pending.parent.target,
   });
-  if (useGitStore.getState().publications[path] === pending) apply(path, dto);
+  if (selectPublication(useGitStore.getState(), path) === pending)
+    apply(path, dto);
 }
 
 export function listenPublicationOutcomes() {

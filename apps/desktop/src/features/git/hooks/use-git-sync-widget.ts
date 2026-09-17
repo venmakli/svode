@@ -56,42 +56,62 @@ export interface GitSyncWidget {
 export function useGitSyncWidget(): GitSyncWidget {
   const spacePath = useSpace(selectActiveSpacePath);
   const parent = useParentPublication(spacePath);
-  const activePath = useRef(spacePath);
+  const active = useRef<object | null>(null);
+  const remoteRequest = useRef(0);
+  const outgoingRequest = useRef(0);
+  const configRequest = useRef(0);
   useEffect(() => {
-    activePath.current = spacePath;
+    active.current = {};
+    remoteRequest.current++;
+    outgoingRequest.current++;
+    configRequest.current++;
+    setHasRemote(false);
+    setAutoSyncState(false);
+    setSavingAutoSync(false);
     setOpen(false);
     setAuthOpenState(false);
     setAuthSaving(false);
     setAuthChallenge(null);
     setAuthError(null);
     setCommits([]);
-    setRemoteChecked(false);
     setCheckingRemote(false);
     setLoadingCommits(false);
+    return () => {
+      active.current = null;
+    };
   }, [spacePath]);
   const activeRootPath = useSpace((state) => state.activeRootPath);
   const status = useGitStore((state) =>
     spacePath ? state.statuses[spacePath] : undefined,
   );
-  const syncing = useGitStore((state) =>
-    spacePath ? state.syncing[spacePath] === true : false,
+  const repository = status?.repository ?? spacePath;
+  const syncing = useGitStore(
+    (state) =>
+      !!spacePath &&
+      (state.syncing[spacePath] === true ||
+        (!!repository && state.backendSyncing[repository] === true)),
   );
   const branchError = useGitStore((state) =>
-    spacePath ? (state.branchError[spacePath] ?? null) : null,
+    repository ? (state.branchError[repository] ?? null) : null,
   );
   const syncError = useGitStore((state) =>
-    spacePath
-      ? (state.branchError[spacePath] ?? state.syncError[spacePath] ?? null)
+    repository
+      ? (state.branchError[repository] ?? state.syncError[repository] ?? null)
       : null,
   );
   const remoteError = useGitStore((state) =>
-    spacePath ? (state.remoteError[spacePath] ?? null) : null,
+    repository ? (state.remoteError[repository] ?? null) : null,
   );
 
   const [hasRemote, setHasRemote] = useState(false);
   const [autoSync, setAutoSyncState] = useState(false);
   const [open, setOpen] = useState(false);
-  const [remoteChecked, setRemoteChecked] = useState(false);
+  const remoteChecked = useGitStore(
+    (state) => !!repository && state.remoteChecked[repository] === true,
+  );
+  const remoteStatus = useGitStore((state) =>
+    repository ? state.remoteStatuses[repository] : undefined,
+  );
   const [checkingRemote, setCheckingRemote] = useState(false);
   const [commits, setCommits] = useState<GitUnpushedCommit[]>([]);
   const [loadingCommits, setLoadingCommits] = useState(false);
@@ -105,47 +125,49 @@ export function useGitSyncWidget(): GitSyncWidget {
 
   const refreshRemote = useCallback(async () => {
     if (!spacePath) return null;
+    const identity = active.current;
+    const request = ++remoteRequest.current;
     setCheckingRemote(true);
     try {
       const next = await refreshGitSyncRemoteStatus(spacePath);
-      if (activePath.current !== spacePath) return null;
-      setRemoteChecked(true);
+      if (active.current !== identity) return null;
       return next;
     } catch (err) {
       console.debug("git fetch/status failed:", err);
-      if (activePath.current === spacePath) setRemoteChecked(false);
       return null;
     } finally {
-      if (activePath.current === spacePath) setCheckingRemote(false);
+      if (active.current === identity && remoteRequest.current === request)
+        setCheckingRemote(false);
     }
   }, [spacePath]);
 
   const loadConfig = useCallback(async () => {
+    const identity = active.current;
+    const request = ++configRequest.current;
     if (!spacePath) {
       setHasRemote(false);
       setAutoSyncState(false);
-      setRemoteChecked(false);
       setCommits([]);
       return;
     }
 
     try {
       const config = await getGitSyncWidgetConfig(spacePath, activeRootPath);
-      if (activePath.current !== spacePath) return;
+      if (active.current !== identity || configRequest.current !== request)
+        return;
       setHasRemote(config.hasRemote);
       setAutoSyncState(config.autoSync);
       if (config.hasRemote) {
         await refreshRemote();
       } else {
-        setRemoteChecked(false);
         setCommits([]);
       }
     } catch (err) {
-      if (activePath.current !== spacePath) return;
+      if (active.current !== identity || configRequest.current !== request)
+        return;
       console.debug("git sync widget config failed:", err);
       setHasRemote(false);
       setAutoSyncState(false);
-      setRemoteChecked(false);
       setCommits([]);
     }
   }, [activeRootPath, refreshRemote, spacePath]);
@@ -153,6 +175,23 @@ export function useGitSyncWidget(): GitSyncWidget {
   useEffect(() => {
     void loadConfig();
   }, [loadConfig]);
+
+  const loadCommits = useCallback(async () => {
+    if (!spacePath) return;
+    const identity = active.current;
+    const request = ++outgoingRequest.current;
+    const current = () =>
+      active.current === identity && outgoingRequest.current === request;
+    await loadOutgoingCommits(
+      spacePath,
+      (value) => {
+        if (current()) setCommits(value);
+      },
+      (value) => {
+        if (current()) setLoadingCommits(value);
+      },
+    );
+  }, [spacePath]);
 
   useEffect(() => {
     if (!spacePath) return;
@@ -166,15 +205,7 @@ export function useGitSyncWidget(): GitSyncWidget {
       void refreshRemote();
       void refreshGitPublication(spacePath).catch(() => {});
       if (open) {
-        void loadOutgoingCommits(
-          spacePath,
-          (value) => {
-            if (activePath.current === spacePath) setCommits(value);
-          },
-          (value) => {
-            if (activePath.current === spacePath) setLoadingCommits(value);
-          },
-        );
+        void loadCommits();
       }
     }).then((unlisten) => {
       if (cancelled) unlisten();
@@ -185,35 +216,29 @@ export function useGitSyncWidget(): GitSyncWidget {
       cancelled = true;
       if (unlistenCommit) unlistenCommit();
     };
-  }, [open, refreshRemote, spacePath]);
+  }, [loadCommits, open, refreshRemote, spacePath]);
 
   const openDialog = useCallback(async () => {
     if (!spacePath) return;
+    const identity = active.current;
 
     setOpen(true);
     void refreshGitPublication(spacePath).catch(() => {});
     const freshStatus = await refreshRemote();
-    if (activePath.current !== spacePath) return;
+    if (active.current !== identity) return;
     if (!freshStatus) {
       setCommits([]);
       return;
     }
-    await loadOutgoingCommits(
-      spacePath,
-      (value) => {
-        if (activePath.current === spacePath) setCommits(value);
-      },
-      (value) => {
-        if (activePath.current === spacePath) setLoadingCommits(value);
-      },
-    );
-  }, [refreshRemote, spacePath]);
+    await loadCommits();
+  }, [loadCommits, refreshRemote, spacePath]);
 
   const syncNow = useCallback(async () => {
     if (!spacePath) return;
+    const identity = active.current;
 
     const outcome = await syncGitNow(spacePath);
-    if (activePath.current !== spacePath) return;
+    if (active.current !== identity) return;
     if (outcome.type === "AuthRequired") {
       if (outcome.challenge) {
         setAuthChallenge(outcome.challenge);
@@ -226,12 +251,12 @@ export function useGitSyncWidget(): GitSyncWidget {
     }
     notifyGitSyncOutcome(outcome);
     if (isFullSyncSuccess(outcome)) {
+      outgoingRequest.current++;
       toast.success(m.git_sync_success());
       setOpen(false);
       setCommits([]);
-      await refreshRemote();
     }
-  }, [refreshRemote, spacePath]);
+  }, [spacePath]);
 
   const setAuthOpen = useCallback((nextOpen: boolean) => {
     setAuthOpenState(nextOpen);
@@ -244,6 +269,7 @@ export function useGitSyncWidget(): GitSyncWidget {
     async (credentials: GitRemoteAuthCredentials) => {
       if (!spacePath || !authChallenge?.remoteUrl || authSaving) return;
 
+      const identity = active.current;
       setAuthSaving(true);
       setAuthError(null);
       try {
@@ -252,16 +278,16 @@ export function useGitSyncWidget(): GitSyncWidget {
           username: credentials.username,
           password: credentials.password,
         });
-        if (activePath.current !== spacePath) return;
+        if (active.current !== identity) return;
         const outcome = await syncGitNow(spacePath);
-        if (activePath.current !== spacePath) return;
+        if (active.current !== identity) return;
         if (isFullSyncSuccess(outcome)) {
+          outgoingRequest.current++;
           toast.success(m.git_sync_success());
           setAuthOpenState(false);
           setAuthChallenge(null);
           setOpen(false);
           setCommits([]);
-          await refreshRemote();
           return;
         }
         if (outcome.type === "AuthRequired") {
@@ -274,18 +300,20 @@ export function useGitSyncWidget(): GitSyncWidget {
         setAuthChallenge(null);
       } catch (err) {
         console.error("git credential save/retry failed:", err);
-        if (activePath.current === spacePath)
+        if (active.current === identity)
           setAuthError(m.git_remote_auth_save_failed());
       } finally {
-        if (activePath.current === spacePath) setAuthSaving(false);
+        if (active.current === identity) setAuthSaving(false);
       }
     },
-    [authChallenge, authSaving, refreshRemote, spacePath],
+    [authChallenge, authSaving, spacePath],
   );
 
   const setAutoSync = useCallback(
     async (enabled: boolean) => {
       if (!spacePath) return;
+      const identity = active.current;
+      configRequest.current++;
       const previous = autoSync;
       setAutoSyncState(enabled);
       setSavingAutoSync(true);
@@ -297,18 +325,19 @@ export function useGitSyncWidget(): GitSyncWidget {
         });
       } catch (err) {
         console.error("Failed to update git auto-sync:", err);
+        if (active.current !== identity) return;
         setAutoSyncState(previous);
         toast.error(m.toast_error());
       } finally {
-        setSavingAutoSync(false);
+        if (active.current === identity) setSavingAutoSync(false);
       }
     },
     [activeRootPath, autoSync, spacePath],
   );
 
   const counters = useMemo(
-    () => remoteCounters(status, remoteChecked),
-    [remoteChecked, status],
+    () => remoteCounters(remoteStatus, remoteChecked),
+    [remoteChecked, remoteStatus],
   );
 
   return {

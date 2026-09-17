@@ -90,7 +90,7 @@ if (process.env.SVODE_PUBLICATION_TEST !== "1") {
         refreshGitRemoteStatus(path),
         refreshGitRemoteStatus(path),
       ]);
-      expect(fetches).toBe(1);
+      expect(fetches).toBe(2);
       expect(useGitStore.getState().syncError[path]).toBe(cause);
       failFetch = true;
       await refreshGitRemoteStatus(path).catch(() => {});
@@ -110,24 +110,21 @@ if (process.env.SVODE_PUBLICATION_TEST !== "1") {
     }
   });
 
-  test("overlapping sync triggers share a flight and a later save is still published", async () => {
+  test("repeat triggers, explicit intent and a saved generation all reach the backend owner", async () => {
     let release!: () => void;
-    let started!: () => void;
-    const entered = new Promise<void>((resolve) => {
-      started = resolve;
-    });
     const pending = new Promise<void>((resolve) => {
       release = resolve;
     });
-    let syncCalls = 0;
-    mockNativeIpc(async (command) => {
+    const backgrounds: unknown[] = [];
+    mockNativeIpc(async (command, args) => {
       if (command === "git_sync") {
-        syncCalls++;
-        if (syncCalls === 1) {
-          started();
-          await pending;
-        }
-        return { type: "success", publishedHead: String(syncCalls) };
+        backgrounds.push((args as { background: boolean }).background);
+        await pending;
+        return {
+          type: "success",
+          publishedHead: "latest",
+          remoteStatus: status,
+        };
       }
       if (command === "git_status" || command === "git_commit_file")
         return status;
@@ -136,16 +133,17 @@ if (process.env.SVODE_PUBLICATION_TEST !== "1") {
     });
     try {
       const first = syncSpace(path, true);
-      await entered;
-      const second = syncSpace(path, true);
-      expect(first).toBe(second);
+      const repeated = syncSpace(path, true);
+      const explicit = syncSpace(path, false);
       await commitFileAndMaybeSync(path, "README.md");
-      expect(syncCalls).toBe(1);
+      expect(backgrounds).toEqual([true, true, false, true]);
       expect(useGitStore.getState().syncing[path]).toBe(true);
       release();
-      await first;
-      expect(syncCalls).toBe(2);
+      await Promise.all([first, repeated, explicit]);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(backgrounds.length).toBe(4);
       expect(useGitStore.getState().syncing[path] === undefined).toBe(true);
+      expect(useGitStore.getState().remoteChecked[path]).toBe(true);
     } finally {
       release();
       clearNativeMocks();
@@ -153,7 +151,7 @@ if (process.env.SVODE_PUBLICATION_TEST !== "1") {
     }
   });
 
-  test("opening the project waits for a running child publication", async () => {
+  test("root-open is admitted while child runs; backend resolves relationship and coverage", async () => {
     for (const rootPath of ["/project", "C:\\project"]) {
       const childPath = `${rootPath}${rootPath.includes("\\") ? "\\" : "/"}child`;
       let release!: () => void;
@@ -175,7 +173,11 @@ if (process.env.SVODE_PUBLICATION_TEST !== "1") {
             started();
             await pending;
           }
-          return { type: "success", publishedHead: "published" };
+          return {
+            type: "success",
+            publishedHead: "published",
+            remoteStatus: status,
+          };
         }
         throw new Error(command);
       });
@@ -184,7 +186,7 @@ if (process.env.SVODE_PUBLICATION_TEST !== "1") {
         await entered;
         const parent = syncOnOpen(rootPath, rootPath);
         await new Promise((resolve) => setTimeout(resolve, 0));
-        expect(calls).toEqual([childPath]);
+        expect(calls).toEqual([childPath, rootPath]);
         release();
         await Promise.all([child, parent]);
         expect(calls).toEqual([childPath, rootPath]);
@@ -336,6 +338,7 @@ if (process.env.SVODE_PUBLICATION_TEST !== "1") {
         return {
           type: "success",
           publishedHead: "sha",
+          remoteStatus: status,
           parent: {
             ...publication.parent,
             result: { type: "conflict", files: ["README.md"] },
@@ -426,6 +429,100 @@ if (process.env.SVODE_PUBLICATION_TEST !== "1") {
       }
     } finally {
       await setLocale(original, { reload: false });
+    }
+  });
+}
+
+if (process.env.SVODE_PUBLICATION_TEST === "1") {
+  test("background operation events reach inline aliases and readers preserve their failure", async () => {
+    const { recordGitOperationOutcome } =
+      await import("./git-operation-events");
+    const { selectIndicator } = await import("../model/git-store");
+    const repo = "/background";
+    const alias = "/background/inline";
+    const git = useGitStore.getState();
+    const status = {
+      repository: repo,
+      branch: "main",
+      ahead: 0,
+      behind: 0,
+      files: [],
+      hasStaged: false,
+      hasUnstaged: false,
+      hasConflicts: false,
+      tracking: "origin/main",
+    };
+    git.applyStatus(alias, status);
+    recordGitOperationOutcome({
+      repository: repo,
+      active: true,
+      report: null,
+      error: null,
+    });
+    expect(selectIndicator(useGitStore.getState(), alias)).toBe("syncing");
+    recordGitOperationOutcome({
+      repository: repo,
+      active: false,
+      report: null,
+      error: "git pull failed: Could not resolve hostname fixture.invalid",
+    });
+    const cause = useGitStore.getState().syncError[repo];
+    expect(cause.includes("Could not resolve hostname")).toBe(true);
+    git.applyRemoteStatus(alias, status);
+    expect(selectIndicator(useGitStore.getState(), alias)).toBe("error");
+    expect(useGitStore.getState().syncError[repo]).toBe(cause);
+    expect(useGitStore.getState().remoteChecked[repo]).toBe(true);
+    recordGitOperationOutcome({
+      repository: repo,
+      active: true,
+      report: null,
+      error: null,
+    });
+    recordGitOperationOutcome({
+      repository: repo,
+      active: false,
+      report: { type: "success", publishedHead: "sha", remoteStatus: status },
+      error: null,
+    });
+    expect(selectIndicator(useGitStore.getState(), alias)).toBe("clean");
+    git.clear(alias);
+    git.clear(repo);
+  });
+
+  test("overlapping publication reads keep the newest result and unknown remains distinct", async () => {
+    const path = "/inspection-order";
+    const responses: ((value: unknown) => void)[] = [];
+    mockNativeIpc(
+      () =>
+        new Promise((resolve) => {
+          responses.push(resolve);
+        }),
+    );
+    try {
+      const first = refreshGitPublication(path);
+      const second = refreshGitPublication(path);
+      await Promise.resolve();
+      responses[1]({
+        childHead: "new",
+        child: "unknown",
+        inspectionError: "git fetch failed: offline",
+        parent: { repository: "/root", pointer: "local" },
+      });
+      await second;
+      responses[0]({
+        childHead: "old",
+        child: "published",
+        parent: { repository: "/root", pointer: "published" },
+      });
+      await first;
+      const value = useGitStore.getState().publications[path];
+      expect(value.childHead).toBe("new");
+      expect(value.child).toBe("unknown");
+      expect(value.inspectionError?.includes("offline")).toBe(true);
+      expect(parentRecoveryAction(value)).toBe("sync");
+    } finally {
+      clearNativeMocks();
+      useGitStore.getState().clear(path);
     }
   });
 }

@@ -24,6 +24,7 @@ export function toGitAvailability(dto: GitAvailabilityDto): GitAvailability {
 
 export function toGitStatus(dto: GitStatusDto): GitStatus {
   return {
+    ...(dto.repository ? { repository: dto.repository } : {}),
     branch: dto.branch,
     ahead: dto.ahead,
     behind: dto.behind,

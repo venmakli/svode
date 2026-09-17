@@ -2007,6 +2007,8 @@
   "git_publication_local_summary": "Пространство сохранено локально. Публикация версии проекта не завершена.",
   "git_publication_child_published": "Пространство: опубликовано",
   "git_publication_child_local": "Пространство: сохранено локально",
+  "git_publication_unchecked_summary": "Публикация не подтверждена",
+  "git_publication_child_unknown": "Не проверено",
   "git_publication_child_unpublished": "Пространство: публикация не подтверждена",
   "git_publication_parent_published": "Версия в проекте: опубликована",
   "git_publication_parent_local": "Версия в проекте: сохранена локально",

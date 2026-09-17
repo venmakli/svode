@@ -35,7 +35,7 @@ fn emit_space_synced(app: &AppHandle, key: &IndexKey) {
     );
 }
 
-async fn invalidate_actor_space(app: &AppHandle, space: &Path) {
+pub(crate) async fn invalidate_actor_space(app: &AppHandle, space: &Path) {
     if let Err(error) = crate::actors::invalidate_space(app, space).await {
         tracing::warn!(
             space = %space.display(),
@@ -434,32 +434,27 @@ pub async fn git_push(
 pub async fn git_status(
     state: State<'_, GitState>,
     space_path: String,
+    remote_counts: Option<bool>,
 ) -> Result<GitStatus, AppError> {
     let path = PathBuf::from(&space_path);
     let repository = super::access::resolve_repository(state.cli()?, &path).await?;
     let lock = state.get_lock(&repository).await;
     let _guard = lock.lock().await;
-    super::ops::status(state.cli()?, &path).await
+    let mut status = if remote_counts.unwrap_or(false) {
+        super::ops::status_with_remote_counts(state.cli()?, &path).await?
+    } else {
+        super::ops::status(state.cli()?, &path).await?
+    };
+    status.repository = Some(repository.to_string_lossy().into_owned());
+    Ok(status)
 }
 
 #[tauri::command]
 pub async fn git_fetch_status(
     app: AppHandle,
-    state: State<'_, GitState>,
-    access_state: State<'_, super::access::RepositoryAccessState>,
     space_path: String,
-) -> Result<GitStatus, AppError> {
-    let path = PathBuf::from(&space_path);
-    let repository = super::access::resolve_repository(state.cli()?, &path).await?;
-    let lock = state.get_lock(&repository).await;
-    let _guard = lock.lock().await;
-    let cli = state.cli()?;
-    if let Err(error) = super::ops::fetch_remote(cli, &path).await {
-        invalidate_repository_access(&app, &access_state, cli, &path).await;
-        return Err(error);
-    }
-    invalidate_actor_space(&app, &path).await;
-    super::ops::status_with_remote_counts(cli, &path).await
+) -> Result<GitStatus, super::operations::SharedError> {
+    super::publication_flow::fetch_status(&app, Path::new(&space_path)).await
 }
 
 #[tauri::command]
@@ -874,7 +869,7 @@ mod tests {
 pub async fn git_publication_status(
     app: AppHandle,
     space_path: String,
-) -> Result<Option<super::publication_flow::PublicationStatus>, AppError> {
+) -> Result<Option<super::publication_flow::PublicationStatus>, super::operations::SharedError> {
     super::publication_flow::inspect(&app, Path::new(&space_path)).await
 }
 

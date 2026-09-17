@@ -13,6 +13,8 @@ use crate::space::types::SpaceGitType;
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GitStatus {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub repository: Option<String>,
     pub branch: String,
     pub ahead: u32,
     pub behind: u32,
@@ -295,7 +297,7 @@ pub async fn status_with_remote_counts(
     space_dir: &Path,
 ) -> Result<GitStatus, AppError> {
     let mut status = status(cli, space_dir).await?;
-    if status.tracking.is_some() || get_remote(cli, space_dir).await?.is_none() {
+    if get_remote(cli, space_dir).await?.is_none() {
         return Ok(status);
     }
 
@@ -465,6 +467,7 @@ fn parse_status_porcelain_v2_z(stdout: &str) -> Result<GitStatus, AppError> {
     }
 
     Ok(GitStatus {
+        repository: None,
         branch,
         ahead,
         behind,
@@ -2243,6 +2246,7 @@ mod tests {
     #[test]
     fn strips_status_paths_to_space_relative_paths() {
         let mut status = GitStatus {
+            repository: None,
             branch: "main".to_string(),
             ahead: 0,
             behind: 0,

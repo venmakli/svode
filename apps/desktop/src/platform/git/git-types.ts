@@ -13,6 +13,7 @@ export interface FileGitStatusDto {
 }
 
 export interface GitStatusDto {
+  repository?: string;
   parent?: ParentPublicationDto;
   branch: string;
   ahead: number;
@@ -53,7 +54,12 @@ export interface GitAuthChallengeDto {
 }
 
 export type SyncResultDto =
-  | { type: "success"; publishedHead?: string; parent?: ParentPublicationDto }
+  | {
+      type: "success";
+      publishedHead?: string;
+      parent?: ParentPublicationDto;
+      remoteStatus?: GitStatusDto;
+    }
   | { type: "conflict"; files: string[] }
   | { type: "noRemote" }
   | { type: "authRequired"; challenge?: GitAuthChallengeDto | null };
@@ -81,6 +87,7 @@ export interface CloneProgressDto {
 
 export interface PublicationStatusDto {
   childHead: string;
-  child: "local" | "published" | "unpublished";
+  child: "local" | "published" | "unpublished" | "unknown";
+  inspectionError?: string | { kind: string; [key: string]: unknown };
   parent: ParentPublicationDto;
 }

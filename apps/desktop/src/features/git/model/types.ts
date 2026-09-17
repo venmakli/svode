@@ -13,6 +13,7 @@ export interface FileGitStatus {
 }
 
 export interface GitStatus {
+  repository?: string;
   branch: string;
   ahead: number;
   behind: number;
@@ -96,6 +97,7 @@ export interface GitUnpushedCommit {
 
 export interface GitPublicationStatus {
   childHead: string;
-  child: "local" | "published" | "unpublished";
+  child: "local" | "published" | "unpublished" | "unknown";
+  inspectionError?: string;
   parent: ParentPublication;
 }

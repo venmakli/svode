@@ -7,9 +7,11 @@ export function publicationCopy(publication: GitPublicationStatus) {
   const summary =
     parent.pointer === "published" && child === "published"
       ? m.git_sync_success()
-      : child === "published"
-        ? m.git_publication_partial()
-        : m.git_publication_local_summary();
+      : child === "unknown"
+        ? m.git_publication_unchecked_summary()
+        : child === "published"
+          ? m.git_publication_partial()
+          : m.git_publication_local_summary();
   let reason: string | null = null;
   if (parent.error?.kind === "repository_access_denied")
     reason =
@@ -29,9 +31,11 @@ export function publicationCopy(publication: GitPublicationStatus) {
     child:
       child === "published"
         ? m.git_publication_child_published()
-        : child === "local"
-          ? m.git_publication_child_local()
-          : m.git_publication_child_unpublished(),
+        : child === "unknown"
+          ? m.git_publication_child_unknown()
+          : child === "local"
+            ? m.git_publication_child_local()
+            : m.git_publication_child_unpublished(),
     parent:
       parent.pointer === "published"
         ? m.git_publication_parent_published()

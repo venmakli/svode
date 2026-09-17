@@ -37,7 +37,12 @@ test("sync activity belongs to the space and leaves file and folder states intac
   const syncing = { ...idle, syncing: { [SPACE_PATH]: true } };
   for (const path of ["docs/changed.md", "conflict.md", "pending.md"]) {
     expect(
-      selectFileChangeIndicator(syncing, SPACE_PATH, path, path === "pending.md"),
+      selectFileChangeIndicator(
+        syncing,
+        SPACE_PATH,
+        path,
+        path === "pending.md",
+      ),
     ).toEqual(
       selectFileChangeIndicator(idle, SPACE_PATH, path, path === "pending.md"),
     );
@@ -224,6 +229,7 @@ function gitState(files: GitStatus["files"]) {
 
 function gitStateBySpace(filesBySpace: Record<string, GitStatus["files"]>) {
   return {
+    ...useGitStore.getState(),
     publications: {},
     setPublication: () => undefined,
     statuses: Object.fromEntries(
@@ -284,4 +290,123 @@ test("status failure retains the last snapshot and explicit retry clears its err
   await git.refreshStatus(space, async () => status);
   expect(useGitStore.getState().statusErrors[space]).toBe(false);
   git.clear(space);
+});
+
+test("late counters cannot overwrite a newer sync or resurrect a cleared Space", async () => {
+  const path = "/reader-race";
+  const git = useGitStore.getState();
+  const fresh = { ...status([]), ahead: 0 };
+  let finish!: (value: GitStatus) => void;
+  const read = git.refreshRemoteStatus(
+    path,
+    () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+    String,
+    async () => fresh,
+  );
+  git.setSyncError(path, "original sync failure");
+  git.applyRemoteStatus(path, fresh);
+  finish({ ...fresh, ahead: 7 });
+  await read;
+  expect(useGitStore.getState().statuses[path].ahead).toBe(0);
+  expect(useGitStore.getState().syncError[path]).toBe("original sync failure");
+  const cleared = git.refreshRemoteStatus(
+    path,
+    () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+    String,
+    async () => fresh,
+  );
+  git.clear(path);
+  finish(fresh);
+  await cleared;
+  expect(useGitStore.getState().statuses[path] === undefined).toBe(true);
+  expect(useGitStore.getState().remoteChecked[path] === undefined).toBe(true);
+});
+
+test("a save during counter loading keeps its files and recalculates local counts without another fetch", async () => {
+  const path = "/save-reader-race";
+  const git = useGitStore.getState();
+  let finish!: (value: GitStatus) => void;
+  let reads = 0;
+  const saved = {
+    ...status([{ path: "other.md", state: "modified" }]),
+    ahead: 2,
+  };
+  const read = git.refreshRemoteStatus(
+    path,
+    () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+    String,
+    async () => {
+      reads++;
+      return saved;
+    },
+  );
+  git.applyStatus(path, saved);
+  finish({ ...status([]), ahead: 1 });
+  await read;
+  expect(useGitStore.getState().statuses[path]).toEqual(saved);
+  expect(useGitStore.getState().remoteChecked[path]).toBe(true);
+  expect(reads).toBe(1);
+  git.clear(path);
+});
+
+test("pending UI requests neither finish another request nor reuse a cleared incarnation", () => {
+  const git = useGitStore.getState();
+  const path = "/pending-sync";
+  const first = git.beginSync(path);
+  const second = git.beginSync(path);
+  expect(first.current()).toBe(false);
+  second.finish();
+  expect(useGitStore.getState().syncing[path]).toBe(true);
+  git.clear(path);
+  const third = git.beginSync(path);
+  first.finish();
+  expect(third.current()).toBe(true);
+  expect(useGitStore.getState().syncing[path]).toBe(true);
+  third.finish();
+  expect(useGitStore.getState().syncing[path] === undefined).toBe(true);
+  git.clear(path);
+});
+
+test("first inline reader resolves canonical counters and cannot overwrite a newer repository outcome", async () => {
+  const git = useGitStore.getState();
+  const repo = "/first-inline-read";
+  const alias = `${repo}/inline`;
+  const fresh = { ...status([]), repository: repo, ahead: 0 };
+  git.setSyncError(alias, "retained cause");
+  await git.refreshRemoteStatus(
+    alias,
+    async () => fresh,
+    String,
+    async () => fresh,
+  );
+  expect(useGitStore.getState().remoteChecked[repo]).toBe(true);
+  expect(useGitStore.getState().syncError[repo]).toBe("retained cause");
+  git.applyStatus(alias, status([]));
+  expect(useGitStore.getState().statuses[alias].repository).toBe(repo);
+  git.clear(alias);
+  let finish!: (value: GitStatus) => void;
+  const pending = git.refreshRemoteStatus(
+    alias,
+    () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+    String,
+    async () => fresh,
+  );
+  git.applyRemoteStatus(repo, fresh);
+  finish({ ...fresh, ahead: 7 });
+  await pending;
+  expect(useGitStore.getState().remoteStatuses[repo].ahead).toBe(0);
+  expect(useGitStore.getState().statuses[alias] === undefined).toBe(true);
+  git.clear(repo);
 });

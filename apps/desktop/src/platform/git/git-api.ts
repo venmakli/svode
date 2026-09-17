@@ -60,8 +60,11 @@ export function checkGitAvailability(): Promise<GitAvailabilityDto> {
   return invokeCommand<GitAvailabilityDto>("git_check_availability");
 }
 
-export function getGitStatus(spacePath: string): Promise<GitStatusDto> {
-  return invokeCommand<GitStatusDto>("git_status", { spacePath });
+export function getGitStatus(
+  spacePath: string,
+  remoteCounts = false,
+): Promise<GitStatusDto> {
+  return invokeCommand<GitStatusDto>("git_status", { spacePath, remoteCounts });
 }
 
 export function fetchGitStatus(spacePath: string): Promise<GitStatusDto> {
@@ -238,5 +241,18 @@ export function listenGitPublication(
   return listen<PublicationStatusDto & { spacePath: string }>(
     "git:publication",
     (event) => handler(event.payload),
+  );
+}
+
+export function listenGitSyncState(
+  handler: (event: {
+    repository: string;
+    active: boolean;
+    report: SyncResultDto | null;
+    error: unknown;
+  }) => void,
+) {
+  return listen<Parameters<typeof handler>[0]>("git:sync-state", (event) =>
+    handler(event.payload),
   );
 }

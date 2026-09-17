@@ -20,6 +20,7 @@ pub mod ops;
 pub(crate) mod operations;
 pub(crate) mod publication;
 pub(crate) mod publication_flow;
+pub(crate) mod readers;
 mod published_pointer;
 mod staging;
 #[cfg(test)]

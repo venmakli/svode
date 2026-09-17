@@ -1,5 +1,6 @@
 import { listenPublicationOutcomes } from "../api/git-publication-actions";
-import { useEffect, useRef } from "react";
+import { listenGitOperationOutcomes } from "../api/git-operation-events";
+import { useEffect } from "react";
 import {
   getSpaceSnapshot,
   useSpace,
@@ -23,23 +24,25 @@ export function useAppGitFocus() {
   const activeRootPath = useSpace((s) => s.activeRootPath);
   useEffect(() => {
     let disposed = false;
-    let stop: (() => void) | undefined;
-    void listenPublicationOutcomes().then((unlisten) => {
-      if (disposed) unlisten();
-      else stop = unlisten;
-    });
+    const stops: (() => void)[] = [];
+    for (const listen of [
+      listenPublicationOutcomes,
+      listenGitOperationOutcomes,
+    ]) {
+      void listen().then((unlisten) => {
+        if (disposed) unlisten();
+        else stops.push(unlisten);
+      });
+    }
     return () => {
       disposed = true;
-      stop?.();
+      for (const stop of stops) stop();
     };
   }, []);
-  const lastSynced = useRef<string | null>(null);
 
   // Silent sync-on-open for the active space only.
   useEffect(() => {
     if (!activePath) return;
-    if (lastSynced.current === activePath) return;
-    lastSynced.current = activePath;
     void syncGitOnActiveSpaceOpen(activePath, activeRootPath);
   }, [activePath, activeRootPath]);
 
