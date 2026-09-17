@@ -5,6 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { GitRemoteAuthDialog } from "./git-remote-auth-dialog";
 
+import { useRepositoryAccessActivation } from "../hooks/use-repository-access-activation";
 import { useRepositoryAccess } from "../hooks/use-repository-access";
 import { useRepositoryAccessRecovery } from "../hooks/use-repository-access-recovery";
 import { repositoryAccessPresentation } from "./repository-access-copy";
@@ -33,6 +34,7 @@ export function RepositoryAccessSummary({
   repositoryPath,
   onEditRemote,
 }: RepositoryAccessSummaryProps) {
+  useRepositoryAccessActivation(repositoryPath);
   const access = useRepositoryAccess(repositoryPath);
   const presentation = repositoryAccessPresentation(access);
   const recovery = useRepositoryAccessRecovery({

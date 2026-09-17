@@ -1,4 +1,5 @@
 import {
+  activateRepositoryAccess,
   getRepositoryAccess,
   listenRepositoryAccessChanged,
   toRepositoryAccessDeniedDto,
@@ -10,6 +11,12 @@ import type {
   RepositoryAccessDenial,
   RepositoryAccessSnapshot,
 } from "../model/repository-access";
+
+export async function activateRepositoryAccessLifecycle(
+  spacePath: string,
+): Promise<RepositoryAccessSnapshot> {
+  return toRepositoryAccess(await activateRepositoryAccess(spacePath));
+}
 
 export async function loadRepositoryAccess(
   spacePath: string,

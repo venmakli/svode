@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -113,6 +114,14 @@ struct PersistedEvidence {
     expires_at: Option<i64>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AutomaticAttempt {
+    remote_fingerprint: String,
+    checked_at: Option<i64>,
+    consumed: bool,
+}
+
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct AccessStore {
@@ -122,6 +131,8 @@ struct AccessStore {
     installation_id: String,
     #[serde(default)]
     evidence: HashMap<String, PersistedEvidence>,
+    #[serde(default)]
+    automatic_attempts: HashMap<String, AutomaticAttempt>,
 }
 
 fn access_store_version() -> u32 {
@@ -147,7 +158,7 @@ pub struct RepositoryAccessState {
     clock: Arc<dyn Clock>,
     generation: AtomicU64,
     snapshots: Mutex<HashMap<PathBuf, Arc<PublishedSnapshot>>>,
-    probe_locks: Mutex<HashMap<PathBuf, Arc<AsyncMutex<()>>>>,
+    probe_locks: Mutex<HashMap<PathBuf, Arc<ProbeFlight>>>,
     persistence_lock: Mutex<()>,
 }
 
@@ -238,32 +249,66 @@ impl RepositoryAccessState {
                 }
 
                 let store = self.read_store(store_path)?;
-                let snapshot = snapshot_from_store(
+                let mut snapshot = snapshot_from_store(
                     &repository_id,
                     store.evidence.get(&repository_id),
                     &remote.fingerprint,
                     now,
                 );
+                if let Some(attempt) = store.automatic_attempts.get(&repository_id) {
+                    if attempt.remote_fingerprint != remote.fingerprint {
+                        snapshot = unknown_snapshot(
+                            &repository_id,
+                            RepositoryAccessReason::RemoteChanged,
+                            snapshot.last_known_status,
+                        );
+                    } else if attempt.consumed
+                        && (snapshot.status == RepositoryAccessStatus::Writable
+                            || snapshot.reason == Some(RepositoryAccessReason::NotChecked)
+                            || (snapshot.reason == Some(RepositoryAccessReason::Expired)
+                                && snapshot.last_known_status
+                                    == Some(RepositoryAccessStatus::Writable)))
+                    {
+                        if snapshot.status == RepositoryAccessStatus::Writable {
+                            snapshot.last_known_status = Some(RepositoryAccessStatus::Writable);
+                        }
+                        snapshot.status = RepositoryAccessStatus::Unknown;
+                        snapshot.reason = Some(RepositoryAccessReason::AmbiguousRejection);
+                    }
+                }
                 Ok(self.publish(&repository, Some(remote.fingerprint), snapshot)?)
             }
         }
     }
 
+    #[cfg(test)]
     pub async fn verify(
         &self,
         cli: &GitCli,
         space_path: &Path,
         store_path: &Path,
     ) -> Result<RepositoryAccessSnapshot, AppError> {
+        self.verify_requested(cli, space_path, store_path, false, |_| {})
+            .await
+    }
+
+    async fn verify_requested(
+        &self,
+        cli: &GitCli,
+        space_path: &Path,
+        store_path: &Path,
+        automatic: bool,
+        on_checking: impl Fn(&str),
+    ) -> Result<RepositoryAccessSnapshot, AppError> {
         let repository = resolve_repository(cli, space_path).await?;
-        let permit = self.acquire_probe(&repository).await?;
+        let permit = self.acquire_probe(&repository, automatic).await?;
         if matches!(permit, ProbePermit::Joined) {
             if let Some(snapshot) = self.cached(&repository)? {
                 return Ok(snapshot.snapshot.clone());
             }
             return self.snapshot(cli, &repository, store_path).await;
         }
-        let _guard = match permit {
+        let mut guard = match permit {
             ProbePermit::Owner(guard) => guard,
             ProbePermit::Joined => unreachable!(),
         };
@@ -303,22 +348,67 @@ impl RepositoryAccessState {
             RemoteInspection::Remote(remote) => remote,
         };
 
-        let checking = self.publish(
-            &repository,
-            Some(remote.fingerprint.clone()),
-            RepositoryAccessSnapshot {
-                repository_id: repository_id.clone(),
-                generation: 0,
-                status: RepositoryAccessStatus::Checking,
-                reason: None,
-                checked_at: None,
-                expires_at: None,
-                last_known_status: self
-                    .cached(&repository)?
-                    .map(|current| current.snapshot.status)
-                    .filter(|status| *status != RepositoryAccessStatus::Checking),
-            },
-        )?;
+        let checking = {
+            let mut snapshots = self.snapshots.lock().map_err(|_| {
+                AppError::General("repository access snapshot lock poisoned".into())
+            })?;
+            let _guard = self.persistence_lock.lock().map_err(|_| {
+                AppError::General("repository access persistence lock poisoned".into())
+            })?;
+            let mut store = read_store_file(store_path)?;
+            let evidence = store.evidence.get(&repository_id);
+            let eligible = automatic_attempt_eligible(
+                evidence,
+                store.automatic_attempts.get(&repository_id),
+                &remote.fingerprint,
+                self.clock.now_unix(),
+            );
+            // A newer in-memory success also blocks probing if its durable write failed.
+            let fresh = snapshots.get(&repository).is_some_and(|current| {
+                current.remote_fingerprint.as_deref() == Some(&remote.fingerprint)
+                    && current.snapshot.status == RepositoryAccessStatus::Writable
+                    && current
+                        .snapshot
+                        .expires_at
+                        .is_some_and(|expiry| expiry > self.clock.now_unix())
+            });
+            if automatic && (!eligible || fresh) {
+                None
+            } else {
+                store.automatic_attempts.insert(
+                    repository_id.clone(),
+                    AutomaticAttempt {
+                        remote_fingerprint: remote.fingerprint.clone(),
+                        checked_at: evidence.map(|value| value.checked_at),
+                        consumed: true,
+                    },
+                );
+                // The reservation must survive a crash before any network IO starts.
+                write_store_file(store_path, &store)?;
+                let last_known_status = snapshots
+                    .get(&repository)
+                    .map(|current| current.snapshot.status);
+                Some(self.publish_locked(
+                    &mut snapshots,
+                    &repository,
+                    Some(remote.fingerprint.clone()),
+                    RepositoryAccessSnapshot {
+                        repository_id: repository_id.clone(),
+                        generation: 0,
+                        status: RepositoryAccessStatus::Checking,
+                        reason: None,
+                        checked_at: None,
+                        expires_at: None,
+                        last_known_status,
+                    },
+                ))
+            }
+        };
+        let Some(checking) = checking else {
+            return self.snapshot(cli, &repository, store_path).await;
+        };
+        guard.attempted = true;
+        on_checking(&repository_id);
 
         let installation_id = match self.ensure_installation_id(store_path) {
             Ok(installation_id) => installation_id,
@@ -628,6 +718,25 @@ impl RepositoryAccessState {
                     expires_at: snapshot.expires_at,
                 },
             );
+            store.automatic_attempts.insert(
+                snapshot.repository_id.clone(),
+                AutomaticAttempt {
+                    remote_fingerprint: remote_fingerprint.to_string(),
+                    checked_at: snapshot.checked_at,
+                    consumed: snapshot.status != RepositoryAccessStatus::Writable,
+                },
+            );
+            // Preserve legacy negative recovery even if its detailed evidence is evicted.
+            for (id, evidence) in &store.evidence {
+                store
+                    .automatic_attempts
+                    .entry(id.clone())
+                    .or_insert_with(|| AutomaticAttempt {
+                        remote_fingerprint: evidence.remote_fingerprint.clone(),
+                        checked_at: Some(evidence.checked_at),
+                        consumed: evidence.status != RepositoryAccessStatus::Writable,
+                    });
+            }
             trim_evidence(&mut store.evidence);
             write_store_file(store_path, &store)
         })();
@@ -698,27 +807,45 @@ impl RepositoryAccessState {
         Ok(store.installation_id)
     }
 
-    fn probe_lock(&self, repository: &Path) -> Result<Arc<AsyncMutex<()>>, AppError> {
+    fn probe_lock(&self, repository: &Path) -> Result<Arc<ProbeFlight>, AppError> {
         let mut locks = self
             .probe_locks
             .lock()
             .map_err(|_| AppError::General("repository access probe lock cache poisoned".into()))?;
         Ok(locks
             .entry(repository.to_path_buf())
-            .or_insert_with(|| Arc::new(AsyncMutex::new(())))
+            .or_insert_with(|| {
+                Arc::new(ProbeFlight {
+                    mutex: Arc::new(AsyncMutex::new(())),
+                    completed: AtomicU64::new(0),
+                })
+            })
             .clone())
     }
 
-    async fn acquire_probe(&self, repository: &Path) -> Result<ProbePermit, AppError> {
-        let lock = self.probe_lock(repository)?;
-        match lock.clone().try_lock_owned() {
-            Ok(guard) => Ok(ProbePermit::Owner(guard)),
+    async fn acquire_probe(
+        &self,
+        repository: &Path,
+        automatic: bool,
+    ) -> Result<ProbePermit, AppError> {
+        let flight = self.probe_lock(repository)?;
+        let completed = flight.completed.load(Ordering::SeqCst);
+        let guard = match flight.mutex.clone().try_lock_owned() {
+            Ok(guard) => guard,
             Err(_) => {
-                let guard = lock.lock_owned().await;
-                drop(guard);
-                Ok(ProbePermit::Joined)
+                let guard = flight.mutex.clone().lock_owned().await;
+                if automatic || flight.completed.load(Ordering::SeqCst) != completed {
+                    return Ok(ProbePermit::Joined);
+                }
+                // An automatic no-op must not swallow a simultaneous manual retry.
+                guard
             }
-        }
+        };
+        Ok(ProbePermit::Owner(ProbeGuard {
+            _guard: guard,
+            flight,
+            attempted: false,
+        }))
     }
 }
 
@@ -728,8 +855,27 @@ impl Default for RepositoryAccessState {
     }
 }
 
+struct ProbeFlight {
+    mutex: Arc<AsyncMutex<()>>,
+    completed: AtomicU64,
+}
+
+struct ProbeGuard {
+    _guard: OwnedMutexGuard<()>,
+    flight: Arc<ProbeFlight>,
+    attempted: bool,
+}
+
+impl Drop for ProbeGuard {
+    fn drop(&mut self) {
+        if self.attempted {
+            self.flight.completed.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+}
+
 enum ProbePermit {
-    Owner(OwnedMutexGuard<()>),
+    Owner(ProbeGuard),
     Joined,
 }
 
@@ -766,10 +912,32 @@ pub async fn repository_access_verify(
     git_state: State<'_, GitState>,
     access_state: State<'_, RepositoryAccessState>,
 ) -> Result<RepositoryAccessSnapshot, AppError> {
+    run_verification_command(app, space_path, git_state, access_state, false).await
+}
+
+#[tauri::command]
+pub async fn repository_access_activate(
+    app: AppHandle,
+    space_path: String,
+    git_state: State<'_, GitState>,
+    access_state: State<'_, RepositoryAccessState>,
+) -> Result<RepositoryAccessSnapshot, AppError> {
+    run_verification_command(app, space_path, git_state, access_state, true).await
+}
+
+async fn run_verification_command(
+    app: AppHandle,
+    space_path: String,
+    git_state: State<'_, GitState>,
+    access_state: State<'_, RepositoryAccessState>,
+    automatic: bool,
+) -> Result<RepositoryAccessSnapshot, AppError> {
     let cli = require_cli(&git_state)?;
     let store_path = access_store_path(&app)?;
     let snapshot = match access_state
-        .verify(&cli, Path::new(&space_path), &store_path)
+        .verify_requested(&cli, Path::new(&space_path), &store_path, automatic, |id| {
+            emit_repository_access_changed(&app, id);
+        })
         .await
     {
         Ok(snapshot) => snapshot,
@@ -784,10 +952,12 @@ pub async fn repository_access_verify(
         }
     };
     emit_repository_access_changed(&app, &snapshot.repository_id);
-    if matches!(
-        snapshot.status,
-        RepositoryAccessStatus::Local | RepositoryAccessStatus::Writable
-    ) {
+    if !automatic
+        && matches!(
+            snapshot.status,
+            RepositoryAccessStatus::Local | RepositoryAccessStatus::Writable
+        )
+    {
         if let Err(error) = crate::actors::invalidate_space(&app, Path::new(&space_path)).await {
             tracing::warn!(
                 space = %space_path,
@@ -1487,6 +1657,30 @@ fn bounded_detail(detail: &str) -> String {
     detail.chars().take(512).collect()
 }
 
+fn automatic_attempt_eligible(
+    evidence: Option<&PersistedEvidence>,
+    attempt: Option<&AutomaticAttempt>,
+    fingerprint: &str,
+    now: i64,
+) -> bool {
+    if let Some(attempt) = attempt {
+        if attempt.consumed || attempt.remote_fingerprint != fingerprint {
+            return false;
+        }
+        if evidence.map(|value| value.checked_at) != attempt.checked_at {
+            return false;
+        }
+    }
+    match evidence {
+        None => attempt.is_none(),
+        Some(value) => {
+            value.remote_fingerprint == fingerprint
+                && value.status == RepositoryAccessStatus::Writable
+                && value.expires_at.is_some_and(|expiry| expiry <= now)
+        }
+    }
+}
+
 fn snapshot_from_store(
     repository_id: &str,
     evidence: Option<&PersistedEvidence>,
@@ -1578,10 +1772,7 @@ fn read_store_file(path: &Path) -> Result<AccessStore, AppError> {
     let raw = fs::read_to_string(path)?;
     let store: AccessStore = serde_json::from_str(&raw)?;
     if store.version != ACCESS_STORE_VERSION {
-        return Ok(AccessStore {
-            version: ACCESS_STORE_VERSION,
-            ..AccessStore::default()
-        });
+        return Err(AppError::General("Unsupported repository access store version. Restore access state before checking again.".into()));
     }
     Ok(store)
 }
@@ -1590,7 +1781,15 @@ fn write_store_file(path: &Path, store: &AccessStore) -> Result<(), AppError> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
-    fs::write(path, serde_json::to_string_pretty(store)?)?;
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    let mut staged = tempfile::NamedTempFile::new_in(parent)?;
+    staged.write_all(serde_json::to_string_pretty(store)?.as_bytes())?;
+    staged.as_file().sync_all()?;
+    staged
+        .persist(path)
+        .map_err(|error| AppError::Io(error.error))?;
+    #[cfg(unix)]
+    fs::File::open(parent)?.sync_all()?;
     Ok(())
 }
 
@@ -2102,17 +2301,18 @@ mod tests {
         let state = Arc::new(test_state(Arc::new(TestClock::new(10))));
         let repository = PathBuf::from("/virtual/repository");
         let owner = state
-            .acquire_probe(&repository)
+            .acquire_probe(&repository, false)
             .await
             .expect("owner permit");
-        let ProbePermit::Owner(owner_guard) = owner else {
+        let ProbePermit::Owner(mut owner_guard) = owner else {
             panic!("first caller must own probe");
         };
+        owner_guard.attempted = true;
         let joined_state = state.clone();
         let joined_repository = repository.clone();
         let joined = tokio::spawn(async move {
             joined_state
-                .acquire_probe(&joined_repository)
+                .acquire_probe(&joined_repository, false)
                 .await
                 .expect("joined permit")
         });
@@ -2125,7 +2325,7 @@ mod tests {
         ));
         assert!(matches!(
             state
-                .acquire_probe(&repository)
+                .acquire_probe(&repository, false)
                 .await
                 .expect("later explicit permit"),
             ProbePermit::Owner(_)

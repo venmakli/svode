@@ -11,6 +11,7 @@ import {
 } from "@/components/ui/popover";
 import * as m from "@/paraglide/messages.js";
 
+import { useRepositoryAccessActivation } from "../hooks/use-repository-access-activation";
 import { useRepositoryAccess } from "../hooks/use-repository-access";
 import { repositoryAccessPresentation } from "./repository-access-copy";
 import { RepositoryAccessStatusIcon } from "./repository-access-status-icon";
@@ -28,6 +29,7 @@ export function RepositoryWorkStatus({
   repositoryPath,
   onOpenRepositorySettings,
 }: RepositoryWorkStatusProps) {
+  useRepositoryAccessActivation(repositoryPath);
   const access = useRepositoryAccess(repositoryPath);
   const presentation = repositoryAccessPresentation(access);
   const [open, setOpen] = useState(false);

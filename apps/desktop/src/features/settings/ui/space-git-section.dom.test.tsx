@@ -42,7 +42,10 @@ if (!isolatedProcess) {
     mockNativeIpc(
       (command) => {
         calls.push(command);
-        if (command === "repository_access_get") {
+        if (
+          command === "repository_access_get" ||
+          command === "repository_access_activate"
+        ) {
           return {
             checkedAt: null,
             expiresAt: null,
@@ -144,9 +147,10 @@ if (!isolatedProcess) {
           m.git_remote_reconciliation_pending_title(),
         ),
       ).toBe(true);
+      expect(calls.includes("repository_access_get")).toBe(true);
       expect(
-        calls.filter((command) => command === "repository_access_get"),
-      ).toEqual(["repository_access_get"]);
+        calls.filter((command) => command === "repository_access_activate"),
+      ).toEqual(["repository_access_activate"]);
       expect(calls.includes("repository_access_verify")).toBe(false);
 
       await setLocale("ru", { reload: false });

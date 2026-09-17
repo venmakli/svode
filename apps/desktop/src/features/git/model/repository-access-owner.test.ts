@@ -7,6 +7,9 @@ test("one repository owner deduplicates root and inline verification", async () 
   let verifyCalls = 0;
   let finishVerify!: (snapshot: RepositoryAccessSnapshot) => void;
   const owner = new RepositoryAccessOwner({
+    activate: async () => {
+      throw new Error("Passive consumers must not activate");
+    },
     listen: async () => () => undefined,
     load: async () => snapshot(1, "unknown", "not_checked"),
     verify: () => {
@@ -35,6 +38,9 @@ test("one repository owner deduplicates root and inline verification", async () 
 
 test("late generations cannot replace a newer repository projection", async () => {
   const owner = new RepositoryAccessOwner({
+    activate: async () => {
+      throw new Error("Passive consumers must not activate");
+    },
     listen: async () => () => undefined,
     load: async (path) =>
       path === "/project" ? snapshot(4, "writable") : snapshot(3, "read_only"),
@@ -55,6 +61,9 @@ test("repository invalidation rereads canonical state across mounted paths", asy
   let generation = 1;
   let eventHandler!: (repositoryId: string) => void;
   const owner = new RepositoryAccessOwner({
+    activate: async () => {
+      throw new Error("Passive consumers must not activate");
+    },
     listen: async (handler) => {
       eventHandler = handler;
       return () => undefined;
@@ -79,6 +88,9 @@ test("future expiry triggers one local canonical reread", async () => {
   let loads = 0;
   const owner = new RepositoryAccessOwner(
     {
+      activate: async () => {
+        throw new Error("Passive consumers must not activate");
+      },
       listen: async () => () => undefined,
       load: async () => {
         loads += 1;
@@ -103,6 +115,9 @@ test("open reads locally without starting a verification probe", async () => {
   let loads = 0;
   let verifies = 0;
   const owner = new RepositoryAccessOwner({
+    activate: async () => {
+      throw new Error("Passive consumers must not activate");
+    },
     listen: async () => () => undefined,
     load: async () => {
       loads += 1;
@@ -124,6 +139,9 @@ test("open reads locally without starting a verification probe", async () => {
 
 test("independent and submodule repositories remain isolated", async () => {
   const owner = new RepositoryAccessOwner({
+    activate: async () => {
+      throw new Error("Passive consumers must not activate");
+    },
     listen: async () => () => undefined,
     load: async (path) => ({
       ...snapshot(1, path.includes("independent") ? "writable" : "read_only"),
@@ -158,6 +176,9 @@ test("a delayed local read cannot end verification or erase its failure", async 
     const verify = deferred<RepositoryAccessSnapshot>();
     let reads = 0;
     const owner = new RepositoryAccessOwner({
+      activate: async () => {
+        throw new Error("Passive consumers must not activate");
+      },
       listen: async () => () => undefined,
       load: async () =>
         ++reads === 1 ? snapshot(1, "unknown", "expired") : read.promise,
@@ -185,6 +206,9 @@ test("late read results cannot replace a completed verify result or error", asyn
     const verify = deferred<RepositoryAccessSnapshot>();
     let reads = 0;
     const owner = new RepositoryAccessOwner({
+      activate: async () => {
+        throw new Error("Passive consumers must not activate");
+      },
       listen: async () => () => undefined,
       load: async () =>
         ++reads === 1 ? snapshot(1, "unknown", "expired") : read.promise,
@@ -212,6 +236,9 @@ test("late read results cannot replace a completed verify result or error", asyn
 test("a failed canonical read reaches every alias and explicit retry recovers all", async () => {
   let failed = false;
   const owner = new RepositoryAccessOwner({
+    activate: async () => {
+      throw new Error("Passive consumers must not activate");
+    },
     listen: async () => () => undefined,
     load: async () => {
       if (failed) throw new Error("read failed");
@@ -235,6 +262,9 @@ test("invalidation during a read queues one fresh read for positive push evidenc
   let calls = 0;
   let verifies = 0;
   const owner = new RepositoryAccessOwner({
+    activate: async () => {
+      throw new Error("Passive consumers must not activate");
+    },
     listen: async () => () => undefined,
     load: async () => {
       calls++;
@@ -263,6 +293,9 @@ test("a late verification error cannot undo newer positive push evidence", async
   const verify = deferred<RepositoryAccessSnapshot>();
   let published = false;
   const owner = new RepositoryAccessOwner({
+    activate: async () => {
+      throw new Error("Passive consumers must not activate");
+    },
     listen: async () => () => undefined,
     load: async () =>
       snapshot(published ? 3 : 1, published ? "writable" : "unknown"),
@@ -309,3 +342,167 @@ function snapshot(
 function settle() {
   return new Promise((resolve) => setTimeout(resolve, 0));
 }
+
+test("only active repositories request lifecycle; leaving cancels delayed activation", async () => {
+  const loaded = deferred<RepositoryAccessSnapshot>();
+  const calls: string[] = [];
+  const owner = new RepositoryAccessOwner({
+    activate: async (path) => {
+      calls.push(path);
+      return snapshot(2, "unknown");
+    },
+    load: (path) =>
+      path === "/leaving"
+        ? loaded.promise
+        : Promise.resolve({ ...snapshot(1, "local"), repositoryId: path }),
+    verify: async () => snapshot(3, "writable"),
+    listen: async () => () => undefined,
+  });
+  owner.retain("/passive-sibling");
+  await owner.activate("/passive-sibling");
+  const release = owner.retainActive("/leaving");
+  release();
+  loaded.resolve(snapshot(1, "unknown"));
+  await settle();
+  expect(calls).toEqual([]);
+  const leave = owner.retainActive("/active");
+  await settle();
+  expect(calls).toEqual(["/active"]);
+  leave();
+  await owner.activate("/active");
+  expect(calls).toEqual(["/active"]);
+  owner.dispose();
+});
+
+test("automatic checking fans out to passive inline readers and manual requests join", async () => {
+  const pending = deferred<RepositoryAccessSnapshot>();
+  let current = snapshot(1, "unknown", "not_checked");
+  let event!: (id: string) => void;
+  let automatic = 0;
+  let manual = 0;
+  const owner = new RepositoryAccessOwner({
+    activate: () => {
+      automatic++;
+      current = snapshot(2, "checking");
+      event("repo-shared");
+      return pending.promise;
+    },
+    load: async () => current,
+    verify: async () => {
+      manual++;
+      return pending.promise;
+    },
+    listen: async (handler) => {
+      event = handler;
+      return () => undefined;
+    },
+  });
+  await owner.refresh("/project/inline");
+  const leave = owner.retainActive("/project");
+  await settle();
+  await settle();
+  expect(owner.getSnapshot("/project/inline").snapshot?.status).toBe(
+    "checking",
+  );
+  const joined = owner.verify("/project/inline");
+  current = snapshot(3, "writable");
+  pending.resolve(current);
+  await joined;
+  expect(automatic).toBe(1);
+  expect(manual).toBe(1);
+  expect(owner.getSnapshot("/project/inline").snapshot).toBe(
+    owner.getSnapshot("/project").snapshot,
+  );
+  leave();
+  owner.dispose();
+});
+
+test("expiry activates only active repository; fresh activation never flashes checking", async () => {
+  let now = 990;
+  let activated = 0;
+  const owner = new RepositoryAccessOwner(
+    {
+      activate: async (path) => {
+        activated++;
+        return { ...snapshot(2, "writable"), repositoryId: path, expiresAt: 1 };
+      },
+      load: async (path) => ({
+        ...snapshot(
+          now < 1000 ? 1 : 3,
+          now < 1000 ? "writable" : "unknown",
+          now < 1000 ? null : "expired",
+        ),
+        repositoryId: path,
+        expiresAt: 1,
+      }),
+      verify: async () => snapshot(4, "writable"),
+      listen: async () => () => undefined,
+    },
+    () => now,
+  );
+  const leave = owner.retainActive("/active");
+  await owner.refresh("/passive");
+  await settle();
+  expect(owner.getSnapshot("/active").verifying).toBe(false);
+  expect(activated).toBe(1);
+  now = 1000;
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  expect(activated).toBe(2);
+  leave();
+  owner.dispose();
+});
+
+test("automatic persistence error preserves manual recovery", async () => {
+  let manual = 0;
+  const owner = new RepositoryAccessOwner({
+    activate: async () => {
+      throw new Error("Cannot persist access reservation");
+    },
+    load: async () => snapshot(1, "unknown", "not_checked"),
+    verify: async () => {
+      manual++;
+      return snapshot(2, "writable");
+    },
+    listen: async () => () => undefined,
+  });
+  const leave = owner.retainActive("/active");
+  await settle();
+  expect(owner.getSnapshot("/active").error).toBe(
+    "Cannot persist access reservation",
+  );
+  expect(manual).toBe(0);
+  expect(owner.getSnapshot("/active").verifying).toBe(false);
+  await owner.verify("/active");
+  expect(manual).toBe(1);
+  expect(owner.getSnapshot("/active").error).toBeNull();
+  leave();
+  owner.dispose();
+});
+
+test("manual retry is not swallowed by an in-flight automatic no-op", async () => {
+  const automatic = deferred<RepositoryAccessSnapshot>();
+  const manual = deferred<RepositoryAccessSnapshot>();
+  let manualCalls = 0;
+  const owner = new RepositoryAccessOwner({
+    activate: () => automatic.promise,
+    load: async () => snapshot(1, "unknown", "auth_required"),
+    verify: () => {
+      manualCalls++;
+      return manual.promise;
+    },
+    listen: async () => () => undefined,
+  });
+  const leave = owner.retainActive("/active");
+  await settle();
+  const retry = owner.verify("/active");
+  automatic.resolve(snapshot(1, "unknown", "auth_required"));
+  await settle();
+  expect(manualCalls).toBe(1);
+  expect(owner.getSnapshot("/active").verifying).toBe(true);
+  manual.resolve(snapshot(2, "writable"));
+  await retry;
+  expect(owner.getSnapshot("/active").snapshot?.status).toBe("writable");
+  expect(owner.getSnapshot("/active").verifying).toBe(false);
+  leave();
+  owner.dispose();
+});

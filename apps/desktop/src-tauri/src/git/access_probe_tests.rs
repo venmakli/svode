@@ -439,7 +439,8 @@ if [ "$1" = ls-remote ] && [ -f .git/pushed ]; then echo 3000000 > .git/clock; f
 
 #[tokio::test]
 async fn late_probe_cannot_replace_new_push_evidence_or_changed_origin() {
-    for changed_origin in [false, true] {
+    for (changed_origin, automatic) in [(false, false), (true, false), (false, true), (true, true)]
+    {
         let fixture = Fixture::new(
             r#"
 if [ "$1" = push ]; then
@@ -453,16 +454,22 @@ fi
         .await;
         let store = fixture._temp.path().join("access.json");
         let state = Arc::new(RepositoryAccessState::new());
-        state
-            .record_writable_evidence(&fixture.real, &fixture.repo, &store)
-            .await
-            .unwrap();
+        if !automatic {
+            state
+                .record_writable_evidence(&fixture.real, &fixture.repo, &store)
+                .await
+                .unwrap();
+        }
         let pending = {
             let state = state.clone();
             let cli = fixture.cli.clone();
             let repo = fixture.repo.clone();
             let store = store.clone();
-            tokio::spawn(async move { state.verify(&cli, &repo, &store).await })
+            tokio::spawn(async move {
+                state
+                    .verify_requested(&cli, &repo, &store, automatic, |_| {})
+                    .await
+            })
         };
         tokio::time::timeout(Duration::from_secs(5), async {
             while !fixture.repo.join(".git/probe-wait").exists() {
@@ -505,4 +512,338 @@ fi
             !changed_origin
         );
     }
+}
+
+struct AutoClock(std::sync::atomic::AtomicI64);
+impl AutoClock {
+    fn new(now: i64) -> Self {
+        Self(std::sync::atomic::AtomicI64::new(now))
+    }
+    fn set(&self, now: i64) {
+        self.0.store(now, Ordering::SeqCst);
+    }
+}
+impl Clock for AutoClock {
+    fn now_unix(&self) -> i64 {
+        self.0.load(Ordering::SeqCst)
+    }
+}
+
+async fn activate(
+    f: &Fixture,
+    state: &RepositoryAccessState,
+    store: &Path,
+) -> RepositoryAccessSnapshot {
+    state
+        .verify_requested(&f.cli, &f.repo, store, true, |_| {})
+        .await
+        .unwrap()
+}
+
+fn network_calls(f: &Fixture) -> usize {
+    f.calls()
+        .iter()
+        .filter(|c| c.as_str() == "push" || c.as_str() == "ls-remote")
+        .count()
+}
+
+#[tokio::test]
+async fn automatic_first_open_expiry_restart_and_positive_renewal() {
+    let f = Fixture::new("").await;
+    let clock = Arc::new(AutoClock::new(1_000_000));
+    let state = RepositoryAccessState::with_clock(clock.clone());
+    let store = f._temp.path().join("access.json");
+    let first = activate(&f, &state, &store).await;
+    assert_eq!(first.status, RepositoryAccessStatus::Writable);
+    assert_eq!(network_calls(&f), 2);
+    let state = RepositoryAccessState::with_clock(clock.clone());
+    activate(&f, &state, &store).await;
+    clock.set(first.expires_at.unwrap() - 1);
+    activate(&f, &state, &store).await;
+    assert_eq!(network_calls(&f), 2);
+    clock.set(first.expires_at.unwrap());
+    let second = activate(&f, &state, &store).await;
+    assert_eq!(second.status, RepositoryAccessStatus::Writable);
+    assert_eq!(network_calls(&f), 4);
+    state
+        .record_writable_evidence(&f.real, &f.repo, &store)
+        .await
+        .unwrap();
+    activate(&f, &state, &store).await;
+    assert_eq!(network_calls(&f), 4);
+    clock.set(second.expires_at.unwrap());
+    let restarted = RepositoryAccessState::with_clock(clock);
+    activate(&f, &restarted, &store).await;
+    assert_eq!(network_calls(&f), 6);
+}
+
+#[tokio::test]
+async fn automatic_failures_stay_manual_across_restart_and_time() {
+    for fault in [
+        "if [ \"$1\" = ls-remote ]; then echo 'connection timed out' >&2; exit 1; fi",
+        "if [ \"$1\" = ls-remote ]; then echo 'Permission denied (publickey)' >&2; exit 1; fi",
+        "if [ \"$1\" = push ]; then echo 'remote: Write access to repository not granted.' >&2; exit 1; fi",
+        "if [ \"$1\" = hash-object ]; then exit 1; fi",
+    ] {
+        let f = Fixture::new(fault).await;
+        let clock = Arc::new(AutoClock::new(1_000_000));
+        let store = f._temp.path().join("access.json");
+        let state = RepositoryAccessState::with_clock(clock.clone());
+        let _ = state
+            .verify_requested(&f.cli, &f.repo, &store, true, |_| {})
+            .await;
+        let count = network_calls(&f);
+        assert!(
+            read_store_file(&store)
+                .unwrap()
+                .automatic_attempts
+                .values()
+                .all(|a| a.consumed)
+        );
+        clock.set(9_000_000);
+        for _ in 0..2 {
+            let state = RepositoryAccessState::with_clock(clock.clone());
+            let result = activate(&f, &state, &store).await;
+            assert_ne!(result.status, RepositoryAccessStatus::Writable);
+            assert!(
+                state
+                    .require_mutation(&f.cli, &f.repo, &store)
+                    .await
+                    .is_err()
+            );
+        }
+        assert_eq!(network_calls(&f), count);
+        // Restored transport alone is not a retry; explicit manual success renews the cycle.
+        let state = RepositoryAccessState::with_clock(clock.clone());
+        state.verify(&f.real, &f.repo, &store).await.unwrap();
+        assert!(
+            read_store_file(&store)
+                .unwrap()
+                .automatic_attempts
+                .values()
+                .all(|a| !a.consumed)
+        );
+        clock.set(10_000_000);
+        let result = state
+            .verify_requested(&f.real, &f.repo, &store, true, |_| {})
+            .await
+            .unwrap();
+        assert_eq!(result.status, RepositoryAccessStatus::Writable);
+        assert_eq!(result.checked_at, Some(10_000_000));
+    }
+}
+
+#[tokio::test]
+async fn automatic_legacy_evidence_and_remote_changes_are_conservative() {
+    let f = Fixture::new("").await;
+    let store = f._temp.path().join("access.json");
+    let clock = Arc::new(AutoClock::new(1_000_000));
+    let state = RepositoryAccessState::with_clock(clock.clone());
+    state.verify(&f.real, &f.repo, &store).await.unwrap();
+    let baseline = read_store_file(&store).unwrap();
+    for status in [
+        RepositoryAccessStatus::Writable,
+        RepositoryAccessStatus::ReadOnly,
+        RepositoryAccessStatus::Unknown,
+    ] {
+        for expired in [false, true] {
+            let mut legacy = baseline.clone();
+            legacy.automatic_attempts.clear();
+            let value = legacy.evidence.values_mut().next().unwrap();
+            value.status = status;
+            value.reason = (status == RepositoryAccessStatus::Unknown)
+                .then_some(RepositoryAccessReason::AuthRequired);
+            value.expires_at = Some(if expired { 999_999 } else { 1_086_400 });
+            write_store_file(&store, &legacy).unwrap();
+            let state = RepositoryAccessState::with_clock(clock.clone());
+            // Local snapshot and write gate never probe, even when eligible.
+            state.snapshot(&f.cli, &f.repo, &store).await.unwrap();
+            let before = network_calls(&f);
+            let _ = state.require_mutation(&f.cli, &f.repo, &store).await;
+            assert_eq!(network_calls(&f), before);
+            activate(&f, &state, &store).await;
+            assert_eq!(
+                network_calls(&f) - before,
+                if expired && status == RepositoryAccessStatus::Writable {
+                    2
+                } else {
+                    0
+                }
+            );
+        }
+    }
+    write_store_file(&store, &baseline).unwrap();
+    ok(
+        &f.real,
+        &f.repo,
+        &["remote", "set-url", "origin", "changed"],
+    )
+    .await;
+    let before = network_calls(&f);
+    let state = RepositoryAccessState::with_clock(clock);
+    assert_eq!(
+        activate(&f, &state, &store).await.reason,
+        Some(RepositoryAccessReason::RemoteChanged)
+    );
+    assert_eq!(network_calls(&f), before);
+}
+
+#[tokio::test]
+async fn automatic_reservation_crash_and_persistence_failure_never_retry() {
+    let f = Fixture::new("").await;
+    let store = f._temp.path().join("access.json");
+    let cli = f.cli.clone();
+    let repo = f.repo.clone();
+    let crash_store = store.clone();
+    // Abort immediately after durable reservation, before the first network call.
+    let pending = tokio::spawn(async move {
+        RepositoryAccessState::new()
+            .verify_requested(&cli, &repo, &crash_store, true, |_| {
+                panic!("simulated crash after reservation")
+            })
+            .await
+    });
+    assert!(pending.await.unwrap_err().is_panic());
+    let before = network_calls(&f);
+    assert_eq!(before, 0);
+    let restarted = RepositoryAccessState::new();
+    assert_eq!(
+        activate(&f, &restarted, &store).await.reason,
+        Some(RepositoryAccessReason::AmbiguousRejection)
+    );
+    assert_eq!(network_calls(&f), before);
+    restarted.verify(&f.real, &f.repo, &store).await.unwrap();
+    assert!(
+        !read_store_file(&store)
+            .unwrap()
+            .automatic_attempts
+            .values()
+            .next()
+            .unwrap()
+            .consumed
+    );
+
+    let unavailable = f._temp.path().join("not-directory");
+    fs::write(&unavailable, "file").unwrap();
+    let state = RepositoryAccessState::new();
+    assert!(
+        state
+            .verify_requested(
+                &f.cli,
+                &f.repo,
+                &unavailable.join("access.json"),
+                true,
+                |_| {}
+            )
+            .await
+            .is_err()
+    );
+    assert_eq!(network_calls(&f), before);
+}
+
+#[tokio::test]
+async fn automatic_and_manual_consumers_join_one_checking_probe() {
+    let f = Fixture::new("if [ \"$1\" = push ]; then sleep 0.1; fi").await;
+    let store = f._temp.path().join("access.json");
+    let state = RepositoryAccessState::new();
+    let inline = f.repo.join("inline");
+    fs::create_dir(&inline).unwrap();
+    let (auto, another_window, manual) = tokio::join!(
+        state.verify_requested(&f.cli, &f.repo, &store, true, |_| {}),
+        state.verify_requested(&f.cli, &inline, &store, true, |_| {}),
+        state.verify(&f.cli, &f.repo, &store),
+    );
+    assert_eq!(auto.unwrap(), another_window.unwrap());
+    assert_eq!(manual.unwrap().status, RepositoryAccessStatus::Writable);
+    assert_eq!(network_calls(&f), 2);
+}
+
+#[tokio::test]
+async fn manual_retry_is_not_swallowed_by_an_automatic_noop() {
+    let f = Fixture::new("").await;
+    let store = f._temp.path().join("access.json");
+    let state = Arc::new(RepositoryAccessState::new());
+    let repository = resolve_repository(&f.real, &f.repo).await.unwrap();
+    state.snapshot(&f.real, &f.repo, &store).await.unwrap();
+    let noop = state.acquire_probe(&repository, true).await.unwrap();
+    let pending = {
+        let state = state.clone();
+        let cli = f.cli.clone();
+        let repo = f.repo.clone();
+        tokio::spawn(async move { state.verify(&cli, &repo, &store).await })
+    };
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    drop(noop);
+    assert_eq!(
+        pending.await.unwrap().unwrap().status,
+        RepositoryAccessStatus::Writable
+    );
+    assert_eq!(network_calls(&f), 2);
+}
+
+#[tokio::test]
+async fn local_unsupported_and_unreadable_store_activation_never_probe() {
+    let f = Fixture::new("").await;
+    let store = f._temp.path().join("access.json");
+    let state = RepositoryAccessState::new();
+    for raw in ["broken JSON", r#"{"version":99}"#] {
+        fs::write(&store, raw).unwrap();
+        assert!(
+            state
+                .verify_requested(&f.cli, &f.repo, &store, true, |_| {})
+                .await
+                .is_err()
+        );
+        assert_eq!(network_calls(&f), 0);
+    }
+    ok(
+        &f.real,
+        &f.repo,
+        &["config", "--add", "remote.origin.pushurl", "one"],
+    )
+    .await;
+    ok(
+        &f.real,
+        &f.repo,
+        &["config", "--add", "remote.origin.pushurl", "two"],
+    )
+    .await;
+    assert_eq!(
+        activate(&f, &state, &store).await.reason,
+        Some(RepositoryAccessReason::UnsupportedRemoteConfiguration)
+    );
+    ok(&f.real, &f.repo, &["remote", "remove", "origin"]).await;
+    assert_eq!(
+        activate(&f, &state, &store).await.status,
+        RepositoryAccessStatus::Local
+    );
+    assert_eq!(network_calls(&f), 0);
+}
+
+#[tokio::test]
+async fn failed_manual_probe_cannot_revive_previous_fresh_writable_after_restart() {
+    let f = Fixture::new("if [ \"$1\" = hash-object ]; then exit 1; fi").await;
+    let store = f._temp.path().join("access.json");
+    let state = RepositoryAccessState::new();
+    state.verify(&f.real, &f.repo, &store).await.unwrap();
+    assert!(state.verify(&f.cli, &f.repo, &store).await.is_err());
+    let before = network_calls(&f);
+    let restarted = RepositoryAccessState::new();
+    let result = activate(&f, &restarted, &store).await;
+    assert_eq!(result.status, RepositoryAccessStatus::Unknown);
+    assert_eq!(
+        result.reason,
+        Some(RepositoryAccessReason::AmbiguousRejection)
+    );
+    assert_eq!(
+        result.last_known_status,
+        Some(RepositoryAccessStatus::Writable)
+    );
+    assert!(
+        restarted
+            .require_mutation(&f.cli, &f.repo, &store)
+            .await
+            .is_err()
+    );
+    assert_eq!(network_calls(&f), before);
 }

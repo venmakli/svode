@@ -163,6 +163,7 @@ pub fn run() {
             routines::commands::routines_dispatch_manual,
             git::access::repository_access_get,
             git::access::repository_access_verify,
+            git::access::repository_access_activate,
             commands::greet::greet,
             commands::files::list_entries,
             commands::files::list_tree_children,

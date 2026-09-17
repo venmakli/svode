@@ -39,7 +39,10 @@ if (!isolatedProcess) {
         );
         calls.push({ command, spacePath });
         generation += 1;
-        if (command === "repository_access_get") {
+        if (
+          command === "repository_access_get" ||
+          command === "repository_access_activate"
+        ) {
           const status = spacePath === "/child" ? childStatus : rootStatus;
           return snapshot(spacePath, status, generation);
         }
@@ -196,7 +199,10 @@ if (!isolatedProcess) {
     mockNativeIpc(
       (command, args) => {
         const path = String((args as { spacePath?: string })?.spacePath);
-        if (command === "repository_access_get") {
+        if (
+          command === "repository_access_get" ||
+          command === "repository_access_activate"
+        ) {
           if (failure) throw new Error("Access runtime unavailable");
           return result(path);
         }
@@ -380,9 +386,149 @@ if (!isolatedProcess) {
       dom.window.close();
     }
   });
+  test("automatic activation shares checking, preserves draft and stays silent after failure", async () => {
+    const dom = createDom();
+    const restoreGlobals = installDomGlobals(dom);
+    const { RepositoryWorkStatus } = await import("./repository-work-status");
+    const { RepositoryAccessSummary, RepositoryAccessBadge } =
+      await import("./repository-access-summary");
+    const { repositoryAccessOwner } =
+      await import("../model/repository-access-owner");
+    const { emit } = await import("@/platform/native/events");
+    const root = createRoot(dom.window.document.getElementById("app")!);
+    let status: AccessStatus | "checking" = "unknown";
+    let reason: string | null = "not_checked";
+    let generation = 1000;
+    let consumed = false;
+    let probes = 0;
+    let activations = 0;
+    let finish!: () => void;
+    const result = (path: string) => ({
+      ...snapshot(path, status, ++generation),
+      reason,
+    });
+    mockNativeIpc(
+      (command, args) => {
+        const path = String((args as { spacePath?: string })?.spacePath);
+        if (command === "repository_access_get") return result(path);
+        if (command === "repository_access_activate") {
+          expect(path).toBe("/automatic");
+          activations++;
+          if (consumed) return result(path);
+          consumed = true;
+          probes++;
+          status = "checking";
+          void emit("git:repository-access-changed", {
+            repositoryId: "repo:/automatic",
+          });
+          return new Promise((resolve) => {
+            finish = () => {
+              status = "unknown";
+              reason = "offline_or_timeout";
+              resolve(result(path));
+            };
+          });
+        }
+        if (command === "repository_access_verify") {
+          status = "writable";
+          reason = null;
+          return result(path);
+        }
+        throw new Error(`Unexpected command: ${command}`);
+      },
+      { shouldMockEvents: true },
+    );
+    try {
+      await act(async () => {
+        root.render(
+          <>
+            <textarea defaultValue="Unsaved draft" />
+            <RepositoryWorkStatus
+              contextName="Auto"
+              displayPath="/automatic"
+              repositoryPath="/automatic"
+            />
+            <RepositoryAccessSummary
+              ownerKind="independent"
+              ownerName="Auto"
+              displayPath="/automatic"
+              repositoryPath="/automatic"
+              remoteUrl="https://example.test/remote.git"
+              onEditRemote={() => undefined}
+            />
+            <RepositoryAccessBadge
+              ownerKind="independent"
+              repositoryPath="/sibling"
+            />
+          </>,
+        );
+        await nextFrame(dom);
+        await nextFrame(dom);
+      });
+      expect(workStatusTrigger(dom).dataset.repositoryWorkStatusState).toBe(
+        "checking",
+      );
+      expect(
+        dom.window.document
+          .querySelector("[data-repository-access-summary]")
+          ?.getAttribute("aria-busy"),
+      ).toBe("true");
+      expect(probes).toBe(1);
+      expect(dom.window.document.querySelector('[role="dialog"]')).toBeNull();
+      await act(async () => {
+        finish();
+        await nextFrame(dom);
+      });
+      expect(workStatusTrigger(dom).dataset.repositoryWorkStatusState).toBe(
+        "unknown",
+      );
+      const beforeHidden = activations;
+      await act(async () => {
+        Object.defineProperty(dom.window.document, "visibilityState", {
+          configurable: true,
+          value: "hidden",
+        });
+        dom.window.document.dispatchEvent(
+          new dom.window.Event("visibilitychange"),
+        );
+        dom.window.dispatchEvent(new dom.window.Event("focus"));
+        await nextFrame(dom);
+      });
+      expect(activations).toBe(beforeHidden);
+      await act(async () => {
+        Object.defineProperty(dom.window.document, "visibilityState", {
+          configurable: true,
+          value: "visible",
+        });
+        dom.window.document.dispatchEvent(
+          new dom.window.Event("visibilitychange"),
+        );
+        await nextFrame(dom);
+        dom.window.dispatchEvent(new dom.window.Event("focus"));
+        await nextFrame(dom);
+      });
+      expect(probes).toBe(1);
+      expect(dom.window.document.querySelector('[role="dialog"]')).toBeNull();
+      expect(dom.window.document.querySelector("textarea")?.value).toBe(
+        "Unsaved draft",
+      );
+      await act(async () => {
+        await repositoryAccessOwner.verify("/automatic");
+      });
+      expect(workStatusTrigger(dom).dataset.repositoryWorkStatusState).toBe(
+        "writable",
+      );
+    } finally {
+      await act(async () => root.unmount());
+      repositoryAccessOwner.dispose();
+      clearNativeMocks();
+      restoreGlobals();
+      dom.window.close();
+    }
+  });
 }
 
-type AccessStatus = "local" | "writable" | "unknown" | "read_only";
+type AccessStatus = "local" | "writable" | "unknown" | "read_only" | "checking";
 
 function snapshot(path: string, status: AccessStatus, generation: number) {
   return {

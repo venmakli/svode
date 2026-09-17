@@ -1,4 +1,5 @@
 import {
+  activateRepositoryAccessLifecycle,
   checkRepositoryAccess,
   listenToRepositoryAccessChanges,
   loadRepositoryAccess,
@@ -14,6 +15,7 @@ export interface RepositoryAccessView {
 }
 
 interface RepositoryAccessOwnerApi {
+  activate(spacePath: string): Promise<RepositoryAccessSnapshot>;
   load(spacePath: string): Promise<RepositoryAccessSnapshot>;
   verify(spacePath: string): Promise<RepositoryAccessSnapshot>;
   listen(handler: (repositoryId: string) => void): Promise<() => void>;
@@ -22,6 +24,7 @@ interface RepositoryAccessOwnerApi {
 const MAX_TIMER_DELAY_MS = 2_147_000_000;
 
 export class RepositoryAccessOwner {
+  private readonly activePaths = new Map<string, number>();
   private readonly listeners = new Set<() => void>();
   private version = 0;
   private readonly pathStates = new Map<string, RepositoryAccessView>();
@@ -39,12 +42,17 @@ export class RepositoryAccessOwner {
     string,
     Promise<RepositoryAccessSnapshot | null>
   >();
+  private readonly activationFlights = new Map<
+    string,
+    Promise<RepositoryAccessSnapshot | null>
+  >();
   private readonly invalidatedReads = new Set<string>();
   private readonly expiryTimers = new Map<
     string,
     ReturnType<typeof setTimeout>
   >();
   private listening = false;
+  private listenReady: Promise<void> = Promise.resolve();
   private unlisten: (() => void) | null = null;
 
   constructor(
@@ -67,6 +75,28 @@ export class RepositoryAccessOwner {
     this.startListening();
     if (options.refresh !== false) void this.refresh(spacePath);
     return () => undefined;
+  }
+
+  retainActive(spacePath: string): () => void {
+    if (!spacePath) return () => undefined;
+    this.startListening();
+    this.activePaths.set(spacePath, (this.activePaths.get(spacePath) ?? 0) + 1);
+    void this.activate(spacePath);
+    return () => {
+      const count = this.activePaths.get(spacePath) ?? 0;
+      if (count <= 1) this.activePaths.delete(spacePath);
+      else this.activePaths.set(spacePath, count - 1);
+    };
+  }
+
+  async activate(spacePath: string): Promise<RepositoryAccessSnapshot | null> {
+    if (!this.activePaths.has(spacePath)) return null;
+    await this.startListening();
+    // Attach the repository before checking events arrive, and cancel a pending
+    // activation if its host disappears while the local read is in flight.
+    await this.refresh(spacePath);
+    if (!this.activePaths.has(spacePath)) return null;
+    return this.runVerification(spacePath, true);
   }
 
   refresh(spacePath: string): Promise<RepositoryAccessSnapshot | null> {
@@ -117,26 +147,39 @@ export class RepositoryAccessOwner {
   }
 
   verify(spacePath: string): Promise<RepositoryAccessSnapshot | null> {
+    return this.runVerification(spacePath, false);
+  }
+
+  private runVerification(
+    spacePath: string,
+    automatic: boolean,
+  ): Promise<RepositoryAccessSnapshot | null> {
     if (!spacePath) return Promise.resolve(null);
     const repositoryId = this.pathRepositoryIds.get(spacePath);
     const key = repositoryId
       ? `repository:${repositoryId}`
       : `path:${spacePath}`;
-    const existing = this.verifyFlights.get(key);
+    const flights = automatic ? this.activationFlights : this.verifyFlights;
+    const existing = flights.get(key);
     if (existing) return existing;
 
     const initialSnapshot = this.ensurePathState(spacePath).snapshot;
-    this.updateRepositoryState(spacePath, (state) => ({
-      ...state,
-      error: null,
-      loading: false,
-      verifying: true,
-    }));
-    const promise = this.api.verify(spacePath).then(
+    if (!automatic)
+      this.updateRepositoryState(spacePath, (state) => ({
+        ...state,
+        error: null,
+        loading: false,
+        verifying: true,
+      }));
+    // Automatic requests can be no-ops. Only canonical checking marks them busy.
+    const request = automatic
+      ? this.api.activate(spacePath)
+      : this.api.verify(spacePath);
+    const promise = request.then(
       (snapshot) => {
         this.publish(spacePath, snapshot, {
           clearError: true,
-          verifying: false,
+          verifying: automatic ? undefined : false,
         });
         return this.repositorySnapshots.get(snapshot.repositoryId) ?? snapshot;
       },
@@ -151,15 +194,14 @@ export class RepositoryAccessOwner {
               ? null
               : errorMessage(error),
           loading: false,
-          verifying: false,
+          verifying: automatic ? state.verifying : false,
         }));
         return null;
       },
     );
-    this.verifyFlights.set(key, promise);
+    flights.set(key, promise);
     void promise.finally(() => {
-      if (this.verifyFlights.get(key) === promise)
-        this.verifyFlights.delete(key);
+      if (flights.get(key) === promise) flights.delete(key);
     });
     return promise;
   }
@@ -179,12 +221,13 @@ export class RepositoryAccessOwner {
     this.listening = false;
     for (const timer of this.expiryTimers.values()) clearTimeout(timer);
     this.expiryTimers.clear();
+    this.activePaths.clear();
   }
 
-  private startListening(): void {
-    if (this.listening) return;
+  private startListening(): Promise<void> {
+    if (this.listening) return this.listenReady;
     this.listening = true;
-    void this.api
+    this.listenReady = this.api
       .listen((repositoryId) => this.handleInvalidation(repositoryId))
       .then((unlisten) => {
         if (!this.listening) {
@@ -200,6 +243,7 @@ export class RepositoryAccessOwner {
           error,
         );
       });
+    return this.listenReady;
   }
 
   private publish(
@@ -321,6 +365,10 @@ export class RepositoryAccessOwner {
       () => {
         this.expiryTimers.delete(snapshot.repositoryId);
         this.handleInvalidation(snapshot.repositoryId);
+        const paths = this.repositoryPaths.get(snapshot.repositoryId);
+        const activePath =
+          paths && [...paths].find((path) => this.activePaths.has(path));
+        if (activePath) void this.activate(activePath);
       },
       Math.min(delay, MAX_TIMER_DELAY_MS),
     );
@@ -365,6 +413,7 @@ function errorMessage(error: unknown) {
 }
 
 export const repositoryAccessOwner = new RepositoryAccessOwner({
+  activate: activateRepositoryAccessLifecycle,
   listen: listenToRepositoryAccessChanges,
   load: loadRepositoryAccess,
   verify: checkRepositoryAccess,

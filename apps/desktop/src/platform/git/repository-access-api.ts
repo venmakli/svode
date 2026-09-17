@@ -51,6 +51,15 @@ export interface RepositoryAccessDeniedDto {
   reason: RepositoryAccessDeniedReasonDto;
 }
 
+export function activateRepositoryAccess(
+  spacePath: string,
+): Promise<RepositoryAccessSnapshotDto> {
+  return invokeCommand<RepositoryAccessSnapshotDto>(
+    "repository_access_activate",
+    { spacePath },
+  );
+}
+
 export function getRepositoryAccess(
   spacePath: string,
 ): Promise<RepositoryAccessSnapshotDto> {
