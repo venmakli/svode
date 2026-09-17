@@ -16,6 +16,10 @@ use super::mailmap::{
 use crate::error::AppError;
 use crate::git::cli::GitCli;
 
+#[cfg(test)]
+#[path = "probe_tests.rs"]
+mod probe_tests;
+
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct ActorCandidate {
@@ -556,6 +560,13 @@ impl ActorCatalogState {
                 match loaded {
                     Ok(activity) => {
                         let activity = Arc::new(activity);
+                        let current = self.snapshot_at_repository(cli, &repository).await;
+                        self.remove_activity_lock_if_idle(&key, &activity_lock)?;
+                        if current?.generation != snapshot.generation {
+                            return Err(AppError::General(
+                                "actor activity changed while loading; retry with the current catalog".into(),
+                            ));
+                        }
                         if self
                             .cached_current(&repository)?
                             .is_some_and(|current| current.generation == snapshot.generation)
@@ -567,7 +578,6 @@ impl ActorCatalogState {
                                 })?
                                 .insert(key.clone(), activity.clone());
                         }
-                        self.remove_activity_lock_if_idle(&key, &activity_lock)?;
                         activity
                     }
                     Err(error) => {
@@ -799,6 +809,44 @@ fn local_activity_instant(timestamp: i64) -> Option<(NaiveDate, String)> {
         .map(|instant| (instant.date_naive(), instant.format("%H:%M").to_string()))
 }
 
+async fn load_actor_history(cli: &GitCli, repository: &Path) -> Result<String, AppError> {
+    let history = cli
+        .exec_with_env(
+            repository,
+            &[
+                "log",
+                "--no-use-mailmap",
+                "--all",
+                "--format=%H%x00%an%x00%ae%x00%at%x00%s",
+            ],
+            &[("GIT_NO_LAZY_FETCH", "1")],
+        )
+        .await?;
+    if history.exit_code != 0 && !is_unborn_repository(cli, repository).await? {
+        return Err(AppError::GitCommandFailed(format!(
+            "failed to scan actor history in {}: {}",
+            repository.display(),
+            history.stderr.trim()
+        )));
+    }
+
+    let mut visible = String::with_capacity(history.stdout.len());
+    for record in history.stdout.lines() {
+        let mut fields = record.splitn(5, '\0');
+        let oid = fields.next().unwrap_or_default();
+        let name = fields.next().unwrap_or_default();
+        let email = fields.next().unwrap_or_default();
+        if crate::git::access::is_access_probe_identity(name, email)
+            && crate::git::access::is_access_probe_commit(cli, repository, oid).await?
+        {
+            continue;
+        }
+        visible.push_str(record);
+        visible.push('\n');
+    }
+    Ok(visible)
+}
+
 async fn load_activity_year(
     cli: &GitCli,
     repository: &Path,
@@ -807,27 +855,10 @@ async fn load_activity_year(
     range_start: NaiveDate,
     range_end_exclusive: NaiveDate,
 ) -> Result<ActorActivityYear, AppError> {
-    let history = cli
-        .exec(
-            repository,
-            &[
-                "log",
-                "--no-use-mailmap",
-                "--all",
-                "--format=%H%x00%an%x00%ae%x00%at%x00%s",
-            ],
-        )
-        .await?;
-    if history.exit_code != 0 && !is_unborn_repository(cli, repository).await? {
-        return Err(AppError::GitCommandFailed(format!(
-            "failed to scan actor activity in {}: {}",
-            repository.display(),
-            history.stderr.trim()
-        )));
-    }
+    let history = load_actor_history(cli, repository).await?;
 
     let commits = activity_commits_from_log(
-        &history.stdout,
+        &history,
         &snapshot.mailmap,
         canonical_email,
         range_start,
@@ -1162,27 +1193,10 @@ pub(super) async fn load_snapshot(
         materialize_declaration(&mut rows, rule);
     }
 
-    let history = cli
-        .exec(
-            repository,
-            &[
-                "log",
-                "--no-use-mailmap",
-                "--all",
-                "--format=%H%x00%an%x00%ae%x00%at",
-            ],
-        )
-        .await?;
-    if history.exit_code != 0 && !is_unborn_repository(cli, repository).await? {
-        return Err(AppError::GitCommandFailed(format!(
-            "failed to scan actor history in {}: {}",
-            repository.display(),
-            history.stderr.trim()
-        )));
-    }
+    let history = load_actor_history(cli, repository).await?;
     let mut seen_commits = HashSet::new();
-    for record in history.stdout.lines() {
-        let mut parts = record.splitn(4, '\0');
+    for record in history.lines() {
+        let mut parts = record.splitn(5, '\0');
         let commit_id = parts.next().unwrap_or_default().trim();
         let raw_name = parts.next().unwrap_or_default().trim();
         let raw_email = parts.next().unwrap_or_default().trim();

@@ -1486,7 +1486,7 @@ async fn read_remote_ref(
     }
 }
 
-async fn create_service_commit(
+pub(crate) async fn create_service_commit(
     cli: &GitCli,
     repository: &Path,
     installation_hash: &str,
@@ -1537,6 +1537,102 @@ async fn create_service_commit(
         )));
     }
     Ok(commit.stdout.trim().to_string())
+}
+
+pub(crate) fn is_access_probe_identity(name: &str, email: &str) -> bool {
+    name == SERVICE_AUTHOR_NAME && email == SERVICE_AUTHOR_EMAIL
+}
+
+// Recognizes the existing wire format; this is not proof of origin or authority.
+fn access_probe_tree(commit: &str) -> Option<&str> {
+    let (headers, message) = commit.split_once("\n\n")?;
+    let mut tree = None;
+    let mut author = false;
+    let mut committer = false;
+    for header in headers.lines() {
+        if let Some(oid) = header.strip_prefix("tree ") {
+            if tree.is_some()
+                || !matches!(oid.len(), 40 | 64)
+                || !oid.bytes().all(|byte| byte.is_ascii_hexdigit())
+            {
+                return None;
+            }
+            tree = Some(oid);
+        } else if header.starts_with("parent ") {
+            return None;
+        } else if let Some(identity) = header.strip_prefix("author ") {
+            if author || !identity.starts_with("Svode Access Probe <access@svode.invalid> ") {
+                return None;
+            }
+            author = true;
+        } else if let Some(identity) = header.strip_prefix("committer ") {
+            if committer || !identity.starts_with("Svode Access Probe <access@svode.invalid> ") {
+                return None;
+            }
+            committer = true;
+        }
+    }
+    let mut lines = message.strip_suffix('\n')?.split('\n');
+    if !author || !committer || lines.next()? != "version=1" {
+        return None;
+    }
+    let installation = lines.next()?.strip_prefix("installation=")?;
+    if installation.len() != 16
+        || !installation
+            .bytes()
+            .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+    {
+        return None;
+    }
+    let nonce = lines.next()?.strip_prefix("nonce=")?;
+    if nonce.len() != 26
+        || nonce.as_bytes()[0] > b'7'
+        || !nonce.bytes().all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'h' | b'j'..=b'k' | b'm'..=b'n' | b'p'..=b't' | b'v'..=b'z'))
+    {
+        return None;
+    }
+    let checked_at = lines.next()?.strip_prefix("checked-at=")?;
+    if checked_at.parse::<i64>().ok()?.to_string() != checked_at || lines.next().is_some() {
+        return None;
+    }
+    tree
+}
+
+pub(crate) async fn is_access_probe_commit(
+    cli: &GitCli,
+    repository: &Path,
+    oid: &str,
+) -> Result<bool, AppError> {
+    let object = cli
+        .exec_with_env(
+            repository,
+            &["cat-file", "commit", oid],
+            &[("GIT_NO_LAZY_FETCH", "1")],
+        )
+        .await?;
+    if object.exit_code != 0 {
+        return Err(AppError::GitCommandFailed(format!(
+            "failed to read actor history candidate {oid}: {}",
+            object.stderr.trim()
+        )));
+    }
+    let Some(tree) = access_probe_tree(&object.stdout) else {
+        return Ok(false);
+    };
+    let contents = cli
+        .exec_with_env(
+            repository,
+            &["ls-tree", tree],
+            &[("GIT_NO_LAZY_FETCH", "1")],
+        )
+        .await?;
+    if contents.exit_code != 0 {
+        return Err(AppError::GitCommandFailed(format!(
+            "failed to read access probe tree {tree}: {}",
+            contents.stderr.trim()
+        )));
+    }
+    Ok(contents.stdout.is_empty())
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -1960,6 +2056,43 @@ mod tests {
         assert_eq!(
             exact_lease(&reference, ""),
             format!("--force-with-lease={reference}:")
+        );
+
+        git_ok(&cli, &repository, &["update-ref", &reference, &remote_oid]).await;
+        let evidence_before = fs::read(&store).unwrap();
+        let actors = crate::actors::ActorCatalogState::new();
+        let catalog = actors.snapshot(&cli, &repository).await.unwrap().catalog();
+        assert!(
+            catalog
+                .rows
+                .iter()
+                .all(|row| row.canonical_email != SERVICE_AUTHOR_EMAIL)
+        );
+        actors.refresh(&cli, &repository).await.unwrap();
+        for row in &catalog.rows {
+            actors
+                .activity(&cli, &repository, &row.canonical_email, None, None, None)
+                .await
+                .unwrap();
+        }
+        assert_eq!(fs::read(&store).unwrap(), evidence_before);
+        let after_read = state.snapshot(&cli, &repository, &store).await.unwrap();
+        assert_eq!(after_read.status, second.status);
+        assert_eq!(after_read.generation, second.generation);
+        assert_eq!(
+            git_ok(&cli, &remote, &["rev-parse", &reference])
+                .await
+                .stdout
+                .trim(),
+            remote_oid
+        );
+        assert_eq!(
+            state
+                .verify(&cli, &repository, &store)
+                .await
+                .unwrap()
+                .status,
+            RepositoryAccessStatus::Writable
         );
     }
 
