@@ -20,6 +20,7 @@ mod macos_fullscreen;
 pub mod mcp;
 mod media;
 mod native_file_drop;
+mod page;
 mod process;
 mod properties;
 mod repo_path;

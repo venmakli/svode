@@ -826,6 +826,11 @@ Metadata and fields:
 - Collection identity lives in README.md owner metadata. Schema.yaml stores columns, views, system field labels, and template settings. Use the Collection README tools for that owner content.
 - Prefer domain tools over direct filesystem writes: update_page_metadata for standalone Page metadata, owner-specific metadata tools for Space/Collection README content, schema tools for columns/views, write_page or update_collection_item_body for body replacement, and update_collection_item_fields for custom field values.
 
+Body saves:
+- write_page, write_space_readme and write_collection_readme treat missing/null title as body-only; a title string saves body and title together using managed naming. update_collection_item_body is always body-only.
+- A successful body save returns the actual canonical path, newPath on rename, actual changedPaths (empty for no-op), and warnings. Collection writes also return the canonical collectionPath. Use these returned paths for subsequent calls.
+- A rejected combined body/title save restores the complete affected source set. PAGE_WRITE_RECOVERY_FAILED reports failed restoration and affected paths; inspect them before retrying. Filename warnings and projection_update_failed are applied outcomes: do not repeat the write as though it failed. Git commit remains separate.
+
 Structural work and integrity:
 - Files-first work is supported: ordinary Markdown body edits and deliberate, predictable bulk file edits can be made directly in the repository.
 - Do not construct `.svode/order`, relation migrations, managed `.assets/` paths, structural Page moves/renames, or Collections manually. Use rename_content, move_content, reorder_content, reorder_spaces, convert_page_to_leaf, or convert_to_collection so Svode preserves relations, backlinks, sidebar order, and indexes. Discover spaces with list_spaces; root is `spaceId: "root"`, while reorder_spaces accepts child ids only.

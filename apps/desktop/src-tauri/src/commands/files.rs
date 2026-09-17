@@ -80,12 +80,12 @@ fn managed_attachment_repository_dir(space: &str, project_path: Option<&str>) ->
         .unwrap_or(space_dir)
 }
 
-fn managed_attachment_policy_paths(space: &str, project_path: Option<&str>) -> Vec<PathBuf> {
+pub(crate) fn managed_attachment_policy_paths(space: &str, project_path: Option<&str>) -> Vec<PathBuf> {
     let repo_dir = managed_attachment_repository_dir(space, project_path);
     vec![repo_dir.join(".gitignore"), repo_dir.join(".gitattributes")]
 }
 
-fn rebase_managed_attachment_routes(
+pub(crate) fn rebase_managed_attachment_routes(
     space: &str,
     project_path: Option<&str>,
     from: &str,
@@ -170,7 +170,7 @@ fn rel_changed_path(space: &str, path: &Path) -> String {
         .replace('\\', "/")
 }
 
-fn grouped_abs_paths_by_space(
+pub(crate) fn grouped_abs_paths_by_space(
     project_path: Option<&str>,
     fallback_space: &str,
     paths: &[PathBuf],
@@ -227,7 +227,7 @@ fn push_unique_path(paths: &mut Vec<String>, path: String) {
     }
 }
 
-fn collect_markdown_paths(
+pub(crate) fn collect_markdown_paths(
     base: &Path,
     root: &Path,
     policy: &TreeIgnorePolicy,
@@ -380,7 +380,7 @@ fn entry_history_commit_name(space: &str, path: &str) -> String {
     }
 }
 
-fn entry_rename_op(space: &str, from: &str, to: &str) -> StructuralOp {
+pub(crate) fn entry_rename_op(space: &str, from: &str, to: &str) -> StructuralOp {
     if entry_in_sensitive_collection(space, from) || entry_in_sensitive_collection(space, to) {
         StructuralOp::Rename {
             old: "collection entry".to_string(),
@@ -402,7 +402,7 @@ fn template_name_for_commit(space: &str, collection_path: &str, name: String) ->
     }
 }
 
-fn maybe_autocommit_structural_paths(
+pub(crate) fn maybe_autocommit_structural_paths(
     autocommit: &AutocommitService,
     project_path: Option<&str>,
     space_path: &str,
@@ -415,7 +415,7 @@ fn maybe_autocommit_structural_paths(
     autocommit.schedule_structural_paths(PathBuf::from(proj), PathBuf::from(space_path), op, paths);
 }
 
-async fn space_id_for_dir(state: &IndexState, space: &str) -> Option<String> {
+pub(crate) async fn space_id_for_dir(state: &IndexState, space: &str) -> Option<String> {
     state
         .key_for_space_dir(Path::new(space))
         .await
@@ -675,7 +675,7 @@ fn rebase_legacy_source_tree_after_move(
 /// `Root`-keyed index treating `space` as its own project — covers calls
 /// that arrive before the project's `open_project` cache populates (e.g.
 /// rapid-create flows in tests).
-async fn backlinks_for_space(state: &IndexState, space: &str) -> Arc<BacklinkIndex> {
+pub(crate) async fn backlinks_for_space(state: &IndexState, space: &str) -> Arc<BacklinkIndex> {
     let key = state
         .key_for_space_dir(Path::new(space))
         .await

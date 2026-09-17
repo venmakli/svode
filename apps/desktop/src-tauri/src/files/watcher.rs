@@ -201,6 +201,22 @@ fn process_events(
     root_schema_present: &mut bool,
     attachments_generation: &mut u64,
 ) {
+    let nonces = app.state::<Arc<WriteNonceRegistry>>();
+    if let Err(error) = nonces.with_source_publication(|| {
+        process_published_events(events, space, app, root_schema_present, attachments_generation);
+        Ok(())
+    }) {
+        tracing::warn!("watcher source publication failed: {error}");
+    }
+}
+
+fn process_published_events(
+    events: &[Event],
+    space: &str,
+    app: &AppHandle,
+    root_schema_present: &mut bool,
+    attachments_generation: &mut u64,
+) {
     // Deduplicate by path while preserving structural create/delete semantics.
     // Backends often report Create followed by Modify for the same file within
     // one debounce window; the sidebar still needs this as `file:created`.

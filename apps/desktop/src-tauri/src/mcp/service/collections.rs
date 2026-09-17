@@ -209,18 +209,8 @@ pub(super) async fn create_collection_item(
         )?;
     }
     if let Some(body) = args.body {
-        let written = entry::write(
-            &space,
-            &created.path,
-            &body,
-            None,
-            None,
-            None,
-            None,
-            None,
-            true,
-        )?;
-        if let Some(new_path) = written.new_path {
+        let written = write_page_content(app, &context, &space, &created.path, &body, None).await?;
+        if let Some(new_path) = written.result.new_path {
             created.path = new_path;
         }
         created.body = body;
@@ -326,16 +316,14 @@ pub(super) async fn update_collection_item_body(
     args: UpdateCollectionItemBodyArgs,
 ) -> Result<ToolCallResult, McpBusinessError> {
     let _policy = MCP_MUTATION_POLICY;
-    let (_, space) = resolve_space(app, args.space_id).await?;
+    let (context, space) = resolve_space(app, args.space_id).await?;
     let path = validate_markdown_path(&args.path)?;
     ensure_inside(Path::new(&space), &path)?;
     require_collection_item(&space, &path)?;
-    let result = entry::write(
-        &space, &path, &args.body, None, None, None, None, None, true,
-    )?;
+    let result = write_page_content(app, &context, &space, &path, &args.body, None).await?;
     Ok(ToolCallResult::ok(
         format!("Updated body for {path}."),
-        json!({ "path": path, "newPath": result.new_path, "changedPaths": [path] }),
+        page_write_response(&space, &path, result),
     ))
 }
 

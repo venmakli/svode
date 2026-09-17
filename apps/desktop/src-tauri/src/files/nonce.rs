@@ -11,6 +11,7 @@ const TTL: Duration = Duration::from_secs(3);
 /// echoes after an auto-save write.
 pub struct WriteNonceRegistry {
     entries: Mutex<HashMap<PathBuf, (WriteOriginMetadata, Instant)>>,
+    source_publication: Mutex<()>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -24,7 +25,19 @@ impl WriteNonceRegistry {
     pub fn new() -> Self {
         Self {
             entries: Mutex::new(HashMap::new()),
+            source_publication: Mutex::new(()),
         }
+    }
+
+    pub(crate) fn with_source_publication<T>(
+        &self,
+        operation: impl FnOnce() -> Result<T, crate::AppError>,
+    ) -> Result<T, crate::AppError> {
+        let _guard = self
+            .source_publication
+            .lock()
+            .map_err(|_| crate::AppError::General("source publication lock is poisoned".into()))?;
+        operation()
     }
 
     /// Register a nonce for the given absolute path; overwrites any previous entry.
@@ -76,6 +89,48 @@ impl Default for WriteNonceRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn source_publication_hides_intermediate_bytes_from_watcher() {
+        let registry = std::sync::Arc::new(WriteNonceRegistry::new());
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("Page.md");
+        std::fs::write(&path, "original").unwrap();
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let writer_registry = registry.clone();
+        let writer_path = path.clone();
+        let writer = std::thread::spawn(move || {
+            writer_registry
+                .with_source_publication(|| {
+                    std::fs::write(&writer_path, "intermediate")?;
+                    started_tx.send(()).unwrap();
+                    release_rx.recv().unwrap();
+                    std::fs::write(&writer_path, "original")?;
+                    Ok(())
+                })
+                .unwrap()
+        });
+        started_rx.recv().unwrap();
+        let (observed_tx, observed_rx) = std::sync::mpsc::channel();
+        let observer = std::thread::spawn(move || {
+            registry
+                .with_source_publication(|| {
+                    observed_tx.send(std::fs::read_to_string(path)?).unwrap();
+                    Ok(())
+                })
+                .unwrap()
+        });
+        assert!(
+            observed_rx
+                .recv_timeout(std::time::Duration::from_millis(20))
+                .is_err()
+        );
+        release_tx.send(()).unwrap();
+        assert_eq!(observed_rx.recv().unwrap(), "original");
+        writer.join().unwrap();
+        observer.join().unwrap();
+    }
 
     #[test]
     fn origin_metadata_preserves_frontend_nonce_and_routine_lineage() {

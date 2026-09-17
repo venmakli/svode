@@ -340,338 +340,39 @@ pub(super) async fn write_entry_shared(
     nonces: &WriteNonceRegistry,
     autocommit: Option<&AutocommitService>,
 ) -> Result<WriteResult, AppError> {
-    let requested_skip_rename = skip_rename.unwrap_or(false);
-    let backlink_index = backlinks_for_space(index_state, &space).await;
-    let project = project_path.as_deref().filter(|p| !p.is_empty());
-    let project_aware = project.is_some();
-    let write_plan =
-        entry::planned_write_rename(&space, &path, title.as_deref(), requested_skip_rename)?;
-    let mut deferred_rename_warning = None;
-    let mut relation_mutation_paths = Vec::new();
-    let skip_rename = if !requested_skip_rename {
-        if let Some(rename) = write_plan.as_ref() {
-            let (old_path, new_path) = relation_paths_for_write_rename(&path, rename);
-            match properties::relation_move_mutation_paths_with_project(
-                &space, project, &old_path, &new_path,
-            ) {
-                Ok(paths) => {
-                    relation_mutation_paths = paths;
-                    false
+    let request = crate::page::write::PageWrite {
+        space: &space,
+        path: &path,
+        content: &content,
+        title: title.as_deref(),
+        icon: icon.as_deref(),
+        extra,
+        skip_rename: skip_rename.unwrap_or(false),
+        project: project_path.as_deref().filter(|path| !path.is_empty()),
+    };
+    let _ = existing_id;
+    let authorization_space = &space;
+    crate::page::write::write(
+        request,
+        index_state,
+        nonces,
+        autocommit,
+        |paths| async move {
+            match authorization {
+                WriteEntryAuthorization::App(app) => {
+                    require_planned_mutation_paths(app, authorization_space, paths).await
                 }
-                Err(error) if is_schema_validation_error(&error) => {
-                    deferred_rename_warning = Some(entry::EntryWarning::filename_rename_deferred(
-                        &path,
-                        &error.to_string(),
-                    ));
-                    true
-                }
-                Err(error) => return Err(error),
-            }
-        } else {
-            false
-        }
-    } else {
-        true
-    };
-    if project_aware && !skip_rename {
-        ensure_backlinks_before_structural(index_state, project).await;
-    }
-    let mut planned_paths = relation_mutation_paths.clone();
-    if !skip_rename && write_plan.is_some() {
-        planned_paths.extend(managed_attachment_policy_paths(&space, project));
-    }
-    if !skip_rename && let (Some(project), Some(_)) = (project, write_plan.as_ref()) {
-        let target_space_id = space_id_for_dir(index_state, &space).await;
-        planned_paths.extend_from_slice(
-            index_state
-                .plan_links_on_rename_project(Path::new(project), target_space_id.as_deref(), &path)
-                .await?
-                .mutation_paths(),
-        );
-        if let Some(folder) = write_plan
-            .as_ref()
-            .and_then(|plan| plan.folder_rename_old.as_deref())
-        {
-            planned_paths.extend_from_slice(
-                index_state
-                    .plan_links_on_folder_rename_project(
-                        Path::new(project),
-                        target_space_id.as_deref(),
-                        folder,
-                    )
-                    .await?
-                    .mutation_paths(),
-            );
-        }
-    }
-    let authorized_paths = match authorization {
-        WriteEntryAuthorization::App(app) => {
-            require_planned_mutation_paths(app, &space, planned_paths).await?
-        }
-        #[cfg(test)]
-        WriteEntryAuthorization::Preauthorized => {
-            planned_paths.push(PathBuf::from(&space));
-            planned_paths
-        }
-    };
-    let mut result = scope_authorized_mutation_paths(authorized_paths.clone(), async {
-        entry::write_with_relation_plan(
-            &space,
-            &path,
-            &content,
-            title.as_deref(),
-            icon.as_deref(),
-            extra,
-            existing_id.as_deref(),
-            if project_aware {
-                None
-            } else {
-                Some(&backlink_index)
-            },
-            skip_rename,
-            project,
-            Some(&relation_mutation_paths),
-        )
-    })
-    .await?;
-    if let Some(warning) = deferred_rename_warning {
-        result.warnings.push(warning);
-    }
-    let policy_paths = if !skip_rename && result.new_path.is_some() {
-        if let Some(rename) = write_plan.as_ref() {
-            let (old_path, new_path) = relation_paths_for_write_rename(&path, rename);
-            rebase_managed_attachment_routes(
-                &space,
-                project,
-                &old_path,
-                &new_path,
-                rename.folder_rename_old.is_some(),
-            )?
-        } else {
-            Vec::new()
-        }
-    } else {
-        Vec::new()
-    };
-
-    // Register the write-nonce against the canonical post-rename path so the
-    // watcher can echo-guard the `file:changed` event that our own write
-    // produces. Fall back to the join if canonicalize fails (e.g. path was
-    // deleted between the write and here).
-    let result_rel = result.new_path.as_deref().unwrap_or(&path);
-    let joined = Path::new(&space).join(result_rel);
-    let canonical = std::fs::canonicalize(&joined).unwrap_or(joined);
-    nonces.register(canonical, result.write_nonce.clone());
-
-    // Update SQLite index for the (possibly renamed) target path. Resolves
-    // through IndexState to the owning pool (root or per-space DB).
-    // On rename: delete the stale row first, then upsert the new path. The
-    // reverse order would let a concurrent write to the new path get clobbered
-    // by the stale-row delete.
-    if let Some(proj) = project_path.as_deref().filter(|p| !p.is_empty()) {
-        let project = Path::new(proj);
-        let target_space_id = space_id_for_dir(index_state, &space).await;
-        if !skip_rename {
-            if let Some(ref new_path) = result.new_path {
-                let folder_rename = Path::new(&path)
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .is_some_and(|n| n.eq_ignore_ascii_case("readme.md"))
-                    .then(|| {
-                        let old_folder = Path::new(&path).parent()?.to_string_lossy().to_string();
-                        let new_folder =
-                            Path::new(new_path).parent()?.to_string_lossy().to_string();
-                        (!old_folder.is_empty() && old_folder != new_folder)
-                            .then_some((old_folder, new_folder))
-                    })
-                    .flatten();
-                if let Some((old_folder, new_folder)) = folder_rename {
-                    match scope_authorized_mutation_paths(authorized_paths.clone(), async {
-                        index_state
-                            .update_links_on_folder_rename_project(
-                                project,
-                                target_space_id.as_deref(),
-                                &old_folder,
-                                &new_folder,
-                                title.as_deref(),
-                            )
-                            .await
-                    })
-                    .await
-                    {
-                        Ok(modified) => {
-                            if let Some(autocommit) = autocommit {
-                                schedule_modified_source_spaces(
-                                    index_state,
-                                    autocommit,
-                                    project_path.as_deref(),
-                                    &modified,
-                                    entry_rename_op(&space, &old_folder, &new_folder),
-                                )
-                                .await;
-                            }
-                            result.modified_files =
-                                modified.iter().map(|item| item.path.clone()).collect();
-                            result.modified_sources = modified;
-                        }
-                        Err(e) => {
-                            tracing::warn!("cross-space folder backlink rewrite failed: {e}")
-                        }
-                    }
-                    let rebased = rebase_project_source_tree_after_move(
-                        index_state,
-                        project_path.as_deref(),
-                        &space,
-                        target_space_id.as_deref(),
-                        &old_folder,
-                        &new_folder,
-                        "write_entry",
-                    )
-                    .await;
-                    if let Some(autocommit) = autocommit {
-                        schedule_modified_source_spaces(
-                            index_state,
-                            autocommit,
-                            project_path.as_deref(),
-                            &rebased,
-                            entry_rename_op(&space, &old_folder, &new_folder),
-                        )
-                        .await;
-                    }
-                    for item in rebased {
-                        if !result.modified_sources.contains(&item) {
-                            result.modified_files.push(item.path.clone());
-                            result.modified_sources.push(item);
-                        }
-                    }
-                } else {
-                    match scope_authorized_mutation_paths(authorized_paths.clone(), async {
-                        index_state
-                            .update_links_on_rename_project(
-                                project,
-                                target_space_id.as_deref(),
-                                &path,
-                                new_path,
-                                title.as_deref(),
-                            )
-                            .await
-                    })
-                    .await
-                    {
-                        Ok(modified) => {
-                            result.modified_files =
-                                modified.iter().map(|item| item.path.clone()).collect();
-                            result.modified_sources = modified.clone();
-                            if let Some(autocommit) = autocommit {
-                                schedule_modified_source_spaces(
-                                    index_state,
-                                    autocommit,
-                                    project_path.as_deref(),
-                                    &modified,
-                                    entry_rename_op(&space, &path, new_path),
-                                )
-                                .await;
-                            }
-                        }
-                        Err(e) => tracing::warn!("cross-space backlink rewrite failed: {e}"),
-                    }
+                #[cfg(test)]
+                WriteEntryAuthorization::Preauthorized => {
+                    let mut paths = paths;
+                    paths.push(PathBuf::from(authorization_space));
+                    Ok(paths)
                 }
             }
-        }
-
-        if result.new_path.is_some() {
-            if let Err(e) = index_state
-                .remove_file_backlinks(project, target_space_id.as_deref(), &path)
-                .await
-            {
-                tracing::warn!("remove stale backlinks source failed for {path}: {e}");
-            }
-        }
-        let current = result.new_path.as_deref().unwrap_or(&path);
-        if let Err(e) = index_state
-            .update_file_backlinks(project, target_space_id.as_deref(), current)
-            .await
-        {
-            tracing::warn!("update file backlinks failed for {current}: {e}");
-        }
-
-        let target = result.new_path.clone().unwrap_or_else(|| path.clone());
-        let deleted_paths = result
-            .new_path
-            .as_ref()
-            .map(|_| vec![path.clone()])
-            .unwrap_or_default();
-        replace_index_entries_or_reindex(
-            index_state,
-            project_path.as_deref(),
-            &space,
-            &deleted_paths,
-            std::slice::from_ref(&target),
-            "write_entry",
-        )
-        .await;
-    } else if !skip_rename
-        && let Some(new_path) = result.new_path.as_deref()
-        && Path::new(&path)
-            .file_name()
-            .and_then(|name| name.to_str())
-            .is_some_and(|name| name.eq_ignore_ascii_case("README.md"))
-        && let (Some(old_folder), Some(new_folder)) =
-            (Path::new(&path).parent(), Path::new(new_path).parent())
-        && old_folder != new_folder
-    {
-        rebase_legacy_source_tree_after_move(
-            &space,
-            &backlink_index,
-            &old_folder.to_string_lossy(),
-            &new_folder.to_string_lossy(),
-        );
-    }
-
-    // On ⌘S-path rename, schedule the structural commit so `git_commit_file`'s
-    // flush can drain it before the user-commit (Rename before Update).
-    if !skip_rename {
-        if let Some(ref new_path) = result.new_path {
-            if let Some(autocommit) = autocommit {
-                let mut commit_paths = entry_paths_with_order(
-                    &space,
-                    [
-                        abs_entry_path(&space, &path),
-                        abs_entry_path(&space, new_path),
-                    ],
-                );
-                commit_paths.extend(policy_paths);
-                maybe_autocommit_structural_paths(
-                    autocommit,
-                    project_path.as_deref(),
-                    &space,
-                    entry_rename_op(&space, &path, new_path),
-                    commit_paths,
-                );
-            }
-        }
-    }
-
-    Ok(result)
-}
-
-fn relation_paths_for_write_rename(
-    path: &str,
-    rename: &entry::PlannedWriteRename,
-) -> (String, String) {
-    if let Some(old_folder) = rename.folder_rename_old.as_ref() {
-        let new_folder = Path::new(&rename.new_path)
-            .parent()
-            .unwrap_or(Path::new(""))
-            .to_string_lossy()
-            .to_string();
-        return (old_folder.clone(), new_folder);
-    }
-    (path.to_string(), rename.new_path.clone())
-}
-
-fn is_schema_validation_error(error: &AppError) -> bool {
-    matches!(error, AppError::General(message) if message.starts_with("schema error:"))
+        },
+    )
+    .await
+    .map(|outcome| outcome.result)
 }
 
 pub async fn delete_entry_shared(

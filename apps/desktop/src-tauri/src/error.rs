@@ -100,6 +100,9 @@ pub enum AppError {
     #[error("Page name is already used in this container")]
     DocumentNameConflict(crate::files::naming::DocumentNameConflict),
 
+    #[error("Page write recovery failed after {cause}; unrestored paths: {paths:?}")]
+    PageWriteRecovery { cause: String, paths: Vec<String> },
+
     #[error("{0}")]
     General(String),
 }
@@ -136,6 +139,7 @@ impl AppError {
             AppError::IdentityMissing => "identity_missing",
             AppError::IdentityInvalid(_) => "identity_invalid",
             AppError::DocumentNameConflict(_) => "page_name_conflict",
+            AppError::PageWriteRecovery { .. } => "page_write_recovery",
             AppError::General(_) => "general",
         }
     }
@@ -147,6 +151,9 @@ impl Serialize for AppError {
         S: serde::Serializer,
     {
         match self {
+            AppError::PageWriteRecovery { cause, paths } => {
+                serde_json::json!({ "kind": self.kind(), "message": self.to_string(), "cause": cause, "paths": paths }).serialize(serializer)
+            }
             AppError::GitPublicationBlocked { repository, child, reason } => {
                 serde_json::json!({ "kind": self.kind(), "repository": repository, "child": child, "reason": reason }).serialize(serializer)
             }

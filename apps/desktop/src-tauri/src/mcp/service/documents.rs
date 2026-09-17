@@ -60,31 +60,29 @@ pub(super) async fn write_page(
     args: WritePageArgs,
 ) -> Result<ToolCallResult, McpBusinessError> {
     let _policy = MCP_MUTATION_POLICY;
-    let (_, space) = resolve_space(app, args.space_id).await?;
+    let (context, space) = resolve_space(app, args.space_id).await?;
     let path = validate_markdown_path(&args.path)?;
     ensure_inside(Path::new(&space), &path)?;
     require_standalone_page(&space, &path)?;
-    let result = match entry::write(
+    let result = match write_page_content(
+        app,
+        &context,
         &space,
         &path,
         &args.content,
         args.title.as_deref(),
-        None,
-        None,
-        None,
-        None,
-        true,
-    ) {
+    )
+    .await
+    {
         Ok(result) => result,
         Err(crate::error::AppError::DocumentNameConflict(conflict)) => {
             return Ok(page_name_conflict_result(conflict));
         }
         Err(error) => return Err(error.into()),
     };
-    let changed = vec![result.new_path.clone().unwrap_or(path.clone())];
     Ok(ToolCallResult::ok(
         format!("Updated Page {path}."),
-        json!({ "path": path, "newPath": result.new_path, "changedPaths": changed }),
+        page_write_response(&space, &path, result),
     ))
 }
 
@@ -213,24 +211,22 @@ pub(super) async fn write_space_readme(
     args: WriteSpaceReadmeArgs,
 ) -> Result<ToolCallResult, McpBusinessError> {
     let _policy = MCP_MUTATION_POLICY;
-    let (_, space) = resolve_space(app, args.space_id).await?;
+    let (context, space) = resolve_space(app, args.space_id).await?;
     let path = "README.md".to_string();
     ensure_inside(Path::new(&space), &path)?;
     require_owner(&space, &path, ContentOwnerKind::Space)?;
-    let result = entry::write(
+    let result = write_page_content(
+        app,
+        &context,
         &space,
         &path,
         &args.content,
         args.title.as_deref(),
-        None,
-        None,
-        None,
-        None,
-        true,
-    )?;
+    )
+    .await?;
     Ok(ToolCallResult::ok(
         "Updated Space README.",
-        json!({ "path": path, "newPath": result.new_path, "changedPaths": [path] }),
+        page_write_response(&space, &path, result),
     ))
 }
 
@@ -287,25 +283,30 @@ pub(super) async fn write_collection_readme(
     args: WriteCollectionReadmeArgs,
 ) -> Result<ToolCallResult, McpBusinessError> {
     let _policy = MCP_MUTATION_POLICY;
-    let (_, space) = resolve_space(app, args.space_id).await?;
+    let (context, space) = resolve_space(app, args.space_id).await?;
     let collection_path = validate_public_rel_path(&args.collection_path, true)?;
     let path = collection_readme_path(&collection_path);
     ensure_inside(Path::new(&space), &path)?;
     require_owner(&space, &path, ContentOwnerKind::Collection)?;
-    let result = entry::write(
+    let result = write_page_content(
+        app,
+        &context,
         &space,
         &path,
         &args.content,
         args.title.as_deref(),
-        None,
-        None,
-        None,
-        None,
-        true,
-    )?;
+    )
+    .await?;
+    let mut response = page_write_response(&space, &path, result);
+    response["collectionPath"] = json!(
+        Path::new(response["path"].as_str().unwrap())
+            .parent()
+            .unwrap_or(Path::new(""))
+            .to_string_lossy()
+    );
     Ok(ToolCallResult::ok(
         format!("Updated Collection README for {collection_path}."),
-        json!({ "collectionPath": collection_path, "path": path, "newPath": result.new_path, "changedPaths": [path] }),
+        response,
     ))
 }
 

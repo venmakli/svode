@@ -152,13 +152,18 @@ fn order_append(space: &Path, dir_key: &str, name: &str) {
 
 /// Rename an entry in order.json (replace old_name with new_name in the given directory).
 fn order_rename(space: &Path, dir_key: &str, old_name: &str, new_name: &str) {
+    let _ = order_rename_checked(space, dir_key, old_name, new_name);
+}
+
+fn order_rename_checked(space: &Path, dir_key: &str, old_name: &str, new_name: &str) -> Result<(), AppError> {
     let mut order = tree::read_order(space);
     if let Some(list) = order.get_mut(dir_key) {
-        if let Some(pos) = list.iter().position(|n| n == old_name) {
+        if let Some(pos) = list.iter().position(|name| name == old_name) {
             list[pos] = new_name.to_string();
-            let _ = tree::write_order(space, &order);
+            tree::write_order(space, &order)?;
         }
     }
+    Ok(())
 }
 
 fn order_insert_after(space: &Path, dir_key: &str, after_name: &str, name: &str) {
@@ -667,6 +672,7 @@ pub fn planned_write_rename(
     }
 }
 
+#[cfg(test)]
 pub fn write(
     space: &str,
     path: &str,
@@ -693,6 +699,7 @@ pub fn write(
     )
 }
 
+#[cfg(test)]
 pub(crate) fn write_with_relation_plan(
     space: &str,
     path: &str,
@@ -708,7 +715,7 @@ pub(crate) fn write_with_relation_plan(
 ) -> Result<WriteResult, AppError> {
     if title.is_some() || !skip_rename {
         return crate::files::naming::with_document_name_lock(space, || {
-            write_inner(
+            write_under_name_lock(
                 space,
                 path,
                 content,
@@ -723,7 +730,7 @@ pub(crate) fn write_with_relation_plan(
             )
         });
     }
-    write_inner(
+    write_under_name_lock(
         space,
         path,
         content,
@@ -738,7 +745,7 @@ pub(crate) fn write_with_relation_plan(
     )
 }
 
-fn write_inner(
+pub(crate) fn write_under_name_lock(
     space: &str,
     path: &str,
     content: &str,
@@ -881,6 +888,8 @@ fn write_inner(
     }
 
     persistence::write_serialized(&abs_path, &meta, content)?;
+    #[cfg(test)]
+    crate::page::write::checkpoint("body")?;
 
     // Auto-save path: frontmatter + body are already on disk above. Don't
     // rename, don't touch order.json, don't update backlinks in other files.
@@ -1011,7 +1020,7 @@ fn write_inner(
                 grandparent.to_string_lossy().to_string()
             };
             // Rename folder entry in parent's order list
-            order_rename(sp_path, &dir_key, &old_dir_name, &new_dir_name);
+            order_rename_checked(sp_path, &dir_key, &old_dir_name, &new_dir_name)?;
             // Rename the key itself (children order moves to new dir name)
             let mut order = tree::read_order(sp_path);
             let old_key = if dir_key == "." {
@@ -1026,7 +1035,7 @@ fn write_inner(
                     format!("{}/{}", dir_key, new_dir_name)
                 };
                 order.insert(new_key, children);
-                let _ = tree::write_order(sp_path, &order);
+                tree::write_order(sp_path, &order)?;
             }
         } else {
             // Regular file: dir_key is the parent directory
@@ -1036,7 +1045,7 @@ fn write_inner(
             } else {
                 parent_dir.to_string_lossy().to_string()
             };
-            order_rename(sp_path, &dir_key, &old_name, &new_name);
+            order_rename_checked(sp_path, &dir_key, &old_name, &new_name)?;
         }
     }
 

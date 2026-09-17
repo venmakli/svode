@@ -784,6 +784,87 @@ fn index_key_for_context(context: &ActiveProjectContext, space_id: Option<&str>)
 mod tests {
     use super::*;
 
+    #[tokio::test]
+    async fn body_write_json_intent_and_canonical_result_use_shared_operation() {
+        for title in [None, Some(Value::Null), Some(json!("New"))] {
+            for path in ["Old.md", "README.md", "Old/README.md", "Tasks/item.md"] {
+                let temp = tempfile::tempdir().unwrap();
+                let root = temp.path();
+                fs::create_dir_all(root.join(".git")).unwrap();
+                fs::create_dir_all(root.join(path).parent().unwrap()).unwrap();
+                fs::write(root.join(path), "---\ntitle: Old\n---\nOriginal").unwrap();
+                if path.starts_with("Tasks/") {
+                    fs::write(root.join("Tasks/schema.yaml"), "columns: []\n").unwrap();
+                }
+                let mut json_args = json!({"path": path, "content": "New body"});
+                if let Some(value) = &title {
+                    json_args["title"] = value.clone();
+                }
+                let args: WritePageArgs = decode(json_args.clone()).unwrap();
+                let space_args: WriteSpaceReadmeArgs = decode(json_args.clone()).unwrap();
+                json_args["collectionPath"] = json!("Old");
+                let collection_args: WriteCollectionReadmeArgs = decode(json_args).unwrap();
+                assert_eq!(args.title, space_args.title);
+                assert_eq!(args.title, collection_args.title);
+                let state = IndexState::new();
+                let nonces = crate::files::WriteNonceRegistry::new();
+                let outcome = crate::page::write::write(
+                    crate::page::write::PageWrite {
+                        space: root.to_str().unwrap(),
+                        path,
+                        content: &args.content,
+                        title: args.title.as_deref(),
+                        icon: None,
+                        extra: None,
+                        skip_rename: args.title.is_none(),
+                        project: None,
+                    },
+                    &state,
+                    &nonces,
+                    None,
+                    |mut paths| async move {
+                        paths.push(root.to_path_buf());
+                        Ok(paths)
+                    },
+                )
+                .await
+                .unwrap();
+                let response = page_write_response(root.to_str().unwrap(), path, outcome);
+                let expected = if args.title.is_none() || path == "README.md" {
+                    path
+                } else if path == "Old/README.md" {
+                    "New/README.md"
+                } else if path == "Tasks/item.md" {
+                    "Tasks/New.md"
+                } else {
+                    "New.md"
+                };
+                assert_eq!(response["path"], expected);
+                assert!(
+                    response["changedPaths"]
+                        .as_array()
+                        .unwrap()
+                        .contains(&json!(path))
+                );
+                assert!(
+                    response["changedPaths"]
+                        .as_array()
+                        .unwrap()
+                        .contains(&json!(expected))
+                );
+                assert_eq!(
+                    entry::read(root.to_str().unwrap(), expected).unwrap().body,
+                    "New body"
+                );
+                if expected != path {
+                    assert_eq!(response["newPath"], expected);
+                } else {
+                    assert_eq!(response["newPath"], Value::Null);
+                }
+            }
+        }
+    }
+
     fn scaffold_test_space(path: &Path, name: &str) {
         crate::space::scaffold::scaffold_space(path, name, "", "").expect("scaffold space");
     }
@@ -959,4 +1040,57 @@ mod tests {
 
         assert_eq!(root, project);
     }
+}
+
+async fn write_page_content(
+    app: &AppHandle,
+    context: &ActiveProjectContext,
+    space: &str,
+    path: &str,
+    content: &str,
+    title: Option<&str>,
+) -> Result<crate::page::write::PageWriteOutcome, crate::error::AppError> {
+    let state = app.state::<IndexState>();
+    let nonces = app.state::<std::sync::Arc<crate::files::WriteNonceRegistry>>();
+    crate::page::write::write(
+        crate::page::write::PageWrite {
+            space,
+            path,
+            content,
+            title,
+            icon: None,
+            extra: None,
+            skip_rename: title.is_none(),
+            project: Some(&context.project_path),
+        },
+        &state,
+        &nonces,
+        None,
+        |mut paths| async move {
+            paths.push(PathBuf::from(space));
+            crate::git::access::require_repository_mutation_paths(app, paths.clone()).await?;
+            Ok(paths)
+        },
+    )
+    .await
+}
+
+fn page_write_response(
+    space: &str,
+    original: &str,
+    outcome: crate::page::write::PageWriteOutcome,
+) -> Value {
+    let canonical = outcome.result.new_path.as_deref().unwrap_or(original);
+    let changed = outcome
+        .changed_paths
+        .iter()
+        .map(|path| {
+            path.strip_prefix(space)
+                .unwrap_or(path)
+                .to_string_lossy()
+                .replace('\\', "/")
+        })
+        .collect::<Vec<_>>();
+    json!({ "path": canonical, "newPath": outcome.result.new_path,
+        "changedPaths": changed, "warnings": outcome.result.warnings })
 }
