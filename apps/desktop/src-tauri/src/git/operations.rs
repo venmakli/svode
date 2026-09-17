@@ -111,52 +111,73 @@ pub(crate) struct Snapshot {
     ordinary_sources: bool,
 }
 
+fn transport_hash(branch: &str, config: &str) -> Sha256 {
+    let mut hash = Sha256::new();
+    let branch_ref = branch.trim();
+    let branch_name = branch_ref.strip_prefix("refs/heads/").unwrap_or_default();
+    let remote_key = format!("branch.{branch_name}.remote");
+    let merge_key = format!("branch.{branch_name}.merge");
+    let entries = config
+        .split('\0')
+        .filter(|entry| !entry.is_empty())
+        .collect::<Vec<_>>();
+    let default_tracking = !branch_name.is_empty()
+        && entries.iter().all(|entry| {
+            let (key, value) = entry.split_once('\n').unwrap_or((entry, ""));
+            (key != remote_key || value == "origin") && (key != merge_key || value == branch_ref)
+        });
+    // First publish installs origin/current-branch tracking. That does not
+    // change the target already selected by the no-upstream sync intent.
+    for entry in entries {
+        let key = entry.split_once('\n').map(|(key, _)| key).unwrap_or(entry);
+        if default_tracking && (key == remote_key || key == merge_key) {
+            continue;
+        }
+        hash.update(entry.as_bytes());
+        hash.update([0]);
+    }
+    if default_tracking {
+        hash.update(b"svode-origin-current-tracking\0");
+    }
+    hash.update(branch.as_bytes());
+    hash
+}
+
+pub(crate) async fn read_transport(cli: &GitCli, repo: &Path) -> Result<String, AppError> {
+    let (branch, config) = tokio::join!(
+        cli.exec(repo, &["symbolic-ref", "-q", "HEAD"]),
+        cli.exec_redacted(repo, &["config", "--null", "--list"]),
+    );
+    let (branch, config) = (branch?, config?);
+    if config.exit_code != 0 || branch.exit_code > 1 {
+        return Err(target_changed(repo));
+    }
+    Ok(format!(
+        "{:x}",
+        transport_hash(&branch.stdout, &config.stdout).finalize()
+    ))
+}
+
 impl Snapshot {
     pub(crate) async fn read(cli: &GitCli, repo: &Path) -> Result<Self, AppError> {
-        let branch = cli.exec(repo, &["symbolic-ref", "-q", "HEAD"]).await?;
-        let config = cli
-            .exec_redacted(repo, &["config", "--null", "--list"])
-            .await?;
+        let (branch, config, refs, git_dir, index) = tokio::join!(
+            cli.exec(repo, &["symbolic-ref", "-q", "HEAD"]),
+            cli.exec_redacted(repo, &["config", "--null", "--list"]),
+            cli.exec(repo, &["show-ref", "--head"]),
+            cli.exec(repo, &["rev-parse", "--absolute-git-dir"]),
+            cli.exec(repo, &["ls-files", "--stage", "-z"]),
+        );
+        let (branch, config, refs, git_dir, index) = (branch?, config?, refs?, git_dir?, index?);
         if config.exit_code != 0 || branch.exit_code > 1 {
             return Err(target_changed(repo));
         }
-        let mut hash = Sha256::new();
-        let branch_ref = branch.stdout.trim();
-        let branch_name = branch_ref.strip_prefix("refs/heads/").unwrap_or_default();
-        let remote_key = format!("branch.{branch_name}.remote");
-        let merge_key = format!("branch.{branch_name}.merge");
-        let entries = config
-            .stdout
-            .split('\0')
-            .filter(|entry| !entry.is_empty())
-            .collect::<Vec<_>>();
-        let default_tracking = !branch_name.is_empty()
-            && entries.iter().all(|entry| {
-                let (key, value) = entry.split_once('\n').unwrap_or((entry, ""));
-                (key != remote_key || value == "origin")
-                    && (key != merge_key || value == branch_ref)
-            });
-        // First publish installs origin/current-branch tracking. That does not
-        // change the target already selected by the no-upstream sync intent.
-        for entry in entries {
-            let key = entry.split_once('\n').map(|(key, _)| key).unwrap_or(entry);
-            if default_tracking && (key == remote_key || key == merge_key) {
-                continue;
-            }
-            hash.update(entry.as_bytes());
-            hash.update([0]);
-        }
-        if default_tracking {
-            hash.update(b"svode-origin-current-tracking\0");
-        }
-        hash.update(branch.stdout.as_bytes());
+        let mut hash = transport_hash(&branch.stdout, &config.stdout);
         let transport = format!("{:x}", hash.clone().finalize());
         match std::fs::read(repo.join(".gitmodules")) {
             Ok(bytes) => hash.update(bytes),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(error) => return Err(error.into()),
         }
-        let refs = cli.exec(repo, &["show-ref", "--head"]).await?;
         if refs.exit_code > 1 {
             return Err(target_changed(repo));
         }
@@ -166,7 +187,6 @@ impl Snapshot {
             .find_map(|line| line.strip_suffix(" HEAD"))
             .unwrap_or_default()
             .to_owned();
-        let git_dir = cli.exec(repo, &["rev-parse", "--absolute-git-dir"]).await?;
         if git_dir.exit_code != 0 {
             return Err(target_changed(repo));
         }
@@ -204,7 +224,6 @@ impl Snapshot {
         }
         // Cached stat data and index extensions can change during a reader's
         // git status; only the actual staged entries are part of generation.
-        let index = cli.exec(repo, &["ls-files", "--stage", "-z"]).await?;
         if index.exit_code != 0 {
             return Err(target_changed(repo));
         }

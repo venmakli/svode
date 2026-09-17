@@ -365,20 +365,24 @@ async fn ancestor(cli: &GitCli, repo: &Path, older: &str, newer: &str) -> Result
 }
 
 pub(crate) async fn ensure_no_operation(cli: &GitCli, repo: &Path) -> Result<(), AppError> {
-    for name in [
-        "MERGE_HEAD",
-        "CHERRY_PICK_HEAD",
-        "REVERT_HEAD",
-        "rebase-merge",
-        "rebase-apply",
-        "sequencer",
-    ] {
-        let path = checked(
+    let path = |name| async move {
+        checked(
             cli,
             repo,
             &["rev-parse", "--path-format=absolute", "--git-path", name],
         )
-        .await?;
+        .await
+    };
+    let paths = tokio::join!(
+        path("MERGE_HEAD"),
+        path("CHERRY_PICK_HEAD"),
+        path("REVERT_HEAD"),
+        path("rebase-merge"),
+        path("rebase-apply"),
+        path("sequencer"),
+    );
+    for result in [paths.0, paths.1, paths.2, paths.3, paths.4, paths.5] {
+        let path = result?;
         if Path::new(&path).exists() {
             return Err(blocked(BranchBlockReason::OperationInProgress));
         }

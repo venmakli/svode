@@ -15,26 +15,27 @@ struct LocalFacts {
 
 impl LocalFacts {
     async fn read(cli: &GitCli, repo: &Path) -> Result<Self, AppError> {
-        let branch = cli
-            .exec_redacted(repo, &["symbolic-ref", "-q", "HEAD"])
-            .await?;
+        let (branch, refs, config, paths) = tokio::join!(
+            cli.exec_redacted(repo, &["symbolic-ref", "-q", "HEAD"]),
+            checked(cli, repo, &["show-ref", "--head"]),
+            checked(cli, repo, &["config", "--null", "--list"]),
+            checked(
+                cli,
+                repo,
+                &[
+                    "rev-parse",
+                    "--path-format=absolute",
+                    "--git-common-dir",
+                    "--is-shallow-repository"
+                ]
+            ),
+        );
+        let branch = branch?;
         if branch.exit_code > 1 {
             return Err(blocked(repo, None, PublicationBlockReason::Configuration));
         }
         let branch = branch.stdout.trim_end().to_owned();
-        let refs = checked(cli, repo, &["show-ref", "--head"]).await?;
-        let config = checked(cli, repo, &["config", "--null", "--list"]).await?;
-        let paths = checked(
-            cli,
-            repo,
-            &[
-                "rev-parse",
-                "--path-format=absolute",
-                "--git-common-dir",
-                "--is-shallow-repository",
-            ],
-        )
-        .await?;
+        let (refs, config, paths) = (refs?, config?, paths?);
         let mut paths = paths.lines();
         let common = Path::new(
             paths

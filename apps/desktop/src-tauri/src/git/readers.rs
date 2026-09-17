@@ -27,13 +27,15 @@ impl PublicationRead {
 /// A successful ordinary sync observed precisely the origin/current branch
 /// used by counters and inspection. Custom mapping keeps the fresh read path.
 pub(crate) async fn origin_observed(cli: &GitCli, repo: &Path) -> Result<bool, AppError> {
-    let branch = ops::current_branch(cli, repo).await?;
+    let (branch, config) = tokio::join!(
+        ops::current_branch(cli, repo),
+        cli.exec_redacted(repo, &["config", "--null", "--list"]),
+    );
+    let branch = branch?;
     if branch.is_empty() || branch == "HEAD" {
         return Ok(false);
     }
-    let config = cli
-        .exec_redacted(repo, &["config", "--null", "--list"])
-        .await?;
+    let config = config?;
     if config.exit_code != 0 {
         return Ok(false);
     }
@@ -67,12 +69,11 @@ pub(crate) async fn origin_observed(cli: &GitCli, repo: &Path) -> Result<bool, A
     {
         return Ok(false);
     }
-    let fetch = cli
-        .exec_redacted(repo, &["remote", "get-url", "--all", "origin"])
-        .await?;
-    let push = cli
-        .exec_redacted(repo, &["remote", "get-url", "--push", "--all", "origin"])
-        .await?;
+    let (fetch, push) = tokio::join!(
+        cli.exec_redacted(repo, &["remote", "get-url", "--all", "origin"]),
+        cli.exec_redacted(repo, &["remote", "get-url", "--push", "--all", "origin"]),
+    );
+    let (fetch, push) = (fetch?, push?);
     Ok(fetch.exit_code == 0
         && push.exit_code == 0
         && fetch.stdout.lines().count() == 1

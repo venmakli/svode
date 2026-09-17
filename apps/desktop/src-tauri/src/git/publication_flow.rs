@@ -548,9 +548,7 @@ pub(crate) async fn parent_step_locked(
     permission: Result<(), AppError>,
 ) -> ParentPublication {
     let target = publication_target(cli, repo, parent).await;
-    let transport = Snapshot::read(cli, parent)
-        .await
-        .map(|snapshot| snapshot.transport);
+    let transport = super::operations::read_transport(cli, parent).await;
     let mut outcome = ParentPublication {
         repository: parent.to_string_lossy().into_owned(),
         pointer: PointerState::Pending,

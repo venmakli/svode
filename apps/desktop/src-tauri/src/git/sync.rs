@@ -43,9 +43,7 @@ pub async fn sync(cli: &GitCli, space_dir: &Path) -> Result<SyncResult, AppError
     if remote_out.stdout.trim().is_empty() {
         return Ok(SyncResult::NoRemote);
     }
-    let target = super::operations::Snapshot::read(cli, space_dir)
-        .await?
-        .transport;
+    let target = super::operations::read_transport(cli, space_dir).await?;
 
     if upstream_ref(cli, space_dir).await?.is_none() {
         return sync_without_upstream(cli, space_dir, &target).await;
@@ -167,11 +165,7 @@ pub(crate) async fn validate_transport(
     repo: &Path,
     expected: &str,
 ) -> Result<(), AppError> {
-    if super::operations::Snapshot::read(cli, repo)
-        .await?
-        .transport
-        != expected
-    {
+    if super::operations::read_transport(cli, repo).await? != expected {
         return Err(super::operations::target_changed(repo));
     }
     Ok(())
@@ -268,9 +262,7 @@ pub async fn conflict_files(cli: &GitCli, space_dir: &Path) -> Result<Vec<String
 
 /// Resolve conflicts: stage all and commit, then push.
 pub async fn resolve_and_continue(cli: &GitCli, space_dir: &Path) -> Result<SyncResult, AppError> {
-    let target = super::operations::Snapshot::read(cli, space_dir)
-        .await?
-        .transport;
+    let target = super::operations::read_transport(cli, space_dir).await?;
     // Stage all resolved files
     let add_out = cli.exec(space_dir, &["add", "."]).await?;
     if add_out.exit_code != 0 {
