@@ -213,7 +213,7 @@ impl Fixture {
             &self.git,
             write,
             |_, space, repo| {
-                autocommit::dispatch_exact_path_commit(
+                crate::git::delivery::dispatch_commit(
                     space,
                     repo,
                     |space, repo| {

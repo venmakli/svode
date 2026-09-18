@@ -1,18 +1,18 @@
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Duration;
 
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Manager};
 
 use super::GitState;
 use super::ops;
+use super::pending::PendingPaths;
+pub use super::pending::StructuralOp;
 use crate::AppError;
 use crate::space::types::SpaceGitType;
 
 const FLUSH_ALL_TIMEOUT_SECS: u64 = 10;
-const EVENT_COMMITTED: &str = "git:committed";
 
 #[derive(Debug, Clone, Copy)]
 enum CommitIntent {
@@ -20,24 +20,6 @@ enum CommitIntent {
     StructuralLifecycle,
     SystemConfig,
     ManualExplicit,
-}
-
-#[allow(dead_code)]
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum StructuralOp {
-    Create(String),
-    Delete(String),
-    Rename { old: String, new: String },
-    Move(String),
-    Reorder,
-    ConvertToFolder(String),
-    ConvertToLeaf(String),
-    MakeCollection(String),
-    Duplicate { old: String, new: String },
-    CreateTemplate(String),
-    DeleteTemplate(String),
-    DuplicateTemplate { old: String, new: String },
-    InstantiateTemplate { title: String, parent: String },
 }
 
 /// Categories of system-level auto-commits — messages and file scopes.
@@ -78,13 +60,6 @@ impl SystemCommitKind {
     }
 }
 
-#[derive(Serialize, Clone)]
-#[serde(rename_all = "camelCase")]
-struct CommittedPayload {
-    space_path: String,
-    repo_path: String,
-}
-
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ExactPathPendingReason {
@@ -114,97 +89,14 @@ pub enum GuardedExactPathPlan {
     Pending(ExactPathPendingReason),
 }
 
-#[derive(Clone)]
-struct PendingItem {
-    op: Option<StructuralOp>,
-    paths: Vec<PathBuf>,
-}
-
-struct PendingBatch {
-    items: Vec<PendingItem>,
-}
-
-pub(crate) struct PendingSave {
-    pending: Arc<Mutex<HashMap<PathBuf, PendingBatch>>>,
-    space: PathBuf,
-    items: Vec<PendingItem>,
-}
-
-impl PendingSave {
-    pub fn paths(&self) -> Vec<PathBuf> {
-        dedupe_paths(self.items.iter().flat_map(|item| item.paths.clone()))
-    }
-
-    pub fn complete(&mut self) {
-        self.items.clear();
-    }
-}
-
-impl Drop for PendingSave {
-    fn drop(&mut self) {
-        if self.items.is_empty() {
-            return;
-        }
-        let mut map = self.pending.lock().unwrap();
-        map.entry(self.space.clone())
-            .or_insert_with(|| PendingBatch { items: Vec::new() })
-            .items
-            .append(&mut self.items);
-    }
-}
-
 pub struct AutocommitService {
     app: AppHandle,
-    /// Keyed by `space_path` — different spaces never share a batch even when
-    /// they target the same repo (multiple inline children of one project).
-    /// Uses a sync Mutex so `schedule_structural` can push synchronously from
-    /// sync IPC handlers without racing against later flush/commit calls.
-    pending: Arc<Mutex<HashMap<PathBuf, PendingBatch>>>,
+    pending: Arc<PendingPaths>,
 }
 
 impl AutocommitService {
-    pub(crate) fn begin_manual_save(
-        &self,
-        space: &Path,
-        anchors: Option<&[PathBuf]>,
-    ) -> PendingSave {
-        let mut map = self.pending.lock().unwrap();
-        let mut selected = Vec::new();
-        if let Some(batch) = map.get_mut(space) {
-            let ops = anchors.map(|anchors| {
-                batch
-                    .items
-                    .iter()
-                    .filter(|item| pending_item_touches(item, anchors))
-                    .filter_map(|item| item.op.clone())
-                    .collect::<Vec<_>>()
-            });
-            batch.items.retain(|item| {
-                let related = anchors.is_none_or(|anchors| {
-                    pending_item_touches(item, anchors)
-                        || item
-                            .op
-                            .as_ref()
-                            .is_some_and(|op| ops.as_ref().is_some_and(|ops| ops.contains(op)))
-                });
-                if related {
-                    selected.push(item.clone());
-                }
-                !related
-            });
-        }
-        PendingSave {
-            pending: self.pending.clone(),
-            space: space.to_path_buf(),
-            items: selected,
-        }
-    }
-
-    pub fn new(app: AppHandle) -> Self {
-        Self {
-            app,
-            pending: Arc::new(Mutex::new(HashMap::new())),
-        }
+    pub fn new(app: AppHandle, pending: Arc<PendingPaths>) -> Self {
+        Self { app, pending }
     }
 
     /// Register path-scoped content/workspace changes for the next explicit
@@ -216,97 +108,15 @@ impl AutocommitService {
     /// immediately.
     pub fn schedule_structural_paths(
         &self,
-        project_path: PathBuf,
+        _project_path: PathBuf,
         space_path: PathBuf,
         op: StructuralOp,
         paths: Vec<PathBuf>,
     ) {
         if !background_commit_allowed(&space_path, CommitIntent::ContentWorkspace) {
-            self.record_pending_paths(project_path, space_path, Some(op), paths);
+            self.pending.record(&space_path, Some(op), paths);
         }
     }
-
-    fn record_pending_paths(
-        &self,
-        _project_path: PathBuf,
-        space_path: PathBuf,
-        op: Option<StructuralOp>,
-        paths: Vec<PathBuf>,
-    ) {
-        let mut map = self.pending.lock().unwrap();
-        let entry = map
-            .entry(space_path.clone())
-            .or_insert_with(|| PendingBatch { items: Vec::new() });
-        entry.items.push(PendingItem {
-            op,
-            paths: paths
-                .into_iter()
-                .map(|path| {
-                    if path.is_absolute() {
-                        path
-                    } else {
-                        space_path.join(path)
-                    }
-                })
-                .collect(),
-        });
-    }
-
-    /// Drain pending content/schema paths for one space so an explicit manual
-    /// commit can stage them together with the user's active file. This is
-    /// keyed by `space_path`, not target repo, to avoid draining sibling inline
-    /// spaces that share the same root repository.
-    pub fn take_pending_paths_for_space(
-        &self,
-        _project_path: &Path,
-        space_path: &Path,
-    ) -> Vec<PathBuf> {
-        let batch = {
-            let mut map = self.pending.lock().unwrap();
-            map.remove(space_path)
-        };
-        let Some(batch) = batch else {
-            return Vec::new();
-        };
-
-        dedupe_paths(batch.items.into_iter().flat_map(|item| item.paths))
-    }
-}
-
-fn pending_item_touches(item: &PendingItem, anchor_paths: &[PathBuf]) -> bool {
-    item.paths
-        .iter()
-        .any(|path| anchor_paths.iter().any(|anchor| path == anchor))
-}
-
-#[cfg(test)]
-fn split_related_pending_items(
-    items: Vec<PendingItem>,
-    anchor_paths: &[PathBuf],
-    matching_ops: &[Option<StructuralOp>],
-) -> (Vec<PathBuf>, Vec<PendingItem>) {
-    let mut kept = Vec::new();
-    let mut drained = Vec::new();
-    for item in items {
-        let related_by_path = pending_item_touches(&item, anchor_paths);
-        let related_by_op = item.op.is_some() && matching_ops.iter().any(|op| *op == item.op);
-        if related_by_path || related_by_op {
-            drained.extend(item.paths);
-        } else {
-            kept.push(item);
-        }
-    }
-    (drained, kept)
-}
-
-fn dedupe_paths(paths: impl IntoIterator<Item = PathBuf>) -> Vec<PathBuf> {
-    let mut unique = Vec::new();
-    for path in paths {
-        if !unique.iter().any(|existing: &PathBuf| existing == &path) {
-            unique.push(path);
-        }
-    }
-    unique
 }
 
 impl AutocommitService {
@@ -462,7 +272,7 @@ impl AutocommitService {
     /// markdown entries must land in one path-scoped commit.
     pub async fn commit_paths_now(
         &self,
-        project_path: PathBuf,
+        _project_path: PathBuf,
         space_path: PathBuf,
         paths: Vec<PathBuf>,
         _message: String,
@@ -472,7 +282,7 @@ impl AutocommitService {
         }
 
         if !background_commit_allowed(&space_path, CommitIntent::ContentWorkspace) {
-            self.record_pending_paths(project_path, space_path, None, paths);
+            self.pending.record(&space_path, None, paths);
         }
         Ok(())
     }
@@ -561,13 +371,7 @@ impl AutocommitService {
     /// network or lock doesn't prevent process exit.
     pub async fn flush_all(&self) {
         let fut = async {
-            let keys: Vec<PathBuf> = {
-                let map = self.pending.lock().unwrap();
-                map.keys().cloned().collect()
-            };
-            for key in keys {
-                let _ = self.take_pending_paths_for_space(Path::new(""), &key);
-            }
+            self.pending.clear();
         };
 
         if let Err(_) = tokio::time::timeout(Duration::from_secs(FLUSH_ALL_TIMEOUT_SECS), fut).await
@@ -709,24 +513,7 @@ pub(crate) fn publish_exact_path_commit(
     space_path: &Path,
     repo: &Path,
 ) {
-    dispatch_exact_path_commit(
-        space_path,
-        repo,
-        |space, repo| emit_committed(app, space, repo),
-        |repo| schedule_committed_sync(app, repo),
-    );
-}
-
-pub(crate) fn dispatch_exact_path_commit(
-    space: &Path,
-    repo: &Path,
-    emit: impl FnOnce(&Path, &Path),
-    sync: impl FnOnce(&Path),
-) {
-    emit(space, repo);
-    if is_auto_sync_enabled(repo) {
-        sync(repo);
-    }
+    super::delivery::publish_commit(app, space_path, repo);
 }
 
 fn classify_guarded_exact_path_preflight(
@@ -1077,7 +864,7 @@ async fn finish_commit(
     repo: &Path,
     pointer_intent: Option<CommitIntent>,
 ) -> Result<(), AppError> {
-    emit_committed(app, space, repo);
+    super::delivery::emit_committed(app, space, repo);
     let pointer = if let Some(intent) = pointer_intent {
         let state = app.state::<GitState>();
         let child_lock = state.get_lock(repo).await;
@@ -1091,51 +878,19 @@ async fn finish_commit(
     } else {
         Ok(false)
     };
-    schedule_committed_sync(app, repo);
+    super::delivery::schedule_auto_sync(app, repo);
     if pointer.unwrap_or_else(|error| {
         tracing::warn!(kind = error.kind(), "child saved; project pointer pending");
         false
     }) {
-        emit_committed(app, space, project);
+        super::delivery::emit_committed(app, space, project);
         // With child auto-sync enabled, its pipeline owns the parent step.
         // Otherwise root policy may publish only already available pointers.
-        if !is_auto_sync_enabled(repo) {
-            schedule_committed_sync(app, project);
+        if !super::delivery::auto_sync_enabled(repo) {
+            super::delivery::schedule_auto_sync(app, project);
         }
     }
     Ok(())
-}
-
-fn schedule_committed_sync(app: &AppHandle, repo: &Path) {
-    if !is_auto_sync_enabled(repo) { return; }
-    let app = app.clone();
-    let repo = repo.to_path_buf();
-    tauri::async_runtime::spawn(async move {
-        if let Err(error) = super::publication_flow::sync(&app, &repo, true, false).await {
-            tracing::warn!(kind = error.kind(), "auto-sync after commit failed");
-        }
-    });
-}
-
-
-fn emit_committed(app: &AppHandle, space_path: &Path, repo_path: &Path) {
-    if let Err(error) = crate::actors::invalidate_repository(app, repo_path) {
-        tracing::warn!(
-            repository = %repo_path.display(),
-            "failed to invalidate actor catalog after commit: {error}"
-        );
-    }
-    let payload = CommittedPayload {
-        space_path: space_path.to_string_lossy().to_string(),
-        repo_path: repo_path.to_string_lossy().to_string(),
-    };
-    if let Err(e) = app.emit(EVENT_COMMITTED, payload) {
-        tracing::warn!("failed to emit {}: {}", EVENT_COMMITTED, e);
-    }
-}
-
-fn is_auto_sync_enabled(repo_path: &Path) -> bool {
-    crate::space::config::effective_git_user_policy(repo_path).auto_sync
 }
 
 fn background_commit_allowed(config_path: &Path, intent: CommitIntent) -> bool {
@@ -1515,44 +1270,6 @@ fn aggregate_message(ops: &[StructuralOp]) -> String {
 
 #[cfg(test)]
 mod tests {
-    #[test]
-    fn failed_manual_save_restores_pending_and_success_retains_new_events() {
-        let space = std::path::PathBuf::from("/space");
-        let pending = std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
-        {
-            let _lease = super::PendingSave {
-                pending: pending.clone(),
-                space: space.clone(),
-                items: vec![super::PendingItem {
-                    op: None,
-                    paths: vec![space.join("old.md"), space.join("new.md")],
-                }],
-            };
-        }
-        assert_eq!(pending.lock().unwrap().get(&space).unwrap().items.len(), 1);
-        let items = pending.lock().unwrap().remove(&space).unwrap().items;
-        let mut lease = super::PendingSave {
-            pending: pending.clone(),
-            space: space.clone(),
-            items,
-        };
-        pending.lock().unwrap().insert(
-            space.clone(),
-            super::PendingBatch {
-                items: vec![super::PendingItem {
-                    op: None,
-                    paths: vec![space.join("later.md")],
-                }],
-            },
-        );
-        lease.complete();
-        drop(lease);
-        assert_eq!(
-            pending.lock().unwrap().get(&space).unwrap().items[0].paths,
-            vec![space.join("later.md")]
-        );
-    }
-
     use super::*;
     use crate::space::config::{write_git_user_policy, write_space_config};
     use crate::space::types::{GitSpaceConfig, GitUserPolicy, SpaceConfig};
@@ -1627,7 +1344,7 @@ mod tests {
                                 .unwrap(),
                                 expected
                             );
-                            assert_eq!(is_auto_sync_enabled(target), sync);
+                            assert_eq!(crate::git::delivery::auto_sync_enabled(target), sync);
                             if expected {
                                 assert_ne!(git(&cli, target, &["rev-parse", "HEAD"]).await, head);
                                 assert_eq!(
@@ -2084,8 +1801,8 @@ mod tests {
             },
         );
 
-        assert!(!is_auto_sync_enabled(&project));
-        assert!(is_auto_sync_enabled(&inline_space));
+        assert!(!crate::git::delivery::auto_sync_enabled(&project));
+        assert!(crate::git::delivery::auto_sync_enabled(&inline_space));
         assert!(!background_commit_allowed(
             &project,
             CommitIntent::StructuralLifecycle
@@ -2129,7 +1846,12 @@ mod tests {
                         let mut triggers = 0;
                         // Production callbacks are dispatched only for a commit receipt.
                         if created {
-                            dispatch_exact_path_commit(repo, repo, |_, _| {}, |_| triggers += 1);
+                            crate::git::delivery::dispatch_commit(
+                                repo,
+                                repo,
+                                |_, _| {},
+                                |_| triggers += 1,
+                            );
                         }
                         assert_eq!(triggers, usize::from(expected && bits & 4 != 0));
                     }
@@ -2151,146 +1873,6 @@ mod tests {
                 }
             }
         }
-    }
-
-    #[test]
-    fn single_file_save_drains_only_related_pending_paths() {
-        let temp = tempfile::tempdir().expect("temp dir");
-        let project = temp.path().join("project");
-        let space = project.join("docs");
-
-        let unrelated = space.join("other.md");
-        let old_path = space.join("old.md");
-        let active = space.join("new.md");
-        let backlink_source = space.join("source.md");
-        let rename_op = StructuralOp::Rename {
-            old: "old.md".to_string(),
-            new: "new.md".to_string(),
-        };
-
-        let items = vec![
-            PendingItem {
-                op: Some(StructuralOp::Create("other.md".to_string())),
-                paths: vec![unrelated.clone()],
-            },
-            PendingItem {
-                op: Some(rename_op.clone()),
-                paths: vec![old_path.clone(), active.clone()],
-            },
-            PendingItem {
-                op: Some(rename_op),
-                paths: vec![backlink_source.clone()],
-            },
-        ];
-        let anchors = vec![active.clone()];
-        let matching_ops: Vec<Option<StructuralOp>> = items
-            .iter()
-            .filter(|item| pending_item_touches(item, &anchors))
-            .map(|item| item.op.clone())
-            .collect();
-        let (drained, kept) = split_related_pending_items(items, &anchors, &matching_ops);
-
-        assert!(drained.contains(&old_path));
-        assert!(drained.contains(&active));
-        assert!(drained.contains(&backlink_source));
-        assert!(!drained.contains(&unrelated));
-
-        assert_eq!(
-            dedupe_paths(kept.into_iter().flat_map(|item| item.paths)),
-            vec![unrelated]
-        );
-    }
-
-    #[test]
-    fn structural_pending_items_keep_expected_paths_by_operation() {
-        let temp = tempfile::tempdir().expect("temp dir");
-        let space = temp.path().join("space");
-        let order = space.join(".svode").join("order.json");
-        let created = space.join("new.md");
-        let deleted = space.join("old.md");
-        let move_old = space.join("from.md");
-        let move_new = space.join("Folder").join("from.md");
-        let reordered = space.join("reordered.md");
-
-        let items = vec![
-            PendingItem {
-                op: Some(StructuralOp::Create("new.md".to_string())),
-                paths: vec![order.clone(), created.clone()],
-            },
-            PendingItem {
-                op: Some(StructuralOp::Delete("old.md".to_string())),
-                paths: vec![order.clone(), deleted.clone()],
-            },
-            PendingItem {
-                op: Some(StructuralOp::Move("from.md".to_string())),
-                paths: vec![order.clone(), move_old.clone(), move_new.clone()],
-            },
-            PendingItem {
-                op: Some(StructuralOp::Reorder),
-                paths: vec![order.clone(), reordered.clone()],
-            },
-        ];
-
-        let (drained, kept) = split_related_pending_items(
-            items,
-            std::slice::from_ref(&move_new),
-            &[Some(StructuralOp::Move("from.md".to_string()))],
-        );
-
-        assert_eq!(
-            dedupe_paths(drained),
-            vec![order.clone(), move_old, move_new]
-        );
-        assert_eq!(kept.len(), 3);
-        assert_eq!(
-            dedupe_paths(kept.into_iter().flat_map(|item| item.paths)),
-            vec![order, created, deleted, reordered]
-        );
-    }
-
-    #[test]
-    fn single_file_save_drains_move_backlink_sources_by_operation() {
-        let temp = tempfile::tempdir().expect("temp dir");
-        let project = temp.path().join("project");
-        let space = project.join("docs");
-
-        let unrelated_create = space.join("draft.md");
-        let old_path = space.join("Source.md");
-        let moved_path = space.join("Folder").join("Source.md");
-        let backlink_source = space.join("Backlink.md");
-        let move_op = StructuralOp::Move("Source.md".to_string());
-
-        let items = vec![
-            PendingItem {
-                op: Some(StructuralOp::Create("draft.md".to_string())),
-                paths: vec![unrelated_create.clone()],
-            },
-            PendingItem {
-                op: Some(move_op.clone()),
-                paths: vec![old_path.clone(), moved_path.clone()],
-            },
-            PendingItem {
-                op: Some(move_op),
-                paths: vec![backlink_source.clone()],
-            },
-        ];
-        let anchors = vec![moved_path.clone()];
-        let matching_ops: Vec<Option<StructuralOp>> = items
-            .iter()
-            .filter(|item| pending_item_touches(item, &anchors))
-            .map(|item| item.op.clone())
-            .collect();
-        let (drained, kept) = split_related_pending_items(items, &anchors, &matching_ops);
-
-        assert!(drained.contains(&old_path));
-        assert!(drained.contains(&moved_path));
-        assert!(drained.contains(&backlink_source));
-        assert!(!drained.contains(&unrelated_create));
-
-        assert_eq!(
-            dedupe_paths(kept.into_iter().flat_map(|item| item.paths)),
-            vec![unrelated_create]
-        );
     }
 
     #[test]

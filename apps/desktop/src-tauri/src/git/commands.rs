@@ -431,7 +431,6 @@ pub async fn git_commit_file(
     let result = super::manual_save::save(
         &app,
         &state,
-        &autocommit,
         project.as_deref(),
         &path,
         Some(normalize_commit_paths(vec![file_path])?),
@@ -445,7 +444,6 @@ pub async fn git_commit_file(
 pub async fn git_commit_all(
     app: AppHandle,
     state: State<'_, GitState>,
-    autocommit: State<'_, Arc<AutocommitService>>,
     project_path: Option<String>,
     space_path: String,
 ) -> Result<super::publication_flow::SaveReport, AppError> {
@@ -453,8 +451,7 @@ pub async fn git_commit_all(
     let project = project_path
         .filter(|path| !path.is_empty())
         .map(PathBuf::from);
-    let result =
-        super::manual_save::save(&app, &state, &autocommit, project.as_deref(), &path, None).await;
+    let result = super::manual_save::save(&app, &state, project.as_deref(), &path, None).await;
     invalidate_actor_space(&app, &path).await;
     result
 }
@@ -463,7 +460,6 @@ pub async fn git_commit_all(
 pub async fn git_commit_paths(
     app: AppHandle,
     state: State<'_, GitState>,
-    autocommit: State<'_, Arc<AutocommitService>>,
     project_path: Option<String>,
     space_path: String,
     file_paths: Vec<String>,
@@ -475,7 +471,6 @@ pub async fn git_commit_paths(
     let result = super::manual_save::save(
         &app,
         &state,
-        &autocommit,
         project.as_deref(),
         &path,
         Some(normalize_commit_paths(file_paths)?),

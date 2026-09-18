@@ -7,6 +7,7 @@ pub mod cli;
 pub mod clone;
 pub mod commands;
 pub mod dates;
+pub(crate) mod delivery;
 pub mod inspection;
 pub mod inspection_stats;
 #[cfg(test)]
@@ -18,6 +19,7 @@ pub(crate) mod local_repair;
 pub(crate) mod manual_save;
 pub mod ops;
 pub(crate) mod operations;
+pub(crate) mod pending;
 pub(crate) mod publication;
 pub(crate) mod publication_flow;
 pub(crate) mod readers;

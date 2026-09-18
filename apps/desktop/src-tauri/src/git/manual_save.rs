@@ -2,7 +2,7 @@ use std::path::Path;
 
 use tauri::AppHandle;
 
-use super::{GitState, access, autocommit::AutocommitService, ops};
+use super::{GitState, access, ops};
 use crate::{
     AppError,
     repo_path::{RootMode, normalize_repo_relative, repo_relative_from_base},
@@ -12,7 +12,6 @@ use crate::{
 pub(crate) async fn save(
     app: &AppHandle,
     state: &GitState,
-    autocommit: &AutocommitService,
     project: Option<&Path>,
     space: &Path,
     requested: Option<Vec<String>>,
@@ -42,7 +41,7 @@ pub(crate) async fn save(
             .map(|path| space.join(path))
             .collect::<Vec<_>>()
     });
-    let mut pending = autocommit.begin_manual_save(space, anchors.as_deref());
+    let mut pending = state.pending().begin_save(space, anchors.as_deref());
     let selected = match requested {
         Some(paths) => paths,
         None => ops::status(&cli, space)

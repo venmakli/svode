@@ -98,8 +98,10 @@ pub fn run() {
             app.manage(routine_stores.clone());
             app.manage(index::IndexState::new());
             app.manage(index::update::IndexUpdateState::new(routine_stores));
+            let pending = app.state::<git::GitState>().pending();
             let service = Arc::new(git::autocommit::AutocommitService::new(
                 app.handle().clone(),
+                pending,
             ));
             app.manage(service);
             if let Err(error) = native_file_drop::clear_materialized_file_drops(app.handle()) {

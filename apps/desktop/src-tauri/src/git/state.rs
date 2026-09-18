@@ -5,6 +5,7 @@ use std::sync::{Arc, OnceLock};
 use super::cli::GitCli;
 use super::operations::Operations;
 use super::ops::GitStatus;
+use super::pending::PendingPaths;
 use crate::AppError;
 
 static DETECTED_CLI: OnceLock<Option<GitCli>> = OnceLock::new();
@@ -21,6 +22,7 @@ pub(super) fn detected_cli() -> Option<GitCli> {
 pub struct GitState {
     pub(crate) cli: Option<GitCli>,
     pub(crate) operations: Arc<Operations>,
+    pending: Arc<PendingPaths>,
     locks: tokio::sync::Mutex<HashMap<PathBuf, Arc<tokio::sync::Mutex<()>>>>,
 }
 
@@ -33,6 +35,7 @@ impl GitState {
         Self {
             cli,
             operations: Arc::default(),
+            pending: Arc::default(),
             locks: tokio::sync::Mutex::new(HashMap::new()),
         }
     }
@@ -58,6 +61,10 @@ impl GitState {
             .entry(canonical)
             .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
             .clone()
+    }
+
+    pub(crate) fn pending(&self) -> Arc<PendingPaths> {
+        self.pending.clone()
     }
 
     pub(crate) async fn status(
@@ -123,6 +130,7 @@ mod tests {
         let state = GitState {
             cli: None,
             operations: Arc::default(),
+            pending: Arc::default(),
             locks: tokio::sync::Mutex::new(HashMap::new()),
         };
 
