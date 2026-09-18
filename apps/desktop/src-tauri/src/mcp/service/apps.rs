@@ -6,15 +6,8 @@ pub(super) async fn validate_app_manifest(
     let result = crate::apps::manifest::validate_manifest_source(&args.yaml);
     let structured = match result {
         Ok(runtime) => {
-            let (runtime_type, settings_references) = match runtime {
-                crate::apps::manifest::ValidatedRuntime::Static { .. } => ("static", Vec::new()),
-                crate::apps::manifest::ValidatedRuntime::Url { .. } => ("url", Vec::new()),
-                crate::apps::manifest::ValidatedRuntime::Process(runtime) => (
-                    "process",
-                    crate::apps::environment::references(&runtime.environment_declaration)
-                        .expect("manifest validation checked environment references"),
-                ),
-            };
+            let runtime_type = runtime.runtime_type().as_str();
+            let settings_references = runtime.settings_references();
             json!({
                 "valid": true,
                 "runtimeType": runtime_type,

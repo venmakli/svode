@@ -27,6 +27,16 @@ pub(crate) enum AppRuntimeType {
     Url,
 }
 
+impl AppRuntimeType {
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Static => "static",
+            Self::Process => "process",
+            Self::Url => "url",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct AppManifestDiagnostic {
@@ -40,6 +50,23 @@ pub(crate) enum ValidatedRuntime {
     Static { public_root: String, entry: String },
     Process(AppProcessRuntime),
     Url { url: String },
+}
+
+impl ValidatedRuntime {
+    pub(crate) const fn runtime_type(&self) -> AppRuntimeType {
+        match self {
+            Self::Static { .. } => AppRuntimeType::Static,
+            Self::Process(_) => AppRuntimeType::Process,
+            Self::Url { .. } => AppRuntimeType::Url,
+        }
+    }
+
+    pub(crate) fn settings_references(&self) -> Vec<String> {
+        match self {
+            Self::Process(runtime) => runtime.settings_references(),
+            Self::Static { .. } | Self::Url { .. } => Vec::new(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -56,6 +83,13 @@ pub(crate) struct AppProcessRuntime {
     pub url: String,
     pub environment: BTreeMap<String, String>,
     pub environment_declaration: BTreeMap<String, String>,
+}
+
+impl AppProcessRuntime {
+    pub(crate) fn settings_references(&self) -> Vec<String> {
+        environment::references(&self.environment_declaration)
+            .expect("validated manifest contains valid environment references")
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -595,7 +629,7 @@ fn required_http_url(
     path: &str,
 ) -> Result<String, Vec<AppManifestDiagnostic>> {
     let url = required_string(map, key, path)?;
-    let parsed = tauri::Url::parse(&url).map_err(|_| {
+    let parsed = url::Url::parse(&url).map_err(|_| {
         vec![diagnostic(
             "invalid_url",
             path,
@@ -778,6 +812,23 @@ mod tests {
             .code,
             "resource_limit"
         );
+    }
+
+    #[test]
+    fn exposes_runtime_type_and_sorted_reference_names_from_the_validated_manifest() {
+        let source = "runtime:\n  type: process\n  start:\n    argv: [tool]\n  url: http://127.0.0.1:3210\nenvironment:\n  FIRST: ${SECOND}-${FIRST}\n  LITERAL: $${IGNORED}\n";
+        let runtime = validate_manifest_source(source).unwrap();
+        let temp = tempfile::tempdir().unwrap();
+        fs::write(temp.path().join(APP_MANIFEST_NAME), source).unwrap();
+        let runtime_from_file = read_and_validate_manifest(temp.path())
+            .unwrap()
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(runtime.runtime_type(), AppRuntimeType::Process);
+        assert_eq!(runtime.runtime_type().as_str(), "process");
+        assert_eq!(runtime.settings_references(), ["FIRST", "SECOND"]);
+        assert_eq!(runtime_from_file, runtime);
     }
 
     #[test]

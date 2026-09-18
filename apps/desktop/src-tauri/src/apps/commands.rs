@@ -5,7 +5,6 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_opener::OpenerExt;
 
-use super::environment;
 use super::manifest::{
     AppManifestDiagnostic, AppProcessRuntime, AppRuntimeType, ValidatedRuntime,
     read_and_validate_manifest, resolve_app_owner,
@@ -406,8 +405,7 @@ async fn resolve_runtime_environment(
     owner_path: &Path,
     runtime: &mut AppProcessRuntime,
 ) -> Result<Vec<MissingAppVariable>, AppError> {
-    let references = environment::references(&runtime.environment_declaration)
-        .map_err(|error| AppError::General(error.message))?;
+    let references = runtime.settings_references();
     let owner_directory = system_path::user_facing_path(owner_path);
     let context = AppVariableOwnerContext {
         scope: VariableScope {

@@ -1,5 +1,4 @@
-use crate::apps::environment;
-use crate::apps::manifest::{ValidatedRuntime, read_and_validate_manifest, resolve_app_owner};
+use crate::apps::manifest::{read_and_validate_manifest, resolve_app_owner};
 use crate::space::app_variables::mutations::{self, Mutation, VariableMutationResult};
 use crate::space::app_variables::{
     self, AppVariableContextInput, AppVariableOwnerContext, AppVariablesCatalog,
@@ -227,10 +226,7 @@ pub(crate) fn resolve_context(
         &input.owner_path,
     )?;
     let references = match read_and_validate_manifest(&owner.owner_path)? {
-        Some(Ok(ValidatedRuntime::Process(runtime))) => {
-            environment::references(&runtime.environment_declaration)
-                .map_err(|e| AppError::General(e.message))?
-        }
+        Some(Ok(runtime)) => runtime.settings_references(),
         _ => Vec::new(),
     };
     let owner_directory = system_path::user_facing_path(&owner.owner_path);
