@@ -9,7 +9,7 @@ use super::model::{
     CollectionEvent, ResolvedRoutineOwner, RoutineAction, RoutineDefinition,
     RoutineDispatchBlockedCode, RoutineDispatchResult, RoutineOwnerKind, RoutineTrigger,
 };
-use super::{cache, service};
+use super::{RoutineStoreState, cache, service};
 use crate::AppError;
 use crate::agent_actors;
 use crate::agent_actors::launch::{AgentLaunchResolution, AgentLaunchValidationCode};
@@ -45,6 +45,7 @@ pub(crate) async fn dispatch_explicit(
     expected_fingerprint: Option<String>,
     git_state: &GitState,
     access_state: &RepositoryAccessState,
+    routine_stores: &RoutineStoreState,
     index_state: &IndexState,
     terminal_manager: &TerminalManager,
 ) -> Result<RoutineDispatchResult, AppError> {
@@ -56,6 +57,7 @@ pub(crate) async fn dispatch_explicit(
         DispatchKind::Manual,
         git_state,
         access_state,
+        routine_stores,
         index_state,
         terminal_manager,
     )
@@ -71,6 +73,7 @@ pub(crate) async fn dispatch_event(
     let payload = serde_json::from_str(&event.payload_json)?;
     let git_state = app.state::<GitState>();
     let access_state = app.state::<RepositoryAccessState>();
+    let routine_stores = app.state::<Arc<RoutineStoreState>>();
     let index_state = app.state::<IndexState>();
     let terminal_manager = app.state::<TerminalManager>();
     dispatch_routine(
@@ -85,6 +88,7 @@ pub(crate) async fn dispatch_event(
         },
         &git_state,
         &access_state,
+        &routine_stores,
         &index_state,
         &terminal_manager,
     )
@@ -151,6 +155,7 @@ pub(crate) async fn dispatch_scheduled(
 ) -> Result<RoutineDispatchResult, AppError> {
     let git_state = app.state::<GitState>();
     let access_state = app.state::<RepositoryAccessState>();
+    let routine_stores = app.state::<Arc<RoutineStoreState>>();
     let index_state = app.state::<IndexState>();
     let terminal_manager = app.state::<TerminalManager>();
     dispatch_routine(
@@ -161,6 +166,7 @@ pub(crate) async fn dispatch_scheduled(
         DispatchKind::Scheduled,
         &git_state,
         &access_state,
+        &routine_stores,
         &index_state,
         &terminal_manager,
     )
@@ -222,6 +228,7 @@ pub(super) async fn dispatch_routine(
     dispatch_kind: DispatchKind,
     git_state: &GitState,
     access_state: &RepositoryAccessState,
+    routine_stores: &RoutineStoreState,
     index_state: &IndexState,
     terminal_manager: &TerminalManager,
 ) -> Result<RoutineDispatchResult, AppError> {
@@ -322,7 +329,9 @@ pub(super) async fn dispatch_routine(
         }
     };
 
-    let pool = index_state.get_or_create_routines(&owner.index_key).await?;
+    let pool = routine_stores
+        .get_or_create_for_index(index_state, &owner.index_key)
+        .await?;
     let live_pty_ids = service::live_agent_pty_ids(terminal_manager)?;
     if let Some(run) = cache::latest_run(&pool, &owner.descriptor.owner_path, &routine_id).await?
         && run.blocks_relaunch(&live_pty_ids)

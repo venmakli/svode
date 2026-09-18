@@ -15,8 +15,8 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use tauri::{AppHandle, Emitter, Manager};
-use tokio::sync::{Mutex, Semaphore};
+use tauri::{AppHandle, Emitter};
+use tokio::sync::Mutex;
 
 use crate::error::AppError;
 use crate::files::BacklinkIndex;
@@ -28,12 +28,11 @@ use crate::files::backlinks::{
 use crate::files::tree_policy::TreeIgnorePolicy;
 use crate::git::access::ensure_mutation_paths_were_authorized;
 use crate::repo_path::{RootMode, normalize_repo_relative, repo_relative_from_path};
+use crate::routines::RoutineStoreState;
 use crate::space::types::{SpaceConfig, SpaceStatus};
 use crate::space::{config, project};
 use crate::storage::lfs::LfsState;
 use crate::system_path;
-
-const REINDEX_PARALLELISM: usize = 4;
 
 /// Normalize a relative path to forward slashes for cross-platform DB storage.
 pub(crate) fn normalize_rel(path: &str) -> String {
@@ -273,10 +272,8 @@ fn normalize_abs_path(path: &Path) -> Option<PathBuf> {
 /// Holds one pool per `IndexKey` — root project + each ready child space —
 /// plus matching reindex serialization locks and runtime backlink indices.
 pub struct IndexState {
-    runtime: Option<AppHandle>,
     pools: Arc<Mutex<lifecycle::IndexPools>>,
-    routine_pools: Mutex<HashMap<IndexKey, SqlitePool>>,
-    routine_storage_locks: Mutex<HashMap<IndexKey, Arc<Mutex<()>>>>,
+    routine_stores: Arc<RoutineStoreState>,
     /// Per-key serialization lock for `full_reindex`. Two rapid `open_project`
     /// calls would otherwise spawn two concurrent reindexes against the same
     /// DB — correct under SQLite serialization, but doubles the work and
@@ -313,31 +310,21 @@ impl Drop for ReindexActiveGuard {
 }
 
 impl IndexState {
+    #[cfg(test)]
     pub fn new() -> Self {
+        Self::with_routine_stores(Arc::new(RoutineStoreState::new()))
+    }
+
+    pub fn with_routine_stores(routine_stores: Arc<RoutineStoreState>) -> Self {
         Self {
-            runtime: None,
             pools: Arc::new(Mutex::new(lifecycle::IndexPools::default())),
-            routine_pools: Mutex::new(HashMap::new()),
-            routine_storage_locks: Mutex::new(HashMap::new()),
+            routine_stores,
             reindex_locks: Mutex::new(HashMap::new()),
             reindex_active: Mutex::new(HashMap::new()),
             reconcile_active: Mutex::new(HashMap::new()),
             backlinks: Mutex::new(HashMap::new()),
             spaces_cache: Mutex::new(HashMap::new()),
             lfs_states: Mutex::new(HashMap::new()),
-        }
-    }
-
-    pub fn for_runtime(app: AppHandle) -> Self {
-        Self {
-            runtime: Some(app),
-            ..Self::new()
-        }
-    }
-
-    async fn repair_store_scope(&self, key: &IndexKey, dir: &Path) {
-        if let Some(app) = &self.runtime {
-            crate::git::local_repair::repair_scope_best_effort(app, key.project(), dir).await;
         }
     }
 
@@ -1187,7 +1174,6 @@ impl IndexState {
             return Ok(pool);
         }
         let dir = self.dir_for_key(key).await?;
-        self.repair_store_scope(key, &dir).await;
         lifecycle::open(pools, key.clone(), dir).await
     }
 
@@ -1195,49 +1181,8 @@ impl IndexState {
     /// target. Definitions, baselines, queues, runs, and scheduler claims are
     /// never stored in the rebuildable search projection.
     pub async fn get_or_create_routines(&self, key: &IndexKey) -> Result<SqlitePool, AppError> {
-        if let Some(pool) = self.routine_pools.lock().await.get(key).cloned() {
-            return Ok(pool);
-        }
-
-        let lock = {
-            let mut locks = self.routine_storage_locks.lock().await;
-            locks
-                .entry(key.clone())
-                .or_insert_with(|| Arc::new(Mutex::new(())))
-                .clone()
-        };
-        let _guard = lock.lock().await;
-        if let Some(pool) = self.routine_pools.lock().await.get(key).cloned() {
-            return Ok(pool);
-        }
-
         let dir = self.dir_for_key(key).await?;
-        self.repair_store_scope(key, &dir).await;
-        let previously_created = crate::routines::authority::storage_was_created(&dir)?;
-        let outcome = crate::routines::storage::open_pool(
-            &crate::routines::storage::database_path(&dir),
-            previously_created,
-        )
-        .await?;
-        if let Some(evidence) = outcome.recovery {
-            if let Err(error) = crate::routines::authority::record_recovery(&dir, evidence) {
-                outcome.pool.close().await;
-                return Err(error);
-            }
-        } else if !previously_created
-            && let Err(error) = crate::routines::authority::mark_storage_ready(&dir)
-        {
-            outcome.pool.close().await;
-            return Err(error);
-        }
-
-        let mut pools = self.routine_pools.lock().await;
-        if let Some(existing) = pools.get(key) {
-            outcome.pool.close().await;
-            return Ok(existing.clone());
-        }
-        pools.insert(key.clone(), outcome.pool.clone());
-        Ok(outcome.pool)
+        self.routine_stores.get_or_create(key, &dir).await
     }
 
     pub(crate) async fn sync_routine_projection(&self, key: &IndexKey) -> Result<(), AppError> {
@@ -1283,27 +1228,16 @@ impl IndexState {
     }
 
     async fn close_key_runtime(&self, key: &IndexKey) {
-        let routine_pool = self.routine_pools.lock().await.remove(key);
-        if let Some(pool) = routine_pool {
-            tracing::info!("closing routines pool for {:?}", key);
-            pool.close().await;
-        }
         self.backlinks.lock().await.remove(key);
         self.reindex_locks.lock().await.remove(key);
         self.reindex_active.lock().await.remove(key);
         self.reconcile_active.lock().await.remove(key);
         self.lfs_states.lock().await.remove(key);
-        self.routine_storage_locks.lock().await.remove(key);
     }
 
-    /// Open root + all ready child-space pools for `project` and reconcile
-    /// their cached source manifests in the background (Semaphore-4 limit).
-    ///
-    /// Order: cache snapshot → open pools → spawn reconciliation. Watcher
-    /// writes share the per-pool lock and advance generation, so a stale
-    /// reconciliation plan retries instead of overwriting newer rows.
-    pub async fn open_project(&self, app: &AppHandle, project: &Path) -> Result<(), AppError> {
-        crate::git::local_repair::repair_project(app, project).await;
+    /// Open root + all ready child-space pools for `project` and return the
+    /// prepared keys to the Desktop runtime that owns background tasks.
+    pub async fn open_project(&self, project: &Path) -> Result<Vec<IndexKey>, AppError> {
         let cfg = config::read_space_config(project)?;
         let cache = ProjectSpacesCache::from_config(project, &cfg);
         let ready_ids: Vec<String> = cache
@@ -1336,45 +1270,15 @@ impl IndexState {
             if let Err(e) = self.get_or_create(key).await {
                 tracing::warn!("open pool failed for {:?}: {e}", key);
             }
-            if let Err(e) = self.get_or_create_routines(key).await {
-                tracing::warn!("open routines pool failed for {:?}: {e}", key);
-            }
         }
 
-        // Spawn cached-first manifest reconciliation. A new or incompatible
-        // pool falls back to one full rebuild inside run_reconciliation.
-        let semaphore = Arc::new(Semaphore::new(REINDEX_PARALLELISM));
-        let app_handle = app.clone();
-        for key in keys {
-            let sem = semaphore.clone();
-            let app = app_handle.clone();
-            tokio::spawn(async move {
-                let _permit = match sem.acquire_owned().await {
-                    Ok(p) => p,
-                    Err(_) => return,
-                };
-                let state = app.state::<IndexState>();
-                if let Err(e) = state.run_reconciliation(&key).await {
-                    tracing::warn!("background reconciliation failed for {:?}: {e}", key);
-                }
-            });
-        }
-
-        Ok(())
+        Ok(keys)
     }
 
     /// Close every pool belonging to `project`.
     pub async fn close_project(&self, project: &Path) {
-        let mut keys_to_close =
+        let keys_to_close =
             lifecycle::close(self.pools.clone().lock_owned().await, None, Some(project)).await;
-        keys_to_close.extend(
-            self.routine_pools
-                .lock()
-                .await
-                .keys()
-                .filter(|key| key.project() == project)
-                .cloned(),
-        );
         for key in keys_to_close {
             self.close_key_runtime(&key).await;
         }
@@ -1403,12 +1307,11 @@ impl IndexState {
     /// closed, status_by_id records the ghost state for resolver errors).
     pub async fn on_space_added(
         &self,
-        app: &AppHandle,
         project: &Path,
         space_id: &str,
         folder_name: &str,
         status: SpaceStatus,
-    ) {
+    ) -> Option<IndexKey> {
         {
             let mut cache = self.spaces_cache.lock().await;
             let entry = cache.entry(project.to_path_buf()).or_default();
@@ -1430,15 +1333,8 @@ impl IndexState {
         self.invalidate_project_backlinks(project).await;
 
         if !matches!(status, SpaceStatus::Ready) {
-            return;
+            return None;
         }
-
-        crate::git::local_repair::repair_scope_best_effort(
-            app,
-            project,
-            &project.join(folder_name),
-        )
-        .await;
 
         let key = IndexKey::Space {
             project: project.to_path_buf(),
@@ -1446,16 +1342,9 @@ impl IndexState {
         };
         if let Err(e) = self.get_or_create(&key).await {
             tracing::warn!("on_space_added: get_or_create failed: {e}");
-            return;
+            return None;
         }
-
-        let app_handle = app.clone();
-        tokio::spawn(async move {
-            let state = app_handle.state::<IndexState>();
-            if let Err(e) = state.run_full_reindex(&key).await {
-                tracing::warn!("on_space_added full_reindex failed: {e}");
-            }
-        });
+        Some(key)
     }
 
     /// Handle `space:removed`. Drops cache + pool. Idempotent: ghost-state
@@ -1483,11 +1372,10 @@ impl IndexState {
     /// open/close the pool to match.
     pub async fn on_space_status_changed(
         &self,
-        app: &AppHandle,
         project: &Path,
         space_id: &str,
         new_status: SpaceStatus,
-    ) {
+    ) -> Option<IndexKey> {
         {
             let mut cache = self.spaces_cache.lock().await;
             if let Some(entry) = cache.get_mut(project) {
@@ -1513,25 +1401,15 @@ impl IndexState {
         };
         match new_status {
             SpaceStatus::Ready => {
-                if let Ok(dir) = self.dir_for_key(&key).await {
-                    crate::git::local_repair::repair_scope_best_effort(app, project, &dir).await;
-                }
                 if let Err(e) = self.get_or_create(&key).await {
                     tracing::warn!("status_changed→Ready: get_or_create failed: {e}");
-                    return;
+                    return None;
                 }
-                let app_handle = app.clone();
-                tokio::spawn(async move {
-                    let state = app_handle.state::<IndexState>();
-                    if let Err(e) = state.run_full_reindex(&key).await {
-                        tracing::warn!("status_changed→Ready full_reindex failed: {e}");
-                    }
-                });
+                Some(key)
             }
             SpaceStatus::Missing | SpaceStatus::Broken => {
-                self.set_lfs_state_with(app, &key, LfsState::NotApplicable)
-                    .await;
                 self.close_key(&key).await;
+                None
             }
         }
     }
@@ -1543,12 +1421,7 @@ impl IndexState {
     /// pools for newcomers and closes them for departures, without disturbing
     /// the pools that survived. Existing pools whose status is unchanged are
     /// untouched (no reindex storm).
-    pub async fn refresh_after_root_pull(
-        &self,
-        app: &AppHandle,
-        project: &Path,
-    ) -> Result<(), AppError> {
-        crate::git::local_repair::repair_project(app, project).await;
+    pub async fn refresh_after_root_pull(&self, project: &Path) -> Result<Vec<IndexKey>, AppError> {
         let cfg = config::read_space_config(project)?;
         let fresh = ProjectSpacesCache::from_config(project, &cfg);
 
@@ -1565,16 +1438,19 @@ impl IndexState {
                 .unwrap_or_default()
         };
 
+        let mut tasks = Vec::new();
         for (id, status) in &fresh.status_by_id {
             match known.get(id) {
                 None => {
                     let folder = fresh.folder_by_id.get(id).cloned().unwrap_or_default();
-                    self.on_space_added(app, project, id, &folder, *status)
-                        .await;
+                    if let Some(key) = self.on_space_added(project, id, &folder, *status).await {
+                        tasks.push(key);
+                    }
                 }
                 Some(prev) if prev != status => {
-                    self.on_space_status_changed(app, project, id, *status)
-                        .await;
+                    if let Some(key) = self.on_space_status_changed(project, id, *status).await {
+                        tasks.push(key);
+                    }
                 }
                 _ => {}
             }
@@ -1587,7 +1463,7 @@ impl IndexState {
         }
         self.invalidate_project_backlinks(project).await;
 
-        Ok(())
+        Ok(tasks)
     }
 
     /// Snapshot every `IndexKey` belonging to this project — the root key
@@ -1630,15 +1506,6 @@ impl IndexState {
             }
         }
         Ok(keys)
-    }
-
-    pub async fn routine_owner_paths(&self, key: &IndexKey) -> Result<Vec<String>, AppError> {
-        let pool = self.get_or_create_routines(key).await?;
-        Ok(sqlx::query_scalar::<_, String>(
-            "SELECT owner_path FROM routine_owner_roots ORDER BY owner_path",
-        )
-        .fetch_all(&pool)
-        .await?)
     }
 
     /// Reverse lookup for callers that only know the absolute space directory

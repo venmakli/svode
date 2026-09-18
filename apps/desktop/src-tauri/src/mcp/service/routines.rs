@@ -5,6 +5,7 @@ use crate::routines::{
     RoutineDispatchResult, RoutineOwnerInputKind, RoutineRow,
 };
 use crate::terminal::TerminalManager;
+use std::sync::Arc;
 
 const DEFAULT_ROUTINE_LIMIT: i64 = 50;
 const MAX_ROUTINE_LIMIT: i64 = 200;
@@ -179,12 +180,19 @@ pub(super) async fn list_routines(
     args: ListRoutinesArgs,
 ) -> Result<ToolCallResult, McpBusinessError> {
     let owner = resolve_routine_owner(app, &args.space_id, args.collection_path.as_deref()).await?;
+    let routine_stores = app.state::<Arc<crate::routines::RoutineStoreState>>();
     let index_state = app.state::<IndexState>();
     let terminal_manager = app.state::<TerminalManager>();
-    let snapshot =
-        crate::routines::service::read_catalog(&index_state, &terminal_manager, &owner).await?;
+    let snapshot = crate::routines::service::read_catalog(
+        &routine_stores,
+        &index_state,
+        &terminal_manager,
+        &owner,
+    )
+    .await?;
     let authority = authority_projection(
-        crate::routines::service::read_automatic_authority(&index_state, &owner).await,
+        crate::routines::service::read_automatic_authority(&routine_stores, &index_state, &owner)
+            .await,
     );
     let structured = list_payload(&snapshot, authority, args.limit, args.offset);
     let returned = structured["routines"]
@@ -204,13 +212,20 @@ pub(super) async fn get_routine(
     args: GetRoutineArgs,
 ) -> Result<ToolCallResult, McpBusinessError> {
     let owner = resolve_routine_owner(app, &args.space_id, args.collection_path.as_deref()).await?;
+    let routine_stores = app.state::<Arc<crate::routines::RoutineStoreState>>();
     let index_state = app.state::<IndexState>();
     let terminal_manager = app.state::<TerminalManager>();
-    let snapshot =
-        crate::routines::service::read_catalog(&index_state, &terminal_manager, &owner).await?;
+    let snapshot = crate::routines::service::read_catalog(
+        &routine_stores,
+        &index_state,
+        &terminal_manager,
+        &owner,
+    )
+    .await?;
     let row = find_routine(&snapshot, &args.routine_id)?;
     let authority = authority_projection(
-        crate::routines::service::read_automatic_authority(&index_state, &owner).await,
+        crate::routines::service::read_automatic_authority(&routine_stores, &index_state, &owner)
+            .await,
     );
     Ok(ToolCallResult::ok(
         format!("Read routine {} for the explicit owner.", args.routine_id),
@@ -223,6 +238,7 @@ pub(super) async fn create_routine(
     args: CreateRoutineArgs,
 ) -> Result<ToolCallResult, McpBusinessError> {
     let owner = resolve_routine_owner(app, &args.space_id, args.collection_path.as_deref()).await?;
+    let routine_stores = app.state::<Arc<crate::routines::RoutineStoreState>>();
     let index_state = app.state::<IndexState>();
     let terminal_manager = app.state::<TerminalManager>();
     let git_state = app.state::<GitState>();
@@ -234,6 +250,7 @@ pub(super) async fn create_routine(
         mutation_policy(args.confirm_automatic_execution.unwrap_or(false)),
         &git_state,
         &access_state,
+        &routine_stores,
         &index_state,
         &terminal_manager,
     )
@@ -247,6 +264,7 @@ pub(super) async fn update_routine(
 ) -> Result<ToolCallResult, McpBusinessError> {
     validate_mutation_identity(&args.routine_id, &args.expected_fingerprint)?;
     let owner = resolve_routine_owner(app, &args.space_id, args.collection_path.as_deref()).await?;
+    let routine_stores = app.state::<Arc<crate::routines::RoutineStoreState>>();
     let index_state = app.state::<IndexState>();
     let terminal_manager = app.state::<TerminalManager>();
     let git_state = app.state::<GitState>();
@@ -260,6 +278,7 @@ pub(super) async fn update_routine(
         mutation_policy(args.confirm_automatic_execution.unwrap_or(false)),
         &git_state,
         &access_state,
+        &routine_stores,
         &index_state,
         &terminal_manager,
     )
@@ -273,6 +292,7 @@ pub(super) async fn delete_routine(
 ) -> Result<ToolCallResult, McpBusinessError> {
     validate_mutation_identity(&args.routine_id, &args.expected_fingerprint)?;
     let owner = resolve_routine_owner(app, &args.space_id, args.collection_path.as_deref()).await?;
+    let routine_stores = app.state::<Arc<crate::routines::RoutineStoreState>>();
     let index_state = app.state::<IndexState>();
     let terminal_manager = app.state::<TerminalManager>();
     let git_state = app.state::<GitState>();
@@ -284,6 +304,7 @@ pub(super) async fn delete_routine(
         args.expected_fingerprint,
         &git_state,
         &access_state,
+        &routine_stores,
         &index_state,
         &terminal_manager,
     )
@@ -312,6 +333,7 @@ pub(super) async fn run_routine(
         Some(args.expected_fingerprint),
         &app.state::<GitState>(),
         &app.state::<crate::git::access::RepositoryAccessState>(),
+        &app.state::<Arc<crate::routines::RoutineStoreState>>(),
         &app.state::<IndexState>(),
         &app.state::<TerminalManager>(),
     )
@@ -444,6 +466,7 @@ async fn mutation_result(
         } => {
             let authority = authority_projection(
                 crate::routines::service::read_automatic_authority(
+                    &app.state::<Arc<crate::routines::RoutineStoreState>>(),
                     &app.state::<IndexState>(),
                     owner,
                 )

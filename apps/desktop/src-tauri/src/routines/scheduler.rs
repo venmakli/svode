@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use chrono::{DateTime, SecondsFormat, TimeDelta, Utc};
@@ -21,6 +21,7 @@ use crate::git::access::{
 };
 use crate::git::commands::{GitState, require_cli};
 use crate::index::IndexState;
+use crate::routines::RoutineStoreState;
 use crate::terminal::TerminalManager;
 
 const SCHEDULER_INTERVAL: Duration = Duration::from_secs(60);
@@ -71,7 +72,9 @@ async fn tick_project(
     project_path: &Path,
 ) -> Result<(), AppError> {
     let index_state = app.state::<IndexState>();
-    let owners = authority::discover_project_owners(&index_state, project_path).await?;
+    let routine_stores = app.state::<Arc<RoutineStoreState>>();
+    let owners =
+        authority::discover_project_owners(&routine_stores, &index_state, project_path).await?;
     for owner in owners {
         if let Err(error) = tick_owner(app, &owner).await {
             tracing::warn!(
@@ -85,8 +88,11 @@ async fn tick_project(
 
 async fn tick_owner(app: &AppHandle, owner: &ResolvedRoutineOwner) -> Result<(), AppError> {
     let index_state = app.state::<IndexState>();
+    let routine_stores = app.state::<Arc<RoutineStoreState>>();
     let terminal_manager = app.state::<TerminalManager>();
-    let pool = index_state.get_or_create_routines(&owner.index_key).await?;
+    let pool = routine_stores
+        .get_or_create_for_index(&index_state, &owner.index_key)
+        .await?;
     let automatic_authority = match authority::read(owner) {
         Ok(enabled) => enabled,
         Err(error) => {

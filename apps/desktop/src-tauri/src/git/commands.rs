@@ -587,7 +587,11 @@ pub(crate) async fn refresh_synced_repository(app: &AppHandle, cli: &GitCli, pat
     // no-op since child spaces don't carry their own `spaces` list under
     // the flat-space invariant.
     if let IndexKey::Root(ref project) = key {
-        if let Err(e) = index_state.refresh_after_root_pull(&app, project).await {
+        if let Err(e) = app
+            .state::<crate::project_runtime::ProjectRuntimeState>()
+            .refresh_after_root_pull(app, project)
+            .await
+        {
             tracing::warn!("refresh_after_root_pull failed: {e}");
         }
     }

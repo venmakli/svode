@@ -22,6 +22,7 @@ mod media;
 mod native_file_drop;
 mod page;
 mod process;
+mod project_runtime;
 mod properties;
 mod repo_path;
 mod routines;
@@ -67,6 +68,7 @@ pub fn run() {
         .manage(identity::IdentityState::new())
         .manage(git::access::RepositoryAccessState::new())
         .manage(routines::RoutineSchedulerState::new())
+        .manage(project_runtime::ProjectRuntimeState::new())
         .manage(app_windows::AppWindowState::new())
         .manage(space::settings::AppSettingsState::new())
         .manage(mcp::active::ActiveProjectState::new())
@@ -92,7 +94,9 @@ pub fn run() {
             app_windows::handle_window_event(app, window, event);
         })
         .setup(|app| {
-            app.manage(index::IndexState::for_runtime(app.handle().clone()));
+            let routine_stores = Arc::new(routines::RoutineStoreState::new());
+            app.manage(routine_stores.clone());
+            app.manage(index::IndexState::with_routine_stores(routine_stores));
             let service = Arc::new(git::autocommit::AutocommitService::new(
                 app.handle().clone(),
             ));

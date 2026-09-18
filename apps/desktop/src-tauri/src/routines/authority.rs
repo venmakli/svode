@@ -7,6 +7,7 @@ use super::service;
 use super::storage::RecoveryEvidence;
 use crate::AppError;
 use crate::index::{IndexKey, IndexState};
+use crate::routines::RoutineStoreState;
 use crate::space::config;
 use crate::space::types::{RoutinesLocalConfig, RoutinesRecoveryLocalConfig};
 
@@ -108,6 +109,7 @@ pub(crate) fn acknowledge_recovery(space_dir: &Path) -> Result<(), AppError> {
 }
 
 pub(crate) async fn discover_project_owners(
+    routine_stores: &RoutineStoreState,
     index_state: &IndexState,
     project_path: &Path,
 ) -> Result<Vec<ResolvedRoutineOwner>, AppError> {
@@ -126,7 +128,7 @@ pub(crate) async fn discover_project_owners(
             ".",
             RoutineOwnerInputKind::RegisteredSpace,
         )?);
-        for owner_path in index_state.routine_owner_paths(&key).await? {
+        for owner_path in routine_stores.owner_paths(index_state, &key).await? {
             owners.push(service::resolve_owner(
                 &project_path,
                 &space_path,

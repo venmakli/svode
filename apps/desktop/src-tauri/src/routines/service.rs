@@ -2,6 +2,8 @@ use std::collections::HashSet;
 use std::fs::{self, File, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
+#[cfg(test)]
+use std::sync::Arc;
 
 use chrono::{SecondsFormat, Utc};
 use tauri::AppHandle;
@@ -23,6 +25,7 @@ use crate::git::access::{
 use crate::git::commands::{GitState, require_cli};
 use crate::index::{IndexKey, IndexState};
 use crate::repo_path::{RootMode, normalize_repo_relative};
+use crate::routines::RoutineStoreState;
 use crate::space::config;
 use crate::terminal::TerminalManager;
 
@@ -213,12 +216,16 @@ pub(crate) fn resolve_owner(
 }
 
 pub(crate) async fn read_catalog(
+    routine_stores: &RoutineStoreState,
     index_state: &IndexState,
     terminal_manager: &TerminalManager,
     owner: &ResolvedRoutineOwner,
 ) -> Result<RoutineCatalogSnapshot, AppError> {
     let mut snapshot = discover_owner(owner).await?;
-    match index_state.get_or_create_routines(&owner.index_key).await {
+    match routine_stores
+        .get_or_create_for_index(index_state, &owner.index_key)
+        .await
+    {
         Ok(pool) => {
             if let Err(error) = cache::replace_owner_snapshot(&pool, &snapshot).await {
                 tracing::warn!(
@@ -359,10 +366,13 @@ pub(crate) async fn read_catalog(
 }
 
 pub(crate) async fn read_automatic_authority(
+    routine_stores: &RoutineStoreState,
     index_state: &IndexState,
     owner: &ResolvedRoutineOwner,
 ) -> Result<bool, AppError> {
-    index_state.get_or_create_routines(&owner.index_key).await?;
+    routine_stores
+        .get_or_create_for_index(index_state, &owner.index_key)
+        .await?;
     authority::read(owner)
 }
 
@@ -383,6 +393,7 @@ pub(crate) async fn create_managed(
     policy: RoutineMutationPolicy,
     git_state: &GitState,
     access_state: &RepositoryAccessState,
+    routine_stores: &RoutineStoreState,
     index_state: &IndexState,
     terminal_manager: &TerminalManager,
 ) -> Result<ManagedRoutineMutationResult, AppError> {
@@ -416,8 +427,14 @@ pub(crate) async fn create_managed(
         .await
         .map_err(blocking_task_error)??;
     let changed_path = definition_path(&owner, &filename);
-    let (snapshot, mut warnings) =
-        projection_after_write(index_state, terminal_manager, &owner, &changed_path).await?;
+    let (snapshot, mut warnings) = projection_after_write(
+        routine_stores,
+        index_state,
+        terminal_manager,
+        &owner,
+        &changed_path,
+    )
+    .await?;
     if filename_projection.is_lossy() {
         warnings.push(
             RoutineDiagnostic::new(
@@ -471,6 +488,7 @@ pub(crate) async fn update_managed(
     policy: RoutineMutationPolicy,
     git_state: &GitState,
     access_state: &RepositoryAccessState,
+    routine_stores: &RoutineStoreState,
     index_state: &IndexState,
     terminal_manager: &TerminalManager,
 ) -> Result<ManagedRoutineMutationResult, AppError> {
@@ -557,8 +575,14 @@ pub(crate) async fn update_managed(
         }
     };
     let current_path = definition_path(&owner, &current_filename);
-    let (snapshot, mut warnings) =
-        projection_after_write(index_state, terminal_manager, &owner, &current_path).await?;
+    let (snapshot, mut warnings) = projection_after_write(
+        routine_stores,
+        index_state,
+        terminal_manager,
+        &owner,
+        &current_path,
+    )
+    .await?;
     if let Some(projection) = filename_projection
         && projection.is_lossy()
     {
@@ -663,6 +687,7 @@ pub(crate) async fn delete_managed(
     expected_fingerprint: String,
     git_state: &GitState,
     access_state: &RepositoryAccessState,
+    routine_stores: &RoutineStoreState,
     index_state: &IndexState,
     terminal_manager: &TerminalManager,
 ) -> Result<ManagedRoutineMutationResult, AppError> {
@@ -701,8 +726,14 @@ pub(crate) async fn delete_managed(
             current_fingerprint,
         });
     }
-    let (snapshot, warnings) =
-        projection_after_write(index_state, terminal_manager, &owner, &changed_path).await?;
+    let (snapshot, warnings) = projection_after_write(
+        routine_stores,
+        index_state,
+        terminal_manager,
+        &owner,
+        &changed_path,
+    )
+    .await?;
     super::emit_owner_invalidation(app, &owner);
     Ok(ManagedRoutineMutationResult::Applied {
         routine_id,
@@ -865,12 +896,13 @@ pub(crate) async fn revalidate_owner(
 }
 
 async fn projection_after_write(
+    routine_stores: &RoutineStoreState,
     index_state: &IndexState,
     terminal_manager: &TerminalManager,
     owner: &ResolvedRoutineOwner,
     changed_path: &str,
 ) -> Result<(RoutineCatalogSnapshot, Vec<RoutineDiagnostic>), AppError> {
-    match read_catalog(index_state, terminal_manager, owner).await {
+    match read_catalog(routine_stores, index_state, terminal_manager, owner).await {
         Ok(snapshot) => {
             let warnings = snapshot
                 .diagnostics
@@ -1939,14 +1971,16 @@ mod tests {
             "---\ntrigger:\n  type: manual\naction:\n  type: run_agent\n  executor: agent:01arz3ndektsv4rrffq69g5fav\n---\nKept\n",
         )
         .unwrap();
-        let index_state = IndexState::new();
-        let pool = index_state
-            .get_or_create_routines(&owner.index_key)
+        let routine_stores = Arc::new(RoutineStoreState::new());
+        let index_state = IndexState::with_routine_stores(routine_stores.clone());
+        let pool = routine_stores
+            .get_or_create_for_index(&index_state, &owner.index_key)
             .await
             .unwrap();
         pool.close().await;
 
         let (snapshot, warnings) = projection_after_write(
+            &routine_stores,
             &index_state,
             &TerminalManager::new(),
             &owner,
@@ -1988,10 +2022,11 @@ mod tests {
             RoutineOwnerInputKind::CollectionDirectory,
         )
         .unwrap();
-        let index_state = IndexState::new();
+        let routine_stores = Arc::new(RoutineStoreState::new());
+        let index_state = IndexState::with_routine_stores(routine_stores.clone());
         let terminal_manager = TerminalManager::new();
 
-        let snapshot = read_catalog(&index_state, &terminal_manager, &owner)
+        let snapshot = read_catalog(&routine_stores, &index_state, &terminal_manager, &owner)
             .await
             .unwrap();
 
@@ -2012,13 +2047,13 @@ mod tests {
         assert_eq!(invalid.diagnostics[0].code, "routine_frontmatter_invalid");
 
         assert!(
-            !read_automatic_authority(&index_state, &owner)
+            !read_automatic_authority(&routine_stores, &index_state, &owner)
                 .await
                 .unwrap()
         );
         authority::set(&owner, true).unwrap();
         assert!(
-            read_automatic_authority(&index_state, &owner)
+            read_automatic_authority(&routine_stores, &index_state, &owner)
                 .await
                 .unwrap()
         );

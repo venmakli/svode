@@ -9,8 +9,10 @@ mod schedule;
 mod scheduler;
 pub(crate) mod service;
 pub(crate) mod storage;
+mod store_state;
 
 pub(crate) use scheduler::RoutineSchedulerState;
+pub(crate) use store_state::RoutineStoreState;
 
 pub(crate) use model::ResolvedRoutineOwner;
 pub(crate) use model::{CollectionEventOrigin, CollectionEventSourceKind};

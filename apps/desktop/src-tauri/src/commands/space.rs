@@ -12,6 +12,7 @@ use crate::git::commands::{
 };
 use crate::git::{local_repair, ops};
 use crate::index::IndexState;
+use crate::project_runtime::ProjectRuntimeState;
 use crate::space::{config, project, registry, settings, symlinks, types::*};
 use crate::storage::lfs::LfsState;
 use crate::system_path;
@@ -405,7 +406,7 @@ pub async fn open_project_folder(
 #[tauri::command]
 pub async fn delete_project(
     app: AppHandle,
-    index_state: State<'_, IndexState>,
+    project_runtime: State<'_, ProjectRuntimeState>,
     app_process_state: State<'_, crate::apps::AppProcessState>,
     id: String,
     delete_files: Option<bool>,
@@ -427,7 +428,9 @@ pub async fn delete_project(
     // directory).
     if let Some(sp_ref) = project_ref {
         app_process_state.stop_project(Path::new(&sp_ref.path));
-        index_state.close_project(Path::new(&sp_ref.path)).await;
+        project_runtime
+            .close_project(&app, &id, Path::new(&sp_ref.path))
+            .await;
     }
 
     project::delete_project(&config_dir, &id, delete_files.unwrap_or(false))?;
@@ -451,7 +454,7 @@ pub async fn open_project(
     window: Window,
     git_state: State<'_, GitState>,
     autocommit: State<'_, Arc<AutocommitService>>,
-    index_state: State<'_, IndexState>,
+    project_runtime: State<'_, ProjectRuntimeState>,
     id: String,
 ) -> Result<OpenProjectResult, AppError> {
     let config_dir = app
@@ -527,14 +530,15 @@ pub async fn open_project(
     // not block project open — the user can always trigger a manual reindex
     // later. Initial state is not a transit, so no `space:status_changed`
     // emit is needed: the cache snapshot during open_project covers it.
-    if let Err(e) = index_state.open_project(&app, &project_path).await {
+    if let Err(e) = project_runtime
+        .open_project(&app, id.clone(), project_path.clone())
+        .await
+    {
         tracing::warn!(
-            "index_state.open_project failed for {}: {e}",
+            "project runtime open failed for {}: {e}",
             project_path.display()
         );
     }
-    app.state::<crate::routines::RoutineSchedulerState>()
-        .start_project(app.clone(), id.clone(), project_path.clone());
 
     let project = root_project_info(id, &project_path, &cfg, sp_ref.last_opened);
     Ok(OpenProjectResult {
@@ -576,7 +580,7 @@ pub async fn reorder_spaces(
 pub async fn create_space(
     app: AppHandle,
     git_state: State<'_, GitState>,
-    index_state: State<'_, IndexState>,
+    project_runtime: State<'_, ProjectRuntimeState>,
     parent_path: String,
     name: String,
     icon: String,
@@ -684,7 +688,7 @@ pub async fn create_space(
         }
     }
 
-    index_state
+    project_runtime
         .on_space_added(&app, parent, &info.id, &folder_name, info.status)
         .await;
     emit_space_added(&app, parent, &info, &folder_name);
@@ -696,7 +700,7 @@ pub async fn create_space(
 pub async fn delete_space(
     app: AppHandle,
     git_state: State<'_, GitState>,
-    index_state: State<'_, IndexState>,
+    project_runtime: State<'_, ProjectRuntimeState>,
     parent_path: String,
     space_id: String,
     delete_files: Option<bool>,
@@ -753,7 +757,9 @@ pub async fn delete_space(
         }
     }
 
-    index_state.on_space_removed(parent, &space_id).await;
+    project_runtime
+        .on_space_removed(&app, parent, &space_id)
+        .await;
     emit_space_removed(&app, parent, &space_id);
 
     Ok(())
@@ -763,7 +769,7 @@ pub async fn delete_space(
 pub async fn register_cloned_space(
     app: AppHandle,
     autocommit: State<'_, Arc<AutocommitService>>,
-    index_state: State<'_, IndexState>,
+    project_runtime: State<'_, ProjectRuntimeState>,
     parent_path: String,
     folder_name: String,
     fallback_name: String,
@@ -809,7 +815,7 @@ pub async fn register_cloned_space(
         }
     }
 
-    index_state
+    project_runtime
         .on_space_added(&app, path, &info.id, &folder_name, info.status)
         .await;
     emit_space_added(&app, path, &info, &folder_name);
@@ -1126,7 +1132,7 @@ pub async fn clone_missing_space(
     app: AppHandle,
     git_state: State<'_, GitState>,
     autocommit: State<'_, Arc<AutocommitService>>,
-    index_state: State<'_, IndexState>,
+    project_runtime: State<'_, ProjectRuntimeState>,
     project_path: String,
     space_id: String,
 ) -> Result<(), AppError> {
@@ -1206,7 +1212,7 @@ pub async fn clone_missing_space(
         }
     }
 
-    index_state
+    project_runtime
         .on_space_status_changed(&app, &parent, &space_id, SpaceStatus::Ready)
         .await;
     emit_space_status_changed(&app, &parent, &space_id, old_status, SpaceStatus::Ready);
@@ -1243,14 +1249,16 @@ pub async fn clone_missing_space(
 #[tauri::command]
 pub async fn remove_missing_space(
     app: AppHandle,
-    index_state: State<'_, IndexState>,
+    project_runtime: State<'_, ProjectRuntimeState>,
     project_path: String,
     space_id: String,
 ) -> Result<(), AppError> {
     let parent = Path::new(&project_path);
     require_repository_mutation(&app, parent).await?;
     project::remove_missing_space(parent, &space_id)?;
-    index_state.on_space_removed(parent, &space_id).await;
+    project_runtime
+        .on_space_removed(&app, parent, &space_id)
+        .await;
     emit_space_removed(&app, parent, &space_id);
     Ok(())
 }

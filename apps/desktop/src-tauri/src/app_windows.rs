@@ -183,9 +183,7 @@ pub fn release_current_project_window(app: AppHandle, window: Window) {
         .state::<AppWindowState>()
         .release_window_project(window.label())
     {
-        app.state::<crate::routines::RoutineSchedulerState>()
-            .stop_project(&project_id);
-        stop_project_apps(&app, &project_id);
+        stop_project_runtime(&app, &project_id);
     }
 }
 
@@ -318,9 +316,7 @@ pub fn register_current_project_window(app: &AppHandle, project_id: &str, window
     if let Some(previous) = state.project_id_for_window(window_label)
         && previous != project_id
     {
-        app.state::<crate::routines::RoutineSchedulerState>()
-            .stop_project(&previous);
-        stop_project_apps(app, &previous);
+        stop_project_runtime(app, &previous);
     }
     state.register_project_window(project_id, window_label);
 }
@@ -361,9 +357,7 @@ pub fn handle_window_event(app: &AppHandle, window: &Window, event: &WindowEvent
         }
         WindowEvent::Destroyed => {
             if let Some(project_id) = window_state.remove_window(&label) {
-                app.state::<crate::routines::RoutineSchedulerState>()
-                    .stop_project(&project_id);
-                stop_project_apps(app, &project_id);
+                stop_project_runtime(app, &project_id);
             }
             active_state.remove_window(&label);
         }
@@ -371,7 +365,7 @@ pub fn handle_window_event(app: &AppHandle, window: &Window, event: &WindowEvent
     }
 }
 
-fn stop_project_apps(app: &AppHandle, project_id: &str) {
+fn stop_project_runtime(app: &AppHandle, project_id: &str) {
     let Ok(config_dir) = app_config_dir(app) else {
         return;
     };
@@ -380,6 +374,14 @@ fn stop_project_apps(app: &AppHandle, project_id: &str) {
     };
     app.state::<crate::apps::AppProcessState>()
         .stop_project(Path::new(&project.path));
+    let app = app.clone();
+    let project_id = project_id.to_string();
+    let project_path = PathBuf::from(project.path);
+    tauri::async_runtime::spawn(async move {
+        app.state::<crate::project_runtime::ProjectRuntimeState>()
+            .close_project(&app, &project_id, &project_path)
+            .await;
+    });
 }
 
 pub fn handle_single_instance(app: &AppHandle, _args: Vec<String>, _cwd: String) {

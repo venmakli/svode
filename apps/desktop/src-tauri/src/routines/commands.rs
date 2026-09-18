@@ -1,11 +1,12 @@
 use std::path::Path;
+use std::sync::Arc;
 use tauri::{AppHandle, State};
 
 use super::model::{
     ResolvedRoutineOwner, RoutineAutomaticConsent, RoutineCatalogSnapshot, RoutineDefinition,
     RoutineManualDispatchResult, RoutineMutationResult, RoutineOwnerInputKind,
 };
-use super::{authority, dispatch, service};
+use super::{RoutineStoreState, authority, dispatch, service};
 #[cfg(test)]
 use super::{
     cache,
@@ -46,6 +47,7 @@ pub async fn routines_list(
     space_id: String,
     owner_path: String,
     owner_kind: RoutineOwnerInputKind,
+    routine_stores: State<'_, Arc<RoutineStoreState>>,
     index_state: State<'_, IndexState>,
     terminal_manager: State<'_, TerminalManager>,
 ) -> Result<RoutineCatalogSnapshot, AppError> {
@@ -57,7 +59,7 @@ pub async fn routines_list(
         owner_kind,
     }
     .resolve()?;
-    service::read_catalog(&index_state, &terminal_manager, &owner).await
+    service::read_catalog(&routine_stores, &index_state, &terminal_manager, &owner).await
 }
 
 #[tauri::command]
@@ -67,6 +69,7 @@ pub async fn routines_refresh(
     space_id: String,
     owner_path: String,
     owner_kind: RoutineOwnerInputKind,
+    routine_stores: State<'_, Arc<RoutineStoreState>>,
     index_state: State<'_, IndexState>,
     terminal_manager: State<'_, TerminalManager>,
 ) -> Result<RoutineCatalogSnapshot, AppError> {
@@ -76,6 +79,7 @@ pub async fn routines_refresh(
         space_id,
         owner_path,
         owner_kind,
+        routine_stores,
         index_state,
         terminal_manager,
     )
@@ -89,6 +93,7 @@ pub async fn routines_get_automatic_consent(
     space_id: String,
     owner_path: String,
     owner_kind: RoutineOwnerInputKind,
+    routine_stores: State<'_, Arc<RoutineStoreState>>,
     index_state: State<'_, IndexState>,
 ) -> Result<RoutineAutomaticConsent, AppError> {
     let owner = RoutineOwnerInput {
@@ -100,7 +105,7 @@ pub async fn routines_get_automatic_consent(
     }
     .resolve()?;
     Ok(RoutineAutomaticConsent {
-        enabled: service::read_automatic_authority(&index_state, &owner).await?,
+        enabled: service::read_automatic_authority(&routine_stores, &index_state, &owner).await?,
         storage_reset_pending: authority::recovery_required(&owner.space_path)?,
     })
 }
@@ -113,6 +118,7 @@ pub async fn routines_set_automatic_consent(
     owner_path: String,
     owner_kind: RoutineOwnerInputKind,
     enabled: bool,
+    routine_stores: State<'_, Arc<RoutineStoreState>>,
     index_state: State<'_, IndexState>,
 ) -> Result<RoutineAutomaticConsent, AppError> {
     let owner = RoutineOwnerInput {
@@ -123,7 +129,9 @@ pub async fn routines_set_automatic_consent(
         owner_kind,
     }
     .resolve()?;
-    index_state.get_or_create_routines(&owner.index_key).await?;
+    routine_stores
+        .get_or_create_for_index(&index_state, &owner.index_key)
+        .await?;
     Ok(RoutineAutomaticConsent {
         enabled: authority::set(&owner, enabled)?,
         storage_reset_pending: authority::recovery_required(&owner.space_path)?,
@@ -147,6 +155,7 @@ pub async fn routines_create(
     definition: RoutineDefinition,
     git_state: State<'_, GitState>,
     access_state: State<'_, RepositoryAccessState>,
+    routine_stores: State<'_, Arc<RoutineStoreState>>,
     index_state: State<'_, IndexState>,
     terminal_manager: State<'_, TerminalManager>,
 ) -> Result<RoutineMutationResult, AppError> {
@@ -170,6 +179,7 @@ pub async fn routines_create(
             service::RoutineMutationPolicy::desktop_create(),
             &git_state,
             &access_state,
+            &routine_stores,
             &index_state,
             &terminal_manager,
         )
@@ -192,6 +202,7 @@ pub async fn routines_update(
     definition: RoutineDefinition,
     git_state: State<'_, GitState>,
     access_state: State<'_, RepositoryAccessState>,
+    routine_stores: State<'_, Arc<RoutineStoreState>>,
     index_state: State<'_, IndexState>,
     terminal_manager: State<'_, TerminalManager>,
 ) -> Result<RoutineMutationResult, AppError> {
@@ -213,6 +224,7 @@ pub async fn routines_update(
             service::RoutineMutationPolicy::desktop(materialize_filename),
             &git_state,
             &access_state,
+            &routine_stores,
             &index_state,
             &terminal_manager,
         )
@@ -233,6 +245,7 @@ pub async fn routines_delete(
     expected_fingerprint: String,
     git_state: State<'_, GitState>,
     access_state: State<'_, RepositoryAccessState>,
+    routine_stores: State<'_, Arc<RoutineStoreState>>,
     index_state: State<'_, IndexState>,
     terminal_manager: State<'_, TerminalManager>,
 ) -> Result<RoutineMutationResult, AppError> {
@@ -252,6 +265,7 @@ pub async fn routines_delete(
             expected_fingerprint,
             &git_state,
             &access_state,
+            &routine_stores,
             &index_state,
             &terminal_manager,
         )
@@ -298,6 +312,7 @@ pub async fn routines_dispatch_manual(
     routine_id: String,
     git_state: State<'_, GitState>,
     access_state: State<'_, RepositoryAccessState>,
+    routine_stores: State<'_, Arc<RoutineStoreState>>,
     index_state: State<'_, IndexState>,
     terminal_manager: State<'_, TerminalManager>,
 ) -> Result<RoutineManualDispatchResult, AppError> {
@@ -316,6 +331,7 @@ pub async fn routines_dispatch_manual(
         None,
         &git_state,
         &access_state,
+        &routine_stores,
         &index_state,
         &terminal_manager,
     )
