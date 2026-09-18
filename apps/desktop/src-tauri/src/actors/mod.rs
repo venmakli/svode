@@ -35,8 +35,8 @@ pub(crate) async fn invalidate_space(
 ) -> Result<(), crate::AppError> {
     use tauri::Manager;
 
-    let git_state = app.state::<crate::git::commands::GitState>();
-    let cli = crate::git::commands::require_cli(&git_state)?;
+    let git_state = app.state::<crate::git::GitState>();
+    let cli = crate::git::require_cli(&git_state)?;
     let repository = resolver::resolve_repository(&cli, space_path).await?;
     invalidate_repository(app, &repository)
 }

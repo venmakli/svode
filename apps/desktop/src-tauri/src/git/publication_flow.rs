@@ -1,12 +1,7 @@
 use super::operations::{
     Completion, Intent, Output, ParentEvidence, Request, SharedError, Snapshot,
 };
-use super::{
-    access, branch,
-    commands::{self, GitState},
-    ops,
-    sync::SyncResult,
-};
+use super::{GitState, access, branch, commands, ops, require_cli, sync::SyncResult};
 use crate::AppError;
 use serde::Serialize;
 use std::path::Path;
@@ -62,7 +57,7 @@ pub(crate) async fn sync(
         Output::Sync(mut report) => {
             if report.remote_status.is_some() {
                 let state = app.state::<GitState>();
-                let cli = commands::require_cli(&state)?;
+                let cli = require_cli(&state)?;
                 let repository = access::resolve_repository(&cli, repo).await?;
                 if std::fs::canonicalize(repo).map_err(AppError::from)? != repository {
                     let lock = state.get_lock(&repository).await;
@@ -88,7 +83,7 @@ pub(crate) async fn request(
     intent: Intent,
 ) -> Result<Output, SharedError> {
     let state = app.state::<GitState>();
-    let cli = commands::require_cli(&state)?;
+    let cli = require_cli(&state)?;
     let owned_app = app.clone();
     state
         .operations
@@ -112,7 +107,7 @@ pub(crate) async fn push(
         unreachable!("push result")
     };
     let state = app.state::<GitState>();
-    let cli = commands::require_cli(&state)?;
+    let cli = require_cli(&state)?;
     let repository = access::resolve_repository(&cli, path).await?;
     status.repository = Some(repository.to_string_lossy().into_owned());
     if std::fs::canonicalize(path).map_err(AppError::from)? == repository {
@@ -143,7 +138,7 @@ async fn execute(app: &AppHandle, request: Request) -> Completion {
         .and_then(|done| done.parent.clone());
     let mut read_sync = None;
     let result = async {
-        let cli = commands::require_cli(&state)?;
+        let cli = require_cli(&state)?;
         before = Snapshot::read(&cli, repo).await?;
         if before.target != request.snapshot.target {
             return Err(super::operations::target_changed(repo));
@@ -637,7 +632,7 @@ pub(crate) async fn fetch_status(
         unreachable!("status reader result")
     };
     let state = app.state::<GitState>();
-    let cli = commands::require_cli(&state)?;
+    let cli = require_cli(&state)?;
     let repository = access::resolve_repository(&cli, path).await?;
     status.repository = Some(repository.to_string_lossy().into_owned());
     if std::fs::canonicalize(path).map_err(AppError::from)? == repository {

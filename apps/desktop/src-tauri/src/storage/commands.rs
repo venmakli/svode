@@ -17,7 +17,7 @@ use crate::git::GitState;
 use crate::git::access::require_repository_mutation;
 use crate::git::autocommit::{AutocommitService, StructuralOp, SystemCommitKind};
 use crate::git::cli::GitCli;
-use crate::git::commands::require_cli;
+use crate::git::require_cli;
 use crate::index::IndexState;
 use crate::repo_path::{RootMode, repo_relative_from_base};
 use crate::space::config::{read_space_config, write_space_config};

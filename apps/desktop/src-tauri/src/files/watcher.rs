@@ -72,8 +72,8 @@ impl FileWatcher {
             .map_err(|e| AppError::Watcher(e.to_string()))?;
 
         let actors = {
-            let git_state = app.state::<crate::git::commands::GitState>();
-            crate::git::commands::require_cli(&git_state).and_then(|cli| {
+            let git_state = app.state::<crate::git::GitState>();
+            crate::git::require_cli(&git_state).and_then(|cli| {
                 let actor_app = app.clone();
                 super::actor_observation::ActorObservation::start(
                     cli,

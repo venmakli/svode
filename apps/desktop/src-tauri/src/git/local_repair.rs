@@ -4,7 +4,7 @@ use std::path::Path;
 
 use tauri::{AppHandle, Manager};
 
-use super::{access, cli::GitCli, commands::GitState, ops};
+use super::{GitState, access, cli::GitCli, ops};
 use crate::{
     AppError,
     space::{config, project, types::SpaceStatus},

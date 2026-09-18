@@ -62,7 +62,7 @@ pub(super) async fn list_actors(
 ) -> Result<ToolCallResult, McpBusinessError> {
     let (_, space) = resolve_space(app, args.space_id).await?;
     let git_state = app.state::<GitState>();
-    let cli = git::commands::require_cli(&git_state)?;
+    let cli = git::require_cli(&git_state)?;
     let actor_catalog = app.state::<properties::ActorCatalogState>();
     let actors = properties::list_actors(
         &actor_catalog,
@@ -95,10 +95,7 @@ pub(super) async fn get_git_status(
 ) -> Result<ToolCallResult, McpBusinessError> {
     let (_, space) = resolve_space(app, args.space_id).await?;
     let state = app.state::<GitState>();
-    let cli = git::commands::require_cli(&state)?;
-    let lock = state.get_lock(Path::new(&space)).await;
-    let _guard = lock.lock().await;
-    let status = git::ops::status(&cli, Path::new(&space)).await?;
+    let status = state.status(Path::new(&space), false).await?;
     Ok(ToolCallResult::ok(
         "Git status for active Svode space.",
         json!({ "status": status }),

@@ -19,7 +19,7 @@ use crate::git::access::{
     require_repository_mutation_paths, scope_authorized_mutation_paths,
 };
 use crate::git::autocommit::{AutocommitService, StructuralOp};
-use crate::git::commands::{GitState, require_cli};
+use crate::git::{GitState, require_cli};
 use crate::index::update::IndexUpdateState;
 use crate::index::{self, IndexKey, IndexState, ResolvedDocLink};
 use crate::properties::{

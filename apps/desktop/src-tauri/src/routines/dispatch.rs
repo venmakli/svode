@@ -19,10 +19,10 @@ use crate::agent_adapters::runtime::{
 use crate::agent_adapters::{AgentAdapterKind, AgentAdapterRegistry};
 use crate::agent_sessions::types::{AgentSessionResumeCommand, AgentSessionSource};
 use crate::files::WriteNonceRegistry;
+use crate::git::GitState;
 use crate::git::access::{
     RepositoryAccessState, require_repository_mutation_paths, scope_authorized_mutation_paths,
 };
-use crate::git::commands::GitState;
 use crate::index::IndexState;
 use crate::terminal::{AgentTerminalSpawn, TerminalManager, quote_agent_shell_command};
 

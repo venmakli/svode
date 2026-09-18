@@ -17,7 +17,7 @@ use crate::artifact::identity::{
 use crate::commands::files as files_commands;
 use crate::files::{entry, tree};
 use crate::git::access::{ensure_mutation_paths_were_authorized, repository_access_snapshot};
-use crate::git::{self, commands::GitState};
+use crate::git::{self, GitState};
 use crate::index::update::IndexUpdateState;
 use crate::index::{IndexKey, IndexState};
 use crate::properties::{self, CollectionSchema, Column, Filter, PropertyType, Sort, View};

@@ -9,8 +9,8 @@ use super::{
     set_global_identity, set_local_identity, validate_email, validate_name,
 };
 use crate::AppError;
-use crate::git::commands::{GitState, require_cli};
 use crate::git::ops;
+use crate::git::{GitState, require_cli};
 use crate::space::config;
 use crate::space::types::SpaceGitType;
 

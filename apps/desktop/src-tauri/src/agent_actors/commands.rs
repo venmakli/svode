@@ -20,8 +20,8 @@ use crate::git::access::{RepositoryAccessState, access_store_path};
 use crate::git::autocommit::{
     AutocommitService, ExactPathPersistenceOutcome, GuardedExactPathPlan,
 };
-use crate::git::commands::require_cli;
 use crate::git::ops;
+use crate::git::require_cli;
 use crate::space::types::SpaceGitType;
 
 const COMMIT_MESSAGE: &str = "Update agent actors";

@@ -1,7 +1,7 @@
 use crate::git::autocommit::{
     ExactPathPendingReason, ExactPathPersistenceOutcome, GuardedExactPathPlan,
 };
-use crate::git::{GitState, autocommit, commands::require_cli, ops};
+use crate::git::{GitState, autocommit, ops, require_cli};
 use crate::{AppError, space::types::SpaceGitType};
 use serde::Serialize;
 use sha2::{Digest, Sha256};

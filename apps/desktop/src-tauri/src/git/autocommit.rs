@@ -6,7 +6,7 @@ use std::time::Duration;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
 
-use super::commands::GitState;
+use super::GitState;
 use super::ops;
 use crate::AppError;
 use crate::space::types::SpaceGitType;

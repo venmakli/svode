@@ -19,7 +19,7 @@ use crate::git::access::{
     RepositoryAccessState, RepositoryAccessStatus, RoutineClaimResult, access_store_path,
     require_repository_mutation_paths,
 };
-use crate::git::commands::{GitState, require_cli};
+use crate::git::{GitState, require_cli};
 use crate::index::IndexState;
 use crate::routines::RoutineStoreState;
 use crate::terminal::TerminalManager;

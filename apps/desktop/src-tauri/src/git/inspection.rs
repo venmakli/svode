@@ -3,10 +3,7 @@ use std::{io::Read, path::Path};
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
-use super::{
-    cli::GitCli,
-    commands::{GitState, require_cli},
-};
+use super::{GitState, cli::GitCli, require_cli};
 use crate::{
     AppError,
     repo_path::{RootMode, normalize_repo_relative},

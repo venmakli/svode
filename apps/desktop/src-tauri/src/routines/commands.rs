@@ -14,8 +14,8 @@ use super::{
     parser,
 };
 use crate::AppError;
+use crate::git::GitState;
 use crate::git::access::RepositoryAccessState;
-use crate::git::commands::GitState;
 use crate::index::IndexState;
 use crate::terminal::TerminalManager;
 

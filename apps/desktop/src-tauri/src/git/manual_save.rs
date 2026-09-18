@@ -2,7 +2,7 @@ use std::path::Path;
 
 use tauri::AppHandle;
 
-use super::{access, autocommit::AutocommitService, commands::GitState, ops};
+use super::{GitState, access, autocommit::AutocommitService, ops};
 use crate::{
     AppError,
     repo_path::{RootMode, normalize_repo_relative, repo_relative_from_base},
@@ -17,7 +17,7 @@ pub(crate) async fn save(
     space: &Path,
     requested: Option<Vec<String>>,
 ) -> Result<super::publication_flow::SaveReport, AppError> {
-    let cli = super::commands::require_cli(state)?;
+    let cli = super::require_cli(state)?;
     let (kind, repo) = match project {
         Some(project) => ops::resolve_target_repo(&cli, project, space).await?,
         None => (SpaceGitType::Independent, space.to_path_buf()),

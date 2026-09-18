@@ -7,10 +7,8 @@ use tauri::{AppHandle, Emitter, Manager, State, Window};
 use crate::error::AppError;
 use crate::git::access::{RepositoryAccessSnapshot, require_repository_mutation};
 use crate::git::autocommit::{AutocommitService, SystemCommitKind};
-use crate::git::commands::{
-    GitState, auto_commit_structural_enabled, init_repo_with_policy, require_cli,
-};
-use crate::git::{local_repair, ops};
+use crate::git::commands::{auto_commit_structural_enabled, init_repo_with_policy};
+use crate::git::{GitState, local_repair, ops, require_cli};
 use crate::index::IndexState;
 use crate::project_runtime::ProjectRuntimeState;
 use crate::space::{config, project, registry, settings, symlinks, types::*};
@@ -834,7 +832,7 @@ pub async fn project_clone(
     target_path: String,
 ) -> Result<SpaceInfo, AppError> {
     let path = PathBuf::from(&target_path);
-    let cli = crate::git::commands::require_cli(&git_state)?;
+    let cli = crate::git::require_cli(&git_state)?;
     let lock = git_state.get_lock(&path).await;
     let _guard = lock.lock().await;
     crate::git::clone::clone_with_progress(&cli, &app, &url, &path).await?;

@@ -11,7 +11,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::sync::{Mutex as AsyncMutex, OwnedMutexGuard};
 
 use super::cli::{GitCli, GitOutput};
-use super::commands::{GitState, require_cli};
+use super::{GitState, require_cli};
 use crate::AppError;
 
 const ACCESS_STORE_FILE: &str = "repository-access.json";

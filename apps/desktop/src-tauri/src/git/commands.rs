@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -8,6 +7,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use super::autocommit::{AutocommitService, SystemCommitKind};
 use super::cli::{GitAvailability, GitCli};
 use super::ops::{GitStatus, UnpushedCommit};
+use super::{GitState, require_cli};
 use crate::AppError;
 use crate::index::update::IndexUpdateState;
 use crate::index::{IndexKey, IndexState};
@@ -140,13 +140,6 @@ impl GitTrackedRemoteReconciliation {
     }
 }
 
-/// Helper: read the GitCli reference (clone is cheap — PathBuf only) outside the
-/// per-space lock, so async work that needs `&AppHandle` doesn't borrow
-/// `state`.
-pub(crate) fn require_cli(state: &GitState) -> Result<GitCli, AppError> {
-    state.cli.clone().ok_or(AppError::GitNotFound)
-}
-
 pub(crate) fn auto_commit_structural_enabled(space_path: &Path) -> bool {
     crate::space::config::effective_git_user_policy(space_path).auto_commit_structural
 }
@@ -191,49 +184,6 @@ fn drop_legacy_shared_git_policy(config_target: &Path) {
         }
         Ok(_) => {}
         Err(e) => tracing::warn!("failed to read shared config for policy migration: {e}"),
-    }
-}
-
-pub struct GitState {
-    pub(crate) cli: Option<GitCli>,
-    pub(crate) operations: Arc<super::operations::Operations>,
-    locks: tokio::sync::Mutex<HashMap<PathBuf, Arc<tokio::sync::Mutex<()>>>>,
-}
-
-impl GitState {
-    pub fn new() -> Self {
-        let cli = match GitCli::detect() {
-            Ok(cli) => Some(cli),
-            Err(e) => {
-                tracing::warn!("Git not available: {e}");
-                None
-            }
-        };
-        Self {
-            cli,
-            operations: Arc::default(),
-            locks: tokio::sync::Mutex::new(HashMap::new()),
-        }
-    }
-
-    /// Get the GitCli instance, returning GitNotFound if git is not available.
-    fn cli(&self) -> Result<&GitCli, AppError> {
-        self.cli.as_ref().ok_or(AppError::GitNotFound)
-    }
-
-    /// Get or create a per-space lock. Public so other modules
-    /// (like the space creation flow) can serialize git work too.
-    pub(crate) async fn get_lock(&self, path: &Path) -> Arc<tokio::sync::Mutex<()>> {
-        let canonical = std::fs::canonicalize(path).unwrap_or_else(|_| {
-            path.parent().and_then(|parent| std::fs::canonicalize(parent).ok())
-                .zip(path.file_name()).map(|(parent, name)| parent.join(name))
-                .unwrap_or_else(|| path.to_path_buf())
-        });
-        let mut locks = self.locks.lock().await;
-        locks
-            .entry(canonical)
-            .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
-            .clone()
     }
 }
 
@@ -438,16 +388,7 @@ pub async fn git_status(
     remote_counts: Option<bool>,
 ) -> Result<GitStatus, AppError> {
     let path = PathBuf::from(&space_path);
-    let repository = super::access::resolve_repository(state.cli()?, &path).await?;
-    let lock = state.get_lock(&repository).await;
-    let _guard = lock.lock().await;
-    let mut status = if remote_counts.unwrap_or(false) {
-        super::ops::status_with_remote_counts(state.cli()?, &path).await?
-    } else {
-        super::ops::status(state.cli()?, &path).await?
-    };
-    status.repository = Some(repository.to_string_lossy().into_owned());
-    Ok(status)
+    state.status(&path, remote_counts.unwrap_or(false)).await
 }
 
 #[tauri::command]

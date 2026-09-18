@@ -1,17 +1,15 @@
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
-use std::sync::OnceLock;
 use std::time::Duration;
 
 use chrono::{DateTime, SecondsFormat, Utc};
 
 use super::cli::{GitCli, GitOutput};
+use super::state::detected_cli;
 use crate::repo_path::{RootMode, normalize_repo_relative};
 
 const GIT_DATE_TIMEOUT_SECS: u64 = 3;
 const GIT_DATE_CHUNK_SIZE: usize = 256;
-
-static GIT_CLI: OnceLock<Option<GitCli>> = OnceLock::new();
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct EntryDateOverride {
@@ -30,14 +28,10 @@ pub(crate) async fn derive_date_overrides(
     space_dir: &Path,
     rel_paths: &[String],
 ) -> EntryDateOverrides {
-    let Some(cli) = cached_git_cli() else {
+    let Some(cli) = detected_cli() else {
         return EntryDateOverrides::new();
     };
     derive_date_overrides_with_cli(&cli, space_dir, rel_paths).await
-}
-
-fn cached_git_cli() -> Option<GitCli> {
-    GIT_CLI.get_or_init(|| GitCli::detect().ok()).clone()
 }
 
 pub(crate) async fn derive_date_overrides_with_cli(

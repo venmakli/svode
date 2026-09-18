@@ -7,7 +7,7 @@ use super::{policy, s3};
 use crate::error::AppError;
 use crate::git::GitState;
 use crate::git::cli::{GitCli, GitOutput};
-use crate::git::commands::require_cli;
+use crate::git::require_cli;
 use crate::space::types::{AssetsS3Config, AssetsStrategy, BinaryRoutingConfig};
 
 /// Non-fatal diagnostics produced by `apply_strategy` — surfaced to the UI so

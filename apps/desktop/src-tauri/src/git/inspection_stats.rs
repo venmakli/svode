@@ -4,10 +4,10 @@ use serde::Serialize;
 use tauri::State;
 
 use super::{
+    GitState,
     cli::{GitCli, read_bounded},
-    commands::{GitState, require_cli},
     inspection::{InspectionScope, contained_file, is_binary_format},
-    ops,
+    ops, require_cli,
 };
 use crate::{
     AppError,

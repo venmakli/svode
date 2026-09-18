@@ -22,7 +22,7 @@ use crate::git;
 use crate::git::access::{
     RepositoryAccessState, access_store_path, ensure_mutation_paths_were_authorized,
 };
-use crate::git::commands::{GitState, require_cli};
+use crate::git::{GitState, require_cli};
 use crate::index::{IndexKey, IndexState};
 use crate::repo_path::{RootMode, normalize_repo_relative};
 use crate::routines::RoutineStoreState;

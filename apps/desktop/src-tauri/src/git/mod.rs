@@ -25,6 +25,11 @@ mod published_pointer;
 mod staging;
 #[cfg(test)]
 mod staging_tests;
+mod state;
 pub mod sync;
 
-pub use commands::GitState;
+pub use state::GitState;
+
+pub(crate) fn require_cli(state: &GitState) -> Result<cli::GitCli, crate::AppError> {
+    state.require_cli()
+}

@@ -673,7 +673,7 @@ async fn concurrent_root_and_child_publish_never_expose_an_unavailable_pointer()
     let f = Fixture::new();
     commit(&f.child, "note", "concurrent");
     f.pointer();
-    let state = super::super::commands::GitState::new();
+    let state = super::super::GitState::new();
     let child_lock = state.get_lock(&f.child).await;
     let root_lock = state.get_lock(&f.root).await;
     let (root_result, child_result) = tokio::join!(

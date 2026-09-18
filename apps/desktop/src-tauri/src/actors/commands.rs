@@ -12,7 +12,7 @@ use crate::AppError;
 use crate::git::GitState;
 use crate::git::access::RepositoryAccessState;
 use crate::git::autocommit::AutocommitService;
-use crate::git::commands::require_cli;
+use crate::git::require_cli;
 
 #[tauri::command]
 pub async fn actors_get_catalog(
