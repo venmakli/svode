@@ -332,9 +332,9 @@ pub(super) async fn dispatch_routine(
     let pool = routine_stores
         .get_or_create_for_index(index_state, &owner.index_key)
         .await?;
-    let live_pty_ids = service::live_agent_pty_ids(terminal_manager)?;
+    let live_pty_ids = super::runtime::live_evidence(terminal_manager)?;
     if let Some(run) = cache::latest_run(&pool, &owner.descriptor.owner_path, &routine_id).await?
-        && run.blocks_relaunch(&live_pty_ids)
+        && run.blocks_relaunch(live_pty_ids.live_agent_pty_ids())
     {
         return Ok(RoutineDispatchResult::AlreadyRunning {
             routine_id,

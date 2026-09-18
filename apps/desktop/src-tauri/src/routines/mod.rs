@@ -5,6 +5,7 @@ pub(crate) mod dispatch;
 pub(crate) mod events;
 mod model;
 mod parser;
+pub(crate) mod runtime;
 mod schedule;
 mod scheduler;
 pub(crate) mod service;

@@ -183,10 +183,11 @@ pub(super) async fn list_routines(
     let routine_stores = app.state::<Arc<crate::routines::RoutineStoreState>>();
     let index_state = app.state::<IndexState>();
     let terminal_manager = app.state::<TerminalManager>();
+    let live_evidence = crate::routines::runtime::live_evidence(&terminal_manager)?;
     let snapshot = crate::routines::service::read_catalog(
         &routine_stores,
         &index_state,
-        &terminal_manager,
+        &live_evidence,
         &owner,
     )
     .await?;
@@ -215,10 +216,11 @@ pub(super) async fn get_routine(
     let routine_stores = app.state::<Arc<crate::routines::RoutineStoreState>>();
     let index_state = app.state::<IndexState>();
     let terminal_manager = app.state::<TerminalManager>();
+    let live_evidence = crate::routines::runtime::live_evidence(&terminal_manager)?;
     let snapshot = crate::routines::service::read_catalog(
         &routine_stores,
         &index_state,
-        &terminal_manager,
+        &live_evidence,
         &owner,
     )
     .await?;

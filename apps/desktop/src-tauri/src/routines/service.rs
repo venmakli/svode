@@ -10,7 +10,7 @@ use tauri::AppHandle;
 
 use super::model::{
     ResolvedRoutineOwner, RoutineCatalogSnapshot, RoutineDefinition, RoutineDiagnostic,
-    RoutineNameConflict, RoutineNameConflictEvidence, RoutineOwnerDescriptor,
+    RoutineLiveEvidence, RoutineNameConflict, RoutineNameConflictEvidence, RoutineOwnerDescriptor,
     RoutineOwnerInputKind, RoutineOwnerKind, RoutineRow, RoutineRunOrigin, RoutineTimeBasis,
     RoutineTrigger,
 };
@@ -218,7 +218,7 @@ pub(crate) fn resolve_owner(
 pub(crate) async fn read_catalog(
     routine_stores: &RoutineStoreState,
     index_state: &IndexState,
-    terminal_manager: &TerminalManager,
+    live_evidence: &RoutineLiveEvidence,
     owner: &ResolvedRoutineOwner,
 ) -> Result<RoutineCatalogSnapshot, AppError> {
     let mut snapshot = discover_owner(owner).await?;
@@ -237,7 +237,6 @@ pub(crate) async fn read_catalog(
                     "routine files were read, but the local definition cache could not be refreshed",
                 ));
             }
-            let live_pty_ids = live_agent_pty_ids(terminal_manager)?;
             let now = Utc::now();
             let mut schedule_diagnostics = Vec::new();
             for row in &mut snapshot.routines {
@@ -345,7 +344,7 @@ pub(crate) async fn read_catalog(
                 } else if let Some(run) = local {
                     row.last_run_at = Some(run.created_at.clone());
                     row.last_run_origin = Some(RoutineRunOrigin::Local);
-                    row.last_run = Some(run.to_ref(&live_pty_ids));
+                    row.last_run = Some(run.to_ref(live_evidence.live_agent_pty_ids()));
                 }
             }
             snapshot.diagnostics.extend(schedule_diagnostics);
@@ -902,7 +901,8 @@ async fn projection_after_write(
     owner: &ResolvedRoutineOwner,
     changed_path: &str,
 ) -> Result<(RoutineCatalogSnapshot, Vec<RoutineDiagnostic>), AppError> {
-    match read_catalog(routine_stores, index_state, terminal_manager, owner).await {
+    let live_evidence = super::runtime::live_evidence(terminal_manager)?;
+    match read_catalog(routine_stores, index_state, &live_evidence, owner).await {
         Ok(snapshot) => {
             let warnings = snapshot
                 .diagnostics
@@ -1150,17 +1150,6 @@ fn definition_file_fingerprint(path: &Path) -> Result<Option<String>, AppError> 
 fn sync_directory(path: &Path) -> Result<(), AppError> {
     File::open(path)?.sync_all()?;
     Ok(())
-}
-
-pub(crate) fn live_agent_pty_ids(
-    terminal_manager: &TerminalManager,
-) -> Result<HashSet<String>, AppError> {
-    Ok(terminal_manager
-        .list_agent_surfaces()?
-        .into_iter()
-        .filter(|surface| surface.live)
-        .map(|surface| surface.pty_id)
-        .collect())
 }
 
 fn publication_fingerprint(snapshot: &RoutineCatalogSnapshot) -> String {
@@ -2024,9 +2013,9 @@ mod tests {
         .unwrap();
         let routine_stores = Arc::new(RoutineStoreState::new());
         let index_state = IndexState::new();
-        let terminal_manager = TerminalManager::new();
+        let live_evidence = RoutineLiveEvidence::default();
 
-        let snapshot = read_catalog(&routine_stores, &index_state, &terminal_manager, &owner)
+        let snapshot = read_catalog(&routine_stores, &index_state, &live_evidence, &owner)
             .await
             .unwrap();
 
@@ -2057,5 +2046,114 @@ mod tests {
                 .await
                 .unwrap()
         );
+    }
+
+    #[tokio::test]
+    async fn shared_read_projects_explicit_live_evidence_and_newer_remote_claims() {
+        let temp = tempfile::tempdir().unwrap();
+        let project = temp.path();
+        fs::create_dir_all(project.join(".routines")).unwrap();
+        fs::write(
+            project.join(".routines/review.md"),
+            "---\nid: 01arz3ndektsv4rrffq69g5fav\nname: Review\ntrigger:\n  type: manual\naction:\n  type: run_agent\n  executor: agent:01arz3ndektsv4rrffq69g5fav\n---\nReview\n",
+        )
+        .unwrap();
+        write_space_config(project, &space_config("Project", None)).unwrap();
+        let owner = resolve_owner(
+            project,
+            project,
+            "root",
+            ".",
+            RoutineOwnerInputKind::RegisteredSpace,
+        )
+        .unwrap();
+        let routine_stores = Arc::new(RoutineStoreState::new());
+        let index_state = IndexState::new();
+        let initial = read_catalog(
+            &routine_stores,
+            &index_state,
+            &RoutineLiveEvidence::default(),
+            &owner,
+        )
+        .await
+        .unwrap();
+        let routine = &initial.routines[0];
+        let routine_id = routine.routine_id.as_deref().unwrap();
+        let definition = routine.definition.as_ref().unwrap();
+        let pool = routine_stores
+            .get_or_create_for_index(&index_state, &owner.index_key)
+            .await
+            .unwrap();
+        cache::create_run(
+            &pool,
+            cache::NewRoutineRun {
+                routine_run_id: "run-local",
+                routine_id,
+                owner_path: ".",
+                trigger_type: "manual",
+                definition_fingerprint: &routine.execution_fingerprint,
+                definition,
+                launch_id: "launch-local",
+                source: "codex",
+                source_session_id: Some("source-local"),
+                agent_session_id: "codex:source-local",
+                created_at: "2026-09-19T10:00:00Z",
+            },
+        )
+        .await
+        .unwrap();
+        cache::attach_pty(&pool, "run-local", "pty-live", "2026-09-19T10:00:01Z")
+            .await
+            .unwrap();
+
+        let local = read_catalog(
+            &routine_stores,
+            &index_state,
+            &RoutineLiveEvidence::new(HashSet::from(["pty-live".to_string()])),
+            &owner,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            local.routines[0].last_run_origin,
+            Some(RoutineRunOrigin::Local)
+        );
+        assert!(local.routines[0].last_run.as_ref().unwrap().active);
+        assert!(
+            local.routines[0]
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == "routine_executor_unavailable")
+        );
+
+        cache::record_remote_claim(
+            &pool,
+            ".",
+            routine_id,
+            "slot-remote",
+            &routine.execution_fingerprint,
+            "device-two",
+            "2026-09-19T10:01:00Z",
+        )
+        .await
+        .unwrap();
+        let remote = read_catalog(
+            &routine_stores,
+            &index_state,
+            &RoutineLiveEvidence::new(HashSet::from(["pty-live".to_string()])),
+            &owner,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            remote.routines[0].last_run_origin,
+            Some(RoutineRunOrigin::Remote)
+        );
+        assert_eq!(
+            remote.routines[0].last_run_at.as_deref(),
+            Some("2026-09-19T10:01:00Z")
+        );
+        assert!(remote.routines[0].last_run.is_none());
+        assert_ne!(remote.catalog_fingerprint, local.catalog_fingerprint);
     }
 }

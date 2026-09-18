@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
@@ -340,14 +340,29 @@ pub(crate) struct RoutineRunRecord {
     pub session_status: Option<String>,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct RoutineLiveEvidence {
+    live_agent_pty_ids: HashSet<String>,
+}
+
+impl RoutineLiveEvidence {
+    pub(crate) fn new(live_agent_pty_ids: HashSet<String>) -> Self {
+        Self { live_agent_pty_ids }
+    }
+
+    pub(crate) fn live_agent_pty_ids(&self) -> &HashSet<String> {
+        &self.live_agent_pty_ids
+    }
+}
+
 impl RoutineRunRecord {
-    pub(crate) fn has_live_pty(&self, live_pty_ids: &std::collections::HashSet<String>) -> bool {
+    pub(crate) fn has_live_pty(&self, live_pty_ids: &HashSet<String>) -> bool {
         self.pty_id
             .as_ref()
             .is_some_and(|pty_id| live_pty_ids.contains(pty_id))
     }
 
-    pub(crate) fn blocks_relaunch(&self, live_pty_ids: &std::collections::HashSet<String>) -> bool {
+    pub(crate) fn blocks_relaunch(&self, live_pty_ids: &HashSet<String>) -> bool {
         match self.session_status.as_deref() {
             Some("active") => self.has_live_pty(live_pty_ids),
             Some("done" | "failed" | "stopped") => false,
@@ -365,7 +380,7 @@ impl RoutineRunRecord {
         }
     }
 
-    pub(crate) fn to_ref(&self, live_pty_ids: &std::collections::HashSet<String>) -> RoutineRunRef {
+    pub(crate) fn to_ref(&self, live_pty_ids: &HashSet<String>) -> RoutineRunRef {
         RoutineRunRef {
             routine_run_id: self.routine_run_id.clone(),
             launch_id: self.launch_id.clone(),

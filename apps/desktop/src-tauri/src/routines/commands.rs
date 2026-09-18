@@ -59,7 +59,8 @@ pub async fn routines_list(
         owner_kind,
     }
     .resolve()?;
-    service::read_catalog(&routine_stores, &index_state, &terminal_manager, &owner).await
+    let live_evidence = super::runtime::live_evidence(&terminal_manager)?;
+    service::read_catalog(&routine_stores, &index_state, &live_evidence, &owner).await
 }
 
 #[tauri::command]

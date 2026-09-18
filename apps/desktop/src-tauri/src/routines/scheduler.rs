@@ -105,7 +105,7 @@ async fn tick_owner(app: &AppHandle, owner: &ResolvedRoutineOwner) -> Result<(),
     };
     dispatch_next_event(app, owner, automatic_authority, &pool).await?;
     let snapshot = service::discover_owner(owner).await?;
-    let live_pty_ids = service::live_agent_pty_ids(&terminal_manager)?;
+    let live_pty_ids = super::runtime::live_evidence(&terminal_manager)?;
     let now = Utc::now();
 
     for row in snapshot.routines {
@@ -213,7 +213,7 @@ async fn tick_owner(app: &AppHandle, owner: &ResolvedRoutineOwner) -> Result<(),
         }
         if let Some(run) =
             cache::latest_run(&pool, &owner.descriptor.owner_path, routine_id).await?
-            && run.blocks_relaunch(&live_pty_ids)
+            && run.blocks_relaunch(live_pty_ids.live_agent_pty_ids())
         {
             advance_checkpoint(
                 app,
@@ -387,9 +387,9 @@ async fn dispatch_next_event(
         return Ok(());
     };
     let terminal_manager = app.state::<TerminalManager>();
-    let live_pty_ids = service::live_agent_pty_ids(&terminal_manager)?;
+    let live_pty_ids = super::runtime::live_evidence(&terminal_manager)?;
     if let Some(run) = cache::latest_run(pool, &event.owner_path, &event.routine_id).await?
-        && run.blocks_relaunch(&live_pty_ids)
+        && run.blocks_relaunch(live_pty_ids.live_agent_pty_ids())
     {
         return Ok(());
     }
