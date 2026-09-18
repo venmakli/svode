@@ -720,56 +720,6 @@ async fn maybe_autocommit_schema(
     }
 }
 
-fn snapshot_paths(paths: &[PathBuf]) -> Result<Vec<(PathBuf, Option<Vec<u8>>)>, AppError> {
-    let mut seen = std::collections::HashSet::new();
-    let mut snapshots = Vec::new();
-    for path in paths {
-        if !seen.insert(path.clone()) {
-            continue;
-        }
-        let content = if path.exists() {
-            Some(std::fs::read(path)?)
-        } else {
-            None
-        };
-        snapshots.push((path.clone(), content));
-    }
-    Ok(snapshots)
-}
-
-fn changed_paths(snapshot: Vec<(PathBuf, Option<Vec<u8>>)>) -> Result<Vec<PathBuf>, AppError> {
-    let mut changed = Vec::new();
-    for (path, before) in snapshot {
-        let after = if path.exists() {
-            Some(std::fs::read(&path)?)
-        } else {
-            None
-        };
-        if before != after {
-            changed.push(path);
-        }
-    }
-    Ok(changed)
-}
-
-fn append_unique_path(paths: &mut Vec<PathBuf>, path: PathBuf) {
-    if !paths.iter().any(|existing| existing == &path) {
-        paths.push(path);
-    }
-}
-
-fn append_unsnapshotted_paths(
-    paths: &mut Vec<PathBuf>,
-    snapshotted: &[PathBuf],
-    candidates: Vec<PathBuf>,
-) {
-    for path in candidates {
-        if !snapshotted.iter().any(|existing| existing == &path) {
-            append_unique_path(paths, path);
-        }
-    }
-}
-
 async fn require_planned_mutation_paths(
     app: &AppHandle,
     space: &str,
@@ -778,6 +728,19 @@ async fn require_planned_mutation_paths(
     paths.push(PathBuf::from(space));
     require_repository_mutation_paths(app, paths.clone()).await?;
     Ok(paths)
+}
+
+async fn apply_collection_mutation<T>(
+    app: &AppHandle,
+    space: &str,
+    mutation: properties::PreparedCollectionMutation<T>,
+) -> Result<properties::CollectionMutationOutcome<T>, AppError>
+where
+    T: Send + 'static,
+{
+    let authorized_paths =
+        require_planned_mutation_paths(app, space, mutation.paths().to_vec()).await?;
+    scope_authorized_mutation_paths(authorized_paths, async move { mutation.apply() }).await
 }
 
 async fn require_entry_move_mutation_plan(

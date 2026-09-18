@@ -54,6 +54,9 @@ pub use integrity::{
 };
 use integrity::{is_collection_traversal_ignored, is_registered_child_space_rel};
 
+mod mutations;
+pub use mutations::*;
+
 mod query;
 #[allow(unused_imports)] // Stable properties facade; primarily used by focused tests today.
 pub use query::reorder_visible_entry_names;

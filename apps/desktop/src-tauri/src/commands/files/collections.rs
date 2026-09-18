@@ -441,32 +441,28 @@ pub async fn repair_two_way_relation(
     project_path: Option<String>,
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<(), AppError> {
-    let paths = properties::relation_repair_mutation_paths_with_project(
+    let mutation = properties::prepare_repair_two_way_relation(
         &space,
         &collection_path,
         &column,
+        &strategy,
+        reverse_column.as_deref(),
         project_path.as_deref(),
     )?;
-    let authorized_paths = require_planned_mutation_paths(&app, &space, paths.clone()).await?;
-    let snapshot = snapshot_paths(&paths)?;
-    scope_authorized_mutation_paths(authorized_paths, async {
-        properties::repair_two_way_relation_with_project(
-            &space,
-            &collection_path,
-            &column,
-            &strategy,
-            reverse_column.as_deref(),
-            project_path.as_deref(),
-        )
-    })
-    .await?;
-    let paths = changed_paths(snapshot)?;
+    let outcome = apply_collection_mutation(&app, &space, mutation).await?;
     let message = if collection_has_sensitive_columns(&space, &collection_path) {
         "Update collection field".to_string()
     } else {
         format!("Repair two-way relation \"{column}\"")
     };
-    maybe_autocommit_schema(&autocommit, project_path.as_deref(), &space, paths, message).await;
+    maybe_autocommit_schema(
+        &autocommit,
+        project_path.as_deref(),
+        &space,
+        outcome.changed_paths,
+        message,
+    )
+    .await;
     let reindex_space = space.clone();
     tauri::async_runtime::spawn(async move {
         let index_state = app.state::<IndexState>();

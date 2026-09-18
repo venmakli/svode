@@ -11,33 +11,28 @@ pub async fn add_schema_column(
     project_path: Option<String>,
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<CollectionSchema, AppError> {
-    let materializes_unique_id = column.type_ == PropertyType::UniqueId;
-    let default_message = if materializes_unique_id {
+    let default_message = if column.type_ == PropertyType::UniqueId {
         format!("Add and materialize unique_id \"{}\"", column.name)
     } else {
         format!("Add column \"{}\"", column.name)
     };
-    let paths = properties::schema_column_mutation_paths_with_project(
+    let mutation = properties::prepare_add_schema_column(
         &space,
         &collection_path,
-        &column,
-        materializes_unique_id,
+        column,
         project_path.as_deref(),
     )?;
-    let authorized_paths = require_planned_mutation_paths(&app, &space, paths.clone()).await?;
-    let snapshot = snapshot_paths(&paths)?;
-    let schema = scope_authorized_mutation_paths(authorized_paths, async {
-        properties::add_schema_column_with_project(
-            &space,
-            &collection_path,
-            column,
-            project_path.as_deref(),
-        )
-    })
-    .await?;
-    let paths = changed_paths(snapshot)?;
+    let outcome = apply_collection_mutation(&app, &space, mutation).await?;
+    let schema = outcome.value;
     let message = schema_commit_message(&schema, default_message, "Update collection field");
-    maybe_autocommit_schema(&autocommit, project_path.as_deref(), &space, paths, message).await;
+    maybe_autocommit_schema(
+        &autocommit,
+        project_path.as_deref(),
+        &space,
+        outcome.changed_paths,
+        message,
+    )
+    .await;
     Ok(schema)
 }
 
@@ -58,59 +53,21 @@ pub async fn change_schema_type(
         property_type_message(new_type)
     );
     let conversion_strategy = conversion_strategy.map(json_to_yaml_value).transpose()?;
-    let mut paths = properties::schema_column_name_mutation_paths_with_project(
-        &space,
-        &collection_path,
-        &column_name,
-        true,
-        project_path.as_deref(),
-    )?;
-    paths.extend(properties::schema_type_target_mutation_paths_with_project(
+    let mutation = properties::prepare_change_schema_type(
         &space,
         &collection_path,
         &column_name,
         new_type,
-        conversion_strategy.as_ref(),
+        conversion_strategy,
         project_path.as_deref(),
-    )?);
-    let authorized_paths = require_planned_mutation_paths(&app, &space, paths.clone()).await?;
-    let snapshotted = paths.clone();
-    let snapshot = snapshot_paths(&snapshotted)?;
-    let (schema, warnings) = scope_authorized_mutation_paths(authorized_paths, async {
-        properties::change_schema_type_with_warnings_and_project(
-            &space,
-            &collection_path,
-            &column_name,
-            new_type,
-            conversion_strategy,
-            project_path.as_deref(),
-        )
-    })
-    .await?;
-    if let Some(column) = schema
-        .columns
-        .iter()
-        .find(|column| column.name == column_name)
-    {
-        append_unsnapshotted_paths(
-            &mut paths,
-            &snapshotted,
-            properties::schema_column_mutation_paths_with_project(
-                &space,
-                &collection_path,
-                column,
-                true,
-                project_path.as_deref(),
-            )?,
-        );
-    }
-    let mut changed = changed_paths(snapshot)?;
-    append_unsnapshotted_paths(&mut changed, &snapshotted, paths);
+    )?;
+    let outcome = apply_collection_mutation(&app, &space, mutation).await?;
+    let (schema, warnings) = outcome.value;
     maybe_autocommit_schema(
         &autocommit,
         project_path.as_deref(),
         &space,
-        changed,
+        outcome.changed_paths,
         schema_commit_message_with_previous(
             &schema,
             was_sensitive,
@@ -132,9 +89,9 @@ pub async fn assign_unique_id(
     index_updates: State<'_, IndexUpdateState>,
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<Entry, AppError> {
-    require_repository_mutation(&app, Path::new(&space)).await?;
-    let paths = properties::unique_id_mutation_paths_for_entry(&space, &file_path)?;
-    let entry = properties::assign_unique_id(&space, &file_path)?;
+    let mutation = properties::prepare_assign_unique_id(&space, &file_path)?;
+    let outcome = apply_collection_mutation(&app, &space, mutation).await?;
+    let entry = outcome.value;
     update_index_entry_or_reindex(
         &index_state,
         &index_updates,
@@ -148,7 +105,7 @@ pub async fn assign_unique_id(
         &autocommit,
         project_path.as_deref(),
         &space,
-        paths,
+        outcome.changed_paths,
         if entry_in_sensitive_collection(&space, &entry.path) {
             "Repair unique_id for collection entry".to_string()
         } else {
@@ -167,14 +124,14 @@ pub async fn normalize_unique_id_counter(
     project_path: Option<String>,
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<CollectionSchema, AppError> {
-    require_repository_mutation(&app, Path::new(&space)).await?;
-    let paths = properties::schema_mutation_paths(&space, &collection_path, false)?;
-    let schema = properties::normalize_unique_id_counter(&space, &collection_path)?;
+    let mutation = properties::prepare_normalize_unique_id_counter(&space, &collection_path)?;
+    let outcome = apply_collection_mutation(&app, &space, mutation).await?;
+    let schema = outcome.value;
     maybe_autocommit_schema(
         &autocommit,
         project_path.as_deref(),
         &space,
-        paths,
+        outcome.changed_paths,
         "Normalize unique_id counter".to_string(),
     )
     .await;
@@ -192,33 +149,29 @@ pub async fn rename_schema_column(
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<CollectionSchema, AppError> {
     let was_sensitive = collection_has_sensitive_columns(&space, &collection_path);
-    let paths = properties::schema_column_name_mutation_paths_with_project(
+    let mutation = properties::prepare_rename_schema_column(
         &space,
         &collection_path,
         &old_name,
-        true,
+        &new_name,
         project_path.as_deref(),
     )?;
-    let authorized_paths = require_planned_mutation_paths(&app, &space, paths.clone()).await?;
-    let snapshot = snapshot_paths(&paths)?;
-    let schema = scope_authorized_mutation_paths(authorized_paths, async {
-        properties::rename_schema_column_with_project(
-            &space,
-            &collection_path,
-            &old_name,
-            &new_name,
-            project_path.as_deref(),
-        )
-    })
-    .await?;
-    let paths = changed_paths(snapshot)?;
+    let outcome = apply_collection_mutation(&app, &space, mutation).await?;
+    let schema = outcome.value;
     let message = schema_commit_message_with_previous(
         &schema,
         was_sensitive,
         format!("Rename column \"{old_name}\" → \"{new_name}\""),
         "Rename sensitive field",
     );
-    maybe_autocommit_schema(&autocommit, project_path.as_deref(), &space, paths, message).await;
+    maybe_autocommit_schema(
+        &autocommit,
+        project_path.as_deref(),
+        &space,
+        outcome.changed_paths,
+        message,
+    )
+    .await;
     Ok(schema)
 }
 
@@ -234,54 +187,15 @@ pub async fn update_schema_column(
 ) -> Result<CollectionSchema, AppError> {
     let was_sensitive = collection_has_sensitive_columns(&space, &collection_path);
     let patch = json_to_yaml_value(patch)?;
-    let mut paths = properties::schema_column_name_mutation_paths_with_project(
+    let mutation = properties::prepare_update_schema_column(
         &space,
         &collection_path,
         &column_name,
-        false,
+        patch,
         project_path.as_deref(),
     )?;
-    paths.extend(
-        properties::schema_column_patch_target_mutation_paths_with_project(
-            &space,
-            &collection_path,
-            &column_name,
-            &patch,
-            project_path.as_deref(),
-        )?,
-    );
-    let authorized_paths = require_planned_mutation_paths(&app, &space, paths.clone()).await?;
-    let snapshotted = paths.clone();
-    let snapshot = snapshot_paths(&snapshotted)?;
-    let schema = scope_authorized_mutation_paths(authorized_paths, async {
-        properties::update_schema_column_with_project(
-            &space,
-            &collection_path,
-            &column_name,
-            patch,
-            project_path.as_deref(),
-        )
-    })
-    .await?;
-    if let Some(column) = schema
-        .columns
-        .iter()
-        .find(|column| column.name == column_name)
-    {
-        append_unsnapshotted_paths(
-            &mut paths,
-            &snapshotted,
-            properties::schema_column_mutation_paths_with_project(
-                &space,
-                &collection_path,
-                column,
-                column.type_ == PropertyType::Relation,
-                project_path.as_deref(),
-            )?,
-        );
-    }
-    let mut changed = changed_paths(snapshot)?;
-    append_unsnapshotted_paths(&mut changed, &snapshotted, paths);
+    let outcome = apply_collection_mutation(&app, &space, mutation).await?;
+    let schema = outcome.value;
     let message = schema_commit_message_with_previous(
         &schema,
         was_sensitive,
@@ -292,7 +206,7 @@ pub async fn update_schema_column(
         &autocommit,
         project_path.as_deref(),
         &space,
-        changed,
+        outcome.changed_paths,
         message,
     )
     .await;
@@ -311,28 +225,15 @@ pub async fn delete_schema_column(
 ) -> Result<CollectionSchema, AppError> {
     let was_sensitive = collection_has_sensitive_columns(&space, &collection_path);
     let delete_values = delete_values.unwrap_or(false);
-    let paths = properties::schema_mutation_paths(&space, &collection_path, delete_values)?;
-    let mut paths = paths;
-    paths.extend(properties::schema_column_name_mutation_paths_with_project(
+    let mutation = properties::prepare_delete_schema_column(
         &space,
         &collection_path,
         &column_name,
         delete_values,
         project_path.as_deref(),
-    )?);
-    let authorized_paths = require_planned_mutation_paths(&app, &space, paths.clone()).await?;
-    let snapshot = snapshot_paths(&paths)?;
-    let schema = scope_authorized_mutation_paths(authorized_paths, async {
-        properties::delete_schema_column_with_project(
-            &space,
-            &collection_path,
-            &column_name,
-            delete_values,
-            project_path.as_deref(),
-        )
-    })
-    .await?;
-    let paths = changed_paths(snapshot)?;
+    )?;
+    let outcome = apply_collection_mutation(&app, &space, mutation).await?;
+    let schema = outcome.value;
     let suffix = if delete_values { " and values" } else { "" };
     let message = schema_commit_message_with_previous(
         &schema,
@@ -340,7 +241,14 @@ pub async fn delete_schema_column(
         format!("Delete column \"{column_name}\"{suffix}"),
         "Update collection field",
     );
-    maybe_autocommit_schema(&autocommit, project_path.as_deref(), &space, paths, message).await;
+    maybe_autocommit_schema(
+        &autocommit,
+        project_path.as_deref(),
+        &space,
+        outcome.changed_paths,
+        message,
+    )
+    .await;
     Ok(schema)
 }
 
@@ -354,12 +262,19 @@ pub async fn add_option(
     project_path: Option<String>,
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<CollectionSchema, AppError> {
-    require_repository_mutation(&app, Path::new(&space)).await?;
     let default_message = format!("Add option \"{}\" to \"{column_name}\"", option.name);
-    let paths = properties::schema_mutation_paths(&space, &collection_path, false)?;
-    let schema = properties::add_option(&space, &collection_path, &column_name, option)?;
+    let mutation = properties::prepare_add_option(&space, &collection_path, column_name, option)?;
+    let outcome = apply_collection_mutation(&app, &space, mutation).await?;
+    let schema = outcome.value;
     let message = schema_commit_message(&schema, default_message, "Update collection field");
-    maybe_autocommit_schema(&autocommit, project_path.as_deref(), &space, paths, message).await;
+    maybe_autocommit_schema(
+        &autocommit,
+        project_path.as_deref(),
+        &space,
+        outcome.changed_paths,
+        message,
+    )
+    .await;
     Ok(schema)
 }
 
@@ -374,23 +289,28 @@ pub async fn rename_option(
     project_path: Option<String>,
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<CollectionSchema, AppError> {
-    require_repository_mutation(&app, Path::new(&space)).await?;
-    let paths = properties::schema_mutation_paths(&space, &collection_path, true)?;
-    let snapshot = snapshot_paths(&paths)?;
-    let schema = properties::rename_option(
+    let mutation = properties::prepare_rename_option(
         &space,
         &collection_path,
-        &column_name,
-        &old_option_name,
-        &new_option_name,
+        column_name.clone(),
+        old_option_name.clone(),
+        new_option_name.clone(),
     )?;
-    let paths = changed_paths(snapshot)?;
+    let outcome = apply_collection_mutation(&app, &space, mutation).await?;
+    let schema = outcome.value;
     let message = schema_commit_message(
         &schema,
         format!("Rename option \"{column_name}\": \"{old_option_name}\" → \"{new_option_name}\""),
         "Update collection field",
     );
-    maybe_autocommit_schema(&autocommit, project_path.as_deref(), &space, paths, message).await;
+    maybe_autocommit_schema(
+        &autocommit,
+        project_path.as_deref(),
+        &space,
+        outcome.changed_paths,
+        message,
+    )
+    .await;
     Ok(schema)
 }
 
@@ -405,25 +325,30 @@ pub async fn delete_option(
     project_path: Option<String>,
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<CollectionSchema, AppError> {
-    require_repository_mutation(&app, Path::new(&space)).await?;
     let delete_values = delete_values.unwrap_or(false);
-    let paths = properties::schema_mutation_paths(&space, &collection_path, delete_values)?;
-    let snapshot = snapshot_paths(&paths)?;
-    let schema = properties::delete_option(
+    let mutation = properties::prepare_delete_option(
         &space,
         &collection_path,
-        &column_name,
-        &option_name,
+        column_name.clone(),
+        option_name.clone(),
         delete_values,
     )?;
-    let paths = changed_paths(snapshot)?;
+    let outcome = apply_collection_mutation(&app, &space, mutation).await?;
+    let schema = outcome.value;
     let suffix = if delete_values { " and values" } else { "" };
     let message = schema_commit_message(
         &schema,
         format!("Delete option \"{column_name}\": \"{option_name}\"{suffix}"),
         "Update collection field",
     );
-    maybe_autocommit_schema(&autocommit, project_path.as_deref(), &space, paths, message).await;
+    maybe_autocommit_schema(
+        &autocommit,
+        project_path.as_deref(),
+        &space,
+        outcome.changed_paths,
+        message,
+    )
+    .await;
     Ok(schema)
 }
 
@@ -439,23 +364,30 @@ pub async fn update_option(
     project_path: Option<String>,
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<CollectionSchema, AppError> {
-    require_repository_mutation(&app, Path::new(&space)).await?;
-    let paths = properties::schema_mutation_paths(&space, &collection_path, false)?;
     let patch = patch.map(json_to_yaml_value).transpose()?;
-    let schema = properties::update_option(
+    let mutation = properties::prepare_update_option(
         &space,
         &collection_path,
-        &column_name,
-        &option_name,
+        column_name.clone(),
+        option_name.clone(),
         option,
         patch,
     )?;
+    let outcome = apply_collection_mutation(&app, &space, mutation).await?;
+    let schema = outcome.value;
     let message = schema_commit_message(
         &schema,
         format!("Update option \"{column_name}\": \"{option_name}\""),
         "Update collection field",
     );
-    maybe_autocommit_schema(&autocommit, project_path.as_deref(), &space, paths, message).await;
+    maybe_autocommit_schema(
+        &autocommit,
+        project_path.as_deref(),
+        &space,
+        outcome.changed_paths,
+        message,
+    )
+    .await;
     Ok(schema)
 }
 
@@ -469,15 +401,23 @@ pub async fn promote_orphan(
     project_path: Option<String>,
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<CollectionSchema, AppError> {
-    require_repository_mutation(&app, Path::new(&space)).await?;
-    let paths = properties::schema_mutation_paths(&space, &collection_path, false)?;
-    let schema = properties::promote_orphan(&space, &collection_path, &file_path, &field)?;
+    let mutation =
+        properties::prepare_promote_orphan(&space, &collection_path, file_path, field.clone())?;
+    let outcome = apply_collection_mutation(&app, &space, mutation).await?;
+    let schema = outcome.value;
     let message = schema_commit_message(
         &schema,
         format!("Add column \"{field}\""),
         "Update collection field",
     );
-    maybe_autocommit_schema(&autocommit, project_path.as_deref(), &space, paths, message).await;
+    maybe_autocommit_schema(
+        &autocommit,
+        project_path.as_deref(),
+        &space,
+        outcome.changed_paths,
+        message,
+    )
+    .await;
     Ok(schema)
 }
 
@@ -490,14 +430,21 @@ pub async fn clear_field_values(
     project_path: Option<String>,
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<(), AppError> {
-    require_repository_mutation(&app, Path::new(&space)).await?;
-    let paths = properties::clear_field_values(&space, &collection_path, &field)?;
+    let mutation = properties::prepare_clear_field_values(&space, &collection_path, field.clone())?;
+    let outcome = apply_collection_mutation(&app, &space, mutation).await?;
     let message = if collection_has_sensitive_columns(&space, &collection_path) {
         "Update collection field".to_string()
     } else {
         format!("Clear field \"{field}\" values")
     };
-    maybe_autocommit_schema(&autocommit, project_path.as_deref(), &space, paths, message).await;
+    maybe_autocommit_schema(
+        &autocommit,
+        project_path.as_deref(),
+        &space,
+        outcome.changed_paths,
+        message,
+    )
+    .await;
     Ok(())
 }
 
@@ -512,14 +459,19 @@ pub async fn clear_option_values(
     project_path: Option<String>,
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<(), AppError> {
-    require_repository_mutation(&app, Path::new(&space)).await?;
     let mut names = option_names.unwrap_or_default();
     if let Some(option_name) = option_name {
         names.push(option_name);
     }
     names.sort();
     names.dedup();
-    let paths = properties::clear_option_values(&space, &collection_path, &column_name, &names)?;
+    let mutation = properties::prepare_clear_option_values(
+        &space,
+        &collection_path,
+        column_name.clone(),
+        names.clone(),
+    )?;
+    let outcome = apply_collection_mutation(&app, &space, mutation).await?;
     let message = if collection_has_sensitive_columns(&space, &collection_path) {
         "Update collection field".to_string()
     } else if names.len() == 1 {
@@ -527,7 +479,14 @@ pub async fn clear_option_values(
     } else {
         format!("Clear option \"{column_name}\" values")
     };
-    maybe_autocommit_schema(&autocommit, project_path.as_deref(), &space, paths, message).await;
+    maybe_autocommit_schema(
+        &autocommit,
+        project_path.as_deref(),
+        &space,
+        outcome.changed_paths,
+        message,
+    )
+    .await;
     Ok(())
 }
 
@@ -542,20 +501,27 @@ pub async fn replace_option_values(
     project_path: Option<String>,
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<(), AppError> {
-    require_repository_mutation(&app, Path::new(&space)).await?;
-    let paths = properties::replace_option_values(
+    let mutation = properties::prepare_replace_option_values(
         &space,
         &collection_path,
-        &column_name,
-        &old_option_name,
-        &new_option_name,
+        column_name.clone(),
+        old_option_name.clone(),
+        new_option_name.clone(),
     )?;
+    let outcome = apply_collection_mutation(&app, &space, mutation).await?;
     let message = if collection_has_sensitive_columns(&space, &collection_path) {
         "Update collection field".to_string()
     } else {
         format!("Replace option \"{column_name}\": \"{old_option_name}\" → \"{new_option_name}\"")
     };
-    maybe_autocommit_schema(&autocommit, project_path.as_deref(), &space, paths, message).await;
+    maybe_autocommit_schema(
+        &autocommit,
+        project_path.as_deref(),
+        &space,
+        outcome.changed_paths,
+        message,
+    )
+    .await;
     Ok(())
 }
 
@@ -569,15 +535,27 @@ pub async fn update_system_field_label(
     project_path: Option<String>,
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<CollectionSchema, AppError> {
-    require_repository_mutation(&app, Path::new(&space)).await?;
-    let paths = properties::schema_mutation_paths(&space, &collection_path, false)?;
-    let schema = properties::update_system_field_label(&space, &collection_path, &field, label)?;
+    let mutation = properties::prepare_update_system_field_label(
+        &space,
+        &collection_path,
+        field.clone(),
+        label,
+    )?;
+    let outcome = apply_collection_mutation(&app, &space, mutation).await?;
+    let schema = outcome.value;
     let message = schema_commit_message(
         &schema,
         format!("Update system field \"{field}\""),
         "Update collection schema",
     );
-    maybe_autocommit_schema(&autocommit, project_path.as_deref(), &space, paths, message).await;
+    maybe_autocommit_schema(
+        &autocommit,
+        project_path.as_deref(),
+        &space,
+        outcome.changed_paths,
+        message,
+    )
+    .await;
     Ok(schema)
 }
 

@@ -734,24 +734,17 @@ pub(super) async fn add_collection_column(
     let (context, space) = resolve_space(app, args.space_id).await?;
     let collection_path = validate_public_rel_path(&args.collection_path, true)?;
     ensure_inside(Path::new(&space), &collection_path)?;
-    let include_markdown = args.column.type_ == PropertyType::UniqueId;
-    let paths = properties::schema_column_mutation_paths_with_project(
-        &space,
-        &collection_path,
-        &args.column,
-        include_markdown,
-        Some(context.project_path.as_str()),
-    )?;
-    let schema = properties::add_schema_column_with_project(
+    let mutation = properties::prepare_add_schema_column(
         &space,
         &collection_path,
         args.column,
         Some(context.project_path.as_str()),
     )?;
-    let changed_paths = rel_paths_from_space(&space, paths);
+    let outcome = mutation.apply()?;
+    let changed_paths = rel_paths_from_space(&space, outcome.changed_paths);
     Ok(ToolCallResult::ok(
         format!("Added column to collection {collection_path}."),
-        json!({ "collectionPath": collection_path, "schema": schema, "changedPaths": changed_paths }),
+        json!({ "collectionPath": collection_path, "schema": outcome.value, "changedPaths": changed_paths }),
     ))
 }
 
@@ -763,27 +756,21 @@ pub(super) async fn update_collection_column(
     let (context, space) = resolve_space(app, args.space_id).await?;
     let collection_path = validate_public_rel_path(&args.collection_path, true)?;
     ensure_inside(Path::new(&space), &collection_path)?;
-    let paths = properties::schema_column_name_mutation_paths_with_project(
-        &space,
-        &collection_path,
-        &args.column_name,
-        true,
-        Some(context.project_path.as_str()),
-    )?;
-    let schema = properties::update_schema_column_with_project(
+    let mutation = properties::prepare_update_schema_column(
         &space,
         &collection_path,
         &args.column_name,
         json_to_yaml(args.patch)?,
         Some(context.project_path.as_str()),
     )?;
-    let changed_paths = rel_paths_from_space(&space, paths);
+    let outcome = mutation.apply()?;
+    let changed_paths = rel_paths_from_space(&space, outcome.changed_paths);
     Ok(ToolCallResult::ok(
         format!(
             "Updated column {} in collection {collection_path}.",
             args.column_name
         ),
-        json!({ "collectionPath": collection_path, "schema": schema, "changedPaths": changed_paths }),
+        json!({ "collectionPath": collection_path, "schema": outcome.value, "changedPaths": changed_paths }),
     ))
 }
 
@@ -796,21 +783,21 @@ pub(super) async fn delete_collection_column(
     let collection_path = validate_public_rel_path(&args.collection_path, true)?;
     ensure_inside(Path::new(&space), &collection_path)?;
     let delete_values = args.delete_values.unwrap_or(false);
-    let paths = properties::schema_mutation_paths(&space, &collection_path, delete_values)?;
-    let schema = properties::delete_schema_column_with_project(
+    let mutation = properties::prepare_delete_schema_column(
         &space,
         &collection_path,
         &args.column_name,
         delete_values,
         Some(context.project_path.as_str()),
     )?;
-    let changed_paths = rel_paths_from_space(&space, paths);
+    let outcome = mutation.apply()?;
+    let changed_paths = rel_paths_from_space(&space, outcome.changed_paths);
     Ok(ToolCallResult::ok(
         format!(
             "Deleted column {} from collection {collection_path}.",
             args.column_name
         ),
-        json!({ "collectionPath": collection_path, "schema": schema, "changedPaths": changed_paths }),
+        json!({ "collectionPath": collection_path, "schema": outcome.value, "changedPaths": changed_paths }),
     ))
 }
 

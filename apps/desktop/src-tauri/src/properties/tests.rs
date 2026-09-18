@@ -192,6 +192,95 @@ views: []
 }
 
 #[test]
+fn prepared_schema_mutation_reports_only_sources_that_changed() {
+    let tmp = TempDir::new().unwrap();
+    let space = tmp.path();
+    fs::create_dir_all(space.join("tasks")).unwrap();
+    let schema_path = space.join("tasks/schema.yaml");
+    let changed_item = space.join("tasks/changed.md");
+    let untouched_item = space.join("tasks/untouched.md");
+    fs::write(
+        &schema_path,
+        "columns:\n  - name: Status\n    type: select\n    options: [Todo, Done]\nviews: []\n",
+    )
+    .unwrap();
+    fs::write(
+        &changed_item,
+        "---\ntitle: Changed\nStatus: Todo\n---\nBody\n",
+    )
+    .unwrap();
+    fs::write(&untouched_item, "---\ntitle: Untouched\n---\nBody\n").unwrap();
+
+    let mutation = prepare_rename_option(
+        space.to_str().unwrap(),
+        "tasks",
+        "Status".to_string(),
+        "Todo".to_string(),
+        "Ready".to_string(),
+    )
+    .unwrap();
+    assert!(mutation.paths().contains(&untouched_item));
+
+    let outcome = mutation.apply().unwrap();
+    assert_eq!(
+        outcome.changed_paths,
+        vec![changed_item.clone(), schema_path.clone()]
+    );
+    assert_eq!(
+        entry::read(space.to_str().unwrap(), "tasks/changed.md")
+            .unwrap()
+            .meta
+            .extra
+            .get("Status")
+            .and_then(Value::as_str),
+        Some("Ready")
+    );
+    assert_eq!(
+        fs::read_to_string(untouched_item).unwrap(),
+        "---\ntitle: Untouched\n---\nBody\n"
+    );
+}
+
+#[test]
+fn prepared_relation_schema_mutation_reports_reverse_schema_and_values() {
+    let tmp = TempDir::new().unwrap();
+    let space = tmp.path();
+    fs::create_dir_all(space.join("tasks")).unwrap();
+    fs::create_dir_all(space.join("people")).unwrap();
+    fs::write(space.join("tasks/schema.yaml"), "columns: []\nviews: []\n").unwrap();
+    fs::write(space.join("people/schema.yaml"), "columns: []\nviews: []\n").unwrap();
+    fs::write(
+        space.join("tasks/task.md"),
+        "---\ntitle: Task\nOwner: person.md\n---\n",
+    )
+    .unwrap();
+    fs::write(space.join("people/person.md"), "---\ntitle: Person\n---\n").unwrap();
+    let mut column = test_column("Owner", PropertyType::Relation);
+    column.relation = Some("people".to_string());
+    column.limit = Some(RelationLimit::One);
+    column.two_way = Some("Tasks".to_string());
+
+    let outcome = prepare_add_schema_column(space.to_str().unwrap(), "tasks", column, None)
+        .unwrap()
+        .apply()
+        .unwrap();
+
+    assert_eq!(
+        outcome.changed_paths,
+        vec![
+            space.join("people/person.md"),
+            space.join("people/schema.yaml"),
+            space.join("tasks/schema.yaml"),
+        ]
+    );
+    let reverse = entry::read(space.to_str().unwrap(), "people/person.md").unwrap();
+    assert_eq!(
+        reverse.meta.extra["Tasks"].as_sequence().unwrap()[0].as_str(),
+        Some("task.md")
+    );
+}
+
+#[test]
 fn boolean_schema_is_canonical_strict_and_inferred_from_boolean_values() {
     let raw = r#"
 columns:

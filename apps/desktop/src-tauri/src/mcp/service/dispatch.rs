@@ -338,43 +338,48 @@ async fn authorize_mutating_tool(
         }
         "add_collection_column" => {
             let decoded: AddCollectionColumnArgs = decode(args.clone())?;
-            paths.extend(properties::schema_column_mutation_paths_with_project(
-                &space,
-                &decoded.collection_path,
-                &decoded.column,
-                decoded.column.type_ == PropertyType::UniqueId,
-                Some(&context.project_path),
-            )?);
+            paths.extend(
+                properties::prepare_add_schema_column(
+                    &space,
+                    &decoded.collection_path,
+                    decoded.column,
+                    Some(&context.project_path),
+                )?
+                .paths()
+                .iter()
+                .cloned(),
+            );
         }
         "update_collection_column" => {
             let decoded: UpdateCollectionColumnArgs = decode(args.clone())?;
             let patch = json_to_yaml(decoded.patch)?;
-            paths.extend(properties::schema_column_name_mutation_paths_with_project(
-                &space,
-                &decoded.collection_path,
-                &decoded.column_name,
-                true,
-                Some(&context.project_path),
-            )?);
             paths.extend(
-                properties::schema_column_patch_target_mutation_paths_with_project(
+                properties::prepare_update_schema_column(
                     &space,
                     &decoded.collection_path,
                     &decoded.column_name,
-                    &patch,
+                    patch,
                     Some(&context.project_path),
-                )?,
+                )?
+                .paths()
+                .iter()
+                .cloned(),
             );
         }
         "delete_collection_column" => {
             let decoded: DeleteCollectionColumnArgs = decode(args.clone())?;
-            paths.extend(properties::schema_column_name_mutation_paths_with_project(
-                &space,
-                &decoded.collection_path,
-                &decoded.column_name,
-                decoded.delete_values.unwrap_or(false),
-                Some(&context.project_path),
-            )?);
+            paths.extend(
+                properties::prepare_delete_schema_column(
+                    &space,
+                    &decoded.collection_path,
+                    &decoded.column_name,
+                    decoded.delete_values.unwrap_or(false),
+                    Some(&context.project_path),
+                )?
+                .paths()
+                .iter()
+                .cloned(),
+            );
         }
         _ => {}
     }

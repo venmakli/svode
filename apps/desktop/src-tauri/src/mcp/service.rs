@@ -19,7 +19,7 @@ use crate::git::access::repository_access_snapshot;
 use crate::git::{self, GitState};
 use crate::index::update::IndexUpdateState;
 use crate::index::{IndexKey, IndexState};
-use crate::properties::{self, CollectionSchema, Column, Filter, PropertyType, Sort, View};
+use crate::properties::{self, CollectionSchema, Column, Filter, Sort, View};
 use crate::repo_path::{RootMode, normalize_repo_relative};
 use crate::space::{config as space_config, project, registry};
 
