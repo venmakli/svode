@@ -4,6 +4,7 @@ use std::sync::Arc;
 use tauri::{AppHandle, State};
 
 use crate::AppError;
+use crate::git::GitState;
 use crate::git::access::{require_repository_mutation_paths, scope_authorized_mutation_paths};
 use crate::git::autocommit::AutocommitService;
 use crate::index::IndexState;
@@ -52,6 +53,7 @@ pub(crate) async fn attachments_import_file(
     index_state: State<'_, IndexState>,
     index_updates: State<'_, crate::index::update::IndexUpdateState>,
     autocommit: State<'_, Arc<AutocommitService>>,
+    git_state: State<'_, GitState>,
 ) -> Result<ManagedImportResult, AppError> {
     let plan = plan_managed_import(
         &index_state,
@@ -65,15 +67,17 @@ pub(crate) async fn attachments_import_file(
     let authorized_paths = plan.affected_paths().to_vec();
     require_repository_mutation_paths(&app, authorized_paths.clone()).await?;
     scope_authorized_mutation_paths::<_, _, AppError>(authorized_paths, async {
-        execute_managed_import(
-            &app,
+        let result = execute_managed_import(
+            &git_state,
             &index_state,
             &index_updates,
             Some(&autocommit),
             MutationOrigin::Desktop,
             plan,
         )
-        .await
+        .await?;
+        super::delivery::emit_managed_import_invalidations(&app, &result.delivery);
+        Ok(result)
     })
     .await
 }

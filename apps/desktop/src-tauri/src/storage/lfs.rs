@@ -148,6 +148,14 @@ pub(crate) async fn probe_lfs_config(
     repo_dir: &Path,
     config: &AssetsSpaceConfig,
 ) -> LfsState {
+    probe_lfs_config_with_git(&app.state::<GitState>(), repo_dir, config).await
+}
+
+pub(crate) async fn probe_lfs_config_with_git(
+    git_state: &GitState,
+    repo_dir: &Path,
+    config: &AssetsSpaceConfig,
+) -> LfsState {
     match config.strategy {
         AssetsStrategy::Local | AssetsStrategy::InGit => LfsState::NotApplicable,
         AssetsStrategy::LfsS3 => {
@@ -168,7 +176,6 @@ pub(crate) async fn probe_lfs_config(
             }
         }
         AssetsStrategy::LfsRemote => {
-            let git_state = app.state::<GitState>();
             let Some(cli) = git_state.cli.clone() else {
                 return LfsState::MissingCreds;
             };

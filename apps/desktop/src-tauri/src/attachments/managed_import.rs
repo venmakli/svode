@@ -3,15 +3,15 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{self, BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, Manager};
 
+use crate::AppError;
 use crate::artifact::identity::{
     ContentOwnerKind, SemanticIdentity, SourceShape, resolve_markdown_identity_for_path,
 };
 use crate::files::{backlinks, filename};
+use crate::git::GitState;
 use crate::git::access::ensure_mutation_paths_were_authorized;
 use crate::git::autocommit::{AutocommitService, StructuralOp};
 use crate::index::IndexState;
@@ -23,11 +23,8 @@ use crate::storage::{
     assets, policy, scope::resolve_effective_storage_scope_for_key,
     strategy::apply_managed_import_route,
 };
-use crate::{AppError, system_path};
 
 use super::source::classify_binary_path;
-
-static MANAGED_IMPORT_GENERATION: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum MutationOrigin {
@@ -54,6 +51,17 @@ pub(crate) struct ManagedImportResult {
     pub mime: String,
     pub size_bytes: u64,
     pub changed_paths: Vec<String>,
+    #[serde(skip)]
+    pub delivery: ManagedImportDelivery,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct ManagedImportDelivery {
+    pub space_path: PathBuf,
+    pub owner_paths: Vec<String>,
+    pub attachment_path: String,
+    pub canonical_content_path: String,
+    pub converted_page: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -262,7 +270,7 @@ pub(crate) async fn plan_managed_import(
 }
 
 pub(crate) async fn execute_managed_import(
-    app: &AppHandle,
+    git_state: &GitState,
     index_state: &IndexState,
     index_updates: &IndexUpdateState,
     autocommit: Option<&Arc<AutocommitService>>,
@@ -285,8 +293,8 @@ pub(crate) async fn execute_managed_import(
         revalidated.binary_route,
         policy::ManagedBinaryRoute::LfsExtension | policy::ManagedBinaryRoute::LfsThreshold
     ) {
-        let state = crate::storage::lfs::probe_lfs_config(
-            app,
+        let state = crate::storage::lfs::probe_lfs_config_with_git(
+            git_state,
             &revalidated.repository_path,
             &revalidated.storage_config,
         )
@@ -338,9 +346,8 @@ pub(crate) async fn execute_managed_import(
             &attachment_abs,
             RootMode::Reject,
         )?;
-        let git_state = app.state::<crate::git::GitState>();
         let policy_paths = match apply_managed_import_route(
-            &git_state,
+            git_state,
             &revalidated.repository_path,
             revalidated.binary_route,
             &repository_attachment_path,
@@ -388,17 +395,27 @@ pub(crate) async fn execute_managed_import(
         candidates.push(attachment_abs.clone());
         candidates.extend(policy_paths);
         let changed_paths = changed_project_paths(&before, &candidates, &revalidated.project_path);
-        emit_import_invalidations(app, &revalidated, &attachment_path);
+        let mut owner_paths = BTreeSet::from([revalidated.owner_path.clone()]);
+        if revalidated.requires_conversion {
+            owner_paths.insert(revalidated.parent_owner_path.clone());
+        }
 
         Ok(ManagedImportResult {
             content_path: revalidated.canonical_content_path.clone(),
-            attachment_path,
+            attachment_path: attachment_path.clone(),
             markdown_url,
             cover_path,
             file_name,
             mime: assets::mime_for(&extension).to_string(),
             size_bytes: metadata.len(),
             changed_paths,
+            delivery: ManagedImportDelivery {
+                space_path: revalidated.space_path.clone(),
+                owner_paths: owner_paths.into_iter().collect(),
+                attachment_path,
+                canonical_content_path: revalidated.canonical_content_path.clone(),
+                converted_page: revalidated.requires_conversion,
+            },
         })
     }
     .await;
@@ -626,37 +643,6 @@ fn changed_project_paths(
     paths.into_iter().collect()
 }
 
-fn emit_import_invalidations(app: &AppHandle, plan: &ManagedImportPlan, attachment_path: &str) {
-    let generation = MANAGED_IMPORT_GENERATION.fetch_add(1, Ordering::Relaxed);
-    let mut owners = BTreeSet::from([plan.owner_path.clone()]);
-    if plan.requires_conversion {
-        owners.insert(plan.parent_owner_path.clone());
-    }
-    for owner_path in owners {
-        let mut changes = vec![serde_json::json!({
-            "path": attachment_path,
-            "kind": "binary",
-        })];
-        if plan.requires_conversion {
-            changes.push(serde_json::json!({
-                "path": plan.canonical_content_path,
-                "kind": "page",
-            }));
-        }
-        if let Err(error) = app.emit(
-            "attachments:invalidated",
-            serde_json::json!({
-                "spacePath": system_path::user_facing_path(&plan.space_path),
-                "ownerPath": owner_path,
-                "generation": generation,
-                "changes": changes,
-            }),
-        ) {
-            tracing::warn!("managed import invalidation failed: {error}");
-        }
-    }
-}
-
 fn normalize_relative_display(path: &Path) -> String {
     if path.as_os_str().is_empty() {
         ".".to_string()
@@ -775,6 +761,61 @@ mod tests {
             plan.affected_paths
                 .contains(&plan.project_path.join(".svode/order.json"))
         );
+    }
+
+    #[tokio::test]
+    async fn managed_import_executes_without_a_tauri_runtime() {
+        let git_state = GitState::new();
+        if git_state.require_cli().is_err() {
+            return;
+        }
+        let temp = tempfile::tempdir().unwrap();
+        let project = temp.path().join("project");
+        fs::create_dir_all(&project).unwrap();
+        write_space_config(
+            &project,
+            &SpaceConfig {
+                name: "Project".into(),
+                description: String::new(),
+                icon: "folder".into(),
+                spaces: None,
+                agent: None,
+                defaults: None,
+                git: None,
+                assets: Some(AssetsSpaceConfig {
+                    strategy: AssetsStrategy::InGit,
+                    binary_routing: None,
+                    s3: None,
+                }),
+                tree: None,
+            },
+        )
+        .unwrap();
+        fs::write(project.join("README.md"), "---\ntitle: Project\n---\n").unwrap();
+        let source = temp.path().join("photo.png");
+        fs::write(&source, b"image").unwrap();
+
+        let index_state = IndexState::new();
+        let plan = plan_managed_import(&index_state, &project, None, "README.md", &source, None)
+            .await
+            .unwrap();
+        let result = execute_managed_import(
+            &git_state,
+            &index_state,
+            crate::index::update::test_update_state(),
+            None,
+            MutationOrigin::Mcp,
+            plan,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result.content_path, "README.md");
+        assert_eq!(result.attachment_path, "photo.png");
+        assert_eq!(result.markdown_url, "photo.png");
+        assert!(project.join("photo.png").is_file());
+        assert_eq!(result.delivery.owner_paths, vec![".".to_string()]);
+        assert!(!result.delivery.converted_page);
     }
 
     #[tokio::test]

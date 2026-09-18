@@ -423,7 +423,7 @@ pub(super) async fn import_asset(
     )
     .await?;
     let result = crate::attachments::managed_import::execute_managed_import(
-        app,
+        &app.state::<GitState>(),
         &index_state,
         &index_updates,
         None,
@@ -431,6 +431,7 @@ pub(super) async fn import_asset(
         plan,
     )
     .await?;
+    crate::attachments::delivery::emit_managed_import_invalidations(app, &result.delivery);
     let owner_space_id = args
         .space_id
         .unwrap_or_else(|| active_mcp_space_id(&context));
