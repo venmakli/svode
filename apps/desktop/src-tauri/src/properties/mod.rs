@@ -86,10 +86,10 @@ pub use schema_mutations::{
     change_schema_type_with_warnings_and_project, clear_field_values, clear_option_values,
     default_collection_schema, delete_option, delete_schema_column,
     delete_schema_column_with_project, delete_view, duplicate_view, promote_orphan, rename_option,
-    rename_schema_column, rename_schema_column_with_project, rename_template_slug_references,
-    rename_view, reorder_templates, reorder_views, replace_option_values, set_default_template,
-    update_option, update_schema_column, update_schema_column_with_project,
-    update_system_field_label, update_view, write_default_collection_schema,
+    rename_schema_column, rename_schema_column_with_project, rename_view, reorder_templates,
+    reorder_views, replace_option_values, set_default_template, update_option,
+    update_schema_column, update_schema_column_with_project, update_system_field_label,
+    update_view, write_default_collection_schema,
 };
 use schema_mutations::{find_column_mut, strip_string_refs_in_views};
 

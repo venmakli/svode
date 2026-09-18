@@ -935,14 +935,6 @@ pub(crate) fn write_under_name_lock(
                     .to_string();
                 let new_folder_abs = resolve(space, &new_folder_rel);
                 fs::rename(&old_folder_abs, &new_folder_abs)?;
-                if let Err(error) = crate::properties::rename_template_slug_references(
-                    space,
-                    path,
-                    &rename.new_path,
-                ) {
-                    let _ = fs::rename(&new_folder_abs, &old_folder_abs);
-                    return Err(error);
-                }
                 rewrite_relations_after_fs_move_with_project(
                     Path::new(space),
                     project_path,
@@ -954,14 +946,6 @@ pub(crate) fn write_under_name_lock(
                 )?;
             } else {
                 fs::rename(&abs_path, &target_abs)?;
-                if let Err(error) = crate::properties::rename_template_slug_references(
-                    space,
-                    path,
-                    &rename.new_path,
-                ) {
-                    let _ = fs::rename(&target_abs, &abs_path);
-                    return Err(error);
-                }
                 rewrite_relations_after_fs_move_with_project(
                     Path::new(space),
                     project_path,

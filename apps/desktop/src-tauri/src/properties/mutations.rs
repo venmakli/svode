@@ -12,7 +12,7 @@ pub struct CollectionMutationOutcome<T> {
 }
 
 impl<T> PreparedCollectionMutation<T> {
-    fn new(
+    pub(crate) fn new(
         mut paths: Vec<PathBuf>,
         apply: impl FnOnce() -> Result<T, AppError> + Send + 'static,
     ) -> Self {
@@ -436,4 +436,170 @@ pub fn prepare_repair_two_way_relation(
             project_path.as_deref(),
         )
     }))
+}
+
+pub fn prepare_add_view(
+    space: &str,
+    collection_path: &str,
+    view: View,
+    position: Option<usize>,
+) -> Result<PreparedCollectionMutation<CollectionSchema>, AppError> {
+    let paths = schema_mutation_paths(space, collection_path, false)?;
+    let space = space.to_string();
+    let collection_path = collection_path.to_string();
+    Ok(PreparedCollectionMutation::new(paths, move || {
+        add_view(&space, &collection_path, view, position)
+    }))
+}
+
+pub fn prepare_rename_view(
+    space: &str,
+    collection_path: &str,
+    old_name: &str,
+    new_name: &str,
+) -> Result<PreparedCollectionMutation<CollectionSchema>, AppError> {
+    let paths = schema_mutation_paths(space, collection_path, false)?;
+    let space = space.to_string();
+    let collection_path = collection_path.to_string();
+    let old_name = old_name.to_string();
+    let new_name = new_name.to_string();
+    Ok(PreparedCollectionMutation::new(paths, move || {
+        rename_view(&space, &collection_path, &old_name, &new_name)
+    }))
+}
+
+pub fn prepare_update_view(
+    space: &str,
+    collection_path: &str,
+    view_name: &str,
+    patch: Value,
+) -> Result<PreparedCollectionMutation<CollectionSchema>, AppError> {
+    let paths = schema_mutation_paths(space, collection_path, false)?;
+    let space = space.to_string();
+    let collection_path = collection_path.to_string();
+    let view_name = view_name.to_string();
+    Ok(PreparedCollectionMutation::new(paths, move || {
+        update_view(&space, &collection_path, &view_name, patch)
+    }))
+}
+
+pub fn prepare_delete_view(
+    space: &str,
+    collection_path: &str,
+    view_name: &str,
+) -> Result<PreparedCollectionMutation<CollectionSchema>, AppError> {
+    let paths = schema_mutation_paths(space, collection_path, false)?;
+    let space = space.to_string();
+    let collection_path = collection_path.to_string();
+    let view_name = view_name.to_string();
+    Ok(PreparedCollectionMutation::new(paths, move || {
+        delete_view(&space, &collection_path, &view_name)
+    }))
+}
+
+pub fn prepare_duplicate_view(
+    space: &str,
+    collection_path: &str,
+    view_name: &str,
+    new_name: &str,
+) -> Result<PreparedCollectionMutation<CollectionSchema>, AppError> {
+    let paths = schema_mutation_paths(space, collection_path, false)?;
+    let space = space.to_string();
+    let collection_path = collection_path.to_string();
+    let view_name = view_name.to_string();
+    let new_name = new_name.to_string();
+    Ok(PreparedCollectionMutation::new(paths, move || {
+        duplicate_view(&space, &collection_path, &view_name, &new_name)
+    }))
+}
+
+pub fn prepare_reorder_views(
+    space: &str,
+    collection_path: &str,
+    new_order: Vec<String>,
+) -> Result<PreparedCollectionMutation<CollectionSchema>, AppError> {
+    let paths = schema_mutation_paths(space, collection_path, false)?;
+    let space = space.to_string();
+    let collection_path = collection_path.to_string();
+    Ok(PreparedCollectionMutation::new(paths, move || {
+        reorder_views(&space, &collection_path, new_order)
+    }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    fn table(name: &str) -> View {
+        View::Table {
+            name: name.to_string(),
+            filter: Vec::new(),
+            sort: Vec::new(),
+            visible_fields: vec!["title".to_string()],
+            show_nested: None,
+        }
+    }
+
+    #[test]
+    fn prepared_view_operations_report_actual_schema_changes() {
+        let temp = TempDir::new().unwrap();
+        let space = temp.path().to_string_lossy().to_string();
+        fs::create_dir(temp.path().join("tasks")).unwrap();
+        write_default_collection_schema(&space, "tasks").unwrap();
+        let schema_path = temp.path().join("tasks/schema.yaml");
+
+        let added = prepare_add_view(&space, "tasks", table("Board"), None)
+            .unwrap()
+            .apply()
+            .unwrap();
+        assert_eq!(added.changed_paths, [schema_path.clone()]);
+
+        let renamed = prepare_rename_view(&space, "tasks", "Board", "Roadmap")
+            .unwrap()
+            .apply()
+            .unwrap();
+        assert_eq!(renamed.changed_paths, [schema_path.clone()]);
+
+        let patch: Value = serde_yml::from_str("show_nested: false\n").unwrap();
+        let updated = prepare_update_view(&space, "tasks", "Roadmap", patch.clone())
+            .unwrap()
+            .apply()
+            .unwrap();
+        assert_eq!(updated.changed_paths, [schema_path.clone()]);
+        let unchanged = prepare_update_view(&space, "tasks", "Roadmap", patch)
+            .unwrap()
+            .apply()
+            .unwrap();
+        assert!(unchanged.changed_paths.is_empty());
+
+        prepare_duplicate_view(&space, "tasks", "Roadmap", "Roadmap copy")
+            .unwrap()
+            .apply()
+            .unwrap();
+        prepare_reorder_views(
+            &space,
+            "tasks",
+            vec![
+                "Roadmap copy".to_string(),
+                "Все".to_string(),
+                "Roadmap".to_string(),
+            ],
+        )
+        .unwrap()
+        .apply()
+        .unwrap();
+        let deleted = prepare_delete_view(&space, "tasks", "Roadmap copy")
+            .unwrap()
+            .apply()
+            .unwrap();
+        assert_eq!(deleted.changed_paths, [schema_path.clone()]);
+
+        let before = fs::read(&schema_path).unwrap();
+        let invalid = prepare_reorder_views(&space, "tasks", vec!["Roadmap".to_string()])
+            .unwrap()
+            .apply();
+        assert!(invalid.is_err());
+        assert_eq!(fs::read(schema_path).unwrap(), before);
+    }
 }

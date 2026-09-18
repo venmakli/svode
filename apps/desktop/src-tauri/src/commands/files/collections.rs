@@ -154,19 +154,22 @@ pub async fn set_default_template(
     project_path: Option<String>,
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<CollectionSchema, AppError> {
-    require_repository_mutation(&app, Path::new(&space)).await?;
-    if let Some(template_slug) = template_slug.as_deref() {
-        templates::ensure_template_exists(&space, &collection_path, template_slug)?;
-    }
-    let paths = properties::schema_mutation_paths(&space, &collection_path, false)?;
-    let schema =
-        properties::set_default_template(&space, &collection_path, template_slug.as_deref())?;
+    let mutation = templates::prepare_set_default(&space, &collection_path, template_slug)?;
+    let outcome = apply_collection_mutation(&app, &space, mutation).await?;
+    let schema = outcome.value;
     let message = schema_commit_message(
         &schema,
         "Update collection templates",
         "Update collection templates",
     );
-    maybe_autocommit_schema(&autocommit, project_path.as_deref(), &space, paths, message).await;
+    maybe_autocommit_schema(
+        &autocommit,
+        project_path.as_deref(),
+        &space,
+        outcome.changed_paths,
+        message,
+    )
+    .await;
     Ok(schema)
 }
 
@@ -179,16 +182,22 @@ pub async fn reorder_templates(
     project_path: Option<String>,
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<CollectionSchema, AppError> {
-    require_repository_mutation(&app, Path::new(&space)).await?;
-    templates::validate_template_order(&space, &collection_path, &new_order)?;
-    let paths = properties::schema_mutation_paths(&space, &collection_path, false)?;
-    let schema = properties::reorder_templates(&space, &collection_path, new_order)?;
+    let mutation = templates::prepare_reorder(&space, &collection_path, new_order)?;
+    let outcome = apply_collection_mutation(&app, &space, mutation).await?;
+    let schema = outcome.value;
     let message = schema_commit_message(
         &schema,
         "Update collection templates",
         "Update collection templates",
     );
-    maybe_autocommit_schema(&autocommit, project_path.as_deref(), &space, paths, message).await;
+    maybe_autocommit_schema(
+        &autocommit,
+        project_path.as_deref(),
+        &space,
+        outcome.changed_paths,
+        message,
+    )
+    .await;
     Ok(schema)
 }
 
@@ -202,12 +211,19 @@ pub async fn add_view(
     project_path: Option<String>,
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<CollectionSchema, AppError> {
-    require_repository_mutation(&app, Path::new(&space)).await?;
     let default_message = format!("Add view \"{}\"", view.name());
-    let paths = properties::schema_mutation_paths(&space, &collection_path, false)?;
-    let schema = properties::add_view(&space, &collection_path, view, position)?;
+    let mutation = properties::prepare_add_view(&space, &collection_path, view, position)?;
+    let outcome = apply_collection_mutation(&app, &space, mutation).await?;
+    let schema = outcome.value;
     let message = schema_commit_message(&schema, default_message, "Update collection view");
-    maybe_autocommit_schema(&autocommit, project_path.as_deref(), &space, paths, message).await;
+    maybe_autocommit_schema(
+        &autocommit,
+        project_path.as_deref(),
+        &space,
+        outcome.changed_paths,
+        message,
+    )
+    .await;
     Ok(schema)
 }
 
@@ -221,15 +237,22 @@ pub async fn rename_view(
     project_path: Option<String>,
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<CollectionSchema, AppError> {
-    require_repository_mutation(&app, Path::new(&space)).await?;
-    let paths = properties::schema_mutation_paths(&space, &collection_path, false)?;
-    let schema = properties::rename_view(&space, &collection_path, &old_name, &new_name)?;
+    let mutation = properties::prepare_rename_view(&space, &collection_path, &old_name, &new_name)?;
+    let outcome = apply_collection_mutation(&app, &space, mutation).await?;
+    let schema = outcome.value;
     let message = schema_commit_message(
         &schema,
         format!("Rename view \"{old_name}\" \u{2192} \"{new_name}\""),
         "Update collection view",
     );
-    maybe_autocommit_schema(&autocommit, project_path.as_deref(), &space, paths, message).await;
+    maybe_autocommit_schema(
+        &autocommit,
+        project_path.as_deref(),
+        &space,
+        outcome.changed_paths,
+        message,
+    )
+    .await;
     Ok(schema)
 }
 
@@ -243,16 +266,23 @@ pub async fn update_view(
     project_path: Option<String>,
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<CollectionSchema, AppError> {
-    require_repository_mutation(&app, Path::new(&space)).await?;
-    let paths = properties::schema_mutation_paths(&space, &collection_path, false)?;
     let patch = json_to_yaml_value(patch)?;
-    let schema = properties::update_view(&space, &collection_path, &view_name, patch)?;
+    let mutation = properties::prepare_update_view(&space, &collection_path, &view_name, patch)?;
+    let outcome = apply_collection_mutation(&app, &space, mutation).await?;
+    let schema = outcome.value;
     let message = schema_commit_message(
         &schema,
         format!("Update view \"{view_name}\""),
         "Update collection view",
     );
-    maybe_autocommit_schema(&autocommit, project_path.as_deref(), &space, paths, message).await;
+    maybe_autocommit_schema(
+        &autocommit,
+        project_path.as_deref(),
+        &space,
+        outcome.changed_paths,
+        message,
+    )
+    .await;
     Ok(schema)
 }
 
@@ -265,15 +295,22 @@ pub async fn delete_view(
     project_path: Option<String>,
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<CollectionSchema, AppError> {
-    require_repository_mutation(&app, Path::new(&space)).await?;
-    let paths = properties::schema_mutation_paths(&space, &collection_path, false)?;
-    let schema = properties::delete_view(&space, &collection_path, &view_name)?;
+    let mutation = properties::prepare_delete_view(&space, &collection_path, &view_name)?;
+    let outcome = apply_collection_mutation(&app, &space, mutation).await?;
+    let schema = outcome.value;
     let message = schema_commit_message(
         &schema,
         format!("Delete view \"{view_name}\""),
         "Update collection view",
     );
-    maybe_autocommit_schema(&autocommit, project_path.as_deref(), &space, paths, message).await;
+    maybe_autocommit_schema(
+        &autocommit,
+        project_path.as_deref(),
+        &space,
+        outcome.changed_paths,
+        message,
+    )
+    .await;
     Ok(schema)
 }
 
@@ -287,15 +324,23 @@ pub async fn duplicate_view(
     project_path: Option<String>,
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<CollectionSchema, AppError> {
-    require_repository_mutation(&app, Path::new(&space)).await?;
-    let paths = properties::schema_mutation_paths(&space, &collection_path, false)?;
-    let schema = properties::duplicate_view(&space, &collection_path, &view_name, &new_name)?;
+    let mutation =
+        properties::prepare_duplicate_view(&space, &collection_path, &view_name, &new_name)?;
+    let outcome = apply_collection_mutation(&app, &space, mutation).await?;
+    let schema = outcome.value;
     let message = schema_commit_message(
         &schema,
         format!("Duplicate view \"{view_name}\" \u{2192} \"{new_name}\""),
         "Update collection view",
     );
-    maybe_autocommit_schema(&autocommit, project_path.as_deref(), &space, paths, message).await;
+    maybe_autocommit_schema(
+        &autocommit,
+        project_path.as_deref(),
+        &space,
+        outcome.changed_paths,
+        message,
+    )
+    .await;
     Ok(schema)
 }
 
@@ -308,11 +353,18 @@ pub async fn reorder_views(
     project_path: Option<String>,
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<CollectionSchema, AppError> {
-    require_repository_mutation(&app, Path::new(&space)).await?;
-    let paths = properties::schema_mutation_paths(&space, &collection_path, false)?;
-    let schema = properties::reorder_views(&space, &collection_path, new_order)?;
+    let mutation = properties::prepare_reorder_views(&space, &collection_path, new_order)?;
+    let outcome = apply_collection_mutation(&app, &space, mutation).await?;
+    let schema = outcome.value;
     let message = schema_commit_message(&schema, "Reorder views", "Update collection view");
-    maybe_autocommit_schema(&autocommit, project_path.as_deref(), &space, paths, message).await;
+    maybe_autocommit_schema(
+        &autocommit,
+        project_path.as_deref(),
+        &space,
+        outcome.changed_paths,
+        message,
+    )
+    .await;
     Ok(schema)
 }
 

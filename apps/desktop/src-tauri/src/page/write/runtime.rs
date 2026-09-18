@@ -158,12 +158,6 @@ async fn prepare(
             request.space,
             request.project,
         ));
-        if let Some((parent, _)) = request.path.split_once(".templates/") {
-            let schema = Path::new(request.space).join(parent).join("schema.yaml");
-            if schema.is_file() {
-                paths.push(schema);
-            }
-        }
         if let Some(folder) = &planned.folder_rename_old {
             let root = Path::new(request.space);
             moved_sources = crate::commands::files::collect_markdown_paths(

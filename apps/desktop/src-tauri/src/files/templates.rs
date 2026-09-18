@@ -392,6 +392,38 @@ mod tests {
         assert_eq!(unicode.entry.path, "collection/日本語 Template 🚀.md");
         assert!(unicode.entry.warnings.is_empty());
     }
+
+    #[test]
+    fn prepared_template_config_validates_inventory_and_reports_actual_changes() {
+        let tmp = TempDir::new().unwrap();
+        let space = tmp.path().to_string_lossy().to_string();
+        fs::create_dir(tmp.path().join("collection")).unwrap();
+        properties::write_default_collection_schema(&space, "collection").unwrap();
+        create(&space, "collection", "Template", TemplateKind::Leaf).unwrap();
+        let schema_path = tmp.path().join("collection/schema.yaml");
+
+        let selected = prepare_set_default(&space, "collection", Some("template".to_string()))
+            .unwrap()
+            .apply()
+            .unwrap();
+        assert_eq!(selected.changed_paths, [schema_path.clone()]);
+        let unchanged = prepare_set_default(&space, "collection", Some("template".to_string()))
+            .unwrap()
+            .apply()
+            .unwrap();
+        assert!(unchanged.changed_paths.is_empty());
+
+        let reordered = prepare_reorder(&space, "collection", vec!["template".to_string()])
+            .unwrap()
+            .apply()
+            .unwrap();
+        assert_eq!(reordered.changed_paths, [schema_path.clone()]);
+
+        let before = fs::read(&schema_path).unwrap();
+        assert!(prepare_set_default(&space, "collection", Some("missing".to_string())).is_err());
+        assert!(prepare_reorder(&space, "collection", vec!["missing".to_string()]).is_err());
+        assert_eq!(fs::read(schema_path).unwrap(), before);
+    }
 }
 
 pub fn ensure_template_exists(
@@ -432,6 +464,40 @@ pub fn validate_template_order(
         }
     }
     Ok(())
+}
+
+pub fn prepare_set_default(
+    space: &str,
+    collection_path: &str,
+    template_slug: Option<String>,
+) -> Result<properties::PreparedCollectionMutation<CollectionSchema>, AppError> {
+    if let Some(template_slug) = template_slug.as_deref() {
+        ensure_template_exists(space, collection_path, template_slug)?;
+    }
+    let paths = properties::schema_mutation_paths(space, collection_path, false)?;
+    let space = space.to_string();
+    let collection_path = collection_path.to_string();
+    Ok(properties::PreparedCollectionMutation::new(
+        paths,
+        move || {
+            properties::set_default_template(&space, &collection_path, template_slug.as_deref())
+        },
+    ))
+}
+
+pub fn prepare_reorder(
+    space: &str,
+    collection_path: &str,
+    new_order: Vec<String>,
+) -> Result<properties::PreparedCollectionMutation<CollectionSchema>, AppError> {
+    validate_template_order(space, collection_path, &new_order)?;
+    let paths = properties::schema_mutation_paths(space, collection_path, false)?;
+    let space = space.to_string();
+    let collection_path = collection_path.to_string();
+    Ok(properties::PreparedCollectionMutation::new(
+        paths,
+        move || properties::reorder_templates(&space, &collection_path, new_order),
+    ))
 }
 
 fn instantiate_hierarchy(

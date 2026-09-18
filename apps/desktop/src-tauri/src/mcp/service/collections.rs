@@ -809,12 +809,13 @@ pub(super) async fn add_collection_view(
     let (_, space) = resolve_space(app, args.space_id).await?;
     let collection_path = validate_public_rel_path(&args.collection_path, true)?;
     ensure_inside(Path::new(&space), &collection_path)?;
-    let paths = properties::schema_mutation_paths(&space, &collection_path, false)?;
-    let schema = properties::add_view(&space, &collection_path, args.view, args.position)?;
-    let changed_paths = rel_paths_from_space(&space, paths);
+    let mutation =
+        properties::prepare_add_view(&space, &collection_path, args.view, args.position)?;
+    let outcome = mutation.apply()?;
+    let changed_paths = rel_paths_from_space(&space, outcome.changed_paths);
     Ok(ToolCallResult::ok(
         format!("Added view to collection {collection_path}."),
-        json!({ "collectionPath": collection_path, "schema": schema, "changedPaths": changed_paths }),
+        json!({ "collectionPath": collection_path, "schema": outcome.value, "changedPaths": changed_paths }),
     ))
 }
 
@@ -826,20 +827,20 @@ pub(super) async fn update_collection_view(
     let (_, space) = resolve_space(app, args.space_id).await?;
     let collection_path = validate_public_rel_path(&args.collection_path, true)?;
     ensure_inside(Path::new(&space), &collection_path)?;
-    let paths = properties::schema_mutation_paths(&space, &collection_path, false)?;
-    let schema = properties::update_view(
+    let mutation = properties::prepare_update_view(
         &space,
         &collection_path,
         &args.view_name,
         json_to_yaml(args.patch)?,
     )?;
-    let changed_paths = rel_paths_from_space(&space, paths);
+    let outcome = mutation.apply()?;
+    let changed_paths = rel_paths_from_space(&space, outcome.changed_paths);
     Ok(ToolCallResult::ok(
         format!(
             "Updated view {} in collection {collection_path}.",
             args.view_name
         ),
-        json!({ "collectionPath": collection_path, "schema": schema, "changedPaths": changed_paths }),
+        json!({ "collectionPath": collection_path, "schema": outcome.value, "changedPaths": changed_paths }),
     ))
 }
 
@@ -851,14 +852,14 @@ pub(super) async fn delete_collection_view(
     let (_, space) = resolve_space(app, args.space_id).await?;
     let collection_path = validate_public_rel_path(&args.collection_path, true)?;
     ensure_inside(Path::new(&space), &collection_path)?;
-    let paths = properties::schema_mutation_paths(&space, &collection_path, false)?;
-    let schema = properties::delete_view(&space, &collection_path, &args.view_name)?;
-    let changed_paths = rel_paths_from_space(&space, paths);
+    let mutation = properties::prepare_delete_view(&space, &collection_path, &args.view_name)?;
+    let outcome = mutation.apply()?;
+    let changed_paths = rel_paths_from_space(&space, outcome.changed_paths);
     Ok(ToolCallResult::ok(
         format!(
             "Deleted view {} from collection {collection_path}.",
             args.view_name
         ),
-        json!({ "collectionPath": collection_path, "schema": schema, "changedPaths": changed_paths }),
+        json!({ "collectionPath": collection_path, "schema": outcome.value, "changedPaths": changed_paths }),
     ))
 }
