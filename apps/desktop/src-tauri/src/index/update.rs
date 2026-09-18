@@ -14,6 +14,7 @@ use crate::index::reindex::{
 use crate::index::{IndexKey, IndexState, ReindexActiveGuard};
 use crate::routines::{CollectionEventOrigin, RoutineStoreState};
 
+#[derive(Clone)]
 pub struct IndexUpdateState {
     routine_stores: Arc<RoutineStoreState>,
 }

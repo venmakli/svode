@@ -719,7 +719,7 @@ fn sync_index_for_watched_path(
             .unwrap_or_else(|| IndexKey::Root(space_root.to_path_buf()));
 
         if is_schema_path(path) {
-            if let Err(e) = updates.run_full_reindex(&state, &key).await {
+            if let Err(e) = crate::index::service::repair_space(&state, &updates, &key).await {
                 tracing::warn!("watcher full reindex failed for {:?}: {e}", key);
             }
             return;
@@ -747,7 +747,7 @@ fn sync_index_for_visibility_change(
             .key_for_space_dir(space_root)
             .await
             .unwrap_or_else(|| IndexKey::Root(space_root.to_path_buf()));
-        if let Err(error) = updates.run_full_reindex(&state, &key).await {
+        if let Err(error) = crate::index::service::repair_space(&state, &updates, &key).await {
             tracing::warn!("watcher visibility reindex failed for {:?}: {error}", key);
         }
         if invalidate_backlinks {

@@ -261,7 +261,9 @@ impl ProjectRuntimeState {
         let task = tauri::async_runtime::spawn(async move {
             let index_state = app.state::<IndexState>();
             let updates = app.state::<IndexUpdateState>();
-            if let Err(error) = updates.run_full_reindex(&index_state, &key).await {
+            if let Err(error) =
+                crate::index::service::repair_space(&index_state, &updates, &key).await
+            {
                 tracing::warn!(?key, "background full reindex failed: {error}");
             }
         });

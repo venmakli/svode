@@ -8,6 +8,7 @@ pub mod reindex;
 mod retention;
 mod retention_wal;
 pub mod search;
+pub mod service;
 pub mod update;
 
 use sqlx::SqlitePool;
@@ -270,32 +271,33 @@ fn normalize_abs_path(path: &Path) -> Option<PathBuf> {
 ///
 /// Holds one pool per `IndexKey` — root project + each ready child space —
 /// plus matching reindex serialization locks and runtime backlink indices.
+#[derive(Clone)]
 pub struct IndexState {
     pools: Arc<Mutex<lifecycle::IndexPools>>,
     /// Per-key serialization lock for `full_reindex`. Two rapid `open_project`
     /// calls would otherwise spawn two concurrent reindexes against the same
     /// DB — correct under SQLite serialization, but doubles the work and
     /// exposes a brief empty-index window twice.
-    reindex_locks: Mutex<HashMap<IndexKey, Arc<Mutex<()>>>>,
+    reindex_locks: Arc<Mutex<HashMap<IndexKey, Arc<Mutex<()>>>>>,
     /// Per-key flag toggled by `run_full_reindex` (true while the reindex
     /// transaction is in flight). `fan_out` reads this to skip mid-reindex
     /// pools per §Q3 — separate from `reindex_locks` so that concurrent
     /// search reads don't serialize against each other on the same Mutex.
-    reindex_active: Mutex<HashMap<IndexKey, Arc<AtomicBool>>>,
+    reindex_active: Arc<Mutex<HashMap<IndexKey, Arc<AtomicBool>>>>,
     /// Per-key flag raised while a cached snapshot is being reconciled with
     /// its source manifest. Cached rows stay readable throughout this pass.
-    reconcile_active: Mutex<HashMap<IndexKey, Arc<AtomicBool>>>,
+    reconcile_active: Arc<Mutex<HashMap<IndexKey, Arc<AtomicBool>>>>,
     /// Per-key runtime backlink index. Mirrors `pools` lifecycle. Lazy-build:
     /// `BacklinkIndex::build` runs on first access (preserves current
     /// behaviour — not eager at `open_project`).
-    backlinks: Mutex<HashMap<IndexKey, Arc<BacklinkIndex>>>,
+    backlinks: Arc<Mutex<HashMap<IndexKey, Arc<BacklinkIndex>>>>,
     /// Per-project resolver cache. Refreshed on `open_project` and on every
     /// `space:*` lifecycle event.
-    spaces_cache: Mutex<HashMap<PathBuf, ProjectSpacesCache>>,
+    spaces_cache: Arc<Mutex<HashMap<PathBuf, ProjectSpacesCache>>>,
     /// Per-key LFS runtime state. Initial value for any key is
     /// `NotApplicable`; the actual probe is lazy (triggered by user gestures
     /// or post-clone/sync events). See `storage/lfs.rs`.
-    lfs_states: Mutex<HashMap<IndexKey, LfsState>>,
+    lfs_states: Arc<Mutex<HashMap<IndexKey, LfsState>>>,
 }
 
 /// RAII guard: clears the `reindex_active` flag when dropped, even on panic.
@@ -311,12 +313,12 @@ impl IndexState {
     pub fn new() -> Self {
         Self {
             pools: Arc::new(Mutex::new(lifecycle::IndexPools::default())),
-            reindex_locks: Mutex::new(HashMap::new()),
-            reindex_active: Mutex::new(HashMap::new()),
-            reconcile_active: Mutex::new(HashMap::new()),
-            backlinks: Mutex::new(HashMap::new()),
-            spaces_cache: Mutex::new(HashMap::new()),
-            lfs_states: Mutex::new(HashMap::new()),
+            reindex_locks: Arc::new(Mutex::new(HashMap::new())),
+            reindex_active: Arc::new(Mutex::new(HashMap::new())),
+            reconcile_active: Arc::new(Mutex::new(HashMap::new())),
+            backlinks: Arc::new(Mutex::new(HashMap::new())),
+            spaces_cache: Arc::new(Mutex::new(HashMap::new())),
+            lfs_states: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 

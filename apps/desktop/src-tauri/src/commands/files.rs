@@ -995,7 +995,7 @@ async fn reindex_space_dir(
         key = ?key,
         "running full index repair reindex"
     );
-    if let Err(e) = index_updates.run_full_reindex(index_state, &key).await {
+    if let Err(e) = crate::index::service::repair_space(index_state, index_updates, &key).await {
         tracing::warn!("collection operation reindex failed for {:?}: {e}", key);
     }
 }

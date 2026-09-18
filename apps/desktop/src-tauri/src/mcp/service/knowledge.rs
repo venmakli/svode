@@ -2,6 +2,7 @@ use super::*;
 use crate::index::knowledge::{
     KnowledgeFilters, KnowledgeResponse, KnowledgeScope, KnowledgeSource,
 };
+use crate::index::service;
 
 const DEFAULT_SEARCH_LIMIT: usize = 20;
 const MAX_SEARCH_LIMIT: usize = 50;
@@ -257,7 +258,7 @@ pub(super) async fn get_related_context(
     let node_kinds = validate_kinds(args.node_kinds, &NODE_KINDS, "nodeKinds")?;
     let resolved = resolve_scope(app, args.scope, args.space_id).await?;
     let state = app.state::<IndexState>();
-    let mut response = crate::index::knowledge::read_related_context(
+    let mut response = service::read_related_context(
         &state,
         &resolved.project,
         resolved.scope.clone(),
@@ -396,7 +397,7 @@ async fn read_effective_snapshot(
     filters: KnowledgeFilters,
 ) -> KnowledgeResponse {
     let state = app.state::<IndexState>();
-    crate::index::knowledge::read_scoped_snapshot_filtered(
+    service::read_scoped_knowledge(
         &state,
         &resolved.project,
         resolved.scope.clone(),

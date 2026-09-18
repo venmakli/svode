@@ -457,29 +457,30 @@ pub(super) async fn search_pages(
     app: &AppHandle,
     args: SearchArgs,
 ) -> Result<ToolCallResult, McpBusinessError> {
-    let (context, space) = resolve_space(app, args.space_id.clone()).await?;
+    let (context, _) = resolve_space(app, args.space_id.clone()).await?;
     let state = app.state::<IndexState>();
     let key = index_key_for_context(&context, args.space_id.as_deref());
     let limit = clamp_limit(args.limit);
     let start = offset(args.offset);
-    let pool = match state.get_or_create(&key).await {
-        Ok(pool) => pool,
-        Err(_) => {
-            let key = state
-                .key_for_space_dir(Path::new(&space))
-                .await
-                .unwrap_or(IndexKey::Root(PathBuf::from(&space)));
-            state.get_or_create(&key).await?
-        }
-    };
-    let mut results =
-        search::search_fts(&pool, &args.query, None, None, limit + start as i64).await?;
-    let total = results.len();
-    results = results
+    let response = crate::index::service::search_content(
+        &state,
+        PathBuf::from(&context.project_path),
+        args.query,
+        None,
+        None,
+        Some(crate::index::service::SearchScope::Space {
+            space_id: IndexState::space_id_for_key(&key),
+        }),
+        Some(limit.saturating_add(start as i64)),
+    )
+    .await?;
+    let total = response.items.len();
+    let results = response
+        .items
         .into_iter()
         .skip(start)
         .take(limit as usize)
-        .collect();
+        .collect::<Vec<_>>();
     Ok(ToolCallResult::ok(
         format!("Found {} matching Pages.", results.len()),
         json!({ "items": results, "total": total, "limit": limit, "offset": start }),

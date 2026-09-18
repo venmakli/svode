@@ -1,172 +1,13 @@
-use std::collections::HashSet;
 use std::path::PathBuf;
-use std::sync::Arc;
 
-use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager, State};
-use tokio::sync::Semaphore;
-use tokio::task::JoinSet;
 
 use crate::error::AppError;
 use crate::index::knowledge::{KnowledgeFilters, KnowledgeResponse, KnowledgeScope};
-use crate::index::search::{self, SearchResult};
+use crate::index::service::{self, SearchResponse, SearchScope};
 use crate::index::update::IndexUpdateState;
 use crate::index::{IndexKey, IndexState};
 
-const DEFAULT_LIMIT: i64 = 20;
-const REINDEX_PARALLELISM: usize = 4;
-
-const ICON_PAGE: &str = "\u{1F4C4}"; // 📄
-const ICON_TABLE_ROW: &str = "\u{1F4CB}"; // 📋
-
-/// Optional scope for project-wide search/reindex IPCs.
-///
-/// `Project` (the default) → fan out across the root pool + every ready
-/// space pool. `Space { space_id }` → restrict to one pool.
-/// `Space { space_id: None }` is equivalent to root-only.
-#[derive(Debug, Deserialize)]
-#[serde(
-    rename_all = "camelCase",
-    rename_all_fields = "camelCase",
-    tag = "kind"
-)]
-pub enum SearchScope {
-    Project,
-    Space { space_id: Option<String> },
-}
-
-/// Per-pool search hit shape returned to the frontend.
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SearchItem {
-    pub id: String,
-    pub space_id: Option<String>,
-    pub space_path: String,
-    pub space_name: String,
-    pub path: String,
-    pub title: String,
-    #[serde(rename = "type")]
-    pub entry_type: String,
-    pub table_name: Option<String>,
-    pub snippet: Option<String>,
-    pub icon: String,
-}
-
-/// Envelope for fan-out search responses. `indexed_spaces` / `total_spaces`
-/// power the Command Palette progress hint (Phase 6 §Q3).
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SearchResponse {
-    pub items: Vec<SearchItem>,
-    pub indexed_spaces: usize,
-    pub total_spaces: usize,
-}
-
-async fn scope_to_keys(
-    state: &IndexState,
-    project: &PathBuf,
-    scope: Option<SearchScope>,
-) -> Vec<IndexKey> {
-    match scope {
-        Some(SearchScope::Space { space_id: Some(id) }) => vec![IndexKey::Space {
-            project: project.clone(),
-            space_id: id,
-        }],
-        Some(SearchScope::Space { space_id: None }) => vec![IndexKey::Root(project.clone())],
-        Some(SearchScope::Project) | None => state.keys_for_project(project).await,
-    }
-}
-
-fn icon_for(entry_type: &str) -> String {
-    match entry_type {
-        "table_row" => ICON_TABLE_ROW.to_string(),
-        _ => ICON_PAGE.to_string(),
-    }
-}
-
-/// Per-pool fan-out result: ordered hits + the originating key (so the merge
-/// stage can attach `space_id` / `space_name` / `space_path`).
-struct PoolHits {
-    key: IndexKey,
-    hits: Vec<SearchResult>,
-}
-
-/// Run `query_fn` against every already-open key in parallel. Reconciliation
-/// and full rebuilds keep the previous committed SQLite snapshot readable,
-/// so search never opens/migrates a pool and never disappears during refresh.
-async fn fan_out<F, Fut>(
-    app: &AppHandle,
-    keys: Vec<IndexKey>,
-    query_fn: F,
-) -> (Vec<PoolHits>, usize)
-where
-    F: Fn(sqlx::SqlitePool) -> Fut + Send + Sync + 'static + Clone,
-    Fut: std::future::Future<Output = Result<Vec<SearchResult>, AppError>> + Send,
-{
-    let mut set: JoinSet<Option<PoolHits>> = JoinSet::new();
-    for key in keys {
-        let app = app.clone();
-        let q = query_fn.clone();
-        set.spawn(async move {
-            let state = app.state::<IndexState>();
-            let pool = match state.existing_pool(&key).await {
-                Some(pool) => pool,
-                None => {
-                    tracing::debug!("fan_out: cached pool unavailable for {:?}", key);
-                    return None;
-                }
-            };
-            match q(pool).await {
-                Ok(hits) => Some(PoolHits { key, hits }),
-                Err(e) => {
-                    tracing::warn!("fan_out: query failed for {:?}: {e}", key);
-                    None
-                }
-            }
-        });
-    }
-
-    let mut pools: Vec<PoolHits> = Vec::new();
-    while let Some(joined) = set.join_next().await {
-        match joined {
-            Ok(Some(p)) => pools.push(p),
-            Ok(None) => {}
-            Err(e) => tracing::warn!("fan_out: join failed: {e}"),
-        }
-    }
-    let indexed = pools.len();
-    (pools, indexed)
-}
-
-/// Build a `SearchItem` from a per-pool `SearchResult`, attaching the source
-/// pool's identity. Resolves directory + display name lazily for the key.
-async fn enrich(state: &IndexState, key: &IndexKey, hit: SearchResult) -> SearchItem {
-    let space_path = state
-        .dir_for_key(key)
-        .await
-        .map(|p| p.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    let space_name = state.space_name(key).await;
-    let space_id = match key {
-        IndexKey::Root(_) => None,
-        IndexKey::Space { space_id, .. } => Some(space_id.clone()),
-    };
-    let icon = icon_for(&hit.entry_type);
-    SearchItem {
-        id: hit.id,
-        space_id,
-        space_path,
-        space_name,
-        path: hit.path,
-        title: hit.title,
-        entry_type: hit.entry_type,
-        table_name: hit.table_name,
-        snippet: hit.snippet,
-        icon,
-    }
-}
-
-/// Reindex one space (`spaceId = null` → root pool).
 #[tauri::command]
 pub async fn reindex_space(
     state: State<'_, IndexState>,
@@ -174,151 +15,39 @@ pub async fn reindex_space(
     project_path: String,
     space_id: Option<String>,
 ) -> Result<(), AppError> {
-    let project = PathBuf::from(&project_path);
+    let project = PathBuf::from(project_path);
     let key = match space_id {
-        Some(id) => IndexKey::Space {
-            project: project.clone(),
-            space_id: id,
-        },
-        None => IndexKey::Root(project.clone()),
+        Some(space_id) => IndexKey::Space { project, space_id },
+        None => IndexKey::Root(project),
     };
-    updates.run_full_reindex(&state, &key).await
+    service::repair_space(&state, &updates, &key).await
 }
 
-/// Reindex root + every ready child space pool. Bounded parallelism (4).
 #[tauri::command]
 pub async fn reindex_project(app: AppHandle, project_path: String) -> Result<(), AppError> {
-    let project = PathBuf::from(&project_path);
-    let keys = app.state::<IndexState>().keys_for_project(&project).await;
-
-    let semaphore = Arc::new(Semaphore::new(REINDEX_PARALLELISM));
-    let mut handles = Vec::new();
-    for key in keys {
-        let sem = semaphore.clone();
-        let app = app.clone();
-        handles.push(tokio::spawn(async move {
-            let _permit = sem.acquire_owned().await.ok();
-            let state = app.state::<IndexState>();
-            let updates = app.state::<IndexUpdateState>();
-            if let Err(e) = updates.run_full_reindex(&state, &key).await {
-                tracing::warn!("reindex_project: full_reindex failed for {:?}: {e}", key);
-            }
-        }));
-    }
-    for h in handles {
-        let _ = h.await;
-    }
+    service::repair_project(
+        app.state::<IndexState>().inner().clone(),
+        app.state::<IndexUpdateState>().inner().clone(),
+        PathBuf::from(project_path),
+    )
+    .await;
     Ok(())
 }
 
-/// Project-wide search by title prefix/substring. Fans out across pools and
-/// merges results in-process.
-///
-/// Merge: concat all per-pool top-`limit` results, sort by
-/// `(prefix-match? 0 : 1, updated_at DESC)`, truncate to global `limit`.
 #[tauri::command]
 pub async fn search_project_entries_by_title(
-    app: AppHandle,
+    state: State<'_, IndexState>,
     project_path: String,
     query: String,
     scope: Option<SearchScope>,
     limit: Option<i64>,
 ) -> Result<SearchResponse, AppError> {
-    let project = PathBuf::from(&project_path);
-    let state = app.state::<IndexState>();
-    let keys = scope_to_keys(&state, &project, scope).await;
-    let keys_for_unique_id = keys.clone();
-    let total = keys.len();
-    let lim = limit.unwrap_or(DEFAULT_LIMIT);
-
-    let q = query.clone();
-    let (pools, indexed) = fan_out(&app, keys, move |pool| {
-        let q = q.clone();
-        async move { search::search_by_title(&pool, &q, lim).await }
-    })
-    .await;
-
-    let q_lc = query.to_lowercase();
-    // Concat with key, score prefix-match (lowercase).
-    let mut merged: Vec<(IndexKey, SearchResult, u8)> = Vec::new();
-    for (key, hit) in search_unique_id_exact(&state, &keys_for_unique_id, &query, lim).await {
-        merged.push((key, hit, 0));
-    }
-    for p in pools {
-        for hit in p.hits {
-            let prefix = if hit.title.to_lowercase().starts_with(&q_lc) {
-                0
-            } else {
-                1
-            };
-            merged.push((p.key.clone(), hit, prefix));
-        }
-    }
-    merged.sort_by(|a, b| {
-        a.2.cmp(&b.2).then_with(|| {
-            // updated_at DESC — None last
-            match (b.1.updated_at.as_deref(), a.1.updated_at.as_deref()) {
-                (Some(x), Some(y)) => x.cmp(y),
-                (Some(_), None) => std::cmp::Ordering::Less,
-                (None, Some(_)) => std::cmp::Ordering::Greater,
-                (None, None) => std::cmp::Ordering::Equal,
-            }
-        })
-    });
-    let mut seen = HashSet::new();
-    merged.retain(|(key, hit, _)| seen.insert((key.clone(), hit.path.clone())));
-    merged.truncate(lim as usize);
-
-    let mut items = Vec::with_capacity(merged.len());
-    for (key, hit, _) in merged {
-        items.push(enrich(&state, &key, hit).await);
-    }
-
-    Ok(SearchResponse {
-        items,
-        indexed_spaces: indexed,
-        total_spaces: total,
-    })
+    service::search_by_title(&state, PathBuf::from(project_path), query, scope, limit).await
 }
 
-async fn search_unique_id_exact(
-    state: &IndexState,
-    keys: &[IndexKey],
-    query: &str,
-    limit: i64,
-) -> Vec<(IndexKey, SearchResult)> {
-    let mut results = Vec::new();
-    for key in keys {
-        if results.len() >= limit as usize {
-            break;
-        }
-        let Some(pool) = state.existing_pool(key).await else {
-            continue;
-        };
-        let Ok(space_path) = state.dir_for_key(key).await else {
-            continue;
-        };
-        let remaining = limit - results.len() as i64;
-        match search::search_unique_id_exact(&pool, &space_path, query, remaining).await {
-            Ok(hits) => {
-                results.extend(hits.into_iter().map(|hit| (key.clone(), hit)));
-            }
-            Err(error) => {
-                tracing::warn!("unique_id search failed for {:?}: {error}", key);
-            }
-        }
-    }
-    results
-}
-
-/// Project-wide FTS5 search. Fans out across pools; merges via round-robin
-/// over per-pool rank position (Phase 6 §Q1) — rank-1 from every pool, then
-/// rank-2 from every pool, etc. Tie-break at the same rank position is
-/// `updated_at DESC`. The absolute BM25 score is not comparable across pools
-/// and is never used after the per-pool fetch.
 #[tauri::command]
 pub async fn search_project_entries(
-    app: AppHandle,
+    state: State<'_, IndexState>,
     project_path: String,
     query: String,
     entry_type: Option<String>,
@@ -326,103 +55,26 @@ pub async fn search_project_entries(
     scope: Option<SearchScope>,
     limit: Option<i64>,
 ) -> Result<SearchResponse, AppError> {
-    let project = PathBuf::from(&project_path);
-    let state = app.state::<IndexState>();
-    let keys = scope_to_keys(&state, &project, scope).await;
-    let total = keys.len();
-    let lim = limit.unwrap_or(DEFAULT_LIMIT);
-
-    let q = query.clone();
-    let et = entry_type.clone();
-    let tn = table_name.clone();
-    let (pools, indexed) = fan_out(&app, keys, move |pool| {
-        let q = q.clone();
-        let et = et.clone();
-        let tn = tn.clone();
-        async move { search::search_fts(&pool, &q, et.as_deref(), tn.as_deref(), lim).await }
-    })
-    .await;
-
-    // Round-robin over rank position. At each position, sort the slice
-    // `updated_at DESC` (tie-break) before pushing.
-    let max_rank = pools.iter().map(|p| p.hits.len()).max().unwrap_or(0);
-    let mut items: Vec<SearchItem> = Vec::with_capacity(lim as usize);
-    'outer: for rank in 0..max_rank {
-        let mut bucket: Vec<(IndexKey, SearchResult)> = Vec::new();
-        for p in &pools {
-            if let Some(hit) = p.hits.get(rank) {
-                bucket.push((p.key.clone(), hit.clone()));
-            }
-        }
-        bucket.sort_by(
-            |a, b| match (b.1.updated_at.as_deref(), a.1.updated_at.as_deref()) {
-                (Some(x), Some(y)) => x.cmp(y),
-                (Some(_), None) => std::cmp::Ordering::Less,
-                (None, Some(_)) => std::cmp::Ordering::Greater,
-                (None, None) => std::cmp::Ordering::Equal,
-            },
-        );
-        for (key, hit) in bucket {
-            items.push(enrich(&state, &key, hit).await);
-            if items.len() >= lim as usize {
-                break 'outer;
-            }
-        }
-    }
-
-    Ok(SearchResponse {
-        items,
-        indexed_spaces: indexed,
-        total_spaces: total,
-    })
+    service::search_content(
+        &state,
+        PathBuf::from(project_path),
+        query,
+        entry_type,
+        table_name,
+        scope,
+        limit,
+    )
+    .await
 }
 
-/// Project-wide "recent" listing — merges all per-pool results, sorts
-/// `updated_at DESC`, truncates to `limit`.
 #[tauri::command]
 pub async fn recent_project_entries(
-    app: AppHandle,
+    state: State<'_, IndexState>,
     project_path: String,
     scope: Option<SearchScope>,
     limit: Option<i64>,
 ) -> Result<SearchResponse, AppError> {
-    let project = PathBuf::from(&project_path);
-    let state = app.state::<IndexState>();
-    let keys = scope_to_keys(&state, &project, scope).await;
-    let total = keys.len();
-    let lim = limit.unwrap_or(DEFAULT_LIMIT);
-
-    let (pools, indexed) = fan_out(&app, keys, move |pool| async move {
-        search::recent(&pool, lim).await
-    })
-    .await;
-
-    let mut merged: Vec<(IndexKey, SearchResult)> = Vec::new();
-    for p in pools {
-        for hit in p.hits {
-            merged.push((p.key.clone(), hit));
-        }
-    }
-    merged.sort_by(
-        |a, b| match (b.1.updated_at.as_deref(), a.1.updated_at.as_deref()) {
-            (Some(x), Some(y)) => x.cmp(y),
-            (Some(_), None) => std::cmp::Ordering::Less,
-            (None, Some(_)) => std::cmp::Ordering::Greater,
-            (None, None) => std::cmp::Ordering::Equal,
-        },
-    );
-    merged.truncate(lim as usize);
-
-    let mut items = Vec::with_capacity(merged.len());
-    for (key, hit) in merged {
-        items.push(enrich(&state, &key, hit).await);
-    }
-
-    Ok(SearchResponse {
-        items,
-        indexed_spaces: indexed,
-        total_spaces: total,
-    })
+    service::recent(&state, PathBuf::from(project_path), scope, limit).await
 }
 
 #[tauri::command]
@@ -430,28 +82,9 @@ pub async fn count_broken_links(
     state: State<'_, IndexState>,
     project_path: String,
 ) -> Result<i64, AppError> {
-    let project = PathBuf::from(&project_path);
-    state.ensure_project_backlinks_built(&project).await?;
-    let keys = state.keys_for_project(&project).await;
-    let mut total = 0i64;
-    for key in keys {
-        let pool = match state.get_or_create(&key).await {
-            Ok(pool) => pool,
-            Err(e) => {
-                tracing::warn!("count_broken_links: opening pool failed for {:?}: {e}", key);
-                continue;
-            }
-        };
-        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM broken_links")
-            .fetch_one(&pool)
-            .await?;
-        total += count;
-    }
-    Ok(total)
+    service::count_broken_links(&state, &PathBuf::from(project_path)).await
 }
 
-/// Read the already prepared project/Space document graph and quick-search
-/// projection. This adapter never schedules or runs a reindex.
 #[tauri::command]
 pub async fn get_knowledge_documents(
     state: State<'_, IndexState>,
@@ -465,7 +98,7 @@ pub async fn get_knowledge_documents(
     search_limit: Option<usize>,
     filters: Option<KnowledgeFilters>,
 ) -> Result<KnowledgeResponse, AppError> {
-    Ok(crate::index::knowledge::read_project_snapshot_filtered(
+    Ok(service::read_project_knowledge(
         &state,
         &PathBuf::from(project_path),
         scope,
@@ -478,24 +111,4 @@ pub async fn get_knowledge_documents(
         filters.unwrap_or_default(),
     )
     .await)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::SearchScope;
-
-    #[test]
-    fn search_space_scope_deserializes_frontend_space_id() {
-        let scope: SearchScope = serde_json::from_value(serde_json::json!({
-            "kind": "space",
-            "spaceId": "space-develop"
-        }))
-        .expect("deserialize frontend search scope payload");
-        match scope {
-            SearchScope::Space { space_id } => {
-                assert_eq!(space_id.as_deref(), Some("space-develop"));
-            }
-            SearchScope::Project => panic!("expected Space scope"),
-        }
-    }
 }
