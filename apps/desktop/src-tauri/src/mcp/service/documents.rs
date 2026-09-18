@@ -91,63 +91,50 @@ pub(super) async fn create_page(
     args: CreatePageArgs,
 ) -> Result<ToolCallResult, McpBusinessError> {
     let _policy = MCP_MUTATION_POLICY;
-    let (_, space) = resolve_space(app, args.space_id).await?;
-    let path = normalize_create_page_path(&args.path)?;
-    let abs = ensure_inside(Path::new(&space), &path)?;
-    require_standalone_page(&space, &path)?;
-    if abs.exists() {
-        return Err(McpBusinessError::new(
-            "FILE_ALREADY_EXISTS",
-            format!("File already exists: {path}"),
-        ));
-    }
-    let title = args.title.unwrap_or_else(|| {
-        Path::new(&path)
-            .file_stem()
-            .and_then(|stem| stem.to_str())
-            .unwrap_or("Untitled")
-            .replace(['-', '_'], " ")
-    });
-    let mutation = crate::files::naming::with_document_name_lock(&space, || {
-        if abs.exists() {
-            return Err(crate::error::AppError::FileAlreadyExists(path.clone()));
+    let (context, space) = resolve_space(app, args.space_id).await?;
+    let parent_path = validate_public_rel_path(&args.parent_path, true)?;
+    ensure_inside(Path::new(&space), &parent_path)?;
+    let authorization_space = space.clone();
+    let outcome = match crate::page::create::create(
+        crate::page::create::PageCreate {
+            space: space.clone(),
+            parent_path: (!parent_path.is_empty()).then_some(parent_path),
+            title: args.title,
+            body: args.content,
+            icon: args.icon,
+            description: args.description,
+            cover: args.cover,
+            properties: args.properties,
+            contextual_defaults: false,
+            allocate_unique_title: false,
+            as_readme: false,
+            project: Some(context.project_path.clone()),
+        },
+        &app.state::<IndexState>(),
+        |mut paths| async move {
+            paths.push(PathBuf::from(&authorization_space));
+            crate::git::access::require_repository_mutation_paths(app, paths.clone()).await?;
+            Ok(paths)
+        },
+    )
+    .await
+    {
+        Ok(outcome) => outcome,
+        Err(error) => {
+            return match error {
+                crate::error::AppError::DocumentNameConflict(conflict) => {
+                    Ok(page_name_conflict_result(conflict))
+                }
+                error => Err(error.into()),
+            };
         }
-        crate::files::naming::ensure_document_name_available(Path::new(&space), &path, &title)?;
-        if let Some(parent) = abs.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        let mut meta = entry::EntryMeta::new_persisted(title);
-        meta.icon = args.icon;
-        if meta.icon.is_some() {
-            meta.mark_icon_present();
-        }
-        meta.description = args
-            .description
-            .and_then(|value| (!value.trim().is_empty()).then_some(value));
-        if meta.description.is_some() {
-            meta.mark_description_present();
-        }
-        meta.cover = args.cover;
-        if meta.cover.is_some() {
-            meta.mark_cover_present();
-        }
-        fs::write(
-            &abs,
-            crate::files::frontmatter::serialize(&meta, args.content.as_deref().unwrap_or("")),
-        )?;
-        Ok(())
-    });
-    if let Err(error) = mutation {
-        return match error {
-            crate::error::AppError::DocumentNameConflict(conflict) => {
-                Ok(page_name_conflict_result(conflict))
-            }
-            error => Err(error.into()),
-        };
-    }
+    };
+    let changed_paths =
+        crate::page::metadata::relative_changed_paths(&space, &outcome.changed_paths);
+    let warnings = outcome.page.warnings.clone();
     Ok(ToolCallResult::ok(
-        format!("Created Page {path}."),
-        json!({ "path": path, "changedPaths": [path] }),
+        format!("Created Page {}.", outcome.page.path),
+        json!({ "path": outcome.page.path, "page": outcome.page, "changedPaths": changed_paths, "warnings": warnings }),
     ))
 }
 
@@ -156,29 +143,34 @@ pub(super) async fn update_page_metadata(
     args: UpdatePageMetadataArgs,
 ) -> Result<ToolCallResult, McpBusinessError> {
     let _policy = MCP_MUTATION_POLICY;
-    let (_, space) = resolve_space(app, args.space_id).await?;
+    let (context, space) = resolve_space(app, args.space_id).await?;
     let path = validate_markdown_path(&args.path)?;
     ensure_inside(Path::new(&space), &path)?;
     require_standalone_page(&space, &path)?;
-    let page = match crate::files::naming::with_document_name_lock(&space, || {
-        write_metadata_frontmatter(
-            &space,
-            &path,
-            args.title,
-            args.icon,
-            args.description,
-            args.cover,
-        )
-    }) {
-        Ok(page) => page,
+    let outcome = match patch_page_metadata(
+        app,
+        &context,
+        &space,
+        &path,
+        args.title,
+        args.icon,
+        args.description,
+        args.cover,
+    )
+    .await
+    {
+        Ok(outcome) => outcome,
         Err(crate::error::AppError::DocumentNameConflict(conflict)) => {
             return Ok(page_name_conflict_result(conflict));
         }
         Err(error) => return Err(error.into()),
     };
+    let changed_paths =
+        crate::page::metadata::relative_changed_paths(&space, &outcome.changed_paths);
+    let warnings = outcome.page.warnings.clone();
     Ok(ToolCallResult::ok(
         format!("Updated metadata for {path}."),
-        json!({ "page": page, "changedPaths": [path] }),
+        json!({ "page": outcome.page, "changedPaths": changed_paths, "warnings": warnings }),
     ))
 }
 
@@ -235,21 +227,27 @@ pub(super) async fn update_space_metadata(
     args: UpdateSpaceMetadataArgs,
 ) -> Result<ToolCallResult, McpBusinessError> {
     let _policy = MCP_MUTATION_POLICY;
-    let (_, space) = resolve_space(app, args.space_id).await?;
+    let (context, space) = resolve_space(app, args.space_id).await?;
     let path = "README.md".to_string();
     ensure_inside(Path::new(&space), &path)?;
     require_owner(&space, &path, ContentOwnerKind::Space)?;
-    let readme = write_metadata_frontmatter(
+    let outcome = patch_page_metadata(
+        app,
+        &context,
         &space,
         &path,
         args.title,
         args.icon,
         args.description,
         args.cover,
-    )?;
+    )
+    .await?;
+    let changed_paths =
+        crate::page::metadata::relative_changed_paths(&space, &outcome.changed_paths);
+    let warnings = outcome.page.warnings.clone();
     Ok(ToolCallResult::ok(
         "Updated Space metadata.",
-        json!({ "spaceReadme": readme, "changedPaths": [path] }),
+        json!({ "spaceReadme": outcome.page, "changedPaths": changed_paths, "warnings": warnings }),
     ))
 }
 
@@ -315,23 +313,68 @@ pub(super) async fn update_collection_metadata(
     args: UpdateCollectionMetadataArgs,
 ) -> Result<ToolCallResult, McpBusinessError> {
     let _policy = MCP_MUTATION_POLICY;
-    let (_, space) = resolve_space(app, args.space_id).await?;
+    let (context, space) = resolve_space(app, args.space_id).await?;
     let collection_path = validate_public_rel_path(&args.collection_path, true)?;
     let path = collection_readme_path(&collection_path);
     ensure_inside(Path::new(&space), &path)?;
     require_owner(&space, &path, ContentOwnerKind::Collection)?;
-    let readme = write_metadata_frontmatter(
+    let outcome = patch_page_metadata(
+        app,
+        &context,
         &space,
         &path,
         args.title,
         args.icon,
         args.description,
         args.cover,
-    )?;
+    )
+    .await?;
+    let collection_path = Path::new(&outcome.page.path)
+        .parent()
+        .unwrap_or(Path::new(""))
+        .to_string_lossy()
+        .replace('\\', "/");
+    let changed_paths =
+        crate::page::metadata::relative_changed_paths(&space, &outcome.changed_paths);
+    let warnings = outcome.page.warnings.clone();
     Ok(ToolCallResult::ok(
         format!("Updated Collection metadata for {collection_path}."),
-        json!({ "collectionPath": collection_path, "collectionReadme": readme, "changedPaths": [path] }),
+        json!({ "collectionPath": collection_path, "collectionReadme": outcome.page, "changedPaths": changed_paths, "warnings": warnings }),
     ))
+}
+
+pub(super) async fn patch_page_metadata(
+    app: &AppHandle,
+    context: &ActiveProjectContext,
+    space: &str,
+    path: &str,
+    title: Option<String>,
+    icon: Option<Option<String>>,
+    description: Option<Option<String>>,
+    cover: Option<Option<entry::Cover>>,
+) -> Result<crate::page::metadata::PageMetadataOutcome, crate::error::AppError> {
+    let state = app.state::<IndexState>();
+    let nonces = app.state::<std::sync::Arc<crate::files::WriteNonceRegistry>>();
+    crate::page::metadata::patch(
+        space,
+        path,
+        crate::page::metadata::PageMetadataPatch {
+            title,
+            icon,
+            description,
+            cover,
+        },
+        Some(&context.project_path),
+        &state,
+        &nonces,
+        None,
+        |mut paths| async move {
+            paths.push(PathBuf::from(space));
+            crate::git::access::require_repository_mutation_paths(app, paths.clone()).await?;
+            Ok(paths)
+        },
+    )
+    .await
 }
 
 fn page_name_conflict_result(

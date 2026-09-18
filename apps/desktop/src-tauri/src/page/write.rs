@@ -19,6 +19,7 @@ pub(crate) struct PageWrite<'a> {
     pub title: Option<&'a str>,
     pub icon: Option<&'a str>,
     pub extra: Option<HashMap<String, serde_yml::Value>>,
+    pub metadata: Option<entry::EntryMeta>,
     pub skip_rename: bool,
     pub project: Option<&'a str>,
 }
@@ -200,6 +201,7 @@ fn apply_sources(request: PageWrite<'_>, plan: WritePlan) -> Result<PageWriteOut
                 request.title,
                 request.icon,
                 request.extra,
+                request.metadata,
                 None,
                 None,
                 request.skip_rename || plan.warning.is_some(),

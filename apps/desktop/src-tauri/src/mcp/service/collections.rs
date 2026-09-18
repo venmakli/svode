@@ -157,71 +157,6 @@ pub(super) async fn query_collection_items(
     ))
 }
 
-pub(super) async fn create_collection_item(
-    app: &AppHandle,
-    args: CreateCollectionItemArgs,
-) -> Result<ToolCallResult, McpBusinessError> {
-    let _policy = MCP_MUTATION_POLICY;
-    let (context, space) = resolve_space(app, args.space_id).await?;
-    let collection_path = validate_public_rel_path(&args.collection_path, true)?;
-    ensure_inside(Path::new(&space), &collection_path)?;
-    properties::read_collection_schema(&space, &collection_path)?;
-    let fields = args.fields;
-    let parent = if collection_path.is_empty() {
-        None
-    } else {
-        Some(collection_path.as_str())
-    };
-    let mut relation_targets = Vec::new();
-    for (field, value) in fields.as_ref().into_iter().flatten() {
-        relation_targets.extend(
-            properties::relation_field_target_mutation_paths_for_value_with_project(
-                &space,
-                Some(context.project_path.as_str()),
-                &collection_path,
-                field,
-                json_to_yaml(value.clone())?,
-            )?,
-        );
-    }
-    ensure_mutation_paths_were_authorized(&relation_targets)?;
-    let mut created = entry::create_with_contextual_defaults(&space, parent, &args.title, None)?;
-    let filename_warnings = std::mem::take(&mut created.warnings);
-    if let Some(fields) = fields {
-        for (field, value) in fields {
-            created = entry::update_field(
-                &space,
-                Some(context.project_path.as_str()),
-                &created.path,
-                &field,
-                value,
-            )?;
-        }
-    }
-    if args.icon.is_some() || args.description.is_some() || args.cover.is_some() {
-        created = write_metadata_frontmatter(
-            &space,
-            &created.path,
-            None,
-            args.icon.map(Some),
-            args.description.map(Some),
-            args.cover.map(Some),
-        )?;
-    }
-    if let Some(body) = args.body {
-        let written = write_page_content(app, &context, &space, &created.path, &body, None).await?;
-        if let Some(new_path) = written.result.new_path {
-            created.path = new_path;
-        }
-        created.body = body;
-    }
-    created.warnings.extend(filename_warnings);
-    Ok(ToolCallResult::ok(
-        format!("Created Collection item {}.", created.path),
-        json!({ "item": created, "changedPaths": [created.path] }),
-    ))
-}
-
 pub(super) async fn read_collection_item(
     app: &AppHandle,
     args: PathArgs,
@@ -251,21 +186,27 @@ pub(super) async fn update_collection_item_metadata(
     args: UpdatePageMetadataArgs,
 ) -> Result<ToolCallResult, McpBusinessError> {
     let _policy = MCP_MUTATION_POLICY;
-    let (_, space) = resolve_space(app, args.space_id).await?;
+    let (context, space) = resolve_space(app, args.space_id).await?;
     let path = validate_markdown_path(&args.path)?;
     ensure_inside(Path::new(&space), &path)?;
     require_collection_item(&space, &path)?;
-    let item = write_metadata_frontmatter(
+    let outcome = super::documents::patch_page_metadata(
+        app,
+        &context,
         &space,
         &path,
         args.title,
         args.icon,
         args.description,
         args.cover,
-    )?;
+    )
+    .await?;
+    let changed_paths =
+        crate::page::metadata::relative_changed_paths(&space, &outcome.changed_paths);
+    let warnings = outcome.page.warnings.clone();
     Ok(ToolCallResult::ok(
         format!("Updated metadata for Collection item {path}."),
-        json!({ "item": item, "changedPaths": [path] }),
+        json!({ "item": outcome.page, "changedPaths": changed_paths, "warnings": warnings }),
     ))
 }
 

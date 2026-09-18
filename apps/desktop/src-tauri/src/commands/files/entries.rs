@@ -97,30 +97,26 @@ pub async fn create_entry(
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<Entry, AppError> {
     require_repository_mutation(&app, Path::new(&space)).await?;
-    let contextual_defaults = contextual_defaults
-        .map(|defaults| {
-            defaults
-                .into_iter()
-                .map(|(field, value)| Ok((field, json_to_yaml_value(value)?)))
-                .collect::<Result<HashMap<_, _>, AppError>>()
-        })
-        .transpose()?;
-    let created = entry::create_with_options(
-        &space,
-        parent_path.as_deref(),
-        &title,
-        contextual_defaults,
-        allocate_unique_title.unwrap_or(false),
-        as_readme.unwrap_or(false),
-    )?;
-    update_index_entry_or_reindex(
+    let created = crate::page::create::create(
+        crate::page::create::PageCreate {
+            space: space.clone(),
+            parent_path,
+            title,
+            body: None,
+            icon: None,
+            description: None,
+            cover: None,
+            properties: contextual_defaults,
+            contextual_defaults: true,
+            allocate_unique_title: allocate_unique_title.unwrap_or(false),
+            as_readme: as_readme.unwrap_or(false),
+            project: project_path.clone(),
+        },
         &index_state,
-        project_path.as_deref(),
-        &space,
-        &created.path,
-        "create_entry",
+        |paths| require_planned_mutation_paths(&app, &space, paths),
     )
-    .await;
+    .await?
+    .page;
     if properties::unique_id_schema_path_for_entry(&space, &created.path)?.is_some() {
         let mut paths = properties::unique_id_mutation_paths_for_entry(&space, &created.path)?;
         paths.push(order_path(&space));
@@ -347,6 +343,7 @@ pub(super) async fn write_entry_shared(
         title: title.as_deref(),
         icon: icon.as_deref(),
         extra,
+        metadata: None,
         skip_rename: skip_rename.unwrap_or(false),
         project: project_path.as_deref().filter(|path| !path.is_empty()),
     };
@@ -441,7 +438,7 @@ pub async fn delete_entry_shared(
             reindex_space_dir(index_state, space).await;
         } else if !deleted.cascade_touched.is_empty() {
             for (owner_space, paths) in &cascade_touched_by_space {
-                update_index_paths_or_reindex(
+                let _ = update_index_paths_or_reindex(
                     index_state,
                     Some(proj),
                     &owner_space.to_string_lossy(),

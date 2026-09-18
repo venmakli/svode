@@ -63,21 +63,22 @@ pub fn definitions() -> Vec<ToolDefinition> {
         ),
         def(
             "create_page",
-            "Create a standalone Svode Page, not a Collection or owner README. Use create_collection for structured data like tasks, CRM contacts, OKRs, backlog items, asset inventory items, or any list/table/board/calendar content. A new image cover must use cover.path from import_asset or an already-existing repository file; cover.path does not upload a file. Paths without extension become .md; trailing slash creates a directory-backed Page at README.md.",
+            "Create one Svode Page with Desktop naming and allocation rules. parentPath is the containing directory (empty for the Space root); schema-backed parents apply Collection defaults and validate initial properties. A new image cover must use cover.path from import_asset or an already-existing repository file. Does not autocommit.",
             schema(
                 &[
                     space_id(),
                     path_req(
-                        "path",
-                        "Repo-relative Page path. Missing .md is normalized to .md; trailing slash creates a directory-backed Page at README.md.",
+                        "parentPath",
+                        "Repo-relative parent directory; use an empty string for the Space root.",
                     ),
+                    str_req("title"),
                     str_opt("content"),
-                    str_opt("title"),
                     str_opt("icon"),
                     str_opt("description"),
                     cover_opt("cover"),
+                    fields_opt("properties"),
                 ],
-                &["path"],
+                &["parentPath", "title"],
             ),
             write_ann(false, Some(false)),
             None,
@@ -451,25 +452,6 @@ pub fn definitions() -> Vec<ToolDefinition> {
             None,
         ),
         def(
-            "create_collection_item",
-            "Create one item inside an existing Collection. The collectionPath must already contain schema.yaml; this tool does not create Collections. fields are custom schema field values; title/icon/description/cover are system metadata. A new image cover must use cover.path from import_asset or an already-existing repository file. Does not autocommit.",
-            schema(
-                &[
-                    space_id(),
-                    collection_path_req("collectionPath"),
-                    str_req("title"),
-                    str_opt("body"),
-                    str_opt("icon"),
-                    str_opt("description"),
-                    cover_opt("cover"),
-                    fields_opt("fields"),
-                ],
-                &["collectionPath", "title"],
-            ),
-            write_ann(false, Some(false)),
-            None,
-        ),
-        def(
             "read_collection_item",
             "Read one item inside a schema-backed Collection by its Markdown path.",
             schema(
@@ -823,6 +805,7 @@ Routine workflow:
 
 Metadata and fields:
 - System metadata is title, icon, description, cover, created, and updated. Do not create custom columns for these and do not write them through update_collection_item_fields.
+- Use create_page with parentPath + title for both standalone Pages and Collection items. Put initial Collection values in properties; never pass system metadata keys inside properties. Always continue with the returned canonical path.
 - Collection identity lives in README.md owner metadata. Schema.yaml stores columns, views, system field labels, and template settings. Use the Collection README tools for that owner content.
 - Prefer domain tools over direct filesystem writes: update_page_metadata for standalone Page metadata, owner-specific metadata tools for Space/Collection README content, schema tools for columns/views, write_page or update_collection_item_body for body replacement, and update_collection_item_fields for custom field values.
 
@@ -1915,7 +1898,6 @@ mod tests {
                 "update_routine",
                 "delete_routine",
                 "run_routine",
-                "create_collection_item",
                 "update_collection_item_fields",
                 "update_collection_item_body",
                 "update_collection_item_metadata",
@@ -1987,6 +1969,22 @@ mod tests {
         }
         assert!(!names.iter().any(|name| name.contains("document")));
         assert!(!names.iter().any(|name| name.ends_with("_entry")));
+        assert!(!names.contains(&"create_collection_item"));
+        let create = definitions
+            .iter()
+            .find(|definition| definition.name == "create_page")
+            .unwrap();
+        assert_eq!(
+            create.input_schema["required"],
+            json!(["parentPath", "title"])
+        );
+        assert!(create.input_schema["properties"].get("path").is_none());
+        assert!(create.input_schema["properties"].get("fields").is_none());
+        assert!(
+            create.input_schema["properties"]
+                .get("properties")
+                .is_some()
+        );
         let knowledge = definitions
             .iter()
             .find(|definition| definition.name == "search_knowledge")

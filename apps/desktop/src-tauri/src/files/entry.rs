@@ -722,6 +722,7 @@ pub(crate) fn write_with_relation_plan(
                 title,
                 icon,
                 extra,
+                None,
                 _existing_id,
                 backlink_index,
                 skip_rename,
@@ -737,6 +738,7 @@ pub(crate) fn write_with_relation_plan(
         title,
         icon,
         extra,
+        None,
         _existing_id,
         backlink_index,
         skip_rename,
@@ -752,6 +754,7 @@ pub(crate) fn write_under_name_lock(
     title: Option<&str>,
     icon: Option<&str>,
     extra: Option<HashMap<String, serde_yml::Value>>,
+    metadata: Option<EntryMeta>,
     _existing_id: Option<&str>,
     backlink_index: Option<&BacklinkIndex>,
     skip_rename: bool,
@@ -800,27 +803,28 @@ pub(crate) fn write_under_name_lock(
     } else {
         None
     };
-    let metadata_requested = match &parsed_existing {
-        frontmatter::ParseStatus::Valid { meta, .. } => {
-            has_naming_intent
-                || title.is_some_and(|t| meta.title != t)
-                || icon.is_some_and(|i| meta.icon.as_deref() != Some(i))
-                || extra
-                    .as_ref()
-                    .is_some_and(|incoming| incoming != &meta.extra)
-        }
-        frontmatter::ParseStatus::Missing { .. } => {
-            has_naming_intent
-                || title.is_some_and(title_changes_fallback)
-                || icon.is_some()
-                || extra.as_ref().is_some_and(extra_changes_empty)
-        }
-        frontmatter::ParseStatus::Malformed { .. } => {
-            title.is_some_and(title_changes_fallback)
-                || icon.is_some()
-                || extra.as_ref().is_some_and(extra_changes_empty)
-        }
-    };
+    let metadata_requested = metadata.is_some()
+        || match &parsed_existing {
+            frontmatter::ParseStatus::Valid { meta, .. } => {
+                has_naming_intent
+                    || title.is_some_and(|t| meta.title != t)
+                    || icon.is_some_and(|i| meta.icon.as_deref() != Some(i))
+                    || extra
+                        .as_ref()
+                        .is_some_and(|incoming| incoming != &meta.extra)
+            }
+            frontmatter::ParseStatus::Missing { .. } => {
+                has_naming_intent
+                    || title.is_some_and(title_changes_fallback)
+                    || icon.is_some()
+                    || extra.as_ref().is_some_and(extra_changes_empty)
+            }
+            frontmatter::ParseStatus::Malformed { .. } => {
+                title.is_some_and(title_changes_fallback)
+                    || icon.is_some()
+                    || extra.as_ref().is_some_and(extra_changes_empty)
+            }
+        };
 
     if !metadata_requested {
         persistence::write_body_preserving_frontmatter(
@@ -847,6 +851,10 @@ pub(crate) fn write_under_name_lock(
             )));
         }
     };
+
+    if let Some(candidate) = metadata {
+        meta = candidate;
+    }
 
     // Update title and icon if provided
     if let Some(t) = title {
@@ -1244,6 +1252,31 @@ pub fn update_field(
         });
     }
     update_field_inner(space, project_path, path, field, value)
+}
+
+pub(crate) fn replace_created_body(space: &str, path: &str, body: &str) -> Result<Entry, AppError> {
+    let abs_path = resolve(space, path);
+    let (_, parsed) = persistence::read_existing(&abs_path)?;
+    let mut meta = match parsed {
+        frontmatter::ParseStatus::Valid { meta, .. } => meta,
+        frontmatter::ParseStatus::Missing { .. } => {
+            meta_for_file_without_frontmatter(&abs_path, path)?
+        }
+        frontmatter::ParseStatus::Malformed { message, .. } => {
+            return Err(AppError::FrontmatterParse(format!(
+                "cannot set initial body while frontmatter is malformed: {message}"
+            )));
+        }
+    };
+    persistence::write_serialized(&abs_path, &meta, body)?;
+    apply_runtime_metadata(&mut meta, &abs_path, path)?;
+    Ok(Entry {
+        meta,
+        body: body.to_string(),
+        path: path.to_string(),
+        warnings: Vec::new(),
+        name_conflict: None,
+    })
 }
 
 fn update_field_inner(

@@ -135,9 +135,6 @@ async fn call_tool_inner(
                 collections::query_collection_items(&app, decode(args)?).await
             }
             "read_collection_item" => collections::read_collection_item(&app, decode(args)?).await,
-            "create_collection_item" => {
-                collections::create_collection_item(&app, decode(args)?).await
-            }
             "update_collection_item_fields" => {
                 collections::update_collection_item_fields(&app, decode(args)?).await
             }
@@ -255,22 +252,6 @@ async fn authorize_mutating_tool(
                         json_to_yaml(value)?,
                     )?,
                 );
-            }
-        }
-        "create_collection_item" => {
-            let decoded: CreateCollectionItemArgs = decode(args.clone())?;
-            if let Some(fields) = decoded.fields {
-                for (field, value) in fields {
-                    paths.extend(
-                        properties::relation_field_target_mutation_paths_for_value_with_project(
-                            &space,
-                            Some(&context.project_path),
-                            &decoded.collection_path,
-                            &field,
-                            json_to_yaml(value)?,
-                        )?,
-                    );
-                }
             }
         }
         "delete_page" | "delete_collection_item" => {

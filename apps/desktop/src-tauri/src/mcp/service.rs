@@ -2,15 +2,13 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
 use serde_json::{Value, json};
 use tauri::{AppHandle, Manager};
 
 use super::active::{self, ActiveProjectContext, ActiveProjectState};
 use super::error::McpBusinessError;
-use super::path::{
-    ensure_inside, normalize_create_page_path, validate_markdown_path, validate_public_rel_path,
-};
+use super::path::{ensure_inside, validate_markdown_path, validate_public_rel_path};
 use super::protocol::{IpcContextOverride, ToolCallResult};
 use crate::artifact::identity::{
     ContentOwnerKind, MarkdownIdentityFacts, PageRole, SemanticIdentity, SourceShape,
@@ -163,20 +161,22 @@ struct WritePageArgs {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 struct CreatePageArgs {
     #[serde(default)]
     space_id: Option<String>,
-    path: String,
+    parent_path: String,
+    title: String,
     #[serde(default)]
     content: Option<String>,
-    #[serde(default)]
-    title: Option<String>,
     #[serde(default)]
     icon: Option<String>,
     #[serde(default)]
     description: Option<String>,
     #[serde(default)]
     cover: Option<entry::Cover>,
+    #[serde(default)]
+    properties: Option<HashMap<String, Value>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -187,11 +187,11 @@ struct UpdatePageMetadataArgs {
     path: String,
     #[serde(default)]
     title: Option<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_present")]
     icon: Option<Option<String>>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_present")]
     description: Option<Option<String>>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_present")]
     cover: Option<Option<entry::Cover>>,
 }
 
@@ -212,11 +212,11 @@ struct UpdateSpaceMetadataArgs {
     space_id: Option<String>,
     #[serde(default)]
     title: Option<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_present")]
     icon: Option<Option<String>>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_present")]
     description: Option<Option<String>>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_present")]
     cover: Option<Option<entry::Cover>>,
 }
 
@@ -239,12 +239,20 @@ struct UpdateCollectionMetadataArgs {
     collection_path: String,
     #[serde(default)]
     title: Option<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_present")]
     icon: Option<Option<String>>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_present")]
     description: Option<Option<String>>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_present")]
     cover: Option<Option<entry::Cover>>,
+}
+
+fn deserialize_present<'de, D, T>(deserializer: D) -> Result<Option<Option<T>>, D::Error>
+where
+    D: Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Option::<T>::deserialize(deserializer).map(Some)
 }
 
 #[derive(Debug, Deserialize)]
@@ -315,25 +323,6 @@ struct QueryCollectionItemsArgs {
     limit: Option<i64>,
     #[serde(default)]
     offset: Option<i64>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct CreateCollectionItemArgs {
-    #[serde(default)]
-    space_id: Option<String>,
-    collection_path: String,
-    title: String,
-    #[serde(default)]
-    body: Option<String>,
-    #[serde(default)]
-    icon: Option<String>,
-    #[serde(default)]
-    description: Option<String>,
-    #[serde(default)]
-    cover: Option<entry::Cover>,
-    #[serde(default)]
-    fields: Option<HashMap<String, Value>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -657,73 +646,6 @@ fn schema_for_create_collection(args: &CreateCollectionArgs) -> CollectionSchema
     schema
 }
 
-fn write_metadata_frontmatter(
-    space: &str,
-    path: &str,
-    title: Option<String>,
-    icon: Option<Option<String>>,
-    description: Option<Option<String>>,
-    cover: Option<Option<entry::Cover>>,
-) -> Result<entry::Entry, crate::error::AppError> {
-    let abs = Path::new(space).join(path);
-    let raw = fs::read_to_string(&abs)?;
-    let (mut meta, body) = match crate::files::frontmatter::parse_status(&raw) {
-        crate::files::frontmatter::ParseStatus::Valid { meta, body } => (meta, body),
-        crate::files::frontmatter::ParseStatus::Missing { body } => {
-            let fallback = Path::new(path)
-                .file_stem()
-                .and_then(|stem| stem.to_str())
-                .map(entry::title_from_stem)
-                .unwrap_or_else(|| "Untitled".to_string());
-            (
-                entry::EntryMeta::synthesized(fallback, String::new(), String::new()),
-                body,
-            )
-        }
-        crate::files::frontmatter::ParseStatus::Malformed { message, .. } => {
-            return Err(crate::error::AppError::FrontmatterParse(format!(
-                "cannot update metadata while frontmatter is malformed: {message}"
-            )));
-        }
-    };
-    let title_requested = title.is_some();
-    if let Some(title) = title {
-        if title.trim().is_empty() {
-            return Err(crate::error::AppError::General(
-                "title must not be empty".to_string(),
-            ));
-        }
-        meta.title = title;
-        meta.mark_title_present();
-    }
-    if let Some(icon) = icon {
-        meta.icon = icon;
-        if meta.icon.is_some() {
-            meta.mark_icon_present();
-        }
-    }
-    if let Some(description) = description {
-        meta.description = description.and_then(|value| {
-            let trimmed = value.trim().to_string();
-            (!trimmed.is_empty()).then_some(trimmed)
-        });
-        if meta.description.is_some() {
-            meta.mark_description_present();
-        }
-    }
-    if let Some(cover) = cover {
-        meta.cover = cover;
-        if meta.cover.is_some() {
-            meta.mark_cover_present();
-        }
-    }
-    if title_requested {
-        crate::files::naming::ensure_document_name_available(Path::new(space), path, &meta.title)?;
-    }
-    fs::write(abs, crate::files::frontmatter::serialize(&meta, &body))?;
-    entry::read(space, path)
-}
-
 async fn pool_for_space(
     app: &AppHandle,
     context: &ActiveProjectContext,
@@ -816,6 +738,7 @@ mod tests {
                         title: args.title.as_deref(),
                         icon: None,
                         extra: None,
+                        metadata: None,
                         skip_rename: args.title.is_none(),
                         project: None,
                     },
@@ -910,6 +833,58 @@ mod tests {
             "documentLabel": "Documents"
         });
         assert!(decode::<CreateCollectionArgs>(args).is_err());
+    }
+
+    #[test]
+    fn create_page_requires_parent_and_title_and_rejects_legacy_inputs() {
+        let args: CreatePageArgs = decode(json!({
+            "parentPath": "tasks",
+            "title": "First",
+            "content": "Body",
+            "properties": { "Status": "Todo" }
+        }))
+        .unwrap();
+        assert_eq!(args.parent_path, "tasks");
+        assert_eq!(args.title, "First");
+        assert!(decode::<CreatePageArgs>(json!({ "path": "tasks/first.md" })).is_err());
+        assert!(
+            decode::<CreatePageArgs>(json!({
+                "parentPath": "tasks",
+                "title": "First",
+                "fields": { "Status": "Todo" }
+            }))
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn metadata_decode_preserves_missing_null_and_value() {
+        let missing: UpdatePageMetadataArgs = decode(json!({ "path": "Page.md" })).unwrap();
+        let nulls: UpdatePageMetadataArgs = decode(json!({
+            "path": "Page.md",
+            "title": null,
+            "icon": null,
+            "description": null,
+            "cover": null
+        }))
+        .unwrap();
+        let values: UpdatePageMetadataArgs = decode(json!({
+            "path": "Page.md",
+            "title": "New",
+            "icon": "star",
+            "description": "  preserved  ",
+            "cover": { "type": "color", "value": "blue" }
+        }))
+        .unwrap();
+        assert!(missing.icon.is_none());
+        assert_eq!(nulls.title, None);
+        assert_eq!(nulls.icon, Some(None));
+        assert_eq!(nulls.description, Some(None));
+        assert_eq!(nulls.cover, Some(None));
+        assert_eq!(values.title.as_deref(), Some("New"));
+        assert_eq!(values.icon, Some(Some("star".into())));
+        assert_eq!(values.description, Some(Some("  preserved  ".into())));
+        assert!(values.cover.flatten().is_some());
     }
 
     #[test]
@@ -1060,6 +1035,7 @@ async fn write_page_content(
             title,
             icon: None,
             extra: None,
+            metadata: None,
             skip_rename: title.is_none(),
             project: Some(&context.project_path),
         },

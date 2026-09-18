@@ -86,20 +86,6 @@ pub fn validate_markdown_path(path: &str) -> Result<String, McpBusinessError> {
     }
 }
 
-pub fn normalize_create_page_path(path: &str) -> Result<String, McpBusinessError> {
-    let trimmed = path.trim();
-    if trimmed.ends_with('/') || trimmed.ends_with('\\') {
-        let base = trimmed.trim_end_matches(['/', '\\']);
-        let base = validate_public_rel_path(base, false)?;
-        return validate_markdown_path(&format!("{base}/README.md"));
-    }
-    let mut rel = validate_public_rel_path(path, false)?;
-    if Path::new(&rel).extension().is_none() {
-        rel.push_str(".md");
-    }
-    validate_markdown_path(&rel)
-}
-
 pub fn ensure_inside(root: &Path, rel: &str) -> Result<PathBuf, McpBusinessError> {
     let normalized_root = root.canonicalize().map_err(|error| {
         McpBusinessError::new(
@@ -197,14 +183,6 @@ mod tests {
         assert_eq!(
             validate_public_rel_path("docs\\note.md", false).unwrap(),
             "docs/note.md"
-        );
-        assert_eq!(
-            normalize_create_page_path("docs/new-note").unwrap(),
-            "docs/new-note.md"
-        );
-        assert_eq!(
-            normalize_create_page_path("docs/").unwrap(),
-            "docs/README.md"
         );
     }
 

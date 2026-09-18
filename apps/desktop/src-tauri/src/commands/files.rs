@@ -1015,20 +1015,21 @@ async fn update_index_entry_or_reindex(
     }
 }
 
-async fn update_index_paths_or_reindex(
+pub(crate) async fn update_index_paths_or_reindex(
     index_state: &IndexState,
     project_path: Option<&str>,
     space: &str,
     abs_paths: Vec<PathBuf>,
     fallback_context: &str,
-) {
+) -> Vec<String> {
     let Some(proj) = project_path.filter(|p| !p.is_empty()) else {
         reindex_space_dir(index_state, space).await;
-        return;
+        return Vec::new();
     };
 
     let project = Path::new(proj);
     let mut needs_reindex = false;
+    let mut errors = Vec::new();
     for abs_path in abs_paths {
         if let Err(e) = index::update::update_entry(index_state, project, &abs_path).await {
             tracing::warn!(
@@ -1036,6 +1037,7 @@ async fn update_index_paths_or_reindex(
                 abs_path.display()
             );
             needs_reindex = true;
+            errors.push(e.to_string());
         } else {
             tracing::debug!(
                 event = "index.update.targeted",
@@ -1049,6 +1051,7 @@ async fn update_index_paths_or_reindex(
         tracing::info!("{fallback_context}: running index.reindex.repair fallback");
         reindex_space_dir(index_state, space).await;
     }
+    errors
 }
 
 async fn update_index_tree_or_reindex(
@@ -1070,7 +1073,14 @@ async fn update_index_tree_or_reindex(
             return;
         }
     };
-    update_index_paths_or_reindex(index_state, project_path, space, paths, fallback_context).await;
+    let _ = update_index_paths_or_reindex(
+        index_state,
+        project_path,
+        space,
+        paths,
+        fallback_context,
+    )
+    .await;
 }
 
 async fn replace_index_entries_or_reindex(
