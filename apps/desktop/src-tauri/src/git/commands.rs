@@ -9,6 +9,7 @@ use super::autocommit::{AutocommitService, SystemCommitKind};
 use super::cli::{GitAvailability, GitCli};
 use super::ops::{GitStatus, UnpushedCommit};
 use crate::AppError;
+use crate::index::update::IndexUpdateState;
 use crate::index::{IndexKey, IndexState};
 use crate::repo_path::{RootMode, normalize_repo_relative, repo_relative_from_base};
 use crate::space::project;
@@ -555,6 +556,7 @@ pub async fn git_sync(
 pub(crate) async fn refresh_synced_repository(app: &AppHandle, cli: &GitCli, path: &Path) {
     let access_state = app.state::<super::access::RepositoryAccessState>();
     let index_state = app.state::<IndexState>();
+    let index_updates = app.state::<IndexUpdateState>();
     let evidence = async {
         let store_path = super::access::access_store_path(app)?;
         access_state
@@ -575,8 +577,13 @@ pub(crate) async fn refresh_synced_repository(app: &AppHandle, cli: &GitCli, pat
     let changed = super::ops::diff_after_pull(cli, &path).await.ok();
     if let Some(changed) = &changed {
         if !changed.is_empty() {
-            if let Err(e) =
-                crate::index::update::reindex_after_pull(&index_state, &key, changed.clone()).await
+            if let Err(e) = crate::index::update::reindex_after_pull(
+                &index_state,
+                &index_updates,
+                &key,
+                changed.clone(),
+            )
+            .await
             {
                 tracing::warn!("reindex_after_pull failed: {e}");
             }

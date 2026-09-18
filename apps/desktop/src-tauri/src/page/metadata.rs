@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use crate::error::AppError;
 use crate::files::{WriteNonceRegistry, entry};
 use crate::git::autocommit::AutocommitService;
-use crate::index::IndexState;
+use crate::index::{IndexState, update::IndexUpdateState};
 
 use super::write::{PageWrite, PageWriteOutcome};
 
@@ -34,6 +34,7 @@ pub(crate) async fn patch<F, Fut>(
     patch: PageMetadataPatch,
     project: Option<&str>,
     state: &IndexState,
+    updates: &IndexUpdateState,
     nonces: &WriteNonceRegistry,
     autocommit: Option<&AutocommitService>,
     authorize: F,
@@ -103,6 +104,7 @@ where
             project,
         },
         state,
+        updates,
         nonces,
         autocommit,
         authorize,
@@ -133,6 +135,7 @@ pub(crate) fn relative_changed_paths(space: &str, paths: &[PathBuf]) -> Vec<Stri
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::index::update::test_update_state;
     use std::fs;
 
     #[tokio::test]
@@ -156,6 +159,7 @@ mod tests {
             },
             None,
             &IndexState::new(),
+            test_update_state(),
             &WriteNonceRegistry::new(),
             None,
             |mut paths| async move {
@@ -189,6 +193,7 @@ mod tests {
             },
             None,
             &IndexState::new(),
+            test_update_state(),
             &WriteNonceRegistry::new(),
             None,
             |mut paths| async move {
@@ -223,6 +228,7 @@ mod tests {
             },
             None,
             &IndexState::new(),
+            test_update_state(),
             &WriteNonceRegistry::new(),
             None,
             |mut paths| async move {

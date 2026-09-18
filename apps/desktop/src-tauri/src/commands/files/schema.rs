@@ -129,6 +129,7 @@ pub async fn assign_unique_id(
     file_path: String,
     project_path: Option<String>,
     index_state: State<'_, IndexState>,
+    index_updates: State<'_, IndexUpdateState>,
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<Entry, AppError> {
     require_repository_mutation(&app, Path::new(&space)).await?;
@@ -136,6 +137,7 @@ pub async fn assign_unique_id(
     let entry = properties::assign_unique_id(&space, &file_path)?;
     update_index_entry_or_reindex(
         &index_state,
+        &index_updates,
         project_path.as_deref(),
         &space,
         &entry.path,

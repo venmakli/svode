@@ -12,6 +12,7 @@ use crate::error::AppError;
 use crate::files::WriteNonceRegistry;
 use crate::files::tree::{child_folder_names, has_direct_schema};
 use crate::files::tree_policy::{TreeIgnorePolicy, TreePathKind};
+use crate::index::update::IndexUpdateState;
 use crate::index::{IndexKey, IndexState};
 use crate::repo_path::{RootMode, repo_relative_from_base, repo_relative_from_path};
 use crate::routines::{
@@ -711,13 +712,14 @@ fn sync_index_for_watched_path(
 
     tauri::async_runtime::block_on(async {
         let state = app.state::<IndexState>();
+        let updates = app.state::<IndexUpdateState>();
         let key = state
             .key_for_space_dir(space_root)
             .await
             .unwrap_or_else(|| IndexKey::Root(space_root.to_path_buf()));
 
         if is_schema_path(path) {
-            if let Err(e) = state.run_full_reindex(&key).await {
+            if let Err(e) = updates.run_full_reindex(&state, &key).await {
                 tracing::warn!("watcher full reindex failed for {:?}: {e}", key);
             }
             return;
@@ -725,22 +727,10 @@ fn sync_index_for_watched_path(
 
         let project = key.project().to_path_buf();
         if let Err(e) =
-            crate::index::update::update_entry_with_origin(&state, &project, path, origin).await
+            crate::index::update::publish_path_with_origin(&state, &updates, &project, path, origin)
+                .await
         {
             tracing::warn!("watcher index update failed for {}: {e}", path.display());
-        }
-        let Ok(rel_path) = repo_relative_from_base(space_root, path, RootMode::Reject) else {
-            return;
-        };
-        let space_id = IndexState::space_id_for_key(&key);
-        if let Err(error) = state
-            .update_file_backlinks(&project, space_id.as_deref(), &rel_path)
-            .await
-        {
-            tracing::warn!(
-                "watcher backlink update failed for {}: {error}",
-                path.display()
-            );
         }
     });
 }
@@ -752,11 +742,12 @@ fn sync_index_for_visibility_change(
 ) {
     tauri::async_runtime::block_on(async {
         let state = app.state::<IndexState>();
+        let updates = app.state::<IndexUpdateState>();
         let key = state
             .key_for_space_dir(space_root)
             .await
             .unwrap_or_else(|| IndexKey::Root(space_root.to_path_buf()));
-        if let Err(error) = state.run_full_reindex(&key).await {
+        if let Err(error) = updates.run_full_reindex(&state, &key).await {
             tracing::warn!("watcher visibility reindex failed for {:?}: {error}", key);
         }
         if invalidate_backlinks {

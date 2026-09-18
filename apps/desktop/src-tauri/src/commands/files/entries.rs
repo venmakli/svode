@@ -94,6 +94,7 @@ pub async fn create_entry(
     as_readme: Option<bool>,
     project_path: Option<String>,
     index_state: State<'_, IndexState>,
+    index_updates: State<'_, IndexUpdateState>,
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<Entry, AppError> {
     require_repository_mutation(&app, Path::new(&space)).await?;
@@ -113,6 +114,7 @@ pub async fn create_entry(
             project: project_path.clone(),
         },
         &index_state,
+        &index_updates,
         |paths| require_planned_mutation_paths(&app, &space, paths),
     )
     .await?
@@ -187,6 +189,7 @@ pub async fn update_entry_field(
     value: serde_json::Value,
     project_path: Option<String>,
     index_state: State<'_, IndexState>,
+    index_updates: State<'_, IndexUpdateState>,
     nonces: State<'_, Arc<WriteNonceRegistry>>,
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<Entry, AppError> {
@@ -201,6 +204,7 @@ pub async fn update_entry_field(
             title.to_string(),
             project_path,
             &index_state,
+            &index_updates,
             &nonces,
             Some(&autocommit),
         )
@@ -222,6 +226,7 @@ pub async fn update_entry_field(
 
     update_index_entry_or_reindex(
         &index_state,
+        &index_updates,
         project_path.as_deref(),
         &space,
         &file_path,
@@ -245,6 +250,7 @@ pub async fn write_entry(
     skip_rename: Option<bool>,
     project_path: Option<String>,
     index_state: State<'_, IndexState>,
+    index_updates: State<'_, IndexUpdateState>,
     nonces: State<'_, Arc<WriteNonceRegistry>>,
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<WriteResult, AppError> {
@@ -271,6 +277,7 @@ pub async fn write_entry(
         skip_rename,
         project_path,
         &index_state,
+        &index_updates,
         &nonces,
         Some(&autocommit),
     )
@@ -290,6 +297,7 @@ pub(super) async fn update_entry_title_shared(
     title: String,
     project_path: Option<String>,
     index_state: &IndexState,
+    index_updates: &IndexUpdateState,
     nonces: &WriteNonceRegistry,
     autocommit: Option<&AutocommitService>,
 ) -> Result<Entry, AppError> {
@@ -311,6 +319,7 @@ pub(super) async fn update_entry_title_shared(
         Some(false),
         project_path,
         index_state,
+        index_updates,
         nonces,
         autocommit,
     )
@@ -333,6 +342,7 @@ pub(super) async fn write_entry_shared(
     skip_rename: Option<bool>,
     project_path: Option<String>,
     index_state: &IndexState,
+    index_updates: &IndexUpdateState,
     nonces: &WriteNonceRegistry,
     autocommit: Option<&AutocommitService>,
 ) -> Result<WriteResult, AppError> {
@@ -352,6 +362,7 @@ pub(super) async fn write_entry_shared(
     crate::page::write::write(
         request,
         index_state,
+        index_updates,
         nonces,
         autocommit,
         |paths| async move {
@@ -377,6 +388,7 @@ pub async fn delete_entry_shared(
     path: &str,
     project_path: Option<&str>,
     index_state: &IndexState,
+    index_updates: &IndexUpdateState,
     autocommit: Option<&AutocommitService>,
 ) -> Result<DeleteEntryCommandResult, AppError> {
     let planned_deleted = entry::planned_deleted_entry_paths(space, path)?;
@@ -411,17 +423,13 @@ pub async fn delete_entry_shared(
 
     if let Some(proj) = project_path.filter(|p| !p.is_empty()) {
         let project = Path::new(proj);
-        let source_space_id = space_id_for_dir(index_state, space).await;
         let mut needs_reindex = false;
         for deleted_path in &deleted.deleted_paths {
-            if let Err(e) = index_state
-                .remove_file_backlinks(project, source_space_id.as_deref(), deleted_path)
-                .await
-            {
-                tracing::warn!("remove backlinks for deleted entry failed: {e}");
-            }
             let abs_old = Path::new(space).join(deleted_path);
-            if let Err(e) = index::update::delete_entry(index_state, project, &abs_old).await {
+            if let Err(e) =
+                index::update::publish_managed_path(index_state, index_updates, project, &abs_old)
+                    .await
+            {
                 tracing::warn!("index delete_entry failed for {deleted_path}: {e}");
                 needs_reindex = true;
             } else {
@@ -435,11 +443,12 @@ pub async fn delete_entry_shared(
         }
         if needs_reindex {
             tracing::info!("delete_entry: running index.reindex.repair fallback");
-            reindex_space_dir(index_state, space).await;
+            reindex_space_dir(index_state, index_updates, space).await;
         } else if !deleted.cascade_touched.is_empty() {
             for (owner_space, paths) in &cascade_touched_by_space {
                 let _ = update_index_paths_or_reindex(
                     index_state,
+                    index_updates,
                     Some(proj),
                     &owner_space.to_string_lossy(),
                     paths.clone(),
@@ -449,7 +458,7 @@ pub async fn delete_entry_shared(
             }
         }
     } else {
-        reindex_space_dir(index_state, space).await;
+        reindex_space_dir(index_state, index_updates, space).await;
     }
     if let Some(autocommit) = autocommit {
         let current_space = PathBuf::from(space);
@@ -487,6 +496,7 @@ pub async fn delete_entry(
     path: String,
     project_path: Option<String>,
     index_state: State<'_, IndexState>,
+    index_updates: State<'_, IndexUpdateState>,
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<(), AppError> {
     let deleted_paths = entry::planned_deleted_entry_paths(&space, &path)?;
@@ -499,6 +509,7 @@ pub async fn delete_entry(
             &path,
             project_path.as_deref(),
             &index_state,
+            &index_updates,
             Some(&autocommit),
         )
         .await
@@ -515,6 +526,7 @@ pub async fn rename_entry(
     to: String,
     project_path: Option<String>,
     index_state: State<'_, IndexState>,
+    index_updates: State<'_, IndexUpdateState>,
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<Vec<String>, AppError> {
     let authorized_paths = require_entry_move_mutation_plan(
@@ -533,6 +545,7 @@ pub async fn rename_entry(
             &to,
             project_path.as_deref(),
             &index_state,
+            &index_updates,
             Some(&autocommit),
         )
         .await
@@ -546,6 +559,7 @@ pub async fn rename_entry_shared(
     to: &str,
     project_path: Option<&str>,
     index_state: &IndexState,
+    index_updates: &IndexUpdateState,
     autocommit: Option<&AutocommitService>,
 ) -> Result<Vec<String>, AppError> {
     let from_parent = Path::new(from).parent().unwrap_or(Path::new(""));
@@ -568,6 +582,7 @@ pub async fn rename_entry_shared(
         let mut modified_sources = if was_dir {
             index_state
                 .update_links_on_folder_rename_project(
+                    index_updates,
                     project,
                     target_space_id.as_deref(),
                     from,
@@ -577,7 +592,14 @@ pub async fn rename_entry_shared(
                 .await
         } else {
             index_state
-                .update_links_on_rename_project(project, target_space_id.as_deref(), from, to, None)
+                .update_links_on_rename_project(
+                    index_updates,
+                    project,
+                    target_space_id.as_deref(),
+                    from,
+                    to,
+                    None,
+                )
                 .await
         }
         .unwrap_or_else(|e| {
@@ -587,6 +609,7 @@ pub async fn rename_entry_shared(
         let rebased = if was_dir {
             rebase_project_source_tree_after_move(
                 index_state,
+                index_updates,
                 project_path,
                 space,
                 target_space_id.as_deref(),
@@ -598,6 +621,7 @@ pub async fn rename_entry_shared(
         } else if !same_parent(from, to) {
             rebase_project_source_after_move(
                 index_state,
+                index_updates,
                 project_path,
                 space,
                 target_space_id.as_deref(),
@@ -672,6 +696,7 @@ pub async fn move_entry(
     to_parent: String,
     project_path: Option<String>,
     index_state: State<'_, IndexState>,
+    index_updates: State<'_, IndexUpdateState>,
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<String, AppError> {
     let file_name = Path::new(&from)
@@ -699,6 +724,7 @@ pub async fn move_entry(
             &to_parent,
             project_path.as_deref(),
             &index_state,
+            &index_updates,
             Some(&autocommit),
         )
         .await
@@ -712,6 +738,7 @@ pub async fn move_entry_shared(
     to_parent: &str,
     project_path: Option<&str>,
     index_state: &IndexState,
+    index_updates: &IndexUpdateState,
     autocommit: Option<&AutocommitService>,
 ) -> Result<String, AppError> {
     let backlink_index = backlinks_for_space(index_state, space).await;
@@ -739,6 +766,7 @@ pub async fn move_entry_shared(
         let mut modified_sources = if was_dir {
             index_state
                 .update_links_on_folder_rename_project(
+                    index_updates,
                     project,
                     target_space_id.as_deref(),
                     from,
@@ -749,6 +777,7 @@ pub async fn move_entry_shared(
         } else {
             index_state
                 .update_links_on_rename_project(
+                    index_updates,
                     project,
                     target_space_id.as_deref(),
                     from,
@@ -764,6 +793,7 @@ pub async fn move_entry_shared(
         let rebased = if was_dir {
             rebase_project_source_tree_after_move(
                 index_state,
+                index_updates,
                 project_path,
                 space,
                 target_space_id.as_deref(),
@@ -775,6 +805,7 @@ pub async fn move_entry_shared(
         } else {
             rebase_project_source_after_move(
                 index_state,
+                index_updates,
                 project_path,
                 space,
                 target_space_id.as_deref(),

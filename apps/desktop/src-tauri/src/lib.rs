@@ -96,7 +96,8 @@ pub fn run() {
         .setup(|app| {
             let routine_stores = Arc::new(routines::RoutineStoreState::new());
             app.manage(routine_stores.clone());
-            app.manage(index::IndexState::with_routine_stores(routine_stores));
+            app.manage(index::IndexState::new());
+            app.manage(index::update::IndexUpdateState::new(routine_stores));
             let service = Arc::new(git::autocommit::AutocommitService::new(
                 app.handle().clone(),
             ));

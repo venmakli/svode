@@ -1,5 +1,7 @@
 use sqlx::SqlitePool;
 use std::path::Path;
+use std::sync::Arc;
+use std::sync::atomic::Ordering;
 
 use crate::error::AppError;
 use crate::files::tree_policy::TreeIgnorePolicy;
@@ -9,8 +11,101 @@ use crate::index::reindex::{
     MarkdownProjection, build_entry_with_dates, markdown_projection, markdown_source_record,
     upsert_entry,
 };
-use crate::index::{IndexKey, IndexState};
-use crate::routines::CollectionEventOrigin;
+use crate::index::{IndexKey, IndexState, ReindexActiveGuard};
+use crate::routines::{CollectionEventOrigin, RoutineStoreState};
+
+pub struct IndexUpdateState {
+    routine_stores: Arc<RoutineStoreState>,
+}
+
+#[cfg(test)]
+pub(crate) fn test_update_state() -> &'static IndexUpdateState {
+    use std::sync::OnceLock;
+
+    static STATE: OnceLock<IndexUpdateState> = OnceLock::new();
+    STATE.get_or_init(|| IndexUpdateState::new(Arc::new(RoutineStoreState::new())))
+}
+
+impl IndexUpdateState {
+    pub fn new(routine_stores: Arc<RoutineStoreState>) -> Self {
+        Self { routine_stores }
+    }
+
+    pub(crate) async fn routines_pool(
+        &self,
+        index_state: &IndexState,
+        key: &IndexKey,
+    ) -> Result<SqlitePool, AppError> {
+        self.routine_stores
+            .get_or_create_for_index(index_state, key)
+            .await
+    }
+
+    pub(crate) async fn sync_routine_projection(
+        &self,
+        index_state: &IndexState,
+        key: &IndexKey,
+    ) -> Result<(), AppError> {
+        let index_pool = index_state.get_or_create(key).await?;
+        let routines_pool = self.routines_pool(index_state, key).await?;
+        let space_dir = index_state.dir_for_key(key).await?;
+        crate::routines::cache::reconcile_projection_from_index(
+            &routines_pool,
+            &index_pool,
+            &space_dir,
+        )
+        .await
+    }
+
+    pub async fn run_reconciliation(
+        &self,
+        index_state: &IndexState,
+        key: &IndexKey,
+    ) -> Result<(), AppError> {
+        let flag = index_state.reconcile_active_flag(key).await;
+        flag.store(true, Ordering::SeqCst);
+        let _flag_guard = ReindexActiveGuard(flag);
+        for _ in 0..3 {
+            match crate::index::reconcile::reconcile_pool(index_state, key).await? {
+                crate::index::reconcile::ReconcileOutcome::Applied => {
+                    self.sync_routine_projection(index_state, key).await?;
+                    return Ok(());
+                }
+                crate::index::reconcile::ReconcileOutcome::Retry => continue,
+                crate::index::reconcile::ReconcileOutcome::Rebuild => {
+                    return self.run_full_reindex(index_state, key).await;
+                }
+            }
+        }
+        Err(AppError::Index(format!(
+            "source manifest kept changing during reconciliation for {key:?}"
+        )))
+    }
+
+    pub async fn run_full_reindex(
+        &self,
+        index_state: &IndexState,
+        key: &IndexKey,
+    ) -> Result<(), AppError> {
+        let pool = index_state.get_or_create(key).await?;
+        let dir = index_state.dir_for_key(key).await?;
+        let skip = index_state.skip_folders_for(key).await;
+        let lock = index_state.reindex_lock(key).await;
+        let flag = index_state.reindex_active_flag(key).await;
+        let _guard = lock.lock().await;
+        flag.store(true, Ordering::SeqCst);
+        let _flag_guard = ReindexActiveGuard(flag);
+        let complete =
+            crate::index::reindex::full_reindex_for_target(&pool, key.project(), &dir, &skip)
+                .await?;
+        index_state.rebuild_source_backlinks(key).await?;
+        self.sync_routine_projection(index_state, key).await?;
+        if complete {
+            index_state.cleanup_reconciled_index(key, &pool).await;
+        }
+        Ok(())
+    }
+}
 
 /// Verify that an absolute path resolves inside the space root, guarding
 /// against `..` traversal in user-supplied relative paths. If either side
@@ -40,16 +135,62 @@ fn ensure_inside_space(space_dir: &Path, abs_path: &Path) -> Result<(), AppError
 /// - If the file exists but isn't a markdown file → also delete (e.g. user
 ///   renamed `foo.md` → `foo.txt`, leaving a stale entry).
 /// - Otherwise → upsert.
+#[cfg(test)]
 pub async fn update_entry(
     state: &IndexState,
     project: &Path,
     abs_path: &Path,
 ) -> Result<(), AppError> {
-    update_entry_with_origin(state, project, abs_path, CollectionEventOrigin::managed()).await
+    update_entry_with_origin(
+        state,
+        test_update_state(),
+        project,
+        abs_path,
+        CollectionEventOrigin::managed(),
+    )
+    .await
+}
+
+pub async fn publish_managed_path(
+    state: &IndexState,
+    updates: &IndexUpdateState,
+    project: &Path,
+    abs_path: &Path,
+) -> Result<(), AppError> {
+    publish_path_with_origin(
+        state,
+        updates,
+        project,
+        abs_path,
+        CollectionEventOrigin::managed(),
+    )
+    .await
+}
+
+pub(crate) async fn publish_path_with_origin(
+    state: &IndexState,
+    updates: &IndexUpdateState,
+    project: &Path,
+    abs_path: &Path,
+    origin: CollectionEventOrigin,
+) -> Result<(), AppError> {
+    update_entry_with_origin(state, updates, project, abs_path, origin).await?;
+    let (key, relative) = state.resolve(project, abs_path).await?;
+    let space_id = IndexState::space_id_for_key(&key);
+    if abs_path.is_file() {
+        state
+            .update_file_backlinks(project, space_id.as_deref(), &relative)
+            .await
+    } else {
+        state
+            .remove_file_backlinks(project, space_id.as_deref(), &relative)
+            .await
+    }
 }
 
 pub(crate) async fn update_entry_with_origin(
     state: &IndexState,
+    updates: &IndexUpdateState,
     project: &Path,
     abs_path: &Path,
     origin: CollectionEventOrigin,
@@ -57,7 +198,7 @@ pub(crate) async fn update_entry_with_origin(
     let (key, rel_path) = state.resolve(project, abs_path).await?;
     let dir = state.dir_for_key(&key).await?;
     let pool = state.get_or_create(&key).await?;
-    let routines_pool = state.get_or_create_routines(&key).await?;
+    let routines_pool = updates.routines_pool(state, &key).await?;
 
     let normalized = normalize_rel_result(&rel_path)?;
     let abs = dir.join(&normalized);
@@ -171,6 +312,7 @@ pub(crate) async fn update_entry_with_origin(
 
 /// Incrementally delete the entry for a single absolute path. Resolves to
 /// the owning pool and deletes by relative path.
+#[cfg(test)]
 pub async fn delete_entry(
     state: &IndexState,
     project: &Path,
@@ -178,7 +320,7 @@ pub async fn delete_entry(
 ) -> Result<(), AppError> {
     let (key, rel_path) = state.resolve(project, abs_path).await?;
     let pool = state.get_or_create(&key).await?;
-    let routines_pool = state.get_or_create_routines(&key).await?;
+    let routines_pool = test_update_state().routines_pool(state, &key).await?;
     let lock = state.reindex_lock(&key).await;
     let _guard = lock.lock().await;
     apply_targeted_change(
@@ -197,6 +339,7 @@ pub async fn delete_entry(
 
 pub async fn rebase_collection_schema_manifest(
     state: &IndexState,
+    updates: &IndexUpdateState,
     space_dir: &Path,
     old_root: &str,
     new_root: &str,
@@ -236,7 +379,7 @@ pub async fn rebase_collection_schema_manifest(
     }
     crate::index::reconcile::advance_generation(&mut transaction, false, changed).await?;
     transaction.commit().await?;
-    state.sync_routine_projection(&key).await?;
+    updates.sync_routine_projection(state, &key).await?;
     Ok(())
 }
 
@@ -536,11 +679,12 @@ fn markdown_frontmatter_diff_safe(path: &Path) -> bool {
 /// paths in `changed_files` are relative to that pool's root.
 pub async fn reindex_after_pull(
     state: &IndexState,
+    updates: &IndexUpdateState,
     key: &IndexKey,
     changed_files: Vec<String>,
 ) -> Result<(), AppError> {
     let pool = state.get_or_create(key).await?;
-    let routines_pool = state.get_or_create_routines(key).await?;
+    let routines_pool = updates.routines_pool(state, key).await?;
     let dir = state.dir_for_key(key).await?;
     let lock = state.reindex_lock(key).await;
     let _guard = lock.lock().await;
@@ -569,6 +713,17 @@ pub async fn reindex_after_pull(
                 .map(|e| e.eq_ignore_ascii_case("md"))
                 .unwrap_or(false);
             (abs.exists() && is_md).then_some(normalized)
+        })
+        .collect::<Vec<_>>();
+    let backlink_paths = changed_files
+        .iter()
+        .filter_map(|path| {
+            let normalized = normalize_rel_result(path).ok()?;
+            Path::new(&normalized)
+                .extension()
+                .and_then(|extension| extension.to_str())
+                .is_some_and(|extension| extension.eq_ignore_ascii_case("md"))
+                .then_some(normalized)
         })
         .collect::<Vec<_>>();
     let date_overrides = derive_date_overrides(&dir, &changed_md_paths).await;
@@ -725,9 +880,26 @@ pub async fn reindex_after_pull(
         }
     }
 
+    let space_id = IndexState::space_id_for_key(key);
+    for relative in backlink_paths {
+        let absolute = dir.join(&relative);
+        let result = if absolute.is_file() {
+            state
+                .update_file_backlinks(key.project(), space_id.as_deref(), &relative)
+                .await
+        } else {
+            state
+                .remove_file_backlinks(key.project(), space_id.as_deref(), &relative)
+                .await
+        };
+        if let Err(error) = result {
+            tracing::warn!(path = %relative, "Git refresh backlink update failed: {error}");
+        }
+    }
+
     if schema_changed || visibility_policy_changed {
         drop(_guard);
-        state.run_full_reindex(key).await?;
+        updates.run_full_reindex(state, key).await?;
         if visibility_policy_changed {
             state.invalidate_project_backlinks(key.project()).await;
         }
@@ -1296,6 +1468,44 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn managed_publication_keeps_backlinks_in_sync_with_source_changes() {
+        let tmp = TempDir::new().unwrap();
+        let space = tmp.path();
+        let source = space.join("Source.md");
+        let target = space.join("Target.md");
+        std::fs::write(&target, "# Target\n").unwrap();
+        std::fs::write(&source, "See [target](Target.md).\n").unwrap();
+
+        let state = IndexState::new();
+        publish_managed_path(&state, test_update_state(), space, &target)
+            .await
+            .unwrap();
+        publish_managed_path(&state, test_update_state(), space, &source)
+            .await
+            .unwrap();
+
+        let key = IndexKey::Root(space.to_path_buf());
+        let backlinks = state.backlinks_for(&key).await;
+        assert_eq!(backlinks.get_backlinks("Target.md").len(), 1);
+        assert_eq!(
+            backlinks.get_backlinks("Target.md")[0].source_path,
+            "Source.md"
+        );
+
+        std::fs::write(&source, "Link removed.\n").unwrap();
+        publish_managed_path(&state, test_update_state(), space, &source)
+            .await
+            .unwrap();
+        assert!(backlinks.get_backlinks("Target.md").is_empty());
+
+        std::fs::remove_file(&source).unwrap();
+        publish_managed_path(&state, test_update_state(), space, &source)
+            .await
+            .unwrap();
+        assert!(backlinks.get_backlinks("Target.md").is_empty());
+    }
+
+    #[tokio::test]
     async fn targeted_collection_diff_queues_matched_events_once_and_survives_restart() {
         let tmp = TempDir::new().unwrap();
         let space = tmp.path();
@@ -1358,12 +1568,24 @@ mod tests {
             "---\ntitle: Item\nStatus: Done\nPriority: 1\nUnmodeled: changed\n---\nBody\n",
         )
         .unwrap();
-        update_entry_with_origin(&state, space, &file, CollectionEventOrigin::watcher())
-            .await
-            .unwrap();
-        update_entry_with_origin(&state, space, &file, CollectionEventOrigin::watcher())
-            .await
-            .unwrap();
+        update_entry_with_origin(
+            &state,
+            test_update_state(),
+            space,
+            &file,
+            CollectionEventOrigin::watcher(),
+        )
+        .await
+        .unwrap();
+        update_entry_with_origin(
+            &state,
+            test_update_state(),
+            space,
+            &file,
+            CollectionEventOrigin::watcher(),
+        )
+        .await
+        .unwrap();
 
         let queued: (i64, String, String, String) = sqlx::query_as(
             "SELECT COUNT(*), routine_id, property_key, payload_json FROM routine_event_queue",
@@ -1443,6 +1665,7 @@ mod tests {
 
         reindex_after_pull(
             &state,
+            test_update_state(),
             &key,
             vec!["tasks/schema.yaml".to_string(), "tasks/item.md".to_string()],
         )
@@ -1459,6 +1682,38 @@ mod tests {
         assert_eq!(payload["oldValue"], "Open");
         assert_eq!(payload["newValue"], "Done");
         assert_eq!(payload["sourceKind"], "git_sync");
+    }
+
+    #[tokio::test]
+    async fn git_refresh_keeps_backlinks_in_sync_for_targeted_markdown_changes() {
+        let tmp = TempDir::new().unwrap();
+        let space = tmp.path();
+        let source = space.join("Source.md");
+        std::fs::write(space.join("Old.md"), "# Old\n").unwrap();
+        std::fs::write(space.join("New.md"), "# New\n").unwrap();
+        std::fs::write(&source, "See [old](Old.md).\n").unwrap();
+
+        let state = IndexState::new();
+        let key = IndexKey::Root(space.to_path_buf());
+        test_update_state()
+            .run_full_reindex(&state, &key)
+            .await
+            .unwrap();
+        let backlinks = state.backlinks_for(&key).await;
+        assert_eq!(backlinks.get_backlinks("Old.md").len(), 1);
+
+        std::fs::write(&source, "See [new](New.md).\n").unwrap();
+        reindex_after_pull(
+            &state,
+            test_update_state(),
+            &key,
+            vec!["Source.md".to_string()],
+        )
+        .await
+        .unwrap();
+
+        assert!(backlinks.get_backlinks("Old.md").is_empty());
+        assert_eq!(backlinks.get_backlinks("New.md").len(), 1);
     }
 
     #[tokio::test]
@@ -1673,9 +1928,15 @@ mod tests {
         assert_eq!(created_payload["origin"], "managed");
 
         std::fs::write(&file, "---\ntitle: [broken\n---\nBody\n").unwrap();
-        update_entry_with_origin(&state, space, &file, CollectionEventOrigin::watcher())
-            .await
-            .unwrap();
+        update_entry_with_origin(
+            &state,
+            test_update_state(),
+            space,
+            &file,
+            CollectionEventOrigin::watcher(),
+        )
+        .await
+        .unwrap();
         assert_eq!(
             sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM routine_event_queue")
                 .fetch_one(&routines_pool)
@@ -1685,9 +1946,15 @@ mod tests {
         );
 
         std::fs::remove_file(&file).unwrap();
-        update_entry_with_origin(&state, space, &file, CollectionEventOrigin::git_sync())
-            .await
-            .unwrap();
+        update_entry_with_origin(
+            &state,
+            test_update_state(),
+            space,
+            &file,
+            CollectionEventOrigin::git_sync(),
+        )
+        .await
+        .unwrap();
         let payload: String = sqlx::query_scalar(
             "SELECT payload_json FROM routine_event_queue WHERE event_type = 'collection.entry_deleted'",
         )

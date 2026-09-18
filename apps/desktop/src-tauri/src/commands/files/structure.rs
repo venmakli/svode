@@ -8,6 +8,7 @@ pub async fn nest_entry(
     path: String,
     project_path: Option<String>,
     index_state: State<'_, IndexState>,
+    index_updates: State<'_, IndexUpdateState>,
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<String, AppError> {
     let _new_path = nested_entry_path(&path)?;
@@ -26,6 +27,7 @@ pub async fn nest_entry(
             &path,
             project_path.as_deref(),
             &index_state,
+            &index_updates,
             &autocommit,
         )
         .await
@@ -38,6 +40,7 @@ async fn nest_entry_shared(
     path: &str,
     project_path: Option<&str>,
     index_state: &IndexState,
+    index_updates: &IndexUpdateState,
     autocommit: &AutocommitService,
 ) -> Result<String, AppError> {
     let backlink_index = backlinks_for_space(index_state, space).await;
@@ -57,6 +60,7 @@ async fn nest_entry_shared(
         let target_space_id = space_id_for_dir(index_state, space).await;
         let mut modified_sources = index_state
             .update_links_on_rename_project(
+                index_updates,
                 project,
                 target_space_id.as_deref(),
                 path,
@@ -71,6 +75,7 @@ async fn nest_entry_shared(
         modified_sources.extend(
             rebase_project_source_after_move(
                 index_state,
+                index_updates,
                 project_path,
                 space,
                 target_space_id.as_deref(),
@@ -121,6 +126,7 @@ pub async fn unnest_entry(
     path: String,
     project_path: Option<String>,
     index_state: State<'_, IndexState>,
+    index_updates: State<'_, IndexUpdateState>,
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<String, AppError> {
     let _new_path = leaf_entry_path(&path)?;
@@ -139,6 +145,7 @@ pub async fn unnest_entry(
             &path,
             project_path.as_deref(),
             &index_state,
+            &index_updates,
             Some(&autocommit),
         )
         .await
@@ -151,6 +158,7 @@ pub async fn unnest_entry_shared(
     path: &str,
     project_path: Option<&str>,
     index_state: &IndexState,
+    index_updates: &IndexUpdateState,
     autocommit: Option<&AutocommitService>,
 ) -> Result<String, AppError> {
     let backlink_index = backlinks_for_space(index_state, space).await;
@@ -170,6 +178,7 @@ pub async fn unnest_entry_shared(
         let target_space_id = space_id_for_dir(index_state, space).await;
         let mut modified_sources = index_state
             .update_links_on_rename_project(
+                index_updates,
                 project,
                 target_space_id.as_deref(),
                 path,
@@ -184,6 +193,7 @@ pub async fn unnest_entry_shared(
         modified_sources.extend(
             rebase_project_source_after_move(
                 index_state,
+                index_updates,
                 project_path,
                 space,
                 target_space_id.as_deref(),
@@ -238,6 +248,7 @@ pub async fn convert_entry_to_folder(
     file_path: String,
     project_path: Option<String>,
     index_state: State<'_, IndexState>,
+    index_updates: State<'_, IndexUpdateState>,
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<Entry, AppError> {
     let _new_path = nested_entry_path(&file_path)?;
@@ -256,6 +267,7 @@ pub async fn convert_entry_to_folder(
             &file_path,
             project_path.as_deref(),
             &index_state,
+            &index_updates,
             Some(&autocommit),
         )
         .await
@@ -268,6 +280,7 @@ pub async fn convert_entry_to_folder_shared(
     file_path: &str,
     project_path: Option<&str>,
     index_state: &IndexState,
+    index_updates: &IndexUpdateState,
     autocommit: Option<&AutocommitService>,
 ) -> Result<Entry, AppError> {
     let backlink_index = backlinks_for_space(index_state, space).await;
@@ -291,6 +304,7 @@ pub async fn convert_entry_to_folder_shared(
         let target_space_id = space_id_for_dir(index_state, space).await;
         let mut modified_sources = index_state
             .update_links_on_rename_project(
+                index_updates,
                 project,
                 target_space_id.as_deref(),
                 &old_leaf,
@@ -305,6 +319,7 @@ pub async fn convert_entry_to_folder_shared(
         modified_sources.extend(
             rebase_project_source_after_move(
                 index_state,
+                index_updates,
                 project_path,
                 space,
                 target_space_id.as_deref(),
@@ -336,6 +351,7 @@ pub async fn convert_entry_to_folder_shared(
     }
     replace_index_entries_or_reindex(
         index_state,
+        index_updates,
         project_path,
         space,
         &[old_leaf.clone()],
@@ -368,6 +384,7 @@ pub async fn convert_to_collection(
     path: String,
     project_path: Option<String>,
     index_state: State<'_, IndexState>,
+    index_updates: State<'_, IndexUpdateState>,
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<ConvertToCollectionCommandResult, AppError> {
     let authorized_paths = require_convert_to_collection_mutation_plan(
@@ -384,6 +401,7 @@ pub async fn convert_to_collection(
             &path,
             project_path.as_deref(),
             &index_state,
+            &index_updates,
             Some(&autocommit),
         )
         .await
@@ -396,6 +414,7 @@ pub async fn convert_to_collection_shared(
     path: &str,
     project_path: Option<&str>,
     index_state: &IndexState,
+    index_updates: &IndexUpdateState,
     autocommit: Option<&AutocommitService>,
 ) -> Result<ConvertToCollectionCommandResult, AppError> {
     let old_path = normalize_repo_relative(path, RootMode::Reject)?;
@@ -449,6 +468,7 @@ pub async fn convert_to_collection_shared(
                 &old_path,
                 project_path,
                 index_state,
+                index_updates,
                 autocommit,
             )
             .await?;
@@ -472,6 +492,7 @@ pub async fn convert_to_collection_shared(
     let schema_path_rel = collection_schema_path_rel(&collection_path);
     update_index_tree_or_reindex(
         index_state,
+        index_updates,
         project_path,
         space,
         &collection_path,
@@ -513,6 +534,7 @@ pub async fn convert_entry_to_leaf(
     file_path: String,
     project_path: Option<String>,
     index_state: State<'_, IndexState>,
+    index_updates: State<'_, IndexUpdateState>,
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<Entry, AppError> {
     let _new_path = leaf_entry_path(&file_path)?;
@@ -531,6 +553,7 @@ pub async fn convert_entry_to_leaf(
             &file_path,
             project_path.as_deref(),
             &index_state,
+            &index_updates,
             Some(&autocommit),
         )
         .await
@@ -543,6 +566,7 @@ pub async fn convert_entry_to_leaf_shared(
     file_path: &str,
     project_path: Option<&str>,
     index_state: &IndexState,
+    index_updates: &IndexUpdateState,
     autocommit: Option<&AutocommitService>,
 ) -> Result<Entry, AppError> {
     let backlink_index = backlinks_for_space(index_state, space).await;
@@ -569,6 +593,7 @@ pub async fn convert_entry_to_leaf_shared(
         let target_space_id = space_id_for_dir(index_state, space).await;
         let mut modified_sources = index_state
             .update_links_on_rename_project(
+                index_updates,
                 project,
                 target_space_id.as_deref(),
                 &old_readme,
@@ -583,6 +608,7 @@ pub async fn convert_entry_to_leaf_shared(
         modified_sources.extend(
             rebase_project_source_after_move(
                 index_state,
+                index_updates,
                 project_path,
                 space,
                 target_space_id.as_deref(),
@@ -614,6 +640,7 @@ pub async fn convert_entry_to_leaf_shared(
     }
     replace_index_entries_or_reindex(
         index_state,
+        index_updates,
         project_path,
         space,
         &[old_readme.clone()],
@@ -646,6 +673,7 @@ pub async fn convert_entry_to_nested_collection(
     file_path: String,
     project_path: Option<String>,
     index_state: State<'_, IndexState>,
+    index_updates: State<'_, IndexUpdateState>,
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<(), AppError> {
     let authorized_paths = require_convert_to_collection_mutation_plan(
@@ -662,6 +690,7 @@ pub async fn convert_entry_to_nested_collection(
             &file_path,
             project_path.as_deref(),
             &index_state,
+            &index_updates,
             Some(&autocommit),
         )
         .await
@@ -677,6 +706,7 @@ pub async fn convert_bare_folder_to_collection(
     folder_path: String,
     project_path: Option<String>,
     index_state: State<'_, IndexState>,
+    index_updates: State<'_, IndexUpdateState>,
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<Entry, AppError> {
     let authorized_paths = require_convert_to_collection_mutation_plan(
@@ -693,6 +723,7 @@ pub async fn convert_bare_folder_to_collection(
             &folder_path,
             project_path.as_deref(),
             &index_state,
+            &index_updates,
             Some(&autocommit),
         )
         .await
@@ -708,6 +739,7 @@ pub async fn duplicate_entry(
     file_path: String,
     project_path: Option<String>,
     index_state: State<'_, IndexState>,
+    index_updates: State<'_, IndexUpdateState>,
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<Entry, AppError> {
     require_repository_mutation(&app, Path::new(&space)).await?;
@@ -715,6 +747,7 @@ pub async fn duplicate_entry(
     let entry = entry::duplicate_entry(Path::new(&space), &file_path)?;
     update_index_tree_or_reindex(
         &index_state,
+        &index_updates,
         project_path.as_deref(),
         &space,
         root_path_for_head(&entry.path),

@@ -4,6 +4,10 @@ use crate::space::types::{SpaceConfig, TreeSpaceConfig};
 use sqlx::SqlitePool;
 use tempfile::TempDir;
 
+fn updates() -> &'static IndexUpdateState {
+    crate::index::update::test_update_state()
+}
+
 #[tokio::test]
 async fn page_read_dates_without_registered_pool_preserve_all_native_roles() {
     let tmp = TempDir::new().unwrap();
@@ -75,9 +79,16 @@ fn collect_markdown_rel_paths(tmp: &TempDir, root: &Path) -> Vec<String> {
 
 async fn delete_for_test(tmp: &TempDir, path: &str) -> DeleteEntryCommandResult {
     let index_state = IndexState::new();
-    delete_entry_shared(tmp.path().to_str().unwrap(), path, None, &index_state, None)
-        .await
-        .expect("delete entry")
+    delete_entry_shared(
+        tmp.path().to_str().unwrap(),
+        path,
+        None,
+        &index_state,
+        updates(),
+        None,
+    )
+    .await
+    .expect("delete entry")
 }
 
 async fn indexed_pool(state: &IndexState, space: &Path) -> SqlitePool {
@@ -237,6 +248,7 @@ async fn shared_delete_entry_removes_targeted_index_rows_and_fts() {
         "Note.md",
         Some(space.to_str().unwrap()),
         &state,
+        updates(),
         None,
     )
     .await
@@ -317,6 +329,7 @@ async fn targeted_convert_to_folder_replaces_stale_leaf_index_row() {
     let entry = entry::convert_entry_to_folder(space, "Topic.md", None).unwrap();
     replace_index_entries_or_reindex(
         &state,
+        updates(),
         Some(space.to_str().unwrap()),
         space.to_str().unwrap(),
         &["Topic.md".to_string()],
@@ -354,6 +367,7 @@ async fn targeted_convert_to_leaf_replaces_stale_readme_index_row() {
     let entry = entry::convert_entry_to_leaf(space, "Topic/README.md", None).unwrap();
     replace_index_entries_or_reindex(
         &state,
+        updates(),
         Some(space.to_str().unwrap()),
         space.to_str().unwrap(),
         &["Topic/README.md".to_string()],
@@ -391,6 +405,7 @@ async fn targeted_duplicate_indexes_created_tree_only() {
     let entry = entry::duplicate_entry(space, "Original.md").unwrap();
     update_index_tree_or_reindex(
         &state,
+        updates(),
         Some(space.to_str().unwrap()),
         space.to_str().unwrap(),
         root_path_for_head(&entry.path),
@@ -444,6 +459,7 @@ async fn moved_collection_tree_replaces_descendant_index_paths() {
     .unwrap();
     rebase_project_source_tree_after_move(
         &state,
+        updates(),
         Some(space.to_str().unwrap()),
         space.to_str().unwrap(),
         None,
@@ -512,6 +528,7 @@ async fn title_update_renames_collection_tree_and_rebases_indexes_and_backlinks(
         "Renamed collection".to_string(),
         Some(space.to_string_lossy().into_owned()),
         &index_state,
+        updates(),
         &nonces,
         None,
     )
@@ -657,6 +674,7 @@ async fn title_update_ignores_unrelated_broken_schemas_for_standalone_pages() {
                     "Партнёрства".into(),
                     project_aware.then(|| root.to_string_lossy().into_owned()),
                     &index_state,
+                    updates(),
                     &nonces,
                     None,
                 )
@@ -732,6 +750,7 @@ async fn title_update_defers_relation_domain_rename_and_retries_the_same_title()
             "Renamed Page".into(),
             None,
             &index_state,
+            updates(),
             &nonces,
             None,
         )
@@ -760,6 +779,7 @@ async fn title_update_defers_relation_domain_rename_and_retries_the_same_title()
             "Renamed Page".into(),
             None,
             &index_state,
+            updates(),
             &nonces,
             None,
         )
@@ -790,6 +810,7 @@ async fn targeted_nested_collection_convert_recomputes_descendant_flags() {
         entry::convert_entry_to_nested_collection(space, "Tasks/README.md").unwrap();
     update_index_tree_or_reindex(
         &state,
+        updates(),
         Some(space.to_str().unwrap()),
         space.to_str().unwrap(),
         &collection_path,
@@ -831,6 +852,7 @@ async fn shared_convert_to_collection_preserves_leaf_and_refreshes_index_tree() 
         "Topic.md",
         Some(space.to_str().unwrap()),
         &state,
+        updates(),
         None,
     )
     .await
@@ -887,6 +909,7 @@ async fn shared_convert_to_collection_supports_folder_document_and_bare_folder()
         "Folder/README.md",
         Some(space.to_str().unwrap()),
         &state,
+        updates(),
         None,
     )
     .await
@@ -896,6 +919,7 @@ async fn shared_convert_to_collection_supports_folder_document_and_bare_folder()
         "Bare",
         Some(space.to_str().unwrap()),
         &state,
+        updates(),
         None,
     )
     .await
@@ -924,6 +948,7 @@ async fn shared_convert_to_collection_rejects_existing_collection_readme() {
         "Tasks/README.md",
         Some(space.to_str().unwrap()),
         &state,
+        updates(),
         None,
     )
     .await;
@@ -946,6 +971,7 @@ async fn shared_convert_to_collection_preserves_leaf_when_target_folder_exists()
         "Topic.md",
         Some(space.to_str().unwrap()),
         &state,
+        updates(),
         None,
     )
     .await;
@@ -968,6 +994,7 @@ async fn shared_delete_entry_returns_error_for_missing_path() {
         "Missing.md",
         None,
         &index_state,
+        updates(),
         None,
     )
     .await;
@@ -1102,6 +1129,7 @@ async fn shared_rename_rejects_parent_change_and_preserves_sibling_position() {
         "target/a.md",
         None,
         &index_state,
+        updates(),
         None,
     )
     .await;
@@ -1114,6 +1142,7 @@ async fn shared_rename_rejects_parent_change_and_preserves_sibling_position() {
         "renamed.md",
         None,
         &index_state,
+        updates(),
         None,
     )
     .await
@@ -1176,6 +1205,7 @@ async fn title_update_isolates_other_spaces_and_preserves_scoped_relation_rewrit
             "Новое имя".into(),
             Some(root.to_string_lossy().into_owned()),
             &index_state,
+            updates(),
             &WriteNonceRegistry::new(),
             None,
         )

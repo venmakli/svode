@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use crate::error::AppError;
 use crate::files::entry::{self, EntryWarning};
-use crate::index::IndexState;
+use crate::index::{IndexState, update::IndexUpdateState};
 
 pub(crate) struct PageCreate {
     pub space: String,
@@ -120,6 +120,7 @@ impl SourceSnapshot {
 pub(crate) async fn create<F, Fut>(
     request: PageCreate,
     state: &IndexState,
+    updates: &IndexUpdateState,
     authorize: F,
 ) -> Result<PageCreateOutcome, AppError>
 where
@@ -335,14 +336,17 @@ where
         .cloned()
         .collect();
     let projection_errors = match checkpoint("projection") {
-        Ok(()) => crate::commands::files::update_index_paths_or_reindex(
-            state,
-            request.project.as_deref(),
-            &request.space,
-            markdown,
-            "create_page",
-        )
-        .await,
+        Ok(()) => {
+            crate::commands::files::update_index_paths_or_reindex(
+                state,
+                updates,
+                request.project.as_deref(),
+                &request.space,
+                markdown,
+                "create_page",
+            )
+            .await
+        }
         Err(error) => vec![error.to_string()],
     };
     if !projection_errors.is_empty() {
@@ -429,6 +433,7 @@ fn checkpoint(stage: &str) -> Result<(), AppError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::index::update::test_update_state;
     use serde_json::json;
 
     fn request(root: &Path) -> PageCreate {
@@ -456,6 +461,7 @@ mod tests {
         let outcome = create(
             request(temp.path()),
             &IndexState::new(),
+            test_update_state(),
             |paths| async move { Ok(paths) },
         )
         .await
@@ -486,9 +492,14 @@ mod tests {
         let mut input = request(temp.path());
         input.parent_path = Some("Tasks".into());
         input.properties = Some(HashMap::from([("Status".into(), serde_json::Value::Null)]));
-        let outcome = create(input, &IndexState::new(), |paths| async move { Ok(paths) })
-            .await
-            .unwrap();
+        let outcome = create(
+            input,
+            &IndexState::new(),
+            test_update_state(),
+            |paths| async move { Ok(paths) },
+        )
+        .await
+        .unwrap();
         assert!(!outcome.page.meta.extra.contains_key("Status"));
         assert_eq!(
             outcome.page.meta.extra.get("Key"),
@@ -507,9 +518,14 @@ mod tests {
         .unwrap();
         let mut input = request(temp.path());
         input.parent_path = Some("Parent.md".into());
-        let outcome = create(input, &IndexState::new(), |paths| async move { Ok(paths) })
-            .await
-            .unwrap();
+        let outcome = create(
+            input,
+            &IndexState::new(),
+            test_update_state(),
+            |paths| async move { Ok(paths) },
+        )
+        .await
+        .unwrap();
         assert_eq!(outcome.page.path, "Parent/Budget.md");
         assert!(!temp.path().join("Parent.md").exists());
         assert_eq!(
@@ -536,6 +552,7 @@ mod tests {
         let result = create(
             request(temp.path()),
             &IndexState::new(),
+            test_update_state(),
             |paths| async move { Ok(paths) },
         )
         .await;
@@ -557,12 +574,20 @@ mod tests {
         .unwrap();
         let mut input = request(temp.path());
         input.properties = Some(HashMap::from([("Key".into(), json!(42))]));
-        let result = create(input, &IndexState::new(), |paths| async move { Ok(paths) }).await;
+        let result = create(
+            input,
+            &IndexState::new(),
+            test_update_state(),
+            |paths| async move { Ok(paths) },
+        )
+        .await;
         assert!(result.is_err());
         assert!(!temp.path().join("Budget.md").exists());
-        assert!(fs::read_to_string(temp.path().join("schema.yaml"))
-            .unwrap()
-            .contains("next: 1"));
+        assert!(
+            fs::read_to_string(temp.path().join("schema.yaml"))
+                .unwrap()
+                .contains("next: 1")
+        );
     }
 
     #[tokio::test]
@@ -574,7 +599,13 @@ mod tests {
         let mut input = request(temp.path());
         input.parent_path = Some("Parent.md".into());
         FAILURE.with(|failure| *failure.borrow_mut() = Some("body"));
-        let result = create(input, &IndexState::new(), |paths| async move { Ok(paths) }).await;
+        let result = create(
+            input,
+            &IndexState::new(),
+            test_update_state(),
+            |paths| async move { Ok(paths) },
+        )
+        .await;
         FAILURE.with(|failure| *failure.borrow_mut() = None);
         assert!(result.is_err());
         assert_eq!(
@@ -589,9 +620,12 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         crate::space::scaffold::scaffold_space(temp.path(), "Test", "", "").unwrap();
         FAILURE.with(|failure| *failure.borrow_mut() = Some("projection"));
-        let outcome = create(request(temp.path()), &IndexState::new(), |paths| async move {
-            Ok(paths)
-        })
+        let outcome = create(
+            request(temp.path()),
+            &IndexState::new(),
+            test_update_state(),
+            |paths| async move { Ok(paths) },
+        )
         .await
         .unwrap();
         FAILURE.with(|failure| *failure.borrow_mut() = None);

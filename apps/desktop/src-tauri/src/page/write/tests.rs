@@ -1,6 +1,6 @@
 use super::*;
 use crate::files::WriteNonceRegistry;
-use crate::index::{IndexKey, IndexState};
+use crate::index::{IndexKey, IndexState, update::test_update_state};
 
 async fn save(
     root: &Path,
@@ -23,6 +23,7 @@ async fn save(
             project: Some(root.to_str().unwrap()),
         },
         state,
+        test_update_state(),
         nonces,
         None,
         |mut paths| async move {
@@ -203,6 +204,7 @@ async fn projection_failure_is_applied_and_authorization_denial_is_not() {
             project: None,
         },
         &state,
+        test_update_state(),
         &nonces,
         None,
         |_| async { Err(AppError::General("denied".into())) },

@@ -111,6 +111,7 @@ pub(super) async fn create_page(
             project: Some(context.project_path.clone()),
         },
         &app.state::<IndexState>(),
+        &app.state::<IndexUpdateState>(),
         |mut paths| async move {
             paths.push(PathBuf::from(&authorization_space));
             crate::git::access::require_repository_mutation_paths(app, paths.clone()).await?;
@@ -354,6 +355,7 @@ pub(super) async fn patch_page_metadata(
     cover: Option<Option<entry::Cover>>,
 ) -> Result<crate::page::metadata::PageMetadataOutcome, crate::error::AppError> {
     let state = app.state::<IndexState>();
+    let updates = app.state::<IndexUpdateState>();
     let nonces = app.state::<std::sync::Arc<crate::files::WriteNonceRegistry>>();
     crate::page::metadata::patch(
         space,
@@ -366,6 +368,7 @@ pub(super) async fn patch_page_metadata(
         },
         Some(&context.project_path),
         &state,
+        &updates,
         &nonces,
         None,
         |mut paths| async move {
@@ -404,6 +407,7 @@ pub(super) async fn import_asset(
     let content_path = validate_markdown_path(&args.content_path)?;
     ensure_inside(Path::new(&space), &content_path)?;
     let index_state = app.state::<IndexState>();
+    let index_updates = app.state::<IndexUpdateState>();
     let selected_space_id = args
         .space_id
         .as_deref()
@@ -420,6 +424,7 @@ pub(super) async fn import_asset(
     let result = crate::attachments::managed_import::execute_managed_import(
         app,
         &index_state,
+        &index_updates,
         None,
         crate::attachments::managed_import::MutationOrigin::Mcp,
         plan,

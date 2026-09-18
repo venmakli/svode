@@ -10,6 +10,7 @@ use tokio::task::JoinSet;
 use crate::error::AppError;
 use crate::index::knowledge::{KnowledgeFilters, KnowledgeResponse, KnowledgeScope};
 use crate::index::search::{self, SearchResult};
+use crate::index::update::IndexUpdateState;
 use crate::index::{IndexKey, IndexState};
 
 const DEFAULT_LIMIT: i64 = 20;
@@ -169,6 +170,7 @@ async fn enrich(state: &IndexState, key: &IndexKey, hit: SearchResult) -> Search
 #[tauri::command]
 pub async fn reindex_space(
     state: State<'_, IndexState>,
+    updates: State<'_, IndexUpdateState>,
     project_path: String,
     space_id: Option<String>,
 ) -> Result<(), AppError> {
@@ -180,7 +182,7 @@ pub async fn reindex_space(
         },
         None => IndexKey::Root(project.clone()),
     };
-    state.run_full_reindex(&key).await
+    updates.run_full_reindex(&state, &key).await
 }
 
 /// Reindex root + every ready child space pool. Bounded parallelism (4).
@@ -197,7 +199,8 @@ pub async fn reindex_project(app: AppHandle, project_path: String) -> Result<(),
         handles.push(tokio::spawn(async move {
             let _permit = sem.acquire_owned().await.ok();
             let state = app.state::<IndexState>();
-            if let Err(e) = state.run_full_reindex(&key).await {
+            let updates = app.state::<IndexUpdateState>();
+            if let Err(e) = updates.run_full_reindex(&state, &key).await {
                 tracing::warn!("reindex_project: full_reindex failed for {:?}: {e}", key);
             }
         }));

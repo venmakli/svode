@@ -1972,7 +1972,7 @@ mod tests {
         )
         .unwrap();
         let routine_stores = Arc::new(RoutineStoreState::new());
-        let index_state = IndexState::with_routine_stores(routine_stores.clone());
+        let index_state = IndexState::new();
         let pool = routine_stores
             .get_or_create_for_index(&index_state, &owner.index_key)
             .await
@@ -2023,7 +2023,7 @@ mod tests {
         )
         .unwrap();
         let routine_stores = Arc::new(RoutineStoreState::new());
-        let index_state = IndexState::with_routine_stores(routine_stores.clone());
+        let index_state = IndexState::new();
         let terminal_manager = TerminalManager::new();
 
         let snapshot = read_catalog(&routine_stores, &index_state, &terminal_manager, &owner)

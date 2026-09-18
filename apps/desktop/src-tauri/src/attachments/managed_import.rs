@@ -17,6 +17,7 @@ use crate::files::{backlinks, filename};
 use crate::git::access::ensure_mutation_paths_were_authorized;
 use crate::git::autocommit::{AutocommitService, StructuralOp};
 use crate::index::IndexState;
+use crate::index::update::IndexUpdateState;
 use crate::properties;
 use crate::repo_path::{RootMode, normalize_repo_relative, repo_relative_from_base};
 use crate::space::types::{AssetsSpaceConfig, AssetsStrategy};
@@ -265,6 +266,7 @@ pub(crate) async fn plan_managed_import(
 pub(crate) async fn execute_managed_import(
     app: &AppHandle,
     index_state: &IndexState,
+    index_updates: &IndexUpdateState,
     autocommit: Option<&Arc<AutocommitService>>,
     origin: MutationOrigin,
     plan: ManagedImportPlan,
@@ -324,6 +326,7 @@ pub(crate) async fn execute_managed_import(
                 &revalidated.content_path,
                 Some(&revalidated.project_path.to_string_lossy()),
                 index_state,
+                index_updates,
                 autocommit.map(AsRef::as_ref),
             )
             .await?;

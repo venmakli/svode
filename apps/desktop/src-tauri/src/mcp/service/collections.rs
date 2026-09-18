@@ -85,6 +85,7 @@ pub(super) async fn convert_to_collection(
         &path,
         Some(context.project_path.as_str()),
         &index_state,
+        &app.state::<IndexUpdateState>(),
         None,
     )
     .await
@@ -316,6 +317,7 @@ async fn delete_markdown_content(
         &path,
         Some(context.project_path.as_str()),
         &index_state,
+        &app.state::<IndexUpdateState>(),
         None,
     )
     .await?;
@@ -349,6 +351,7 @@ pub(super) async fn rename_content(
         &to,
         Some(context.project_path.as_str()),
         &index_state,
+        &app.state::<IndexUpdateState>(),
         None,
     )
     .await?;
@@ -383,6 +386,7 @@ pub(super) async fn move_content(
         &to_parent,
         Some(context.project_path.as_str()),
         &index_state,
+        &app.state::<IndexUpdateState>(),
         None,
     )
     .await?;
@@ -470,6 +474,7 @@ pub(super) async fn convert_page_to_leaf(
         &path,
         Some(context.project_path.as_str()),
         &index_state,
+        &app.state::<IndexUpdateState>(),
         None,
     )
     .await?;

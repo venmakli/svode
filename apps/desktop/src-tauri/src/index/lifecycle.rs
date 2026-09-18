@@ -431,6 +431,10 @@ mod tests {
         for folder in ["inline", "independent"] {
             std::fs::create_dir_all(project.join(folder)).unwrap();
             cache.folder_by_id.insert(folder.into(), folder.into());
+            cache.by_folder.insert(folder.into(), folder.into());
+            cache
+                .status_by_id
+                .insert(folder.into(), crate::space::types::SpaceStatus::Ready);
         }
         state
             .spaces_cache

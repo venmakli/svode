@@ -20,6 +20,7 @@ use crate::git::access::{
 };
 use crate::git::autocommit::{AutocommitService, StructuralOp};
 use crate::git::commands::{GitState, require_cli};
+use crate::index::update::IndexUpdateState;
 use crate::index::{self, IndexKey, IndexState, ResolvedDocLink};
 use crate::properties::{
     self, ActorCandidate, CollectionInfo, CollectionSchema, Column, EntrySchemaResponse, Filter,
@@ -80,7 +81,10 @@ fn managed_attachment_repository_dir(space: &str, project_path: Option<&str>) ->
         .unwrap_or(space_dir)
 }
 
-pub(crate) fn managed_attachment_policy_paths(space: &str, project_path: Option<&str>) -> Vec<PathBuf> {
+pub(crate) fn managed_attachment_policy_paths(
+    space: &str,
+    project_path: Option<&str>,
+) -> Vec<PathBuf> {
     let repo_dir = managed_attachment_repository_dir(space, project_path);
     vec![repo_dir.join(".gitignore"), repo_dir.join(".gitattributes")]
 }
@@ -482,6 +486,7 @@ fn moved_child_old_path(new_child: &str, old_root: &str, new_root: &str) -> Stri
 
 async fn rebase_project_source_after_move(
     index_state: &IndexState,
+    index_updates: &IndexUpdateState,
     project_path: Option<&str>,
     space: &str,
     source_space_id: Option<&str>,
@@ -499,6 +504,7 @@ async fn rebase_project_source_after_move(
         Ok(Some(item)) => {
             update_index_entry_or_reindex(
                 index_state,
+                index_updates,
                 project_path,
                 space,
                 new_path,
@@ -517,6 +523,7 @@ async fn rebase_project_source_after_move(
 
 async fn rebase_project_source_tree_after_move(
     index_state: &IndexState,
+    index_updates: &IndexUpdateState,
     project_path: Option<&str>,
     space: &str,
     source_space_id: Option<&str>,
@@ -592,6 +599,7 @@ async fn rebase_project_source_tree_after_move(
     }
     replace_index_entries_or_reindex(
         index_state,
+        index_updates,
         project_path,
         space,
         &deleted_paths,
@@ -601,6 +609,7 @@ async fn rebase_project_source_tree_after_move(
     .await;
     if let Err(e) = index::update::rebase_collection_schema_manifest(
         index_state,
+        index_updates,
         space_root,
         old_root,
         new_root,
@@ -971,7 +980,11 @@ async fn pool_for_space(
     index_state.get_or_create(&key).await
 }
 
-async fn reindex_space_dir(index_state: &IndexState, space: &str) {
+async fn reindex_space_dir(
+    index_state: &IndexState,
+    index_updates: &IndexUpdateState,
+    space: &str,
+) {
     let key = index_state
         .key_for_space_dir(Path::new(space))
         .await
@@ -982,29 +995,32 @@ async fn reindex_space_dir(index_state: &IndexState, space: &str) {
         key = ?key,
         "running full index repair reindex"
     );
-    if let Err(e) = index_state.run_full_reindex(&key).await {
+    if let Err(e) = index_updates.run_full_reindex(index_state, &key).await {
         tracing::warn!("collection operation reindex failed for {:?}: {e}", key);
     }
 }
 
 async fn update_index_entry_or_reindex(
     index_state: &IndexState,
+    index_updates: &IndexUpdateState,
     project_path: Option<&str>,
     space: &str,
     rel_path: &str,
     fallback_context: &str,
 ) {
     let Some(proj) = project_path.filter(|p| !p.is_empty()) else {
-        reindex_space_dir(index_state, space).await;
+        reindex_space_dir(index_state, index_updates, space).await;
         return;
     };
 
     let project = Path::new(proj);
     let abs_target = Path::new(space).join(rel_path);
-    if let Err(e) = index::update::update_entry(index_state, project, &abs_target).await {
+    if let Err(e) =
+        index::update::publish_managed_path(index_state, index_updates, project, &abs_target).await
+    {
         tracing::warn!("{fallback_context}: targeted index update failed for {rel_path}: {e}");
         tracing::info!("{fallback_context}: running index.reindex.repair fallback");
-        reindex_space_dir(index_state, space).await;
+        reindex_space_dir(index_state, index_updates, space).await;
     } else {
         tracing::debug!(
             event = "index.update.targeted",
@@ -1017,13 +1033,14 @@ async fn update_index_entry_or_reindex(
 
 pub(crate) async fn update_index_paths_or_reindex(
     index_state: &IndexState,
+    index_updates: &IndexUpdateState,
     project_path: Option<&str>,
     space: &str,
     abs_paths: Vec<PathBuf>,
     fallback_context: &str,
 ) -> Vec<String> {
     let Some(proj) = project_path.filter(|p| !p.is_empty()) else {
-        reindex_space_dir(index_state, space).await;
+        reindex_space_dir(index_state, index_updates, space).await;
         return Vec::new();
     };
 
@@ -1031,7 +1048,10 @@ pub(crate) async fn update_index_paths_or_reindex(
     let mut needs_reindex = false;
     let mut errors = Vec::new();
     for abs_path in abs_paths {
-        if let Err(e) = index::update::update_entry(index_state, project, &abs_path).await {
+        if let Err(e) =
+            index::update::publish_managed_path(index_state, index_updates, project, &abs_path)
+                .await
+        {
             tracing::warn!(
                 "{fallback_context}: targeted index update failed for {}: {e}",
                 abs_path.display()
@@ -1049,13 +1069,14 @@ pub(crate) async fn update_index_paths_or_reindex(
     }
     if needs_reindex {
         tracing::info!("{fallback_context}: running index.reindex.repair fallback");
-        reindex_space_dir(index_state, space).await;
+        reindex_space_dir(index_state, index_updates, space).await;
     }
     errors
 }
 
 async fn update_index_tree_or_reindex(
     index_state: &IndexState,
+    index_updates: &IndexUpdateState,
     project_path: Option<&str>,
     space: &str,
     rel_root: &str,
@@ -1069,12 +1090,13 @@ async fn update_index_tree_or_reindex(
         Err(e) => {
             tracing::warn!("{fallback_context}: collect markdown paths failed for {rel_root}: {e}");
             tracing::info!("{fallback_context}: running index.reindex.repair fallback");
-            reindex_space_dir(index_state, space).await;
+            reindex_space_dir(index_state, index_updates, space).await;
             return;
         }
     };
     let _ = update_index_paths_or_reindex(
         index_state,
+        index_updates,
         project_path,
         space,
         paths,
@@ -1085,6 +1107,7 @@ async fn update_index_tree_or_reindex(
 
 async fn replace_index_entries_or_reindex(
     index_state: &IndexState,
+    index_updates: &IndexUpdateState,
     project_path: Option<&str>,
     space: &str,
     deleted_rel_paths: &[String],
@@ -1092,7 +1115,7 @@ async fn replace_index_entries_or_reindex(
     fallback_context: &str,
 ) {
     let Some(proj) = project_path.filter(|p| !p.is_empty()) else {
-        reindex_space_dir(index_state, space).await;
+        reindex_space_dir(index_state, index_updates, space).await;
         return;
     };
 
@@ -1100,7 +1123,10 @@ async fn replace_index_entries_or_reindex(
     let mut needs_reindex = false;
     for rel_path in deleted_rel_paths {
         let abs_target = Path::new(space).join(rel_path);
-        if let Err(e) = index::update::delete_entry(index_state, project, &abs_target).await {
+        if let Err(e) =
+            index::update::publish_managed_path(index_state, index_updates, project, &abs_target)
+                .await
+        {
             tracing::warn!("{fallback_context}: targeted index delete failed for {rel_path}: {e}");
             needs_reindex = true;
         } else {
@@ -1114,7 +1140,10 @@ async fn replace_index_entries_or_reindex(
     }
     for rel_path in updated_rel_paths {
         let abs_target = Path::new(space).join(rel_path);
-        if let Err(e) = index::update::update_entry(index_state, project, &abs_target).await {
+        if let Err(e) =
+            index::update::publish_managed_path(index_state, index_updates, project, &abs_target)
+                .await
+        {
             tracing::warn!("{fallback_context}: targeted index update failed for {rel_path}: {e}");
             needs_reindex = true;
         } else {
@@ -1128,7 +1157,7 @@ async fn replace_index_entries_or_reindex(
     }
     if needs_reindex {
         tracing::info!("{fallback_context}: running index.reindex.repair fallback");
-        reindex_space_dir(index_state, space).await;
+        reindex_space_dir(index_state, index_updates, space).await;
     }
 }
 

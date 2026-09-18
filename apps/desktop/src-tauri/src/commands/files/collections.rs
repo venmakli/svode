@@ -96,6 +96,7 @@ pub async fn instantiate_template(
     contextual_defaults: Option<HashMap<String, serde_json::Value>>,
     project_path: Option<String>,
     index_state: State<'_, IndexState>,
+    index_updates: State<'_, IndexUpdateState>,
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<Entry, AppError> {
     require_repository_mutation(&app, Path::new(&space)).await?;
@@ -120,6 +121,7 @@ pub async fn instantiate_template(
     let root = root_path_for_head(&instantiated.entry.path);
     update_index_tree_or_reindex(
         &index_state,
+        &index_updates,
         project_path.as_deref(),
         &space,
         root,
@@ -464,10 +466,11 @@ pub async fn repair_two_way_relation(
     let reindex_space = space.clone();
     tauri::async_runtime::spawn(async move {
         let index_state = app.state::<IndexState>();
+        let index_updates = app.state::<IndexUpdateState>();
         tracing::info!(
             "repair_two_way_relation: scheduling background full space reindex after relation repair"
         );
-        reindex_space_dir(&index_state, &reindex_space).await;
+        reindex_space_dir(&index_state, &index_updates, &reindex_space).await;
     });
     Ok(())
 }

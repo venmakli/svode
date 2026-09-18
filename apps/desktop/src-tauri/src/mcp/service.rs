@@ -18,6 +18,7 @@ use crate::commands::files as files_commands;
 use crate::files::{entry, tree};
 use crate::git::access::{ensure_mutation_paths_were_authorized, repository_access_snapshot};
 use crate::git::{self, commands::GitState};
+use crate::index::update::IndexUpdateState;
 use crate::index::{IndexKey, IndexState, search};
 use crate::properties::{self, CollectionSchema, Column, Filter, PropertyType, Sort, View};
 use crate::repo_path::{RootMode, normalize_repo_relative};
@@ -743,6 +744,7 @@ mod tests {
                         project: None,
                     },
                     &state,
+                    crate::index::update::test_update_state(),
                     &nonces,
                     None,
                     |mut paths| async move {
@@ -1026,6 +1028,7 @@ async fn write_page_content(
     title: Option<&str>,
 ) -> Result<crate::page::write::PageWriteOutcome, crate::error::AppError> {
     let state = app.state::<IndexState>();
+    let updates = app.state::<IndexUpdateState>();
     let nonces = app.state::<std::sync::Arc<crate::files::WriteNonceRegistry>>();
     crate::page::write::write(
         crate::page::write::PageWrite {
@@ -1040,6 +1043,7 @@ async fn write_page_content(
             project: Some(&context.project_path),
         },
         &state,
+        &updates,
         &nonces,
         None,
         |mut paths| async move {

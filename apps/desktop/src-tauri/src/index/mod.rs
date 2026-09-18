@@ -28,7 +28,6 @@ use crate::files::backlinks::{
 use crate::files::tree_policy::TreeIgnorePolicy;
 use crate::git::access::ensure_mutation_paths_were_authorized;
 use crate::repo_path::{RootMode, normalize_repo_relative, repo_relative_from_path};
-use crate::routines::RoutineStoreState;
 use crate::space::types::{SpaceConfig, SpaceStatus};
 use crate::space::{config, project};
 use crate::storage::lfs::LfsState;
@@ -273,7 +272,6 @@ fn normalize_abs_path(path: &Path) -> Option<PathBuf> {
 /// plus matching reindex serialization locks and runtime backlink indices.
 pub struct IndexState {
     pools: Arc<Mutex<lifecycle::IndexPools>>,
-    routine_stores: Arc<RoutineStoreState>,
     /// Per-key serialization lock for `full_reindex`. Two rapid `open_project`
     /// calls would otherwise spawn two concurrent reindexes against the same
     /// DB — correct under SQLite serialization, but doubles the work and
@@ -301,7 +299,7 @@ pub struct IndexState {
 }
 
 /// RAII guard: clears the `reindex_active` flag when dropped, even on panic.
-struct ReindexActiveGuard(Arc<AtomicBool>);
+pub(crate) struct ReindexActiveGuard(pub(crate) Arc<AtomicBool>);
 
 impl Drop for ReindexActiveGuard {
     fn drop(&mut self) {
@@ -310,15 +308,9 @@ impl Drop for ReindexActiveGuard {
 }
 
 impl IndexState {
-    #[cfg(test)]
     pub fn new() -> Self {
-        Self::with_routine_stores(Arc::new(RoutineStoreState::new()))
-    }
-
-    pub fn with_routine_stores(routine_stores: Arc<RoutineStoreState>) -> Self {
         Self {
             pools: Arc::new(Mutex::new(lifecycle::IndexPools::default())),
-            routine_stores,
             reindex_locks: Mutex::new(HashMap::new()),
             reindex_active: Mutex::new(HashMap::new()),
             reconcile_active: Mutex::new(HashMap::new()),
@@ -326,6 +318,25 @@ impl IndexState {
             spaces_cache: Mutex::new(HashMap::new()),
             lfs_states: Mutex::new(HashMap::new()),
         }
+    }
+
+    #[cfg(test)]
+    pub async fn get_or_create_routines(&self, key: &IndexKey) -> Result<SqlitePool, AppError> {
+        update::test_update_state().routines_pool(self, key).await
+    }
+
+    #[cfg(test)]
+    pub async fn run_reconciliation(&self, key: &IndexKey) -> Result<(), AppError> {
+        update::test_update_state()
+            .run_reconciliation(self, key)
+            .await
+    }
+
+    #[cfg(test)]
+    pub async fn run_full_reindex(&self, key: &IndexKey) -> Result<(), AppError> {
+        update::test_update_state()
+            .run_full_reindex(self, key)
+            .await
     }
 
     /// Read the cached LFS state for `key`. Defaults to `NotApplicable` for
@@ -807,6 +818,7 @@ impl IndexState {
 
     pub async fn update_links_on_rename_project(
         &self,
+        updates: &update::IndexUpdateState,
         project: &Path,
         target_space_id: Option<&str>,
         old_path: &str,
@@ -880,14 +892,16 @@ impl IndexState {
             let source_dir = self
                 .space_path_of(project, item.space_id.as_deref())
                 .await?;
-            if let Err(error) =
-                crate::index::update::update_entry(self, project, &source_dir.join(&item.path))
-                    .await
+            if let Err(error) = crate::index::update::publish_managed_path(
+                self,
+                updates,
+                project,
+                &source_dir.join(&item.path),
+            )
+            .await
             {
                 tracing::warn!("failed to update rewritten backlink source index: {error}");
             }
-            self.update_file_backlinks(project, item.space_id.as_deref(), &item.path)
-                .await?;
         }
         Ok(modified)
     }
@@ -945,6 +959,7 @@ impl IndexState {
 
     pub async fn update_links_on_folder_rename_project(
         &self,
+        updates: &update::IndexUpdateState,
         project: &Path,
         target_space_id: Option<&str>,
         old_folder: &str,
@@ -1051,14 +1066,16 @@ impl IndexState {
             let source_dir = self
                 .space_path_of(project, item.space_id.as_deref())
                 .await?;
-            if let Err(error) =
-                crate::index::update::update_entry(self, project, &source_dir.join(&item.path))
-                    .await
+            if let Err(error) = crate::index::update::publish_managed_path(
+                self,
+                updates,
+                project,
+                &source_dir.join(&item.path),
+            )
+            .await
             {
                 tracing::warn!("failed to update rewritten folder backlink source index: {error}");
             }
-            self.update_file_backlinks(project, item.space_id.as_deref(), &item.path)
-                .await?;
         }
         Ok(modified)
     }
@@ -1117,51 +1134,7 @@ impl IndexState {
             .clone()
     }
 
-    /// Compare the per-source manifest with disk and apply only known diffs.
-    /// A missing/incompatible manifest takes the explicit full-rebuild
-    /// fallback; concurrent targeted writes are detected by the generation
-    /// fence and retried from a fresh inventory.
-    pub async fn run_reconciliation(&self, key: &IndexKey) -> Result<(), AppError> {
-        let flag = self.reconcile_active_flag(key).await;
-        flag.store(true, Ordering::SeqCst);
-        let _flag_guard = ReindexActiveGuard(flag);
-        for _ in 0..3 {
-            match reconcile::reconcile_pool(self, key).await? {
-                reconcile::ReconcileOutcome::Applied => {
-                    self.sync_routine_projection(key).await?;
-                    return Ok(());
-                }
-                reconcile::ReconcileOutcome::Retry => continue,
-                reconcile::ReconcileOutcome::Rebuild => return self.run_full_reindex(key).await,
-            }
-        }
-        Err(AppError::Index(format!(
-            "source manifest kept changing during reconciliation for {key:?}"
-        )))
-    }
-
-    /// Run `full_reindex` for `key` under the per-key serialization lock and
-    /// with the `reindex_active` flag raised for the duration. Centralizes the
-    /// "open pool + dir + skip + lock + flag" boilerplate that every
-    /// `full_reindex` caller needs.
-    pub async fn run_full_reindex(&self, key: &IndexKey) -> Result<(), AppError> {
-        let pool = self.get_or_create(key).await?;
-        let dir = self.dir_for_key(key).await?;
-        let skip = self.skip_folders_for(key).await;
-        let lock = self.reindex_lock(key).await;
-        let flag = self.reindex_active_flag(key).await;
-        let _guard = lock.lock().await;
-        flag.store(true, Ordering::SeqCst);
-        let _flag_guard = ReindexActiveGuard(flag);
-        let complete = reindex::full_reindex_for_target(&pool, key.project(), &dir, &skip).await?;
-        self.sync_routine_projection(key).await?;
-        if complete {
-            self.cleanup_reconciled_index(key, &pool).await;
-        }
-        Ok(())
-    }
-
-    async fn cleanup_reconciled_index(&self, key: &IndexKey, pool: &SqlitePool) {
+    pub(crate) async fn cleanup_reconciled_index(&self, key: &IndexKey, pool: &SqlitePool) {
         let pools = self.pools.clone().lock_owned().await;
         lifecycle::cleanup(pools, key.clone(), pool.clone()).await;
     }
@@ -1175,26 +1148,6 @@ impl IndexState {
         }
         let dir = self.dir_for_key(key).await?;
         lifecycle::open(pools, key.clone(), dir).await
-    }
-
-    /// Get (or create) the operational routines store paired with this index
-    /// target. Definitions, baselines, queues, runs, and scheduler claims are
-    /// never stored in the rebuildable search projection.
-    pub async fn get_or_create_routines(&self, key: &IndexKey) -> Result<SqlitePool, AppError> {
-        let dir = self.dir_for_key(key).await?;
-        self.routine_stores.get_or_create(key, &dir).await
-    }
-
-    pub(crate) async fn sync_routine_projection(&self, key: &IndexKey) -> Result<(), AppError> {
-        let index_pool = self.get_or_create(key).await?;
-        let routines_pool = self.get_or_create_routines(key).await?;
-        let space_dir = self.dir_for_key(key).await?;
-        crate::routines::cache::reconcile_projection_from_index(
-            &routines_pool,
-            &index_pool,
-            &space_dir,
-        )
-        .await
     }
 
     /// Return only an already-open pool. Read-only snapshot surfaces use this
@@ -1774,7 +1727,14 @@ mod tests {
 
         fs::rename(project.join("Folder"), project.join("Archive")).unwrap();
         let modified = state
-            .update_links_on_folder_rename_project(project, None, "Folder", "Archive", None)
+            .update_links_on_folder_rename_project(
+                update::test_update_state(),
+                project,
+                None,
+                "Folder",
+                "Archive",
+                None,
+            )
             .await
             .unwrap();
 

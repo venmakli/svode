@@ -5,11 +5,12 @@ use crate::commands::files::{
 };
 use crate::files::{BacklinkIndex, WriteNonceRegistry};
 use crate::git::autocommit::AutocommitService;
-use crate::index::{self, IndexState};
+use crate::index::{self, IndexState, update::IndexUpdateState};
 
 pub(crate) async fn write<F, Fut>(
     request: PageWrite<'_>,
     state: &IndexState,
+    updates: &IndexUpdateState,
     nonces: &WriteNonceRegistry,
     autocommit: Option<&AutocommitService>,
     authorize: F,
@@ -71,6 +72,7 @@ where
     }
     let projection = publish(
         state,
+        updates,
         &backlink_index,
         &space,
         project.as_deref(),
@@ -250,6 +252,7 @@ async fn prepare(
 
 async fn publish(
     state: &IndexState,
+    updates: &IndexUpdateState,
     backlinks: &BacklinkIndex,
     space: &str,
     project: Option<&str>,
@@ -273,31 +276,10 @@ async fn publish(
         }
         if let Some(project) = project {
             let project = Path::new(project);
-            let update = if path.exists() {
-                index::update::update_entry(state, project, path).await
-            } else {
-                index::update::delete_entry(state, project, path).await
-            };
-            if let Err(error) = update {
+            if let Err(error) =
+                index::update::publish_managed_path(state, updates, project, path).await
+            {
                 errors.push(error.to_string());
-            }
-            match state.resolve(project, path).await {
-                Ok((key, relative)) => {
-                    let id = IndexState::space_id_for_key(&key);
-                    let result = if path.exists() {
-                        state
-                            .update_file_backlinks(project, id.as_deref(), &relative)
-                            .await
-                    } else {
-                        state
-                            .remove_file_backlinks(project, id.as_deref(), &relative)
-                            .await
-                    };
-                    if let Err(error) = result {
-                        errors.push(error.to_string());
-                    }
-                }
-                Err(error) => errors.push(error.to_string()),
             }
         } else if let Ok(relative) = path.strip_prefix(space) {
             let relative = relative.to_string_lossy();
@@ -320,6 +302,7 @@ async fn publish(
         {
             if let Err(error) = index::update::rebase_collection_schema_manifest(
                 state,
+                updates,
                 Path::new(space),
                 &old.to_string_lossy(),
                 &new.to_string_lossy(),

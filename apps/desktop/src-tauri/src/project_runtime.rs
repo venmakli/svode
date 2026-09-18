@@ -6,6 +6,7 @@ use tauri::{AppHandle, Manager};
 use tokio::sync::Semaphore;
 
 use crate::AppError;
+use crate::index::update::IndexUpdateState;
 use crate::index::{IndexKey, IndexState};
 use crate::routines::{RoutineSchedulerState, RoutineStoreState};
 use crate::space::types::SpaceStatus;
@@ -244,7 +245,9 @@ impl ProjectRuntimeState {
                 let Ok(_permit) = semaphore.acquire_owned().await else {
                     return;
                 };
-                if let Err(error) = app.state::<IndexState>().run_reconciliation(&key).await {
+                let index_state = app.state::<IndexState>();
+                let updates = app.state::<IndexUpdateState>();
+                if let Err(error) = updates.run_reconciliation(&index_state, &key).await {
                     tracing::warn!(?key, "background reconciliation failed: {error}");
                 }
             });
@@ -256,7 +259,9 @@ impl ProjectRuntimeState {
         let app = app.clone();
         let task_key = key.clone();
         let task = tauri::async_runtime::spawn(async move {
-            if let Err(error) = app.state::<IndexState>().run_full_reindex(&key).await {
+            let index_state = app.state::<IndexState>();
+            let updates = app.state::<IndexUpdateState>();
+            if let Err(error) = updates.run_full_reindex(&index_state, &key).await {
                 tracing::warn!(?key, "background full reindex failed: {error}");
             }
         });

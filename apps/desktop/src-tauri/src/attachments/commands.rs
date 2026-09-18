@@ -50,6 +50,7 @@ pub(crate) async fn attachments_import_file(
     source_path: String,
     file_name: Option<String>,
     index_state: State<'_, IndexState>,
+    index_updates: State<'_, crate::index::update::IndexUpdateState>,
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<ManagedImportResult, AppError> {
     let plan = plan_managed_import(
@@ -67,6 +68,7 @@ pub(crate) async fn attachments_import_file(
         execute_managed_import(
             &app,
             &index_state,
+            &index_updates,
             Some(&autocommit),
             MutationOrigin::Desktop,
             plan,
