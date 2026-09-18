@@ -242,16 +242,31 @@ async fn authorize_mutating_tool(
         "update_collection_item_fields" => {
             let decoded: UpdateCollectionItemFieldsArgs = decode(args.clone())?;
             let path = validate_markdown_path(&decoded.path)?;
-            for (field, value) in decoded.fields {
-                paths.extend(
-                    properties::relation_entry_field_mutation_paths_with_project(
-                        &space,
-                        Some(&context.project_path),
-                        &path,
-                        &field,
-                        json_to_yaml(value)?,
-                    )?,
-                );
+            if decoded.fields.is_empty() {
+                return Ok(None);
+            }
+            let batch = properties::prepare_entry_field_batch(
+                &space,
+                Some(&context.project_path),
+                &path,
+                &decoded.fields,
+                properties::EntryFieldBatchIntent::Literal,
+            )?;
+            paths.extend_from_slice(batch.mutation_paths());
+            if let Some(title) = batch.title()
+                && let Some(rename) =
+                    entry::planned_write_rename(&space, &path, Some(title), false)?
+            {
+                extend_entry_move_plan(
+                    app,
+                    &context,
+                    &space,
+                    &path,
+                    &rename.new_path,
+                    &mut paths,
+                    true,
+                )
+                .await?;
             }
         }
         "delete_page" | "delete_collection_item" => {

@@ -8,7 +8,7 @@ pub use model::{
 };
 pub use persistence::read;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -155,7 +155,12 @@ fn order_rename(space: &Path, dir_key: &str, old_name: &str, new_name: &str) {
     let _ = order_rename_checked(space, dir_key, old_name, new_name);
 }
 
-fn order_rename_checked(space: &Path, dir_key: &str, old_name: &str, new_name: &str) -> Result<(), AppError> {
+fn order_rename_checked(
+    space: &Path,
+    dir_key: &str,
+    old_name: &str,
+    new_name: &str,
+) -> Result<(), AppError> {
     let mut order = tree::read_order(space);
     if let Some(list) = order.get_mut(dir_key) {
         if let Some(pos) = list.iter().position(|name| name == old_name) {
@@ -316,42 +321,6 @@ fn collect_entry_md_files(root: &Path, out: &mut Vec<PathBuf>) -> Result<(), App
     Ok(())
 }
 
-fn with_file_rollback<T, F>(paths: Vec<PathBuf>, f: F) -> Result<T, AppError>
-where
-    F: FnOnce() -> Result<T, AppError>,
-{
-    let mut seen = HashSet::new();
-    let mut snapshots = Vec::new();
-    for path in paths {
-        if !seen.insert(path.clone()) {
-            continue;
-        }
-        let content = if path.exists() {
-            Some(fs::read(&path)?)
-        } else {
-            None
-        };
-        snapshots.push((path, content));
-    }
-
-    match f() {
-        Ok(value) => Ok(value),
-        Err(error) => {
-            for (path, content) in snapshots {
-                if let Some(content) = content {
-                    if let Some(parent) = path.parent() {
-                        let _ = fs::create_dir_all(parent);
-                    }
-                    let _ = fs::write(path, content);
-                } else if path.exists() {
-                    let _ = fs::remove_file(path);
-                }
-            }
-            Err(error)
-        }
-    }
-}
-
 fn normalize_entry_path_arg(space: &Path, path: &str) -> Result<String, AppError> {
     let rel = path.trim_matches('/').replace('\\', "/");
     if rel.is_empty() {
@@ -365,11 +334,13 @@ fn normalize_entry_path_arg(space: &Path, path: &str) -> Result<String, AppError
 
 /// Create a new entry on disk. Returns the created Entry.
 #[allow(dead_code)]
+#[cfg(test)]
 pub fn create(space: &str, parent_path: Option<&str>, title: &str) -> Result<Entry, AppError> {
     create_with_contextual_defaults(space, parent_path, title, None)
 }
 
 /// Create a new entry on disk with optional schema-validated contextual defaults.
+#[cfg(test)]
 pub fn create_with_contextual_defaults(
     space: &str,
     parent_path: Option<&str>,
@@ -379,6 +350,7 @@ pub fn create_with_contextual_defaults(
     create_with_options(space, parent_path, title, contextual_defaults, false, false)
 }
 
+#[cfg(test)]
 pub fn create_with_options(
     space: &str,
     parent_path: Option<&str>,
@@ -387,23 +359,58 @@ pub fn create_with_options(
     allocate_unique_title: bool,
     as_readme: bool,
 ) -> Result<Entry, AppError> {
+    let created =
+        create_source_with_options(space, parent_path, title, allocate_unique_title, as_readme)?;
+    let mut metadata = created.meta.clone();
+    crate::properties::apply_schema_defaults_for_path(space, &created.path, &mut metadata)?;
+    if let Some(contextual_defaults) = contextual_defaults.as_ref() {
+        crate::properties::apply_contextual_defaults_for_path(
+            space,
+            &created.path,
+            &mut metadata,
+            contextual_defaults,
+        )?;
+    }
+    crate::properties::assign_unique_id_to_meta_for_path(space, &created.path, &mut metadata)?;
+    write_under_name_lock(
+        space,
+        &created.path,
+        &created.body,
+        None,
+        None,
+        None,
+        Some(metadata),
+        None,
+        None,
+        true,
+        None,
+        None,
+    )?;
+    read(space, &created.path)
+}
+
+pub(crate) fn create_source_with_options(
+    space: &str,
+    parent_path: Option<&str>,
+    title: &str,
+    allocate_unique_title: bool,
+    as_readme: bool,
+) -> Result<Entry, AppError> {
     crate::files::naming::with_document_name_lock(space, || {
-        create_with_options_inner(
+        create_source_with_options_inner(
             space,
             parent_path,
             title,
-            contextual_defaults,
             allocate_unique_title,
             as_readme,
         )
     })
 }
 
-fn create_with_options_inner(
+fn create_source_with_options_inner(
     space: &str,
     parent_path: Option<&str>,
     title: &str,
-    contextual_defaults: Option<HashMap<String, serde_yml::Value>>,
     allocate_unique_title: bool,
     as_readme: bool,
 ) -> Result<Entry, AppError> {
@@ -456,25 +463,8 @@ fn create_with_options_inner(
     }
 
     let mut meta = EntryMeta::new_persisted(title);
-    crate::properties::apply_schema_defaults_for_path(space, &rel_path, &mut meta)?;
-    if let Some(contextual_defaults) = contextual_defaults.as_ref() {
-        crate::properties::apply_contextual_defaults_for_path(
-            space,
-            &rel_path,
-            &mut meta,
-            contextual_defaults,
-        )?;
-    }
-
     let body = "";
-    let mut rollback_paths =
-        crate::properties::unique_id_mutation_paths_for_entry(space, &rel_path)?;
-    rollback_paths.push(abs_path.clone());
-    with_file_rollback(rollback_paths, || {
-        crate::properties::assign_unique_id_to_meta_for_path(space, &rel_path, &mut meta)?;
-        persistence::write_serialized(&abs_path, &meta, body)?;
-        Ok(())
-    })?;
+    persistence::write_serialized(&abs_path, &meta, body)?;
     apply_runtime_metadata(&mut meta, &abs_path, &rel_path)?;
 
     // Append to order.json so the new file appears at the end
@@ -1239,6 +1229,7 @@ pub(crate) fn apply_entry_field_update(
     }
 }
 
+#[cfg(test)]
 pub fn update_field(
     space: &str,
     project_path: Option<&str>,
@@ -1279,6 +1270,7 @@ pub(crate) fn replace_created_body(space: &str, path: &str, body: &str) -> Resul
     })
 }
 
+#[cfg(test)]
 fn update_field_inner(
     space: &str,
     project_path: Option<&str>,

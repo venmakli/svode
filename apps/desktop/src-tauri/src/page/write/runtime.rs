@@ -113,7 +113,7 @@ async fn prepare(
     let mut rename = entry::planned_write_rename(
         request.space,
         request.path,
-        request.title,
+        requested_title(request),
         request.skip_rename,
     )?;
     let mut relation_paths = Vec::new();
@@ -140,6 +140,9 @@ async fn prepare(
         }
     }
     let mut paths = vec![Path::new(request.space).join(request.path)];
+    if let Some(batch) = request.field_batch.as_ref() {
+        paths.extend_from_slice(batch.mutation_paths());
+    }
     let mut links = Vec::new();
     let mut moved_sources = Vec::new();
     let mut link_targets = Vec::new();
@@ -241,7 +244,6 @@ async fn prepare(
     paths.dedup();
     Ok(WritePlan {
         rename,
-        relation_paths,
         links,
         moved_sources,
         link_targets,

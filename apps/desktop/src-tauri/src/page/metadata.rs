@@ -100,6 +100,7 @@ where
             icon: None,
             extra: None,
             metadata: Some(candidate),
+            field_batch: None,
             skip_rename: explicit_title.is_none(),
             project,
         },

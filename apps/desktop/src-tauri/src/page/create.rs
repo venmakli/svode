@@ -262,11 +262,10 @@ where
             snapshot.track_created(Path::new(&request.space).join(&converted.path));
             snapshot.track_created_dir(Path::new(&request.space).join(new_parent));
         }
-        let created = entry::create_with_options(
+        let created = entry::create_source_with_options(
             &request.space,
             parent.as_deref(),
             &request.title,
-            contextual_values,
             request.allocate_unique_title,
             request.as_readme,
         )?;
@@ -274,45 +273,80 @@ where
         checkpoint("create")?;
         let warnings = created.warnings.clone();
         let mut page = created;
+        let mut initial_metadata = page.meta.clone();
+        crate::properties::apply_schema_defaults_for_path(
+            &request.space,
+            &page.path,
+            &mut initial_metadata,
+        )?;
+        if let Some(contextual_values) = contextual_values.as_ref() {
+            crate::properties::apply_contextual_defaults_for_path(
+                &request.space,
+                &page.path,
+                &mut initial_metadata,
+                contextual_values,
+            )?;
+        }
+        crate::properties::assign_unique_id_to_meta_for_path(
+            &request.space,
+            &page.path,
+            &mut initial_metadata,
+        )?;
+        entry::write_under_name_lock(
+            &request.space,
+            &page.path,
+            &page.body,
+            None,
+            None,
+            None,
+            Some(initial_metadata),
+            None,
+            None,
+            true,
+            request.project.as_deref(),
+            None,
+        )?;
+        page = entry::read(&request.space, &page.path)?;
+
+        let mut fields = std::collections::BTreeMap::new();
         if !request.contextual_defaults {
-            for (field, value) in properties {
-                page = entry::update_field(
-                    &request.space,
-                    request.project.as_deref(),
-                    &page.path,
-                    &field,
-                    value,
-                )?;
-            }
+            fields.extend(properties);
         }
-        checkpoint("properties")?;
-        if request.icon.is_some() {
-            page = entry::update_field(
-                &request.space,
-                request.project.as_deref(),
-                &page.path,
-                "icon",
-                request.icon.clone().unwrap().into(),
-            )?;
+        if let Some(icon) = request.icon.clone() {
+            fields.insert("icon".to_string(), icon.into());
         }
-        if request.description.is_some() {
-            page = entry::update_field(
-                &request.space,
-                request.project.as_deref(),
-                &page.path,
-                "description",
-                request.description.clone().unwrap().into(),
-            )?;
+        if let Some(description) = request.description.clone() {
+            fields.insert("description".to_string(), description.into());
         }
         if let Some(cover) = request.cover.clone() {
-            page = entry::update_field(
+            fields.insert("cover".to_string(), serde_json::to_value(cover)?);
+        }
+        if !fields.is_empty() {
+            let batch = crate::properties::prepare_entry_field_batch(
                 &request.space,
                 request.project.as_deref(),
                 &page.path,
-                "cover",
-                serde_json::to_value(cover)?,
+                &fields,
+                crate::properties::EntryFieldBatchIntent::Literal,
             )?;
+            crate::properties::apply_prepared_entry_field_relations(&batch)?;
+            entry::write_under_name_lock(
+                &request.space,
+                &page.path,
+                &page.body,
+                None,
+                None,
+                None,
+                Some(batch.into_metadata()),
+                None,
+                None,
+                true,
+                request.project.as_deref(),
+                None,
+            )?;
+            page = entry::read(&request.space, &page.path)?;
         }
+        checkpoint("properties")?;
         if let Some(body) = request.body.as_deref() {
             page = entry::replace_created_body(&request.space, &page.path, body)?;
         }

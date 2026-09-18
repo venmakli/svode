@@ -466,7 +466,7 @@ pub fn definitions() -> Vec<ToolDefinition> {
         ),
         def(
             "update_collection_item_fields",
-            "Update custom fields for one Collection item. Do not write unique_id, title, icon, description, cover, created, or updated through fields. Does not autocommit.",
+            "Atomically update system and custom fields for one Collection item. title uses managed rename; icon, description, cover, and custom fields use Desktop validation. created, updated, and unique_id are read-only. Does not autocommit.",
             schema(
                 &[
                     space_id(),
@@ -804,10 +804,10 @@ Routine workflow:
 - Saving an enabled schedule/event requires confirmAutomaticExecution=true, but that acknowledgement never enables owner-local device authority. Never address or edit raw .routines paths through MCP; Routine definitions belong to the Routine domain tools and owner resolver.
 
 Metadata and fields:
-- System metadata is title, icon, description, cover, created, and updated. Do not create custom columns for these and do not write them through update_collection_item_fields.
+- System metadata is title, icon, description, cover, created, and updated. Do not create custom columns for these. For a Collection item, update_collection_item_fields accepts title, icon, description, and cover in the same atomic map as custom fields; created and updated remain read-only.
 - Use create_page with parentPath + title for both standalone Pages and Collection items. Put initial Collection values in properties; never pass system metadata keys inside properties. Always continue with the returned canonical path.
 - Collection identity lives in README.md owner metadata. Schema.yaml stores columns, views, system field labels, and template settings. Use the Collection README tools for that owner content.
-- Prefer domain tools over direct filesystem writes: update_page_metadata for standalone Page metadata, owner-specific metadata tools for Space/Collection README content, schema tools for columns/views, write_page or update_collection_item_body for body replacement, and update_collection_item_fields for custom field values.
+- Prefer domain tools over direct filesystem writes: update_page_metadata for standalone Page metadata, owner-specific metadata tools for Space/Collection README content, schema tools for columns/views, write_page or update_collection_item_body for body replacement, and update_collection_item_fields for atomic Collection item metadata/property changes.
 
 Body saves:
 - write_page, write_space_readme and write_collection_readme treat missing/null title as body-only; a title string saves body and title together using managed naming. update_collection_item_body is always body-only.
@@ -1253,7 +1253,7 @@ fn fields_req(name: &'static str) -> (&'static str, Value) {
         name,
         json!({
             "type": "object",
-            "description": "Custom schema field values keyed by column name. actor values are canonical emails; relation values are Collection item path refs; unique_id and system metadata are read-only here.",
+            "description": "Atomic Collection item changes keyed by field name. title, icon, description, and cover are supported system fields; created, updated, and unique_id are read-only. actor values are canonical emails; relation values are Collection item path refs.",
             "additionalProperties": true
         }),
     )

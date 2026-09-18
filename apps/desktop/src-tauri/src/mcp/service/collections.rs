@@ -224,36 +224,65 @@ pub(super) async fn update_collection_item_fields(
     let path = validate_markdown_path(&args.path)?;
     ensure_inside(Path::new(&space), &path)?;
     require_collection_item(&space, &path)?;
-    let mut relation_targets = Vec::new();
-    for (field, value) in &args.fields {
-        relation_targets.extend(
-            properties::relation_entry_field_mutation_paths_with_project(
-                &space,
-                Some(context.project_path.as_str()),
-                &path,
-                field,
-                json_to_yaml(value.clone())?,
-            )?,
-        );
+    if args.fields.is_empty() {
+        let item = entry::read(&space, &path)?;
+        return Ok(ToolCallResult::ok(
+            format!("No field changes for {path}."),
+            json!({ "item": item, "changedPaths": [] }),
+        ));
     }
-    ensure_mutation_paths_were_authorized(&relation_targets)?;
-    let mut updated = None;
-    for (field, value) in args.fields {
-        updated = Some(entry::update_field(
-            &space,
-            Some(context.project_path.as_str()),
-            &path,
-            &field,
-            value,
-        )?);
-    }
-    let item = match updated {
-        Some(item) => item,
-        None => entry::read(&space, &path)?,
+    let batch = properties::prepare_entry_field_batch(
+        &space,
+        Some(context.project_path.as_str()),
+        &path,
+        &args.fields,
+        properties::EntryFieldBatchIntent::Literal,
+    )?;
+    let has_title = batch.title().is_some();
+    let current = entry::read(&space, &path)?;
+    let state = app.state::<IndexState>();
+    let updates = app.state::<IndexUpdateState>();
+    let nonces = app.state::<std::sync::Arc<crate::files::WriteNonceRegistry>>();
+    let authorization_space = space.clone();
+    let outcome = match crate::page::write::write(
+        crate::page::write::PageWrite {
+            space: &space,
+            path: &path,
+            content: &current.body,
+            title: None,
+            icon: None,
+            extra: None,
+            metadata: None,
+            field_batch: Some(batch),
+            skip_rename: !has_title,
+            project: Some(&context.project_path),
+        },
+        &state,
+        &updates,
+        &nonces,
+        None,
+        |mut paths| async move {
+            paths.push(PathBuf::from(&authorization_space));
+            crate::git::access::require_repository_mutation_paths(app, paths.clone()).await?;
+            Ok(paths)
+        },
+    )
+    .await
+    {
+        Ok(outcome) => outcome,
+        Err(crate::error::AppError::DocumentNameConflict(conflict)) => {
+            return Ok(super::documents::page_name_conflict_result(conflict));
+        }
+        Err(error) => return Err(error.into()),
     };
+    let canonical_path = outcome.result.new_path.as_deref().unwrap_or(&path);
+    let mut item = entry::read(&space, canonical_path)?;
+    item.warnings = outcome.result.warnings;
+    let changed_paths =
+        crate::page::metadata::relative_changed_paths(&space, &outcome.changed_paths);
     Ok(ToolCallResult::ok(
         format!("Updated fields for {path}."),
-        json!({ "item": item, "changedPaths": [path] }),
+        json!({ "item": item, "changedPaths": changed_paths }),
     ))
 }
 

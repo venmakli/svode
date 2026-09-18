@@ -2200,6 +2200,7 @@ fn rewrite_relation_value_refs_for_target_space(
     Ok(())
 }
 
+#[cfg(test)]
 pub fn update_relation_entry_field(
     space: &str,
     project_path: Option<&str>,
@@ -2294,23 +2295,147 @@ pub fn update_relation_entry_field(
     })
 }
 
-pub fn relation_entry_field_mutation_paths_with_project(
+#[derive(Clone, Copy)]
+pub(crate) enum EntryFieldBatchIntent {
+    Literal,
+    Routine,
+}
+
+struct PreparedRelationFieldUpdate {
+    target_space: String,
+    relation: String,
+    reverse_name: String,
+    source_column_name: String,
+    source_collection: String,
+    reverse_scope: Option<RelationScope>,
+    source_value: String,
+    old_values: Vec<String>,
+    new_values: Vec<String>,
+}
+
+struct PreparedRelationField {
+    normalized: Value,
+    reverse_update: Option<PreparedRelationFieldUpdate>,
+    mutation_paths: Vec<PathBuf>,
+}
+
+pub(crate) struct PreparedEntryFieldBatch {
+    metadata: EntryMeta,
+    title: Option<String>,
+    relation_updates: Vec<PreparedRelationFieldUpdate>,
+    mutation_paths: Vec<PathBuf>,
+}
+
+impl PreparedEntryFieldBatch {
+    pub(crate) fn into_metadata(self) -> EntryMeta {
+        self.metadata
+    }
+
+    pub(crate) fn title(&self) -> Option<&str> {
+        self.title.as_deref()
+    }
+
+    pub(crate) fn mutation_paths(&self) -> &[PathBuf] {
+        &self.mutation_paths
+    }
+}
+
+pub(crate) fn prepare_entry_field_batch(
+    space: &str,
+    project_path: Option<&str>,
+    file_path: &str,
+    values: &std::collections::BTreeMap<String, serde_json::Value>,
+    intent: EntryFieldBatchIntent,
+) -> Result<PreparedEntryFieldBatch, AppError> {
+    let current = entry::read(space, file_path)?;
+    let mut metadata = current.meta;
+    let mut title = None;
+    let mut relation_updates = Vec::new();
+    let mut mutation_paths = vec![Path::new(space).join(normalize_rel_path(file_path))];
+
+    for (field, raw) in values {
+        let is_system = matches!(
+            field.as_str(),
+            "title" | "icon" | "description" | "cover" | "created" | "updated"
+        );
+        if matches!(intent, EntryFieldBatchIntent::Routine) && is_system {
+            return Err(schema_error(format!(
+                "routine property batch cannot update system field '{field}'"
+            )));
+        }
+        let value = match intent {
+            EntryFieldBatchIntent::Literal => raw.clone(),
+            EntryFieldBatchIntent::Routine => resolve_routine_runtime_value(raw),
+        };
+        if is_system {
+            entry::apply_entry_field_update(&mut metadata, field, value)?;
+            if field == "title" {
+                title = Some(metadata.title.clone());
+            }
+            continue;
+        }
+
+        ensure_entry_field_writable(space, file_path, field)?;
+        let yaml_value = serde_yml::to_value(value)
+            .map_err(|error| schema_error(format!("{field}: {error}")))?;
+        let prepared_relation = prepare_relation_field_update(
+            space,
+            project_path,
+            file_path,
+            field,
+            &metadata,
+            &yaml_value,
+        )?;
+        let (normalized, relation_update) = match prepared_relation {
+            Some(prepared) => {
+                mutation_paths.extend(prepared.mutation_paths);
+                (prepared.normalized, prepared.reverse_update)
+            }
+            None => {
+                let normalized = normalize_entry_field_value(space, file_path, field, yaml_value)?;
+                validate_entry_field_value(space, file_path, field, &normalized)?;
+                (normalized, None)
+            }
+        };
+        if normalized.is_null()
+            || normalized
+                .as_sequence()
+                .is_some_and(|sequence| sequence.is_empty())
+        {
+            metadata.extra.remove(field);
+        } else {
+            metadata.extra.insert(field.clone(), normalized);
+        }
+        if let Some(update) = relation_update {
+            relation_updates.push(update);
+        }
+    }
+
+    Ok(PreparedEntryFieldBatch {
+        metadata,
+        title,
+        relation_updates,
+        mutation_paths: dedupe_paths(mutation_paths)?,
+    })
+}
+
+fn prepare_relation_field_update(
     space: &str,
     project_path: Option<&str>,
     file_path: &str,
     field: &str,
-    value: Value,
-) -> Result<Vec<PathBuf>, AppError> {
-    let Some((schema, _)) = resolve_collection_schema_result(space, file_path)? else {
-        return Ok(vec![Path::new(space).join(normalize_rel_path(file_path))]);
+    metadata: &EntryMeta,
+    value: &Value,
+) -> Result<Option<PreparedRelationField>, AppError> {
+    let Some((schema, collection_root)) = resolve_collection_schema_result(space, file_path)?
+    else {
+        return Ok(None);
     };
     let Some(column) = schema.columns.iter().find(|column| column.name == field) else {
-        return Ok(vec![Path::new(space).join(normalize_rel_path(file_path))]);
+        return Ok(None);
     };
-    let source_path = normalize_rel_path(file_path);
-    let source_abs = Path::new(space).join(&source_path);
-    if column.type_ != PropertyType::Relation || column.two_way.is_none() {
-        return Ok(vec![source_abs]);
+    if column.type_ != PropertyType::Relation {
+        return Ok(None);
     }
     let relation = column
         .relation
@@ -2318,14 +2443,61 @@ pub fn relation_entry_field_mutation_paths_with_project(
         .ok_or_else(|| schema_error(format!("relation column '{field}' requires relation")))?;
     let target_space =
         required_relation_target_space_path(space, project_path, column.relation_scope.as_ref())?;
-    let normalized = normalize_relation_update_value(&target_space, column, relation, &value)?;
-    let old_values = read_relation_field_values_from_file(&source_abs, column)?;
+    let normalized = normalize_relation_update_value(&target_space, column, relation, value)?;
+    let Some(reverse_name) = column.two_way.as_deref() else {
+        return Ok(Some(PreparedRelationField {
+            normalized,
+            reverse_update: None,
+            mutation_paths: Vec::new(),
+        }));
+    };
+    validate_physical_two_way_relation_scope(space, project_path, column)?;
+    let reverse_scope =
+        reverse_relation_scope_for_target(space, project_path, column.relation_scope.as_ref())?;
+    let source_collection = rel_path_string(&collection_root);
+    let source_path = normalize_rel_path(file_path);
+    let source_value = value_relative_to_collection(&source_collection, &source_path)?;
+    let old_values =
+        relation_values_from_value(column, metadata.extra.get(field).unwrap_or(&Value::Null))?;
     let new_values = relation_values_from_value(column, &normalized)?;
-    let mut paths = vec![source_abs];
+    let mut paths = vec![Path::new(space).join(&source_path)];
     for value in old_values.iter().chain(new_values.iter()) {
         paths.push(Path::new(&target_space).join(join_collection_value(relation, value)));
     }
-    dedupe_paths(paths)
+    Ok(Some(PreparedRelationField {
+        normalized,
+        reverse_update: Some(PreparedRelationFieldUpdate {
+            target_space,
+            relation: relation.to_string(),
+            reverse_name: reverse_name.to_string(),
+            source_column_name: field.to_string(),
+            source_collection,
+            reverse_scope,
+            source_value,
+            old_values,
+            new_values,
+        }),
+        mutation_paths: dedupe_paths(paths)?,
+    }))
+}
+
+pub(crate) fn apply_prepared_entry_field_relations(
+    batch: &PreparedEntryFieldBatch,
+) -> Result<(), AppError> {
+    for update in &batch.relation_updates {
+        sync_reverse_relation_values(
+            &update.target_space,
+            &update.relation,
+            &update.reverse_name,
+            &update.source_column_name,
+            &update.source_collection,
+            update.reverse_scope.as_ref(),
+            &update.source_value,
+            &update.old_values,
+            &update.new_values,
+        )?;
+    }
+    Ok(())
 }
 
 /// Plans every file that may be touched by an entry property batch.  The
@@ -2337,20 +2509,14 @@ pub(crate) fn entry_property_batch_mutation_paths_with_project(
     file_path: &str,
     values: &std::collections::BTreeMap<String, serde_json::Value>,
 ) -> Result<Vec<PathBuf>, AppError> {
-    let mut paths = vec![Path::new(space).join(normalize_rel_path(file_path))];
-    for (field, raw) in values {
-        ensure_entry_field_writable(space, file_path, field)?;
-        let value = resolve_routine_runtime_value(raw);
-        paths.extend(relation_entry_field_mutation_paths_with_project(
-            space,
-            project_path,
-            file_path,
-            field,
-            serde_yml::to_value(value)
-                .map_err(|error| schema_error(format!("{field}: {error}")))?,
-        )?);
-    }
-    dedupe_paths(paths)
+    prepare_entry_field_batch(
+        space,
+        project_path,
+        file_path,
+        values,
+        EntryFieldBatchIntent::Routine,
+    )
+    .map(|batch| batch.mutation_paths)
 }
 
 /// Applies a routine property batch through the ordinary entry/property
@@ -2364,20 +2530,32 @@ pub(crate) fn update_entry_properties_atomic(
     if values.is_empty() {
         return Err(schema_error("property batch cannot be empty"));
     }
-    let paths =
-        entry_property_batch_mutation_paths_with_project(space, project_path, file_path, values)?;
+    let batch = prepare_entry_field_batch(
+        space,
+        project_path,
+        file_path,
+        values,
+        EntryFieldBatchIntent::Routine,
+    )?;
+    let paths = batch.mutation_paths.clone();
     with_rollback(paths, || {
-        let mut updated = None;
-        for (field, raw) in values {
-            updated = Some(entry::update_field(
-                space,
-                project_path,
-                file_path,
-                field,
-                resolve_routine_runtime_value(raw),
-            )?);
-        }
-        updated.ok_or_else(|| schema_error("property batch cannot be empty"))
+        apply_prepared_entry_field_relations(&batch)?;
+        let current = entry::read(space, file_path)?;
+        entry::write_under_name_lock(
+            space,
+            file_path,
+            &current.body,
+            None,
+            None,
+            None,
+            Some(batch.into_metadata()),
+            None,
+            None,
+            true,
+            project_path,
+            None,
+        )?;
+        entry::read(space, file_path)
     })
 }
 
@@ -4168,17 +4346,34 @@ where
     match f() {
         Ok(value) => Ok(value),
         Err(error) => {
+            let mut failed = Vec::new();
             for (path, content) in snapshots {
-                if let Some(content) = content {
+                let restored = if let Some(content) = content {
                     if let Some(parent) = path.parent() {
-                        let _ = fs::create_dir_all(parent);
+                        if let Err(restore_error) = fs::create_dir_all(parent) {
+                            let _ = restore_error;
+                            failed.push(path.display().to_string());
+                            continue;
+                        }
                     }
-                    let _ = fs::write(path, content);
+                    fs::write(&path, content)
                 } else if path.exists() {
-                    let _ = fs::remove_file(path);
+                    fs::remove_file(&path)
+                } else {
+                    Ok(())
+                };
+                if restored.is_err() {
+                    failed.push(path.display().to_string());
                 }
             }
-            Err(error)
+            if failed.is_empty() {
+                Err(error)
+            } else {
+                Err(AppError::PageWriteRecovery {
+                    cause: error.to_string(),
+                    paths: failed,
+                })
+            }
         }
     }
 }

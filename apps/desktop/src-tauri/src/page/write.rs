@@ -20,8 +20,15 @@ pub(crate) struct PageWrite<'a> {
     pub icon: Option<&'a str>,
     pub extra: Option<HashMap<String, serde_yml::Value>>,
     pub metadata: Option<entry::EntryMeta>,
+    pub field_batch: Option<crate::properties::PreparedEntryFieldBatch>,
     pub skip_rename: bool,
     pub project: Option<&'a str>,
+}
+
+fn requested_title<'a>(request: &'a PageWrite<'_>) -> Option<&'a str> {
+    request
+        .title
+        .or_else(|| request.field_batch.as_ref().and_then(|batch| batch.title()))
 }
 
 pub(crate) struct PageWriteOutcome {
@@ -36,7 +43,6 @@ struct LinkSource {
 
 struct WritePlan {
     rename: Option<entry::PlannedWriteRename>,
-    relation_paths: Vec<PathBuf>,
     links: Vec<LinkSource>,
     moved_sources: Vec<PathBuf>,
     link_targets: Vec<PathBuf>,
@@ -148,10 +154,11 @@ impl SourceSnapshot {
 
 fn apply_sources(request: PageWrite<'_>, plan: WritePlan) -> Result<PageWriteOutcome, AppError> {
     crate::files::naming::with_document_name_lock(request.space, || {
+        let title = requested_title(&request).map(str::to_string);
         let current = entry::planned_write_rename(
             request.space,
             request.path,
-            request.title,
+            title.as_deref(),
             request.skip_rename,
         )?;
         if current != plan.rename && plan.warning.is_none() {
@@ -160,7 +167,7 @@ fn apply_sources(request: PageWrite<'_>, plan: WritePlan) -> Result<PageWriteOut
             ));
         }
         if plan.warning.is_some() {
-            let title = match request.title {
+            let title = match title.as_deref() {
                 Some(title) => title.to_string(),
                 None => entry::read(request.space, request.path)?.meta.title,
             };
@@ -174,39 +181,46 @@ fn apply_sources(request: PageWrite<'_>, plan: WritePlan) -> Result<PageWriteOut
             .rename
             .as_ref()
             .map(|rename| rename_roots(&request, rename));
-        if let Some((old, new)) = &roots {
-            let mut current_paths = crate::properties::relation_move_mutation_paths_with_project(
-                request.space,
-                request.project,
-                &old.strip_prefix(request.space).unwrap().to_string_lossy(),
-                &new.strip_prefix(request.space).unwrap().to_string_lossy(),
-            )?;
-            let mut planned_paths = plan.relation_paths.clone();
-            current_paths.sort();
-            planned_paths.sort();
-            if current_paths != planned_paths {
-                return Err(AppError::General(
-                    "Page related source plan changed; retry the operation".into(),
-                ));
-            }
-        }
         let snapshot = SourceSnapshot::capture(&plan.paths, roots.clone())?;
         let had_naming_intent =
             crate::files::filename::has_managed_naming_intent(request.space, request.path);
         let operation = (|| {
+            if let Some(batch) = request.field_batch.as_ref() {
+                crate::properties::apply_prepared_entry_field_relations(batch)?;
+            }
+            let relation_paths = if let Some((old, new)) = &roots {
+                let current_paths = crate::properties::relation_move_mutation_paths_with_project(
+                    request.space,
+                    request.project,
+                    &old.strip_prefix(request.space).unwrap().to_string_lossy(),
+                    &new.strip_prefix(request.space).unwrap().to_string_lossy(),
+                )?;
+                if current_paths.iter().any(|path| !plan.paths.contains(path)) {
+                    return Err(AppError::General(
+                        "Page related source plan changed; retry the operation".into(),
+                    ));
+                }
+                current_paths
+            } else {
+                Vec::new()
+            };
+            let metadata = request
+                .field_batch
+                .map(|batch| batch.into_metadata())
+                .or(request.metadata);
             let mut result = entry::write_under_name_lock(
                 request.space,
                 request.path,
                 request.content,
-                request.title,
+                title.as_deref(),
                 request.icon,
                 request.extra,
-                request.metadata,
+                metadata,
                 None,
                 None,
                 request.skip_rename || plan.warning.is_some(),
                 request.project,
-                Some(&plan.relation_paths),
+                Some(&relation_paths),
             )?;
             if let Some(warning) = plan.warning {
                 result.warnings.push(warning);
@@ -232,7 +246,7 @@ fn apply_sources(request: PageWrite<'_>, plan: WritePlan) -> Result<PageWriteOut
                             &old,
                             &new,
                             if head {
-                                request.title.map(|title| (stem.as_str(), title))
+                                title.as_deref().map(|title| (stem.as_str(), title))
                             } else {
                                 None
                             },

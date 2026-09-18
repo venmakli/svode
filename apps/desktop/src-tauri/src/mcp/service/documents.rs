@@ -380,7 +380,7 @@ pub(super) async fn patch_page_metadata(
     .await
 }
 
-fn page_name_conflict_result(
+pub(super) fn page_name_conflict_result(
     conflict: crate::files::naming::DocumentNameConflict,
 ) -> ToolCallResult {
     let message = "Page name is already used in this container";

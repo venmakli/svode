@@ -15,7 +15,7 @@ use crate::artifact::identity::{
 };
 use crate::commands::files as files_commands;
 use crate::files::{entry, tree};
-use crate::git::access::{ensure_mutation_paths_were_authorized, repository_access_snapshot};
+use crate::git::access::repository_access_snapshot;
 use crate::git::{self, GitState};
 use crate::index::update::IndexUpdateState;
 use crate::index::{IndexKey, IndexState};
@@ -391,7 +391,7 @@ struct UpdateCollectionItemFieldsArgs {
     #[serde(default)]
     space_id: Option<String>,
     path: String,
-    fields: HashMap<String, Value>,
+    fields: std::collections::BTreeMap<String, Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -712,6 +712,7 @@ mod tests {
                         icon: None,
                         extra: None,
                         metadata: None,
+                        field_batch: None,
                         skip_rename: args.title.is_none(),
                         project: None,
                     },
@@ -1011,6 +1012,7 @@ async fn write_page_content(
             icon: None,
             extra: None,
             metadata: None,
+            field_batch: None,
             skip_rename: title.is_none(),
             project: Some(&context.project_path),
         },

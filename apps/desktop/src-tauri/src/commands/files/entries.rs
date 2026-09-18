@@ -193,47 +193,40 @@ pub async fn update_entry_field(
     nonces: State<'_, Arc<WriteNonceRegistry>>,
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<Entry, AppError> {
-    if field == "title" {
-        let title = value.as_str().ok_or_else(|| {
-            AppError::General("invalid entry field: title must be a string".into())
-        })?;
-        return update_entry_title_shared(
-            WriteEntryAuthorization::App(&app),
-            space,
-            file_path,
-            title.to_string(),
-            project_path,
-            &index_state,
-            &index_updates,
-            &nonces,
-            Some(&autocommit),
-        )
-        .await;
-    }
-
-    let relation_paths = properties::relation_entry_field_mutation_paths_with_project(
+    let fields = std::collections::BTreeMap::from([(field, value)]);
+    let batch = properties::prepare_entry_field_batch(
         &space,
         project_path.as_deref(),
         &file_path,
-        &field,
-        json_to_yaml_value(value.clone())?,
+        &fields,
+        properties::EntryFieldBatchIntent::Literal,
     )?;
-    let authorized_paths = require_planned_mutation_paths(&app, &space, relation_paths).await?;
-    let updated = scope_authorized_mutation_paths(authorized_paths, async {
-        entry::update_field(&space, project_path.as_deref(), &file_path, &field, value)
-    })
-    .await?;
-
-    update_index_entry_or_reindex(
+    let has_title = batch.title().is_some();
+    let current = entry::read(&space, &file_path)?;
+    let authorization_space = space.clone();
+    let outcome = crate::page::write::write(
+        crate::page::write::PageWrite {
+            space: &space,
+            path: &file_path,
+            content: &current.body,
+            title: None,
+            icon: None,
+            extra: None,
+            metadata: None,
+            field_batch: Some(batch),
+            skip_rename: !has_title,
+            project: project_path.as_deref().filter(|path| !path.is_empty()),
+        },
         &index_state,
         &index_updates,
-        project_path.as_deref(),
-        &space,
-        &file_path,
-        "update_entry_field",
+        &nonces,
+        Some(&autocommit),
+        |paths| require_planned_mutation_paths(&app, &authorization_space, paths),
     )
-    .await;
-
+    .await?;
+    let current_path = outcome.result.new_path.as_deref().unwrap_or(&file_path);
+    let mut updated = entry::read(&space, current_path)?;
+    updated.warnings = outcome.result.warnings;
     Ok(updated)
 }
 
@@ -290,6 +283,7 @@ pub(super) enum WriteEntryAuthorization<'a> {
     Preauthorized,
 }
 
+#[cfg(test)]
 pub(super) async fn update_entry_title_shared(
     authorization: WriteEntryAuthorization<'_>,
     space: String,
@@ -354,6 +348,7 @@ pub(super) async fn write_entry_shared(
         icon: icon.as_deref(),
         extra,
         metadata: None,
+        field_batch: None,
         skip_rename: skip_rename.unwrap_or(false),
         project: project_path.as_deref().filter(|path| !path.is_empty()),
     };
