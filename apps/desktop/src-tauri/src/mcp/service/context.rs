@@ -258,6 +258,23 @@ mod tests {
             project.canonicalize().unwrap()
         );
     }
+
+    #[test]
+    fn explicit_root_and_default_selectors_preserve_mcp_addressing() {
+        let context = ActiveProjectContext {
+            project_path: "/project".to_string(),
+            active_space_id: Some("child".to_string()),
+            active_space_path: "/project/child".to_string(),
+        };
+
+        assert_eq!(space_selection(Some("root")), McpSpaceSelection::Root);
+        assert_eq!(
+            space_selection(Some("other")),
+            McpSpaceSelection::Child("other")
+        );
+        assert_eq!(space_selection(None), McpSpaceSelection::FrozenDefault);
+        assert_eq!(context.active_space_id.as_deref(), Some("child"));
+    }
 }
 
 pub(super) async fn resolve_space(
@@ -265,16 +282,31 @@ pub(super) async fn resolve_space(
     requested_space_id: Option<String>,
 ) -> Result<(ActiveProjectContext, String), McpBusinessError> {
     let context = active_context(app)?;
-    if let Some(space_id) = requested_space_id {
-        if is_mcp_root_space_id(&space_id) {
-            return Ok((context.clone(), context.project_path.clone()));
-        }
-        let state = app.state::<IndexState>();
-        let path = state
-            .space_path_of(Path::new(&context.project_path), Some(&space_id))
-            .await?;
-        Ok((context, path.to_string_lossy().to_string()))
-    } else {
-        Ok((context.clone(), context.active_space_path))
+    let space = match space_selection(requested_space_id.as_deref()) {
+        McpSpaceSelection::FrozenDefault => context.active_space_path.clone(),
+        McpSpaceSelection::Root => context.project_path.clone(),
+        McpSpaceSelection::Child(space_id) => crate::space::read::resolve_space_target(
+            Path::new(&context.project_path),
+            Some(space_id),
+        )?
+        .space_path
+        .to_string_lossy()
+        .to_string(),
+    };
+    Ok((context, space))
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum McpSpaceSelection<'a> {
+    FrozenDefault,
+    Root,
+    Child(&'a str),
+}
+
+fn space_selection(requested_space_id: Option<&str>) -> McpSpaceSelection<'_> {
+    match requested_space_id {
+        Some(space_id) if is_mcp_root_space_id(space_id) => McpSpaceSelection::Root,
+        Some(space_id) => McpSpaceSelection::Child(space_id),
+        None => McpSpaceSelection::FrozenDefault,
     }
 }

@@ -2,6 +2,7 @@ pub mod app_variables;
 pub mod config;
 pub mod merge;
 pub mod project;
+pub mod read;
 pub mod registry;
 pub mod scaffold;
 pub mod settings;

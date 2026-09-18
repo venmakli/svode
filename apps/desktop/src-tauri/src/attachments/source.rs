@@ -16,9 +16,7 @@ use crate::files::tree::{
 };
 use crate::git::dates::derive_date_overrides;
 use crate::repo_path::{RootMode, normalize_repo_relative};
-use crate::space::config::read_space_config;
-use crate::space::project::{normalize_space_folder, space_ref_status};
-use crate::space::types::SpaceStatus;
+use crate::space::read::resolve_space_target;
 use crate::system_path;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -100,61 +98,12 @@ pub(crate) fn resolve_registered_owner(
     project_path: &Path,
     space_id: Option<&str>,
 ) -> Result<ResolvedRegisteredOwner, AppError> {
-    let project_metadata = fs::symlink_metadata(project_path).map_err(|error| {
-        AppError::PathNotAccessible(format!(
-            "cannot inspect registered Project {}: {error}",
-            project_path.display()
-        ))
-    })?;
-    if !project_metadata.is_dir() || project_metadata.file_type().is_symlink() {
-        return Err(AppError::PathNotAccessible(format!(
-            "registered Project is not a regular directory: {}",
-            project_path.display()
-        )));
-    }
-
-    let project_path = fs::canonicalize(project_path)?;
-    let config = read_space_config(&project_path)?;
-    let (resolved_space_id, space_path) = match space_id {
-        None => (None, project_path.clone()),
-        Some(requested_id) => {
-            let reference = config
-                .spaces
-                .as_deref()
-                .unwrap_or_default()
-                .iter()
-                .find(|reference| reference.id == requested_id)
-                .ok_or_else(|| AppError::SpaceNotFound(requested_id.to_string()))?;
-            if space_ref_status(&project_path, reference) != SpaceStatus::Ready {
-                return Err(AppError::SpaceNotFound(requested_id.to_string()));
-            }
-            let folder = normalize_space_folder(&reference.path)?;
-            (Some(requested_id.to_string()), project_path.join(folder))
-        }
-    };
-
-    let space_metadata = fs::symlink_metadata(&space_path).map_err(|error| {
-        AppError::PathNotAccessible(format!(
-            "cannot inspect registered owner {}: {error}",
-            space_path.display()
-        ))
-    })?;
-    if !space_metadata.is_dir() || space_metadata.file_type().is_symlink() {
-        return Err(AppError::PathNotAccessible(format!(
-            "registered owner is not a regular directory: {}",
-            space_path.display()
-        )));
-    }
-    let space_path = fs::canonicalize(&space_path)?;
-    if !space_path.starts_with(&project_path) {
-        return Err(AppError::PathNotAccessible(format!(
-            "registered owner escapes Project boundary: {}",
-            space_path.display()
-        )));
-    }
+    let target = resolve_space_target(project_path, space_id)?;
+    let project_path = target.project_path;
+    let space_path = target.space_path;
 
     let repository_path =
-        if resolved_space_id.is_some() && fs::symlink_metadata(space_path.join(".git")).is_ok() {
+        if target.space_id.is_some() && fs::symlink_metadata(space_path.join(".git")).is_ok() {
             space_path.clone()
         } else {
             project_path.clone()
@@ -162,7 +111,7 @@ pub(crate) fn resolve_registered_owner(
 
     Ok(ResolvedRegisteredOwner {
         project_path,
-        space_id: resolved_space_id,
+        space_id: target.space_id,
         owner_path: space_path.clone(),
         owner_relative_path: ".".to_string(),
         space_path,

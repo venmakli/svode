@@ -9,8 +9,7 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::artifact::identity::{
-    ContentOwnerKind, MarkdownIdentityFacts, SemanticIdentity, SourceShape,
-    resolve_markdown_identity,
+    ContentOwnerKind, SemanticIdentity, SourceShape, resolve_markdown_identity_for_path,
 };
 use crate::commands::files as file_commands;
 use crate::files::{backlinks, filename};
@@ -420,33 +419,11 @@ fn eligible_import_identity(identity: SemanticIdentity) -> bool {
 }
 
 fn semantic_identity_for_path(space: &Path, path: &str) -> Result<SemanticIdentity, AppError> {
-    let direct_collection_root = Path::new(path)
-        .file_name()
-        .and_then(|name| name.to_str())
-        .filter(|name| name.eq_ignore_ascii_case("README.md"))
-        .and_then(|_| Path::new(path).parent())
-        .filter(|parent| space.join(parent).join("schema.yaml").is_file())
-        .map(normalize_relative_display);
-    let collection_root = match direct_collection_root {
-        Some(root) => Some(root),
-        None => properties::resolve_collection_schema_result(&space.to_string_lossy(), path)?
-            .map(|(_, root)| normalize_relative_display(&root)),
-    };
-    let source_shape = if Path::new(path)
-        .file_name()
-        .and_then(|name| name.to_str())
-        .is_some_and(|name| name.eq_ignore_ascii_case("README.md"))
-    {
-        SourceShape::Directory
-    } else {
-        SourceShape::File
-    };
-    Ok(resolve_markdown_identity(MarkdownIdentityFacts {
+    resolve_markdown_identity_for_path(
+        space,
         path,
-        source_shape,
-        collection_root: collection_root.as_deref(),
-        agent_context: crate::index::knowledge::is_agent_context_source(path),
-    }))
+        crate::index::knowledge::is_agent_context_source(path),
+    )
 }
 
 fn nested_content_path(path: &str) -> Result<String, AppError> {

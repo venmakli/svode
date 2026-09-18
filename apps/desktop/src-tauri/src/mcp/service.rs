@@ -11,8 +11,7 @@ use super::error::McpBusinessError;
 use super::path::{ensure_inside, validate_markdown_path, validate_public_rel_path};
 use super::protocol::{IpcContextOverride, ToolCallResult};
 use crate::artifact::identity::{
-    ContentOwnerKind, MarkdownIdentityFacts, PageRole, SemanticIdentity, SourceShape,
-    resolve_markdown_identity,
+    ContentOwnerKind, PageRole, SemanticIdentity, resolve_markdown_identity_for_path,
 };
 use crate::commands::files as files_commands;
 use crate::files::{entry, tree};
@@ -430,39 +429,12 @@ fn semantic_identity_for_path(
     space: &str,
     path: &str,
 ) -> Result<SemanticIdentity, McpBusinessError> {
-    let direct_collection_root = Path::new(path)
-        .file_name()
-        .and_then(|name| name.to_str())
-        .filter(|name| name.eq_ignore_ascii_case("README.md"))
-        .and_then(|_| Path::new(path).parent())
-        .filter(|parent| Path::new(space).join(parent).join("schema.yaml").is_file())
-        .map(|parent| {
-            if parent.as_os_str().is_empty() {
-                ".".to_string()
-            } else {
-                parent.to_string_lossy().replace('\\', "/")
-            }
-        });
-    let collection_root = match direct_collection_root {
-        Some(root) => Some(root),
-        None => properties::resolve_collection_schema_result(space, path)?
-            .map(|(_, root)| root.to_string_lossy().replace('\\', "/")),
-    };
-    let source_shape = if Path::new(path)
-        .file_name()
-        .and_then(|name| name.to_str())
-        .is_some_and(|name| name.eq_ignore_ascii_case("README.md"))
-    {
-        SourceShape::Directory
-    } else {
-        SourceShape::File
-    };
-    Ok(resolve_markdown_identity(MarkdownIdentityFacts {
+    resolve_markdown_identity_for_path(
+        Path::new(space),
         path,
-        source_shape,
-        collection_root: collection_root.as_deref(),
-        agent_context: crate::index::knowledge::is_agent_context_source(path),
-    }))
+        crate::index::knowledge::is_agent_context_source(path),
+    )
+    .map_err(Into::into)
 }
 
 fn require_standalone_page(space: &str, path: &str) -> Result<(), McpBusinessError> {

@@ -4,7 +4,7 @@ use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
 
-use crate::space::config;
+use crate::space::read::resolve_space_target;
 use crate::{AppError, system_path};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -92,37 +92,30 @@ pub fn build_context(
     active_space_id: Option<String>,
     active_space_path: Option<String>,
 ) -> Result<ActiveProjectContext, AppError> {
-    let project = canonicalize_context_path("project", PathBuf::from(project_path))?;
-    let space_path = match (active_space_id.as_deref(), active_space_path) {
-        (_, Some(path)) if !path.trim().is_empty() => PathBuf::from(path),
-        (Some(space_id), _) => child_space_path(&project, space_id)?,
-        (None, _) => project.clone(),
-    };
-    let space_path = canonicalize_context_path("active space", space_path)?;
-    if !space_path.starts_with(&project) {
+    let target = resolve_space_target(Path::new(&project_path), active_space_id.as_deref())?;
+    if let Some(provided_path) = active_space_path.filter(|path| !path.trim().is_empty()) {
+        let provided_path =
+            canonicalize_context_path("active space", PathBuf::from(provided_path))?;
+        if provided_path != target.space_path {
+            return Err(AppError::PathNotAccessible(format!(
+                "active space '{}' does not match registered target '{}'",
+                provided_path.display(),
+                target.space_path.display()
+            )));
+        }
+    }
+    if !target.space_path.starts_with(&target.project_path) {
         return Err(AppError::PathNotAccessible(format!(
             "active space '{}' is outside project '{}'",
-            space_path.display(),
-            project.display()
+            target.space_path.display(),
+            target.project_path.display()
         )));
     }
     Ok(ActiveProjectContext {
-        project_path: system_path::user_facing_path(&project),
-        active_space_id,
-        active_space_path: system_path::user_facing_path(&space_path),
+        project_path: system_path::user_facing_path(&target.project_path),
+        active_space_id: target.space_id,
+        active_space_path: system_path::user_facing_path(&target.space_path),
     })
-}
-
-fn child_space_path(project: &Path, space_id: &str) -> Result<PathBuf, AppError> {
-    let cfg = config::read_space_config(project)?;
-    let Some(space_ref) = cfg
-        .spaces
-        .as_ref()
-        .and_then(|spaces| spaces.iter().find(|space| space.id == space_id))
-    else {
-        return Err(AppError::SpaceNotFound(space_id.to_string()));
-    };
-    Ok(project.join(&space_ref.path))
 }
 
 fn canonicalize_context_path(label: &str, path: PathBuf) -> Result<PathBuf, AppError> {
@@ -217,5 +210,24 @@ mod tests {
         );
 
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn rejects_active_space_path_that_does_not_match_registered_id() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = dir.path().join("project");
+        let child = project.join("spaces/child");
+        let other = project.join("other");
+        fs::create_dir_all(&child).unwrap();
+        fs::create_dir_all(&other).unwrap();
+        write_project_config(&project, "spaces/child");
+
+        let result = build_context(
+            project.to_string_lossy().to_string(),
+            Some("child".to_string()),
+            Some(other.to_string_lossy().to_string()),
+        );
+
+        assert!(matches!(result, Err(AppError::PathNotAccessible(_))));
     }
 }
