@@ -64,7 +64,7 @@ pub(super) async fn list_actors(
     let git_state = app.state::<GitState>();
     let cli = git::require_cli(&git_state)?;
     let actor_catalog = app.state::<properties::ActorCatalogState>();
-    let actors = properties::list_actors(
+    let actors = properties::read::actors(
         &actor_catalog,
         &cli,
         Path::new(&space),

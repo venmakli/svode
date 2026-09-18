@@ -62,6 +62,8 @@ use query::{
     validate_ad_hoc_query,
 };
 
+pub(crate) mod read;
+
 mod schema_validation;
 use schema_validation::{
     FieldContext, FieldType, autopick_board_group_by, autopick_calendar_date_field, field_type,

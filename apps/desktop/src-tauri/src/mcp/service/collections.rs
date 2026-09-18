@@ -105,7 +105,7 @@ pub(super) async fn list_collections(
     args: SpaceArgs,
 ) -> Result<ToolCallResult, McpBusinessError> {
     let (_, space) = resolve_space(app, args.space_id).await?;
-    let collections = properties::list_collections(&space)?;
+    let collections = properties::read::collections(&space)?;
     Ok(ToolCallResult::ok(
         format!("Found {} collections.", collections.len()),
         json!({ "collections": collections }),
@@ -119,7 +119,7 @@ pub(super) async fn get_collection_schema(
     let (_, space) = resolve_space(app, args.space_id).await?;
     let collection_path = validate_public_rel_path(&args.collection_path, true)?;
     ensure_inside(Path::new(&space), &collection_path)?;
-    let schema = properties::read_collection_schema(&space, &collection_path)?;
+    let schema = properties::read::collection_schema(&space, &collection_path)?;
     Ok(ToolCallResult::ok(
         format!("Read schema for collection {collection_path}."),
         json!({ "collectionPath": collection_path, "schema": schema }),
@@ -135,15 +135,19 @@ pub(super) async fn query_collection_items(
     ensure_inside(Path::new(&space), &collection_path)?;
     let limit = clamp_limit(args.limit);
     let offset = args.offset.unwrap_or(0).max(0);
-    let pool = pool_for_space(app, &context, args.space_id.as_deref(), &space).await?;
+    let target = properties::read::CollectionReadTarget::from_index_key(
+        space,
+        index_key_for_context(&context, args.space_id.as_deref()),
+    );
+    let index_state = app.state::<IndexState>();
     let git_state = app.state::<GitState>();
     let git_cli = git::require_cli(&git_state).ok();
     let actor_catalog = app.state::<properties::ActorCatalogState>();
-    let items = properties::query_entries(
-        &pool,
+    let items = properties::read::query_entries(
+        &index_state,
         &actor_catalog,
         git_cli.as_ref(),
-        &space,
+        &target,
         &collection_path,
         Some(args.filter),
         Some(args.sort),
@@ -507,7 +511,7 @@ pub(super) async fn validate_collection_integrity(
     if let Some(path) = collection_path.as_deref() {
         ensure_inside(Path::new(&space), path)?;
     }
-    let report = properties::validate_collection_integrity_with_project(
+    let report = properties::read::integrity(
         &space,
         collection_path.as_deref(),
         Some(context.project_path.as_str()),

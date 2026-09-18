@@ -586,5 +586,5 @@ pub fn get_collection_schema(
     space: String,
     collection_path: String,
 ) -> Result<CollectionSchema, AppError> {
-    properties::read_collection_schema(&space, &collection_path)
+    properties::read::collection_schema(&space, &collection_path)
 }

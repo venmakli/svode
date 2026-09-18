@@ -356,16 +356,16 @@ fn schema_commit_message_with_previous(
 }
 
 fn collection_has_sensitive_columns(space: &str, collection_path: &str) -> bool {
-    properties::read_collection_schema(space, collection_path)
+    properties::read::collection_schema(space, collection_path)
         .map(|schema| properties::schema_has_sensitive_columns(&schema))
         .unwrap_or(false)
 }
 
 fn entry_in_sensitive_collection(space: &str, path: &str) -> bool {
-    properties::resolve_collection_schema_result(space, path)
+    properties::read::entry_schema(space, path)
         .ok()
         .flatten()
-        .is_some_and(|(schema, _)| properties::schema_has_sensitive_columns(&schema))
+        .is_some_and(|response| properties::schema_has_sensitive_columns(&response.schema))
 }
 
 fn entry_commit_name(space: &str, path: &str) -> String {
@@ -960,24 +960,6 @@ async fn require_entry_delete_mutation_plan(
         deleted_paths,
     )?;
     require_planned_mutation_paths(app, space, paths).await
-}
-
-async fn pool_for_space(
-    index_state: &IndexState,
-    space: &str,
-    project_path: Option<&str>,
-) -> Result<sqlx::SqlitePool, AppError> {
-    let key = if let Some(key) = index_state.key_for_space_dir(Path::new(space)).await {
-        key
-    } else if let Some(project_path) = project_path.filter(|path| !path.is_empty()) {
-        index_state
-            .resolve(Path::new(project_path), Path::new(space))
-            .await?
-            .0
-    } else {
-        IndexKey::Root(PathBuf::from(space))
-    };
-    index_state.get_or_create(&key).await
 }
 
 async fn reindex_space_dir(

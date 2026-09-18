@@ -177,7 +177,7 @@ pub fn get_entry_schema(
     space: String,
     file_path: String,
 ) -> Result<Option<EntrySchemaResponse>, AppError> {
-    properties::schema_response(&space, &file_path)
+    properties::read::entry_schema(&space, &file_path)
 }
 
 #[tauri::command]

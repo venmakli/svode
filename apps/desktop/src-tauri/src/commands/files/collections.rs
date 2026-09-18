@@ -327,13 +327,14 @@ pub async fn list_entries_for_view(
     git_state: State<'_, GitState>,
     actor_catalog: State<'_, properties::ActorCatalogState>,
 ) -> Result<Vec<Entry>, AppError> {
-    let pool = pool_for_space(&index_state, &space, project_path.as_deref()).await?;
+    let target =
+        properties::read::target_for_space(&index_state, space, project_path.as_deref()).await?;
     let git_cli = git_state.cli.clone();
-    properties::list_entries_for_view(
-        &pool,
+    properties::read::entries_for_view(
+        &index_state,
         &actor_catalog,
         git_cli.as_ref(),
-        &space,
+        &target,
         &collection_path,
         &view_name,
         include_nested,
@@ -355,13 +356,14 @@ pub async fn query_entries(
     git_state: State<'_, GitState>,
     actor_catalog: State<'_, properties::ActorCatalogState>,
 ) -> Result<Vec<Entry>, AppError> {
-    let pool = pool_for_space(&index_state, &space, project_path.as_deref()).await?;
+    let target =
+        properties::read::target_for_space(&index_state, space, project_path.as_deref()).await?;
     let git_cli = git_state.cli.clone();
-    properties::query_entries(
-        &pool,
+    properties::read::query_entries(
+        &index_state,
         &actor_catalog,
         git_cli.as_ref(),
-        &space,
+        &target,
         &collection_path,
         filters,
         sort,
@@ -380,8 +382,9 @@ pub async fn resolve_relation(
     project_path: Option<String>,
     index_state: State<'_, IndexState>,
 ) -> Result<Option<ResolvedRelation>, AppError> {
-    let pool = pool_for_space(&index_state, &space, project_path.as_deref()).await?;
-    properties::resolve_relation(&pool, &relation, &value).await
+    let target =
+        properties::read::target_for_space(&index_state, space, project_path.as_deref()).await?;
+    properties::read::resolve_relation(&index_state, &target, &relation, &value).await
 }
 
 #[tauri::command]
@@ -392,8 +395,9 @@ pub async fn resolve_relations_batch(
     project_path: Option<String>,
     index_state: State<'_, IndexState>,
 ) -> Result<Vec<Option<ResolvedRelation>>, AppError> {
-    let pool = pool_for_space(&index_state, &space, project_path.as_deref()).await?;
-    properties::resolve_relations_batch(&pool, &relation, &values).await
+    let target =
+        properties::read::target_for_space(&index_state, space, project_path.as_deref()).await?;
+    properties::read::resolve_relations_batch(&index_state, &target, &relation, &values).await
 }
 
 #[tauri::command]
@@ -403,7 +407,7 @@ pub fn query_relation_backlinks(
     source_collection_path: Option<String>,
     source_column: Option<String>,
 ) -> Result<Vec<RelationBacklink>, AppError> {
-    properties::query_relation_backlinks(
+    properties::read::relation_backlinks(
         &space,
         &target_path,
         source_collection_path.as_deref(),
@@ -418,7 +422,7 @@ pub fn diagnose_two_way_relation(
     column: String,
     project_path: Option<String>,
 ) -> Result<RelationTwoWayDiagnostics, AppError> {
-    properties::diagnose_two_way_relation_with_project(
+    properties::read::relation_diagnostics(
         &space,
         &collection_path,
         &column,
@@ -477,7 +481,7 @@ pub async fn repair_two_way_relation(
 
 #[tauri::command]
 pub fn list_collections(space: String) -> Result<Vec<CollectionInfo>, AppError> {
-    properties::list_collections(&space)
+    properties::read::collections(&space)
 }
 
 #[tauri::command]
@@ -488,7 +492,7 @@ pub async fn list_actors(
     actor_catalog: State<'_, properties::ActorCatalogState>,
 ) -> Result<Vec<ActorCandidate>, AppError> {
     let cli = require_cli(&git_state)?;
-    properties::list_actors(
+    properties::read::actors(
         &actor_catalog,
         &cli,
         Path::new(&space_path),
@@ -504,5 +508,5 @@ pub async fn refresh_actors(
     actor_catalog: State<'_, properties::ActorCatalogState>,
 ) -> Result<Vec<ActorCandidate>, AppError> {
     let cli = require_cli(&git_state)?;
-    properties::refresh_actors(&actor_catalog, &cli, Path::new(&space_path), false).await
+    properties::read::refresh_actors(&actor_catalog, &cli, Path::new(&space_path), false).await
 }
