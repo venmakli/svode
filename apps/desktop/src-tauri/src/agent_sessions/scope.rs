@@ -6,7 +6,7 @@ use super::types::{
     AgentSessionScope, AgentSessionScopeConfidence, AgentSessionScopeKind, AgentSessionScopeStatus,
 };
 use crate::error::AppError;
-use crate::space::project as space_project;
+use crate::space::content_tree;
 use crate::space::types::{SpaceInfo, SpaceStatus};
 
 #[derive(Debug, Clone)]
@@ -84,7 +84,7 @@ impl ScopeIndex {
 }
 
 pub(super) fn load_child_spaces(project: &Path) -> Result<Vec<SpaceInfo>, AppError> {
-    match space_project::list_spaces(project) {
+    match content_tree::list_child_spaces(project) {
         Ok(spaces) => Ok(spaces),
         Err(AppError::FileNotFound(_)) => Ok(Vec::new()),
         Err(error) => Err(error),

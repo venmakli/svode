@@ -443,15 +443,20 @@ pub(super) async fn reorder_content(
     let (_context, space) = resolve_space(app, args.space_id).await?;
     let parent_path = validate_public_rel_path(&args.parent_path, true)?;
     ensure_inside(Path::new(&space), &parent_path)?;
-    let result =
-        files_commands::reorder_entries_shared(&space, &parent_path, args.ordered_children)?;
+    crate::git::access::require_repository_mutation(app, Path::new(&space)).await?;
+    let result = content_tree::reorder_content(&space, &parent_path, args.ordered_children)?;
+    let changed_paths = if result.changed {
+        vec![".svode/order.json"]
+    } else {
+        Vec::new()
+    };
     Ok(ToolCallResult::ok(
         format!("Reordered {} direct children.", result.previous_order.len()),
         json!({
             "parentPath": result.parent_path,
             "previousOrder": result.previous_order,
             "orderedChildren": result.ordered_children,
-            "changedPaths": [".svode/order.json"],
+            "changedPaths": changed_paths,
         }),
     ))
 }
@@ -472,20 +477,25 @@ pub(super) async fn reorder_spaces(
             "the root space is pinned and must not be included",
         ));
     }
-    let previous_order = project::list_spaces(Path::new(&context.project_path))?
-        .into_iter()
-        .map(|space| space.id)
-        .collect::<Vec<_>>();
-    project::reorder_spaces(
+    crate::git::access::require_repository_mutation(app, Path::new(&context.project_path)).await?;
+    let outcome = content_tree::reorder_child_spaces(
         Path::new(&context.project_path),
-        args.ordered_space_ids.clone(),
+        args.ordered_space_ids,
     )?;
+    let changed_paths = if outcome.changed {
+        vec![".svode/config.json"]
+    } else {
+        Vec::new()
+    };
     Ok(ToolCallResult::ok(
-        format!("Reordered {} child spaces.", args.ordered_space_ids.len()),
+        format!(
+            "Reordered {} child spaces.",
+            outcome.ordered_space_ids.len()
+        ),
         json!({
-            "previousOrder": previous_order,
-            "orderedSpaceIds": args.ordered_space_ids,
-            "changedPaths": [".svode/config.json"],
+            "previousOrder": outcome.previous_order,
+            "orderedSpaceIds": outcome.ordered_space_ids,
+            "changedPaths": changed_paths,
         }),
     ))
 }

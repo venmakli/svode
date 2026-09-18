@@ -12,7 +12,7 @@ pub(super) async fn list_pages(
         .transpose()?
         .unwrap_or_default();
     ensure_inside(Path::new(&space), &root)?;
-    let mut nodes = tree::build_tree(&space).map_err(McpBusinessError::from)?;
+    let mut nodes = content_tree::list_recursive(&space).map_err(McpBusinessError::from)?;
     if !root.is_empty() {
         let prefix = format!("{root}/");
         nodes.retain(|node| node.path == root || node.path.starts_with(&prefix));

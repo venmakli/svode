@@ -1,5 +1,6 @@
 use super::*;
 use crate::space::config::write_space_config;
+use crate::space::content_tree::reorder_content;
 use crate::space::types::{SpaceConfig, TreeSpaceConfig};
 use sqlx::SqlitePool;
 use tempfile::TempDir;
@@ -1033,7 +1034,7 @@ fn shared_reorder_entries_handles_semantic_paths_and_preserves_other_keys() {
     );
     tree::write_order(space, &order).unwrap();
 
-    let result = reorder_entries_shared(
+    let result = reorder_content(
         space.to_str().unwrap(),
         "",
         vec![
@@ -1067,7 +1068,7 @@ fn shared_reorder_entries_handles_semantic_paths_and_preserves_other_keys() {
         &vec!["a.md".to_string(), "b.md".to_string()]
     );
 
-    let nested = reorder_entries_shared(
+    let nested = reorder_content(
         space.to_str().unwrap(),
         "folder/README.md",
         vec!["folder/b.md".to_string(), "folder/a.md".to_string()],
@@ -1099,7 +1100,7 @@ fn shared_reorder_entries_rejects_invalid_permutation_without_writing() {
         vec!["a.md".to_string()],
         vec!["a.md".to_string(), "foreign.md".to_string()],
     ] {
-        let result = reorder_entries_shared(space.to_str().unwrap(), "", invalid);
+        let result = reorder_content(space.to_str().unwrap(), "", invalid);
         assert!(result.is_err());
         assert_eq!(
             std::fs::read(space.join(".svode/order.json")).unwrap(),

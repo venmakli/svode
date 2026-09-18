@@ -4,68 +4,7 @@ use super::*;
 
 #[tauri::command]
 pub fn read_tree_order(space: String) -> Result<HashMap<String, Vec<String>>, AppError> {
-    Ok(tree::read_order(Path::new(&space)))
-}
-
-#[derive(Debug, PartialEq, Eq)]
-pub struct ReorderEntriesCommandResult {
-    pub parent_path: String,
-    pub previous_order: Vec<String>,
-    pub ordered_children: Vec<String>,
-}
-
-pub fn reorder_entries_shared(
-    space: &str,
-    parent_path: &str,
-    ordered_children: Vec<String>,
-) -> Result<ReorderEntriesCommandResult, AppError> {
-    let parent_path = tree::normalize_tree_parent_path(Some(parent_path))?;
-    let actual_children = tree::list_tree_children(space, Some(&parent_path))?;
-    let previous_order = actual_children
-        .iter()
-        .map(|child| child.path.clone())
-        .collect::<Vec<_>>();
-    let expected = previous_order
-        .iter()
-        .collect::<std::collections::HashSet<_>>();
-    let proposed = ordered_children
-        .iter()
-        .collect::<std::collections::HashSet<_>>();
-
-    if proposed.len() != ordered_children.len() {
-        return Err(AppError::General(
-            "orderedChildren contains duplicate paths".to_string(),
-        ));
-    }
-    if proposed != expected {
-        return Err(AppError::General(
-            "orderedChildren must contain each current direct child exactly once".to_string(),
-        ));
-    }
-
-    let names = ordered_children
-        .iter()
-        .map(|path| {
-            actual_children
-                .iter()
-                .find(|child| child.path == *path)
-                .map(|child| child.name.clone())
-                .ok_or_else(|| AppError::General(format!("unknown child path: {path}")))
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    let mut order = tree::read_order(Path::new(space));
-    order.insert(parent_path.clone(), names);
-    tree::write_order(Path::new(space), &order)?;
-
-    Ok(ReorderEntriesCommandResult {
-        parent_path: if parent_path == "." {
-            String::new()
-        } else {
-            parent_path
-        },
-        previous_order,
-        ordered_children,
-    })
+    Ok(crate::space::content_tree::read_order(Path::new(&space)))
 }
 
 #[tauri::command]
@@ -77,14 +16,16 @@ pub async fn save_tree_order(
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<(), AppError> {
     require_repository_mutation(&app, Path::new(&space)).await?;
-    tree::write_order(Path::new(&space), &order)?;
-    maybe_autocommit_structural_paths(
-        &autocommit,
-        project_path.as_deref(),
-        &space,
-        StructuralOp::Reorder,
-        vec![order_path(&space)],
-    );
+    let changed = crate::space::content_tree::replace_order(Path::new(&space), order)?;
+    if changed {
+        maybe_autocommit_structural_paths(
+            &autocommit,
+            project_path.as_deref(),
+            &space,
+            StructuralOp::Reorder,
+            vec![order_path(&space)],
+        );
+    }
     Ok(())
 }
 

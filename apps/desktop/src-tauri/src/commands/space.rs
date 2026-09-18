@@ -11,7 +11,7 @@ use crate::git::commands::{auto_commit_structural_enabled, init_repo_with_policy
 use crate::git::{GitState, local_repair, ops, require_cli};
 use crate::index::IndexState;
 use crate::project_runtime::ProjectRuntimeState;
-use crate::space::{config, project, registry, settings, symlinks, types::*};
+use crate::space::{config, content_tree, project, registry, settings, symlinks, types::*};
 use crate::storage::lfs::LfsState;
 use crate::system_path;
 
@@ -550,7 +550,7 @@ pub async fn open_project(
 #[tauri::command]
 pub fn list_spaces(space_path: String) -> Result<Vec<SpaceInfo>, AppError> {
     let path = Path::new(&space_path);
-    project::list_spaces(path)
+    content_tree::list_child_spaces(path)
 }
 
 #[tauri::command]
@@ -562,16 +562,18 @@ pub async fn reorder_spaces(
 ) -> Result<Vec<SpaceInfo>, AppError> {
     let parent = PathBuf::from(&project_path);
     require_repository_mutation(&app, &parent).await?;
-    let spaces = project::reorder_spaces(&parent, ordered_space_ids)?;
+    let outcome = content_tree::reorder_child_spaces(&parent, ordered_space_ids)?;
 
-    if let Err(e) = autocommit
-        .commit_system_now(parent.clone(), parent, SystemCommitKind::ReorderSpaces)
-        .await
-    {
-        tracing::warn!("commit reorder spaces failed: {e}");
+    if outcome.changed {
+        if let Err(e) = autocommit
+            .commit_system_now(parent.clone(), parent, SystemCommitKind::ReorderSpaces)
+            .await
+        {
+            tracing::warn!("commit reorder spaces failed: {e}");
+        }
     }
 
-    Ok(spaces)
+    Ok(outcome.spaces)
 }
 
 #[tauri::command]

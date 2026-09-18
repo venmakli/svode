@@ -6,7 +6,7 @@ use super::*;
 pub fn list_entries(space: String) -> Result<Vec<TreeNode>, AppError> {
     let started = Instant::now();
     let space_name = path_name(&space);
-    let result = tree::build_tree(&space);
+    let result = crate::space::content_tree::list_recursive(&space);
     let duration_ms = started.elapsed().as_millis() as u64;
 
     match &result {
@@ -48,7 +48,7 @@ pub fn list_tree_children(
     } else {
         "root"
     };
-    let result = tree::list_tree_children_checked(&space, parent_path.as_deref());
+    let result = crate::space::content_tree::list_children_checked(&space, parent_path.as_deref());
     let duration_ms = started.elapsed().as_millis() as u64;
 
     match &result {
