@@ -257,16 +257,8 @@ async fn authorize_mutating_tool(
                 && let Some(rename) =
                     entry::planned_write_rename(&space, &path, Some(title), false)?
             {
-                extend_entry_move_plan(
-                    app,
-                    &context,
-                    &space,
-                    &path,
-                    &rename.new_path,
-                    &mut paths,
-                    true,
-                )
-                .await?;
+                extend_entry_move_plan(app, &context, &space, &path, &rename.new_path, &mut paths)
+                    .await?;
             }
         }
         "delete_page" | "delete_collection_item" => {
@@ -301,7 +293,6 @@ async fn authorize_mutating_tool(
                 &decoded.from,
                 &decoded.to,
                 &mut paths,
-                true,
             )
             .await?;
         }
@@ -316,8 +307,7 @@ async fn authorize_mutating_tool(
             } else {
                 format!("{}/{file_name}", decoded.to_parent)
             };
-            extend_entry_move_plan(app, &context, &space, &decoded.from, &to, &mut paths, true)
-                .await?;
+            extend_entry_move_plan(app, &context, &space, &decoded.from, &to, &mut paths).await?;
         }
         "convert_page_to_leaf" => {
             let decoded: PathArgs = decode(args.clone())?;
@@ -446,25 +436,18 @@ async fn extend_entry_move_plan(
     from: &str,
     to: &str,
     paths: &mut Vec<PathBuf>,
-    include_relations: bool,
 ) -> Result<(), McpBusinessError> {
-    if include_relations {
-        paths.extend(properties::relation_move_mutation_paths_with_project(
+    paths.extend(
+        crate::space::structural::move_mutation_paths(
+            &app.state::<IndexState>(),
             space,
             Some(&context.project_path),
             from,
             to,
-        )?);
-    }
-    extend_backlink_plan(
-        app,
-        context,
-        space,
-        from,
-        Path::new(space).join(from).is_dir(),
-        paths,
-    )
-    .await
+        )
+        .await?,
+    );
+    Ok(())
 }
 
 async fn extend_backlink_plan(
@@ -475,29 +458,16 @@ async fn extend_backlink_plan(
     folder_rename: bool,
     paths: &mut Vec<PathBuf>,
 ) -> Result<(), McpBusinessError> {
-    let index_state = app.state::<IndexState>();
-    let target_space_id = index_state
-        .key_for_space_dir(Path::new(space))
-        .await
-        .and_then(|key| IndexState::space_id_for_key(&key));
-    let plan = if folder_rename {
-        index_state
-            .plan_links_on_folder_rename_project(
-                Path::new(&context.project_path),
-                target_space_id.as_deref(),
-                from,
-            )
-            .await?
-    } else {
-        index_state
-            .plan_links_on_rename_project(
-                Path::new(&context.project_path),
-                target_space_id.as_deref(),
-                from,
-            )
-            .await?
-    };
-    paths.extend_from_slice(plan.mutation_paths());
+    paths.extend(
+        crate::space::structural::backlink_mutation_paths(
+            &app.state::<IndexState>(),
+            space,
+            Some(&context.project_path),
+            from,
+            folder_rename,
+        )
+        .await?,
+    );
     Ok(())
 }
 

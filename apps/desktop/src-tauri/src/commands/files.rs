@@ -70,40 +70,6 @@ fn order_path(space: &str) -> PathBuf {
     Path::new(space).join(".svode").join("order.json")
 }
 
-fn managed_attachment_repository_dir(space: &str, project_path: Option<&str>) -> PathBuf {
-    let space_dir = PathBuf::from(space);
-    if space_dir.join(".git").symlink_metadata().is_ok() {
-        return space_dir;
-    }
-    project_path
-        .filter(|path| !path.is_empty())
-        .map(PathBuf::from)
-        .unwrap_or(space_dir)
-}
-
-pub(crate) fn managed_attachment_policy_paths(
-    space: &str,
-    project_path: Option<&str>,
-) -> Vec<PathBuf> {
-    let repo_dir = managed_attachment_repository_dir(space, project_path);
-    vec![repo_dir.join(".gitignore"), repo_dir.join(".gitattributes")]
-}
-
-pub(crate) fn rebase_managed_attachment_routes(
-    space: &str,
-    project_path: Option<&str>,
-    from: &str,
-    to: &str,
-    subtree: bool,
-) -> Result<Vec<PathBuf>, AppError> {
-    let space_dir = PathBuf::from(space);
-    let repo_dir = managed_attachment_repository_dir(space, project_path);
-    let space_prefix = space_dir.strip_prefix(&repo_dir).unwrap_or(Path::new(""));
-    let old_path = space_prefix.join(from).to_string_lossy().replace('\\', "/");
-    let new_path = space_prefix.join(to).to_string_lossy().replace('\\', "/");
-    crate::storage::strategy::rebase_managed_import_routes(&repo_dir, &old_path, &new_path, subtree)
-}
-
 fn root_path_for_head(path: &str) -> &str {
     if path
         .rsplit_once('/')
@@ -384,20 +350,6 @@ fn entry_history_commit_name(space: &str, path: &str) -> String {
     }
 }
 
-pub(crate) fn entry_rename_op(space: &str, from: &str, to: &str) -> StructuralOp {
-    if entry_in_sensitive_collection(space, from) || entry_in_sensitive_collection(space, to) {
-        StructuralOp::Rename {
-            old: "collection entry".to_string(),
-            new: "collection entry".to_string(),
-        }
-    } else {
-        StructuralOp::Rename {
-            old: basename(from),
-            new: basename(to),
-        }
-    }
-}
-
 fn template_name_for_commit(space: &str, collection_path: &str, name: String) -> String {
     if collection_has_sensitive_columns(space, collection_path) {
         "collection template".to_string()
@@ -463,27 +415,6 @@ async fn ensure_backlinks_before_structural(state: &IndexState, project_path: Op
     }
 }
 
-fn same_parent(left: &str, right: &str) -> bool {
-    Path::new(left).parent().unwrap_or(Path::new(""))
-        == Path::new(right).parent().unwrap_or(Path::new(""))
-}
-
-fn normalize_rel_lossy(path: &Path) -> String {
-    path.to_string_lossy().replace('\\', "/")
-}
-
-fn moved_child_old_path(new_child: &str, old_root: &str, new_root: &str) -> String {
-    if new_child == new_root {
-        return old_root.to_string();
-    }
-    let prefix = format!("{}/", new_root.trim_end_matches('/'));
-    match new_child.strip_prefix(&prefix) {
-        Some(rest) if old_root.is_empty() => rest.to_string(),
-        Some(rest) => format!("{}/{}", old_root.trim_end_matches('/'), rest),
-        None => old_root.to_string(),
-    }
-}
-
 async fn rebase_project_source_after_move(
     index_state: &IndexState,
     index_updates: &IndexUpdateState,
@@ -521,169 +452,6 @@ async fn rebase_project_source_after_move(
     }
 }
 
-async fn rebase_project_source_tree_after_move(
-    index_state: &IndexState,
-    index_updates: &IndexUpdateState,
-    project_path: Option<&str>,
-    space: &str,
-    source_space_id: Option<&str>,
-    old_root: &str,
-    new_root: &str,
-    fallback_context: &str,
-) -> Vec<ModifiedLinkSource> {
-    let Some(proj) = project_path.filter(|p| !p.is_empty()) else {
-        return Vec::new();
-    };
-    let space_root = Path::new(space);
-    let policy = TreeIgnorePolicy::from_space_root(space_root);
-    let new_abs = space_root.join(new_root);
-    let files = match collect_markdown_paths(space_root, &new_abs, &policy) {
-        Ok(files) => files,
-        Err(e) => {
-            tracing::warn!("{fallback_context}: collect moved markdown sources failed: {e}");
-            return Vec::new();
-        }
-    };
-
-    let project = Path::new(proj);
-    let mut modified = Vec::new();
-    let mut deleted_paths = Vec::with_capacity(files.len());
-    let mut updated_paths = Vec::with_capacity(files.len());
-    let old_root_abs = space_root.join(old_root);
-    let new_root_abs = space_root.join(new_root);
-    for file in files {
-        let new_rel = normalize_rel_lossy(file.strip_prefix(space_root).unwrap_or(&file));
-        let old_rel = moved_child_old_path(&new_rel, old_root, new_root);
-        deleted_paths.push(old_rel.clone());
-        updated_paths.push(new_rel.clone());
-        if let Err(e) = index_state
-            .remove_file_backlinks(project, source_space_id, &old_rel)
-            .await
-        {
-            tracing::warn!("{fallback_context}: remove old source backlinks failed: {e}");
-        }
-        let old_abs = space_root.join(&old_rel);
-        let new_abs = space_root.join(&new_rel);
-        match fs::read_to_string(&new_abs) {
-            Ok(content) => {
-                let updated = crate::files::backlinks::rebase_source_links_between_moved_tree(
-                    &content,
-                    &old_abs,
-                    &new_abs,
-                    &old_root_abs,
-                    &new_root_abs,
-                );
-                if updated != content {
-                    if let Err(e) = fs::write(&new_abs, updated) {
-                        tracing::warn!(
-                            "{fallback_context}: write moved source rebase failed for {new_rel}: {e}"
-                        );
-                    } else {
-                        modified.push(ModifiedLinkSource {
-                            space_id: source_space_id.map(ToString::to_string),
-                            path: new_rel.clone(),
-                        });
-                    }
-                }
-            }
-            Err(e) => tracing::warn!(
-                "{fallback_context}: read moved source for rebase failed for {new_rel}: {e}"
-            ),
-        }
-        if let Err(e) = index_state
-            .update_file_backlinks(project, source_space_id, &new_rel)
-            .await
-        {
-            tracing::warn!("{fallback_context}: update moved source backlinks failed: {e}");
-        }
-    }
-    replace_index_entries_or_reindex(
-        index_state,
-        index_updates,
-        project_path,
-        space,
-        &deleted_paths,
-        &updated_paths,
-        fallback_context,
-    )
-    .await;
-    if let Err(e) = index::update::rebase_collection_schema_manifest(
-        index_state,
-        index_updates,
-        space_root,
-        old_root,
-        new_root,
-    )
-    .await
-    {
-        tracing::warn!("{fallback_context}: rebase collection schema manifest failed: {e}");
-    }
-    modified
-}
-
-fn rebase_legacy_source_after_move(
-    space: &str,
-    backlink_index: &BacklinkIndex,
-    old_path: &str,
-    new_path: &str,
-) -> Result<bool, AppError> {
-    let space_path = Path::new(space);
-    let abs = space_path.join(new_path);
-    if !abs.exists() {
-        return Ok(false);
-    }
-    let content = fs::read_to_string(&abs)?;
-    let updated = crate::files::backlinks::rebase_source_links(&content, old_path, new_path);
-    backlink_index.remove_file(old_path);
-    if updated == content {
-        let _ = backlink_index.update_file(space_path, new_path);
-        return Ok(false);
-    }
-    fs::write(&abs, updated)?;
-    let _ = backlink_index.update_file(space_path, new_path);
-    Ok(true)
-}
-
-fn rebase_legacy_source_tree_after_move(
-    space: &str,
-    backlink_index: &BacklinkIndex,
-    old_root: &str,
-    new_root: &str,
-) {
-    let space_root = Path::new(space);
-    let policy = TreeIgnorePolicy::from_space_root(space_root);
-    let Ok(files) = collect_markdown_paths(space_root, &space_root.join(new_root), &policy) else {
-        return;
-    };
-    let old_root_abs = space_root.join(old_root);
-    let new_root_abs = space_root.join(new_root);
-    for file in files {
-        let new_rel = normalize_rel_lossy(file.strip_prefix(space_root).unwrap_or(&file));
-        let old_rel = moved_child_old_path(&new_rel, old_root, new_root);
-        let old_abs = space_root.join(&old_rel);
-        let new_abs = space_root.join(&new_rel);
-        backlink_index.remove_file(&old_rel);
-        let Ok(content) = fs::read_to_string(&new_abs) else {
-            continue;
-        };
-        let updated = crate::files::backlinks::rebase_source_links_between_moved_tree(
-            &content,
-            &old_abs,
-            &new_abs,
-            &old_root_abs,
-            &new_root_abs,
-        );
-        if updated != content {
-            let _ = fs::write(&new_abs, updated);
-        }
-        let _ = backlink_index.update_file(space_root, &new_rel);
-    }
-}
-
-/// Resolve the runtime backlink index that owns `space`. Falls back to a
-/// `Root`-keyed index treating `space` as its own project — covers calls
-/// that arrive before the project's `open_project` cache populates (e.g.
-/// rapid-create flows in tests).
 pub(crate) async fn backlinks_for_space(state: &IndexState, space: &str) -> Arc<BacklinkIndex> {
     let key = state
         .key_for_space_dir(Path::new(space))
@@ -751,32 +519,9 @@ async fn require_entry_move_mutation_plan(
     from: &str,
     to: &str,
 ) -> Result<Vec<PathBuf>, AppError> {
-    let Some(project_path) = project_path.filter(|path| !path.is_empty()) else {
-        return require_planned_mutation_paths(
-            app,
-            space,
-            managed_attachment_policy_paths(space, None),
-        )
-        .await;
-    };
-    let mut paths =
-        properties::relation_move_mutation_paths_with_project(space, Some(project_path), from, to)?;
-    let target_space_id = space_id_for_dir(index_state, space).await;
-    let link_plan = if Path::new(space).join(from).is_dir() {
-        index_state
-            .plan_links_on_folder_rename_project(
-                Path::new(project_path),
-                target_space_id.as_deref(),
-                from,
-            )
-            .await?
-    } else {
-        index_state
-            .plan_links_on_rename_project(Path::new(project_path), target_space_id.as_deref(), from)
-            .await?
-    };
-    paths.extend_from_slice(link_plan.mutation_paths());
-    paths.extend(managed_attachment_policy_paths(space, Some(project_path)));
+    let paths =
+        crate::space::structural::move_mutation_paths(index_state, space, project_path, from, to)
+            .await?;
     require_planned_mutation_paths(app, space, paths).await
 }
 
@@ -802,26 +547,14 @@ pub(crate) async fn entry_backlink_mutation_paths(
     from: &str,
     folder_rename: bool,
 ) -> Result<Vec<PathBuf>, AppError> {
-    let Some(project_path) = project_path.filter(|path| !path.is_empty()) else {
-        return Ok(vec![PathBuf::from(space)]);
-    };
-    let target_space_id = space_id_for_dir(index_state, space).await;
-    let link_plan = if folder_rename {
-        index_state
-            .plan_links_on_folder_rename_project(
-                Path::new(project_path),
-                target_space_id.as_deref(),
-                from,
-            )
-            .await?
-    } else {
-        index_state
-            .plan_links_on_rename_project(Path::new(project_path), target_space_id.as_deref(), from)
-            .await?
-    };
-    let mut paths = link_plan.mutation_paths().to_vec();
-    paths.push(PathBuf::from(space));
-    Ok(paths)
+    crate::space::structural::backlink_mutation_paths(
+        index_state,
+        space,
+        project_path,
+        from,
+        folder_rename,
+    )
+    .await
 }
 
 async fn require_convert_to_collection_mutation_plan(

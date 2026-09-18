@@ -7,5 +7,6 @@ pub mod read;
 pub mod registry;
 pub mod scaffold;
 pub mod settings;
+pub mod structural;
 pub mod symlinks;
 pub mod types;

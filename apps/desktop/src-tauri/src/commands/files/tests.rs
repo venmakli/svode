@@ -150,7 +150,7 @@ fn rebase_legacy_source_after_move_updates_content_and_source_identity() {
     )
     .unwrap();
 
-    let changed = rebase_legacy_source_after_move(
+    let changed = crate::space::structural::rebase_legacy_source_after_move(
         tmp.path().to_str().unwrap(),
         &index,
         "Source.md",
@@ -195,7 +195,7 @@ fn rebase_legacy_source_tree_after_move_preserves_internal_moved_targets() {
     )
     .unwrap();
 
-    rebase_legacy_source_tree_after_move(
+    crate::space::structural::rebase_legacy_source_tree_after_move(
         tmp.path().to_str().unwrap(),
         &index,
         "Folder",
@@ -403,16 +403,16 @@ async fn targeted_duplicate_indexes_created_tree_only() {
         .unwrap();
     let pool = indexed_pool(&state, space).await;
 
-    let entry = entry::duplicate_entry(space, "Original.md").unwrap();
-    update_index_tree_or_reindex(
+    let entry = crate::space::structural::duplicate(
+        space.to_str().unwrap(),
+        "Original.md",
+        Some(space.to_str().unwrap()),
         &state,
         updates(),
-        Some(space.to_str().unwrap()),
-        space.to_str().unwrap(),
-        root_path_for_head(&entry.path),
-        "duplicate_entry",
+        None,
     )
-    .await;
+    .await
+    .unwrap();
 
     assert_eq!(entry.path, "Original (copy).md");
     assert_eq!(
@@ -458,7 +458,7 @@ async fn moved_collection_tree_replaces_descendant_index_paths() {
         space.join("Renamed collection"),
     )
     .unwrap();
-    rebase_project_source_tree_after_move(
+    crate::space::structural::rebase_project_source_tree_after_move(
         &state,
         updates(),
         Some(space.to_str().unwrap()),
@@ -1124,7 +1124,7 @@ async fn shared_rename_rejects_parent_change_and_preserves_sibling_position() {
     tree::write_order(space, &order).unwrap();
     let index_state = IndexState::new();
 
-    let invalid = rename_entry_shared(
+    let invalid = crate::space::structural::rename(
         space.to_str().unwrap(),
         "a.md",
         "target/a.md",
@@ -1137,7 +1137,7 @@ async fn shared_rename_rejects_parent_change_and_preserves_sibling_position() {
     assert!(invalid.is_err());
     assert!(space.join("a.md").is_file());
 
-    rename_entry_shared(
+    crate::space::structural::rename(
         space.to_str().unwrap(),
         "a.md",
         "renamed.md",
@@ -1152,6 +1152,39 @@ async fn shared_rename_rejects_parent_change_and_preserves_sibling_position() {
         tree::read_order(space).get(".").unwrap(),
         &vec!["renamed.md".to_string(), "b.md".to_string()]
     );
+}
+
+#[tokio::test]
+async fn shared_move_nest_and_unnest_use_the_structural_owner() {
+    let tmp = TempDir::new().unwrap();
+    let space = tmp.path().to_str().unwrap();
+    std::fs::create_dir(tmp.path().join("target")).unwrap();
+    std::fs::write(tmp.path().join("Page.md"), "---\ntitle: Page\n---\nbody").unwrap();
+    let state = IndexState::new();
+
+    let moved = crate::space::structural::move_entry(
+        space,
+        "Page.md",
+        "target",
+        None,
+        &state,
+        updates(),
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(moved, "target/Page.md");
+
+    let nested = crate::space::structural::nest(space, &moved, None, &state, updates(), None)
+        .await
+        .unwrap();
+    assert_eq!(nested, "target/Page/README.md");
+
+    let leaf = crate::space::structural::unnest(space, &nested, None, &state, updates(), None)
+        .await
+        .unwrap();
+    assert_eq!(leaf, "target/Page.md");
+    assert!(tmp.path().join(&leaf).is_file());
 }
 
 #[tokio::test]

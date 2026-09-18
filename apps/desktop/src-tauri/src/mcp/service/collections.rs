@@ -378,7 +378,7 @@ pub(super) async fn rename_content(
     let before = snapshot_structural_paths(Path::new(&space))?;
     let before_project = snapshot_structural_paths(Path::new(&context.project_path))?;
     let index_state = app.state::<IndexState>();
-    files_commands::rename_entry_shared(
+    crate::space::structural::rename(
         &space,
         &from,
         &to,
@@ -413,7 +413,7 @@ pub(super) async fn move_content(
     let before = snapshot_structural_paths(Path::new(&space))?;
     let before_project = snapshot_structural_paths(Path::new(&context.project_path))?;
     let index_state = app.state::<IndexState>();
-    let new_path = files_commands::move_entry_shared(
+    let new_path = crate::space::structural::move_entry(
         &space,
         &from,
         &to_parent,

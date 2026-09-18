@@ -178,7 +178,7 @@ where
     )?);
     if let Some((old, new_parent)) = parent_conversion.as_ref() {
         let root = Path::new(&request.space);
-        planned_paths.extend(crate::commands::files::collect_markdown_paths(
+        planned_paths.extend(crate::space::structural::collect_markdown_paths(
             root,
             root,
             &crate::files::tree_policy::TreeIgnorePolicy::from_space_root(root),
@@ -238,7 +238,7 @@ where
     let authorized = authorize(planned_paths.clone()).await?;
     let mut snapshot = SourceSnapshot::capture(planned_paths)?;
     let backlinks = if parent_conversion.is_some() {
-        let backlinks = crate::commands::files::backlinks_for_space(state, &request.space).await;
+        let backlinks = crate::space::structural::backlinks_for_space(state, &request.space).await;
         if !backlinks.is_built() {
             backlinks.build(Path::new(&request.space))?;
         }
@@ -371,7 +371,7 @@ where
         .collect();
     let projection_errors = match checkpoint("projection") {
         Ok(()) => {
-            crate::commands::files::update_index_paths_or_reindex(
+            crate::space::structural::update_index_paths_or_reindex(
                 state,
                 updates,
                 request.project.as_deref(),

@@ -208,7 +208,7 @@ pub(crate) async fn plan_managed_import(
     let binary_route =
         policy::evaluate_managed_binary_route(&scope.config, &requested_file_name, source_size)?;
     let mut affected_paths = if requires_conversion {
-        file_commands::entry_backlink_mutation_paths(
+        crate::space::structural::backlink_mutation_paths(
             index_state,
             &space_path.to_string_lossy(),
             Some(&project_path.to_string_lossy()),

@@ -270,7 +270,7 @@ fn apply_sources(request: PageWrite<'_>, plan: WritePlan) -> Result<PageWriteOut
                     }
                 }
                 checkpoint("relations")?;
-                crate::commands::files::rebase_managed_attachment_routes(
+                crate::space::structural::rebase_managed_attachment_routes(
                     request.space,
                     request.project,
                     &old_root

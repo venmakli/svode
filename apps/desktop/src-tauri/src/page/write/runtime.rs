@@ -1,11 +1,11 @@
 use super::*;
-use crate::commands::files::{
-    backlinks_for_space, entry_rename_op, grouped_abs_paths_by_space,
-    managed_attachment_policy_paths, maybe_autocommit_structural_paths, space_id_for_dir,
-};
 use crate::files::{BacklinkIndex, WriteNonceRegistry};
 use crate::git::autocommit::AutocommitService;
 use crate::index::{self, IndexState, update::IndexUpdateState};
+use crate::space::structural::{
+    backlinks_for_space, entry_rename_op, grouped_abs_paths_by_space,
+    managed_attachment_policy_paths, maybe_autocommit_structural_paths, space_id_for_dir,
+};
 
 pub(crate) async fn write<F, Fut>(
     request: PageWrite<'_>,
@@ -160,7 +160,7 @@ async fn prepare(
         ));
         if let Some(folder) = &planned.folder_rename_old {
             let root = Path::new(request.space);
-            moved_sources = crate::commands::files::collect_markdown_paths(
+            moved_sources = crate::space::structural::collect_markdown_paths(
                 root,
                 &root.join(folder),
                 &crate::files::tree_policy::TreeIgnorePolicy::from_space_root(root),

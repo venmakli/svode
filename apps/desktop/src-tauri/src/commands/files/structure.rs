@@ -22,101 +22,17 @@ pub async fn nest_entry(
     )
     .await?;
     scope_authorized_mutation_paths(authorized_paths, async {
-        nest_entry_shared(
+        crate::space::structural::nest(
             &space,
             &path,
             project_path.as_deref(),
             &index_state,
             &index_updates,
-            &autocommit,
+            Some(&autocommit),
         )
         .await
     })
     .await
-}
-
-async fn nest_entry_shared(
-    space: &str,
-    path: &str,
-    project_path: Option<&str>,
-    index_state: &IndexState,
-    index_updates: &IndexUpdateState,
-    autocommit: &AutocommitService,
-) -> Result<String, AppError> {
-    let backlink_index = backlinks_for_space(index_state, space).await;
-    ensure_backlinks_before_structural(index_state, project_path).await;
-    revalidate_entry_backlink_mutation_plan(index_state, space, project_path, path, false).await?;
-    let new_path = entry::nest_entry(
-        Path::new(&space),
-        path,
-        if project_path.filter(|p| !p.is_empty()).is_some() {
-            None
-        } else {
-            Some(&backlink_index)
-        },
-    )?;
-    if let Some(proj) = project_path.filter(|p| !p.is_empty()) {
-        let project = Path::new(proj);
-        let target_space_id = space_id_for_dir(index_state, space).await;
-        let mut modified_sources = index_state
-            .update_links_on_rename_project(
-                index_updates,
-                project,
-                target_space_id.as_deref(),
-                path,
-                &new_path,
-                None,
-            )
-            .await
-            .unwrap_or_else(|e| {
-                tracing::warn!("cross-space nest backlink rewrite failed: {e}");
-                Vec::new()
-            });
-        modified_sources.extend(
-            rebase_project_source_after_move(
-                index_state,
-                index_updates,
-                project_path,
-                space,
-                target_space_id.as_deref(),
-                path,
-                &new_path,
-                "nest_entry",
-            )
-            .await,
-        );
-        let modified_sources = crate::files::backlinks::dedupe_modified_sources(modified_sources);
-        schedule_modified_source_spaces(
-            index_state,
-            autocommit,
-            project_path,
-            &modified_sources,
-            StructuralOp::Move(entry_commit_name(space, &new_path)),
-        )
-        .await;
-        let _ = index_state
-            .remove_file_backlinks(project, target_space_id.as_deref(), path)
-            .await;
-        let _ = index_state
-            .update_file_backlinks(project, target_space_id.as_deref(), &new_path)
-            .await;
-    } else {
-        let _ = rebase_legacy_source_after_move(space, &backlink_index, path, &new_path);
-    }
-    maybe_autocommit_structural_paths(
-        autocommit,
-        project_path,
-        space,
-        StructuralOp::Move(entry_commit_name(space, &new_path)),
-        entry_paths_with_order(
-            space,
-            [
-                abs_entry_path(space, path),
-                abs_entry_path(space, &new_path),
-            ],
-        ),
-    );
-    Ok(new_path)
 }
 
 #[tauri::command]
@@ -140,7 +56,7 @@ pub async fn unnest_entry(
     )
     .await?;
     scope_authorized_mutation_paths(authorized_paths, async {
-        unnest_entry_shared(
+        crate::space::structural::unnest(
             &space,
             &path,
             project_path.as_deref(),
@@ -151,94 +67,6 @@ pub async fn unnest_entry(
         .await
     })
     .await
-}
-
-pub async fn unnest_entry_shared(
-    space: &str,
-    path: &str,
-    project_path: Option<&str>,
-    index_state: &IndexState,
-    index_updates: &IndexUpdateState,
-    autocommit: Option<&AutocommitService>,
-) -> Result<String, AppError> {
-    let backlink_index = backlinks_for_space(index_state, space).await;
-    ensure_backlinks_before_structural(index_state, project_path).await;
-    revalidate_entry_backlink_mutation_plan(index_state, space, project_path, path, false).await?;
-    let new_path = entry::unnest_entry(
-        Path::new(space),
-        path,
-        if project_path.filter(|p| !p.is_empty()).is_some() {
-            None
-        } else {
-            Some(&backlink_index)
-        },
-    )?;
-    if let Some(proj) = project_path.filter(|p| !p.is_empty()) {
-        let project = Path::new(proj);
-        let target_space_id = space_id_for_dir(index_state, space).await;
-        let mut modified_sources = index_state
-            .update_links_on_rename_project(
-                index_updates,
-                project,
-                target_space_id.as_deref(),
-                path,
-                &new_path,
-                None,
-            )
-            .await
-            .unwrap_or_else(|e| {
-                tracing::warn!("cross-space unnest backlink rewrite failed: {e}");
-                Vec::new()
-            });
-        modified_sources.extend(
-            rebase_project_source_after_move(
-                index_state,
-                index_updates,
-                project_path,
-                space,
-                target_space_id.as_deref(),
-                path,
-                &new_path,
-                "unnest_entry",
-            )
-            .await,
-        );
-        let modified_sources = crate::files::backlinks::dedupe_modified_sources(modified_sources);
-        if let Some(autocommit) = autocommit {
-            schedule_modified_source_spaces(
-                index_state,
-                autocommit,
-                project_path,
-                &modified_sources,
-                StructuralOp::Move(entry_commit_name(space, &new_path)),
-            )
-            .await;
-        }
-        let _ = index_state
-            .remove_file_backlinks(project, target_space_id.as_deref(), path)
-            .await;
-        let _ = index_state
-            .update_file_backlinks(project, target_space_id.as_deref(), &new_path)
-            .await;
-    } else {
-        let _ = rebase_legacy_source_after_move(space, &backlink_index, path, &new_path);
-    }
-    if let Some(autocommit) = autocommit {
-        maybe_autocommit_structural_paths(
-            autocommit,
-            project_path,
-            space,
-            StructuralOp::Move(entry_commit_name(space, &new_path)),
-            entry_paths_with_order(
-                space,
-                [
-                    abs_entry_path(space, path),
-                    abs_entry_path(space, &new_path),
-                ],
-            ),
-        );
-    }
-    Ok(new_path)
 }
 
 #[tauri::command]
@@ -347,7 +175,12 @@ pub async fn convert_entry_to_folder_shared(
             .update_file_backlinks(project, target_space_id.as_deref(), &entry.path)
             .await;
     } else {
-        let _ = rebase_legacy_source_after_move(space, &backlink_index, &old_leaf, &entry.path);
+        let _ = crate::space::structural::rebase_legacy_source_after_move(
+            space,
+            &backlink_index,
+            &old_leaf,
+            &entry.path,
+        );
     }
     replace_index_entries_or_reindex(
         index_state,
@@ -636,7 +469,12 @@ pub async fn convert_entry_to_leaf_shared(
             .update_file_backlinks(project, target_space_id.as_deref(), &entry.path)
             .await;
     } else {
-        let _ = rebase_legacy_source_after_move(space, &backlink_index, &old_readme, &entry.path);
+        let _ = crate::space::structural::rebase_legacy_source_after_move(
+            space,
+            &backlink_index,
+            &old_readme,
+            &entry.path,
+        );
     }
     replace_index_entries_or_reindex(
         index_state,
@@ -743,53 +581,13 @@ pub async fn duplicate_entry(
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<Entry, AppError> {
     require_repository_mutation(&app, Path::new(&space)).await?;
-    let old_name = entry_history_commit_name(&space, &file_path);
-    let entry = entry::duplicate_entry(Path::new(&space), &file_path)?;
-    update_index_tree_or_reindex(
+    crate::space::structural::duplicate(
+        &space,
+        &file_path,
+        project_path.as_deref(),
         &index_state,
         &index_updates,
-        project_path.as_deref(),
-        &space,
-        root_path_for_head(&entry.path),
-        "duplicate_entry",
+        Some(&autocommit),
     )
-    .await;
-    let unique_id_paths =
-        properties::unique_id_mutation_paths_for_entry_tree(Path::new(&space), &entry.path)?;
-    if unique_id_paths.is_empty() {
-        maybe_autocommit_structural_paths(
-            &autocommit,
-            project_path.as_deref(),
-            &space,
-            StructuralOp::Duplicate {
-                old: old_name,
-                new: entry_history_commit_name(&space, &entry.path),
-            },
-            entry_paths_with_order(
-                &space,
-                [abs_entry_path(&space, root_path_for_head(&entry.path))],
-            ),
-        );
-    } else {
-        let mut paths = entry_paths_with_order(
-            &space,
-            [abs_entry_path(&space, root_path_for_head(&entry.path))],
-        );
-        paths.extend(unique_id_paths);
-        maybe_autocommit_schema(
-            &autocommit,
-            project_path.as_deref(),
-            &space,
-            paths,
-            if entry_in_sensitive_collection(&space, &file_path)
-                || entry_in_sensitive_collection(&space, &entry.path)
-            {
-                "Duplicate collection entry".to_string()
-            } else {
-                format!("Duplicate {old_name} → {}", entry_history_name(&entry.path))
-            },
-        )
-        .await;
-    }
-    Ok(entry)
+    .await
 }
