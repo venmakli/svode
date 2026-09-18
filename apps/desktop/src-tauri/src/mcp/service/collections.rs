@@ -5,66 +5,41 @@ pub(super) async fn create_collection(
     args: CreateCollectionArgs,
 ) -> Result<ToolCallResult, McpBusinessError> {
     let _policy = MCP_MUTATION_POLICY;
-    let (_, space) = resolve_space(app, args.space_id.clone()).await?;
-    let collection_path = validate_public_rel_path(&args.path, false)?;
-    if Path::new(&collection_path).extension().is_some() {
-        return Err(McpBusinessError::new(
-            "INVALID_PATH",
-            "collection path must be a directory path without a file extension",
-        ));
-    }
-    let collection_abs = ensure_inside(Path::new(&space), &collection_path)?;
-    if collection_abs.join("schema.yaml").exists() {
-        return Err(McpBusinessError::new(
-            "COLLECTION_ALREADY_EXISTS",
-            format!("Collection already exists: {collection_path}"),
-        ));
-    }
-    let readme_path = collection_readme_path(&collection_path);
-    let readme_abs = ensure_inside(Path::new(&space), &readme_path)?;
-    if readme_abs.exists() {
-        return Err(McpBusinessError::new(
-            "FILE_ALREADY_EXISTS",
-            format!("README already exists; use convert_to_collection instead: {readme_path}"),
-        ));
-    }
-
+    let (context, space) = resolve_space(app, args.space_id.clone()).await?;
+    let parent_path = validate_public_rel_path(&args.parent_path, true)?;
+    ensure_inside(Path::new(&space), &parent_path)?;
     let schema = schema_for_create_collection(&args);
-    properties::write_collection_schema(&space, &collection_path, &schema)?;
-    let mut meta = entry::EntryMeta::new_persisted(if args.title.trim().is_empty() {
-        fallback_collection_title(&collection_path)
-    } else {
-        args.title
-    });
-    meta.icon = args.icon;
-    if meta.icon.is_some() {
-        meta.mark_icon_present();
-    }
-    meta.description = args
-        .description
-        .and_then(|value| (!value.trim().is_empty()).then_some(value));
-    if meta.description.is_some() {
-        meta.mark_description_present();
-    }
-    meta.cover = args.cover;
-    if meta.cover.is_some() {
-        meta.mark_cover_present();
-    }
-    if let Some(parent) = readme_abs.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    fs::write(
-        &readme_abs,
-        crate::files::frontmatter::serialize(&meta, args.body.as_deref().unwrap_or("")),
-    )?;
-    let collection = entry::read(&space, &readme_path)?;
+    let outcome = crate::space::structural::create_collection(
+        crate::space::structural::CollectionCreate {
+            space: space.clone(),
+            parent_path: (!parent_path.is_empty()).then_some(parent_path),
+            title: args.title,
+            body: args.body,
+            icon: args.icon,
+            description: args.description,
+            cover: args.cover,
+            schema,
+            allocate_unique_title: false,
+            project: Some(context.project_path),
+        },
+        &app.state::<IndexState>(),
+        &app.state::<IndexUpdateState>(),
+        None,
+        |paths| async move {
+            crate::git::access::ensure_mutation_paths_were_authorized(&paths)?;
+            Ok(paths)
+        },
+    )
+    .await?;
+    let changed_paths =
+        crate::page::metadata::relative_changed_paths(&space, &outcome.changed_paths);
     Ok(ToolCallResult::ok(
-        format!("Created collection {collection_path}."),
+        format!("Created collection {}.", outcome.collection_path),
         json!({
-            "collectionPath": collection_path,
-            "collection": collection,
-            "schema": schema,
-            "changedPaths": [readme_path, schema_path_rel(&collection_path)]
+            "collectionPath": outcome.collection_path,
+            "collection": outcome.collection,
+            "schema": outcome.schema,
+            "changedPaths": changed_paths
         }),
     ))
 }
@@ -80,7 +55,7 @@ pub(super) async fn convert_to_collection(
     let before = snapshot_structural_paths(Path::new(&space))?;
     let before_project = snapshot_structural_paths(Path::new(&context.project_path))?;
     let index_state = app.state::<IndexState>();
-    let conversion = files_commands::convert_to_collection_shared(
+    let conversion = crate::space::structural::convert_to_collection(
         &space,
         &path,
         Some(context.project_path.as_str()),
@@ -345,7 +320,7 @@ async fn delete_markdown_content(
     let _policy = MCP_MUTATION_POLICY;
     let (context, space) = resolve_space(app, space_id).await?;
     let index_state = app.state::<IndexState>();
-    let deleted = files_commands::delete_entry_shared(
+    let deleted = crate::space::structural::delete(
         &space,
         &path,
         Some(context.project_path.as_str()),
@@ -512,7 +487,7 @@ pub(super) async fn convert_page_to_leaf(
     let before = snapshot_structural_paths(Path::new(&space))?;
     let before_project = snapshot_structural_paths(Path::new(&context.project_path))?;
     let index_state = app.state::<IndexState>();
-    let page = files_commands::convert_entry_to_leaf_shared(
+    let page = crate::space::structural::convert_to_leaf(
         &space,
         &path,
         Some(context.project_path.as_str()),
@@ -610,7 +585,7 @@ fn structural_operation_result(
 }
 
 fn collection_conversion_result(
-    conversion: files_commands::ConvertToCollectionCommandResult,
+    conversion: crate::space::structural::ConvertToCollectionOutcome,
     changed_paths: Vec<String>,
     affected_project_paths: Vec<String>,
 ) -> ToolCallResult {

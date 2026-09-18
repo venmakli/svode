@@ -13,7 +13,6 @@ use super::protocol::{IpcContextOverride, ToolCallResult};
 use crate::artifact::identity::{
     ContentOwnerKind, PageRole, SemanticIdentity, resolve_markdown_identity_for_path,
 };
-use crate::commands::files as files_commands;
 use crate::files::entry;
 use crate::git::access::repository_access_snapshot;
 use crate::git::{self, GitState};
@@ -273,7 +272,7 @@ struct ImportAssetArgs {
 struct CreateCollectionArgs {
     #[serde(default)]
     space_id: Option<String>,
-    path: String,
+    parent_path: String,
     title: String,
     #[serde(default)]
     icon: Option<String>,
@@ -494,14 +493,6 @@ fn rel_paths_from_space(space: &str, paths: Vec<PathBuf>) -> Vec<String> {
         .collect()
 }
 
-fn schema_path_rel(collection_path: &str) -> String {
-    if collection_path.is_empty() {
-        "schema.yaml".to_string()
-    } else {
-        format!("{collection_path}/schema.yaml")
-    }
-}
-
 fn is_mcp_root_space_id(space_id: &str) -> bool {
     space_id == MCP_ROOT_SPACE_ID
 }
@@ -590,14 +581,6 @@ fn mcp_space_capabilities(kind: &str) -> Value {
         "commitChanges": false,
         "autocommit": false
     })
-}
-
-fn fallback_collection_title(path: &str) -> String {
-    Path::new(path)
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or("Collection")
-        .replace(['-', '_'], " ")
 }
 
 fn schema_for_create_collection(args: &CreateCollectionArgs) -> CollectionSchema {
@@ -803,7 +786,7 @@ mod tests {
     #[test]
     fn create_collection_rejects_removed_document_label_argument() {
         let args = json!({
-            "path": "tasks",
+            "parentPath": "",
             "title": "Tasks",
             "documentLabel": "Documents"
         });

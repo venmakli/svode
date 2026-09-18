@@ -772,6 +772,7 @@ fn write_schema_with_project(
     Ok(())
 }
 
+#[cfg(test)]
 pub fn write_collection_schema(
     space: &str,
     collection_path: &str,

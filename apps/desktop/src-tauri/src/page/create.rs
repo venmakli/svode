@@ -19,6 +19,7 @@ pub(crate) struct PageCreate {
     pub allocate_unique_title: bool,
     pub as_readme: bool,
     pub project: Option<String>,
+    pub publish_projection: bool,
 }
 
 pub(crate) struct PageCreateOutcome {
@@ -369,19 +370,23 @@ where
         })
         .cloned()
         .collect();
-    let projection_errors = match checkpoint("projection") {
-        Ok(()) => {
-            crate::space::structural::update_index_paths_or_reindex(
-                state,
-                updates,
-                request.project.as_deref(),
-                &request.space,
-                markdown,
-                "create_page",
-            )
-            .await
+    let projection_errors = if request.publish_projection {
+        match checkpoint("projection") {
+            Ok(()) => {
+                crate::space::structural::update_index_paths_or_reindex(
+                    state,
+                    updates,
+                    request.project.as_deref(),
+                    &request.space,
+                    markdown,
+                    "create_page",
+                )
+                .await
+            }
+            Err(error) => vec![error.to_string()],
         }
-        Err(error) => vec![error.to_string()],
+    } else {
+        Vec::new()
     };
     if !projection_errors.is_empty() {
         page.warnings.push(EntryWarning {
@@ -485,6 +490,7 @@ mod tests {
             allocate_unique_title: false,
             as_readme: false,
             project: None,
+            publish_projection: true,
         }
     }
 

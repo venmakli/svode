@@ -177,6 +177,7 @@ pub fn run() {
             commands::files::list_tree_children,
             commands::files::get_entry_detail_state,
             commands::files::create_entry,
+            commands::files::create_collection,
             commands::files::create_folder,
             commands::files::read_entry,
             commands::files::get_entry_schema,

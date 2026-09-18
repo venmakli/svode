@@ -222,6 +222,18 @@ async fn authorize_mutating_tool(
     let mut paths = vec![PathBuf::from(&space)];
 
     match name {
+        "create_collection" => {
+            let decoded: CreateCollectionArgs = decode(args.clone())?;
+            let parent_path = validate_public_rel_path(&decoded.parent_path, true)?;
+            paths.extend(crate::space::structural::collection_create_schema_paths(
+                &space,
+                (!parent_path.is_empty()).then_some(parent_path.as_str()),
+                &decoded.title,
+                schema_for_create_collection(&decoded),
+                false,
+                Some(&context.project_path),
+            )?);
+        }
         "import_asset" => {
             let decoded: ImportAssetArgs = decode(args.clone())?;
             let index_state = app.state::<IndexState>();

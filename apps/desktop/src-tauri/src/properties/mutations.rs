@@ -30,7 +30,10 @@ impl<T> PreparedCollectionMutation<T> {
 
     pub fn apply(self) -> Result<CollectionMutationOutcome<T>, AppError> {
         let snapshot = MutationSnapshot::capture(&self.paths)?;
-        let value = (self.apply)()?;
+        let value = match (self.apply)() {
+            Ok(value) => value,
+            Err(error) => return Err(snapshot.rollback(error)),
+        };
         Ok(CollectionMutationOutcome {
             value,
             changed_paths: snapshot.changed_paths()?,
@@ -68,6 +71,83 @@ impl MutationSnapshot {
         }
         Ok(changed)
     }
+
+    fn rollback(&self, cause: AppError) -> AppError {
+        let mut failed = Vec::new();
+        for (path, original) in self.0.iter().rev() {
+            let restored = match original {
+                Some(bytes) => {
+                    if let Some(parent) = path.parent()
+                        && let Err(error) = fs::create_dir_all(parent)
+                    {
+                        failed.push(format!("{}: {error}", parent.display()));
+                        continue;
+                    }
+                    fs::write(path, bytes)
+                }
+                None => match fs::remove_file(path) {
+                    Ok(()) => Ok(()),
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+                    Err(error) => Err(error),
+                },
+            };
+            if let Err(error) = restored {
+                failed.push(format!("{}: {error}", path.display()));
+            }
+        }
+        if failed.is_empty() {
+            cause
+        } else {
+            AppError::PageWriteRecovery {
+                cause: cause.to_string(),
+                paths: failed,
+            }
+        }
+    }
+}
+
+pub fn prepare_initial_collection_schema(
+    space: &str,
+    collection_path: &str,
+    mut schema: CollectionSchema,
+    project_path: Option<&str>,
+) -> Result<PreparedCollectionMutation<CollectionSchema>, AppError> {
+    normalize_schema(&mut schema);
+    validate_schema(&schema)?;
+    validate_schema_relations_in_space(space, project_path, collection_path, &schema)?;
+    let mut paths = schema_mutation_paths(space, collection_path, false)?;
+    for column in &schema.columns {
+        paths.extend(schema_column_mutation_paths_with_project(
+            space,
+            collection_path,
+            column,
+            false,
+            project_path,
+        )?);
+    }
+    let space = space.to_string();
+    let collection_path = collection_path.to_string();
+    let project_path = project_path.map(str::to_string);
+    Ok(PreparedCollectionMutation::new(paths, move || {
+        let columns = schema.columns.clone();
+        let views = schema.views.clone();
+        let mut seed = default_collection_schema();
+        seed.system_fields = schema.system_fields.clone();
+        seed.templates = schema.templates.clone();
+        write_schema_with_project(&space, &collection_path, &seed, project_path.as_deref())?;
+        for column in columns {
+            add_schema_column_with_project(
+                &space,
+                &collection_path,
+                column,
+                project_path.as_deref(),
+            )?;
+        }
+        let mut result = read_schema_or_default(&space, &collection_path)?;
+        result.views = views;
+        write_schema_with_project(&space, &collection_path, &result, project_path.as_deref())?;
+        read_schema_or_default(&space, &collection_path)
+    }))
 }
 
 pub fn prepare_add_schema_column(

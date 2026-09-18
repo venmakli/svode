@@ -213,8 +213,8 @@ pub fn definitions() -> Vec<ToolDefinition> {
                 &[
                     space_id(),
                     path_req(
-                        "path",
-                        "Repo-relative directory path for the collection. Do not include a markdown extension and do not create a wrapper folder for a single collection.",
+                        "parentPath",
+                        "Repo-relative parent directory or Page path. Use an empty string for the Space root; a leaf parent Page is materialized in the same action.",
                     ),
                     str_req("title"),
                     str_opt("icon"),
@@ -224,7 +224,7 @@ pub fn definitions() -> Vec<ToolDefinition> {
                     columns_opt("columns"),
                     views_opt("views"),
                 ],
-                &["path", "title"],
+                &["parentPath", "title"],
             ),
             write_ann(false, Some(false)),
             None,
@@ -1939,6 +1939,10 @@ mod tests {
         assert_eq!(
             definition.input_schema["additionalProperties"],
             json!(false)
+        );
+        assert_eq!(
+            definition.input_schema["required"],
+            json!(["parentPath", "title"])
         );
         let delete_definition = definitions
             .iter()

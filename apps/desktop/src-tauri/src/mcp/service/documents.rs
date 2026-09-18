@@ -109,6 +109,7 @@ pub(super) async fn create_page(
             allocate_unique_title: false,
             as_readme: false,
             project: Some(context.project_path.clone()),
+            publish_projection: true,
         },
         &app.state::<IndexState>(),
         &app.state::<IndexUpdateState>(),

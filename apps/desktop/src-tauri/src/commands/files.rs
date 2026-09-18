@@ -9,14 +9,13 @@ use tauri::{AppHandle, Manager, State};
 
 use crate::error::AppError;
 use crate::files::{
-    BacklinkIndex, BacklinkInfo, Entry, FileWatcher, LinkValidation, ModifiedLinkSource, TreeNode,
-    WriteNonceRegistry, WriteResult, entry, link_fix, templates, tree,
+    BacklinkIndex, BacklinkInfo, Entry, FileWatcher, LinkValidation, TreeNode, WriteNonceRegistry,
+    WriteResult, entry, link_fix, templates, tree,
     tree_policy::{TreeIgnorePolicy, TreePathKind},
 };
 use crate::files::{TemplateInfo, TemplateKind};
 use crate::git::access::{
-    ensure_mutation_paths_were_authorized, require_repository_mutation,
-    require_repository_mutation_paths, scope_authorized_mutation_paths,
+    require_repository_mutation, require_repository_mutation_paths, scope_authorized_mutation_paths,
 };
 use crate::git::autocommit::{AutocommitService, StructuralOp};
 use crate::git::{GitState, require_cli};
@@ -108,93 +107,12 @@ pub struct ChangeSchemaTypeResult {
     pub warnings: Vec<SchemaMutationWarning>,
 }
 
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DeleteEntryCommandResult {
-    pub deleted_root: String,
-    pub deleted_paths: Vec<String>,
-    pub cascade_touched: Vec<String>,
-    pub changed_paths: Vec<String>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ConvertToCollectionCommandResult {
-    pub old_path: String,
-    pub collection_path: String,
-    pub readme_path: String,
-    pub schema_path: String,
-    pub entry: Entry,
-}
+pub type ConvertToCollectionCommandResult = crate::space::structural::ConvertToCollectionOutcome;
 
 fn entry_paths_with_order(space: &str, paths: impl IntoIterator<Item = PathBuf>) -> Vec<PathBuf> {
     let mut out = vec![order_path(space)];
     out.extend(paths);
     out
-}
-
-fn rel_changed_path(space: &str, path: &Path) -> String {
-    path.strip_prefix(space)
-        .unwrap_or(path)
-        .to_string_lossy()
-        .replace('\\', "/")
-}
-
-pub(crate) fn grouped_abs_paths_by_space(
-    project_path: Option<&str>,
-    fallback_space: &str,
-    paths: &[PathBuf],
-) -> HashMap<PathBuf, Vec<PathBuf>> {
-    let mut spaces = vec![PathBuf::from(fallback_space)];
-    if let Some(project) = project_path.filter(|path| !path.is_empty()) {
-        let project_root = PathBuf::from(project);
-        if !spaces.iter().any(|space| same_path(space, &project_root)) {
-            spaces.push(project_root.clone());
-        }
-        match config::read_space_config(&project_root) {
-            Ok(config) => {
-                for space_ref in config.spaces.as_deref().unwrap_or(&[]) {
-                    let child = project_root.join(&space_ref.path);
-                    if !spaces.iter().any(|space| same_path(space, &child)) {
-                        spaces.push(child);
-                    }
-                }
-            }
-            Err(error) => {
-                tracing::warn!("could not read project config for changed paths: {error}")
-            }
-        }
-    }
-    spaces.sort_by_key(|space| std::cmp::Reverse(space.as_os_str().len()));
-
-    let mut grouped: HashMap<PathBuf, Vec<PathBuf>> = HashMap::new();
-    for path in paths {
-        let owner = spaces
-            .iter()
-            .find(|space| path.starts_with(space))
-            .cloned()
-            .unwrap_or_else(|| PathBuf::from(fallback_space));
-        grouped.entry(owner).or_default().push(path.clone());
-    }
-    grouped
-}
-
-fn same_path(left: &Path, right: &Path) -> bool {
-    let normalize = |path: &Path| {
-        path.canonicalize()
-            .unwrap_or_else(|_| path.to_path_buf())
-            .to_string_lossy()
-            .replace('\\', "/")
-            .trim_end_matches('/')
-            .to_string()
-    };
-    normalize(left) == normalize(right)
-}
-
-fn push_unique_path(paths: &mut Vec<String>, path: String) {
-    if !paths.iter().any(|existing| existing == &path) {
-        paths.push(path);
-    }
 }
 
 pub(crate) fn collect_markdown_paths(
@@ -244,21 +162,6 @@ pub(crate) fn collect_markdown_paths(
     }
 
     Ok(paths)
-}
-
-fn schema_path(space: &str, collection_path: &str) -> PathBuf {
-    if collection_path.is_empty() || collection_path == "." {
-        return Path::new(space).join("schema.yaml");
-    }
-    Path::new(space).join(collection_path).join("schema.yaml")
-}
-
-fn collection_schema_path_rel(collection_path: &str) -> String {
-    if collection_path.is_empty() || collection_path == "." {
-        "schema.yaml".to_string()
-    } else {
-        format!("{collection_path}/schema.yaml")
-    }
 }
 
 fn entry_history_name(path: &str) -> String {
@@ -342,14 +245,6 @@ fn entry_commit_name(space: &str, path: &str) -> String {
     }
 }
 
-fn entry_history_commit_name(space: &str, path: &str) -> String {
-    if entry_in_sensitive_collection(space, path) {
-        "collection entry".to_string()
-    } else {
-        entry_history_name(path)
-    }
-}
-
 fn template_name_for_commit(space: &str, collection_path: &str, name: String) -> String {
     if collection_has_sensitive_columns(space, collection_path) {
         "collection template".to_string()
@@ -376,80 +271,6 @@ pub(crate) async fn space_id_for_dir(state: &IndexState, space: &str) -> Option<
         .key_for_space_dir(Path::new(space))
         .await
         .and_then(|key| IndexState::space_id_for_key(&key))
-}
-
-async fn schedule_modified_source_spaces(
-    state: &IndexState,
-    autocommit: &AutocommitService,
-    project_path: Option<&str>,
-    modified: &[ModifiedLinkSource],
-    op: StructuralOp,
-) {
-    let Some(proj) = project_path.filter(|p| !p.is_empty()) else {
-        return;
-    };
-    let project = Path::new(proj);
-    let mut by_space: HashMap<PathBuf, Vec<PathBuf>> = HashMap::new();
-    for item in modified {
-        match state.space_path_of(project, item.space_id.as_deref()).await {
-            Ok(space_path) => {
-                by_space
-                    .entry(space_path.clone())
-                    .or_default()
-                    .push(space_path.join(&item.path));
-            }
-            Err(e) => tracing::warn!("schedule modified backlink source failed: {e}"),
-        }
-    }
-    for (space_path, paths) in by_space {
-        autocommit.schedule_structural_paths(project.to_path_buf(), space_path, op.clone(), paths);
-    }
-}
-
-async fn ensure_backlinks_before_structural(state: &IndexState, project_path: Option<&str>) {
-    let Some(proj) = project_path.filter(|p| !p.is_empty()) else {
-        return;
-    };
-    if let Err(e) = state.ensure_project_backlinks_built(Path::new(proj)).await {
-        tracing::warn!("pre-structural backlink rebuild failed: {e}");
-    }
-}
-
-async fn rebase_project_source_after_move(
-    index_state: &IndexState,
-    index_updates: &IndexUpdateState,
-    project_path: Option<&str>,
-    space: &str,
-    source_space_id: Option<&str>,
-    old_path: &str,
-    new_path: &str,
-    fallback_context: &str,
-) -> Vec<ModifiedLinkSource> {
-    let Some(proj) = project_path.filter(|p| !p.is_empty()) else {
-        return Vec::new();
-    };
-    match index_state
-        .rebase_source_links_project(Path::new(proj), source_space_id, old_path, new_path)
-        .await
-    {
-        Ok(Some(item)) => {
-            update_index_entry_or_reindex(
-                index_state,
-                index_updates,
-                project_path,
-                space,
-                new_path,
-                fallback_context,
-            )
-            .await;
-            vec![item]
-        }
-        Ok(None) => Vec::new(),
-        Err(e) => {
-            tracing::warn!("{fallback_context}: source link rebase failed for {new_path}: {e}");
-            Vec::new()
-        }
-    }
 }
 
 pub(crate) async fn backlinks_for_space(state: &IndexState, space: &str) -> Arc<BacklinkIndex> {
@@ -579,33 +400,6 @@ async fn require_convert_to_collection_mutation_plan(
     }
 }
 
-async fn revalidate_entry_backlink_mutation_plan(
-    index_state: &IndexState,
-    space: &str,
-    project_path: Option<&str>,
-    from: &str,
-    folder_rename: bool,
-) -> Result<(), AppError> {
-    let Some(project_path) = project_path.filter(|path| !path.is_empty()) else {
-        return Ok(());
-    };
-    let target_space_id = space_id_for_dir(index_state, space).await;
-    let plan = if folder_rename {
-        index_state
-            .plan_links_on_folder_rename_project(
-                Path::new(project_path),
-                target_space_id.as_deref(),
-                from,
-            )
-            .await?
-    } else {
-        index_state
-            .plan_links_on_rename_project(Path::new(project_path), target_space_id.as_deref(), from)
-            .await?
-    };
-    ensure_mutation_paths_were_authorized(plan.mutation_paths())
-}
-
 fn nested_entry_path(path: &str) -> Result<String, AppError> {
     let path = normalize_repo_relative(path, RootMode::Reject)?;
     if Path::new(&path)
@@ -642,20 +436,6 @@ fn leaf_entry_path(path: &str) -> Result<String, AppError> {
     } else {
         format!("{}/{folder_name}.md", parent.to_string_lossy())
     })
-}
-
-async fn require_entry_delete_mutation_plan(
-    app: &AppHandle,
-    space: &str,
-    project_path: Option<&str>,
-    deleted_paths: &[String],
-) -> Result<Vec<PathBuf>, AppError> {
-    let paths = properties::cascade_clean_deleted_entries_mutation_paths_with_project(
-        space,
-        project_path.filter(|path| !path.is_empty()),
-        deleted_paths,
-    )?;
-    require_planned_mutation_paths(app, space, paths).await
 }
 
 async fn reindex_space_dir(
@@ -781,62 +561,6 @@ async fn update_index_tree_or_reindex(
         fallback_context,
     )
     .await;
-}
-
-async fn replace_index_entries_or_reindex(
-    index_state: &IndexState,
-    index_updates: &IndexUpdateState,
-    project_path: Option<&str>,
-    space: &str,
-    deleted_rel_paths: &[String],
-    updated_rel_paths: &[String],
-    fallback_context: &str,
-) {
-    let Some(proj) = project_path.filter(|p| !p.is_empty()) else {
-        reindex_space_dir(index_state, index_updates, space).await;
-        return;
-    };
-
-    let project = Path::new(proj);
-    let mut needs_reindex = false;
-    for rel_path in deleted_rel_paths {
-        let abs_target = Path::new(space).join(rel_path);
-        if let Err(e) =
-            index::update::publish_managed_path(index_state, index_updates, project, &abs_target)
-                .await
-        {
-            tracing::warn!("{fallback_context}: targeted index delete failed for {rel_path}: {e}");
-            needs_reindex = true;
-        } else {
-            tracing::debug!(
-                event = "index.update.targeted",
-                context = fallback_context,
-                operation = "delete",
-                path = rel_path
-            );
-        }
-    }
-    for rel_path in updated_rel_paths {
-        let abs_target = Path::new(space).join(rel_path);
-        if let Err(e) =
-            index::update::publish_managed_path(index_state, index_updates, project, &abs_target)
-                .await
-        {
-            tracing::warn!("{fallback_context}: targeted index update failed for {rel_path}: {e}");
-            needs_reindex = true;
-        } else {
-            tracing::debug!(
-                event = "index.update.targeted",
-                context = fallback_context,
-                operation = "update",
-                path = rel_path
-            );
-        }
-    }
-    if needs_reindex {
-        tracing::info!("{fallback_context}: running index.reindex.repair fallback");
-        reindex_space_dir(index_state, index_updates, space).await;
-    }
 }
 
 #[cfg(test)]

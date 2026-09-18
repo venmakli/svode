@@ -88,6 +88,20 @@ export function createFolder(input: {
   });
 }
 
+export function createCollection(input: {
+  spacePath: string;
+  parentPath?: string | null;
+  title: string;
+  projectPath?: string | null;
+}) {
+  return invokeCommand<PageDto>("create_collection", {
+    space: input.spacePath,
+    parentPath: input.parentPath ?? null,
+    title: input.title,
+    projectPath: input.projectPath ?? null,
+  });
+}
+
 export async function convertToCollection(input: {
   spacePath: string;
   path: string;

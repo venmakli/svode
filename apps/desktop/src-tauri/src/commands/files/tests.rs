@@ -10,6 +10,170 @@ fn updates() -> &'static IndexUpdateState {
 }
 
 #[tokio::test]
+async fn collection_create_is_one_structural_action_under_a_leaf_parent() {
+    let tmp = TempDir::new().unwrap();
+    crate::space::scaffold::scaffold_space(tmp.path(), "Test", "", "").unwrap();
+    std::fs::create_dir_all(tmp.path().join(".git")).unwrap();
+    std::fs::write(
+        tmp.path().join("Parent.md"),
+        "---\ntitle: Parent\n---\nParent body",
+    )
+    .unwrap();
+    let root = tmp.path().to_string_lossy().into_owned();
+    let outcome = crate::space::structural::create_collection(
+        crate::space::structural::CollectionCreate {
+            space: root.clone(),
+            parent_path: Some("Parent.md".into()),
+            title: "Tasks".into(),
+            body: Some("Owner body".into()),
+            icon: None,
+            description: None,
+            cover: None,
+            schema: properties::default_collection_schema(),
+            allocate_unique_title: false,
+            project: None,
+        },
+        &IndexState::new(),
+        updates(),
+        None,
+        |paths| async move { Ok(paths) },
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(outcome.collection_path, "Parent/Tasks");
+    assert_eq!(outcome.collection.path, "Parent/Tasks/README.md");
+    assert_eq!(outcome.collection.body, "Owner body");
+    assert!(tmp.path().join("Parent/Tasks/schema.yaml").is_file());
+    assert!(!tmp.path().join("Parent.md").exists());
+    assert_eq!(
+        std::fs::read_to_string(tmp.path().join("Parent/README.md")).unwrap(),
+        "---\ntitle: Parent\n---\nParent body"
+    );
+}
+
+#[tokio::test]
+async fn collection_create_rejects_invalid_schema_before_source_effects() {
+    let tmp = TempDir::new().unwrap();
+    crate::space::scaffold::scaffold_space(tmp.path(), "Test", "", "").unwrap();
+    std::fs::create_dir_all(tmp.path().join(".git")).unwrap();
+    let schema: CollectionSchema = serde_yml::from_str(
+        "columns:\n  - { name: Status, type: text }\n  - { name: Status, type: number }\nviews: []\n",
+    )
+    .unwrap();
+    let root = tmp.path().to_string_lossy().into_owned();
+    let result = crate::space::structural::create_collection(
+        crate::space::structural::CollectionCreate {
+            space: root,
+            parent_path: None,
+            title: "Tasks".into(),
+            body: None,
+            icon: None,
+            description: None,
+            cover: None,
+            schema,
+            allocate_unique_title: false,
+            project: None,
+        },
+        &IndexState::new(),
+        updates(),
+        None,
+        |paths| async move { Ok(paths) },
+    )
+    .await;
+
+    assert!(result.is_err());
+    assert!(!tmp.path().join("Tasks.md").exists());
+    assert!(!tmp.path().join("Tasks").exists());
+}
+
+#[tokio::test]
+async fn collection_create_materializes_two_way_reverse_schema() {
+    let tmp = TempDir::new().unwrap();
+    crate::space::scaffold::scaffold_space(tmp.path(), "Test", "", "").unwrap();
+    std::fs::create_dir_all(tmp.path().join(".git")).unwrap();
+    std::fs::create_dir_all(tmp.path().join("Sprints")).unwrap();
+    std::fs::write(
+        tmp.path().join("Sprints/schema.yaml"),
+        "columns: []\nviews: []\n",
+    )
+    .unwrap();
+    let schema: CollectionSchema = serde_yml::from_str(
+        "columns:\n  - name: Sprint\n    type: relation\n    relation: Sprints\n    two_way: Tasks\nviews: []\n",
+    )
+    .unwrap();
+    let root = tmp.path().to_string_lossy().into_owned();
+    let outcome = crate::space::structural::create_collection(
+        crate::space::structural::CollectionCreate {
+            space: root,
+            parent_path: None,
+            title: "Tasks".into(),
+            body: None,
+            icon: None,
+            description: None,
+            cover: None,
+            schema,
+            allocate_unique_title: false,
+            project: None,
+        },
+        &IndexState::new(),
+        updates(),
+        None,
+        |paths| async move { Ok(paths) },
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(outcome.schema.columns[0].two_way.as_deref(), Some("Tasks"));
+    let reverse =
+        properties::read_collection_schema(tmp.path().to_str().unwrap(), "Sprints").unwrap();
+    assert_eq!(reverse.columns[0].name, "Tasks");
+    assert_eq!(reverse.columns[0].relation.as_deref(), Some("Tasks"));
+}
+
+#[tokio::test]
+async fn collection_create_rolls_back_after_reverse_schema_conflict() {
+    let tmp = TempDir::new().unwrap();
+    crate::space::scaffold::scaffold_space(tmp.path(), "Test", "", "").unwrap();
+    std::fs::create_dir_all(tmp.path().join(".git")).unwrap();
+    std::fs::create_dir_all(tmp.path().join("Sprints")).unwrap();
+    let reverse_schema = "columns:\n  - { name: Tasks, type: text }\nviews: []\n";
+    std::fs::write(tmp.path().join("Sprints/schema.yaml"), reverse_schema).unwrap();
+    let schema: CollectionSchema = serde_yml::from_str(
+        "columns:\n  - name: Sprint\n    type: relation\n    relation: Sprints\n    two_way: Tasks\nviews: []\n",
+    )
+    .unwrap();
+    let root = tmp.path().to_string_lossy().into_owned();
+    let result = crate::space::structural::create_collection(
+        crate::space::structural::CollectionCreate {
+            space: root,
+            parent_path: None,
+            title: "Tasks".into(),
+            body: None,
+            icon: None,
+            description: None,
+            cover: None,
+            schema,
+            allocate_unique_title: false,
+            project: None,
+        },
+        &IndexState::new(),
+        updates(),
+        None,
+        |paths| async move { Ok(paths) },
+    )
+    .await;
+
+    assert!(result.is_err());
+    assert!(!tmp.path().join("Tasks.md").exists());
+    assert!(!tmp.path().join("Tasks").exists());
+    assert_eq!(
+        std::fs::read_to_string(tmp.path().join("Sprints/schema.yaml")).unwrap(),
+        reverse_schema
+    );
+}
+
+#[tokio::test]
 async fn page_read_dates_without_registered_pool_preserve_all_native_roles() {
     let tmp = TempDir::new().unwrap();
     let state = IndexState::new();
@@ -78,9 +242,9 @@ fn collect_markdown_rel_paths(tmp: &TempDir, root: &Path) -> Vec<String> {
     rels
 }
 
-async fn delete_for_test(tmp: &TempDir, path: &str) -> DeleteEntryCommandResult {
+async fn delete_for_test(tmp: &TempDir, path: &str) -> crate::space::structural::DeleteOutcome {
     let index_state = IndexState::new();
-    delete_entry_shared(
+    crate::space::structural::delete(
         tmp.path().to_str().unwrap(),
         path,
         None,
@@ -244,7 +408,7 @@ async fn shared_delete_entry_removes_targeted_index_rows_and_fts() {
         .unwrap();
     let pool = indexed_pool(&state, space).await;
 
-    let result = delete_entry_shared(
+    let result = crate::space::structural::delete(
         space.to_str().unwrap(),
         "Note.md",
         Some(space.to_str().unwrap()),
@@ -328,7 +492,7 @@ async fn targeted_convert_to_folder_replaces_stale_leaf_index_row() {
     let pool = indexed_pool(&state, space).await;
 
     let entry = entry::convert_entry_to_folder(space, "Topic.md", None).unwrap();
-    replace_index_entries_or_reindex(
+    crate::space::structural::replace_index_entries_or_reindex(
         &state,
         updates(),
         Some(space.to_str().unwrap()),
@@ -366,7 +530,7 @@ async fn targeted_convert_to_leaf_replaces_stale_readme_index_row() {
     let pool = indexed_pool(&state, space).await;
 
     let entry = entry::convert_entry_to_leaf(space, "Topic/README.md", None).unwrap();
-    replace_index_entries_or_reindex(
+    crate::space::structural::replace_index_entries_or_reindex(
         &state,
         updates(),
         Some(space.to_str().unwrap()),
@@ -848,7 +1012,7 @@ async fn shared_convert_to_collection_preserves_leaf_and_refreshes_index_tree() 
         .unwrap();
     let pool = indexed_pool(&state, space).await;
 
-    let result = convert_to_collection_shared(
+    let result = crate::space::structural::convert_to_collection(
         space.to_str().unwrap(),
         "Topic.md",
         Some(space.to_str().unwrap()),
@@ -905,7 +1069,7 @@ async fn shared_convert_to_collection_supports_folder_document_and_bare_folder()
     .unwrap();
     std::fs::create_dir_all(space.join("Bare")).unwrap();
 
-    let folder_result = convert_to_collection_shared(
+    let folder_result = crate::space::structural::convert_to_collection(
         space.to_str().unwrap(),
         "Folder/README.md",
         Some(space.to_str().unwrap()),
@@ -915,7 +1079,7 @@ async fn shared_convert_to_collection_supports_folder_document_and_bare_folder()
     )
     .await
     .expect("convert folder document");
-    let bare_result = convert_to_collection_shared(
+    let bare_result = crate::space::structural::convert_to_collection(
         space.to_str().unwrap(),
         "Bare",
         Some(space.to_str().unwrap()),
@@ -944,7 +1108,7 @@ async fn shared_convert_to_collection_rejects_existing_collection_readme() {
     std::fs::write(space.join("Tasks").join("README.md"), "tasks").unwrap();
     std::fs::write(space.join("Tasks").join("schema.yaml"), "columns: []\n").unwrap();
 
-    let result = convert_to_collection_shared(
+    let result = crate::space::structural::convert_to_collection(
         space.to_str().unwrap(),
         "Tasks/README.md",
         Some(space.to_str().unwrap()),
@@ -967,7 +1131,7 @@ async fn shared_convert_to_collection_preserves_leaf_when_target_folder_exists()
     std::fs::write(space.join("Topic.md"), "topic-body").unwrap();
     std::fs::create_dir(space.join("Topic")).unwrap();
 
-    let result = convert_to_collection_shared(
+    let result = crate::space::structural::convert_to_collection(
         space.to_str().unwrap(),
         "Topic.md",
         Some(space.to_str().unwrap()),
@@ -990,7 +1154,7 @@ async fn shared_delete_entry_returns_error_for_missing_path() {
     let tmp = TempDir::new().unwrap();
     let index_state = IndexState::new();
 
-    let result = delete_entry_shared(
+    let result = crate::space::structural::delete(
         tmp.path().to_str().unwrap(),
         "Missing.md",
         None,

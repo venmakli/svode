@@ -112,6 +112,7 @@ pub async fn create_entry(
             allocate_unique_title: allocate_unique_title.unwrap_or(false),
             as_readme: as_readme.unwrap_or(false),
             project: project_path.clone(),
+            publish_projection: true,
         },
         &index_state,
         &index_updates,
@@ -141,6 +142,40 @@ pub async fn create_entry(
 }
 
 #[tauri::command]
+pub async fn create_collection(
+    app: AppHandle,
+    space: String,
+    parent_path: Option<String>,
+    title: String,
+    project_path: Option<String>,
+    index_state: State<'_, IndexState>,
+    index_updates: State<'_, IndexUpdateState>,
+    autocommit: State<'_, Arc<AutocommitService>>,
+) -> Result<Entry, AppError> {
+    let authorization_space = space.clone();
+    let outcome = crate::space::structural::create_collection(
+        crate::space::structural::CollectionCreate {
+            space,
+            parent_path,
+            title,
+            body: None,
+            icon: None,
+            description: None,
+            cover: None,
+            schema: properties::default_collection_schema(),
+            allocate_unique_title: true,
+            project: project_path,
+        },
+        &index_state,
+        &index_updates,
+        Some(&autocommit),
+        |paths| require_planned_mutation_paths(&app, &authorization_space, paths),
+    )
+    .await?;
+    Ok(outcome.collection)
+}
+
+#[tauri::command]
 pub async fn create_folder(
     app: AppHandle,
     space: String,
@@ -150,15 +185,13 @@ pub async fn create_folder(
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<String, AppError> {
     require_repository_mutation(&app, Path::new(&space)).await?;
-    let folder_path = entry::create_folder(&space, parent_path.as_deref(), &name)?;
-    maybe_autocommit_structural_paths(
-        &autocommit,
-        project_path.as_deref(),
+    crate::space::structural::create_folder(
         &space,
-        StructuralOp::Create(entry_commit_name(&space, &folder_path)),
-        entry_paths_with_order(&space, [abs_entry_path(&space, &folder_path)]),
-    );
-    Ok(folder_path)
+        parent_path.as_deref(),
+        &name,
+        project_path.as_deref(),
+        Some(&autocommit),
+    )
 }
 
 #[tauri::command]
@@ -378,112 +411,6 @@ pub(super) async fn write_entry_shared(
     .map(|outcome| outcome.result)
 }
 
-pub async fn delete_entry_shared(
-    space: &str,
-    path: &str,
-    project_path: Option<&str>,
-    index_state: &IndexState,
-    index_updates: &IndexUpdateState,
-    autocommit: Option<&AutocommitService>,
-) -> Result<DeleteEntryCommandResult, AppError> {
-    let planned_deleted = entry::planned_deleted_entry_paths(space, path)?;
-    let planned_cascade = properties::cascade_clean_deleted_entries_mutation_paths_with_project(
-        space,
-        project_path.filter(|path| !path.is_empty()),
-        &planned_deleted,
-    )?;
-    ensure_mutation_paths_were_authorized(&planned_cascade)?;
-    let backlink_index = backlinks_for_space(index_state, space).await;
-    let deleted = entry::delete_with_project(
-        space,
-        path,
-        Some(&backlink_index),
-        project_path.filter(|path| !path.is_empty()),
-    )?;
-    let cascade_touched_by_space =
-        grouped_abs_paths_by_space(project_path, space, &deleted.cascade_touched);
-    let cascade_touched = deleted
-        .cascade_touched
-        .iter()
-        .map(|path| rel_changed_path(space, path))
-        .collect::<Vec<_>>();
-    let mut changed_paths = Vec::new();
-    for deleted_path in &deleted.deleted_paths {
-        push_unique_path(&mut changed_paths, deleted_path.clone());
-    }
-    push_unique_path(&mut changed_paths, deleted.deleted_root.clone());
-    for touched in &cascade_touched {
-        push_unique_path(&mut changed_paths, touched.clone());
-    }
-
-    if let Some(proj) = project_path.filter(|p| !p.is_empty()) {
-        let project = Path::new(proj);
-        let mut needs_reindex = false;
-        for deleted_path in &deleted.deleted_paths {
-            let abs_old = Path::new(space).join(deleted_path);
-            if let Err(e) =
-                index::update::publish_managed_path(index_state, index_updates, project, &abs_old)
-                    .await
-            {
-                tracing::warn!("index delete_entry failed for {deleted_path}: {e}");
-                needs_reindex = true;
-            } else {
-                tracing::debug!(
-                    event = "index.update.targeted",
-                    context = "delete_entry",
-                    operation = "delete",
-                    path = deleted_path
-                );
-            }
-        }
-        if needs_reindex {
-            tracing::info!("delete_entry: running index.reindex.repair fallback");
-            reindex_space_dir(index_state, index_updates, space).await;
-        } else if !deleted.cascade_touched.is_empty() {
-            for (owner_space, paths) in &cascade_touched_by_space {
-                let _ = update_index_paths_or_reindex(
-                    index_state,
-                    index_updates,
-                    Some(proj),
-                    &owner_space.to_string_lossy(),
-                    paths.clone(),
-                    "delete_entry",
-                )
-                .await;
-            }
-        }
-    } else {
-        reindex_space_dir(index_state, index_updates, space).await;
-    }
-    if let Some(autocommit) = autocommit {
-        let current_space = PathBuf::from(space);
-        let mut paths_by_space = cascade_touched_by_space;
-        paths_by_space
-            .entry(current_space.clone())
-            .or_default()
-            .extend(entry_paths_with_order(
-                space,
-                [abs_entry_path(space, &deleted.deleted_root)],
-            ));
-        let op = StructuralOp::Delete(entry_commit_name(space, path));
-        for (owner_space, paths) in paths_by_space {
-            maybe_autocommit_structural_paths(
-                autocommit,
-                project_path,
-                &owner_space.to_string_lossy(),
-                op.clone(),
-                paths,
-            );
-        }
-    }
-    Ok(DeleteEntryCommandResult {
-        deleted_root: deleted.deleted_root,
-        deleted_paths: deleted.deleted_paths,
-        cascade_touched,
-        changed_paths,
-    })
-}
-
 #[tauri::command]
 pub async fn delete_entry(
     app: AppHandle,
@@ -494,12 +421,11 @@ pub async fn delete_entry(
     index_updates: State<'_, IndexUpdateState>,
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<(), AppError> {
-    let deleted_paths = entry::planned_deleted_entry_paths(&space, &path)?;
     let authorized_paths =
-        require_entry_delete_mutation_plan(&app, &space, project_path.as_deref(), &deleted_paths)
-            .await?;
+        crate::space::structural::delete_mutation_paths(&space, project_path.as_deref(), &path)?;
+    require_repository_mutation_paths(&app, authorized_paths.clone()).await?;
     scope_authorized_mutation_paths(authorized_paths, async {
-        delete_entry_shared(
+        crate::space::structural::delete(
             &space,
             &path,
             project_path.as_deref(),

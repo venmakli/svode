@@ -11,7 +11,6 @@ use tauri::{AppHandle, Emitter, Manager};
 use crate::artifact::identity::{
     ContentOwnerKind, SemanticIdentity, SourceShape, resolve_markdown_identity_for_path,
 };
-use crate::commands::files as file_commands;
 use crate::files::{backlinks, filename};
 use crate::git::access::ensure_mutation_paths_were_authorized;
 use crate::git::autocommit::{AutocommitService, StructuralOp};
@@ -320,7 +319,7 @@ pub(crate) async fn execute_managed_import(
 
     let mutation = async {
         if revalidated.requires_conversion {
-            file_commands::convert_entry_to_folder_shared(
+            crate::space::structural::convert_to_folder(
                 &revalidated.space_path.to_string_lossy(),
                 &revalidated.content_path,
                 Some(&revalidated.project_path.to_string_lossy()),

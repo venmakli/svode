@@ -407,6 +407,57 @@ pub(crate) fn create_source_with_options(
     })
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct PlannedSourceCreate {
+    pub title: String,
+    pub path: String,
+}
+
+pub(crate) fn planned_source_create(
+    space: &str,
+    parent_path: Option<&str>,
+    title: &str,
+    allocate_unique_title: bool,
+    as_readme: bool,
+) -> Result<PlannedSourceCreate, AppError> {
+    let parent_path = parent_path
+        .map(str::trim)
+        .filter(|parent| !parent.is_empty());
+    let initial_scope_path = if as_readme {
+        parent_path
+            .map(|parent| format!("{parent}/README.md"))
+            .unwrap_or_else(|| "README.md".to_string())
+    } else {
+        parent_path
+            .map(|parent| format!("{parent}/.svode-name-probe.md"))
+            .unwrap_or_else(|| ".svode-name-probe.md".to_string())
+    };
+    let title = if allocate_unique_title {
+        crate::files::naming::allocate_document_title(Path::new(space), &initial_scope_path, title)?
+    } else {
+        crate::files::naming::ensure_document_name_available(
+            Path::new(space),
+            &initial_scope_path,
+            title,
+        )?;
+        title.to_string()
+    };
+    let projection = filename::project(&title);
+    let path = if as_readme {
+        parent_path
+            .map(|parent| format!("{parent}/README.md"))
+            .unwrap_or_else(|| "README.md".to_string())
+    } else {
+        let parent_abs = parent_path
+            .map(|parent| resolve(space, parent))
+            .unwrap_or_else(|| PathBuf::from(space));
+        let (abs_path, _) =
+            filename::allocate_available_path(&parent_abs, &projection, Some("md"))?;
+        rel_from_abs(Path::new(space), &abs_path)
+    };
+    Ok(PlannedSourceCreate { title, path })
+}
+
 fn create_source_with_options_inner(
     space: &str,
     parent_path: Option<&str>,
