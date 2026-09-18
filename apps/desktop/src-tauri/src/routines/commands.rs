@@ -15,7 +15,7 @@ use super::{
 };
 use crate::AppError;
 use crate::git::GitState;
-use crate::git::access::RepositoryAccessState;
+use crate::git::access::{RepositoryAccessState, access_store_path};
 use crate::index::IndexState;
 use crate::terminal::TerminalManager;
 
@@ -172,20 +172,29 @@ pub async fn routines_create(
         Ok(definition) => definition,
         Err(message) => return Ok(RoutineMutationResult::Blocked { message }),
     };
-    Ok(desktop_mutation_result(
-        service::create_managed(
-            &app,
-            owner,
-            definition,
-            service::RoutineMutationPolicy::desktop_create(),
-            &git_state,
-            &access_state,
-            &routine_stores,
-            &index_state,
-            &terminal_manager,
-        )
-        .await?,
-    ))
+    let access_store_path = access_store_path(&app)?;
+    let live_evidence = super::runtime::live_evidence(&terminal_manager)?;
+    let context = service::RoutineMutationContext {
+        access_store_path: &access_store_path,
+        git_state: &git_state,
+        access_state: &access_state,
+        routine_stores: &routine_stores,
+        index_state: &index_state,
+        live_evidence: &live_evidence,
+    };
+    let result = service::create_managed(
+        owner.clone(),
+        definition,
+        service::RoutineMutationIntent {
+            validation: service::RoutineValidationIntent::CompleteDefinition,
+            naming: service::RoutineNamingIntent::MaterializeCanonicalFilename,
+        },
+        desktop_policy_context(),
+        &context,
+    )
+    .await?;
+    emit_applied_invalidation(&app, &owner, &result);
+    Ok(desktop_mutation_result(result))
 }
 
 #[tauri::command]
@@ -215,22 +224,35 @@ pub async fn routines_update(
         owner_kind,
     }
     .resolve()?;
-    Ok(desktop_mutation_result(
-        service::update_managed(
-            &app,
-            owner,
-            routine_id,
-            expected_fingerprint,
-            definition,
-            service::RoutineMutationPolicy::desktop(materialize_filename),
-            &git_state,
-            &access_state,
-            &routine_stores,
-            &index_state,
-            &terminal_manager,
-        )
-        .await?,
-    ))
+    let access_store_path = access_store_path(&app)?;
+    let live_evidence = super::runtime::live_evidence(&terminal_manager)?;
+    let context = service::RoutineMutationContext {
+        access_store_path: &access_store_path,
+        git_state: &git_state,
+        access_state: &access_state,
+        routine_stores: &routine_stores,
+        index_state: &index_state,
+        live_evidence: &live_evidence,
+    };
+    let result = service::update_managed(
+        owner.clone(),
+        routine_id,
+        expected_fingerprint,
+        definition,
+        service::RoutineMutationIntent {
+            validation: service::RoutineValidationIntent::IntermediateEdit,
+            naming: if materialize_filename {
+                service::RoutineNamingIntent::MaterializeCanonicalFilename
+            } else {
+                service::RoutineNamingIntent::PreserveCurrentFilename
+            },
+        },
+        desktop_policy_context(),
+        &context,
+    )
+    .await?;
+    emit_applied_invalidation(&app, &owner, &result);
+    Ok(desktop_mutation_result(result))
 }
 
 #[tauri::command]
@@ -258,20 +280,40 @@ pub async fn routines_delete(
         owner_kind,
     }
     .resolve()?;
-    Ok(desktop_mutation_result(
-        service::delete_managed(
-            &app,
-            owner,
-            routine_id,
-            expected_fingerprint,
-            &git_state,
-            &access_state,
-            &routine_stores,
-            &index_state,
-            &terminal_manager,
-        )
-        .await?,
-    ))
+    let access_store_path = access_store_path(&app)?;
+    let live_evidence = super::runtime::live_evidence(&terminal_manager)?;
+    let context = service::RoutineMutationContext {
+        access_store_path: &access_store_path,
+        git_state: &git_state,
+        access_state: &access_state,
+        routine_stores: &routine_stores,
+        index_state: &index_state,
+        live_evidence: &live_evidence,
+    };
+    let result =
+        service::delete_managed(owner.clone(), routine_id, expected_fingerprint, &context).await?;
+    emit_applied_invalidation(&app, &owner, &result);
+    Ok(desktop_mutation_result(result))
+}
+
+fn desktop_policy_context() -> service::RoutineMutationPolicyContext {
+    service::RoutineMutationPolicyContext {
+        origin: service::RoutineMutationOrigin::User,
+        automatic_execution_acknowledged: true,
+    }
+}
+
+fn emit_applied_invalidation(
+    app: &AppHandle,
+    owner: &ResolvedRoutineOwner,
+    result: &service::ManagedRoutineMutationResult,
+) {
+    if matches!(
+        result,
+        service::ManagedRoutineMutationResult::Applied { .. }
+    ) {
+        super::emit_owner_invalidation(app, owner);
+    }
 }
 
 fn desktop_mutation_result(result: service::ManagedRoutineMutationResult) -> RoutineMutationResult {

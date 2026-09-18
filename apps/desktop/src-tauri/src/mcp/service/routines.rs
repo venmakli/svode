@@ -245,16 +245,22 @@ pub(super) async fn create_routine(
     let terminal_manager = app.state::<TerminalManager>();
     let git_state = app.state::<GitState>();
     let access_state = app.state::<crate::git::access::RepositoryAccessState>();
+    let access_store_path = crate::git::access::access_store_path(app)?;
+    let live_evidence = crate::routines::runtime::live_evidence(&terminal_manager)?;
+    let context = crate::routines::service::RoutineMutationContext {
+        access_store_path: &access_store_path,
+        git_state: &git_state,
+        access_state: &access_state,
+        routine_stores: &routine_stores,
+        index_state: &index_state,
+        live_evidence: &live_evidence,
+    };
     let result = crate::routines::service::create_managed(
-        app,
         owner.clone(),
         args.definition,
+        strict_materializing_intent(),
         mutation_policy(args.confirm_automatic_execution.unwrap_or(false)),
-        &git_state,
-        &access_state,
-        &routine_stores,
-        &index_state,
-        &terminal_manager,
+        &context,
     )
     .await?;
     mutation_result(app, &owner, result, MutationKind::Create).await
@@ -271,18 +277,24 @@ pub(super) async fn update_routine(
     let terminal_manager = app.state::<TerminalManager>();
     let git_state = app.state::<GitState>();
     let access_state = app.state::<crate::git::access::RepositoryAccessState>();
+    let access_store_path = crate::git::access::access_store_path(app)?;
+    let live_evidence = crate::routines::runtime::live_evidence(&terminal_manager)?;
+    let context = crate::routines::service::RoutineMutationContext {
+        access_store_path: &access_store_path,
+        git_state: &git_state,
+        access_state: &access_state,
+        routine_stores: &routine_stores,
+        index_state: &index_state,
+        live_evidence: &live_evidence,
+    };
     let result = crate::routines::service::update_managed(
-        app,
         owner.clone(),
         args.routine_id,
         args.expected_fingerprint,
         args.definition,
+        strict_materializing_intent(),
         mutation_policy(args.confirm_automatic_execution.unwrap_or(false)),
-        &git_state,
-        &access_state,
-        &routine_stores,
-        &index_state,
-        &terminal_manager,
+        &context,
     )
     .await?;
     mutation_result(app, &owner, result, MutationKind::Update).await
@@ -299,16 +311,21 @@ pub(super) async fn delete_routine(
     let terminal_manager = app.state::<TerminalManager>();
     let git_state = app.state::<GitState>();
     let access_state = app.state::<crate::git::access::RepositoryAccessState>();
+    let access_store_path = crate::git::access::access_store_path(app)?;
+    let live_evidence = crate::routines::runtime::live_evidence(&terminal_manager)?;
+    let context = crate::routines::service::RoutineMutationContext {
+        access_store_path: &access_store_path,
+        git_state: &git_state,
+        access_state: &access_state,
+        routine_stores: &routine_stores,
+        index_state: &index_state,
+        live_evidence: &live_evidence,
+    };
     let result = crate::routines::service::delete_managed(
-        app,
         owner.clone(),
         args.routine_id,
         args.expected_fingerprint,
-        &git_state,
-        &access_state,
-        &routine_stores,
-        &index_state,
-        &terminal_manager,
+        &context,
     )
     .await?;
     mutation_result(app, &owner, result, MutationKind::Delete).await
@@ -345,11 +362,26 @@ pub(super) async fn run_routine(
 
 fn mutation_policy(
     confirm_automatic_execution: bool,
-) -> crate::routines::service::RoutineMutationPolicy {
+) -> crate::routines::service::RoutineMutationPolicyContext {
+    use crate::routines::service::{RoutineMutationOrigin, RoutineMutationPolicyContext};
+
     if crate::mcp::service::routine_caller_provenance().is_some() {
-        crate::routines::service::RoutineMutationPolicy::routine_mcp(confirm_automatic_execution)
+        RoutineMutationPolicyContext {
+            origin: RoutineMutationOrigin::RoutineAgent,
+            automatic_execution_acknowledged: confirm_automatic_execution,
+        }
     } else {
-        crate::routines::service::RoutineMutationPolicy::external_mcp(confirm_automatic_execution)
+        RoutineMutationPolicyContext {
+            origin: RoutineMutationOrigin::ExternalAgent,
+            automatic_execution_acknowledged: confirm_automatic_execution,
+        }
+    }
+}
+
+fn strict_materializing_intent() -> crate::routines::service::RoutineMutationIntent {
+    crate::routines::service::RoutineMutationIntent {
+        validation: crate::routines::service::RoutineValidationIntent::CompleteDefinition,
+        naming: crate::routines::service::RoutineNamingIntent::MaterializeCanonicalFilename,
     }
 }
 
@@ -459,6 +491,12 @@ async fn mutation_result(
     result: crate::routines::service::ManagedRoutineMutationResult,
     kind: MutationKind,
 ) -> Result<ToolCallResult, McpBusinessError> {
+    if matches!(
+        &result,
+        crate::routines::service::ManagedRoutineMutationResult::Applied { .. }
+    ) {
+        crate::routines::emit_owner_invalidation(app, owner);
+    }
     match result {
         crate::routines::service::ManagedRoutineMutationResult::Applied {
             routine_id,
@@ -911,7 +949,10 @@ mod tests {
     async fn verified_routine_provenance_selects_recursive_mutation_policy() {
         assert_eq!(
             mutation_policy(true),
-            crate::routines::service::RoutineMutationPolicy::external_mcp(true)
+            crate::routines::service::RoutineMutationPolicyContext {
+                origin: crate::routines::service::RoutineMutationOrigin::ExternalAgent,
+                automatic_execution_acknowledged: true,
+            }
         );
 
         super::super::MCP_ROUTINE_CALLER
@@ -924,7 +965,10 @@ mod tests {
                 async {
                     assert_eq!(
                         mutation_policy(true),
-                        crate::routines::service::RoutineMutationPolicy::routine_mcp(true)
+                        crate::routines::service::RoutineMutationPolicyContext {
+                            origin: crate::routines::service::RoutineMutationOrigin::RoutineAgent,
+                            automatic_execution_acknowledged: true,
+                        }
                     );
                 },
             )

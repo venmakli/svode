@@ -346,7 +346,9 @@ pub(super) async fn dispatch_routine(
         });
     }
 
-    if let Err(error) = service::authorize_mutation(app, git_state, access_state, &repository).await
+    let access_store_path = crate::git::access::access_store_path(app)?;
+    if let Err(error) =
+        service::authorize_mutation(git_state, access_state, &access_store_path, &repository).await
     {
         return Ok(dispatch_blocked(
             routine_id,

@@ -5,9 +5,6 @@ use std::path::{Path, PathBuf};
 #[cfg(test)]
 use std::sync::Arc;
 
-use chrono::{SecondsFormat, Utc};
-use tauri::AppHandle;
-
 use super::model::{
     ResolvedRoutineOwner, RoutineCatalogSnapshot, RoutineDefinition, RoutineDiagnostic,
     RoutineLiveEvidence, RoutineNameConflict, RoutineNameConflictEvidence, RoutineOwnerDescriptor,
@@ -19,69 +16,52 @@ use crate::AppError;
 use crate::agent_actors;
 use crate::files::filename::{self, FilenameProjection};
 use crate::git;
-use crate::git::access::{
-    RepositoryAccessState, access_store_path, ensure_mutation_paths_were_authorized,
-};
+use crate::git::access::{RepositoryAccessState, ensure_mutation_paths_were_authorized};
 use crate::git::{GitState, require_cli};
 use crate::index::{IndexKey, IndexState};
 use crate::repo_path::{RootMode, normalize_repo_relative};
 use crate::routines::RoutineStoreState;
 use crate::space::config;
-use crate::terminal::TerminalManager;
+use chrono::{SecondsFormat, Utc};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum RoutineMutationCaller {
-    Desktop,
-    ExternalMcp,
-    RoutineMcp,
+pub(crate) enum RoutineValidationIntent {
+    IntermediateEdit,
+    CompleteDefinition,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct RoutineMutationPolicy {
-    caller: RoutineMutationCaller,
-    confirm_automatic_execution: bool,
-    materialize_filename: bool,
-    require_valid_definition: bool,
+pub(crate) enum RoutineNamingIntent {
+    PreserveCurrentFilename,
+    MaterializeCanonicalFilename,
 }
 
-impl RoutineMutationPolicy {
-    pub(crate) fn desktop_create() -> Self {
-        Self {
-            caller: RoutineMutationCaller::Desktop,
-            confirm_automatic_execution: true,
-            materialize_filename: true,
-            require_valid_definition: true,
-        }
-    }
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct RoutineMutationIntent {
+    pub(crate) validation: RoutineValidationIntent,
+    pub(crate) naming: RoutineNamingIntent,
+}
 
-    pub(crate) fn desktop(materialize_filename: bool) -> Self {
-        Self {
-            caller: RoutineMutationCaller::Desktop,
-            confirm_automatic_execution: true,
-            materialize_filename,
-            require_valid_definition: false,
-        }
-    }
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RoutineMutationOrigin {
+    User,
+    ExternalAgent,
+    RoutineAgent,
+}
 
-    pub(crate) fn external_mcp(confirm_automatic_execution: bool) -> Self {
-        Self {
-            caller: RoutineMutationCaller::ExternalMcp,
-            confirm_automatic_execution,
-            materialize_filename: true,
-            require_valid_definition: true,
-        }
-    }
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct RoutineMutationPolicyContext {
+    pub(crate) origin: RoutineMutationOrigin,
+    pub(crate) automatic_execution_acknowledged: bool,
+}
 
-    // DF-062C wires opaque routine caller provenance into this policy seam.
-    #[allow(dead_code)]
-    pub(crate) fn routine_mcp(confirm_automatic_execution: bool) -> Self {
-        Self {
-            caller: RoutineMutationCaller::RoutineMcp,
-            confirm_automatic_execution,
-            materialize_filename: true,
-            require_valid_definition: true,
-        }
-    }
+pub(crate) struct RoutineMutationContext<'a> {
+    pub(crate) access_store_path: &'a Path,
+    pub(crate) git_state: &'a GitState,
+    pub(crate) access_state: &'a RepositoryAccessState,
+    pub(crate) routine_stores: &'a RoutineStoreState,
+    pub(crate) index_state: &'a IndexState,
+    pub(crate) live_evidence: &'a RoutineLiveEvidence,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -379,32 +359,34 @@ pub(crate) async fn discover_owner(
     owner: &ResolvedRoutineOwner,
 ) -> Result<RoutineCatalogSnapshot, AppError> {
     let owner = owner.clone();
-    tauri::async_runtime::spawn_blocking(move || snapshot_with_executor_diagnostics(&owner))
+    tokio::task::spawn_blocking(move || snapshot_with_executor_diagnostics(&owner))
         .await
         .map_err(blocking_task_error)
 }
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn create_managed(
-    app: &AppHandle,
     owner: ResolvedRoutineOwner,
     definition: RoutineDefinition,
-    policy: RoutineMutationPolicy,
-    git_state: &GitState,
-    access_state: &RepositoryAccessState,
-    routine_stores: &RoutineStoreState,
-    index_state: &IndexState,
-    terminal_manager: &TerminalManager,
+    intent: RoutineMutationIntent,
+    policy: RoutineMutationPolicyContext,
+    context: &RoutineMutationContext<'_>,
 ) -> Result<ManagedRoutineMutationResult, AppError> {
-    if let Err(result) = validate_candidate(&owner, &definition, policy) {
+    if let Err(result) = validate_candidate(&owner, &definition, intent, policy) {
         return Ok(*result);
     }
     let name = managed_name(&definition).expect("validated managed Routine name");
-    let repository = mutation_repository(git_state, &owner).await?;
-    let lock = git_state.get_lock(&repository).await;
+    let repository = mutation_repository(context.git_state, &owner).await?;
+    let lock = context.git_state.get_lock(&repository).await;
     let _guard = lock.lock().await;
-    let owner = revalidate_owner(git_state, &owner, &repository).await?;
-    authorize_mutation(app, git_state, access_state, &repository).await?;
+    let owner = revalidate_owner(context.git_state, &owner, &repository).await?;
+    authorize_mutation(
+        context.git_state,
+        context.access_state,
+        context.access_store_path,
+        &repository,
+    )
+    .await?;
 
     let current = discover_owner(&owner).await?;
     if let Some(conflict) = routine_name_conflict(&current, name, None) {
@@ -420,16 +402,16 @@ pub(crate) async fn create_managed(
     let write_owner = owner.clone();
     let write_name = name.to_string();
     let (filename, filename_projection, allocated_suffix) =
-        tauri::async_runtime::spawn_blocking(move || {
+        tokio::task::spawn_blocking(move || {
             create_definition_file(&write_owner, &write_name, &content)
         })
         .await
         .map_err(blocking_task_error)??;
     let changed_path = definition_path(&owner, &filename);
     let (snapshot, mut warnings) = projection_after_write(
-        routine_stores,
-        index_state,
-        terminal_manager,
+        context.routine_stores,
+        context.index_state,
+        context.live_evidence,
         &owner,
         &changed_path,
     )
@@ -468,7 +450,6 @@ pub(crate) async fn create_managed(
         .routine_id
         .clone()
         .ok_or_else(|| AppError::General("created Routine has no portable identity".into()))?;
-    super::emit_owner_invalidation(app, &owner);
     Ok(ManagedRoutineMutationResult::Applied {
         routine_id,
         snapshot,
@@ -479,29 +460,31 @@ pub(crate) async fn create_managed(
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn update_managed(
-    app: &AppHandle,
     owner: ResolvedRoutineOwner,
     routine_id: String,
     expected_fingerprint: String,
     definition: RoutineDefinition,
-    policy: RoutineMutationPolicy,
-    git_state: &GitState,
-    access_state: &RepositoryAccessState,
-    routine_stores: &RoutineStoreState,
-    index_state: &IndexState,
-    terminal_manager: &TerminalManager,
+    intent: RoutineMutationIntent,
+    policy: RoutineMutationPolicyContext,
+    context: &RoutineMutationContext<'_>,
 ) -> Result<ManagedRoutineMutationResult, AppError> {
-    if let Err(result) = validate_candidate(&owner, &definition, policy) {
+    if let Err(result) = validate_candidate(&owner, &definition, intent, policy) {
         return Ok(*result);
     }
     let name = managed_name(&definition)
         .expect("validated managed Routine name")
         .to_string();
-    let repository = mutation_repository(git_state, &owner).await?;
-    let lock = git_state.get_lock(&repository).await;
+    let repository = mutation_repository(context.git_state, &owner).await?;
+    let lock = context.git_state.get_lock(&repository).await;
     let _guard = lock.lock().await;
-    let owner = revalidate_owner(git_state, &owner, &repository).await?;
-    authorize_mutation(app, git_state, access_state, &repository).await?;
+    let owner = revalidate_owner(context.git_state, &owner, &repository).await?;
+    authorize_mutation(
+        context.git_state,
+        context.access_state,
+        context.access_store_path,
+        &repository,
+    )
+    .await?;
 
     let current = discover_owner(&owner).await?;
     let Some(row) = current
@@ -518,7 +501,7 @@ pub(crate) async fn update_managed(
             current_fingerprint: Some(row.fingerprint.clone()),
         });
     }
-    if update_requires_name_check(row, &name, policy)
+    if update_requires_name_check(row, &name, intent.naming)
         && let Some(conflict) = routine_name_conflict(&current, &name, Some(&routine_id))
     {
         return Ok(ManagedRoutineMutationResult::NameConflict { conflict });
@@ -535,10 +518,10 @@ pub(crate) async fn update_managed(
     let old_filename = row.filename.clone();
     let old_path = row.path.clone();
     let (target_filename, filename_projection) =
-        update_target_filename(&old_filename, &name, policy);
+        update_target_filename(&old_filename, &name, intent.naming);
     let directory = owner.routines_dir();
     let write_fingerprint = expected_fingerprint.clone();
-    let outcome = tauri::async_runtime::spawn_blocking(move || {
+    let outcome = tokio::task::spawn_blocking(move || {
         update_definition_file_cas(
             &directory,
             &old_filename,
@@ -575,9 +558,9 @@ pub(crate) async fn update_managed(
     };
     let current_path = definition_path(&owner, &current_filename);
     let (snapshot, mut warnings) = projection_after_write(
-        routine_stores,
-        index_state,
-        terminal_manager,
+        context.routine_stores,
+        context.index_state,
+        context.live_evidence,
         &owner,
         &current_path,
     )
@@ -616,7 +599,6 @@ pub(crate) async fn update_managed(
             "the Routine source was saved, but its stable identity is temporarily unavailable; automatic dispatch remains fail-closed until reconciliation",
         ));
     }
-    super::emit_owner_invalidation(app, &owner);
     Ok(ManagedRoutineMutationResult::Applied {
         routine_id,
         snapshot,
@@ -628,9 +610,9 @@ pub(crate) async fn update_managed(
 fn update_target_filename(
     current_filename: &str,
     definition_name: &str,
-    policy: RoutineMutationPolicy,
+    naming: RoutineNamingIntent,
 ) -> (String, Option<FilenameProjection>) {
-    if policy.materialize_filename {
+    if naming == RoutineNamingIntent::MaterializeCanonicalFilename {
         let projection = filename::project(definition_name);
         (
             filename::component_name(&projection.stem, Some("md")),
@@ -644,9 +626,9 @@ fn update_target_filename(
 fn update_requires_name_check(
     current: &RoutineRow,
     candidate_name: &str,
-    policy: RoutineMutationPolicy,
+    naming: RoutineNamingIntent,
 ) -> bool {
-    policy.materialize_filename
+    naming == RoutineNamingIntent::MaterializeCanonicalFilename
         || crate::files::naming::display_name_key(&current.name)
             != crate::files::naming::display_name_key(candidate_name)
 }
@@ -680,21 +662,22 @@ fn routine_name_conflict(
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn delete_managed(
-    app: &AppHandle,
     owner: ResolvedRoutineOwner,
     routine_id: String,
     expected_fingerprint: String,
-    git_state: &GitState,
-    access_state: &RepositoryAccessState,
-    routine_stores: &RoutineStoreState,
-    index_state: &IndexState,
-    terminal_manager: &TerminalManager,
+    context: &RoutineMutationContext<'_>,
 ) -> Result<ManagedRoutineMutationResult, AppError> {
-    let repository = mutation_repository(git_state, &owner).await?;
-    let lock = git_state.get_lock(&repository).await;
+    let repository = mutation_repository(context.git_state, &owner).await?;
+    let lock = context.git_state.get_lock(&repository).await;
     let _guard = lock.lock().await;
-    let owner = revalidate_owner(git_state, &owner, &repository).await?;
-    authorize_mutation(app, git_state, access_state, &repository).await?;
+    let owner = revalidate_owner(context.git_state, &owner, &repository).await?;
+    authorize_mutation(
+        context.git_state,
+        context.access_state,
+        context.access_store_path,
+        &repository,
+    )
+    .await?;
 
     let current = discover_owner(&owner).await?;
     let Some(row) = current
@@ -715,7 +698,7 @@ pub(crate) async fn delete_managed(
     let directory = owner.routines_dir();
     let changed_path = row.path.clone();
     let delete_fingerprint = expected_fingerprint.clone();
-    let outcome = tauri::async_runtime::spawn_blocking(move || {
+    let outcome = tokio::task::spawn_blocking(move || {
         delete_definition_file_cas(&directory, &path, &delete_fingerprint)
     })
     .await
@@ -726,14 +709,13 @@ pub(crate) async fn delete_managed(
         });
     }
     let (snapshot, warnings) = projection_after_write(
-        routine_stores,
-        index_state,
-        terminal_manager,
+        context.routine_stores,
+        context.index_state,
+        context.live_evidence,
         &owner,
         &changed_path,
     )
     .await?;
-    super::emit_owner_invalidation(app, &owner);
     Ok(ManagedRoutineMutationResult::Applied {
         routine_id,
         snapshot,
@@ -753,15 +735,15 @@ pub(crate) async fn mutation_repository(
 }
 
 pub(crate) async fn authorize_mutation(
-    app: &AppHandle,
     git_state: &GitState,
     access_state: &RepositoryAccessState,
+    access_store_path: &Path,
     repository: &Path,
 ) -> Result<(), AppError> {
     ensure_mutation_paths_were_authorized(&[repository.to_path_buf()])?;
     let cli = require_cli(git_state)?;
     access_state
-        .require_mutation(&cli, repository, &access_store_path(app)?)
+        .require_mutation(&cli, repository, access_store_path)
         .await?;
     Ok(())
 }
@@ -769,7 +751,8 @@ pub(crate) async fn authorize_mutation(
 fn validate_candidate(
     owner: &ResolvedRoutineOwner,
     definition: &RoutineDefinition,
-    policy: RoutineMutationPolicy,
+    intent: RoutineMutationIntent,
+    policy: RoutineMutationPolicyContext,
 ) -> Result<(), Box<ManagedRoutineMutationResult>> {
     if managed_name(definition).is_none() {
         return Err(Box::new(ManagedRoutineMutationResult::Blocked {
@@ -785,7 +768,7 @@ fn validate_candidate(
         }));
     }
     let diagnostics = candidate_diagnostics(owner, definition);
-    if policy.require_valid_definition && !diagnostics.is_empty() {
+    if intent.validation == RoutineValidationIntent::CompleteDefinition && !diagnostics.is_empty() {
         return Err(Box::new(ManagedRoutineMutationResult::Blocked {
             code: RoutineMutationBlockedCode::Invalid,
             message: diagnostics
@@ -796,14 +779,15 @@ fn validate_candidate(
         }));
     }
     if automatic_execution_enabled(definition) {
-        if policy.caller == RoutineMutationCaller::RoutineMcp {
+        if policy.origin == RoutineMutationOrigin::RoutineAgent {
             return Err(Box::new(ManagedRoutineMutationResult::Blocked {
                 code: RoutineMutationBlockedCode::RecursionGuard,
                 message: "a routine-launched MCP caller cannot save enabled automation".into(),
                 diagnostics: Vec::new(),
             }));
         }
-        if policy.caller != RoutineMutationCaller::Desktop && !policy.confirm_automatic_execution {
+        if policy.origin != RoutineMutationOrigin::User && !policy.automatic_execution_acknowledged
+        {
             return Err(Box::new(ManagedRoutineMutationResult::Blocked {
                 code: RoutineMutationBlockedCode::AutomaticConfirmationRequired,
                 message:
@@ -897,12 +881,11 @@ pub(crate) async fn revalidate_owner(
 async fn projection_after_write(
     routine_stores: &RoutineStoreState,
     index_state: &IndexState,
-    terminal_manager: &TerminalManager,
+    live_evidence: &RoutineLiveEvidence,
     owner: &ResolvedRoutineOwner,
     changed_path: &str,
 ) -> Result<(RoutineCatalogSnapshot, Vec<RoutineDiagnostic>), AppError> {
-    let live_evidence = super::runtime::live_evidence(terminal_manager)?;
-    match read_catalog(routine_stores, index_state, &live_evidence, owner).await {
+    match read_catalog(routine_stores, index_state, live_evidence, owner).await {
         Ok(snapshot) => {
             let warnings = snapshot
                 .diagnostics
@@ -1349,6 +1332,23 @@ mod tests {
         }
     }
 
+    fn mutation_intent(
+        validation: RoutineValidationIntent,
+        naming: RoutineNamingIntent,
+    ) -> RoutineMutationIntent {
+        RoutineMutationIntent { validation, naming }
+    }
+
+    fn policy_context(
+        origin: RoutineMutationOrigin,
+        automatic_execution_acknowledged: bool,
+    ) -> RoutineMutationPolicyContext {
+        RoutineMutationPolicyContext {
+            origin,
+            automatic_execution_acknowledged,
+        }
+    }
+
     #[test]
     fn resolves_project_space_and_collection_owners_without_ambiguity() {
         let temp = tempfile::tempdir().unwrap();
@@ -1512,7 +1512,11 @@ mod tests {
         let blocked = validate_candidate(
             &owner,
             &event_definition(true),
-            RoutineMutationPolicy::external_mcp(false),
+            mutation_intent(
+                RoutineValidationIntent::CompleteDefinition,
+                RoutineNamingIntent::MaterializeCanonicalFilename,
+            ),
+            policy_context(RoutineMutationOrigin::ExternalAgent, false),
         )
         .unwrap_err();
         assert!(matches!(
@@ -1528,7 +1532,11 @@ mod tests {
             validate_candidate(
                 &owner,
                 &event_definition(true),
-                RoutineMutationPolicy::external_mcp(true),
+                mutation_intent(
+                    RoutineValidationIntent::CompleteDefinition,
+                    RoutineNamingIntent::MaterializeCanonicalFilename,
+                ),
+                policy_context(RoutineMutationOrigin::ExternalAgent, true),
             )
             .is_ok()
         );
@@ -1536,7 +1544,11 @@ mod tests {
             validate_candidate(
                 &owner,
                 &event_definition(false),
-                RoutineMutationPolicy::external_mcp(false),
+                mutation_intent(
+                    RoutineValidationIntent::CompleteDefinition,
+                    RoutineNamingIntent::MaterializeCanonicalFilename,
+                ),
+                policy_context(RoutineMutationOrigin::ExternalAgent, false),
             )
             .is_ok()
         );
@@ -1548,7 +1560,11 @@ mod tests {
         let blocked = validate_candidate(
             &collection_owner(temp.path()),
             &event_definition(true),
-            RoutineMutationPolicy::routine_mcp(true),
+            mutation_intent(
+                RoutineValidationIntent::CompleteDefinition,
+                RoutineNamingIntent::MaterializeCanonicalFilename,
+            ),
+            policy_context(RoutineMutationOrigin::RoutineAgent, true),
         )
         .unwrap_err();
         assert!(matches!(
@@ -1566,7 +1582,7 @@ mod tests {
             update_target_filename(
                 "current-name.md",
                 "Another Routine",
-                RoutineMutationPolicy::desktop(false),
+                RoutineNamingIntent::PreserveCurrentFilename,
             )
             .0,
             "current-name.md"
@@ -1575,7 +1591,7 @@ mod tests {
             update_target_filename(
                 "current-name.md",
                 "Another Routine",
-                RoutineMutationPolicy::desktop(true),
+                RoutineNamingIntent::MaterializeCanonicalFilename,
             )
             .0,
             "Another Routine.md"
@@ -1671,28 +1687,33 @@ mod tests {
         assert!(update_requires_name_check(
             &row,
             "Existing duplicate",
-            RoutineMutationPolicy::desktop(true),
+            RoutineNamingIntent::MaterializeCanonicalFilename,
         ));
         assert!(!update_requires_name_check(
             &row,
             "  EXISTING\u{2003}DUPLICATE ",
-            RoutineMutationPolicy::desktop(false),
+            RoutineNamingIntent::PreserveCurrentFilename,
         ));
         assert!(update_requires_name_check(
             &row,
             "Different",
-            RoutineMutationPolicy::desktop(false),
+            RoutineNamingIntent::PreserveCurrentFilename,
         ));
     }
 
     #[test]
-    fn invalid_owner_candidate_is_blocked_without_creating_source() {
+    fn strict_candidate_rejects_invalid_source_while_intermediate_edit_preserves_diagnostics() {
         let temp = tempfile::tempdir().unwrap();
         let owner = project_owner(temp.path());
+        let definition = event_definition(false);
         let blocked = validate_candidate(
             &owner,
-            &event_definition(false),
-            RoutineMutationPolicy::external_mcp(false),
+            &definition,
+            mutation_intent(
+                RoutineValidationIntent::CompleteDefinition,
+                RoutineNamingIntent::MaterializeCanonicalFilename,
+            ),
+            policy_context(RoutineMutationOrigin::ExternalAgent, false),
         )
         .unwrap_err();
         assert!(matches!(
@@ -1704,6 +1725,29 @@ mod tests {
             } if diagnostics.iter().any(|diagnostic| diagnostic.code == "routine_event_owner_invalid")
         ));
         assert!(!owner.routines_dir().exists());
+
+        assert!(
+            validate_candidate(
+                &owner,
+                &definition,
+                mutation_intent(
+                    RoutineValidationIntent::IntermediateEdit,
+                    RoutineNamingIntent::PreserveCurrentFilename,
+                ),
+                policy_context(RoutineMutationOrigin::User, true),
+            )
+            .is_ok()
+        );
+        let content =
+            parser::serialize_definition(&definition, "01arz3ndektsv4rrffq69g5fav").unwrap();
+        create_definition_file(&owner, "Keep invalid draft", content.as_bytes()).unwrap();
+        let draft = parser::discover_owner(&owner).routines.remove(0);
+        assert!(
+            draft
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == "routine_event_owner_invalid")
+        );
     }
 
     #[test]
@@ -1971,7 +2015,7 @@ mod tests {
         let (snapshot, warnings) = projection_after_write(
             &routine_stores,
             &index_state,
-            &TerminalManager::new(),
+            &RoutineLiveEvidence::default(),
             &owner,
             ".routines/kept.md",
         )
