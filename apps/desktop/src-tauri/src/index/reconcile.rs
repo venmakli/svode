@@ -33,8 +33,8 @@ mod tests {
     async fn pool() -> SqlitePool {
         let temp = TempDir::new().unwrap();
         let path = temp.keep().join("index.db");
-        let pool = crate::index::db::create_pool(&path).await.unwrap();
-        crate::index::db::ensure_schema(&pool).await.unwrap();
+        let pool = svode_core::index::db::create_pool(&path).await.unwrap();
+        svode_core::index::db::ensure_schema(&pool).await.unwrap();
         pool
     }
 

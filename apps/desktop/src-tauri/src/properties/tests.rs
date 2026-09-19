@@ -2484,10 +2484,10 @@ async fn df_087_root_collection_queries_exclude_owner_readme_for_all_query_shape
     )
     .unwrap();
 
-    let pool = crate::index::db::create_pool(&space.join(".svode/index.db"))
+    let pool = svode_core::index::db::create_pool(&space.join(".svode/index.db"))
         .await
         .unwrap();
-    crate::index::db::ensure_schema(&pool).await.unwrap();
+    svode_core::index::db::ensure_schema(&pool).await.unwrap();
     crate::index::reindex::full_reindex(&pool, space, &[])
         .await
         .unwrap();

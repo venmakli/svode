@@ -439,8 +439,8 @@ async fn open_writable_cache_pool(db_path: &Path) -> Result<sqlx::SqlitePool, Ap
     match initial {
         Ok(pool) => match ensure_cache_schema(&pool).await {
             Ok(()) => Ok(pool),
-            Err(error) if crate::index::db::is_corrupt_database_error(&error) => {
-                crate::index::db::close_pool(&pool).await;
+            Err(error) if svode_core::index::db::is_corrupt_database_error(&error) => {
+                svode_core::index::db::close_pool(&pool).await;
                 replace_corrupt_cache(db_path).await
             }
             Err(error) => {
@@ -448,7 +448,7 @@ async fn open_writable_cache_pool(db_path: &Path) -> Result<sqlx::SqlitePool, Ap
                 Err(error)
             }
         },
-        Err(error) if crate::index::db::is_corrupt_database_error(&error) => {
+        Err(error) if svode_core::index::db::is_corrupt_database_error(&error) => {
             replace_corrupt_cache(db_path).await
         }
         Err(error) => Err(error),
@@ -456,9 +456,9 @@ async fn open_writable_cache_pool(db_path: &Path) -> Result<sqlx::SqlitePool, Ap
 }
 
 async fn replace_corrupt_cache(db_path: &Path) -> Result<sqlx::SqlitePool, AppError> {
-    crate::index::db::quarantine_database_family(
+    svode_core::index::db::quarantine_database_family(
         db_path,
-        crate::index::db::QuarantineReason::Corrupt,
+        svode_core::index::db::QuarantineReason::Corrupt,
     )?;
     let pool = open_cache_pool(db_path, true).await?;
     ensure_cache_schema(&pool).await?;

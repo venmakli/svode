@@ -7,8 +7,9 @@ use svode_core::index::lifecycle::cleanup_using;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::index::{IndexKey, IndexState, db};
+    use crate::index::{IndexKey, IndexState};
     use std::sync::Arc;
+    use svode_core::index::db;
 
     fn generations(dir: &Path) -> usize {
         std::fs::read_dir(dir.join(".svode"))
@@ -36,10 +37,13 @@ mod tests {
         let directory = state.dir_for_key(&key).await.unwrap().join(".svode");
         let old = directory.join("index.db.incompatible-123");
         let legacy = db::create_pool(&old).await.unwrap();
-        sqlx::raw_sql(include_str!("fixtures/index-v15.sql"))
-            .execute(&legacy)
-            .await
-            .unwrap();
+        sqlx::raw_sql(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../../crates/svode-core/src/index/fixtures/index-v15.sql"
+        )))
+        .execute(&legacy)
+        .await
+        .unwrap();
         db::close_pool(&legacy).await;
         let before = std::fs::read(&old).unwrap();
         let (entered_tx, entered_rx) = oneshot::channel();
@@ -280,10 +284,13 @@ mod tests {
                 )
                 .await
                 .unwrap();
-            sqlx::raw_sql(include_str!("fixtures/index-v15.sql"))
-                .execute(&old_pool)
-                .await
-                .unwrap();
+            sqlx::raw_sql(include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../../crates/svode-core/src/index/fixtures/index-v15.sql"
+            )))
+            .execute(&old_pool)
+            .await
+            .unwrap();
             db::close_pool(&old_pool).await;
             std::fs::write(dir.join("page.md"), "# Preserved searchable content").unwrap();
             let owner = dir.join(format!("owner-{i}"));

@@ -352,7 +352,7 @@ mod tests {
         let pool = SqlitePool::connect("sqlite::memory:")
             .await
             .expect("sqlite pool");
-        crate::index::db::ensure_schema(&pool)
+        svode_core::index::db::ensure_schema(&pool)
             .await
             .expect("index schema");
         pool

@@ -278,10 +278,10 @@ mod tests {
         )
         .unwrap();
         std::fs::write(tmp.path().join("visible.md"), "# Visible").unwrap();
-        let pool = crate::index::db::create_pool(&tmp.path().join(".svode/index.db"))
+        let pool = svode_core::index::db::create_pool(&tmp.path().join(".svode/index.db"))
             .await
             .unwrap();
-        crate::index::db::ensure_schema(&pool).await.unwrap();
+        svode_core::index::db::ensure_schema(&pool).await.unwrap();
 
         full_reindex(&pool, tmp.path(), &[]).await.unwrap();
 
@@ -425,10 +425,12 @@ mod tests {
         std::fs::write(child.join("item.md"), "# Team item").unwrap();
         std::fs::write(child.join(".gitignore"), "item.md\n").unwrap();
 
-        let root_pool = crate::index::db::create_pool(&root.join(".svode/index.db"))
+        let root_pool = svode_core::index::db::create_pool(&root.join(".svode/index.db"))
             .await
             .unwrap();
-        crate::index::db::ensure_schema(&root_pool).await.unwrap();
+        svode_core::index::db::ensure_schema(&root_pool)
+            .await
+            .unwrap();
         full_reindex(&root_pool, root, &["team".to_string()])
             .await
             .unwrap();
@@ -508,10 +510,12 @@ mod tests {
             0
         );
 
-        let child_pool = crate::index::db::create_pool(&child.join(".svode/index.db"))
+        let child_pool = svode_core::index::db::create_pool(&child.join(".svode/index.db"))
             .await
             .unwrap();
-        crate::index::db::ensure_schema(&child_pool).await.unwrap();
+        svode_core::index::db::ensure_schema(&child_pool)
+            .await
+            .unwrap();
         full_reindex(&child_pool, &child, &[]).await.unwrap();
         assert_eq!(
             sqlx::query_as::<_, (i64, i64, i64)>(

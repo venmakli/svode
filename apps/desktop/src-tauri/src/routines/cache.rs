@@ -590,10 +590,12 @@ mod tests {
             "---\ntitle: Item\nStatus: Open\n---\n",
         )
         .unwrap();
-        let index_pool = crate::index::db::create_pool(&temp.path().join("index.db"))
+        let index_pool = svode_core::index::db::create_pool(&temp.path().join("index.db"))
             .await
             .unwrap();
-        crate::index::db::ensure_schema(&index_pool).await.unwrap();
+        svode_core::index::db::ensure_schema(&index_pool)
+            .await
+            .unwrap();
         crate::index::reindex::full_reindex(&index_pool, temp.path(), &[])
             .await
             .unwrap();

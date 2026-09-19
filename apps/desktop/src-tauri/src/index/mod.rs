@@ -1,5 +1,4 @@
 pub mod commands;
-pub mod db;
 pub mod knowledge;
 mod lifecycle;
 pub(crate) mod page_dates;

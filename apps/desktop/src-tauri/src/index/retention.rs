@@ -10,9 +10,18 @@ mod tests {
         fs::create_dir_all(directory).unwrap();
         let path = directory.join(format!("index.db.incompatible-{generation}"));
         let sql = match version {
-            14 => include_str!("fixtures/index-v14.sql"),
-            15 | 16 => include_str!("fixtures/index-v15.sql"),
-            _ => include_str!("fixtures/index-v17.sql"),
+            14 => include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../../crates/svode-core/src/index/fixtures/index-v14.sql"
+            )),
+            15 | 16 => include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../../crates/svode-core/src/index/fixtures/index-v15.sql"
+            )),
+            _ => include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../../crates/svode-core/src/index/fixtures/index-v17.sql"
+            )),
         };
         let mut connection = SqliteConnection::connect_with(
             &SqliteConnectOptions::new()
