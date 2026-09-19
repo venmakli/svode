@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-// Build the lfs-dal sidecar and place it where Tauri's `externalBin` expects:
-// `apps/desktop/src-tauri/binaries/lfs-dal-<target-triple>[.exe]`.
+// Build the svode-lfs sidecar and place it where Tauri's `externalBin` expects:
+// `apps/desktop/src-tauri/binaries/svode-lfs-<target-triple>[.exe]`.
 //
 // Tauri matches the suffix against the host's rustc target triple at bundle
 // time, so we ask rustc itself for the triple instead of guessing per-OS.
@@ -19,7 +19,7 @@ import { fileURLToPath } from "node:url";
 import { cargoTargetDir } from "./cargo-target.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const crateDir = resolve(__dirname, "../../../crates/lfs-dal");
+const crateDir = resolve(__dirname, "../../../crates/svode-lfs");
 const binariesDir = resolve(__dirname, "../src-tauri/binaries");
 const targetDir = cargoTargetDir();
 
@@ -58,18 +58,18 @@ function copyIfChanged(src, dest) {
 
 function builtBinaryPath(triple) {
   const exeSuffix = exeSuffixForTarget(triple);
-  return resolve(targetDir, triple, "lfs-release", `lfs-dal${exeSuffix}`);
+  return resolve(targetDir, triple, "lfs-release", `svode-lfs${exeSuffix}`);
 }
 
 function sidecarPath(triple) {
-  return resolve(binariesDir, `lfs-dal-${triple}${exeSuffixForTarget(triple)}`);
+  return resolve(binariesDir, `svode-lfs-${triple}${exeSuffixForTarget(triple)}`);
 }
 
 function buildTarget(triple) {
-  console.log(`[lfs-dal] building for ${triple}`);
+  console.log(`[svode-lfs] building for ${triple}`);
   run(
     "cargo",
-    ["build", "-p", "lfs-dal", "--profile", "lfs-release", "--target", triple],
+    ["build", "-p", "svode-lfs", "--profile", "lfs-release", "--target", triple],
     {
       cwd: crateDir,
       env: { ...process.env, CARGO_TARGET_DIR: targetDir },
@@ -100,7 +100,7 @@ function tauriTargetBinaryPath(triple) {
     targetDir,
     triple,
     "lfs-release",
-    `lfs-dal${exeSuffixForTarget(triple)}`,
+    `svode-lfs${exeSuffixForTarget(triple)}`,
   );
 }
 
@@ -119,20 +119,20 @@ if (requestedTriple === "universal-apple-darwin") {
     const copied = copyIfChanged(built[index], sidecarPath(target));
     console.log(
       copied
-        ? `[lfs-dal] -> ${sidecarPath(target)}`
-        : `[lfs-dal] unchanged ${sidecarPath(target)}`,
+        ? `[svode-lfs] -> ${sidecarPath(target)}`
+        : `[svode-lfs] unchanged ${sidecarPath(target)}`,
     );
   });
 
   const universalDest = sidecarPath(requestedTriple);
   lipoUniversal(built, universalDest);
-  console.log(`[lfs-dal] -> ${universalDest}`);
+  console.log(`[svode-lfs] -> ${universalDest}`);
 
   const tauriDest = tauriTargetBinaryPath(requestedTriple);
   lipoUniversal(built, tauriDest);
-  console.log(`[lfs-dal] -> ${tauriDest}`);
+  console.log(`[svode-lfs] -> ${tauriDest}`);
 } else {
   const dest = sidecarPath(requestedTriple);
   const copied = copyIfChanged(built[0], dest);
-  console.log(copied ? `[lfs-dal] -> ${dest}` : `[lfs-dal] unchanged ${dest}`);
+  console.log(copied ? `[svode-lfs] -> ${dest}` : `[svode-lfs] unchanged ${dest}`);
 }

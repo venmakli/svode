@@ -317,7 +317,7 @@ pub async fn set_assets_strategy(
 
     let catalog_dir = super::bindings::catalog_dir(&app)?;
     let mut next_agent_config = None;
-    let lfs_dal_path = if matches!(strategy, AssetsStrategy::LfsS3) {
+    let svode_lfs_path = if matches!(strategy, AssetsStrategy::LfsS3) {
         let cfg = s3_config
             .as_ref()
             .ok_or_else(|| AppError::Storage("lfs-s3 requires endpoint/bucket/region".into()))?;
@@ -362,7 +362,7 @@ pub async fn set_assets_strategy(
             })
             .await?,
         );
-        Some(s3::resolve_agent_binary(&app)?)
+        Some(s3::resolve_agent_binary()?)
     } else {
         None
     };
@@ -373,7 +373,7 @@ pub async fn set_assets_strategy(
         strategy,
         &binary_routing,
         s3_config.as_ref(),
-        lfs_dal_path.as_deref(),
+        svode_lfs_path.as_deref(),
     )
     .await?;
 

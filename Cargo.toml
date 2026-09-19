@@ -1,5 +1,5 @@
 [workspace]
-members = ["apps/desktop/src-tauri", "crates/svode-core", "crates/lfs-dal"]
+members = ["apps/desktop/src-tauri", "crates/svode-core", "crates/svode-lfs"]
 resolver = "3"
 
 [profile.lfs-release]

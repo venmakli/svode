@@ -35,7 +35,7 @@ function placeholderContent(triple) {
 
 const triple = process.env.TAURI_ENV_TARGET_TRIPLE || rustcHostTriple();
 const suffix = exeSuffixForTarget(triple);
-const sidecars = ["lfs-dal", "svode-mcp"];
+const sidecars = ["svode-lfs", "svode-mcp"];
 
 mkdirSync(binariesDir, { recursive: true });
 

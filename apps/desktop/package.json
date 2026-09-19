@@ -6,8 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "NODE_OPTIONS='--max-old-space-size=8192' vite build",
-    "build:sidecars": "node scripts/build-lfs-dal.mjs && node scripts/build-svode-mcp.mjs",
-    "build:lfs-dal": "node scripts/build-lfs-dal.mjs",
+    "build:sidecars": "node scripts/build-svode-lfs.mjs && node scripts/build-svode-mcp.mjs",
+    "build:svode-lfs": "node scripts/build-svode-lfs.mjs",
     "build:svode-mcp": "node scripts/build-svode-mcp.mjs",
     "check:sidecars": "node scripts/prepare-sidecar-placeholders.mjs",
     "paraglide": "paraglide-js compile --project ./project.inlang --outdir ./src/paraglide --silent",

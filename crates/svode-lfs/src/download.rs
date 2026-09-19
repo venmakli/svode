@@ -23,7 +23,7 @@ fn temporary_directory(repo: &Path) -> Result<PathBuf> {
     let directory = directory.strip_suffix('\r').unwrap_or(directory);
     let directory = PathBuf::from(directory);
     ensure!(directory.is_absolute(), "Git directory is not absolute");
-    Ok(directory.join("lfs/tmp/lfs-dal"))
+    Ok(directory.join("lfs/tmp/svode-lfs"))
 }
 
 pub(super) fn stage(repo: &Path, mut contents: impl Read) -> Result<String> {

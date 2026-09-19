@@ -139,22 +139,22 @@ pub fn ensure_agent_gitignore(space_dir: &Path) -> Result<(), AppError> {
     Ok(())
 }
 
-/// Resolve the bundled `lfs-dal` sidecar binary on disk. Looks first next
+/// Resolve the bundled `svode-lfs` sidecar binary on disk. Looks first next
 /// to the host executable (production / `tauri build`), then falls back to
-/// the `src-tauri/binaries/lfs-dal-<triple>` artifact written by
-/// `scripts/build-lfs-dal.mjs` (dev mode), and finally to the cargo target
+/// the `src-tauri/binaries/svode-lfs-<triple>` artifact written by
+/// `scripts/build-svode-lfs.mjs` (dev mode), and finally to the cargo target
 /// shared Cargo workspace output. Returns an absolute path so git's
-/// `lfs.customtransfer.lfs-dal.path` config never relies on cwd.
-pub fn resolve_agent_binary(_app_handle: &tauri::AppHandle) -> Result<PathBuf, AppError> {
+/// `lfs.customtransfer.svode-lfs.path` config never relies on cwd.
+pub fn resolve_agent_binary() -> Result<PathBuf, AppError> {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let mut candidates = Vec::new();
 
     // 1. Bundled sidecar — Tauri places externalBin next to the host binary
-    //    after stripping the target-triple suffix, so a plain `lfs-dal[.exe]`
+    //    after stripping the target-triple suffix, so a plain `svode-lfs[.exe]`
     //    in the same directory wins for production builds.
     if let Ok(exe) = std::env::current_exe() {
         if let Some(parent) = exe.parent() {
-            for name in lfs_dal_plain_names() {
+            for name in svode_lfs_plain_names() {
                 candidates.push(parent.join(name));
             }
         }
@@ -165,7 +165,7 @@ pub fn resolve_agent_binary(_app_handle: &tauri::AppHandle) -> Result<PathBuf, A
     //    relative lookup is enough.
     let triple = std::env::var("TARGET").ok().or_else(rustc_host_triple);
     if let Some(triple) = triple.as_deref() {
-        for name in lfs_dal_suffixed_names(triple) {
+        for name in svode_lfs_suffixed_names(triple) {
             candidates.push(manifest_dir.join("binaries").join(name));
         }
     }
@@ -177,7 +177,7 @@ pub fn resolve_agent_binary(_app_handle: &tauri::AppHandle) -> Result<PathBuf, A
         .map(PathBuf::from)
         .unwrap_or_else(|| workspace_dir.join("target"));
     for profile in ["lfs-release", "release", "debug"] {
-        for name in lfs_dal_plain_names() {
+        for name in svode_lfs_plain_names() {
             candidates.push(target_dir.join(profile).join(&name));
             if let Some(triple) = triple.as_deref() {
                 candidates.push(target_dir.join(triple).join(profile).join(&name));
@@ -191,7 +191,7 @@ pub fn resolve_agent_binary(_app_handle: &tauri::AppHandle) -> Result<PathBuf, A
         }
         let absolute = candidate.canonicalize().map_err(|e| {
             AppError::Storage(format!(
-                "lfs-dal binary path could not be canonicalized ({}): {e}",
+                "svode-lfs binary path could not be canonicalized ({}): {e}",
                 candidate.display()
             ))
         })?;
@@ -200,44 +200,44 @@ pub fn resolve_agent_binary(_app_handle: &tauri::AppHandle) -> Result<PathBuf, A
     }
 
     Err(AppError::Storage(
-        "lfs-dal binary not found — run `bun run build:lfs-dal` or rebuild the app bundle".into(),
+        "svode-lfs binary not found — run `bun run build:svode-lfs` or rebuild the app bundle".into(),
     ))
 }
 
-fn lfs_dal_plain_names() -> Vec<String> {
-    lfs_dal_plain_names_for(cfg!(windows))
+fn svode_lfs_plain_names() -> Vec<String> {
+    svode_lfs_plain_names_for(cfg!(windows))
 }
 
-fn lfs_dal_plain_names_for(windows: bool) -> Vec<String> {
+fn svode_lfs_plain_names_for(windows: bool) -> Vec<String> {
     if windows {
-        vec!["lfs-dal.exe".to_string(), "lfs-dal".to_string()]
+        vec!["svode-lfs.exe".to_string(), "svode-lfs".to_string()]
     } else {
-        vec!["lfs-dal".to_string()]
+        vec!["svode-lfs".to_string()]
     }
 }
 
-fn lfs_dal_suffixed_names(triple: &str) -> Vec<String> {
-    lfs_dal_suffixed_names_for(triple, cfg!(windows))
+fn svode_lfs_suffixed_names(triple: &str) -> Vec<String> {
+    svode_lfs_suffixed_names_for(triple, cfg!(windows))
 }
 
-fn lfs_dal_suffixed_names_for(triple: &str, windows: bool) -> Vec<String> {
+fn svode_lfs_suffixed_names_for(triple: &str, windows: bool) -> Vec<String> {
     if windows {
-        vec![format!("lfs-dal-{triple}.exe"), format!("lfs-dal-{triple}")]
+        vec![format!("svode-lfs-{triple}.exe"), format!("svode-lfs-{triple}")]
     } else {
-        vec![format!("lfs-dal-{triple}")]
+        vec![format!("svode-lfs-{triple}")]
     }
 }
 
 fn validate_agent_binary(path: &Path) -> Result<(), AppError> {
     if !path.is_absolute() {
         return Err(AppError::Storage(format!(
-            "lfs-dal binary path must be absolute: {}",
+            "svode-lfs binary path must be absolute: {}",
             path.display()
         )));
     }
     if !path.is_file() {
         return Err(AppError::Storage(format!(
-            "lfs-dal binary is not a file: {}",
+            "svode-lfs binary is not a file: {}",
             path.display()
         )));
     }
@@ -251,7 +251,7 @@ fn validate_agent_binary_executable(path: &Path) -> Result<(), AppError> {
     let mode = std::fs::metadata(path)?.permissions().mode();
     if mode & 0o111 == 0 {
         return Err(AppError::Storage(format!(
-            "lfs-dal binary is not executable: {}",
+            "svode-lfs binary is not executable: {}",
             path.display()
         )));
     }
@@ -264,7 +264,7 @@ fn validate_agent_binary_executable(_path: &Path) -> Result<(), AppError> {
 }
 
 /// Cheap shell-out to ask rustc for the host triple. Cached lazily would be
-/// nice but resolve_agent_binary is rarely called (only on strategy switch),
+/// nice but resolve_agent_binary is only called for managed readiness/setup,
 /// so we just spawn the process each time.
 fn rustc_host_triple() -> Option<String> {
     let mut cmd = std::process::Command::new("rustc");
@@ -376,26 +376,26 @@ mod tests {
     }
 
     #[test]
-    fn lfs_dal_names_include_windows_exe_fallbacks() {
+    fn svode_lfs_names_include_windows_exe_fallbacks() {
         assert_eq!(
-            lfs_dal_plain_names_for(true),
-            vec!["lfs-dal.exe".to_string(), "lfs-dal".to_string()]
+            svode_lfs_plain_names_for(true),
+            vec!["svode-lfs.exe".to_string(), "svode-lfs".to_string()]
         );
         assert_eq!(
-            lfs_dal_suffixed_names_for("x86_64-pc-windows-msvc", true),
+            svode_lfs_suffixed_names_for("x86_64-pc-windows-msvc", true),
             vec![
-                "lfs-dal-x86_64-pc-windows-msvc.exe".to_string(),
-                "lfs-dal-x86_64-pc-windows-msvc".to_string(),
+                "svode-lfs-x86_64-pc-windows-msvc.exe".to_string(),
+                "svode-lfs-x86_64-pc-windows-msvc".to_string(),
             ]
         );
     }
 
     #[test]
-    fn lfs_dal_names_use_plain_unix_binary_names() {
-        assert_eq!(lfs_dal_plain_names_for(false), vec!["lfs-dal".to_string()]);
+    fn svode_lfs_names_use_plain_unix_binary_names() {
+        assert_eq!(svode_lfs_plain_names_for(false), vec!["svode-lfs".to_string()]);
         assert_eq!(
-            lfs_dal_suffixed_names_for("aarch64-apple-darwin", false),
-            vec!["lfs-dal-aarch64-apple-darwin".to_string()]
+            svode_lfs_suffixed_names_for("aarch64-apple-darwin", false),
+            vec!["svode-lfs-aarch64-apple-darwin".to_string()]
         );
     }
 }

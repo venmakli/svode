@@ -77,7 +77,7 @@ fn real_git_layouts_preserve_metadata_and_keep_independent_handoffs() {
         );
         for path in &paths {
             assert!(Path::new(path).is_absolute());
-            assert!(Path::new(path).starts_with(git_dir.join("lfs/tmp/lfs-dal")));
+            assert!(Path::new(path).starts_with(git_dir.join("lfs/tmp/svode-lfs")));
             assert_eq!(std::fs::read(path).unwrap(), b"same OID bytes");
         }
         assert_eq!(std::fs::read(git_dir.join("HEAD")).unwrap(), head);

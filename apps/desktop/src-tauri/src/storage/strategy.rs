@@ -28,6 +28,37 @@ const MANAGED_PATH_PREFIX: &str = "# svode:path ";
 
 const IGNORE_BODY: &str = ".assets/";
 
+/// Git LFS custom-transfer agent identifier Svode registers for the LfsS3
+/// strategy. Git spawns the sidecar registered under this name on push/pull.
+const TRANSFER_AGENT: &str = "svode-lfs";
+/// Historical agent identifier used before the `lfs-dal → svode-lfs` rename.
+/// Recognized only to migrate Svode's own registration; never claimed from a
+/// third-party standalone agent.
+const LEGACY_TRANSFER_AGENT: &str = "lfs-dal";
+/// Base names of the sidecar binary Svode has shipped. A legacy `lfs-dal`
+/// registration whose path points at one of these (or at the current sidecar
+/// name) is recognized as Svode's own; any other target is treated as a
+/// conflicting custom configuration and left untouched.
+const OWNED_BINARY_NAMES: [&str; 4] = ["lfs-dal", "lfs-dal.exe", "svode-lfs", "svode-lfs.exe"];
+
+/// Outcome of [`repair_managed_registration`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RegistrationOutcome {
+    /// Registration already targets the current sidecar; Git config untouched.
+    Current,
+    /// Legacy/missing/stale/partial wiring was migrated to `svode-lfs`.
+    Repaired,
+    /// A third-party or conflicting custom transfer config was left unchanged.
+    Foreign,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RepairAction {
+    None,
+    Foreign,
+    Migrate,
+}
+
 /// Read a file to a string, returning an empty string if the file does not
 /// exist. Any other IO error is propagated.
 fn read_or_empty(path: &Path) -> Result<String, AppError> {
@@ -442,6 +473,235 @@ async fn exec_storage_strategy_git(
     cli.exec(space_dir, args).await
 }
 
+/// Read a single local Git config value. Returns `None` when the key is unset
+/// (`git config --get` exit code 1); any other non-zero exit is an error.
+async fn read_local_config(
+    cli: &GitCli,
+    repo_dir: &Path,
+    key: &str,
+) -> Result<Option<String>, AppError> {
+    let out = cli
+        .exec(repo_dir, &["config", "--local", "--get", key])
+        .await?;
+    match out.exit_code {
+        0 => Ok(Some(out.stdout.trim().to_string())),
+        1 => Ok(None),
+        _ => Err(AppError::Storage(format!(
+            "git config --get {key} failed: {}",
+            out.stderr.trim()
+        ))),
+    }
+}
+
+/// Set a single local Git config value, going through the history-rewrite guard.
+async fn set_local_config(
+    cli: &GitCli,
+    repo_dir: &Path,
+    key: &str,
+    value: &str,
+) -> Result<(), AppError> {
+    let out = exec_storage_strategy_git(cli, repo_dir, &["config", "--local", key, value]).await?;
+    if out.exit_code != 0 {
+        return Err(AppError::Storage(format!(
+            "git config {key} failed: {}",
+            out.stderr.trim()
+        )));
+    }
+    Ok(())
+}
+
+/// Unset a single local Git config key. A missing key (`--unset` exit code 5)
+/// is treated as a no-op rather than an error.
+async fn unset_local_config(cli: &GitCli, repo_dir: &Path, key: &str) -> Result<(), AppError> {
+    let out =
+        exec_storage_strategy_git(cli, repo_dir, &["config", "--local", "--unset", key]).await?;
+    if out.exit_code != 0 && out.exit_code != 5 {
+        return Err(AppError::Storage(format!(
+            "git config --unset {key} failed: {}",
+            out.stderr.trim()
+        )));
+    }
+    Ok(())
+}
+
+/// A recorded legacy `lfs-dal` transfer path is Svode's own when it is absent
+/// (a broken registration we rewrite) or points at a binary Svode ships. Any
+/// other target is a conflicting custom configuration. A basename alone is not
+/// sufficient on its own — the caller only reaches here after confirming the
+/// managed Svode agent identifier is registered.
+fn legacy_path_is_ours(path: Option<&str>) -> bool {
+    match path {
+        None => true,
+        Some(path) => Path::new(path)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| OWNED_BINARY_NAMES.contains(&name)),
+    }
+}
+
+/// Decide what the managed registration needs, given the current local Git
+/// config. Pure so the legacy/missing/stale/current/partial/foreign matrix is
+/// unit-testable without Git or a resolved sidecar binary.
+fn classify_registration(
+    agent: Option<&str>,
+    current_path_is_file: bool,
+    legacy_path: Option<&str>,
+) -> RepairAction {
+    match agent {
+        Some(a) if a != TRANSFER_AGENT && a != LEGACY_TRANSFER_AGENT => RepairAction::Foreign,
+        Some(a) if a == LEGACY_TRANSFER_AGENT && !legacy_path_is_ours(legacy_path) => {
+            RepairAction::Foreign
+        }
+        Some(a) if a == TRANSFER_AGENT && current_path_is_file && legacy_path.is_none() => {
+            RepairAction::None
+        }
+        _ => RepairAction::Migrate,
+    }
+}
+
+/// Write Svode's managed LFS S3 custom-transfer registration, pointing Git at
+/// `bin`, then remove any superseded legacy `lfs-dal` keys. The caller holds the
+/// repository lock. The sidecar path is written and verified *before* the active
+/// transfer agent is switched, so a failure never leaves Git pointing at an
+/// unverified agent. Only the recognized managed legacy keys are removed; user
+/// additions under the legacy agent are left untouched.
+async fn write_managed_registration(
+    cli: &GitCli,
+    repo_dir: &Path,
+    bin: &Path,
+) -> Result<(), AppError> {
+    let bin = bin.canonicalize().unwrap_or_else(|_| bin.to_path_buf());
+    if !bin.is_absolute() {
+        return Err(AppError::Storage(format!(
+            "svode-lfs path must be absolute: {}",
+            bin.display()
+        )));
+    }
+    let bin_str = bin
+        .to_str()
+        .ok_or_else(|| AppError::Storage("svode-lfs path must be valid UTF-8".into()))?;
+
+    let path_key = format!("lfs.customtransfer.{TRANSFER_AGENT}.path");
+    let concurrent_key = format!("lfs.customtransfer.{TRANSFER_AGENT}.concurrent");
+    set_local_config(cli, repo_dir, &path_key, bin_str).await?;
+    set_local_config(cli, repo_dir, &concurrent_key, "true").await?;
+
+    // Verify the sidecar path persisted before making it the active agent.
+    if read_local_config(cli, repo_dir, &path_key)
+        .await?
+        .as_deref()
+        != Some(bin_str)
+    {
+        return Err(AppError::Storage(
+            "svode-lfs transfer agent path did not persist".into(),
+        ));
+    }
+    set_local_config(cli, repo_dir, "lfs.standalonetransferagent", TRANSFER_AGENT).await?;
+
+    unset_local_config(
+        cli,
+        repo_dir,
+        &format!("lfs.customtransfer.{LEGACY_TRANSFER_AGENT}.path"),
+    )
+    .await?;
+    unset_local_config(
+        cli,
+        repo_dir,
+        &format!("lfs.customtransfer.{LEGACY_TRANSFER_AGENT}.concurrent"),
+    )
+    .await?;
+    Ok(())
+}
+
+/// Remove Svode's managed transfer wiring (current and legacy) without
+/// disturbing a third-party standalone agent. The caller holds the repository
+/// lock.
+async fn teardown_managed_registration(cli: &GitCli, repo_dir: &Path) -> Result<(), AppError> {
+    // Only clear the active agent when it is one Svode owns; a foreign
+    // standalonetransferagent stays untouched.
+    if let Some(agent) = read_local_config(cli, repo_dir, "lfs.standalonetransferagent").await?
+        && (agent == TRANSFER_AGENT || agent == LEGACY_TRANSFER_AGENT)
+    {
+        unset_local_config(cli, repo_dir, "lfs.standalonetransferagent").await?;
+    }
+    for agent in [TRANSFER_AGENT, LEGACY_TRANSFER_AGENT] {
+        unset_local_config(cli, repo_dir, &format!("lfs.customtransfer.{agent}.path")).await?;
+        unset_local_config(
+            cli,
+            repo_dir,
+            &format!("lfs.customtransfer.{agent}.concurrent"),
+        )
+        .await?;
+    }
+    Ok(())
+}
+
+/// Repair Svode's managed LFS S3 transfer registration for an existing
+/// repository so Git spawns the current `svode-lfs` sidecar, migrating a
+/// previous install's `lfs-dal` registration. Idempotent: a repository already
+/// on the current wiring returns [`RegistrationOutcome::Current`] without
+/// touching Git config, so a repeat after success is a no-op. A third-party
+/// standalone agent or a legacy id pointing at a non-Svode binary is left intact
+/// and reported as [`RegistrationOutcome::Foreign`]. The caller must NOT hold
+/// the repository lock.
+pub(crate) async fn repair_managed_registration(
+    git_state: &GitState,
+    repo_dir: &Path,
+) -> Result<RegistrationOutcome, AppError> {
+    repair_managed_registration_with(git_state, repo_dir, s3::resolve_agent_binary).await
+}
+
+async fn repair_managed_registration_with(
+    git_state: &GitState,
+    repo_dir: &Path,
+    resolve_bin: impl Fn() -> Result<PathBuf, AppError>,
+) -> Result<RegistrationOutcome, AppError> {
+    let cli = require_cli(git_state)?;
+
+    // Cheap lock-free read on the common already-current path.
+    if inspect_registration(&cli, repo_dir).await? == RepairAction::None {
+        return Ok(RegistrationOutcome::Current);
+    }
+
+    // A change may be required: serialize with other repository operations and
+    // re-classify under the lock to avoid racing a concurrent apply.
+    let lock = git_state.get_lock(repo_dir).await;
+    let _guard = lock.lock().await;
+    match inspect_registration(&cli, repo_dir).await? {
+        RepairAction::None => Ok(RegistrationOutcome::Current),
+        RepairAction::Foreign => Ok(RegistrationOutcome::Foreign),
+        RepairAction::Migrate => {
+            let bin = resolve_bin()?;
+            write_managed_registration(&cli, repo_dir, &bin).await?;
+            Ok(RegistrationOutcome::Repaired)
+        }
+    }
+}
+
+async fn inspect_registration(cli: &GitCli, repo_dir: &Path) -> Result<RepairAction, AppError> {
+    let agent = read_local_config(cli, repo_dir, "lfs.standalonetransferagent").await?;
+    let current_path = read_local_config(
+        cli,
+        repo_dir,
+        &format!("lfs.customtransfer.{TRANSFER_AGENT}.path"),
+    )
+    .await?;
+    let legacy_path = read_local_config(
+        cli,
+        repo_dir,
+        &format!("lfs.customtransfer.{LEGACY_TRANSFER_AGENT}.path"),
+    )
+    .await?;
+    let current_path_is_file = current_path
+        .as_deref()
+        .is_some_and(|path| Path::new(path).is_file());
+    Ok(classify_registration(
+        agent.as_deref(),
+        current_path_is_file,
+        legacy_path.as_deref(),
+    ))
+}
+
 /// Apply a new assets strategy: update `.gitignore` / `.gitattributes`,
 /// install LFS hooks if needed, and wire S3 transfer-agent config.
 /// Does NOT mutate `SpaceConfig` — the caller owns that.
@@ -455,7 +715,7 @@ pub async fn apply_strategy(
     new: AssetsStrategy,
     binary_routing: &BinaryRoutingConfig,
     s3_config: Option<&AssetsS3Config>,
-    lfs_dal_path: Option<&Path>,
+    svode_lfs_path: Option<&Path>,
 ) -> Result<ApplyStrategyResult, AppError> {
     let cli = require_cli(git_state)?;
     let mut result = ApplyStrategyResult::default();
@@ -474,9 +734,9 @@ pub async fn apply_strategy(
                 "lfs-s3 strategy requires an S3 configuration".into(),
             ));
         }
-        if lfs_dal_path.is_none() {
+        if svode_lfs_path.is_none() {
             return Err(AppError::Storage(
-                "lfs-dal sidecar binary not available".into(),
+                "svode-lfs sidecar binary not available".into(),
             ));
         }
     }
@@ -554,73 +814,26 @@ pub async fn apply_strategy(
         }
     }
 
-    // --- LFS S3 custom transfer agent (lfs-dal) wiring/teardown. ---
-    // For LfsS3 we ensure the local agent config is ignored and configure
-    // Git to use lfs-dal. The caller publishes credentials after strategy apply
-    // and portable config persistence succeed. Configure lfs-dal
-    // as the standalone transfer agent. For any other strategy we tear the
-    // git config back down so a stale agent doesn't fire on push.
+    // --- LFS S3 custom transfer agent (svode-lfs) wiring/teardown. ---
+    // For LfsS3 we ensure the local agent config is ignored and register the
+    // svode-lfs sidecar as the standalone transfer agent, replacing any legacy
+    // lfs-dal registration. The caller publishes credentials after strategy
+    // apply and portable config persistence succeed. For any other strategy we
+    // tear our own git config back down — without disturbing a foreign active
+    // agent — so a stale agent doesn't fire on push.
     if matches!(new, AssetsStrategy::LfsS3) {
-        let bin = lfs_dal_path.expect("checked above");
-
+        let bin = svode_lfs_path.expect("checked above");
         s3::ensure_agent_gitignore(space_dir)?;
-        let bin = bin.canonicalize().unwrap_or_else(|_| bin.to_path_buf());
-        if !bin.is_absolute() {
-            return Err(AppError::Storage(format!(
-                "lfs-dal path must be absolute: {}",
-                bin.display()
-            )));
-        }
-        let bin_str = bin
-            .to_str()
-            .ok_or_else(|| AppError::Storage("lfs-dal path must be valid UTF-8".into()))?;
-        let pairs: [(&str, &str); 3] = [
-            ("lfs.customtransfer.lfs-dal.path", bin_str),
-            ("lfs.customtransfer.lfs-dal.concurrent", "true"),
-            ("lfs.standalonetransferagent", "lfs-dal"),
-        ];
-        for (key, value) in pairs {
-            match exec_storage_strategy_git(&cli, space_dir, &["config", "--local", key, value])
-                .await
-            {
-                Ok(o) if o.exit_code != 0 => {
-                    let msg = format!("git config {key} failed: {}", o.stderr.trim());
-                    tracing::warn!("{msg}");
-                    result.warnings.push(msg);
-                }
-                Err(e) => {
-                    let msg = format!("git config {key} errored: {e}");
-                    tracing::warn!("{msg}");
-                    result.warnings.push(msg);
-                }
-                _ => {}
-            }
+        if let Err(e) = write_managed_registration(&cli, space_dir, bin).await {
+            let msg = format!("configuring the svode-lfs transfer agent failed: {e}");
+            tracing::warn!("{msg}");
+            result.warnings.push(msg);
         }
     } else {
-        // Tear down lfs-dal git config and the agent config file. Missing
-        // values are fine — `git config --unset` returns 5, which we treat
-        // as no-op rather than warning.
-        let unset_keys = [
-            "lfs.standalonetransferagent",
-            "lfs.customtransfer.lfs-dal.path",
-            "lfs.customtransfer.lfs-dal.concurrent",
-        ];
-        for key in unset_keys {
-            match exec_storage_strategy_git(&cli, space_dir, &["config", "--local", "--unset", key])
-                .await
-            {
-                Ok(o) if o.exit_code != 0 && o.exit_code != 5 => {
-                    let msg = format!("git config --unset {key} failed: {}", o.stderr.trim());
-                    tracing::warn!("{msg}");
-                    result.warnings.push(msg);
-                }
-                Err(e) => {
-                    let msg = format!("git config --unset {key} errored: {e}");
-                    tracing::warn!("{msg}");
-                    result.warnings.push(msg);
-                }
-                _ => {}
-            }
+        if let Err(e) = teardown_managed_registration(&cli, space_dir).await {
+            let msg = format!("removing the svode-lfs transfer agent failed: {e}");
+            tracing::warn!("{msg}");
+            result.warnings.push(msg);
         }
         if let Err(e) = s3::delete_agent_config(space_dir) {
             let msg = format!("delete lfs-s3-agent.json failed: {e}");
@@ -641,9 +854,11 @@ mod tests {
     use std::path::{Path, PathBuf};
 
     use super::{
-        LFS_PATHS_END, LFS_PATHS_START, apply_managed_import_route, apply_strategy,
-        ensure_storage_strategy_git_args_safe, rebase_managed_import_routes,
-        rewrite_managed_lfs_attributes, rewrite_managed_path_block,
+        LFS_PATHS_END, LFS_PATHS_START, RegistrationOutcome, RepairAction,
+        apply_managed_import_route, apply_strategy, classify_registration,
+        ensure_storage_strategy_git_args_safe, legacy_path_is_ours, rebase_managed_import_routes,
+        repair_managed_registration_with, rewrite_managed_lfs_attributes,
+        rewrite_managed_path_block, teardown_managed_registration,
     };
     use crate::AppError;
     use crate::git::GitState;
@@ -786,6 +1001,333 @@ mod tests {
         assert!(error.to_string().contains("not effective"));
         let attributes = std::fs::read_to_string(repo.join(".gitattributes")).unwrap_or_default();
         assert!(!attributes.contains("Topic/file.bin"));
+        Ok(())
+    }
+
+    #[test]
+    fn classify_registration_covers_wiring_matrix() {
+        // Current wiring: svode-lfs agent, its binary on disk, no legacy keys.
+        assert_eq!(
+            classify_registration(Some("svode-lfs"), true, None),
+            RepairAction::None
+        );
+        // Stale path: svode-lfs agent but its recorded binary is gone.
+        assert_eq!(
+            classify_registration(Some("svode-lfs"), false, None),
+            RepairAction::Migrate
+        );
+        // Partially repaired: current agent/path but a legacy key still lingers.
+        assert_eq!(
+            classify_registration(Some("svode-lfs"), true, Some("/old/lfs-dal")),
+            RepairAction::Migrate
+        );
+        // Legacy Svode registration (path is our own binary, or absent).
+        assert_eq!(
+            classify_registration(Some("lfs-dal"), false, Some("/old/Svode.app/lfs-dal")),
+            RepairAction::Migrate
+        );
+        assert_eq!(
+            classify_registration(Some("lfs-dal"), false, None),
+            RepairAction::Migrate
+        );
+        // No registration at all.
+        assert_eq!(
+            classify_registration(None, false, None),
+            RepairAction::Migrate
+        );
+        // Foreign standalone agent, or a legacy id pointing at a foreign binary.
+        assert_eq!(
+            classify_registration(Some("vendor-agent"), false, None),
+            RepairAction::Foreign
+        );
+        assert_eq!(
+            classify_registration(Some("lfs-dal"), false, Some("/opt/vendor/transfer")),
+            RepairAction::Foreign
+        );
+    }
+
+    #[test]
+    fn legacy_path_ownership_requires_svode_binary_name() {
+        assert!(legacy_path_is_ours(None));
+        assert!(legacy_path_is_ours(Some(
+            "/Applications/Svode.app/Contents/MacOS/lfs-dal"
+        )));
+        assert!(legacy_path_is_ours(Some("/dev/target/debug/svode-lfs")));
+        assert!(!legacy_path_is_ours(Some("/opt/vendor/transfer")));
+        assert!(!legacy_path_is_ours(Some("/usr/local/bin/git-lfs")));
+    }
+
+    fn make_fake_binary(dir: &Path, name: &str) -> Result<PathBuf, AppError> {
+        std::fs::create_dir_all(dir)?;
+        let path = dir.join(name);
+        std::fs::write(&path, b"#!/bin/sh\n")?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = std::fs::metadata(&path)?.permissions();
+            perms.set_mode(0o755);
+            std::fs::set_permissions(&path, perms)?;
+        }
+        Ok(path)
+    }
+
+    async fn init_repo(cli: &GitCli, repo: &Path) -> Result<(), AppError> {
+        std::fs::create_dir_all(repo)?;
+        git_ok(cli, repo, &["init"]).await?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn repair_migrates_legacy_registration_and_is_idempotent() -> Result<(), AppError> {
+        let git_state = GitState::new();
+        let Some(cli) = git_state.cli.as_ref() else {
+            return Ok(());
+        };
+        let temp = tempfile::tempdir()?;
+        let repo = temp.path().join("repo");
+        init_repo(cli, &repo).await?;
+        let bin = make_fake_binary(&temp.path().join("bin"), "svode-lfs")?;
+        let legacy_bin = make_fake_binary(&temp.path().join("old"), "lfs-dal")?;
+
+        for (key, value) in [
+            ("lfs.standalonetransferagent", "lfs-dal"),
+            (
+                "lfs.customtransfer.lfs-dal.path",
+                legacy_bin.to_str().unwrap(),
+            ),
+            ("lfs.customtransfer.lfs-dal.concurrent", "true"),
+            // A user addition under the legacy agent must survive migration.
+            ("lfs.customtransfer.lfs-dal.args", "--keep"),
+        ] {
+            git_ok(cli, &repo, &["config", "--local", key, value]).await?;
+        }
+
+        let resolved = bin.clone();
+        let outcome =
+            repair_managed_registration_with(&git_state, &repo, || Ok(resolved.clone())).await?;
+        assert_eq!(outcome, RegistrationOutcome::Repaired);
+
+        let expected = bin.canonicalize()?;
+        assert_eq!(
+            git_stdout(
+                cli,
+                &repo,
+                &["config", "--local", "--get", "lfs.standalonetransferagent"]
+            )
+            .await?,
+            "svode-lfs"
+        );
+        assert_eq!(
+            git_stdout(
+                cli,
+                &repo,
+                &[
+                    "config",
+                    "--local",
+                    "--get",
+                    "lfs.customtransfer.svode-lfs.path"
+                ]
+            )
+            .await?,
+            expected.to_str().unwrap()
+        );
+        assert_eq!(
+            cli.exec(
+                &repo,
+                &[
+                    "config",
+                    "--local",
+                    "--get",
+                    "lfs.customtransfer.lfs-dal.path"
+                ]
+            )
+            .await?
+            .exit_code,
+            1
+        );
+        // User-added extra key under the legacy agent is preserved.
+        assert_eq!(
+            git_stdout(
+                cli,
+                &repo,
+                &[
+                    "config",
+                    "--local",
+                    "--get",
+                    "lfs.customtransfer.lfs-dal.args"
+                ]
+            )
+            .await?,
+            "--keep"
+        );
+
+        // Repeat after success must not touch config or resolve a binary again.
+        let again = repair_managed_registration_with(&git_state, &repo, || {
+            panic!("resolver must not run on the already-current path")
+        })
+        .await?;
+        assert_eq!(again, RegistrationOutcome::Current);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn repair_rewrites_stale_current_path() -> Result<(), AppError> {
+        let git_state = GitState::new();
+        let Some(cli) = git_state.cli.as_ref() else {
+            return Ok(());
+        };
+        let temp = tempfile::tempdir()?;
+        let repo = temp.path().join("repo");
+        init_repo(cli, &repo).await?;
+        let bin = make_fake_binary(&temp.path().join("bin"), "svode-lfs")?;
+
+        for (key, value) in [
+            ("lfs.standalonetransferagent", "svode-lfs"),
+            (
+                "lfs.customtransfer.svode-lfs.path",
+                "/nonexistent/previous/svode-lfs",
+            ),
+        ] {
+            git_ok(cli, &repo, &["config", "--local", key, value]).await?;
+        }
+
+        let resolved = bin.clone();
+        let outcome =
+            repair_managed_registration_with(&git_state, &repo, || Ok(resolved.clone())).await?;
+        assert_eq!(outcome, RegistrationOutcome::Repaired);
+        assert_eq!(
+            git_stdout(
+                cli,
+                &repo,
+                &[
+                    "config",
+                    "--local",
+                    "--get",
+                    "lfs.customtransfer.svode-lfs.path"
+                ]
+            )
+            .await?,
+            bin.canonicalize()?.to_str().unwrap()
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn repair_leaves_foreign_configuration_untouched() -> Result<(), AppError> {
+        let git_state = GitState::new();
+        let Some(cli) = git_state.cli.as_ref() else {
+            return Ok(());
+        };
+        let temp = tempfile::tempdir()?;
+        let repo = temp.path().join("repo");
+        init_repo(cli, &repo).await?;
+
+        for (key, value) in [
+            ("lfs.standalonetransferagent", "vendor-agent"),
+            (
+                "lfs.customtransfer.vendor-agent.path",
+                "/opt/vendor/transfer",
+            ),
+        ] {
+            git_ok(cli, &repo, &["config", "--local", key, value]).await?;
+        }
+
+        let outcome = repair_managed_registration_with(&git_state, &repo, || {
+            panic!("resolver must not run for a foreign configuration")
+        })
+        .await?;
+        assert_eq!(outcome, RegistrationOutcome::Foreign);
+
+        assert_eq!(
+            git_stdout(
+                cli,
+                &repo,
+                &["config", "--local", "--get", "lfs.standalonetransferagent"]
+            )
+            .await?,
+            "vendor-agent"
+        );
+        assert_eq!(
+            cli.exec(
+                &repo,
+                &[
+                    "config",
+                    "--local",
+                    "--get",
+                    "lfs.customtransfer.svode-lfs.path"
+                ]
+            )
+            .await?
+            .exit_code,
+            1
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn teardown_removes_own_wiring_but_keeps_foreign_agent() -> Result<(), AppError> {
+        let git_state = GitState::new();
+        let Some(cli) = git_state.cli.as_ref() else {
+            return Ok(());
+        };
+        let temp = tempfile::tempdir()?;
+        let repo = temp.path().join("repo");
+        init_repo(cli, &repo).await?;
+
+        for (key, value) in [
+            ("lfs.standalonetransferagent", "vendor-agent"),
+            (
+                "lfs.customtransfer.vendor-agent.path",
+                "/opt/vendor/transfer",
+            ),
+            ("lfs.customtransfer.svode-lfs.path", "/dev/svode-lfs"),
+            ("lfs.customtransfer.lfs-dal.path", "/old/lfs-dal"),
+        ] {
+            git_ok(cli, &repo, &["config", "--local", key, value]).await?;
+        }
+
+        {
+            let lock = git_state.get_lock(&repo).await;
+            let _guard = lock.lock().await;
+            teardown_managed_registration(cli, &repo).await?;
+        }
+
+        // Foreign active agent and its config remain.
+        assert_eq!(
+            git_stdout(
+                cli,
+                &repo,
+                &["config", "--local", "--get", "lfs.standalonetransferagent"]
+            )
+            .await?,
+            "vendor-agent"
+        );
+        assert_eq!(
+            git_stdout(
+                cli,
+                &repo,
+                &[
+                    "config",
+                    "--local",
+                    "--get",
+                    "lfs.customtransfer.vendor-agent.path"
+                ]
+            )
+            .await?,
+            "/opt/vendor/transfer"
+        );
+        // Svode's own keys are gone.
+        for key in [
+            "lfs.customtransfer.svode-lfs.path",
+            "lfs.customtransfer.lfs-dal.path",
+        ] {
+            assert_eq!(
+                cli.exec(&repo, &["config", "--local", "--get", key])
+                    .await?
+                    .exit_code,
+                1
+            );
+        }
         Ok(())
     }
 

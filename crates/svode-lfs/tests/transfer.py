@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """macOS process regression: real sidecar, Git LFS and loopback S3 fixture.
 
-Run after cargo build: python3 tests/transfer.py ../../target/debug/lfs-dal
+Run after cargo build: python3 tests/transfer.py ../../target/debug/svode-lfs
 Creates two unique synthetic Keychain entries and deletes them in finally.
 All repositories, S3 objects and caches are disposable; no user config is read.
 """
@@ -121,9 +121,9 @@ def configure(repo, root, port, binary):
         "bindings": {"accessKey": {"owner": {"scope": "global"}, "name": "ACCESS"},
                      "secretKey": {"owner": {"scope": "global"}, "name": "SECRET"}},
     }))
-    git(repo, "config", "lfs.standalonetransferagent", "lfs-dal")
-    git(repo, "config", "lfs.customtransfer.lfs-dal.path", str(binary))
-    git(repo, "config", "lfs.customtransfer.lfs-dal.concurrent", "true")
+    git(repo, "config", "lfs.standalonetransferagent", "svode-lfs")
+    git(repo, "config", "lfs.customtransfer.svode-lfs.path", str(binary))
+    git(repo, "config", "lfs.customtransfer.svode-lfs.concurrent", "true")
     git(repo, "config", "remote.origin.url", "https://fixture.invalid/repo.git")
 
 
@@ -153,7 +153,7 @@ def check_layout(repo, cache=None):
     assert cached.read_bytes() == data and len(S3.reads) > reads
     assert all(p.read_bytes() == data for p, data in before.items())
     assert git(repo, "ls-files", "--others", "--exclude-standard") == untracked
-    assert not list((directory / "lfs/tmp/lfs-dal").iterdir()), "Git LFS must consume the handoff"
+    assert not list((directory / "lfs/tmp/svode-lfs").iterdir()), "Git LFS must consume the handoff"
 
 
 def exercise(root, binary, port):
@@ -191,7 +191,7 @@ def exercise(root, binary, port):
     print("PASS same-OID parallel processes, repeated transfer, file survives terminate")
 
     directory = Path(git(submodule, "rev-parse", "--absolute-git-dir").decode().rstrip("\n"))
-    temporary = directory / "lfs/tmp/lfs-dal"
+    temporary = directory / "lfs/tmp/svode-lfs"
     with Session(binary, submodule) as session:
         gitfile = submodule / ".git"
         original = gitfile.read_bytes()

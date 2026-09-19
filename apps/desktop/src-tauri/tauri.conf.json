@@ -35,7 +35,7 @@
   "bundle": {
     "active": true,
     "targets": "all",
-    "externalBin": ["binaries/lfs-dal", "binaries/svode-mcp"],
+    "externalBin": ["binaries/svode-lfs", "binaries/svode-mcp"],
     "linux": {
       "deb": {
         "depends": ["git"]

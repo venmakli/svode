@@ -169,10 +169,19 @@ pub(crate) async fn probe_lfs_config_with_git(
             })
             .await
             .unwrap_or(false);
-            if present {
-                LfsState::Ready
-            } else {
-                LfsState::MissingCreds
+            if !present {
+                return LfsState::MissingCreds;
+            }
+            // Managed readiness before transfer: ensure Git spawns the current
+            // svode-lfs sidecar, migrating a previous install's lfs-dal
+            // registration. A repair failure must not be reported as a ready
+            // S3 strategy, so surface the repair affordance instead.
+            match super::strategy::repair_managed_registration(git_state, repo_dir).await {
+                Ok(_) => LfsState::Ready,
+                Err(error) => {
+                    tracing::warn!("svode-lfs registration repair failed: {error}");
+                    LfsState::MissingCreds
+                }
             }
         }
         AssetsStrategy::LfsRemote => {
