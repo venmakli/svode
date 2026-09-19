@@ -5,7 +5,7 @@ use serde::{
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use crate::files::backlinks::ModifiedLinkSource;
+use svode_core::index::backlinks::ModifiedLinkSource;
 
 pub use svode_core::page::ColorName;
 

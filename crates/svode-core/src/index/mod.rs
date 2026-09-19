@@ -1,3 +1,4 @@
+pub mod backlinks;
 pub mod db;
 pub mod entry_projection;
 pub mod inventory;

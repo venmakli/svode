@@ -112,7 +112,7 @@ fn similar_path_suggestions(space_dir: &Path, broken_path: &str) -> Result<Vec<S
         .unwrap_or("")
         .to_lowercase();
     let mut candidates = Vec::new();
-    for file in super::backlinks::collect_md_files(space_dir, &[])? {
+    for file in svode_core::index::backlinks::collect_md_files(space_dir, &[])? {
         let rel = crate::repo_path::repo_relative_from_base(space_dir, &file, RootMode::Reject)?;
         let stem = Path::new(&rel)
             .file_stem()

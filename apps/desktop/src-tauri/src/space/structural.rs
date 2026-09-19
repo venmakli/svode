@@ -6,14 +6,15 @@ use std::sync::Arc;
 use serde::Serialize;
 
 use crate::error::AppError;
-use svode_core::content_tree::policy::{TreeIgnorePolicy, TreePathKind};
-use crate::files::{BacklinkIndex, Entry, ModifiedLinkSource, entry};
+use crate::files::{Entry, entry};
 use crate::git::access::ensure_mutation_paths_were_authorized;
 use crate::git::autocommit::{AutocommitService, StructuralOp};
 use crate::index::update::IndexUpdateState;
 use crate::index::{self, IndexKey, IndexState};
 use crate::properties;
 use crate::repo_path::{RootMode, normalize_repo_relative};
+use svode_core::content_tree::policy::{TreeIgnorePolicy, TreePathKind};
+use svode_core::index::backlinks::{BacklinkIndex, ModifiedLinkSource};
 
 use super::config;
 
@@ -583,7 +584,7 @@ pub(crate) async fn rebase_project_source_tree_after_move(
         let old_abs = root.join(&old_rel);
         let new_abs = root.join(&new_rel);
         if let Ok(content) = fs::read_to_string(&new_abs) {
-            let rebased = crate::files::backlinks::rebase_source_links_between_moved_tree(
+            let rebased = svode_core::index::backlinks::rebase_source_links_between_moved_tree(
                 &content,
                 &old_abs,
                 &new_abs,
@@ -632,7 +633,7 @@ pub fn rebase_legacy_source_after_move(
         return Ok(false);
     }
     let content = fs::read_to_string(&path)?;
-    let updated = crate::files::backlinks::rebase_source_links(&content, old_path, new_path);
+    let updated = svode_core::index::backlinks::rebase_source_links(&content, old_path, new_path);
     backlinks.remove_file(old_path);
     if updated == content {
         let _ = backlinks.update_file(root, new_path);
@@ -668,7 +669,7 @@ pub(crate) fn rebase_legacy_source_tree_after_move(
         let Ok(content) = fs::read_to_string(&new_abs) else {
             continue;
         };
-        let updated = crate::files::backlinks::rebase_source_links_between_moved_tree(
+        let updated = svode_core::index::backlinks::rebase_source_links_between_moved_tree(
             &content,
             &old_abs,
             &new_abs,
@@ -1244,7 +1245,7 @@ async fn convert_to_folder_with_publication(
             )
             .await,
         );
-        let modified = crate::files::backlinks::dedupe_modified_sources(modified);
+        let modified = svode_core::index::backlinks::dedupe_modified_sources(modified);
         if let Some(autocommit) = autocommit {
             schedule_modified_source_spaces(
                 state,
@@ -1351,7 +1352,7 @@ pub async fn convert_to_leaf(
             )
             .await,
         );
-        let modified = crate::files::backlinks::dedupe_modified_sources(modified);
+        let modified = svode_core::index::backlinks::dedupe_modified_sources(modified);
         if let Some(autocommit) = autocommit {
             schedule_modified_source_spaces(
                 state,
@@ -1689,7 +1690,7 @@ async fn apply_move(
         } else {
             Vec::new()
         });
-        let modified = crate::files::backlinks::dedupe_modified_sources(modified);
+        let modified = svode_core::index::backlinks::dedupe_modified_sources(modified);
         modified_paths = modified.iter().map(|source| source.path.clone()).collect();
         if let Some(autocommit) = autocommit {
             schedule_modified_source_spaces(
@@ -1865,7 +1866,7 @@ async fn reshape(
             )
             .await,
         );
-        let modified = crate::files::backlinks::dedupe_modified_sources(modified);
+        let modified = svode_core::index::backlinks::dedupe_modified_sources(modified);
         if let Some(autocommit) = autocommit {
             schedule_modified_source_spaces(
                 state,

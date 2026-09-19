@@ -7,6 +7,7 @@ use std::sync::atomic::AtomicBool;
 use sqlx::SqlitePool;
 use tokio::sync::Mutex;
 
+use super::backlinks::BacklinkIndex;
 use super::lifecycle::IndexPools;
 use super::resolver::{ProjectSpacesCache, SpaceStatus, resolve_index_target};
 use super::{IndexError, IndexKey};
@@ -18,9 +19,36 @@ pub struct IndexRuntimeState {
     pub reindex_active: Arc<Mutex<HashMap<IndexKey, Arc<AtomicBool>>>>,
     pub reconcile_active: Arc<Mutex<HashMap<IndexKey, Arc<AtomicBool>>>>,
     pub spaces_cache: Arc<Mutex<HashMap<PathBuf, ProjectSpacesCache>>>,
+    backlinks: Arc<Mutex<HashMap<IndexKey, Arc<BacklinkIndex>>>>,
 }
 
 impl IndexRuntimeState {
+    pub async fn backlinks_for(&self, key: &IndexKey) -> Arc<BacklinkIndex> {
+        let skip = self.skip_folders_for(key).await;
+        let mut map = self.backlinks.lock().await;
+        let index = map
+            .entry(key.clone())
+            .or_insert_with(|| Arc::new(BacklinkIndex::new()))
+            .clone();
+        index.set_skip_top_level(skip);
+        index
+    }
+
+    pub async fn backlinks_built_for(&self, keys: &[IndexKey]) -> bool {
+        let map = self.backlinks.lock().await;
+        keys.iter()
+            .all(|key| map.get(key).is_some_and(|idx| idx.is_built()))
+    }
+
+    pub async fn invalidate_backlinks_for(&self, keys: &[IndexKey]) {
+        let map = self.backlinks.lock().await;
+        for key in keys {
+            if let Some(index) = map.get(key) {
+                index.mark_stale();
+            }
+        }
+    }
+
     pub async fn resolve(
         &self,
         project: &Path,
@@ -144,6 +172,7 @@ impl IndexRuntimeState {
     }
 
     pub async fn close_key_runtime(&self, key: &IndexKey) {
+        self.backlinks.lock().await.remove(key);
         self.reindex_locks.lock().await.remove(key);
         self.reindex_active.lock().await.remove(key);
         self.reconcile_active.lock().await.remove(key);
@@ -156,6 +185,10 @@ impl IndexRuntimeState {
         for key in &keys {
             self.close_key_runtime(key).await;
         }
+        self.backlinks
+            .lock()
+            .await
+            .retain(|key, _| key.project() != project);
         self.spaces_cache.lock().await.remove(project);
         keys
     }
@@ -331,6 +364,14 @@ mod tests {
         let first = state.get_or_create(&child).await.unwrap();
         let same = state.clone().get_or_create(&child).await.unwrap();
         assert_eq!(state.pools.lock().await.physical_count(), 1);
+        let root_backlinks = state.backlinks_for(&root).await;
+        let shared_backlinks = state.clone().backlinks_for(&root).await;
+        assert!(Arc::ptr_eq(&root_backlinks, &shared_backlinks));
+        assert_eq!(root_backlinks.current_skip(), vec!["child".to_string()]);
+        root_backlinks.mark_built();
+        assert!(state.backlinks_built_for(&[root.clone()]).await);
+        state.invalidate_backlinks_for(&[root.clone()]).await;
+        assert!(!state.backlinks_built_for(&[root.clone()]).await);
         state.get_or_create(&root).await.unwrap();
         state
             .change_space_status(project, "child-id", SpaceStatus::Missing, None)
@@ -339,8 +380,17 @@ mod tests {
         assert!(first.is_closed());
         assert!(same.is_closed());
         assert_eq!(state.keys_for_project(project).await, vec![root.clone()]);
+        let orphan_backlinks = state.backlinks_for(&child).await;
         state.close_project(project).await;
         assert!(state.existing_pool(&root).await.is_none());
+        assert!(!Arc::ptr_eq(
+            &root_backlinks,
+            &state.backlinks_for(&root).await
+        ));
+        assert!(!Arc::ptr_eq(
+            &orphan_backlinks,
+            &state.backlinks_for(&child).await
+        ));
         assert!(state.routine_inventory_keys(project).await.is_err());
     }
 }

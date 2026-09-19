@@ -12,10 +12,10 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::error::AppError;
-use crate::files::backlinks::{BacklinkIndex, ModifiedLinkSource};
 use crate::files::filename::{self, FilenameProjection};
 use crate::files::frontmatter;
 use crate::files::tree;
+use svode_core::index::backlinks::{BacklinkIndex, ModifiedLinkSource};
 
 use persistence::{
     apply_runtime_metadata, fallback_title_for_path, meta_for_file_without_frontmatter,
@@ -27,107 +27,7 @@ fn resolve(space: &str, rel: &str) -> PathBuf {
     Path::new(space).join(rel)
 }
 
-/// Legacy ASCII projection used only by hidden template source slugs.
-fn transliterate(input: &str) -> String {
-    let mut result = String::with_capacity(input.len() * 2);
-    for c in input.chars() {
-        let mapped = match c {
-            'а' | 'А' => "a",
-            'б' | 'Б' => "b",
-            'в' | 'В' => "v",
-            'г' | 'Г' => "g",
-            'д' | 'Д' => "d",
-            'е' | 'Е' => "e",
-            'ё' | 'Ё' => "yo",
-            'ж' | 'Ж' => "zh",
-            'з' | 'З' => "z",
-            'и' | 'И' => "i",
-            'й' | 'Й' => "j",
-            'к' | 'К' => "k",
-            'л' | 'Л' => "l",
-            'м' | 'М' => "m",
-            'н' | 'Н' => "n",
-            'о' | 'О' => "o",
-            'п' | 'П' => "p",
-            'р' | 'Р' => "r",
-            'с' | 'С' => "s",
-            'т' | 'Т' => "t",
-            'у' | 'У' => "u",
-            'ф' | 'Ф' => "f",
-            'х' | 'Х' => "h",
-            'ц' | 'Ц' => "ts",
-            'ч' | 'Ч' => "ch",
-            'ш' | 'Ш' => "sh",
-            'щ' | 'Щ' => "shch",
-            'ъ' | 'Ъ' => "",
-            'ы' | 'Ы' => "y",
-            'ь' | 'Ь' => "",
-            'э' | 'Э' => "e",
-            'ю' | 'Ю' => "yu",
-            'я' | 'Я' => "ya",
-            _ => {
-                result.push(c);
-                continue;
-            }
-        };
-        result.push_str(mapped);
-    }
-    result
-}
-
-const MAX_SLUG_LENGTH: usize = 60;
-
-/// Generate a legacy ASCII template source slug from a title.
-pub(crate) fn slugify(title: &str) -> String {
-    // Transliterate Cyrillic → Latin, then lowercase
-    let transliterated = transliterate(title);
-    let slug: String = transliterated
-        .to_lowercase()
-        .chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() {
-                c
-            } else if c == ' ' || c == '_' || c == '-' {
-                '-'
-            } else {
-                '\0'
-            }
-        })
-        .filter(|&c| c != '\0')
-        .collect();
-
-    // Collapse multiple hyphens
-    let mut result = String::with_capacity(slug.len());
-    let mut prev_hyphen = false;
-    for c in slug.chars() {
-        if c == '-' {
-            if !prev_hyphen {
-                result.push(c);
-            }
-            prev_hyphen = true;
-        } else {
-            result.push(c);
-            prev_hyphen = false;
-        }
-    }
-    let trimmed = result.trim_matches('-');
-
-    // Fallback for empty slugs (e.g. CJK-only input)
-    if trimmed.is_empty() {
-        return "untitled".to_string();
-    }
-
-    // Truncate to MAX_SLUG_LENGTH on word boundary
-    if trimmed.len() <= MAX_SLUG_LENGTH {
-        return trimmed.to_string();
-    }
-
-    let truncated = &trimmed[..MAX_SLUG_LENGTH];
-    match truncated.rfind('-') {
-        Some(pos) => truncated[..pos].to_string(),
-        None => truncated.to_string(),
-    }
-}
+pub(crate) use svode_core::page::naming::slugify;
 
 /// Generate a title from a filename stem: "my-notes" → "My notes".
 pub(crate) fn title_from_stem(stem: &str) -> String {

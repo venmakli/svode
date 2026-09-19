@@ -4,7 +4,8 @@ use sqlx::SqlitePool;
 use crate::error::AppError;
 use crate::index::{IndexKey, IndexState};
 
-pub(crate) use svode_core::index::reconcile::MAX_INDEXED_MARKDOWN_BYTES;
+#[cfg(test)]
+use svode_core::index::reconcile::MAX_INDEXED_MARKDOWN_BYTES;
 
 #[cfg(test)]
 use svode_core::index::manifest::{

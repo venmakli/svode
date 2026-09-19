@@ -19,12 +19,6 @@ use tauri::{AppHandle, Emitter};
 use tokio::sync::Mutex;
 
 use crate::error::AppError;
-use crate::files::BacklinkIndex;
-use crate::files::backlinks::{
-    LinkSource, ModifiedLinkSource, collect_md_files, dedupe_modified_sources,
-    is_backlink_discoverable_path, is_external_or_anchor_url, link_stem, markdown_url_path,
-    rebase_source_links_between, replace_link_urls_between,
-};
 use crate::git::access::ensure_mutation_paths_were_authorized;
 use crate::repo_path::{RootMode, normalize_repo_relative};
 use crate::space::types::{SpaceConfig, SpaceStatus};
@@ -32,6 +26,11 @@ use crate::space::{config, project};
 use crate::storage::lfs::LfsState;
 use crate::system_path;
 use svode_core::content_tree::policy::TreeIgnorePolicy;
+use svode_core::index::backlinks::{
+    BacklinkIndex, LinkSource, ModifiedLinkSource, collect_md_files, dedupe_modified_sources,
+    is_backlink_discoverable_path, is_external_or_anchor_url, link_stem, markdown_url_path,
+    rebase_source_links_between, replace_link_urls_between,
+};
 
 /// Normalize a relative path to forward slashes for cross-platform DB storage.
 pub(crate) fn normalize_rel(path: &str) -> String {
@@ -135,17 +134,10 @@ fn normalize_abs_path(path: &Path) -> Option<PathBuf> {
     Some(out)
 }
 
-/// Per-project SQLite + backlink state managed by Tauri.
-///
-/// Holds one pool per `IndexKey` — root project + each ready child space —
-/// plus matching reindex serialization locks and runtime backlink indices.
+/// Desktop runtime state for index orchestration and LFS notifications.
 #[derive(Clone)]
 pub struct IndexState {
     pub(crate) core: svode_core::index::state::IndexRuntimeState,
-    /// Per-key runtime backlink index. Mirrors `pools` lifecycle. Lazy-build:
-    /// `BacklinkIndex::build` runs on first access (preserves current
-    /// behaviour — not eager at `open_project`).
-    backlinks: Arc<Mutex<HashMap<IndexKey, Arc<BacklinkIndex>>>>,
     /// Per-key LFS runtime state. Initial value for any key is
     /// `NotApplicable`; the actual probe is lazy (triggered by user gestures
     /// or post-clone/sync events). See `storage/lfs.rs`.
@@ -165,7 +157,6 @@ impl IndexState {
     pub fn new() -> Self {
         Self {
             core: svode_core::index::state::IndexRuntimeState::default(),
-            backlinks: Arc::new(Mutex::new(HashMap::new())),
             lfs_states: Arc::new(Mutex::new(HashMap::new())),
         }
     }
@@ -275,12 +266,7 @@ impl IndexState {
 
     pub async fn invalidate_project_backlinks(&self, project: &Path) {
         let keys = self.keys_for_project(&project.to_path_buf()).await;
-        let map = self.backlinks.lock().await;
-        for key in keys {
-            if let Some(index) = map.get(&key) {
-                index.mark_stale();
-            }
-        }
+        self.core.invalidate_backlinks_for(&keys).await;
     }
 
     pub async fn resolve_doc_link(
@@ -476,10 +462,10 @@ impl IndexState {
         }
 
         let content = std::fs::read_to_string(&abs)?;
-        let links = crate::files::backlinks::parse_markdown_links(&content);
+        let links = svode_core::index::backlinks::parse_markdown_links(&content);
         let mut grouped: HashMap<
             IndexKey,
-            HashMap<String, Vec<crate::files::backlinks::LinkSpan>>,
+            HashMap<String, Vec<svode_core::index::backlinks::LinkSpan>>,
         > = HashMap::new();
 
         for (url_path, span) in links {
@@ -597,23 +583,12 @@ impl IndexState {
 
     pub async fn ensure_project_backlinks_built(&self, project: &Path) -> Result<(), AppError> {
         let keys = self.keys_for_project(&project.to_path_buf()).await;
-        let all_built = {
-            let map = self.backlinks.lock().await;
-            keys.iter()
-                .all(|key| map.get(key).is_some_and(|idx| idx.is_built()))
-        };
+        let all_built = self.core.backlinks_built_for(&keys).await;
         if all_built {
             return Ok(());
         }
 
-        {
-            let map = self.backlinks.lock().await;
-            for key in &keys {
-                if let Some(index) = map.get(key) {
-                    index.mark_stale();
-                }
-            }
-        }
+        self.core.invalidate_backlinks_for(&keys).await;
 
         for key in &keys {
             self.rebuild_source_backlinks(key).await?;
@@ -956,14 +931,7 @@ impl IndexState {
     /// for `key` (child-space folders for root, empty for spaces) so that
     /// any subsequent build/auto-build excludes nested-pool content.
     pub async fn backlinks_for(&self, key: &IndexKey) -> Arc<BacklinkIndex> {
-        let skip = self.skip_folders_for(key).await;
-        let mut map = self.backlinks.lock().await;
-        let index = map
-            .entry(key.clone())
-            .or_insert_with(|| Arc::new(BacklinkIndex::new()))
-            .clone();
-        index.set_skip_top_level(skip);
-        index
+        self.core.backlinks_for(key).await
     }
 
     /// Drop the pool and runtime backlink index for a key.
@@ -973,7 +941,6 @@ impl IndexState {
     }
 
     async fn close_key_runtime(&self, key: &IndexKey) {
-        self.backlinks.lock().await.remove(key);
         self.lfs_states.lock().await.remove(key);
     }
 

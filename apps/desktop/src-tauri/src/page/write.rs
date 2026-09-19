@@ -3,11 +3,12 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::error::AppError;
-use crate::files::backlinks::{
+use crate::files::entry::EntryWarning;
+use crate::files::{WriteResult, entry};
+use svode_core::index::backlinks::ModifiedLinkSource;
+use svode_core::index::backlinks::{
     link_stem, rebase_source_links_between_moved_tree, replace_link_urls_between,
 };
-use crate::files::entry::EntryWarning;
-use crate::files::{ModifiedLinkSource, WriteResult, entry};
 
 mod runtime;
 pub(crate) use runtime::write;

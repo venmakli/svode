@@ -8,10 +8,8 @@ use serde::Serialize;
 use tauri::{AppHandle, Manager, State};
 
 use crate::error::AppError;
-use svode_core::content_tree::policy::{TreeIgnorePolicy, TreePathKind};
 use crate::files::{
-    BacklinkIndex, BacklinkInfo, Entry, FileWatcher, LinkValidation, TreeNode, WriteNonceRegistry,
-    WriteResult, entry, link_fix, templates, tree,
+    Entry, FileWatcher, TreeNode, WriteNonceRegistry, WriteResult, entry, link_fix, templates, tree,
 };
 use crate::files::{TemplateInfo, TemplateKind};
 use crate::git::access::{
@@ -28,6 +26,8 @@ use crate::properties::{
 };
 use crate::repo_path::{RootMode, normalize_repo_relative};
 use crate::space::config;
+use svode_core::content_tree::policy::{TreeIgnorePolicy, TreePathKind};
+use svode_core::index::backlinks::{BacklinkIndex, BacklinkInfo, LinkValidation};
 
 mod collections;
 mod entries;

@@ -31,9 +31,7 @@ use svode_core::index::model::{KnowledgeArtifact, KnowledgeEdgeArtifact};
 
 #[cfg(test)]
 use svode_core::index::knowledge_artifact::finish_artifact;
-pub(crate) use svode_core::index::knowledge_artifact::{
-    is_agent_context_source, is_secret_like_source,
-};
+pub(crate) use svode_core::index::knowledge_artifact::is_agent_context_source;
 
 use svode_core::index::knowledge_rows::read_agent_applicability;
 #[cfg(test)]

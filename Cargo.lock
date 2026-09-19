@@ -5371,6 +5371,7 @@ dependencies = [
  "ulid",
  "unicode-casefold",
  "unicode-normalization",
+ "unicode-segmentation",
  "url",
  "which",
 ]

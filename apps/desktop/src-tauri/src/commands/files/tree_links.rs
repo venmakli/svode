@@ -66,7 +66,7 @@ pub fn make_relative_link(
     source_doc_path: String,
     target_doc_path: String,
 ) -> Result<String, AppError> {
-    Ok(crate::files::backlinks::make_relative_link_between(
+    Ok(svode_core::index::backlinks::make_relative_link_between(
         Path::new(&source_doc_path),
         Path::new(&target_doc_path),
     ))

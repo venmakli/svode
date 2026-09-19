@@ -1,11 +1,12 @@
 use super::*;
-use crate::files::{BacklinkIndex, WriteNonceRegistry};
+use crate::files::WriteNonceRegistry;
 use crate::git::autocommit::AutocommitService;
 use crate::index::{self, IndexState, update::IndexUpdateState};
 use crate::space::structural::{
     backlinks_for_space, entry_rename_op, grouped_abs_paths_by_space,
     managed_attachment_policy_paths, maybe_autocommit_structural_paths, space_id_for_dir,
 };
+use svode_core::index::backlinks::BacklinkIndex;
 
 pub(crate) async fn write<F, Fut>(
     request: PageWrite<'_>,

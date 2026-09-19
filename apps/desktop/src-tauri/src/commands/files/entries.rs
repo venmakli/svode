@@ -542,7 +542,7 @@ pub async fn rebuild_backlinks(
     index_state: State<'_, IndexState>,
 ) -> Result<(), AppError> {
     let backlink_index = backlinks_for_space(&index_state, &space).await;
-    backlink_index.build(Path::new(&space))
+    Ok(backlink_index.build(Path::new(&space))?)
 }
 
 #[tauri::command]
@@ -559,7 +559,7 @@ pub async fn validate_links(
             return Ok(Vec::new());
         }
         let content = std::fs::read_to_string(abs)?;
-        let links = crate::files::backlinks::parse_markdown_links(&content);
+        let links = svode_core::index::backlinks::parse_markdown_links(&content);
         let mut out = Vec::new();
         let mut seen = std::collections::HashSet::new();
         for (url, _) in links {
@@ -576,7 +576,10 @@ pub async fn validate_links(
         }
         Ok(out)
     } else {
-        crate::files::backlinks::validate_links(Path::new(&space), &path)
+        Ok(svode_core::index::backlinks::validate_links(
+            Path::new(&space),
+            &path,
+        )?)
     }
 }
 

@@ -3,17 +3,16 @@ use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Mutex;
 
-use serde::{Deserialize, Serialize};
-
-use crate::error::AppError;
-use crate::files::{entry::slugify, filename};
-use svode_core::content_tree::policy::{TreeIgnorePolicy, TreePathKind};
-
-use svode_core::page::links::{
+use crate::content_tree::policy::{TreeIgnorePolicy, TreePathKind};
+use crate::index::IndexError;
+use crate::page::filename;
+use crate::page::links::{
     LinkDestinationStyle, MarkdownLink, normalize_link_path_preserve_parent,
     parse_markdown_link_nodes,
 };
-pub use svode_core::page::links::{LinkSpan, parse_markdown_links};
+pub use crate::page::links::{LinkSpan, parse_markdown_links};
+use crate::page::naming::slugify;
+use serde::{Deserialize, Serialize};
 
 /// Identity of the document that contains a link. `None` means the root
 /// project pool; `Some(id)` means a child space pool.
@@ -64,7 +63,7 @@ fn normalize_link_path(path: &str) -> String {
 /// (source identity, link_positions).
 ///
 /// Each instance is per-`IndexKey` (root pool or one child space) — the
-/// project's `IndexState` keeps a `HashMap<IndexKey, Arc<BacklinkIndex>>`.
+/// core `IndexRuntimeState` keeps a `HashMap<IndexKey, Arc<BacklinkIndex>>`.
 /// `skip_top_level` records folders that lazy/auto rebuilds must skip
 /// (the project's root index excludes child-space directories).
 pub struct BacklinkIndex {
@@ -98,7 +97,7 @@ impl BacklinkIndex {
         }
     }
 
-    fn current_skip(&self) -> Vec<String> {
+    pub(crate) fn current_skip(&self) -> Vec<String> {
         self.skip_top_level
             .lock()
             .map(|g| g.clone())
@@ -121,7 +120,7 @@ impl BacklinkIndex {
 
     /// Build index by scanning all .md files under space_path. Honors the
     /// configured `skip_top_level` (set via `set_skip_top_level`).
-    pub fn build(&self, space_path: &Path) -> Result<(), AppError> {
+    pub fn build(&self, space_path: &Path) -> Result<(), IndexError> {
         let skip = self.current_skip();
         self.build_with_skip(space_path, &skip)
     }
@@ -133,7 +132,7 @@ impl BacklinkIndex {
         &self,
         space_path: &Path,
         skip_top_level: &[String],
-    ) -> Result<(), AppError> {
+    ) -> Result<(), IndexError> {
         let mut index: HashMap<String, Vec<(LinkSource, Vec<LinkSpan>)>> = HashMap::new();
 
         let md_files = collect_md_files_filtered(space_path, skip_top_level)?;
@@ -187,7 +186,7 @@ impl BacklinkIndex {
     }
 
     /// Re-index a single file. Removes old entries for this source, then re-parses.
-    pub fn update_file(&self, space_path: &Path, file_rel_path: &str) -> Result<(), AppError> {
+    pub fn update_file(&self, space_path: &Path, file_rel_path: &str) -> Result<(), IndexError> {
         // First remove old entries where this file is the source
         self.remove_file(file_rel_path);
 
@@ -311,7 +310,7 @@ impl BacklinkIndex {
         old_path: &str,
         new_path: &str,
         new_title: Option<&str>,
-    ) -> Result<Vec<String>, AppError> {
+    ) -> Result<Vec<String>, IndexError> {
         // Incremental `update_file` only indexes files the user has touched in
         // this session; after app startup the map is empty until something
         // triggers a build. Without this, a rename of a file that no one has
@@ -382,7 +381,7 @@ impl BacklinkIndex {
         space_path: &Path,
         old_folder: &str,
         new_folder: &str,
-    ) -> Result<Vec<String>, AppError> {
+    ) -> Result<Vec<String>, IndexError> {
         if !self.is_built() {
             self.build(space_path)?;
         }
@@ -621,7 +620,7 @@ pub struct LinkValidation {
 pub fn validate_links(
     space_path: &Path,
     doc_rel_path: &str,
-) -> Result<Vec<LinkValidation>, AppError> {
+) -> Result<Vec<LinkValidation>, IndexError> {
     let abs_path = space_path.join(doc_rel_path);
     if !abs_path.exists() {
         return Ok(Vec::new());
@@ -729,34 +728,34 @@ fn path_components(path: &Path) -> Vec<String> {
 fn collect_md_files_filtered(
     dir: &Path,
     skip_top_level: &[String],
-) -> Result<Vec<PathBuf>, AppError> {
+) -> Result<Vec<PathBuf>, IndexError> {
     let mut files = Vec::new();
     let policy = TreeIgnorePolicy::from_space_root(dir);
     collect_md_files_recursive(dir, dir, skip_top_level, &policy, &mut files)?;
     Ok(files)
 }
 
-pub(crate) fn is_backlink_discoverable_path(
+pub fn is_backlink_discoverable_path(
     space_path: &Path,
     rel_path: &str,
     policy: &TreeIgnorePolicy,
 ) -> bool {
     if policy.is_ignored_rel(Path::new(rel_path), TreePathKind::File)
-        || crate::index::knowledge::is_secret_like_source(rel_path)
+        || crate::index::knowledge_artifact::is_secret_like_source(rel_path)
     {
         return false;
     }
     match fs::symlink_metadata(space_path.join(rel_path)) {
         Ok(metadata) => {
             !metadata.file_type().is_symlink()
-                && metadata.len() <= crate::index::reconcile::MAX_INDEXED_MARKDOWN_BYTES
+                && metadata.len() <= crate::index::inventory::MAX_INDEXED_MARKDOWN_BYTES
         }
         Err(_) => true,
     }
 }
 
 /// Public walker for project-aware backlink rebuilds.
-pub fn collect_md_files(dir: &Path, skip_top_level: &[String]) -> Result<Vec<PathBuf>, AppError> {
+pub fn collect_md_files(dir: &Path, skip_top_level: &[String]) -> Result<Vec<PathBuf>, IndexError> {
     collect_md_files_filtered(dir, skip_top_level)
 }
 
@@ -899,7 +898,7 @@ fn collect_md_files_recursive(
     skip_top_level: &[String],
     policy: &TreeIgnorePolicy,
     files: &mut Vec<PathBuf>,
-) -> Result<(), AppError> {
+) -> Result<(), IndexError> {
     let Ok(meta) = fs::symlink_metadata(dir) else {
         return Ok(());
     };
@@ -950,8 +949,8 @@ fn collect_md_files_recursive(
                 .unwrap_or(&path)
                 .to_string_lossy()
                 .replace('\\', "/");
-            if !crate::index::knowledge::is_secret_like_source(&rel)
-                && meta.len() <= crate::index::reconcile::MAX_INDEXED_MARKDOWN_BYTES
+            if !crate::index::knowledge_artifact::is_secret_like_source(&rel)
+                && meta.len() <= crate::index::inventory::MAX_INDEXED_MARKDOWN_BYTES
             {
                 files.push(path);
             }

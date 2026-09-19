@@ -1,5 +1,4 @@
 pub(crate) mod actor_observation;
-pub mod backlinks;
 pub mod entry;
 pub(crate) mod filename;
 pub mod frontmatter;
@@ -10,7 +9,6 @@ pub mod templates;
 pub mod tree;
 pub mod watcher;
 
-pub use backlinks::{BacklinkIndex, BacklinkInfo, LinkValidation, ModifiedLinkSource};
 pub use entry::{Entry, EntryMeta, WriteResult};
 pub use nonce::WriteNonceRegistry;
 pub use templates::{TemplateInfo, TemplateKind};
