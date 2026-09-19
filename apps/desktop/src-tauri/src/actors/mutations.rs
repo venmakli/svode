@@ -238,14 +238,14 @@ pub async fn preview(
         return Ok(blocked_preview(blocked));
     }
 
-    let repository = resolve_repository(cli, space_path).await?;
+    let repository = resolve_repository(cli.core(), space_path).await?;
     let repository_lock = actor_catalog.repository_lock(&repository)?;
     let _guard = repository_lock.lock().await;
     let source = match read_mailmap_source(&repository)? {
         Ok(source) => source,
         Err((reason, message)) => return Ok(blocked_preview_with_message(reason, message)),
     };
-    let snapshot = load_snapshot(cli, &repository, 0).await?;
+    let snapshot = load_snapshot(cli.core(), &repository, 0).await?;
     let plan = match plan_mutation(&snapshot, action) {
         Ok(plan) => plan,
         Err(result) => return Ok(result),
@@ -314,7 +314,7 @@ pub async fn apply(
         return Ok(blocked_apply(ActorMutationBlockReason::StalePreview));
     }
 
-    let snapshot = load_snapshot(cli, &repository, 0).await?;
+    let snapshot = load_snapshot(cli.core(), &repository, 0).await?;
     let plan = match plan_mutation(&snapshot, review.action.clone()) {
         Ok(plan) => plan,
         Err(result) => return Ok(preview_to_apply(result)),
@@ -399,7 +399,10 @@ pub async fn apply(
         };
     }
 
-    match actor_catalog.load_and_publish(cli, &repository).await {
+    match actor_catalog
+        .load_and_publish(cli.core(), &repository)
+        .await
+    {
         Ok(_) => {
             let expected_fingerprint = mailmap_fingerprint(true, patched.as_bytes());
             let target_matches_expected = matches!(
@@ -441,7 +444,9 @@ pub async fn apply(
                 None
             };
             actor_catalog.mark_repository_dirty(&repository)?;
-            let snapshot = actor_catalog.load_and_publish(cli, &repository).await?;
+            let snapshot = actor_catalog
+                .load_and_publish(cli.core(), &repository)
+                .await?;
             crate::actors::emit_published(app, &repository, snapshot.generation());
             Ok(ActorMutationApplyResult::Applied {
                 canonical_email: plan.canonical_email,
@@ -466,7 +471,7 @@ pub async fn apply(
                 rollback_errors.push(format!("mailmap: {rollback_error}"));
             }
             if rollback_errors.is_empty() {
-                Err(error)
+                Err(error.into())
             } else {
                 Err(AppError::General(format!(
                     "actor catalog refresh failed: {error}; rollback failed: {}",
@@ -790,7 +795,7 @@ async fn resolve_actor_git_context(
     project_path: &Path,
     space_path: &Path,
 ) -> Result<(PathBuf, SpaceGitType, PathBuf), AppError> {
-    let repository = resolve_repository(cli, space_path).await?;
+    let repository = resolve_repository(cli.core(), space_path).await?;
     let canonical_project = fs::canonicalize(project_path).map_err(|error| {
         AppError::GitCommandFailed(format!(
             "failed to canonicalize actor project {}: {error}",
@@ -1661,7 +1666,7 @@ mod tests {
     async fn add_materializes_no_commit_row_and_duplicate_is_non_writing() {
         let repo = init_repo("Current", "current@example.test");
         let cli = GitCli::detect().expect("git CLI");
-        let snapshot = load_snapshot(&cli, repo.path(), 0)
+        let snapshot = load_snapshot(cli.core(), repo.path(), 0)
             .await
             .expect("initial snapshot");
         let action = ActorMutationAction::Add {
@@ -1675,7 +1680,7 @@ mod tests {
         let patched = patch_mailmap(&source.raw, &source.document, &mutation);
         atomic_replace_mailmap(&source, patched.as_bytes()).expect("write add");
 
-        let refreshed = load_snapshot(&cli, repo.path(), 0)
+        let refreshed = load_snapshot(cli.core(), repo.path(), 0)
             .await
             .expect("refreshed snapshot");
         let added = refreshed
@@ -1742,16 +1747,16 @@ mod tests {
         let cli = GitCli::detect().expect("git CLI");
         let state = ActorCatalogState::new();
         let initial = state
-            .snapshot(&cli, repo.path())
+            .snapshot(cli.core(), repo.path())
             .await
             .expect("initial snapshot");
         assert_eq!(initial.catalog().generation, 1);
-        let repository = resolve_repository(&cli, repo.path())
+        let repository = resolve_repository(cli.core(), repo.path())
             .await
             .expect("repository");
         let lock = state.repository_lock(&repository).expect("repository lock");
         let _guard = lock.lock().await;
-        let current = load_snapshot(&cli, &repository, 0)
+        let current = load_snapshot(cli.core(), &repository, 0)
             .await
             .expect("current snapshot");
         let mutation = plan_mutation(
@@ -1768,7 +1773,7 @@ mod tests {
         let patched = patch_mailmap(&source.raw, &source.document, &mutation);
         atomic_replace_mailmap(&source, patched.as_bytes()).expect("atomic replace");
         let published = state
-            .load_and_publish(&cli, &repository)
+            .load_and_publish(cli.core(), &repository)
             .await
             .expect("publish mutation");
 
@@ -1786,7 +1791,7 @@ mod tests {
         )
         .expect("write mailmap");
         let cli = GitCli::detect().expect("git CLI");
-        let snapshot = load_snapshot(&cli, repo.path(), 0)
+        let snapshot = load_snapshot(cli.core(), repo.path(), 0)
             .await
             .expect("initial snapshot");
         let mutation = plan_mutation(
@@ -1804,7 +1809,7 @@ mod tests {
         validate_patched_document(&patched, &mutation).expect("valid merge");
         atomic_replace_mailmap(&source, patched.as_bytes()).expect("write merge");
 
-        let refreshed = load_snapshot(&cli, repo.path(), 0)
+        let refreshed = load_snapshot(cli.core(), repo.path(), 0)
             .await
             .expect("refreshed snapshot");
         assert!(
@@ -1836,7 +1841,7 @@ mod tests {
         let repo = init_repo("Current", "current@example.test");
         commit_as(repo.path(), "other.txt", "Other", "other@example.test");
         let cli = GitCli::detect().expect("git CLI");
-        let snapshot = load_snapshot(&cli, repo.path(), 0)
+        let snapshot = load_snapshot(cli.core(), repo.path(), 0)
             .await
             .expect("initial snapshot");
         let non_current = plan_mutation(
@@ -1883,7 +1888,7 @@ mod tests {
                 Some("current-new@example.test".into())
             )
         );
-        let refreshed = load_snapshot(&cli, repo.path(), 0)
+        let refreshed = load_snapshot(cli.core(), repo.path(), 0)
             .await
             .expect("refreshed snapshot");
         assert_eq!(refreshed.current_email(), Some("current-new@example.test"));

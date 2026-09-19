@@ -49,36 +49,10 @@ impl CollectionIntegrityReport {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CollectionInfo {
-    pub path: String,
-    pub title: String,
-    pub row_count: usize,
-    pub nested: bool,
-}
+pub use svode_core::collections::list::CollectionInfo;
 
 pub fn list_collections(space: &str) -> Result<Vec<CollectionInfo>, AppError> {
-    let root = Path::new(space);
-    let mut infos = Vec::new();
-    let skip_dirs = child_folder_names(root);
-    let policy = TreeIgnorePolicy::from_space_root(root);
-    if root.join(SCHEMA_FILE).is_file() {
-        infos.push(CollectionInfo {
-            path: ".".to_string(),
-            title: collection_title(
-                root,
-                root.file_name()
-                    .and_then(|name| name.to_str())
-                    .unwrap_or("Collection"),
-            ),
-            row_count: collection_markdown_files(space, ".")?.len(),
-            nested: false,
-        });
-    }
-    collect_collections(root, root, &skip_dirs, &policy, &mut infos)?;
-    infos.sort_by(|a, b| a.path.cmp(&b.path));
-    Ok(infos)
+    Ok(svode_core::collections::list::list_collections(space)?)
 }
 
 /// Validate collection references which can be damaged by deliberate raw filesystem edits.
@@ -375,103 +349,4 @@ fn integrity_issue(
         collection_path: Some(collection_root_for_schema(collection_path)),
         related_path,
     }
-}
-
-fn collect_collections(
-    space: &Path,
-    dir: &Path,
-    skip_dirs: &HashSet<String>,
-    policy: &TreeIgnorePolicy,
-    out: &mut Vec<CollectionInfo>,
-) -> Result<(), AppError> {
-    for entry in fs::read_dir(dir)? {
-        let entry = entry?;
-        let path = entry.path();
-        let name = entry.file_name();
-        let name = name.to_string_lossy();
-
-        let Ok(meta) = fs::symlink_metadata(&path) else {
-            continue;
-        };
-        if meta.file_type().is_symlink() || !meta.is_dir() {
-            continue;
-        }
-
-        if is_collection_traversal_ignored(space, &path, &meta, skip_dirs, policy) {
-            continue;
-        }
-
-        if path.join(SCHEMA_FILE).is_file() {
-            let rel = path
-                .strip_prefix(space)
-                .unwrap_or(&path)
-                .to_string_lossy()
-                .replace('\\', "/");
-            let title = collection_title(&path, &name);
-            let row_count = collection_markdown_files(&space.to_string_lossy(), &rel)?.len();
-            let nested =
-                find_collection_root(space, &format!("{}/README.md", normalize_rel_path(&rel)))
-                    .is_some();
-            out.push(CollectionInfo {
-                path: rel.clone(),
-                title,
-                row_count,
-                nested,
-            });
-        }
-
-        collect_collections(space, &path, skip_dirs, policy, out)?;
-    }
-    Ok(())
-}
-
-pub(super) fn is_registered_child_space_rel(rel: &str, skip_dirs: &HashSet<String>) -> bool {
-    if rel.is_empty() || rel == "." {
-        return false;
-    }
-
-    skip_dirs.iter().any(|child| {
-        rel == child
-            || rel
-                .strip_prefix(child)
-                .is_some_and(|suffix| suffix.starts_with('/'))
-    })
-}
-
-fn tree_path_kind(meta: &fs::Metadata) -> TreePathKind {
-    if meta.is_dir() {
-        TreePathKind::Directory
-    } else if meta.is_file() {
-        TreePathKind::File
-    } else {
-        TreePathKind::Unknown
-    }
-}
-
-pub(super) fn is_collection_traversal_ignored(
-    space: &Path,
-    path: &Path,
-    meta: &fs::Metadata,
-    skip_dirs: &HashSet<String>,
-    policy: &TreeIgnorePolicy,
-) -> bool {
-    let rel_path = path.strip_prefix(space).unwrap_or(path);
-    let rel = rel_path_string(rel_path);
-    if meta.is_dir() && is_registered_child_space_rel(&rel, skip_dirs) {
-        return true;
-    }
-
-    policy.is_ignored_rel(rel_path, tree_path_kind(meta))
-}
-
-fn collection_title(collection_dir: &Path, fallback_name: &str) -> String {
-    let readme = collection_dir.join("README.md");
-    if let Ok(raw) = fs::read_to_string(readme) {
-        if let Ok(Some((meta, _))) = frontmatter::try_parse(&raw) {
-            if !meta.title.trim().is_empty() {
-                return meta.title;
-            }
-        }
-    }
-    fallback_name.replace(['-', '_'], " ")
 }

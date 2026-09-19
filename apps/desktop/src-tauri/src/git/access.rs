@@ -8,7 +8,7 @@ use super::{GitState, require_cli};
 use crate::AppError;
 
 pub use svode_core::git::access::{
-    RepositoryAccessSnapshot, RepositoryAccessStatus, RoutineClaimResult, is_access_probe_identity,
+    RepositoryAccessSnapshot, RepositoryAccessStatus, RoutineClaimResult,
 };
 
 const ACCESS_STORE_FILE: &str = "repository-access.json";
@@ -268,30 +268,6 @@ pub(crate) fn access_store_path(app: &AppHandle) -> Result<PathBuf, AppError> {
 
 pub async fn resolve_repository(cli: &GitCli, path: &Path) -> Result<PathBuf, AppError> {
     Ok(svode_core::git::access::resolve_repository(cli.core(), path).await?)
-}
-
-#[cfg(test)]
-pub async fn create_service_commit(
-    cli: &GitCli,
-    repository: &Path,
-    installation_hash: &str,
-    checked_at: i64,
-) -> Result<String, AppError> {
-    Ok(svode_core::git::access::create_service_commit(
-        cli.core(),
-        repository,
-        installation_hash,
-        checked_at,
-    )
-    .await?)
-}
-
-pub async fn is_access_probe_commit(
-    cli: &GitCli,
-    repository: &Path,
-    oid: &str,
-) -> Result<bool, AppError> {
-    Ok(svode_core::git::access::is_access_probe_commit(cli.core(), repository, oid).await?)
 }
 
 pub async fn scope_authorized_mutation_paths<F, T, E>(

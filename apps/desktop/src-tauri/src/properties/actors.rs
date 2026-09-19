@@ -71,7 +71,7 @@ pub async fn list_actors(
     space_path: &Path,
     _all_time: bool,
 ) -> Result<Vec<ActorCandidate>, AppError> {
-    Ok(cache.snapshot(cli, space_path).await?.candidates())
+    Ok(cache.snapshot(cli.core(), space_path).await?.candidates())
 }
 
 pub async fn refresh_actors(
@@ -80,5 +80,5 @@ pub async fn refresh_actors(
     space_path: &Path,
     _all_time: bool,
 ) -> Result<Vec<ActorCandidate>, AppError> {
-    Ok(cache.refresh(cli, space_path).await?.candidates())
+    Ok(cache.refresh(cli.core(), space_path).await?.candidates())
 }

@@ -1,4 +1,5 @@
 pub mod access;
+pub mod actor_sources;
 pub mod cli;
 pub mod path;
 pub mod pending;

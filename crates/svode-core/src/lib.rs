@@ -1,5 +1,6 @@
 //! Shared product services, independent of desktop and transport runtimes.
 
+pub mod actors;
 pub mod agent_adapters;
 pub mod agent_context;
 pub mod apps;

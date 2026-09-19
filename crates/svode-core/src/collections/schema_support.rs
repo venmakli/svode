@@ -197,7 +197,7 @@ pub(super) fn validate_relation_path_shape(path: &str) -> Result<(), CollectionE
         .map_err(|e| schema_error(e.to_string()))
 }
 
-pub(super) fn validate_relation_value_shape(
+pub fn validate_relation_value_shape(
     column: &Column,
     value: &Value,
 ) -> Result<Vec<String>, CollectionError> {
@@ -242,7 +242,7 @@ pub(super) fn validate_relation_value_shape(
     Ok(values)
 }
 
-pub(super) fn normalize_relation_value_shape(raw: &str) -> Result<String, CollectionError> {
+pub fn normalize_relation_value_shape(raw: &str) -> Result<String, CollectionError> {
     normalize_repo_relative(raw, RootMode::Reject).map_err(|e| schema_error(e.to_string()))
 }
 

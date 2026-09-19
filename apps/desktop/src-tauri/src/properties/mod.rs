@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use chrono::{Duration, Local, NaiveDate, NaiveDateTime};
 use serde::{Deserialize, Serialize};
 use serde_yml::{Mapping, Value};
-use sqlx::{QueryBuilder, Row, Sqlite, SqlitePool};
+use sqlx::SqlitePool;
 
 use crate::error::AppError;
 use crate::files::entry::{ColorName, EntryMeta};
@@ -13,9 +13,6 @@ use crate::files::tree::child_folder_names;
 use crate::files::{entry, frontmatter};
 use crate::git::access::ensure_mutation_paths_were_authorized;
 use crate::git::cli::GitCli;
-use crate::repo_path::{RootMode, normalize_repo_relative};
-use crate::space::config;
-use svode_core::content_tree::policy::{TreeIgnorePolicy, TreePathKind};
 
 const SCHEMA_FILE: &str = "schema.yaml";
 const RESERVED_FIELDS: &[&str] = &[
@@ -50,7 +47,6 @@ pub use integrity::{
     CollectionInfo, CollectionIntegrityIssue, CollectionIntegrityReport,
     CollectionIntegritySeverity, list_collections, validate_collection_integrity_with_project,
 };
-use integrity::{is_collection_traversal_ignored, is_registered_child_space_rel};
 
 mod mutations;
 pub use mutations::*;
@@ -59,17 +55,17 @@ mod query;
 #[allow(unused_imports)] // Stable properties facade; primarily used by focused tests today.
 pub use query::reorder_visible_entry_names;
 use query::{
-    entries_from_rows, entry_order_name, entry_parent_dir, filter_values, query_entry_rows,
-    validate_ad_hoc_query,
+    entries_from_rows, entry_order_name, entry_parent_dir, query_entry_rows, validate_ad_hoc_query,
 };
+#[cfg(test)]
+use svode_core::collections::schema_validation::validate_filter_op;
 
 pub(crate) mod read;
 
 mod schema_validation;
 use schema_validation::{
     FieldContext, FieldType, autopick_board_group_by, autopick_calendar_date_field, field_type,
-    normalize_property_value_for_write, normalize_view, single_filter_value, status_group_name,
-    validate_field_ref, validate_filter_op,
+    normalize_property_value_for_write, normalize_view,
 };
 pub use schema_validation::{
     ensure_entry_field_writable, normalize_entry_field_value, normalize_schema,
@@ -200,15 +196,6 @@ pub fn default_status_options() -> Vec<PropertyOption> {
     ]
 }
 
-pub fn resolve_collection_schema(
-    space: &str,
-    file_path: &str,
-) -> Option<(CollectionSchema, PathBuf)> {
-    resolve_collection_schema_result(space, file_path)
-        .ok()
-        .flatten()
-}
-
 pub fn resolve_collection_schema_result(
     space: &str,
     file_path: &str,
@@ -275,14 +262,11 @@ fn collection_root_for_schema(collection_path: &str) -> String {
 }
 
 fn collection_root_for_fs(collection_path: &str) -> String {
-    let rel = normalize_rel_path(collection_path);
-    if rel == "." { String::new() } else { rel }
+    svode_core::collections::relation_read::collection_root_for_fs(collection_path)
 }
 
 fn normalize_collection_path(path: &str) -> Result<String, AppError> {
-    normalize_repo_relative(path, RootMode::Allow)
-        .map_err(|e| schema_error(e.to_string()))
-        .map(|rel| if rel.is_empty() { ".".to_string() } else { rel })
+    Ok(svode_core::collections::relation_read::normalize_collection_path(path)?)
 }
 
 fn normalize_relation_scope(
@@ -306,51 +290,13 @@ fn relation_target_space_path(
     project_path: Option<&str>,
     scope: Option<&RelationScope>,
 ) -> Result<Option<String>, AppError> {
-    match scope {
-        None => Ok(Some(space.to_string())),
-        Some(RelationScope::Root) => Ok(project_path
-            .map(str::trim)
-            .filter(|path| !path.is_empty())
-            .map(ToOwned::to_owned)),
-        Some(RelationScope::Space { id }) => {
-            let project = project_path
-                .map(str::trim)
-                .filter(|path| !path.is_empty())
-                .unwrap_or(space);
-            let config = match config::read_space_config(Path::new(project)) {
-                Ok(config) => config,
-                Err(error) if project_path.is_none() => {
-                    tracing::warn!(
-                        "relation target scope space '{}' could not read project config: {error}",
-                        id
-                    );
-                    return Ok(None);
-                }
-                Err(error) => return Err(error),
-            };
-            let Some(space_ref) = config
-                .spaces
-                .as_deref()
-                .unwrap_or(&[])
-                .iter()
-                .find(|space_ref| space_ref.id == *id)
-            else {
-                if project_path.is_none() {
-                    return Ok(None);
-                }
-                return Err(schema_error(format!(
-                    "relation target space '{}' is not registered",
-                    id
-                )));
-            };
-            Ok(Some(
-                Path::new(project)
-                    .join(&space_ref.path)
-                    .to_string_lossy()
-                    .to_string(),
-            ))
-        }
-    }
+    Ok(
+        svode_core::collections::relation_read::relation_target_space_path(
+            space,
+            project_path,
+            scope,
+        )?,
+    )
 }
 
 fn required_relation_target_space_path(
@@ -358,47 +304,28 @@ fn required_relation_target_space_path(
     project_path: Option<&str>,
     scope: Option<&RelationScope>,
 ) -> Result<String, AppError> {
-    relation_target_space_path(space, project_path, scope)?
-        .ok_or_else(|| schema_error("project_path is required to resolve relation target scope"))
+    Ok(
+        svode_core::collections::relation_read::required_relation_target_space_path(
+            space,
+            project_path,
+            scope,
+        )?,
+    )
 }
 
 fn relation_is_current_scope(column: &Column) -> bool {
-    column.relation_scope.is_none()
+    svode_core::collections::relation_read::relation_is_current_scope(column)
 }
 
 fn same_fs_path(left: &str, right: &str) -> bool {
-    let normalize = |path: &str| {
-        Path::new(path)
-            .canonicalize()
-            .unwrap_or_else(|_| PathBuf::from(path))
-            .to_string_lossy()
-            .replace('\\', "/")
-            .trim_end_matches('/')
-            .to_string()
-    };
-    normalize(left) == normalize(right)
+    svode_core::collections::relation_read::same_fs_path(left, right)
 }
 
 fn space_scope_from_project(
     space: &str,
     project_path: Option<&str>,
 ) -> Result<Option<RelationScope>, AppError> {
-    let Some(project) = project_path.map(str::trim).filter(|path| !path.is_empty()) else {
-        return Ok(None);
-    };
-    if same_fs_path(space, project) {
-        return Ok(Some(RelationScope::Root));
-    }
-    let config = config::read_space_config(Path::new(project))?;
-    for space_ref in config.spaces.as_deref().unwrap_or(&[]) {
-        let candidate = Path::new(project).join(&space_ref.path);
-        if same_fs_path(space, &candidate.to_string_lossy()) {
-            return Ok(Some(RelationScope::Space {
-                id: space_ref.id.clone(),
-            }));
-        }
-    }
-    Ok(None)
+    Ok(svode_core::collections::relation_read::space_scope_from_project(space, project_path)?)
 }
 
 fn reverse_relation_scope_for_target(
@@ -406,17 +333,13 @@ fn reverse_relation_scope_for_target(
     project_path: Option<&str>,
     target_scope: Option<&RelationScope>,
 ) -> Result<Option<RelationScope>, AppError> {
-    let target_space = required_relation_target_space_path(space, project_path, target_scope)?;
-    if same_fs_path(space, &target_space) {
-        return Ok(None);
-    }
-    match space_scope_from_project(space, project_path)? {
-        Some(RelationScope::Root) => Ok(Some(RelationScope::Root)),
-        Some(RelationScope::Space { id }) => Ok(Some(RelationScope::Space { id })),
-        None => Err(schema_error(
-            "source space is not registered in project; cannot create cross-scope two-way relation",
-        )),
-    }
+    Ok(
+        svode_core::collections::relation_read::reverse_relation_scope_for_target(
+            space,
+            project_path,
+            target_scope,
+        )?,
+    )
 }
 
 fn validate_physical_two_way_relation_scope(
@@ -452,48 +375,14 @@ fn relation_target_pair(
     project_path: Option<&str>,
     column: &Column,
 ) -> Result<Option<(String, String, Option<RelationScope>)>, AppError> {
-    if column.type_ != PropertyType::Relation {
-        return Ok(None);
-    }
-    let Some(relation) = column.relation.as_deref() else {
-        return Ok(None);
-    };
-    let relation = normalize_collection_path(relation)?;
-    let target_space =
-        required_relation_target_space_path(space, project_path, column.relation_scope.as_ref())?;
-    let reverse_scope =
-        reverse_relation_scope_for_target(space, project_path, column.relation_scope.as_ref())?;
-    Ok(Some((target_space, relation, reverse_scope)))
+    Ok(svode_core::collections::relation_read::relation_target_pair(space, project_path, column)?)
 }
 
 fn project_relation_scan_spaces(
     space: &str,
     project_path: Option<&str>,
 ) -> Result<Vec<String>, AppError> {
-    let mut spaces = Vec::new();
-    let mut push_space = |candidate: String| {
-        if !spaces
-            .iter()
-            .any(|existing: &String| same_fs_path(existing, &candidate))
-        {
-            spaces.push(candidate);
-        }
-    };
-    push_space(space.to_string());
-    let Some(project) = project_path.map(str::trim).filter(|path| !path.is_empty()) else {
-        return Ok(spaces);
-    };
-    push_space(project.to_string());
-    let config = config::read_space_config(Path::new(project))?;
-    for space_ref in config.spaces.as_deref().unwrap_or(&[]) {
-        push_space(
-            Path::new(project)
-                .join(&space_ref.path)
-                .to_string_lossy()
-                .to_string(),
-        );
-    }
-    Ok(spaces)
+    Ok(svode_core::collections::relation_read::project_relation_scan_spaces(space, project_path)?)
 }
 
 fn relation_column_targets_space(
@@ -520,32 +409,19 @@ fn relation_column_targets_space(
 }
 
 fn join_collection_value(collection_path: &str, value: &str) -> String {
-    let collection = collection_root_for_fs(collection_path);
-    if collection.is_empty() {
-        value.to_string()
-    } else {
-        format!("{collection}/{value}")
-    }
+    svode_core::collections::relation_read::join_collection_value(collection_path, value)
 }
 
 fn value_relative_to_collection(
     collection_path: &str,
     file_path: &str,
 ) -> Result<String, AppError> {
-    let collection = collection_root_for_fs(collection_path);
-    let file = normalize_rel_path(file_path);
-    let value = if collection.is_empty() {
-        file
-    } else {
-        file.strip_prefix(&format!("{collection}/"))
-            .ok_or_else(|| {
-                schema_error(format!(
-                    "entry '{file}' is outside collection '{collection_path}'"
-                ))
-            })?
-            .to_string()
-    };
-    normalize_relation_value_shape(&value)
+    Ok(
+        svode_core::collections::relation_read::value_relative_to_collection(
+            collection_path,
+            file_path,
+        )?,
+    )
 }
 
 fn canonicalize_relation_target_value(
@@ -620,45 +496,15 @@ fn ensure_compatible_reverse_with_scope(
     current_column: &str,
     allow_limit_one: bool,
 ) -> Result<(), AppError> {
-    if reverse.type_ != PropertyType::Relation {
-        return Err(schema_error(format!(
-            "reverse column '{}' is not a relation",
-            reverse.name
-        )));
-    }
-    let relation = reverse.relation.as_deref().ok_or_else(|| {
-        schema_error(format!("reverse column '{}' has no relation", reverse.name))
-    })?;
-    if normalize_collection_path(relation)? != collection_root_for_schema(current_collection) {
-        return Err(schema_error(format!(
-            "reverse column '{}' points to '{}', expected '{}'",
-            reverse.name, relation, current_collection
-        )));
-    }
-    if reverse.relation_scope.as_ref() != expected_relation_scope {
-        return Err(schema_error(format!(
-            "reverse column '{}' points to a different relation scope",
-            reverse.name
-        )));
-    }
-    if !current_column.is_empty()
-        && reverse
-            .two_way
-            .as_deref()
-            .is_some_and(|paired| paired != current_column)
-    {
-        return Err(schema_error(format!(
-            "reverse column '{}' is paired with another column",
-            reverse.name
-        )));
-    }
-    if reverse.limit == Some(RelationLimit::One) && !allow_limit_one {
-        return Err(schema_error(format!(
-            "reverse column '{}' cannot be limited to one item",
-            reverse.name
-        )));
-    }
-    Ok(())
+    Ok(
+        svode_core::collections::relation_read::ensure_compatible_reverse_with_scope(
+            reverse,
+            current_collection,
+            expected_relation_scope,
+            current_column,
+            allow_limit_one,
+        )?,
+    )
 }
 
 fn read_schema_at(path: &Path) -> Result<CollectionSchema, AppError> {
@@ -669,12 +515,7 @@ fn read_schema_or_default(
     space: &str,
     collection_path: &str,
 ) -> Result<CollectionSchema, AppError> {
-    let path = collection_dir(space, collection_path).join(SCHEMA_FILE);
-    if path.is_file() {
-        read_schema_at(&path)
-    } else {
-        Ok(CollectionSchema::default())
-    }
+    Ok(svode_core::collections::relation_read::read_schema_or_default(space, collection_path)?)
 }
 
 pub fn read_collection_schema(
@@ -2596,11 +2437,7 @@ fn read_relation_field_values_from_file(
     path: &Path,
     column: &Column,
 ) -> Result<Vec<String>, AppError> {
-    let raw = fs::read_to_string(path)?;
-    let Some((meta, _)) = frontmatter::try_parse(&raw)? else {
-        return Ok(Vec::new());
-    };
-    relation_values_from_value(column, meta.extra.get(&column.name).unwrap_or(&Value::Null))
+    Ok(svode_core::collections::relation_read::read_relation_field_values_from_file(path, column)?)
 }
 
 fn relation_values_from_value(column: &Column, value: &Value) -> Result<Vec<String>, AppError> {
@@ -2857,45 +2694,7 @@ fn validate_relation_column_name(name: &str) -> Result<(), AppError> {
 }
 
 fn validate_relation_value_shape(column: &Column, value: &Value) -> Result<Vec<String>, AppError> {
-    if value.is_null() {
-        return Ok(Vec::new());
-    }
-
-    if column.limit == Some(RelationLimit::One) {
-        let raw = value.as_str().ok_or_else(|| {
-            schema_error(format!(
-                "{} must be a relation path string or null",
-                column.name
-            ))
-        })?;
-        return Ok(vec![normalize_relation_value_shape(raw)?]);
-    }
-
-    if let Some(raw) = value.as_str() {
-        return Ok(vec![normalize_relation_value_shape(raw)?]);
-    }
-
-    let sequence = value.as_sequence().ok_or_else(|| {
-        schema_error(format!(
-            "{} must be an array of relation path strings",
-            column.name
-        ))
-    })?;
-    let mut seen = HashSet::new();
-    let mut values = Vec::new();
-    for item in sequence {
-        let raw = item.as_str().ok_or_else(|| {
-            schema_error(format!(
-                "{} must contain only relation path strings",
-                column.name
-            ))
-        })?;
-        let normalized = normalize_relation_value_shape(raw)?;
-        if seen.insert(normalized.clone()) {
-            values.push(normalized);
-        }
-    }
-    Ok(values)
+    Ok(svode_core::collections::relation_read::validate_relation_value_shape(column, value)?)
 }
 
 fn enforce_relation_limit_one_existing_values(
@@ -2938,7 +2737,7 @@ fn enforce_relation_limit_one_existing_values(
 }
 
 fn normalize_relation_value_shape(raw: &str) -> Result<String, AppError> {
-    normalize_repo_relative(raw, RootMode::Reject).map_err(|e| schema_error(e.to_string()))
+    Ok(svode_core::collections::relation_read::normalize_relation_value_shape(raw)?)
 }
 
 fn option_names(column: &Column) -> HashSet<&str> {
@@ -3041,84 +2840,11 @@ fn resolve_today_macro(raw: &str) -> Result<Option<String>, AppError> {
     ))
 }
 
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ResolvedRelation {
-    pub title: String,
-    pub icon: Option<String>,
-    pub file_path: String,
-    pub collection_root_path: String,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RelationBacklink {
-    pub file_path: String,
-    pub collection_root_path: String,
-    pub column: String,
-    pub value: String,
-    pub title: String,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum RelationTwoWaySchemaStatus {
-    Ok,
-    NotTwoWay,
-    MissingReverse,
-    IncompatibleReverse,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CompatibleReverseChoice {
-    pub name: String,
-    pub two_way: Option<String>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum RelationDriftKind {
-    MissingReverse,
-    MissingSource,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RelationDriftRow {
-    pub kind: RelationDriftKind,
-    pub source_file_path: String,
-    pub target_file_path: String,
-    pub source_value: String,
-    pub target_value: String,
-}
-
-#[derive(Debug, Clone, Serialize, Default)]
-#[serde(rename_all = "camelCase")]
-pub struct RelationDriftSummary {
-    pub missing_reverse_count: usize,
-    pub missing_source_count: usize,
-    pub rows: Vec<RelationDriftRow>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RelationTwoWayDiagnostics {
-    pub collection_path: String,
-    pub column: String,
-    pub relation: Option<String>,
-    pub reverse_column: Option<String>,
-    pub schema_status: RelationTwoWaySchemaStatus,
-    pub schema_message: Option<String>,
-    pub compatible_reverse_choices: Vec<CompatibleReverseChoice>,
-    pub drift: RelationDriftSummary,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-struct RelationEdge {
-    source_value: String,
-    target_value: String,
-}
+#[allow(unused_imports)]
+pub use svode_core::collections::relation_read::{
+    CompatibleReverseChoice, RelationBacklink, RelationDriftKind, RelationDriftRow,
+    RelationDriftSummary, RelationTwoWayDiagnostics, RelationTwoWaySchemaStatus, ResolvedRelation,
+};
 
 async fn resolve_query_filters(
     actor_catalog: &ActorCatalogState,
@@ -3130,9 +2856,9 @@ async fn resolve_query_filters(
     let needs_actor_resolver = query_filters_need_actor_resolver(schema, filters)?;
     let needs_me = query_filters_need_me(schema, filters)?;
     let actor_snapshot = match (needs_actor_resolver, git_cli) {
-        (true, Some(cli)) => match actor_catalog.snapshot(cli, space_path).await {
+        (true, Some(cli)) => match actor_catalog.snapshot(cli.core(), space_path).await {
             Ok(snapshot) => Some(snapshot),
-            Err(error) if needs_me => return Err(error),
+            Err(error) if needs_me => return Err(error.into()),
             Err(error) => {
                 tracing::warn!(
                     "actor resolver unavailable for explicit query values in {}: {error}",
@@ -3430,14 +3156,7 @@ pub async fn resolve_relation(
     relation: &str,
     value: &str,
 ) -> Result<Option<ResolvedRelation>, AppError> {
-    let relation = normalize_collection_path(relation)?;
-    let value = normalize_relation_value_shape(value)?;
-    let file_path = join_collection_value(&relation, &value);
-    let resolved = fetch_resolved_relation(pool, &file_path).await?;
-    if resolved.is_some() || value == file_path {
-        return Ok(resolved);
-    }
-    fetch_resolved_relation(pool, &value).await
+    Ok(svode_core::collections::relation_read::resolve_relation(pool, relation, value).await?)
 }
 
 pub async fn resolve_relations_batch(
@@ -3445,75 +3164,10 @@ pub async fn resolve_relations_batch(
     relation: &str,
     values: &[String],
 ) -> Result<Vec<Option<ResolvedRelation>>, AppError> {
-    let relation = normalize_collection_path(relation)?;
-    let mut candidates = Vec::with_capacity(values.len());
-    let mut lookup_paths = Vec::new();
-    let mut seen_paths = HashSet::new();
-    for value in values {
-        let value = normalize_relation_value_shape(value)?;
-        let primary = join_collection_value(&relation, &value);
-        let fallback = if value == primary { None } else { Some(value) };
-        if seen_paths.insert(primary.clone()) {
-            lookup_paths.push(primary.clone());
-        }
-        if let Some(fallback_path) = fallback.as_ref() {
-            if seen_paths.insert(fallback_path.clone()) {
-                lookup_paths.push(fallback_path.clone());
-            }
-        }
-        candidates.push((primary, fallback));
-    }
-    if lookup_paths.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    let mut query = QueryBuilder::<Sqlite>::new(
-        "SELECT title, icon, file_path, collection_root_path FROM entries WHERE file_path IN (",
-    );
-    let mut separated = query.separated(", ");
-    for file_path in &lookup_paths {
-        separated.push_bind(file_path);
-    }
-    separated.push_unseparated(")");
-    let rows = query.build().fetch_all(pool).await?;
-    let mut by_path = HashMap::new();
-    for row in rows {
-        let file_path: String = row.get("file_path");
-        by_path.insert(file_path, resolved_relation_from_row(row));
-    }
-    Ok(candidates
-        .iter()
-        .map(|(primary, fallback)| {
-            by_path.get(primary).cloned().or_else(|| {
-                fallback
-                    .as_ref()
-                    .and_then(|fallback_path| by_path.get(fallback_path).cloned())
-            })
-        })
-        .collect())
-}
-
-async fn fetch_resolved_relation(
-    pool: &SqlitePool,
-    file_path: &str,
-) -> Result<Option<ResolvedRelation>, AppError> {
-    let row = sqlx::query(
-        "SELECT title, icon, file_path, collection_root_path FROM entries WHERE file_path = ? LIMIT 1",
+    Ok(
+        svode_core::collections::relation_read::resolve_relations_batch(pool, relation, values)
+            .await?,
     )
-    .bind(file_path)
-    .fetch_optional(pool)
-    .await?;
-    Ok(row.map(resolved_relation_from_row))
-}
-
-fn resolved_relation_from_row(row: sqlx::sqlite::SqliteRow) -> ResolvedRelation {
-    let collection_root_path: Option<String> = row.get("collection_root_path");
-    ResolvedRelation {
-        title: row.get("title"),
-        icon: row.get("icon"),
-        file_path: row.get("file_path"),
-        collection_root_path: collection_root_path.unwrap_or_default(),
-    }
 }
 
 pub fn query_relation_backlinks(
@@ -3522,67 +3176,14 @@ pub fn query_relation_backlinks(
     source_collection_path: Option<&str>,
     source_column: Option<&str>,
 ) -> Result<Vec<RelationBacklink>, AppError> {
-    let target = normalize_rel_path(target_path);
-    let mut out = Vec::new();
-    for collection in list_collections(space)? {
-        if source_collection_path
-            .map(collection_root_for_schema)
-            .as_deref()
-            .is_some_and(|source| source != collection.path)
-        {
-            continue;
-        }
-        let schema = read_schema_or_default(space, &collection.path)?;
-        let columns: Vec<Column> = schema
-            .columns
-            .iter()
-            .filter(|column| {
-                column.type_ == PropertyType::Relation
-                    && relation_is_current_scope(column)
-                    && source_column.is_none_or(|name| name == column.name)
-            })
-            .cloned()
-            .collect();
-        for column in columns {
-            let Some(relation) = column.relation.as_deref() else {
-                continue;
-            };
-            let Ok(target_value) = value_relative_to_collection(relation, &target) else {
-                continue;
-            };
-            for file in collection_markdown_files(space, &collection.path)? {
-                let raw = fs::read_to_string(&file)?;
-                let Some((meta, _)) = frontmatter::try_parse(&raw)? else {
-                    continue;
-                };
-                let values = relation_values_from_value(
-                    &column,
-                    meta.extra.get(&column.name).unwrap_or(&Value::Null),
-                )?;
-                if values.iter().any(|value| value == &target_value) {
-                    let file_path = file
-                        .strip_prefix(space)
-                        .unwrap_or(&file)
-                        .to_string_lossy()
-                        .replace('\\', "/");
-                    out.push(RelationBacklink {
-                        file_path,
-                        collection_root_path: collection.path.clone(),
-                        column: column.name.clone(),
-                        value: target_value.clone(),
-                        title: meta.title,
-                    });
-                }
-            }
-        }
-    }
-    out.sort_by(|a, b| {
-        a.collection_root_path
-            .cmp(&b.collection_root_path)
-            .then_with(|| a.column.cmp(&b.column))
-            .then_with(|| a.file_path.cmp(&b.file_path))
-    });
-    Ok(out)
+    Ok(
+        svode_core::collections::relation_read::query_relation_backlinks(
+            space,
+            target_path,
+            source_collection_path,
+            source_column,
+        )?,
+    )
 }
 
 #[allow(dead_code)]
@@ -3591,7 +3192,13 @@ pub fn diagnose_two_way_relation(
     collection_path: &str,
     column_name: &str,
 ) -> Result<RelationTwoWayDiagnostics, AppError> {
-    diagnose_two_way_relation_with_project(space, collection_path, column_name, None)
+    Ok(
+        svode_core::collections::relation_read::diagnose_two_way_relation(
+            space,
+            collection_path,
+            column_name,
+        )?,
+    )
 }
 
 pub fn diagnose_two_way_relation_with_project(
@@ -3600,216 +3207,14 @@ pub fn diagnose_two_way_relation_with_project(
     column_name: &str,
     project_path: Option<&str>,
 ) -> Result<RelationTwoWayDiagnostics, AppError> {
-    let collection_path = collection_root_for_schema(collection_path);
-    let schema = read_schema_or_default(space, &collection_path)?;
-    let column = schema
-        .columns
-        .iter()
-        .find(|column| column.name == column_name && column.type_ == PropertyType::Relation)
-        .cloned()
-        .ok_or_else(|| schema_error(format!("relation column '{column_name}' not found")))?;
-    let relation = column
-        .relation
-        .as_deref()
-        .map(normalize_collection_path)
-        .transpose()?;
-    let reverse_column = column.two_way.clone();
-    let target_pair = if relation.is_some() {
-        relation_target_pair(space, project_path, &column)?
-    } else {
-        None
-    };
-    let choices = if let Some((target_space, relation, reverse_scope)) = target_pair.as_ref() {
-        compatible_reverse_choices(
-            target_space,
-            &collection_path,
-            reverse_scope.as_ref(),
+    Ok(
+        svode_core::collections::relation_read::diagnose_two_way_relation_with_project(
+            space,
+            collection_path,
             column_name,
-            relation,
-        )?
-    } else {
-        Vec::new()
-    };
-
-    let mut schema_status = RelationTwoWaySchemaStatus::NotTwoWay;
-    let mut schema_message = None;
-    let mut drift = RelationDriftSummary::default();
-
-    if let (Some((target_space, relation, reverse_scope)), Some(reverse_name)) =
-        (target_pair.as_ref(), reverse_column.as_deref())
-    {
-        let reverse_schema = read_schema_or_default(target_space, relation)?;
-        if let Some(reverse) = reverse_schema
-            .columns
-            .iter()
-            .find(|candidate| candidate.name == reverse_name)
-        {
-            match ensure_compatible_reverse_with_scope(
-                reverse,
-                &collection_path,
-                reverse_scope.as_ref(),
-                column_name,
-                true,
-            ) {
-                Ok(()) if reverse.two_way.as_deref() == Some(column_name) => {
-                    schema_status = RelationTwoWaySchemaStatus::Ok;
-                    drift = detect_relation_value_drift(
-                        space,
-                        &collection_path,
-                        &column,
-                        target_space,
-                        relation,
-                        reverse,
-                    )?;
-                }
-                Ok(()) => {
-                    schema_status = RelationTwoWaySchemaStatus::IncompatibleReverse;
-                    schema_message = Some(format!(
-                        "reverse column '{reverse_name}' is not paired with '{column_name}'"
-                    ));
-                }
-                Err(error) => {
-                    schema_status = RelationTwoWaySchemaStatus::IncompatibleReverse;
-                    schema_message = Some(error.to_string());
-                }
-            }
-        } else {
-            schema_status = RelationTwoWaySchemaStatus::MissingReverse;
-            schema_message = Some(format!("reverse column '{reverse_name}' not found"));
-        }
-    }
-
-    Ok(RelationTwoWayDiagnostics {
-        collection_path,
-        column: column_name.to_string(),
-        relation,
-        reverse_column,
-        schema_status,
-        schema_message,
-        compatible_reverse_choices: choices,
-        drift,
-    })
-}
-
-fn compatible_reverse_choices(
-    space: &str,
-    collection_path: &str,
-    expected_relation_scope: Option<&RelationScope>,
-    column_name: &str,
-    relation: &str,
-) -> Result<Vec<CompatibleReverseChoice>, AppError> {
-    let mut choices = Vec::new();
-    let reverse_schema = read_schema_or_default(space, relation)?;
-    for candidate in &reverse_schema.columns {
-        if candidate.type_ != PropertyType::Relation {
-            continue;
-        }
-        if candidate.relation_scope.as_ref() != expected_relation_scope {
-            continue;
-        }
-        if candidate.limit == Some(RelationLimit::One) {
-            continue;
-        }
-        let Some(candidate_relation) = candidate.relation.as_deref() else {
-            continue;
-        };
-        if normalize_collection_path(candidate_relation)
-            .ok()
-            .as_deref()
-            != Some(collection_path)
-        {
-            continue;
-        }
-        if candidate
-            .two_way
-            .as_deref()
-            .is_some_and(|paired| paired != column_name)
-        {
-            continue;
-        }
-        choices.push(CompatibleReverseChoice {
-            name: candidate.name.clone(),
-            two_way: candidate.two_way.clone(),
-        });
-    }
-    choices.sort_by(|a, b| a.name.cmp(&b.name));
-    Ok(choices)
-}
-
-fn detect_relation_value_drift(
-    source_space: &str,
-    collection_path: &str,
-    column: &Column,
-    target_space: &str,
-    relation: &str,
-    reverse: &Column,
-) -> Result<RelationDriftSummary, AppError> {
-    let source_edges = relation_edges_for_column(source_space, collection_path, column)?;
-    let reverse_edges = relation_edges_for_column(target_space, relation, reverse)?
-        .into_iter()
-        .map(|edge| RelationEdge {
-            source_value: edge.target_value,
-            target_value: edge.source_value,
-        })
-        .collect::<HashSet<_>>();
-
-    let mut rows = Vec::new();
-    for edge in source_edges.difference(&reverse_edges) {
-        rows.push(RelationDriftRow {
-            kind: RelationDriftKind::MissingReverse,
-            source_file_path: join_collection_value(collection_path, &edge.source_value),
-            target_file_path: join_collection_value(relation, &edge.target_value),
-            source_value: edge.source_value.clone(),
-            target_value: edge.target_value.clone(),
-        });
-    }
-    let missing_reverse_count = rows.len();
-    for edge in reverse_edges.difference(&source_edges) {
-        rows.push(RelationDriftRow {
-            kind: RelationDriftKind::MissingSource,
-            source_file_path: join_collection_value(collection_path, &edge.source_value),
-            target_file_path: join_collection_value(relation, &edge.target_value),
-            source_value: edge.source_value.clone(),
-            target_value: edge.target_value.clone(),
-        });
-    }
-    let missing_source_count = rows.len() - missing_reverse_count;
-    rows.sort_by(|a, b| {
-        a.source_file_path
-            .cmp(&b.source_file_path)
-            .then_with(|| a.target_file_path.cmp(&b.target_file_path))
-            .then_with(|| a.kind.cmp(&b.kind))
-    });
-
-    Ok(RelationDriftSummary {
-        missing_reverse_count,
-        missing_source_count,
-        rows,
-    })
-}
-
-fn relation_edges_for_column(
-    space: &str,
-    collection_path: &str,
-    column: &Column,
-) -> Result<HashSet<RelationEdge>, AppError> {
-    let source_collection = collection_root_for_schema(collection_path);
-    let mut edges = HashSet::new();
-    for file in collection_markdown_files(space, collection_path)? {
-        let file_path = file
-            .strip_prefix(space)
-            .unwrap_or(&file)
-            .to_string_lossy()
-            .replace('\\', "/");
-        let source_value = value_relative_to_collection(&source_collection, &file_path)?;
-        for target_value in read_relation_field_values_from_file(&file, column)? {
-            edges.insert(RelationEdge {
-                source_value: source_value.clone(),
-                target_value,
-            });
-        }
-    }
-    Ok(edges)
+            project_path,
+        )?,
+    )
 }
 
 #[allow(dead_code)]
@@ -4156,91 +3561,11 @@ fn detach_current_two_way_relation(
 }
 
 fn collection_markdown_files(space: &str, collection_path: &str) -> Result<Vec<PathBuf>, AppError> {
-    let space_root = Path::new(space);
-    let collection_root = collection_rel(collection_path);
-    let collection_root_rel = rel_path_string(&collection_root);
-    let skip_dirs = child_folder_names(space_root);
-    if is_registered_child_space_rel(&collection_root_rel, &skip_dirs) {
-        return Ok(Vec::new());
-    }
-
-    let root = collection_dir(space, collection_path);
-    if !root.exists() {
-        return Ok(Vec::new());
-    }
-
-    let policy = TreeIgnorePolicy::from_space_root(space_root);
-    let mut files = Vec::new();
-    for file in collect_md_files(space_root, &root, &skip_dirs, &policy)? {
-        let rel = file
-            .strip_prefix(space)
-            .unwrap_or(&file)
-            .to_string_lossy()
-            .replace('\\', "/");
-        let belongs = resolve_collection_schema(space, &rel)
-            .map(|(_, root)| root == collection_root)
-            .unwrap_or(false);
-        if belongs {
-            files.push(file);
-        }
-    }
-    Ok(files)
+    Ok(svode_core::collections::traversal::collection_markdown_files(space, collection_path)?)
 }
 
 fn collect_md_files_in_space(space: &Path, root: &Path) -> Result<Vec<PathBuf>, AppError> {
-    // Collection-side scans must honor the same scope boundaries as tree/index.
-    // Root project collections must not recurse into registered child spaces.
-    let root_rel = root
-        .strip_prefix(space)
-        .map(rel_path_string)
-        .unwrap_or_else(|_| rel_path_string(root));
-    let skip_dirs = child_folder_names(space);
-    if is_registered_child_space_rel(&root_rel, &skip_dirs) {
-        return Ok(Vec::new());
-    }
-
-    let policy = TreeIgnorePolicy::from_space_root(space);
-    collect_md_files(space, root, &skip_dirs, &policy)
-}
-
-fn collect_md_files(
-    space: &Path,
-    root: &Path,
-    skip_dirs: &HashSet<String>,
-    policy: &TreeIgnorePolicy,
-) -> Result<Vec<PathBuf>, AppError> {
-    let mut files = Vec::new();
-    collect_md_files_inner(space, root, skip_dirs, policy, &mut files)?;
-    Ok(files)
-}
-
-fn collect_md_files_inner(
-    space: &Path,
-    dir: &Path,
-    skip_dirs: &HashSet<String>,
-    policy: &TreeIgnorePolicy,
-    out: &mut Vec<PathBuf>,
-) -> Result<(), AppError> {
-    for entry in fs::read_dir(dir)? {
-        let entry = entry?;
-        let path = entry.path();
-
-        let Ok(meta) = fs::symlink_metadata(&path) else {
-            continue;
-        };
-        if meta.file_type().is_symlink()
-            || is_collection_traversal_ignored(space, &path, &meta, skip_dirs, policy)
-        {
-            continue;
-        }
-
-        if meta.is_dir() {
-            collect_md_files_inner(space, &path, skip_dirs, policy, out)?;
-        } else if meta.is_file() && path.extension().and_then(|ext| ext.to_str()) == Some("md") {
-            out.push(path);
-        }
-    }
-    Ok(())
+    Ok(svode_core::collections::traversal::collect_md_files_in_space(space, root)?)
 }
 
 fn mutate_frontmatter<F>(path: &Path, mut f: F) -> Result<bool, AppError>

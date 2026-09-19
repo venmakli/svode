@@ -2,29 +2,29 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use super::GitError;
 use super::cli::GitCli;
-use crate::error::AppError;
 
 /// Only the local inputs of the Human Actors projection, never the object store.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct ActorSources {
+pub struct ActorSources {
     pub repository: PathBuf,
     files: Vec<PathBuf>,
     refs: PathBuf,
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub(crate) enum SourceValue {
+pub enum SourceValue {
     Missing,
     File(Vec<u8>),
     Directory,
     Symlink(PathBuf),
 }
 
-pub(crate) type SourceStamp = BTreeMap<PathBuf, SourceValue>;
+pub type SourceStamp = BTreeMap<PathBuf, SourceValue>;
 
 impl ActorSources {
-    pub async fn resolve(cli: &GitCli, space: &Path) -> Result<Self, AppError> {
+    pub async fn resolve(cli: &GitCli, space: &Path) -> Result<Self, GitError> {
         let result = cli
             .exec(
                 space,
@@ -49,7 +49,7 @@ impl ActorSources {
             .await?;
         let paths: Vec<_> = result.stdout.lines().map(PathBuf::from).collect();
         if result.exit_code != 0 || paths.len() != 7 {
-            return Err(AppError::GitCommandFailed(format!(
+            return Err(GitError::GitCommandFailed(format!(
                 "cannot resolve actor sources: {}",
                 result.stderr.trim()
             )));
@@ -87,7 +87,7 @@ impl ActorSources {
         paths.into_iter().collect()
     }
 
-    pub fn stamp(&self) -> Result<SourceStamp, AppError> {
+    pub fn stamp(&self) -> Result<SourceStamp, GitError> {
         let mut stamp = BTreeMap::new();
         for file in &self.files {
             // Ordinary repositories have a directory here; gitfiles are source inputs.
@@ -101,7 +101,7 @@ impl ActorSources {
     }
 }
 
-fn read_source(path: &Path, stamp: &mut SourceStamp) -> Result<(), AppError> {
+fn read_source(path: &Path, stamp: &mut SourceStamp) -> Result<(), GitError> {
     let value = match fs::symlink_metadata(path) {
         Ok(metadata) if metadata.file_type().is_symlink() => {
             SourceValue::Symlink(fs::read_link(path)?)
@@ -115,7 +115,7 @@ fn read_source(path: &Path, stamp: &mut SourceStamp) -> Result<(), AppError> {
     Ok(())
 }
 
-fn read_refs(path: &Path, stamp: &mut SourceStamp) -> Result<(), AppError> {
+fn read_refs(path: &Path, stamp: &mut SourceStamp) -> Result<(), GitError> {
     let entries = match fs::read_dir(path) {
         Ok(entries) => entries,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),

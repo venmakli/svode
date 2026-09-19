@@ -1,5 +1,19 @@
 use serde::Serialize;
 
+impl From<svode_core::actors::ActorError> for AppError {
+    fn from(error: svode_core::actors::ActorError) -> Self {
+        match error {
+            svode_core::actors::ActorError::Io(error) => Self::Io(error),
+            svode_core::actors::ActorError::Git(error) => error.into(),
+            svode_core::actors::ActorError::GitCommandFailed(message) => {
+                Self::GitCommandFailed(message)
+            }
+            svode_core::actors::ActorError::FileNotFound(message) => Self::FileNotFound(message),
+            svode_core::actors::ActorError::General(message) => Self::General(message),
+        }
+    }
+}
+
 impl From<svode_core::collections::CollectionError> for AppError {
     fn from(error: svode_core::collections::CollectionError) -> Self {
         match error {
@@ -7,6 +21,15 @@ impl From<svode_core::collections::CollectionError> for AppError {
             svode_core::collections::CollectionError::Schema(message) => {
                 Self::General(format!("schema error: {message}"))
             }
+            svode_core::collections::CollectionError::Index(message) => Self::Index(message),
+            svode_core::collections::CollectionError::Sqlx(error) => Self::Db(error),
+            svode_core::collections::CollectionError::FrontmatterParse(message) => {
+                Self::FrontmatterParse(message)
+            }
+            svode_core::collections::CollectionError::FileNotFound(path) => {
+                Self::FileNotFound(path)
+            }
+            svode_core::collections::CollectionError::SerdeJson(error) => Self::Serde(error),
         }
     }
 }

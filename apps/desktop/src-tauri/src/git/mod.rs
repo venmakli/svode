@@ -1,6 +1,5 @@
 pub mod access;
-pub(crate) mod actor_sources;
-pub mod auth;
+pub(crate) mod auth;
 pub mod autocommit;
 pub(crate) mod branch;
 pub mod cli;
@@ -17,13 +16,13 @@ pub(crate) mod local_policy;
 mod local_policy_tests;
 pub(crate) mod local_repair;
 pub(crate) mod manual_save;
-pub mod ops;
 pub(crate) mod operations;
+pub mod ops;
 pub(crate) mod pending;
 pub(crate) mod publication;
 pub(crate) mod publication_flow;
-pub(crate) mod readers;
 mod published_pointer;
+pub(crate) mod readers;
 mod staging;
 #[cfg(test)]
 mod staging_tests;

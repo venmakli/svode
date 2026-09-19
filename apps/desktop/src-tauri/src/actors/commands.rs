@@ -22,7 +22,7 @@ pub async fn actors_get_catalog(
 ) -> Result<ActorCatalog, AppError> {
     let cli = require_cli(&git_state)?;
     Ok(actor_catalog
-        .snapshot(&cli, Path::new(&space_path))
+        .snapshot(cli.core(), Path::new(&space_path))
         .await?
         .catalog())
 }
@@ -35,7 +35,7 @@ pub async fn actors_refresh_catalog(
 ) -> Result<ActorCatalog, AppError> {
     let cli = require_cli(&git_state)?;
     Ok(actor_catalog
-        .refresh(&cli, Path::new(&space_path))
+        .refresh(cli.core(), Path::new(&space_path))
         .await?
         .catalog())
 }
@@ -53,7 +53,7 @@ pub async fn actors_get_activity(
     let cli = require_cli(&git_state)?;
     actor_catalog
         .activity(
-            &cli,
+            cli.core(),
             Path::new(&space_path),
             &canonical_email,
             selected_year,
@@ -61,6 +61,7 @@ pub async fn actors_get_activity(
             cursor.as_deref(),
         )
         .await
+        .map_err(Into::into)
 }
 
 #[tauri::command]

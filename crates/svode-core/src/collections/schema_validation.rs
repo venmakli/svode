@@ -334,7 +334,7 @@ fn validate_view(
 }
 
 #[derive(Clone, Copy)]
-pub(super) enum FieldContext {
+pub enum FieldContext {
     Filter,
     Sort,
     VisibleField,
@@ -411,7 +411,7 @@ fn validate_custom_field_context(
     }
 }
 
-pub(super) fn validate_filter_op(
+pub fn validate_filter_op(
     schema: &CollectionSchema,
     filter: &Filter,
 ) -> Result<(), CollectionError> {
@@ -507,7 +507,7 @@ pub(super) fn validate_filter_op(
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(super) enum FieldType {
+pub enum FieldType {
     TextLike,
     Number,
     UniqueId,
@@ -714,7 +714,7 @@ fn parse_status_group_name(raw: &str) -> Option<StatusGroup> {
     }
 }
 
-pub(super) fn field_type(
+pub fn field_type(
     schema: &CollectionSchema,
     field: &str,
     _context: FieldContext,
