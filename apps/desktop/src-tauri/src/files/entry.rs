@@ -2,8 +2,8 @@ mod model;
 mod persistence;
 
 pub use model::{
-    ColorName, Cover, DeleteResult, Entry, EntryDetailForm, EntryDetailState, EntryMeta,
-    EntryWarning, WriteResult,
+    Cover, DeleteResult, Entry, EntryDetailForm, EntryDetailState, EntryMeta, EntryWarning,
+    WriteResult,
 };
 pub use persistence::read;
 
@@ -29,15 +29,7 @@ fn resolve(space: &str, rel: &str) -> PathBuf {
 
 pub(crate) use svode_core::page::naming::slugify;
 
-/// Generate a title from a filename stem: "my-notes" → "My notes".
-pub(crate) fn title_from_stem(stem: &str) -> String {
-    let s = stem.replace('-', " ").replace('_', " ");
-    let mut chars = s.chars();
-    match chars.next() {
-        None => "Untitled".to_string(),
-        Some(c) => c.to_uppercase().to_string() + chars.as_str(),
-    }
-}
+pub(crate) use svode_core::page::frontmatter::{apply_entry_field_update, title_from_stem};
 
 /// Append a filename to order.json for a given directory key.
 fn order_append(space: &Path, dir_key: &str, name: &str) {
@@ -197,7 +189,7 @@ fn rewrite_relations_after_fs_move_with_project(
     };
     if let Err(error) = result {
         let _ = fs::rename(new_abs, old_abs);
-        return Err(error);
+        return Err(error.into());
     }
     Ok(())
 }
@@ -1040,129 +1032,6 @@ pub(crate) fn write_under_name_lock(
     })
 }
 
-fn invalid_entry_field(message: impl Into<String>) -> AppError {
-    AppError::General(format!("invalid entry field: {}", message.into()))
-}
-
-fn expect_string(value: serde_json::Value, field: &str) -> Result<String, AppError> {
-    match value {
-        serde_json::Value::String(s) => Ok(s),
-        _ => Err(invalid_entry_field(format!("{field} must be a string"))),
-    }
-}
-
-fn cover_from_json(value: serde_json::Value) -> Result<Cover, AppError> {
-    let serde_json::Value::Object(mut object) = value else {
-        return Err(invalid_entry_field("cover must be an object or null"));
-    };
-
-    let cover_type = object
-        .remove("type")
-        .and_then(|v| v.as_str().map(ToOwned::to_owned))
-        .ok_or_else(|| invalid_entry_field("cover.type must be 'color' or 'image'"))?;
-
-    match cover_type.as_str() {
-        "color" => {
-            let value = object
-                .remove("value")
-                .and_then(|v| v.as_str().map(ToOwned::to_owned))
-                .ok_or_else(|| invalid_entry_field("cover.value must be a color name"))?;
-            let value = ColorName::from_name(&value).ok_or_else(|| {
-                invalid_entry_field(
-                    "cover.value must be one of neutral, gray, red, orange, yellow, green, blue, purple, pink, brown",
-                )
-            })?;
-            Ok(Cover::Color { value })
-        }
-        "image" => {
-            let path = object
-                .remove("path")
-                .and_then(|v| v.as_str().map(ToOwned::to_owned))
-                .ok_or_else(|| invalid_entry_field("cover.path must be a string"))?;
-            let position = match object.remove("position") {
-                None | Some(serde_json::Value::Null) => None,
-                Some(serde_json::Value::Number(n)) => {
-                    let pos = n
-                        .as_u64()
-                        .ok_or_else(|| invalid_entry_field("cover.position must be 0..=100"))?;
-                    if pos > 100 {
-                        return Err(invalid_entry_field("cover.position must be 0..=100"));
-                    }
-                    Some(pos as u8)
-                }
-                Some(_) => return Err(invalid_entry_field("cover.position must be 0..=100")),
-            };
-            Ok(Cover::Image { path, position })
-        }
-        _ => Err(invalid_entry_field(
-            "cover.type must be either 'color' or 'image'",
-        )),
-    }
-}
-
-pub(crate) fn apply_entry_field_update(
-    meta: &mut EntryMeta,
-    field: &str,
-    value: serde_json::Value,
-) -> Result<(), AppError> {
-    match field {
-        "created" | "updated" => Err(invalid_entry_field(format!("{field} is read-only"))),
-        "title" => {
-            meta.title = expect_string(value, "title")?;
-            meta.mark_title_present();
-            Ok(())
-        }
-        "icon" => {
-            meta.icon = match value {
-                serde_json::Value::Null => None,
-                v => Some(expect_string(v, "icon")?),
-            };
-            if meta.icon.is_some() {
-                meta.mark_icon_present();
-            }
-            Ok(())
-        }
-        "description" => {
-            meta.description = match value {
-                serde_json::Value::Null => None,
-                serde_json::Value::String(s) => {
-                    if s.chars().count() > 500 {
-                        return Err(invalid_entry_field(
-                            "description must be at most 500 characters",
-                        ));
-                    }
-                    if s.is_empty() { None } else { Some(s) }
-                }
-                _ => return Err(invalid_entry_field("description must be a string or null")),
-            };
-            if meta.description.is_some() {
-                meta.mark_description_present();
-            }
-            Ok(())
-        }
-        "cover" => {
-            meta.cover = match value {
-                serde_json::Value::Null => None,
-                v => Some(cover_from_json(v)?),
-            };
-            if meta.cover.is_some() {
-                meta.mark_cover_present();
-            }
-            Ok(())
-        }
-        custom => {
-            if value.is_null() {
-                meta.extra.remove(custom);
-            } else {
-                let yaml_value = serde_yml::to_value(value)
-                    .map_err(|e| invalid_entry_field(format!("{custom}: {e}")))?;
-                meta.extra.insert(custom.to_string(), yaml_value);
-            }
-            Ok(())
-        }
-    }
-}
-
 #[cfg(test)]
 pub fn update_field(
     space: &str,
@@ -1218,16 +1087,30 @@ fn update_field_inner(
     );
     if is_custom {
         crate::properties::ensure_entry_field_writable(space, path, field)?;
-        let yaml_value = serde_yml::to_value(value.clone())
-            .map_err(|e| invalid_entry_field(format!("{field}: {e}")))?;
-        if let Some(entry) = crate::properties::update_relation_entry_field(
+        let yaml_value = serde_yml::to_value(value.clone()).map_err(|e| {
+            AppError::from(
+                svode_core::page::frontmatter::FrontmatterError::InvalidField(format!(
+                    "{field}: {e}"
+                )),
+            )
+        })?;
+        if let Some((meta, body)) = crate::properties::update_relation_entry_field(
             space,
             project_path,
             path,
             field,
             yaml_value,
         )? {
-            return Ok(entry);
+            let path = svode_core::collections::schema::normalize_rel_path(path);
+            let name_conflict =
+                crate::files::naming::document_name_conflict(Path::new(space), &path, &meta.title)?;
+            return Ok(Entry {
+                meta,
+                body,
+                path,
+                warnings: Vec::new(),
+                name_conflict,
+            });
         }
     }
 
@@ -1252,8 +1135,13 @@ fn update_field_inner(
     let previous_title = (field == "title").then(|| meta.title.clone());
 
     if is_custom && !value.is_null() {
-        let yaml_value = serde_yml::to_value(value.clone())
-            .map_err(|e| invalid_entry_field(format!("{field}: {e}")))?;
+        let yaml_value = serde_yml::to_value(value.clone()).map_err(|e| {
+            AppError::from(
+                svode_core::page::frontmatter::FrontmatterError::InvalidField(format!(
+                    "{field}: {e}"
+                )),
+            )
+        })?;
         let yaml_value =
             crate::properties::normalize_entry_field_value(space, path, field, yaml_value)?;
         crate::properties::validate_entry_field_value(space, path, field, &yaml_value)?;
@@ -1566,7 +1454,7 @@ pub fn unnest_entry(
     {
         let _ = fs::create_dir_all(folder);
         let _ = fs::rename(&new_abs, &abs_path);
-        return Err(error);
+        return Err(error.into());
     }
 
     // Update backlinks
@@ -1803,7 +1691,7 @@ pub fn convert_entry_to_leaf(
     ) {
         let _ = fs::create_dir_all(folder_abs);
         let _ = fs::rename(&leaf_abs, &readme_abs);
-        return Err(error);
+        return Err(error.into());
     }
 
     let parent_rel = Path::new(&path)
@@ -2078,7 +1966,7 @@ pub fn delete_with_project(
         &deleted_paths,
     ) {
         Ok(paths) => paths,
-        Err(error) => return Err(error),
+        Err(error) => return Err(error.into()),
     };
 
     let delete_parent = abs_path.parent().unwrap_or(Path::new(space));
@@ -2263,6 +2151,7 @@ pub fn rename_with_project(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use svode_core::page::ColorName;
     use tempfile::TempDir;
 
     #[test]

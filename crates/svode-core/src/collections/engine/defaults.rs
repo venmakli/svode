@@ -1,10 +1,11 @@
 use super::*;
+use crate::collections::query::{entry_order_name, entry_parent_dir};
 
 pub fn apply_schema_defaults_for_path(
     space: &str,
     file_path: &str,
     meta: &mut EntryMeta,
-) -> Result<bool, AppError> {
+) -> Result<bool, CollectionError> {
     let Some((schema, _)) = resolve_collection_schema_result(space, file_path)? else {
         return Ok(false);
     };
@@ -29,7 +30,7 @@ pub fn apply_contextual_defaults_for_path(
     file_path: &str,
     meta: &mut EntryMeta,
     contextual_defaults: &HashMap<String, Value>,
-) -> Result<bool, AppError> {
+) -> Result<bool, CollectionError> {
     if contextual_defaults.is_empty() {
         return Ok(false);
     }
@@ -59,7 +60,7 @@ pub fn apply_contextual_defaults_for_path_strict(
     file_path: &str,
     meta: &mut EntryMeta,
     contextual_defaults: &HashMap<String, Value>,
-) -> Result<bool, AppError> {
+) -> Result<bool, CollectionError> {
     if contextual_defaults.is_empty() {
         return Ok(false);
     }
@@ -88,7 +89,10 @@ pub fn apply_contextual_defaults_for_path_strict(
     Ok(changed)
 }
 
-pub fn apply_schema_defaults_to_entry_tree(space: &Path, rel_path: &str) -> Result<(), AppError> {
+pub fn apply_schema_defaults_to_entry_tree(
+    space: &Path,
+    rel_path: &str,
+) -> Result<(), CollectionError> {
     let abs = space.join(rel_path);
     if abs.is_dir() {
         for path in collect_md_files_in_space(space, &abs)? {
@@ -105,14 +109,14 @@ pub fn apply_schema_defaults_to_entry_tree(space: &Path, rel_path: &str) -> Resu
     Ok(())
 }
 
-fn apply_schema_defaults_to_file(space: &Path, rel_path: &str) -> Result<(), AppError> {
+fn apply_schema_defaults_to_file(space: &Path, rel_path: &str) -> Result<(), CollectionError> {
     let space_str = space.to_string_lossy();
     let abs = space.join(rel_path);
     let raw = fs::read_to_string(&abs)?;
     let (mut meta, body) = match frontmatter::parse_status(&raw) {
         frontmatter::ParseStatus::Valid { meta, body } => (meta, body),
         frontmatter::ParseStatus::Missing { body } => {
-            let title = entry::title_from_stem(
+            let title = frontmatter::title_from_stem(
                 Path::new(rel_path)
                     .file_stem()
                     .and_then(|stem| stem.to_str())
@@ -124,7 +128,7 @@ fn apply_schema_defaults_to_file(space: &Path, rel_path: &str) -> Result<(), App
             )
         }
         frontmatter::ParseStatus::Malformed { message, .. } => {
-            return Err(AppError::FrontmatterParse(format!(
+            return Err(CollectionError::FrontmatterParse(format!(
                 "cannot apply schema defaults while frontmatter is malformed: {message}"
             )));
         }
@@ -140,7 +144,7 @@ fn apply_schema_defaults_to_file(space: &Path, rel_path: &str) -> Result<(), App
 pub fn unique_id_mutation_paths_for_entry(
     space: &str,
     file_path: &str,
-) -> Result<Vec<PathBuf>, AppError> {
+) -> Result<Vec<PathBuf>, CollectionError> {
     let mut paths = vec![Path::new(space).join(normalize_rel_path(file_path))];
     if let Some(schema_path) = unique_id_schema_path_for_entry(space, file_path)? {
         paths.push(schema_path);
@@ -151,7 +155,7 @@ pub fn unique_id_mutation_paths_for_entry(
 pub fn unique_id_mutation_paths_for_entry_tree(
     space: &Path,
     rel_path: &str,
-) -> Result<Vec<PathBuf>, AppError> {
+) -> Result<Vec<PathBuf>, CollectionError> {
     let mut paths = Vec::new();
     for file in markdown_files_in_tree(space, rel_path)? {
         let rel = copy_rel_from_abs(space, &file);
@@ -167,7 +171,7 @@ pub fn unique_id_mutation_paths_for_entry_tree(
 pub fn unique_id_schema_path_for_entry(
     space: &str,
     file_path: &str,
-) -> Result<Option<PathBuf>, AppError> {
+) -> Result<Option<PathBuf>, CollectionError> {
     let Some((schema, root)) = resolve_collection_schema_result(space, file_path)? else {
         return Ok(None);
     };
@@ -186,7 +190,7 @@ pub fn assign_unique_ids_to_entry_tree(
     space: &Path,
     rel_path: &str,
     force: bool,
-) -> Result<(), AppError> {
+) -> Result<(), CollectionError> {
     for file in markdown_files_in_tree(space, rel_path)? {
         let rel = copy_rel_from_abs(space, &file);
         assign_unique_id_to_file(&space.to_string_lossy(), &rel, force)?;
@@ -194,18 +198,18 @@ pub fn assign_unique_ids_to_entry_tree(
     Ok(())
 }
 
-pub fn assign_unique_id(space: &str, file_path: &str) -> Result<entry::Entry, AppError> {
+pub fn assign_unique_id(space: &str, file_path: &str) -> Result<(), CollectionError> {
     let paths = unique_id_mutation_paths_for_entry(space, file_path)?;
     with_rollback(paths, || {
         assign_unique_id_to_file(space, file_path, true)?;
-        entry::read(space, file_path)
+        Ok(())
     })
 }
 
 pub fn normalize_unique_id_counter(
     space: &str,
     collection_path: &str,
-) -> Result<CollectionSchema, AppError> {
+) -> Result<CollectionSchema, CollectionError> {
     let schema_path = collection_dir(space, collection_path).join(SCHEMA_FILE);
     with_rollback(vec![schema_path], || {
         let mut schema = read_schema_or_default(space, collection_path)?;
@@ -229,14 +233,18 @@ pub fn normalize_unique_id_counter(
     })
 }
 
-fn assign_unique_id_to_file(space: &str, file_path: &str, force: bool) -> Result<bool, AppError> {
+fn assign_unique_id_to_file(
+    space: &str,
+    file_path: &str,
+    force: bool,
+) -> Result<bool, CollectionError> {
     let rel = normalize_rel_path(file_path);
     let abs = Path::new(space).join(&rel);
     let raw = fs::read_to_string(&abs)?;
     let (mut meta, body) = match frontmatter::parse_status(&raw) {
         frontmatter::ParseStatus::Valid { meta, body } => (meta, body),
         frontmatter::ParseStatus::Missing { body } => {
-            let title = entry::title_from_stem(
+            let title = frontmatter::title_from_stem(
                 Path::new(&rel)
                     .file_stem()
                     .and_then(|stem| stem.to_str())
@@ -248,7 +256,7 @@ fn assign_unique_id_to_file(space: &str, file_path: &str, force: bool) -> Result
             )
         }
         frontmatter::ParseStatus::Malformed { message, .. } => {
-            return Err(AppError::FrontmatterParse(format!(
+            return Err(CollectionError::FrontmatterParse(format!(
                 "cannot assign unique_id while frontmatter is malformed: {message}"
             )));
         }
@@ -268,7 +276,7 @@ pub fn assign_unique_id_to_meta_for_path(
     space: &str,
     file_path: &str,
     meta: &mut EntryMeta,
-) -> Result<bool, AppError> {
+) -> Result<bool, CollectionError> {
     assign_unique_id_to_meta_inner(space, file_path, meta, false)
 }
 
@@ -276,7 +284,7 @@ fn force_assign_unique_id_to_meta(
     space: &str,
     file_path: &str,
     meta: &mut EntryMeta,
-) -> Result<bool, AppError> {
+) -> Result<bool, CollectionError> {
     assign_unique_id_to_meta_inner(space, file_path, meta, true)
 }
 
@@ -285,7 +293,7 @@ fn assign_unique_id_to_meta_inner(
     file_path: &str,
     meta: &mut EntryMeta,
     force: bool,
-) -> Result<bool, AppError> {
+) -> Result<bool, CollectionError> {
     let Some((mut schema, root)) = resolve_collection_schema_result(space, file_path)? else {
         return Ok(false);
     };
@@ -328,7 +336,7 @@ pub(super) fn materialize_unique_id_column(
     space: &str,
     collection_path: &str,
     column_name: &str,
-) -> Result<(), AppError> {
+) -> Result<(), CollectionError> {
     let mut schema = read_schema_or_default(space, collection_path)?;
     let files = sorted_collection_markdown_files_for_unique_id(space, collection_path)?;
     let mut used = HashSet::new();
@@ -346,7 +354,7 @@ pub(super) fn materialize_unique_id_column(
         let (mut meta, body) = match frontmatter::parse_status(&raw) {
             frontmatter::ParseStatus::Valid { meta, body } => (meta, body),
             frontmatter::ParseStatus::Missing { body } => {
-                let title = entry::title_from_stem(
+                let title = frontmatter::title_from_stem(
                     Path::new(&rel)
                         .file_stem()
                         .and_then(|stem| stem.to_str())
@@ -358,7 +366,7 @@ pub(super) fn materialize_unique_id_column(
                 )
             }
             frontmatter::ParseStatus::Malformed { message, .. } => {
-                return Err(AppError::FrontmatterParse(format!(
+                return Err(CollectionError::FrontmatterParse(format!(
                     "cannot assign unique_id while frontmatter is malformed: {message}"
                 )));
             }
@@ -389,7 +397,7 @@ fn collection_unique_id_values(
     collection_path: &str,
     field: &str,
     exclude_path: Option<&str>,
-) -> Result<Vec<(String, u64)>, AppError> {
+) -> Result<Vec<(String, u64)>, CollectionError> {
     let exclude = exclude_path.map(normalize_rel_path);
     let mut values = Vec::new();
     for file in collection_markdown_files(space, collection_path)? {
@@ -411,7 +419,7 @@ fn collection_unique_id_values(
 fn next_unique_id_value(
     schema: &CollectionSchema,
     existing_values: &[(String, u64)],
-) -> Result<u64, AppError> {
+) -> Result<u64, CollectionError> {
     let schema_next = schema
         .columns
         .iter()
@@ -431,7 +439,7 @@ fn set_unique_id_next(
     schema: &mut CollectionSchema,
     field: &str,
     next: u64,
-) -> Result<(), AppError> {
+) -> Result<(), CollectionError> {
     let column = schema
         .columns
         .iter_mut()
@@ -441,7 +449,7 @@ fn set_unique_id_next(
     Ok(())
 }
 
-fn next_after(value: u64) -> Result<u64, AppError> {
+fn next_after(value: u64) -> Result<u64, CollectionError> {
     value
         .checked_add(1)
         .ok_or_else(|| schema_error("unique_id counter overflow"))
@@ -450,8 +458,8 @@ fn next_after(value: u64) -> Result<u64, AppError> {
 fn sorted_collection_markdown_files_for_unique_id(
     space: &str,
     collection_path: &str,
-) -> Result<Vec<PathBuf>, AppError> {
-    let order = crate::files::tree::read_order(Path::new(space));
+) -> Result<Vec<PathBuf>, CollectionError> {
+    let order = crate::content_tree::read_order(Path::new(space));
     let mut rows = Vec::new();
     for file in collection_markdown_files(space, collection_path)? {
         let rel = copy_rel_from_abs(Path::new(space), &file);
@@ -486,7 +494,7 @@ fn sorted_collection_markdown_files_for_unique_id(
     Ok(rows.into_iter().map(|row| row.0).collect())
 }
 
-fn markdown_files_in_tree(space: &Path, rel_path: &str) -> Result<Vec<PathBuf>, AppError> {
+fn markdown_files_in_tree(space: &Path, rel_path: &str) -> Result<Vec<PathBuf>, CollectionError> {
     let abs = space.join(normalize_rel_path(rel_path));
     if abs.is_dir() {
         collect_md_files_in_space(space, &abs)
@@ -497,7 +505,7 @@ fn markdown_files_in_tree(space: &Path, rel_path: &str) -> Result<Vec<PathBuf>, 
     }
 }
 
-pub(super) fn dedupe_paths(paths: Vec<PathBuf>) -> Result<Vec<PathBuf>, AppError> {
+pub(super) fn dedupe_paths(paths: Vec<PathBuf>) -> Result<Vec<PathBuf>, CollectionError> {
     let mut seen = HashSet::new();
     Ok(paths
         .into_iter()

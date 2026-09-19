@@ -1,13 +1,8 @@
 use super::*;
-
-pub fn validate_schema(schema: &CollectionSchema) -> Result<(), AppError> {
-    Ok(svode_core::collections::schema_validation::validate_schema(
-        schema,
-    )?)
-}
+pub use crate::collections::schema_validation::validate_schema;
 
 pub fn normalize_schema(schema: &mut CollectionSchema) {
-    svode_core::collections::schema_validation::normalize_schema(schema);
+    crate::collections::schema_validation::normalize_schema(schema);
 }
 
 pub(super) fn normalize_view(
@@ -75,14 +70,14 @@ pub(super) fn autopick_calendar_date_field(schema: &CollectionSchema) -> Option<
         .map(|column| column.name.clone())
 }
 
-pub(super) use svode_core::collections::schema_validation::{FieldContext, FieldType, field_type};
+pub(super) use crate::collections::schema_validation::{FieldContext, FieldType, field_type};
 
 pub fn validate_entry_field_value(
     space: &str,
     file_path: &str,
     field: &str,
     value: &Value,
-) -> Result<(), AppError> {
+) -> Result<(), CollectionError> {
     let Some((schema, _)) = resolve_collection_schema_result(space, file_path)? else {
         return Ok(());
     };
@@ -96,7 +91,7 @@ pub fn ensure_entry_field_writable(
     space: &str,
     file_path: &str,
     field: &str,
-) -> Result<(), AppError> {
+) -> Result<(), CollectionError> {
     let Some((schema, _)) = resolve_collection_schema_result(space, file_path)? else {
         return Ok(());
     };
@@ -116,7 +111,7 @@ pub fn normalize_entry_field_value(
     file_path: &str,
     field: &str,
     value: Value,
-) -> Result<Value, AppError> {
+) -> Result<Value, CollectionError> {
     let Some((schema, _)) = resolve_collection_schema_result(space, file_path)? else {
         return Ok(value);
     };
@@ -129,7 +124,7 @@ pub fn normalize_entry_field_value(
 pub(super) fn normalize_property_value_for_write(
     column: &Column,
     value: Value,
-) -> Result<Value, AppError> {
+) -> Result<Value, CollectionError> {
     if value.is_null() {
         return Ok(Value::Null);
     }

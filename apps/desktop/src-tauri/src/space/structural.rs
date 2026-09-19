@@ -1131,7 +1131,7 @@ where
                 &collection_path,
                 parent_conversion.as_ref(),
                 order_before.as_deref(),
-                error,
+                error.into(),
             ));
         }
     };

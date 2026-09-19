@@ -5,7 +5,7 @@ pub fn add_schema_column(
     space: &str,
     collection_path: &str,
     column: Column,
-) -> Result<CollectionSchema, AppError> {
+) -> Result<CollectionSchema, CollectionError> {
     add_schema_column_with_project(space, collection_path, column, None)
 }
 
@@ -14,7 +14,7 @@ pub fn add_schema_column_with_project(
     collection_path: &str,
     mut column: Column,
     project_path: Option<&str>,
-) -> Result<CollectionSchema, AppError> {
+) -> Result<CollectionSchema, CollectionError> {
     if column.type_ == PropertyType::Status && column.options.is_none() {
         column.options = Some(default_status_options());
     }
@@ -67,7 +67,7 @@ pub fn change_schema_type(
     column_name: &str,
     new_type: PropertyType,
     conversion_strategy: Option<Value>,
-) -> Result<CollectionSchema, AppError> {
+) -> Result<CollectionSchema, CollectionError> {
     change_schema_type_with_warnings(
         space,
         collection_path,
@@ -84,7 +84,7 @@ pub fn change_schema_type_with_warnings(
     column_name: &str,
     new_type: PropertyType,
     conversion_strategy: Option<Value>,
-) -> Result<(CollectionSchema, Vec<SchemaMutationWarning>), AppError> {
+) -> Result<(CollectionSchema, Vec<SchemaMutationWarning>), CollectionError> {
     change_schema_type_with_warnings_and_project(
         space,
         collection_path,
@@ -102,7 +102,7 @@ pub fn change_schema_type_with_warnings_and_project(
     new_type: PropertyType,
     conversion_strategy: Option<Value>,
     project_path: Option<&str>,
-) -> Result<(CollectionSchema, Vec<SchemaMutationWarning>), AppError> {
+) -> Result<(CollectionSchema, Vec<SchemaMutationWarning>), CollectionError> {
     let schema_path = collection_dir(space, collection_path).join(SCHEMA_FILE);
     let mut touched = vec![schema_path];
     touched.extend(collection_markdown_files(space, collection_path)?);
@@ -249,7 +249,7 @@ pub fn rename_schema_column(
     collection_path: &str,
     old_name: &str,
     new_name: &str,
-) -> Result<CollectionSchema, AppError> {
+) -> Result<CollectionSchema, CollectionError> {
     rename_schema_column_with_project(space, collection_path, old_name, new_name, None)
 }
 
@@ -259,7 +259,7 @@ pub fn rename_schema_column_with_project(
     old_name: &str,
     new_name: &str,
     project_path: Option<&str>,
-) -> Result<CollectionSchema, AppError> {
+) -> Result<CollectionSchema, CollectionError> {
     let schema_path = collection_dir(space, collection_path).join(SCHEMA_FILE);
     let mut touched = vec![schema_path];
     touched.extend(collection_markdown_files(space, collection_path)?);
@@ -317,7 +317,7 @@ pub fn update_schema_column(
     collection_path: &str,
     column_name: &str,
     patch: Value,
-) -> Result<CollectionSchema, AppError> {
+) -> Result<CollectionSchema, CollectionError> {
     update_schema_column_with_project(space, collection_path, column_name, patch, None)
 }
 
@@ -327,7 +327,7 @@ pub fn update_schema_column_with_project(
     column_name: &str,
     patch: Value,
     project_path: Option<&str>,
-) -> Result<CollectionSchema, AppError> {
+) -> Result<CollectionSchema, CollectionError> {
     let mut touched = vec![collection_dir(space, collection_path).join(SCHEMA_FILE)];
     {
         let schema = read_schema_or_default(space, collection_path)?;
@@ -402,7 +402,7 @@ fn rewrite_actor_cardinality_values(
     collection_path: &str,
     old_column: &Column,
     new_column: &Column,
-) -> Result<(), AppError> {
+) -> Result<(), CollectionError> {
     if !is_actor_cardinality_change(old_column, new_column) {
         return Ok(());
     }
@@ -428,7 +428,10 @@ fn rewrite_actor_cardinality_values(
     Ok(())
 }
 
-fn actor_value_for_cardinality_toggle(column: &Column, value: Value) -> Result<Value, AppError> {
+fn actor_value_for_cardinality_toggle(
+    column: &Column,
+    value: Value,
+) -> Result<Value, CollectionError> {
     if actor_multiple(column) {
         return normalize_actor_value(column, value);
     }
@@ -454,7 +457,7 @@ pub fn delete_schema_column(
     collection_path: &str,
     column_name: &str,
     delete_values: bool,
-) -> Result<CollectionSchema, AppError> {
+) -> Result<CollectionSchema, CollectionError> {
     delete_schema_column_with_project(space, collection_path, column_name, delete_values, None)
 }
 
@@ -464,7 +467,7 @@ pub fn delete_schema_column_with_project(
     column_name: &str,
     delete_values: bool,
     project_path: Option<&str>,
-) -> Result<CollectionSchema, AppError> {
+) -> Result<CollectionSchema, CollectionError> {
     let schema_path = collection_dir(space, collection_path).join(SCHEMA_FILE);
     let mut touched = vec![schema_path];
     if delete_values {
@@ -527,7 +530,7 @@ pub fn add_option(
     collection_path: &str,
     column_name: &str,
     option: PropertyOption,
-) -> Result<CollectionSchema, AppError> {
+) -> Result<CollectionSchema, CollectionError> {
     let schema_path = collection_dir(space, collection_path).join(SCHEMA_FILE);
     with_rollback(vec![schema_path], || {
         let mut schema = read_schema_or_default(space, collection_path)?;
@@ -552,7 +555,7 @@ pub fn rename_option(
     column_name: &str,
     old_option_name: &str,
     new_option_name: &str,
-) -> Result<CollectionSchema, AppError> {
+) -> Result<CollectionSchema, CollectionError> {
     let schema_path = collection_dir(space, collection_path).join(SCHEMA_FILE);
     let mut touched = vec![schema_path];
     touched.extend(collection_markdown_files(space, collection_path)?);
@@ -595,7 +598,7 @@ pub fn delete_option(
     column_name: &str,
     option_name: &str,
     delete_values: bool,
-) -> Result<CollectionSchema, AppError> {
+) -> Result<CollectionSchema, CollectionError> {
     let schema_path = collection_dir(space, collection_path).join(SCHEMA_FILE);
     let mut touched = vec![schema_path];
     if delete_values {
@@ -641,7 +644,7 @@ pub fn clear_field_values(
     space: &str,
     collection_path: &str,
     field: &str,
-) -> Result<Vec<PathBuf>, AppError> {
+) -> Result<Vec<PathBuf>, CollectionError> {
     let files = collection_markdown_files(space, collection_path)?;
     let mut changed = Vec::new();
     with_rollback(files.clone(), || {
@@ -664,7 +667,7 @@ pub fn clear_option_values(
     collection_path: &str,
     column_name: &str,
     option_names: &[String],
-) -> Result<Vec<PathBuf>, AppError> {
+) -> Result<Vec<PathBuf>, CollectionError> {
     if option_names.is_empty() {
         return Ok(Vec::new());
     }
@@ -710,7 +713,7 @@ pub fn replace_option_values(
     column_name: &str,
     old_option_name: &str,
     new_option_name: &str,
-) -> Result<Vec<PathBuf>, AppError> {
+) -> Result<Vec<PathBuf>, CollectionError> {
     let schema = read_schema_or_default(space, collection_path)?;
     let column = schema
         .columns
@@ -754,7 +757,7 @@ pub fn update_option(
     option_name: &str,
     option: Option<PropertyOption>,
     patch: Option<Value>,
-) -> Result<CollectionSchema, AppError> {
+) -> Result<CollectionSchema, CollectionError> {
     let schema_path = collection_dir(space, collection_path).join(SCHEMA_FILE);
     with_rollback(vec![schema_path], || {
         let mut schema = read_schema_or_default(space, collection_path)?;
@@ -787,7 +790,7 @@ pub fn promote_orphan(
     collection_path: &str,
     file_path: &str,
     field: &str,
-) -> Result<CollectionSchema, AppError> {
+) -> Result<CollectionSchema, CollectionError> {
     if matches!(field, "created" | "updated") {
         return Err(schema_error(format!(
             "orphan field '{field}' conflicts with derived system metadata; rename it before promoting or delete it"
@@ -812,7 +815,7 @@ pub fn update_system_field_label(
     collection_path: &str,
     field: &str,
     label: Option<String>,
-) -> Result<CollectionSchema, AppError> {
+) -> Result<CollectionSchema, CollectionError> {
     if field != "title" {
         return Err(schema_error("only title system field can be relabeled"));
     }
@@ -854,7 +857,7 @@ pub fn set_default_template(
     space: &str,
     collection_path: &str,
     template_slug: Option<&str>,
-) -> Result<CollectionSchema, AppError> {
+) -> Result<CollectionSchema, CollectionError> {
     let schema_path = collection_dir(space, collection_path).join(SCHEMA_FILE);
     with_rollback(vec![schema_path], || {
         let mut schema = read_schema_or_default(space, collection_path)?;
@@ -871,7 +874,7 @@ pub fn reorder_templates(
     space: &str,
     collection_path: &str,
     new_order: Vec<String>,
-) -> Result<CollectionSchema, AppError> {
+) -> Result<CollectionSchema, CollectionError> {
     let schema_path = collection_dir(space, collection_path).join(SCHEMA_FILE);
     with_rollback(vec![schema_path], || {
         let mut schema = read_schema_or_default(space, collection_path)?;
@@ -899,7 +902,10 @@ pub fn default_collection_schema() -> CollectionSchema {
     }
 }
 
-pub fn write_default_collection_schema(space: &str, collection_path: &str) -> Result<(), AppError> {
+pub fn write_default_collection_schema(
+    space: &str,
+    collection_path: &str,
+) -> Result<(), CollectionError> {
     write_schema(space, collection_path, &default_collection_schema())
 }
 
@@ -908,7 +914,7 @@ pub fn add_view(
     collection_path: &str,
     mut view: View,
     position: Option<usize>,
-) -> Result<CollectionSchema, AppError> {
+) -> Result<CollectionSchema, CollectionError> {
     let schema_path = collection_dir(space, collection_path).join(SCHEMA_FILE);
     with_rollback(vec![schema_path], || {
         let mut schema = read_schema_or_default(space, collection_path)?;
@@ -952,7 +958,7 @@ pub fn rename_view(
     collection_path: &str,
     old_name: &str,
     new_name: &str,
-) -> Result<CollectionSchema, AppError> {
+) -> Result<CollectionSchema, CollectionError> {
     let schema_path = collection_dir(space, collection_path).join(SCHEMA_FILE);
     with_rollback(vec![schema_path], || {
         let mut schema = read_schema_or_default(space, collection_path)?;
@@ -971,7 +977,7 @@ pub fn update_view(
     collection_path: &str,
     view_name: &str,
     patch: Value,
-) -> Result<CollectionSchema, AppError> {
+) -> Result<CollectionSchema, CollectionError> {
     let schema_path = collection_dir(space, collection_path).join(SCHEMA_FILE);
     with_rollback(vec![schema_path], || {
         let mut schema = read_schema_or_default(space, collection_path)?;
@@ -996,7 +1002,7 @@ pub fn delete_view(
     space: &str,
     collection_path: &str,
     view_name: &str,
-) -> Result<CollectionSchema, AppError> {
+) -> Result<CollectionSchema, CollectionError> {
     let schema_path = collection_dir(space, collection_path).join(SCHEMA_FILE);
     with_rollback(vec![schema_path], || {
         let mut schema = read_schema_or_default(space, collection_path)?;
@@ -1015,7 +1021,7 @@ pub fn duplicate_view(
     collection_path: &str,
     view_name: &str,
     new_name: &str,
-) -> Result<CollectionSchema, AppError> {
+) -> Result<CollectionSchema, CollectionError> {
     let schema_path = collection_dir(space, collection_path).join(SCHEMA_FILE);
     with_rollback(vec![schema_path], || {
         let mut schema = read_schema_or_default(space, collection_path)?;
@@ -1039,7 +1045,7 @@ pub fn reorder_views(
     space: &str,
     collection_path: &str,
     new_order: Vec<String>,
-) -> Result<CollectionSchema, AppError> {
+) -> Result<CollectionSchema, CollectionError> {
     let schema_path = collection_dir(space, collection_path).join(SCHEMA_FILE);
     with_rollback(vec![schema_path], || {
         let mut schema = read_schema_or_default(space, collection_path)?;
@@ -1070,7 +1076,7 @@ pub fn reorder_views(
 fn find_view_mut<'a>(
     schema: &'a mut CollectionSchema,
     view_name: &str,
-) -> Result<&'a mut View, AppError> {
+) -> Result<&'a mut View, CollectionError> {
     schema
         .views
         .iter_mut()
@@ -1084,7 +1090,7 @@ fn normalize_view_for_schema(schema: &CollectionSchema, view: &mut View) {
     normalize_view(view, group_by.as_deref(), date_field.as_deref());
 }
 
-fn merge_mapping_patch(target: &mut Value, patch: Value) -> Result<(), AppError> {
+fn merge_mapping_patch(target: &mut Value, patch: Value) -> Result<(), CollectionError> {
     let target = target
         .as_mapping_mut()
         .ok_or_else(|| schema_error("view target must be an object"))?;
@@ -1112,7 +1118,7 @@ pub struct SchemaMutationWarning {
 pub(super) fn find_column_mut<'a>(
     schema: &'a mut CollectionSchema,
     column_name: &str,
-) -> Result<&'a mut Column, AppError> {
+) -> Result<&'a mut Column, CollectionError> {
     schema
         .columns
         .iter_mut()
@@ -1120,7 +1126,7 @@ pub(super) fn find_column_mut<'a>(
         .ok_or_else(|| schema_error(format!("column '{column_name}' not found")))
 }
 
-fn ensure_option_column(column: &Column) -> Result<(), AppError> {
+fn ensure_option_column(column: &Column) -> Result<(), CollectionError> {
     match column.type_ {
         PropertyType::Select | PropertyType::MultiSelect | PropertyType::Status => Ok(()),
         _ => Err(schema_error(format!(
@@ -1133,7 +1139,7 @@ fn ensure_option_column(column: &Column) -> Result<(), AppError> {
 fn normalize_column_for_new_type(
     column: &mut Column,
     strategy: Option<&Value>,
-) -> Result<(), AppError> {
+) -> Result<(), CollectionError> {
     match column.type_ {
         PropertyType::Status => {
             if let Some(options) = strategy.and_then(|value| value.get("options")).cloned() {
@@ -1261,7 +1267,7 @@ fn normalize_column_for_new_type(
     Ok(())
 }
 
-fn apply_status_groups(column: &mut Column, groups: &Value) -> Result<(), AppError> {
+fn apply_status_groups(column: &mut Column, groups: &Value) -> Result<(), CollectionError> {
     let mapping = groups
         .as_mapping()
         .ok_or_else(|| schema_error("groups strategy must be an object"))?;
@@ -1423,7 +1429,7 @@ fn convert_value_for_relation_change(
     space: &str,
     column: &Column,
     value: Value,
-) -> Result<(Option<Value>, Option<Value>), AppError> {
+) -> Result<(Option<Value>, Option<Value>), CollectionError> {
     if value.is_null() {
         return Ok((None, None));
     }
@@ -1505,7 +1511,7 @@ fn unique_extra_field_name(
     collection_path: &str,
     schema: &CollectionSchema,
     base: &str,
-) -> Result<String, AppError> {
+) -> Result<String, CollectionError> {
     let mut used: HashSet<String> = schema
         .columns
         .iter()
@@ -1708,7 +1714,7 @@ fn delete_option_value(value: &mut Value, option_name: &str) {
     }
 }
 
-fn apply_option_patch(option: &mut PropertyOption, patch: Value) -> Result<(), AppError> {
+fn apply_option_patch(option: &mut PropertyOption, patch: Value) -> Result<(), CollectionError> {
     let mapping = patch
         .as_mapping()
         .ok_or_else(|| schema_error("option patch must be an object"))?;
@@ -1725,7 +1731,7 @@ fn apply_option_patch(option: &mut PropertyOption, patch: Value) -> Result<(), A
     Ok(())
 }
 
-fn apply_column_patch(column: &mut Column, patch: Value) -> Result<(), AppError> {
+fn apply_column_patch(column: &mut Column, patch: Value) -> Result<(), CollectionError> {
     let mapping = patch
         .as_mapping()
         .ok_or_else(|| schema_error("column patch must be an object"))?;
@@ -1776,7 +1782,7 @@ fn apply_column_patch(column: &mut Column, patch: Value) -> Result<(), AppError>
     Ok(())
 }
 
-fn nullable_from_mapping<T>(mapping: &Mapping, key: &str) -> Result<Option<T>, AppError>
+fn nullable_from_mapping<T>(mapping: &Mapping, key: &str) -> Result<Option<T>, CollectionError>
 where
     T: for<'de> Deserialize<'de>,
 {

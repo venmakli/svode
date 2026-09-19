@@ -1,5 +1,6 @@
 pub mod dates;
 pub mod filename;
+pub mod frontmatter;
 pub mod identity;
 pub mod links;
 pub mod naming;
@@ -12,7 +13,7 @@ pub use target::{
 };
 
 pub use source::{
-    ColorName, PageSource, PageSourceError, PageSourceMeta, PageSourceWarning, ParsedMarkdown,
-    ResolvedPageTarget, SourceVersion, fallback_title, filesystem_dates, parse_markdown,
-    read_page_source, resolve_page_target,
+    ColorName, Cover, PageSource, PageSourceError, PageSourceMeta, PageSourceWarning,
+    ParsedMarkdown, ResolvedPageTarget, SourceVersion, fallback_title, filesystem_dates,
+    parse_markdown, read_page_source, resolve_page_target,
 };

@@ -2,7 +2,7 @@ use super::*;
 
 pub struct PreparedCollectionMutation<T> {
     paths: Vec<PathBuf>,
-    apply: Box<dyn FnOnce() -> Result<T, AppError> + Send>,
+    apply: Box<dyn FnOnce() -> Result<T, CollectionError> + Send>,
 }
 
 #[derive(Debug)]
@@ -12,9 +12,9 @@ pub struct CollectionMutationOutcome<T> {
 }
 
 impl<T> PreparedCollectionMutation<T> {
-    pub(crate) fn new(
+    pub fn new(
         mut paths: Vec<PathBuf>,
-        apply: impl FnOnce() -> Result<T, AppError> + Send + 'static,
+        apply: impl FnOnce() -> Result<T, CollectionError> + Send + 'static,
     ) -> Self {
         paths.sort();
         paths.dedup();
@@ -28,7 +28,7 @@ impl<T> PreparedCollectionMutation<T> {
         &self.paths
     }
 
-    pub fn apply(self) -> Result<CollectionMutationOutcome<T>, AppError> {
+    pub fn apply(self) -> Result<CollectionMutationOutcome<T>, CollectionError> {
         let snapshot = MutationSnapshot::capture(&self.paths)?;
         let value = match (self.apply)() {
             Ok(value) => value,
@@ -44,7 +44,7 @@ impl<T> PreparedCollectionMutation<T> {
 struct MutationSnapshot(Vec<(PathBuf, Option<Vec<u8>>)>);
 
 impl MutationSnapshot {
-    fn capture(paths: &[PathBuf]) -> Result<Self, AppError> {
+    fn capture(paths: &[PathBuf]) -> Result<Self, CollectionError> {
         let mut snapshot = Vec::with_capacity(paths.len());
         for path in paths {
             let bytes = match fs::read(path) {
@@ -57,7 +57,7 @@ impl MutationSnapshot {
         Ok(Self(snapshot))
     }
 
-    fn changed_paths(self) -> Result<Vec<PathBuf>, AppError> {
+    fn changed_paths(self) -> Result<Vec<PathBuf>, CollectionError> {
         let mut changed = Vec::new();
         for (path, before) in self.0 {
             let after = match fs::read(&path) {
@@ -72,7 +72,7 @@ impl MutationSnapshot {
         Ok(changed)
     }
 
-    fn rollback(&self, cause: AppError) -> AppError {
+    fn rollback(&self, cause: CollectionError) -> CollectionError {
         let mut failed = Vec::new();
         for (path, original) in self.0.iter().rev() {
             let restored = match original {
@@ -98,7 +98,7 @@ impl MutationSnapshot {
         if failed.is_empty() {
             cause
         } else {
-            AppError::PageWriteRecovery {
+            CollectionError::Recovery {
                 cause: cause.to_string(),
                 paths: failed,
             }
@@ -111,7 +111,7 @@ pub fn prepare_initial_collection_schema(
     collection_path: &str,
     mut schema: CollectionSchema,
     project_path: Option<&str>,
-) -> Result<PreparedCollectionMutation<CollectionSchema>, AppError> {
+) -> Result<PreparedCollectionMutation<CollectionSchema>, CollectionError> {
     normalize_schema(&mut schema);
     validate_schema(&schema)?;
     validate_schema_relations_in_space(space, project_path, collection_path, &schema)?;
@@ -155,7 +155,7 @@ pub fn prepare_add_schema_column(
     collection_path: &str,
     column: Column,
     project_path: Option<&str>,
-) -> Result<PreparedCollectionMutation<CollectionSchema>, AppError> {
+) -> Result<PreparedCollectionMutation<CollectionSchema>, CollectionError> {
     let paths = schema_column_mutation_paths_with_project(
         space,
         collection_path,
@@ -178,7 +178,10 @@ pub fn prepare_change_schema_type(
     new_type: PropertyType,
     conversion_strategy: Option<Value>,
     project_path: Option<&str>,
-) -> Result<PreparedCollectionMutation<(CollectionSchema, Vec<SchemaMutationWarning>)>, AppError> {
+) -> Result<
+    PreparedCollectionMutation<(CollectionSchema, Vec<SchemaMutationWarning>)>,
+    CollectionError,
+> {
     let mut paths = schema_column_name_mutation_paths_with_project(
         space,
         collection_path,
@@ -216,7 +219,7 @@ pub fn prepare_rename_schema_column(
     old_name: &str,
     new_name: &str,
     project_path: Option<&str>,
-) -> Result<PreparedCollectionMutation<CollectionSchema>, AppError> {
+) -> Result<PreparedCollectionMutation<CollectionSchema>, CollectionError> {
     let paths = schema_column_name_mutation_paths_with_project(
         space,
         collection_path,
@@ -246,7 +249,7 @@ pub fn prepare_update_schema_column(
     column_name: &str,
     patch: Value,
     project_path: Option<&str>,
-) -> Result<PreparedCollectionMutation<CollectionSchema>, AppError> {
+) -> Result<PreparedCollectionMutation<CollectionSchema>, CollectionError> {
     let mut paths = schema_column_name_mutation_paths_with_project(
         space,
         collection_path,
@@ -282,7 +285,7 @@ pub fn prepare_delete_schema_column(
     column_name: &str,
     delete_values: bool,
     project_path: Option<&str>,
-) -> Result<PreparedCollectionMutation<CollectionSchema>, AppError> {
+) -> Result<PreparedCollectionMutation<CollectionSchema>, CollectionError> {
     let mut paths = schema_mutation_paths(space, collection_path, delete_values)?;
     paths.extend(schema_column_name_mutation_paths_with_project(
         space,
@@ -311,7 +314,7 @@ pub fn prepare_add_option(
     collection_path: &str,
     column_name: String,
     option: PropertyOption,
-) -> Result<PreparedCollectionMutation<CollectionSchema>, AppError> {
+) -> Result<PreparedCollectionMutation<CollectionSchema>, CollectionError> {
     let paths = schema_mutation_paths(space, collection_path, false)?;
     let space = space.to_string();
     let collection_path = collection_path.to_string();
@@ -327,7 +330,7 @@ pub fn prepare_update_option(
     option_name: String,
     option: Option<PropertyOption>,
     patch: Option<Value>,
-) -> Result<PreparedCollectionMutation<CollectionSchema>, AppError> {
+) -> Result<PreparedCollectionMutation<CollectionSchema>, CollectionError> {
     let paths = schema_mutation_paths(space, collection_path, false)?;
     let space = space.to_string();
     let collection_path = collection_path.to_string();
@@ -348,7 +351,7 @@ pub fn prepare_promote_orphan(
     collection_path: &str,
     file_path: String,
     field: String,
-) -> Result<PreparedCollectionMutation<CollectionSchema>, AppError> {
+) -> Result<PreparedCollectionMutation<CollectionSchema>, CollectionError> {
     let paths = schema_mutation_paths(space, collection_path, false)?;
     let space = space.to_string();
     let collection_path = collection_path.to_string();
@@ -362,7 +365,7 @@ pub fn prepare_update_system_field_label(
     collection_path: &str,
     field: String,
     label: Option<String>,
-) -> Result<PreparedCollectionMutation<CollectionSchema>, AppError> {
+) -> Result<PreparedCollectionMutation<CollectionSchema>, CollectionError> {
     let paths = schema_mutation_paths(space, collection_path, false)?;
     let space = space.to_string();
     let collection_path = collection_path.to_string();
@@ -377,7 +380,7 @@ pub fn prepare_rename_option(
     column_name: String,
     old_option_name: String,
     new_option_name: String,
-) -> Result<PreparedCollectionMutation<CollectionSchema>, AppError> {
+) -> Result<PreparedCollectionMutation<CollectionSchema>, CollectionError> {
     let paths = schema_mutation_paths(space, collection_path, true)?;
     let space = space.to_string();
     let collection_path = collection_path.to_string();
@@ -398,7 +401,7 @@ pub fn prepare_delete_option(
     column_name: String,
     option_name: String,
     delete_values: bool,
-) -> Result<PreparedCollectionMutation<CollectionSchema>, AppError> {
+) -> Result<PreparedCollectionMutation<CollectionSchema>, CollectionError> {
     let paths = schema_mutation_paths(space, collection_path, delete_values)?;
     let space = space.to_string();
     let collection_path = collection_path.to_string();
@@ -417,7 +420,7 @@ pub fn prepare_clear_field_values(
     space: &str,
     collection_path: &str,
     field: String,
-) -> Result<PreparedCollectionMutation<()>, AppError> {
+) -> Result<PreparedCollectionMutation<()>, CollectionError> {
     let paths = schema_mutation_paths(space, collection_path, true)?;
     let space = space.to_string();
     let collection_path = collection_path.to_string();
@@ -431,7 +434,7 @@ pub fn prepare_clear_option_values(
     collection_path: &str,
     column_name: String,
     option_names: Vec<String>,
-) -> Result<PreparedCollectionMutation<()>, AppError> {
+) -> Result<PreparedCollectionMutation<()>, CollectionError> {
     let paths = schema_mutation_paths(space, collection_path, true)?;
     let space = space.to_string();
     let collection_path = collection_path.to_string();
@@ -446,7 +449,7 @@ pub fn prepare_replace_option_values(
     column_name: String,
     old_option_name: String,
     new_option_name: String,
-) -> Result<PreparedCollectionMutation<()>, AppError> {
+) -> Result<PreparedCollectionMutation<()>, CollectionError> {
     let paths = schema_mutation_paths(space, collection_path, true)?;
     let space = space.to_string();
     let collection_path = collection_path.to_string();
@@ -465,7 +468,7 @@ pub fn prepare_replace_option_values(
 pub fn prepare_assign_unique_id(
     space: &str,
     file_path: &str,
-) -> Result<PreparedCollectionMutation<entry::Entry>, AppError> {
+) -> Result<PreparedCollectionMutation<()>, CollectionError> {
     let paths = unique_id_mutation_paths_for_entry(space, file_path)?;
     let space = space.to_string();
     let file_path = file_path.to_string();
@@ -477,7 +480,7 @@ pub fn prepare_assign_unique_id(
 pub fn prepare_normalize_unique_id_counter(
     space: &str,
     collection_path: &str,
-) -> Result<PreparedCollectionMutation<CollectionSchema>, AppError> {
+) -> Result<PreparedCollectionMutation<CollectionSchema>, CollectionError> {
     let paths = schema_mutation_paths(space, collection_path, false)?;
     let space = space.to_string();
     let collection_path = collection_path.to_string();
@@ -493,7 +496,7 @@ pub fn prepare_repair_two_way_relation(
     strategy: &str,
     reverse_column: Option<&str>,
     project_path: Option<&str>,
-) -> Result<PreparedCollectionMutation<()>, AppError> {
+) -> Result<PreparedCollectionMutation<()>, CollectionError> {
     let paths = relation_repair_mutation_paths_with_project(
         space,
         collection_path,
@@ -523,7 +526,7 @@ pub fn prepare_add_view(
     collection_path: &str,
     view: View,
     position: Option<usize>,
-) -> Result<PreparedCollectionMutation<CollectionSchema>, AppError> {
+) -> Result<PreparedCollectionMutation<CollectionSchema>, CollectionError> {
     let paths = schema_mutation_paths(space, collection_path, false)?;
     let space = space.to_string();
     let collection_path = collection_path.to_string();
@@ -537,7 +540,7 @@ pub fn prepare_rename_view(
     collection_path: &str,
     old_name: &str,
     new_name: &str,
-) -> Result<PreparedCollectionMutation<CollectionSchema>, AppError> {
+) -> Result<PreparedCollectionMutation<CollectionSchema>, CollectionError> {
     let paths = schema_mutation_paths(space, collection_path, false)?;
     let space = space.to_string();
     let collection_path = collection_path.to_string();
@@ -553,7 +556,7 @@ pub fn prepare_update_view(
     collection_path: &str,
     view_name: &str,
     patch: Value,
-) -> Result<PreparedCollectionMutation<CollectionSchema>, AppError> {
+) -> Result<PreparedCollectionMutation<CollectionSchema>, CollectionError> {
     let paths = schema_mutation_paths(space, collection_path, false)?;
     let space = space.to_string();
     let collection_path = collection_path.to_string();
@@ -567,7 +570,7 @@ pub fn prepare_delete_view(
     space: &str,
     collection_path: &str,
     view_name: &str,
-) -> Result<PreparedCollectionMutation<CollectionSchema>, AppError> {
+) -> Result<PreparedCollectionMutation<CollectionSchema>, CollectionError> {
     let paths = schema_mutation_paths(space, collection_path, false)?;
     let space = space.to_string();
     let collection_path = collection_path.to_string();
@@ -582,7 +585,7 @@ pub fn prepare_duplicate_view(
     collection_path: &str,
     view_name: &str,
     new_name: &str,
-) -> Result<PreparedCollectionMutation<CollectionSchema>, AppError> {
+) -> Result<PreparedCollectionMutation<CollectionSchema>, CollectionError> {
     let paths = schema_mutation_paths(space, collection_path, false)?;
     let space = space.to_string();
     let collection_path = collection_path.to_string();
@@ -597,7 +600,7 @@ pub fn prepare_reorder_views(
     space: &str,
     collection_path: &str,
     new_order: Vec<String>,
-) -> Result<PreparedCollectionMutation<CollectionSchema>, AppError> {
+) -> Result<PreparedCollectionMutation<CollectionSchema>, CollectionError> {
     let paths = schema_mutation_paths(space, collection_path, false)?;
     let space = space.to_string();
     let collection_path = collection_path.to_string();

@@ -53,15 +53,15 @@ async fn pool_for_target(
 }
 
 pub fn entry_schema(space: &str, file_path: &str) -> Result<Option<EntrySchemaResponse>, AppError> {
-    super::schema_response(space, file_path)
+    Ok(super::schema_response(space, file_path)?)
 }
 
 pub fn collection_schema(space: &str, collection_path: &str) -> Result<CollectionSchema, AppError> {
-    super::read_collection_schema(space, collection_path)
+    Ok(super::read_collection_schema(space, collection_path)?)
 }
 
 pub fn collections(space: &str) -> Result<Vec<CollectionInfo>, AppError> {
-    super::list_collections(space)
+    Ok(super::list_collections(space)?)
 }
 
 pub async fn entries_for_view(
@@ -122,7 +122,7 @@ pub async fn resolve_relation(
     value: &str,
 ) -> Result<Option<ResolvedRelation>, AppError> {
     let pool = pool_for_target(index_state, target).await?;
-    super::resolve_relation(&pool, relation, value).await
+    Ok(super::resolve_relation(&pool, relation, value).await?)
 }
 
 pub async fn resolve_relations_batch(
@@ -132,7 +132,7 @@ pub async fn resolve_relations_batch(
     values: &[String],
 ) -> Result<Vec<Option<ResolvedRelation>>, AppError> {
     let pool = pool_for_target(index_state, target).await?;
-    super::resolve_relations_batch(&pool, relation, values).await
+    Ok(super::resolve_relations_batch(&pool, relation, values).await?)
 }
 
 pub fn relation_backlinks(
@@ -141,7 +141,12 @@ pub fn relation_backlinks(
     source_collection_path: Option<&str>,
     source_column: Option<&str>,
 ) -> Result<Vec<RelationBacklink>, AppError> {
-    super::query_relation_backlinks(space, target_path, source_collection_path, source_column)
+    Ok(super::query_relation_backlinks(
+        space,
+        target_path,
+        source_collection_path,
+        source_column,
+    )?)
 }
 
 pub fn relation_diagnostics(
@@ -150,7 +155,12 @@ pub fn relation_diagnostics(
     column: &str,
     project_path: Option<&str>,
 ) -> Result<RelationTwoWayDiagnostics, AppError> {
-    super::diagnose_two_way_relation_with_project(space, collection_path, column, project_path)
+    Ok(super::diagnose_two_way_relation_with_project(
+        space,
+        collection_path,
+        column,
+        project_path,
+    )?)
 }
 
 pub fn integrity(
@@ -158,7 +168,11 @@ pub fn integrity(
     collection_path: Option<&str>,
     project_path: Option<&str>,
 ) -> Result<CollectionIntegrityReport, AppError> {
-    super::validate_collection_integrity_with_project(space, collection_path, project_path)
+    Ok(super::validate_collection_integrity_with_project(
+        space,
+        collection_path,
+        project_path,
+    )?)
 }
 
 pub async fn actors(

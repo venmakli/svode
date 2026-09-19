@@ -4,7 +4,7 @@ mod mutations;
 mod resolver;
 
 pub(crate) use resolver::ActorInvalidationPayload;
-pub use resolver::{ActorActivity, ActorCandidate, ActorCatalog, ActorCatalogState, ActorSnapshot};
+pub use resolver::{ActorActivity, ActorCandidate, ActorCatalog, ActorCatalogState};
 
 pub(crate) const INVALIDATED_EVENT: &str = "actors:invalidated";
 

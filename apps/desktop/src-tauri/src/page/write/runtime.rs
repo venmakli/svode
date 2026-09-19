@@ -6,6 +6,7 @@ use crate::space::structural::{
     backlinks_for_space, entry_rename_op, grouped_abs_paths_by_space,
     managed_attachment_policy_paths, maybe_autocommit_structural_paths, space_id_for_dir,
 };
+use svode_core::collections::CollectionError;
 use svode_core::index::backlinks::BacklinkIndex;
 
 pub(crate) async fn write<F, Fut>(
@@ -130,14 +131,14 @@ async fn prepare(
             &new,
         ) {
             Ok(paths) => relation_paths = paths,
-            Err(AppError::General(message)) if message.starts_with("schema error:") => {
+            Err(CollectionError::Schema(message)) => {
                 warning = Some(EntryWarning::filename_rename_deferred(
                     request.path,
-                    &message,
+                    &format!("schema error: {message}"),
                 ));
                 rename = None;
             }
-            Err(error) => return Err(error),
+            Err(error) => return Err(error.into()),
         }
     }
     let mut paths = vec![Path::new(request.space).join(request.path)];

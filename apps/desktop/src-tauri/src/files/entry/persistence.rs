@@ -50,10 +50,7 @@ pub fn read(space: &str, path: &str) -> Result<Entry, AppError> {
 }
 
 pub(crate) fn entry_from_source(source: svode_core::page::PageSource) -> Result<Entry, AppError> {
-    let source_meta = source.meta;
-    let mut meta = EntryMeta::from_source_meta(source_meta)?;
-    meta.created = source.created;
-    meta.updated = source.updated;
+    let meta = EntryMeta::from_page_source(&source);
     Ok(Entry {
         meta,
         body: source.body,

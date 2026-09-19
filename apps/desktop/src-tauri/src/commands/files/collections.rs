@@ -7,7 +7,7 @@ pub fn list_templates(
     space: String,
     collection_path: String,
 ) -> Result<Vec<TemplateInfo>, AppError> {
-    templates::list(&space, &collection_path)
+    Ok(templates::list(&space, &collection_path)?)
 }
 
 #[tauri::command]

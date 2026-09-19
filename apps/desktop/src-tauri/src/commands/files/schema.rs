@@ -91,7 +91,7 @@ pub async fn assign_unique_id(
 ) -> Result<Entry, AppError> {
     let mutation = properties::prepare_assign_unique_id(&space, &file_path)?;
     let outcome = apply_collection_mutation(&app, &space, mutation).await?;
-    let entry = outcome.value;
+    let entry = entry::read(&space, &file_path)?;
     update_index_entry_or_reindex(
         &index_state,
         &index_updates,

@@ -1,4 +1,5 @@
 use super::*;
+pub use crate::collections::list::list_collections;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -49,11 +50,7 @@ impl CollectionIntegrityReport {
     }
 }
 
-pub use svode_core::collections::list::CollectionInfo;
-
-pub fn list_collections(space: &str) -> Result<Vec<CollectionInfo>, AppError> {
-    Ok(svode_core::collections::list::list_collections(space)?)
-}
+pub use crate::collections::list::CollectionInfo;
 
 /// Validate collection references which can be damaged by deliberate raw filesystem edits.
 ///
@@ -64,13 +61,13 @@ pub fn validate_collection_integrity_with_project(
     space: &str,
     collection_path: Option<&str>,
     project_path: Option<&str>,
-) -> Result<CollectionIntegrityReport, AppError> {
+) -> Result<CollectionIntegrityReport, CollectionError> {
     let collections = match collection_path {
         Some(path) => {
             let path = normalize_collection_path(path)?;
             let schema_path = collection_dir(space, &path).join(SCHEMA_FILE);
             if !schema_path.is_file() {
-                return Err(AppError::FileNotFound(
+                return Err(CollectionError::FileNotFound(
                     schema_path.to_string_lossy().to_string(),
                 ));
             }
@@ -96,7 +93,7 @@ fn validate_collection_relations(
     collection_path: &str,
     project_path: Option<&str>,
     report: &mut CollectionIntegrityReport,
-) -> Result<(), AppError> {
+) -> Result<(), CollectionError> {
     let schema = read_collection_schema(space, collection_path)?;
     let schema_path = schema_path_for_collection(collection_path);
     let source_files = collection_markdown_files(space, collection_path)?;
@@ -271,11 +268,11 @@ fn validate_stale_order_refs(
     space: &str,
     selected_collection: Option<&str>,
     report: &mut CollectionIntegrityReport,
-) -> Result<(), AppError> {
+) -> Result<(), CollectionError> {
     let selected_collection = selected_collection
         .map(normalize_collection_path)
         .transpose()?;
-    let order = crate::files::tree::read_order(Path::new(space));
+    let order = crate::content_tree::read_order(Path::new(space));
     for (directory, entries) in order {
         if !order_key_is_in_scope(&directory, selected_collection.as_deref()) {
             continue;

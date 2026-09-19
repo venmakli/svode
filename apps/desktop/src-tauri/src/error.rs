@@ -30,6 +30,16 @@ impl From<svode_core::collections::CollectionError> for AppError {
                 Self::FileNotFound(path)
             }
             svode_core::collections::CollectionError::SerdeJson(error) => Self::Serde(error),
+            svode_core::collections::CollectionError::General(message) => Self::General(message),
+            svode_core::collections::CollectionError::Git(error) => error.into(),
+            svode_core::collections::CollectionError::Actor(error) => error.into(),
+            svode_core::collections::CollectionError::PageSource(error) => error.into(),
+            svode_core::collections::CollectionError::DocumentNameConflict(conflict) => {
+                Self::DocumentNameConflict(conflict)
+            }
+            svode_core::collections::CollectionError::Recovery { cause, paths } => {
+                Self::PageWriteRecovery { cause, paths }
+            }
         }
     }
 }
@@ -151,6 +161,16 @@ impl From<svode_core::content_tree::ContentTreeError> for AppError {
             ContentTreeError::FileNotFound(path) => Self::FileNotFound(path),
             ContentTreeError::PathNotAccessible(path) => Self::PathNotAccessible(path),
             ContentTreeError::Source(error) => error.into(),
+        }
+    }
+}
+
+impl From<svode_core::page::frontmatter::FrontmatterError> for AppError {
+    fn from(error: svode_core::page::frontmatter::FrontmatterError) -> Self {
+        use svode_core::page::frontmatter::FrontmatterError;
+        match error {
+            FrontmatterError::Parse(message) => Self::FrontmatterParse(message),
+            FrontmatterError::InvalidField(_) => Self::General(error.to_string()),
         }
     }
 }

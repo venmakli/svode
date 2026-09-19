@@ -329,7 +329,10 @@ where
 {
     let authorized_paths =
         require_planned_mutation_paths(app, space, mutation.paths().to_vec()).await?;
-    scope_authorized_mutation_paths(authorized_paths, async move { mutation.apply() }).await
+    scope_authorized_mutation_paths(authorized_paths, async move {
+        mutation.apply().map_err(AppError::from)
+    })
+    .await
 }
 
 async fn require_entry_move_mutation_plan(

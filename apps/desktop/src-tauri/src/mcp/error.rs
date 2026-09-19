@@ -45,6 +45,12 @@ impl From<AppError> for McpBusinessError {
     }
 }
 
+impl From<svode_core::collections::CollectionError> for McpBusinessError {
+    fn from(error: svode_core::collections::CollectionError) -> Self {
+        AppError::from(error).into()
+    }
+}
+
 impl From<std::io::Error> for McpBusinessError {
     fn from(error: std::io::Error) -> Self {
         Self::new("IO_ERROR", error.to_string())
