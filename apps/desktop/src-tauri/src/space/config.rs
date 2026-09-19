@@ -33,49 +33,20 @@ pub fn write_space_config(path: &Path, config: &SpaceConfig) -> Result<(), AppEr
 
 /// Read local config from {space_path}/.svode/local.json.
 pub fn read_local_config(path: &Path) -> Result<LocalConfig, AppError> {
-    let config_path = path.join(".svode").join("local.json");
-    if !config_path.exists() {
-        return Ok(LocalConfig::default());
-    }
-    let data = std::fs::read_to_string(&config_path)?;
-    Ok(serde_json::from_str(&data)?)
+    Ok(svode_core::routines::local::read(path)?)
 }
 
 /// Write local config to {space_path}/.svode/local.json.
 #[cfg(test)]
 pub fn write_local_config(path: &Path, local: &LocalConfig) -> Result<(), AppError> {
-    with_local_config_lock(path, || write_local_config_locked(path, local))
+    Ok(svode_core::routines::local::write(path, local)?)
 }
 
 pub fn mutate_local_config<T>(
     path: &Path,
     mutate: impl FnOnce(&mut LocalConfig) -> Result<T, AppError>,
 ) -> Result<T, AppError> {
-    with_local_config_lock(path, || {
-        let mut local = read_local_config(path)?;
-        let result = mutate(&mut local)?;
-        write_local_config_locked(path, &local)?;
-        Ok(result)
-    })
-}
-
-fn write_local_config_locked(path: &Path, local: &LocalConfig) -> Result<(), AppError> {
-    let dir = path.join(".svode");
-    svode_core::variables::files::write_preserving_variables(
-        &dir.join("local.json"),
-        &serde_json::to_value(local)?,
-    )
-    .map_err(variables_error)
-}
-
-fn with_local_config_lock<T>(
-    path: &Path,
-    operation: impl FnOnce() -> Result<T, AppError>,
-) -> Result<T, AppError> {
-    let directory = path.join(".svode");
-    let _guard = svode_core::variables::files::lock(&directory).map_err(variables_error)?;
-    svode_core::variables::files::check_pending(&directory).map_err(variables_error)?;
-    operation()
+    svode_core::routines::local::mutate_with(path, mutate)
 }
 
 fn variables_error(error: svode_core::variables::Error) -> AppError {
@@ -103,10 +74,9 @@ pub fn write_git_user_policy(path: &Path, policy: &GitUserPolicy) -> Result<(), 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::space::types::{
-        AgentSessionsLocalConfig, BINARY_ROUTING_VERSION, GitSpaceConfig, RoutinesLocalConfig,
-    };
+    use crate::space::types::{AgentSessionsLocalConfig, BINARY_ROUTING_VERSION, GitSpaceConfig};
     use std::sync::Arc;
+    use svode_core::routines::local::RoutinesLocalConfig;
 
     fn config_with_git() -> SpaceConfig {
         SpaceConfig {

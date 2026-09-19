@@ -4,19 +4,18 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
 use crate::error::AppError;
-use svode_core::content_tree::policy::TreeIgnorePolicy;
 use crate::git::dates::derive_date_overrides;
 use crate::index::normalize_rel_result;
 use crate::index::reindex::{
     MarkdownProjection, build_entry_with_dates, markdown_projection, markdown_source_record,
-    upsert_entry,
 };
 use crate::index::{IndexKey, IndexState, ReindexActiveGuard};
 use crate::routines::{CollectionEventOrigin, RoutineStoreState};
+use svode_core::content_tree::policy::TreeIgnorePolicy;
 
 #[derive(Clone)]
 pub struct IndexUpdateState {
-    routine_stores: Arc<RoutineStoreState>,
+    core: svode_core::index::update::IndexUpdateState,
 }
 
 #[cfg(test)]
@@ -29,7 +28,9 @@ pub(crate) fn test_update_state() -> &'static IndexUpdateState {
 
 impl IndexUpdateState {
     pub fn new(routine_stores: Arc<RoutineStoreState>) -> Self {
-        Self { routine_stores }
+        Self {
+            core: svode_core::index::update::IndexUpdateState::new(routine_stores.core_handle()),
+        }
     }
 
     pub(crate) async fn routines_pool(
@@ -37,9 +38,7 @@ impl IndexUpdateState {
         index_state: &IndexState,
         key: &IndexKey,
     ) -> Result<SqlitePool, AppError> {
-        self.routine_stores
-            .get_or_create_for_index(index_state, key)
-            .await
+        Ok(self.core.routines_pool(&index_state.core, key).await?)
     }
 
     pub(crate) async fn sync_routine_projection(
@@ -47,15 +46,10 @@ impl IndexUpdateState {
         index_state: &IndexState,
         key: &IndexKey,
     ) -> Result<(), AppError> {
-        let index_pool = index_state.get_or_create(key).await?;
-        let routines_pool = self.routines_pool(index_state, key).await?;
-        let space_dir = index_state.dir_for_key(key).await?;
-        crate::routines::cache::reconcile_projection_from_index(
-            &routines_pool,
-            &index_pool,
-            &space_dir,
-        )
-        .await
+        Ok(self
+            .core
+            .sync_routine_projection(&index_state.core, key)
+            .await?)
     }
 
     pub async fn run_reconciliation(
@@ -352,34 +346,7 @@ pub async fn rebase_collection_schema_manifest(
     let pool = state.get_or_create(&key).await?;
     let lock = state.reindex_lock(&key).await;
     let _guard = lock.lock().await;
-    let old_root = normalize_rel_result(old_root)?;
-    let new_root = normalize_rel_result(new_root)?;
-    let old_prefix = format!("{old_root}/");
-    let new_prefix = format!("{new_root}/");
-    let mut transaction = pool.begin().await?;
-    let paths = sqlx::query_scalar::<_, String>(
-        "SELECT source_path FROM knowledge_source_manifest WHERE source_kind = 'collection_schema'",
-    )
-    .fetch_all(&mut *transaction)
-    .await?;
-    let mut changed = false;
-    for old_path in paths {
-        let Some(remainder) = old_path.strip_prefix(&old_prefix) else {
-            continue;
-        };
-        let new_path = format!("{new_prefix}{remainder}");
-        changed |= sqlx::query(
-            "UPDATE knowledge_source_manifest SET source_path = ? WHERE source_path = ? AND source_kind = 'collection_schema'",
-        )
-        .bind(new_path)
-        .bind(old_path)
-        .execute(&mut *transaction)
-        .await?
-        .rows_affected()
-            > 0;
-    }
-    crate::index::reconcile::advance_generation(&mut transaction, false, changed).await?;
-    transaction.commit().await?;
+    svode_core::index::update::rebase_collection_schema_manifest(&pool, old_root, new_root).await?;
     updates.sync_routine_projection(state, &key).await?;
     Ok(())
 }
@@ -411,173 +378,23 @@ async fn apply_targeted_change(
     if let (Some(record), Some(entry)) = (source_record.as_mut(), entry) {
         record.diagnostic_code = entry.source_diagnostic.clone();
     }
-    let current = entry
-        .map(|entry| crate::routines::events::snapshot_from_entry(space_dir, entry))
-        .transpose()?
-        .flatten();
-    let mut routines_transaction = routines_pool.begin().await?;
-    let previous =
-        crate::routines::events::read_observation_snapshot(&mut routines_transaction, &normalized)
-            .await?;
-    let collection_path = current
-        .as_ref()
-        .map(|entry| entry.collection_path.as_str())
-        .or_else(|| {
-            previous
-                .as_ref()
-                .map(|entry| entry.collection_path.as_str())
-        });
-    let automatic_authority = match collection_path {
-        Some(collection_path) => {
-            match crate::routines::authority::read_indexed_collection(
-                space_dir,
-                index_key,
-                collection_path,
-            ) {
-                Ok(enabled) => enabled,
-                Err(error) => {
-                    tracing::warn!(
-                        collection_path = %collection_path,
-                        "routine Collection authority read failed closed: {error}"
-                    );
-                    false
-                }
-            }
-        }
-        None => false,
-    };
-    if automatic_authority {
-        crate::routines::events::queue_collection_events(
-            &mut routines_transaction,
-            space_dir,
-            previous.as_ref(),
-            current.as_ref(),
-            current_frontmatter_diff_safe,
-            origin,
-        )
-        .await?;
-    }
-    crate::routines::events::write_observation_snapshot(
-        &mut routines_transaction,
-        &normalized,
-        current.as_ref(),
-    )
-    .await?;
-    routines_transaction.commit().await?;
-
     let folded_collection = folded_collection_artifact(space_dir, &normalized);
-    let mut transaction = index_pool.begin().await?;
-    let mut knowledge_changed = false;
-    if let Some(entry) = entry {
-        upsert_entry(&mut *transaction, entry).await?;
-        if let Some(artifact) = entry.knowledge.as_ref() {
-            knowledge_changed |=
-                crate::index::knowledge::upsert_artifact(&mut transaction, artifact).await?;
-        } else if let Some(artifact) = folded_collection.as_ref() {
-            knowledge_changed |=
-                crate::index::knowledge::delete_artifact(&mut transaction, &normalized).await?;
-            knowledge_changed |=
-                crate::index::knowledge::upsert_artifact(&mut transaction, artifact).await?;
-        } else {
-            knowledge_changed |=
-                crate::index::knowledge::delete_artifact(&mut transaction, &normalized).await?;
-        }
-    } else {
-        sqlx::query("DELETE FROM entries WHERE file_path = ?")
-            .bind(&normalized)
-            .execute(&mut *transaction)
-            .await?;
-        knowledge_changed |=
-            crate::index::knowledge::delete_artifact(&mut transaction, &normalized).await?;
-        if let Some(artifact) = folded_collection.as_ref() {
-            knowledge_changed |=
-                crate::index::knowledge::upsert_artifact(&mut transaction, artifact).await?;
-        } else if Path::new(&normalized)
-            .file_name()
-            .and_then(|name| name.to_str())
-            .is_some_and(|name| name.eq_ignore_ascii_case("readme.md"))
-            && let Some(parent) = Path::new(&normalized)
-                .parent()
-                .filter(|parent| !parent.as_os_str().is_empty())
-        {
-            knowledge_changed |= crate::index::knowledge::delete_artifact(
-                &mut transaction,
-                &parent.to_string_lossy().replace('\\', "/"),
-            )
-            .await?;
-        }
-    }
-    let manifest_changed = crate::index::reconcile::reconcile_source_record(
-        &mut transaction,
+    Ok(svode_core::index::update::apply_targeted_change(
+        index_pool,
+        routines_pool,
+        index_key,
+        space_dir,
         &normalized,
-        "markdown",
+        entry,
         source_record.as_ref(),
+        folded_collection.as_ref(),
+        current_frontmatter_diff_safe,
+        origin,
     )
-    .await?;
-    let manifest_exists: i64 =
-        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM knowledge_manifest WHERE singleton = 1)")
-            .fetch_one(&mut *transaction)
-            .await?;
-    if manifest_exists == 0 {
-        crate::index::knowledge::refresh_manifest_preserving_diagnostics(&mut transaction).await?;
-    }
-    let skipped_count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM knowledge_source_manifest WHERE diagnostic_code IS NOT NULL",
-    )
-    .fetch_one(&mut *transaction)
-    .await?;
-    sqlx::query("UPDATE knowledge_manifest SET skipped_count = ? WHERE singleton = 1")
-        .bind(skipped_count)
-        .execute(&mut *transaction)
-        .await?;
-    crate::index::reconcile::advance_generation(
-        &mut transaction,
-        knowledge_changed,
-        manifest_changed || knowledge_changed,
-    )
-    .await?;
-    transaction.commit().await?;
-    Ok(())
+    .await?)
 }
 
-pub(crate) fn folded_collection_artifact(
-    space_dir: &Path,
-    rel_path: &str,
-) -> Option<crate::index::knowledge::KnowledgeArtifact> {
-    let path = Path::new(rel_path);
-    if !path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .is_some_and(|name| name.eq_ignore_ascii_case("README.md"))
-    {
-        return None;
-    }
-    let parent = path
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty());
-    let collection_path = parent
-        .map(|parent| parent.to_string_lossy().replace('\\', "/"))
-        .unwrap_or_else(|| ".".to_string());
-    let schema_path = if collection_path == "." {
-        space_dir.join("schema.yaml")
-    } else {
-        space_dir.join(&collection_path).join("schema.yaml")
-    };
-    if !schema_path.is_file() {
-        return None;
-    }
-    let policy = TreeIgnorePolicy::from_space_root(space_dir);
-    if policy.is_ignored_abs(&schema_path, svode_core::content_tree::policy::TreePathKind::File) {
-        return None;
-    }
-    let projection =
-        crate::properties::knowledge_projection::project_collection(space_dir, &collection_path)
-            .ok()?;
-    Some(crate::index::knowledge::build_collection_artifact(
-        &projection,
-        &crate::index::reindex::file_modified_iso(&schema_path),
-    ))
-}
+pub(crate) use svode_core::index::knowledge_artifact::folded_collection_artifact;
 
 /// Refresh only the normalized project Agent Context rows for an already-open
 /// owning pool. This is a write-path hook for the existing watcher invalidation
@@ -586,75 +403,7 @@ pub async fn refresh_agent_context_projection(
     state: &IndexState,
     space_dir: &Path,
 ) -> Result<(), AppError> {
-    let key = state
-        .key_for_space_dir(space_dir)
-        .await
-        .unwrap_or_else(|| IndexKey::Root(space_dir.to_path_buf()));
-    let keys = if matches!(&key, IndexKey::Root(_)) {
-        state.keys_for_project(&key.project().to_path_buf()).await
-    } else {
-        vec![key]
-    };
-    for key in keys {
-        let Some(pool) = state.existing_pool(&key).await else {
-            continue;
-        };
-        let target_dir = state.dir_for_key(&key).await?;
-        let lock = state.reindex_lock(&key).await;
-        let _guard = lock.lock().await;
-        let projected = crate::agent_context::projection::target_knowledge_projection(
-            key.project(),
-            &target_dir,
-        )
-        .await?;
-        let artifacts = projected
-            .iter()
-            .filter(|artifact| artifact.owner_scope == "current")
-            .map(crate::index::knowledge::build_agent_artifact)
-            .collect::<Vec<_>>();
-        let applicability = projected
-            .iter()
-            .filter(|artifact| artifact.is_effectively_applicable())
-            .map(crate::index::knowledge::build_agent_applicability)
-            .collect::<Vec<_>>();
-        let previous_manifest = crate::index::reconcile::read_source_manifest(&pool).await?;
-        let mut current_manifest = previous_manifest
-            .iter()
-            .filter(|record| record.source_kind != "agent_context")
-            .cloned()
-            .collect::<Vec<_>>();
-        current_manifest.extend(artifacts.iter().map(|artifact| {
-            crate::index::reconcile::SourceManifestRecord::agent_context(
-                artifact.source_path.clone(),
-                artifact.content_hash.clone(),
-                artifact
-                    .fragments
-                    .iter()
-                    .map(|fragment| fragment.text.len())
-                    .sum(),
-            )
-        }));
-        let mut transaction = pool.begin().await?;
-        let knowledge_changed = crate::index::knowledge::replace_agent_context(
-            &mut transaction,
-            &artifacts,
-            &applicability,
-        )
-        .await?;
-        let manifest_changed = crate::index::reconcile::reconcile_source_manifest(
-            &mut transaction,
-            &previous_manifest,
-            &current_manifest,
-        )
-        .await?;
-        crate::index::reconcile::advance_generation(
-            &mut transaction,
-            knowledge_changed,
-            manifest_changed || knowledge_changed,
-        )
-        .await?;
-        transaction.commit().await?;
-    }
+    svode_core::index::update::refresh_agent_context_projection(&state.core, space_dir).await?;
     Ok(())
 }
 
@@ -1413,7 +1162,7 @@ mod tests {
         std::fs::write(child.join("child.md"), "child searchable").unwrap();
 
         let state = IndexState::new();
-        state.spaces_cache.lock().await.insert(
+        state.core.spaces_cache.lock().await.insert(
             project.to_path_buf(),
             ProjectSpacesCache {
                 by_folder: HashMap::from([("child".to_string(), "child-space".to_string())]),

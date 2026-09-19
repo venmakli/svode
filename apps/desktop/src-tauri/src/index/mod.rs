@@ -6,7 +6,6 @@ pub(crate) mod page_dates;
 pub mod reconcile;
 pub mod reindex;
 mod retention;
-mod retention_wal;
 pub mod search;
 pub mod service;
 pub mod update;
@@ -26,13 +25,13 @@ use crate::files::backlinks::{
     is_backlink_discoverable_path, is_external_or_anchor_url, link_stem, markdown_url_path,
     rebase_source_links_between, replace_link_urls_between,
 };
-use svode_core::content_tree::policy::TreeIgnorePolicy;
 use crate::git::access::ensure_mutation_paths_were_authorized;
-use crate::repo_path::{RootMode, normalize_repo_relative, repo_relative_from_path};
+use crate::repo_path::{RootMode, normalize_repo_relative};
 use crate::space::types::{SpaceConfig, SpaceStatus};
 use crate::space::{config, project};
 use crate::storage::lfs::LfsState;
 use crate::system_path;
+use svode_core::content_tree::policy::TreeIgnorePolicy;
 
 /// Normalize a relative path to forward slashes for cross-platform DB storage.
 pub(crate) fn normalize_rel(path: &str) -> String {
@@ -43,20 +42,7 @@ pub(crate) fn normalize_rel_result(path: &str) -> Result<String, AppError> {
     normalize_repo_relative(path, RootMode::Reject)
 }
 
-pub(crate) fn normalize_rel_root_result(path: &str) -> Result<String, AppError> {
-    normalize_repo_relative(path, RootMode::Allow)
-}
-
-/// Identity of an index pool inside a project.
-///
-/// `Root` covers files that live directly under the project (the project's
-/// own inline content); `Space { space_id }` covers a child space (inline,
-/// independent, or submodule — the storage shape is identical).
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum IndexKey {
-    Root(PathBuf),
-    Space { project: PathBuf, space_id: String },
-}
+pub use svode_core::index::IndexKey;
 
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -80,62 +66,29 @@ impl ProjectLinkMutationPlan {
     }
 }
 
-impl IndexKey {
-    pub fn project(&self) -> &Path {
-        match self {
-            IndexKey::Root(p) => p,
-            IndexKey::Space { project, .. } => project,
-        }
-    }
-}
+pub use svode_core::index::resolver::ProjectSpacesCache;
 
-/// Per-project space lookup tables maintained by `IndexState`. Read on every
-/// resolver call; updated on `open_project` / `space:*` lifecycle.
-#[derive(Debug, Clone, Default)]
-pub struct ProjectSpacesCache {
-    /// folder_name → space_id (resolver path → IndexKey)
-    by_folder: HashMap<String, String>,
-    /// space_id → folder_name (IndexKey → filesystem path)
-    folder_by_id: HashMap<String, String>,
-    /// space_id → ready/missing/broken (resolver to surface ghost-state)
-    status_by_id: HashMap<String, SpaceStatus>,
-    /// Display name of the root project (`SpaceConfig.name`), surfaced as
-    /// `SearchItem.spaceName` for root-pool entries.
-    root_name: String,
-    /// space_id → display name (read from each child's `.svode/config.json`).
-    /// Populated only for `Ready` spaces; falls back to `folder_name` if the
-    /// child config can't be read.
-    name_by_id: HashMap<String, String>,
-}
-
-impl ProjectSpacesCache {
-    fn from_config(project: &Path, cfg: &SpaceConfig) -> Self {
-        let mut by_folder = HashMap::new();
-        let mut folder_by_id = HashMap::new();
-        let mut status_by_id = HashMap::new();
-        let mut name_by_id = HashMap::new();
-        if let Some(spaces) = &cfg.spaces {
-            for sp in spaces {
-                let folder = sp.path.clone();
-                let space_dir = project.join(&folder);
-                let status = project::space_ref_status(project, sp);
-                if matches!(status, SpaceStatus::Ready) {
-                    let display = read_child_space_name(&space_dir, &folder);
-                    name_by_id.insert(sp.id.clone(), display);
-                }
-                by_folder.insert(folder.clone(), sp.id.clone());
-                folder_by_id.insert(sp.id.clone(), folder);
-                status_by_id.insert(sp.id.clone(), status);
+fn project_spaces_cache_from_config(project: &Path, cfg: &SpaceConfig) -> ProjectSpacesCache {
+    let mut cache = ProjectSpacesCache {
+        root_name: cfg.name.clone(),
+        ..ProjectSpacesCache::default()
+    };
+    if let Some(spaces) = &cfg.spaces {
+        for sp in spaces {
+            let folder = sp.path.clone();
+            let space_dir = project.join(&folder);
+            let status = project::space_ref_status(project, sp);
+            if matches!(status, SpaceStatus::Ready) {
+                cache
+                    .name_by_id
+                    .insert(sp.id.clone(), read_child_space_name(&space_dir, &folder));
             }
-        }
-        Self {
-            by_folder,
-            folder_by_id,
-            status_by_id,
-            root_name: cfg.name.clone(),
-            name_by_id,
+            cache.by_folder.insert(folder.clone(), sp.id.clone());
+            cache.folder_by_id.insert(sp.id.clone(), folder);
+            cache.status_by_id.insert(sp.id.clone(), status);
         }
     }
+    cache
 }
 
 /// Read a child space's display name from its `.svode/config.json`. Falls
@@ -154,99 +107,14 @@ fn read_child_space_name(space_dir: &Path, folder_name: &str) -> String {
     }
 }
 
-async fn initialize_index_pool(pool: SqlitePool) -> Result<SqlitePool, AppError> {
-    if let Err(error) = db::ensure_schema(&pool).await {
-        db::close_pool(&pool).await;
-        return Err(error);
-    }
-    Ok(pool)
-}
-
-async fn open_prepared_pool(db_path: &Path) -> Result<SqlitePool, AppError> {
-    let (reason, found) = match db::create_pool(db_path).await {
-        Ok(pool) => {
-            let status = db::schema_status(&pool).await;
-            match status {
-                Ok(db::SchemaStatus::Current) => return Ok(pool),
-                Ok(db::SchemaStatus::Uninitialized) => return initialize_index_pool(pool).await,
-                Ok(db::SchemaStatus::Incompatible(found)) => {
-                    db::close_pool(&pool).await;
-                    (db::QuarantineReason::Incompatible, found)
-                }
-                Err(error) => {
-                    db::close_pool(&pool).await;
-                    if !db::is_corrupt_database_error(&error) {
-                        return Err(error);
-                    }
-                    (db::QuarantineReason::Corrupt, None)
-                }
-            }
-        }
-        Err(error) if db::is_corrupt_database_error(&error) => {
-            (db::QuarantineReason::Corrupt, None)
-        }
-        Err(error) => return Err(error),
-    };
-    tracing::warn!(
-        store = "index",
-        owner = %db_path.display(),
-        ?reason,
-        ?found,
-        expected = db::SCHEMA_VERSION,
-        "quarantining index database family; source rebuild required"
-    );
-    db::quarantine_database_family(db_path, reason)?;
-    let replacement = initialize_index_pool(db::create_pool(db_path).await?).await?;
-    tracing::info!(
-        store = "index",
-        owner = %db_path.display(),
-        expected = db::SCHEMA_VERSION,
-        "replacement index schema ready; source reconciliation pending"
-    );
-    Ok(replacement)
-}
-
-/// Resolve `abs_path` to the index pool that owns it plus the relative path
-/// inside that pool.
-///
-/// First-segment match per the flat-space invariant: the project knows only
-/// its direct children. Algorithm scales to nested spaces unchanged (each
-/// level holds its own `SpaceConfig`).
 pub fn resolve_index_target(
     project: &Path,
     cache: &ProjectSpacesCache,
     abs_path: &Path,
 ) -> Result<(IndexKey, String), AppError> {
-    let rel = abs_path.strip_prefix(project).map_err(|_| {
-        AppError::Index(format!("path outside project root: {}", abs_path.display()))
-    })?;
-
-    let rel = repo_relative_from_path(rel, RootMode::Allow)?;
-
-    if rel == "." {
-        return Ok((IndexKey::Root(project.to_path_buf()), String::new()));
-    }
-
-    let segments: Vec<&str> = rel.split('/').collect();
-
-    if let Some(space_id) = cache.by_folder.get(segments[0]) {
-        if !matches!(cache.status_by_id.get(space_id), Some(SpaceStatus::Ready)) {
-            return Err(AppError::Index(format!(
-                "target space unavailable: {}",
-                segments[0]
-            )));
-        }
-        let sub_rel = segments[1..].join("/");
-        return Ok((
-            IndexKey::Space {
-                project: project.to_path_buf(),
-                space_id: space_id.clone(),
-            },
-            sub_rel,
-        ));
-    }
-
-    Ok((IndexKey::Root(project.to_path_buf()), segments.join("/")))
+    Ok(svode_core::index::resolver::resolve_index_target(
+        project, cache, abs_path,
+    )?)
 }
 
 fn normalize_abs_path(path: &Path) -> Option<PathBuf> {
@@ -273,27 +141,11 @@ fn normalize_abs_path(path: &Path) -> Option<PathBuf> {
 /// plus matching reindex serialization locks and runtime backlink indices.
 #[derive(Clone)]
 pub struct IndexState {
-    pools: Arc<Mutex<lifecycle::IndexPools>>,
-    /// Per-key serialization lock for `full_reindex`. Two rapid `open_project`
-    /// calls would otherwise spawn two concurrent reindexes against the same
-    /// DB — correct under SQLite serialization, but doubles the work and
-    /// exposes a brief empty-index window twice.
-    reindex_locks: Arc<Mutex<HashMap<IndexKey, Arc<Mutex<()>>>>>,
-    /// Per-key flag toggled by `run_full_reindex` (true while the reindex
-    /// transaction is in flight). `fan_out` reads this to skip mid-reindex
-    /// pools per §Q3 — separate from `reindex_locks` so that concurrent
-    /// search reads don't serialize against each other on the same Mutex.
-    reindex_active: Arc<Mutex<HashMap<IndexKey, Arc<AtomicBool>>>>,
-    /// Per-key flag raised while a cached snapshot is being reconciled with
-    /// its source manifest. Cached rows stay readable throughout this pass.
-    reconcile_active: Arc<Mutex<HashMap<IndexKey, Arc<AtomicBool>>>>,
+    pub(crate) core: svode_core::index::state::IndexRuntimeState,
     /// Per-key runtime backlink index. Mirrors `pools` lifecycle. Lazy-build:
     /// `BacklinkIndex::build` runs on first access (preserves current
     /// behaviour — not eager at `open_project`).
     backlinks: Arc<Mutex<HashMap<IndexKey, Arc<BacklinkIndex>>>>,
-    /// Per-project resolver cache. Refreshed on `open_project` and on every
-    /// `space:*` lifecycle event.
-    spaces_cache: Arc<Mutex<HashMap<PathBuf, ProjectSpacesCache>>>,
     /// Per-key LFS runtime state. Initial value for any key is
     /// `NotApplicable`; the actual probe is lazy (triggered by user gestures
     /// or post-clone/sync events). See `storage/lfs.rs`.
@@ -312,12 +164,8 @@ impl Drop for ReindexActiveGuard {
 impl IndexState {
     pub fn new() -> Self {
         Self {
-            pools: Arc::new(Mutex::new(lifecycle::IndexPools::default())),
-            reindex_locks: Arc::new(Mutex::new(HashMap::new())),
-            reindex_active: Arc::new(Mutex::new(HashMap::new())),
-            reconcile_active: Arc::new(Mutex::new(HashMap::new())),
+            core: svode_core::index::state::IndexRuntimeState::default(),
             backlinks: Arc::new(Mutex::new(HashMap::new())),
-            spaces_cache: Arc::new(Mutex::new(HashMap::new())),
             lfs_states: Arc::new(Mutex::new(HashMap::new())),
         }
     }
@@ -375,48 +223,20 @@ impl IndexState {
         project: &Path,
         abs_path: &Path,
     ) -> Result<(IndexKey, String), AppError> {
-        let cache_guard = self.spaces_cache.lock().await;
-        let cache = cache_guard.get(project).cloned().unwrap_or_default();
-        drop(cache_guard);
-        resolve_index_target(project, &cache, abs_path)
+        Ok(self.core.resolve(project, abs_path).await?)
     }
 
     /// Display name for this pool's source: project name for `Root`, child
     /// `SpaceConfig.name` for `Space`. Falls back to folder name if the cache
     /// has no entry (treated as a soft miss).
     pub async fn space_name(&self, key: &IndexKey) -> String {
-        let cache = self.spaces_cache.lock().await;
-        match key {
-            IndexKey::Root(project) => cache
-                .get(project)
-                .map(|c| c.root_name.clone())
-                .unwrap_or_default(),
-            IndexKey::Space { project, space_id } => cache
-                .get(project)
-                .and_then(|c| {
-                    c.name_by_id
-                        .get(space_id)
-                        .cloned()
-                        .or_else(|| c.folder_by_id.get(space_id).cloned())
-                })
-                .unwrap_or_default(),
-        }
+        self.core.space_name(key).await
     }
 
     /// Returns the directory whose `.svode/index.db` backs this key — i.e.,
     /// the root project path or the ready child-space path.
     pub async fn dir_for_key(&self, key: &IndexKey) -> Result<PathBuf, AppError> {
-        match key {
-            IndexKey::Root(p) => Ok(p.clone()),
-            IndexKey::Space { project, space_id } => {
-                let cache = self.spaces_cache.lock().await;
-                let folder = cache
-                    .get(project)
-                    .and_then(|c| c.folder_by_id.get(space_id))
-                    .ok_or_else(|| AppError::SpaceNotFound(space_id.clone()))?;
-                Ok(project.join(folder))
-            }
-        }
+        Ok(self.core.dir_for_key(key).await?)
     }
 
     pub fn space_id_for_key(key: &IndexKey) -> Option<String> {
@@ -438,24 +258,10 @@ impl IndexState {
         project: &Path,
         space_id: Option<&str>,
     ) -> Result<IndexKey, AppError> {
-        match space_id {
-            None => Ok(IndexKey::Root(project.to_path_buf())),
-            Some(id) => {
-                let cache = self.spaces_cache.lock().await;
-                let ready = cache
-                    .get(project)
-                    .and_then(|c| c.status_by_id.get(id))
-                    .is_some_and(|s| matches!(s, SpaceStatus::Ready));
-                if ready {
-                    Ok(IndexKey::Space {
-                        project: project.to_path_buf(),
-                        space_id: id.to_string(),
-                    })
-                } else {
-                    Err(AppError::SpaceNotFound(id.to_string()))
-                }
-            }
-        }
+        Ok(self
+            .core
+            .key_for_project_space_id(project, space_id)
+            .await?)
     }
 
     pub async fn space_path_of(
@@ -550,7 +356,7 @@ impl IndexState {
             });
         }
 
-        let cache_guard = self.spaces_cache.lock().await;
+        let cache_guard = self.core.spaces_cache.lock().await;
         let cache = cache_guard.get(project).cloned().unwrap_or_default();
         drop(cache_guard);
 
@@ -622,7 +428,7 @@ impl IndexState {
             _ => return Ok(None),
         };
 
-        let cache_guard = self.spaces_cache.lock().await;
+        let cache_guard = self.core.spaces_cache.lock().await;
         let cache = cache_guard.get(project).cloned().unwrap_or_default();
         drop(cache_guard);
         match resolve_index_target(project, &cache, &target_abs) {
@@ -1113,50 +919,34 @@ impl IndexState {
 
     /// Get (or create) the per-key reindex serialization lock.
     pub async fn reindex_lock(&self, key: &IndexKey) -> Arc<Mutex<()>> {
-        let mut locks = self.reindex_locks.lock().await;
-        locks
-            .entry(key.clone())
-            .or_insert_with(|| Arc::new(Mutex::new(())))
-            .clone()
+        self.core.reindex_lock(key).await
     }
 
     /// Get (or create) the per-key `reindex_active` flag. Read-only check
     /// surface for `fan_out`; writers go through `run_full_reindex`.
     pub async fn reindex_active_flag(&self, key: &IndexKey) -> Arc<AtomicBool> {
-        let mut map = self.reindex_active.lock().await;
-        map.entry(key.clone())
-            .or_insert_with(|| Arc::new(AtomicBool::new(false)))
-            .clone()
+        self.core.reindex_active_flag(key).await
     }
 
     pub async fn reconcile_active_flag(&self, key: &IndexKey) -> Arc<AtomicBool> {
-        let mut map = self.reconcile_active.lock().await;
-        map.entry(key.clone())
-            .or_insert_with(|| Arc::new(AtomicBool::new(false)))
-            .clone()
+        self.core.reconcile_active_flag(key).await
     }
 
     pub(crate) async fn cleanup_reconciled_index(&self, key: &IndexKey, pool: &SqlitePool) {
-        let pools = self.pools.clone().lock_owned().await;
-        lifecycle::cleanup(pools, key.clone(), pool.clone()).await;
+        self.core.cleanup_reconciled_index(key, pool).await;
     }
 
     /// Get an existing pool for the key, or open one (creating the DB
     /// file and schema if necessary).
     pub async fn get_or_create(&self, key: &IndexKey) -> Result<SqlitePool, AppError> {
-        let pools = self.pools.clone().lock_owned().await;
-        if let Some(pool) = pools.get(key) {
-            return Ok(pool);
-        }
-        let dir = self.dir_for_key(key).await?;
-        lifecycle::open(pools, key.clone(), dir).await
+        Ok(self.core.get_or_create(key).await?)
     }
 
     /// Return only an already-open pool. Read-only snapshot surfaces use this
     /// to avoid creating or migrating derived storage as a side effect of an
     /// open/search gesture.
     pub(crate) async fn existing_pool(&self, key: &IndexKey) -> Option<SqlitePool> {
-        self.pools.lock().await.get(key)
+        self.core.existing_pool(key).await
     }
 
     /// Get (or create) the runtime backlink index for this key. Lazy-build:
@@ -1178,15 +968,12 @@ impl IndexState {
 
     /// Drop the pool and runtime backlink index for a key.
     async fn close_key(&self, key: &IndexKey) {
-        lifecycle::close(self.pools.clone().lock_owned().await, Some(key), None).await;
+        self.core.close_key(key).await;
         self.close_key_runtime(key).await;
     }
 
     async fn close_key_runtime(&self, key: &IndexKey) {
         self.backlinks.lock().await.remove(key);
-        self.reindex_locks.lock().await.remove(key);
-        self.reindex_active.lock().await.remove(key);
-        self.reconcile_active.lock().await.remove(key);
         self.lfs_states.lock().await.remove(key);
     }
 
@@ -1194,7 +981,7 @@ impl IndexState {
     /// prepared keys to the Desktop runtime that owns background tasks.
     pub async fn open_project(&self, project: &Path) -> Result<Vec<IndexKey>, AppError> {
         let cfg = config::read_space_config(project)?;
-        let cache = ProjectSpacesCache::from_config(project, &cfg);
+        let cache = project_spaces_cache_from_config(project, &cfg);
         let ready_ids: Vec<String> = cache
             .status_by_id
             .iter()
@@ -1206,10 +993,7 @@ impl IndexState {
         // overwrite the cache (re-open after reconfig, etc.).
         self.close_project(project).await;
 
-        self.spaces_cache
-            .lock()
-            .await
-            .insert(project.to_path_buf(), cache);
+        self.core.replace_project_cache(project, cache).await;
         self.invalidate_project_backlinks(project).await;
 
         let mut keys: Vec<IndexKey> = vec![IndexKey::Root(project.to_path_buf())];
@@ -1232,29 +1016,17 @@ impl IndexState {
 
     /// Close every pool belonging to `project`.
     pub async fn close_project(&self, project: &Path) {
-        let keys_to_close =
-            lifecycle::close(self.pools.clone().lock_owned().await, None, Some(project)).await;
+        let keys_to_close = self.core.close_project(project).await;
         for key in keys_to_close {
             self.close_key_runtime(&key).await;
         }
-        self.spaces_cache.lock().await.remove(project);
     }
 
     /// Folders that the walker for `key` must skip — child-space directories
     /// (each space owns its own pool, so root must not index them, and
     /// nested-space layout would have its own list per level).
     pub async fn skip_folders_for(&self, key: &IndexKey) -> Vec<String> {
-        match key {
-            IndexKey::Root(project) => {
-                let cache = self.spaces_cache.lock().await;
-                cache
-                    .get(project)
-                    .map(|c| c.by_folder.keys().cloned().collect())
-                    .unwrap_or_default()
-            }
-            // Flat-space invariant: child spaces have no nested children.
-            IndexKey::Space { .. } => Vec::new(),
-        }
+        self.core.skip_folders_for(key).await
     }
 
     /// Handle `space:added`. Refreshes the resolver cache, opens the pool,
@@ -1267,24 +1039,11 @@ impl IndexState {
         folder_name: &str,
         status: SpaceStatus,
     ) -> Option<IndexKey> {
-        {
-            let mut cache = self.spaces_cache.lock().await;
-            let entry = cache.entry(project.to_path_buf()).or_default();
-            entry
-                .by_folder
-                .insert(folder_name.to_string(), space_id.to_string());
-            entry
-                .folder_by_id
-                .insert(space_id.to_string(), folder_name.to_string());
-            entry.status_by_id.insert(space_id.to_string(), status);
-            if matches!(status, SpaceStatus::Ready) {
-                let space_dir = project.join(folder_name);
-                let display = read_child_space_name(&space_dir, folder_name);
-                entry.name_by_id.insert(space_id.to_string(), display);
-            } else {
-                entry.name_by_id.remove(space_id);
-            }
-        }
+        let display = matches!(status, SpaceStatus::Ready)
+            .then(|| read_child_space_name(&project.join(folder_name), folder_name));
+        self.core
+            .upsert_space(project, space_id, folder_name, status, display)
+            .await;
         self.invalidate_project_backlinks(project).await;
 
         if !matches!(status, SpaceStatus::Ready) {
@@ -1305,16 +1064,7 @@ impl IndexState {
     /// Handle `space:removed`. Drops cache + pool. Idempotent: ghost-state
     /// removals never had a pool open.
     pub async fn on_space_removed(&self, project: &Path, space_id: &str) {
-        {
-            let mut cache = self.spaces_cache.lock().await;
-            if let Some(entry) = cache.get_mut(project) {
-                if let Some(folder) = entry.folder_by_id.remove(space_id) {
-                    entry.by_folder.remove(&folder);
-                }
-                entry.status_by_id.remove(space_id);
-                entry.name_by_id.remove(space_id);
-            }
-        }
+        self.core.remove_space(project, space_id).await;
         self.invalidate_project_backlinks(project).await;
         let key = IndexKey::Space {
             project: project.to_path_buf(),
@@ -1331,24 +1081,17 @@ impl IndexState {
         space_id: &str,
         new_status: SpaceStatus,
     ) -> Option<IndexKey> {
-        {
-            let mut cache = self.spaces_cache.lock().await;
-            if let Some(entry) = cache.get_mut(project) {
-                entry.status_by_id.insert(space_id.to_string(), new_status);
-                match new_status {
-                    SpaceStatus::Ready => {
-                        if let Some(folder) = entry.folder_by_id.get(space_id).cloned() {
-                            let space_dir = project.join(&folder);
-                            let display = read_child_space_name(&space_dir, &folder);
-                            entry.name_by_id.insert(space_id.to_string(), display);
-                        }
-                    }
-                    SpaceStatus::Missing | SpaceStatus::Broken => {
-                        entry.name_by_id.remove(space_id);
-                    }
-                }
-            }
-        }
+        let display = if matches!(new_status, SpaceStatus::Ready) {
+            self.core
+                .folder_for_space(project, space_id)
+                .await
+                .map(|folder| read_child_space_name(&project.join(&folder), &folder))
+        } else {
+            None
+        };
+        self.core
+            .change_space_status(project, space_id, new_status, display)
+            .await;
         self.invalidate_project_backlinks(project).await;
         let key = IndexKey::Space {
             project: project.to_path_buf(),
@@ -1378,20 +1121,9 @@ impl IndexState {
     /// untouched (no reindex storm).
     pub async fn refresh_after_root_pull(&self, project: &Path) -> Result<Vec<IndexKey>, AppError> {
         let cfg = config::read_space_config(project)?;
-        let fresh = ProjectSpacesCache::from_config(project, &cfg);
+        let fresh = project_spaces_cache_from_config(project, &cfg);
 
-        let known: HashMap<String, SpaceStatus> = {
-            let cache = self.spaces_cache.lock().await;
-            cache
-                .get(project)
-                .map(|c| {
-                    c.status_by_id
-                        .iter()
-                        .map(|(k, v)| (k.clone(), *v))
-                        .collect()
-                })
-                .unwrap_or_default()
-        };
+        let known = self.core.status_by_id(project).await;
 
         let mut tasks = Vec::new();
         for (id, status) in &fresh.status_by_id {
@@ -1425,63 +1157,21 @@ impl IndexState {
     /// plus any ready child-space keys cached for the project. Used by
     /// fan-out IPCs (search/reindex) when scope = project.
     pub async fn keys_for_project(&self, project: &PathBuf) -> Vec<IndexKey> {
-        let mut keys: Vec<IndexKey> = vec![IndexKey::Root(project.clone())];
-        let cache = self.spaces_cache.lock().await;
-        if let Some(c) = cache.get(project) {
-            for (space_id, status) in &c.status_by_id {
-                if matches!(status, SpaceStatus::Ready) {
-                    keys.push(IndexKey::Space {
-                        project: project.clone(),
-                        space_id: space_id.clone(),
-                    });
-                }
-            }
-        }
-        keys
+        self.core.keys_for_project(project).await
     }
 
     pub(crate) async fn routine_inventory_keys(
         &self,
         project: &Path,
     ) -> Result<Vec<IndexKey>, AppError> {
-        let cache = self.spaces_cache.lock().await;
-        let project_cache = cache.get(project).ok_or_else(|| {
-            AppError::Index(format!(
-                "routine owner inventory is unavailable for {}",
-                project.display()
-            ))
-        })?;
-        let mut keys = vec![IndexKey::Root(project.to_path_buf())];
-        for (space_id, status) in &project_cache.status_by_id {
-            if matches!(status, SpaceStatus::Ready) {
-                keys.push(IndexKey::Space {
-                    project: project.to_path_buf(),
-                    space_id: space_id.clone(),
-                });
-            }
-        }
-        Ok(keys)
+        Ok(self.core.routine_inventory_keys(project).await?)
     }
 
     /// Reverse lookup for callers that only know the absolute space directory
     /// (e.g. `git_sync` flow). Searches every loaded project for a child whose
     /// directory matches, falling back to `Root` when the dir IS the project.
     pub async fn key_for_space_dir(&self, space_dir: &Path) -> Option<IndexKey> {
-        let cache = self.spaces_cache.lock().await;
-        for (project, project_cache) in cache.iter() {
-            if project == space_dir {
-                return Some(IndexKey::Root(project.clone()));
-            }
-            for (space_id, folder) in &project_cache.folder_by_id {
-                if project.join(folder) == space_dir {
-                    return Some(IndexKey::Space {
-                        project: project.clone(),
-                        space_id: space_id.clone(),
-                    });
-                }
-            }
-        }
-        None
+        self.core.key_for_space_dir(space_dir).await
     }
 }
 
@@ -1493,7 +1183,7 @@ mod tests {
     use tempfile::TempDir;
 
     async fn install_child_space_cache(state: &IndexState, project: &Path) {
-        state.spaces_cache.lock().await.insert(
+        state.core.spaces_cache.lock().await.insert(
             project.to_path_buf(),
             ProjectSpacesCache {
                 by_folder: HashMap::from([("child".to_string(), "child-space".to_string())]),

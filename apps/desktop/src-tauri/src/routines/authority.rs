@@ -1,111 +1,57 @@
 use std::path::Path;
 
-use chrono::{SecondsFormat, Utc};
-
 use super::model::{ResolvedRoutineOwner, RoutineOwnerInputKind};
 use super::service;
+#[cfg(test)]
 use super::storage::RecoveryEvidence;
 use crate::AppError;
 use crate::index::{IndexKey, IndexState};
 use crate::routines::RoutineStoreState;
+#[cfg(test)]
 use crate::space::config;
-use crate::space::types::{RoutinesLocalConfig, RoutinesRecoveryLocalConfig};
-
-const STORAGE_GENERATION: u32 = 1;
 
 pub(crate) fn read(owner: &ResolvedRoutineOwner) -> Result<bool, AppError> {
-    read_key(&owner.space_path, &owner.identity())
-}
-
-pub(crate) fn read_indexed_collection(
-    space_dir: &Path,
-    index_key: &IndexKey,
-    owner_path: &str,
-) -> Result<bool, AppError> {
-    read_key(
-        space_dir,
-        &ResolvedRoutineOwner::indexed_collection_identity(index_key, owner_path),
-    )
-}
-
-fn read_key(space_dir: &Path, owner_key: &str) -> Result<bool, AppError> {
-    let routines = config::read_local_config(space_dir)?
-        .routines
-        .unwrap_or_default();
-    Ok(routines
-        .automatic_authority
-        .get(owner_key)
-        .copied()
-        .unwrap_or(false))
+    Ok(svode_core::routines::authority::read_key(
+        &owner.space_path,
+        &owner.identity(),
+    )?)
 }
 
 pub(crate) fn set(owner: &ResolvedRoutineOwner, enabled: bool) -> Result<bool, AppError> {
-    let owner_key = owner.identity();
-    config::mutate_local_config(&owner.space_path, |local| {
-        let routines = local
-            .routines
-            .get_or_insert_with(RoutinesLocalConfig::default);
-        if enabled {
-            routines.recovery = None;
-            routines.automatic_authority.insert(owner_key, true);
-        } else {
-            routines.automatic_authority.remove(&owner_key);
-        }
-        Ok(enabled)
-    })
+    Ok(svode_core::routines::authority::set_key(
+        &owner.space_path,
+        &owner.identity(),
+        enabled,
+    )?)
 }
 
-pub(crate) fn storage_was_created(space_dir: &Path) -> Result<bool, AppError> {
-    Ok(config::read_local_config(space_dir)?
-        .routines
-        .and_then(|routines| routines.storage_generation)
-        .is_some())
-}
-
+#[cfg(test)]
 pub(crate) fn mark_storage_ready(space_dir: &Path) -> Result<(), AppError> {
-    config::mutate_local_config(space_dir, |local| {
-        let routines = local
-            .routines
-            .get_or_insert_with(RoutinesLocalConfig::default);
-        routines.storage_generation = Some(STORAGE_GENERATION);
-        Ok(())
-    })
+    Ok(svode_core::routines::authority::mark_storage_ready(
+        space_dir,
+    )?)
 }
 
+#[cfg(test)]
 pub(crate) fn record_recovery(
     space_dir: &Path,
     evidence: RecoveryEvidence,
 ) -> Result<(), AppError> {
-    config::mutate_local_config(space_dir, |local| {
-        let routines = local
-            .routines
-            .get_or_insert_with(RoutinesLocalConfig::default);
-        routines.automatic_authority.clear();
-        routines.storage_generation = Some(STORAGE_GENERATION);
-        routines.recovery = Some(RoutinesRecoveryLocalConfig {
-            reason: evidence.reason.to_string(),
-            observed_at: Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true),
-            quarantine_files: evidence.quarantine_files,
-        });
-        Ok(())
-    })
+    Ok(svode_core::routines::authority::record_recovery(
+        space_dir, evidence,
+    )?)
 }
 
 pub(crate) fn recovery_required(space_dir: &Path) -> Result<bool, AppError> {
-    Ok(config::read_local_config(space_dir)?
-        .routines
-        .is_some_and(|routines| routines.recovery.is_some()))
+    Ok(svode_core::routines::authority::recovery_required(
+        space_dir,
+    )?)
 }
 
 pub(crate) fn acknowledge_recovery(space_dir: &Path) -> Result<(), AppError> {
-    config::mutate_local_config(space_dir, |local| {
-        let routines = local
-            .routines
-            .get_or_insert_with(RoutinesLocalConfig::default);
-        routines.automatic_authority.clear();
-        routines.recovery = None;
-        Ok(())
-    })
+    Ok(svode_core::routines::authority::acknowledge_recovery(
+        space_dir,
+    )?)
 }
 
 pub(crate) async fn discover_project_owners(

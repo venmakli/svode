@@ -1,9 +1,9 @@
 use std::path::Path;
 
 use super::cli::GitCli;
-use super::state::detected_cli;
+pub(crate) use super::state::detected_cli;
 
-pub(crate) use svode_core::page::dates::{EntryDateOverride, EntryDateOverrides};
+pub(crate) use svode_core::page::dates::EntryDateOverrides;
 use svode_core::page::dates::{GitDateExecutor, GitDateOutput};
 
 impl GitDateExecutor for GitCli {

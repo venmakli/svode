@@ -6,9 +6,9 @@ use std::time::SystemTime;
 use chrono::{DateTime, SecondsFormat, Utc};
 use serde::Serialize;
 
+use super::AgentContextError;
 use crate::agent_adapters::system_source_registry_environment;
-use crate::error::AppError;
-use crate::repo_path::{RootMode, repo_relative_from_base};
+use crate::git::path::{RootMode, repo_relative_from_base};
 
 use super::model::{
     AgentContextSnapshotContent, InstructionOwnerKind, InstructionSourceKind, SkillScope,
@@ -56,7 +56,7 @@ impl ProjectKnowledgeArtifact {
 pub async fn target_knowledge_projection(
     project_root: &Path,
     target_root: &Path,
-) -> Result<Vec<ProjectKnowledgeArtifact>, AppError> {
+) -> Result<Vec<ProjectKnowledgeArtifact>, AgentContextError> {
     let environment = system_source_registry_environment()?;
     let project = project_root.to_path_buf();
     let target = target_root.to_path_buf();
@@ -67,7 +67,7 @@ pub async fn target_knowledge_projection(
     })
     .await
     .map_err(|error| {
-        AppError::General(format!("agent context projection task failed: {error}"))
+        AgentContextError::General(format!("agent context projection task failed: {error}"))
     })??;
     normalize_project_snapshot(&project, &target, &content)
 }
@@ -76,15 +76,15 @@ fn normalize_project_snapshot(
     project_root: &Path,
     target_root: &Path,
     content: &AgentContextSnapshotContent,
-) -> Result<Vec<ProjectKnowledgeArtifact>, AppError> {
+) -> Result<Vec<ProjectKnowledgeArtifact>, AgentContextError> {
     let canonical_project = project_root.canonicalize().map_err(|error| {
-        AppError::General(format!(
+        AgentContextError::General(format!(
             "could not canonicalize Agent Context projection root {}: {error}",
             project_root.display()
         ))
     })?;
     let canonical_target = target_root.canonicalize().map_err(|error| {
-        AppError::General(format!(
+        AgentContextError::General(format!(
             "could not canonicalize Agent Context projection target {}: {error}",
             target_root.display()
         ))

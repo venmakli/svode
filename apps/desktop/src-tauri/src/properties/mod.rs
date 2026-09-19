@@ -10,12 +10,12 @@ use sqlx::{QueryBuilder, Row, Sqlite, SqlitePool};
 use crate::error::AppError;
 use crate::files::entry::{ColorName, EntryMeta};
 use crate::files::tree::child_folder_names;
-use svode_core::content_tree::policy::{TreeIgnorePolicy, TreePathKind};
 use crate::files::{entry, frontmatter};
 use crate::git::access::ensure_mutation_paths_were_authorized;
 use crate::git::cli::GitCli;
 use crate::repo_path::{RootMode, normalize_repo_relative};
 use crate::space::config;
+use svode_core::content_tree::policy::{TreeIgnorePolicy, TreePathKind};
 
 const SCHEMA_FILE: &str = "schema.yaml";
 const RESERVED_FIELDS: &[&str] = &[
@@ -29,8 +29,6 @@ const RESERVED_FIELDS: &[&str] = &[
 
 mod model;
 pub use model::*;
-
-pub mod knowledge_projection;
 
 mod actors;
 pub use actors::{ActorCandidate, ActorCatalogState, list_actors, refresh_actors};
@@ -136,19 +134,6 @@ fn trim_unique_id_prefix(prefix: Option<String>) -> Option<String> {
     })
 }
 
-fn validate_unique_id_prefix(column_name: &str, prefix: &str) -> Result<(), AppError> {
-    if prefix
-        .chars()
-        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
-    {
-        Ok(())
-    } else {
-        Err(schema_error(format!(
-            "unique_id column '{column_name}' prefix can contain only ASCII letters, digits, '_' or '-'"
-        )))
-    }
-}
-
 fn parse_unique_id_filter_value(column: &Column, value: &Value) -> Result<u64, AppError> {
     if let Some(number) = unique_id_value(value) {
         return Ok(number);
@@ -228,12 +213,12 @@ pub fn resolve_collection_schema_result(
     space: &str,
     file_path: &str,
 ) -> Result<Option<(CollectionSchema, PathBuf)>, AppError> {
-    let space_path = Path::new(space);
-    let Some(root) = find_collection_root(space_path, file_path) else {
-        return Ok(None);
-    };
-    let schema = read_schema_at(&space_path.join(&root).join(SCHEMA_FILE))?;
-    Ok(Some((schema, root)))
+    Ok(
+        svode_core::collections::schema::resolve_collection_schema_result(
+            Path::new(space),
+            file_path,
+        )?,
+    )
 }
 
 pub fn schema_response(
@@ -251,53 +236,11 @@ pub fn schema_response(
 }
 
 fn find_collection_root(space: &Path, file_path: &str) -> Option<PathBuf> {
-    let rel = normalize_rel_path(file_path);
-    let rel_path = Path::new(&rel);
-    let parent = rel_path
-        .parent()
-        .filter(|p| !p.as_os_str().is_empty())
-        .map(Path::to_path_buf);
-
-    let mut dir = if rel_path
-        .file_name()
-        .and_then(|n| n.to_str())
-        .is_some_and(|n| n.eq_ignore_ascii_case("README.md"))
-    {
-        let owner_dir = parent?;
-        owner_dir
-            .parent()
-            .filter(|p| !p.as_os_str().is_empty())
-            .map(Path::to_path_buf)
-            .unwrap_or_default()
-    } else {
-        parent.unwrap_or_default()
-    };
-
-    loop {
-        if space.join(&dir).join(SCHEMA_FILE).is_file() {
-            return Some(dir);
-        }
-
-        if dir.as_os_str().is_empty() {
-            break;
-        }
-        dir = dir
-            .parent()
-            .filter(|p| !p.as_os_str().is_empty())
-            .map(Path::to_path_buf)
-            .unwrap_or_default();
-    }
-
-    None
+    svode_core::collections::schema::find_collection_root(space, file_path)
 }
 
 fn normalize_rel_path(path: &str) -> String {
-    normalize_repo_relative(path, RootMode::Allow).unwrap_or_else(|_| {
-        path.trim_matches('/')
-            .replace('\\', "/")
-            .trim_start_matches("./")
-            .to_string()
-    })
+    svode_core::collections::schema::normalize_rel_path(path)
 }
 
 fn rel_path_string(path: &Path) -> String {
@@ -719,12 +662,7 @@ fn ensure_compatible_reverse_with_scope(
 }
 
 fn read_schema_at(path: &Path) -> Result<CollectionSchema, AppError> {
-    let raw = fs::read_to_string(path)?;
-    let mut schema: CollectionSchema = serde_yml::from_str(&raw)
-        .map_err(|e| schema_error(format!("{}: invalid schema YAML: {e}", path.display())))?;
-    normalize_schema(&mut schema);
-    validate_schema(&schema).map_err(|e| schema_error(format!("{}: {e}", path.display())))?;
-    Ok(schema)
+    Ok(svode_core::collections::schema::read_schema_at(path)?)
 }
 
 fn read_schema_or_default(
@@ -2916,12 +2854,6 @@ fn validate_relation_column_name(name: &str) -> Result<(), AppError> {
         )));
     }
     Ok(())
-}
-
-fn validate_relation_path_shape(path: &str) -> Result<(), AppError> {
-    normalize_repo_relative(path, RootMode::Allow)
-        .map(|_| ())
-        .map_err(|e| schema_error(e.to_string()))
 }
 
 fn validate_relation_value_shape(column: &Column, value: &Value) -> Result<Vec<String>, AppError> {

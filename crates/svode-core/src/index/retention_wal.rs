@@ -5,7 +5,7 @@ use std::path::Path;
 // SQLite ignores invalid/incomplete WAL tails. Retention must preserve them
 // instead of classifying only the readable main database as disposable.
 // Format/checksum: https://sqlite.org/fileformat2.html#walformat
-pub(super) fn valid(main: &Path, path: &Path) -> std::io::Result<bool> {
+pub fn valid(main: &Path, path: &Path) -> std::io::Result<bool> {
     let mut file = File::open(path)?;
     let len = file.metadata()?.len();
     if len == 0 {

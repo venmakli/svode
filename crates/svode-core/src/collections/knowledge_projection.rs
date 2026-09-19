@@ -3,13 +3,12 @@ use std::path::Path;
 
 use serde::Serialize;
 
-use crate::error::AppError;
-use crate::files::frontmatter;
-use crate::repo_path::{RootMode, normalize_repo_relative};
+use super::CollectionError;
+use crate::git::path::{RootMode, normalize_repo_relative};
+use crate::page::{ParsedMarkdown, parse_markdown};
 
-use super::{
-    CollectionSchema, PropertyType, RelationScope, join_collection_value, read_collection_schema,
-};
+use super::model::{CollectionSchema, PropertyType, RelationScope};
+use super::schema::{normalize_rel_path, read_schema_at, resolve_collection_schema_result};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -32,8 +31,8 @@ pub struct KnowledgeRelationProjection {
 pub fn project_collection(
     space_root: &Path,
     collection_path: &str,
-) -> Result<KnowledgeCollectionProjection, AppError> {
-    let schema = read_collection_schema(&space_root.to_string_lossy(), collection_path)?;
+) -> Result<KnowledgeCollectionProjection, CollectionError> {
+    let schema = read_schema_at(&space_root.join(collection_path).join("schema.yaml"))?;
     let collection_dir = if collection_path == "." {
         space_root.to_path_buf()
     } else {
@@ -63,9 +62,8 @@ pub fn project_entry_relations(
     space_root: &Path,
     entry_path: &str,
     fields_json: &str,
-) -> Result<Vec<KnowledgeRelationProjection>, AppError> {
-    let Some((schema, collection_root)) =
-        super::resolve_collection_schema_result(&space_root.to_string_lossy(), entry_path)?
+) -> Result<Vec<KnowledgeRelationProjection>, CollectionError> {
+    let Some((schema, collection_root)) = resolve_collection_schema_result(space_root, entry_path)?
     else {
         return Ok(Vec::new());
     };
@@ -120,14 +118,14 @@ pub fn collection_readme_path(collection_path: &str) -> String {
 fn read_collection_readme(
     path: &Path,
     fallback_title: String,
-) -> Result<(String, Option<String>, String), AppError> {
+) -> Result<(String, Option<String>, String), CollectionError> {
     if !path.is_file() {
         return Ok((fallback_title, None, String::new()));
     }
     let raw = fs::read_to_string(path)?;
-    Ok(match frontmatter::parse_status(&raw) {
-        frontmatter::ParseStatus::Valid { meta, body } => {
-            let title = if meta.frontmatter_keys.title {
+    Ok(match parse_markdown(&raw, &path.to_string_lossy()) {
+        ParsedMarkdown::Valid(meta, body) => {
+            let title = if meta.title_present {
                 meta.title
             } else {
                 markdown_heading(&body).unwrap_or(fallback_title)
@@ -176,6 +174,15 @@ fn schema_labels(schema: &CollectionSchema) -> Vec<String> {
     labels
 }
 
+fn join_collection_value(collection_path: &str, value: &str) -> String {
+    let collection = normalize_rel_path(collection_path);
+    if collection.is_empty() || collection == "." {
+        value.to_string()
+    } else {
+        format!("{collection}/{value}")
+    }
+}
+
 fn string_values(value: &serde_json::Value) -> Vec<&str> {
     match value {
         serde_json::Value::String(value) => vec![value.as_str()],
@@ -186,8 +193,9 @@ fn string_values(value: &serde_json::Value) -> Vec<&str> {
     }
 }
 
-fn normalize_projected_path(path: &Path) -> Result<String, AppError> {
+fn normalize_projected_path(path: &Path) -> Result<String, CollectionError> {
     normalize_repo_relative(&path.to_string_lossy(), RootMode::Reject)
+        .map_err(|error| CollectionError::Schema(error.to_string()))
 }
 
 #[cfg(test)]

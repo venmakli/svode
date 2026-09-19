@@ -7,38 +7,7 @@ use std::path::PathBuf;
 
 use crate::files::backlinks::ModifiedLinkSource;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum ColorName {
-    Neutral,
-    Gray,
-    Red,
-    Orange,
-    Yellow,
-    Green,
-    Blue,
-    Purple,
-    Pink,
-    Brown,
-}
-
-impl ColorName {
-    pub(super) fn from_name(value: &str) -> Option<Self> {
-        match value {
-            "neutral" => Some(Self::Neutral),
-            "gray" => Some(Self::Gray),
-            "red" => Some(Self::Red),
-            "orange" => Some(Self::Orange),
-            "yellow" => Some(Self::Yellow),
-            "green" => Some(Self::Green),
-            "blue" => Some(Self::Blue),
-            "purple" => Some(Self::Purple),
-            "pink" => Some(Self::Pink),
-            "brown" => Some(Self::Brown),
-            _ => None,
-        }
-    }
-}
+pub use svode_core::page::ColorName;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]

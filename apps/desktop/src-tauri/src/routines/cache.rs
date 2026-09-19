@@ -1,7 +1,12 @@
-use std::path::{Path, PathBuf};
+#[cfg(test)]
+use std::path::Path;
+use std::path::PathBuf;
 use std::sync::Mutex;
 
-use sqlx::{Row, Sqlite, SqlitePool, Transaction};
+use sqlx::SqlitePool;
+
+#[cfg(test)]
+use svode_core::routines::observation::reconcile_projection_from_index;
 
 #[cfg(test)]
 use super::model::RoutineRow;
@@ -14,316 +19,36 @@ use crate::terminal::{
     AgentTerminalLifecycleSink, AgentTerminalOutcomeEvidence, AgentTerminalOutcomeStatus,
 };
 
-pub(crate) async fn reconcile_projection_from_index(
-    routines_pool: &SqlitePool,
-    index_pool: &SqlitePool,
-    space_dir: &Path,
-) -> Result<(), AppError> {
-    let rows = sqlx::query(
-        "SELECT file_path, title, collection_root_path, fields, created, updated \
-         FROM entries WHERE in_collection = 1 AND is_entry_head = 1 ORDER BY file_path",
-    )
-    .fetch_all(index_pool)
-    .await?;
-    let snapshots = rows
-        .into_iter()
-        .map(|row| super::events::snapshot_from_row(row, space_dir))
-        .collect::<Result<Vec<_>, _>>()?;
-    let owner_paths = sqlx::query_scalar::<_, String>(
-        "SELECT source_path FROM knowledge_source_manifest \
-         WHERE source_kind = 'collection_schema' AND diagnostic_code IS NULL \
-         ORDER BY source_path",
-    )
-    .fetch_all(index_pool)
-    .await?
-    .into_iter()
-    .filter_map(|schema_path| {
-        if schema_path == "schema.yaml" {
-            Some(".".to_string())
-        } else {
-            schema_path
-                .strip_suffix("/schema.yaml")
-                .map(ToString::to_string)
-        }
-    })
-    .collect::<std::collections::BTreeSet<_>>();
-    let observed_at = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
-
-    let mut transaction = routines_pool.begin().await?;
-    sqlx::query("DELETE FROM routine_owner_roots")
-        .execute(&mut *transaction)
-        .await?;
-    for owner_path in owner_paths {
-        sqlx::query("INSERT INTO routine_owner_roots (owner_path) VALUES (?)")
-            .bind(owner_path)
-            .execute(&mut *transaction)
-            .await?;
-    }
-    sqlx::query("DELETE FROM routine_observation_baseline")
-        .execute(&mut *transaction)
-        .await?;
-    for snapshot in snapshots {
-        sqlx::query(
-            "INSERT INTO routine_observation_baseline (entry_path, snapshot_json, observed_at) VALUES (?, ?, ?)",
-        )
-        .bind(&snapshot.entry_path)
-        .bind(serde_json::to_string(&snapshot)?)
-        .bind(&observed_at)
-        .execute(&mut *transaction)
-        .await?;
-    }
-    transaction.commit().await?;
-    Ok(())
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct RoutineScheduleState {
-    pub definition_fingerprint: String,
-    pub checkpoint_at: String,
-    pub next_run_at: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct RemoteRoutineClaim {
-    pub run_key: String,
-    pub claimed_by: String,
-    pub claimed_at: String,
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct QueuedRoutineEvent {
-    pub queue_key: String,
-    pub event_key: String,
-    pub owner_path: String,
-    pub routine_id: String,
-    pub definition_fingerprint: String,
-    pub payload_json: String,
-}
-
-pub(crate) async fn next_pending_event(
-    pool: &SqlitePool,
-    owner_path: &str,
-) -> Result<Option<QueuedRoutineEvent>, AppError> {
-    let row = sqlx::query(
-        r#"SELECT queue_key, event_key, owner_path, routine_id,
-                  definition_fingerprint, payload_json
-           FROM routine_event_queue
-           WHERE owner_path = ? AND state = 'pending'
-             AND NOT EXISTS (
-               SELECT 1 FROM routine_event_queue active
-               WHERE active.owner_path = routine_event_queue.owner_path
-                 AND active.routine_id = routine_event_queue.routine_id
-                 AND active.state = 'active'
-             )
-           ORDER BY observed_at, queue_key LIMIT 1"#,
-    )
-    .bind(owner_path)
-    .fetch_optional(pool)
-    .await?;
-    row.map(|row| {
-        Ok(QueuedRoutineEvent {
-            queue_key: row.try_get("queue_key")?,
-            event_key: row.try_get("event_key")?,
-            owner_path: row.try_get("owner_path")?,
-            routine_id: row.try_get("routine_id")?,
-            definition_fingerprint: row.try_get("definition_fingerprint")?,
-            payload_json: row.try_get("payload_json")?,
-        })
-    })
-    .transpose()
-}
-
-pub(crate) async fn activate_event(
-    pool: &SqlitePool,
-    queue_key: &str,
-    execution_run_id: &str,
-) -> Result<bool, AppError> {
-    let result = sqlx::query(
-        "UPDATE routine_event_queue SET state = 'active', payload_json = json_set(payload_json, '$.executionRunId', ?) WHERE queue_key = ? AND state = 'pending'",
-    )
-    .bind(execution_run_id)
-    .bind(queue_key)
-    .execute(pool)
-    .await?;
-    Ok(result.rows_affected() == 1)
-}
-
-pub(crate) async fn finish_event(
-    pool: &SqlitePool,
-    queue_key: &str,
-    state: &str,
-) -> Result<(), AppError> {
-    debug_assert!(matches!(state, "completed" | "failed" | "pending"));
-    sqlx::query("UPDATE routine_event_queue SET state = ? WHERE queue_key = ?")
-        .bind(state)
-        .bind(queue_key)
-        .execute(pool)
-        .await?;
-    Ok(())
-}
-
-pub(crate) async fn schedule_state(
-    pool: &SqlitePool,
-    owner_path: &str,
-    routine_id: &str,
-) -> Result<Option<RoutineScheduleState>, AppError> {
-    let row = sqlx::query(
-        "SELECT definition_fingerprint, checkpoint_at, next_run_at FROM routine_schedule_state WHERE owner_path = ? AND routine_id = ?",
-    )
-    .bind(owner_path)
-    .bind(routine_id)
-    .fetch_optional(pool)
-    .await?;
-    row.map(|row| {
-        Ok(RoutineScheduleState {
-            definition_fingerprint: row.try_get("definition_fingerprint")?,
-            checkpoint_at: row.try_get("checkpoint_at")?,
-            next_run_at: row.try_get("next_run_at")?,
-        })
-    })
-    .transpose()
-}
-
-pub(crate) async fn write_schedule_state(
-    pool: &SqlitePool,
-    owner_path: &str,
-    routine_id: &str,
-    definition_fingerprint: &str,
-    checkpoint_at: &str,
-    next_run_at: &str,
-) -> Result<(), AppError> {
-    sqlx::query(
-        r#"
-        INSERT INTO routine_schedule_state (
-            owner_path, routine_id, definition_fingerprint, checkpoint_at, next_run_at
-        ) VALUES (?, ?, ?, ?, ?)
-        ON CONFLICT(owner_path, routine_id) DO UPDATE SET
-            definition_fingerprint = excluded.definition_fingerprint,
-            checkpoint_at = excluded.checkpoint_at,
-            next_run_at = excluded.next_run_at
-        "#,
-    )
-    .bind(owner_path)
-    .bind(routine_id)
-    .bind(definition_fingerprint)
-    .bind(checkpoint_at)
-    .bind(next_run_at)
-    .execute(pool)
-    .await?;
-    Ok(())
-}
-
-pub(crate) async fn claim_local_run(
-    pool: &SqlitePool,
-    run_key: &str,
-    routine_id: &str,
-    leased_at: &str,
-    expires_at: &str,
-) -> Result<bool, AppError> {
-    let result = sqlx::query(
-        "INSERT OR IGNORE INTO routine_automatic_leases (run_key, routine_id, leased_at, expires_at) VALUES (?, ?, ?, ?)",
-    )
-    .bind(run_key)
-    .bind(routine_id)
-    .bind(leased_at)
-    .bind(expires_at)
-    .execute(pool)
-    .await?;
-    Ok(result.rows_affected() == 1)
-}
-
-pub(crate) async fn record_remote_claim(
-    pool: &SqlitePool,
-    owner_path: &str,
-    routine_id: &str,
-    run_key: &str,
-    definition_fingerprint: &str,
-    claimed_by: &str,
-    claimed_at: &str,
-) -> Result<(), AppError> {
-    sqlx::query(
-        r#"
-        INSERT OR REPLACE INTO routine_remote_claims (
-            run_key, owner_path, routine_id, definition_fingerprint, claimed_by, claimed_at
-        ) VALUES (?, ?, ?, ?, ?, ?)
-        "#,
-    )
-    .bind(run_key)
-    .bind(owner_path)
-    .bind(routine_id)
-    .bind(definition_fingerprint)
-    .bind(claimed_by)
-    .bind(claimed_at)
-    .execute(pool)
-    .await?;
-    Ok(())
-}
-
-pub(crate) async fn latest_remote_claim(
-    pool: &SqlitePool,
-    owner_path: &str,
-    routine_id: &str,
-) -> Result<Option<RemoteRoutineClaim>, AppError> {
-    let row = sqlx::query(
-        r#"
-        SELECT run_key, claimed_by, claimed_at
-        FROM routine_remote_claims
-        WHERE owner_path = ? AND routine_id = ?
-        ORDER BY claimed_at DESC, run_key DESC
-        LIMIT 1
-        "#,
-    )
-    .bind(owner_path)
-    .bind(routine_id)
-    .fetch_optional(pool)
-    .await?;
-    row.map(|row| {
-        Ok(RemoteRoutineClaim {
-            run_key: row.try_get("run_key")?,
-            claimed_by: row.try_get("claimed_by")?,
-            claimed_at: row.try_get("claimed_at")?,
-        })
-    })
-    .transpose()
-}
+pub(crate) use svode_core::routines::operational::{
+    QueuedRoutineEvent, activate_event, claim_local_run, finish_event, latest_remote_claim,
+    next_pending_event, record_remote_claim, schedule_state, write_schedule_state,
+};
 
 pub(crate) async fn replace_owner_snapshot(
     pool: &SqlitePool,
     snapshot: &RoutineCatalogSnapshot,
 ) -> Result<(), AppError> {
-    let mut transaction = pool.begin().await?;
-    if snapshot.owner.kind == super::model::RoutineOwnerKind::Collection {
-        sqlx::query("INSERT OR IGNORE INTO routine_owner_roots (owner_path) VALUES (?)")
-            .bind(&snapshot.owner.owner_path)
-            .execute(&mut *transaction)
-            .await?;
-    }
-    delete_owner_rows(&mut transaction, &snapshot.owner.owner_path).await?;
-    for row in &snapshot.routines {
-        let Some(routine_id) = row.routine_id.as_deref() else {
-            continue;
-        };
-        let row_json = serde_json::to_string(row)?;
-        sqlx::query(
-            r#"
-            INSERT INTO routine_definitions (
-                owner_path,
-                routine_id,
-                fingerprint,
-                row_json,
-                refreshed_at
-            ) VALUES (?, ?, ?, ?, ?)
-            "#,
-        )
-        .bind(&snapshot.owner.owner_path)
-        .bind(routine_id)
-        .bind(&row.execution_fingerprint)
-        .bind(row_json)
-        .bind(&snapshot.refreshed_at)
-        .execute(&mut *transaction)
-        .await?;
-    }
-    transaction.commit().await?;
+    let rows = snapshot
+        .routines
+        .iter()
+        .filter_map(|row| {
+            row.routine_id.as_ref().map(|routine_id| {
+                Ok(svode_core::routines::operational::DefinitionRow {
+                    routine_id: routine_id.clone(),
+                    fingerprint: row.execution_fingerprint.clone(),
+                    row_json: serde_json::to_string(row)?,
+                })
+            })
+        })
+        .collect::<Result<Vec<_>, serde_json::Error>>()?;
+    svode_core::routines::operational::replace_owner_snapshot(
+        pool,
+        &snapshot.owner.owner_path,
+        snapshot.owner.kind == super::model::RoutineOwnerKind::Collection,
+        &snapshot.refreshed_at,
+        &rows,
+    )
+    .await?;
     Ok(())
 }
 
@@ -344,142 +69,55 @@ pub(crate) struct NewRoutineRun<'a> {
 
 pub(crate) async fn create_run(pool: &SqlitePool, run: NewRoutineRun<'_>) -> Result<(), AppError> {
     let definition_json = serde_json::to_string(run.definition)?;
-    sqlx::query(
-        r#"
-        INSERT INTO routine_runs (
-            routine_run_id, routine_id, owner_path, trigger_type,
-            definition_fingerprint, definition_json, launch_id, source,
-            source_session_id, agent_session_id, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        "#,
+    svode_core::routines::operational::create_run(
+        pool,
+        svode_core::routines::operational::NewRoutineRun {
+            routine_run_id: run.routine_run_id,
+            routine_id: run.routine_id,
+            owner_path: run.owner_path,
+            trigger_type: run.trigger_type,
+            definition_fingerprint: run.definition_fingerprint,
+            definition_json: &definition_json,
+            launch_id: run.launch_id,
+            source: run.source,
+            source_session_id: run.source_session_id,
+            agent_session_id: run.agent_session_id,
+            created_at: run.created_at,
+        },
     )
-    .bind(run.routine_run_id)
-    .bind(run.routine_id)
-    .bind(run.owner_path)
-    .bind(run.trigger_type)
-    .bind(run.definition_fingerprint)
-    .bind(definition_json)
-    .bind(run.launch_id)
-    .bind(run.source)
-    .bind(run.source_session_id)
-    .bind(run.agent_session_id)
-    .bind(run.created_at)
-    .bind(run.created_at)
-    .execute(pool)
     .await?;
     Ok(())
 }
 
-pub(crate) async fn attach_pty(
-    pool: &SqlitePool,
-    routine_run_id: &str,
-    pty_id: &str,
-    observed_at: &str,
-) -> Result<(), AppError> {
-    sqlx::query("UPDATE routine_runs SET pty_id = ?, updated_at = ? WHERE routine_run_id = ?")
-        .bind(pty_id)
-        .bind(observed_at)
-        .bind(routine_run_id)
-        .execute(pool)
-        .await?;
-    Ok(())
-}
-
-pub(crate) async fn record_terminal_outcome(
-    pool: &SqlitePool,
-    routine_run_id: &str,
-    status: RoutineRunTerminalStatus,
-    exit_code: Option<i32>,
-    reason: &str,
-    observed_at: &str,
-) -> Result<(), AppError> {
-    sqlx::query(
-        r#"
-        UPDATE routine_runs
-        SET terminal_status = ?, terminal_exit_code = ?, terminal_reason = ?,
-            terminal_observed_at = ?, session_status = NULL, updated_at = ?
-        WHERE routine_run_id = ?
-        "#,
-    )
-    .bind(status.as_str())
-    .bind(exit_code)
-    .bind(reason)
-    .bind(observed_at)
-    .bind(observed_at)
-    .bind(routine_run_id)
-    .execute(pool)
-    .await?;
-    Ok(())
-}
-
-pub(crate) async fn reconcile_agent_session(
-    pool: &SqlitePool,
-    routine_run_id: &str,
-    source_session_id: &str,
-    agent_session_id: &str,
-    session_status: &str,
-    observed_at: &str,
-) -> Result<(), AppError> {
-    sqlx::query(
-        r#"
-        UPDATE routine_runs
-        SET source_session_id = ?, agent_session_id = ?, session_status = ?, updated_at = ?
-        WHERE routine_run_id = ?
-        "#,
-    )
-    .bind(source_session_id)
-    .bind(agent_session_id)
-    .bind(session_status)
-    .bind(observed_at)
-    .bind(routine_run_id)
-    .execute(pool)
-    .await?;
-    Ok(())
-}
+pub(crate) use svode_core::routines::operational::{
+    attach_pty, reconcile_agent_session, record_terminal_outcome,
+};
 
 pub(crate) async fn latest_run(
     pool: &SqlitePool,
     owner_path: &str,
     routine_id: &str,
 ) -> Result<Option<RoutineRunRecord>, AppError> {
-    let row = sqlx::query(
-        r#"
-        SELECT routine_run_id, routine_id, owner_path, launch_id, pty_id, source,
-               source_session_id, agent_session_id, created_at, terminal_status,
-               terminal_exit_code, terminal_reason, terminal_observed_at, session_status
-        FROM routine_runs
-        WHERE owner_path = ? AND routine_id = ?
-        ORDER BY created_at DESC, routine_run_id DESC
-        LIMIT 1
-        "#,
+    Ok(
+        svode_core::routines::operational::latest_run(pool, owner_path, routine_id)
+            .await?
+            .map(|row| RoutineRunRecord {
+                routine_run_id: row.routine_run_id,
+                routine_id: row.routine_id,
+                owner_path: row.owner_path,
+                launch_id: row.launch_id,
+                pty_id: row.pty_id,
+                source: row.source,
+                source_session_id: row.source_session_id,
+                agent_session_id: row.agent_session_id,
+                created_at: row.created_at,
+                terminal_status: row.terminal_status,
+                terminal_exit_code: row.terminal_exit_code,
+                terminal_reason: row.terminal_reason,
+                terminal_observed_at: row.terminal_observed_at,
+                session_status: row.session_status,
+            }),
     )
-    .bind(owner_path)
-    .bind(routine_id)
-    .fetch_optional(pool)
-    .await?;
-    row.map(routine_run_from_row).transpose()
-}
-
-fn routine_run_from_row(row: sqlx::sqlite::SqliteRow) -> Result<RoutineRunRecord, AppError> {
-    let terminal_status = row.try_get::<Option<String>, _>("terminal_status")?;
-    Ok(RoutineRunRecord {
-        routine_run_id: row.try_get("routine_run_id")?,
-        routine_id: row.try_get("routine_id")?,
-        owner_path: row.try_get("owner_path")?,
-        launch_id: row.try_get("launch_id")?,
-        pty_id: row.try_get("pty_id")?,
-        source: row.try_get("source")?,
-        source_session_id: row.try_get("source_session_id")?,
-        agent_session_id: row.try_get("agent_session_id")?,
-        created_at: row.try_get("created_at")?,
-        terminal_status: terminal_status
-            .as_deref()
-            .and_then(RoutineRunTerminalStatus::from_str),
-        terminal_exit_code: row.try_get("terminal_exit_code")?,
-        terminal_reason: row.try_get("terminal_reason")?,
-        terminal_observed_at: row.try_get("terminal_observed_at")?,
-        session_status: row.try_get("session_status")?,
-    })
 }
 
 pub(crate) struct RoutineRunLifecycleSink {
@@ -591,29 +229,14 @@ impl AgentTerminalLifecycleSink for RoutineRunLifecycleSink {
     }
 }
 
-async fn delete_owner_rows(
-    transaction: &mut Transaction<'_, Sqlite>,
-    owner_path: &str,
-) -> Result<(), AppError> {
-    sqlx::query("DELETE FROM routine_definitions WHERE owner_path = ?")
-        .bind(owner_path)
-        .execute(&mut **transaction)
-        .await?;
-    Ok(())
-}
-
 #[cfg(test)]
 pub(crate) async fn read_owner_rows(
     pool: &SqlitePool,
     owner_path: &str,
 ) -> Result<Vec<RoutineRow>, AppError> {
-    let rows = sqlx::query_scalar::<_, String>(
-        "SELECT row_json FROM routine_definitions WHERE owner_path = ? ORDER BY routine_id",
-    )
-    .bind(owner_path)
-    .fetch_all(pool)
-    .await?;
-    rows.into_iter()
+    svode_core::routines::operational::read_owner_rows_json(pool, owner_path)
+        .await?
+        .into_iter()
         .map(|row| serde_json::from_str(&row).map_err(AppError::Serde))
         .collect()
 }

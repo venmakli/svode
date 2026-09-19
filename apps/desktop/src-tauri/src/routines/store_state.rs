@@ -1,21 +1,21 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::path::Path;
 use std::sync::Arc;
 
 use sqlx::SqlitePool;
-use tokio::sync::Mutex;
 
-use super::{authority, storage};
 use crate::AppError;
 use crate::index::{IndexKey, IndexState};
 
 #[derive(Default)]
 pub struct RoutineStoreState {
-    pools: Mutex<HashMap<IndexKey, SqlitePool>>,
-    open_locks: Mutex<HashMap<IndexKey, Arc<Mutex<()>>>>,
+    core: Arc<svode_core::routines::store_state::RoutineStoreState>,
 }
 
 impl RoutineStoreState {
+    pub(crate) fn core_handle(&self) -> Arc<svode_core::routines::store_state::RoutineStoreState> {
+        self.core.clone()
+    }
     pub fn new() -> Self {
         Self::default()
     }
@@ -25,42 +25,7 @@ impl RoutineStoreState {
         key: &IndexKey,
         space_dir: &Path,
     ) -> Result<SqlitePool, AppError> {
-        if let Some(pool) = self.pools.lock().await.get(key).cloned() {
-            return Ok(pool);
-        }
-
-        let lock = {
-            let mut locks = self.open_locks.lock().await;
-            locks
-                .entry(key.clone())
-                .or_insert_with(|| Arc::new(Mutex::new(())))
-                .clone()
-        };
-        let _guard = lock.lock().await;
-        if let Some(pool) = self.pools.lock().await.get(key).cloned() {
-            return Ok(pool);
-        }
-
-        let previously_created = authority::storage_was_created(space_dir)?;
-        let outcome =
-            storage::open_pool(&storage::database_path(space_dir), previously_created).await?;
-        if let Some(evidence) = outcome.recovery {
-            if let Err(error) = authority::record_recovery(space_dir, evidence) {
-                outcome.pool.close().await;
-                return Err(error);
-            }
-        } else if !previously_created && let Err(error) = authority::mark_storage_ready(space_dir) {
-            outcome.pool.close().await;
-            return Err(error);
-        }
-
-        let mut pools = self.pools.lock().await;
-        if let Some(existing) = pools.get(key) {
-            outcome.pool.close().await;
-            return Ok(existing.clone());
-        }
-        pools.insert(key.clone(), outcome.pool.clone());
-        Ok(outcome.pool)
+        Ok(self.core.get_or_create(key, space_dir).await?)
     }
 
     pub async fn get_or_create_for_index(
@@ -77,49 +42,16 @@ impl RoutineStoreState {
         index_state: &IndexState,
         key: &IndexKey,
     ) -> Result<Vec<String>, AppError> {
-        let pool = self.get_or_create_for_index(index_state, key).await?;
-        Ok(sqlx::query_scalar::<_, String>(
-            "SELECT owner_path FROM routine_owner_roots ORDER BY owner_path",
-        )
-        .fetch_all(&pool)
-        .await?)
+        let space_dir = index_state.dir_for_key(key).await?;
+        Ok(self.core.owner_paths(key, &space_dir).await?)
     }
 
     pub async fn close_key(&self, key: &IndexKey) {
-        let lock = {
-            let mut locks = self.open_locks.lock().await;
-            locks
-                .entry(key.clone())
-                .or_insert_with(|| Arc::new(Mutex::new(())))
-                .clone()
-        };
-        let _guard = lock.lock().await;
-        if let Some(pool) = self.pools.lock().await.remove(key) {
-            tracing::info!(?key, "closing routines pool");
-            pool.close().await;
-        }
+        self.core.close_key(key).await;
     }
 
     pub async fn close_project(&self, project: &Path) {
-        let mut keys = self
-            .pools
-            .lock()
-            .await
-            .keys()
-            .filter(|key| key.project() == project)
-            .cloned()
-            .collect::<HashSet<_>>();
-        keys.extend(
-            self.open_locks
-                .lock()
-                .await
-                .keys()
-                .filter(|key| key.project() == project)
-                .cloned(),
-        );
-        for key in keys {
-            self.close_key(&key).await;
-        }
+        self.core.close_project(project).await;
     }
 
     pub async fn reconcile_project(
@@ -133,38 +65,32 @@ impl RoutineStoreState {
             .into_iter()
             .collect::<HashSet<_>>();
         let stale = self
-            .pools
-            .lock()
+            .core
+            .open_keys_for_project(project)
             .await
-            .keys()
-            .filter(|key| key.project() == project && !desired.contains(*key))
-            .cloned()
+            .into_iter()
+            .filter(|key| !desired.contains(key))
             .collect::<Vec<_>>();
         for key in stale {
-            self.close_key(&key).await;
+            self.core.close_key(&key).await;
         }
         for key in desired {
             let dir = index_state.dir_for_key(&key).await?;
-            self.get_or_create(&key, &dir).await?;
+            self.core.get_or_create(&key, &dir).await?;
         }
         Ok(())
     }
 
     #[cfg(test)]
     async fn keys_for_project(&self, project: &Path) -> Vec<IndexKey> {
-        self.pools
-            .lock()
-            .await
-            .keys()
-            .filter(|key| key.project() == project)
-            .cloned()
-            .collect()
+        self.core.open_keys_for_project(project).await
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
 
     #[tokio::test]
     async fn concurrent_open_uses_one_pool_generation_and_close_drains_clones() {

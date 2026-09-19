@@ -1,5 +1,89 @@
 use serde::Serialize;
 
+impl From<svode_core::collections::CollectionError> for AppError {
+    fn from(error: svode_core::collections::CollectionError) -> Self {
+        match error {
+            svode_core::collections::CollectionError::Io(error) => Self::Io(error),
+            svode_core::collections::CollectionError::Schema(message) => {
+                Self::General(format!("schema error: {message}"))
+            }
+        }
+    }
+}
+
+impl From<svode_core::agent_context::AgentContextError> for AppError {
+    fn from(error: svode_core::agent_context::AgentContextError) -> Self {
+        match error {
+            svode_core::agent_context::AgentContextError::PathNotAccessible(message) => {
+                Self::PathNotAccessible(message)
+            }
+            svode_core::agent_context::AgentContextError::General(message) => {
+                Self::General(message)
+            }
+            svode_core::agent_context::AgentContextError::SourceRegistry(
+                svode_core::agent_adapters::SourceRegistryError::PathNotAccessible(message),
+            ) => Self::PathNotAccessible(message),
+        }
+    }
+}
+
+impl From<svode_core::routines::local::LocalConfigError> for AppError {
+    fn from(error: svode_core::routines::local::LocalConfigError) -> Self {
+        match error {
+            svode_core::routines::local::LocalConfigError::Io(error) => Self::Io(error),
+            svode_core::routines::local::LocalConfigError::Serde(error) => Self::Serde(error),
+            svode_core::routines::local::LocalConfigError::Storage(error) => {
+                Self::Storage(error.to_string())
+            }
+        }
+    }
+}
+
+impl From<svode_core::index::IndexError> for AppError {
+    fn from(error: svode_core::index::IndexError) -> Self {
+        match error {
+            svode_core::index::IndexError::Io(error) => Self::Io(error),
+            svode_core::index::IndexError::Sqlx(error) => Self::Db(error),
+            svode_core::index::IndexError::Git(error) => error.into(),
+            svode_core::index::IndexError::AgentContext(error) => error.into(),
+            svode_core::index::IndexError::SpaceNotFound(id) => Self::SpaceNotFound(id),
+            svode_core::index::IndexError::Index(message) => Self::Index(message),
+        }
+    }
+}
+
+impl From<svode_core::index::update::IndexUpdateError> for AppError {
+    fn from(error: svode_core::index::update::IndexUpdateError) -> Self {
+        match error {
+            svode_core::index::update::IndexUpdateError::Sqlx(error) => Self::Db(error),
+            svode_core::index::update::IndexUpdateError::Index(error) => error.into(),
+            svode_core::index::update::IndexUpdateError::Routine(error) => error.into(),
+            svode_core::index::update::IndexUpdateError::Observation(error) => error.into(),
+        }
+    }
+}
+
+impl From<svode_core::routines::RoutineStoreError> for AppError {
+    fn from(error: svode_core::routines::RoutineStoreError) -> Self {
+        match error {
+            svode_core::routines::RoutineStoreError::Io(error) => Self::Io(error),
+            svode_core::routines::RoutineStoreError::Sqlx(error) => Self::Db(error),
+            svode_core::routines::RoutineStoreError::Index(error) => error.into(),
+            svode_core::routines::RoutineStoreError::Local(error) => error.into(),
+            svode_core::routines::RoutineStoreError::General(message) => Self::General(message),
+        }
+    }
+}
+
+impl From<svode_core::routines::observation::ObservationError> for AppError {
+    fn from(error: svode_core::routines::observation::ObservationError) -> Self {
+        match error {
+            svode_core::routines::observation::ObservationError::Sqlx(error) => Self::Db(error),
+            svode_core::routines::observation::ObservationError::Serde(error) => Self::Serde(error),
+        }
+    }
+}
+
 impl From<svode_core::apps::manifest::AppManifestError> for AppError {
     fn from(error: svode_core::apps::manifest::AppManifestError) -> Self {
         use svode_core::apps::manifest::AppManifestError;

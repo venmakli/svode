@@ -10,7 +10,7 @@ use svode_core::git::state::GitRepositoryState;
 
 static DETECTED_CLI: OnceLock<Option<GitCli>> = OnceLock::new();
 
-pub(super) fn detected_cli() -> Option<GitCli> {
+pub(crate) fn detected_cli() -> Option<GitCli> {
     DETECTED_CLI.get_or_init(|| GitCli::detect().ok()).clone()
 }
 
