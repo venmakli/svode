@@ -909,6 +909,13 @@ mod tests {
                 );
             }
             let mut page = entry::read(space, path).unwrap();
+            let core = svode_core::page::read_page_source(
+                svode_core::page::resolve_page_target(temp.path(), path).unwrap(),
+            )
+            .unwrap();
+            assert_eq!(core.body, page.body);
+            assert_eq!(core.meta.title, page.meta.title);
+            assert_eq!(core.warnings.len(), page.warnings.len());
             let mut expected = serde_json::to_value(&page).unwrap();
             sqlx::query("INSERT INTO entries VALUES (?, 'indexed-created', 'indexed-updated')")
                 .bind(path)

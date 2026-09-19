@@ -330,33 +330,7 @@ pub(crate) fn is_secret_like_source(source_path: &str) -> bool {
 }
 
 pub(crate) fn is_agent_context_source(source_path: &str) -> bool {
-    let path = Path::new(source_path);
-    let filename = path.file_name().and_then(|name| name.to_str());
-    if matches!(
-        filename,
-        Some(
-            "AGENTS.md"
-                | "AGENTS.override.md"
-                | "CLAUDE.md"
-                | "CLAUDE.local.md"
-                | "GEMINI.md"
-                | "SOUL.md"
-                | "USER.md"
-                | "MEMORY.md"
-        )
-    ) {
-        return true;
-    }
-    let components = path
-        .components()
-        .filter_map(|component| match component {
-            Component::Normal(value) => value.to_str(),
-            _ => None,
-        })
-        .collect::<Vec<_>>();
-    components
-        .windows(2)
-        .any(|parts| matches!(parts, [".agents", "skills"] | [".claude", "skills"]))
+    svode_core::page::identity::is_agent_context_source(source_path)
 }
 
 pub(crate) async fn replace_all(

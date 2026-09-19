@@ -1,9 +1,5 @@
 use crate::error::AppError;
-use crate::files::{
-    EntryMeta,
-    entry::{Cover, FrontmatterKeys},
-};
-use std::collections::HashMap;
+use crate::files::EntryMeta;
 
 const FRONTMATTER_DELIMITER: &str = "---";
 
@@ -13,9 +9,7 @@ pub enum ParseStatus {
     Malformed { message: String, body: String },
 }
 
-struct FrontmatterParts<'a> {
-    yaml: &'a str,
-    body: &'a str,
+struct FrontmatterParts {
     body_start: usize,
 }
 
@@ -43,24 +37,20 @@ pub fn parse(content: &str) -> Result<(EntryMeta, String), AppError> {
 }
 
 pub fn parse_status(content: &str) -> ParseStatus {
-    if !content.trim_start().starts_with(FRONTMATTER_DELIMITER) {
-        return ParseStatus::Missing {
-            body: content.to_string(),
-        };
-    }
-
-    match split_frontmatter(content).and_then(|parts| {
-        let meta = parse_yaml_meta(parts.yaml)?;
-        Ok((meta, parts.body.to_string()))
-    }) {
-        Ok((meta, body)) => ParseStatus::Valid { meta, body },
-        Err(error) => ParseStatus::Malformed {
-            message: match error {
-                AppError::FrontmatterParse(message) => message,
-                other => other.to_string(),
-            },
-            body: content.to_string(),
-        },
+    match svode_core::page::parse_markdown(content, "") {
+        svode_core::page::ParsedMarkdown::Missing(body) => ParseStatus::Missing { body },
+        svode_core::page::ParsedMarkdown::Valid(meta, body) => {
+            match EntryMeta::from_source_meta(meta) {
+                Ok(meta) => ParseStatus::Valid { meta, body },
+                Err(error) => ParseStatus::Malformed {
+                    message: error.to_string(),
+                    body: content.to_string(),
+                },
+            }
+        }
+        svode_core::page::ParsedMarkdown::Malformed(message, body) => {
+            ParseStatus::Malformed { message, body }
+        }
     }
 }
 
@@ -76,7 +66,7 @@ pub fn replace_body_preserving_frontmatter(content: &str, body: &str) -> Result<
     Ok(format!("{prefix}{separator}{body}"))
 }
 
-fn split_frontmatter(content: &str) -> Result<FrontmatterParts<'_>, AppError> {
+fn split_frontmatter(content: &str) -> Result<FrontmatterParts, AppError> {
     let leading_len = content.len() - content.trim_start().len();
     let trimmed = &content[leading_len..];
     if !trimmed.starts_with(FRONTMATTER_DELIMITER) {
@@ -101,7 +91,6 @@ fn split_frontmatter(content: &str) -> Result<FrontmatterParts<'_>, AppError> {
             AppError::FrontmatterParse("missing closing frontmatter delimiter '---'".into())
         })?;
 
-    let yaml_str = &after_first[..end_pos];
     let closing_start = yaml_start + end_pos + 1;
     let closing_end = closing_start + FRONTMATTER_DELIMITER.len();
     let body_start = if content[closing_end..].starts_with("\r\n") {
@@ -112,92 +101,7 @@ fn split_frontmatter(content: &str) -> Result<FrontmatterParts<'_>, AppError> {
         closing_end
     };
 
-    Ok(FrontmatterParts {
-        yaml: yaml_str,
-        body: &content[body_start..],
-        body_start,
-    })
-}
-
-fn parse_yaml_meta(yaml_str: &str) -> Result<EntryMeta, AppError> {
-    let value: serde_yml::Value = serde_yml::from_str(yaml_str)
-        .map_err(|e| AppError::FrontmatterParse(format!("invalid YAML frontmatter: {e}")))?;
-    let mapping = match value {
-        serde_yml::Value::Null => serde_yml::Mapping::new(),
-        serde_yml::Value::Mapping(mapping) => mapping,
-        _ => {
-            return Err(AppError::FrontmatterParse(
-                "invalid YAML frontmatter: expected a mapping".into(),
-            ));
-        }
-    };
-
-    let mut frontmatter_keys = FrontmatterKeys::default();
-    let mut title = None;
-    let mut icon = None;
-    let mut description = None;
-    let mut cover = None;
-    let mut extra = HashMap::new();
-
-    for (key, value) in mapping {
-        let serde_yml::Value::String(key) = key else {
-            return Err(AppError::FrontmatterParse(
-                "invalid YAML frontmatter: keys must be strings".into(),
-            ));
-        };
-
-        match key.as_str() {
-            "title" => {
-                frontmatter_keys.title = true;
-                title = Some(parse_string(value, "title")?);
-            }
-            "icon" => {
-                frontmatter_keys.icon = true;
-                icon = parse_optional_string(value, "icon")?;
-            }
-            "description" => {
-                frontmatter_keys.description = true;
-                description = parse_optional_string(value, "description")?;
-            }
-            "cover" => {
-                frontmatter_keys.cover = true;
-                cover = parse_optional_cover(value)?;
-            }
-            custom => {
-                extra.insert(custom.to_string(), value);
-            }
-        }
-    }
-
-    Ok(EntryMeta::from_frontmatter(
-        title.unwrap_or_default(),
-        icon,
-        description,
-        cover,
-        extra,
-        frontmatter_keys,
-    ))
-}
-
-fn parse_string(value: serde_yml::Value, field: &str) -> Result<String, AppError> {
-    serde_yml::from_value(value)
-        .map_err(|e| AppError::FrontmatterParse(format!("invalid YAML frontmatter: {field}: {e}")))
-}
-
-fn parse_optional_string(value: serde_yml::Value, field: &str) -> Result<Option<String>, AppError> {
-    if value.is_null() {
-        return Ok(None);
-    }
-    parse_string(value, field).map(Some)
-}
-
-fn parse_optional_cover(value: serde_yml::Value) -> Result<Option<Cover>, AppError> {
-    if value.is_null() {
-        return Ok(None);
-    }
-    serde_yml::from_value(value)
-        .map(Some)
-        .map_err(|e| AppError::FrontmatterParse(format!("invalid YAML frontmatter: cover: {e}")))
+    Ok(FrontmatterParts { body_start })
 }
 
 /// Serialize frontmatter + body into a full markdown string.

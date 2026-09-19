@@ -339,17 +339,7 @@ fn args_with_quote_path<'a>(args: &'a [&'a str]) -> Vec<&'a str> {
 }
 
 fn resolve_git_binary() -> Result<PathBuf, AppError> {
-    if let Ok(path) = which::which("git") {
-        return Ok(path);
-    }
-
-    for candidate in git_fallback_candidates() {
-        if candidate.is_file() {
-            return Ok(candidate);
-        }
-    }
-
-    Err(AppError::GitNotFound)
+    svode_core::page::dates::detect_git_binary().ok_or(AppError::GitNotFound)
 }
 
 #[derive(Debug, Clone, Default)]
@@ -438,37 +428,6 @@ fn push_parent_dir(out: &mut Vec<PathBuf>, path: PathBuf) {
 }
 
 #[cfg(windows)]
-fn git_fallback_candidates() -> Vec<PathBuf> {
-    let mut out = Vec::new();
-    if let Some(root) = std::env::var_os("ProgramFiles") {
-        out.push(PathBuf::from(&root).join("Git").join("cmd").join("git.exe"));
-        out.push(PathBuf::from(root).join("Git").join("bin").join("git.exe"));
-    }
-    if let Some(root) = std::env::var_os("ProgramFiles(x86)") {
-        out.push(PathBuf::from(root).join("Git").join("cmd").join("git.exe"));
-    }
-    if let Some(root) = std::env::var_os("LOCALAPPDATA") {
-        out.push(
-            PathBuf::from(root)
-                .join("Programs")
-                .join("Git")
-                .join("cmd")
-                .join("git.exe"),
-        );
-    }
-    if let Some(root) = std::env::var_os("USERPROFILE") {
-        out.push(
-            PathBuf::from(root)
-                .join("scoop")
-                .join("shims")
-                .join("git.exe"),
-        );
-    }
-    out.push(PathBuf::from("C:/ProgramData/chocolatey/bin/git.exe"));
-    out
-}
-
-#[cfg(windows)]
 fn git_lfs_fallback_candidates() -> Vec<PathBuf> {
     let mut out = Vec::new();
     if let Some(root) = std::env::var_os("ProgramFiles") {
@@ -503,18 +462,6 @@ fn git_lfs_fallback_candidates() -> Vec<PathBuf> {
     }
     out.push(PathBuf::from("C:/ProgramData/chocolatey/bin/git-lfs.exe"));
     out
-}
-
-#[cfg(not(windows))]
-fn git_fallback_candidates() -> Vec<PathBuf> {
-    [
-        "/usr/bin/git",
-        "/usr/local/bin/git",
-        "/opt/homebrew/bin/git",
-    ]
-    .into_iter()
-    .map(PathBuf::from)
-    .collect()
 }
 
 #[cfg(not(windows))]

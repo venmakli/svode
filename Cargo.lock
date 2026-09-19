@@ -5355,12 +5355,19 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 name = "svode-core"
 version = "0.0.1"
 dependencies = [
+ "chrono",
  "keyring",
  "serde",
  "serde_json",
+ "serde_yml",
  "sha2 0.10.9",
  "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
  "ulid",
+ "unicode-casefold",
+ "unicode-normalization",
+ "which",
 ]
 
 [[package]]

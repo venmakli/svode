@@ -1,5 +1,28 @@
 use serde::Serialize;
 
+impl From<svode_core::page::PageSourceError> for AppError {
+    fn from(error: svode_core::page::PageSourceError) -> Self {
+        use svode_core::page::PageSourceError;
+        match error {
+            PageSourceError::Missing(path) => Self::FileNotFound(path),
+            PageSourceError::SpaceNotFound(id) => Self::SpaceNotFound(id),
+            PageSourceError::InvalidConfig(error) => Self::Serde(error),
+            PageSourceError::InvalidPath(path) | PageSourceError::InvalidOwner(path) => {
+                Self::PathNotAccessible(path)
+            }
+            PageSourceError::InvalidEncoding(path) => Self::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("invalid UTF-8: {path}"),
+            )),
+            PageSourceError::Access(path) => Self::Io(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                path,
+            )),
+            PageSourceError::Io(error) => Self::Io(error),
+        }
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum AppError {
     #[error("IO error: {0}")]
@@ -41,10 +64,18 @@ pub enum AppError {
     #[error("Git command failed: {0}")]
     GitCommandFailed(String),
     #[error("Project publication blocked: {reason:?}")]
-    GitPublicationBlocked { repository: String, child: Option<String>, reason: crate::git::publication::PublicationBlockReason },
+    GitPublicationBlocked {
+        repository: String,
+        child: Option<String>,
+        reason: crate::git::publication::PublicationBlockReason,
+    },
 
-    #[error("Git branch preparation blocked: {reason:?}. Restore the branch and local work in Git, then retry.")]
-    GitBranchBlocked { reason: crate::git::branch::BranchBlockReason },
+    #[error(
+        "Git branch preparation blocked: {reason:?}. Restore the branch and local work in Git, then retry."
+    )]
+    GitBranchBlocked {
+        reason: crate::git::branch::BranchBlockReason,
+    },
 
     #[error("Git save failed during {stage}: {reason} ({path_count} paths)")]
     GitSaveFailed {

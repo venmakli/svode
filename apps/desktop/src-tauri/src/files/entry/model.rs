@@ -104,6 +104,29 @@ pub struct EntryMeta {
 }
 
 impl EntryMeta {
+    pub(crate) fn from_source_meta(
+        source: svode_core::page::PageSourceMeta,
+    ) -> Result<Self, crate::error::AppError> {
+        let cover = source
+            .cover
+            .map(|cover| serde_yml::to_value(cover).and_then(serde_yml::from_value))
+            .transpose()
+            .map_err(|error| crate::error::AppError::FrontmatterParse(error.to_string()))?;
+        Ok(Self::from_frontmatter(
+            source.title,
+            source.icon,
+            source.description,
+            cover,
+            source.extra,
+            FrontmatterKeys {
+                title: source.title_present,
+                icon: source.icon_present,
+                description: source.description_present,
+                cover: source.cover_present,
+            },
+        ))
+    }
+
     pub(crate) fn new_persisted(title: impl Into<String>) -> Self {
         Self {
             title: title.into(),
@@ -201,14 +224,6 @@ pub struct EntryWarning {
 }
 
 impl EntryWarning {
-    pub(super) fn malformed_frontmatter(message: String) -> Self {
-        Self {
-            kind: "malformed_frontmatter".to_string(),
-            message,
-            path: None,
-        }
-    }
-
     pub(super) fn filename_projection(path: &str, reasons: &str) -> Self {
         Self {
             kind: "filename_projection".to_string(),

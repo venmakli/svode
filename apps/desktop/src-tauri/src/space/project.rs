@@ -158,46 +158,15 @@ pub fn open_project_folder(
     )
 }
 
-fn gitmodules_contains_path(parent_path: &Path, space_path: &str) -> bool {
-    let gitmodules = parent_path.join(".gitmodules");
-    if !gitmodules.exists() {
-        return false;
-    }
-    let content = std::fs::read_to_string(gitmodules).unwrap_or_default();
-    content.lines().any(|line| {
-        let trimmed = line.trim();
-        let Some(rest) = trimmed.strip_prefix("path") else {
-            return false;
-        };
-        let Some((_, value)) = rest.split_once('=') else {
-            return false;
-        };
-        value.trim() == space_path
-    })
-}
-
-fn submodule_checkout_ready(parent_path: &Path, space_path: &str) -> bool {
-    parent_path
-        .join(space_path)
-        .join(".git")
-        .symlink_metadata()
-        .is_ok()
-}
-
 pub fn space_ref_status(parent_path: &Path, space_ref: &SpaceRef) -> SpaceStatus {
-    let space_path = parent_path.join(&space_ref.path);
-    let is_submodule = gitmodules_contains_path(parent_path, &space_ref.path);
-
-    if space_path.exists() {
-        if is_submodule && !submodule_checkout_ready(parent_path, &space_ref.path) {
-            SpaceStatus::Missing
-        } else {
-            SpaceStatus::Ready
-        }
-    } else if space_ref.repo.is_some() || is_submodule {
-        SpaceStatus::Missing
-    } else {
-        SpaceStatus::Broken
+    match svode_core::page::space_reference_status(
+        parent_path,
+        &space_ref.path,
+        space_ref.repo.as_deref(),
+    ) {
+        svode_core::page::SpaceReadiness::Ready => SpaceStatus::Ready,
+        svode_core::page::SpaceReadiness::Missing => SpaceStatus::Missing,
+        svode_core::page::SpaceReadiness::Broken => SpaceStatus::Broken,
     }
 }
 

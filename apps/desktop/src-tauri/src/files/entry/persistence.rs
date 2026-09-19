@@ -7,36 +7,12 @@ use crate::files::frontmatter::{self, ParseStatus};
 use super::{Entry, EntryMeta, EntryWarning, title_from_stem};
 
 /// Current UTC timestamp in RFC 3339 format.
-fn now_rfc3339() -> String {
-    chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
-}
-
-/// Convert filesystem timestamp to RFC 3339 string, falling back to now.
-fn system_time_to_rfc3339(st: std::io::Result<std::time::SystemTime>) -> String {
-    st.ok()
-        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-        .map(|d| {
-            chrono::DateTime::from_timestamp(d.as_secs() as i64, d.subsec_nanos())
-                .unwrap_or_else(chrono::Utc::now)
-                .to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
-        })
-        .unwrap_or_else(now_rfc3339)
-}
-
 fn derived_file_dates(abs_path: &Path) -> Result<(String, String), AppError> {
-    let fs_meta = fs::metadata(abs_path)?;
-    Ok((
-        system_time_to_rfc3339(fs_meta.created()),
-        system_time_to_rfc3339(fs_meta.modified()),
-    ))
+    svode_core::page::filesystem_dates(abs_path).map_err(Into::into)
 }
 
 pub(super) fn fallback_title_for_path(path: &str) -> String {
-    let stem = Path::new(path)
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("untitled");
-    title_from_stem(stem)
+    svode_core::page::fallback_title(path)
 }
 
 pub(super) fn meta_for_file_without_frontmatter(
@@ -68,57 +44,31 @@ pub(super) fn apply_runtime_metadata(
 
 /// Read an entry from disk without mutating a missing or malformed frontmatter block.
 pub fn read(space: &str, path: &str) -> Result<Entry, AppError> {
-    let abs_path = Path::new(space).join(path);
+    let target = svode_core::page::resolve_page_target(Path::new(space), path)?;
+    let source = svode_core::page::read_page_source(target)?;
+    entry_from_source(source)
+}
 
-    if !abs_path.exists() {
-        return Err(AppError::FileNotFound(path.to_string()));
-    }
-
-    let content = fs::read_to_string(&abs_path)?;
-
-    let name_conflict = crate::files::naming::document_name_conflict(
-        Path::new(space),
-        path,
-        &match frontmatter::parse_status(&content) {
-            ParseStatus::Valid { ref meta, .. } if meta.frontmatter_keys.title => {
-                meta.title.clone()
-            }
-            _ => fallback_title_for_path(path),
-        },
-    )?;
-
-    match frontmatter::parse_status(&content) {
-        ParseStatus::Valid { mut meta, body } => {
-            apply_runtime_metadata(&mut meta, &abs_path, path)?;
-            Ok(Entry {
-                meta,
-                body,
-                path: path.to_string(),
-                warnings: Vec::new(),
-                name_conflict,
+pub(crate) fn entry_from_source(source: svode_core::page::PageSource) -> Result<Entry, AppError> {
+    let source_meta = source.meta;
+    let mut meta = EntryMeta::from_source_meta(source_meta)?;
+    meta.created = source.created;
+    meta.updated = source.updated;
+    Ok(Entry {
+        meta,
+        body: source.body,
+        path: source.target.path,
+        warnings: source
+            .warnings
+            .into_iter()
+            .map(|warning| EntryWarning {
+                kind: warning.kind,
+                message: warning.message,
+                path: None,
             })
-        }
-        ParseStatus::Missing { body } => {
-            let meta = meta_for_file_without_frontmatter(&abs_path, path)?;
-            Ok(Entry {
-                meta,
-                body,
-                path: path.to_string(),
-                warnings: Vec::new(),
-                name_conflict,
-            })
-        }
-        ParseStatus::Malformed { message, body } => {
-            let meta = meta_for_file_without_frontmatter(&abs_path, path)?;
-            Ok(Entry {
-                meta,
-                body,
-                path: path.to_string(),
-                warnings: vec![EntryWarning::malformed_frontmatter(message)],
-                name_conflict,
-            })
-        }
-    }
+            .collect(),
+        name_conflict: source.name_conflict,
+    })
 }
 
 pub(super) fn read_existing(abs_path: &Path) -> Result<(String, ParseStatus), AppError> {

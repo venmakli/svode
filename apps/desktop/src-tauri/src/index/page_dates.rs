@@ -14,8 +14,14 @@ pub(crate) async fn apply_indexed_dates(pool: &SqlitePool, path: &str, page: &mu
     else {
         return;
     };
-    page.meta.created = created;
-    page.meta.updated = updated;
+    svode_core::page::dates::apply_date_override(
+        &mut page.meta.created,
+        &mut page.meta.updated,
+        Some(&svode_core::page::dates::EntryDateOverride {
+            created: Some(created),
+            updated: Some(updated),
+        }),
+    );
 }
 
 #[cfg(test)]

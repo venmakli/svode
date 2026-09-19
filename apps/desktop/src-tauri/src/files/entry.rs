@@ -1,7 +1,6 @@
 mod model;
 mod persistence;
 
-pub(crate) use model::FrontmatterKeys;
 pub use model::{
     ColorName, Cover, DeleteResult, Entry, EntryDetailForm, EntryDetailState, EntryMeta,
     EntryWarning, WriteResult,
