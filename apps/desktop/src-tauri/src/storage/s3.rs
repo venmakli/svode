@@ -143,7 +143,7 @@ pub fn ensure_agent_gitignore(space_dir: &Path) -> Result<(), AppError> {
 /// to the host executable (production / `tauri build`), then falls back to
 /// the `src-tauri/binaries/lfs-dal-<triple>` artifact written by
 /// `scripts/build-lfs-dal.mjs` (dev mode), and finally to the cargo target
-/// dir of the standalone crate. Returns an absolute path so git's
+/// shared Cargo workspace output. Returns an absolute path so git's
 /// `lfs.customtransfer.lfs-dal.path` config never relies on cwd.
 pub fn resolve_agent_binary(_app_handle: &tauri::AppHandle) -> Result<PathBuf, AppError> {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -170,16 +170,18 @@ pub fn resolve_agent_binary(_app_handle: &tauri::AppHandle) -> Result<PathBuf, A
         }
     }
 
-    // 3. Last-ditch dev fallback — the crate's own cargo target dir, in case
-    //    someone ran `cargo build` by hand without going through the script.
-    for profile in ["release", "debug"] {
+    // 3. Last-ditch dev fallback for direct Cargo builds in the shared workspace.
+    let workspace_dir = manifest_dir.join("../../..");
+    let target_dir = std::env::var_os("CARGO_TARGET_DIR")
+        .filter(|value| PathBuf::from(value).is_absolute())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| workspace_dir.join("target"));
+    for profile in ["lfs-release", "release", "debug"] {
         for name in lfs_dal_plain_names() {
-            candidates.push(
-                manifest_dir
-                    .join("../../crates/lfs-dal/target")
-                    .join(profile)
-                    .join(name),
-            );
+            candidates.push(target_dir.join(profile).join(&name));
+            if let Some(triple) = triple.as_deref() {
+                candidates.push(target_dir.join(triple).join(profile).join(&name));
+            }
         }
     }
 

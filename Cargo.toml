@@ -1,0 +1,10 @@
+[workspace]
+members = ["apps/desktop/src-tauri", "crates/svode-core", "crates/lfs-dal"]
+resolver = "3"
+
+[profile.lfs-release]
+inherits = "release"
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true

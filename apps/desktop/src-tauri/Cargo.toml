@@ -1,10 +1,10 @@
 [package]
-name = "svode"
+name = "svode-desktop"
 version = "0.0.8"
 authors = ["Kamnev Ilya"]
 edition = "2024"
 repository = "https://github.com/venmakli/svode"
-default-run = "svode"
+default-run = "svode-desktop"
 
 [lib]
 name = "svode_lib"

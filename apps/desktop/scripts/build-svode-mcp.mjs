@@ -14,10 +14,12 @@ import {
 } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { cargoTargetDir } from "./cargo-target.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const crateDir = resolve(__dirname, "../src-tauri");
 const binariesDir = resolve(crateDir, "binaries");
+const targetDir = cargoTargetDir();
 
 function rustcHostTriple() {
   const out = execFileSync("rustc", ["-vV"], { encoding: "utf8" });
@@ -54,13 +56,7 @@ function copyIfChanged(src, dest) {
 
 function builtBinaryPath(triple) {
   const exeSuffix = exeSuffixForTarget(triple);
-  return resolve(
-    crateDir,
-    "target",
-    triple,
-    "release",
-    `svode-mcp${exeSuffix}`,
-  );
+  return resolve(targetDir, triple, "release", `svode-mcp${exeSuffix}`);
 }
 
 function sidecarPath(triple) {
@@ -90,9 +86,19 @@ function buildTarget(triple) {
   ensureBuildPlaceholder(triple);
   run(
     "cargo",
-    ["build", "--release", "--bin", "svode-mcp", "--target", triple],
+    [
+      "build",
+      "-p",
+      "svode-desktop",
+      "--release",
+      "--bin",
+      "svode-mcp",
+      "--target",
+      triple,
+    ],
     {
       cwd: crateDir,
+      env: { ...process.env, CARGO_TARGET_DIR: targetDir },
     },
   );
 

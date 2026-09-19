@@ -16,10 +16,12 @@ import {
 } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { cargoTargetDir } from "./cargo-target.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const crateDir = resolve(__dirname, "../../../crates/lfs-dal");
 const binariesDir = resolve(__dirname, "../src-tauri/binaries");
+const targetDir = cargoTargetDir();
 
 function rustcHostTriple() {
   const out = execFileSync("rustc", ["-vV"], { encoding: "utf8" });
@@ -56,19 +58,23 @@ function copyIfChanged(src, dest) {
 
 function builtBinaryPath(triple) {
   const exeSuffix = exeSuffixForTarget(triple);
-  return resolve(crateDir, "target", triple, "release", `lfs-dal${exeSuffix}`);
+  return resolve(targetDir, triple, "lfs-release", `lfs-dal${exeSuffix}`);
 }
 
 function sidecarPath(triple) {
-  return resolve(
-    binariesDir,
-    `lfs-dal-${triple}${exeSuffixForTarget(triple)}`,
-  );
+  return resolve(binariesDir, `lfs-dal-${triple}${exeSuffixForTarget(triple)}`);
 }
 
 function buildTarget(triple) {
   console.log(`[lfs-dal] building for ${triple}`);
-  run("cargo", ["build", "--release", "--target", triple], { cwd: crateDir });
+  run(
+    "cargo",
+    ["build", "-p", "lfs-dal", "--profile", "lfs-release", "--target", triple],
+    {
+      cwd: crateDir,
+      env: { ...process.env, CARGO_TARGET_DIR: targetDir },
+    },
+  );
 
   const built = builtBinaryPath(triple);
   if (!existsSync(built)) {
@@ -79,7 +85,9 @@ function buildTarget(triple) {
 
 function lipoUniversal(inputs, dest) {
   if (process.platform !== "darwin") {
-    throw new Error("universal-apple-darwin sidecars can only be built on macOS");
+    throw new Error(
+      "universal-apple-darwin sidecars can only be built on macOS",
+    );
   }
   mkdirSync(dirname(dest), { recursive: true });
   rmSync(dest, { force: true });
@@ -89,15 +97,15 @@ function lipoUniversal(inputs, dest) {
 
 function tauriTargetBinaryPath(triple) {
   return resolve(
-    __dirname,
-    "../src-tauri/target",
+    targetDir,
     triple,
-    "release",
+    "lfs-release",
     `lfs-dal${exeSuffixForTarget(triple)}`,
   );
 }
 
-const requestedTriple = process.env.TAURI_ENV_TARGET_TRIPLE || rustcHostTriple();
+const requestedTriple =
+  process.env.TAURI_ENV_TARGET_TRIPLE || rustcHostTriple();
 const targets =
   requestedTriple === "universal-apple-darwin"
     ? ["aarch64-apple-darwin", "x86_64-apple-darwin"]

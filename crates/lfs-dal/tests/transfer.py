@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """macOS process regression: real sidecar, Git LFS and loopback S3 fixture.
 
-Run after cargo build: python3 tests/transfer.py target/debug/lfs-dal
+Run after cargo build: python3 tests/transfer.py ../../target/debug/lfs-dal
 Creates two unique synthetic Keychain entries and deletes them in finally.
 All repositories, S3 objects and caches are disposable; no user config is read.
 """

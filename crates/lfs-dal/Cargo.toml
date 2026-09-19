@@ -18,9 +18,3 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-std", "io-
 opendal = { version = "0.55", features = ["services-s3"] }
 anyhow = "1"
 tempfile = "3"
-
-[profile.release]
-opt-level = "z"
-lto = true
-codegen-units = 1
-strip = true
