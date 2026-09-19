@@ -26,7 +26,7 @@ use crate::files::backlinks::{
     is_backlink_discoverable_path, is_external_or_anchor_url, link_stem, markdown_url_path,
     rebase_source_links_between, replace_link_urls_between,
 };
-use crate::files::tree_policy::TreeIgnorePolicy;
+use svode_core::content_tree::policy::TreeIgnorePolicy;
 use crate::git::access::ensure_mutation_paths_were_authorized;
 use crate::repo_path::{RootMode, normalize_repo_relative, repo_relative_from_path};
 use crate::space::types::{SpaceConfig, SpaceStatus};

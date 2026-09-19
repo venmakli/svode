@@ -1,6 +1,6 @@
 use std::path::{Component, Path, PathBuf};
 
-use crate::space::config::read_space_config;
+use super::read_tree_config;
 
 const SYSTEM_EXCLUDED_DIRS: &[&str] = &[".git", ".svode", ".assets", ".templates"];
 const SYSTEM_EXCLUDED_FILE_NAMES: &[&str] = &[
@@ -40,7 +40,7 @@ impl TreeIgnorePolicy {
 
     pub fn from_space_root(root: &Path) -> Self {
         let mut policy = Self::system_only(root);
-        let Ok(config) = read_space_config(root) else {
+        let Some(config) = read_tree_config(root) else {
             return policy;
         };
         let Some(tree) = config.tree else {

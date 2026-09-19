@@ -8,10 +8,10 @@ use serde::Serialize;
 use tauri::{AppHandle, Manager, State};
 
 use crate::error::AppError;
+use svode_core::content_tree::policy::{TreeIgnorePolicy, TreePathKind};
 use crate::files::{
     BacklinkIndex, BacklinkInfo, Entry, FileWatcher, LinkValidation, TreeNode, WriteNonceRegistry,
     WriteResult, entry, link_fix, templates, tree,
-    tree_policy::{TreeIgnorePolicy, TreePathKind},
 };
 use crate::files::{TemplateInfo, TemplateKind};
 use crate::git::access::{

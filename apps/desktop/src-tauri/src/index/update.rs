@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
 use crate::error::AppError;
-use crate::files::tree_policy::TreeIgnorePolicy;
+use svode_core::content_tree::policy::TreeIgnorePolicy;
 use crate::git::dates::derive_date_overrides;
 use crate::index::normalize_rel_result;
 use crate::index::reindex::{
@@ -567,7 +567,7 @@ pub(crate) fn folded_collection_artifact(
         return None;
     }
     let policy = TreeIgnorePolicy::from_space_root(space_dir);
-    if policy.is_ignored_abs(&schema_path, crate::files::tree_policy::TreePathKind::File) {
+    if policy.is_ignored_abs(&schema_path, svode_core::content_tree::policy::TreePathKind::File) {
         return None;
     }
     let projection =

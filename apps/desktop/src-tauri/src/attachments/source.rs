@@ -6,7 +6,7 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 
 use crate::AppError;
-use crate::artifact::children::{DirectoryFacts, DirectoryKind, is_regular_source};
+use svode_core::content_tree::children::{DirectoryFacts, DirectoryKind, is_regular_source};
 use crate::artifact::identity::{
     ArtifactKind, MarkdownIdentityFacts, SourceShape, resolve_markdown_identity,
 };

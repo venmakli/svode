@@ -6,7 +6,7 @@ use std::sync::Arc;
 use serde::Serialize;
 
 use crate::error::AppError;
-use crate::files::tree_policy::{TreeIgnorePolicy, TreePathKind};
+use svode_core::content_tree::policy::{TreeIgnorePolicy, TreePathKind};
 use crate::files::{BacklinkIndex, Entry, ModifiedLinkSource, entry};
 use crate::git::access::ensure_mutation_paths_were_authorized;
 use crate::git::autocommit::{AutocommitService, StructuralOp};

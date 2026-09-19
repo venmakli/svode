@@ -24,8 +24,7 @@ pub fn try_parse(content: &str) -> Result<Option<(EntryMeta, String)>, AppError>
     }
 }
 
-/// Parse a markdown file's content into (frontmatter, body).
-/// Returns an error if frontmatter is missing or malformed.
+#[cfg(test)]
 pub fn parse(content: &str) -> Result<(EntryMeta, String), AppError> {
     match parse_status(content) {
         ParseStatus::Valid { meta, body } => Ok((meta, body)),

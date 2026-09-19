@@ -397,66 +397,28 @@ pub fn delete_space(
 
 /// List spaces of a space by reading its config and resolving paths.
 pub fn list_spaces(parent_path: &Path) -> Result<Vec<SpaceInfo>, AppError> {
-    let parent_config = config::read_space_config(parent_path)?;
-    let mut result = Vec::new();
-
-    if let Some(spaces) = &parent_config.spaces {
-        for space_ref in spaces {
-            let space_path = parent_path.join(&space_ref.path);
-            let status = space_ref_status(parent_path, space_ref);
-
-            if matches!(status, SpaceStatus::Ready) {
-                let space_config = config::read_space_config(&space_path).ok();
-                result.push(SpaceInfo {
-                    id: space_ref.id.clone(),
-                    name: space_config
-                        .as_ref()
-                        .map(|c| c.name.clone())
-                        .unwrap_or_else(|| {
-                            space_path
-                                .file_name()
-                                .map(|n| n.to_string_lossy().to_string())
-                                .unwrap_or_default()
-                        }),
-                    icon: space_config
-                        .as_ref()
-                        .map(|c| c.icon.clone())
-                        .unwrap_or_default(),
-                    description: space_config
-                        .as_ref()
-                        .map(|c| c.description.clone())
-                        .unwrap_or_default(),
-                    path: system_path::user_facing_path(&space_path),
-                    has_spaces: space_config
-                        .as_ref()
-                        .and_then(|c| c.spaces.as_ref())
-                        .map(|s| !s.is_empty())
-                        .unwrap_or(false),
-                    has_schema: has_schema_capability(&space_path, status),
-                    has_app: has_app_capability(&space_path, status),
-                    last_opened: None,
-                    status,
-                    lfs_state: LfsState::NotApplicable,
-                });
-            } else {
-                result.push(SpaceInfo {
-                    id: space_ref.id.clone(),
-                    name: space_ref.path.clone(),
-                    icon: String::new(),
-                    description: String::new(),
-                    path: system_path::user_facing_path(&space_path),
-                    has_spaces: false,
-                    has_schema: has_schema_capability(&space_path, status),
-                    has_app: has_app_capability(&space_path, status),
-                    last_opened: None,
-                    status,
-                    lfs_state: LfsState::NotApplicable,
-                });
-            }
-        }
-    }
-
-    Ok(result)
+    Ok(
+        svode_core::content_tree::list_project_children(parent_path)?
+            .into_iter()
+            .map(|child| SpaceInfo {
+                id: child.id,
+                name: child.name,
+                icon: child.icon,
+                description: child.description,
+                path: system_path::user_facing_path(&child.path),
+                has_spaces: child.has_spaces,
+                has_schema: child.has_schema,
+                has_app: child.has_app,
+                last_opened: None,
+                status: match child.status {
+                    svode_core::page::SpaceReadiness::Ready => SpaceStatus::Ready,
+                    svode_core::page::SpaceReadiness::Missing => SpaceStatus::Missing,
+                    svode_core::page::SpaceReadiness::Broken => SpaceStatus::Broken,
+                },
+                lfs_state: LfsState::NotApplicable,
+            })
+            .collect(),
+    )
 }
 
 /// Reorder child spaces in the root project's `.svode/config.json`.

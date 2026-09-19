@@ -182,7 +182,7 @@ where
         planned_paths.extend(crate::space::structural::collect_markdown_paths(
             root,
             root,
-            &crate::files::tree_policy::TreeIgnorePolicy::from_space_root(root),
+            &svode_core::content_tree::policy::TreeIgnorePolicy::from_space_root(root),
         )?);
         planned_paths.push(root.join(old));
         planned_paths.push(root.join(new_parent).join("README.md"));

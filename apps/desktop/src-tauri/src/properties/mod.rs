@@ -10,7 +10,7 @@ use sqlx::{QueryBuilder, Row, Sqlite, SqlitePool};
 use crate::error::AppError;
 use crate::files::entry::{ColorName, EntryMeta};
 use crate::files::tree::child_folder_names;
-use crate::files::tree_policy::{TreeIgnorePolicy, TreePathKind};
+use svode_core::content_tree::policy::{TreeIgnorePolicy, TreePathKind};
 use crate::files::{entry, frontmatter};
 use crate::git::access::ensure_mutation_paths_were_authorized;
 use crate::git::cli::GitCli;

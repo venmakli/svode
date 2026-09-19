@@ -3,14 +3,14 @@ use std::path::Path;
 
 /// Surface adapters supply visible, structurally safe direct source facts.
 #[derive(Clone, Copy, Debug, Default)]
-pub(crate) struct DirectoryFacts {
+pub struct DirectoryFacts {
     pub has_head: bool,
     pub has_schema: bool,
     pub has_app: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum DirectoryKind {
+pub enum DirectoryKind {
     Collection,
     Page,
     App,
@@ -35,6 +35,6 @@ impl DirectoryFacts {
     }
 }
 
-pub(crate) fn is_regular_source(path: &Path) -> bool {
+pub fn is_regular_source(path: &Path) -> bool {
     fs::symlink_metadata(path).is_ok_and(|metadata| metadata.is_file())
 }

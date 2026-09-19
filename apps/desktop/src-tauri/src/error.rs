@@ -1,5 +1,18 @@
 use serde::Serialize;
 
+impl From<svode_core::content_tree::ContentTreeError> for AppError {
+    fn from(error: svode_core::content_tree::ContentTreeError) -> Self {
+        use svode_core::content_tree::ContentTreeError;
+        match error {
+            ContentTreeError::Io(error) => Self::Io(error),
+            ContentTreeError::Serde(error) => Self::Serde(error),
+            ContentTreeError::FileNotFound(path) => Self::FileNotFound(path),
+            ContentTreeError::PathNotAccessible(path) => Self::PathNotAccessible(path),
+            ContentTreeError::Source(error) => error.into(),
+        }
+    }
+}
+
 impl From<svode_core::page::PageSourceError> for AppError {
     fn from(error: svode_core::page::PageSourceError) -> Self {
         use svode_core::page::PageSourceError;

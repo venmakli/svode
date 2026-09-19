@@ -163,7 +163,7 @@ async fn prepare(
             moved_sources = crate::space::structural::collect_markdown_paths(
                 root,
                 &root.join(folder),
-                &crate::files::tree_policy::TreeIgnorePolicy::from_space_root(root),
+                &svode_core::content_tree::policy::TreeIgnorePolicy::from_space_root(root),
             )?;
             paths.extend(moved_sources.clone());
         }

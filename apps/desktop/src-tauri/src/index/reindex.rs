@@ -7,7 +7,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::error::AppError;
 use crate::files::frontmatter;
-use crate::files::tree_policy::{TreeIgnorePolicy, TreePathKind};
+use svode_core::content_tree::policy::{TreeIgnorePolicy, TreePathKind};
 use crate::git::dates::{EntryDateOverride, derive_date_overrides};
 use crate::index::normalize_rel_root_result;
 use crate::index::reconcile::{MAX_INDEXED_MARKDOWN_BYTES, SourceManifestRecord};

@@ -6,7 +6,7 @@ use std::sync::Mutex;
 use serde::{Deserialize, Serialize};
 
 use crate::error::AppError;
-use crate::files::tree_policy::{TreeIgnorePolicy, TreePathKind};
+use svode_core::content_tree::policy::{TreeIgnorePolicy, TreePathKind};
 use crate::files::{entry::slugify, filename};
 
 /// Byte span of a markdown link `[text](url)` in the source content.
