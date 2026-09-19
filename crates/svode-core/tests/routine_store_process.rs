@@ -42,11 +42,14 @@ async fn core_opens_one_operational_store_and_preserves_it_across_reopen() {
 
     stores.close_project(&owner).await;
     assert!(pools.iter().all(sqlx::SqlitePool::is_closed));
-    let reopened = stores.get_or_create(&key, &owner).await.unwrap();
+    let reopened = stores.reopen_current(&key, &owner).await.unwrap();
+    let reader = stores.get_or_create(&key, &owner).await.unwrap();
     assert_eq!(
         stores.owner_paths(&key, &owner).await.unwrap(),
         vec!["scope".to_string()]
     );
     assert!(!reopened.is_closed());
     stores.close_key(&key).await;
+    assert!(reopened.is_closed());
+    assert!(reader.is_closed());
 }

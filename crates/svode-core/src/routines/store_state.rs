@@ -24,7 +24,14 @@ impl RoutineStoreState {
         key: &IndexKey,
         space_dir: &Path,
     ) -> Result<SqlitePool, RoutineStoreError> {
-        if let Some(pool) = self.pools.lock().await.get(key).cloned() {
+        if let Some(pool) = self
+            .pools
+            .lock()
+            .await
+            .get(key)
+            .cloned()
+            .filter(|pool| !pool.is_closed())
+        {
             return Ok(pool);
         }
         let lock = {
@@ -35,9 +42,17 @@ impl RoutineStoreState {
                 .clone()
         };
         let _guard = lock.lock().await;
-        if let Some(pool) = self.pools.lock().await.get(key).cloned() {
+        if let Some(pool) = self
+            .pools
+            .lock()
+            .await
+            .get(key)
+            .cloned()
+            .filter(|pool| !pool.is_closed())
+        {
             return Ok(pool);
         }
+        self.pools.lock().await.remove(key);
         let previously_created = authority::storage_was_created(space_dir)?;
         let outcome =
             storage::open_pool(&storage::database_path(space_dir), previously_created).await?;
@@ -57,6 +72,37 @@ impl RoutineStoreState {
         }
         pools.insert(key.clone(), outcome.pool.clone());
         Ok(outcome.pool)
+    }
+
+    /// Reconnect a lifecycle sink to the current operational store without
+    /// creating or recovering storage outside the shared per-owner lock.
+    pub async fn reopen_current(
+        &self,
+        key: &IndexKey,
+        space_dir: &Path,
+    ) -> Result<SqlitePool, RoutineStoreError> {
+        let lock = {
+            let mut locks = self.open_locks.lock().await;
+            locks
+                .entry(key.clone())
+                .or_insert_with(|| Arc::new(Mutex::new(())))
+                .clone()
+        };
+        let _guard = lock.lock().await;
+        if let Some(pool) = self
+            .pools
+            .lock()
+            .await
+            .get(key)
+            .cloned()
+            .filter(|pool| !pool.is_closed())
+        {
+            return Ok(pool);
+        }
+        self.pools.lock().await.remove(key);
+        let pool = storage::reopen_current_pool(&storage::database_path(space_dir)).await?;
+        self.pools.lock().await.insert(key.clone(), pool.clone());
+        Ok(pool)
     }
 
     pub async fn owner_paths(

@@ -532,7 +532,9 @@ pub(super) async fn dispatch_routine(
         routine_run_id: Some(routine_run_id.clone()),
         lifecycle_sink: Some(Arc::new(cache::RoutineRunLifecycleSink::with_invalidation(
             pool.clone(),
-            super::storage::database_path(&owner.space_path),
+            routine_stores.core_handle(),
+            owner.index_key.clone(),
+            owner.space_path.clone(),
             routine_run_id.clone(),
             app.clone(),
             &owner,

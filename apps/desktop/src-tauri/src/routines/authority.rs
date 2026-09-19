@@ -2,13 +2,13 @@ use std::path::Path;
 
 use super::model::{ResolvedRoutineOwner, RoutineOwnerInputKind};
 use super::service;
-#[cfg(test)]
-use super::storage::RecoveryEvidence;
 use crate::AppError;
 use crate::index::{IndexKey, IndexState};
 use crate::routines::RoutineStoreState;
 #[cfg(test)]
 use crate::space::config;
+#[cfg(test)]
+use svode_core::routines::storage::RecoveryEvidence;
 
 pub(crate) fn read(owner: &ResolvedRoutineOwner) -> Result<bool, AppError> {
     Ok(svode_core::routines::authority::read_key(

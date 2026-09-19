@@ -1,12 +1,14 @@
 #[cfg(test)]
 use std::path::Path;
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use sqlx::SqlitePool;
 
 #[cfg(test)]
 use svode_core::routines::observation::reconcile_projection_from_index;
+#[cfg(test)]
+use svode_core::routines::storage;
 
 #[cfg(test)]
 use super::model::RoutineRow;
@@ -122,17 +124,27 @@ pub(crate) async fn latest_run(
 
 pub(crate) struct RoutineRunLifecycleSink {
     pool: Mutex<SqlitePool>,
-    db_path: PathBuf,
+    store: Arc<svode_core::routines::store_state::RoutineStoreState>,
+    key: crate::index::IndexKey,
+    space_dir: PathBuf,
     routine_run_id: String,
     invalidation: Option<(tauri::AppHandle, super::model::RoutineInvalidationPayload)>,
 }
 
 impl RoutineRunLifecycleSink {
     #[cfg(test)]
-    pub(crate) fn new(pool: SqlitePool, db_path: PathBuf, routine_run_id: String) -> Self {
+    pub(crate) fn new(
+        pool: SqlitePool,
+        store: Arc<svode_core::routines::store_state::RoutineStoreState>,
+        key: crate::index::IndexKey,
+        space_dir: PathBuf,
+        routine_run_id: String,
+    ) -> Self {
         Self {
             pool: Mutex::new(pool),
-            db_path,
+            store,
+            key,
+            space_dir,
             routine_run_id,
             invalidation: None,
         }
@@ -140,14 +152,18 @@ impl RoutineRunLifecycleSink {
 
     pub(crate) fn with_invalidation(
         pool: SqlitePool,
-        db_path: PathBuf,
+        store: Arc<svode_core::routines::store_state::RoutineStoreState>,
+        key: crate::index::IndexKey,
+        space_dir: PathBuf,
         routine_run_id: String,
         app: tauri::AppHandle,
         owner: &super::model::ResolvedRoutineOwner,
     ) -> Self {
         Self {
             pool: Mutex::new(pool),
-            db_path,
+            store,
+            key,
+            space_dir,
             routine_run_id,
             invalidation: Some((
                 app,
@@ -168,9 +184,11 @@ impl RoutineRunLifecycleSink {
             .lock()
             .map_err(|_| AppError::General("routine run lifecycle pool lock poisoned".into()))?;
         if pool.is_closed() {
-            let db_path = self.db_path.clone();
+            let store = self.store.clone();
+            let key = self.key.clone();
+            let space_dir = self.space_dir.clone();
             *pool = tauri::async_runtime::block_on(async move {
-                crate::routines::storage::reopen_current_pool(&db_path).await
+                store.reopen_current(&key, &space_dir).await
             })?;
         }
         Ok(pool.clone())
@@ -251,7 +269,6 @@ mod tests {
     use crate::routines::model::{
         RoutineAction, RoutineDiagnostic, RoutineOwnerDescriptor, RoutineOwnerKind, RoutineTrigger,
     };
-    use crate::routines::storage;
 
     async fn routines_pool(path: &Path) -> SqlitePool {
         storage::open_pool(path, false).await.unwrap().pool
@@ -376,8 +393,10 @@ mod tests {
     #[tokio::test]
     async fn routine_run_mapping_survives_terminal_and_session_reconciliation() {
         let temp = tempdir().unwrap();
-        let db_path = temp.path().join("routines.db");
-        let pool = routines_pool(&db_path).await;
+        std::fs::create_dir_all(temp.path().join(".svode")).unwrap();
+        let key = crate::index::IndexKey::Root(temp.path().to_path_buf());
+        let store = Arc::new(svode_core::routines::store_state::RoutineStoreState::new());
+        let pool = store.get_or_create(&key, temp.path()).await.unwrap();
         let definition = RoutineDefinition {
             name: Some("Review".into()),
             description: None,
@@ -447,7 +466,13 @@ mod tests {
         assert!(!reconciled.blocks_relaunch(&HashSet::from(["pty-one".to_string()])));
         assert_eq!(reconciled.to_ref(&HashSet::new()).launch_id, "launch-one");
 
-        let sink = RoutineRunLifecycleSink::new(pool.clone(), db_path.clone(), "run-one".into());
+        let sink = RoutineRunLifecycleSink::new(
+            pool.clone(),
+            store.clone(),
+            key.clone(),
+            temp.path().to_path_buf(),
+            "run-one".into(),
+        );
         pool.close().await;
         tokio::task::spawn_blocking(move || {
             sink.reconcile_agent_session(
@@ -461,7 +486,7 @@ mod tests {
         .unwrap()
         .unwrap();
 
-        let reopened = storage::reopen_current_pool(&db_path).await.unwrap();
+        let reopened = store.reopen_current(&key, temp.path()).await.unwrap();
         let after_reload = latest_run(&reopened, ".", "routine-one")
             .await
             .unwrap()
@@ -471,6 +496,14 @@ mod tests {
             Some("source-after-reload")
         );
         assert_eq!(after_reload.agent_session_id, "codex:source-after-reload");
+        assert!(
+            !store
+                .get_or_create(&key, temp.path())
+                .await
+                .unwrap()
+                .is_closed()
+        );
+        store.close_key(&key).await;
     }
 
     #[tokio::test]

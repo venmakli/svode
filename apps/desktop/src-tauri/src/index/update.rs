@@ -1362,7 +1362,7 @@ mod tests {
             .await
             .unwrap();
         routines_pool.close().await;
-        let reopened = crate::routines::storage::reopen_current_pool(Path::new(&db_path))
+        let reopened = svode_core::routines::storage::reopen_current_pool(Path::new(&db_path))
             .await
             .unwrap();
         assert_eq!(
