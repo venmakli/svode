@@ -1,11 +1,11 @@
 pub mod commands;
-pub mod knowledge;
+#[cfg(test)]
+mod knowledge_tests;
 mod lifecycle;
 pub(crate) mod page_dates;
 pub mod reconcile;
 pub mod reindex;
 mod retention;
-pub mod search;
 pub mod service;
 pub mod update;
 
@@ -24,11 +24,9 @@ use crate::space::types::{SpaceConfig, SpaceStatus};
 use crate::space::{config, project};
 use crate::storage::lfs::LfsState;
 use crate::system_path;
-use svode_core::content_tree::policy::TreeIgnorePolicy;
 use svode_core::index::backlinks::{
-    BacklinkIndex, LinkSource, ModifiedLinkSource, collect_md_files, dedupe_modified_sources,
-    is_backlink_discoverable_path, is_external_or_anchor_url, link_stem, markdown_url_path,
-    rebase_source_links_between, replace_link_urls_between,
+    BacklinkIndex, ModifiedLinkSource, dedupe_modified_sources, is_external_or_anchor_url,
+    link_stem, markdown_url_path, rebase_source_links_between, replace_link_urls_between,
 };
 
 /// Normalize a relative path to forward slashes for cross-platform DB storage.
@@ -103,16 +101,6 @@ fn read_child_space_name(space_dir: &Path, folder_name: &str) -> String {
             folder_name.to_string()
         }
     }
-}
-
-pub fn resolve_index_target(
-    project: &Path,
-    cache: &ProjectSpacesCache,
-    abs_path: &Path,
-) -> Result<(IndexKey, String), AppError> {
-    Ok(svode_core::index::resolver::resolve_index_target(
-        project, cache, abs_path,
-    )?)
 }
 
 fn normalize_abs_path(path: &Path) -> Option<PathBuf> {
@@ -233,13 +221,6 @@ impl IndexState {
         match key {
             IndexKey::Root(_) => None,
             IndexKey::Space { space_id, .. } => Some(space_id.clone()),
-        }
-    }
-
-    fn source_for_key(key: &IndexKey, rel_path: &str) -> LinkSource {
-        LinkSource {
-            source_space_id: Self::space_id_for_key(key),
-            source_path: normalize_rel(rel_path),
         }
     }
 
@@ -389,130 +370,16 @@ impl IndexState {
         })
     }
 
-    async fn resolve_link_target_key(
-        &self,
-        project: &Path,
-        source_space_id: Option<&str>,
-        source_path: &str,
-        url: &str,
-    ) -> Result<Option<(IndexKey, String)>, AppError> {
-        if is_external_or_anchor_url(url) {
-            return Ok(None);
-        }
-        let source_key = self
-            .key_for_project_space_id(project, source_space_id)
-            .await?;
-        let source_dir = self.dir_for_key(&source_key).await?;
-        let source_rel = normalize_rel_result(source_path)?;
-        let target_link = markdown_url_path(url);
-
-        let source_parent_rel = Path::new(&source_rel).parent().unwrap_or(Path::new(""));
-        let source_parent_abs = source_dir.join(source_parent_rel);
-        let target_abs = match normalize_abs_path(&source_parent_abs.join(&target_link)) {
-            Some(p) if p.starts_with(project) => p,
-            _ => return Ok(None),
-        };
-
-        let cache_guard = self.core.spaces_cache.lock().await;
-        let cache = cache_guard.get(project).cloned().unwrap_or_default();
-        drop(cache_guard);
-        match resolve_index_target(project, &cache, &target_abs) {
-            Ok((key, rel)) if !rel.is_empty() => Ok(Some((key, normalize_rel_result(&rel)?))),
-            Ok(_) => Ok(None),
-            Err(_) => Ok(None),
-        }
-    }
-
-    async fn remove_source_from_project(&self, project: &Path, source: &LinkSource) {
-        let keys = self.keys_for_project(&project.to_path_buf()).await;
-        for key in keys {
-            let index = self.backlinks_for(&key).await;
-            index.remove_source(source);
-        }
-    }
-
     pub async fn update_file_backlinks(
         &self,
         project: &Path,
         source_space_id: Option<&str>,
         source_rel_path: &str,
     ) -> Result<(), AppError> {
-        let source_key = self
-            .key_for_project_space_id(project, source_space_id)
-            .await?;
-        let source_dir = self.dir_for_key(&source_key).await?;
-        let source_rel = normalize_rel_result(source_rel_path)?;
-        let source = Self::source_for_key(&source_key, &source_rel);
-        self.remove_source_from_project(project, &source).await;
-
-        let pool = self.get_or_create(&source_key).await?;
-        sqlx::query("DELETE FROM broken_links WHERE source_rel_path = ?")
-            .bind(&source_rel)
-            .execute(&pool)
-            .await?;
-
-        let abs = source_dir.join(&source_rel);
-        if !abs.exists() {
-            return Ok(());
-        }
-        let policy = TreeIgnorePolicy::from_space_root(&source_dir);
-        if !is_backlink_discoverable_path(&source_dir, &source_rel, &policy) {
-            return Ok(());
-        }
-
-        let content = std::fs::read_to_string(&abs)?;
-        let links = svode_core::index::backlinks::parse_markdown_links(&content);
-        let mut grouped: HashMap<
-            IndexKey,
-            HashMap<String, Vec<svode_core::index::backlinks::LinkSpan>>,
-        > = HashMap::new();
-
-        for (url_path, span) in links {
-            let raw_url = url_path;
-            let target = self
-                .resolve_link_target_key(project, source_space_id, &source_rel, &raw_url)
-                .await?;
-            let Some((target_key, target_rel)) = target else {
-                let resolved = self
-                    .resolve_doc_link(project, source_space_id, &source_rel, &raw_url)
-                    .await?;
-                self.insert_broken_link(
-                    &pool,
-                    &source_rel,
-                    resolved.target_space_id.as_deref(),
-                    &raw_url,
-                )
-                .await?;
-                continue;
-            };
-            let target_dir = self.dir_for_key(&target_key).await?;
-            let target_abs = target_dir.join(&target_rel);
-            let target_policy = TreeIgnorePolicy::from_space_root(&target_dir);
-            if !is_backlink_discoverable_path(&target_dir, &target_rel, &target_policy) {
-                continue;
-            }
-            if !target_abs.exists() {
-                let target_space_id = Self::space_id_for_key(&target_key);
-                self.insert_broken_link(&pool, &source_rel, target_space_id.as_deref(), &raw_url)
-                    .await?;
-                continue;
-            }
-            grouped
-                .entry(target_key)
-                .or_default()
-                .entry(target_rel)
-                .or_default()
-                .push(span);
-        }
-
-        for (target_key, by_target) in grouped {
-            let target_index = self.backlinks_for(&target_key).await;
-            for (target_rel, spans) in by_target {
-                target_index.add_source_links(&target_rel, source.clone(), spans);
-            }
-        }
-
-        Ok(())
+        Ok(self
+            .core
+            .update_file_backlinks(project, source_space_id, source_rel_path)
+            .await?)
     }
 
     pub async fn remove_file_backlinks(
@@ -521,81 +388,14 @@ impl IndexState {
         source_space_id: Option<&str>,
         source_rel_path: &str,
     ) -> Result<(), AppError> {
-        let source_key = self
-            .key_for_project_space_id(project, source_space_id)
-            .await?;
-        let source_rel = normalize_rel_result(source_rel_path)?;
-        let source = Self::source_for_key(&source_key, &source_rel);
-        self.remove_source_from_project(project, &source).await;
-        let pool = self.get_or_create(&source_key).await?;
-        sqlx::query("DELETE FROM broken_links WHERE source_rel_path = ?")
-            .bind(&source_rel)
-            .execute(&pool)
-            .await?;
-        Ok(())
-    }
-
-    async fn insert_broken_link(
-        &self,
-        pool: &SqlitePool,
-        source_rel: &str,
-        target_space_id: Option<&str>,
-        target_url: &str,
-    ) -> Result<(), AppError> {
-        sqlx::query(
-            "INSERT OR REPLACE INTO broken_links \
-             (source_rel_path, target_space_id, target_url, detected_at) \
-             VALUES (?, ?, ?, ?)",
-        )
-        .bind(source_rel)
-        .bind(target_space_id)
-        .bind(target_url)
-        .bind(chrono::Utc::now().to_rfc3339())
-        .execute(pool)
-        .await?;
-        Ok(())
-    }
-
-    pub async fn rebuild_source_backlinks(&self, key: &IndexKey) -> Result<(), AppError> {
-        let dir = self.dir_for_key(key).await?;
-        let skip = self.skip_folders_for(key).await;
-        let files = collect_md_files(&dir, &skip)?;
-        let source_space_id = Self::space_id_for_key(key);
-        let keys = self.keys_for_project(&key.project().to_path_buf()).await;
-        for target_key in keys {
-            self.backlinks_for(&target_key)
-                .await
-                .remove_sources_in_space(source_space_id.as_deref());
-        }
-        let pool = self.get_or_create(key).await?;
-        sqlx::query("DELETE FROM broken_links")
-            .execute(&pool)
-            .await?;
-
-        for file in files {
-            let rel = crate::repo_path::repo_relative_from_base(&dir, &file, RootMode::Reject)?;
-            self.update_file_backlinks(key.project(), source_space_id.as_deref(), &rel)
-                .await?;
-        }
-        Ok(())
+        Ok(self
+            .core
+            .remove_file_backlinks(project, source_space_id, source_rel_path)
+            .await?)
     }
 
     pub async fn ensure_project_backlinks_built(&self, project: &Path) -> Result<(), AppError> {
-        let keys = self.keys_for_project(&project.to_path_buf()).await;
-        let all_built = self.core.backlinks_built_for(&keys).await;
-        if all_built {
-            return Ok(());
-        }
-
-        self.core.invalidate_backlinks_for(&keys).await;
-
-        for key in &keys {
-            self.rebuild_source_backlinks(key).await?;
-        }
-        for key in &keys {
-            self.backlinks_for(key).await.mark_built();
-        }
-        Ok(())
+        Ok(self.core.ensure_project_backlinks_built(project).await?)
     }
 
     pub async fn update_links_on_rename_project(
@@ -898,14 +698,11 @@ impl IndexState {
 
     /// Get (or create) the per-key `reindex_active` flag. Read-only check
     /// surface for `fan_out`; writers go through `run_full_reindex`.
-    pub async fn reindex_active_flag(&self, key: &IndexKey) -> Arc<AtomicBool> {
-        self.core.reindex_active_flag(key).await
-    }
-
     pub async fn reconcile_active_flag(&self, key: &IndexKey) -> Arc<AtomicBool> {
         self.core.reconcile_active_flag(key).await
     }
 
+    #[cfg(test)]
     pub(crate) async fn cleanup_reconciled_index(&self, key: &IndexKey, pool: &SqlitePool) {
         self.core.cleanup_reconciled_index(key, pool).await;
     }
@@ -919,6 +716,7 @@ impl IndexState {
     /// Return only an already-open pool. Read-only snapshot surfaces use this
     /// to avoid creating or migrating derived storage as a side effect of an
     /// open/search gesture.
+    #[cfg(test)]
     pub(crate) async fn existing_pool(&self, key: &IndexKey) -> Option<SqlitePool> {
         self.core.existing_pool(key).await
     }
@@ -991,10 +789,6 @@ impl IndexState {
     /// Folders that the walker for `key` must skip — child-space directories
     /// (each space owns its own pool, so root must not index them, and
     /// nested-space layout would have its own list per level).
-    pub async fn skip_folders_for(&self, key: &IndexKey) -> Vec<String> {
-        self.core.skip_folders_for(key).await
-    }
-
     /// Handle `space:added`. Refreshes the resolver cache, opens the pool,
     /// schedules a `full_reindex`. No-op if `status != Ready` (pool stays
     /// closed, status_by_id records the ghost state for resolver errors).
@@ -1248,27 +1042,27 @@ mod tests {
         assert_eq!(root_paths, vec!["shared.md".to_string()]);
         assert_eq!(child_paths, vec!["shared.md".to_string()]);
         assert_eq!(
-            search::search_fts(&root_pool, "root-token", None, None, 10)
+            svode_core::index::search::search_fts(&root_pool, "root-token", None, None, 10)
                 .await
                 .unwrap()
                 .len(),
             1
         );
         assert!(
-            search::search_fts(&root_pool, "child-token", None, None, 10)
+            svode_core::index::search::search_fts(&root_pool, "child-token", None, None, 10)
                 .await
                 .unwrap()
                 .is_empty()
         );
         assert_eq!(
-            search::search_fts(&child_pool, "child-token", None, None, 10)
+            svode_core::index::search::search_fts(&child_pool, "child-token", None, None, 10)
                 .await
                 .unwrap()
                 .len(),
             1
         );
         assert!(
-            search::search_fts(&child_pool, "root-token", None, None, 10)
+            svode_core::index::search::search_fts(&child_pool, "root-token", None, None, 10)
                 .await
                 .unwrap()
                 .is_empty()

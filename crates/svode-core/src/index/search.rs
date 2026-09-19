@@ -3,8 +3,9 @@ use std::path::Path;
 use serde::Serialize;
 use sqlx::{Row, SqlitePool};
 
-use crate::error::AppError;
-use crate::properties::{self, Column, PropertyType};
+use crate::collections::model::{Column, PropertyType};
+use crate::collections::schema::{normalize_rel_path, read_schema_at};
+use crate::index::IndexError as AppError;
 
 /// Per-pool query row carrier. Crosses module boundaries internally; the
 /// wire-shape returned to the frontend is `SearchItem` (built by
@@ -179,9 +180,11 @@ pub async fn search_unique_id_exact(
             break;
         }
         let collection_path = row.get::<String, _>("collection_root_path");
-        let Ok(schema) =
-            properties::read_collection_schema(&space_path.to_string_lossy(), &collection_path)
-        else {
+        let Ok(schema) = read_schema_at(
+            &space_path
+                .join(normalize_rel_path(&collection_path))
+                .join("schema.yaml"),
+        ) else {
             continue;
         };
         let Some(column) = schema

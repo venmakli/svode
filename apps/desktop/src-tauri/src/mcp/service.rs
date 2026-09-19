@@ -431,7 +431,7 @@ fn semantic_identity_for_path(
     resolve_markdown_identity_for_path(
         Path::new(space),
         path,
-        crate::index::knowledge::is_agent_context_source(path),
+        svode_core::index::knowledge::is_agent_context_source(path),
     )
     .map_err(Into::into)
 }

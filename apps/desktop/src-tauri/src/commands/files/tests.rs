@@ -421,7 +421,7 @@ async fn shared_delete_entry_removes_targeted_index_rows_and_fts() {
 
     assert_eq!(result.deleted_paths, vec!["Note.md".to_string()]);
     assert!(indexed_paths(&pool).await.is_empty());
-    let hits = index::search::search_fts(&pool, "search-token", None, None, 10)
+    let hits = svode_core::index::search::search_fts(&pool, "search-token", None, None, 10)
         .await
         .unwrap();
     assert!(hits.is_empty());
@@ -509,7 +509,7 @@ async fn targeted_convert_to_folder_replaces_stale_leaf_index_row() {
         vec!["Topic/README.md".to_string()]
     );
     assert!(
-        index::search::search_fts(&pool, "leaf-body-token", None, None, 10)
+        svode_core::index::search::search_fts(&pool, "leaf-body-token", None, None, 10)
             .await
             .unwrap()
             .iter()
@@ -544,7 +544,7 @@ async fn targeted_convert_to_leaf_replaces_stale_readme_index_row() {
     assert_eq!(entry.path, "Topic.md");
     assert_eq!(indexed_paths(&pool).await, vec!["Topic.md".to_string()]);
     assert!(
-        index::search::search_fts(&pool, "readme-body-token", None, None, 10)
+        svode_core::index::search::search_fts(&pool, "readme-body-token", None, None, 10)
             .await
             .unwrap()
             .iter()
@@ -583,7 +583,7 @@ async fn targeted_duplicate_indexes_created_tree_only() {
         indexed_paths(&pool).await,
         vec!["Original (copy).md".to_string(), "Original.md".to_string()]
     );
-    let hits = index::search::search_fts(&pool, "original-token", None, None, 10)
+    let hits = svode_core::index::search::search_fts(&pool, "original-token", None, None, 10)
         .await
         .unwrap();
     assert_eq!(hits.len(), 2);
@@ -1048,7 +1048,7 @@ async fn shared_convert_to_collection_preserves_leaf_and_refreshes_index_tree() 
         vec!["Reference.md".to_string(), "Topic/README.md".to_string()]
     );
     assert!(
-        index::search::search_fts(&pool, "leaf-body-token", None, None, 10)
+        svode_core::index::search::search_fts(&pool, "leaf-body-token", None, None, 10)
             .await
             .unwrap()
             .iter()

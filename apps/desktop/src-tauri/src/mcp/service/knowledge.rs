@@ -1,8 +1,8 @@
 use super::*;
-use crate::index::knowledge::{
+use crate::index::service;
+use svode_core::index::knowledge::{
     KnowledgeFilters, KnowledgeResponse, KnowledgeScope, KnowledgeSource,
 };
-use crate::index::service;
 
 const DEFAULT_SEARCH_LIMIT: usize = 20;
 const MAX_SEARCH_LIMIT: usize = 50;

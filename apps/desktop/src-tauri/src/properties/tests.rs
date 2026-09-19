@@ -2551,7 +2551,7 @@ async fn df_087_root_collection_queries_exclude_owner_readme_for_all_query_shape
     .unwrap();
     assert_eq!(owner_membership_edges, 0);
     assert!(
-        crate::index::search::search_by_title(&pool, "Owner", 10)
+        svode_core::index::search::search_by_title(&pool, "Owner", 10)
             .await
             .unwrap()
             .is_empty()

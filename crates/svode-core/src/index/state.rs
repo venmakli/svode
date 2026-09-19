@@ -8,6 +8,7 @@ use sqlx::SqlitePool;
 use tokio::sync::Mutex;
 
 use super::backlinks::BacklinkIndex;
+use super::backlinks::{is_external_or_anchor_url, markdown_url_path};
 use super::lifecycle::IndexPools;
 use super::resolver::{ProjectSpacesCache, SpaceStatus, resolve_index_target};
 use super::{IndexError, IndexKey};
@@ -23,6 +24,73 @@ pub struct IndexRuntimeState {
 }
 
 impl IndexRuntimeState {
+    pub async fn resolve_link_target_key(
+        &self,
+        project: &Path,
+        source_space_id: Option<&str>,
+        source_path: &str,
+        url: &str,
+    ) -> Result<Option<(IndexKey, String)>, IndexError> {
+        if is_external_or_anchor_url(url) {
+            return Ok(None);
+        }
+        let source_key = self
+            .key_for_project_space_id(project, source_space_id)
+            .await?;
+        let source_dir = self.dir_for_key(&source_key).await?;
+        let source_rel = crate::git::path::normalize_repo_relative(
+            source_path,
+            crate::git::path::RootMode::Reject,
+        )?;
+        let source_parent = Path::new(&source_rel).parent().unwrap_or(Path::new(""));
+        let target_link = markdown_url_path(url);
+        let mut target = PathBuf::new();
+        for component in source_dir
+            .join(source_parent)
+            .join(target_link)
+            .components()
+        {
+            match component {
+                std::path::Component::Prefix(value) => target.push(value.as_os_str()),
+                std::path::Component::RootDir => target.push(std::path::MAIN_SEPARATOR.to_string()),
+                std::path::Component::CurDir => {}
+                std::path::Component::Normal(value) => target.push(value),
+                std::path::Component::ParentDir => {
+                    if !target.pop() {
+                        return Ok(None);
+                    }
+                }
+            }
+        }
+        if !target.starts_with(project) {
+            return Ok(None);
+        }
+        let cache = self
+            .spaces_cache
+            .lock()
+            .await
+            .get(project)
+            .cloned()
+            .unwrap_or_default();
+        match resolve_index_target(project, &cache, &target) {
+            Ok((key, rel)) if !rel.is_empty() => Ok(Some((
+                key,
+                crate::git::path::normalize_repo_relative(
+                    &rel,
+                    crate::git::path::RootMode::Reject,
+                )?,
+            ))),
+            _ => Ok(None),
+        }
+    }
+
+    pub fn space_id_for_key(key: &IndexKey) -> Option<String> {
+        match key {
+            IndexKey::Root(_) => None,
+            IndexKey::Space { space_id, .. } => Some(space_id.clone()),
+        }
+    }
+
     pub async fn backlinks_for(&self, key: &IndexKey) -> Arc<BacklinkIndex> {
         let skip = self.skip_folders_for(key).await;
         let mut map = self.backlinks.lock().await;

@@ -294,7 +294,7 @@ mod tests {
         assert!(hidden_fingerprint.starts_with("collection-member-only:"));
         assert_ne!(hidden_fingerprint, original_fingerprint);
         assert!(
-            crate::index::search::search_fts(&pool, "policy-body-token", None, None, 10)
+            svode_core::index::search::search_fts(&pool, "policy-body-token", None, None, 10)
                 .await
                 .unwrap()
                 .is_empty()
@@ -315,7 +315,7 @@ mod tests {
             1
         );
         assert_eq!(
-            crate::index::search::search_fts(&pool, "policy-body-token", None, None, 10)
+            svode_core::index::search::search_fts(&pool, "policy-body-token", None, None, 10)
                 .await
                 .unwrap()
                 .len(),

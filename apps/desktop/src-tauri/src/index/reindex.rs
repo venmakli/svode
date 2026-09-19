@@ -1,6 +1,9 @@
+#[cfg(test)]
 use sqlx::SqlitePool;
+#[cfg(test)]
 use std::path::Path;
 
+#[cfg(test)]
 use crate::error::AppError;
 #[cfg(test)]
 use svode_core::content_tree::policy::TreeIgnorePolicy;
@@ -320,25 +323,25 @@ mod tests {
         );
 
         assert!(
-            crate::index::search::search_by_title(&pool, "Hidden Needle", 10)
+            svode_core::index::search::search_by_title(&pool, "Hidden Needle", 10)
                 .await
                 .unwrap()
                 .is_empty()
         );
         assert!(
-            crate::index::search::search_fts(&pool, "hidden-body-token", None, None, 10)
+            svode_core::index::search::search_fts(&pool, "hidden-body-token", None, None, 10)
                 .await
                 .unwrap()
                 .is_empty()
         );
         assert!(
-            crate::index::search::search_unique_id_exact(&pool, tmp.path(), "HID-7", 10)
+            svode_core::index::search::search_unique_id_exact(&pool, tmp.path(), "HID-7", 10)
                 .await
                 .unwrap()
                 .is_empty()
         );
         assert!(
-            crate::index::search::recent(&pool, 10)
+            svode_core::index::search::recent(&pool, 10)
                 .await
                 .unwrap()
                 .iter()
@@ -576,6 +579,7 @@ pub async fn full_reindex(
         .map_err(Into::into)
 }
 
+#[cfg(test)]
 pub async fn full_reindex_for_target(
     pool: &SqlitePool,
     project_dir: &Path,

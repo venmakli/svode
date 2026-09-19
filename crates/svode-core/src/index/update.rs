@@ -1,5 +1,6 @@
 use std::path::Path;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use sqlx::SqlitePool;
 
@@ -7,6 +8,7 @@ use super::manifest::SourceManifestRecord;
 use super::model::{IndexedEntry, KnowledgeArtifact};
 use super::state::IndexRuntimeState;
 use super::{IndexError, IndexKey};
+use crate::page::dates::GitDateExecutor;
 use crate::routines::RoutineStoreError;
 use crate::routines::model::{CollectionEventOrigin, ResolvedRoutineOwner};
 use crate::routines::observation::{self, ObservationError};
@@ -54,6 +56,39 @@ impl IndexUpdateState {
         observation::reconcile_projection_from_index(&routines_pool, &index_pool, &space_dir)
             .await?;
         Ok(())
+    }
+
+    pub async fn repair_space<E: GitDateExecutor>(
+        &self,
+        index_state: &IndexRuntimeState,
+        key: &IndexKey,
+        executor: Option<&E>,
+    ) -> Result<(), IndexUpdateError> {
+        let pool = index_state.get_or_create(key).await?;
+        let dir = index_state.dir_for_key(key).await?;
+        let skip = index_state.skip_folders_for(key).await;
+        let lock = index_state.reindex_lock(key).await;
+        let flag = index_state.reindex_active_flag(key).await;
+        let _guard = lock.lock().await;
+        flag.store(true, Ordering::SeqCst);
+        let _flag_guard = ActiveRepairGuard(flag);
+        let complete =
+            super::reindex::full_reindex_for_target(executor, &pool, key.project(), &dir, &skip)
+                .await?;
+        index_state.rebuild_source_backlinks(key).await?;
+        self.sync_routine_projection(index_state, key).await?;
+        if complete {
+            index_state.cleanup_reconciled_index(key, &pool).await;
+        }
+        Ok(())
+    }
+}
+
+struct ActiveRepairGuard(Arc<AtomicBool>);
+
+impl Drop for ActiveRepairGuard {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::SeqCst);
     }
 }
 

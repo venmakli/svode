@@ -3,10 +3,10 @@ use std::path::PathBuf;
 use tauri::{AppHandle, Manager, State};
 
 use crate::error::AppError;
-use crate::index::knowledge::{KnowledgeFilters, KnowledgeResponse, KnowledgeScope};
 use crate::index::service::{self, SearchResponse, SearchScope};
 use crate::index::update::IndexUpdateState;
 use crate::index::{IndexKey, IndexState};
+use svode_core::index::knowledge::{KnowledgeFilters, KnowledgeResponse, KnowledgeScope};
 
 #[tauri::command]
 pub async fn reindex_space(

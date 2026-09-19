@@ -1,7 +1,9 @@
+mod backlink_state;
 pub mod backlinks;
 pub mod db;
 pub mod entry_projection;
 pub mod inventory;
+pub mod knowledge;
 pub mod knowledge_artifact;
 pub mod knowledge_rows;
 pub mod lifecycle;
@@ -13,6 +15,8 @@ pub mod resolver;
 pub mod retention;
 pub mod retention_wal;
 pub mod rows;
+pub mod search;
+pub mod service;
 pub mod state;
 pub mod update;
 

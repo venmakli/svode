@@ -82,23 +82,11 @@ impl IndexUpdateState {
         index_state: &IndexState,
         key: &IndexKey,
     ) -> Result<(), AppError> {
-        let pool = index_state.get_or_create(key).await?;
-        let dir = index_state.dir_for_key(key).await?;
-        let skip = index_state.skip_folders_for(key).await;
-        let lock = index_state.reindex_lock(key).await;
-        let flag = index_state.reindex_active_flag(key).await;
-        let _guard = lock.lock().await;
-        flag.store(true, Ordering::SeqCst);
-        let _flag_guard = ReindexActiveGuard(flag);
-        let complete =
-            crate::index::reindex::full_reindex_for_target(&pool, key.project(), &dir, &skip)
-                .await?;
-        index_state.rebuild_source_backlinks(key).await?;
-        self.sync_routine_projection(index_state, key).await?;
-        if complete {
-            index_state.cleanup_reconciled_index(key, &pool).await;
-        }
-        Ok(())
+        let cli = crate::git::dates::detected_cli();
+        Ok(self
+            .core
+            .repair_space(&index_state.core, key, cli.as_ref())
+            .await?)
     }
 }
 
@@ -661,7 +649,7 @@ pub async fn reindex_after_pull(
 mod tests {
     use super::*;
     use crate::index::ProjectSpacesCache;
-    use crate::index::search::search_fts;
+    use svode_core::index::search::search_fts;
     use crate::space::config::write_space_config;
     use crate::space::types::{SpaceConfig, SpaceStatus, TreeSpaceConfig};
     use std::collections::HashMap;
@@ -1053,7 +1041,7 @@ mod tests {
             "Open"
         );
         assert!(
-            crate::index::search::search_by_title(&pool, "Hidden Needle", 10)
+            svode_core::index::search::search_by_title(&pool, "Hidden Needle", 10)
                 .await
                 .unwrap()
                 .is_empty()
@@ -1086,7 +1074,7 @@ mod tests {
             1
         );
         assert_eq!(
-            crate::index::search::search_by_title(&pool, "Hidden Needle", 10)
+            svode_core::index::search::search_by_title(&pool, "Hidden Needle", 10)
                 .await
                 .unwrap()
                 .len(),
