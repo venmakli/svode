@@ -1,7 +1,8 @@
 use std::path::Path;
 
 use crate::error::AppError;
-use crate::files::{EntryMeta, frontmatter};
+use svode_core::page::entry::EntryMeta;
+use svode_core::page::frontmatter;
 
 use super::config::write_space_config;
 use super::types::{AssetsSpaceConfig, SpaceConfig};
@@ -179,7 +180,7 @@ mod tests {
         assert!(created);
         let raw =
             std::fs::read_to_string(space_path.join(README_FILE)).expect("read created readme");
-        let (meta, body) = crate::files::frontmatter::parse(&raw).expect("parse frontmatter");
+        let (meta, body) = svode_core::page::frontmatter::parse(&raw).expect("parse frontmatter");
         assert_eq!(meta.title, "Project Home");
         assert_eq!(body, "");
     }

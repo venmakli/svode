@@ -14,7 +14,6 @@ use super::model::{
 use super::{authority, cache, parser};
 use crate::AppError;
 use crate::agent_actors;
-use crate::files::filename::{self, FilenameProjection};
 use crate::git;
 use crate::git::access::{RepositoryAccessState, ensure_mutation_paths_were_authorized};
 use crate::git::{GitState, require_cli};
@@ -23,6 +22,7 @@ use crate::repo_path::{RootMode, normalize_repo_relative};
 use crate::routines::RoutineStoreState;
 use crate::space::config;
 use chrono::{SecondsFormat, Utc};
+use svode_core::page::filename::{self, FilenameProjection};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RoutineValidationIntent {
@@ -629,8 +629,8 @@ fn update_requires_name_check(
     naming: RoutineNamingIntent,
 ) -> bool {
     naming == RoutineNamingIntent::MaterializeCanonicalFilename
-        || crate::files::naming::display_name_key(&current.name)
-            != crate::files::naming::display_name_key(candidate_name)
+        || svode_core::page::naming::display_name_key(&current.name)
+            != svode_core::page::naming::display_name_key(candidate_name)
 }
 
 fn routine_name_conflict(
@@ -638,14 +638,14 @@ fn routine_name_conflict(
     candidate_name: &str,
     exclude_routine_id: Option<&str>,
 ) -> Option<RoutineNameConflict> {
-    let candidate_key = crate::files::naming::display_name_key(candidate_name);
+    let candidate_key = svode_core::page::naming::display_name_key(candidate_name);
     let conflicts = snapshot
         .routines
         .iter()
         .filter(|row| {
             exclude_routine_id
                 .is_none_or(|routine_id| row.routine_id.as_deref() != Some(routine_id))
-                && crate::files::naming::display_name_key(&row.name) == candidate_key
+                && svode_core::page::naming::display_name_key(&row.name) == candidate_key
         })
         .map(|row| RoutineNameConflictEvidence {
             routine_id: row.routine_id.clone(),

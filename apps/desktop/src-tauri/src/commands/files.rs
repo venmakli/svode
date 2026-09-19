@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
@@ -8,17 +7,14 @@ use serde::Serialize;
 use tauri::{AppHandle, Manager, State};
 
 use crate::error::AppError;
-use crate::files::{
-    Entry, FileWatcher, TreeNode, WriteNonceRegistry, WriteResult, entry, link_fix, templates, tree,
-};
-use crate::files::{TemplateInfo, TemplateKind};
+use crate::files::{FileWatcher, TreeNode, link_fix, tree};
 use crate::git::access::{
     require_repository_mutation, require_repository_mutation_paths, scope_authorized_mutation_paths,
 };
 use crate::git::autocommit::{AutocommitService, StructuralOp};
 use crate::git::{GitState, require_cli};
 use crate::index::update::IndexUpdateState;
-use crate::index::{self, IndexKey, IndexState, ResolvedDocLink};
+use crate::index::{self, IndexState, ResolvedDocLink};
 use crate::properties::{
     self, ActorCandidate, CollectionInfo, CollectionSchema, Column, EntrySchemaResponse, Filter,
     PropertyOption, PropertyType, RelationBacklink, RelationTwoWayDiagnostics, ResolvedRelation,
@@ -26,8 +22,10 @@ use crate::properties::{
 };
 use crate::repo_path::{RootMode, normalize_repo_relative};
 use crate::space::config;
-use svode_core::content_tree::policy::{TreeIgnorePolicy, TreePathKind};
-use svode_core::index::backlinks::{BacklinkIndex, BacklinkInfo, LinkValidation};
+use svode_core::index::backlinks::{BacklinkInfo, LinkValidation};
+use svode_core::page::entry::{self, Entry, WriteResult};
+use svode_core::page::nonce::WriteNonceRegistry;
+use svode_core::page::templates::{self, TemplateInfo, TemplateKind};
 
 mod collections;
 mod entries;
@@ -113,55 +111,6 @@ fn entry_paths_with_order(space: &str, paths: impl IntoIterator<Item = PathBuf>)
     let mut out = vec![order_path(space)];
     out.extend(paths);
     out
-}
-
-pub(crate) fn collect_markdown_paths(
-    base: &Path,
-    root: &Path,
-    policy: &TreeIgnorePolicy,
-) -> Result<Vec<PathBuf>, AppError> {
-    let Ok(meta) = fs::symlink_metadata(root) else {
-        return Ok(Vec::new());
-    };
-    if meta.file_type().is_symlink() {
-        return Ok(Vec::new());
-    }
-
-    let rel_path = root.strip_prefix(base).unwrap_or(root);
-    let kind = if meta.is_dir() {
-        TreePathKind::Directory
-    } else if meta.is_file() {
-        TreePathKind::File
-    } else {
-        TreePathKind::Unknown
-    };
-    if policy.is_ignored_rel(rel_path, kind) {
-        return Ok(Vec::new());
-    }
-
-    if meta.is_file() {
-        if root
-            .extension()
-            .and_then(|ext| ext.to_str())
-            .is_some_and(|ext| ext.eq_ignore_ascii_case("md"))
-        {
-            return Ok(vec![root.to_path_buf()]);
-        }
-        return Ok(Vec::new());
-    }
-
-    let mut paths = Vec::new();
-    if !meta.is_dir() {
-        return Ok(paths);
-    }
-
-    for item in fs::read_dir(root)? {
-        let item = item?;
-        let path = item.path();
-        paths.extend(collect_markdown_paths(base, &path, policy)?);
-    }
-
-    Ok(paths)
 }
 
 fn entry_history_name(path: &str) -> String {
@@ -264,21 +213,6 @@ pub(crate) fn maybe_autocommit_structural_paths(
         return;
     };
     autocommit.schedule_structural_paths(PathBuf::from(proj), PathBuf::from(space_path), op, paths);
-}
-
-pub(crate) async fn space_id_for_dir(state: &IndexState, space: &str) -> Option<String> {
-    state
-        .key_for_space_dir(Path::new(space))
-        .await
-        .and_then(|key| IndexState::space_id_for_key(&key))
-}
-
-pub(crate) async fn backlinks_for_space(state: &IndexState, space: &str) -> Arc<BacklinkIndex> {
-    let key = state
-        .key_for_space_dir(Path::new(space))
-        .await
-        .unwrap_or_else(|| IndexKey::Root(PathBuf::from(space)));
-    state.backlinks_for(&key).await
 }
 
 fn json_to_yaml_value(value: serde_json::Value) -> Result<serde_yml::Value, AppError> {
@@ -439,131 +373,6 @@ fn leaf_entry_path(path: &str) -> Result<String, AppError> {
     } else {
         format!("{}/{folder_name}.md", parent.to_string_lossy())
     })
-}
-
-async fn reindex_space_dir(
-    index_state: &IndexState,
-    index_updates: &IndexUpdateState,
-    space: &str,
-) {
-    let key = index_state
-        .key_for_space_dir(Path::new(space))
-        .await
-        .unwrap_or_else(|| IndexKey::Root(PathBuf::from(space)));
-    tracing::info!(
-        event = "index.reindex.repair",
-        space,
-        key = ?key,
-        "running full index repair reindex"
-    );
-    if let Err(e) = crate::index::service::repair_space(index_state, index_updates, &key).await {
-        tracing::warn!("collection operation reindex failed for {:?}: {e}", key);
-    }
-}
-
-async fn update_index_entry_or_reindex(
-    index_state: &IndexState,
-    index_updates: &IndexUpdateState,
-    project_path: Option<&str>,
-    space: &str,
-    rel_path: &str,
-    fallback_context: &str,
-) {
-    let Some(proj) = project_path.filter(|p| !p.is_empty()) else {
-        reindex_space_dir(index_state, index_updates, space).await;
-        return;
-    };
-
-    let project = Path::new(proj);
-    let abs_target = Path::new(space).join(rel_path);
-    if let Err(e) =
-        index::update::publish_managed_path(index_state, index_updates, project, &abs_target).await
-    {
-        tracing::warn!("{fallback_context}: targeted index update failed for {rel_path}: {e}");
-        tracing::info!("{fallback_context}: running index.reindex.repair fallback");
-        reindex_space_dir(index_state, index_updates, space).await;
-    } else {
-        tracing::debug!(
-            event = "index.update.targeted",
-            context = fallback_context,
-            operation = "update",
-            path = rel_path
-        );
-    }
-}
-
-pub(crate) async fn update_index_paths_or_reindex(
-    index_state: &IndexState,
-    index_updates: &IndexUpdateState,
-    project_path: Option<&str>,
-    space: &str,
-    abs_paths: Vec<PathBuf>,
-    fallback_context: &str,
-) -> Vec<String> {
-    let Some(proj) = project_path.filter(|p| !p.is_empty()) else {
-        reindex_space_dir(index_state, index_updates, space).await;
-        return Vec::new();
-    };
-
-    let project = Path::new(proj);
-    let mut needs_reindex = false;
-    let mut errors = Vec::new();
-    for abs_path in abs_paths {
-        if let Err(e) =
-            index::update::publish_managed_path(index_state, index_updates, project, &abs_path)
-                .await
-        {
-            tracing::warn!(
-                "{fallback_context}: targeted index update failed for {}: {e}",
-                abs_path.display()
-            );
-            needs_reindex = true;
-            errors.push(e.to_string());
-        } else {
-            tracing::debug!(
-                event = "index.update.targeted",
-                context = fallback_context,
-                operation = "update",
-                path = %abs_path.display()
-            );
-        }
-    }
-    if needs_reindex {
-        tracing::info!("{fallback_context}: running index.reindex.repair fallback");
-        reindex_space_dir(index_state, index_updates, space).await;
-    }
-    errors
-}
-
-async fn update_index_tree_or_reindex(
-    index_state: &IndexState,
-    index_updates: &IndexUpdateState,
-    project_path: Option<&str>,
-    space: &str,
-    rel_root: &str,
-    fallback_context: &str,
-) {
-    let space_root = Path::new(space);
-    let policy = TreeIgnorePolicy::from_space_root(space_root);
-    let abs_root = space_root.join(rel_root);
-    let paths = match collect_markdown_paths(space_root, &abs_root, &policy) {
-        Ok(paths) => paths,
-        Err(e) => {
-            tracing::warn!("{fallback_context}: collect markdown paths failed for {rel_root}: {e}");
-            tracing::info!("{fallback_context}: running index.reindex.repair fallback");
-            reindex_space_dir(index_state, index_updates, space).await;
-            return;
-        }
-    };
-    let _ = update_index_paths_or_reindex(
-        index_state,
-        index_updates,
-        project_path,
-        space,
-        paths,
-        fallback_context,
-    )
-    .await;
 }
 
 #[cfg(test)]

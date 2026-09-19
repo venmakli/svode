@@ -13,7 +13,6 @@ use super::protocol::{IpcContextOverride, ToolCallResult};
 use crate::artifact::identity::{
     ContentOwnerKind, PageRole, SemanticIdentity, resolve_markdown_identity_for_path,
 };
-use crate::files::entry;
 use crate::git::access::repository_access_snapshot;
 use crate::git::{self, GitState};
 use crate::index::update::IndexUpdateState;
@@ -21,6 +20,7 @@ use crate::index::{IndexKey, IndexState};
 use crate::properties::{self, CollectionSchema, Column, Filter, Sort, View};
 use crate::repo_path::{RootMode, normalize_repo_relative};
 use crate::space::{config as space_config, content_tree, project, registry};
+use svode_core::page::entry;
 
 const DEFAULT_LIMIT: i64 = 50;
 const MAX_LIMIT: i64 = 200;
@@ -685,9 +685,9 @@ mod tests {
                 assert_eq!(args.title, space_args.title);
                 assert_eq!(args.title, collection_args.title);
                 let state = IndexState::new();
-                let nonces = crate::files::WriteNonceRegistry::new();
-                let outcome = crate::page::write::write(
-                    crate::page::write::PageWrite {
+                let nonces = svode_core::page::nonce::WriteNonceRegistry::new();
+                let outcome = crate::page::write(
+                    svode_core::page::write::PageWrite {
                         space: root.to_str().unwrap(),
                         path,
                         content: &args.content,
@@ -989,12 +989,12 @@ async fn write_page_content(
     path: &str,
     content: &str,
     title: Option<&str>,
-) -> Result<crate::page::write::PageWriteOutcome, crate::error::AppError> {
+) -> Result<svode_core::page::write::PageWriteOutcome, crate::error::AppError> {
     let state = app.state::<IndexState>();
     let updates = app.state::<IndexUpdateState>();
-    let nonces = app.state::<std::sync::Arc<crate::files::WriteNonceRegistry>>();
-    crate::page::write::write(
-        crate::page::write::PageWrite {
+    let nonces = app.state::<std::sync::Arc<svode_core::page::nonce::WriteNonceRegistry>>();
+    crate::page::write(
+        svode_core::page::write::PageWrite {
             space,
             path,
             content,
@@ -1022,7 +1022,7 @@ async fn write_page_content(
 fn page_write_response(
     space: &str,
     original: &str,
-    outcome: crate::page::write::PageWriteOutcome,
+    outcome: svode_core::page::write::PageWriteOutcome,
 ) -> Value {
     let canonical = outcome.result.new_path.as_deref().unwrap_or(original);
     let changed = outcome

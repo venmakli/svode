@@ -8,11 +8,11 @@ use crate::error::AppError;
 #[cfg(test)]
 use svode_core::content_tree::policy::TreeIgnorePolicy;
 
-pub(crate) use svode_core::index::inventory::{
-    MarkdownProjection, markdown_projection, markdown_source_record,
-};
+#[cfg(test)]
+use svode_core::index::inventory::MarkdownProjection;
 #[cfg(test)]
 use svode_core::index::inventory::{collect_md_files, collect_reindex_inventory};
+pub(crate) use svode_core::index::inventory::{markdown_projection, markdown_source_record};
 
 #[cfg(test)]
 mod tests {
@@ -562,8 +562,6 @@ mod tests {
         );
     }
 }
-
-pub(crate) use svode_core::index::model::IndexedEntry;
 
 pub(crate) use svode_core::index::entry_projection::build_entry_with_dates;
 

@@ -1,6 +1,6 @@
 use sqlx::SqlitePool;
 
-use crate::files::Entry;
+use svode_core::page::entry::Entry;
 
 /// Enrich a source read using its selected pool and normalized repository-relative path.
 /// Missing rows and unavailable indexed dates leave filesystem-derived dates intact.
@@ -27,7 +27,7 @@ pub(crate) async fn apply_indexed_dates(pool: &SqlitePool, path: &str, page: &mu
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::files::entry;
+    use svode_core::page::entry;
 
     #[tokio::test]
     async fn enrichment_preserves_source_facts_and_never_writes_sources() {

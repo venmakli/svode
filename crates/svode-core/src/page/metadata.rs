@@ -1,13 +1,12 @@
 use std::path::{Path, PathBuf};
 
-use crate::error::AppError;
-use crate::files::{WriteNonceRegistry, entry};
-use crate::git::autocommit::AutocommitService;
-use crate::index::{IndexState, update::IndexUpdateState};
+use crate::page::PageError;
+use crate::page::dates::GitDateExecutor;
+use crate::page::entry;
 
-use super::write::{PageWrite, PageWriteOutcome};
+use super::write::{PageRuntime, PageWrite, PageWriteOutcome};
 
-pub(crate) struct PageMetadataPatch {
+pub struct PageMetadataPatch {
     pub title: Option<String>,
     pub icon: Option<Option<String>>,
     pub description: Option<Option<String>>,
@@ -15,7 +14,7 @@ pub(crate) struct PageMetadataPatch {
 }
 
 impl PageMetadataPatch {
-    pub(crate) fn is_empty(&self) -> bool {
+    pub fn is_empty(&self) -> bool {
         self.title.is_none()
             && self.icon.is_none()
             && self.description.is_none()
@@ -23,25 +22,24 @@ impl PageMetadataPatch {
     }
 }
 
-pub(crate) struct PageMetadataOutcome {
+pub struct PageMetadataOutcome {
     pub page: entry::Entry,
     pub changed_paths: Vec<PathBuf>,
 }
 
-pub(crate) async fn patch<F, Fut>(
+pub async fn patch<E, F, Fut, Err>(
     space: &str,
     path: &str,
     patch: PageMetadataPatch,
     project: Option<&str>,
-    state: &IndexState,
-    updates: &IndexUpdateState,
-    nonces: &WriteNonceRegistry,
-    autocommit: Option<&AutocommitService>,
+    runtime: PageRuntime<'_, E>,
     authorize: F,
-) -> Result<PageMetadataOutcome, AppError>
+) -> Result<PageMetadataOutcome, Err>
 where
+    E: GitDateExecutor,
     F: FnOnce(Vec<PathBuf>) -> Fut,
-    Fut: std::future::Future<Output = Result<Vec<PathBuf>, AppError>>,
+    Fut: std::future::Future<Output = Result<Vec<PathBuf>, Err>>,
+    Err: From<PageError>,
 {
     let current = entry::read(space, path)?;
     if patch.is_empty() {
@@ -51,41 +49,7 @@ where
         });
     }
 
-    let mut candidate = current.meta.clone();
-    if let Some(title) = patch.title.as_ref() {
-        entry::apply_entry_field_update(
-            &mut candidate,
-            "title",
-            serde_json::Value::String(title.clone()),
-        )?;
-    }
-    if let Some(icon) = patch.icon {
-        entry::apply_entry_field_update(
-            &mut candidate,
-            "icon",
-            icon.map(serde_json::Value::String)
-                .unwrap_or(serde_json::Value::Null),
-        )?;
-    }
-    if let Some(description) = patch.description {
-        entry::apply_entry_field_update(
-            &mut candidate,
-            "description",
-            description
-                .map(serde_json::Value::String)
-                .unwrap_or(serde_json::Value::Null),
-        )?;
-    }
-    if let Some(cover) = patch.cover {
-        entry::apply_entry_field_update(
-            &mut candidate,
-            "cover",
-            cover
-                .map(serde_json::to_value)
-                .transpose()?
-                .unwrap_or(serde_json::Value::Null),
-        )?;
-    }
+    let candidate = patched_metadata(&current.meta, &patch)?;
 
     let explicit_title = patch.title.as_deref();
     let PageWriteOutcome {
@@ -104,10 +68,7 @@ where
             skip_rename: explicit_title.is_none(),
             project,
         },
-        state,
-        updates,
-        nonces,
-        autocommit,
+        runtime,
         authorize,
     )
     .await?;
@@ -120,7 +81,50 @@ where
     })
 }
 
-pub(crate) fn relative_changed_paths(space: &str, paths: &[PathBuf]) -> Vec<String> {
+/// Tri-state patch over the current metadata, validated by the field rules.
+fn patched_metadata(
+    current: &entry::EntryMeta,
+    patch: &PageMetadataPatch,
+) -> Result<entry::EntryMeta, PageError> {
+    let mut candidate = current.clone();
+    if let Some(title) = patch.title.as_ref() {
+        entry::apply_entry_field_update(
+            &mut candidate,
+            "title",
+            serde_json::Value::String(title.clone()),
+        )?;
+    }
+    if let Some(icon) = patch.icon.clone() {
+        entry::apply_entry_field_update(
+            &mut candidate,
+            "icon",
+            icon.map(serde_json::Value::String)
+                .unwrap_or(serde_json::Value::Null),
+        )?;
+    }
+    if let Some(description) = patch.description.clone() {
+        entry::apply_entry_field_update(
+            &mut candidate,
+            "description",
+            description
+                .map(serde_json::Value::String)
+                .unwrap_or(serde_json::Value::Null),
+        )?;
+    }
+    if let Some(cover) = patch.cover.clone() {
+        entry::apply_entry_field_update(
+            &mut candidate,
+            "cover",
+            cover
+                .map(serde_json::to_value)
+                .transpose()?
+                .unwrap_or(serde_json::Value::Null),
+        )?;
+    }
+    Ok(candidate)
+}
+
+pub fn relative_changed_paths(space: &str, paths: &[PathBuf]) -> Vec<String> {
     let root = Path::new(space);
     paths
         .iter()
@@ -136,7 +140,9 @@ pub(crate) fn relative_changed_paths(space: &str, paths: &[PathBuf]) -> Vec<Stri
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::index::update::test_update_state;
+    use crate::index::state::IndexRuntimeState;
+    use crate::page::nonce::WriteNonceRegistry;
+    use crate::page::test_support::runtime;
     use std::fs;
 
     #[tokio::test]
@@ -159,13 +165,10 @@ mod tests {
                 cover: None,
             },
             None,
-            &IndexState::new(),
-            test_update_state(),
-            &WriteNonceRegistry::new(),
-            None,
+            runtime(&IndexRuntimeState::default(), &WriteNonceRegistry::new()),
             |mut paths| async move {
                 paths.push(root.to_path_buf());
-                Ok(paths)
+                Ok::<_, PageError>(paths)
             },
         )
         .await
@@ -193,13 +196,10 @@ mod tests {
                 cover: None,
             },
             None,
-            &IndexState::new(),
-            test_update_state(),
-            &WriteNonceRegistry::new(),
-            None,
+            runtime(&IndexRuntimeState::default(), &WriteNonceRegistry::new()),
             |mut paths| async move {
                 paths.push(root.to_path_buf());
-                Ok(paths)
+                Ok::<_, PageError>(paths)
             },
         )
         .await;
@@ -228,13 +228,10 @@ mod tests {
                 cover: Some(None),
             },
             None,
-            &IndexState::new(),
-            test_update_state(),
-            &WriteNonceRegistry::new(),
-            None,
+            runtime(&IndexRuntimeState::default(), &WriteNonceRegistry::new()),
             |mut paths| async move {
                 paths.push(root.to_path_buf());
-                Ok(paths)
+                Ok::<_, PageError>(paths)
             },
         )
         .await

@@ -9,15 +9,15 @@ use tauri::{AppHandle, Emitter, Manager};
 
 use crate::agent_context::AgentContextState;
 use crate::error::AppError;
-use crate::files::WriteNonceRegistry;
 use crate::files::tree::{child_folder_names, has_direct_schema};
-use svode_core::content_tree::policy::{TreeIgnorePolicy, TreePathKind};
 use crate::index::update::IndexUpdateState;
 use crate::index::{IndexKey, IndexState};
 use crate::repo_path::{RootMode, repo_relative_from_base, repo_relative_from_path};
 use crate::routines::{
     CollectionEventOrigin, CollectionEventSourceKind, RoutineInvalidationPayload, RoutineOwnerKind,
 };
+use svode_core::content_tree::policy::{TreeIgnorePolicy, TreePathKind};
+use svode_core::page::nonce::WriteNonceRegistry;
 
 struct WatcherHandle {
     _watcher: RecommendedWatcher,

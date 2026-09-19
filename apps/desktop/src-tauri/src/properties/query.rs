@@ -4,9 +4,9 @@ use sqlx::SqlitePool;
 
 use super::{ActorCatalogState, Filter, Sort, View, read_collection_schema, resolve_query_filters};
 use crate::error::AppError;
-use crate::files::entry;
 use crate::git::cli::GitCli;
 use svode_core::collections::query::{entry_parent_dir, query_entry_rows, validate_ad_hoc_query};
+use svode_core::page::entry;
 
 pub async fn list_entries_for_view(
     pool: &SqlitePool,

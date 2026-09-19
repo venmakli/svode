@@ -1,3 +1,4 @@
+pub mod routes;
 pub mod s3;
 
 #[cfg(test)]

@@ -731,7 +731,7 @@ pub(crate) fn discover_owner(owner: &ResolvedRoutineOwner) -> RoutineCatalogSnap
         BTreeMap::<String, Vec<usize>>::new(),
         |mut groups, (index, row)| {
             groups
-                .entry(crate::files::naming::display_name_key(&row.name))
+                .entry(svode_core::page::naming::display_name_key(&row.name))
                 .or_default()
                 .push(index);
             groups

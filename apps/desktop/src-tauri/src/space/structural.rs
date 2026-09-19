@@ -1,20 +1,19 @@
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 
 use serde::Serialize;
 
 use crate::error::AppError;
-use crate::files::{Entry, entry};
 use crate::git::access::ensure_mutation_paths_were_authorized;
 use crate::git::autocommit::{AutocommitService, StructuralOp};
 use crate::index::update::IndexUpdateState;
-use crate::index::{self, IndexKey, IndexState};
+use crate::index::{self, IndexState};
 use crate::properties;
 use crate::repo_path::{RootMode, normalize_repo_relative};
-use svode_core::content_tree::policy::{TreeIgnorePolicy, TreePathKind};
+use svode_core::content_tree::policy::TreeIgnorePolicy;
 use svode_core::index::backlinks::{BacklinkIndex, ModifiedLinkSource};
+use svode_core::page::entry::{self, Entry};
 
 use super::config;
 
@@ -96,37 +95,6 @@ pub fn order_path(space: &str) -> PathBuf {
     Path::new(space).join(".svode").join("order.json")
 }
 
-fn managed_attachment_repository_dir(space: &str, project_path: Option<&str>) -> PathBuf {
-    let space_dir = PathBuf::from(space);
-    if space_dir.join(".git").symlink_metadata().is_ok() {
-        return space_dir;
-    }
-    project_path
-        .filter(|path| !path.is_empty())
-        .map(PathBuf::from)
-        .unwrap_or(space_dir)
-}
-
-pub fn managed_attachment_policy_paths(space: &str, project_path: Option<&str>) -> Vec<PathBuf> {
-    let repo_dir = managed_attachment_repository_dir(space, project_path);
-    vec![repo_dir.join(".gitignore"), repo_dir.join(".gitattributes")]
-}
-
-pub fn rebase_managed_attachment_routes(
-    space: &str,
-    project_path: Option<&str>,
-    from: &str,
-    to: &str,
-    subtree: bool,
-) -> Result<Vec<PathBuf>, AppError> {
-    let space_dir = PathBuf::from(space);
-    let repo_dir = managed_attachment_repository_dir(space, project_path);
-    let space_prefix = space_dir.strip_prefix(&repo_dir).unwrap_or(Path::new(""));
-    let old_path = space_prefix.join(from).to_string_lossy().replace('\\', "/");
-    let new_path = space_prefix.join(to).to_string_lossy().replace('\\', "/");
-    crate::storage::strategy::rebase_managed_import_routes(&repo_dir, &old_path, &new_path, subtree)
-}
-
 pub fn entry_paths_with_order(
     space: &str,
     paths: impl IntoIterator<Item = PathBuf>,
@@ -185,46 +153,6 @@ fn same_path(left: &Path, right: &Path) -> bool {
             .to_string()
     };
     normalize(left) == normalize(right)
-}
-
-pub fn collect_markdown_paths(
-    base: &Path,
-    root: &Path,
-    policy: &TreeIgnorePolicy,
-) -> Result<Vec<PathBuf>, AppError> {
-    let Ok(meta) = fs::symlink_metadata(root) else {
-        return Ok(Vec::new());
-    };
-    if meta.file_type().is_symlink() {
-        return Ok(Vec::new());
-    }
-    let rel_path = root.strip_prefix(base).unwrap_or(root);
-    let kind = if meta.is_dir() {
-        TreePathKind::Directory
-    } else if meta.is_file() {
-        TreePathKind::File
-    } else {
-        TreePathKind::Unknown
-    };
-    if policy.is_ignored_rel(rel_path, kind) {
-        return Ok(Vec::new());
-    }
-    if meta.is_file() {
-        return Ok(root
-            .extension()
-            .and_then(|ext| ext.to_str())
-            .is_some_and(|ext| ext.eq_ignore_ascii_case("md"))
-            .then(|| vec![root.to_path_buf()])
-            .unwrap_or_default());
-    }
-    if !meta.is_dir() {
-        return Ok(Vec::new());
-    }
-    let mut paths = Vec::new();
-    for item in fs::read_dir(root)? {
-        paths.extend(collect_markdown_paths(base, &item?.path(), policy)?);
-    }
-    Ok(paths)
 }
 
 fn basename(path: &str) -> String {
@@ -307,21 +235,6 @@ pub fn maybe_autocommit_structural_paths(
     );
 }
 
-pub async fn space_id_for_dir(state: &IndexState, space: &str) -> Option<String> {
-    state
-        .key_for_space_dir(Path::new(space))
-        .await
-        .and_then(|key| IndexState::space_id_for_key(&key))
-}
-
-pub async fn backlinks_for_space(state: &IndexState, space: &str) -> Arc<BacklinkIndex> {
-    let key = state
-        .key_for_space_dir(Path::new(space))
-        .await
-        .unwrap_or_else(|| IndexKey::Root(PathBuf::from(space)));
-    state.backlinks_for(&key).await
-}
-
 async fn schedule_modified_source_spaces(
     state: &IndexState,
     autocommit: &AutocommitService,
@@ -381,128 +294,6 @@ fn moved_child_old_path(new_child: &str, old_root: &str, new_root: &str) -> Stri
     }
 }
 
-async fn reindex_space_dir(state: &IndexState, updates: &IndexUpdateState, space: &str) {
-    let key = state
-        .key_for_space_dir(Path::new(space))
-        .await
-        .unwrap_or_else(|| IndexKey::Root(PathBuf::from(space)));
-    if let Err(error) = crate::index::service::repair_space(state, updates, &key).await {
-        tracing::warn!("structural operation reindex failed for {:?}: {error}", key);
-    }
-}
-
-async fn update_index_entry_or_reindex(
-    state: &IndexState,
-    updates: &IndexUpdateState,
-    project_path: Option<&str>,
-    space: &str,
-    rel_path: &str,
-    context: &str,
-) {
-    let Some(project) = project_path.filter(|path| !path.is_empty()) else {
-        reindex_space_dir(state, updates, space).await;
-        return;
-    };
-    if let Err(error) = index::update::publish_managed_path(
-        state,
-        updates,
-        Path::new(project),
-        &Path::new(space).join(rel_path),
-    )
-    .await
-    {
-        tracing::warn!("{context}: targeted index update failed for {rel_path}: {error}");
-        reindex_space_dir(state, updates, space).await;
-    }
-}
-
-pub async fn update_index_paths_or_reindex(
-    state: &IndexState,
-    updates: &IndexUpdateState,
-    project_path: Option<&str>,
-    space: &str,
-    paths: Vec<PathBuf>,
-    context: &str,
-) -> Vec<String> {
-    let Some(project) = project_path.filter(|path| !path.is_empty()) else {
-        reindex_space_dir(state, updates, space).await;
-        return Vec::new();
-    };
-    let mut errors = Vec::new();
-    for path in paths {
-        if let Err(error) =
-            index::update::publish_managed_path(state, updates, Path::new(project), &path).await
-        {
-            tracing::warn!(
-                "{context}: targeted index update failed for {}: {error}",
-                path.display()
-            );
-            errors.push(error.to_string());
-        }
-    }
-    if !errors.is_empty() {
-        reindex_space_dir(state, updates, space).await;
-    }
-    errors
-}
-
-pub async fn update_index_tree_or_reindex(
-    state: &IndexState,
-    updates: &IndexUpdateState,
-    project_path: Option<&str>,
-    space: &str,
-    rel_root: &str,
-    context: &str,
-) {
-    let root = Path::new(space);
-    let paths = match collect_markdown_paths(
-        root,
-        &root.join(rel_root),
-        &TreeIgnorePolicy::from_space_root(root),
-    ) {
-        Ok(paths) => paths,
-        Err(error) => {
-            tracing::warn!("{context}: collect markdown paths failed for {rel_root}: {error}");
-            reindex_space_dir(state, updates, space).await;
-            return;
-        }
-    };
-    let _ =
-        update_index_paths_or_reindex(state, updates, project_path, space, paths, context).await;
-}
-
-pub(crate) async fn replace_index_entries_or_reindex(
-    state: &IndexState,
-    updates: &IndexUpdateState,
-    project_path: Option<&str>,
-    space: &str,
-    deleted: &[String],
-    updated: &[String],
-    context: &str,
-) {
-    let Some(project) = project_path.filter(|path| !path.is_empty()) else {
-        reindex_space_dir(state, updates, space).await;
-        return;
-    };
-    let mut failed = false;
-    for path in deleted.iter().chain(updated) {
-        if let Err(error) = index::update::publish_managed_path(
-            state,
-            updates,
-            Path::new(project),
-            &Path::new(space).join(path),
-        )
-        .await
-        {
-            tracing::warn!("{context}: targeted index replacement failed for {path}: {error}");
-            failed = true;
-        }
-    }
-    if failed {
-        reindex_space_dir(state, updates, space).await;
-    }
-}
-
 async fn rebase_project_source_after_move(
     state: &IndexState,
     updates: &IndexUpdateState,
@@ -523,12 +314,12 @@ async fn rebase_project_source_after_move(
     {
         Ok(Some(source)) => {
             if publish_projection {
-                update_index_entry_or_reindex(
+                let _ = index::update::publish_paths_or_repair(
                     state,
                     updates,
                     project_path,
                     space,
-                    new_path,
+                    vec![Path::new(space).join(new_path)],
                     context,
                 )
                 .await;
@@ -557,7 +348,7 @@ pub(crate) async fn rebase_project_source_tree_after_move(
         return Vec::new();
     };
     let root = Path::new(space);
-    let files = match collect_markdown_paths(
+    let files = match svode_core::content_tree::collect_markdown_paths(
         root,
         &root.join(new_root),
         &TreeIgnorePolicy::from_space_root(root),
@@ -602,19 +393,27 @@ pub(crate) async fn rebase_project_source_tree_after_move(
             .update_file_backlinks(Path::new(project), space_id, &new_rel)
             .await;
     }
-    replace_index_entries_or_reindex(
+    let _ = index::update::publish_paths_or_repair(
         state,
         updates,
         project_path,
         space,
-        &deleted,
-        &updated,
+        deleted
+            .iter()
+            .chain(&updated)
+            .map(|path| Path::new(space).join(path))
+            .collect(),
         context,
     )
     .await;
-    if let Err(error) =
-        index::update::rebase_collection_schema_manifest(state, updates, root, old_root, new_root)
-            .await
+    if let Err(error) = svode_core::index::update::rebase_space_collection_schema_manifest(
+        &state.core,
+        updates.core(),
+        root,
+        old_root,
+        new_root,
+    )
+    .await
     {
         tracing::warn!("{context}: rebase collection schema manifest failed: {error}");
     }
@@ -651,7 +450,7 @@ pub(crate) fn rebase_legacy_source_tree_after_move(
     new_root: &str,
 ) {
     let root = Path::new(space);
-    let Ok(files) = collect_markdown_paths(
+    let Ok(files) = svode_core::content_tree::collect_markdown_paths(
         root,
         &root.join(new_root),
         &TreeIgnorePolicy::from_space_root(root),
@@ -692,12 +491,12 @@ pub async fn move_mutation_paths(
 ) -> Result<Vec<PathBuf>, AppError> {
     let Some(project) = project_path.filter(|path| !path.is_empty()) else {
         let mut paths = vec![PathBuf::from(space)];
-        paths.extend(managed_attachment_policy_paths(space, None));
+        paths.extend(svode_core::storage::routes::managed_attachment_policy_paths(space, None));
         return Ok(paths);
     };
     let mut paths =
         properties::relation_move_mutation_paths_with_project(space, Some(project), from, to)?;
-    let space_id = space_id_for_dir(state, space).await;
+    let space_id = state.core.space_id_for_dir(Path::new(space)).await;
     let link_plan = if Path::new(space).join(from).is_dir() {
         state
             .plan_links_on_folder_rename_project(Path::new(project), space_id.as_deref(), from)
@@ -708,7 +507,8 @@ pub async fn move_mutation_paths(
             .await?
     };
     paths.extend_from_slice(link_plan.mutation_paths());
-    paths.extend(managed_attachment_policy_paths(space, Some(project)));
+    paths
+        .extend(svode_core::storage::routes::managed_attachment_policy_paths(space, Some(project)));
     paths.push(PathBuf::from(space));
     paths.sort();
     paths.dedup();
@@ -725,7 +525,7 @@ pub async fn backlink_mutation_paths(
     let Some(project) = project_path.filter(|path| !path.is_empty()) else {
         return Ok(vec![PathBuf::from(space)]);
     };
-    let space_id = space_id_for_dir(state, space).await;
+    let space_id = state.core.space_id_for_dir(Path::new(space)).await;
     let plan = if folder_rename {
         state
             .plan_links_on_folder_rename_project(Path::new(project), space_id.as_deref(), from)
@@ -791,7 +591,7 @@ pub async fn delete(
 ) -> Result<DeleteOutcome, AppError> {
     let planned = delete_mutation_paths(space, project_path, path)?;
     ensure_mutation_paths_were_authorized(&planned)?;
-    let backlink_index = backlinks_for_space(state, space).await;
+    let backlink_index = state.core.backlinks_for_space_dir(Path::new(space)).await;
     let deleted = entry::delete_with_project(
         space,
         path,
@@ -830,10 +630,10 @@ pub async fn delete(
             }
         }
         if needs_reindex {
-            reindex_space_dir(state, updates, space).await;
+            index::update::repair_space_dir(state, updates, space).await;
         } else {
             for (owner_space, paths) in &cascade_touched_by_space {
-                let _ = update_index_paths_or_reindex(
+                let _ = index::update::publish_paths_or_repair(
                     state,
                     updates,
                     Some(project),
@@ -845,7 +645,7 @@ pub async fn delete(
             }
         }
     } else {
-        reindex_space_dir(state, updates, space).await;
+        index::update::repair_space_dir(state, updates, space).await;
     }
 
     if let Some(autocommit) = autocommit {
@@ -1056,8 +856,8 @@ where
     let schema_paths = prepared_schema.paths().to_vec();
     let order_before = fs::read(order_path(&request.space)).ok();
     let authorization_space = request.space.clone();
-    let page = crate::page::create::create(
-        crate::page::create::PageCreate {
+    let page = crate::page::create(
+        svode_core::page::create::PageCreate {
             space: request.space.clone(),
             parent_path: parent,
             title: planned.title,
@@ -1135,7 +935,7 @@ where
             ));
         }
     };
-    update_index_tree_or_reindex(
+    index::update::publish_tree_or_repair(
         state,
         updates,
         request.project.as_deref(),
@@ -1199,7 +999,7 @@ async fn convert_to_folder_with_publication(
     autocommit: Option<&AutocommitService>,
     publish_projection: bool,
 ) -> Result<Entry, AppError> {
-    let backlinks = backlinks_for_space(state, space).await;
+    let backlinks = state.core.backlinks_for_space_dir(Path::new(space)).await;
     ensure_backlinks_before_structural(state, project_path).await;
     revalidate_backlink_plan(state, space, project_path, file_path, false).await?;
     let project_aware = project_path.filter(|path| !path.is_empty()).is_some();
@@ -1216,7 +1016,7 @@ async fn convert_to_folder_with_publication(
     let old_leaf = format!("{folder_root}.md");
     if let Some(project) = project_path.filter(|path| !path.is_empty()) {
         let project = Path::new(project);
-        let target_space_id = space_id_for_dir(state, space).await;
+        let target_space_id = state.core.space_id_for_dir(Path::new(space)).await;
         let mut modified = state
             .update_links_on_rename_project(
                 updates,
@@ -1266,13 +1066,16 @@ async fn convert_to_folder_with_publication(
         let _ = rebase_legacy_source_after_move(space, &backlinks, &old_leaf, &converted.path);
     }
     if publish_projection {
-        replace_index_entries_or_reindex(
+        let _ = index::update::publish_paths_or_repair(
             state,
             updates,
             project_path,
             space,
-            std::slice::from_ref(&old_leaf),
-            std::slice::from_ref(&converted.path),
+            std::slice::from_ref(&old_leaf)
+                .iter()
+                .chain(std::slice::from_ref(&converted.path))
+                .map(|path| Path::new(space).join(path))
+                .collect(),
             "convert_to_folder",
         )
         .await;
@@ -1303,7 +1106,7 @@ pub async fn convert_to_leaf(
     updates: &IndexUpdateState,
     autocommit: Option<&AutocommitService>,
 ) -> Result<Entry, AppError> {
-    let backlinks = backlinks_for_space(state, space).await;
+    let backlinks = state.core.backlinks_for_space_dir(Path::new(space)).await;
     ensure_backlinks_before_structural(state, project_path).await;
     revalidate_backlink_plan(state, space, project_path, file_path, false).await?;
     let project_aware = project_path.filter(|path| !path.is_empty()).is_some();
@@ -1323,7 +1126,7 @@ pub async fn convert_to_leaf(
         .unwrap_or_else(|| converted.path.clone());
     if let Some(project) = project_path.filter(|path| !path.is_empty()) {
         let project = Path::new(project);
-        let target_space_id = space_id_for_dir(state, space).await;
+        let target_space_id = state.core.space_id_for_dir(Path::new(space)).await;
         let mut modified = state
             .update_links_on_rename_project(
                 updates,
@@ -1372,13 +1175,16 @@ pub async fn convert_to_leaf(
     } else {
         let _ = rebase_legacy_source_after_move(space, &backlinks, &old_readme, &converted.path);
     }
-    replace_index_entries_or_reindex(
+    let _ = index::update::publish_paths_or_repair(
         state,
         updates,
         project_path,
         space,
-        std::slice::from_ref(&old_readme),
-        std::slice::from_ref(&converted.path),
+        std::slice::from_ref(&old_readme)
+            .iter()
+            .chain(std::slice::from_ref(&converted.path))
+            .map(|path| Path::new(space).join(path))
+            .collect(),
         "convert_to_leaf",
     )
     .await;
@@ -1502,7 +1308,7 @@ async fn convert_to_collection_with_publication(
     };
 
     if publish_projection {
-        update_index_tree_or_reindex(
+        index::update::publish_tree_or_repair(
             state,
             updates,
             project_path,
@@ -1604,7 +1410,7 @@ async fn apply_move(
     updates: &IndexUpdateState,
     autocommit: Option<&AutocommitService>,
 ) -> Result<MoveOutcome, AppError> {
-    let backlinks = backlinks_for_space(state, space).await;
+    let backlinks = state.core.backlinks_for_space_dir(Path::new(space)).await;
     let was_dir = Path::new(space).join(from).is_dir();
     let old_abs = Path::new(space).join(from);
     ensure_backlinks_before_structural(state, project_path).await;
@@ -1624,12 +1430,17 @@ async fn apply_move(
             project_path,
         )?
     };
-    let policy_paths =
-        rebase_managed_attachment_routes(space, project_path, from, &new_path, was_dir)?;
+    let policy_paths = svode_core::storage::routes::rebase_managed_attachment_routes(
+        space,
+        project_path,
+        from,
+        &new_path,
+        was_dir,
+    )?;
     let mut modified_paths = Vec::new();
     if let Some(project) = project_path.filter(|path| !path.is_empty()) {
         let project = Path::new(project);
-        let space_id = space_id_for_dir(state, space).await;
+        let space_id = state.core.space_id_for_dir(Path::new(space)).await;
         let mut modified = if was_dir {
             state
                 .update_links_on_folder_rename_project(
@@ -1809,7 +1620,7 @@ async fn reshape(
     updates: &IndexUpdateState,
     autocommit: Option<&AutocommitService>,
 ) -> Result<String, AppError> {
-    let backlinks = backlinks_for_space(state, space).await;
+    let backlinks = state.core.backlinks_for_space_dir(Path::new(space)).await;
     ensure_backlinks_before_structural(state, project_path).await;
     revalidate_backlink_plan(state, space, project_path, path, false).await?;
     let new_path = if nesting {
@@ -1833,7 +1644,7 @@ async fn reshape(
     };
     if let Some(project) = project_path.filter(|path| !path.is_empty()) {
         let project = Path::new(project);
-        let space_id = space_id_for_dir(state, space).await;
+        let space_id = state.core.space_id_for_dir(Path::new(space)).await;
         let mut modified = state
             .update_links_on_rename_project(
                 updates,
@@ -1920,7 +1731,7 @@ pub async fn duplicate(
         .filter(|(_, name)| name.eq_ignore_ascii_case("README.md"))
         .map(|(parent, _)| parent)
         .unwrap_or(&duplicated.path);
-    update_index_tree_or_reindex(
+    index::update::publish_tree_or_repair(
         state,
         updates,
         project_path,

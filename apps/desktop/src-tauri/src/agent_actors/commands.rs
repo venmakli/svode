@@ -398,9 +398,9 @@ fn scan_routine_references(
                     continue;
                 }
             };
-            let meta = match crate::files::frontmatter::parse_status(&raw) {
-                crate::files::frontmatter::ParseStatus::Valid { meta, .. } => meta,
-                crate::files::frontmatter::ParseStatus::Missing { .. } => {
+            let meta = match svode_core::page::frontmatter::parse_status(&raw) {
+                svode_core::page::frontmatter::ParseStatus::Valid { meta, .. } => meta,
+                svode_core::page::frontmatter::ParseStatus::Missing { .. } => {
                     diagnostics.push(reference_diagnostic(
                         owner,
                         Some(&path),
@@ -409,7 +409,7 @@ fn scan_routine_references(
                     ));
                     continue;
                 }
-                crate::files::frontmatter::ParseStatus::Malformed { message, .. } => {
+                svode_core::page::frontmatter::ParseStatus::Malformed { message, .. } => {
                     diagnostics.push(reference_diagnostic(
                         owner,
                         Some(&path),

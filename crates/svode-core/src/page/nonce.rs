@@ -15,7 +15,7 @@ pub struct WriteNonceRegistry {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct WriteOriginMetadata {
+pub struct WriteOriginMetadata {
     pub nonce: String,
     pub routine_run_id: Option<String>,
     pub origin: String,
@@ -29,14 +29,13 @@ impl WriteNonceRegistry {
         }
     }
 
-    pub(crate) fn with_source_publication<T>(
+    pub fn with_source_publication<T>(
         &self,
-        operation: impl FnOnce() -> Result<T, crate::AppError>,
-    ) -> Result<T, crate::AppError> {
-        let _guard = self
-            .source_publication
-            .lock()
-            .map_err(|_| crate::AppError::General("source publication lock is poisoned".into()))?;
+        operation: impl FnOnce() -> Result<T, crate::page::PageError>,
+    ) -> Result<T, crate::page::PageError> {
+        let _guard = self.source_publication.lock().map_err(|_| {
+            crate::page::PageError::General("source publication lock is poisoned".into())
+        })?;
         operation()
     }
 
@@ -45,7 +44,7 @@ impl WriteNonceRegistry {
         self.register_with_origin(abs_path, nonce, None, "managed");
     }
 
-    pub(crate) fn register_with_origin(
+    pub fn register_with_origin(
         &self,
         abs_path: PathBuf,
         nonce: String,
@@ -67,7 +66,7 @@ impl WriteNonceRegistry {
         );
     }
 
-    pub(crate) fn take_metadata(&self, abs_path: &std::path::Path) -> Option<WriteOriginMetadata> {
+    pub fn take_metadata(&self, abs_path: &std::path::Path) -> Option<WriteOriginMetadata> {
         let mut map = self.entries.lock().unwrap();
         self.sweep(&mut map);
         let (metadata, _) = map.remove(abs_path)?;

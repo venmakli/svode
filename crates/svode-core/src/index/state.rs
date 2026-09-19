@@ -378,6 +378,22 @@ impl IndexRuntimeState {
         Ok(self.keys_for_project(project).await)
     }
 
+    /// Backlink registry of the pool that owns `space_dir`, or of a standalone
+    /// root when the directory is not part of an open Project.
+    pub async fn backlinks_for_space_dir(&self, space_dir: &Path) -> Arc<BacklinkIndex> {
+        let key = self
+            .key_for_space_dir(space_dir)
+            .await
+            .unwrap_or_else(|| IndexKey::Root(space_dir.to_path_buf()));
+        self.backlinks_for(&key).await
+    }
+
+    pub async fn space_id_for_dir(&self, space_dir: &Path) -> Option<String> {
+        self.key_for_space_dir(space_dir)
+            .await
+            .and_then(|key| Self::space_id_for_key(&key))
+    }
+
     pub async fn key_for_space_dir(&self, space_dir: &Path) -> Option<IndexKey> {
         let cache = self.spaces_cache.lock().await;
         for (project, item) in cache.iter() {

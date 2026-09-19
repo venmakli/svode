@@ -339,7 +339,7 @@ pub(crate) async fn read_scoped_item(
             }
             if path.ends_with(".md") {
                 let source = if current_exists { &after } else { &before };
-                result.title = crate::files::frontmatter::try_parse(source)
+                result.title = svode_core::page::frontmatter::try_parse(source)
                     .ok()
                     .flatten()
                     .map(|(meta, _)| meta.title)

@@ -35,14 +35,14 @@ pub fn list_children_checked(
 }
 
 pub fn read_order(space: &Path) -> HashMap<String, Vec<String>> {
-    tree::read_order(space)
+    svode_core::content_tree::read_order(space)
 }
 
 pub fn replace_order(space: &Path, order: HashMap<String, Vec<String>>) -> Result<bool, AppError> {
-    if tree::read_order(space) == order {
+    if svode_core::content_tree::read_order(space) == order {
         return Ok(false);
     }
-    tree::write_order(space, &order)?;
+    svode_core::content_tree::write_order(space, &order)?;
     Ok(true)
 }
 
@@ -83,9 +83,9 @@ pub fn reorder_content(
                     .ok_or_else(|| AppError::General(format!("unknown child path: {path}")))
             })
             .collect::<Result<Vec<_>, _>>()?;
-        let mut order = tree::read_order(Path::new(space));
+        let mut order = svode_core::content_tree::read_order(Path::new(space));
         order.insert(parent_path.clone(), names);
-        tree::write_order(Path::new(space), &order)?;
+        svode_core::content_tree::write_order(Path::new(space), &order)?;
     }
 
     Ok(ContentOrderOutcome {

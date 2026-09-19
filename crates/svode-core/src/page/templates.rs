@@ -4,17 +4,18 @@ use std::path::{Path, PathBuf};
 
 use serde_yml::Value;
 
-use crate::error::AppError;
-use crate::files::entry::{self, Entry, EntryMeta};
-use crate::files::{filename, frontmatter, tree};
-use crate::properties;
+use crate::collections::engine;
+use crate::content_tree;
+use crate::page::PageError;
+use crate::page::entry::{self, Entry, EntryMeta};
+use crate::page::{filename, frontmatter};
 
-use svode_core::collections::engine::{
+use crate::collections::engine::{
     README_FILE, TEMPLATES_DIR, TemplateSource, humanize_template_slug as humanize_slug,
     join_template_rel as join_rel, normalize_template_rel as normalize_rel,
     resolve_template_source, template_head_rel, template_rel_abs as rel_abs, templates_dir,
 };
-pub use svode_core::collections::engine::{
+pub use crate::collections::engine::{
     TemplateInfo, TemplateKind, list_templates as list,
     prepare_reorder_templates as prepare_reorder,
     prepare_set_default_template as prepare_set_default,
@@ -47,8 +48,8 @@ pub fn create(
     collection_path: &str,
     title: &str,
     kind: TemplateKind,
-) -> Result<String, AppError> {
-    properties::read_collection_schema(space, collection_path)?;
+) -> Result<String, PageError> {
+    engine::read_collection_schema(space, collection_path)?;
     let templates_abs = templates_dir(space, collection_path);
     fs::create_dir_all(&templates_abs)?;
 
@@ -68,12 +69,12 @@ pub fn create(
     };
 
     let mut meta = EntryMeta::new_persisted(title.to_string());
-    properties::apply_schema_defaults_for_path(space, &head_rel, &mut meta)?;
+    engine::apply_schema_defaults_for_path(space, &head_rel, &mut meta)?;
     fs::write(&head_abs, frontmatter::serialize(&meta, ""))?;
 
     if kind == TemplateKind::NestedCollection {
         let template_collection = join_rel(collection_path, &format!("{TEMPLATES_DIR}/{slug}"));
-        properties::write_default_collection_schema(space, &template_collection)?;
+        engine::write_default_collection_schema(space, &template_collection)?;
     }
 
     Ok(head_rel)
@@ -83,7 +84,7 @@ pub fn delete(
     space: &str,
     collection_path: &str,
     template_slug: &str,
-) -> Result<DeletedTemplate, AppError> {
+) -> Result<DeletedTemplate, PageError> {
     let source = resolve_template_source(space, collection_path, template_slug)?;
     if source.is_dir {
         fs::remove_dir_all(&source.root_abs)?;
@@ -100,7 +101,7 @@ pub fn duplicate(
     space: &str,
     collection_path: &str,
     template_slug: &str,
-) -> Result<DuplicatedTemplate, AppError> {
+) -> Result<DuplicatedTemplate, PageError> {
     let source = resolve_template_source(space, collection_path, template_slug)?;
     let templates_abs = templates_dir(space, collection_path);
     let new_title = format!("{} (copy)", source.title);
@@ -129,7 +130,7 @@ pub fn duplicate(
         vec![dest_root.clone()]
     };
     rewrite_markdown_identities(&files, Some(&root_head), Some(&new_title), None, None, None)?;
-    properties::rewrite_internal_relation_refs_for_copy(
+    engine::rewrite_internal_relation_refs_for_copy(
         space,
         &rel_from_abs(Path::new(space), &source.root_abs),
         &rel_from_abs(Path::new(space), &dest_root),
@@ -151,8 +152,8 @@ pub fn instantiate(
     allocate_unique_title: bool,
     force_folder: bool,
     contextual_defaults: Option<HashMap<String, Value>>,
-) -> Result<InstantiatedTemplate, AppError> {
-    crate::files::naming::with_document_name_lock(space, || {
+) -> Result<InstantiatedTemplate, PageError> {
+    crate::page::naming::with_document_name_lock(space, || {
         instantiate_inner(
             space,
             collection_path,
@@ -175,13 +176,13 @@ fn instantiate_inner(
     allocate_unique_title: bool,
     force_folder: bool,
     contextual_defaults: Option<HashMap<String, Value>>,
-) -> Result<InstantiatedTemplate, AppError> {
+) -> Result<InstantiatedTemplate, PageError> {
     let source = resolve_template_source(space, collection_path, template_slug)?;
     let contextual_defaults = contextual_defaults.unwrap_or_default();
     let parent_rel = normalize_rel(parent_dir);
     let parent_abs = rel_abs(space, &parent_rel);
     if !parent_abs.is_dir() {
-        return Err(AppError::FileNotFound(parent_rel));
+        return Err(PageError::FileNotFound(parent_rel));
     }
 
     let hierarchy = force_folder || source.is_dir;
@@ -196,13 +197,13 @@ fn instantiate_inner(
         join_rel(&parent_rel, &format!(".svode-name-probe-{probe_id}.md"))
     };
     let root_title = if allocate_unique_title {
-        crate::files::naming::allocate_document_title(
+        crate::page::naming::allocate_document_title(
             Path::new(space),
             &scope_probe,
             &requested_title,
         )?
     } else {
-        crate::files::naming::ensure_document_name_available(
+        crate::page::naming::ensure_document_name_available(
             Path::new(space),
             &scope_probe,
             &requested_title,
@@ -249,7 +250,7 @@ fn instantiate_inner(
             Some(&contextual_defaults),
             None,
         )?;
-        properties::rewrite_internal_relation_refs_for_copy(
+        engine::rewrite_internal_relation_refs_for_copy(
             space,
             &rel_from_abs(Path::new(space), &source.root_abs),
             &rel_from_abs(Path::new(space), &head_abs),
@@ -283,7 +284,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let space = tmp.path().to_string_lossy();
         fs::create_dir(tmp.path().join("collection")).unwrap();
-        properties::write_default_collection_schema(&space, "collection").unwrap();
+        engine::write_default_collection_schema(&space, "collection").unwrap();
         create(&space, "collection", "Template", TemplateKind::Leaf).unwrap();
         entry::create_with_options(&space, Some("collection"), "Shared", None, false, false)
             .unwrap();
@@ -298,7 +299,7 @@ mod tests {
             false,
             None,
         );
-        assert!(matches!(conflict, Err(AppError::DocumentNameConflict(_))));
+        assert!(matches!(conflict, Err(PageError::DocumentNameConflict(_))));
 
         let allocated = instantiate(
             &space,
@@ -333,7 +334,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let space = tmp.path().to_string_lossy().to_string();
         fs::create_dir(tmp.path().join("collection")).unwrap();
-        properties::write_default_collection_schema(&space, "collection").unwrap();
+        engine::write_default_collection_schema(&space, "collection").unwrap();
         create(&space, "collection", "Template", TemplateKind::Leaf).unwrap();
         let schema_path = tmp.path().join("collection/schema.yaml");
 
@@ -369,7 +370,7 @@ fn instantiate_hierarchy(
     head_rel: &str,
     root_title: &str,
     contextual_defaults: &HashMap<String, Value>,
-) -> Result<(), AppError> {
+) -> Result<(), PageError> {
     let stage_root = create_stage_dir()?.join(
         dest_root_abs
             .file_name()
@@ -398,11 +399,13 @@ fn instantiate_hierarchy(
 
         if let Some(parent) = dest_root_abs.parent() {
             if !parent.is_dir() {
-                return Err(AppError::FileNotFound(parent.to_string_lossy().to_string()));
+                return Err(PageError::FileNotFound(
+                    parent.to_string_lossy().to_string(),
+                ));
             }
         }
         fs::rename(&stage_root, dest_root_abs)?;
-        properties::rewrite_internal_relation_refs_for_copy(
+        engine::rewrite_internal_relation_refs_for_copy(
             space,
             &rel_from_abs(Path::new(space), &source.root_abs),
             &rel_from_abs(Path::new(space), dest_root_abs),
@@ -426,7 +429,7 @@ fn rewrite_markdown_identities(
     root_schema_path: Option<(&str, &str)>,
     contextual_defaults: Option<&HashMap<String, Value>>,
     title_suffix: Option<&str>,
-) -> Result<(), AppError> {
+) -> Result<(), PageError> {
     let mut docs = Vec::new();
     for path in files {
         let doc = read_markdown_doc(path)?;
@@ -445,9 +448,9 @@ fn rewrite_markdown_identities(
                 doc.meta.mark_title_present();
             }
             if let Some((space, rel_path)) = root_schema_path {
-                properties::apply_schema_defaults_for_path(space, rel_path, &mut doc.meta)?;
+                engine::apply_schema_defaults_for_path(space, rel_path, &mut doc.meta)?;
                 if let Some(defaults) = contextual_defaults {
-                    properties::apply_contextual_defaults_for_path_strict(
+                    engine::apply_contextual_defaults_for_path_strict(
                         space,
                         rel_path,
                         &mut doc.meta,
@@ -463,7 +466,7 @@ fn rewrite_markdown_identities(
     Ok(())
 }
 
-fn read_markdown_doc(path: &Path) -> Result<MarkdownDoc, AppError> {
+fn read_markdown_doc(path: &Path) -> Result<MarkdownDoc, PageError> {
     let raw = fs::read_to_string(path)?;
     let (meta, body) = match frontmatter::try_parse(&raw)? {
         Some((meta, body)) => (meta, body),
@@ -486,9 +489,9 @@ fn validate_contextual_defaults(
     space: &str,
     head_rel: &str,
     contextual_defaults: &HashMap<String, Value>,
-) -> Result<(), AppError> {
+) -> Result<(), PageError> {
     let mut meta = EntryMeta::new_persisted("");
-    properties::apply_contextual_defaults_for_path_strict(
+    engine::apply_contextual_defaults_for_path_strict(
         space,
         head_rel,
         &mut meta,
@@ -516,7 +519,7 @@ fn unique_template_slug(templates_abs: &Path, base_slug: &str) -> String {
     )
 }
 
-fn copy_dir_recursive_all(source: &Path, dest: &Path) -> Result<(), AppError> {
+fn copy_dir_recursive_all(source: &Path, dest: &Path) -> Result<(), PageError> {
     fs::create_dir_all(dest)?;
     for item in fs::read_dir(source)? {
         let item = item?;
@@ -531,13 +534,13 @@ fn copy_dir_recursive_all(source: &Path, dest: &Path) -> Result<(), AppError> {
     Ok(())
 }
 
-fn collect_md_files_all(root: &Path) -> Result<Vec<PathBuf>, AppError> {
+fn collect_md_files_all(root: &Path) -> Result<Vec<PathBuf>, PageError> {
     let mut files = Vec::new();
     collect_md_files_inner(root, &mut files)?;
     Ok(files)
 }
 
-fn collect_md_files_inner(path: &Path, out: &mut Vec<PathBuf>) -> Result<(), AppError> {
+fn collect_md_files_inner(path: &Path, out: &mut Vec<PathBuf>) -> Result<(), PageError> {
     if path.is_file() {
         if path.extension().and_then(|ext| ext.to_str()) == Some("md") {
             out.push(path.to_path_buf());
@@ -551,7 +554,7 @@ fn collect_md_files_inner(path: &Path, out: &mut Vec<PathBuf>) -> Result<(), App
     Ok(())
 }
 
-fn create_stage_dir() -> Result<PathBuf, AppError> {
+fn create_stage_dir() -> Result<PathBuf, PageError> {
     let path = std::env::temp_dir().join(format!(
         "svode-template-stage-{}",
         ulid::Ulid::new().to_string().to_lowercase()
@@ -566,11 +569,11 @@ fn append_order(space: &Path, parent_rel: &str, name: &str) {
     } else {
         parent_rel.to_string()
     };
-    let mut order = tree::read_order(space);
+    let mut order = content_tree::read_order(space);
     let items = order.entry(key).or_default();
     if !items.iter().any(|item| item == name) {
         items.push(name.to_string());
-        let _ = tree::write_order(space, &order);
+        let _ = content_tree::write_order(space, &order);
     }
 }
 

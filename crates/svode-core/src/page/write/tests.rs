@@ -1,6 +1,9 @@
 use super::*;
-use crate::files::WriteNonceRegistry;
-use crate::index::{IndexKey, IndexState, update::test_update_state};
+use crate::index::IndexKey;
+use crate::index::state::IndexRuntimeState as IndexState;
+use crate::page::dates::SystemGitDateExecutor;
+use crate::page::nonce::WriteNonceRegistry;
+use crate::page::test_support::{runtime, scaffold_space};
 use std::collections::BTreeMap;
 
 async fn save(
@@ -10,7 +13,7 @@ async fn save(
     title: Option<&str>,
     state: &IndexState,
     nonces: &WriteNonceRegistry,
-) -> Result<PageWriteOutcome, AppError> {
+) -> Result<PageWriteOutcome, PageError> {
     write(
         PageWrite {
             space: root.to_str().unwrap(),
@@ -24,10 +27,7 @@ async fn save(
             skip_rename: title.is_none(),
             project: Some(root.to_str().unwrap()),
         },
-        state,
-        test_update_state(),
-        nonces,
-        None,
+        runtime(state, nonces),
         |mut paths| async move {
             paths.push(root.to_path_buf());
             Ok(paths)
@@ -40,14 +40,14 @@ async fn save_fields(
     root: &Path,
     path: &str,
     fields: BTreeMap<String, serde_json::Value>,
-) -> Result<PageWriteOutcome, AppError> {
+) -> Result<PageWriteOutcome, PageError> {
     let current = entry::read(root.to_str().unwrap(), path)?;
-    let batch = crate::properties::prepare_entry_field_batch(
+    let batch = crate::collections::engine::prepare_entry_field_batch(
         root.to_str().unwrap(),
         None,
         path,
         &fields,
-        crate::properties::EntryFieldBatchIntent::Literal,
+        crate::collections::engine::EntryFieldBatchIntent::Literal,
     )?;
     let has_title = batch.title().is_some();
     write(
@@ -63,10 +63,7 @@ async fn save_fields(
             skip_rename: !has_title,
             project: None,
         },
-        &IndexState::new(),
-        test_update_state(),
-        &WriteNonceRegistry::new(),
-        None,
+        runtime(&IndexState::default(), &WriteNonceRegistry::new()),
         |mut paths| async move {
             paths.push(root.to_path_buf());
             Ok(paths)
@@ -238,7 +235,7 @@ async fn body_only_preserves_raw_frontmatter_and_noop_does_not_publish() {
         let root = temp.path();
         fs::create_dir_all(root.join(".git")).unwrap();
         fs::write(root.join("Old.md"), source).unwrap();
-        let state = IndexState::new();
+        let state = IndexState::default();
         let nonces = WriteNonceRegistry::new();
         let current = entry::read(root.to_str().unwrap(), "Old.md").unwrap();
         let result = save(root, "Old.md", &current.body, None, &state, &nonces)
@@ -288,12 +285,12 @@ async fn combined_failure_restores_all_source_bytes_paths_and_prior_edits() {
                 fs::write(root.join("Old/Child.md"), "[external](../Link.md)\n").unwrap();
                 fs::write(root.join("Old/asset.bin"), [0, 1, 2, 255]).unwrap();
             }
-            let state = IndexState::new();
+            let state = IndexState::default();
             let pool = state
                 .get_or_create(&IndexKey::Root(root.to_path_buf()))
                 .await
                 .unwrap();
-            crate::index::reindex::full_reindex(&pool, root, &[])
+            crate::index::reindex::full_reindex(None::<&SystemGitDateExecutor>, &pool, root, &[])
                 .await
                 .unwrap();
             let before: Vec<(String, String)> =
@@ -363,7 +360,7 @@ async fn projection_failure_is_applied_and_authorization_denial_is_not() {
     let root = temp.path();
     fs::create_dir_all(root.join(".git")).unwrap();
     fs::write(root.join("Old.md"), "---\ntitle: Old\n---\nOld").unwrap();
-    let state = IndexState::new();
+    let state = IndexState::default();
     let nonces = WriteNonceRegistry::new();
     FAILURE.with(|failure| *failure.borrow_mut() = Some("projection"));
     let result = save(root, "Old.md", "New body", Some("New"), &state, &nonces)
@@ -397,11 +394,8 @@ async fn projection_failure_is_applied_and_authorization_denial_is_not() {
             skip_rename: false,
             project: None,
         },
-        &state,
-        test_update_state(),
-        &nonces,
-        None,
-        |_| async { Err(AppError::General("denied".into())) },
+        runtime(&state, &nonces),
+        |_| async { Err(PageError::General("denied".into())) },
     )
     .await;
     assert!(result.is_err());
@@ -416,9 +410,9 @@ fn rollback_failure_reports_original_cause_and_unrestored_paths() {
     let snapshot = SourceSnapshot::capture(std::slice::from_ref(&path), None).unwrap();
     fs::remove_file(&path).unwrap();
     fs::create_dir(&path).unwrap();
-    let error = snapshot.rollback(AppError::General("source write failed".into()));
+    let error = snapshot.rollback(PageError::General("source write failed".into()));
     match error {
-        AppError::PageWriteRecovery { cause, paths } => {
+        PageError::Recovery { cause, paths } => {
             assert_eq!(cause, "source write failed");
             assert_eq!(paths, [path.display().to_string()]);
         }
@@ -438,7 +432,7 @@ async fn root_owner_title_and_filename_collision_keep_canonical_path() {
             "---\ntitle: Other display name\n---\nUntouched",
         )
         .unwrap();
-        let state = IndexState::new();
+        let state = IndexState::default();
         let nonces = WriteNonceRegistry::new();
         let result = save(root, path, "New body", Some("New"), &state, &nonces)
             .await
@@ -472,7 +466,7 @@ async fn root_owner_title_and_filename_collision_keep_canonical_path() {
 async fn late_failure_restores_collection_schema_and_reverse_relation_values() {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path();
-    crate::space::scaffold::scaffold_space(root, "Test", "", "").unwrap();
+    scaffold_space(root, "Test");
     fs::create_dir_all(root.join(".git")).unwrap();
     fs::create_dir_all(root.join("Tasks")).unwrap();
     fs::create_dir_all(root.join("Decisions")).unwrap();
@@ -492,7 +486,7 @@ async fn late_failure_restores_collection_schema_and_reverse_relation_values() {
     for (path, content) in sources {
         fs::write(root.join(path), content).unwrap();
     }
-    let state = IndexState::new();
+    let state = IndexState::default();
     let nonces = WriteNonceRegistry::new();
     FAILURE.with(|failure| *failure.borrow_mut() = Some("routing"));
     let result = save(
@@ -524,14 +518,14 @@ async fn late_failure_restores_collection_schema_and_reverse_relation_values() {
 async fn deferred_filename_still_rejects_duplicate_display_name() {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path();
-    crate::space::scaffold::scaffold_space(root, "Test", "", "").unwrap();
+    scaffold_space(root, "Test");
     fs::create_dir_all(root.join(".git")).unwrap();
     fs::create_dir_all(root.join("Tasks")).unwrap();
     fs::write(root.join("Tasks/schema.yaml"), "columns: [").unwrap();
     let original = "---\ntitle: Original\n---\nBefore";
     fs::write(root.join("Tasks/Original.md"), original).unwrap();
     fs::write(root.join("Tasks/peer.md"), "---\ntitle: Taken\n---\nPeer").unwrap();
-    let state = IndexState::new();
+    let state = IndexState::default();
     let result = save(
         root,
         "Tasks/Original.md",
@@ -541,7 +535,7 @@ async fn deferred_filename_still_rejects_duplicate_display_name() {
         &WriteNonceRegistry::new(),
     )
     .await;
-    assert!(matches!(result, Err(AppError::DocumentNameConflict(_))));
+    assert!(matches!(result, Err(PageError::DocumentNameConflict(_))));
     assert_eq!(
         fs::read_to_string(root.join("Tasks/Original.md")).unwrap(),
         original
@@ -593,7 +587,7 @@ async fn combined_write_keeps_git_head_and_unrelated_staged_bytes() {
         "Old.md",
         "New body",
         Some("New"),
-        &IndexState::new(),
+        &IndexState::default(),
         &WriteNonceRegistry::new(),
     )
     .await

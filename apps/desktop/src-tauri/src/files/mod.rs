@@ -1,16 +1,7 @@
 pub(crate) mod actor_observation;
-pub mod entry;
-pub(crate) mod filename;
-pub mod frontmatter;
 pub(crate) mod link_fix;
-pub(crate) mod naming;
-pub mod nonce;
-pub mod templates;
 pub mod tree;
 pub mod watcher;
 
-pub use entry::{Entry, EntryMeta, WriteResult};
-pub use nonce::WriteNonceRegistry;
-pub use templates::{TemplateInfo, TemplateKind};
 pub use tree::TreeNode;
 pub use watcher::FileWatcher;

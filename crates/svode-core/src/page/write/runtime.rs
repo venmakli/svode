@@ -1,44 +1,79 @@
 use super::*;
-use crate::files::WriteNonceRegistry;
-use crate::git::autocommit::AutocommitService;
-use crate::index::{self, IndexState, update::IndexUpdateState};
-use crate::space::structural::{
-    backlinks_for_space, entry_rename_op, grouped_abs_paths_by_space,
-    managed_attachment_policy_paths, maybe_autocommit_structural_paths, space_id_for_dir,
-};
-use svode_core::collections::CollectionError;
-use svode_core::index::backlinks::BacklinkIndex;
+use crate::index::IndexError;
+use crate::index::backlinks::BacklinkIndex;
+use crate::index::state::IndexRuntimeState;
+use crate::index::update::{self, IndexUpdateState};
+use crate::page::dates::GitDateExecutor;
+use crate::page::nonce::WriteNonceRegistry;
 
-pub(crate) async fn write<F, Fut>(
+/// Shared runtime state a Page mutation publishes into: the Project index,
+/// Routine observation, watcher echo nonces and the Git date provider.
+pub struct PageRuntime<'a, E> {
+    pub index: &'a IndexRuntimeState,
+    pub updates: &'a IndexUpdateState,
+    pub nonces: &'a WriteNonceRegistry,
+    pub git_dates: Option<&'a E>,
+}
+
+impl<E> Clone for PageRuntime<'_, E> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<E> Copy for PageRuntime<'_, E> {}
+
+async fn space_path_of(
+    state: &IndexRuntimeState,
+    project: &Path,
+    space_id: Option<&str>,
+) -> Result<PathBuf, IndexError> {
+    let key = state.key_for_project_space_id(project, space_id).await?;
+    state.dir_for_key(&key).await
+}
+
+/// Validate, plan, authorize and apply one Page write, then publish its
+/// derived projection. Authorization receives the full planned touched-set;
+/// a projection failure after the source write is an applied warning.
+pub async fn write<E, F, Fut, Err>(
     request: PageWrite<'_>,
-    state: &IndexState,
-    updates: &IndexUpdateState,
-    nonces: &WriteNonceRegistry,
-    autocommit: Option<&AutocommitService>,
+    runtime: PageRuntime<'_, E>,
     authorize: F,
-) -> Result<PageWriteOutcome, AppError>
+) -> Result<PageWriteOutcome, Err>
 where
+    E: GitDateExecutor,
     F: FnOnce(Vec<PathBuf>) -> Fut,
-    Fut: std::future::Future<Output = Result<Vec<PathBuf>, AppError>>,
+    Fut: std::future::Future<Output = Result<Vec<PathBuf>, Err>>,
+    Err: From<PageError>,
 {
-    let backlink_index = backlinks_for_space(state, request.space).await;
+    let state = runtime.index;
+    let nonces = runtime.nonces;
+    let backlink_index = state
+        .backlinks_for_space_dir(Path::new(request.space))
+        .await;
     let plan = prepare(&request, state, &backlink_index).await?;
     let authorized = authorize(plan.paths.clone()).await?;
     let space = request.space.to_string();
     let path = request.path.to_string();
     let project = request.project.map(str::to_string);
-    let mut outcome = crate::git::access::scope_authorized_mutation_paths(authorized, async {
-        nonces.with_source_publication(|| {
-            let outcome = apply_sources(request, plan)?;
-            for path in &outcome.changed_paths {
-                nonces.register(
-                    path.canonicalize().unwrap_or_else(|_| path.clone()),
-                    outcome.result.write_nonce.clone(),
-                );
-            }
-            Ok(outcome)
-        })
-    })
+    let mut outcome = crate::git::access::scope_authorized_mutation_paths(
+        authorized,
+        async {
+            nonces
+                .with_source_publication(|| {
+                    let outcome = apply_sources(request, plan)?;
+                    for path in &outcome.changed_paths {
+                        nonces.register(
+                            path.canonicalize().unwrap_or_else(|_| path.clone()),
+                            outcome.result.write_nonce.clone(),
+                        );
+                    }
+                    Ok(outcome)
+                })
+                .map_err(Err::from)
+        },
+        |error| Err::from(PageError::from(error)),
+    )
     .await?;
     if outcome.changed_paths.is_empty() {
         return Ok(outcome);
@@ -57,7 +92,7 @@ where
             }
             if let Ok((key, relative)) = state.resolve(Path::new(project), changed).await {
                 let source = ModifiedLinkSource {
-                    space_id: IndexState::space_id_for_key(&key),
+                    space_id: IndexRuntimeState::space_id_for_key(&key),
                     path: relative,
                 };
                 if !outcome.result.modified_sources.contains(&source) {
@@ -73,8 +108,7 @@ where
             .collect();
     }
     let projection = publish(
-        state,
-        updates,
+        runtime,
         &backlink_index,
         &space,
         project.as_deref(),
@@ -90,28 +124,14 @@ where
             path: Some(current.to_string()),
         });
     }
-    if let (Some(service), Some(new_path)) = (autocommit, outcome.result.new_path.as_deref()) {
-        let operation = entry_rename_op(&space, &path, new_path);
-        for (owner, paths) in
-            grouped_abs_paths_by_space(project.as_deref(), &space, &outcome.changed_paths)
-        {
-            maybe_autocommit_structural_paths(
-                service,
-                project.as_deref(),
-                &owner.to_string_lossy(),
-                operation.clone(),
-                paths,
-            );
-        }
-    }
     Ok(outcome)
 }
 
 async fn prepare(
     request: &PageWrite<'_>,
-    state: &IndexState,
+    state: &IndexRuntimeState,
     backlinks: &BacklinkIndex,
-) -> Result<WritePlan, AppError> {
+) -> Result<WritePlan, PageError> {
     let mut rename = entry::planned_write_rename(
         request.space,
         request.path,
@@ -124,14 +144,14 @@ async fn prepare(
         let (old, new) = rename_roots(request, planned);
         let old = old.strip_prefix(request.space).unwrap().to_string_lossy();
         let new = new.strip_prefix(request.space).unwrap().to_string_lossy();
-        match crate::properties::relation_move_mutation_paths_with_project(
+        match collections::relation_move_mutation_paths_with_project(
             request.space,
             request.project,
             &old,
             &new,
         ) {
             Ok(paths) => relation_paths = paths,
-            Err(CollectionError::Schema(message)) => {
+            Err(crate::collections::CollectionError::Schema(message)) => {
                 warning = Some(EntryWarning::filename_rename_deferred(
                     request.path,
                     &format!("schema error: {message}"),
@@ -156,16 +176,16 @@ async fn prepare(
                 .map(|path| mapped_path(path, Some(&(new_root.clone(), old_root.clone())))),
         );
         paths.push(Path::new(request.space).join(".svode/order.json"));
-        paths.extend(managed_attachment_policy_paths(
+        paths.extend(crate::storage::routes::managed_attachment_policy_paths(
             request.space,
             request.project,
         ));
         if let Some(folder) = &planned.folder_rename_old {
             let root = Path::new(request.space);
-            moved_sources = crate::space::structural::collect_markdown_paths(
+            moved_sources = crate::content_tree::collect_markdown_paths(
                 root,
                 &root.join(folder),
-                &svode_core::content_tree::policy::TreeIgnorePolicy::from_space_root(root),
+                &crate::content_tree::policy::TreeIgnorePolicy::from_space_root(root),
             )?;
             paths.extend(moved_sources.clone());
         }
@@ -173,7 +193,7 @@ async fn prepare(
         if let Some(folder) = &planned.folder_rename_old {
             targets.extend(backlinks.target_paths_under(folder));
         }
-        let target_id = space_id_for_dir(state, request.space).await;
+        let target_id = state.space_id_for_dir(Path::new(request.space)).await;
         if let Some(project) = request.project {
             state
                 .ensure_project_backlinks_built(Path::new(project))
@@ -196,8 +216,7 @@ async fn prepare(
         for target in targets {
             for (source, _) in backlinks.sources_for_target(&target) {
                 let dir = if let Some(project) = request.project {
-                    state
-                        .space_path_of(Path::new(project), source.source_space_id.as_deref())
+                    space_path_of(state, Path::new(project), source.source_space_id.as_deref())
                         .await?
                 } else {
                     PathBuf::from(request.space)
@@ -248,17 +267,17 @@ async fn prepare(
     })
 }
 
-async fn publish(
-    state: &IndexState,
-    updates: &IndexUpdateState,
+async fn publish<E: GitDateExecutor>(
+    runtime: PageRuntime<'_, E>,
     backlinks: &BacklinkIndex,
     space: &str,
     project: Option<&str>,
     paths: &[PathBuf],
     original: &str,
     current: &str,
-) -> Result<(), AppError> {
+) -> Result<(), PageError> {
     checkpoint("projection")?;
+    let (state, updates) = (runtime.index, runtime.updates);
     let mut errors = Vec::new();
     // All source writes are complete. Routine observation inside targeted updates
     // still precedes the corresponding index publication.
@@ -275,7 +294,7 @@ async fn publish(
         if let Some(project) = project {
             let project = Path::new(project);
             if let Err(error) =
-                index::update::publish_managed_path(state, updates, project, path).await
+                update::publish_managed_path(state, updates, runtime.git_dates, project, path).await
             {
                 errors.push(error.to_string());
             }
@@ -298,7 +317,7 @@ async fn publish(
     {
         if let (Some(old), Some(new)) = (Path::new(original).parent(), Path::new(current).parent())
         {
-            if let Err(error) = index::update::rebase_collection_schema_manifest(
+            if let Err(error) = update::rebase_space_collection_schema_manifest(
                 state,
                 updates,
                 Path::new(space),
@@ -314,6 +333,6 @@ async fn publish(
     if errors.is_empty() {
         Ok(())
     } else {
-        Err(AppError::Index(errors.join("; ")))
+        Err(PageError::Index(errors.join("; ")))
     }
 }

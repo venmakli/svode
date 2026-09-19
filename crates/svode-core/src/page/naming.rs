@@ -1,10 +1,13 @@
+use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
+use std::sync::{Arc, Mutex, OnceLock};
 
 use serde::{Deserialize, Serialize};
 use unicode_casefold::UnicodeCaseFold;
 use unicode_normalization::UnicodeNormalization;
 
+use super::error::PageError;
 use super::source::{PageSourceError, ParsedMarkdown, parse_markdown};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -143,6 +146,61 @@ pub fn document_name_conflict(
         parent_path: parent.filter(|value| !value.is_empty()),
         conflicts,
     }))
+}
+
+static DOCUMENT_NAME_LOCKS: OnceLock<Mutex<HashMap<String, Arc<Mutex<()>>>>> = OnceLock::new();
+
+/// Serialize name allocation and title-driven renames within one Space.
+pub fn with_document_name_lock<T, E: From<PageError>>(
+    space: &str,
+    operation: impl FnOnce() -> Result<T, E>,
+) -> Result<T, E> {
+    let lock = {
+        let locks = DOCUMENT_NAME_LOCKS.get_or_init(|| Mutex::new(HashMap::new()));
+        let mut locks = locks
+            .lock()
+            .map_err(|_| PageError::General("document name lock is poisoned".into()))?;
+        locks
+            .entry(space.to_string())
+            .or_insert_with(|| Arc::new(Mutex::new(())))
+            .clone()
+    };
+    let _guard = lock
+        .lock()
+        .map_err(|_| PageError::General("document name lock is poisoned".into()))?;
+    operation()
+}
+
+pub fn ensure_document_name_available(
+    space: &Path,
+    path: &str,
+    title: &str,
+) -> Result<(), PageError> {
+    if let Some(conflict) = document_name_conflict(space, path, title)? {
+        return Err(PageError::DocumentNameConflict(conflict));
+    }
+    Ok(())
+}
+
+pub fn allocate_document_title(
+    space: &Path,
+    path_for_scope: &str,
+    requested: &str,
+) -> Result<String, PageError> {
+    if !is_user_document(path_for_scope)
+        || document_name_conflict(space, path_for_scope, requested)?.is_none()
+    {
+        return Ok(requested.to_string());
+    }
+    for index in 2..=10_000 {
+        let candidate = format!("{requested} {index}");
+        if document_name_conflict(space, path_for_scope, &candidate)?.is_none() {
+            return Ok(candidate);
+        }
+    }
+    Err(PageError::General(
+        "could not allocate a unique document title".into(),
+    ))
 }
 
 #[cfg(test)]

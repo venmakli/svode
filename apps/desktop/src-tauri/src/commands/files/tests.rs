@@ -1,8 +1,12 @@
 use super::*;
+use crate::index::IndexKey;
 use crate::space::config::write_space_config;
 use crate::space::content_tree::reorder_content;
 use crate::space::types::{SpaceConfig, TreeSpaceConfig};
 use sqlx::SqlitePool;
+use std::fs;
+use svode_core::content_tree::policy::TreeIgnorePolicy;
+use svode_core::index::backlinks::BacklinkIndex;
 use tempfile::TempDir;
 
 fn updates() -> &'static IndexUpdateState {
@@ -228,7 +232,7 @@ fn write_tree_config(tmp: &TempDir, exclude: Vec<&str>, include: Vec<&str>) {
 
 fn collect_markdown_rel_paths(tmp: &TempDir, root: &Path) -> Vec<String> {
     let policy = TreeIgnorePolicy::from_space_root(tmp.path());
-    let mut rels = collect_markdown_paths(tmp.path(), root, &policy)
+    let mut rels = svode_core::content_tree::collect_markdown_paths(tmp.path(), root, &policy)
         .expect("collect markdown paths")
         .into_iter()
         .map(|path| {
@@ -492,13 +496,16 @@ async fn targeted_convert_to_folder_replaces_stale_leaf_index_row() {
     let pool = indexed_pool(&state, space).await;
 
     let entry = entry::convert_entry_to_folder(space, "Topic.md", None).unwrap();
-    crate::space::structural::replace_index_entries_or_reindex(
+    crate::index::update::publish_paths_or_repair(
         &state,
         updates(),
         Some(space.to_str().unwrap()),
         space.to_str().unwrap(),
-        &["Topic.md".to_string()],
-        std::slice::from_ref(&entry.path),
+        ["Topic.md".to_string()]
+            .iter()
+            .chain(std::slice::from_ref(&entry.path))
+            .map(|path| space.join(path))
+            .collect(),
         "convert_entry_to_folder",
     )
     .await;
@@ -530,13 +537,16 @@ async fn targeted_convert_to_leaf_replaces_stale_readme_index_row() {
     let pool = indexed_pool(&state, space).await;
 
     let entry = entry::convert_entry_to_leaf(space, "Topic/README.md", None).unwrap();
-    crate::space::structural::replace_index_entries_or_reindex(
+    crate::index::update::publish_paths_or_repair(
         &state,
         updates(),
         Some(space.to_str().unwrap()),
         space.to_str().unwrap(),
-        &["Topic/README.md".to_string()],
-        std::slice::from_ref(&entry.path),
+        ["Topic/README.md".to_string()]
+            .iter()
+            .chain(std::slice::from_ref(&entry.path))
+            .map(|path| space.join(path))
+            .collect(),
         "convert_entry_to_leaf",
     )
     .await;
@@ -973,7 +983,7 @@ async fn targeted_nested_collection_convert_recomputes_descendant_flags() {
 
     let collection_path =
         entry::convert_entry_to_nested_collection(space, "Tasks/README.md").unwrap();
-    update_index_tree_or_reindex(
+    crate::index::update::publish_tree_or_repair(
         &state,
         updates(),
         Some(space.to_str().unwrap()),
@@ -1196,7 +1206,7 @@ fn shared_reorder_entries_handles_semantic_paths_and_preserves_other_keys() {
         "folder".to_string(),
         vec!["a.md".to_string(), "b.md".to_string()],
     );
-    tree::write_order(space, &order).unwrap();
+    svode_core::content_tree::write_order(space, &order).unwrap();
 
     let result = reorder_content(
         space.to_str().unwrap(),
@@ -1218,7 +1228,7 @@ fn shared_reorder_entries_handles_semantic_paths_and_preserves_other_keys() {
             "collection/README.md".to_string(),
         ]
     );
-    let saved = tree::read_order(space);
+    let saved = svode_core::content_tree::read_order(space);
     assert_eq!(
         saved.get(".").unwrap(),
         &vec![
@@ -1240,7 +1250,9 @@ fn shared_reorder_entries_handles_semantic_paths_and_preserves_other_keys() {
     .unwrap();
     assert_eq!(nested.parent_path, "folder");
     assert_eq!(
-        tree::read_order(space).get("folder").unwrap(),
+        svode_core::content_tree::read_order(space)
+            .get("folder")
+            .unwrap(),
         &vec!["b.md".to_string(), "a.md".to_string()]
     );
 }
@@ -1256,7 +1268,7 @@ fn shared_reorder_entries_rejects_invalid_permutation_without_writing() {
         ".".to_string(),
         vec!["a.md".to_string(), "b.md".to_string()],
     );
-    tree::write_order(space, &order).unwrap();
+    svode_core::content_tree::write_order(space, &order).unwrap();
     let before = std::fs::read(space.join(".svode/order.json")).unwrap();
 
     for invalid in [
@@ -1285,7 +1297,7 @@ async fn shared_rename_rejects_parent_change_and_preserves_sibling_position() {
         ".".to_string(),
         vec!["a.md".to_string(), "b.md".to_string()],
     );
-    tree::write_order(space, &order).unwrap();
+    svode_core::content_tree::write_order(space, &order).unwrap();
     let index_state = IndexState::new();
 
     let invalid = crate::space::structural::rename(
@@ -1313,7 +1325,9 @@ async fn shared_rename_rejects_parent_change_and_preserves_sibling_position() {
     .await
     .unwrap();
     assert_eq!(
-        tree::read_order(space).get(".").unwrap(),
+        svode_core::content_tree::read_order(space)
+            .get(".")
+            .unwrap(),
         &vec!["renamed.md".to_string(), "b.md".to_string()]
     );
 }

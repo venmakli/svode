@@ -372,6 +372,60 @@ pub fn read_order(space: &Path) -> HashMap<String, Vec<String>> {
     }
 }
 
+/// Persist order.json for a Space.
+pub fn write_order(
+    space: &Path,
+    order: &HashMap<String, Vec<String>>,
+) -> Result<(), ContentTreeError> {
+    let svode_dir = space.join(".svode");
+    fs::create_dir_all(&svode_dir)?;
+    let data = serde_json::to_string_pretty(order)?;
+    fs::write(svode_dir.join("order.json"), data)?;
+    Ok(())
+}
+
+/// Markdown files under `root` that the Space tree policy does not ignore.
+/// Symlinks are skipped; `base` is the Space root used for policy matching.
+pub fn collect_markdown_paths(
+    base: &Path,
+    root: &Path,
+    policy: &policy::TreeIgnorePolicy,
+) -> Result<Vec<std::path::PathBuf>, std::io::Error> {
+    let Ok(meta) = fs::symlink_metadata(root) else {
+        return Ok(Vec::new());
+    };
+    if meta.file_type().is_symlink() {
+        return Ok(Vec::new());
+    }
+    let rel_path = root.strip_prefix(base).unwrap_or(root);
+    let kind = if meta.is_dir() {
+        policy::TreePathKind::Directory
+    } else if meta.is_file() {
+        policy::TreePathKind::File
+    } else {
+        policy::TreePathKind::Unknown
+    };
+    if policy.is_ignored_rel(rel_path, kind) {
+        return Ok(Vec::new());
+    }
+    if meta.is_file() {
+        return Ok(root
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("md"))
+            .then(|| vec![root.to_path_buf()])
+            .unwrap_or_default());
+    }
+    if !meta.is_dir() {
+        return Ok(Vec::new());
+    }
+    let mut paths = Vec::new();
+    for item in fs::read_dir(root)? {
+        paths.extend(collect_markdown_paths(base, &item?.path(), policy)?);
+    }
+    Ok(paths)
+}
+
 /// Sort nodes by order.json for a given directory key.
 /// Entries in order come first (in order), then remaining entries alphabetically.
 fn apply_order(nodes: &mut Vec<TreeNode>, order_list: Option<&Vec<String>>) {

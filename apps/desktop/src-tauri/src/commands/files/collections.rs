@@ -119,7 +119,7 @@ pub async fn instantiate_template(
         contextual_defaults,
     )?;
     let root = root_path_for_head(&instantiated.entry.path);
-    update_index_tree_or_reindex(
+    crate::index::update::publish_tree_or_repair(
         &index_state,
         &index_updates,
         project_path.as_deref(),
@@ -522,7 +522,7 @@ pub async fn repair_two_way_relation(
         tracing::info!(
             "repair_two_way_relation: scheduling background full space reindex after relation repair"
         );
-        reindex_space_dir(&index_state, &index_updates, &reindex_space).await;
+        crate::index::update::repair_space_dir(&index_state, &index_updates, &reindex_space).await;
     });
     Ok(())
 }

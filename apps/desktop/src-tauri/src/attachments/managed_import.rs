@@ -10,7 +10,6 @@ use crate::AppError;
 use crate::artifact::identity::{
     ContentOwnerKind, SemanticIdentity, SourceShape, resolve_markdown_identity_for_path,
 };
-use crate::files::filename;
 use crate::git::GitState;
 use crate::git::access::ensure_mutation_paths_were_authorized;
 use crate::git::autocommit::{AutocommitService, StructuralOp};
@@ -24,6 +23,7 @@ use crate::storage::{
     strategy::apply_managed_import_route,
 };
 use svode_core::index::backlinks;
+use svode_core::page::filename;
 
 use super::source::classify_binary_path;
 

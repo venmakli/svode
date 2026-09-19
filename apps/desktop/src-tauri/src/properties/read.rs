@@ -1,9 +1,9 @@
 use std::path::{Path, PathBuf};
 
 use crate::error::AppError;
-use crate::files::entry::Entry;
 use crate::git::cli::GitCli;
 use crate::index::{IndexKey, IndexState};
+use svode_core::page::entry::Entry;
 
 use super::{
     ActorCandidate, ActorCatalogState, CollectionInfo, CollectionIntegrityReport, CollectionSchema,

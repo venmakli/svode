@@ -1,6 +1,6 @@
-use std::collections::HashMap;
 #[cfg(test)]
 use std::fs;
+#[cfg(test)]
 use std::path::Path;
 
 use crate::AppError;
@@ -8,7 +8,6 @@ use serde::Serialize;
 
 #[cfg(test)]
 use svode_core::content_tree::TreeChildKind;
-pub use svode_core::content_tree::read_order;
 pub use svode_core::content_tree::{TreeChildNode, TreeNode};
 pub(crate) use svode_core::content_tree::{
     child_folder_names, has_direct_schema, read_frontmatter_meta_head,
@@ -69,14 +68,6 @@ pub fn list_tree_children_checked(
 
 pub(crate) fn normalize_tree_parent_path(parent_path: Option<&str>) -> Result<String, AppError> {
     svode_core::content_tree::normalize_tree_parent_path(parent_path).map_err(Into::into)
-}
-
-pub fn write_order(space: &Path, order: &HashMap<String, Vec<String>>) -> Result<(), AppError> {
-    let svode_dir = space.join(".svode");
-    std::fs::create_dir_all(&svode_dir)?;
-    let data = serde_json::to_string_pretty(order)?;
-    std::fs::write(svode_dir.join("order.json"), data)?;
-    Ok(())
 }
 
 #[cfg(test)]
@@ -445,7 +436,7 @@ mod tests {
         )
         .unwrap();
 
-        let order = read_order(tmp.path());
+        let order = svode_core::content_tree::read_order(tmp.path());
 
         assert!(order.contains_key("operations/board"));
         assert!(!order.contains_key("operations\\board"));

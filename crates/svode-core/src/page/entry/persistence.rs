@@ -1,24 +1,24 @@
 use std::fs;
 use std::path::Path;
 
-use crate::error::AppError;
-use crate::files::frontmatter::{self, ParseStatus};
+use crate::page::PageError;
+use crate::page::frontmatter::{self, ParseStatus};
 
 use super::{Entry, EntryMeta, EntryWarning, title_from_stem};
 
 /// Current UTC timestamp in RFC 3339 format.
-fn derived_file_dates(abs_path: &Path) -> Result<(String, String), AppError> {
-    svode_core::page::filesystem_dates(abs_path).map_err(Into::into)
+fn derived_file_dates(abs_path: &Path) -> Result<(String, String), PageError> {
+    crate::page::filesystem_dates(abs_path).map_err(Into::into)
 }
 
 pub(super) fn fallback_title_for_path(path: &str) -> String {
-    svode_core::page::fallback_title(path)
+    crate::page::fallback_title(path)
 }
 
 pub(super) fn meta_for_file_without_frontmatter(
     abs_path: &Path,
     path: &str,
-) -> Result<EntryMeta, AppError> {
+) -> Result<EntryMeta, PageError> {
     let (created, updated) = derived_file_dates(abs_path)?;
 
     Ok(EntryMeta::synthesized(
@@ -32,7 +32,7 @@ pub(super) fn apply_runtime_metadata(
     meta: &mut EntryMeta,
     abs_path: &Path,
     path: &str,
-) -> Result<(), AppError> {
+) -> Result<(), PageError> {
     if !meta.frontmatter_keys.title {
         meta.title = fallback_title_for_path(path);
     }
@@ -43,13 +43,13 @@ pub(super) fn apply_runtime_metadata(
 }
 
 /// Read an entry from disk without mutating a missing or malformed frontmatter block.
-pub fn read(space: &str, path: &str) -> Result<Entry, AppError> {
-    let target = svode_core::page::resolve_page_target(Path::new(space), path)?;
-    let source = svode_core::page::read_page_source(target)?;
+pub fn read(space: &str, path: &str) -> Result<Entry, PageError> {
+    let target = crate::page::resolve_page_target(Path::new(space), path)?;
+    let source = crate::page::read_page_source(target)?;
     entry_from_source(source)
 }
 
-pub(crate) fn entry_from_source(source: svode_core::page::PageSource) -> Result<Entry, AppError> {
+pub fn entry_from_source(source: crate::page::PageSource) -> Result<Entry, PageError> {
     let meta = EntryMeta::from_page_source(&source);
     Ok(Entry {
         meta,
@@ -68,7 +68,7 @@ pub(crate) fn entry_from_source(source: svode_core::page::PageSource) -> Result<
     })
 }
 
-pub(super) fn read_existing(abs_path: &Path) -> Result<(String, ParseStatus), AppError> {
+pub(super) fn read_existing(abs_path: &Path) -> Result<(String, ParseStatus), PageError> {
     let existing = fs::read_to_string(abs_path)?;
     let parsed = frontmatter::parse_status(&existing);
     Ok((existing, parsed))
@@ -79,7 +79,7 @@ pub(super) fn write_body_preserving_frontmatter(
     existing: &str,
     parsed: ParseStatus,
     body: &str,
-) -> Result<(), AppError> {
+) -> Result<(), PageError> {
     let full_content = match parsed {
         ParseStatus::Valid { .. } => {
             frontmatter::replace_body_preserving_frontmatter(existing, body)?
@@ -96,7 +96,7 @@ pub(super) fn write_serialized(
     abs_path: &Path,
     meta: &EntryMeta,
     body: &str,
-) -> Result<(), AppError> {
+) -> Result<(), PageError> {
     fs::write(abs_path, frontmatter::serialize(meta, body))?;
     Ok(())
 }
@@ -104,7 +104,7 @@ pub(super) fn write_serialized(
 pub(super) fn refresh_markdown_copy_metadata(
     path: &Path,
     title_override: Option<&str>,
-) -> Result<(), AppError> {
+) -> Result<(), PageError> {
     let raw = fs::read_to_string(path)?;
     let (mut meta, body) = match frontmatter::try_parse(&raw)? {
         Some((meta, body)) => (meta, body),

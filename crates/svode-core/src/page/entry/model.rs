@@ -1,10 +1,10 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-use svode_core::index::backlinks::ModifiedLinkSource;
+use crate::index::backlinks::ModifiedLinkSource;
 
-pub use svode_core::page::Cover;
-pub use svode_core::page::frontmatter::EntryMeta;
+pub use crate::page::Cover;
+pub use crate::page::frontmatter::EntryMeta;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WriteResult {
@@ -39,7 +39,7 @@ pub struct EntryWarning {
 }
 
 impl EntryWarning {
-    pub(super) fn filename_projection(path: &str, reasons: &str) -> Self {
+    pub fn filename_projection(path: &str, reasons: &str) -> Self {
         Self {
             kind: "filename_projection".to_string(),
             message: format!("filename was safely projected ({reasons})"),
@@ -47,7 +47,7 @@ impl EntryWarning {
         }
     }
 
-    pub(super) fn filename_rename_collision(current_path: &str) -> Self {
+    pub fn filename_rename_collision(current_path: &str) -> Self {
         Self {
             kind: "filename_rename_collision".to_string(),
             message: "display name was saved, but the current filename was kept because the target is occupied".to_string(),
@@ -55,7 +55,7 @@ impl EntryWarning {
         }
     }
 
-    pub(crate) fn filename_rename_deferred(current_path: &str, reason: &str) -> Self {
+    pub fn filename_rename_deferred(current_path: &str, reason: &str) -> Self {
         Self {
             kind: "filename_rename_deferred".to_string(),
             message: format!(
@@ -65,7 +65,7 @@ impl EntryWarning {
         }
     }
 
-    pub(super) fn filename_collision_allocated(actual_path: &str) -> Self {
+    pub fn filename_collision_allocated(actual_path: &str) -> Self {
         Self {
             kind: "filename_collision_allocated".to_string(),
             message:
@@ -85,7 +85,7 @@ pub struct Entry {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub warnings: Vec<EntryWarning>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub name_conflict: Option<crate::files::naming::DocumentNameConflict>,
+    pub name_conflict: Option<crate::page::naming::DocumentNameConflict>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

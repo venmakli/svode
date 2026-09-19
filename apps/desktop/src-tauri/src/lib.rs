@@ -63,7 +63,7 @@ pub fn run() {
         .manage(files::FileWatcher::new())
         .manage(agent::AgentSessions::new())
         .manage(agent_sessions::AgentSessionsState::new())
-        .manage(Arc::new(files::WriteNonceRegistry::new()))
+        .manage(Arc::new(svode_core::page::nonce::WriteNonceRegistry::new()))
         .manage(git::GitState::new())
         .manage(identity::IdentityState::new())
         .manage(git::access::RepositoryAccessState::new())

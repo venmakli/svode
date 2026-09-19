@@ -80,7 +80,7 @@ pub fn get_entry_detail_state(
     space: String,
     path: String,
 ) -> Result<entry::EntryDetailState, AppError> {
-    entry::entry_detail_state(Path::new(&space), &path)
+    Ok(entry::entry_detail_state(Path::new(&space), &path)?)
 }
 
 #[tauri::command]
@@ -98,8 +98,8 @@ pub async fn create_entry(
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<Entry, AppError> {
     require_repository_mutation(&app, Path::new(&space)).await?;
-    let created = crate::page::create::create(
-        crate::page::create::PageCreate {
+    let created = crate::page::create(
+        svode_core::page::create::PageCreate {
             space: space.clone(),
             parent_path,
             title,
@@ -237,8 +237,8 @@ pub async fn update_entry_field(
     let has_title = batch.title().is_some();
     let current = entry::read(&space, &file_path)?;
     let authorization_space = space.clone();
-    let outcome = crate::page::write::write(
-        crate::page::write::PageWrite {
+    let outcome = crate::page::write(
+        svode_core::page::write::PageWrite {
             space: &space,
             path: &file_path,
             content: &current.body,
@@ -373,7 +373,7 @@ pub(super) async fn write_entry_shared(
     nonces: &WriteNonceRegistry,
     autocommit: Option<&AutocommitService>,
 ) -> Result<WriteResult, AppError> {
-    let request = crate::page::write::PageWrite {
+    let request = svode_core::page::write::PageWrite {
         space: &space,
         path: &path,
         content: &content,
@@ -387,7 +387,7 @@ pub(super) async fn write_entry_shared(
     };
     let _ = existing_id;
     let authorization_space = &space;
-    crate::page::write::write(
+    crate::page::write(
         request,
         index_state,
         index_updates,
@@ -525,7 +525,10 @@ pub async fn get_backlinks(
     project_path: Option<String>,
     index_state: State<'_, IndexState>,
 ) -> Result<Vec<BacklinkInfo>, AppError> {
-    let backlink_index = backlinks_for_space(&index_state, &space).await;
+    let backlink_index = index_state
+        .core
+        .backlinks_for_space_dir(Path::new(&space))
+        .await;
     if let Some(proj) = project_path.as_deref().filter(|p| !p.is_empty()) {
         index_state
             .ensure_project_backlinks_built(Path::new(proj))
@@ -541,7 +544,10 @@ pub async fn rebuild_backlinks(
     space: String,
     index_state: State<'_, IndexState>,
 ) -> Result<(), AppError> {
-    let backlink_index = backlinks_for_space(&index_state, &space).await;
+    let backlink_index = index_state
+        .core
+        .backlinks_for_space_dir(Path::new(&space))
+        .await;
     Ok(backlink_index.build(Path::new(&space))?)
 }
 
@@ -553,7 +559,7 @@ pub async fn validate_links(
     index_state: State<'_, IndexState>,
 ) -> Result<Vec<LinkValidation>, AppError> {
     if let Some(proj) = project_path.as_deref().filter(|p| !p.is_empty()) {
-        let source_space_id = space_id_for_dir(&index_state, &space).await;
+        let source_space_id = index_state.core.space_id_for_dir(Path::new(&space)).await;
         let abs = Path::new(&space).join(&path);
         if !abs.exists() {
             return Ok(Vec::new());

@@ -32,7 +32,7 @@ pub(super) async fn create_collection(
     )
     .await?;
     let changed_paths =
-        crate::page::metadata::relative_changed_paths(&space, &outcome.changed_paths);
+        svode_core::page::metadata::relative_changed_paths(&space, &outcome.changed_paths);
     Ok(ToolCallResult::ok(
         format!("Created collection {}.", outcome.collection_path),
         json!({
@@ -182,7 +182,7 @@ pub(super) async fn update_collection_item_metadata(
     )
     .await?;
     let changed_paths =
-        crate::page::metadata::relative_changed_paths(&space, &outcome.changed_paths);
+        svode_core::page::metadata::relative_changed_paths(&space, &outcome.changed_paths);
     let warnings = outcome.page.warnings.clone();
     Ok(ToolCallResult::ok(
         format!("Updated metadata for Collection item {path}."),
@@ -217,10 +217,10 @@ pub(super) async fn update_collection_item_fields(
     let current = entry::read(&space, &path)?;
     let state = app.state::<IndexState>();
     let updates = app.state::<IndexUpdateState>();
-    let nonces = app.state::<std::sync::Arc<crate::files::WriteNonceRegistry>>();
+    let nonces = app.state::<std::sync::Arc<svode_core::page::nonce::WriteNonceRegistry>>();
     let authorization_space = space.clone();
-    let outcome = match crate::page::write::write(
-        crate::page::write::PageWrite {
+    let outcome = match crate::page::write(
+        svode_core::page::write::PageWrite {
             space: &space,
             path: &path,
             content: &current.body,
@@ -254,7 +254,7 @@ pub(super) async fn update_collection_item_fields(
     let mut item = entry::read(&space, canonical_path)?;
     item.warnings = outcome.result.warnings;
     let changed_paths =
-        crate::page::metadata::relative_changed_paths(&space, &outcome.changed_paths);
+        svode_core::page::metadata::relative_changed_paths(&space, &outcome.changed_paths);
     Ok(ToolCallResult::ok(
         format!("Updated fields for {path}."),
         json!({ "item": item, "changedPaths": changed_paths }),

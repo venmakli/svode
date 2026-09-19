@@ -198,6 +198,42 @@ impl From<svode_core::page::PageSourceError> for AppError {
     }
 }
 
+impl From<svode_core::page::PageError> for AppError {
+    fn from(error: svode_core::page::PageError) -> Self {
+        use svode_core::page::PageError;
+        match error {
+            PageError::Io(error) => Self::Io(error),
+            PageError::Serde(error) => Self::Serde(error),
+            PageError::FileNotFound(path) => Self::FileNotFound(path),
+            PageError::FileAlreadyExists(path) => Self::FileAlreadyExists(path),
+            PageError::FrontmatterParse(message) => Self::FrontmatterParse(message),
+            PageError::SpaceNotFound(id) => Self::SpaceNotFound(id),
+            PageError::PathNotAccessible(path) => Self::PathNotAccessible(path),
+            PageError::Index(message) => Self::Index(message),
+            PageError::Db(error) => Self::Db(error),
+            PageError::Storage(message) => Self::Storage(message),
+            PageError::DocumentNameConflict(conflict) => Self::DocumentNameConflict(conflict),
+            PageError::Recovery { cause, paths } => Self::PageWriteRecovery { cause, paths },
+            PageError::General(message) => Self::General(message),
+            PageError::Git(error) => error.into(),
+            PageError::Actor(error) => error.into(),
+            PageError::AgentContext(error) => error.into(),
+            PageError::Routine(error) => error.into(),
+            PageError::Observation(error) => error.into(),
+        }
+    }
+}
+
+impl From<svode_core::storage::routes::ManagedRouteError> for AppError {
+    fn from(error: svode_core::storage::routes::ManagedRouteError) -> Self {
+        use svode_core::storage::routes::ManagedRouteError;
+        match error {
+            ManagedRouteError::Io(error) => Self::Io(error),
+            ManagedRouteError::Malformed(message) => Self::Storage(message),
+        }
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum AppError {
     #[error("IO error: {0}")]
@@ -304,7 +340,7 @@ pub enum AppError {
     IdentityInvalid(&'static str),
 
     #[error("Page name is already used in this container")]
-    DocumentNameConflict(crate::files::naming::DocumentNameConflict),
+    DocumentNameConflict(svode_core::page::naming::DocumentNameConflict),
 
     #[error("Page write recovery failed after {cause}; unrestored paths: {paths:?}")]
     PageWriteRecovery { cause: String, paths: Vec<String> },
@@ -395,7 +431,7 @@ impl Serialize for AppError {
                 #[serde(rename_all = "camelCase")]
                 struct StructuredError<'a> {
                     kind: &'static str,
-                    conflict: &'a crate::files::naming::DocumentNameConflict,
+                    conflict: &'a svode_core::page::naming::DocumentNameConflict,
                 }
                 StructuredError {
                     kind: self.kind(),
@@ -415,9 +451,9 @@ mod tests {
     #[test]
     fn page_name_conflict_serializes_as_structured_tauri_error() {
         let value = serde_json::to_value(AppError::DocumentNameConflict(
-            crate::files::naming::DocumentNameConflict {
+            svode_core::page::naming::DocumentNameConflict {
                 parent_path: Some("docs".to_string()),
-                conflicts: vec![crate::files::naming::DocumentNameConflictEvidence {
+                conflicts: vec![svode_core::page::naming::DocumentNameConflictEvidence {
                     path: "docs/existing.md".to_string(),
                     title: "Existing".to_string(),
                 }],

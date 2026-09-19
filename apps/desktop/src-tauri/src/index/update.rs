@@ -6,9 +6,7 @@ use std::sync::atomic::Ordering;
 use crate::error::AppError;
 use crate::git::dates::derive_date_overrides;
 use crate::index::normalize_rel_result;
-use crate::index::reindex::{
-    MarkdownProjection, build_entry_with_dates, markdown_projection, markdown_source_record,
-};
+use crate::index::reindex::{build_entry_with_dates, markdown_projection, markdown_source_record};
 use crate::index::{IndexKey, IndexState, ReindexActiveGuard};
 use crate::routines::{CollectionEventOrigin, RoutineStoreState};
 use svode_core::content_tree::policy::TreeIgnorePolicy;
@@ -31,6 +29,10 @@ impl IndexUpdateState {
         Self {
             core: svode_core::index::update::IndexUpdateState::new(routine_stores.core_handle()),
         }
+    }
+
+    pub(crate) fn core(&self) -> &svode_core::index::update::IndexUpdateState {
+        &self.core
     }
 
     pub(crate) async fn routines_pool(
@@ -90,48 +92,22 @@ impl IndexUpdateState {
     }
 }
 
-/// Verify that an absolute path resolves inside the space root, guarding
-/// against `..` traversal in user-supplied relative paths. If either side
-/// fails to canonicalize, the check is skipped — the caller is expected to
-/// have already established that `abs_path` exists, and a non-canonicalizable
-/// `space_dir` means we have bigger problems.
-fn ensure_inside_space(space_dir: &Path, abs_path: &Path) -> Result<(), AppError> {
-    let (Ok(canon_abs), Ok(canon_root)) = (abs_path.canonicalize(), space_dir.canonicalize())
-    else {
-        return Ok(());
-    };
-    if !canon_abs.starts_with(&canon_root) {
-        return Err(AppError::Index(format!(
-            "path escapes space root: {}",
-            abs_path.display()
-        )));
-    }
-    Ok(())
-}
-
-/// Incrementally update the index for a single absolute path.
-///
-/// Resolves the path to its owning pool through `IndexState`, then upserts or
-/// deletes relative to the owning space's root.
-///
-/// - If the file no longer exists on disk → delete the row.
-/// - If the file exists but isn't a markdown file → also delete (e.g. user
-///   renamed `foo.md` → `foo.txt`, leaving a stale entry).
-/// - Otherwise → upsert.
 #[cfg(test)]
 pub async fn update_entry(
     state: &IndexState,
     project: &Path,
     abs_path: &Path,
 ) -> Result<(), AppError> {
-    update_entry_with_origin(
-        state,
-        test_update_state(),
+    let cli = crate::git::dates::detected_cli();
+    Ok(svode_core::index::update::update_path_with_origin(
+        &state.core,
+        test_update_state().core(),
+        cli.as_ref(),
         project,
         abs_path,
         CollectionEventOrigin::managed(),
     )
-    .await
+    .await?)
 }
 
 pub async fn publish_managed_path(
@@ -157,140 +133,66 @@ pub(crate) async fn publish_path_with_origin(
     abs_path: &Path,
     origin: CollectionEventOrigin,
 ) -> Result<(), AppError> {
-    update_entry_with_origin(state, updates, project, abs_path, origin).await?;
-    let (key, relative) = state.resolve(project, abs_path).await?;
-    let space_id = IndexState::space_id_for_key(&key);
-    if abs_path.is_file() {
-        state
-            .update_file_backlinks(project, space_id.as_deref(), &relative)
-            .await
-    } else {
-        state
-            .remove_file_backlinks(project, space_id.as_deref(), &relative)
-            .await
-    }
+    let cli = crate::git::dates::detected_cli();
+    Ok(svode_core::index::update::publish_path_with_origin(
+        &state.core,
+        &updates.core,
+        cli.as_ref(),
+        project,
+        abs_path,
+        origin,
+    )
+    .await?)
 }
 
-pub(crate) async fn update_entry_with_origin(
+/// Publish managed paths in the Project runtime, repairing the owning Space
+/// pool when there is no Project or a targeted update fails.
+pub(crate) async fn publish_paths_or_repair(
     state: &IndexState,
     updates: &IndexUpdateState,
-    project: &Path,
-    abs_path: &Path,
-    origin: CollectionEventOrigin,
-) -> Result<(), AppError> {
-    let (key, rel_path) = state.resolve(project, abs_path).await?;
-    let dir = state.dir_for_key(&key).await?;
-    let pool = state.get_or_create(&key).await?;
-    let routines_pool = updates.routines_pool(state, &key).await?;
-
-    let normalized = normalize_rel_result(&rel_path)?;
-    let abs = dir.join(&normalized);
-
-    // Serialize against `full_reindex` for the same pool. Without this, an
-    // UPSERT can land between full_reindex's FS walk and its DELETE-then-INSERT
-    // transaction, where it is silently overwritten (Stage 3.5 Phase 5 §5.3).
-    let lock = state.reindex_lock(&key).await;
-    let _guard = lock.lock().await;
-
-    if !abs.exists() {
-        return apply_targeted_change(
-            &pool,
-            &routines_pool,
-            &key,
-            &dir,
-            &normalized,
-            None,
-            None,
-            false,
-            &origin,
-        )
-        .await;
-    }
-
-    let metadata = std::fs::symlink_metadata(&abs)?;
-    if metadata.file_type().is_symlink() || !metadata.is_file() {
-        return apply_targeted_change(
-            &pool,
-            &routines_pool,
-            &key,
-            &dir,
-            &normalized,
-            None,
-            None,
-            false,
-            &origin,
-        )
-        .await;
-    }
-
-    ensure_inside_space(&dir, &abs)?;
-
-    let is_md = abs
-        .extension()
-        .and_then(|e| e.to_str())
-        .map(|e| e.eq_ignore_ascii_case("md"))
-        .unwrap_or(false);
-    if !is_md {
-        tracing::debug!("non-md file in update_entry, removing any stale row: {normalized}");
-        return apply_targeted_change(
-            &pool,
-            &routines_pool,
-            &key,
-            &dir,
-            &normalized,
-            None,
-            None,
-            false,
-            &origin,
-        )
-        .await;
-    }
-
-    let policy = TreeIgnorePolicy::from_space_root(&dir);
-    let Some(projection) = markdown_projection(&dir, &abs, &policy)? else {
-        return apply_targeted_change(
-            &pool,
-            &routines_pool,
-            &key,
-            &dir,
-            &normalized,
-            None,
-            None,
-            false,
-            &origin,
-        )
-        .await;
-    };
-    let source_record = markdown_source_record(&dir, &abs, projection)?;
-    if source_record.diagnostic_code.is_some() {
-        return apply_targeted_change(
-            &pool,
-            &routines_pool,
-            &key,
-            &dir,
-            &normalized,
-            None,
-            Some(projection),
-            false,
-            &origin,
-        )
-        .await;
-    }
-    let date_overrides = derive_date_overrides(&dir, std::slice::from_ref(&normalized)).await;
-    let entry = build_entry_with_dates(&dir, &abs, date_overrides.get(&normalized), projection)?;
-    let frontmatter_valid = markdown_frontmatter_diff_safe(&abs);
-    apply_targeted_change(
-        &pool,
-        &routines_pool,
-        &key,
-        &dir,
-        &normalized,
-        Some(&entry),
-        Some(projection),
-        frontmatter_valid,
-        &origin,
+    project_path: Option<&str>,
+    space: &str,
+    paths: Vec<std::path::PathBuf>,
+    context: &str,
+) -> Vec<String> {
+    let cli = crate::git::dates::detected_cli();
+    svode_core::index::update::publish_paths_or_repair(
+        &state.core,
+        &updates.core,
+        cli.as_ref(),
+        project_path,
+        space,
+        paths,
+        context,
     )
     .await
+}
+
+pub(crate) async fn publish_tree_or_repair(
+    state: &IndexState,
+    updates: &IndexUpdateState,
+    project_path: Option<&str>,
+    space: &str,
+    rel_root: &str,
+    context: &str,
+) {
+    let cli = crate::git::dates::detected_cli();
+    svode_core::index::update::publish_tree_or_repair(
+        &state.core,
+        &updates.core,
+        cli.as_ref(),
+        project_path,
+        space,
+        rel_root,
+        context,
+    )
+    .await
+}
+
+pub(crate) async fn repair_space_dir(state: &IndexState, updates: &IndexUpdateState, space: &str) {
+    let cli = crate::git::dates::detected_cli();
+    svode_core::index::update::repair_space_dir(&state.core, &updates.core, cli.as_ref(), space)
+        .await
 }
 
 /// Incrementally delete the entry for a single absolute path. Resolves to
@@ -306,7 +208,7 @@ pub async fn delete_entry(
     let routines_pool = test_update_state().routines_pool(state, &key).await?;
     let lock = state.reindex_lock(&key).await;
     let _guard = lock.lock().await;
-    apply_targeted_change(
+    Ok(svode_core::index::update::apply_targeted_source_change(
         &pool,
         &routines_pool,
         &key,
@@ -317,72 +219,8 @@ pub async fn delete_entry(
         false,
         &CollectionEventOrigin::managed(),
     )
-    .await
-}
-
-pub async fn rebase_collection_schema_manifest(
-    state: &IndexState,
-    updates: &IndexUpdateState,
-    space_dir: &Path,
-    old_root: &str,
-    new_root: &str,
-) -> Result<(), AppError> {
-    let key = state
-        .key_for_space_dir(space_dir)
-        .await
-        .unwrap_or_else(|| IndexKey::Root(space_dir.to_path_buf()));
-    let pool = state.get_or_create(&key).await?;
-    let lock = state.reindex_lock(&key).await;
-    let _guard = lock.lock().await;
-    svode_core::index::update::rebase_collection_schema_manifest(&pool, old_root, new_root).await?;
-    updates.sync_routine_projection(state, &key).await?;
-    Ok(())
-}
-
-async fn apply_targeted_change(
-    index_pool: &SqlitePool,
-    routines_pool: &SqlitePool,
-    index_key: &IndexKey,
-    space_dir: &Path,
-    rel_path: &str,
-    entry: Option<&crate::index::reindex::IndexedEntry>,
-    source_projection: Option<MarkdownProjection>,
-    current_frontmatter_diff_safe: bool,
-    origin: &CollectionEventOrigin,
-) -> Result<(), AppError> {
-    let normalized = normalize_rel_result(rel_path)?;
-    let source_path = space_dir.join(&normalized);
-    let mut source_record = if let Some(projection) = source_projection
-        && source_path.is_file()
-        && source_path
-            .extension()
-            .and_then(|extension| extension.to_str())
-            .is_some_and(|extension| extension.eq_ignore_ascii_case("md"))
-    {
-        Some(markdown_source_record(space_dir, &source_path, projection)?)
-    } else {
-        None
-    };
-    if let (Some(record), Some(entry)) = (source_record.as_mut(), entry) {
-        record.diagnostic_code = entry.source_diagnostic.clone();
-    }
-    let folded_collection = folded_collection_artifact(space_dir, &normalized);
-    Ok(svode_core::index::update::apply_targeted_change(
-        index_pool,
-        routines_pool,
-        index_key,
-        space_dir,
-        &normalized,
-        entry,
-        source_record.as_ref(),
-        folded_collection.as_ref(),
-        current_frontmatter_diff_safe,
-        origin,
-    )
     .await?)
 }
-
-pub(crate) use svode_core::index::knowledge_artifact::folded_collection_artifact;
 
 /// Refresh only the normalized project Agent Context rows for an already-open
 /// owning pool. This is a write-path hook for the existing watcher invalidation
@@ -393,23 +231,6 @@ pub async fn refresh_agent_context_projection(
 ) -> Result<(), AppError> {
     svode_core::index::update::refresh_agent_context_projection(&state.core, space_dir).await?;
     Ok(())
-}
-
-fn markdown_frontmatter_diff_safe(path: &Path) -> bool {
-    let Ok(raw) = std::fs::read_to_string(path) else {
-        return false;
-    };
-    if matches!(
-        crate::files::frontmatter::parse_status(&raw),
-        crate::files::frontmatter::ParseStatus::Malformed { .. }
-    ) {
-        tracing::warn!(
-            "collection event field diff skipped for malformed frontmatter: {}",
-            path.display()
-        );
-        return false;
-    }
-    true
 }
 
 /// Apply a batch of file changes reported by a git pull. The `key` identifies
@@ -474,7 +295,7 @@ pub async fn reindex_after_pull(
         // Don't filter by extension — pull may have deleted .md files and we
         // still want to drop their rows. The branching mirrors update_entry.
         if !abs.exists() {
-            if let Err(e) = apply_targeted_change(
+            if let Err(e) = svode_core::index::update::apply_targeted_source_change(
                 &pool,
                 &routines_pool,
                 key,
@@ -500,7 +321,7 @@ pub async fn reindex_after_pull(
             }
         };
         if metadata.file_type().is_symlink() || !metadata.is_file() {
-            if let Err(e) = apply_targeted_change(
+            if let Err(e) = svode_core::index::update::apply_targeted_source_change(
                 &pool,
                 &routines_pool,
                 key,
@@ -524,7 +345,7 @@ pub async fn reindex_after_pull(
             .map(|e| e.eq_ignore_ascii_case("md"))
             .unwrap_or(false);
         if !is_md {
-            if let Err(e) = apply_targeted_change(
+            if let Err(e) = svode_core::index::update::apply_targeted_source_change(
                 &pool,
                 &routines_pool,
                 key,
@@ -545,7 +366,7 @@ pub async fn reindex_after_pull(
         let projection = match markdown_projection(&dir, &abs, &policy) {
             Ok(Some(projection)) => projection,
             Ok(None) => {
-                if let Err(e) = apply_targeted_change(
+                if let Err(e) = svode_core::index::update::apply_targeted_source_change(
                     &pool,
                     &routines_pool,
                     key,
@@ -570,7 +391,7 @@ pub async fn reindex_after_pull(
 
         match markdown_source_record(&dir, &abs, projection) {
             Ok(record) if record.diagnostic_code.is_some() => {
-                if let Err(e) = apply_targeted_change(
+                if let Err(e) = svode_core::index::update::apply_targeted_source_change(
                     &pool,
                     &routines_pool,
                     key,
@@ -596,7 +417,7 @@ pub async fn reindex_after_pull(
 
         match build_entry_with_dates(&dir, &abs, date_overrides.get(&normalized), projection) {
             Ok(entry) => {
-                if let Err(e) = apply_targeted_change(
+                if let Err(e) = svode_core::index::update::apply_targeted_source_change(
                     &pool,
                     &routines_pool,
                     key,
@@ -604,7 +425,7 @@ pub async fn reindex_after_pull(
                     &normalized,
                     Some(&entry),
                     Some(projection),
-                    markdown_frontmatter_diff_safe(&abs),
+                    svode_core::index::update::markdown_frontmatter_diff_safe(&abs),
                     &CollectionEventOrigin::git_sync(),
                 )
                 .await
@@ -649,10 +470,10 @@ pub async fn reindex_after_pull(
 mod tests {
     use super::*;
     use crate::index::ProjectSpacesCache;
-    use svode_core::index::search::search_fts;
     use crate::space::config::write_space_config;
     use crate::space::types::{SpaceConfig, SpaceStatus, TreeSpaceConfig};
     use std::collections::HashMap;
+    use svode_core::index::search::search_fts;
     use tempfile::TempDir;
 
     fn write_tree_config(space: &Path, exclude: &[&str], include: &[&str]) {
@@ -1306,18 +1127,20 @@ mod tests {
             "---\ntitle: Item\nStatus: Done\nPriority: 1\nUnmodeled: changed\n---\nBody\n",
         )
         .unwrap();
-        update_entry_with_origin(
-            &state,
-            test_update_state(),
+        svode_core::index::update::update_path_with_origin(
+            &state.core,
+            test_update_state().core(),
+            crate::git::dates::detected_cli().as_ref(),
             space,
             &file,
             CollectionEventOrigin::watcher(),
         )
         .await
         .unwrap();
-        update_entry_with_origin(
-            &state,
-            test_update_state(),
+        svode_core::index::update::update_path_with_origin(
+            &state.core,
+            test_update_state().core(),
+            crate::git::dates::detected_cli().as_ref(),
             space,
             &file,
             CollectionEventOrigin::watcher(),
@@ -1666,9 +1489,10 @@ mod tests {
         assert_eq!(created_payload["origin"], "managed");
 
         std::fs::write(&file, "---\ntitle: [broken\n---\nBody\n").unwrap();
-        update_entry_with_origin(
-            &state,
-            test_update_state(),
+        svode_core::index::update::update_path_with_origin(
+            &state.core,
+            test_update_state().core(),
+            crate::git::dates::detected_cli().as_ref(),
             space,
             &file,
             CollectionEventOrigin::watcher(),
@@ -1684,9 +1508,10 @@ mod tests {
         );
 
         std::fs::remove_file(&file).unwrap();
-        update_entry_with_origin(
-            &state,
-            test_update_state(),
+        svode_core::index::update::update_path_with_origin(
+            &state.core,
+            test_update_state().core(),
+            crate::git::dates::detected_cli().as_ref(),
             space,
             &file,
             CollectionEventOrigin::git_sync(),

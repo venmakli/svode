@@ -95,8 +95,8 @@ pub(super) async fn create_page(
     let parent_path = validate_public_rel_path(&args.parent_path, true)?;
     ensure_inside(Path::new(&space), &parent_path)?;
     let authorization_space = space.clone();
-    let outcome = match crate::page::create::create(
-        crate::page::create::PageCreate {
+    let outcome = match crate::page::create(
+        svode_core::page::create::PageCreate {
             space: space.clone(),
             parent_path: (!parent_path.is_empty()).then_some(parent_path),
             title: args.title,
@@ -132,7 +132,7 @@ pub(super) async fn create_page(
         }
     };
     let changed_paths =
-        crate::page::metadata::relative_changed_paths(&space, &outcome.changed_paths);
+        svode_core::page::metadata::relative_changed_paths(&space, &outcome.changed_paths);
     let warnings = outcome.page.warnings.clone();
     Ok(ToolCallResult::ok(
         format!("Created Page {}.", outcome.page.path),
@@ -168,7 +168,7 @@ pub(super) async fn update_page_metadata(
         Err(error) => return Err(error.into()),
     };
     let changed_paths =
-        crate::page::metadata::relative_changed_paths(&space, &outcome.changed_paths);
+        svode_core::page::metadata::relative_changed_paths(&space, &outcome.changed_paths);
     let warnings = outcome.page.warnings.clone();
     Ok(ToolCallResult::ok(
         format!("Updated metadata for {path}."),
@@ -245,7 +245,7 @@ pub(super) async fn update_space_metadata(
     )
     .await?;
     let changed_paths =
-        crate::page::metadata::relative_changed_paths(&space, &outcome.changed_paths);
+        svode_core::page::metadata::relative_changed_paths(&space, &outcome.changed_paths);
     let warnings = outcome.page.warnings.clone();
     Ok(ToolCallResult::ok(
         "Updated Space metadata.",
@@ -337,7 +337,7 @@ pub(super) async fn update_collection_metadata(
         .to_string_lossy()
         .replace('\\', "/");
     let changed_paths =
-        crate::page::metadata::relative_changed_paths(&space, &outcome.changed_paths);
+        svode_core::page::metadata::relative_changed_paths(&space, &outcome.changed_paths);
     let warnings = outcome.page.warnings.clone();
     Ok(ToolCallResult::ok(
         format!("Updated Collection metadata for {collection_path}."),
@@ -354,14 +354,14 @@ pub(super) async fn patch_page_metadata(
     icon: Option<Option<String>>,
     description: Option<Option<String>>,
     cover: Option<Option<entry::Cover>>,
-) -> Result<crate::page::metadata::PageMetadataOutcome, crate::error::AppError> {
+) -> Result<svode_core::page::metadata::PageMetadataOutcome, crate::error::AppError> {
     let state = app.state::<IndexState>();
     let updates = app.state::<IndexUpdateState>();
-    let nonces = app.state::<std::sync::Arc<crate::files::WriteNonceRegistry>>();
-    crate::page::metadata::patch(
+    let nonces = app.state::<std::sync::Arc<svode_core::page::nonce::WriteNonceRegistry>>();
+    crate::page::patch_metadata(
         space,
         path,
-        crate::page::metadata::PageMetadataPatch {
+        svode_core::page::metadata::PageMetadataPatch {
             title,
             icon,
             description,
@@ -382,7 +382,7 @@ pub(super) async fn patch_page_metadata(
 }
 
 pub(super) fn page_name_conflict_result(
-    conflict: crate::files::naming::DocumentNameConflict,
+    conflict: svode_core::page::naming::DocumentNameConflict,
 ) -> ToolCallResult {
     let message = "Page name is already used in this container";
     ToolCallResult {
@@ -495,9 +495,9 @@ mod tests {
 
     #[test]
     fn name_conflict_result_preserves_container_and_conflicting_page_evidence() {
-        let result = page_name_conflict_result(crate::files::naming::DocumentNameConflict {
+        let result = page_name_conflict_result(svode_core::page::naming::DocumentNameConflict {
             parent_path: Some("docs".to_string()),
-            conflicts: vec![crate::files::naming::DocumentNameConflictEvidence {
+            conflicts: vec![svode_core::page::naming::DocumentNameConflictEvidence {
                 path: "docs/existing.md".to_string(),
                 title: "Existing".to_string(),
             }],

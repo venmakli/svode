@@ -51,6 +51,12 @@ impl From<svode_core::collections::CollectionError> for McpBusinessError {
     }
 }
 
+impl From<svode_core::page::PageError> for McpBusinessError {
+    fn from(error: svode_core::page::PageError) -> Self {
+        AppError::from(error).into()
+    }
+}
+
 impl From<std::io::Error> for McpBusinessError {
     fn from(error: std::io::Error) -> Self {
         Self::new("IO_ERROR", error.to_string())

@@ -2,18 +2,18 @@ use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::error::AppError;
-use crate::files::entry::EntryWarning;
-use crate::files::{WriteResult, entry};
-use svode_core::index::backlinks::ModifiedLinkSource;
-use svode_core::index::backlinks::{
+use crate::collections::engine::{self as collections, PreparedEntryFieldBatch};
+use crate::index::backlinks::ModifiedLinkSource;
+use crate::index::backlinks::{
     link_stem, rebase_source_links_between_moved_tree, replace_link_urls_between,
 };
+use crate::page::PageError;
+use crate::page::entry::{self, EntryWarning, WriteResult};
 
 mod runtime;
-pub(crate) use runtime::write;
+pub use runtime::{PageRuntime, write};
 
-pub(crate) struct PageWrite<'a> {
+pub struct PageWrite<'a> {
     pub space: &'a str,
     pub path: &'a str,
     pub content: &'a str,
@@ -21,7 +21,7 @@ pub(crate) struct PageWrite<'a> {
     pub icon: Option<&'a str>,
     pub extra: Option<HashMap<String, serde_yml::Value>>,
     pub metadata: Option<entry::EntryMeta>,
-    pub field_batch: Option<crate::properties::PreparedEntryFieldBatch>,
+    pub field_batch: Option<PreparedEntryFieldBatch>,
     pub skip_rename: bool,
     pub project: Option<&'a str>,
 }
@@ -32,7 +32,7 @@ fn requested_title<'a>(request: &'a PageWrite<'_>) -> Option<&'a str> {
         .or_else(|| request.field_batch.as_ref().and_then(|batch| batch.title()))
 }
 
-pub(crate) struct PageWriteOutcome {
+pub struct PageWriteOutcome {
     pub result: WriteResult,
     pub changed_paths: Vec<PathBuf>,
 }
@@ -80,7 +80,7 @@ struct SourceSnapshot {
 }
 
 impl SourceSnapshot {
-    fn capture(paths: &[PathBuf], roots: Option<(PathBuf, PathBuf)>) -> Result<Self, AppError> {
+    fn capture(paths: &[PathBuf], roots: Option<(PathBuf, PathBuf)>) -> Result<Self, PageError> {
         let mut files = BTreeMap::new();
         for path in paths {
             let bytes = match fs::read(path) {
@@ -93,7 +93,7 @@ impl SourceSnapshot {
         Ok(Self { files, roots })
     }
 
-    fn rollback(&self, cause: AppError) -> AppError {
+    fn rollback(&self, cause: PageError) -> PageError {
         let mut failed = Vec::new();
         if let Some((old, new)) = &self.roots {
             if !old.exists() && new.exists() && fs::rename(new, old).is_err() {
@@ -121,14 +121,14 @@ impl SourceSnapshot {
         } else {
             failed.sort();
             failed.dedup();
-            AppError::PageWriteRecovery {
+            PageError::Recovery {
                 cause: cause.to_string(),
                 paths: failed,
             }
         }
     }
 
-    fn changes(&self) -> Result<Vec<PathBuf>, AppError> {
+    fn changes(&self) -> Result<Vec<PathBuf>, PageError> {
         let mut changed = Vec::new();
         for (old, bytes) in &self.files {
             let current = mapped_path(old, self.roots.as_ref());
@@ -153,8 +153,8 @@ impl SourceSnapshot {
     }
 }
 
-fn apply_sources(request: PageWrite<'_>, plan: WritePlan) -> Result<PageWriteOutcome, AppError> {
-    crate::files::naming::with_document_name_lock(request.space, || {
+fn apply_sources(request: PageWrite<'_>, plan: WritePlan) -> Result<PageWriteOutcome, PageError> {
+    crate::page::naming::with_document_name_lock(request.space, || {
         let title = requested_title(&request).map(str::to_string);
         let current = entry::planned_write_rename(
             request.space,
@@ -163,7 +163,7 @@ fn apply_sources(request: PageWrite<'_>, plan: WritePlan) -> Result<PageWriteOut
             request.skip_rename,
         )?;
         if current != plan.rename && plan.warning.is_none() {
-            return Err(AppError::General(
+            return Err(PageError::General(
                 "Page rename plan changed; retry the operation".into(),
             ));
         }
@@ -172,7 +172,7 @@ fn apply_sources(request: PageWrite<'_>, plan: WritePlan) -> Result<PageWriteOut
                 Some(title) => title.to_string(),
                 None => entry::read(request.space, request.path)?.meta.title,
             };
-            crate::files::naming::ensure_document_name_available(
+            crate::page::naming::ensure_document_name_available(
                 Path::new(request.space),
                 request.path,
                 &title,
@@ -184,20 +184,20 @@ fn apply_sources(request: PageWrite<'_>, plan: WritePlan) -> Result<PageWriteOut
             .map(|rename| rename_roots(&request, rename));
         let snapshot = SourceSnapshot::capture(&plan.paths, roots.clone())?;
         let had_naming_intent =
-            crate::files::filename::has_managed_naming_intent(request.space, request.path);
+            crate::page::filename::has_managed_naming_intent(request.space, request.path);
         let operation = (|| {
             if let Some(batch) = request.field_batch.as_ref() {
-                crate::properties::apply_prepared_entry_field_relations(batch)?;
+                collections::apply_prepared_entry_field_relations(batch)?;
             }
             let relation_paths = if let Some((old, new)) = &roots {
-                let current_paths = crate::properties::relation_move_mutation_paths_with_project(
+                let current_paths = collections::relation_move_mutation_paths_with_project(
                     request.space,
                     request.project,
                     &old.strip_prefix(request.space).unwrap().to_string_lossy(),
                     &new.strip_prefix(request.space).unwrap().to_string_lossy(),
                 )?;
                 if current_paths.iter().any(|path| !plan.paths.contains(path)) {
-                    return Err(AppError::General(
+                    return Err(PageError::General(
                         "Page related source plan changed; retry the operation".into(),
                     ));
                 }
@@ -271,7 +271,7 @@ fn apply_sources(request: PageWrite<'_>, plan: WritePlan) -> Result<PageWriteOut
                     }
                 }
                 checkpoint("relations")?;
-                crate::space::structural::rebase_managed_attachment_routes(
+                crate::storage::routes::rebase_managed_attachment_routes(
                     request.space,
                     request.project,
                     &old_root
@@ -319,7 +319,7 @@ fn apply_sources(request: PageWrite<'_>, plan: WritePlan) -> Result<PageWriteOut
         })();
         operation.map_err(|error| {
             if had_naming_intent {
-                crate::files::filename::mark_managed_naming_intent(request.space, request.path);
+                crate::page::filename::mark_managed_naming_intent(request.space, request.path);
             }
             snapshot.rollback(error)
         })
@@ -327,7 +327,7 @@ fn apply_sources(request: PageWrite<'_>, plan: WritePlan) -> Result<PageWriteOut
 }
 
 #[cfg(not(test))]
-fn checkpoint(_: &str) -> Result<(), AppError> {
+fn checkpoint(_: &str) -> Result<(), PageError> {
     Ok(())
 }
 
@@ -335,9 +335,9 @@ fn checkpoint(_: &str) -> Result<(), AppError> {
 thread_local! { static FAILURE: std::cell::RefCell<Option<&'static str>> = const { std::cell::RefCell::new(None) }; }
 
 #[cfg(test)]
-pub(crate) fn checkpoint(stage: &str) -> Result<(), AppError> {
+pub(crate) fn checkpoint(stage: &str) -> Result<(), PageError> {
     if FAILURE.with(|failure| *failure.borrow() == Some(stage)) {
-        Err(AppError::General(format!("injected {stage} failure")))
+        Err(PageError::General(format!("injected {stage} failure")))
     } else {
         Ok(())
     }

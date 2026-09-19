@@ -4,7 +4,7 @@
 use std::collections::BTreeMap;
 
 use crate::error::AppError;
-use crate::files::entry;
+use svode_core::page::entry;
 
 pub use svode_core::collections::engine::*;
 
@@ -55,7 +55,7 @@ pub(crate) fn update_entry_properties_atomic(
             project_path,
             None,
         )?;
-        entry::read(space, file_path)
+        Ok(entry::read(space, file_path)?)
     })
 }
 

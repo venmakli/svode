@@ -11,11 +11,11 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::error::AppError;
-use crate::files::filename::{self, FilenameProjection};
-use crate::files::frontmatter;
-use crate::files::tree;
-use svode_core::index::backlinks::{BacklinkIndex, ModifiedLinkSource};
+use crate::content_tree;
+use crate::index::backlinks::{BacklinkIndex, ModifiedLinkSource};
+use crate::page::PageError;
+use crate::page::filename::{self, FilenameProjection};
+use crate::page::frontmatter;
 
 use persistence::{
     apply_runtime_metadata, fallback_title_for_path, meta_for_file_without_frontmatter,
@@ -27,18 +27,18 @@ fn resolve(space: &str, rel: &str) -> PathBuf {
     Path::new(space).join(rel)
 }
 
-pub(crate) use svode_core::page::naming::slugify;
+pub use crate::page::naming::slugify;
 
-pub(crate) use svode_core::page::frontmatter::{apply_entry_field_update, title_from_stem};
+pub use crate::page::frontmatter::{apply_entry_field_update, title_from_stem};
 
 /// Append a filename to order.json for a given directory key.
 fn order_append(space: &Path, dir_key: &str, name: &str) {
-    let mut order = tree::read_order(space);
+    let mut order = content_tree::read_order(space);
     order
         .entry(dir_key.to_string())
         .or_default()
         .push(name.to_string());
-    let _ = tree::write_order(space, &order);
+    let _ = content_tree::write_order(space, &order);
 }
 
 /// Rename an entry in order.json (replace old_name with new_name in the given directory).
@@ -51,19 +51,19 @@ fn order_rename_checked(
     dir_key: &str,
     old_name: &str,
     new_name: &str,
-) -> Result<(), AppError> {
-    let mut order = tree::read_order(space);
+) -> Result<(), PageError> {
+    let mut order = content_tree::read_order(space);
     if let Some(list) = order.get_mut(dir_key) {
         if let Some(pos) = list.iter().position(|name| name == old_name) {
             list[pos] = new_name.to_string();
-            tree::write_order(space, &order)?;
+            content_tree::write_order(space, &order)?;
         }
     }
     Ok(())
 }
 
 fn order_insert_after(space: &Path, dir_key: &str, after_name: &str, name: &str) {
-    let mut order = tree::read_order(space);
+    let mut order = content_tree::read_order(space);
     let list = order.entry(dir_key.to_string()).or_default();
     if list.iter().any(|item| item == name) {
         return;
@@ -73,13 +73,13 @@ fn order_insert_after(space: &Path, dir_key: &str, after_name: &str, name: &str)
     } else {
         list.push(name.to_string());
     }
-    let _ = tree::write_order(space, &order);
+    let _ = content_tree::write_order(space, &order);
 }
 
 fn order_remove_key(space: &Path, dir_key: &str) {
-    let mut order = tree::read_order(space);
+    let mut order = content_tree::read_order(space);
     if order.remove(dir_key).is_some() {
-        let _ = tree::write_order(space, &order);
+        let _ = content_tree::write_order(space, &order);
     }
 }
 
@@ -127,7 +127,7 @@ fn unique_child_path(parent: &Path, stem: &str, extension: Option<&str>) -> Path
     ))
 }
 
-pub(crate) fn filename_projection_warning(
+pub fn filename_projection_warning(
     projection: &FilenameProjection,
     actual_path: &str,
 ) -> Option<EntryWarning> {
@@ -136,7 +136,7 @@ pub(crate) fn filename_projection_warning(
         .then(|| EntryWarning::filename_projection(actual_path, &projection.reason_codes()))
 }
 
-pub(crate) fn filename_allocation_warnings(
+pub fn filename_allocation_warnings(
     requested: &FilenameProjection,
     actual: &FilenameProjection,
     actual_path: &str,
@@ -156,7 +156,7 @@ fn rewrite_relations_after_fs_move(
     new_rel: &str,
     old_abs: &Path,
     new_abs: &Path,
-) -> Result<(), AppError> {
+) -> Result<(), PageError> {
     rewrite_relations_after_fs_move_with_project(
         space, None, old_rel, new_rel, old_abs, new_abs, None,
     )
@@ -170,9 +170,9 @@ fn rewrite_relations_after_fs_move_with_project(
     old_abs: &Path,
     new_abs: &Path,
     authorized_paths: Option<&[PathBuf]>,
-) -> Result<(), AppError> {
+) -> Result<(), PageError> {
     let result = if let Some(authorized_paths) = authorized_paths {
-        crate::properties::rewrite_relation_paths_for_move_with_authorized_plan(
+        crate::collections::engine::rewrite_relation_paths_for_move_with_authorized_plan(
             &space.to_string_lossy(),
             project_path,
             old_rel,
@@ -180,7 +180,7 @@ fn rewrite_relations_after_fs_move_with_project(
             authorized_paths,
         )
     } else {
-        crate::properties::rewrite_relation_paths_for_move_with_project(
+        crate::collections::engine::rewrite_relation_paths_for_move_with_project(
             &space.to_string_lossy(),
             project_path,
             old_rel,
@@ -194,7 +194,7 @@ fn rewrite_relations_after_fs_move_with_project(
     Ok(())
 }
 
-fn collect_entry_md_files(root: &Path, out: &mut Vec<PathBuf>) -> Result<(), AppError> {
+fn collect_entry_md_files(root: &Path, out: &mut Vec<PathBuf>) -> Result<(), PageError> {
     for entry in fs::read_dir(root)? {
         let entry = entry?;
         let path = entry.path();
@@ -212,13 +212,13 @@ fn collect_entry_md_files(root: &Path, out: &mut Vec<PathBuf>) -> Result<(), App
     Ok(())
 }
 
-fn normalize_entry_path_arg(space: &Path, path: &str) -> Result<String, AppError> {
+fn normalize_entry_path_arg(space: &Path, path: &str) -> Result<String, PageError> {
     let rel = path.trim_matches('/').replace('\\', "/");
     if rel.is_empty() {
-        return Err(AppError::FileNotFound(path.to_string()));
+        return Err(PageError::FileNotFound(path.to_string()));
     }
     if !space.join(&rel).exists() {
-        return Err(AppError::FileNotFound(rel));
+        return Err(PageError::FileNotFound(rel));
     }
     Ok(rel)
 }
@@ -226,7 +226,7 @@ fn normalize_entry_path_arg(space: &Path, path: &str) -> Result<String, AppError
 /// Create a new entry on disk. Returns the created Entry.
 #[allow(dead_code)]
 #[cfg(test)]
-pub fn create(space: &str, parent_path: Option<&str>, title: &str) -> Result<Entry, AppError> {
+pub fn create(space: &str, parent_path: Option<&str>, title: &str) -> Result<Entry, PageError> {
     create_with_contextual_defaults(space, parent_path, title, None)
 }
 
@@ -237,7 +237,7 @@ pub fn create_with_contextual_defaults(
     parent_path: Option<&str>,
     title: &str,
     contextual_defaults: Option<HashMap<String, serde_yml::Value>>,
-) -> Result<Entry, AppError> {
+) -> Result<Entry, PageError> {
     create_with_options(space, parent_path, title, contextual_defaults, false, false)
 }
 
@@ -249,20 +249,28 @@ pub fn create_with_options(
     contextual_defaults: Option<HashMap<String, serde_yml::Value>>,
     allocate_unique_title: bool,
     as_readme: bool,
-) -> Result<Entry, AppError> {
+) -> Result<Entry, PageError> {
     let created =
         create_source_with_options(space, parent_path, title, allocate_unique_title, as_readme)?;
     let mut metadata = created.meta.clone();
-    crate::properties::apply_schema_defaults_for_path(space, &created.path, &mut metadata)?;
+    crate::collections::engine::apply_schema_defaults_for_path(
+        space,
+        &created.path,
+        &mut metadata,
+    )?;
     if let Some(contextual_defaults) = contextual_defaults.as_ref() {
-        crate::properties::apply_contextual_defaults_for_path(
+        crate::collections::engine::apply_contextual_defaults_for_path(
             space,
             &created.path,
             &mut metadata,
             contextual_defaults,
         )?;
     }
-    crate::properties::assign_unique_id_to_meta_for_path(space, &created.path, &mut metadata)?;
+    crate::collections::engine::assign_unique_id_to_meta_for_path(
+        space,
+        &created.path,
+        &mut metadata,
+    )?;
     write_under_name_lock(
         space,
         &created.path,
@@ -280,14 +288,14 @@ pub fn create_with_options(
     read(space, &created.path)
 }
 
-pub(crate) fn create_source_with_options(
+pub fn create_source_with_options(
     space: &str,
     parent_path: Option<&str>,
     title: &str,
     allocate_unique_title: bool,
     as_readme: bool,
-) -> Result<Entry, AppError> {
-    crate::files::naming::with_document_name_lock(space, || {
+) -> Result<Entry, PageError> {
+    crate::page::naming::with_document_name_lock(space, || {
         create_source_with_options_inner(
             space,
             parent_path,
@@ -299,18 +307,18 @@ pub(crate) fn create_source_with_options(
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct PlannedSourceCreate {
+pub struct PlannedSourceCreate {
     pub title: String,
     pub path: String,
 }
 
-pub(crate) fn planned_source_create(
+pub fn planned_source_create(
     space: &str,
     parent_path: Option<&str>,
     title: &str,
     allocate_unique_title: bool,
     as_readme: bool,
-) -> Result<PlannedSourceCreate, AppError> {
+) -> Result<PlannedSourceCreate, PageError> {
     let parent_path = parent_path
         .map(str::trim)
         .filter(|parent| !parent.is_empty());
@@ -324,9 +332,9 @@ pub(crate) fn planned_source_create(
             .unwrap_or_else(|| ".svode-name-probe.md".to_string())
     };
     let title = if allocate_unique_title {
-        crate::files::naming::allocate_document_title(Path::new(space), &initial_scope_path, title)?
+        crate::page::naming::allocate_document_title(Path::new(space), &initial_scope_path, title)?
     } else {
-        crate::files::naming::ensure_document_name_available(
+        crate::page::naming::ensure_document_name_available(
             Path::new(space),
             &initial_scope_path,
             title,
@@ -355,7 +363,7 @@ fn create_source_with_options_inner(
     title: &str,
     allocate_unique_title: bool,
     as_readme: bool,
-) -> Result<Entry, AppError> {
+) -> Result<Entry, PageError> {
     let parent_path = parent_path
         .map(str::trim)
         .filter(|parent| !parent.is_empty());
@@ -369,9 +377,9 @@ fn create_source_with_options_inner(
             .unwrap_or_else(|| format!(".svode-name-probe-{}.md", ulid::Ulid::new()))
     };
     let title = if allocate_unique_title {
-        crate::files::naming::allocate_document_title(Path::new(space), &initial_scope_path, title)?
+        crate::page::naming::allocate_document_title(Path::new(space), &initial_scope_path, title)?
     } else {
-        crate::files::naming::ensure_document_name_available(
+        crate::page::naming::ensure_document_name_available(
             Path::new(space),
             &initial_scope_path,
             title,
@@ -386,7 +394,7 @@ fn create_source_with_options_inner(
             .unwrap_or_else(|| "README.md".to_string());
         let abs_path = resolve(space, &rel_path);
         if abs_path.exists() {
-            return Err(AppError::FileAlreadyExists(rel_path));
+            return Err(PageError::FileAlreadyExists(rel_path));
         }
         (rel_path, abs_path, None)
     } else {
@@ -440,7 +448,7 @@ pub fn create_folder(
     space: &str,
     parent_path: Option<&str>,
     name: &str,
-) -> Result<String, AppError> {
+) -> Result<String, PageError> {
     let rel_path = match parent_path {
         Some(parent) => format!("{parent}/{name}"),
         None => name.to_string(),
@@ -449,7 +457,7 @@ pub fn create_folder(
     let abs_path = resolve(space, &rel_path);
 
     if abs_path.exists() {
-        return Err(AppError::FileAlreadyExists(rel_path));
+        return Err(PageError::FileAlreadyExists(rel_path));
     }
 
     fs::create_dir_all(&abs_path)?;
@@ -492,9 +500,9 @@ fn entry_filename_plan(
     space: &str,
     path: &str,
     title: &str,
-) -> Result<EntryFilenamePlan, AppError> {
+) -> Result<EntryFilenamePlan, PageError> {
     let projection = filename::project(title);
-    if !crate::files::naming::is_user_document(path) {
+    if !crate::page::naming::is_user_document(path) {
         return Ok(EntryFilenamePlan::Unchanged(projection));
     }
 
@@ -577,14 +585,14 @@ pub fn planned_write_rename(
     path: &str,
     title: Option<&str>,
     skip_rename: bool,
-) -> Result<Option<PlannedWriteRename>, AppError> {
+) -> Result<Option<PlannedWriteRename>, PageError> {
     let has_naming_intent = title.is_some() || filename::has_managed_naming_intent(space, path);
     if skip_rename || !has_naming_intent {
         return Ok(None);
     }
     let abs_path = resolve(space, path);
     if !abs_path.exists() {
-        return Err(AppError::FileNotFound(path.to_string()));
+        return Err(PageError::FileNotFound(path.to_string()));
     }
     let (_, parsed_existing) = persistence::read_existing(&abs_path)?;
     let materialized_title = match &parsed_existing {
@@ -615,7 +623,7 @@ pub fn write(
     _existing_id: Option<&str>,
     backlink_index: Option<&BacklinkIndex>,
     skip_rename: bool,
-) -> Result<WriteResult, AppError> {
+) -> Result<WriteResult, PageError> {
     write_with_relation_plan(
         space,
         path,
@@ -632,7 +640,7 @@ pub fn write(
 }
 
 #[cfg(test)]
-pub(crate) fn write_with_relation_plan(
+pub fn write_with_relation_plan(
     space: &str,
     path: &str,
     content: &str,
@@ -644,9 +652,9 @@ pub(crate) fn write_with_relation_plan(
     skip_rename: bool,
     project_path: Option<&str>,
     relation_paths: Option<&[PathBuf]>,
-) -> Result<WriteResult, AppError> {
+) -> Result<WriteResult, PageError> {
     if title.is_some() || !skip_rename {
-        return crate::files::naming::with_document_name_lock(space, || {
+        return crate::page::naming::with_document_name_lock(space, || {
             write_under_name_lock(
                 space,
                 path,
@@ -679,7 +687,7 @@ pub(crate) fn write_with_relation_plan(
     )
 }
 
-pub(crate) fn write_under_name_lock(
+pub fn write_under_name_lock(
     space: &str,
     path: &str,
     content: &str,
@@ -692,11 +700,11 @@ pub(crate) fn write_under_name_lock(
     skip_rename: bool,
     project_path: Option<&str>,
     relation_paths: Option<&[PathBuf]>,
-) -> Result<WriteResult, AppError> {
+) -> Result<WriteResult, PageError> {
     let abs_path = resolve(space, path);
 
     if !abs_path.exists() {
-        return Err(AppError::FileNotFound(path.to_string()));
+        return Err(PageError::FileNotFound(path.to_string()));
     }
 
     // Fresh nonce attached to every WriteResult (including no-op early returns)
@@ -721,7 +729,7 @@ pub(crate) fn write_under_name_lock(
     let has_naming_intent =
         !skip_rename && (title.is_some() || filename::has_managed_naming_intent(space, path));
     if has_naming_intent && let Some(materialized_title) = materialized_title.as_deref() {
-        crate::files::naming::ensure_document_name_available(
+        crate::page::naming::ensure_document_name_available(
             Path::new(space),
             path,
             materialized_title,
@@ -778,7 +786,7 @@ pub(crate) fn write_under_name_lock(
         frontmatter::ParseStatus::Valid { meta, body } => (meta, Some(body)),
         frontmatter::ParseStatus::Missing { .. } => (fallback_meta()?, None),
         frontmatter::ParseStatus::Malformed { message, .. } => {
-            return Err(AppError::FrontmatterParse(format!(
+            return Err(PageError::FrontmatterParse(format!(
                 "cannot update metadata while frontmatter is malformed: {message}"
             )));
         }
@@ -946,7 +954,7 @@ pub(crate) fn write_under_name_lock(
             // Rename folder entry in parent's order list
             order_rename_checked(sp_path, &dir_key, &old_dir_name, &new_dir_name)?;
             // Rename the key itself (children order moves to new dir name)
-            let mut order = tree::read_order(sp_path);
+            let mut order = content_tree::read_order(sp_path);
             let old_key = if dir_key == "." {
                 old_dir_name.clone()
             } else {
@@ -959,7 +967,7 @@ pub(crate) fn write_under_name_lock(
                     format!("{}/{}", dir_key, new_dir_name)
                 };
                 order.insert(new_key, children);
-                tree::write_order(sp_path, &order)?;
+                content_tree::write_order(sp_path, &order)?;
             }
         } else {
             // Regular file: dir_key is the parent directory
@@ -1039,16 +1047,16 @@ pub fn update_field(
     path: &str,
     field: &str,
     value: serde_json::Value,
-) -> Result<Entry, AppError> {
+) -> Result<Entry, PageError> {
     if field == "title" {
-        return crate::files::naming::with_document_name_lock(space, || {
+        return crate::page::naming::with_document_name_lock(space, || {
             update_field_inner(space, project_path, path, field, value)
         });
     }
     update_field_inner(space, project_path, path, field, value)
 }
 
-pub(crate) fn replace_created_body(space: &str, path: &str, body: &str) -> Result<Entry, AppError> {
+pub fn replace_created_body(space: &str, path: &str, body: &str) -> Result<Entry, PageError> {
     let abs_path = resolve(space, path);
     let (_, parsed) = persistence::read_existing(&abs_path)?;
     let mut meta = match parsed {
@@ -1057,7 +1065,7 @@ pub(crate) fn replace_created_body(space: &str, path: &str, body: &str) -> Resul
             meta_for_file_without_frontmatter(&abs_path, path)?
         }
         frontmatter::ParseStatus::Malformed { message, .. } => {
-            return Err(AppError::FrontmatterParse(format!(
+            return Err(PageError::FrontmatterParse(format!(
                 "cannot set initial body while frontmatter is malformed: {message}"
             )));
         }
@@ -1080,30 +1088,28 @@ fn update_field_inner(
     path: &str,
     field: &str,
     value: serde_json::Value,
-) -> Result<Entry, AppError> {
+) -> Result<Entry, PageError> {
     let is_custom = !matches!(
         field,
         "created" | "updated" | "title" | "icon" | "description" | "cover"
     );
     if is_custom {
-        crate::properties::ensure_entry_field_writable(space, path, field)?;
+        crate::collections::engine::ensure_entry_field_writable(space, path, field)?;
         let yaml_value = serde_yml::to_value(value.clone()).map_err(|e| {
-            AppError::from(
-                svode_core::page::frontmatter::FrontmatterError::InvalidField(format!(
-                    "{field}: {e}"
-                )),
-            )
+            PageError::from(crate::page::frontmatter::FrontmatterError::InvalidField(
+                format!("{field}: {e}"),
+            ))
         })?;
-        if let Some((meta, body)) = crate::properties::update_relation_entry_field(
+        if let Some((meta, body)) = crate::collections::engine::update_relation_entry_field(
             space,
             project_path,
             path,
             field,
             yaml_value,
         )? {
-            let path = svode_core::collections::schema::normalize_rel_path(path);
+            let path = crate::collections::schema::normalize_rel_path(path);
             let name_conflict =
-                crate::files::naming::document_name_conflict(Path::new(space), &path, &meta.title)?;
+                crate::page::naming::document_name_conflict(Path::new(space), &path, &meta.title)?;
             return Ok(Entry {
                 meta,
                 body,
@@ -1117,7 +1123,7 @@ fn update_field_inner(
     let abs_path = resolve(space, path);
 
     if !abs_path.exists() {
-        return Err(AppError::FileNotFound(path.to_string()));
+        return Err(PageError::FileNotFound(path.to_string()));
     }
 
     let (_, parsed) = persistence::read_existing(&abs_path)?;
@@ -1127,7 +1133,7 @@ fn update_field_inner(
             (meta_for_file_without_frontmatter(&abs_path, path)?, body)
         }
         frontmatter::ParseStatus::Malformed { message, .. } => {
-            return Err(AppError::FrontmatterParse(format!(
+            return Err(PageError::FrontmatterParse(format!(
                 "cannot update metadata while frontmatter is malformed: {message}"
             )));
         }
@@ -1136,15 +1142,14 @@ fn update_field_inner(
 
     if is_custom && !value.is_null() {
         let yaml_value = serde_yml::to_value(value.clone()).map_err(|e| {
-            AppError::from(
-                svode_core::page::frontmatter::FrontmatterError::InvalidField(format!(
-                    "{field}: {e}"
-                )),
-            )
+            PageError::from(crate::page::frontmatter::FrontmatterError::InvalidField(
+                format!("{field}: {e}"),
+            ))
         })?;
-        let yaml_value =
-            crate::properties::normalize_entry_field_value(space, path, field, yaml_value)?;
-        crate::properties::validate_entry_field_value(space, path, field, &yaml_value)?;
+        let yaml_value = crate::collections::engine::normalize_entry_field_value(
+            space, path, field, yaml_value,
+        )?;
+        crate::collections::engine::validate_entry_field_value(space, path, field, &yaml_value)?;
         meta.extra.insert(field.to_string(), yaml_value);
     } else if is_custom {
         meta.extra.remove(field);
@@ -1152,19 +1157,19 @@ fn update_field_inner(
         apply_entry_field_update(&mut meta, field, value)?;
     }
     if field == "title" {
-        crate::files::naming::ensure_document_name_available(Path::new(space), path, &meta.title)?;
+        crate::page::naming::ensure_document_name_available(Path::new(space), path, &meta.title)?;
     }
     persistence::write_serialized(&abs_path, &meta, &body)?;
     if previous_title
         .as_deref()
         .is_some_and(|previous_title| previous_title != meta.title)
-        && crate::files::naming::is_user_document(path)
+        && crate::page::naming::is_user_document(path)
     {
         filename::mark_managed_naming_intent(space, path);
     }
     apply_runtime_metadata(&mut meta, &abs_path, path)?;
     let name_conflict =
-        crate::files::naming::document_name_conflict(Path::new(space), path, &meta.title)?;
+        crate::page::naming::document_name_conflict(Path::new(space), path, &meta.title)?;
 
     Ok(Entry {
         meta,
@@ -1183,7 +1188,7 @@ pub fn move_entry(
     from: &str,
     to_parent: &str,
     backlink_index: Option<&BacklinkIndex>,
-) -> Result<String, AppError> {
+) -> Result<String, PageError> {
     move_entry_with_project(space, from, to_parent, backlink_index, None)
 }
 
@@ -1193,16 +1198,16 @@ pub fn move_entry_with_project(
     to_parent: &str,
     backlink_index: Option<&BacklinkIndex>,
     project_path: Option<&str>,
-) -> Result<String, AppError> {
+) -> Result<String, PageError> {
     let abs_from = space.join(from);
 
     if !abs_from.exists() {
-        return Err(AppError::FileNotFound(from.to_string()));
+        return Err(PageError::FileNotFound(from.to_string()));
     }
 
     let filename = Path::new(from)
         .file_name()
-        .ok_or_else(|| AppError::General("invalid source path".to_string()))?;
+        .ok_or_else(|| PageError::General("invalid source path".to_string()))?;
 
     let new_rel = if to_parent.is_empty() {
         filename.to_string_lossy().to_string()
@@ -1213,9 +1218,9 @@ pub fn move_entry_with_project(
     let abs_to = space.join(&new_rel);
 
     if abs_to.exists() {
-        return Err(AppError::FileAlreadyExists(new_rel));
+        return Err(PageError::FileAlreadyExists(new_rel));
     }
-    let relation_plan = crate::properties::relation_move_mutation_paths_with_project(
+    let relation_plan = crate::collections::engine::relation_move_mutation_paths_with_project(
         &space.to_string_lossy(),
         project_path,
         from,
@@ -1225,7 +1230,7 @@ pub fn move_entry_with_project(
     let from_is_dir = abs_from.is_dir();
     let is_md = from_is_dir || Path::new(from).extension().and_then(|e| e.to_str()) == Some("md");
     let target_sibling_order =
-        tree::list_tree_children(space.to_string_lossy().as_ref(), Some(to_parent))
+        content_tree::list_tree_children(space.to_string_lossy().as_ref(), Some(to_parent))
             .map(|children| {
                 children
                     .into_iter()
@@ -1241,7 +1246,7 @@ pub fn move_entry_with_project(
 
     fs::rename(&abs_from, &abs_to)?;
     update_order_after_move(space, from, &new_rel, from_is_dir, &target_sibling_order)?;
-    crate::properties::apply_schema_defaults_to_entry_tree(space, &new_rel)?;
+    crate::collections::engine::apply_schema_defaults_to_entry_tree(space, &new_rel)?;
     rewrite_relations_after_fs_move_with_project(
         space,
         project_path,
@@ -1276,7 +1281,7 @@ fn update_order_after_move(
     to: &str,
     moved_directory: bool,
     target_sibling_order: &[String],
-) -> Result<(), AppError> {
+) -> Result<(), PageError> {
     let source = Path::new(from);
     let target = Path::new(to);
     let source_parent = dir_key_for(source.parent().unwrap_or(Path::new("")));
@@ -1284,13 +1289,13 @@ fn update_order_after_move(
     let source_name = source
         .file_name()
         .and_then(|name| name.to_str())
-        .ok_or_else(|| AppError::General("invalid source path".to_string()))?;
+        .ok_or_else(|| PageError::General("invalid source path".to_string()))?;
     let target_name = target
         .file_name()
         .and_then(|name| name.to_str())
-        .ok_or_else(|| AppError::General("invalid destination path".to_string()))?;
+        .ok_or_else(|| PageError::General("invalid destination path".to_string()))?;
 
-    let mut order = tree::read_order(space);
+    let mut order = content_tree::read_order(space);
     if let Some(items) = order.get_mut(&source_parent) {
         items.retain(|item| item != source_name);
     }
@@ -1314,7 +1319,7 @@ fn update_order_after_move(
         order.extend(moved_keys);
     }
 
-    tree::write_order(space, &order)
+    Ok(content_tree::write_order(space, &order)?)
 }
 
 /// Nest an entry: convert `foo.md` → `foo/readme.md`, making it a category.
@@ -1323,16 +1328,18 @@ pub fn nest_entry(
     space: &Path,
     path: &str,
     backlink_index: Option<&BacklinkIndex>,
-) -> Result<String, AppError> {
+) -> Result<String, PageError> {
     let abs_path = space.join(path);
 
     if !abs_path.exists() {
-        return Err(AppError::FileNotFound(path.to_string()));
+        return Err(PageError::FileNotFound(path.to_string()));
     }
 
     // Only works on .md files, not directories
     if abs_path.is_dir() {
-        return Err(AppError::General("Path is already a directory".to_string()));
+        return Err(PageError::General(
+            "Path is already a directory".to_string(),
+        ));
     }
 
     // Already a readme.md inside a folder — nothing to do
@@ -1345,13 +1352,13 @@ pub fn nest_entry(
     let stem = abs_path
         .file_stem()
         .and_then(|s| s.to_str())
-        .ok_or_else(|| AppError::General("invalid filename".to_string()))?;
+        .ok_or_else(|| PageError::General("invalid filename".to_string()))?;
 
     let parent = abs_path.parent().unwrap_or(space);
     let folder = parent.join(stem);
 
     if folder.exists() {
-        return Err(AppError::FileAlreadyExists(
+        return Err(PageError::FileAlreadyExists(
             folder.to_string_lossy().to_string(),
         ));
     }
@@ -1389,24 +1396,24 @@ pub fn unnest_entry(
     space: &Path,
     path: &str,
     backlink_index: Option<&BacklinkIndex>,
-) -> Result<String, AppError> {
+) -> Result<String, PageError> {
     let abs_path = space.join(path);
 
     if !abs_path.exists() {
-        return Err(AppError::FileNotFound(path.to_string()));
+        return Err(PageError::FileNotFound(path.to_string()));
     }
 
     // Must be a readme.md inside a folder
     let filename = abs_path.file_name().and_then(|n| n.to_str()).unwrap_or("");
     if !filename.eq_ignore_ascii_case("readme.md") {
-        return Err(AppError::General(
+        return Err(PageError::General(
             "Only readme.md inside a folder can be unnested".to_string(),
         ));
     }
 
     let folder = abs_path
         .parent()
-        .ok_or_else(|| AppError::General("no parent directory".to_string()))?;
+        .ok_or_else(|| PageError::General("no parent directory".to_string()))?;
 
     // Check that the folder has no other children
     let siblings: Vec<_> = fs::read_dir(folder)?
@@ -1419,7 +1426,7 @@ pub fn unnest_entry(
         .collect();
 
     if !siblings.is_empty() {
-        return Err(AppError::General(
+        return Err(PageError::General(
             "Folder still has children, cannot unnest".to_string(),
         ));
     }
@@ -1428,14 +1435,14 @@ pub fn unnest_entry(
     let folder_name = folder
         .file_name()
         .and_then(|s| s.to_str())
-        .ok_or_else(|| AppError::General("invalid folder name".to_string()))?;
+        .ok_or_else(|| PageError::General("invalid folder name".to_string()))?;
     let parent_dir = folder
         .parent()
-        .ok_or_else(|| AppError::General("no parent for folder".to_string()))?;
+        .ok_or_else(|| PageError::General("no parent for folder".to_string()))?;
     let new_abs = parent_dir.join(format!("{}.md", folder_name));
 
     if new_abs.exists() {
-        return Err(AppError::FileAlreadyExists(
+        return Err(PageError::FileAlreadyExists(
             new_abs.to_string_lossy().to_string(),
         ));
     }
@@ -1449,9 +1456,11 @@ pub fn unnest_entry(
         .unwrap_or(&new_abs)
         .to_string_lossy()
         .to_string();
-    if let Err(error) =
-        crate::properties::rewrite_relation_paths_for_move(&space.to_string_lossy(), path, &new_rel)
-    {
+    if let Err(error) = crate::collections::engine::rewrite_relation_paths_for_move(
+        &space.to_string_lossy(),
+        path,
+        &new_rel,
+    ) {
         let _ = fs::create_dir_all(folder);
         let _ = fs::rename(&new_abs, &abs_path);
         return Err(error.into());
@@ -1470,7 +1479,7 @@ pub fn convert_entry_to_folder(
     space: &Path,
     entry_path: &str,
     backlink_index: Option<&BacklinkIndex>,
-) -> Result<Entry, AppError> {
+) -> Result<Entry, PageError> {
     let path = normalize_entry_path_arg(space, entry_path)?;
     let abs_path = space.join(&path);
     if abs_path.is_dir()
@@ -1479,10 +1488,10 @@ pub fn convert_entry_to_folder(
             .next()
             .is_some_and(|name| name.eq_ignore_ascii_case("README.md"))
     {
-        return Err(AppError::General("entry is already a folder".to_string()));
+        return Err(PageError::General("entry is already a folder".to_string()));
     }
     if abs_path.extension().and_then(|ext| ext.to_str()) != Some("md") {
-        return Err(AppError::General(
+        return Err(PageError::General(
             "entry must be a markdown leaf".to_string(),
         ));
     }
@@ -1490,11 +1499,11 @@ pub fn convert_entry_to_folder(
     let stem = abs_path
         .file_stem()
         .and_then(|stem| stem.to_str())
-        .ok_or_else(|| AppError::General("invalid entry filename".to_string()))?;
+        .ok_or_else(|| PageError::General("invalid entry filename".to_string()))?;
     let parent_abs = abs_path.parent().unwrap_or(space);
     let folder_abs = parent_abs.join(stem);
     if folder_abs.exists() {
-        return Err(AppError::FileAlreadyExists(rel_from_abs(
+        return Err(PageError::FileAlreadyExists(rel_from_abs(
             space,
             &folder_abs,
         )));
@@ -1525,12 +1534,12 @@ pub fn convert_entry_to_folder(
     read(&space.to_string_lossy(), &new_rel)
 }
 
-pub fn entry_detail_state(space: &Path, path: &str) -> Result<EntryDetailState, AppError> {
+pub fn entry_detail_state(space: &Path, path: &str) -> Result<EntryDetailState, PageError> {
     let rel = path.trim_matches('/').replace('\\', "/");
     let abs = space.join(&rel);
     if abs.is_dir() {
         if !dir_has_readme(&abs) {
-            return Err(AppError::FileNotFound(rel));
+            return Err(PageError::FileNotFound(rel));
         }
         let (subpage_count, other_file_count) = folder_child_counts(&abs)?;
         return Ok(EntryDetailState {
@@ -1545,7 +1554,7 @@ pub fn entry_detail_state(space: &Path, path: &str) -> Result<EntryDetailState, 
     }
 
     if !abs.exists() {
-        return Err(AppError::FileNotFound(rel));
+        return Err(PageError::FileNotFound(rel));
     }
 
     let is_readme = abs
@@ -1562,7 +1571,7 @@ pub fn entry_detail_state(space: &Path, path: &str) -> Result<EntryDetailState, 
 
     let folder = abs
         .parent()
-        .ok_or_else(|| AppError::General("README.md has no parent folder".to_string()))?;
+        .ok_or_else(|| PageError::General("README.md has no parent folder".to_string()))?;
     let (subpage_count, other_file_count) = folder_child_counts(folder)?;
     Ok(EntryDetailState {
         form: if folder.join("schema.yaml").exists() {
@@ -1575,7 +1584,7 @@ pub fn entry_detail_state(space: &Path, path: &str) -> Result<EntryDetailState, 
     })
 }
 
-fn folder_child_counts(folder: &Path) -> Result<(usize, usize), AppError> {
+fn folder_child_counts(folder: &Path) -> Result<(usize, usize), PageError> {
     let mut subpage_count = 0;
     let mut other_file_count = 0;
 
@@ -1624,7 +1633,7 @@ pub fn convert_entry_to_leaf(
     space: &Path,
     entry_path: &str,
     backlink_index: Option<&BacklinkIndex>,
-) -> Result<Entry, AppError> {
+) -> Result<Entry, PageError> {
     let path = normalize_entry_path_arg(space, entry_path)?;
     let readme_abs = space.join(&path);
     if !readme_abs
@@ -1632,15 +1641,15 @@ pub fn convert_entry_to_leaf(
         .and_then(|name| name.to_str())
         .is_some_and(|name| name.eq_ignore_ascii_case("README.md"))
     {
-        return Err(AppError::General(
+        return Err(PageError::General(
             "only folder README.md can be converted to leaf".to_string(),
         ));
     }
     let folder_abs = readme_abs
         .parent()
-        .ok_or_else(|| AppError::General("README.md has no parent folder".to_string()))?;
+        .ok_or_else(|| PageError::General("README.md has no parent folder".to_string()))?;
     if folder_abs.join("schema.yaml").exists() {
-        return Err(AppError::General(
+        return Err(PageError::General(
             "EntryNotEmpty { entries: [], folders: [], other: [\"schema.yaml\"] }".to_string(),
         ));
     }
@@ -1664,7 +1673,7 @@ pub fn convert_entry_to_leaf(
         }
     }
     if !entries.is_empty() || !folders.is_empty() || !other.is_empty() {
-        return Err(AppError::General(format!(
+        return Err(PageError::General(format!(
             "EntryNotEmpty {{ entries: {:?}, folders: {:?}, other: {:?} }}",
             entries, folders, other
         )));
@@ -1673,18 +1682,18 @@ pub fn convert_entry_to_leaf(
     let folder_name = folder_abs
         .file_name()
         .and_then(|name| name.to_str())
-        .ok_or_else(|| AppError::General("invalid folder name".to_string()))?;
+        .ok_or_else(|| PageError::General("invalid folder name".to_string()))?;
     let parent_abs = folder_abs
         .parent()
-        .ok_or_else(|| AppError::General("folder has no parent".to_string()))?;
+        .ok_or_else(|| PageError::General("folder has no parent".to_string()))?;
     let leaf_abs = parent_abs.join(format!("{folder_name}.md"));
     if leaf_abs.exists() {
-        return Err(AppError::FileAlreadyExists(rel_from_abs(space, &leaf_abs)));
+        return Err(PageError::FileAlreadyExists(rel_from_abs(space, &leaf_abs)));
     }
     fs::rename(&readme_abs, &leaf_abs)?;
     let _ = fs::remove_dir_all(folder_abs);
     let new_rel = rel_from_abs(space, &leaf_abs);
-    if let Err(error) = crate::properties::rewrite_relation_paths_for_move(
+    if let Err(error) = crate::collections::engine::rewrite_relation_paths_for_move(
         &space.to_string_lossy(),
         &path,
         &new_rel,
@@ -1717,7 +1726,7 @@ pub fn convert_entry_to_leaf(
 pub fn convert_entry_to_nested_collection(
     space: &Path,
     entry_path: &str,
-) -> Result<String, AppError> {
+) -> Result<String, PageError> {
     let path = normalize_entry_path_arg(space, entry_path)?;
     let readme_abs = space.join(&path);
     if !readme_abs
@@ -1725,30 +1734,33 @@ pub fn convert_entry_to_nested_collection(
         .and_then(|name| name.to_str())
         .is_some_and(|name| name.eq_ignore_ascii_case("README.md"))
     {
-        return Err(AppError::General(
+        return Err(PageError::General(
             "entry must be converted to folder before making a collection".to_string(),
         ));
     }
     let folder_rel = Path::new(&path)
         .parent()
         .map(|parent| parent.to_string_lossy().replace('\\', "/"))
-        .ok_or_else(|| AppError::General("README.md has no parent folder".to_string()))?;
+        .ok_or_else(|| PageError::General("README.md has no parent folder".to_string()))?;
     let schema_abs = space.join(&folder_rel).join("schema.yaml");
     if schema_abs.exists() {
-        return Err(AppError::FileAlreadyExists(rel_from_abs(
+        return Err(PageError::FileAlreadyExists(rel_from_abs(
             space,
             &schema_abs,
         )));
     }
-    crate::properties::write_default_collection_schema(&space.to_string_lossy(), &folder_rel)?;
+    crate::collections::engine::write_default_collection_schema(
+        &space.to_string_lossy(),
+        &folder_rel,
+    )?;
     Ok(folder_rel)
 }
 
 pub fn convert_bare_folder_to_collection(
     space: &Path,
     folder_path: &str,
-) -> Result<Entry, AppError> {
-    crate::files::naming::with_document_name_lock(&space.to_string_lossy(), || {
+) -> Result<Entry, PageError> {
+    crate::page::naming::with_document_name_lock(&space.to_string_lossy(), || {
         convert_bare_folder_to_collection_inner(space, folder_path)
     })
 }
@@ -1756,22 +1768,22 @@ pub fn convert_bare_folder_to_collection(
 fn convert_bare_folder_to_collection_inner(
     space: &Path,
     folder_path: &str,
-) -> Result<Entry, AppError> {
+) -> Result<Entry, PageError> {
     let rel = folder_path.trim_matches('/').replace('\\', "/");
     let folder_abs = space.join(&rel);
     if !folder_abs.is_dir() {
-        return Err(AppError::FileNotFound(rel));
+        return Err(PageError::FileNotFound(rel));
     }
     let readme_abs = folder_abs.join("README.md");
     let schema_abs = folder_abs.join("schema.yaml");
     if readme_abs.exists() {
-        return Err(AppError::FileAlreadyExists(rel_from_abs(
+        return Err(PageError::FileAlreadyExists(rel_from_abs(
             space,
             &readme_abs,
         )));
     }
     if schema_abs.exists() {
-        return Err(AppError::FileAlreadyExists(rel_from_abs(
+        return Err(PageError::FileAlreadyExists(rel_from_abs(
             space,
             &schema_abs,
         )));
@@ -1782,32 +1794,32 @@ fn convert_bare_folder_to_collection_inner(
         .and_then(|name| name.to_str())
         .unwrap_or("Collection");
     let mut meta = EntryMeta::new_persisted(humanize_slug(folder_name));
-    crate::files::naming::ensure_document_name_available(
+    crate::page::naming::ensure_document_name_available(
         space,
         &format!("{rel}/README.md"),
         &meta.title,
     )?;
-    crate::properties::apply_schema_defaults_for_path(
+    crate::collections::engine::apply_schema_defaults_for_path(
         &space.to_string_lossy(),
         &format!("{rel}/README.md"),
         &mut meta,
     )?;
     persistence::write_serialized(&readme_abs, &meta, "")?;
-    crate::properties::write_default_collection_schema(&space.to_string_lossy(), &rel)?;
+    crate::collections::engine::write_default_collection_schema(&space.to_string_lossy(), &rel)?;
     read(&space.to_string_lossy(), &format!("{rel}/README.md"))
 }
 
-pub fn duplicate_entry(space: &Path, file_path: &str) -> Result<Entry, AppError> {
-    crate::files::naming::with_document_name_lock(&space.to_string_lossy(), || {
+pub fn duplicate_entry(space: &Path, file_path: &str) -> Result<Entry, PageError> {
+    crate::page::naming::with_document_name_lock(&space.to_string_lossy(), || {
         duplicate_entry_inner(space, file_path)
     })
 }
 
-fn duplicate_entry_inner(space: &Path, file_path: &str) -> Result<Entry, AppError> {
+fn duplicate_entry_inner(space: &Path, file_path: &str) -> Result<Entry, PageError> {
     let rel = file_path.trim_matches('/').replace('\\', "/");
     let source_abs = space.join(&rel);
     if !source_abs.exists() {
-        return Err(AppError::FileNotFound(rel));
+        return Err(PageError::FileNotFound(rel));
     }
 
     let (root_source_abs, source_order_name, parent_abs, root_head_rel) = if source_abs.is_dir() {
@@ -1827,7 +1839,7 @@ fn duplicate_entry_inner(space: &Path, file_path: &str) -> Result<Entry, AppErro
     {
         let folder = source_abs
             .parent()
-            .ok_or_else(|| AppError::General("README.md has no parent folder".to_string()))?;
+            .ok_or_else(|| PageError::General("README.md has no parent folder".to_string()))?;
         let parent = folder.parent().unwrap_or(space).to_path_buf();
         let order_name = folder
             .file_name()
@@ -1848,11 +1860,8 @@ fn duplicate_entry_inner(space: &Path, file_path: &str) -> Result<Entry, AppErro
     let requested_copy_title = read(&space.to_string_lossy(), &root_head_rel)
         .map(|entry| format!("{} (copy)", entry.meta.title))
         .unwrap_or_else(|_| format!("{} (copy)", source_order_name));
-    let copy_title = crate::files::naming::allocate_document_title(
-        space,
-        &root_head_rel,
-        &requested_copy_title,
-    )?;
+    let copy_title =
+        crate::page::naming::allocate_document_title(space, &root_head_rel, &requested_copy_title)?;
     let projection = filename::project(&copy_title);
     let (dest_abs, actual_projection) = filename::allocate_available_path(
         &parent_abs,
@@ -1878,12 +1887,12 @@ fn duplicate_entry_inner(space: &Path, file_path: &str) -> Result<Entry, AppErro
         refresh_markdown_copy_metadata(&dest_abs, Some(&copy_title))?;
     }
 
-    crate::properties::rewrite_internal_relation_refs_for_copy(
+    crate::collections::engine::rewrite_internal_relation_refs_for_copy(
         &space.to_string_lossy(),
         &rel_from_abs(space, &root_source_abs),
         &rel_from_abs(space, &dest_abs),
     )?;
-    crate::properties::assign_unique_ids_to_entry_tree(
+    crate::collections::engine::assign_unique_ids_to_entry_tree(
         space,
         &rel_from_abs(space, &dest_abs),
         true,
@@ -1916,7 +1925,7 @@ fn duplicate_entry_inner(space: &Path, file_path: &str) -> Result<Entry, AppErro
     Ok(entry)
 }
 
-fn copy_dir_recursive(source: &Path, dest: &Path) -> Result<(), AppError> {
+fn copy_dir_recursive(source: &Path, dest: &Path) -> Result<(), PageError> {
     fs::create_dir_all(dest)?;
     for item in fs::read_dir(source)? {
         let item = item?;
@@ -1940,7 +1949,7 @@ pub fn delete(
     space: &str,
     path: &str,
     backlink_index: Option<&BacklinkIndex>,
-) -> Result<DeleteResult, AppError> {
+) -> Result<DeleteResult, PageError> {
     delete_with_project(space, path, backlink_index, None)
 }
 
@@ -1949,25 +1958,26 @@ pub fn delete_with_project(
     path: &str,
     backlink_index: Option<&BacklinkIndex>,
     project_path: Option<&str>,
-) -> Result<DeleteResult, AppError> {
+) -> Result<DeleteResult, PageError> {
     let requested_abs_path = resolve(space, path);
     let space_path = Path::new(space);
     let abs_path = delete_root_for_path(space_path, &requested_abs_path);
 
     if !abs_path.exists() {
-        return Err(AppError::FileNotFound(path.to_string()));
+        return Err(PageError::FileNotFound(path.to_string()));
     }
 
     let deleted_root = rel_from_abs(space_path, &abs_path);
     let deleted_paths = collect_deleted_entry_paths(space_path, &abs_path)?;
-    let cascade_touched = match crate::properties::cascade_clean_deleted_entries_with_project(
-        space,
-        project_path,
-        &deleted_paths,
-    ) {
-        Ok(paths) => paths,
-        Err(error) => return Err(error.into()),
-    };
+    let cascade_touched =
+        match crate::collections::engine::cascade_clean_deleted_entries_with_project(
+            space,
+            project_path,
+            &deleted_paths,
+        ) {
+            Ok(paths) => paths,
+            Err(error) => return Err(error.into()),
+        };
 
     let delete_parent = abs_path.parent().unwrap_or(Path::new(space));
     let tombstone = unique_child_path(delete_parent, ".svode-delete", None);
@@ -1993,7 +2003,7 @@ pub fn delete_with_project(
     })
 }
 
-fn cascade_remove_tombstone(tombstone: &Path) -> Result<(), AppError> {
+fn cascade_remove_tombstone(tombstone: &Path) -> Result<(), PageError> {
     if tombstone.is_dir() {
         fs::remove_dir_all(tombstone)?;
     } else {
@@ -2017,7 +2027,7 @@ fn delete_root_for_path(space: &Path, abs_path: &Path) -> PathBuf {
     abs_path.to_path_buf()
 }
 
-fn collect_deleted_entry_paths(space: &Path, abs_path: &Path) -> Result<Vec<String>, AppError> {
+fn collect_deleted_entry_paths(space: &Path, abs_path: &Path) -> Result<Vec<String>, PageError> {
     if abs_path.is_dir() {
         let mut files = Vec::new();
         collect_entry_md_files(abs_path, &mut files)?;
@@ -2030,12 +2040,12 @@ fn collect_deleted_entry_paths(space: &Path, abs_path: &Path) -> Result<Vec<Stri
     }
 }
 
-pub fn planned_deleted_entry_paths(space: &str, path: &str) -> Result<Vec<String>, AppError> {
+pub fn planned_deleted_entry_paths(space: &str, path: &str) -> Result<Vec<String>, PageError> {
     let space_path = Path::new(space);
     let requested = resolve(space, path);
     let root = delete_root_for_path(space_path, &requested);
     if !root.exists() {
-        return Err(AppError::FileNotFound(path.to_string()));
+        return Err(PageError::FileNotFound(path.to_string()));
     }
     collect_deleted_entry_paths(space_path, &root)
 }
@@ -2049,7 +2059,7 @@ fn cleanup_deleted_order(space: &Path, deleted_root: &str) {
     let deleted_parent = root.parent().unwrap_or(Path::new(""));
     let deleted_parent_key = dir_key_for(deleted_parent);
 
-    let mut order = tree::read_order(space);
+    let mut order = content_tree::read_order(space);
     if let Some(items) = order.get_mut(&deleted_parent_key) {
         items.retain(|item| item != deleted_name);
     }
@@ -2058,12 +2068,12 @@ fn cleanup_deleted_order(space: &Path, deleted_root: &str) {
     order.remove(deleted_key);
     let child_prefix = format!("{deleted_key}/");
     order.retain(|key, _| key == "." || key != deleted_key && !key.starts_with(&child_prefix));
-    let _ = tree::write_order(space, &order);
+    let _ = content_tree::write_order(space, &order);
 }
 
 /// Rename/move an entry on disk.
 #[allow(dead_code)]
-pub fn rename(space: &str, from: &str, to: &str) -> Result<(), AppError> {
+pub fn rename(space: &str, from: &str, to: &str) -> Result<(), PageError> {
     rename_with_project(space, from, to, None)
 }
 
@@ -2072,18 +2082,18 @@ pub fn rename_with_project(
     from: &str,
     to: &str,
     project_path: Option<&str>,
-) -> Result<(), AppError> {
+) -> Result<(), PageError> {
     let abs_from = resolve(space, from);
     let abs_to = resolve(space, to);
 
     if !abs_from.exists() {
-        return Err(AppError::FileNotFound(from.to_string()));
+        return Err(PageError::FileNotFound(from.to_string()));
     }
 
     if abs_to.exists() {
-        return Err(AppError::FileAlreadyExists(to.to_string()));
+        return Err(PageError::FileAlreadyExists(to.to_string()));
     }
-    let relation_plan = crate::properties::relation_move_mutation_paths_with_project(
+    let relation_plan = crate::collections::engine::relation_move_mutation_paths_with_project(
         space,
         project_path,
         from,
@@ -2128,7 +2138,7 @@ pub fn rename_with_project(
 
     // If it's a directory, also rename the key in order.json
     if abs_to.is_dir() {
-        let mut order = tree::read_order(sp_path);
+        let mut order = content_tree::read_order(sp_path);
         let old_key = if dir_key == "." {
             old_name
         } else {
@@ -2141,7 +2151,7 @@ pub fn rename_with_project(
                 format!("{}/{}", dir_key, new_name)
             };
             order.insert(new_key, children);
-            let _ = tree::write_order(sp_path, &order);
+            let _ = content_tree::write_order(sp_path, &order);
         }
     }
 
@@ -2151,7 +2161,7 @@ pub fn rename_with_project(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use svode_core::page::ColorName;
+    use crate::page::ColorName;
     use tempfile::TempDir;
 
     #[test]
@@ -2290,7 +2300,7 @@ mod tests {
         assert_eq!(e1.path, "Test Doc.md");
 
         let error = create(ws, None, "Test Doc").unwrap_err();
-        assert!(matches!(error, AppError::DocumentNameConflict(_)));
+        assert!(matches!(error, PageError::DocumentNameConflict(_)));
         assert!(!resolve(ws, "Test Doc-1.md").exists());
     }
 
@@ -2371,7 +2381,7 @@ mod tests {
         assert!(result.deleted_paths.contains(&entry.path));
         assert!(!resolve(ws, "Tasks").exists());
         assert!(
-            !tree::read_order(Path::new(ws))
+            !content_tree::read_order(Path::new(ws))
                 .get(".")
                 .is_some_and(|items| items.iter().any(|item| item == "Tasks"))
         );
@@ -2425,7 +2435,7 @@ mod tests {
         )
         .unwrap_err();
 
-        assert!(matches!(error, AppError::DocumentNameConflict(_)));
+        assert!(matches!(error, PageError::DocumentNameConflict(_)));
         assert!(resolve(ws, "Doc A.md").exists());
         assert_eq!(fs::read_to_string(resolve(ws, &e1.path)).unwrap(), before);
     }
@@ -2647,12 +2657,12 @@ mod tests {
         );
         order.insert("source".to_string(), vec!["child".to_string()]);
         order.insert("source/child".to_string(), vec!["note.md".to_string()]);
-        tree::write_order(ws, &order).unwrap();
+        content_tree::write_order(ws, &order).unwrap();
 
         let moved = move_entry_with_project(ws, "source", "target", None, None).unwrap();
 
         assert_eq!(moved, "target/source");
-        let order = tree::read_order(ws);
+        let order = content_tree::read_order(ws);
         assert_eq!(order.get(".").unwrap(), &vec!["target".to_string()]);
         assert_eq!(
             order.get("target").unwrap(),
@@ -2746,7 +2756,7 @@ mod tests {
         assert_eq!(second.meta.title, "Untitled 2");
 
         let error = create_with_options(&space, None, "untitled", None, false, false).unwrap_err();
-        assert!(matches!(error, AppError::DocumentNameConflict(_)));
+        assert!(matches!(error, PageError::DocumentNameConflict(_)));
         assert_eq!(fs::read_dir(tmp.path()).unwrap().count(), 3);
     }
 
@@ -2766,7 +2776,7 @@ mod tests {
             true,
         )
         .unwrap_err();
-        assert!(matches!(error, AppError::DocumentNameConflict(_)));
+        assert!(matches!(error, PageError::DocumentNameConflict(_)));
         assert!(!tmp.path().join("folder/README.md").exists());
     }
 
@@ -2788,7 +2798,7 @@ mod tests {
             false,
         )
         .unwrap_err();
-        assert!(matches!(conflict, AppError::DocumentNameConflict(_)));
+        assert!(matches!(conflict, PageError::DocumentNameConflict(_)));
 
         let quick =
             create_with_options(&space, Some("collection"), "Shared", None, true, false).unwrap();
@@ -2805,7 +2815,7 @@ mod tests {
         create_folder(&space, None, "shared").unwrap();
 
         let error = convert_bare_folder_to_collection(tmp.path(), "shared").unwrap_err();
-        assert!(matches!(error, AppError::DocumentNameConflict(_)));
+        assert!(matches!(error, PageError::DocumentNameConflict(_)));
         assert!(!tmp.path().join("shared/README.md").exists());
         assert!(!tmp.path().join("shared/schema.yaml").exists());
     }
@@ -2928,5 +2938,137 @@ mod tests {
                 .unwrap()
                 .ends_with("Explicit save\n")
         );
+    }
+
+    #[test]
+    fn unique_id_create_delete_duplicate_and_repair_do_not_reuse_numbers() {
+        let tmp = TempDir::new().unwrap();
+        let space = tmp.path();
+        fs::create_dir_all(space.join("tasks")).unwrap();
+        fs::write(
+            space.join("tasks/schema.yaml"),
+            "columns:\n  - name: Key\n    type: unique_id\n    prefix: ISSUE\n    next: 1\nviews: []\n",
+        )
+        .unwrap();
+
+        let first = create(space.to_str().unwrap(), Some("tasks"), "First").unwrap();
+        assert_eq!(
+            first
+                .meta
+                .extra
+                .get("Key")
+                .and_then(serde_yml::Value::as_u64),
+            Some(1)
+        );
+        fs::remove_file(space.join(&first.path)).unwrap();
+        let second = create(space.to_str().unwrap(), Some("tasks"), "Second").unwrap();
+        assert_eq!(
+            second
+                .meta
+                .extra
+                .get("Key")
+                .and_then(serde_yml::Value::as_u64),
+            Some(2)
+        );
+
+        let duplicated = duplicate_entry(space, &second.path).unwrap();
+        assert_eq!(
+            duplicated
+                .meta
+                .extra
+                .get("Key")
+                .and_then(serde_yml::Value::as_u64),
+            Some(3)
+        );
+
+        let schema =
+            crate::collections::engine::read_collection_schema(space.to_str().unwrap(), "tasks")
+                .unwrap();
+        assert_eq!(schema.columns[0].next, Some(4));
+
+        let duplicated_path = space.join(&duplicated.path);
+        let raw = fs::read_to_string(&duplicated_path).unwrap();
+        let (mut meta, body) = frontmatter::try_parse(&raw).unwrap().unwrap();
+        meta.extra
+            .insert("Key".into(), serde_yml::Value::from(2_u64));
+        fs::write(&duplicated_path, frontmatter::serialize(&meta, &body)).unwrap();
+        crate::collections::engine::assign_unique_id(space.to_str().unwrap(), &duplicated.path)
+            .unwrap();
+        let repaired = read(space.to_str().unwrap(), &duplicated.path).unwrap();
+        assert_eq!(
+            repaired
+                .meta
+                .extra
+                .get("Key")
+                .and_then(serde_yml::Value::as_u64),
+            Some(4)
+        );
+        let schema = crate::collections::engine::normalize_unique_id_counter(
+            space.to_str().unwrap(),
+            "tasks",
+        )
+        .unwrap();
+        assert_eq!(schema.columns[0].next, Some(5));
+    }
+
+    #[test]
+    fn unique_id_update_is_readonly_and_actor_values_are_normalized() {
+        let tmp = TempDir::new().unwrap();
+        let space = tmp.path();
+        fs::create_dir_all(space.join("tasks")).unwrap();
+        fs::write(
+                space.join("tasks/schema.yaml"),
+                "columns:\n  - { name: Key, type: unique_id, next: 1 }\n  - { name: Owner, type: actor, multiple: false }\n  - { name: Reviewers, type: actor, multiple: true }\nviews: []\n",
+            )
+            .unwrap();
+        let created = create(space.to_str().unwrap(), Some("tasks"), "Task").unwrap();
+
+        assert!(
+            update_field(
+                space.to_str().unwrap(),
+                None,
+                &created.path,
+                "Key",
+                serde_json::json!(99),
+            )
+            .is_err()
+        );
+
+        let updated = update_field(
+            space.to_str().unwrap(),
+            None,
+            &created.path,
+            "Owner",
+            serde_json::json!(" ME@EXAMPLE.COM "),
+        )
+        .unwrap();
+        assert_eq!(
+            updated
+                .meta
+                .extra
+                .get("Owner")
+                .and_then(serde_yml::Value::as_str),
+            Some("me@example.com")
+        );
+
+        let updated = update_field(
+            space.to_str().unwrap(),
+            None,
+            &created.path,
+            "Reviewers",
+            serde_json::json!(["A@Example.com", "a@example.com", "bad value"]),
+        )
+        .unwrap();
+        let reviewers: Vec<_> = updated
+            .meta
+            .extra
+            .get("Reviewers")
+            .unwrap()
+            .as_sequence()
+            .unwrap()
+            .iter()
+            .map(|value| value.as_str().unwrap())
+            .collect();
+        assert_eq!(reviewers, vec!["a@example.com", "bad value"]);
     }
 }

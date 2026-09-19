@@ -2,11 +2,14 @@ use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::error::AppError;
-use crate::files::entry::{self, EntryWarning};
-use crate::index::{IndexState, update::IndexUpdateState};
+use crate::collections::engine as collections;
+use crate::index::state::IndexRuntimeState;
+use crate::index::update::IndexUpdateState;
+use crate::page::PageError;
+use crate::page::dates::GitDateExecutor;
+use crate::page::entry::{self, EntryWarning};
 
-pub(crate) struct PageCreate {
+pub struct PageCreate {
     pub space: String,
     pub parent_path: Option<String>,
     pub title: String,
@@ -22,7 +25,7 @@ pub(crate) struct PageCreate {
     pub publish_projection: bool,
 }
 
-pub(crate) struct PageCreateOutcome {
+pub struct PageCreateOutcome {
     pub page: entry::Entry,
     pub changed_paths: Vec<PathBuf>,
 }
@@ -33,7 +36,7 @@ struct SourceSnapshot {
 }
 
 impl SourceSnapshot {
-    fn capture(paths: impl IntoIterator<Item = PathBuf>) -> Result<Self, AppError> {
+    fn capture(paths: impl IntoIterator<Item = PathBuf>) -> Result<Self, PageError> {
         let mut files = BTreeMap::new();
         for path in paths {
             if path.is_dir() {
@@ -62,7 +65,7 @@ impl SourceSnapshot {
         }
     }
 
-    fn rollback(&self, cause: AppError) -> AppError {
+    fn rollback(&self, cause: PageError) -> PageError {
         let mut failed = Vec::new();
         for (path, original) in self.files.iter().rev() {
             let restored = match original {
@@ -95,14 +98,14 @@ impl SourceSnapshot {
         if failed.is_empty() {
             cause
         } else {
-            AppError::PageWriteRecovery {
+            PageError::Recovery {
                 cause: cause.to_string(),
                 paths: failed,
             }
         }
     }
 
-    fn changes(&self) -> Result<Vec<PathBuf>, AppError> {
+    fn changes(&self) -> Result<Vec<PathBuf>, PageError> {
         let mut changed = Vec::new();
         for (path, before) in &self.files {
             let after = match fs::read(path) {
@@ -118,18 +121,59 @@ impl SourceSnapshot {
     }
 }
 
-pub(crate) async fn create<F, Fut>(
+/// Create a Page with its initial metadata, schema defaults/counters and
+/// body as one action. A leaf parent is materialized as a directory-backed
+/// Page first; any handled failure restores the full touched-set.
+pub async fn create<E, F, Fut, Err>(
     request: PageCreate,
-    state: &IndexState,
+    state: &IndexRuntimeState,
     updates: &IndexUpdateState,
+    git_dates: Option<&E>,
     authorize: F,
-) -> Result<PageCreateOutcome, AppError>
+) -> Result<PageCreateOutcome, Err>
 where
+    E: GitDateExecutor,
     F: FnOnce(Vec<PathBuf>) -> Fut,
-    Fut: std::future::Future<Output = Result<Vec<PathBuf>, AppError>>,
+    Fut: std::future::Future<Output = Result<Vec<PathBuf>, Err>>,
+    Err: From<PageError>,
+{
+    // Authorization runs before any source change; its failure is returned
+    // to the caller exactly as the caller produced it.
+    let mut denied = None;
+    let denied_slot = &mut denied;
+    let result = create_page(
+        request,
+        state,
+        updates,
+        git_dates,
+        move |paths| async move {
+            authorize(paths).await.map_err(|error| {
+                *denied_slot = Some(error);
+                PageError::General("Page create authorization failed".into())
+            })
+        },
+    )
+    .await;
+    match (result, denied) {
+        (_, Some(error)) => Err(error),
+        (result, None) => result.map_err(Err::from),
+    }
+}
+
+async fn create_page<E, F, Fut>(
+    request: PageCreate,
+    state: &IndexRuntimeState,
+    updates: &IndexUpdateState,
+    git_dates: Option<&E>,
+    authorize: F,
+) -> Result<PageCreateOutcome, PageError>
+where
+    E: GitDateExecutor,
+    F: FnOnce(Vec<PathBuf>) -> Fut,
+    Fut: std::future::Future<Output = Result<Vec<PathBuf>, PageError>>,
 {
     if request.title.trim().is_empty() {
-        return Err(AppError::General("title must not be empty".into()));
+        return Err(PageError::General("title must not be empty".into()));
     }
     let requested_parent = request
         .parent_path
@@ -150,7 +194,7 @@ where
             key.as_str(),
             "title" | "icon" | "description" | "cover" | "created" | "updated"
         ) {
-            return Err(AppError::General(format!(
+            return Err(PageError::General(format!(
                 "system metadata '{key}' must not be passed in properties"
             )));
         }
@@ -167,33 +211,31 @@ where
         entry::apply_entry_field_update(&mut candidate, "cover", serde_json::to_value(cover)?)?;
     }
 
-    let schema_root = crate::properties::resolve_collection_schema_result(&request.space, &probe)?
+    let schema_root = collections::resolve_collection_schema_result(&request.space, &probe)?
         .map(|(_, root)| root.to_string_lossy().replace('\\', "/"));
     let mut planned_paths = vec![
         Path::new(&request.space).join(".svode/order.json"),
         PathBuf::from(&request.space),
     ];
-    planned_paths.extend(crate::properties::unique_id_mutation_paths_for_entry(
+    planned_paths.extend(collections::unique_id_mutation_paths_for_entry(
         &request.space,
         &probe,
     )?);
     if let Some((old, new_parent)) = parent_conversion.as_ref() {
         let root = Path::new(&request.space);
-        planned_paths.extend(crate::space::structural::collect_markdown_paths(
+        planned_paths.extend(crate::content_tree::collect_markdown_paths(
             root,
             root,
-            &svode_core::content_tree::policy::TreeIgnorePolicy::from_space_root(root),
+            &crate::content_tree::policy::TreeIgnorePolicy::from_space_root(root),
         )?);
         planned_paths.push(root.join(old));
         planned_paths.push(root.join(new_parent).join("README.md"));
-        planned_paths.extend(
-            crate::properties::relation_move_mutation_paths_with_project(
-                &request.space,
-                request.project.as_deref(),
-                old,
-                &format!("{new_parent}/README.md"),
-            )?,
-        );
+        planned_paths.extend(collections::relation_move_mutation_paths_with_project(
+            &request.space,
+            request.project.as_deref(),
+            old,
+            &format!("{new_parent}/README.md"),
+        )?);
     }
     let contextual_values = request
         .contextual_defaults
@@ -204,7 +246,7 @@ where
                     serde_yml::to_value(value)
                         .map(|value| (field.clone(), value))
                         .map_err(|error| {
-                            AppError::General(format!(
+                            PageError::General(format!(
                                 "invalid contextual default '{field}': {error}"
                             ))
                         })
@@ -216,15 +258,15 @@ where
         if request.contextual_defaults {
             continue;
         }
-        crate::properties::ensure_entry_field_writable(&request.space, &probe, field)?;
+        collections::ensure_entry_field_writable(&request.space, &probe, field)?;
         let yaml = serde_yml::to_value(value)
-            .map_err(|error| AppError::General(format!("invalid property '{field}': {error}")))?;
+            .map_err(|error| PageError::General(format!("invalid property '{field}': {error}")))?;
         let normalized =
-            crate::properties::normalize_entry_field_value(&request.space, &probe, field, yaml)?;
-        crate::properties::validate_entry_field_value(&request.space, &probe, field, &normalized)?;
+            collections::normalize_entry_field_value(&request.space, &probe, field, yaml)?;
+        collections::validate_entry_field_value(&request.space, &probe, field, &normalized)?;
         if let Some(collection) = schema_root.as_deref() {
             planned_paths.extend(
-                crate::properties::relation_field_target_mutation_paths_for_value_with_project(
+                collections::relation_field_target_mutation_paths_for_value_with_project(
                     &request.space,
                     request.project.as_deref(),
                     collection,
@@ -239,7 +281,9 @@ where
     let authorized = authorize(planned_paths.clone()).await?;
     let mut snapshot = SourceSnapshot::capture(planned_paths)?;
     let backlinks = if parent_conversion.is_some() {
-        let backlinks = crate::space::structural::backlinks_for_space(state, &request.space).await;
+        let backlinks = state
+            .backlinks_for_space_dir(Path::new(&request.space))
+            .await;
         if !backlinks.is_built() {
             backlinks.build(Path::new(&request.space))?;
         }
@@ -248,89 +292,53 @@ where
         None
     };
 
-    let operation = crate::git::access::scope_authorized_mutation_paths(authorized, async {
-        if let Some((old, new_parent)) = parent_conversion.as_ref() {
-            let converted = entry::convert_entry_to_folder(
-                Path::new(&request.space),
-                old,
-                backlinks.as_deref(),
-            )?;
-            if converted.path != format!("{new_parent}/README.md") {
-                return Err(AppError::General(
-                    "parent Page conversion returned an unexpected path".into(),
-                ));
+    let operation = crate::git::access::scope_authorized_mutation_paths(
+        authorized,
+        async {
+            if let Some((old, new_parent)) = parent_conversion.as_ref() {
+                let converted = entry::convert_entry_to_folder(
+                    Path::new(&request.space),
+                    old,
+                    backlinks.as_deref(),
+                )?;
+                if converted.path != format!("{new_parent}/README.md") {
+                    return Err(PageError::General(
+                        "parent Page conversion returned an unexpected path".into(),
+                    ));
+                }
+                snapshot.track_created(Path::new(&request.space).join(&converted.path));
+                snapshot.track_created_dir(Path::new(&request.space).join(new_parent));
             }
-            snapshot.track_created(Path::new(&request.space).join(&converted.path));
-            snapshot.track_created_dir(Path::new(&request.space).join(new_parent));
-        }
-        let created = entry::create_source_with_options(
-            &request.space,
-            parent.as_deref(),
-            &request.title,
-            request.allocate_unique_title,
-            request.as_readme,
-        )?;
-        snapshot.track_created(Path::new(&request.space).join(&created.path));
-        checkpoint("create")?;
-        let warnings = created.warnings.clone();
-        let mut page = created;
-        let mut initial_metadata = page.meta.clone();
-        crate::properties::apply_schema_defaults_for_path(
-            &request.space,
-            &page.path,
-            &mut initial_metadata,
-        )?;
-        if let Some(contextual_values) = contextual_values.as_ref() {
-            crate::properties::apply_contextual_defaults_for_path(
+            let created = entry::create_source_with_options(
+                &request.space,
+                parent.as_deref(),
+                &request.title,
+                request.allocate_unique_title,
+                request.as_readme,
+            )?;
+            snapshot.track_created(Path::new(&request.space).join(&created.path));
+            checkpoint("create")?;
+            let warnings = created.warnings.clone();
+            let mut page = created;
+            let mut initial_metadata = page.meta.clone();
+            collections::apply_schema_defaults_for_path(
                 &request.space,
                 &page.path,
                 &mut initial_metadata,
-                contextual_values,
             )?;
-        }
-        crate::properties::assign_unique_id_to_meta_for_path(
-            &request.space,
-            &page.path,
-            &mut initial_metadata,
-        )?;
-        entry::write_under_name_lock(
-            &request.space,
-            &page.path,
-            &page.body,
-            None,
-            None,
-            None,
-            Some(initial_metadata),
-            None,
-            None,
-            true,
-            request.project.as_deref(),
-            None,
-        )?;
-        page = entry::read(&request.space, &page.path)?;
-
-        let mut fields = std::collections::BTreeMap::new();
-        if !request.contextual_defaults {
-            fields.extend(properties);
-        }
-        if let Some(icon) = request.icon.clone() {
-            fields.insert("icon".to_string(), icon.into());
-        }
-        if let Some(description) = request.description.clone() {
-            fields.insert("description".to_string(), description.into());
-        }
-        if let Some(cover) = request.cover.clone() {
-            fields.insert("cover".to_string(), serde_json::to_value(cover)?);
-        }
-        if !fields.is_empty() {
-            let batch = crate::properties::prepare_entry_field_batch(
+            if let Some(contextual_values) = contextual_values.as_ref() {
+                collections::apply_contextual_defaults_for_path(
+                    &request.space,
+                    &page.path,
+                    &mut initial_metadata,
+                    contextual_values,
+                )?;
+            }
+            collections::assign_unique_id_to_meta_for_path(
                 &request.space,
-                request.project.as_deref(),
                 &page.path,
-                &fields,
-                crate::properties::EntryFieldBatchIntent::Literal,
+                &mut initial_metadata,
             )?;
-            crate::properties::apply_prepared_entry_field_relations(&batch)?;
             entry::write_under_name_lock(
                 &request.space,
                 &page.path,
@@ -338,7 +346,7 @@ where
                 None,
                 None,
                 None,
-                Some(batch.into_metadata()),
+                Some(initial_metadata),
                 None,
                 None,
                 true,
@@ -346,15 +354,55 @@ where
                 None,
             )?;
             page = entry::read(&request.space, &page.path)?;
-        }
-        checkpoint("properties")?;
-        if let Some(body) = request.body.as_deref() {
-            page = entry::replace_created_body(&request.space, &page.path, body)?;
-        }
-        checkpoint("body")?;
-        page.warnings.extend(warnings);
-        Ok(page)
-    })
+
+            let mut fields = std::collections::BTreeMap::new();
+            if !request.contextual_defaults {
+                fields.extend(properties);
+            }
+            if let Some(icon) = request.icon.clone() {
+                fields.insert("icon".to_string(), icon.into());
+            }
+            if let Some(description) = request.description.clone() {
+                fields.insert("description".to_string(), description.into());
+            }
+            if let Some(cover) = request.cover.clone() {
+                fields.insert("cover".to_string(), serde_json::to_value(cover)?);
+            }
+            if !fields.is_empty() {
+                let batch = collections::prepare_entry_field_batch(
+                    &request.space,
+                    request.project.as_deref(),
+                    &page.path,
+                    &fields,
+                    collections::EntryFieldBatchIntent::Literal,
+                )?;
+                collections::apply_prepared_entry_field_relations(&batch)?;
+                entry::write_under_name_lock(
+                    &request.space,
+                    &page.path,
+                    &page.body,
+                    None,
+                    None,
+                    None,
+                    Some(batch.into_metadata()),
+                    None,
+                    None,
+                    true,
+                    request.project.as_deref(),
+                    None,
+                )?;
+                page = entry::read(&request.space, &page.path)?;
+            }
+            checkpoint("properties")?;
+            if let Some(body) = request.body.as_deref() {
+                page = entry::replace_created_body(&request.space, &page.path, body)?;
+            }
+            checkpoint("body")?;
+            page.warnings.extend(warnings);
+            Ok(page)
+        },
+        PageError::from,
+    )
     .await;
     let mut page = match operation {
         Ok(page) => page,
@@ -373,9 +421,10 @@ where
     let projection_errors = if request.publish_projection {
         match checkpoint("projection") {
             Ok(()) => {
-                crate::space::structural::update_index_paths_or_reindex(
+                crate::index::update::publish_paths_or_repair(
                     state,
                     updates,
+                    git_dates,
                     request.project.as_deref(),
                     &request.space,
                     markdown,
@@ -410,7 +459,7 @@ where
 fn resolve_parent(
     space: &str,
     requested: Option<&str>,
-) -> Result<(Option<String>, Option<(String, String)>), AppError> {
+) -> Result<(Option<String>, Option<(String, String)>), PageError> {
     let Some(requested) = requested else {
         return Ok((None, None));
     };
@@ -427,22 +476,22 @@ fn resolve_parent(
         if root.join(&candidate).is_file() {
             candidate
         } else {
-            return Err(AppError::FileNotFound(requested.to_string()));
+            return Err(PageError::FileNotFound(requested.to_string()));
         }
     } else {
-        return Err(AppError::FileNotFound(requested.to_string()));
+        return Err(PageError::FileNotFound(requested.to_string()));
     };
     if !Path::new(&leaf)
         .extension()
         .and_then(|extension| extension.to_str())
         .is_some_and(|extension| extension.eq_ignore_ascii_case("md"))
     {
-        return Err(AppError::General("parent Page must be Markdown".into()));
+        return Err(PageError::General("parent Page must be Markdown".into()));
     }
     let stem = Path::new(&leaf)
         .file_stem()
         .and_then(|stem| stem.to_str())
-        .ok_or_else(|| AppError::General("parent Page has an invalid filename".into()))?;
+        .ok_or_else(|| PageError::General("parent Page has an invalid filename".into()))?;
     let base = Path::new(&leaf).parent().unwrap_or(Path::new(""));
     let parent = if base.as_os_str().is_empty() {
         stem.to_string()
@@ -453,7 +502,7 @@ fn resolve_parent(
 }
 
 #[cfg(not(test))]
-fn checkpoint(_: &str) -> Result<(), AppError> {
+fn checkpoint(_: &str) -> Result<(), PageError> {
     Ok(())
 }
 
@@ -461,9 +510,9 @@ fn checkpoint(_: &str) -> Result<(), AppError> {
 thread_local! { static FAILURE: std::cell::RefCell<Option<&'static str>> = const { std::cell::RefCell::new(None) }; }
 
 #[cfg(test)]
-fn checkpoint(stage: &str) -> Result<(), AppError> {
+fn checkpoint(stage: &str) -> Result<(), PageError> {
     if FAILURE.with(|failure| *failure.borrow() == Some(stage)) {
-        Err(AppError::General(format!("injected {stage} failure")))
+        Err(PageError::General(format!("injected {stage} failure")))
     } else {
         Ok(())
     }
@@ -472,7 +521,9 @@ fn checkpoint(stage: &str) -> Result<(), AppError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::index::update::test_update_state;
+    use crate::index::state::IndexRuntimeState;
+    use crate::page::dates::SystemGitDateExecutor;
+    use crate::page::test_support::{scaffold_space, update_state};
     use serde_json::json;
 
     fn request(root: &Path) -> PageCreate {
@@ -497,12 +548,13 @@ mod tests {
     #[tokio::test]
     async fn standalone_create_uses_managed_name_and_preserves_initial_data() {
         let temp = tempfile::tempdir().unwrap();
-        crate::space::scaffold::scaffold_space(temp.path(), "Test", "", "").unwrap();
+        scaffold_space(temp.path(), "Test");
         let outcome = create(
             request(temp.path()),
-            &IndexState::new(),
-            test_update_state(),
-            |paths| async move { Ok(paths) },
+            &IndexRuntimeState::default(),
+            update_state(),
+            None::<&SystemGitDateExecutor>,
+            |paths| async move { Ok::<_, PageError>(paths) },
         )
         .await
         .unwrap();
@@ -522,7 +574,7 @@ mod tests {
     #[tokio::test]
     async fn schema_defaults_and_explicit_null_are_one_create_action() {
         let temp = tempfile::tempdir().unwrap();
-        crate::space::scaffold::scaffold_space(temp.path(), "Test", "", "").unwrap();
+        scaffold_space(temp.path(), "Test");
         fs::create_dir_all(temp.path().join("Tasks")).unwrap();
         fs::write(
             temp.path().join("Tasks/schema.yaml"),
@@ -534,9 +586,10 @@ mod tests {
         input.properties = Some(HashMap::from([("Status".into(), serde_json::Value::Null)]));
         let outcome = create(
             input,
-            &IndexState::new(),
-            test_update_state(),
-            |paths| async move { Ok(paths) },
+            &IndexRuntimeState::default(),
+            update_state(),
+            None::<&SystemGitDateExecutor>,
+            |paths| async move { Ok::<_, PageError>(paths) },
         )
         .await
         .unwrap();
@@ -550,7 +603,7 @@ mod tests {
     #[tokio::test]
     async fn creating_under_leaf_materializes_parent_in_the_same_action() {
         let temp = tempfile::tempdir().unwrap();
-        crate::space::scaffold::scaffold_space(temp.path(), "Test", "", "").unwrap();
+        scaffold_space(temp.path(), "Test");
         fs::write(
             temp.path().join("Parent.md"),
             "---\ntitle: Parent\n---\nParent body",
@@ -560,9 +613,10 @@ mod tests {
         input.parent_path = Some("Parent.md".into());
         let outcome = create(
             input,
-            &IndexState::new(),
-            test_update_state(),
-            |paths| async move { Ok(paths) },
+            &IndexRuntimeState::default(),
+            update_state(),
+            None::<&SystemGitDateExecutor>,
+            |paths| async move { Ok::<_, PageError>(paths) },
         )
         .await
         .unwrap();
@@ -577,7 +631,7 @@ mod tests {
     #[tokio::test]
     async fn late_failure_restores_created_page_counter_and_order() {
         let temp = tempfile::tempdir().unwrap();
-        crate::space::scaffold::scaffold_space(temp.path(), "Test", "", "").unwrap();
+        scaffold_space(temp.path(), "Test");
         let schema = temp.path().join("schema.yaml");
         fs::write(
             &schema,
@@ -591,9 +645,10 @@ mod tests {
         FAILURE.with(|failure| *failure.borrow_mut() = Some("body"));
         let result = create(
             request(temp.path()),
-            &IndexState::new(),
-            test_update_state(),
-            |paths| async move { Ok(paths) },
+            &IndexRuntimeState::default(),
+            update_state(),
+            None::<&SystemGitDateExecutor>,
+            |paths| async move { Ok::<_, PageError>(paths) },
         )
         .await;
         FAILURE.with(|failure| *failure.borrow_mut() = None);
@@ -606,7 +661,7 @@ mod tests {
     #[tokio::test]
     async fn read_only_initial_property_is_rejected_before_create() {
         let temp = tempfile::tempdir().unwrap();
-        crate::space::scaffold::scaffold_space(temp.path(), "Test", "", "").unwrap();
+        scaffold_space(temp.path(), "Test");
         fs::write(
             temp.path().join("schema.yaml"),
             "columns:\n  - { name: Key, type: unique_id, prefix: KEY, next: 1 }\nviews: []\n",
@@ -616,9 +671,10 @@ mod tests {
         input.properties = Some(HashMap::from([("Key".into(), json!(42))]));
         let result = create(
             input,
-            &IndexState::new(),
-            test_update_state(),
-            |paths| async move { Ok(paths) },
+            &IndexRuntimeState::default(),
+            update_state(),
+            None::<&SystemGitDateExecutor>,
+            |paths| async move { Ok::<_, PageError>(paths) },
         )
         .await;
         assert!(result.is_err());
@@ -633,7 +689,7 @@ mod tests {
     #[tokio::test]
     async fn failure_after_parent_conversion_restores_leaf_layout() {
         let temp = tempfile::tempdir().unwrap();
-        crate::space::scaffold::scaffold_space(temp.path(), "Test", "", "").unwrap();
+        scaffold_space(temp.path(), "Test");
         let original = "---\ntitle: Parent\n---\nParent body";
         fs::write(temp.path().join("Parent.md"), original).unwrap();
         let mut input = request(temp.path());
@@ -641,9 +697,10 @@ mod tests {
         FAILURE.with(|failure| *failure.borrow_mut() = Some("body"));
         let result = create(
             input,
-            &IndexState::new(),
-            test_update_state(),
-            |paths| async move { Ok(paths) },
+            &IndexRuntimeState::default(),
+            update_state(),
+            None::<&SystemGitDateExecutor>,
+            |paths| async move { Ok::<_, PageError>(paths) },
         )
         .await;
         FAILURE.with(|failure| *failure.borrow_mut() = None);
@@ -658,13 +715,14 @@ mod tests {
     #[tokio::test]
     async fn projection_failure_is_an_applied_warning() {
         let temp = tempfile::tempdir().unwrap();
-        crate::space::scaffold::scaffold_space(temp.path(), "Test", "", "").unwrap();
+        scaffold_space(temp.path(), "Test");
         FAILURE.with(|failure| *failure.borrow_mut() = Some("projection"));
         let outcome = create(
             request(temp.path()),
-            &IndexState::new(),
-            test_update_state(),
-            |paths| async move { Ok(paths) },
+            &IndexRuntimeState::default(),
+            update_state(),
+            None::<&SystemGitDateExecutor>,
+            |paths| async move { Ok::<_, PageError>(paths) },
         )
         .await
         .unwrap();

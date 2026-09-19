@@ -1,6 +1,5 @@
 use super::query::entries_from_rows;
 use super::*;
-use crate::files::frontmatter;
 use crate::git::cli::GitCli;
 use crate::space::config::write_space_config;
 use crate::space::types::{SpaceConfig, SpaceRef, TreeSpaceConfig};
@@ -11,32 +10,11 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use svode_core::collections::query::query_entry_rows;
-use svode_core::page::frontmatter::EntryMeta;
+use svode_core::page::frontmatter;
 use tempfile::TempDir;
 
 fn unique_id_value(value: &Value) -> Option<u64> {
     value.as_u64().filter(|value| *value >= 1)
-}
-
-fn yaml_u64(value: u64) -> Value {
-    Value::from(value)
-}
-
-fn mutate_frontmatter<F>(path: &Path, mut f: F) -> Result<bool, AppError>
-where
-    F: FnMut(&mut EntryMeta) -> Result<(), AppError>,
-{
-    let raw = fs::read_to_string(path)?;
-    let Some((mut meta, body)) = frontmatter::try_parse(&raw)? else {
-        return Ok(false);
-    };
-    let before = meta.extra.clone();
-    f(&mut meta)?;
-    if meta.extra != before {
-        fs::write(path, frontmatter::serialize(&meta, &body))?;
-        return Ok(true);
-    }
-    Ok(false)
 }
 
 fn test_column(name: &str, type_: PropertyType) -> Column {
@@ -1683,110 +1661,6 @@ fn add_unique_id_materializes_existing_rows_and_sets_next() {
     let a = entry::read(space.to_str().unwrap(), "tasks/a.md").unwrap();
     assert_eq!(b.meta.extra.get("Key").and_then(unique_id_value), Some(1));
     assert_eq!(a.meta.extra.get("Key").and_then(unique_id_value), Some(2));
-}
-
-#[test]
-fn unique_id_create_delete_duplicate_and_repair_do_not_reuse_numbers() {
-    let tmp = TempDir::new().unwrap();
-    let space = tmp.path();
-    fs::create_dir_all(space.join("tasks")).unwrap();
-    fs::write(
-        space.join("tasks/schema.yaml"),
-        "columns:\n  - name: Key\n    type: unique_id\n    prefix: ISSUE\n    next: 1\nviews: []\n",
-    )
-    .unwrap();
-
-    let first = entry::create(space.to_str().unwrap(), Some("tasks"), "First").unwrap();
-    assert_eq!(
-        first.meta.extra.get("Key").and_then(unique_id_value),
-        Some(1)
-    );
-    fs::remove_file(space.join(&first.path)).unwrap();
-    let second = entry::create(space.to_str().unwrap(), Some("tasks"), "Second").unwrap();
-    assert_eq!(
-        second.meta.extra.get("Key").and_then(unique_id_value),
-        Some(2)
-    );
-
-    let duplicated = entry::duplicate_entry(space, &second.path).unwrap();
-    assert_eq!(
-        duplicated.meta.extra.get("Key").and_then(unique_id_value),
-        Some(3)
-    );
-
-    let schema = read_collection_schema(space.to_str().unwrap(), "tasks").unwrap();
-    assert_eq!(schema.columns[0].next, Some(4));
-
-    mutate_frontmatter(&space.join(&duplicated.path), |meta| {
-        meta.extra.insert("Key".into(), yaml_u64(2));
-        Ok(())
-    })
-    .unwrap();
-    assign_unique_id(space.to_str().unwrap(), &duplicated.path).unwrap();
-    let repaired = entry::read(space.to_str().unwrap(), &duplicated.path).unwrap();
-    assert_eq!(
-        repaired.meta.extra.get("Key").and_then(unique_id_value),
-        Some(4)
-    );
-    let schema = normalize_unique_id_counter(space.to_str().unwrap(), "tasks").unwrap();
-    assert_eq!(schema.columns[0].next, Some(5));
-}
-
-#[test]
-fn unique_id_update_is_readonly_and_actor_values_are_normalized() {
-    let tmp = TempDir::new().unwrap();
-    let space = tmp.path();
-    fs::create_dir_all(space.join("tasks")).unwrap();
-    fs::write(
-            space.join("tasks/schema.yaml"),
-            "columns:\n  - { name: Key, type: unique_id, next: 1 }\n  - { name: Owner, type: actor, multiple: false }\n  - { name: Reviewers, type: actor, multiple: true }\nviews: []\n",
-        )
-        .unwrap();
-    let created = entry::create(space.to_str().unwrap(), Some("tasks"), "Task").unwrap();
-
-    assert!(
-        entry::update_field(
-            space.to_str().unwrap(),
-            None,
-            &created.path,
-            "Key",
-            serde_json::json!(99),
-        )
-        .is_err()
-    );
-
-    let updated = entry::update_field(
-        space.to_str().unwrap(),
-        None,
-        &created.path,
-        "Owner",
-        serde_json::json!(" ME@EXAMPLE.COM "),
-    )
-    .unwrap();
-    assert_eq!(
-        updated.meta.extra.get("Owner").and_then(Value::as_str),
-        Some("me@example.com")
-    );
-
-    let updated = entry::update_field(
-        space.to_str().unwrap(),
-        None,
-        &created.path,
-        "Reviewers",
-        serde_json::json!(["A@Example.com", "a@example.com", "bad value"]),
-    )
-    .unwrap();
-    let reviewers: Vec<_> = updated
-        .meta
-        .extra
-        .get("Reviewers")
-        .unwrap()
-        .as_sequence()
-        .unwrap()
-        .iter()
-        .map(|value| value.as_str().unwrap())
-        .collect();
-    assert_eq!(reviewers, vec!["a@example.com", "bad value"]);
 }
 
 #[tokio::test]

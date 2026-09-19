@@ -372,3 +372,368 @@ pub async fn rebase_collection_schema_manifest(
     transaction.commit().await?;
     Ok(())
 }
+
+/// Publish one managed source path: Routine observation and the owning index
+/// pool first, then the runtime backlink registry.
+pub async fn publish_managed_path<E: GitDateExecutor>(
+    state: &IndexRuntimeState,
+    updates: &IndexUpdateState,
+    git_dates: Option<&E>,
+    project: &Path,
+    abs_path: &Path,
+) -> Result<(), IndexUpdateError> {
+    publish_path_with_origin(
+        state,
+        updates,
+        git_dates,
+        project,
+        abs_path,
+        CollectionEventOrigin::managed(),
+    )
+    .await
+}
+
+pub async fn publish_path_with_origin<E: GitDateExecutor>(
+    state: &IndexRuntimeState,
+    updates: &IndexUpdateState,
+    git_dates: Option<&E>,
+    project: &Path,
+    abs_path: &Path,
+    origin: CollectionEventOrigin,
+) -> Result<(), IndexUpdateError> {
+    update_path_with_origin(state, updates, git_dates, project, abs_path, origin).await?;
+    let (key, relative) = state.resolve(project, abs_path).await?;
+    let space_id = IndexRuntimeState::space_id_for_key(&key);
+    if abs_path.is_file() {
+        state
+            .update_file_backlinks(project, space_id.as_deref(), &relative)
+            .await?;
+    } else {
+        state
+            .remove_file_backlinks(project, space_id.as_deref(), &relative)
+            .await?;
+    }
+    Ok(())
+}
+
+/// Incrementally update the index for a single absolute path.
+///
+/// Resolves the path to its owning pool, then upserts or deletes relative to
+/// the owning space's root.
+///
+/// - If the file no longer exists on disk → delete the row.
+/// - If the file exists but isn't a markdown file → also delete (e.g. user
+///   renamed `foo.md` → `foo.txt`, leaving a stale entry).
+/// - Otherwise → upsert.
+pub async fn update_path_with_origin<E: GitDateExecutor>(
+    state: &IndexRuntimeState,
+    updates: &IndexUpdateState,
+    git_dates: Option<&E>,
+    project: &Path,
+    abs_path: &Path,
+    origin: CollectionEventOrigin,
+) -> Result<(), IndexUpdateError> {
+    let (key, rel_path) = state.resolve(project, abs_path).await?;
+    let dir = state.dir_for_key(&key).await?;
+    let pool = state.get_or_create(&key).await?;
+    let routines_pool = updates.routines_pool(state, &key).await?;
+
+    let normalized = normalize_rel(&rel_path)?;
+    let abs = dir.join(&normalized);
+
+    // Serialize against `full_reindex` for the same pool. Without this, an
+    // UPSERT can land between full_reindex's FS walk and its DELETE-then-INSERT
+    // transaction, where it is silently overwritten (Stage 3.5 Phase 5 §5.3).
+    let lock = state.reindex_lock(&key).await;
+    let _guard = lock.lock().await;
+
+    let remove = || {
+        apply_targeted_source_change(
+            &pool,
+            &routines_pool,
+            &key,
+            &dir,
+            &normalized,
+            None,
+            None,
+            false,
+            &origin,
+        )
+    };
+    if !abs.exists() {
+        return remove().await;
+    }
+
+    let metadata = std::fs::symlink_metadata(&abs).map_err(IndexError::from)?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return remove().await;
+    }
+
+    ensure_inside_space(&dir, &abs)?;
+
+    let is_md = abs
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.eq_ignore_ascii_case("md"))
+        .unwrap_or(false);
+    if !is_md {
+        tracing::debug!("non-md file in update_entry, removing any stale row: {normalized}");
+        return remove().await;
+    }
+
+    let policy = crate::content_tree::policy::TreeIgnorePolicy::from_space_root(&dir);
+    let Some(projection) = super::inventory::markdown_projection(&dir, &abs, &policy)? else {
+        return remove().await;
+    };
+    let source_record = super::inventory::markdown_source_record(&dir, &abs, projection)?;
+    if source_record.diagnostic_code.is_some() {
+        return apply_targeted_source_change(
+            &pool,
+            &routines_pool,
+            &key,
+            &dir,
+            &normalized,
+            None,
+            Some(projection),
+            false,
+            &origin,
+        )
+        .await;
+    }
+    let date_overrides = match git_dates {
+        Some(executor) => {
+            crate::page::dates::derive_date_overrides(
+                executor,
+                &dir,
+                std::slice::from_ref(&normalized),
+            )
+            .await
+        }
+        None => Default::default(),
+    };
+    let entry = super::entry_projection::build_entry_with_dates(
+        &dir,
+        &abs,
+        date_overrides.get(&normalized),
+        projection,
+    )?;
+    let frontmatter_valid = markdown_frontmatter_diff_safe(&abs);
+    apply_targeted_source_change(
+        &pool,
+        &routines_pool,
+        &key,
+        &dir,
+        &normalized,
+        Some(&entry),
+        Some(projection),
+        frontmatter_valid,
+        &origin,
+    )
+    .await
+}
+
+/// Apply one source change with its manifest record and folded Collection
+/// artifact; Routine observation precedes the index transaction.
+pub async fn apply_targeted_source_change(
+    index_pool: &SqlitePool,
+    routines_pool: &SqlitePool,
+    index_key: &IndexKey,
+    space_dir: &Path,
+    rel_path: &str,
+    entry: Option<&IndexedEntry>,
+    source_projection: Option<super::inventory::MarkdownProjection>,
+    current_frontmatter_diff_safe: bool,
+    origin: &CollectionEventOrigin,
+) -> Result<(), IndexUpdateError> {
+    let normalized = normalize_rel(rel_path)?;
+    let source_path = space_dir.join(&normalized);
+    let mut source_record = if let Some(projection) = source_projection
+        && source_path.is_file()
+        && source_path
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("md"))
+    {
+        Some(super::inventory::markdown_source_record(
+            space_dir,
+            &source_path,
+            projection,
+        )?)
+    } else {
+        None
+    };
+    if let (Some(record), Some(entry)) = (source_record.as_mut(), entry) {
+        record.diagnostic_code = entry.source_diagnostic.clone();
+    }
+    let folded_collection =
+        super::knowledge_artifact::folded_collection_artifact(space_dir, &normalized);
+    apply_targeted_change(
+        index_pool,
+        routines_pool,
+        index_key,
+        space_dir,
+        &normalized,
+        entry,
+        source_record.as_ref(),
+        folded_collection.as_ref(),
+        current_frontmatter_diff_safe,
+        origin,
+    )
+    .await
+}
+
+fn normalize_rel(path: &str) -> Result<String, IndexError> {
+    Ok(crate::git::path::normalize_repo_relative(
+        path,
+        crate::git::path::RootMode::Reject,
+    )?)
+}
+
+/// Verify that an absolute path resolves inside the space root, guarding
+/// against `..` traversal in user-supplied relative paths. If either side
+/// fails to canonicalize, the check is skipped — the caller is expected to
+/// have already established that `abs_path` exists, and a non-canonicalizable
+/// `space_dir` means we have bigger problems.
+fn ensure_inside_space(space_dir: &Path, abs_path: &Path) -> Result<(), IndexError> {
+    let (Ok(canon_abs), Ok(canon_root)) = (abs_path.canonicalize(), space_dir.canonicalize())
+    else {
+        return Ok(());
+    };
+    if !canon_abs.starts_with(&canon_root) {
+        return Err(IndexError::Index(format!(
+            "path escapes space root: {}",
+            abs_path.display()
+        )));
+    }
+    Ok(())
+}
+
+pub fn markdown_frontmatter_diff_safe(path: &Path) -> bool {
+    let Ok(raw) = std::fs::read_to_string(path) else {
+        return false;
+    };
+    if matches!(
+        crate::page::frontmatter::parse_status(&raw),
+        crate::page::frontmatter::ParseStatus::Malformed { .. }
+    ) {
+        tracing::warn!(
+            "collection event field diff skipped for malformed frontmatter: {}",
+            path.display()
+        );
+        return false;
+    }
+    true
+}
+
+/// Rebase Collection schema manifest rows of the pool that owns `space_dir`
+/// after a Collection root moved, then refresh the Routine projection.
+pub async fn rebase_space_collection_schema_manifest(
+    state: &IndexRuntimeState,
+    updates: &IndexUpdateState,
+    space_dir: &Path,
+    old_root: &str,
+    new_root: &str,
+) -> Result<(), IndexUpdateError> {
+    let key = state
+        .key_for_space_dir(space_dir)
+        .await
+        .unwrap_or_else(|| IndexKey::Root(space_dir.to_path_buf()));
+    let pool = state.get_or_create(&key).await?;
+    let lock = state.reindex_lock(&key).await;
+    let _guard = lock.lock().await;
+    rebase_collection_schema_manifest(&pool, old_root, new_root).await?;
+    updates.sync_routine_projection(state, &key).await?;
+    Ok(())
+}
+
+/// Full repair of the pool that owns `space`; failures are logged.
+pub async fn repair_space_dir<E: GitDateExecutor>(
+    state: &IndexRuntimeState,
+    updates: &IndexUpdateState,
+    git_dates: Option<&E>,
+    space: &str,
+) {
+    let key = state
+        .key_for_space_dir(Path::new(space))
+        .await
+        .unwrap_or_else(|| IndexKey::Root(std::path::PathBuf::from(space)));
+    tracing::info!(
+        event = "index.reindex.repair",
+        space,
+        key = ?key,
+        "running full index repair reindex"
+    );
+    if let Err(error) = updates.repair_space(state, &key, git_dates).await {
+        tracing::warn!("index repair reindex failed for {:?}: {error}", key);
+    }
+}
+
+/// Publish managed paths in the Project runtime. Without a Project, or when a
+/// targeted update fails, the owning Space pool is repaired instead. Returns
+/// the targeted update errors.
+pub async fn publish_paths_or_repair<E: GitDateExecutor>(
+    state: &IndexRuntimeState,
+    updates: &IndexUpdateState,
+    git_dates: Option<&E>,
+    project_path: Option<&str>,
+    space: &str,
+    paths: Vec<std::path::PathBuf>,
+    context: &str,
+) -> Vec<String> {
+    let Some(project) = project_path.filter(|path| !path.is_empty()) else {
+        repair_space_dir(state, updates, git_dates, space).await;
+        return Vec::new();
+    };
+    let mut errors = Vec::new();
+    for path in paths {
+        if let Err(error) =
+            publish_managed_path(state, updates, git_dates, Path::new(project), &path).await
+        {
+            tracing::warn!(
+                "{context}: targeted index update failed for {}: {error}",
+                path.display()
+            );
+            errors.push(error.to_string());
+        }
+    }
+    if !errors.is_empty() {
+        repair_space_dir(state, updates, git_dates, space).await;
+    }
+    errors
+}
+
+/// Publish every Markdown source under `rel_root`; on a walk or targeted
+/// update failure the owning Space pool is repaired instead.
+pub async fn publish_tree_or_repair<E: GitDateExecutor>(
+    state: &IndexRuntimeState,
+    updates: &IndexUpdateState,
+    git_dates: Option<&E>,
+    project_path: Option<&str>,
+    space: &str,
+    rel_root: &str,
+    context: &str,
+) {
+    let root = Path::new(space);
+    let paths = match crate::content_tree::collect_markdown_paths(
+        root,
+        &root.join(rel_root),
+        &crate::content_tree::policy::TreeIgnorePolicy::from_space_root(root),
+    ) {
+        Ok(paths) => paths,
+        Err(error) => {
+            tracing::warn!("{context}: collect markdown paths failed for {rel_root}: {error}");
+            repair_space_dir(state, updates, git_dates, space).await;
+            return;
+        }
+    };
+    let _ = publish_paths_or_repair(
+        state,
+        updates,
+        git_dates,
+        project_path,
+        space,
+        paths,
+        context,
+    )
+    .await;
+}
