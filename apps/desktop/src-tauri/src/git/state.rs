@@ -1,5 +1,4 @@
-use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::{Arc, OnceLock};
 
 use super::cli::GitCli;
@@ -7,6 +6,7 @@ use super::operations::Operations;
 use super::ops::GitStatus;
 use super::pending::PendingPaths;
 use crate::AppError;
+use svode_core::git::state::GitRepositoryState;
 
 static DETECTED_CLI: OnceLock<Option<GitCli>> = OnceLock::new();
 
@@ -22,8 +22,7 @@ pub(super) fn detected_cli() -> Option<GitCli> {
 pub struct GitState {
     pub(crate) cli: Option<GitCli>,
     pub(crate) operations: Arc<Operations>,
-    pending: Arc<PendingPaths>,
-    locks: tokio::sync::Mutex<HashMap<PathBuf, Arc<tokio::sync::Mutex<()>>>>,
+    repository: GitRepositoryState,
 }
 
 impl GitState {
@@ -35,8 +34,7 @@ impl GitState {
         Self {
             cli,
             operations: Arc::default(),
-            pending: Arc::default(),
-            locks: tokio::sync::Mutex::new(HashMap::new()),
+            repository: GitRepositoryState::new(),
         }
     }
 
@@ -49,22 +47,11 @@ impl GitState {
     }
 
     pub(crate) async fn get_lock(&self, path: &Path) -> Arc<tokio::sync::Mutex<()>> {
-        let canonical = std::fs::canonicalize(path).unwrap_or_else(|_| {
-            path.parent()
-                .and_then(|parent| std::fs::canonicalize(parent).ok())
-                .zip(path.file_name())
-                .map(|(parent, name)| parent.join(name))
-                .unwrap_or_else(|| path.to_path_buf())
-        });
-        let mut locks = self.locks.lock().await;
-        locks
-            .entry(canonical)
-            .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
-            .clone()
+        self.repository.get_lock(path).await
     }
 
     pub(crate) fn pending(&self) -> Arc<PendingPaths> {
-        self.pending.clone()
+        self.repository.pending()
     }
 
     pub(crate) async fn status(
@@ -96,17 +83,6 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn canonical_repository_aliases_share_one_lock() {
-        let state = GitState::new();
-        let repository = tempfile::tempdir().unwrap();
-
-        let direct = state.get_lock(repository.path()).await;
-        let aliased = state.get_lock(&repository.path().join(".")).await;
-
-        assert!(Arc::ptr_eq(&direct, &aliased));
-    }
-
-    #[tokio::test]
     async fn status_resolves_the_effective_repository_and_preserves_files() {
         let state = GitState::new();
         let Ok(cli) = state.require_cli() else {
@@ -130,8 +106,7 @@ mod tests {
         let state = GitState {
             cli: None,
             operations: Arc::default(),
-            pending: Arc::default(),
-            locks: tokio::sync::Mutex::new(HashMap::new()),
+            repository: GitRepositoryState::new(),
         };
 
         assert!(matches!(state.require_cli(), Err(AppError::GitNotFound)));

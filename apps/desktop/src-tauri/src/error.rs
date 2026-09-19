@@ -1,5 +1,28 @@
 use serde::Serialize;
 
+impl From<svode_core::git::GitError> for AppError {
+    fn from(error: svode_core::git::GitError) -> Self {
+        use svode_core::git::GitError;
+        match error {
+            GitError::GitNotFound => Self::GitNotFound,
+            GitError::GitCommandFailed(message) => Self::GitCommandFailed(message),
+            GitError::PathNotAccessible(path) => Self::PathNotAccessible(path),
+            GitError::RepositoryAccessDenied {
+                repository_id,
+                status,
+                reason,
+            } => Self::RepositoryAccessDenied {
+                repository_id,
+                status,
+                reason,
+            },
+            GitError::Io(error) => Self::Io(error),
+            GitError::Serde(error) => Self::Serde(error),
+            GitError::General(message) => Self::General(message),
+        }
+    }
+}
+
 impl From<svode_core::content_tree::ContentTreeError> for AppError {
     fn from(error: svode_core::content_tree::ContentTreeError) -> Self {
         use svode_core::content_tree::ContentTreeError;

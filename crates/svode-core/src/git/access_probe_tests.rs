@@ -65,7 +65,7 @@ exec '{real_path}' "$@"
         }
     }
 
-    async fn probe(&self) -> Result<ProbeResult, AppError> {
+    async fn probe(&self) -> Result<ProbeResult, GitError> {
         probe_remote(
             &self.cli,
             &self.repo,
