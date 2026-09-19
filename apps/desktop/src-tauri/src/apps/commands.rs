@@ -5,10 +5,6 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_opener::OpenerExt;
 
-use super::manifest::{
-    AppManifestDiagnostic, AppProcessRuntime, AppRuntimeType, ValidatedRuntime,
-    read_and_validate_manifest, resolve_app_owner,
-};
 use super::process_runtime::{
     AppProcessAction, AppProcessLogs, AppProcessPhase, AppProcessSnapshot,
 };
@@ -21,6 +17,10 @@ use crate::space::app_variables::{
 };
 use crate::space::settings::AppSettingsState;
 use crate::system_path;
+use svode_core::apps::manifest::{
+    AppManifestDiagnostic, AppProcessRuntime, AppRuntimeType, ValidatedRuntime,
+    read_and_validate_manifest, resolve_app_owner,
+};
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "status", rename_all = "snake_case")]

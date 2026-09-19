@@ -3,7 +3,7 @@ use super::*;
 pub(super) async fn validate_app_manifest(
     args: ValidateAppManifestArgs,
 ) -> Result<ToolCallResult, McpBusinessError> {
-    let result = crate::apps::manifest::validate_manifest_source(&args.yaml);
+    let result = svode_core::apps::manifest::validate_manifest_source(&args.yaml);
     let structured = match result {
         Ok(runtime) => {
             let runtime_type = runtime.runtime_type().as_str();

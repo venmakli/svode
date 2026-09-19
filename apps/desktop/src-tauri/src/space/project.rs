@@ -183,7 +183,8 @@ pub fn has_schema_capability(path: &Path, status: SpaceStatus) -> bool {
 /// Presence of the exact direct `app.yaml` marker is authoritative before
 /// parsing so an invalid declaration can recover inside the App surface.
 pub fn has_app_capability(path: &Path, status: SpaceStatus) -> bool {
-    matches!(status, SpaceStatus::Ready) && crate::apps::manifest::has_direct_app_manifest(path)
+    matches!(status, SpaceStatus::Ready)
+        && svode_core::apps::manifest::has_direct_app_manifest(path)
 }
 
 /// Register direct git submodules from an existing project as Svode spaces.

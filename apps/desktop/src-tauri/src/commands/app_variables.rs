@@ -1,4 +1,3 @@
-use crate::apps::manifest::{read_and_validate_manifest, resolve_app_owner};
 use crate::space::app_variables::mutations::{self, Mutation, VariableMutationResult};
 use crate::space::app_variables::{
     self, AppVariableContextInput, AppVariableOwnerContext, AppVariablesCatalog,
@@ -8,6 +7,7 @@ use crate::space::settings::AppSettingsState;
 use crate::{AppError, system_path};
 use serde::Deserialize;
 use std::path::Path;
+use svode_core::apps::manifest::{read_and_validate_manifest, resolve_app_owner};
 use svode_core::variables::{self as core, Service, SourceOwner, SourceReference};
 use tauri::{AppHandle, Emitter, Manager, State};
 

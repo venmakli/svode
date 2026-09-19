@@ -9,26 +9,38 @@ use serde::Serialize;
 use serde_yml::Value;
 use serde_yml::libyml::parser::{Event, Parser};
 
-use crate::AppError;
-use crate::attachments::source::resolve_registered_owner;
-use crate::files::tree::child_folder_names;
-use crate::repo_path::{RootMode, normalize_repo_relative};
+use crate::content_tree::child_folder_names;
+use crate::git::GitError;
+use crate::git::path::{RootMode, normalize_repo_relative};
+use crate::page::{PageSourceError, resolve_space_target};
 
 use super::environment;
 
-pub(crate) const APP_MANIFEST_NAME: &str = "app.yaml";
+pub const APP_MANIFEST_NAME: &str = "app.yaml";
 const MAX_APP_MANIFEST_BYTES: u64 = 64 * 1024;
+
+#[derive(Debug, thiserror::Error)]
+pub enum AppManifestError {
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
+    #[error(transparent)]
+    PageSource(#[from] PageSourceError),
+    #[error(transparent)]
+    Git(#[from] GitError),
+    #[error("Path not accessible: {0}")]
+    PathNotAccessible(String),
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum AppRuntimeType {
+pub enum AppRuntimeType {
     Static,
     Process,
     Url,
 }
 
 impl AppRuntimeType {
-    pub(crate) const fn as_str(self) -> &'static str {
+    pub const fn as_str(self) -> &'static str {
         match self {
             Self::Static => "static",
             Self::Process => "process",
@@ -39,21 +51,21 @@ impl AppRuntimeType {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct AppManifestDiagnostic {
+pub struct AppManifestDiagnostic {
     pub code: &'static str,
     pub path: String,
     pub message: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum ValidatedRuntime {
+pub enum ValidatedRuntime {
     Static { public_root: String, entry: String },
     Process(AppProcessRuntime),
     Url { url: String },
 }
 
 impl ValidatedRuntime {
-    pub(crate) const fn runtime_type(&self) -> AppRuntimeType {
+    pub const fn runtime_type(&self) -> AppRuntimeType {
         match self {
             Self::Static { .. } => AppRuntimeType::Static,
             Self::Process(_) => AppRuntimeType::Process,
@@ -61,7 +73,7 @@ impl ValidatedRuntime {
         }
     }
 
-    pub(crate) fn settings_references(&self) -> Vec<String> {
+    pub fn settings_references(&self) -> Vec<String> {
         match self {
             Self::Process(runtime) => runtime.settings_references(),
             Self::Static { .. } | Self::Url { .. } => Vec::new(),
@@ -70,14 +82,14 @@ impl ValidatedRuntime {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct AppCommandRecipe {
+pub struct AppCommandRecipe {
     pub argv: Vec<String>,
     pub cwd: Option<String>,
     pub inputs: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct AppProcessRuntime {
+pub struct AppProcessRuntime {
     pub setup: Option<AppCommandRecipe>,
     pub start: AppCommandRecipe,
     pub url: String,
@@ -86,14 +98,14 @@ pub(crate) struct AppProcessRuntime {
 }
 
 impl AppProcessRuntime {
-    pub(crate) fn settings_references(&self) -> Vec<String> {
+    pub fn settings_references(&self) -> Vec<String> {
         environment::references(&self.environment_declaration)
             .expect("validated manifest contains valid environment references")
     }
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct ResolvedAppOwner {
+pub struct ResolvedAppOwner {
     pub project_path: PathBuf,
     pub owner_path: PathBuf,
 }
@@ -106,7 +118,7 @@ enum YamlContainer {
     Sequence,
 }
 
-pub(crate) fn has_direct_app_manifest(directory: &Path) -> bool {
+pub fn has_direct_app_manifest(directory: &Path) -> bool {
     find_direct_app_manifest(directory).ok().flatten().is_some()
 }
 
@@ -120,16 +132,16 @@ fn find_direct_app_manifest(directory: &Path) -> std::io::Result<Option<PathBuf>
     Ok(None)
 }
 
-pub(crate) fn resolve_app_owner(
+pub fn resolve_app_owner(
     project_path: &Path,
     space_id: Option<&str>,
     owner_path: &str,
-) -> Result<ResolvedAppOwner, AppError> {
-    let registered = resolve_registered_owner(project_path, space_id)?;
+) -> Result<ResolvedAppOwner, AppManifestError> {
+    let registered = resolve_space_target(project_path, space_id)?;
     if owner_path.trim().is_empty() || owner_path == "." {
         return Ok(ResolvedAppOwner {
             project_path: registered.project_path,
-            owner_path: registered.owner_path,
+            owner_path: registered.space_path,
         });
     }
 
@@ -142,7 +154,7 @@ pub(crate) fn resolve_app_owner(
         .as_ref()
         .is_some_and(|component| child_folder_names(&registered.space_path).contains(component))
     {
-        return Err(AppError::PathNotAccessible(format!(
+        return Err(AppManifestError::PathNotAccessible(format!(
             "App owner crosses a registered Space boundary: {normalized}"
         )));
     }
@@ -152,7 +164,7 @@ pub(crate) fn resolve_app_owner(
         candidate.push(component.as_os_str());
         let metadata = fs::symlink_metadata(&candidate)?;
         if metadata.file_type().is_symlink() {
-            return Err(AppError::PathNotAccessible(format!(
+            return Err(AppManifestError::PathNotAccessible(format!(
                 "App owner path contains a symbolic link: {}",
                 candidate.display()
             )));
@@ -160,14 +172,14 @@ pub(crate) fn resolve_app_owner(
     }
     let metadata = fs::symlink_metadata(&candidate)?;
     if !metadata.is_dir() {
-        return Err(AppError::PathNotAccessible(format!(
+        return Err(AppManifestError::PathNotAccessible(format!(
             "App owner is not a directory: {}",
             candidate.display()
         )));
     }
     let canonical = fs::canonicalize(candidate)?;
     if !canonical.starts_with(&registered.space_path) {
-        return Err(AppError::PathNotAccessible(format!(
+        return Err(AppManifestError::PathNotAccessible(format!(
             "App owner escapes Space boundary: {normalized}"
         )));
     }
@@ -178,9 +190,9 @@ pub(crate) fn resolve_app_owner(
     })
 }
 
-pub(crate) fn read_and_validate_manifest(
+pub fn read_and_validate_manifest(
     owner: &Path,
-) -> Result<Option<Result<ValidatedRuntime, Vec<AppManifestDiagnostic>>>, AppError> {
+) -> Result<Option<Result<ValidatedRuntime, Vec<AppManifestDiagnostic>>>, AppManifestError> {
     let Some(manifest_path) = find_direct_app_manifest(owner)? else {
         return Ok(None);
     };
@@ -213,7 +225,7 @@ pub(crate) fn read_and_validate_manifest(
     Ok(Some(validate_manifest_source(&source)))
 }
 
-pub(crate) fn validate_manifest_source(
+pub fn validate_manifest_source(
     source: &str,
 ) -> Result<ValidatedRuntime, Vec<AppManifestDiagnostic>> {
     if source.len() as u64 > MAX_APP_MANIFEST_BYTES {
@@ -907,6 +919,47 @@ mod tests {
                 validate_manifest_source(source).is_err(),
                 "accepted {source}"
             );
+        }
+    }
+
+    #[test]
+    fn resolves_only_registered_app_owners_without_creating_runtime_state() {
+        let temp = tempfile::tempdir().unwrap();
+        let project = temp.path();
+        fs::create_dir_all(project.join(".svode")).unwrap();
+        fs::create_dir_all(project.join("child/app")).unwrap();
+        fs::write(
+            project.join(".svode/config.json"),
+            r#"{"name":"Project","spaces":[{"id":"child-id","path":"child"}]}"#,
+        )
+        .unwrap();
+        fs::write(
+            project.join("child/app/app.yaml"),
+            "runtime:\n  type: url\n  url: https://example.com\n",
+        )
+        .unwrap();
+
+        let owner = resolve_app_owner(project, Some("child-id"), "app").unwrap();
+        assert_eq!(owner.project_path, project.canonicalize().unwrap());
+        assert_eq!(
+            owner.owner_path,
+            project.join("child/app").canonicalize().unwrap()
+        );
+        assert!(matches!(
+            read_and_validate_manifest(&owner.owner_path).unwrap(),
+            Some(Ok(ValidatedRuntime::Url { .. }))
+        ));
+        assert!(resolve_app_owner(project, None, "child").is_err());
+        assert!(resolve_app_owner(project, Some("unknown"), ".").is_err());
+        assert!(resolve_app_owner(project, Some("child-id"), "../.svode").is_err());
+        assert!(!project.join(".svode/index.db").exists());
+        assert!(!project.join("child/.svode").exists());
+
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(project.join("child/app"), project.join("child/alias"))
+                .unwrap();
+            assert!(resolve_app_owner(project, Some("child-id"), "alias").is_err());
         }
     }
 }

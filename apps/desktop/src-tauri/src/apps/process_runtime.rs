@@ -13,9 +13,9 @@ use tokio::io::{AsyncRead, AsyncReadExt};
 use tokio::process::{Child, Command};
 use tokio::time::{Instant, sleep};
 
-use super::manifest::{AppCommandRecipe, AppProcessRuntime};
 use crate::process::hide_tokio_window;
 use crate::process::path_env::ProcessPath;
+use svode_core::apps::manifest::{AppCommandRecipe, AppProcessRuntime};
 
 const MAX_LOG_BYTES: usize = 64 * 1024;
 

@@ -1,5 +1,17 @@
 use serde::Serialize;
 
+impl From<svode_core::apps::manifest::AppManifestError> for AppError {
+    fn from(error: svode_core::apps::manifest::AppManifestError) -> Self {
+        use svode_core::apps::manifest::AppManifestError;
+        match error {
+            AppManifestError::Io(error) => Self::Io(error),
+            AppManifestError::PageSource(error) => error.into(),
+            AppManifestError::Git(error) => error.into(),
+            AppManifestError::PathNotAccessible(path) => Self::PathNotAccessible(path),
+        }
+    }
+}
+
 impl From<svode_core::git::GitError> for AppError {
     fn from(error: svode_core::git::GitError) -> Self {
         use svode_core::git::GitError;

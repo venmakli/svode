@@ -1,17 +1,17 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct EnvironmentTemplateError {
+pub struct EnvironmentTemplateError {
     pub message: String,
 }
 
-pub(crate) fn is_variable_name(value: &str) -> bool {
+pub fn is_variable_name(value: &str) -> bool {
     let mut chars = value.chars();
     matches!(chars.next(), Some('_' | 'A'..='Z' | 'a'..='z'))
         && chars.all(|character| matches!(character, '_' | 'A'..='Z' | 'a'..='z' | '0'..='9'))
 }
 
-pub(crate) fn references(
+pub fn references(
     environment: &BTreeMap<String, String>,
 ) -> Result<Vec<String>, EnvironmentTemplateError> {
     let mut names = BTreeSet::new();
@@ -24,7 +24,7 @@ pub(crate) fn references(
     Ok(names.into_iter().collect())
 }
 
-pub(crate) fn resolve(
+pub fn resolve(
     environment: &BTreeMap<String, String>,
     values: &BTreeMap<String, String>,
 ) -> Result<BTreeMap<String, String>, Vec<String>> {
