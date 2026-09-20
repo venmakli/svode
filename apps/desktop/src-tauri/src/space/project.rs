@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::path::Path;
 
 use crate::error::AppError;
@@ -432,45 +432,12 @@ pub fn reorder_spaces(
 ) -> Result<Vec<SpaceInfo>, AppError> {
     let mut parent_config = config::read_space_config(parent_path)?;
     let current_spaces = parent_config.spaces.clone().unwrap_or_default();
-
-    if ordered_space_ids.len() != current_spaces.len() {
-        return Err(AppError::General(format!(
-            "space reorder expected {} ids, got {}",
-            current_spaces.len(),
-            ordered_space_ids.len()
-        )));
-    }
-
-    let mut seen = HashSet::with_capacity(ordered_space_ids.len());
-    for id in &ordered_space_ids {
-        if !seen.insert(id.clone()) {
-            return Err(AppError::General(format!(
-                "space reorder contains duplicate id: {id}"
-            )));
-        }
-    }
-
-    let current_ids: HashSet<String> = current_spaces
+    let registered_ids = current_spaces
         .iter()
         .map(|space| space.id.clone())
-        .collect();
-    let ordered_ids: HashSet<String> = ordered_space_ids.iter().cloned().collect();
-
-    let missing: Vec<String> = current_ids.difference(&ordered_ids).cloned().collect();
-    if !missing.is_empty() {
-        return Err(AppError::General(format!(
-            "space reorder is missing ids: {}",
-            missing.join(", ")
-        )));
-    }
-
-    let unknown: Vec<String> = ordered_ids.difference(&current_ids).cloned().collect();
-    if !unknown.is_empty() {
-        return Err(AppError::General(format!(
-            "space reorder contains unknown ids: {}",
-            unknown.join(", ")
-        )));
-    }
+        .collect::<Vec<_>>();
+    let ordered_space_ids =
+        svode_core::structure::plan_child_space_order(&registered_ids, ordered_space_ids)?;
 
     let mut by_id: HashMap<String, SpaceRef> = current_spaces
         .into_iter()
@@ -480,7 +447,7 @@ pub fn reorder_spaces(
     for id in ordered_space_ids {
         let space_ref = by_id
             .remove(&id)
-            .ok_or_else(|| AppError::General(format!("space reorder contains unknown id: {id}")))?;
+            .ok_or_else(|| svode_core::structure::unknown_child_space(&id))?;
         reordered.push(space_ref);
     }
 
