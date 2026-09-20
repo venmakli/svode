@@ -31,11 +31,12 @@ struct ProjectConfig {
     spaces: Option<Vec<SpaceReference>>,
 }
 
-#[derive(Deserialize)]
-struct SpaceReference {
-    id: String,
-    path: String,
-    repo: Option<String>,
+/// One registered child Space reference of a Project config.
+#[derive(Debug, Clone, Deserialize)]
+pub struct SpaceReference {
+    pub id: String,
+    pub path: String,
+    pub repo: Option<String>,
 }
 
 pub fn space_reference_status(
@@ -68,12 +69,16 @@ fn project_config(project: &Path) -> Result<ProjectConfig, PageSourceError> {
     serde_json::from_slice(&bytes).map_err(PageSourceError::InvalidConfig)
 }
 
+/// Registered Space references of `project`, in config order. Reading them
+/// also proves that the directory has a readable Space config.
+pub fn registered_spaces(project: &Path) -> Result<Vec<SpaceReference>, PageSourceError> {
+    Ok(project_config(project)?.spaces.unwrap_or_default())
+}
+
 /// Directories of every registered Space of `project`, in config order.
 /// Used to attribute changed paths to their owning Space.
 pub fn registered_space_dirs(project: &Path) -> Result<Vec<PathBuf>, PageSourceError> {
-    Ok(project_config(project)?
-        .spaces
-        .unwrap_or_default()
+    Ok(registered_spaces(project)?
         .iter()
         .map(|reference| project.join(&reference.path))
         .collect())

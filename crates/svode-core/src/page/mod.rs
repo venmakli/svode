@@ -20,8 +20,8 @@ pub mod write;
 pub use error::PageError;
 
 pub use target::{
-    ResolvedSpaceTarget, SpaceReadiness, read_standalone_page, registered_space_dirs,
-    resolve_space_target, space_reference_status,
+    ResolvedSpaceTarget, SpaceReadiness, SpaceReference, read_standalone_page,
+    registered_space_dirs, registered_spaces, resolve_space_target, space_reference_status,
 };
 
 pub use source::{

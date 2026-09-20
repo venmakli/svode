@@ -9,11 +9,11 @@ use tauri::{AppHandle, Manager};
 use super::authority;
 use super::cache;
 use super::dispatch;
+use super::host;
 use super::model::{
     ResolvedRoutineOwner, RoutineDefinition, RoutineDispatchBlockedCode, RoutineDispatchResult,
     RoutineTrigger,
 };
-use super::service;
 use crate::AppError;
 use crate::git::access::{
     RepositoryAccessState, RepositoryAccessStatus, RoutineClaimResult, access_store_path,
@@ -23,6 +23,8 @@ use crate::git::{GitState, require_cli};
 use crate::index::IndexState;
 use crate::routines::RoutineStoreState;
 use crate::terminal::TerminalManager;
+use svode_core::routines::schedule;
+use svode_core::routines::service;
 
 const SCHEDULER_INTERVAL: Duration = Duration::from_secs(60);
 
@@ -178,17 +180,16 @@ async fn tick_owner(app: &AppHandle, owner: &ResolvedRoutineOwner) -> Result<(),
             }
             continue;
         };
-        let evaluation =
-            match super::schedule::evaluate(cron, time_basis, checkpoint, now, *missed_runs) {
-                Ok(evaluation) => evaluation,
-                Err(error) => {
-                    tracing::warn!(
-                        routine_id,
-                        "routine schedule evaluation failed closed: {error}"
-                    );
-                    continue;
-                }
-            };
+        let evaluation = match schedule::evaluate(cron, time_basis, checkpoint, now, *missed_runs) {
+            Ok(evaluation) => evaluation,
+            Err(error) => {
+                tracing::warn!(
+                    routine_id,
+                    "routine schedule evaluation failed closed: {error}"
+                );
+                continue;
+            }
+        };
         if !evaluation.had_occurrence {
             let next = evaluation
                 .next_at
@@ -236,7 +237,7 @@ async fn tick_owner(app: &AppHandle, owner: &ResolvedRoutineOwner) -> Result<(),
             continue;
         }
 
-        let repository = service::mutation_repository(&app.state::<GitState>(), owner).await?;
+        let repository = host::mutation_repository(&app.state::<GitState>(), owner).await?;
         let git_state = app.state::<GitState>();
         let cli = require_cli(&git_state)?;
         let access_state = app.state::<RepositoryAccessState>();
@@ -407,7 +408,7 @@ async fn dispatch_next_event(
         return Ok(());
     }
 
-    let repository = service::mutation_repository(&app.state::<GitState>(), owner).await?;
+    let repository = host::mutation_repository(&app.state::<GitState>(), owner).await?;
     let git_state = app.state::<GitState>();
     let cli = require_cli(&git_state)?;
     let access_state = app.state::<RepositoryAccessState>();
@@ -536,7 +537,7 @@ async fn write_baseline(
     time_basis: &super::model::RoutineTimeBasis,
     now: DateTime<Utc>,
 ) -> Result<(), AppError> {
-    let next = super::schedule::next_after(cron, time_basis, now).map_err(AppError::General)?;
+    let next = schedule::next_after(cron, time_basis, now).map_err(AppError::General)?;
     advance_checkpoint(app, pool, owner, routine_id, fingerprint, now, next).await
 }
 

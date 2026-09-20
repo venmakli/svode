@@ -12,7 +12,7 @@ use crate::agent_adapters::{AgentAdapterKind, AgentAdapterRegistry};
 
 pub use crate::agent_adapters::runtime::AgentLaunchRequest;
 
-use super::{
+use svode_core::agent_actors::{
     AgentAdapter, ApprovalMode, CanonicalActorResolution, ResolvedAgentActor, read_local_approval,
     resolve_canonical_reference,
 };
@@ -190,10 +190,9 @@ mod tests {
     use tempfile::{TempDir, tempdir};
 
     use super::*;
-    use crate::agent_actors::{
-        AgentActor, CatalogMutation, local_path, mutate_catalog, read_catalog, write_local_approval,
-    };
+    use crate::agent_actors::{CatalogMutation, mutate_catalog, write_local_approval};
     use crate::agent_adapters::runtime::AdapterDiagnosticStatus;
+    use svode_core::agent_actors::{AgentActor, local_path, read_catalog};
 
     const ACTOR_ID: &str = "01arz3ndektsv4rrffq69g5fav";
 

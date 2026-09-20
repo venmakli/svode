@@ -4,20 +4,19 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-use super::ResolvedRoutineOwner;
 use super::model::{
-    CollectionEvent, EventMatch, MissedRuns, RoutineAction, RoutineActionTarget,
-    RoutineCatalogSnapshot, RoutineDefinition, RoutineDiagnostic, RoutineNameConflictProjection,
-    RoutineOwnerKind, RoutineRow, RoutineTimeBasis, RoutineTrigger,
+    CollectionEvent, EventMatch, MissedRuns, ResolvedRoutineOwner, RoutineAction,
+    RoutineActionTarget, RoutineCatalogSnapshot, RoutineDefinition, RoutineDiagnostic,
+    RoutineNameConflictProjection, RoutineOwnerKind, RoutineRow, RoutineTimeBasis, RoutineTrigger,
 };
 
-pub(crate) const MAX_ROUTINE_BYTES: u64 = 1024 * 1024;
+pub const MAX_ROUTINE_BYTES: u64 = 1024 * 1024;
 const MAX_ROUTINES_PER_OWNER: usize = 512;
 const MAX_DIAGNOSTICS: usize = 128;
 const MAX_DIAGNOSTIC_MESSAGE_CHARS: usize = 512;
 
 #[derive(Debug, Clone)]
-pub(crate) struct ParsedRoutine {
+pub struct ParsedRoutine {
     pub definition: Option<RoutineDefinition>,
     pub portable_id: Option<String>,
     pub name: String,
@@ -26,14 +25,14 @@ pub(crate) struct ParsedRoutine {
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct DiscoveredRoutineFile {
+pub struct DiscoveredRoutineFile {
     pub filename: String,
     pub fingerprint: String,
     pub parsed: ParsedRoutine,
 }
 
 #[derive(Debug, Clone, Default)]
-pub(crate) struct RoutineDirectoryScan {
+pub struct RoutineDirectoryScan {
     pub files: Vec<DiscoveredRoutineFile>,
     pub diagnostics: Vec<RoutineDiagnostic>,
 }
@@ -207,11 +206,7 @@ impl From<&RoutineAction> for PortableRoutineAction {
     }
 }
 
-pub(crate) fn parse_routine(
-    raw: &str,
-    filename: &str,
-    owner_kind: RoutineOwnerKind,
-) -> ParsedRoutine {
+pub fn parse_routine(raw: &str, filename: &str, owner_kind: RoutineOwnerKind) -> ParsedRoutine {
     let fallback = filename.strip_suffix(".md").unwrap_or(filename).to_string();
     let (yaml, body) = match split_frontmatter(raw) {
         Ok(parts) => parts,
@@ -285,7 +280,7 @@ pub(crate) fn parse_routine(
     }
 }
 
-pub(crate) fn validate_definition(
+pub fn validate_definition(
     definition: &RoutineDefinition,
     owner_kind: RoutineOwnerKind,
 ) -> Vec<RoutineDiagnostic> {
@@ -466,7 +461,7 @@ fn valid_executor(value: &str) -> bool {
         && ulid::Ulid::from_string(&id.to_ascii_uppercase()).is_ok()
 }
 
-pub(crate) fn scan_routine_directory(
+pub fn scan_routine_directory(
     owner_root: &Path,
     owner_kind: RoutineOwnerKind,
 ) -> RoutineDirectoryScan {
@@ -696,7 +691,7 @@ pub(crate) fn scan_routine_directory(
     scan
 }
 
-pub(crate) fn discover_owner(owner: &ResolvedRoutineOwner) -> RoutineCatalogSnapshot {
+pub fn discover_owner(owner: &ResolvedRoutineOwner) -> RoutineCatalogSnapshot {
     let scan = scan_routine_directory(&owner.owner_root, owner.descriptor.kind);
     let mut routines = scan
         .files
@@ -731,7 +726,7 @@ pub(crate) fn discover_owner(owner: &ResolvedRoutineOwner) -> RoutineCatalogSnap
         BTreeMap::<String, Vec<usize>>::new(),
         |mut groups, (index, row)| {
             groups
-                .entry(svode_core::page::naming::display_name_key(&row.name))
+                .entry(crate::page::naming::display_name_key(&row.name))
                 .or_default()
                 .push(index);
             groups
@@ -854,7 +849,7 @@ fn action_summary(action: &RoutineAction) -> String {
     }
 }
 
-pub(crate) fn serialize_definition(
+pub fn serialize_definition(
     definition: &RoutineDefinition,
     portable_id: &str,
 ) -> Result<String, String> {
@@ -913,7 +908,7 @@ fn split_frontmatter(raw: &str) -> Result<(&str, &str), RoutineDiagnostic> {
     ))
 }
 
-pub(crate) fn fingerprint(bytes: &[u8]) -> String {
+pub fn fingerprint(bytes: &[u8]) -> String {
     format!(
         "{:016x}",
         bytes.iter().fold(0xcbf29ce484222325u64, |hash, byte| (hash
@@ -927,7 +922,7 @@ fn routine_id(owner_identity: &str, portable_id: &str) -> String {
     format!("routine:{}", fingerprint(value.as_bytes()))
 }
 
-pub(crate) fn execution_fingerprint(definition: &RoutineDefinition) -> String {
+pub fn execution_fingerprint(definition: &RoutineDefinition) -> String {
     #[derive(Serialize)]
     struct ExecutionDefinition<'a> {
         enabled: Option<bool>,
@@ -952,10 +947,7 @@ fn is_lowercase_ulid(value: &str) -> bool {
         && ulid::Ulid::from_string(&value.to_ascii_uppercase()).is_ok()
 }
 
-pub(crate) fn catalog_fingerprint(
-    rows: &[RoutineRow],
-    diagnostics: &[RoutineDiagnostic],
-) -> String {
+pub fn catalog_fingerprint(rows: &[RoutineRow], diagnostics: &[RoutineDiagnostic]) -> String {
     let mut value = String::new();
     for row in rows {
         value.push_str(row.routine_id.as_deref().unwrap_or_default());

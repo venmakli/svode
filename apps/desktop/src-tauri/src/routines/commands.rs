@@ -2,22 +2,29 @@ use std::path::Path;
 use std::sync::Arc;
 use tauri::{AppHandle, State};
 
+use super::host::RoutineMutationRuntime;
 use super::model::{
     ResolvedRoutineOwner, RoutineAutomaticConsent, RoutineCatalogSnapshot, RoutineDefinition,
     RoutineManualDispatchResult, RoutineMutationResult, RoutineOwnerInputKind,
 };
-use super::{RoutineStoreState, authority, dispatch, service};
+use super::{RoutineStoreState, authority, dispatch};
 #[cfg(test)]
 use super::{
     cache,
     dispatch::{EventDispatchPreflight, event_dispatch_preflight},
-    parser,
 };
 use crate::AppError;
 use crate::git::GitState;
 use crate::git::access::{RepositoryAccessState, access_store_path};
 use crate::index::IndexState;
 use crate::terminal::TerminalManager;
+#[cfg(test)]
+use svode_core::routines::parser;
+use svode_core::routines::service::{
+    self, ManagedRoutineMutationResult, RoutineMutationContext, RoutineMutationIntent,
+    RoutineMutationOrigin, RoutineMutationPolicyContext, RoutineNamingIntent,
+    RoutineValidationIntent,
+};
 
 #[derive(Debug)]
 struct RoutineOwnerInput {
@@ -30,13 +37,13 @@ struct RoutineOwnerInput {
 
 impl RoutineOwnerInput {
     fn resolve(self) -> Result<ResolvedRoutineOwner, AppError> {
-        service::resolve_owner(
+        Ok(service::resolve_owner(
             Path::new(&self.project_path),
             Path::new(&self.space_path),
             &self.space_id,
             &self.owner_path,
             self.owner_kind,
-        )
+        )?)
     }
 }
 
@@ -60,7 +67,13 @@ pub async fn routines_list(
     }
     .resolve()?;
     let live_evidence = super::runtime::live_evidence(&terminal_manager)?;
-    service::read_catalog(&routine_stores, &index_state, &live_evidence, &owner).await
+    Ok(service::read_catalog(
+        routine_stores.core(),
+        &index_state.core,
+        &live_evidence,
+        &owner,
+    )
+    .await?)
 }
 
 #[tauri::command]
@@ -106,7 +119,12 @@ pub async fn routines_get_automatic_consent(
     }
     .resolve()?;
     Ok(RoutineAutomaticConsent {
-        enabled: service::read_automatic_authority(&routine_stores, &index_state, &owner).await?,
+        enabled: service::read_automatic_authority(
+            routine_stores.core(),
+            &index_state.core,
+            &owner,
+        )
+        .await?,
         storage_reset_pending: authority::recovery_required(&owner.space_path)?,
     })
 }
@@ -174,23 +192,23 @@ pub async fn routines_create(
     };
     let access_store_path = access_store_path(&app)?;
     let live_evidence = super::runtime::live_evidence(&terminal_manager)?;
-    let context = service::RoutineMutationContext {
-        access_store_path: &access_store_path,
-        git_state: &git_state,
-        access_state: &access_state,
-        routine_stores: &routine_stores,
-        index_state: &index_state,
+    let host = RoutineMutationRuntime::new(&git_state, &access_state, &access_store_path);
+    let context = RoutineMutationContext {
+        repositories: git_state.repository(),
+        routine_stores: routine_stores.core(),
+        index_state: &index_state.core,
         live_evidence: &live_evidence,
     };
     let result = service::create_managed(
         owner.clone(),
         definition,
-        service::RoutineMutationIntent {
-            validation: service::RoutineValidationIntent::CompleteDefinition,
-            naming: service::RoutineNamingIntent::MaterializeCanonicalFilename,
+        RoutineMutationIntent {
+            validation: RoutineValidationIntent::CompleteDefinition,
+            naming: RoutineNamingIntent::MaterializeCanonicalFilename,
         },
         desktop_policy_context(),
         &context,
+        &host,
     )
     .await?;
     emit_applied_invalidation(&app, &owner, &result);
@@ -226,12 +244,11 @@ pub async fn routines_update(
     .resolve()?;
     let access_store_path = access_store_path(&app)?;
     let live_evidence = super::runtime::live_evidence(&terminal_manager)?;
-    let context = service::RoutineMutationContext {
-        access_store_path: &access_store_path,
-        git_state: &git_state,
-        access_state: &access_state,
-        routine_stores: &routine_stores,
-        index_state: &index_state,
+    let host = RoutineMutationRuntime::new(&git_state, &access_state, &access_store_path);
+    let context = RoutineMutationContext {
+        repositories: git_state.repository(),
+        routine_stores: routine_stores.core(),
+        index_state: &index_state.core,
         live_evidence: &live_evidence,
     };
     let result = service::update_managed(
@@ -239,16 +256,17 @@ pub async fn routines_update(
         routine_id,
         expected_fingerprint,
         definition,
-        service::RoutineMutationIntent {
-            validation: service::RoutineValidationIntent::IntermediateEdit,
+        RoutineMutationIntent {
+            validation: RoutineValidationIntent::IntermediateEdit,
             naming: if materialize_filename {
-                service::RoutineNamingIntent::MaterializeCanonicalFilename
+                RoutineNamingIntent::MaterializeCanonicalFilename
             } else {
-                service::RoutineNamingIntent::PreserveCurrentFilename
+                RoutineNamingIntent::PreserveCurrentFilename
             },
         },
         desktop_policy_context(),
         &context,
+        &host,
     )
     .await?;
     emit_applied_invalidation(&app, &owner, &result);
@@ -282,23 +300,28 @@ pub async fn routines_delete(
     .resolve()?;
     let access_store_path = access_store_path(&app)?;
     let live_evidence = super::runtime::live_evidence(&terminal_manager)?;
-    let context = service::RoutineMutationContext {
-        access_store_path: &access_store_path,
-        git_state: &git_state,
-        access_state: &access_state,
-        routine_stores: &routine_stores,
-        index_state: &index_state,
+    let host = RoutineMutationRuntime::new(&git_state, &access_state, &access_store_path);
+    let context = RoutineMutationContext {
+        repositories: git_state.repository(),
+        routine_stores: routine_stores.core(),
+        index_state: &index_state.core,
         live_evidence: &live_evidence,
     };
-    let result =
-        service::delete_managed(owner.clone(), routine_id, expected_fingerprint, &context).await?;
+    let result = service::delete_managed(
+        owner.clone(),
+        routine_id,
+        expected_fingerprint,
+        &context,
+        &host,
+    )
+    .await?;
     emit_applied_invalidation(&app, &owner, &result);
     Ok(desktop_mutation_result(result))
 }
 
-fn desktop_policy_context() -> service::RoutineMutationPolicyContext {
-    service::RoutineMutationPolicyContext {
-        origin: service::RoutineMutationOrigin::User,
+fn desktop_policy_context() -> RoutineMutationPolicyContext {
+    RoutineMutationPolicyContext {
+        origin: RoutineMutationOrigin::User,
         automatic_execution_acknowledged: true,
     }
 }
@@ -306,19 +329,16 @@ fn desktop_policy_context() -> service::RoutineMutationPolicyContext {
 fn emit_applied_invalidation(
     app: &AppHandle,
     owner: &ResolvedRoutineOwner,
-    result: &service::ManagedRoutineMutationResult,
+    result: &ManagedRoutineMutationResult,
 ) {
-    if matches!(
-        result,
-        service::ManagedRoutineMutationResult::Applied { .. }
-    ) {
+    if matches!(result, ManagedRoutineMutationResult::Applied { .. }) {
         super::emit_owner_invalidation(app, owner);
     }
 }
 
-fn desktop_mutation_result(result: service::ManagedRoutineMutationResult) -> RoutineMutationResult {
+fn desktop_mutation_result(result: ManagedRoutineMutationResult) -> RoutineMutationResult {
     match result {
-        service::ManagedRoutineMutationResult::Applied {
+        ManagedRoutineMutationResult::Applied {
             routine_id,
             snapshot,
             changed_paths,
@@ -329,15 +349,15 @@ fn desktop_mutation_result(result: service::ManagedRoutineMutationResult) -> Rou
             changed_paths,
             warnings,
         },
-        service::ManagedRoutineMutationResult::Conflict {
+        ManagedRoutineMutationResult::Conflict {
             current_fingerprint,
         } => RoutineMutationResult::Stale {
             current_fingerprint,
         },
-        service::ManagedRoutineMutationResult::NameConflict { conflict } => {
+        ManagedRoutineMutationResult::NameConflict { conflict } => {
             RoutineMutationResult::NameConflict { conflict }
         }
-        service::ManagedRoutineMutationResult::Blocked { message, .. } => {
+        ManagedRoutineMutationResult::Blocked { message, .. } => {
             RoutineMutationResult::Blocked { message }
         }
     }

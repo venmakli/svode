@@ -11,48 +11,20 @@ use svode_core::routines::observation::reconcile_projection_from_index;
 use svode_core::routines::storage;
 
 #[cfg(test)]
-use super::model::RoutineRow;
-use super::model::{
-    RoutineCatalogSnapshot, RoutineDefinition, RoutineRunRecord, RoutineRunTerminalStatus,
-};
+use super::model::{RoutineCatalogSnapshot, RoutineRow};
+use super::model::{RoutineDefinition, RoutineRunTerminalStatus};
 use crate::AppError;
 use crate::agent_sessions::types::AgentSessionStatus;
 use crate::terminal::{
     AgentTerminalLifecycleSink, AgentTerminalOutcomeEvidence, AgentTerminalOutcomeStatus,
 };
 
+#[cfg(test)]
+pub(crate) use svode_core::routines::operational::replace_catalog_snapshot as replace_owner_snapshot;
 pub(crate) use svode_core::routines::operational::{
     QueuedRoutineEvent, activate_event, claim_local_run, finish_event, latest_remote_claim,
     next_pending_event, record_remote_claim, schedule_state, write_schedule_state,
 };
-
-pub(crate) async fn replace_owner_snapshot(
-    pool: &SqlitePool,
-    snapshot: &RoutineCatalogSnapshot,
-) -> Result<(), AppError> {
-    let rows = snapshot
-        .routines
-        .iter()
-        .filter_map(|row| {
-            row.routine_id.as_ref().map(|routine_id| {
-                Ok(svode_core::routines::operational::DefinitionRow {
-                    routine_id: routine_id.clone(),
-                    fingerprint: row.execution_fingerprint.clone(),
-                    row_json: serde_json::to_string(row)?,
-                })
-            })
-        })
-        .collect::<Result<Vec<_>, serde_json::Error>>()?;
-    svode_core::routines::operational::replace_owner_snapshot(
-        pool,
-        &snapshot.owner.owner_path,
-        snapshot.owner.kind == super::model::RoutineOwnerKind::Collection,
-        &snapshot.refreshed_at,
-        &rows,
-    )
-    .await?;
-    Ok(())
-}
 
 #[derive(Debug, Clone)]
 pub(crate) struct NewRoutineRun<'a> {
@@ -95,32 +67,7 @@ pub(crate) use svode_core::routines::operational::{
     attach_pty, reconcile_agent_session, record_terminal_outcome,
 };
 
-pub(crate) async fn latest_run(
-    pool: &SqlitePool,
-    owner_path: &str,
-    routine_id: &str,
-) -> Result<Option<RoutineRunRecord>, AppError> {
-    Ok(
-        svode_core::routines::operational::latest_run(pool, owner_path, routine_id)
-            .await?
-            .map(|row| RoutineRunRecord {
-                routine_run_id: row.routine_run_id,
-                routine_id: row.routine_id,
-                owner_path: row.owner_path,
-                launch_id: row.launch_id,
-                pty_id: row.pty_id,
-                source: row.source,
-                source_session_id: row.source_session_id,
-                agent_session_id: row.agent_session_id,
-                created_at: row.created_at,
-                terminal_status: row.terminal_status,
-                terminal_exit_code: row.terminal_exit_code,
-                terminal_reason: row.terminal_reason,
-                terminal_observed_at: row.terminal_observed_at,
-                session_status: row.session_status,
-            }),
-    )
-}
+pub(crate) use svode_core::routines::operational::latest_run_record as latest_run;
 
 pub(crate) struct RoutineRunLifecycleSink {
     pool: Mutex<SqlitePool>,

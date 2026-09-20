@@ -5,11 +5,12 @@ use std::sync::Arc;
 use chrono::{SecondsFormat, Utc};
 use tauri::{AppHandle, Manager};
 
+use super::host::{self, RoutineGitTarget};
 use super::model::{
     CollectionEvent, ResolvedRoutineOwner, RoutineAction, RoutineDefinition,
     RoutineDispatchBlockedCode, RoutineDispatchResult, RoutineOwnerKind, RoutineTrigger,
 };
-use super::{RoutineStoreState, cache, service};
+use super::{RoutineStoreState, cache};
 use crate::AppError;
 use crate::agent_actors;
 use crate::agent_actors::launch::{AgentLaunchResolution, AgentLaunchValidationCode};
@@ -26,6 +27,7 @@ use crate::terminal::{AgentTerminalSpawn, TerminalManager, quote_agent_shell_com
 use svode_core::collections::engine::EntryFieldBatchIntent;
 use svode_core::page::fields::PageFieldUpdate;
 use svode_core::page::nonce::WriteNonceRegistry;
+use svode_core::routines::service;
 
 #[derive(Debug, Clone)]
 pub(super) enum DispatchKind {
@@ -233,10 +235,11 @@ pub(super) async fn dispatch_routine(
     index_state: &IndexState,
     terminal_manager: &TerminalManager,
 ) -> Result<RoutineDispatchResult, AppError> {
-    let repository = service::mutation_repository(git_state, &owner).await?;
+    let repository = host::mutation_repository(git_state, &owner).await?;
     let lock = git_state.get_lock(&repository).await;
     let _guard = lock.lock().await;
-    let owner = service::revalidate_owner(git_state, &owner, &repository).await?;
+    let owner =
+        service::revalidate_owner(&RoutineGitTarget::new(git_state), &owner, &repository).await?;
     let snapshot = service::discover_owner(&owner).await?;
     let Some(row) = snapshot
         .routines
@@ -349,7 +352,7 @@ pub(super) async fn dispatch_routine(
 
     let access_store_path = crate::git::access::access_store_path(app)?;
     if let Err(error) =
-        service::authorize_mutation(git_state, access_state, &access_store_path, &repository).await
+        host::authorize_mutation(git_state, access_state, &access_store_path, &repository).await
     {
         return Ok(dispatch_blocked(
             routine_id,

@@ -184,16 +184,22 @@ pub(super) async fn list_routines(
     let index_state = app.state::<IndexState>();
     let terminal_manager = app.state::<TerminalManager>();
     let live_evidence = crate::routines::runtime::live_evidence(&terminal_manager)?;
-    let snapshot = crate::routines::service::read_catalog(
-        &routine_stores,
-        &index_state,
+    let snapshot = svode_core::routines::service::read_catalog(
+        routine_stores.core(),
+        &index_state.core,
         &live_evidence,
         &owner,
     )
-    .await?;
+    .await
+    .map_err(AppError::from)?;
     let authority = authority_projection(
-        crate::routines::service::read_automatic_authority(&routine_stores, &index_state, &owner)
-            .await,
+        svode_core::routines::service::read_automatic_authority(
+            routine_stores.core(),
+            &index_state.core,
+            &owner,
+        )
+        .await
+        .map_err(AppError::from),
     );
     let structured = list_payload(&snapshot, authority, args.limit, args.offset);
     let returned = structured["routines"]
@@ -217,17 +223,23 @@ pub(super) async fn get_routine(
     let index_state = app.state::<IndexState>();
     let terminal_manager = app.state::<TerminalManager>();
     let live_evidence = crate::routines::runtime::live_evidence(&terminal_manager)?;
-    let snapshot = crate::routines::service::read_catalog(
-        &routine_stores,
-        &index_state,
+    let snapshot = svode_core::routines::service::read_catalog(
+        routine_stores.core(),
+        &index_state.core,
         &live_evidence,
         &owner,
     )
-    .await?;
+    .await
+    .map_err(AppError::from)?;
     let row = find_routine(&snapshot, &args.routine_id)?;
     let authority = authority_projection(
-        crate::routines::service::read_automatic_authority(&routine_stores, &index_state, &owner)
-            .await,
+        svode_core::routines::service::read_automatic_authority(
+            routine_stores.core(),
+            &index_state.core,
+            &owner,
+        )
+        .await
+        .map_err(AppError::from),
     );
     Ok(ToolCallResult::ok(
         format!("Read routine {} for the explicit owner.", args.routine_id),
@@ -247,20 +259,24 @@ pub(super) async fn create_routine(
     let access_state = app.state::<crate::git::access::RepositoryAccessState>();
     let access_store_path = crate::git::access::access_store_path(app)?;
     let live_evidence = crate::routines::runtime::live_evidence(&terminal_manager)?;
-    let context = crate::routines::service::RoutineMutationContext {
-        access_store_path: &access_store_path,
-        git_state: &git_state,
-        access_state: &access_state,
-        routine_stores: &routine_stores,
-        index_state: &index_state,
+    let host = crate::routines::host::RoutineMutationRuntime::new(
+        &git_state,
+        &access_state,
+        &access_store_path,
+    );
+    let context = svode_core::routines::service::RoutineMutationContext {
+        repositories: git_state.repository(),
+        routine_stores: routine_stores.core(),
+        index_state: &index_state.core,
         live_evidence: &live_evidence,
     };
-    let result = crate::routines::service::create_managed(
+    let result = svode_core::routines::service::create_managed(
         owner.clone(),
         args.definition,
         strict_materializing_intent(),
         mutation_policy(args.confirm_automatic_execution.unwrap_or(false)),
         &context,
+        &host,
     )
     .await?;
     mutation_result(app, &owner, result, MutationKind::Create).await
@@ -279,15 +295,18 @@ pub(super) async fn update_routine(
     let access_state = app.state::<crate::git::access::RepositoryAccessState>();
     let access_store_path = crate::git::access::access_store_path(app)?;
     let live_evidence = crate::routines::runtime::live_evidence(&terminal_manager)?;
-    let context = crate::routines::service::RoutineMutationContext {
-        access_store_path: &access_store_path,
-        git_state: &git_state,
-        access_state: &access_state,
-        routine_stores: &routine_stores,
-        index_state: &index_state,
+    let host = crate::routines::host::RoutineMutationRuntime::new(
+        &git_state,
+        &access_state,
+        &access_store_path,
+    );
+    let context = svode_core::routines::service::RoutineMutationContext {
+        repositories: git_state.repository(),
+        routine_stores: routine_stores.core(),
+        index_state: &index_state.core,
         live_evidence: &live_evidence,
     };
-    let result = crate::routines::service::update_managed(
+    let result = svode_core::routines::service::update_managed(
         owner.clone(),
         args.routine_id,
         args.expected_fingerprint,
@@ -295,6 +314,7 @@ pub(super) async fn update_routine(
         strict_materializing_intent(),
         mutation_policy(args.confirm_automatic_execution.unwrap_or(false)),
         &context,
+        &host,
     )
     .await?;
     mutation_result(app, &owner, result, MutationKind::Update).await
@@ -313,19 +333,23 @@ pub(super) async fn delete_routine(
     let access_state = app.state::<crate::git::access::RepositoryAccessState>();
     let access_store_path = crate::git::access::access_store_path(app)?;
     let live_evidence = crate::routines::runtime::live_evidence(&terminal_manager)?;
-    let context = crate::routines::service::RoutineMutationContext {
-        access_store_path: &access_store_path,
-        git_state: &git_state,
-        access_state: &access_state,
-        routine_stores: &routine_stores,
-        index_state: &index_state,
+    let host = crate::routines::host::RoutineMutationRuntime::new(
+        &git_state,
+        &access_state,
+        &access_store_path,
+    );
+    let context = svode_core::routines::service::RoutineMutationContext {
+        repositories: git_state.repository(),
+        routine_stores: routine_stores.core(),
+        index_state: &index_state.core,
         live_evidence: &live_evidence,
     };
-    let result = crate::routines::service::delete_managed(
+    let result = svode_core::routines::service::delete_managed(
         owner.clone(),
         args.routine_id,
         args.expected_fingerprint,
         &context,
+        &host,
     )
     .await?;
     mutation_result(app, &owner, result, MutationKind::Delete).await
@@ -362,8 +386,8 @@ pub(super) async fn run_routine(
 
 fn mutation_policy(
     confirm_automatic_execution: bool,
-) -> crate::routines::service::RoutineMutationPolicyContext {
-    use crate::routines::service::{RoutineMutationOrigin, RoutineMutationPolicyContext};
+) -> svode_core::routines::service::RoutineMutationPolicyContext {
+    use svode_core::routines::service::{RoutineMutationOrigin, RoutineMutationPolicyContext};
 
     if crate::mcp::service::routine_caller_provenance().is_some() {
         RoutineMutationPolicyContext {
@@ -378,10 +402,10 @@ fn mutation_policy(
     }
 }
 
-fn strict_materializing_intent() -> crate::routines::service::RoutineMutationIntent {
-    crate::routines::service::RoutineMutationIntent {
-        validation: crate::routines::service::RoutineValidationIntent::CompleteDefinition,
-        naming: crate::routines::service::RoutineNamingIntent::MaterializeCanonicalFilename,
+fn strict_materializing_intent() -> svode_core::routines::service::RoutineMutationIntent {
+    svode_core::routines::service::RoutineMutationIntent {
+        validation: svode_core::routines::service::RoutineValidationIntent::CompleteDefinition,
+        naming: svode_core::routines::service::RoutineNamingIntent::MaterializeCanonicalFilename,
     }
 }
 
@@ -488,29 +512,31 @@ impl MutationKind {
 async fn mutation_result(
     app: &AppHandle,
     owner: &ResolvedRoutineOwner,
-    result: crate::routines::service::ManagedRoutineMutationResult,
+    result: svode_core::routines::service::ManagedRoutineMutationResult,
     kind: MutationKind,
 ) -> Result<ToolCallResult, McpBusinessError> {
     if matches!(
         &result,
-        crate::routines::service::ManagedRoutineMutationResult::Applied { .. }
+        svode_core::routines::service::ManagedRoutineMutationResult::Applied { .. }
     ) {
         crate::routines::emit_owner_invalidation(app, owner);
     }
     match result {
-        crate::routines::service::ManagedRoutineMutationResult::Applied {
+        svode_core::routines::service::ManagedRoutineMutationResult::Applied {
             routine_id,
             snapshot,
             changed_paths,
             warnings,
         } => {
             let authority = authority_projection(
-                crate::routines::service::read_automatic_authority(
-                    &app.state::<Arc<crate::routines::RoutineStoreState>>(),
-                    &app.state::<IndexState>(),
+                svode_core::routines::service::read_automatic_authority(
+                    app.state::<Arc<crate::routines::RoutineStoreState>>()
+                        .core(),
+                    &app.state::<IndexState>().core,
                     owner,
                 )
-                .await,
+                .await
+                .map_err(AppError::from),
             );
             let structured = match kind {
                 MutationKind::Delete => json!({
@@ -545,7 +571,7 @@ async fn mutation_result(
                 structured,
             ))
         }
-        crate::routines::service::ManagedRoutineMutationResult::Conflict {
+        svode_core::routines::service::ManagedRoutineMutationResult::Conflict {
             current_fingerprint,
         } => Ok(mutation_error(
             if current_fingerprint.is_some() {
@@ -560,7 +586,7 @@ async fn mutation_result(
             },
             json!({ "currentFingerprint": current_fingerprint }),
         )),
-        crate::routines::service::ManagedRoutineMutationResult::NameConflict { conflict } => {
+        svode_core::routines::service::ManagedRoutineMutationResult::NameConflict { conflict } => {
             Ok(mutation_error(
                 "ROUTINE_NAME_CONFLICT",
                 "routine name is already used inside the explicit owner",
@@ -570,7 +596,7 @@ async fn mutation_result(
                 }),
             ))
         }
-        crate::routines::service::ManagedRoutineMutationResult::Blocked {
+        svode_core::routines::service::ManagedRoutineMutationResult::Blocked {
             code,
             message,
             diagnostics,
@@ -635,13 +661,14 @@ async fn resolve_routine_owner(
         Some(path) => (RoutineOwnerInputKind::CollectionDirectory, path),
         None => (RoutineOwnerInputKind::RegisteredSpace, ".".to_string()),
     };
-    crate::routines::service::resolve_owner(
+    svode_core::routines::service::resolve_owner(
         Path::new(&context.project_path),
         Path::new(&space),
         space_id,
         &owner_path,
         owner_kind,
     )
+    .map_err(AppError::from)
     .map_err(Into::into)
 }
 
@@ -949,8 +976,8 @@ mod tests {
     async fn verified_routine_provenance_selects_recursive_mutation_policy() {
         assert_eq!(
             mutation_policy(true),
-            crate::routines::service::RoutineMutationPolicyContext {
-                origin: crate::routines::service::RoutineMutationOrigin::ExternalAgent,
+            svode_core::routines::service::RoutineMutationPolicyContext {
+                origin: svode_core::routines::service::RoutineMutationOrigin::ExternalAgent,
                 automatic_execution_acknowledged: true,
             }
         );
@@ -965,8 +992,9 @@ mod tests {
                 async {
                     assert_eq!(
                         mutation_policy(true),
-                        crate::routines::service::RoutineMutationPolicyContext {
-                            origin: crate::routines::service::RoutineMutationOrigin::RoutineAgent,
+                        svode_core::routines::service::RoutineMutationPolicyContext {
+                            origin:
+                                svode_core::routines::service::RoutineMutationOrigin::RoutineAgent,
                             automatic_execution_acknowledged: true,
                         }
                     );

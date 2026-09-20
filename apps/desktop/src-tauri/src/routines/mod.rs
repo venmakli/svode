@@ -3,12 +3,10 @@ pub(crate) mod cache;
 pub mod commands;
 pub(crate) mod dispatch;
 pub(crate) mod events;
+pub(crate) mod host;
 mod model;
-mod parser;
 pub(crate) mod runtime;
-mod schedule;
 mod scheduler;
-pub(crate) mod service;
 mod store_state;
 
 pub(crate) use scheduler::RoutineSchedulerState;

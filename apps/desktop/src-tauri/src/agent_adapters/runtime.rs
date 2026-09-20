@@ -10,8 +10,8 @@ use tokio::io::AsyncReadExt;
 
 use super::{AgentAdapterKind, AgentAdapterRegistry, resolve_executable_path, system_home_dir};
 use crate::agent::types::load_space_agent_config;
-use crate::agent_actors::{AgentAdapter, ApprovalMode};
 use crate::process;
+use svode_core::agent_actors::{AgentAdapter, ApprovalMode};
 
 const DIAGNOSTIC_TIMEOUT: Duration = Duration::from_secs(5);
 const MAX_DIAGNOSTIC_OUTPUT_BYTES: usize = 16 * 1024;

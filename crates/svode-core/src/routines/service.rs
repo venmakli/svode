@@ -1,9 +1,16 @@
+//! Shared Routine definition owner: owner resolution, catalog read with its
+//! operational projection, and managed definition CRUD under fingerprint CAS.
+//!
+//! The host supplies only the Git target repository of an owner, the
+//! repository authorization of its runtime and live execution evidence.
+
 use std::collections::HashSet;
 use std::fs::{self, File, OpenOptions};
+use std::future::Future;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-#[cfg(test)]
-use std::sync::Arc;
+
+use chrono::{SecondsFormat, Utc};
 
 use super::model::{
     ResolvedRoutineOwner, RoutineCatalogSnapshot, RoutineDefinition, RoutineDiagnostic,
@@ -11,68 +18,152 @@ use super::model::{
     RoutineOwnerInputKind, RoutineOwnerKind, RoutineRow, RoutineRunOrigin, RoutineTimeBasis,
     RoutineTrigger,
 };
-use super::{authority, cache, parser};
-use crate::AppError;
-use crate::agent_actors;
-use crate::git;
-use crate::git::access::{RepositoryAccessState, ensure_mutation_paths_were_authorized};
-use crate::git::{GitState, require_cli};
-use crate::index::{IndexKey, IndexState};
-use crate::repo_path::{RootMode, normalize_repo_relative};
-use crate::routines::RoutineStoreState;
-use crate::space::config;
-use chrono::{SecondsFormat, Utc};
-use svode_core::page::filename::{self, FilenameProjection};
+use super::store_state::RoutineStoreState;
+use super::{RoutineStoreError, authority, operational, parser, schedule};
+use crate::git::GitError;
+use crate::git::path::{RootMode, normalize_repo_relative};
+use crate::git::state::GitRepositoryState;
+use crate::index::state::IndexRuntimeState;
+use crate::index::{IndexError, IndexKey};
+use crate::page::filename::{self, FilenameProjection};
+use crate::page::{PageError, PageSourceError};
+
+/// Failure of a shared Routine definition operation. The categories mirror the
+/// existing Desktop error identities, so transport mapping stays unchanged.
+#[derive(Debug, thiserror::Error)]
+pub enum RoutineServiceError {
+    #[error("IO error: {0}")]
+    Io(#[from] std::io::Error),
+    #[error("Serialization error: {0}")]
+    Serde(#[from] serde_json::Error),
+    #[error("File not found: {0}")]
+    FileNotFound(String),
+    #[error("File already exists: {0}")]
+    FileAlreadyExists(String),
+    #[error("Space not found: {0}")]
+    SpaceNotFound(String),
+    #[error("Path not accessible: {0}")]
+    PathNotAccessible(String),
+    #[error("Database error: {0}")]
+    Db(#[from] sqlx::Error),
+    #[error("{0}")]
+    General(String),
+    #[error(transparent)]
+    Git(#[from] GitError),
+    #[error(transparent)]
+    Index(#[from] IndexError),
+    #[error(transparent)]
+    Store(#[from] RoutineStoreError),
+}
+
+impl From<PageError> for RoutineServiceError {
+    fn from(error: PageError) -> Self {
+        match error {
+            PageError::Io(error) => Self::Io(error),
+            PageError::Serde(error) => Self::Serde(error),
+            PageError::FileNotFound(path) => Self::FileNotFound(path),
+            PageError::FileAlreadyExists(path) => Self::FileAlreadyExists(path),
+            PageError::SpaceNotFound(id) => Self::SpaceNotFound(id),
+            PageError::PathNotAccessible(path) => Self::PathNotAccessible(path),
+            PageError::Db(error) => Self::Db(error),
+            PageError::Git(error) => Self::Git(error),
+            PageError::Routine(error) => Self::Store(error),
+            error => Self::General(error.to_string()),
+        }
+    }
+}
+
+impl From<PageSourceError> for RoutineServiceError {
+    fn from(error: PageSourceError) -> Self {
+        match error {
+            PageSourceError::Missing(path) => Self::FileNotFound(path),
+            PageSourceError::SpaceNotFound(id) => Self::SpaceNotFound(id),
+            PageSourceError::InvalidConfig(error) => Self::Serde(error),
+            PageSourceError::InvalidPath(path) | PageSourceError::InvalidOwner(path) => {
+                Self::PathNotAccessible(path)
+            }
+            PageSourceError::InvalidEncoding(path) => Self::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("invalid UTF-8: {path}"),
+            )),
+            PageSourceError::Access(path) => Self::Io(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                path,
+            )),
+            PageSourceError::Io(error) => Self::Io(error),
+        }
+    }
+}
+
+/// The Git target repository of a Routine owner. Target selection stays with
+/// the host runtime; owner identity and the comparison belong to this owner.
+pub trait RoutineRepositoryTarget {
+    type Error: From<RoutineServiceError>;
+
+    fn mutation_repository(
+        &self,
+        owner: &ResolvedRoutineOwner,
+    ) -> impl Future<Output = Result<PathBuf, Self::Error>>;
+}
+
+/// Host capabilities of one managed Routine mutation: the Git target
+/// repository of an owner and the repository authorization of the current
+/// runtime. Validation, lock order, CAS and projection stay with this owner.
+pub trait RoutineMutationHost: RoutineRepositoryTarget {
+    fn authorize_mutation(
+        &self,
+        repository: &Path,
+    ) -> impl Future<Output = Result<(), Self::Error>>;
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum RoutineValidationIntent {
+pub enum RoutineValidationIntent {
     IntermediateEdit,
     CompleteDefinition,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum RoutineNamingIntent {
+pub enum RoutineNamingIntent {
     PreserveCurrentFilename,
     MaterializeCanonicalFilename,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct RoutineMutationIntent {
-    pub(crate) validation: RoutineValidationIntent,
-    pub(crate) naming: RoutineNamingIntent,
+pub struct RoutineMutationIntent {
+    pub validation: RoutineValidationIntent,
+    pub naming: RoutineNamingIntent,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum RoutineMutationOrigin {
+pub enum RoutineMutationOrigin {
     User,
     ExternalAgent,
     RoutineAgent,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct RoutineMutationPolicyContext {
-    pub(crate) origin: RoutineMutationOrigin,
-    pub(crate) automatic_execution_acknowledged: bool,
+pub struct RoutineMutationPolicyContext {
+    pub origin: RoutineMutationOrigin,
+    pub automatic_execution_acknowledged: bool,
 }
 
-pub(crate) struct RoutineMutationContext<'a> {
-    pub(crate) access_store_path: &'a Path,
-    pub(crate) git_state: &'a GitState,
-    pub(crate) access_state: &'a RepositoryAccessState,
-    pub(crate) routine_stores: &'a RoutineStoreState,
-    pub(crate) index_state: &'a IndexState,
-    pub(crate) live_evidence: &'a RoutineLiveEvidence,
+/// Shared state one managed Routine mutation reads and publishes through.
+pub struct RoutineMutationContext<'a> {
+    pub repositories: &'a GitRepositoryState,
+    pub routine_stores: &'a RoutineStoreState,
+    pub index_state: &'a IndexRuntimeState,
+    pub live_evidence: &'a RoutineLiveEvidence,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum RoutineMutationBlockedCode {
+pub enum RoutineMutationBlockedCode {
     Invalid,
     AutomaticConfirmationRequired,
     RecursionGuard,
 }
 
 impl RoutineMutationBlockedCode {
-    pub(crate) fn as_str(self) -> &'static str {
+    pub fn as_str(self) -> &'static str {
         match self {
             Self::Invalid => "ROUTINE_INVALID",
             Self::AutomaticConfirmationRequired => "ROUTINE_AUTOMATIC_CONFIRMATION_REQUIRED",
@@ -82,7 +173,7 @@ impl RoutineMutationBlockedCode {
 }
 
 #[derive(Debug)]
-pub(crate) enum ManagedRoutineMutationResult {
+pub enum ManagedRoutineMutationResult {
     Applied {
         routine_id: String,
         snapshot: RoutineCatalogSnapshot,
@@ -121,23 +212,23 @@ enum DefinitionUpdateOutcome {
     Stale(Option<String>),
 }
 
-pub(crate) fn resolve_owner(
+pub fn resolve_owner(
     project_path: &Path,
     space_path: &Path,
     space_id: &str,
     owner_path: &str,
     owner_kind: RoutineOwnerInputKind,
-) -> Result<ResolvedRoutineOwner, AppError> {
+) -> Result<ResolvedRoutineOwner, RoutineServiceError> {
     if space_id.trim().is_empty() {
-        return Err(AppError::PathNotAccessible("missing Space id".into()));
+        return Err(RoutineServiceError::PathNotAccessible(
+            "missing Space id".into(),
+        ));
     }
     let project = canonical_space_path(project_path)?;
     let space = canonical_space_path(space_path)?;
-    config::read_space_config(&space)?;
+    crate::page::registered_spaces(&space)?;
     if project != space {
-        let registered = config::read_space_config(&project)?
-            .spaces
-            .unwrap_or_default()
+        let registered = crate::page::registered_spaces(&project)?
             .into_iter()
             .any(|candidate| {
                 candidate.id == space_id
@@ -145,7 +236,9 @@ pub(crate) fn resolve_owner(
                         .is_ok_and(|candidate| candidate == space)
             });
         if !registered {
-            return Err(AppError::PathNotAccessible(space.display().to_string()));
+            return Err(RoutineServiceError::PathNotAccessible(
+                space.display().to_string(),
+            ));
         }
     }
     let index_key = if project == space {
@@ -159,7 +252,9 @@ pub(crate) fn resolve_owner(
     let (kind, normalized_owner_path, owner_root) = match owner_kind {
         RoutineOwnerInputKind::RegisteredSpace => {
             if owner_path != "." {
-                return Err(AppError::PathNotAccessible(owner_path.to_string()));
+                return Err(RoutineServiceError::PathNotAccessible(
+                    owner_path.to_string(),
+                ));
             }
             let kind = if project == space {
                 RoutineOwnerKind::Project
@@ -171,12 +266,14 @@ pub(crate) fn resolve_owner(
         RoutineOwnerInputKind::CollectionDirectory => {
             let normalized = normalize_repo_relative(owner_path, RootMode::Reject)?;
             let collection = fs::canonicalize(space.join(&normalized)).map_err(|error| {
-                AppError::General(format!(
+                RoutineServiceError::General(format!(
                     "failed to resolve routine collection owner {normalized}: {error}"
                 ))
             })?;
             if !collection.starts_with(&space) || !collection.is_dir() {
-                return Err(AppError::PathNotAccessible(owner_path.to_string()));
+                return Err(RoutineServiceError::PathNotAccessible(
+                    owner_path.to_string(),
+                ));
             }
             ensure_collection_schema(&collection)?;
             (RoutineOwnerKind::Collection, normalized, collection)
@@ -195,19 +292,16 @@ pub(crate) fn resolve_owner(
     })
 }
 
-pub(crate) async fn read_catalog(
+pub async fn read_catalog(
     routine_stores: &RoutineStoreState,
-    index_state: &IndexState,
+    index_state: &IndexRuntimeState,
     live_evidence: &RoutineLiveEvidence,
     owner: &ResolvedRoutineOwner,
-) -> Result<RoutineCatalogSnapshot, AppError> {
+) -> Result<RoutineCatalogSnapshot, RoutineServiceError> {
     let mut snapshot = discover_owner(owner).await?;
-    match routine_stores
-        .get_or_create_for_index(index_state, &owner.index_key)
-        .await
-    {
+    match open_owner_store(routine_stores, index_state, &owner.index_key).await {
         Ok(pool) => {
-            if let Err(error) = cache::replace_owner_snapshot(&pool, &snapshot).await {
+            if let Err(error) = operational::replace_catalog_snapshot(&pool, &snapshot).await {
                 tracing::warn!(
                     owner = %owner.descriptor.owner_path,
                     "failed to refresh routine definition cache: {error}"
@@ -232,18 +326,21 @@ pub(crate) async fn read_catalog(
                         ..
                     }) = row.definition.as_ref()
                 {
-                    let current =
-                        cache::schedule_state(&pool, &owner.descriptor.owner_path, routine_id)
-                            .await?;
+                    let current = operational::schedule_state(
+                        &pool,
+                        &owner.descriptor.owner_path,
+                        routine_id,
+                    )
+                    .await?;
                     if let Some(current) = current
                         .filter(|state| state.definition_fingerprint == row.execution_fingerprint)
                     {
                         if matches!(time_basis, RoutineTimeBasis::Local) {
-                            match super::schedule::next_after(cron, time_basis, now) {
+                            match schedule::next_after(cron, time_basis, now) {
                                 Ok(next) => {
                                     let next = next.to_rfc3339_opts(SecondsFormat::Secs, true);
                                     if next != current.next_run_at {
-                                        cache::write_schedule_state(
+                                        operational::write_schedule_state(
                                             &pool,
                                             &owner.descriptor.owner_path,
                                             routine_id,
@@ -267,11 +364,11 @@ pub(crate) async fn read_catalog(
                             row.next_run_at = Some(current.next_run_at);
                         }
                     } else {
-                        match super::schedule::next_after(cron, time_basis, now) {
+                        match schedule::next_after(cron, time_basis, now) {
                             Ok(next) => {
                                 let checkpoint = now.to_rfc3339_opts(SecondsFormat::Secs, true);
                                 let next = next.to_rfc3339_opts(SecondsFormat::Secs, true);
-                                cache::write_schedule_state(
+                                operational::write_schedule_state(
                                     &pool,
                                     &owner.descriptor.owner_path,
                                     routine_id,
@@ -296,8 +393,12 @@ pub(crate) async fn read_catalog(
                     }
                 }
 
-                let local = match cache::latest_run(&pool, &owner.descriptor.owner_path, routine_id)
-                    .await
+                let local = match operational::latest_run_record(
+                    &pool,
+                    &owner.descriptor.owner_path,
+                    routine_id,
+                )
+                .await
                 {
                     Ok(run) => run,
                     Err(error) => {
@@ -309,9 +410,12 @@ pub(crate) async fn read_catalog(
                         break;
                     }
                 };
-                let remote =
-                    cache::latest_remote_claim(&pool, &owner.descriptor.owner_path, routine_id)
-                        .await?;
+                let remote = operational::latest_remote_claim(
+                    &pool,
+                    &owner.descriptor.owner_path,
+                    routine_id,
+                )
+                .await?;
                 if remote.as_ref().is_some_and(|claim| {
                     local
                         .as_ref()
@@ -344,20 +448,29 @@ pub(crate) async fn read_catalog(
     Ok(snapshot)
 }
 
-pub(crate) async fn read_automatic_authority(
+pub async fn read_automatic_authority(
     routine_stores: &RoutineStoreState,
-    index_state: &IndexState,
+    index_state: &IndexRuntimeState,
     owner: &ResolvedRoutineOwner,
-) -> Result<bool, AppError> {
-    routine_stores
-        .get_or_create_for_index(index_state, &owner.index_key)
-        .await?;
-    authority::read(owner)
+) -> Result<bool, RoutineServiceError> {
+    open_owner_store(routine_stores, index_state, &owner.index_key).await?;
+    Ok(authority::read_key(&owner.space_path, &owner.identity())?)
 }
 
-pub(crate) async fn discover_owner(
+/// The operational store of one owner, opened through the shared registry over
+/// the Space directory of its index key.
+async fn open_owner_store(
+    routine_stores: &RoutineStoreState,
+    index_state: &IndexRuntimeState,
+    key: &IndexKey,
+) -> Result<sqlx::SqlitePool, RoutineServiceError> {
+    let space_dir = index_state.dir_for_key(key).await?;
+    Ok(routine_stores.get_or_create(key, &space_dir).await?)
+}
+
+pub async fn discover_owner(
     owner: &ResolvedRoutineOwner,
-) -> Result<RoutineCatalogSnapshot, AppError> {
+) -> Result<RoutineCatalogSnapshot, RoutineServiceError> {
     let owner = owner.clone();
     tokio::task::spawn_blocking(move || snapshot_with_executor_diagnostics(&owner))
         .await
@@ -365,28 +478,23 @@ pub(crate) async fn discover_owner(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(crate) async fn create_managed(
+pub async fn create_managed<H: RoutineMutationHost>(
     owner: ResolvedRoutineOwner,
     definition: RoutineDefinition,
     intent: RoutineMutationIntent,
     policy: RoutineMutationPolicyContext,
     context: &RoutineMutationContext<'_>,
-) -> Result<ManagedRoutineMutationResult, AppError> {
+    host: &H,
+) -> Result<ManagedRoutineMutationResult, H::Error> {
     if let Err(result) = validate_candidate(&owner, &definition, intent, policy) {
         return Ok(*result);
     }
     let name = managed_name(&definition).expect("validated managed Routine name");
-    let repository = mutation_repository(context.git_state, &owner).await?;
-    let lock = context.git_state.get_lock(&repository).await;
+    let repository = host.mutation_repository(&owner).await?;
+    let lock = context.repositories.get_lock(&repository).await;
     let _guard = lock.lock().await;
-    let owner = revalidate_owner(context.git_state, &owner, &repository).await?;
-    authorize_mutation(
-        context.git_state,
-        context.access_state,
-        context.access_store_path,
-        &repository,
-    )
-    .await?;
+    let owner = revalidate_owner(host, &owner, &repository).await?;
+    host.authorize_mutation(&repository).await?;
 
     let current = discover_owner(&owner).await?;
     if let Some(conflict) = routine_name_conflict(&current, name, None) {
@@ -442,14 +550,14 @@ pub(crate) async fn create_managed(
         .iter()
         .find(|row| row.filename == filename)
     else {
-        return Err(AppError::General(
+        return Err(RoutineServiceError::General(
             "created routine was not discoverable after its atomic write".into(),
-        ));
+        )
+        .into());
     };
-    let routine_id = row
-        .routine_id
-        .clone()
-        .ok_or_else(|| AppError::General("created Routine has no portable identity".into()))?;
+    let routine_id = row.routine_id.clone().ok_or_else(|| {
+        RoutineServiceError::General("created Routine has no portable identity".into())
+    })?;
     Ok(ManagedRoutineMutationResult::Applied {
         routine_id,
         snapshot,
@@ -459,7 +567,7 @@ pub(crate) async fn create_managed(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(crate) async fn update_managed(
+pub async fn update_managed<H: RoutineMutationHost>(
     owner: ResolvedRoutineOwner,
     routine_id: String,
     expected_fingerprint: String,
@@ -467,24 +575,19 @@ pub(crate) async fn update_managed(
     intent: RoutineMutationIntent,
     policy: RoutineMutationPolicyContext,
     context: &RoutineMutationContext<'_>,
-) -> Result<ManagedRoutineMutationResult, AppError> {
+    host: &H,
+) -> Result<ManagedRoutineMutationResult, H::Error> {
     if let Err(result) = validate_candidate(&owner, &definition, intent, policy) {
         return Ok(*result);
     }
     let name = managed_name(&definition)
         .expect("validated managed Routine name")
         .to_string();
-    let repository = mutation_repository(context.git_state, &owner).await?;
-    let lock = context.git_state.get_lock(&repository).await;
+    let repository = host.mutation_repository(&owner).await?;
+    let lock = context.repositories.get_lock(&repository).await;
     let _guard = lock.lock().await;
-    let owner = revalidate_owner(context.git_state, &owner, &repository).await?;
-    authorize_mutation(
-        context.git_state,
-        context.access_state,
-        context.access_store_path,
-        &repository,
-    )
-    .await?;
+    let owner = revalidate_owner(host, &owner, &repository).await?;
+    host.authorize_mutation(&repository).await?;
 
     let current = discover_owner(&owner).await?;
     let Some(row) = current
@@ -629,8 +732,8 @@ fn update_requires_name_check(
     naming: RoutineNamingIntent,
 ) -> bool {
     naming == RoutineNamingIntent::MaterializeCanonicalFilename
-        || svode_core::page::naming::display_name_key(&current.name)
-            != svode_core::page::naming::display_name_key(candidate_name)
+        || crate::page::naming::display_name_key(&current.name)
+            != crate::page::naming::display_name_key(candidate_name)
 }
 
 fn routine_name_conflict(
@@ -638,14 +741,14 @@ fn routine_name_conflict(
     candidate_name: &str,
     exclude_routine_id: Option<&str>,
 ) -> Option<RoutineNameConflict> {
-    let candidate_key = svode_core::page::naming::display_name_key(candidate_name);
+    let candidate_key = crate::page::naming::display_name_key(candidate_name);
     let conflicts = snapshot
         .routines
         .iter()
         .filter(|row| {
             exclude_routine_id
                 .is_none_or(|routine_id| row.routine_id.as_deref() != Some(routine_id))
-                && svode_core::page::naming::display_name_key(&row.name) == candidate_key
+                && crate::page::naming::display_name_key(&row.name) == candidate_key
         })
         .map(|row| RoutineNameConflictEvidence {
             routine_id: row.routine_id.clone(),
@@ -661,23 +764,18 @@ fn routine_name_conflict(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(crate) async fn delete_managed(
+pub async fn delete_managed<H: RoutineMutationHost>(
     owner: ResolvedRoutineOwner,
     routine_id: String,
     expected_fingerprint: String,
     context: &RoutineMutationContext<'_>,
-) -> Result<ManagedRoutineMutationResult, AppError> {
-    let repository = mutation_repository(context.git_state, &owner).await?;
-    let lock = context.git_state.get_lock(&repository).await;
+    host: &H,
+) -> Result<ManagedRoutineMutationResult, H::Error> {
+    let repository = host.mutation_repository(&owner).await?;
+    let lock = context.repositories.get_lock(&repository).await;
     let _guard = lock.lock().await;
-    let owner = revalidate_owner(context.git_state, &owner, &repository).await?;
-    authorize_mutation(
-        context.git_state,
-        context.access_state,
-        context.access_store_path,
-        &repository,
-    )
-    .await?;
+    let owner = revalidate_owner(host, &owner, &repository).await?;
+    host.authorize_mutation(&repository).await?;
 
     let current = discover_owner(&owner).await?;
     let Some(row) = current
@@ -722,30 +820,6 @@ pub(crate) async fn delete_managed(
         changed_paths: vec![changed_path],
         warnings,
     })
-}
-
-pub(crate) async fn mutation_repository(
-    git_state: &GitState,
-    owner: &ResolvedRoutineOwner,
-) -> Result<PathBuf, AppError> {
-    let cli = require_cli(git_state)?;
-    let (_, repository) =
-        git::ops::resolve_target_repo(&cli, &owner.project_path, &owner.space_path).await?;
-    Ok(repository)
-}
-
-pub(crate) async fn authorize_mutation(
-    git_state: &GitState,
-    access_state: &RepositoryAccessState,
-    access_store_path: &Path,
-    repository: &Path,
-) -> Result<(), AppError> {
-    ensure_mutation_paths_were_authorized(&[repository.to_path_buf()])?;
-    let cli = require_cli(git_state)?;
-    access_state
-        .require_mutation(&cli, repository, access_store_path)
-        .await?;
-    Ok(())
 }
 
 fn validate_candidate(
@@ -851,11 +925,11 @@ fn automatic_execution_enabled(definition: &RoutineDefinition) -> bool {
         )
 }
 
-pub(crate) async fn revalidate_owner(
-    git_state: &GitState,
+pub async fn revalidate_owner<H: RoutineRepositoryTarget>(
+    host: &H,
     owner: &ResolvedRoutineOwner,
     expected_repository: &Path,
-) -> Result<ResolvedRoutineOwner, AppError> {
+) -> Result<ResolvedRoutineOwner, H::Error> {
     let input_kind = match owner.descriptor.kind {
         RoutineOwnerKind::Project | RoutineOwnerKind::Space => {
             RoutineOwnerInputKind::RegisteredSpace
@@ -869,22 +943,23 @@ pub(crate) async fn revalidate_owner(
         &owner.descriptor.owner_path,
         input_kind,
     )?;
-    let repository = mutation_repository(git_state, &revalidated).await?;
+    let repository = host.mutation_repository(&revalidated).await?;
     if repository != expected_repository {
-        return Err(AppError::PathNotAccessible(
+        return Err(RoutineServiceError::PathNotAccessible(
             "routine owner repository changed during mutation planning".into(),
-        ));
+        )
+        .into());
     }
     Ok(revalidated)
 }
 
 async fn projection_after_write(
     routine_stores: &RoutineStoreState,
-    index_state: &IndexState,
+    index_state: &IndexRuntimeState,
     live_evidence: &RoutineLiveEvidence,
     owner: &ResolvedRoutineOwner,
     changed_path: &str,
-) -> Result<(RoutineCatalogSnapshot, Vec<RoutineDiagnostic>), AppError> {
+) -> Result<(RoutineCatalogSnapshot, Vec<RoutineDiagnostic>), RoutineServiceError> {
     match read_catalog(routine_stores, index_state, live_evidence, owner).await {
         Ok(snapshot) => {
             let warnings = snapshot
@@ -930,7 +1005,7 @@ fn create_definition_file(
     owner: &ResolvedRoutineOwner,
     name: &str,
     content: &[u8],
-) -> Result<(String, FilenameProjection, bool), AppError> {
+) -> Result<(String, FilenameProjection, bool), RoutineServiceError> {
     let directory = owner.routines_dir();
     ensure_routines_directory(&directory)?;
     let projection = filename::project(name);
@@ -947,28 +1022,28 @@ fn create_definition_file(
                 return Ok((filename, candidate, suffix > 0));
             }
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
-            Err(error) => return Err(AppError::Io(error)),
+            Err(error) => return Err(RoutineServiceError::Io(error)),
         }
     }
-    Err(AppError::FileAlreadyExists(
+    Err(RoutineServiceError::FileAlreadyExists(
         "failed to allocate a unique routine filename".into(),
     ))
 }
 
-fn ensure_routines_directory(directory: &Path) -> Result<(), AppError> {
+fn ensure_routines_directory(directory: &Path) -> Result<(), RoutineServiceError> {
     match fs::symlink_metadata(directory) {
-        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_dir() => {
-            Err(AppError::PathNotAccessible(directory.display().to_string()))
-        }
+        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_dir() => Err(
+            RoutineServiceError::PathNotAccessible(directory.display().to_string()),
+        ),
         Ok(_) => Ok(()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             fs::create_dir(directory)?;
-            let parent = directory
-                .parent()
-                .ok_or_else(|| AppError::PathNotAccessible(directory.display().to_string()))?;
+            let parent = directory.parent().ok_or_else(|| {
+                RoutineServiceError::PathNotAccessible(directory.display().to_string())
+            })?;
             sync_directory(parent)
         }
-        Err(error) => Err(AppError::Io(error)),
+        Err(error) => Err(RoutineServiceError::Io(error)),
     }
 }
 
@@ -982,10 +1057,10 @@ fn atomic_replace_cas(
     path: &Path,
     expected_fingerprint: &str,
     bytes: &[u8],
-) -> Result<FileCasOutcome, AppError> {
+) -> Result<FileCasOutcome, RoutineServiceError> {
     let parent = path
         .parent()
-        .ok_or_else(|| AppError::PathNotAccessible(path.display().to_string()))?;
+        .ok_or_else(|| RoutineServiceError::PathNotAccessible(path.display().to_string()))?;
     ensure_routines_directory(parent)?;
     let Some(current_fingerprint) = definition_file_fingerprint(path)? else {
         return Ok(FileCasOutcome::Stale(None));
@@ -1002,7 +1077,7 @@ fn atomic_replace_cas(
     }
     if let Err(error) = fs::rename(&temp, path) {
         let _ = fs::remove_file(&temp);
-        return Err(AppError::Io(error));
+        return Err(RoutineServiceError::Io(error));
     }
     sync_directory(parent)?;
     Ok(FileCasOutcome::Applied)
@@ -1014,7 +1089,7 @@ fn update_definition_file_cas(
     target_filename: &str,
     expected_fingerprint: &str,
     bytes: &[u8],
-) -> Result<DefinitionUpdateOutcome, AppError> {
+) -> Result<DefinitionUpdateOutcome, RoutineServiceError> {
     ensure_routines_directory(directory)?;
     let current_path = directory.join(current_filename);
     let Some(current_fingerprint) = definition_file_fingerprint(&current_path)? else {
@@ -1043,7 +1118,7 @@ fn update_definition_file_cas(
                 let target_path = directory.join(target_filename);
                 if let Err(error) = fs::rename(&intermediate, &target_path) {
                     let _ = fs::rename(&intermediate, &current_path);
-                    return Err(AppError::Io(error));
+                    return Err(RoutineServiceError::Io(error));
                 }
                 sync_directory(directory)?;
                 Ok(DefinitionUpdateOutcome::Applied {
@@ -1081,11 +1156,11 @@ fn update_definition_file_cas(
                 FileCasOutcome::Stale(current) => Ok(DefinitionUpdateOutcome::Stale(current)),
             };
         }
-        Err(error) => return Err(AppError::Io(error)),
+        Err(error) => return Err(RoutineServiceError::Io(error)),
     }
     if let Err(error) = fs::remove_file(&current_path) {
         let _ = fs::remove_file(&target_path);
-        return Err(AppError::Io(error));
+        return Err(RoutineServiceError::Io(error));
     }
     sync_directory(directory)?;
     Ok(DefinitionUpdateOutcome::Applied {
@@ -1098,7 +1173,7 @@ fn delete_definition_file_cas(
     directory: &Path,
     path: &Path,
     expected_fingerprint: &str,
-) -> Result<FileCasOutcome, AppError> {
+) -> Result<FileCasOutcome, RoutineServiceError> {
     ensure_routines_directory(directory)?;
     let Some(current_fingerprint) = definition_file_fingerprint(path)? else {
         return Ok(FileCasOutcome::Stale(None));
@@ -1111,18 +1186,20 @@ fn delete_definition_file_cas(
     Ok(FileCasOutcome::Applied)
 }
 
-fn definition_file_fingerprint(path: &Path) -> Result<Option<String>, AppError> {
+fn definition_file_fingerprint(path: &Path) -> Result<Option<String>, RoutineServiceError> {
     let metadata = match fs::symlink_metadata(path) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(AppError::Io(error)),
+        Err(error) => return Err(RoutineServiceError::Io(error)),
     };
     if metadata.file_type().is_symlink() || !metadata.is_file() {
-        return Err(AppError::PathNotAccessible(path.display().to_string()));
+        return Err(RoutineServiceError::PathNotAccessible(
+            path.display().to_string(),
+        ));
     }
     let bytes = fs::read(path)?;
     if bytes.len() as u64 > parser::MAX_ROUTINE_BYTES {
-        return Err(AppError::PathNotAccessible(format!(
+        return Err(RoutineServiceError::PathNotAccessible(format!(
             "routine definition exceeds the 1 MiB limit: {}",
             path.display()
         )));
@@ -1130,7 +1207,7 @@ fn definition_file_fingerprint(path: &Path) -> Result<Option<String>, AppError> 
     Ok(Some(parser::fingerprint(&bytes)))
 }
 
-fn sync_directory(path: &Path) -> Result<(), AppError> {
+fn sync_directory(path: &Path) -> Result<(), RoutineServiceError> {
     File::open(path)?.sync_all()?;
     Ok(())
 }
@@ -1208,7 +1285,7 @@ fn executor_availability_diagnostic(
     }
     let inherited =
         (owner.space_path != owner.project_path).then_some(owner.project_path.as_path());
-    let actors = agent_actors::resolve_catalogs(&owner.space_path, inherited)
+    let actors = crate::agent_actors::resolve_catalogs(&owner.space_path, inherited)
         .actors
         .into_iter()
         .map(|resolved| format!("agent:{}", resolved.actor.id))
@@ -1222,31 +1299,33 @@ fn executor_availability_diagnostic(
     })
 }
 
-fn canonical_space_path(path: &Path) -> Result<PathBuf, AppError> {
+fn canonical_space_path(path: &Path) -> Result<PathBuf, RoutineServiceError> {
     fs::canonicalize(path).map_err(|error| {
-        AppError::General(format!(
+        RoutineServiceError::General(format!(
             "failed to resolve routine Space {}: {error}",
             path.display()
         ))
     })
 }
 
-fn ensure_collection_schema(collection: &Path) -> Result<(), AppError> {
+fn ensure_collection_schema(collection: &Path) -> Result<(), RoutineServiceError> {
     let schema = collection.join("schema.yaml");
     let metadata = fs::symlink_metadata(&schema).map_err(|_| {
-        AppError::PathNotAccessible(format!(
+        RoutineServiceError::PathNotAccessible(format!(
             "routine collection owner has no direct schema.yaml: {}",
             collection.display()
         ))
     })?;
     if metadata.file_type().is_symlink() || !metadata.is_file() {
-        return Err(AppError::PathNotAccessible(schema.display().to_string()));
+        return Err(RoutineServiceError::PathNotAccessible(
+            schema.display().to_string(),
+        ));
     }
     Ok(())
 }
 
-fn blocking_task_error(error: impl std::fmt::Display) -> AppError {
-    AppError::General(format!("routine filesystem task failed: {error}"))
+fn blocking_task_error(error: impl std::fmt::Display) -> RoutineServiceError {
+    RoutineServiceError::General(format!("routine filesystem task failed: {error}"))
 }
 
 #[cfg(test)]
@@ -1257,21 +1336,25 @@ mod tests {
     use crate::routines::model::{
         CollectionEvent, RoutineAction, RoutineActionTarget, RoutineTrigger,
     };
-    use crate::space::config::write_space_config;
-    use crate::space::types::{SpaceConfig, SpaceRef};
 
-    fn space_config(name: &str, spaces: Option<Vec<SpaceRef>>) -> SpaceConfig {
-        SpaceConfig {
-            name: name.into(),
-            description: String::new(),
-            icon: "folder".into(),
-            spaces,
-            agent: None,
-            defaults: None,
-            git: None,
-            assets: None,
-            tree: None,
+    /// Minimal Space config fixture: `spaces` registers child `(id, folder)`
+    /// references of a Project.
+    fn write_space_config(path: &Path, name: &str, spaces: &[(&str, &str)]) {
+        fs::create_dir_all(path.join(".svode")).unwrap();
+        let mut config = serde_json::json!({ "name": name, "description": "", "icon": "folder" });
+        if !spaces.is_empty() {
+            config["spaces"] = serde_json::Value::Array(
+                spaces
+                    .iter()
+                    .map(|(id, folder)| serde_json::json!({ "id": id, "path": folder }))
+                    .collect(),
+            );
         }
+        fs::write(
+            path.join(".svode/config.json"),
+            serde_json::to_vec_pretty(&config).unwrap(),
+        )
+        .unwrap();
     }
 
     fn project_owner(root: &Path) -> ResolvedRoutineOwner {
@@ -1357,19 +1440,8 @@ mod tests {
         let collection = child.join("tasks");
         fs::create_dir_all(&collection).unwrap();
         fs::write(collection.join("schema.yaml"), "name: Tasks\n").unwrap();
-        write_space_config(&child, &space_config("Child", None)).unwrap();
-        write_space_config(
-            project,
-            &space_config(
-                "Project",
-                Some(vec![SpaceRef {
-                    id: "child-id".into(),
-                    path: "child".into(),
-                    repo: None,
-                }]),
-            ),
-        )
-        .unwrap();
+        write_space_config(&child, "Child", &[]);
+        write_space_config(project, "Project", &[("child-id", "child")]);
 
         let root = resolve_owner(
             project,
@@ -1443,7 +1515,7 @@ mod tests {
         let project = tempfile::tempdir().unwrap();
         let outside = tempfile::tempdir().unwrap();
         fs::write(outside.path().join("schema.yaml"), "name: Outside\n").unwrap();
-        write_space_config(project.path(), &space_config("Project", None)).unwrap();
+        write_space_config(project.path(), "Project", &[]);
         std::os::unix::fs::symlink(outside.path(), project.path().join("linked")).unwrap();
 
         assert!(
@@ -2007,8 +2079,8 @@ mod tests {
         // The store registry transparently reopens a closed pool, so an unavailable
         // cache is simulated by making the database path itself unopenable.
         fs::create_dir_all(temp.path().join(".svode/routines.db")).unwrap();
-        let routine_stores = Arc::new(RoutineStoreState::new());
-        let index_state = IndexState::new();
+        let routine_stores = RoutineStoreState::new();
+        let index_state = IndexRuntimeState::default();
 
         let (snapshot, warnings) = projection_after_write(
             &routine_stores,
@@ -2044,7 +2116,7 @@ mod tests {
         )
         .unwrap();
         fs::write(routines.join("invalid.md"), "---\ntrigger: [\n---\n").unwrap();
-        write_space_config(project, &space_config("Project", None)).unwrap();
+        write_space_config(project, "Project", &[]);
         let owner = resolve_owner(
             project,
             project,
@@ -2053,8 +2125,8 @@ mod tests {
             RoutineOwnerInputKind::CollectionDirectory,
         )
         .unwrap();
-        let routine_stores = Arc::new(RoutineStoreState::new());
-        let index_state = IndexState::new();
+        let routine_stores = RoutineStoreState::new();
+        let index_state = IndexRuntimeState::default();
         let live_evidence = RoutineLiveEvidence::default();
 
         let snapshot = read_catalog(&routine_stores, &index_state, &live_evidence, &owner)
@@ -2082,7 +2154,7 @@ mod tests {
                 .await
                 .unwrap()
         );
-        authority::set(&owner, true).unwrap();
+        authority::set_key(&owner.space_path, &owner.identity(), true).unwrap();
         assert!(
             read_automatic_authority(&routine_stores, &index_state, &owner)
                 .await
@@ -2100,7 +2172,7 @@ mod tests {
             "---\nid: 01arz3ndektsv4rrffq69g5fav\nname: Review\ntrigger:\n  type: manual\naction:\n  type: run_agent\n  executor: agent:01arz3ndektsv4rrffq69g5fav\n---\nReview\n",
         )
         .unwrap();
-        write_space_config(project, &space_config("Project", None)).unwrap();
+        write_space_config(project, "Project", &[]);
         let owner = resolve_owner(
             project,
             project,
@@ -2109,8 +2181,8 @@ mod tests {
             RoutineOwnerInputKind::RegisteredSpace,
         )
         .unwrap();
-        let routine_stores = Arc::new(RoutineStoreState::new());
-        let index_state = IndexState::new();
+        let routine_stores = RoutineStoreState::new();
+        let index_state = IndexRuntimeState::default();
         let initial = read_catalog(
             &routine_stores,
             &index_state,
@@ -2122,19 +2194,19 @@ mod tests {
         let routine = &initial.routines[0];
         let routine_id = routine.routine_id.as_deref().unwrap();
         let definition = routine.definition.as_ref().unwrap();
-        let pool = routine_stores
-            .get_or_create_for_index(&index_state, &owner.index_key)
+        let pool = open_owner_store(&routine_stores, &index_state, &owner.index_key)
             .await
             .unwrap();
-        cache::create_run(
+        let definition_json = serde_json::to_string(definition).unwrap();
+        operational::create_run(
             &pool,
-            cache::NewRoutineRun {
+            operational::NewRoutineRun {
                 routine_run_id: "run-local",
                 routine_id,
                 owner_path: ".",
                 trigger_type: "manual",
                 definition_fingerprint: &routine.execution_fingerprint,
-                definition,
+                definition_json: &definition_json,
                 launch_id: "launch-local",
                 source: "codex",
                 source_session_id: Some("source-local"),
@@ -2144,7 +2216,7 @@ mod tests {
         )
         .await
         .unwrap();
-        cache::attach_pty(&pool, "run-local", "pty-live", "2026-09-19T10:00:01Z")
+        operational::attach_pty(&pool, "run-local", "pty-live", "2026-09-19T10:00:01Z")
             .await
             .unwrap();
 
@@ -2168,7 +2240,7 @@ mod tests {
                 .any(|diagnostic| diagnostic.code == "routine_executor_unavailable")
         );
 
-        cache::record_remote_claim(
+        operational::record_remote_claim(
             &pool,
             ".",
             routine_id,
@@ -2197,5 +2269,258 @@ mod tests {
         );
         assert!(remote.routines[0].last_run.is_none());
         assert_ne!(remote.catalog_fingerprint, local.catalog_fingerprint);
+    }
+
+    /// Host fixture: a fixed Git target repository and a recorded repository
+    /// authorization. `moved_repository` simulates an owner whose target
+    /// repository changes between planning and the locked mutation.
+    struct TestHost {
+        repository: PathBuf,
+        moved_repository: Option<PathBuf>,
+        authorize: Result<(), &'static str>,
+        calls: std::sync::Mutex<Vec<PathBuf>>,
+        resolutions: std::sync::Mutex<usize>,
+    }
+
+    impl TestHost {
+        fn new(repository: &Path) -> Self {
+            Self {
+                repository: repository.to_path_buf(),
+                moved_repository: None,
+                authorize: Ok(()),
+                calls: std::sync::Mutex::new(Vec::new()),
+                resolutions: std::sync::Mutex::new(0),
+            }
+        }
+
+        fn authorized(&self) -> Vec<PathBuf> {
+            self.calls.lock().unwrap().clone()
+        }
+    }
+
+    impl RoutineRepositoryTarget for TestHost {
+        type Error = RoutineServiceError;
+
+        async fn mutation_repository(
+            &self,
+            _owner: &ResolvedRoutineOwner,
+        ) -> Result<PathBuf, RoutineServiceError> {
+            let mut resolutions = self.resolutions.lock().unwrap();
+            *resolutions += 1;
+            Ok(match (&self.moved_repository, *resolutions) {
+                (Some(moved), 2..) => moved.clone(),
+                _ => self.repository.clone(),
+            })
+        }
+    }
+
+    impl RoutineMutationHost for TestHost {
+        async fn authorize_mutation(&self, repository: &Path) -> Result<(), RoutineServiceError> {
+            self.calls.lock().unwrap().push(repository.to_path_buf());
+            self.authorize
+                .map_err(|reason| RoutineServiceError::PathNotAccessible(reason.into()))
+        }
+    }
+
+    fn mutation_context<'a>(
+        repositories: &'a GitRepositoryState,
+        routine_stores: &'a RoutineStoreState,
+        index_state: &'a IndexRuntimeState,
+        live_evidence: &'a RoutineLiveEvidence,
+    ) -> RoutineMutationContext<'a> {
+        RoutineMutationContext {
+            repositories,
+            routine_stores,
+            index_state,
+            live_evidence,
+        }
+    }
+
+    #[tokio::test]
+    async fn managed_crud_authorizes_the_target_repository_and_publishes_one_projection() {
+        let temp = tempfile::tempdir().unwrap();
+        let project = temp.path();
+        let collection = project.join("tasks");
+        fs::create_dir_all(&collection).unwrap();
+        fs::write(collection.join("schema.yaml"), "name: Tasks\n").unwrap();
+        write_space_config(project, "Project", &[]);
+        let owner = resolve_owner(
+            project,
+            project,
+            "root",
+            "tasks",
+            RoutineOwnerInputKind::CollectionDirectory,
+        )
+        .unwrap();
+        let repositories = GitRepositoryState::new();
+        let routine_stores = RoutineStoreState::new();
+        let index_state = IndexRuntimeState::default();
+        let live_evidence = RoutineLiveEvidence::default();
+        let context =
+            mutation_context(&repositories, &routine_stores, &index_state, &live_evidence);
+        let host = TestHost::new(project);
+
+        let created = create_managed(
+            owner.clone(),
+            event_definition(false),
+            mutation_intent(
+                RoutineValidationIntent::CompleteDefinition,
+                RoutineNamingIntent::MaterializeCanonicalFilename,
+            ),
+            policy_context(RoutineMutationOrigin::User, true),
+            &context,
+            &host,
+        )
+        .await
+        .unwrap();
+        let (routine_id, created_paths) = match created {
+            ManagedRoutineMutationResult::Applied {
+                routine_id,
+                snapshot,
+                changed_paths,
+                warnings,
+            } => {
+                assert_eq!(snapshot.routines.len(), 1);
+                assert!(warnings.is_empty(), "{warnings:?}");
+                (routine_id, changed_paths)
+            }
+            other => panic!("unexpected create result: {other:?}"),
+        };
+        assert_eq!(created_paths, vec!["tasks/.routines/Keep review state.md"]);
+        assert_eq!(host.authorized(), vec![project.to_path_buf()]);
+
+        let current = discover_owner(&owner).await.unwrap();
+        let fingerprint = current.routines[0].fingerprint.clone();
+        let mut renamed = event_definition(false);
+        renamed.name = Some("Review state".into());
+        let updated = update_managed(
+            owner.clone(),
+            routine_id.clone(),
+            fingerprint.clone(),
+            renamed,
+            mutation_intent(
+                RoutineValidationIntent::CompleteDefinition,
+                RoutineNamingIntent::MaterializeCanonicalFilename,
+            ),
+            policy_context(RoutineMutationOrigin::User, true),
+            &context,
+            &host,
+        )
+        .await
+        .unwrap();
+        match updated {
+            ManagedRoutineMutationResult::Applied { changed_paths, .. } => assert_eq!(
+                changed_paths,
+                vec![
+                    "tasks/.routines/Keep review state.md".to_string(),
+                    "tasks/.routines/Review state.md".to_string(),
+                ]
+            ),
+            other => panic!("unexpected update result: {other:?}"),
+        }
+
+        let stale = update_managed(
+            owner.clone(),
+            routine_id.clone(),
+            fingerprint,
+            event_definition(false),
+            mutation_intent(
+                RoutineValidationIntent::IntermediateEdit,
+                RoutineNamingIntent::PreserveCurrentFilename,
+            ),
+            policy_context(RoutineMutationOrigin::User, true),
+            &context,
+            &host,
+        )
+        .await
+        .unwrap();
+        assert!(matches!(
+            stale,
+            ManagedRoutineMutationResult::Conflict {
+                current_fingerprint: Some(_)
+            }
+        ));
+
+        let current = discover_owner(&owner).await.unwrap();
+        let deleted = delete_managed(
+            owner.clone(),
+            routine_id,
+            current.routines[0].fingerprint.clone(),
+            &context,
+            &host,
+        )
+        .await
+        .unwrap();
+        assert!(matches!(
+            deleted,
+            ManagedRoutineMutationResult::Applied { .. }
+        ));
+        assert!(discover_owner(&owner).await.unwrap().routines.is_empty());
+        assert_eq!(host.authorized().len(), 4);
+    }
+
+    #[tokio::test]
+    async fn denied_access_and_changed_target_repository_leave_the_source_untouched() {
+        let temp = tempfile::tempdir().unwrap();
+        let project = temp.path();
+        let collection = project.join("tasks");
+        fs::create_dir_all(&collection).unwrap();
+        fs::write(collection.join("schema.yaml"), "name: Tasks\n").unwrap();
+        write_space_config(project, "Project", &[]);
+        let owner = resolve_owner(
+            project,
+            project,
+            "root",
+            "tasks",
+            RoutineOwnerInputKind::CollectionDirectory,
+        )
+        .unwrap();
+        let repositories = GitRepositoryState::new();
+        let routine_stores = RoutineStoreState::new();
+        let index_state = IndexRuntimeState::default();
+        let live_evidence = RoutineLiveEvidence::default();
+        let context =
+            mutation_context(&repositories, &routine_stores, &index_state, &live_evidence);
+
+        let denied = TestHost {
+            authorize: Err("repository access denied"),
+            ..TestHost::new(project)
+        };
+        let error = create_managed(
+            owner.clone(),
+            event_definition(false),
+            mutation_intent(
+                RoutineValidationIntent::CompleteDefinition,
+                RoutineNamingIntent::MaterializeCanonicalFilename,
+            ),
+            policy_context(RoutineMutationOrigin::User, true),
+            &context,
+            &denied,
+        )
+        .await
+        .expect_err("denied access must fail the mutation");
+        assert!(matches!(error, RoutineServiceError::PathNotAccessible(_)));
+        assert!(!owner.routines_dir().exists());
+
+        let moved = TestHost {
+            moved_repository: Some(project.join("moved")),
+            ..TestHost::new(project)
+        };
+        let error = create_managed(
+            owner.clone(),
+            event_definition(false),
+            mutation_intent(
+                RoutineValidationIntent::CompleteDefinition,
+                RoutineNamingIntent::MaterializeCanonicalFilename,
+            ),
+            policy_context(RoutineMutationOrigin::User, true),
+            &context,
+            &moved,
+        )
+        .await
+        .expect_err("a changed target repository must fail before the write");
+        assert!(matches!(error, RoutineServiceError::PathNotAccessible(_)));
+        assert!(moved.authorized().is_empty());
+        assert!(!owner.routines_dir().exists());
     }
 }

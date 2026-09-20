@@ -1,12 +1,12 @@
 use std::path::Path;
 
 use super::model::{ResolvedRoutineOwner, RoutineOwnerInputKind};
-use super::service;
 use crate::AppError;
 use crate::index::{IndexKey, IndexState};
 use crate::routines::RoutineStoreState;
 #[cfg(test)]
 use crate::space::config;
+use svode_core::routines::service;
 #[cfg(test)]
 use svode_core::routines::storage::RecoveryEvidence;
 

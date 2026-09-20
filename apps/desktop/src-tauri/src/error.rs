@@ -108,6 +108,25 @@ impl From<svode_core::routines::RoutineStoreError> for AppError {
     }
 }
 
+impl From<svode_core::routines::service::RoutineServiceError> for AppError {
+    fn from(error: svode_core::routines::service::RoutineServiceError) -> Self {
+        use svode_core::routines::service::RoutineServiceError;
+        match error {
+            RoutineServiceError::Io(error) => Self::Io(error),
+            RoutineServiceError::Serde(error) => Self::Serde(error),
+            RoutineServiceError::FileNotFound(path) => Self::FileNotFound(path),
+            RoutineServiceError::FileAlreadyExists(path) => Self::FileAlreadyExists(path),
+            RoutineServiceError::SpaceNotFound(id) => Self::SpaceNotFound(id),
+            RoutineServiceError::PathNotAccessible(path) => Self::PathNotAccessible(path),
+            RoutineServiceError::Db(error) => Self::Db(error),
+            RoutineServiceError::General(message) => Self::General(message),
+            RoutineServiceError::Git(error) => error.into(),
+            RoutineServiceError::Index(error) => error.into(),
+            RoutineServiceError::Store(error) => error.into(),
+        }
+    }
+}
+
 impl From<svode_core::routines::observation::ObservationError> for AppError {
     fn from(error: svode_core::routines::observation::ObservationError) -> Self {
         match error {

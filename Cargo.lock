@@ -5343,6 +5343,9 @@ name = "svode-core"
 version = "0.0.1"
 dependencies = [
  "chrono",
+ "chrono-tz",
+ "croner",
+ "iana-time-zone",
  "keyring",
  "regex",
  "serde",

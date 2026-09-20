@@ -3,6 +3,9 @@ pub mod local;
 pub mod model;
 pub mod observation;
 pub mod operational;
+pub mod parser;
+pub mod schedule;
+pub mod service;
 pub mod storage;
 pub mod store_state;
 

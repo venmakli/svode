@@ -16,6 +16,10 @@ impl RoutineStoreState {
     pub(crate) fn core_handle(&self) -> Arc<svode_core::routines::store_state::RoutineStoreState> {
         self.core.clone()
     }
+
+    pub(crate) fn core(&self) -> &svode_core::routines::store_state::RoutineStoreState {
+        &self.core
+    }
     pub fn new() -> Self {
         Self::default()
     }

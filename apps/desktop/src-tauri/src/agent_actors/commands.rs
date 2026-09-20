@@ -5,10 +5,7 @@ use std::sync::Arc;
 
 use tauri::{AppHandle, Emitter, State};
 
-use super::{
-    AgentActorMutationInput, AgentActorResolution, AgentAdapter, ApprovalMode, CatalogError,
-    catalog_path, mutate_catalog_compound, read_catalog, resolve_catalogs, set_local_approval,
-};
+use super::{AgentActorMutationInput, mutate_catalog_compound, set_local_approval};
 use crate::AppError;
 use crate::agent_adapters::runtime::{
     AdapterDiagnostic, AdapterRuntimeDescriptor, AdapterSelectOption, AdapterTarget,
@@ -23,6 +20,10 @@ use crate::git::autocommit::{
 use crate::git::ops;
 use crate::git::require_cli;
 use crate::space::types::SpaceGitType;
+use svode_core::agent_actors::{
+    AgentActorResolution, AgentAdapter, ApprovalMode, CatalogError, catalog_path, read_catalog,
+    resolve_catalogs,
+};
 
 const COMMIT_MESSAGE: &str = "Update agent actors";
 const SUBMODULE_POINTER_COMMIT_MESSAGE: &str = "Update space pointer";
@@ -1015,8 +1016,8 @@ mod tests {
     #[test]
     fn binding_projection_preserves_owner_and_stays_unchecked() {
         let resolution = AgentActorResolution {
-            actors: vec![super::super::ResolvedAgentActor {
-                actor: super::super::AgentActor {
+            actors: vec![svode_core::agent_actors::ResolvedAgentActor {
+                actor: svode_core::agent_actors::AgentActor {
                     id: "01arz3ndektsv4rrffq69g5fav".into(),
                     name: "Docs".into(),
                     description: None,

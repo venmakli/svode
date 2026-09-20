@@ -11,19 +11,19 @@ const DST_GAP_SEARCH_MINUTES: i64 = 180;
 const NOMINAL_FORMAT: &str = "%Y-%m-%dT%H:%M";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct ScheduleOccurrence {
+pub struct ScheduleOccurrence {
     pub due_at: DateTime<Utc>,
     pub nominal_civil_time: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct ScheduleEvaluation {
+pub struct ScheduleEvaluation {
     pub due: Option<ScheduleOccurrence>,
     pub had_occurrence: bool,
     pub next_at: DateTime<Utc>,
 }
 
-pub(crate) fn validate_cron(value: &str) -> Result<(), String> {
+pub fn validate_cron(value: &str) -> Result<(), String> {
     if value.split_whitespace().count() != 5 {
         return Err("schedule cron must contain exactly five fields".into());
     }
@@ -32,17 +32,17 @@ pub(crate) fn validate_cron(value: &str) -> Result<(), String> {
         .map_err(|error| format!("invalid schedule cron: {error}"))
 }
 
-pub(crate) fn canonical_timezone(value: &str) -> Result<String, String> {
+pub fn canonical_timezone(value: &str) -> Result<String, String> {
     Tz::from_str(value)
         .map(|timezone| timezone.name().to_string())
         .map_err(|_| format!("invalid IANA schedule timezone: {value}"))
 }
 
-pub(crate) fn validate_timezone(value: &str) -> Result<(), String> {
+pub fn validate_timezone(value: &str) -> Result<(), String> {
     canonical_timezone(value).map(|_| ())
 }
 
-pub(crate) fn effective_timezone(time_basis: &RoutineTimeBasis) -> Result<String, String> {
+pub fn effective_timezone(time_basis: &RoutineTimeBasis) -> Result<String, String> {
     match time_basis {
         RoutineTimeBasis::Local => iana_time_zone::get_timezone()
             .map_err(|error| format!("failed to resolve the current system IANA timezone: {error}"))
@@ -51,7 +51,7 @@ pub(crate) fn effective_timezone(time_basis: &RoutineTimeBasis) -> Result<String
     }
 }
 
-pub(crate) fn next_after(
+pub fn next_after(
     cron: &str,
     time_basis: &RoutineTimeBasis,
     after: DateTime<Utc>,
@@ -60,7 +60,7 @@ pub(crate) fn next_after(
     next_occurrence(&cron, timezone, after).map(|occurrence| occurrence.due_at)
 }
 
-pub(crate) fn evaluate(
+pub fn evaluate(
     cron: &str,
     time_basis: &RoutineTimeBasis,
     checkpoint: DateTime<Utc>,
