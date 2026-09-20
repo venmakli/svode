@@ -1,15 +1,11 @@
 use std::path::{Path, PathBuf};
 
+use crate::actors::{ActorCandidate, ActorCatalogState};
 use crate::error::AppError;
 use crate::git::cli::GitCli;
 use crate::index::{IndexKey, IndexState};
+use svode_core::collections::engine::{Filter, ResolvedRelation, Sort};
 use svode_core::page::entry::Entry;
-
-use super::{
-    ActorCandidate, ActorCatalogState, CollectionInfo, CollectionIntegrityReport, CollectionSchema,
-    EntrySchemaResponse, Filter, RelationBacklink, RelationTwoWayDiagnostics, ResolvedRelation,
-    Sort,
-};
 
 #[derive(Debug, Clone)]
 pub struct CollectionReadTarget {
@@ -50,18 +46,6 @@ async fn pool_for_target(
     target: &CollectionReadTarget,
 ) -> Result<sqlx::SqlitePool, AppError> {
     index_state.get_or_create(&target.index_key).await
-}
-
-pub fn entry_schema(space: &str, file_path: &str) -> Result<Option<EntrySchemaResponse>, AppError> {
-    Ok(super::schema_response(space, file_path)?)
-}
-
-pub fn collection_schema(space: &str, collection_path: &str) -> Result<CollectionSchema, AppError> {
-    Ok(super::read_collection_schema(space, collection_path)?)
-}
-
-pub fn collections(space: &str) -> Result<Vec<CollectionInfo>, AppError> {
-    Ok(super::list_collections(space)?)
 }
 
 pub async fn entries_for_view(
@@ -122,7 +106,7 @@ pub async fn resolve_relation(
     value: &str,
 ) -> Result<Option<ResolvedRelation>, AppError> {
     let pool = pool_for_target(index_state, target).await?;
-    Ok(super::resolve_relation(&pool, relation, value).await?)
+    Ok(svode_core::collections::relation_read::resolve_relation(&pool, relation, value).await?)
 }
 
 pub async fn resolve_relations_batch(
@@ -132,63 +116,32 @@ pub async fn resolve_relations_batch(
     values: &[String],
 ) -> Result<Vec<Option<ResolvedRelation>>, AppError> {
     let pool = pool_for_target(index_state, target).await?;
-    Ok(super::resolve_relations_batch(&pool, relation, values).await?)
-}
-
-pub fn relation_backlinks(
-    space: &str,
-    target_path: &str,
-    source_collection_path: Option<&str>,
-    source_column: Option<&str>,
-) -> Result<Vec<RelationBacklink>, AppError> {
-    Ok(super::query_relation_backlinks(
-        space,
-        target_path,
-        source_collection_path,
-        source_column,
-    )?)
-}
-
-pub fn relation_diagnostics(
-    space: &str,
-    collection_path: &str,
-    column: &str,
-    project_path: Option<&str>,
-) -> Result<RelationTwoWayDiagnostics, AppError> {
-    Ok(super::diagnose_two_way_relation_with_project(
-        space,
-        collection_path,
-        column,
-        project_path,
-    )?)
-}
-
-pub fn integrity(
-    space: &str,
-    collection_path: Option<&str>,
-    project_path: Option<&str>,
-) -> Result<CollectionIntegrityReport, AppError> {
-    Ok(super::validate_collection_integrity_with_project(
-        space,
-        collection_path,
-        project_path,
-    )?)
+    Ok(
+        svode_core::collections::relation_read::resolve_relations_batch(&pool, relation, values)
+            .await?,
+    )
 }
 
 pub async fn actors(
     actor_catalog: &ActorCatalogState,
     git_cli: &GitCli,
     space: &Path,
-    all_time: bool,
+    _all_time: bool,
 ) -> Result<Vec<ActorCandidate>, AppError> {
-    super::list_actors(actor_catalog, git_cli, space, all_time).await
+    Ok(actor_catalog
+        .snapshot(git_cli.core(), space)
+        .await?
+        .candidates())
 }
 
 pub async fn refresh_actors(
     actor_catalog: &ActorCatalogState,
     git_cli: &GitCli,
     space: &Path,
-    all_time: bool,
+    _all_time: bool,
 ) -> Result<Vec<ActorCandidate>, AppError> {
-    super::refresh_actors(actor_catalog, git_cli, space, all_time).await
+    Ok(actor_catalog
+        .refresh(git_cli.core(), space)
+        .await?
+        .candidates())
 }

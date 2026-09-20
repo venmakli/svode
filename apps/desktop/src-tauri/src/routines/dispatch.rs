@@ -19,11 +19,12 @@ use crate::agent_adapters::runtime::{
 use crate::agent_adapters::{AgentAdapterKind, AgentAdapterRegistry};
 use crate::agent_sessions::types::{AgentSessionResumeCommand, AgentSessionSource};
 use crate::git::GitState;
-use crate::git::access::{
-    RepositoryAccessState, require_repository_mutation_paths, scope_authorized_mutation_paths,
-};
+use crate::git::access::{RepositoryAccessState, require_repository_mutation_paths};
 use crate::index::IndexState;
+use crate::index::update::IndexUpdateState;
 use crate::terminal::{AgentTerminalSpawn, TerminalManager, quote_agent_shell_command};
+use svode_core::collections::engine::EntryFieldBatchIntent;
+use svode_core::page::fields::PageFieldUpdate;
 use svode_core::page::nonce::WriteNonceRegistry;
 
 #[derive(Debug, Clone)]
@@ -136,7 +137,7 @@ pub(crate) async fn event_dispatch_preflight(
             {
                 return None;
             }
-            crate::properties::entry_property_batch_mutation_paths_with_project(
+            svode_core::collections::engine::entry_property_batch_mutation_paths_with_project(
                 &owner.space_path.to_string_lossy(),
                 Some(&owner.project_path.to_string_lossy()),
                 &payload.entry_path,
@@ -377,27 +378,31 @@ pub(super) async fn dispatch_routine(
         }
         let space = owner.space_path.to_string_lossy().into_owned();
         let project = owner.project_path.to_string_lossy().into_owned();
-        let paths = crate::properties::entry_property_batch_mutation_paths_with_project(
-            &space,
-            Some(&project),
-            &payload.entry_path,
-            set,
-        )?;
-        require_repository_mutation_paths(app, paths.clone()).await?;
-        let mutation = scope_authorized_mutation_paths(paths, async {
-            crate::properties::update_entry_properties_atomic(
-                &space,
-                Some(&project),
-                &payload.entry_path,
-                set,
-            )
-        })
+        let index_updates = app.state::<IndexUpdateState>();
+        let nonces = app.state::<Arc<WriteNonceRegistry>>();
+        let mutation = crate::page::update_fields(
+            PageFieldUpdate {
+                space: &space,
+                path: &payload.entry_path,
+                project: Some(&project),
+                values: set,
+                intent: EntryFieldBatchIntent::Routine,
+            },
+            index_state,
+            &index_updates,
+            &nonces,
+            None,
+            |paths| async move {
+                require_repository_mutation_paths(app, paths.clone()).await?;
+                Ok(paths)
+            },
+        )
         .await;
         return match mutation {
-            Ok(_) => {
-                let joined = owner.space_path.join(&payload.entry_path);
+            Ok(outcome) => {
+                let joined = owner.space_path.join(&outcome.page.path);
                 let canonical = std::fs::canonicalize(&joined).unwrap_or(joined);
-                app.state::<WriteNonceRegistry>().register_with_origin(
+                nonces.register_with_origin(
                     canonical,
                     new_runtime_id(),
                     Some(execution_run_id.clone()),

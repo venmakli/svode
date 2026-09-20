@@ -6,6 +6,7 @@ use std::time::Instant;
 use serde::Serialize;
 use tauri::{AppHandle, Manager, State};
 
+use crate::actors::ActorCandidate;
 use crate::error::AppError;
 use crate::files::{FileWatcher, TreeNode, link_fix, tree};
 use crate::git::access::{
@@ -15,15 +16,17 @@ use crate::git::autocommit::{AutocommitService, StructuralOp};
 use crate::git::{GitState, require_cli};
 use crate::index::update::IndexUpdateState;
 use crate::index::{self, IndexState, ResolvedDocLink};
-use crate::properties::{
-    self, ActorCandidate, CollectionInfo, CollectionSchema, Column, EntrySchemaResponse, Filter,
-    PropertyOption, PropertyType, RelationBacklink, RelationTwoWayDiagnostics, ResolvedRelation,
-    SchemaMutationWarning, Sort, View,
-};
+use crate::properties::read;
 use crate::repo_path::{RootMode, normalize_repo_relative};
 use crate::space::config;
+use svode_core::collections::engine::{
+    self as engine, CollectionInfo, CollectionSchema, Column, EntryFieldBatchIntent,
+    EntrySchemaResponse, Filter, PropertyOption, PropertyType, RelationBacklink,
+    RelationTwoWayDiagnostics, ResolvedRelation, SchemaMutationWarning, Sort, View,
+};
 use svode_core::index::backlinks::{BacklinkInfo, LinkValidation};
 use svode_core::page::entry::{self, Entry, WriteResult};
+use svode_core::page::fields::PageFieldUpdate;
 use svode_core::page::nonce::WriteNonceRegistry;
 use svode_core::page::templates::{self, TemplateInfo, TemplateKind};
 
@@ -166,7 +169,7 @@ fn schema_commit_message_with_previous(
     default: impl Into<String>,
     sensitive: &'static str,
 ) -> String {
-    if was_sensitive || properties::schema_has_sensitive_columns(schema) {
+    if was_sensitive || engine::schema_has_sensitive_columns(schema) {
         sensitive.to_string()
     } else {
         default.into()
@@ -174,16 +177,16 @@ fn schema_commit_message_with_previous(
 }
 
 fn collection_has_sensitive_columns(space: &str, collection_path: &str) -> bool {
-    properties::read::collection_schema(space, collection_path)
-        .map(|schema| properties::schema_has_sensitive_columns(&schema))
+    engine::read_collection_schema(space, collection_path)
+        .map(|schema| engine::schema_has_sensitive_columns(&schema))
         .unwrap_or(false)
 }
 
 fn entry_in_sensitive_collection(space: &str, path: &str) -> bool {
-    properties::read::entry_schema(space, path)
+    engine::schema_response(space, path)
         .ok()
         .flatten()
-        .is_some_and(|response| properties::schema_has_sensitive_columns(&response.schema))
+        .is_some_and(|response| engine::schema_has_sensitive_columns(&response.schema))
 }
 
 fn entry_commit_name(space: &str, path: &str) -> String {
@@ -256,8 +259,8 @@ async fn require_planned_mutation_paths(
 async fn apply_collection_mutation<T>(
     app: &AppHandle,
     space: &str,
-    mutation: properties::PreparedCollectionMutation<T>,
-) -> Result<properties::CollectionMutationOutcome<T>, AppError>
+    mutation: engine::PreparedCollectionMutation<T>,
+) -> Result<engine::CollectionMutationOutcome<T>, AppError>
 where
     T: Send + 'static,
 {

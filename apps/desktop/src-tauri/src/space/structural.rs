@@ -9,8 +9,8 @@ use crate::git::access::ensure_mutation_paths_were_authorized;
 use crate::git::autocommit::{AutocommitService, StructuralOp};
 use crate::index::update::IndexUpdateState;
 use crate::index::{self, IndexState};
-use crate::properties;
 use crate::repo_path::{RootMode, normalize_repo_relative};
+use svode_core::collections::engine::{self as engine, CollectionSchema};
 use svode_core::content_tree::policy::TreeIgnorePolicy;
 use svode_core::index::backlinks::{BacklinkIndex, ModifiedLinkSource};
 use svode_core::page::entry::{self, Entry};
@@ -44,7 +44,7 @@ pub struct CollectionCreate {
     pub icon: Option<String>,
     pub description: Option<String>,
     pub cover: Option<entry::Cover>,
-    pub schema: properties::CollectionSchema,
+    pub schema: CollectionSchema,
     pub allocate_unique_title: bool,
     pub project: Option<String>,
 }
@@ -54,7 +54,7 @@ pub struct CollectionCreate {
 pub struct CollectionCreateOutcome {
     pub collection_path: String,
     pub collection: Entry,
-    pub schema: properties::CollectionSchema,
+    pub schema: CollectionSchema,
     pub changed_paths: Vec<PathBuf>,
 }
 
@@ -181,10 +181,10 @@ fn entry_history_name(path: &str) -> String {
 }
 
 fn entry_in_sensitive_collection(space: &str, path: &str) -> bool {
-    properties::read::entry_schema(space, path)
+    engine::schema_response(space, path)
         .ok()
         .flatten()
-        .is_some_and(|response| properties::schema_has_sensitive_columns(&response.schema))
+        .is_some_and(|response| engine::schema_has_sensitive_columns(&response.schema))
 }
 
 pub fn entry_commit_name(space: &str, path: &str) -> String {
@@ -495,7 +495,7 @@ pub async fn move_mutation_paths(
         return Ok(paths);
     };
     let mut paths =
-        properties::relation_move_mutation_paths_with_project(space, Some(project), from, to)?;
+        engine::relation_move_mutation_paths_with_project(space, Some(project), from, to)?;
     let space_id = state.core.space_id_for_dir(Path::new(space)).await;
     let link_plan = if Path::new(space).join(from).is_dir() {
         state
@@ -570,7 +570,7 @@ pub fn delete_mutation_paths(
     path: &str,
 ) -> Result<Vec<PathBuf>, AppError> {
     let deleted = entry::planned_deleted_entry_paths(space, path)?;
-    let mut paths = properties::cascade_clean_deleted_entries_mutation_paths_with_project(
+    let mut paths = engine::cascade_clean_deleted_entries_mutation_paths_with_project(
         space,
         project_path.filter(|path| !path.is_empty()),
         &deleted,
@@ -794,7 +794,7 @@ pub fn collection_create_schema_paths(
     space: &str,
     parent_path: Option<&str>,
     title: &str,
-    schema: properties::CollectionSchema,
+    schema: CollectionSchema,
     allocate_unique_title: bool,
     project_path: Option<&str>,
 ) -> Result<Vec<PathBuf>, AppError> {
@@ -811,14 +811,9 @@ pub fn collection_create_schema_paths(
         .strip_suffix(".md")
         .ok_or_else(|| AppError::General("Collection Page must be Markdown".into()))?;
     Ok(
-        properties::prepare_initial_collection_schema(
-            space,
-            collection_path,
-            schema,
-            project_path,
-        )?
-        .paths()
-        .to_vec(),
+        engine::prepare_initial_collection_schema(space, collection_path, schema, project_path)?
+            .paths()
+            .to_vec(),
     )
 }
 
@@ -847,7 +842,7 @@ where
         .strip_suffix(".md")
         .ok_or_else(|| AppError::General("Collection Page must be Markdown".into()))?
         .to_string();
-    let prepared_schema = properties::prepare_initial_collection_schema(
+    let prepared_schema = engine::prepare_initial_collection_schema(
         &request.space,
         &collection_path,
         request.schema,
@@ -1557,7 +1552,7 @@ async fn apply_move(
             );
         } else {
             let unique_id_paths =
-                properties::unique_id_mutation_paths_for_entry_tree(Path::new(space), &new_path)?;
+                engine::unique_id_mutation_paths_for_entry_tree(Path::new(space), &new_path)?;
             if unique_id_paths.is_empty() {
                 maybe_autocommit_structural_paths(
                     autocommit,
@@ -1742,10 +1737,8 @@ pub async fn duplicate(
     .await;
     if let Some(autocommit) = autocommit {
         let mut paths = entry_paths_with_order(space, [abs_entry_path(space, root_path)]);
-        let unique_id_paths = properties::unique_id_mutation_paths_for_entry_tree(
-            Path::new(space),
-            &duplicated.path,
-        )?;
+        let unique_id_paths =
+            engine::unique_id_mutation_paths_for_entry_tree(Path::new(space), &duplicated.path)?;
         if unique_id_paths.is_empty() {
             maybe_autocommit_structural_paths(
                 autocommit,

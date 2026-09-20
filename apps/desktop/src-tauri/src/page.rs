@@ -5,6 +5,7 @@ use std::future::Future;
 use std::path::PathBuf;
 
 use svode_core::page::create::{PageCreate, PageCreateOutcome};
+use svode_core::page::fields::{PageFieldOutcome, PageFieldUpdate};
 use svode_core::page::metadata::{PageMetadataOutcome, PageMetadataPatch};
 use svode_core::page::nonce::WriteNonceRegistry;
 use svode_core::page::write::{PageRuntime, PageWrite, PageWriteOutcome};
@@ -60,6 +61,41 @@ where
             &space,
             &path,
             new_path,
+            &outcome.changed_paths,
+        );
+    }
+    Ok(outcome)
+}
+
+pub(crate) async fn update_fields<F, Fut>(
+    request: PageFieldUpdate<'_>,
+    state: &IndexState,
+    updates: &IndexUpdateState,
+    nonces: &WriteNonceRegistry,
+    autocommit: Option<&AutocommitService>,
+    authorize: F,
+) -> Result<PageFieldOutcome, AppError>
+where
+    F: FnOnce(Vec<PathBuf>) -> Fut,
+    Fut: Future<Output = Result<Vec<PathBuf>, AppError>>,
+{
+    let space = request.space.to_string();
+    let path = request.path.to_string();
+    let project = request.project.map(str::to_string);
+    let cli = crate::git::dates::detected_cli();
+    let outcome = svode_core::page::fields::update(
+        request,
+        runtime(state, updates, nonces, cli.as_ref()),
+        authorize,
+    )
+    .await?;
+    if outcome.page.path != path {
+        schedule_rename(
+            autocommit,
+            project.as_deref(),
+            &space,
+            &path,
+            &outcome.page.path,
             &outcome.changed_paths,
         );
     }

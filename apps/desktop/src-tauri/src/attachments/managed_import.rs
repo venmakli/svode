@@ -15,7 +15,6 @@ use crate::git::access::ensure_mutation_paths_were_authorized;
 use crate::git::autocommit::{AutocommitService, StructuralOp};
 use crate::index::IndexState;
 use crate::index::update::IndexUpdateState;
-use crate::properties;
 use crate::repo_path::{RootMode, normalize_repo_relative, repo_relative_from_base};
 use crate::space::types::{AssetsSpaceConfig, AssetsStrategy};
 use crate::storage::{
@@ -228,12 +227,14 @@ pub(crate) async fn plan_managed_import(
         vec![space_path.join(&owner_path)]
     };
     if requires_conversion {
-        affected_paths.extend(properties::relation_move_mutation_paths_with_project(
-            &space_path.to_string_lossy(),
-            Some(&project_path.to_string_lossy()),
-            &content_path,
-            &canonical_content_path,
-        )?);
+        affected_paths.extend(
+            svode_core::collections::engine::relation_move_mutation_paths_with_project(
+                &space_path.to_string_lossy(),
+                Some(&project_path.to_string_lossy()),
+                &content_path,
+                &canonical_content_path,
+            )?,
+        );
         affected_paths.push(space_path.join(&content_path));
         affected_paths.push(space_path.join(&canonical_content_path));
         affected_paths.push(space_path.join(".svode/order.json"));

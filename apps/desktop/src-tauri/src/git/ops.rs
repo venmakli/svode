@@ -6,7 +6,6 @@ use std::collections::BTreeMap;
 
 use super::cli::GitCli;
 use crate::AppError;
-use crate::properties;
 use crate::repo_path::{RootMode, normalize_repo_relative};
 use crate::space::types::SpaceGitType;
 #[cfg(test)]
@@ -836,10 +835,12 @@ fn staged_changes_touch_sensitive_collection(
 ) -> bool {
     let repo = repo_dir.to_string_lossy();
     records.iter().any(|record| {
-        properties::resolve_collection_schema_result(&repo, &record.path)
+        svode_core::collections::engine::resolve_collection_schema_result(&repo, &record.path)
             .ok()
             .flatten()
-            .is_some_and(|(schema, _)| properties::schema_has_sensitive_columns(&schema))
+            .is_some_and(|(schema, _)| {
+                svode_core::collections::engine::schema_has_sensitive_columns(&schema)
+            })
     })
 }
 

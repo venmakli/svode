@@ -17,10 +17,14 @@ use crate::git::access::repository_access_snapshot;
 use crate::git::{self, GitState};
 use crate::index::update::IndexUpdateState;
 use crate::index::{IndexKey, IndexState};
-use crate::properties::{self, CollectionSchema, Column, Filter, Sort, View};
+use crate::properties::read;
 use crate::repo_path::{RootMode, normalize_repo_relative};
 use crate::space::{config as space_config, content_tree, project, registry};
+use svode_core::collections::engine::{
+    self as engine, CollectionSchema, Column, EntryFieldBatchIntent, Filter, Sort, View,
+};
 use svode_core::page::entry;
+use svode_core::page::fields::PageFieldUpdate;
 
 const DEFAULT_LIMIT: i64 = 50;
 const MAX_LIMIT: i64 = 200;
@@ -584,7 +588,7 @@ fn mcp_space_capabilities(kind: &str) -> Value {
 }
 
 fn schema_for_create_collection(args: &CreateCollectionArgs) -> CollectionSchema {
-    let mut schema = properties::default_collection_schema();
+    let mut schema = engine::default_collection_schema();
     if let Some(columns) = args.columns.clone() {
         let fields = std::iter::once("title".to_string())
             .chain(columns.iter().map(|column| column.name.clone()))

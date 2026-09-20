@@ -2,6 +2,7 @@ pub mod create;
 pub mod dates;
 pub mod entry;
 mod error;
+pub mod fields;
 pub mod filename;
 pub mod frontmatter;
 pub mod identity;

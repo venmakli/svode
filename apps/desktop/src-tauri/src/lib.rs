@@ -73,7 +73,7 @@ pub fn run() {
         .manage(space::settings::AppSettingsState::new())
         .manage(mcp::active::ActiveProjectState::new())
         .manage(mcp::commands::McpConfigState::new())
-        .manage(properties::ActorCatalogState::new())
+        .manage(actors::ActorCatalogState::new())
         .manage(terminal::TerminalManager::new())
         .manage(media::MediaSourceState::new())
         .manage(apps::AppSourceState::new())

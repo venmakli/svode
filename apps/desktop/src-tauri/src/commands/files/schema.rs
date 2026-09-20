@@ -16,7 +16,7 @@ pub async fn add_schema_column(
     } else {
         format!("Add column \"{}\"", column.name)
     };
-    let mutation = properties::prepare_add_schema_column(
+    let mutation = engine::prepare_add_schema_column(
         &space,
         &collection_path,
         column,
@@ -53,7 +53,7 @@ pub async fn change_schema_type(
         property_type_message(new_type)
     );
     let conversion_strategy = conversion_strategy.map(json_to_yaml_value).transpose()?;
-    let mutation = properties::prepare_change_schema_type(
+    let mutation = engine::prepare_change_schema_type(
         &space,
         &collection_path,
         &column_name,
@@ -89,7 +89,7 @@ pub async fn assign_unique_id(
     index_updates: State<'_, IndexUpdateState>,
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<Entry, AppError> {
-    let mutation = properties::prepare_assign_unique_id(&space, &file_path)?;
+    let mutation = engine::prepare_assign_unique_id(&space, &file_path)?;
     let outcome = apply_collection_mutation(&app, &space, mutation).await?;
     let entry = entry::read(&space, &file_path)?;
     let _ = crate::index::update::publish_paths_or_repair(
@@ -124,7 +124,7 @@ pub async fn normalize_unique_id_counter(
     project_path: Option<String>,
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<CollectionSchema, AppError> {
-    let mutation = properties::prepare_normalize_unique_id_counter(&space, &collection_path)?;
+    let mutation = engine::prepare_normalize_unique_id_counter(&space, &collection_path)?;
     let outcome = apply_collection_mutation(&app, &space, mutation).await?;
     let schema = outcome.value;
     maybe_autocommit_schema(
@@ -149,7 +149,7 @@ pub async fn rename_schema_column(
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<CollectionSchema, AppError> {
     let was_sensitive = collection_has_sensitive_columns(&space, &collection_path);
-    let mutation = properties::prepare_rename_schema_column(
+    let mutation = engine::prepare_rename_schema_column(
         &space,
         &collection_path,
         &old_name,
@@ -187,7 +187,7 @@ pub async fn update_schema_column(
 ) -> Result<CollectionSchema, AppError> {
     let was_sensitive = collection_has_sensitive_columns(&space, &collection_path);
     let patch = json_to_yaml_value(patch)?;
-    let mutation = properties::prepare_update_schema_column(
+    let mutation = engine::prepare_update_schema_column(
         &space,
         &collection_path,
         &column_name,
@@ -225,7 +225,7 @@ pub async fn delete_schema_column(
 ) -> Result<CollectionSchema, AppError> {
     let was_sensitive = collection_has_sensitive_columns(&space, &collection_path);
     let delete_values = delete_values.unwrap_or(false);
-    let mutation = properties::prepare_delete_schema_column(
+    let mutation = engine::prepare_delete_schema_column(
         &space,
         &collection_path,
         &column_name,
@@ -263,7 +263,7 @@ pub async fn add_option(
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<CollectionSchema, AppError> {
     let default_message = format!("Add option \"{}\" to \"{column_name}\"", option.name);
-    let mutation = properties::prepare_add_option(&space, &collection_path, column_name, option)?;
+    let mutation = engine::prepare_add_option(&space, &collection_path, column_name, option)?;
     let outcome = apply_collection_mutation(&app, &space, mutation).await?;
     let schema = outcome.value;
     let message = schema_commit_message(&schema, default_message, "Update collection field");
@@ -289,7 +289,7 @@ pub async fn rename_option(
     project_path: Option<String>,
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<CollectionSchema, AppError> {
-    let mutation = properties::prepare_rename_option(
+    let mutation = engine::prepare_rename_option(
         &space,
         &collection_path,
         column_name.clone(),
@@ -326,7 +326,7 @@ pub async fn delete_option(
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<CollectionSchema, AppError> {
     let delete_values = delete_values.unwrap_or(false);
-    let mutation = properties::prepare_delete_option(
+    let mutation = engine::prepare_delete_option(
         &space,
         &collection_path,
         column_name.clone(),
@@ -365,7 +365,7 @@ pub async fn update_option(
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<CollectionSchema, AppError> {
     let patch = patch.map(json_to_yaml_value).transpose()?;
-    let mutation = properties::prepare_update_option(
+    let mutation = engine::prepare_update_option(
         &space,
         &collection_path,
         column_name.clone(),
@@ -402,7 +402,7 @@ pub async fn promote_orphan(
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<CollectionSchema, AppError> {
     let mutation =
-        properties::prepare_promote_orphan(&space, &collection_path, file_path, field.clone())?;
+        engine::prepare_promote_orphan(&space, &collection_path, file_path, field.clone())?;
     let outcome = apply_collection_mutation(&app, &space, mutation).await?;
     let schema = outcome.value;
     let message = schema_commit_message(
@@ -430,7 +430,7 @@ pub async fn clear_field_values(
     project_path: Option<String>,
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<(), AppError> {
-    let mutation = properties::prepare_clear_field_values(&space, &collection_path, field.clone())?;
+    let mutation = engine::prepare_clear_field_values(&space, &collection_path, field.clone())?;
     let outcome = apply_collection_mutation(&app, &space, mutation).await?;
     let message = if collection_has_sensitive_columns(&space, &collection_path) {
         "Update collection field".to_string()
@@ -465,7 +465,7 @@ pub async fn clear_option_values(
     }
     names.sort();
     names.dedup();
-    let mutation = properties::prepare_clear_option_values(
+    let mutation = engine::prepare_clear_option_values(
         &space,
         &collection_path,
         column_name.clone(),
@@ -501,7 +501,7 @@ pub async fn replace_option_values(
     project_path: Option<String>,
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<(), AppError> {
-    let mutation = properties::prepare_replace_option_values(
+    let mutation = engine::prepare_replace_option_values(
         &space,
         &collection_path,
         column_name.clone(),
@@ -535,12 +535,8 @@ pub async fn update_system_field_label(
     project_path: Option<String>,
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<CollectionSchema, AppError> {
-    let mutation = properties::prepare_update_system_field_label(
-        &space,
-        &collection_path,
-        field.clone(),
-        label,
-    )?;
+    let mutation =
+        engine::prepare_update_system_field_label(&space, &collection_path, field.clone(), label)?;
     let outcome = apply_collection_mutation(&app, &space, mutation).await?;
     let schema = outcome.value;
     let message = schema_commit_message(
@@ -564,5 +560,5 @@ pub fn get_collection_schema(
     space: String,
     collection_path: String,
 ) -> Result<CollectionSchema, AppError> {
-    properties::read::collection_schema(&space, &collection_path)
+    Ok(engine::read_collection_schema(&space, &collection_path)?)
 }

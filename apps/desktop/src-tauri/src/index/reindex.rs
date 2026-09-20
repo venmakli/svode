@@ -304,7 +304,7 @@ mod tests {
         );
         let collection_rows = crate::properties::query_entries(
             &pool,
-            &crate::properties::ActorCatalogState::new(),
+            &crate::actors::ActorCatalogState::new(),
             None,
             &tmp.path().to_string_lossy(),
             ".",
@@ -440,7 +440,7 @@ mod tests {
 
         let direct = crate::properties::query_entries(
             &root_pool,
-            &crate::properties::ActorCatalogState::new(),
+            &crate::actors::ActorCatalogState::new(),
             None,
             &root.to_string_lossy(),
             ".",
@@ -467,7 +467,7 @@ mod tests {
 
         let nested = crate::properties::query_entries(
             &root_pool,
-            &crate::properties::ActorCatalogState::new(),
+            &crate::actors::ActorCatalogState::new(),
             None,
             &root.to_string_lossy(),
             ".",

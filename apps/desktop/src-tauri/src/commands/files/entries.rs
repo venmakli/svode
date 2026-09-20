@@ -120,8 +120,8 @@ pub async fn create_entry(
     )
     .await?
     .page;
-    if properties::unique_id_schema_path_for_entry(&space, &created.path)?.is_some() {
-        let mut paths = properties::unique_id_mutation_paths_for_entry(&space, &created.path)?;
+    if engine::unique_id_schema_path_for_entry(&space, &created.path)?.is_some() {
+        let mut paths = engine::unique_id_mutation_paths_for_entry(&space, &created.path)?;
         paths.push(order_path(&space));
         let message = if entry_in_sensitive_collection(&space, &created.path) {
             "Create collection entry with unique_id".to_string()
@@ -162,7 +162,7 @@ pub async fn create_collection(
             icon: None,
             description: None,
             cover: None,
-            schema: properties::default_collection_schema(),
+            schema: engine::default_collection_schema(),
             allocate_unique_title: true,
             project: project_path,
         },
@@ -210,7 +210,7 @@ pub fn get_entry_schema(
     space: String,
     file_path: String,
 ) -> Result<Option<EntrySchemaResponse>, AppError> {
-    properties::read::entry_schema(&space, &file_path)
+    Ok(engine::schema_response(&space, &file_path)?)
 }
 
 #[tauri::command]
@@ -227,28 +227,14 @@ pub async fn update_entry_field(
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<Entry, AppError> {
     let fields = std::collections::BTreeMap::from([(field, value)]);
-    let batch = properties::prepare_entry_field_batch(
-        &space,
-        project_path.as_deref(),
-        &file_path,
-        &fields,
-        properties::EntryFieldBatchIntent::Literal,
-    )?;
-    let has_title = batch.title().is_some();
-    let current = entry::read(&space, &file_path)?;
     let authorization_space = space.clone();
-    let outcome = crate::page::write(
-        svode_core::page::write::PageWrite {
+    let outcome = crate::page::update_fields(
+        PageFieldUpdate {
             space: &space,
             path: &file_path,
-            content: &current.body,
-            title: None,
-            icon: None,
-            extra: None,
-            metadata: None,
-            field_batch: Some(batch),
-            skip_rename: !has_title,
             project: project_path.as_deref().filter(|path| !path.is_empty()),
+            values: &fields,
+            intent: EntryFieldBatchIntent::Literal,
         },
         &index_state,
         &index_updates,
@@ -257,10 +243,7 @@ pub async fn update_entry_field(
         |paths| require_planned_mutation_paths(&app, &authorization_space, paths),
     )
     .await?;
-    let current_path = outcome.result.new_path.as_deref().unwrap_or(&file_path);
-    let mut updated = entry::read(&space, current_path)?;
-    updated.warnings = outcome.result.warnings;
-    Ok(updated)
+    Ok(outcome.page)
 }
 
 #[tauri::command]

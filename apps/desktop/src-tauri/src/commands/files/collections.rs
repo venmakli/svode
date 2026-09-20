@@ -212,7 +212,7 @@ pub async fn add_view(
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<CollectionSchema, AppError> {
     let default_message = format!("Add view \"{}\"", view.name());
-    let mutation = properties::prepare_add_view(&space, &collection_path, view, position)?;
+    let mutation = engine::prepare_add_view(&space, &collection_path, view, position)?;
     let outcome = apply_collection_mutation(&app, &space, mutation).await?;
     let schema = outcome.value;
     let message = schema_commit_message(&schema, default_message, "Update collection view");
@@ -237,7 +237,7 @@ pub async fn rename_view(
     project_path: Option<String>,
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<CollectionSchema, AppError> {
-    let mutation = properties::prepare_rename_view(&space, &collection_path, &old_name, &new_name)?;
+    let mutation = engine::prepare_rename_view(&space, &collection_path, &old_name, &new_name)?;
     let outcome = apply_collection_mutation(&app, &space, mutation).await?;
     let schema = outcome.value;
     let message = schema_commit_message(
@@ -267,7 +267,7 @@ pub async fn update_view(
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<CollectionSchema, AppError> {
     let patch = json_to_yaml_value(patch)?;
-    let mutation = properties::prepare_update_view(&space, &collection_path, &view_name, patch)?;
+    let mutation = engine::prepare_update_view(&space, &collection_path, &view_name, patch)?;
     let outcome = apply_collection_mutation(&app, &space, mutation).await?;
     let schema = outcome.value;
     let message = schema_commit_message(
@@ -295,7 +295,7 @@ pub async fn delete_view(
     project_path: Option<String>,
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<CollectionSchema, AppError> {
-    let mutation = properties::prepare_delete_view(&space, &collection_path, &view_name)?;
+    let mutation = engine::prepare_delete_view(&space, &collection_path, &view_name)?;
     let outcome = apply_collection_mutation(&app, &space, mutation).await?;
     let schema = outcome.value;
     let message = schema_commit_message(
@@ -324,8 +324,7 @@ pub async fn duplicate_view(
     project_path: Option<String>,
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<CollectionSchema, AppError> {
-    let mutation =
-        properties::prepare_duplicate_view(&space, &collection_path, &view_name, &new_name)?;
+    let mutation = engine::prepare_duplicate_view(&space, &collection_path, &view_name, &new_name)?;
     let outcome = apply_collection_mutation(&app, &space, mutation).await?;
     let schema = outcome.value;
     let message = schema_commit_message(
@@ -353,7 +352,7 @@ pub async fn reorder_views(
     project_path: Option<String>,
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<CollectionSchema, AppError> {
-    let mutation = properties::prepare_reorder_views(&space, &collection_path, new_order)?;
+    let mutation = engine::prepare_reorder_views(&space, &collection_path, new_order)?;
     let outcome = apply_collection_mutation(&app, &space, mutation).await?;
     let schema = outcome.value;
     let message = schema_commit_message(&schema, "Reorder views", "Update collection view");
@@ -377,12 +376,11 @@ pub async fn list_entries_for_view(
     project_path: Option<String>,
     index_state: State<'_, IndexState>,
     git_state: State<'_, GitState>,
-    actor_catalog: State<'_, properties::ActorCatalogState>,
+    actor_catalog: State<'_, crate::actors::ActorCatalogState>,
 ) -> Result<Vec<Entry>, AppError> {
-    let target =
-        properties::read::target_for_space(&index_state, space, project_path.as_deref()).await?;
+    let target = read::target_for_space(&index_state, space, project_path.as_deref()).await?;
     let git_cli = git_state.cli.clone();
-    properties::read::entries_for_view(
+    read::entries_for_view(
         &index_state,
         &actor_catalog,
         git_cli.as_ref(),
@@ -406,12 +404,11 @@ pub async fn query_entries(
     project_path: Option<String>,
     index_state: State<'_, IndexState>,
     git_state: State<'_, GitState>,
-    actor_catalog: State<'_, properties::ActorCatalogState>,
+    actor_catalog: State<'_, crate::actors::ActorCatalogState>,
 ) -> Result<Vec<Entry>, AppError> {
-    let target =
-        properties::read::target_for_space(&index_state, space, project_path.as_deref()).await?;
+    let target = read::target_for_space(&index_state, space, project_path.as_deref()).await?;
     let git_cli = git_state.cli.clone();
-    properties::read::query_entries(
+    read::query_entries(
         &index_state,
         &actor_catalog,
         git_cli.as_ref(),
@@ -434,9 +431,8 @@ pub async fn resolve_relation(
     project_path: Option<String>,
     index_state: State<'_, IndexState>,
 ) -> Result<Option<ResolvedRelation>, AppError> {
-    let target =
-        properties::read::target_for_space(&index_state, space, project_path.as_deref()).await?;
-    properties::read::resolve_relation(&index_state, &target, &relation, &value).await
+    let target = read::target_for_space(&index_state, space, project_path.as_deref()).await?;
+    read::resolve_relation(&index_state, &target, &relation, &value).await
 }
 
 #[tauri::command]
@@ -447,9 +443,8 @@ pub async fn resolve_relations_batch(
     project_path: Option<String>,
     index_state: State<'_, IndexState>,
 ) -> Result<Vec<Option<ResolvedRelation>>, AppError> {
-    let target =
-        properties::read::target_for_space(&index_state, space, project_path.as_deref()).await?;
-    properties::read::resolve_relations_batch(&index_state, &target, &relation, &values).await
+    let target = read::target_for_space(&index_state, space, project_path.as_deref()).await?;
+    read::resolve_relations_batch(&index_state, &target, &relation, &values).await
 }
 
 #[tauri::command]
@@ -459,12 +454,12 @@ pub fn query_relation_backlinks(
     source_collection_path: Option<String>,
     source_column: Option<String>,
 ) -> Result<Vec<RelationBacklink>, AppError> {
-    properties::read::relation_backlinks(
+    Ok(engine::query_relation_backlinks(
         &space,
         &target_path,
         source_collection_path.as_deref(),
         source_column.as_deref(),
-    )
+    )?)
 }
 
 #[tauri::command]
@@ -474,12 +469,12 @@ pub fn diagnose_two_way_relation(
     column: String,
     project_path: Option<String>,
 ) -> Result<RelationTwoWayDiagnostics, AppError> {
-    properties::read::relation_diagnostics(
+    Ok(engine::diagnose_two_way_relation_with_project(
         &space,
         &collection_path,
         &column,
         project_path.as_deref(),
-    )
+    )?)
 }
 
 #[tauri::command]
@@ -493,7 +488,7 @@ pub async fn repair_two_way_relation(
     project_path: Option<String>,
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<(), AppError> {
-    let mutation = properties::prepare_repair_two_way_relation(
+    let mutation = engine::prepare_repair_two_way_relation(
         &space,
         &collection_path,
         &column,
@@ -529,7 +524,7 @@ pub async fn repair_two_way_relation(
 
 #[tauri::command]
 pub fn list_collections(space: String) -> Result<Vec<CollectionInfo>, AppError> {
-    properties::read::collections(&space)
+    Ok(engine::list_collections(&space)?)
 }
 
 #[tauri::command]
@@ -537,10 +532,10 @@ pub async fn list_actors(
     space_path: String,
     all_time: Option<bool>,
     git_state: State<'_, GitState>,
-    actor_catalog: State<'_, properties::ActorCatalogState>,
+    actor_catalog: State<'_, crate::actors::ActorCatalogState>,
 ) -> Result<Vec<ActorCandidate>, AppError> {
     let cli = require_cli(&git_state)?;
-    properties::read::actors(
+    read::actors(
         &actor_catalog,
         &cli,
         Path::new(&space_path),
@@ -553,8 +548,8 @@ pub async fn list_actors(
 pub async fn refresh_actors(
     space_path: String,
     git_state: State<'_, GitState>,
-    actor_catalog: State<'_, properties::ActorCatalogState>,
+    actor_catalog: State<'_, crate::actors::ActorCatalogState>,
 ) -> Result<Vec<ActorCandidate>, AppError> {
     let cli = require_cli(&git_state)?;
-    properties::read::refresh_actors(&actor_catalog, &cli, Path::new(&space_path), false).await
+    read::refresh_actors(&actor_catalog, &cli, Path::new(&space_path), false).await
 }

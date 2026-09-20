@@ -80,7 +80,7 @@ pub(super) async fn list_collections(
     args: SpaceArgs,
 ) -> Result<ToolCallResult, McpBusinessError> {
     let (_, space) = resolve_space(app, args.space_id).await?;
-    let collections = properties::read::collections(&space)?;
+    let collections = engine::list_collections(&space)?;
     Ok(ToolCallResult::ok(
         format!("Found {} collections.", collections.len()),
         json!({ "collections": collections }),
@@ -94,7 +94,7 @@ pub(super) async fn get_collection_schema(
     let (_, space) = resolve_space(app, args.space_id).await?;
     let collection_path = validate_public_rel_path(&args.collection_path, true)?;
     ensure_inside(Path::new(&space), &collection_path)?;
-    let schema = properties::read::collection_schema(&space, &collection_path)?;
+    let schema = engine::read_collection_schema(&space, &collection_path)?;
     Ok(ToolCallResult::ok(
         format!("Read schema for collection {collection_path}."),
         json!({ "collectionPath": collection_path, "schema": schema }),
@@ -110,15 +110,15 @@ pub(super) async fn query_collection_items(
     ensure_inside(Path::new(&space), &collection_path)?;
     let limit = clamp_limit(args.limit);
     let offset = args.offset.unwrap_or(0).max(0);
-    let target = properties::read::CollectionReadTarget::from_index_key(
+    let target = read::CollectionReadTarget::from_index_key(
         space,
         index_key_for_context(&context, args.space_id.as_deref()),
     );
     let index_state = app.state::<IndexState>();
     let git_state = app.state::<GitState>();
     let git_cli = git::require_cli(&git_state).ok();
-    let actor_catalog = app.state::<properties::ActorCatalogState>();
-    let items = properties::read::query_entries(
+    let actor_catalog = app.state::<crate::actors::ActorCatalogState>();
+    let items = read::query_entries(
         &index_state,
         &actor_catalog,
         git_cli.as_ref(),
@@ -206,31 +206,17 @@ pub(super) async fn update_collection_item_fields(
             json!({ "item": item, "changedPaths": [] }),
         ));
     }
-    let batch = properties::prepare_entry_field_batch(
-        &space,
-        Some(context.project_path.as_str()),
-        &path,
-        &args.fields,
-        properties::EntryFieldBatchIntent::Literal,
-    )?;
-    let has_title = batch.title().is_some();
-    let current = entry::read(&space, &path)?;
     let state = app.state::<IndexState>();
     let updates = app.state::<IndexUpdateState>();
     let nonces = app.state::<std::sync::Arc<svode_core::page::nonce::WriteNonceRegistry>>();
     let authorization_space = space.clone();
-    let outcome = match crate::page::write(
-        svode_core::page::write::PageWrite {
+    let outcome = match crate::page::update_fields(
+        PageFieldUpdate {
             space: &space,
             path: &path,
-            content: &current.body,
-            title: None,
-            icon: None,
-            extra: None,
-            metadata: None,
-            field_batch: Some(batch),
-            skip_rename: !has_title,
             project: Some(&context.project_path),
+            values: &args.fields,
+            intent: EntryFieldBatchIntent::Literal,
         },
         &state,
         &updates,
@@ -250,9 +236,7 @@ pub(super) async fn update_collection_item_fields(
         }
         Err(error) => return Err(error.into()),
     };
-    let canonical_path = outcome.result.new_path.as_deref().unwrap_or(&path);
-    let mut item = entry::read(&space, canonical_path)?;
-    item.warnings = outcome.result.warnings;
+    let item = outcome.page;
     let changed_paths =
         svode_core::page::metadata::relative_changed_paths(&space, &outcome.changed_paths);
     Ok(ToolCallResult::ok(
@@ -525,7 +509,7 @@ pub(super) async fn validate_collection_integrity(
     if let Some(path) = collection_path.as_deref() {
         ensure_inside(Path::new(&space), path)?;
     }
-    let report = properties::read::integrity(
+    let report = engine::validate_collection_integrity_with_project(
         &space,
         collection_path.as_deref(),
         Some(context.project_path.as_str()),
@@ -719,7 +703,7 @@ pub(super) async fn add_collection_column(
     let (context, space) = resolve_space(app, args.space_id).await?;
     let collection_path = validate_public_rel_path(&args.collection_path, true)?;
     ensure_inside(Path::new(&space), &collection_path)?;
-    let mutation = properties::prepare_add_schema_column(
+    let mutation = engine::prepare_add_schema_column(
         &space,
         &collection_path,
         args.column,
@@ -741,7 +725,7 @@ pub(super) async fn update_collection_column(
     let (context, space) = resolve_space(app, args.space_id).await?;
     let collection_path = validate_public_rel_path(&args.collection_path, true)?;
     ensure_inside(Path::new(&space), &collection_path)?;
-    let mutation = properties::prepare_update_schema_column(
+    let mutation = engine::prepare_update_schema_column(
         &space,
         &collection_path,
         &args.column_name,
@@ -768,7 +752,7 @@ pub(super) async fn delete_collection_column(
     let collection_path = validate_public_rel_path(&args.collection_path, true)?;
     ensure_inside(Path::new(&space), &collection_path)?;
     let delete_values = args.delete_values.unwrap_or(false);
-    let mutation = properties::prepare_delete_schema_column(
+    let mutation = engine::prepare_delete_schema_column(
         &space,
         &collection_path,
         &args.column_name,
@@ -794,8 +778,7 @@ pub(super) async fn add_collection_view(
     let (_, space) = resolve_space(app, args.space_id).await?;
     let collection_path = validate_public_rel_path(&args.collection_path, true)?;
     ensure_inside(Path::new(&space), &collection_path)?;
-    let mutation =
-        properties::prepare_add_view(&space, &collection_path, args.view, args.position)?;
+    let mutation = engine::prepare_add_view(&space, &collection_path, args.view, args.position)?;
     let outcome = mutation.apply()?;
     let changed_paths = rel_paths_from_space(&space, outcome.changed_paths);
     Ok(ToolCallResult::ok(
@@ -812,7 +795,7 @@ pub(super) async fn update_collection_view(
     let (_, space) = resolve_space(app, args.space_id).await?;
     let collection_path = validate_public_rel_path(&args.collection_path, true)?;
     ensure_inside(Path::new(&space), &collection_path)?;
-    let mutation = properties::prepare_update_view(
+    let mutation = engine::prepare_update_view(
         &space,
         &collection_path,
         &args.view_name,
@@ -837,7 +820,7 @@ pub(super) async fn delete_collection_view(
     let (_, space) = resolve_space(app, args.space_id).await?;
     let collection_path = validate_public_rel_path(&args.collection_path, true)?;
     ensure_inside(Path::new(&space), &collection_path)?;
-    let mutation = properties::prepare_delete_view(&space, &collection_path, &args.view_name)?;
+    let mutation = engine::prepare_delete_view(&space, &collection_path, &args.view_name)?;
     let outcome = mutation.apply()?;
     let changed_paths = rel_paths_from_space(&space, outcome.changed_paths);
     Ok(ToolCallResult::ok(

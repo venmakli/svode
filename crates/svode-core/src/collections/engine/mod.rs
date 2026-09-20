@@ -3029,7 +3029,7 @@ where
 }
 
 /// [`with_rollback`] for callers whose own operation reports a host error.
-pub fn with_rollback_as<T, E, F>(paths: Vec<PathBuf>, f: F) -> Result<T, E>
+fn with_rollback_as<T, E, F>(paths: Vec<PathBuf>, f: F) -> Result<T, E>
 where
     E: From<CollectionError> + std::fmt::Display,
     F: FnOnce() -> Result<T, E>,

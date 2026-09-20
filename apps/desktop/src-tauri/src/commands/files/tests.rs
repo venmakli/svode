@@ -33,7 +33,7 @@ async fn collection_create_is_one_structural_action_under_a_leaf_parent() {
             icon: None,
             description: None,
             cover: None,
-            schema: properties::default_collection_schema(),
+            schema: engine::default_collection_schema(),
             allocate_unique_title: false,
             project: None,
         },
@@ -129,8 +129,7 @@ async fn collection_create_materializes_two_way_reverse_schema() {
     .unwrap();
 
     assert_eq!(outcome.schema.columns[0].two_way.as_deref(), Some("Tasks"));
-    let reverse =
-        properties::read_collection_schema(tmp.path().to_str().unwrap(), "Sprints").unwrap();
+    let reverse = engine::read_collection_schema(tmp.path().to_str().unwrap(), "Sprints").unwrap();
     assert_eq!(reverse.columns[0].name, "Tasks");
     assert_eq!(reverse.columns[0].relation.as_deref(), Some("Tasks"));
 }

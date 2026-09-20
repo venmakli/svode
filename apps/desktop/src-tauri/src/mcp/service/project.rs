@@ -63,8 +63,8 @@ pub(super) async fn list_actors(
     let (_, space) = resolve_space(app, args.space_id).await?;
     let git_state = app.state::<GitState>();
     let cli = git::require_cli(&git_state)?;
-    let actor_catalog = app.state::<properties::ActorCatalogState>();
-    let actors = properties::read::actors(
+    let actor_catalog = app.state::<crate::actors::ActorCatalogState>();
+    let actors = read::actors(
         &actor_catalog,
         &cli,
         Path::new(&space),

@@ -257,12 +257,12 @@ async fn authorize_mutating_tool(
             if decoded.fields.is_empty() {
                 return Ok(None);
             }
-            let batch = properties::prepare_entry_field_batch(
+            let batch = engine::prepare_entry_field_batch(
                 &space,
                 Some(&context.project_path),
                 &path,
                 &decoded.fields,
-                properties::EntryFieldBatchIntent::Literal,
+                engine::EntryFieldBatchIntent::Literal,
             )?;
             paths.extend_from_slice(batch.mutation_paths());
             if let Some(title) = batch.title()
@@ -277,7 +277,7 @@ async fn authorize_mutating_tool(
             let decoded: PathArgs = decode(args.clone())?;
             let deleted = entry::planned_deleted_entry_paths(&space, &decoded.path)?;
             paths.extend(
-                properties::cascade_clean_deleted_entries_mutation_paths_with_project(
+                engine::cascade_clean_deleted_entries_mutation_paths_with_project(
                     &space,
                     Some(&context.project_path),
                     &deleted,
@@ -289,7 +289,7 @@ async fn authorize_mutating_tool(
             let path = collection_readme_path(&decoded.collection_path);
             let deleted = entry::planned_deleted_entry_paths(&space, &path)?;
             paths.extend(
-                properties::cascade_clean_deleted_entries_mutation_paths_with_project(
+                engine::cascade_clean_deleted_entries_mutation_paths_with_project(
                     &space,
                     Some(&context.project_path),
                     &deleted,
@@ -341,7 +341,7 @@ async fn authorize_mutating_tool(
         "add_collection_column" => {
             let decoded: AddCollectionColumnArgs = decode(args.clone())?;
             paths.extend(
-                properties::prepare_add_schema_column(
+                engine::prepare_add_schema_column(
                     &space,
                     &decoded.collection_path,
                     decoded.column,
@@ -356,7 +356,7 @@ async fn authorize_mutating_tool(
             let decoded: UpdateCollectionColumnArgs = decode(args.clone())?;
             let patch = json_to_yaml(decoded.patch)?;
             paths.extend(
-                properties::prepare_update_schema_column(
+                engine::prepare_update_schema_column(
                     &space,
                     &decoded.collection_path,
                     &decoded.column_name,
@@ -371,7 +371,7 @@ async fn authorize_mutating_tool(
         "delete_collection_column" => {
             let decoded: DeleteCollectionColumnArgs = decode(args.clone())?;
             paths.extend(
-                properties::prepare_delete_schema_column(
+                engine::prepare_delete_schema_column(
                     &space,
                     &decoded.collection_path,
                     &decoded.column_name,
