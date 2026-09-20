@@ -213,7 +213,7 @@ mod tests {
     #[test]
     fn routine_mutations_preserve_other_local_config_owners() {
         let temp = tempdir().unwrap();
-        config::write_git_user_policy(
+        svode_core::git::policy::write_user_policy(
             temp.path(),
             &GitUserPolicy {
                 auto_sync: true,
@@ -226,7 +226,11 @@ mod tests {
 
         set(&root, true).unwrap();
 
-        assert!(config::read_git_user_policy(temp.path()).unwrap().auto_sync);
+        assert!(
+            svode_core::git::policy::read_user_policy(temp.path())
+                .unwrap()
+                .auto_sync
+        );
     }
 
     #[tokio::test]

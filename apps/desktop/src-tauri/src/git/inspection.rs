@@ -4,10 +4,8 @@ use serde::{Deserialize, Serialize};
 use tauri::State;
 
 use super::{GitState, cli::GitCli, require_cli};
-use crate::{
-    AppError,
-    repo_path::{RootMode, normalize_repo_relative},
-};
+use crate::AppError;
+use svode_core::git::path::{RootMode, contained_file, normalize_repo_relative};
 
 const MAX_BYTES: usize = 512 * 1024;
 const MAX_LINE_BYTES: usize = 16 * 1024;
@@ -57,36 +55,7 @@ async fn bounded_git(
     repo: &Path,
     args: &[&str],
 ) -> Result<(bool, Vec<u8>), AppError> {
-    super::cli::read_bounded(cli, repo, args, MAX_BYTES).await
-}
-
-pub(crate) fn contained_file(space: &Path, path: &str) -> Result<std::path::PathBuf, AppError> {
-    let path = normalize_repo_relative(path, RootMode::Reject)?;
-    let root = space.canonicalize()?;
-    let target = root.join(&path);
-    let mut component = root.clone();
-    for part in path.split('/') {
-        component.push(part);
-        if std::fs::symlink_metadata(&component)
-            .is_ok_and(|metadata| metadata.file_type().is_symlink())
-        {
-            return Err(AppError::PathNotAccessible(
-                "Symlink source is unavailable".into(),
-            ));
-        }
-    }
-    let mut ancestor = target.as_path();
-    while !ancestor.exists() {
-        ancestor = ancestor
-            .parent()
-            .ok_or_else(|| AppError::PathNotAccessible("Source unavailable".into()))?;
-    }
-    if !ancestor.canonicalize()?.starts_with(&root) {
-        return Err(AppError::PathNotAccessible(
-            "Source leaves repository scope".into(),
-        ));
-    }
-    Ok(target)
+    Ok(super::cli::read_bounded(cli, repo, args, MAX_BYTES).await?)
 }
 
 #[cfg(test)]

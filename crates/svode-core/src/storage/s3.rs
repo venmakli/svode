@@ -5,6 +5,35 @@ use serde::{Deserialize, Serialize};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 pub const CONFIG_REL: &str = ".svode/lfs-s3-agent.json";
+
+const AGENT_IGNORE_START: &str = "# svode:lfs-s3-agent:start";
+const AGENT_IGNORE_END: &str = "# svode:lfs-s3-agent:end";
+
+/// Ensure the managed `# svode:lfs-s3-agent` block is present in
+/// `.gitignore` so the agent config file (with its keychain account name) is
+/// never committed. Idempotent.
+pub fn ensure_agent_gitignore(space_dir: &std::path::Path) -> Result<(), std::io::Error> {
+    let path = space_dir.join(".gitignore");
+    let current = match std::fs::read_to_string(&path) {
+        Ok(current) => current,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(error) => return Err(error),
+    };
+    if current.contains(AGENT_IGNORE_START) {
+        return Ok(());
+    }
+    let mut next = current.trim_end_matches('\n').to_string();
+    if !next.is_empty() {
+        next.push('\n');
+    }
+    next.push_str(AGENT_IGNORE_START);
+    next.push('\n');
+    next.push_str(crate::git::policy::S3_AGENT);
+    next.push('\n');
+    next.push_str(AGENT_IGNORE_END);
+    next.push('\n');
+    std::fs::write(&path, next)
+}
 pub const SETUP_REQUIRED: &str = "Configure S3 again: select two Secrets in Storage settings";
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]

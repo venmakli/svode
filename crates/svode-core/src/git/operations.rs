@@ -9,25 +9,25 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 use tokio::sync::{Mutex, watch};
 
+use super::GitError;
 use super::{
     cli::GitCli,
+    flow::{PublicationStatus, SyncReport},
     ops::GitStatus,
-    publication_flow::{PublicationStatus, SyncReport},
 };
-use crate::AppError;
 
 /// Preserve the original IPC error and kind while sharing a terminal outcome.
 #[derive(Debug, Clone)]
-pub struct SharedError(Arc<AppError>);
+pub struct SharedError(Arc<GitError>);
 
-impl From<AppError> for SharedError {
-    fn from(error: AppError) -> Self {
+impl From<GitError> for SharedError {
+    fn from(error: GitError) -> Self {
         Self(Arc::new(error))
     }
 }
 impl std::ops::Deref for SharedError {
-    type Target = AppError;
-    fn deref(&self) -> &AppError {
+    type Target = GitError;
+    fn deref(&self) -> &GitError {
         &self.0
     }
 }
@@ -43,7 +43,7 @@ impl Serialize for SharedError {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum Intent {
+pub enum Intent {
     Sync {
         background: bool,
     },
@@ -60,7 +60,7 @@ pub(crate) enum Intent {
 }
 
 impl Intent {
-    pub(crate) fn reader(&self) -> bool {
+    pub fn reader(&self) -> bool {
         matches!(self, Self::FetchStatus | Self::InspectPublication)
     }
 
@@ -75,12 +75,12 @@ impl Intent {
             )
     }
 
-    pub(crate) fn background(&self) -> bool {
+    pub fn background(&self) -> bool {
         matches!(self, Self::Sync { background: true })
     }
 
-    pub(crate) fn admitted(&self, repo: &Path) -> bool {
-        !self.background() || crate::space::config::effective_git_user_policy(repo).auto_sync
+    pub fn admitted(&self, repo: &Path) -> bool {
+        !self.background() || super::policy::effective_user_policy(repo).auto_sync
     }
 
     fn reserves_parent(&self) -> bool {
@@ -92,7 +92,7 @@ impl Intent {
 }
 
 #[derive(Debug, Clone)]
-pub(crate) enum Output {
+pub enum Output {
     Sync(SyncReport),
     Status(GitStatus),
     Parent(PublicationStatus),
@@ -101,10 +101,10 @@ pub(crate) enum Output {
 
 /// Local observations only; never a replacement for publication's remote proof.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Snapshot {
-    pub(crate) target: String,
-    pub(crate) transport: String,
-    pub(crate) head: String,
+pub struct Snapshot {
+    pub target: String,
+    pub transport: String,
+    pub head: String,
     refs: String,
     branch: String,
     pseudo_refs: String,
@@ -143,7 +143,7 @@ fn transport_hash(branch: &str, config: &str) -> Sha256 {
     hash
 }
 
-pub(crate) async fn read_transport(cli: &GitCli, repo: &Path) -> Result<String, AppError> {
+pub async fn read_transport(cli: &GitCli, repo: &Path) -> Result<String, GitError> {
     let (branch, config) = tokio::join!(
         cli.exec(repo, &["symbolic-ref", "-q", "HEAD"]),
         cli.exec_redacted(repo, &["config", "--null", "--list"]),
@@ -159,7 +159,7 @@ pub(crate) async fn read_transport(cli: &GitCli, repo: &Path) -> Result<String, 
 }
 
 impl Snapshot {
-    pub(crate) async fn read(cli: &GitCli, repo: &Path) -> Result<Self, AppError> {
+    pub async fn read(cli: &GitCli, repo: &Path) -> Result<Self, GitError> {
         let (branch, config, refs, git_dir, index) = tokio::join!(
             cli.exec(repo, &["symbolic-ref", "-q", "HEAD"]),
             cli.exec_redacted(repo, &["config", "--null", "--list"]),
@@ -239,7 +239,7 @@ impl Snapshot {
         })
     }
 
-    pub(crate) fn same_remote_observation(&self, observed: &Self) -> bool {
+    pub fn same_remote_observation(&self, observed: &Self) -> bool {
         let refs = |snapshot: &Self| {
             snapshot
                 .refs
@@ -258,7 +258,7 @@ impl Snapshot {
 
     // Only the current branch and remote tracking refs may have changed in our
     // own successful pull/push. Other sources require another admitted pass.
-    pub(crate) fn publication_covers(&self, before: &Self, published: &str) -> bool {
+    pub fn publication_covers(&self, before: &Self, published: &str) -> bool {
         let other_refs = |s: &Self| {
             s.refs
                 .lines()
@@ -277,8 +277,8 @@ impl Snapshot {
     }
 }
 
-pub(crate) fn target_changed(repo: &Path) -> AppError {
-    AppError::GitPublicationBlocked {
+pub fn target_changed(repo: &Path) -> GitError {
+    GitError::PublicationBlocked {
         repository: repo.to_string_lossy().into_owned(),
         child: None,
         reason: super::publication::PublicationBlockReason::TargetChanged,
@@ -286,35 +286,35 @@ pub(crate) fn target_changed(repo: &Path) -> AppError {
 }
 
 #[derive(Clone)]
-pub(crate) struct Request {
-    pub(crate) repo: PathBuf,
-    pub(crate) intent: Intent,
-    pub(crate) snapshot: Snapshot,
-    pub(crate) parent: Option<(PathBuf, Option<Snapshot>)>,
-    pub(crate) previous: Option<Completion>,
+pub struct Request {
+    pub repo: PathBuf,
+    pub intent: Intent,
+    pub snapshot: Snapshot,
+    pub parent: Option<(PathBuf, Option<Snapshot>)>,
+    pub previous: Option<Completion>,
 }
 
 #[derive(Clone)]
-pub(crate) struct ParentEvidence {
-    pub(crate) repo: PathBuf,
-    pub(crate) before: Snapshot,
-    pub(crate) after: Snapshot,
-    pub(crate) result: super::sync::SyncResult,
-    pub(crate) background: bool,
-    pub(crate) remote_status: Option<GitStatus>,
+pub struct ParentEvidence {
+    pub repo: PathBuf,
+    pub before: Snapshot,
+    pub after: Snapshot,
+    pub result: super::sync::SyncResult,
+    pub background: bool,
+    pub remote_status: Option<GitStatus>,
 }
 
 #[derive(Clone)]
-pub(crate) struct Completion {
-    pub(crate) result: Result<Output, SharedError>,
-    pub(crate) before: Snapshot,
-    pub(crate) after: Snapshot,
-    pub(crate) parent: Option<ParentEvidence>,
-    pub(crate) read_sync: Option<SyncReport>,
+pub struct Completion {
+    pub result: Result<Output, SharedError>,
+    pub before: Snapshot,
+    pub after: Snapshot,
+    pub parent: Option<ParentEvidence>,
+    pub read_sync: Option<SyncReport>,
 }
 
 impl Completion {
-    pub(crate) fn sync_report(&self) -> Option<&SyncReport> {
+    pub fn sync_report(&self) -> Option<&SyncReport> {
         match &self.result {
             Ok(Output::Sync(report)) => Some(report),
             _ => self.read_sync.as_ref(),
@@ -337,13 +337,13 @@ impl Flight {
             receiver
                 .changed()
                 .await
-                .map_err(|_| AppError::General("Git operation stopped".into()))?;
+                .map_err(|_| GitError::General("Git operation stopped".into()))?;
         }
     }
 }
 
 #[derive(Default)]
-pub(crate) struct Operations {
+pub struct Operations {
     flights: Mutex<HashMap<PathBuf, Arc<Flight>>>,
 }
 
@@ -392,7 +392,7 @@ impl Operations {
 
     /// The executing task outlives any one IPC caller. Completed flights are
     /// removed; only callers already waiting on them retain their evidence.
-    pub(crate) async fn run<F, Fut>(
+    pub async fn run<F, Fut>(
         self: &Arc<Self>,
         cli: GitCli,
         path: &Path,
@@ -456,7 +456,7 @@ impl Operations {
                     let result = match tokio::spawn(execute(request)).await {
                         Ok(result) => result,
                         Err(_) => Completion {
-                            result: Err(AppError::General("Git operation stopped".into()).into()),
+                            result: Err(GitError::General("Git operation stopped".into()).into()),
                             before: fallback.clone(),
                             after: fallback,
                             parent: None,

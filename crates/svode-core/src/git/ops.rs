@@ -4,48 +4,20 @@ use std::path::Path;
 use serde::Serialize;
 use std::collections::BTreeMap;
 
+use super::GitError;
 use super::cli::GitCli;
-use crate::AppError;
-use crate::repo_path::{RootMode, normalize_repo_relative};
-use crate::space::types::SpaceGitType;
 #[cfg(test)]
-use core_status::FileGitStatus;
-pub use core_status::GitStatus;
-use svode_core::git::status as core_status;
-
-pub async fn get_remote(cli: &GitCli, dir: &Path) -> Result<Option<String>, AppError> {
-    Ok(core_status::get_remote(cli.core(), dir).await?)
-}
-
-pub async fn status(cli: &GitCli, dir: &Path) -> Result<GitStatus, AppError> {
-    Ok(core_status::status(cli.core(), dir).await?)
-}
-
-pub async fn status_with_remote_counts(cli: &GitCli, dir: &Path) -> Result<GitStatus, AppError> {
-    Ok(core_status::status_with_remote_counts(cli.core(), dir).await?)
-}
-
-async fn ref_exists(cli: &GitCli, dir: &Path, reference: &str) -> Result<bool, AppError> {
-    Ok(core_status::ref_exists(cli.core(), dir, reference).await?)
-}
-
-fn normalize_git_path(path: &str) -> Result<String, AppError> {
-    Ok(core_status::normalize_git_path(path)?)
-}
-
+use super::status::FileGitStatus;
+use crate::git::path::{RootMode, normalize_repo_relative};
+use crate::storage::config::SpaceGitType;
+// Status reads have one owner; the operations surface re-exports it so callers
+// keep their existing `ops::…` path without a second implementation.
+pub use super::status::{
+    GitStatus, current_branch, get_remote, normalize_git_path, ref_exists, status,
+    status_with_remote_counts,
+};
 #[cfg(test)]
-fn parse_status_porcelain_v2_z(output: &str) -> Result<GitStatus, AppError> {
-    Ok(core_status::parse_status_porcelain_v2_z(output)?)
-}
-
-#[cfg(test)]
-fn strip_status_path_prefix(status: &mut GitStatus, prefix: &str) -> Result<(), AppError> {
-    Ok(core_status::strip_status_path_prefix(status, prefix)?)
-}
-
-pub async fn current_branch(cli: &GitCli, dir: &Path) -> Result<String, AppError> {
-    Ok(core_status::current_branch(cli.core(), dir).await?)
-}
+pub use super::status::{parse_status_porcelain_v2_z, strip_status_path_prefix};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SubmoduleConfig {
@@ -59,7 +31,7 @@ struct NameStatusRecord {
     path: String,
 }
 
-pub(crate) fn is_git_auth_error(stderr: &str) -> bool {
+pub fn is_git_auth_error(stderr: &str) -> bool {
     let stderr = stderr.to_ascii_lowercase();
     stderr.contains("authentication")
         || stderr.contains("could not read username")
@@ -69,23 +41,23 @@ pub(crate) fn is_git_auth_error(stderr: &str) -> bool {
         || stderr.contains("missing or invalid credentials")
 }
 
-pub(crate) fn is_git_no_remote_error(stderr: &str) -> bool {
+pub fn is_git_no_remote_error(stderr: &str) -> bool {
     stderr.contains("No configured push destination")
 }
 
-pub(crate) fn git_remote_command_error(command: &str, stderr: &str) -> AppError {
+pub fn git_remote_command_error(command: &str, stderr: &str) -> GitError {
     if is_git_auth_error(stderr) {
-        return AppError::GitAuthRequired(stderr.to_string());
+        return GitError::AuthRequired(stderr.to_string());
     }
     if is_git_no_remote_error(stderr) {
-        return AppError::GitNoRemote;
+        return GitError::NoRemote;
     }
-    AppError::GitCommandFailed(format!("{command} failed: {stderr}"))
+    GitError::GitCommandFailed(format!("{command} failed: {stderr}"))
 }
 
 /// Fetch origin refs without touching the working tree.
 /// Returns `false` when no origin remote is configured.
-pub async fn fetch_remote(cli: &GitCli, space_dir: &Path) -> Result<bool, AppError> {
+pub async fn fetch_remote(cli: &GitCli, space_dir: &Path) -> Result<bool, GitError> {
     if get_remote(cli, space_dir).await?.is_none() {
         return Ok(false);
     }
@@ -102,7 +74,7 @@ pub async fn fetch_remote(cli: &GitCli, space_dir: &Path) -> Result<bool, AppErr
 pub async fn list_submodules(
     cli: &GitCli,
     project_path: &Path,
-) -> Result<Vec<SubmoduleConfig>, AppError> {
+) -> Result<Vec<SubmoduleConfig>, GitError> {
     if !project_path.join(".gitmodules").exists() {
         return Ok(Vec::new());
     }
@@ -125,7 +97,7 @@ pub async fn list_submodules(
         return Ok(Vec::new());
     }
     if out.exit_code != 0 {
-        return Err(AppError::GitCommandFailed("Cannot read .gitmodules".into()));
+        return Err(GitError::GitCommandFailed("Cannot read .gitmodules".into()));
     }
 
     Ok(parse_submodule_config_output(&out.stdout))
@@ -168,7 +140,7 @@ fn parse_submodule_config_output(stdout: &str) -> Vec<SubmoduleConfig> {
 }
 
 /// Set or add the `origin` remote URL.
-pub async fn set_remote(cli: &GitCli, space_dir: &Path, url: &str) -> Result<(), AppError> {
+pub async fn set_remote(cli: &GitCli, space_dir: &Path, url: &str) -> Result<(), GitError> {
     // Check if origin exists
     let exists = cli
         .exec(space_dir, &["remote", "get-url", "origin"])
@@ -180,7 +152,7 @@ pub async fn set_remote(cli: &GitCli, space_dir: &Path, url: &str) -> Result<(),
     };
     let out = cli.exec(space_dir, &args).await?;
     if out.exit_code != 0 {
-        return Err(AppError::GitCommandFailed(format!(
+        return Err(GitError::GitCommandFailed(format!(
             "git remote failed: {}",
             out.stderr
         )));
@@ -189,7 +161,7 @@ pub async fn set_remote(cli: &GitCli, space_dir: &Path, url: &str) -> Result<(),
 }
 
 /// Push current branch silently. Used by explicit publish and policy-gated focus push.
-pub async fn push(cli: &GitCli, space_dir: &Path) -> Result<(), AppError> {
+pub async fn push(cli: &GitCli, space_dir: &Path) -> Result<(), GitError> {
     let out = super::publication::push(cli, space_dir, false).await?;
     if out.exit_code != 0 {
         let stderr = out.stderr.trim();
@@ -208,10 +180,10 @@ pub async fn init_with_optional_scaffold_commit(
     cli: &GitCli,
     space_dir: &Path,
     commit_scaffold: bool,
-) -> Result<(), AppError> {
+) -> Result<(), GitError> {
     let out = cli.exec(space_dir, &["init"]).await?;
     if out.exit_code != 0 {
-        return Err(AppError::GitCommandFailed(format!(
+        return Err(GitError::GitCommandFailed(format!(
             "git init failed: {}",
             out.stderr
         )));
@@ -237,35 +209,35 @@ pub async fn remote_branch_exists(
     cli: &GitCli,
     space_dir: &Path,
     branch: &str,
-) -> Result<bool, AppError> {
+) -> Result<bool, GitError> {
     let remote_ref = format!("refs/remotes/origin/{branch}");
     ref_exists(cli, space_dir, &remote_ref).await
 }
 
 fn is_local_variable_path(path: &str) -> bool {
-    super::local_policy::contains(&path.replace('\\', "/"))
+    super::policy::contains(&path.replace('\\', "/"))
 }
 
-fn reject_local_variable_path(path: &str) -> Result<(), AppError> {
+fn reject_local_variable_path(path: &str) -> Result<(), GitError> {
     if is_local_variable_path(path) {
-        return Err(AppError::GitCommandFailed(
+        return Err(GitError::GitCommandFailed(
             "Local Variables and agent files cannot be committed".into(),
         ));
     }
     Ok(())
 }
 
-async fn reject_staged_local_variables(cli: &GitCli, repo: &Path) -> Result<(), AppError> {
+async fn reject_staged_local_variables(cli: &GitCli, repo: &Path) -> Result<(), GitError> {
     let staged = cli
         .exec_redacted(repo, &["diff", "--cached", "--name-only", "-z"])
         .await?;
     if staged.exit_code != 0 {
-        return Err(AppError::GitCommandFailed(
+        return Err(GitError::GitCommandFailed(
             "Cannot verify local file exclusions".into(),
         ));
     }
     if staged.stdout.split('\0').any(is_local_variable_path) {
-        return Err(AppError::GitCommandFailed(
+        return Err(GitError::GitCommandFailed(
             "Unstage local Variables or agent files before committing".into(),
         ));
     }
@@ -273,7 +245,7 @@ async fn reject_staged_local_variables(cli: &GitCli, repo: &Path) -> Result<(), 
 }
 
 /// Stage the allowed concrete entries in a file or directory selection.
-pub async fn add(cli: &GitCli, space_dir: &Path, path: &str) -> Result<(), AppError> {
+pub async fn add(cli: &GitCli, space_dir: &Path, path: &str) -> Result<(), GitError> {
     super::branch::prepare_existing(cli, space_dir).await?;
     let paths = super::staging::resolve(cli, space_dir, &[path.to_string()]).await?;
     super::staging::prepare(cli, space_dir, &paths)
@@ -282,12 +254,12 @@ pub async fn add(cli: &GitCli, space_dir: &Path, path: &str) -> Result<(), AppEr
 }
 
 /// Stage all allowed changes without changing already staged local entries.
-pub async fn add_all(cli: &GitCli, space_dir: &Path) -> Result<(), AppError> {
+pub async fn add_all(cli: &GitCli, space_dir: &Path) -> Result<(), GitError> {
     add(cli, space_dir, ".").await
 }
 
 /// Commit the index. A no-op is established before invoking hooks.
-pub async fn commit(cli: &GitCli, space_dir: &Path, message: &str) -> Result<bool, AppError> {
+pub async fn commit(cli: &GitCli, space_dir: &Path, message: &str) -> Result<bool, GitError> {
     super::branch::prepare_existing(cli, space_dir).await?;
     reject_staged_local_variables(cli, space_dir).await?;
     if !super::staging::has_changes(cli, space_dir, &[]).await? {
@@ -316,22 +288,22 @@ pub async fn commit_exact_path(
     repo: &Path,
     path: &str,
     message: &str,
-) -> Result<bool, AppError> {
+) -> Result<bool, GitError> {
     Ok(commit_exact_path_receipt(cli, repo, path, message)
         .await?
         .is_some())
 }
 
-pub(crate) struct ExactPathCommitReceipt {
+pub struct ExactPathCommitReceipt {
     pub oid: Option<String>,
 }
 
-pub(crate) async fn commit_exact_path_receipt(
+pub async fn commit_exact_path_receipt(
     cli: &GitCli,
     repo: &Path,
     path: &str,
     message: &str,
-) -> Result<Option<ExactPathCommitReceipt>, AppError> {
+) -> Result<Option<ExactPathCommitReceipt>, GitError> {
     super::branch::prepare_existing(cli, repo).await?;
     let path = normalize_git_path(path)?;
     reject_local_variable_path(&path)?;
@@ -455,12 +427,12 @@ pub(crate) async fn commit_exact_path_receipt(
 }
 
 /// Whether the repository index contains any changes relative to `HEAD`.
-pub async fn has_staged_changes(cli: &GitCli, repo: &Path) -> Result<bool, AppError> {
+pub async fn has_staged_changes(cli: &GitCli, repo: &Path) -> Result<bool, GitError> {
     let out = cli.exec(repo, &["diff", "--cached", "--quiet"]).await?;
     match out.exit_code {
         0 => Ok(false),
         1 => Ok(true),
-        _ => Err(AppError::GitCommandFailed(format!(
+        _ => Err(GitError::GitCommandFailed(format!(
             "git diff --cached failed: {}",
             out.stderr
         ))),
@@ -472,7 +444,7 @@ pub async fn exact_path_has_changes(
     cli: &GitCli,
     repo: &Path,
     path: &str,
-) -> Result<bool, AppError> {
+) -> Result<bool, GitError> {
     let path = normalize_git_path(path)?;
     let out = cli
         .exec(
@@ -488,7 +460,7 @@ pub async fn exact_path_has_changes(
         )
         .await?;
     if out.exit_code != 0 {
-        return Err(AppError::GitCommandFailed(format!(
+        return Err(GitError::GitCommandFailed(format!(
             "git status for exact path failed: {}",
             out.stderr
         )));
@@ -504,7 +476,7 @@ pub async fn exact_path_state_fingerprint(
     cli: &GitCli,
     repo: &Path,
     path: &str,
-) -> Result<String, AppError> {
+) -> Result<String, GitError> {
     let path = normalize_git_path(path)?;
     let status = cli
         .exec(
@@ -520,7 +492,7 @@ pub async fn exact_path_state_fingerprint(
         )
         .await?;
     if status.exit_code != 0 {
-        return Err(AppError::GitCommandFailed(format!(
+        return Err(GitError::GitCommandFailed(format!(
             "git status for exact-path fingerprint failed: {}",
             status.stderr
         )));
@@ -530,7 +502,7 @@ pub async fn exact_path_state_fingerprint(
         .exec(repo, &["ls-files", "--stage", "--", &path])
         .await?;
     if index.exit_code != 0 {
-        return Err(AppError::GitCommandFailed(format!(
+        return Err(GitError::GitCommandFailed(format!(
             "git ls-files for exact-path fingerprint failed: {}",
             index.stderr
         )));
@@ -573,7 +545,7 @@ pub async fn is_registered_unborn_submodule_target(
     cli: &GitCli,
     root: &Path,
     path: &str,
-) -> Result<bool, AppError> {
+) -> Result<bool, GitError> {
     let path = normalize_git_path(path)?;
     if path.contains('/')
         || !list_submodules(cli, root)
@@ -602,12 +574,12 @@ pub async fn is_registered_unborn_submodule_target(
 }
 
 /// Read the repository HEAD expected to become a root gitlink target.
-pub async fn repository_head_oid(cli: &GitCli, repository: &Path) -> Result<String, AppError> {
+pub async fn repository_head_oid(cli: &GitCli, repository: &Path) -> Result<String, GitError> {
     let head = cli
         .exec(repository, &["rev-parse", "--verify", "HEAD"])
         .await?;
     if head.exit_code != 0 {
-        return Err(AppError::GitCommandFailed(format!(
+        return Err(GitError::GitCommandFailed(format!(
             "git rev-parse HEAD failed: {}",
             head.stderr
         )));
@@ -625,7 +597,7 @@ pub async fn submodule_target_matches_expected_head(
     path: &str,
     repository: &Path,
     expected_head: &str,
-) -> Result<bool, AppError> {
+) -> Result<bool, GitError> {
     let path = normalize_git_path(path)?;
     if path.contains('/')
         || !list_submodules(cli, root)
@@ -656,47 +628,11 @@ pub async fn submodule_target_matches_expected_head(
         && target_head.stdout.trim() == expected_head)
 }
 
-/// Stage a specific file and auto-commit with a generated message.
-/// Returns `true` if a commit was actually created.
-#[cfg(test)]
-pub async fn commit_file(
-    cli: &GitCli,
-    space_dir: &Path,
-    file_path: &str,
-) -> Result<bool, AppError> {
-    let created = commit_paths(cli, space_dir, &[file_path.to_string()]).await?;
-    if created {
-        tracing::info!(
-            "Auto-committed file {} in {}",
-            file_path,
-            space_dir.display()
-        );
-    }
-    Ok(created)
-}
-
-/// Stage all changes and auto-commit with a generated message.
-#[cfg(test)]
-pub async fn commit_all(cli: &GitCli, space_dir: &Path) -> Result<bool, AppError> {
-    let paths = status(cli, space_dir)
-        .await?
-        .files
-        .into_iter()
-        .map(|file| file.path)
-        .collect::<Vec<_>>();
-    let created = commit_paths(cli, space_dir, &paths).await?;
-    if created {
-        tracing::info!("Auto-committed all in {}", space_dir.display());
-    }
-    Ok(created)
-}
-
-/// Stage selected paths and auto-commit with a generated message.
 pub async fn commit_paths(
     cli: &GitCli,
     space_dir: &Path,
     file_paths: &[String],
-) -> Result<bool, AppError> {
+) -> Result<bool, GitError> {
     if file_paths.is_empty() {
         return Ok(false);
     }
@@ -706,7 +642,7 @@ pub async fn commit_paths(
         return Ok(false);
     }
     if status(cli, space_dir).await?.has_conflicts {
-        return Err(AppError::GitConflict(
+        return Err(GitError::Conflict(
             "Resolve the repository merge before saving paths".into(),
         ));
     }
@@ -738,7 +674,7 @@ async fn generate_commit_message_for_paths(
     cli: &GitCli,
     space_dir: &Path,
     paths: &[String],
-) -> Result<String, AppError> {
+) -> Result<String, GitError> {
     let literal_paths = paths
         .iter()
         .map(|path| format!(":(literal){path}"))
@@ -835,11 +771,11 @@ fn staged_changes_touch_sensitive_collection(
 ) -> bool {
     let repo = repo_dir.to_string_lossy();
     records.iter().any(|record| {
-        svode_core::collections::engine::resolve_collection_schema_result(&repo, &record.path)
+        crate::collections::engine::resolve_collection_schema_result(&repo, &record.path)
             .ok()
             .flatten()
             .is_some_and(|(schema, _)| {
-                svode_core::collections::engine::schema_has_sensitive_columns(&schema)
+                crate::collections::engine::schema_has_sensitive_columns(&schema)
             })
     })
 }
@@ -860,7 +796,7 @@ fn sensitive_commit_message(records: &[NameStatusRecord]) -> String {
     }
 }
 
-fn parse_name_status_z(stdout: &str) -> Result<Vec<NameStatusRecord>, AppError> {
+fn parse_name_status_z(stdout: &str) -> Result<Vec<NameStatusRecord>, GitError> {
     let tokens: Vec<&str> = stdout
         .split('\0')
         .filter(|token| !token.is_empty())
@@ -893,7 +829,7 @@ fn parse_name_status_z(stdout: &str) -> Result<Vec<NameStatusRecord>, AppError> 
     Ok(records)
 }
 
-fn parse_nul_paths(stdout: &str) -> Result<Vec<String>, AppError> {
+fn parse_nul_paths(stdout: &str) -> Result<Vec<String>, GitError> {
     stdout
         .split('\0')
         .filter(|path| !path.is_empty())
@@ -902,7 +838,7 @@ fn parse_nul_paths(stdout: &str) -> Result<Vec<String>, AppError> {
 }
 
 /// Get list of files changed since last pull.
-pub async fn diff_after_pull(cli: &GitCli, space_dir: &Path) -> Result<Vec<String>, AppError> {
+pub async fn diff_after_pull(cli: &GitCli, space_dir: &Path) -> Result<Vec<String>, GitError> {
     let out = cli
         .exec(
             space_dir,
@@ -929,7 +865,7 @@ pub async fn detect_space_git_type(
     cli: &GitCli,
     project_path: &Path,
     space_path: &Path,
-) -> Result<SpaceGitType, AppError> {
+) -> Result<SpaceGitType, GitError> {
     // Inline = no own git entry at the space root. We deliberately do NOT
     // use `git rev-parse --git-dir` here: for a subfolder of a parent repo,
     // it walks up and succeeds with the parent's `.git`, which would
@@ -948,7 +884,7 @@ pub async fn detect_space_git_type(
     }
 
     let relative =
-        crate::repo_path::repo_relative_from_base(project_path, space_path, RootMode::Reject)?;
+        crate::git::path::repo_relative_from_base(project_path, space_path, RootMode::Reject)?;
     if list_submodules(cli, project_path)
         .await?
         .iter()
@@ -966,7 +902,7 @@ pub async fn resolve_target_repo(
     cli: &GitCli,
     project_path: &Path,
     space_path: &Path,
-) -> Result<(SpaceGitType, std::path::PathBuf), AppError> {
+) -> Result<(SpaceGitType, std::path::PathBuf), GitError> {
     let git_type = detect_space_git_type(cli, project_path, space_path).await?;
     let target = match git_type {
         SpaceGitType::Inline => project_path.to_path_buf(),
@@ -980,7 +916,7 @@ pub async fn get_submodule_url(
     cli: &GitCli,
     root_path: &Path,
     space_folder: &str,
-) -> Result<Option<String>, AppError> {
+) -> Result<Option<String>, GitError> {
     Ok(list_submodules(cli, root_path)
         .await?
         .into_iter()
@@ -998,10 +934,10 @@ pub async fn register_local_submodule_metadata(
     cli: &GitCli,
     root_path: &Path,
     space_folder: &str,
-) -> Result<(), AppError> {
+) -> Result<(), GitError> {
     let normalized = normalize_repo_relative(space_folder, RootMode::Reject)?;
     if normalized.contains('/') {
-        return Err(AppError::PathNotAccessible(space_folder.to_string()));
+        return Err(GitError::PathNotAccessible(space_folder.to_string()));
     }
 
     let path_key = format!("submodule.{}.path", normalized);
@@ -1016,7 +952,7 @@ pub async fn register_local_submodule_metadata(
             .exec(root_path, &["config", "-f", ".gitmodules", key, value])
             .await?;
         if out.exit_code != 0 {
-            return Err(AppError::GitCommandFailed(format!(
+            return Err(GitError::GitCommandFailed(format!(
                 "git config .gitmodules failed: {}",
                 out.stderr
             )));
@@ -1033,7 +969,7 @@ pub async fn register_local_submodule_metadata(
     ] {
         let out = cli.exec(root_path, &["config", &key, &value]).await?;
         if out.exit_code != 0 {
-            return Err(AppError::GitCommandFailed(format!(
+            return Err(GitError::GitCommandFailed(format!(
                 "git config submodule failed: {}",
                 out.stderr
             )));
@@ -1044,7 +980,7 @@ pub async fn register_local_submodule_metadata(
 }
 
 /// Validate a clone URL (HTTPS or SSH).
-pub fn validate_clone_url(url: &str) -> Result<(), AppError> {
+pub fn validate_clone_url(url: &str) -> Result<(), GitError> {
     let trimmed = url.trim();
     let valid = trimmed.starts_with("https://")
         || trimmed.starts_with("http://")
@@ -1054,7 +990,7 @@ pub fn validate_clone_url(url: &str) -> Result<(), AppError> {
             && !trimmed.starts_with("git://")
             && !trimmed.starts_with("file://"));
     if !valid {
-        return Err(AppError::InvalidUrl(trimmed.to_string()));
+        return Err(GitError::InvalidUrl(trimmed.to_string()));
     }
     Ok(())
 }
@@ -1066,7 +1002,7 @@ pub fn validate_clone_url(url: &str) -> Result<(), AppError> {
 /// This is used both for newly initialized spaces and for existing git repos
 /// that Svode scaffolds later. The latter path must update `.gitignore` before
 /// staging `.svode/`, otherwise `.svode/local.json` can be committed.
-pub fn ensure_svode_gitignore(space_dir: &Path) -> Result<bool, AppError> {
+pub fn ensure_svode_gitignore(space_dir: &Path) -> Result<bool, GitError> {
     let gitignore = space_dir.join(".gitignore");
     let content = if gitignore.exists() {
         std::fs::read_to_string(&gitignore)?
@@ -1077,12 +1013,12 @@ pub fn ensure_svode_gitignore(space_dir: &Path) -> Result<bool, AppError> {
     if content.is_empty() {
         std::fs::write(
             &gitignore,
-            &format!("# Svode local files\n{}\n", super::local_policy::rules("")),
+            &format!("# Svode local files\n{}\n", super::policy::rules("")),
         )?;
         return Ok(true);
     }
 
-    let missing: Vec<&str> = super::local_policy::ENTRIES
+    let missing: Vec<&str> = super::policy::ENTRIES
         .iter()
         .copied()
         .filter(|entry| {
@@ -1116,8 +1052,8 @@ const SPACES_BLOCK_START: &str = "# svode:spaces:start";
 const SPACES_BLOCK_END: &str = "# svode:spaces:end";
 
 /// Ensure the inline wildcard block exists in root .gitignore.
-pub fn ensure_inline_gitignore(project_path: &Path) -> Result<(), AppError> {
-    let inline_rules = super::local_policy::rules("*/");
+pub fn ensure_inline_gitignore(project_path: &Path) -> Result<(), GitError> {
+    let inline_rules = super::policy::rules("*/");
     let gitignore = project_path.join(".gitignore");
     let content = if gitignore.exists() {
         std::fs::read_to_string(&gitignore)?
@@ -1161,7 +1097,7 @@ pub fn ensure_inline_gitignore(project_path: &Path) -> Result<(), AppError> {
 }
 
 /// Add an independent space path to the managed block in root .gitignore.
-pub fn add_independent_gitignore(project_path: &Path, space_folder: &str) -> Result<(), AppError> {
+pub fn add_independent_gitignore(project_path: &Path, space_folder: &str) -> Result<(), GitError> {
     let gitignore = project_path.join(".gitignore");
     let content = if gitignore.exists() {
         std::fs::read_to_string(&gitignore)?
@@ -1206,7 +1142,7 @@ pub fn add_independent_gitignore(project_path: &Path, space_folder: &str) -> Res
 pub fn remove_independent_gitignore(
     project_path: &Path,
     space_folder: &str,
-) -> Result<(), AppError> {
+) -> Result<(), GitError> {
     let gitignore = project_path.join(".gitignore");
     if !gitignore.exists() {
         return Ok(());
@@ -1264,7 +1200,7 @@ fn extract_block<'a>(
 // --- Routed commit ---
 
 /// Push with --set-upstream origin <current-branch>.
-pub async fn push_set_upstream(cli: &GitCli, space_dir: &Path) -> Result<(), AppError> {
+pub async fn push_set_upstream(cli: &GitCli, space_dir: &Path) -> Result<(), GitError> {
     let out = super::publication::push(cli, space_dir, true).await?;
     if out.exit_code != 0 {
         let stderr = out.stderr.trim();
@@ -1274,7 +1210,7 @@ pub async fn push_set_upstream(cli: &GitCli, space_dir: &Path) -> Result<(), App
                 || stderr.contains("Updates were rejected")))
             || stderr.contains("Updates were rejected")
         {
-            return Err(AppError::GitRemoteNotEmpty);
+            return Err(GitError::RemoteNotEmpty);
         }
         return Err(git_remote_command_error("git push", stderr));
     }
@@ -1294,7 +1230,7 @@ pub struct UnpushedCommit {
 pub async fn unpushed_commits(
     cli: &GitCli,
     space_dir: &Path,
-) -> Result<Vec<UnpushedCommit>, AppError> {
+) -> Result<Vec<UnpushedCommit>, GitError> {
     let branch = match current_branch(cli, space_dir).await {
         Ok(b) => b,
         Err(_) => return Ok(Vec::new()),
@@ -2092,7 +2028,7 @@ mod tests {
             "Permission denied (publickey).\nfatal: Could not read from remote repository.",
         );
 
-        assert!(matches!(err, AppError::GitAuthRequired(_)));
+        assert!(matches!(err, GitError::AuthRequired(_)));
     }
 
     #[test]
@@ -2102,7 +2038,7 @@ mod tests {
             "Missing or invalid credentials.\nfatal: Authentication failed",
         );
 
-        assert!(matches!(err, AppError::GitAuthRequired(_)));
+        assert!(matches!(err, GitError::AuthRequired(_)));
     }
 
     #[test]
@@ -2112,7 +2048,7 @@ mod tests {
             "fatal: 'origin' does not appear to be a git repository",
         );
 
-        assert!(matches!(err, AppError::GitCommandFailed(_)));
+        assert!(matches!(err, GitError::GitCommandFailed(_)));
         for message in [
             "ssh: Could not resolve hostname fixture.invalid: nodename nor servname provided\nfatal: Could not read from remote repository.",
             "fatal: Repository not found",
@@ -2120,12 +2056,12 @@ mod tests {
         ] {
             assert!(matches!(
                 git_remote_command_error("git fetch", message),
-                AppError::GitCommandFailed(_)
+                GitError::GitCommandFailed(_)
             ));
         }
         assert!(matches!(
             git_remote_command_error("git push", "fatal: No configured push destination."),
-            AppError::GitNoRemote
+            GitError::NoRemote
         ));
     }
 
@@ -2348,7 +2284,7 @@ mod tests {
             return;
         };
         let tmp = TempDir::new().unwrap();
-        crate::space::scaffold::scaffold_space(tmp.path(), "Space", "", "").unwrap();
+        crate::git::staging_tests::scaffold(tmp.path(), "Space");
 
         init_with_optional_scaffold_commit(&cli, tmp.path(), false)
             .await
@@ -2382,7 +2318,7 @@ mod tests {
         let init_parent = cli.exec(&project, &["init"]).await.unwrap();
         assert_eq!(init_parent.exit_code, 0);
 
-        crate::space::scaffold::scaffold_space(&child, "Docs", "", "").unwrap();
+        crate::git::staging_tests::scaffold(&child, "Docs");
         init_with_optional_scaffold_commit(&cli, &child, false)
             .await
             .unwrap();

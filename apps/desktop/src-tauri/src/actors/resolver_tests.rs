@@ -49,11 +49,8 @@ mod tests {
         let independent = init_repo("Other", "other@example.test");
         let cli = GitCli::detect().unwrap();
         let state = Arc::new(ActorCatalogState::new());
-        let initial = state.snapshot(cli.core(), repo.path()).await.unwrap();
-        let other = state
-            .snapshot(cli.core(), independent.path())
-            .await
-            .unwrap();
+        let initial = state.snapshot(&cli, repo.path()).await.unwrap();
+        let other = state.snapshot(&cli, independent.path()).await.unwrap();
         let (tx, rx) = mpsc::channel();
         let start = |path: PathBuf| {
             let state = state.clone();
@@ -74,20 +71,17 @@ mod tests {
         );
         // Managed invalidation plus two observer echoes still produces one publication.
         state.mark_repository_dirty(repo.path()).unwrap();
-        let managed = state.snapshot(cli.core(), repo.path()).await.unwrap();
+        let managed = state.snapshot(&cli, repo.path()).await.unwrap();
         assert_eq!(managed.generation(), initial.generation() + 1);
         rx.recv_timeout(Duration::from_secs(8)).unwrap();
         while rx.recv_timeout(Duration::from_millis(500)).is_ok() {}
         assert!(Arc::ptr_eq(
             &managed,
-            &state.snapshot(cli.core(), &inline).await.unwrap()
+            &state.snapshot(&cli, &inline).await.unwrap()
         ));
         assert!(Arc::ptr_eq(
             &other,
-            &state
-                .snapshot(cli.core(), independent.path())
-                .await
-                .unwrap()
+            &state.snapshot(&cli, independent.path()).await.unwrap()
         ));
         drop(first);
         drop(second);
@@ -97,11 +91,7 @@ mod tests {
         let restored = start(repo.path().to_path_buf());
         rx.recv_timeout(Duration::from_secs(5)).unwrap();
         assert_eq!(
-            state
-                .snapshot(cli.core(), &inline)
-                .await
-                .unwrap()
-                .current_email(),
+            state.snapshot(&cli, &inline).await.unwrap().current_email(),
             Some("gap@example.test")
         );
         // Invalid gitfile/metadata resolution retains the cache and recovers under the same owner.
@@ -109,7 +99,7 @@ mod tests {
         let saved = repo.path().join("saved-git");
         fs::rename(&gitdir, &saved).unwrap();
         rx.recv_timeout(Duration::from_secs(8)).unwrap();
-        assert!(state.snapshot(cli.core(), repo.path()).await.is_err());
+        assert!(state.snapshot(&cli, repo.path()).await.is_err());
         fs::rename(&saved, &gitdir).unwrap();
         git(
             repo.path(),
@@ -118,7 +108,7 @@ mod tests {
         rx.recv_timeout(Duration::from_secs(8)).unwrap();
         assert_eq!(
             state
-                .snapshot(cli.core(), repo.path())
+                .snapshot(&cli, repo.path())
                 .await
                 .unwrap()
                 .current_email(),
@@ -165,10 +155,10 @@ mod tests {
         let sibling = parent.path().join("sibling");
         let cli = GitCli::detect().unwrap();
         let state = Arc::new(ActorCatalogState::new());
-        let parent_snapshot = state.snapshot(cli.core(), parent.path()).await.unwrap();
-        let initial = state.snapshot(cli.core(), &child).await.unwrap();
-        let sibling_snapshot = state.snapshot(cli.core(), &sibling).await.unwrap();
-        let sibling_sources = ActorSources::resolve(cli.core(), &sibling).await.unwrap();
+        let parent_snapshot = state.snapshot(&cli, parent.path()).await.unwrap();
+        let initial = state.snapshot(&cli, &child).await.unwrap();
+        let sibling_snapshot = state.snapshot(&cli, &sibling).await.unwrap();
+        let sibling_sources = ActorSources::resolve(&cli, &sibling).await.unwrap();
         let (tx, rx) = mpsc::channel();
         let observed_state = state.clone();
         let observation = ActorObservation::start(cli.clone(), child.clone(), move |repository| {
@@ -177,10 +167,8 @@ mod tests {
         })
         .unwrap();
         assert_eq!(rx.recv_timeout(Duration::from_secs(5)).unwrap(), child);
-        let sources = ActorSources::resolve(cli.core(), &child).await.unwrap();
-        let parent_sources = ActorSources::resolve(cli.core(), parent.path())
-            .await
-            .unwrap();
+        let sources = ActorSources::resolve(&cli, &child).await.unwrap();
+        let parent_sources = ActorSources::resolve(&cli, parent.path()).await.unwrap();
         let child_config = sources
             .watch_paths()
             .into_iter()
@@ -205,19 +193,12 @@ mod tests {
             &["commit", "--allow-empty", "-m", "attached external"],
         );
         wait();
-        let attached = state.snapshot(cli.core(), &child).await.unwrap();
+        let attached = state.snapshot(&cli, &child).await.unwrap();
         assert_eq!(attached.current_email(), Some("external@example.test"));
         assert_eq!(attached.generation(), initial.generation() + 1);
         assert_eq!(
             state
-                .activity(
-                    cli.core(),
-                    &child,
-                    "external@example.test",
-                    None,
-                    None,
-                    None
-                )
+                .activity(&cli, &child, "external@example.test", None, None, None)
                 .await
                 .unwrap()
                 .commit_count,
@@ -229,7 +210,7 @@ mod tests {
             &["commit", "--allow-empty", "-m", "detached external"],
         );
         wait();
-        let detached = state.snapshot(cli.core(), &child).await.unwrap();
+        let detached = state.snapshot(&cli, &child).await.unwrap();
         assert!(detached.generation() > attached.generation());
 
         git(
@@ -242,7 +223,7 @@ mod tests {
         );
         git(&child, &["fetch", "origin"]);
         wait();
-        let fetched = state.snapshot(cli.core(), &child).await.unwrap();
+        let fetched = state.snapshot(&cli, &child).await.unwrap();
         assert!(
             fetched
                 .candidates()
@@ -251,18 +232,14 @@ mod tests {
         );
         git(&child, &["pack-refs", "--all", "--prune"]);
         wait();
-        let packed = state.snapshot(cli.core(), &child).await.unwrap();
+        let packed = state.snapshot(&cli, &child).await.unwrap();
         assert_eq!(packed.generation(), fetched.generation());
         let replacement = child_config.with_extension("replacement");
         fs::write(&replacement, fs::read(&child_config).unwrap()).unwrap();
         fs::rename(replacement, &child_config).unwrap();
         wait();
         assert_eq!(
-            state
-                .snapshot(cli.core(), &child)
-                .await
-                .unwrap()
-                .generation(),
+            state.snapshot(&cli, &child).await.unwrap().generation(),
             packed.generation()
         );
 
@@ -276,7 +253,7 @@ mod tests {
         wait();
         assert!(
             state
-                .snapshot(cli.core(), &child)
+                .snapshot(&cli, &child)
                 .await
                 .unwrap()
                 .catalog()
@@ -286,7 +263,7 @@ mod tests {
         wait();
         assert!(
             !state
-                .snapshot(cli.core(), &child)
+                .snapshot(&cli, &child)
                 .await
                 .unwrap()
                 .catalog()
@@ -294,20 +271,16 @@ mod tests {
         );
         assert!(Arc::ptr_eq(
             &parent_snapshot,
-            &state.snapshot(cli.core(), parent.path()).await.unwrap()
+            &state.snapshot(&cli, parent.path()).await.unwrap()
         ));
         assert!(Arc::ptr_eq(
             &sibling_snapshot,
-            &state.snapshot(cli.core(), &sibling).await.unwrap()
+            &state.snapshot(&cli, &sibling).await.unwrap()
         ));
         drop(observation);
         git(&child, &["config", "user.email", "gap@example.test"]);
         assert_eq!(
-            state
-                .snapshot(cli.core(), &child)
-                .await
-                .unwrap()
-                .current_email(),
+            state.snapshot(&cli, &child).await.unwrap().current_email(),
             Some("gap@example.test")
         );
     }

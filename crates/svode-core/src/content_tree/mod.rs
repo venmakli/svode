@@ -83,6 +83,8 @@ fn read_tree_config_checked(root: &Path) -> Result<TreeConfigSource, ContentTree
 #[derive(Debug, Clone)]
 pub struct ProjectChild {
     pub id: String,
+    /// The folder exactly as the parent registry records it.
+    pub folder: String,
     pub name: String,
     pub icon: String,
     pub description: String,
@@ -107,6 +109,7 @@ pub fn list_project_children(parent: &Path) -> Result<Vec<ProjectChild>, Content
         let ready = status == SpaceReadiness::Ready;
         result.push(ProjectChild {
             id: child.id,
+            folder: child.path.clone(),
             name: if ready {
                 child_config
                     .as_ref()

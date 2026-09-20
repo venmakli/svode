@@ -19,7 +19,7 @@ pub async fn agent_sessions_list(
     project_path: String,
 ) -> Result<AgentSessionsListResult, AppError> {
     let root = super::scope::normalize_project_path(&project_path)?;
-    crate::git::local_repair::repair_scope_best_effort(&app, &root, &root).await;
+    crate::git::delivery::repair_scope_best_effort(&app, &root, &root).await;
     let state = state.inner().clone();
     let terminal_manager = terminal_manager.inner().clone();
     let project_key = root.to_string_lossy().into_owned();
@@ -51,7 +51,7 @@ pub async fn agent_sessions_refresh(
     project_path: String,
 ) -> Result<AgentSessionsListResult, AppError> {
     let root = super::scope::normalize_project_path(&project_path)?;
-    crate::git::local_repair::repair_scope_best_effort(&app, &root, &root).await;
+    crate::git::delivery::repair_scope_best_effort(&app, &root, &root).await;
     let state = state.inner().clone();
     let terminal_manager = terminal_manager.inner().clone();
     let project_key = root.to_string_lossy().into_owned();
@@ -84,7 +84,7 @@ pub async fn agent_sessions_hot_status(
     session_ids: Vec<String>,
 ) -> Result<AgentSessionsHotStatusResult, AppError> {
     let root = super::scope::normalize_project_path(&project_path)?;
-    crate::git::local_repair::repair_scope_best_effort(&app, &root, &root).await;
+    crate::git::delivery::repair_scope_best_effort(&app, &root, &root).await;
     let state = state.inner().clone();
     let terminal_manager = terminal_manager.inner().clone();
     run_blocking(move || {
@@ -110,7 +110,7 @@ pub async fn agent_sessions_set_pinned(
     pinned: bool,
 ) -> Result<AgentSessionsPinResult, AppError> {
     let root = super::scope::normalize_project_path(&project_path)?;
-    crate::git::local_repair::repair_scope_best_effort(&app, &root, &root).await;
+    crate::git::delivery::repair_scope_best_effort(&app, &root, &root).await;
     let state = state.inner().clone();
     let terminal_manager = terminal_manager.inner().clone();
     run_blocking(move || {
@@ -134,7 +134,7 @@ pub async fn agent_sessions_reenter(
     session_id: String,
 ) -> Result<AgentSessionReentryResult, AppError> {
     let root = super::scope::normalize_project_path(&project_path)?;
-    crate::git::local_repair::repair_scope_best_effort(&app, &root, &root).await;
+    crate::git::delivery::repair_scope_best_effort(&app, &root, &root).await;
     let state = state.inner().clone();
     let terminal_manager = terminal_manager.inner().clone();
     run_blocking(move || {

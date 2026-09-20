@@ -12,7 +12,7 @@ use super::GitError;
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
-fn hide_window(command: &mut StdCommand) {
+pub(crate) fn hide_window(command: &mut StdCommand) {
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;

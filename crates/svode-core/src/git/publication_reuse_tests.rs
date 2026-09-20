@@ -374,7 +374,7 @@ async fn final_destination_and_each_source_advertisement_detect_deletion() {
         assert!(
             matches!(
                 f.push().await,
-                Err(AppError::GitPublicationBlocked {
+                Err(GitError::PublicationBlocked {
                     reason: PublicationBlockReason::TargetChanged,
                     ..
                 })
@@ -460,7 +460,7 @@ async fn pull_merge_checks_gitlinks_introduced_by_the_new_outgoing_history() {
     commit(&f.root, "note", "local content");
     assert!(matches!(
         crate::git::sync::sync(&f.cli, &f.root).await,
-        Err(AppError::GitPublicationBlocked {
+        Err(GitError::PublicationBlocked {
             reason: PublicationBlockReason::RevisionUnavailable,
             ..
         })

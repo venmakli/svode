@@ -164,6 +164,34 @@ impl From<svode_core::git::GitError> for AppError {
                 status,
                 reason,
             },
+            GitError::PublicationBlocked {
+                repository,
+                child,
+                reason,
+            } => Self::GitPublicationBlocked {
+                repository,
+                child,
+                reason,
+            },
+            GitError::BranchBlocked { reason } => Self::GitBranchBlocked { reason },
+            GitError::SaveFailed {
+                stage,
+                reason,
+                exit_code,
+                path_count,
+                path_sample,
+            } => Self::GitSaveFailed {
+                stage,
+                reason,
+                exit_code,
+                path_count,
+                path_sample,
+            },
+            GitError::Conflict(message) => Self::GitConflict(message),
+            GitError::AuthRequired(message) => Self::GitAuthRequired(message),
+            GitError::NoRemote => Self::GitNoRemote,
+            GitError::RemoteNotEmpty => Self::GitRemoteNotEmpty,
+            GitError::InvalidUrl(url) => Self::InvalidUrl(url),
             GitError::Io(error) => Self::Io(error),
             GitError::Serde(error) => Self::Serde(error),
             GitError::General(message) => Self::General(message),
@@ -330,14 +358,14 @@ pub enum AppError {
     GitPublicationBlocked {
         repository: String,
         child: Option<String>,
-        reason: crate::git::publication::PublicationBlockReason,
+        reason: svode_core::git::publication::PublicationBlockReason,
     },
 
     #[error(
         "Git branch preparation blocked: {reason:?}. Restore the branch and local work in Git, then retry."
     )]
     GitBranchBlocked {
-        reason: crate::git::branch::BranchBlockReason,
+        reason: svode_core::git::branch::BranchBlockReason,
     },
 
     #[error("Git save failed during {stage}: {reason} ({path_count} paths)")]

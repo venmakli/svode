@@ -15,9 +15,6 @@ pub const AGENT_CONFIG_REL: &str = svode_core::storage::s3::CONFIG_REL;
 /// Managed `.gitignore` block that hides the agent config file. Kept tiny on
 /// purpose so it can sit alongside the existing `# svode:assets-ignore`
 /// block without confusion.
-const AGENT_IGNORE_START: &str = "# svode:lfs-s3-agent:start";
-const AGENT_IGNORE_END: &str = "# svode:lfs-s3-agent:end";
-const AGENT_IGNORE_BODY: &str = crate::git::local_policy::S3_AGENT;
 
 fn slug_source(source: &str) -> String {
     let mut out = String::new();
@@ -112,33 +109,6 @@ pub fn delete_agent_config(space_dir: &Path) -> Result<(), AppError> {
     Ok(())
 }
 
-/// Ensure the managed `# svode:lfs-s3-agent` block is present in
-/// `.gitignore` so the agent config file (with its keychain account name) is
-/// never committed. Idempotent.
-pub fn ensure_agent_gitignore(space_dir: &Path) -> Result<(), AppError> {
-    let path = space_dir.join(".gitignore");
-    let current = match std::fs::read_to_string(&path) {
-        Ok(s) => s,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
-        Err(e) => return Err(e.into()),
-    };
-    if current.contains(AGENT_IGNORE_START) {
-        return Ok(());
-    }
-    let mut next = current.trim_end_matches('\n').to_string();
-    if !next.is_empty() {
-        next.push('\n');
-    }
-    next.push_str(AGENT_IGNORE_START);
-    next.push('\n');
-    next.push_str(AGENT_IGNORE_BODY);
-    next.push('\n');
-    next.push_str(AGENT_IGNORE_END);
-    next.push('\n');
-    std::fs::write(&path, next)?;
-    Ok(())
-}
-
 /// Resolve the bundled `svode-lfs` sidecar binary on disk. Looks first next
 /// to the host executable (production / `tauri build`), then falls back to
 /// the `src-tauri/binaries/svode-lfs-<triple>` artifact written by
@@ -200,7 +170,8 @@ pub fn resolve_agent_binary() -> Result<PathBuf, AppError> {
     }
 
     Err(AppError::Storage(
-        "svode-lfs binary not found — run `bun run build:svode-lfs` or rebuild the app bundle".into(),
+        "svode-lfs binary not found — run `bun run build:svode-lfs` or rebuild the app bundle"
+            .into(),
     ))
 }
 
@@ -222,7 +193,10 @@ fn svode_lfs_suffixed_names(triple: &str) -> Vec<String> {
 
 fn svode_lfs_suffixed_names_for(triple: &str, windows: bool) -> Vec<String> {
     if windows {
-        vec![format!("svode-lfs-{triple}.exe"), format!("svode-lfs-{triple}")]
+        vec![
+            format!("svode-lfs-{triple}.exe"),
+            format!("svode-lfs-{triple}"),
+        ]
     } else {
         vec![format!("svode-lfs-{triple}")]
     }
@@ -392,7 +366,10 @@ mod tests {
 
     #[test]
     fn svode_lfs_names_use_plain_unix_binary_names() {
-        assert_eq!(svode_lfs_plain_names_for(false), vec!["svode-lfs".to_string()]);
+        assert_eq!(
+            svode_lfs_plain_names_for(false),
+            vec!["svode-lfs".to_string()]
+        );
         assert_eq!(
             svode_lfs_suffixed_names_for("aarch64-apple-darwin", false),
             vec!["svode-lfs-aarch64-apple-darwin".to_string()]

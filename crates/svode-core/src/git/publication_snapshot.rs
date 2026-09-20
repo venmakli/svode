@@ -1,5 +1,5 @@
 use super::{
-    AppError, BTreeMap, GitCli, GitOutput, Path, PublicationBlockReason, blocked, checked,
+    BTreeMap, GitCli, GitError, GitOutput, Path, PublicationBlockReason, blocked, checked,
     sensitive,
 };
 
@@ -14,7 +14,7 @@ struct LocalFacts {
 }
 
 impl LocalFacts {
-    async fn read(cli: &GitCli, repo: &Path) -> Result<Self, AppError> {
+    async fn read(cli: &GitCli, repo: &Path) -> Result<Self, GitError> {
         let (branch, refs, config, paths) = tokio::join!(
             cli.exec_redacted(repo, &["symbolic-ref", "-q", "HEAD"]),
             checked(cli, repo, &["show-ref", "--head"]),
@@ -135,7 +135,7 @@ impl Snapshot {
         cli: &GitCli,
         repo: &Path,
         first: bool,
-    ) -> Result<(), AppError> {
+    ) -> Result<(), GitError> {
         let unchanged = if self.reusable_mapping() {
             let changed = || blocked(repo, None, PublicationBlockReason::TargetChanged);
             let local = LocalFacts::read(cli, repo).await.map_err(|_| changed())?;
@@ -174,7 +174,7 @@ async fn advertisement(
     cli: &GitCli,
     repo: &Path,
     destination: &str,
-) -> Result<GitOutput, AppError> {
+) -> Result<GitOutput, GitError> {
     sensitive(
         cli,
         repo,
@@ -194,7 +194,7 @@ pub(super) async fn snapshot(
     cli: &GitCli,
     repo: &Path,
     first: bool,
-) -> Result<Result<Snapshot, GitOutput>, AppError> {
+) -> Result<Result<Snapshot, GitOutput>, GitError> {
     let local = LocalFacts::read(cli, repo).await?;
     let branch = local.branch.strip_prefix("refs/heads/").unwrap_or("HEAD");
     let mut args = vec![

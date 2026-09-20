@@ -2,16 +2,49 @@
 
 use std::path::Path;
 
-use tauri::{AppHandle, Manager};
+use super::GitError;
+use super::host::GitHost;
+use super::path::normalize_space_folder;
+use super::state::GitRuntime;
+use super::{cli::GitCli, ops};
+use crate::content_tree::{ContentTreeError, list_project_children};
+use crate::page::SpaceReadiness;
+use crate::storage::config::SpaceGitType;
 
-use super::{GitState, access, cli::GitCli, ops};
-use crate::{
-    AppError,
-    space::{config, project, types::SpaceStatus},
-};
+/// One child Space as the parent registry records it. The folder is kept raw
+/// so each caller normalizes it in its own order.
+struct RegisteredChild {
+    folder: String,
+    path: std::path::PathBuf,
+    ready: bool,
+}
+
+fn registered_children(root: &Path) -> Result<Vec<RegisteredChild>, GitError> {
+    let children = list_project_children(root).map_err(|error| match error {
+        ContentTreeError::Io(error) => GitError::Io(error),
+        ContentTreeError::Serde(error) => GitError::Serde(error),
+        error => GitError::General(error.to_string()),
+    })?;
+    Ok(children
+        .into_iter()
+        .map(|child| RegisteredChild {
+            folder: child.folder,
+            ready: child.status == SpaceReadiness::Ready,
+            path: child.path,
+        })
+        .collect())
+}
+
+fn ready_children(root: &Path) -> Result<Vec<std::path::PathBuf>, GitError> {
+    registered_children(root)?
+        .into_iter()
+        .filter(|child| child.ready)
+        .map(|child| normalize_space_folder(&child.folder).map(|_| child.path))
+        .collect()
+}
 
 #[derive(Debug, PartialEq, Eq)]
-pub(crate) enum RepairOutcome {
+pub enum RepairOutcome {
     Unchanged,
     Changed,
     Skipped,
@@ -22,8 +55,8 @@ async fn repair_authorized(
     cli: &GitCli,
     repository: &Path,
     inline: bool,
-    authorization: Result<(), AppError>,
-) -> Result<RepairOutcome, AppError> {
+    authorization: Result<(), GitError>,
+) -> Result<RepairOutcome, GitError> {
     if let Err(error) = authorization {
         tracing::info!(repository = %repository.display(), error_kind = error.kind(), "local ignore repair skipped; retry on writable open");
         return Ok(RepairOutcome::Skipped);
@@ -44,20 +77,15 @@ async fn repair_authorized(
         ops::ensure_inline_gitignore(repository)?;
     }
     if repository.join(".svode/config.json").exists() {
-        let config = config::read_space_config(repository)?;
-        for child in config.spaces.unwrap_or_default() {
-            let folder = project::normalize_space_folder(&child.path)?;
-            if project::space_ref_status(repository, &child) != SpaceStatus::Ready {
+        for child in registered_children(repository)? {
+            let folder = normalize_space_folder(&child.folder)?;
+            if !child.ready {
                 continue;
             }
-            match ops::detect_space_git_type(cli, repository, &repository.join(&folder)).await? {
-                crate::space::types::SpaceGitType::Inline => {
-                    ops::ensure_inline_gitignore(repository)?
-                }
-                crate::space::types::SpaceGitType::Independent => {
-                    ops::add_independent_gitignore(repository, &folder)?
-                }
-                crate::space::types::SpaceGitType::Submodule => {}
+            match ops::detect_space_git_type(cli, repository, &child.path).await? {
+                SpaceGitType::Inline => ops::ensure_inline_gitignore(repository)?,
+                SpaceGitType::Independent => ops::add_independent_gitignore(repository, &folder)?,
+                SpaceGitType::Submodule => {}
             }
         }
     }
@@ -68,11 +96,12 @@ async fn repair_authorized(
     })
 }
 
-pub(crate) async fn repair_scope(
-    app: &AppHandle,
+pub async fn repair_scope(
+    runtime: &GitRuntime,
+    host: &dyn GitHost,
     project: &Path,
     space: &Path,
-) -> Result<RepairOutcome, AppError> {
+) -> Result<RepairOutcome, GitError> {
     if !space.is_dir() {
         tracing::info!(space = %space.display(), "local ignore repair skipped for missing space");
         return Ok(RepairOutcome::Skipped);
@@ -83,26 +112,24 @@ pub(crate) async fn repair_scope(
         tracing::info!(repository = %repository.display(), "local ignore repair deferred until Git initialization");
         return Ok(RepairOutcome::Skipped);
     }
-    let state = app.state::<GitState>();
-    let cli = state.cli.as_ref().ok_or(AppError::GitNotFound)?;
-    let lock = state.get_lock(repository).await;
+    let cli = runtime.cli()?;
+    let lock = runtime.get_lock(repository).await;
     let Ok(_guard) = lock.try_lock() else {
         tracing::info!(repository = %repository.display(), "local ignore repair deferred while repository operation is active");
         return Ok(RepairOutcome::Skipped);
     };
-    let authorization = access::require_repository_mutation(app, repository)
-        .await
-        .map(|_| ());
+    let authorization = host.authorize_repository(repository).await;
     repair_authorized(cli, repository, inline, authorization).await
 }
 
-pub(crate) async fn require_scope_repair(
-    app: &AppHandle,
+pub async fn require_scope_repair(
+    runtime: &GitRuntime,
+    host: &dyn GitHost,
     project: &Path,
     space: &Path,
-) -> Result<(), AppError> {
-    if repair_scope(app, project, space).await? == RepairOutcome::Skipped {
-        return Err(AppError::GitCommandFailed(
+) -> Result<(), GitError> {
+    if repair_scope(runtime, host, project, space).await? == RepairOutcome::Skipped {
+        return Err(GitError::GitCommandFailed(
             "Repository is not safe for ignore repair".into(),
         ));
     }
@@ -110,28 +137,31 @@ pub(crate) async fn require_scope_repair(
 }
 
 /// Exact-path callers already serialize their repository before preflight/publication.
-pub(crate) async fn repair_locked_best_effort(app: &AppHandle, cli: &GitCli, repository: &Path) {
-    let authorization = access::require_repository_mutation(app, repository)
-        .await
-        .map(|_| ());
+pub async fn repair_locked_best_effort(host: &dyn GitHost, cli: &GitCli, repository: &Path) {
+    let authorization = host.authorize_repository(repository).await;
     if let Err(error) = repair_authorized(cli, repository, false, authorization).await {
         tracing::warn!(repository = %repository.display(), error_kind = error.kind(), "local ignore repair failed before exact-path staging; retry on next open");
     }
 }
 
 /// Read/open paths remain available after repair denial or I/O failure.
-pub(crate) async fn repair_scope_best_effort(app: &AppHandle, project: &Path, space: &Path) {
-    if let Err(error) = repair_scope(app, project, space).await {
+pub async fn repair_scope_best_effort(
+    runtime: &GitRuntime,
+    host: &dyn GitHost,
+    project: &Path,
+    space: &Path,
+) {
+    if let Err(error) = repair_scope(runtime, host, project, space).await {
         tracing::warn!(space = %space.display(), error_kind = error.kind(), "local ignore repair failed; retry on next open");
     }
 }
 
-pub(crate) async fn repair_project(app: &AppHandle, root: &Path) {
-    repair_scope_best_effort(app, root, root).await;
-    match ready_spaces(root) {
+pub async fn repair_project(runtime: &GitRuntime, host: &dyn GitHost, root: &Path) {
+    repair_scope_best_effort(runtime, host, root, root).await;
+    match ready_children(root) {
         Ok(children) => {
             for child in children {
-                repair_scope_best_effort(app, root, &child).await;
+                repair_scope_best_effort(runtime, host, root, &child).await;
             }
         }
         Err(error) => tracing::warn!(
@@ -141,16 +171,6 @@ pub(crate) async fn repair_project(app: &AppHandle, root: &Path) {
     }
 }
 
-fn ready_spaces(root: &Path) -> Result<Vec<std::path::PathBuf>, AppError> {
-    config::read_space_config(root)?
-        .spaces
-        .unwrap_or_default()
-        .into_iter()
-        .filter(|child| project::space_ref_status(root, child) == SpaceStatus::Ready)
-        .map(|child| project::normalize_space_folder(&child.path).map(|folder| root.join(folder)))
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -158,8 +178,8 @@ mod tests {
 
     const LEGACY: &str = "# user rules\ncustom.tmp\n# Svode local files\n.svode/local.json\n.svode/*.db\n.svode/*.db-wal\n.svode/*.db-shm\n";
 
-    async fn repair(cli: &GitCli, root: &Path, inline: bool) -> Result<RepairOutcome, AppError> {
-        let access = access::RepositoryAccessState::new();
+    async fn repair(cli: &GitCli, root: &Path, inline: bool) -> Result<RepairOutcome, GitError> {
+        let access = crate::git::access::RepositoryAccessState::new();
         let authorization = access
             .require_mutation(cli, root, &root.join("access-test.json"))
             .await
@@ -265,7 +285,7 @@ mod tests {
         );
         let head = git(&cli, root.path(), &["rev-parse", "HEAD"]).await;
         let index = git(&cli, root.path(), &["ls-files", "--stage", "-z"]).await;
-        let children = ready_spaces(root.path()).unwrap();
+        let children = ready_children(root.path()).unwrap();
         assert_eq!(children.len(), 3);
         assert_eq!(
             repair(&cli, root.path(), false).await.unwrap(),
@@ -276,12 +296,14 @@ mod tests {
             let effective = if is_inline { root.path() } else { &owner };
             repair(&cli, effective, is_inline).await.unwrap();
             coverage(&cli, effective, if is_inline { "inline/" } else { "" }).await;
-            let pool = crate::index::IndexState::new();
+            let pools = crate::index::state::IndexRuntimeState::default();
+            let stores = crate::routines::store_state::RoutineStoreState::new();
             let key = crate::index::IndexKey::Root(owner.clone());
             // The lifecycle driver repairs all owners before any store opens.
-            pool.get_or_create(&key).await.unwrap();
-            pool.get_or_create_routines(&key).await.unwrap();
-            pool.close_project(&owner).await;
+            pools.get_or_create(&key).await.unwrap();
+            stores.get_or_create(&key, &owner).await.unwrap();
+            pools.close_project(&owner).await;
+            stores.close_project(&owner).await;
             let before = std::fs::read(effective.join(".gitignore")).unwrap();
             assert_eq!(
                 repair(&cli, effective, is_inline).await.unwrap(),
@@ -309,7 +331,7 @@ mod tests {
         let cli = cli();
         let root = repo(&cli, true).await;
         legacy(root.path());
-        let denial = AppError::RepositoryAccessDenied {
+        let denial = GitError::RepositoryAccessDenied {
             repository_id: "test".into(),
             status: "read_only".into(),
             reason: "auth_required".into(),
@@ -356,7 +378,7 @@ mod tests {
                 .unwrap()
                 .files
                 .iter()
-                .any(|file| super::super::local_policy::contains(&file.path))
+                .any(|file| super::super::policy::contains(&file.path))
         );
         std::fs::remove_dir(root.path().join(".gitignore")).unwrap();
         assert_eq!(
@@ -431,7 +453,7 @@ mod recovery_tests {
             git(&cli, &child, &["init"]).await;
         }
         std::fs::create_dir(root.path().join("failed/.gitignore")).unwrap();
-        let children = ready_spaces(root.path()).unwrap();
+        let children = ready_children(root.path()).unwrap();
         assert_eq!(children.len(), 2);
         let mut outcomes = Vec::new();
         for child in children {
@@ -444,7 +466,7 @@ mod recovery_tests {
         std::fs::create_dir(&missing).unwrap();
         git(&cli, &missing, &["init"]).await;
         write(&missing, "README.md", "# Restored existing scaffold");
-        assert_eq!(ready_spaces(root.path()).unwrap().len(), 3);
+        assert_eq!(ready_children(root.path()).unwrap().len(), 3);
         assert_eq!(
             repair_authorized(&cli, &missing, false, Ok(()))
                 .await

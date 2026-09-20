@@ -120,7 +120,7 @@ pub async fn clone_with_progress(
 
     if !status.success() {
         let trimmed = stderr_text.trim().to_string();
-        if super::ops::is_git_auth_error(&trimmed) {
+        if svode_core::git::ops::is_git_auth_error(&trimmed) {
             return Err(AppError::GitAuthRequired(trimmed));
         }
         return Err(AppError::GitCommandFailed(format!(
@@ -151,7 +151,7 @@ pub async fn submodule_add_with_progress(
     space_folder: &str,
 ) -> Result<(), AppError> {
     let target = project_path.join(space_folder);
-    if let Some(existing) = super::ops::list_submodules(cli, project_path)
+    if let Some(existing) = svode_core::git::ops::list_submodules(cli, project_path)
         .await?
         .into_iter()
         .find(|item| item.path == space_folder)
@@ -159,7 +159,9 @@ pub async fn submodule_add_with_progress(
         if existing.url.as_deref() != Some(url) {
             return Err(AppError::FileAlreadyExists(target.display().to_string()));
         }
-        return super::branch::materialize(cli, project_path, &target, space_folder).await;
+        return Ok(
+            svode_core::git::branch::materialize(cli, project_path, &target, space_folder).await?,
+        );
     }
     let target_str = project_path
         .join(space_folder)
@@ -244,7 +246,7 @@ pub async fn submodule_add_with_progress(
 
     if !status.success() {
         let trimmed = stderr_text.trim().to_string();
-        if super::ops::is_git_auth_error(&trimmed) {
+        if svode_core::git::ops::is_git_auth_error(&trimmed) {
             return Err(AppError::GitAuthRequired(trimmed));
         }
         return Err(AppError::GitCommandFailed(format!(
@@ -263,7 +265,7 @@ pub async fn submodule_add_with_progress(
         )));
     }
 
-    super::branch::prepare(cli, project_path, &target_dir, true).await?;
+    svode_core::git::branch::prepare(cli, project_path, &target_dir, true).await?;
     Ok(())
 }
 

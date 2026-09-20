@@ -1,22 +1,24 @@
 use std::path::Path;
 
-use tauri::AppHandle;
-
-use super::{GitState, access, ops};
+use super::GitError;
+use super::host::GitHost;
+use super::state::GitRuntime;
+use super::{ops, path::contained_file};
 use crate::{
-    AppError,
-    repo_path::{RootMode, normalize_repo_relative, repo_relative_from_base},
-    space::types::SpaceGitType,
+    git::path::{RootMode, normalize_repo_relative, repo_relative_from_base},
+    storage::config::SpaceGitType,
 };
 
-pub(crate) async fn save(
-    app: &AppHandle,
-    state: &GitState,
+/// One explicit user save: a scoped set of paths, its pending structural
+/// companions and, for a submodule Space, the parent pointer step.
+pub async fn save(
+    runtime: &GitRuntime,
+    host: &dyn GitHost,
     project: Option<&Path>,
     space: &Path,
     requested: Option<Vec<String>>,
-) -> Result<super::publication_flow::SaveReport, AppError> {
-    let cli = super::require_cli(state)?;
+) -> Result<super::flow::SaveReport, GitError> {
+    let cli = runtime.require_cli()?;
     let (kind, repo) = match project {
         Some(project) => ops::resolve_target_repo(&cli, project, space).await?,
         None => (SpaceGitType::Independent, space.to_path_buf()),
@@ -29,10 +31,11 @@ pub(crate) async fn save(
                 .collect::<Result<Vec<_>, _>>()
         })
         .transpose()?;
-    super::local_repair::repair_scope_best_effort(app, project.unwrap_or(space), space).await;
-    let lock = state.get_lock(&repo).await;
+    super::local_repair::repair_scope_best_effort(runtime, host, project.unwrap_or(space), space)
+        .await;
+    let lock = runtime.get_lock(&repo).await;
     let _guard = lock.lock().await;
-    access::require_repository_mutation(app, &repo).await?;
+    host.authorize_repository(&repo).await?;
     super::branch::prepare_existing(&cli, &repo).await?;
 
     let anchors = requested.as_ref().map(|paths| {
@@ -41,14 +44,14 @@ pub(crate) async fn save(
             .map(|path| space.join(path))
             .collect::<Vec<_>>()
     });
-    let mut pending = state.pending().begin_save(space, anchors.as_deref());
+    let mut pending = runtime.pending().begin_save(space, anchors.as_deref());
     let selected = match requested {
         Some(paths) => paths,
         None => ops::status(&cli, space)
             .await?
             .files
             .into_iter()
-            .filter(|file| !super::local_policy::contains(&file.path))
+            .filter(|file| !super::policy::contains(&file.path))
             .map(|file| file.path)
             .collect(),
     };
@@ -63,24 +66,22 @@ pub(crate) async fn save(
         }
     }
     for path in &paths {
-        super::inspection::contained_file(&repo, path)?;
+        contained_file(&repo, path)?;
     }
     let affected = paths.iter().map(|path| repo.join(path)).collect::<Vec<_>>();
-    access::require_repository_mutation_paths(app, affected).await?;
+    host.authorize_paths(affected).await?;
     ops::commit_paths(&cli, &repo, &paths).await?;
     pending.complete();
     let parent = if let Some(project) = project.filter(|_| kind == SpaceGitType::Submodule) {
         let expected = ops::repository_head_oid(&cli, &repo).await?;
         Some(
-            super::publication_flow::parent_step(
-                app, &cli, &repo, project, &expected, false, false,
-            )
-            .await,
+            super::flow::parent_step(runtime, host, &cli, &repo, project, &expected, false, false)
+                .await,
         )
     } else {
         None
     };
-    Ok(super::publication_flow::SaveReport {
+    Ok(super::flow::SaveReport {
         status: ops::status(&cli, space).await?,
         parent,
     })

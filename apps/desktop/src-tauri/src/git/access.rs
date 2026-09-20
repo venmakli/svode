@@ -27,15 +27,8 @@ impl RepositoryAccessState {
         Self(svode_core::git::access::RepositoryAccessState::new())
     }
 
-    #[cfg(test)]
-    pub async fn verify(
-        &self,
-        cli: &GitCli,
-        space: &Path,
-        store: &Path,
-    ) -> Result<RepositoryAccessSnapshot, AppError> {
-        self.verify_requested(cli, space, store, false, |_| {})
-            .await
+    pub(crate) fn core(&self) -> &svode_core::git::access::RepositoryAccessState {
+        &self.0
     }
 
     pub async fn snapshot(
@@ -44,7 +37,7 @@ impl RepositoryAccessState {
         space: &Path,
         store: &Path,
     ) -> Result<RepositoryAccessSnapshot, AppError> {
-        Ok(self.0.snapshot(cli.core(), space, store).await?)
+        Ok(self.0.snapshot(cli, space, store).await?)
     }
 
     pub async fn verify_requested(
@@ -57,7 +50,7 @@ impl RepositoryAccessState {
     ) -> Result<RepositoryAccessSnapshot, AppError> {
         Ok(self
             .0
-            .verify_requested(cli.core(), space, store, automatic, on_checking)
+            .verify_requested(cli, space, store, automatic, on_checking)
             .await?)
     }
 
@@ -67,7 +60,7 @@ impl RepositoryAccessState {
         space: &Path,
         store: &Path,
     ) -> Result<RepositoryAccessSnapshot, AppError> {
-        Ok(self.0.require_mutation(cli.core(), space, store).await?)
+        Ok(self.0.require_mutation(cli, space, store).await?)
     }
 
     pub async fn claim_routine(
@@ -84,7 +77,7 @@ impl RepositoryAccessState {
         Ok(self
             .0
             .claim_routine(
-                cli.core(),
+                cli,
                 repository,
                 store,
                 snapshot,
@@ -104,7 +97,7 @@ impl RepositoryAccessState {
     ) -> Result<Option<String>, AppError> {
         Ok(self
             .0
-            .routine_repository_id(cli.core(), repository, snapshot)
+            .routine_repository_id(cli, repository, snapshot)
             .await?)
     }
 
@@ -114,14 +107,7 @@ impl RepositoryAccessState {
         space: &Path,
         store: &Path,
     ) -> Result<RepositoryAccessSnapshot, AppError> {
-        Ok(self
-            .0
-            .record_writable_evidence(cli.core(), space, store)
-            .await?)
-    }
-
-    pub async fn invalidate(&self, cli: &GitCli, space: &Path) -> Result<String, AppError> {
-        Ok(self.0.invalidate(cli.core(), space).await?)
+        Ok(self.0.record_writable_evidence(cli, space, store).await?)
     }
 }
 
@@ -267,7 +253,7 @@ pub(crate) fn access_store_path(app: &AppHandle) -> Result<PathBuf, AppError> {
 }
 
 pub async fn resolve_repository(cli: &GitCli, path: &Path) -> Result<PathBuf, AppError> {
-    Ok(svode_core::git::access::resolve_repository(cli.core(), path).await?)
+    Ok(svode_core::git::access::resolve_repository(cli, path).await?)
 }
 
 pub async fn scope_authorized_mutation_paths<F, T, E>(

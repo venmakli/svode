@@ -2,8 +2,8 @@ use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 
+use super::GitError;
 use super::cli::GitCli;
-use crate::AppError;
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -19,11 +19,11 @@ pub enum BranchBlockReason {
     CheckoutFailed,
 }
 
-fn blocked(reason: BranchBlockReason) -> AppError {
-    AppError::GitBranchBlocked { reason }
+fn blocked(reason: BranchBlockReason) -> GitError {
+    GitError::BranchBlocked { reason }
 }
 
-async fn checked(cli: &GitCli, repo: &Path, args: &[&str]) -> Result<String, AppError> {
+async fn checked(cli: &GitCli, repo: &Path, args: &[&str]) -> Result<String, GitError> {
     let out = cli.exec(repo, args).await?;
     if out.exit_code != 0 {
         return Err(blocked(BranchBlockReason::Configuration));
@@ -31,7 +31,7 @@ async fn checked(cli: &GitCli, repo: &Path, args: &[&str]) -> Result<String, App
     Ok(out.stdout.trim_end_matches(['\n', '\r']).to_string())
 }
 
-async fn config(cli: &GitCli, repo: &Path, key: &str) -> Result<Option<String>, AppError> {
+async fn config(cli: &GitCli, repo: &Path, key: &str) -> Result<Option<String>, GitError> {
     let out = cli.exec(repo, &["config", "--get", key]).await?;
     match out.exit_code {
         0 => Ok(Some(out.stdout.trim_end().to_string())),
@@ -44,9 +44,9 @@ async fn module_branch(
     cli: &GitCli,
     root: &Path,
     child: &Path,
-) -> Result<Option<String>, AppError> {
+) -> Result<Option<String>, GitError> {
     let path =
-        crate::repo_path::repo_relative_from_base(root, child, crate::repo_path::RootMode::Reject)?;
+        crate::git::path::repo_relative_from_base(root, child, crate::git::path::RootMode::Reject)?;
     let out = cli
         .exec(
             root,
@@ -94,7 +94,7 @@ async fn module_branch(
 }
 
 /// Discover old-form and absorbed direct submodules through Git and exact paths.
-pub(crate) async fn parent(cli: &GitCli, repo: &Path) -> Result<Option<PathBuf>, AppError> {
+pub async fn parent(cli: &GitCli, repo: &Path) -> Result<Option<PathBuf>, GitError> {
     let Some(directory) = repo.parent() else {
         return Ok(None);
     };
@@ -110,10 +110,10 @@ pub(crate) async fn parent(cli: &GitCli, repo: &Path) -> Result<Option<PathBuf>,
     if root == repo || !repo.starts_with(&root) {
         return Ok(None);
     }
-    let relative = crate::repo_path::repo_relative_from_base(
+    let relative = crate::git::path::repo_relative_from_base(
         &root,
         &repo,
-        crate::repo_path::RootMode::Reject,
+        crate::git::path::RootMode::Reject,
     )?;
     if super::ops::list_submodules(cli, &root)
         .await?
@@ -126,7 +126,7 @@ pub(crate) async fn parent(cli: &GitCli, repo: &Path) -> Result<Option<PathBuf>,
     }
 }
 
-pub(crate) async fn prepare_existing(cli: &GitCli, repo: &Path) -> Result<(), AppError> {
+pub async fn prepare_existing(cli: &GitCli, repo: &Path) -> Result<(), GitError> {
     if let Some(root) = parent(cli, repo).await? {
         prepare(cli, &root, &std::fs::canonicalize(repo)?, false).await?;
     }
@@ -134,12 +134,12 @@ pub(crate) async fn prepare_existing(cli: &GitCli, repo: &Path) -> Result<(), Ap
 }
 
 /// Caller holds the child repository lock. Refuse before any index/worktree write.
-pub(crate) async fn prepare(
+pub async fn prepare(
     cli: &GitCli,
     root: &Path,
     child: &Path,
     materializing: bool,
-) -> Result<(), AppError> {
+) -> Result<(), GitError> {
     let attached = cli
         .exec(child, &["symbolic-ref", "--quiet", "--short", "HEAD"])
         .await?;
@@ -353,7 +353,7 @@ pub(crate) async fn prepare(
     Ok(())
 }
 
-async fn ancestor(cli: &GitCli, repo: &Path, older: &str, newer: &str) -> Result<bool, AppError> {
+async fn ancestor(cli: &GitCli, repo: &Path, older: &str, newer: &str) -> Result<bool, GitError> {
     let out = cli
         .exec(repo, &["merge-base", "--is-ancestor", older, newer])
         .await?;
@@ -364,7 +364,7 @@ async fn ancestor(cli: &GitCli, repo: &Path, older: &str, newer: &str) -> Result
     }
 }
 
-pub(crate) async fn ensure_no_operation(cli: &GitCli, repo: &Path) -> Result<(), AppError> {
+pub async fn ensure_no_operation(cli: &GitCli, repo: &Path) -> Result<(), GitError> {
     let path = |name| async move {
         checked(
             cli,
@@ -391,12 +391,12 @@ pub(crate) async fn ensure_no_operation(cli: &GitCli, repo: &Path) -> Result<(),
 }
 
 /// Never repeat `submodule update` over an existing checkout, even after a partial clone.
-pub(crate) async fn materialize(
+pub async fn materialize(
     cli: &GitCli,
     root: &Path,
     child: &Path,
     path: &str,
-) -> Result<(), AppError> {
+) -> Result<(), GitError> {
     module_branch(cli, root, child).await?;
     let initialized = if child.is_dir() {
         let out = cli.exec(child, &["rev-parse", "--show-toplevel"]).await?;

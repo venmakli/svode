@@ -14,10 +14,11 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager, State};
 
 use crate::error::AppError;
-use crate::git::{GitState, ops};
+use crate::git::GitState;
 use crate::index::{IndexKey, IndexState};
 use crate::repo_path::{RootMode, normalize_repo_relative};
 use crate::space::types::{AssetsSpaceConfig, AssetsStrategy};
+use svode_core::git::ops;
 
 use super::scope::{
     AssetsStorageScope, resolve_effective_storage_scope, resolve_effective_storage_scope_for_key,
@@ -185,7 +186,7 @@ pub(crate) async fn probe_lfs_config_with_git(
             }
         }
         AssetsStrategy::LfsRemote => {
-            let Some(cli) = git_state.cli.clone() else {
+            let Some(cli) = git_state.detected().cloned() else {
                 return LfsState::MissingCreds;
             };
             match cli.exec(repo_dir, LFS_REMOTE_PROBE_ARGS).await {
@@ -222,7 +223,7 @@ pub async fn diagnose_lfs_remote(
         });
     }
 
-    let cli = git_state.cli.clone().ok_or(AppError::GitNotFound)?;
+    let cli = git_state.detected().cloned().ok_or(AppError::GitNotFound)?;
     let diagnostic = if !cli.lfs_available() {
         LfsRemoteDiagnostic {
             state: LfsState::MissingCreds,
@@ -243,7 +244,7 @@ pub async fn diagnose_lfs_remote(
 }
 
 async fn diagnose_lfs_remote_with_cli(
-    cli: &crate::git::cli::GitCli,
+    cli: &svode_core::git::cli::GitCli,
     repo_dir: &Path,
 ) -> Result<LfsRemoteDiagnostic, AppError> {
     let Some(remote_url) = ops::get_remote(cli, repo_dir).await? else {
@@ -463,7 +464,7 @@ pub fn maybe_auto_pull_after_sync(
             return;
         }
         let git_state = app.state::<GitState>();
-        let Some(cli) = git_state.cli.clone() else {
+        let Some(cli) = git_state.detected().cloned() else {
             state
                 .set_lfs_state_with(&app, &scope.pool_key, LfsState::MissingCreds)
                 .await;
@@ -514,7 +515,7 @@ pub async fn repair_lfs(
         return Ok(LfsState::NotApplicable);
     }
 
-    let cli = git_state.cli.clone().ok_or(AppError::GitNotFound)?;
+    let cli = git_state.detected().cloned().ok_or(AppError::GitNotFound)?;
 
     index_state
         .set_lfs_state_with(&app, &scope.pool_key, LfsState::Pulling)

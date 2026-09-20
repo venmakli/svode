@@ -1,21 +1,21 @@
+use super::GitError;
 use super::cli::GitCli;
-use crate::AppError;
 use std::{fs::OpenOptions, path::Path};
 
 /// Commit only the revision that the child publisher actually sent. The caller
 /// holds child then root locks; index.lock also excludes external Git staging.
-pub(crate) async fn commit(
+pub async fn commit(
     cli: &GitCli,
     root: &Path,
     child: &Path,
     published: &str,
-) -> Result<bool, AppError> {
+) -> Result<bool, GitError> {
     super::branch::ensure_no_operation(cli, root).await?;
     let path =
-        crate::repo_path::repo_relative_from_base(root, child, crate::repo_path::RootMode::Reject)?;
+        crate::git::path::repo_relative_from_base(root, child, crate::git::path::RootMode::Reject)?;
     let old_head = super::ops::repository_head_oid(cli, root).await?;
     if super::ops::repository_head_oid(cli, child).await? != published {
-        return Err(AppError::GitPublicationBlocked {
+        return Err(GitError::PublicationBlocked {
             repository: root.to_string_lossy().into_owned(),
             child: Some(path),
             reason: super::publication::PublicationBlockReason::TargetChanged,
@@ -34,7 +34,7 @@ pub(crate) async fn commit(
         )
         .await?;
     if index.exit_code != 0 {
-        return Err(AppError::GitCommandFailed(
+        return Err(GitError::GitCommandFailed(
             "Cannot locate project index".into(),
         ));
     }
@@ -65,12 +65,12 @@ pub(crate) async fn commit(
         root: &Path,
         index: &Path,
         args: &[&str],
-    ) -> Result<String, AppError> {
+    ) -> Result<String, GitError> {
         let out = cli
             .exec_with_env(root, args, &[("GIT_INDEX_FILE", &index.to_string_lossy())])
             .await?;
         if out.exit_code != 0 {
-            return Err(AppError::GitCommandFailed(
+            return Err(GitError::GitCommandFailed(
                 "Project pointer commit failed; local content is preserved".into(),
             ));
         }

@@ -7,8 +7,8 @@ use std::time::Duration;
 use notify::{Event, RecommendedWatcher, RecursiveMode, Watcher};
 
 use crate::error::AppError;
-use crate::git::cli::GitCli;
 use svode_core::git::actor_sources::ActorSources;
+use svode_core::git::cli::GitCli;
 
 enum Message {
     Event(notify::Result<Event>),
@@ -55,7 +55,7 @@ impl ActorObservation {
             let mut watched = BTreeMap::from([(space.clone(), false)]);
             let mut reconcile =
                 |watcher: &mut RecommendedWatcher, sources: &mut Option<ActorSources>| match runtime
-                    .block_on(ActorSources::resolve(cli.core(), &space))
+                    .block_on(ActorSources::resolve(&cli, &space))
                 {
                     Ok(next) => {
                         let changed = sources.as_ref() != Some(&next);

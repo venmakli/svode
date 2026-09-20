@@ -108,7 +108,7 @@ impl Fixture {
             ],
         );
     }
-    async fn prepare(&self) -> Result<(), AppError> {
+    async fn prepare(&self) -> Result<(), GitError> {
         prepare(&self.cli, &self.root, &self.child, false).await
     }
     fn snapshot(&self) -> (String, String, String, Vec<u8>) {
@@ -125,9 +125,9 @@ impl Fixture {
     }
 }
 
-fn reason(error: AppError, expected: BranchBlockReason) {
+fn reason(error: GitError, expected: BranchBlockReason) {
     assert!(
-        matches!(error, AppError::GitBranchBlocked { reason } if reason == expected),
+        matches!(error, GitError::BranchBlocked { reason } if reason == expected),
         "{error:?}"
     );
 }

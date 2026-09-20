@@ -26,9 +26,9 @@ pub async fn diagnose_lfs_policy(
     let project = PathBuf::from(&project_path);
     let scope =
         resolve_effective_storage_scope(&index_state, &project, space_id.as_deref()).await?;
-    let cli = git_state.cli.clone().ok_or(AppError::GitNotFound)?;
+    let cli = git_state.detected().cloned().ok_or(AppError::GitNotFound)?;
     let lock = git_state.get_lock(&scope.repo_dir).await;
     let _guard = lock.lock().await;
 
-    Ok(diagnose_repo_lfs_policy(cli.core(), &scope.repo_dir, &scope.config).await?)
+    Ok(diagnose_repo_lfs_policy(&cli, &scope.repo_dir, &scope.config).await?)
 }

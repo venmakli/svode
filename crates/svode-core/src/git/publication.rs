@@ -2,8 +2,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use super::GitError;
 use super::cli::{GitCli, GitOutput};
-use crate::AppError;
 
 #[derive(Debug, Clone, Copy, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -15,15 +15,15 @@ pub enum PublicationBlockReason {
     RevisionUnavailable,
 }
 
-fn blocked(repo: &Path, child: Option<&str>, reason: PublicationBlockReason) -> AppError {
-    AppError::GitPublicationBlocked {
+fn blocked(repo: &Path, child: Option<&str>, reason: PublicationBlockReason) -> GitError {
+    GitError::PublicationBlocked {
         repository: repo.to_string_lossy().into_owned(),
         child: child.map(str::to_owned),
         reason,
     }
 }
 
-async fn checked(cli: &GitCli, repo: &Path, args: &[&str]) -> Result<String, AppError> {
+async fn checked(cli: &GitCli, repo: &Path, args: &[&str]) -> Result<String, GitError> {
     let out = cli.exec_redacted(repo, args).await?;
     if out.exit_code != 0 {
         return Err(blocked(repo, None, PublicationBlockReason::Configuration));
@@ -31,7 +31,7 @@ async fn checked(cli: &GitCli, repo: &Path, args: &[&str]) -> Result<String, App
     Ok(out.stdout.trim_end_matches(['\r', '\n']).into())
 }
 
-async fn sensitive(cli: &GitCli, repo: &Path, args: &[&str]) -> Result<GitOutput, AppError> {
+async fn sensitive(cli: &GitCli, repo: &Path, args: &[&str]) -> Result<GitOutput, GitError> {
     cli.exec_sensitive_with_stdin(repo, args, &[], None, Duration::from_secs(120))
         .await
 }
@@ -50,7 +50,7 @@ impl Drop for NativeEvidence {
     fn drop(&mut self) {
         for (repo, reference, oid) in &self.refs {
             let mut command = std::process::Command::new(&self.git);
-            crate::process::hide_window(&mut command);
+            super::cli::hide_window(&mut command);
             match command
                 .current_dir(repo)
                 .args(["update-ref", "-d", reference, oid])
@@ -65,11 +65,11 @@ impl Drop for NativeEvidence {
 
 /// Every user-history publisher enters here while holding its repository lock.
 /// Temporary repositories isolate proof refs, config and index from user state.
-pub(crate) async fn push_snapshot(
+pub async fn push_snapshot(
     cli: &GitCli,
     repo: &Path,
     first: bool,
-) -> Result<(GitOutput, Option<String>), AppError> {
+) -> Result<(GitOutput, Option<String>), GitError> {
     let repository = super::access::resolve_repository(cli, repo).await?;
     let repo = repository.as_path();
     let fixed = match snapshot(cli, repo, first).await? {
@@ -136,11 +136,11 @@ pub(crate) async fn push_snapshot(
     Ok((out, Some(fixed.head)))
 }
 
-pub(crate) async fn push(cli: &GitCli, repo: &Path, first: bool) -> Result<GitOutput, AppError> {
+pub async fn push(cli: &GitCli, repo: &Path, first: bool) -> Result<GitOutput, GitError> {
     Ok(push_snapshot(cli, repo, first).await?.0)
 }
 
-async fn set_upstream(cli: &GitCli, repo: &Path) -> Result<(), AppError> {
+async fn set_upstream(cli: &GitCli, repo: &Path) -> Result<(), GitError> {
     let branch = super::ops::current_branch(cli, repo).await?;
     checked(
         cli,
@@ -161,7 +161,7 @@ async fn set_upstream(cli: &GitCli, repo: &Path) -> Result<(), AppError> {
     Ok(())
 }
 
-async fn prove(cli: &GitCli, repo: &Path, snapshot: &Snapshot) -> Result<NativeEvidence, AppError> {
+async fn prove(cli: &GitCli, repo: &Path, snapshot: &Snapshot) -> Result<NativeEvidence, GitError> {
     let temp = tempfile::Builder::new()
         .prefix("svode-publication-")
         .tempdir()?;
@@ -307,9 +307,9 @@ async fn prove(cli: &GitCli, repo: &Path, snapshot: &Snapshot) -> Result<NativeE
         )
         .await?;
         for (path, oid) in links {
-            let relative = crate::repo_path::normalize_repo_relative(
+            let relative = crate::git::path::normalize_repo_relative(
                 path,
-                crate::repo_path::RootMode::Reject,
+                crate::git::path::RootMode::Reject,
             )?;
             let child = repo.join(&relative);
             let actual = cli
@@ -459,7 +459,7 @@ async fn prove(cli: &GitCli, repo: &Path, snapshot: &Snapshot) -> Result<NativeE
     Ok(evidence)
 }
 
-async fn complete_history(cli: &GitCli, repo: &Path, revisions: &str) -> Result<bool, AppError> {
+async fn complete_history(cli: &GitCli, repo: &Path, revisions: &str) -> Result<bool, GitError> {
     let out = cli
         .exec_sensitive_with_stdin(
             repo,
@@ -484,7 +484,7 @@ async fn changed_gitlinks(
     cli: &GitCli,
     repo: &Path,
     commit: &str,
-) -> Result<(bool, BTreeSet<String>), AppError> {
+) -> Result<(bool, BTreeSet<String>), GitError> {
     let diff = checked(
         cli,
         repo,
@@ -524,11 +524,11 @@ async fn changed_gitlinks(
 mod tests;
 
 /// Read fresh remote history without pushing, probing capability or changing user refs.
-pub(crate) async fn head_is_published(
+pub async fn head_is_published(
     cli: &GitCli,
     repo: &Path,
     expected: &str,
-) -> Result<bool, AppError> {
+) -> Result<bool, GitError> {
     let branch = super::ops::current_branch(cli, repo).await?;
     if branch == "HEAD" {
         return Ok(false);

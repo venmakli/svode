@@ -11,8 +11,8 @@ use super::{ActorActivity, ActorCatalog, ActorCatalogState};
 use crate::AppError;
 use crate::git::GitState;
 use crate::git::access::RepositoryAccessState;
-use crate::git::autocommit::AutocommitService;
 use crate::git::require_cli;
+use svode_core::git::autocommit::AutocommitService;
 
 #[tauri::command]
 pub async fn actors_get_catalog(
@@ -22,7 +22,7 @@ pub async fn actors_get_catalog(
 ) -> Result<ActorCatalog, AppError> {
     let cli = require_cli(&git_state)?;
     Ok(actor_catalog
-        .snapshot(cli.core(), Path::new(&space_path))
+        .snapshot(&cli, Path::new(&space_path))
         .await?
         .catalog())
 }
@@ -35,7 +35,7 @@ pub async fn actors_refresh_catalog(
 ) -> Result<ActorCatalog, AppError> {
     let cli = require_cli(&git_state)?;
     Ok(actor_catalog
-        .refresh(cli.core(), Path::new(&space_path))
+        .refresh(&cli, Path::new(&space_path))
         .await?
         .catalog())
 }
@@ -53,7 +53,7 @@ pub async fn actors_get_activity(
     let cli = require_cli(&git_state)?;
     actor_catalog
         .activity(
-            cli.core(),
+            &cli,
             Path::new(&space_path),
             &canonical_email,
             selected_year,

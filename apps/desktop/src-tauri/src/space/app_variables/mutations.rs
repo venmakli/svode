@@ -1,7 +1,4 @@
-use crate::git::autocommit::{
-    ExactPathPendingReason, ExactPathPersistenceOutcome, GuardedExactPathPlan,
-};
-use crate::git::{GitState, autocommit, ops, require_cli};
+use crate::git::{GitState, require_cli};
 use crate::{AppError, space::types::SpaceGitType};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
@@ -9,6 +6,10 @@ use std::{
     future::Future,
     path::{Path, PathBuf},
 };
+use svode_core::git::autocommit::{
+    ExactPathPendingReason, ExactPathPersistenceOutcome, GuardedExactPathPlan,
+};
+use svode_core::git::{autocommit, ops};
 use svode_core::variables::{Change, Owner};
 
 const CONFIG_MESSAGE: &str = "Update variables";
@@ -88,7 +89,7 @@ pub(crate) async fn apply(
     project: Option<&Path>,
     git: &GitState,
     write: impl Future<Output = Result<Option<Change>, AppError>>,
-    committed: impl Fn(&crate::git::cli::GitCli, &Path, &Path),
+    committed: impl Fn(&svode_core::git::cli::GitCli, &Path, &Path),
 ) -> Result<Mutation, AppError> {
     let Ok(owner_path) = owner.scope_path() else {
         return Ok(Mutation {
@@ -145,7 +146,7 @@ pub(crate) async fn apply(
                 project.and_then(|path| path.canonicalize().ok())
             };
             let policy_off = policy_repo.as_ref().is_some_and(|repo| {
-                !crate::space::config::effective_git_user_policy(repo).auto_commit_system
+                !svode_core::git::policy::effective_user_policy(repo).auto_commit_system
             });
             let change = write.await?;
             let effect =

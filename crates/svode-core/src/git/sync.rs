@@ -2,9 +2,9 @@ use std::path::Path;
 
 use serde::Serialize;
 
+use super::GitError;
 use super::auth::{GitAuthChallenge, GitRemoteOperation};
 use super::cli::GitCli;
-use crate::AppError;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase", tag = "type")]
@@ -23,19 +23,19 @@ pub enum SyncResult {
 }
 
 #[cfg(test)]
-pub(crate) async fn sync_if_enabled(
+pub async fn sync_if_enabled(
     cli: &GitCli,
     repo: &Path,
     requested: bool,
-) -> Result<Option<SyncResult>, AppError> {
-    if !requested || !crate::space::config::effective_git_user_policy(repo).auto_sync {
+) -> Result<Option<SyncResult>, GitError> {
+    if !requested || !super::policy::effective_user_policy(repo).auto_sync {
         return Ok(None);
     }
     sync(cli, repo).await.map(Some)
 }
 
 /// Pull then push. Handle conflicts, no-remote, and auth errors.
-pub async fn sync(cli: &GitCli, space_dir: &Path) -> Result<SyncResult, AppError> {
+pub async fn sync(cli: &GitCli, space_dir: &Path) -> Result<SyncResult, GitError> {
     super::branch::prepare_existing(cli, space_dir).await?;
     super::branch::ensure_no_operation(cli, space_dir).await?;
     // Check if remote is configured
@@ -96,11 +96,11 @@ async fn sync_without_upstream(
     cli: &GitCli,
     space_dir: &Path,
     target: &str,
-) -> Result<SyncResult, AppError> {
+) -> Result<SyncResult, GitError> {
     match super::ops::fetch_remote(cli, space_dir).await {
         Ok(false) => return Ok(SyncResult::NoRemote),
         Ok(true) => {}
-        Err(AppError::GitAuthRequired(detail)) => {
+        Err(GitError::AuthRequired(detail)) => {
             return auth_required(
                 cli,
                 space_dir,
@@ -109,13 +109,13 @@ async fn sync_without_upstream(
             )
             .await;
         }
-        Err(AppError::GitNoRemote) => return Ok(SyncResult::NoRemote),
+        Err(GitError::NoRemote) => return Ok(SyncResult::NoRemote),
         Err(err) => return Err(err),
     }
 
     let branch = super::ops::current_branch(cli, space_dir).await?;
     if branch == "HEAD" || branch.is_empty() {
-        return Err(AppError::GitCommandFailed(
+        return Err(GitError::GitCommandFailed(
             "Cannot sync detached HEAD without an upstream".to_string(),
         ));
     }
@@ -160,18 +160,14 @@ async fn sync_without_upstream(
     })
 }
 
-pub(crate) async fn validate_transport(
-    cli: &GitCli,
-    repo: &Path,
-    expected: &str,
-) -> Result<(), AppError> {
+pub async fn validate_transport(cli: &GitCli, repo: &Path, expected: &str) -> Result<(), GitError> {
     if super::operations::read_transport(cli, repo).await? != expected {
         return Err(super::operations::target_changed(repo));
     }
     Ok(())
 }
 
-async fn upstream_ref(cli: &GitCli, space_dir: &Path) -> Result<Option<String>, AppError> {
+async fn upstream_ref(cli: &GitCli, space_dir: &Path) -> Result<Option<String>, GitError> {
     let out = cli
         .exec(
             space_dir,
@@ -199,7 +195,7 @@ async fn handle_pull_failure(
     space_dir: &Path,
     stderr: &str,
     stdout: &str,
-) -> Result<SyncResult, AppError> {
+) -> Result<SyncResult, GitError> {
     let stderr = stderr.trim();
 
     if super::ops::is_git_auth_error(stderr) {
@@ -223,13 +219,13 @@ async fn remote_error_to_sync_result(
     cli: &GitCli,
     space_dir: &Path,
     operation: GitRemoteOperation,
-    error: AppError,
-) -> Result<SyncResult, AppError> {
+    error: GitError,
+) -> Result<SyncResult, GitError> {
     match error {
-        AppError::GitAuthRequired(detail) => {
+        GitError::AuthRequired(detail) => {
             auth_required(cli, space_dir, operation, Some(detail.as_str())).await
         }
-        AppError::GitNoRemote => Ok(SyncResult::NoRemote),
+        GitError::NoRemote => Ok(SyncResult::NoRemote),
         other => Err(other),
     }
 }
@@ -239,14 +235,14 @@ async fn auth_required(
     space_dir: &Path,
     operation: GitRemoteOperation,
     detail: Option<&str>,
-) -> Result<SyncResult, AppError> {
+) -> Result<SyncResult, GitError> {
     Ok(SyncResult::AuthRequired {
         challenge: super::auth::build_auth_challenge(cli, space_dir, operation, detail).await,
     })
 }
 
 /// Get list of conflicted files.
-pub async fn conflict_files(cli: &GitCli, space_dir: &Path) -> Result<Vec<String>, AppError> {
+pub async fn conflict_files(cli: &GitCli, space_dir: &Path) -> Result<Vec<String>, GitError> {
     let out = cli
         .exec(space_dir, &["diff", "--name-only", "-z", "--diff-filter=U"])
         .await?;
@@ -255,18 +251,18 @@ pub async fn conflict_files(cli: &GitCli, space_dir: &Path) -> Result<Vec<String
         .split('\0')
         .filter(|path| !path.is_empty())
         .map(|path| {
-            crate::repo_path::normalize_repo_relative(path, crate::repo_path::RootMode::Reject)
+            crate::git::path::normalize_repo_relative(path, crate::git::path::RootMode::Reject)
         })
         .collect()
 }
 
 /// Resolve conflicts: stage all and commit, then push.
-pub async fn resolve_and_continue(cli: &GitCli, space_dir: &Path) -> Result<SyncResult, AppError> {
+pub async fn resolve_and_continue(cli: &GitCli, space_dir: &Path) -> Result<SyncResult, GitError> {
     let target = super::operations::read_transport(cli, space_dir).await?;
     // Stage all resolved files
     let add_out = cli.exec(space_dir, &["add", "."]).await?;
     if add_out.exit_code != 0 {
-        return Err(AppError::GitCommandFailed(format!(
+        return Err(GitError::GitCommandFailed(format!(
             "git add failed: {}",
             add_out.stderr
         )));
@@ -275,7 +271,7 @@ pub async fn resolve_and_continue(cli: &GitCli, space_dir: &Path) -> Result<Sync
     // Commit the merge
     let commit_out = cli.exec(space_dir, &["commit", "--no-edit"]).await?;
     if commit_out.exit_code != 0 {
-        return Err(AppError::GitCommandFailed(format!(
+        return Err(GitError::GitCommandFailed(format!(
             "git commit failed: {}",
             commit_out.stderr
         )));
@@ -290,7 +286,7 @@ pub async fn resolve_and_continue(cli: &GitCli, space_dir: &Path) -> Result<Sync
         if super::ops::is_git_auth_error(stderr) {
             return auth_required(cli, space_dir, GitRemoteOperation::Sync, Some(stderr)).await;
         }
-        return Err(AppError::GitCommandFailed(format!(
+        return Err(GitError::GitCommandFailed(format!(
             "git push failed: {stderr}"
         )));
     }
@@ -302,10 +298,10 @@ pub async fn resolve_and_continue(cli: &GitCli, space_dir: &Path) -> Result<Sync
 }
 
 /// Abort current merge.
-pub async fn merge_abort(cli: &GitCli, space_dir: &Path) -> Result<(), AppError> {
+pub async fn merge_abort(cli: &GitCli, space_dir: &Path) -> Result<(), GitError> {
     let out = cli.exec(space_dir, &["merge", "--abort"]).await?;
     if out.exit_code != 0 {
-        return Err(AppError::GitCommandFailed(format!(
+        return Err(GitError::GitCommandFailed(format!(
             "git merge --abort failed: {}",
             out.stderr
         )));

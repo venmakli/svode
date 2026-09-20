@@ -2,7 +2,7 @@ use std::path::Path;
 
 use crate::error::AppError;
 
-use super::types::{GitUserPolicy, LocalConfig, SpaceConfig};
+use super::types::{LocalConfig, SpaceConfig};
 
 /// Read space config from {space_path}/.svode/config.json.
 pub fn read_space_config(path: &Path) -> Result<SpaceConfig, AppError> {
@@ -53,28 +53,10 @@ fn variables_error(error: svode_core::variables::Error) -> AppError {
     AppError::Storage(error.to_string())
 }
 
-/// Effective per-user Git policy from local-only config.
-pub fn read_git_user_policy(path: &Path) -> Result<GitUserPolicy, AppError> {
-    Ok(read_local_config(path)?.git.unwrap_or_default())
-}
-
-/// Safe policy read for background side-effect gates. Invalid or missing local
-/// config disables automation rather than enabling background commits/sync.
-pub fn effective_git_user_policy(path: &Path) -> GitUserPolicy {
-    read_git_user_policy(path).unwrap_or_default()
-}
-
-pub fn write_git_user_policy(path: &Path, policy: &GitUserPolicy) -> Result<(), AppError> {
-    mutate_local_config(path, |local| {
-        local.git = Some(policy.clone());
-        Ok(())
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::space::types::{AgentSessionsLocalConfig, GitSpaceConfig};
+    use crate::space::types::{AgentSessionsLocalConfig, GitSpaceConfig, GitUserPolicy};
     use std::sync::Arc;
     use svode_core::routines::local::RoutinesLocalConfig;
     use svode_core::storage::config::BINARY_ROUTING_VERSION;
@@ -176,33 +158,6 @@ mod tests {
     }
 
     #[test]
-    fn git_user_policy_defaults_false_and_round_trips_through_local_config() {
-        let temp = tempfile::tempdir().expect("temp dir");
-
-        assert_eq!(
-            read_git_user_policy(temp.path()).expect("read missing local config"),
-            GitUserPolicy::default()
-        );
-
-        let policy = GitUserPolicy {
-            auto_sync: true,
-            auto_commit_structural: false,
-            auto_commit_system: true,
-        };
-        write_git_user_policy(temp.path(), &policy).expect("write policy");
-
-        assert_eq!(
-            read_git_user_policy(temp.path()).expect("read policy"),
-            policy
-        );
-        assert!(
-            std::fs::read_to_string(temp.path().join(".svode/local.json"))
-                .expect("read local")
-                .contains("autoSync")
-        );
-    }
-
-    #[test]
     fn agent_sessions_local_overlay_round_trips_through_local_config() {
         let temp = tempfile::tempdir().expect("temp dir");
         let local = LocalConfig {
@@ -238,7 +193,7 @@ mod tests {
         )
         .expect("write local config");
 
-        write_git_user_policy(
+        svode_core::git::policy::write_user_policy(
             temp.path(),
             &GitUserPolicy {
                 auto_sync: false,
@@ -359,7 +314,7 @@ mod tests {
         }
         let before = service.catalog(&owner).unwrap();
         write_space_config(temp.path(), &stale).unwrap();
-        write_git_user_policy(temp.path(), &GitUserPolicy::default()).unwrap();
+        svode_core::git::policy::write_user_policy(temp.path(), &GitUserPolicy::default()).unwrap();
         super::super::scaffold::scaffold_space(temp.path(), "Renamed", "", "").unwrap();
         let after = service.catalog(&owner).unwrap();
         assert_eq!(
@@ -368,6 +323,9 @@ mod tests {
         );
         std::fs::write(temp.path().join(".svode/variables.pending.json"), "{}").unwrap();
         assert!(write_space_config(temp.path(), &stale).is_err());
-        assert!(write_git_user_policy(temp.path(), &GitUserPolicy::default()).is_err());
+        assert!(
+            svode_core::git::policy::write_user_policy(temp.path(), &GitUserPolicy::default())
+                .is_err()
+        );
     }
 }

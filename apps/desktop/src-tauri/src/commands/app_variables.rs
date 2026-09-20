@@ -164,7 +164,7 @@ async fn run_mutation(
         })
         .await?;
         if let (Some(project), Ok(path)) = (project.as_deref(), owner.scope_path()) {
-            crate::git::local_repair::repair_scope_best_effort(app, project, path).await;
+            crate::git::delivery::repair_scope_best_effort(app, project, path).await;
         }
         let write_owner = owner.clone();
         let git = app.state::<crate::git::GitState>();
@@ -173,9 +173,7 @@ async fn run_mutation(
             project.as_deref(),
             &git,
             run_locked(state, move || operation(&write_owner)),
-            |cli, space, repo| {
-                crate::git::autocommit::publish_exact_path_commit(app, cli, space, repo)
-            },
+            |_cli, space, repo| crate::git::delivery::publish_commit(app, space, repo),
         )
         .await
     }

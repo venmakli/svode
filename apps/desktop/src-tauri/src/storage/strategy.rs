@@ -5,9 +5,9 @@ use serde::Serialize;
 use super::s3;
 use crate::error::AppError;
 use crate::git::GitState;
-use crate::git::cli::{GitCli, GitOutput};
 use crate::git::require_cli;
 use crate::space::types::{AssetsS3Config, AssetsStrategy, BinaryRoutingConfig};
+use svode_core::git::cli::{GitCli, GitOutput};
 use svode_core::storage::policy;
 use svode_core::storage::routes::{
     LFS_PATHS_END, LFS_PATHS_START, LOCAL_PATHS_END, LOCAL_PATHS_START, append_block,
@@ -121,7 +121,7 @@ async fn exec_storage_strategy_git(
     args: &[&str],
 ) -> Result<GitOutput, AppError> {
     ensure_storage_strategy_git_args_safe(args)?;
-    cli.exec(space_dir, args).await
+    Ok(cli.exec(space_dir, args).await?)
 }
 
 /// Read a single local Git config value. Returns `None` when the key is unset
@@ -432,7 +432,7 @@ pub async fn apply_strategy(
     // report that as a non-fatal warning without rewriting user configuration.
     if policy::strategy_uses_lfs_policy(new) {
         let paths = policy::representative_lfs_paths(binary_routing);
-        match policy::check_lfs_filters(cli.core(), space_dir, &paths).await {
+        match policy::check_lfs_filters(&cli, space_dir, &paths).await {
             Ok(checks) => {
                 for check in checks.into_iter().filter(|check| check.value != "lfs") {
                     result.warnings.push(format!(
@@ -474,7 +474,7 @@ pub async fn apply_strategy(
     // agent — so a stale agent doesn't fire on push.
     if matches!(new, AssetsStrategy::LfsS3) {
         let bin = svode_lfs_path.expect("checked above");
-        s3::ensure_agent_gitignore(space_dir)?;
+        svode_core::storage::s3::ensure_agent_gitignore(space_dir)?;
         if let Err(e) = write_managed_registration(&cli, space_dir, bin).await {
             let msg = format!("configuring the svode-lfs transfer agent failed: {e}");
             tracing::warn!("{msg}");
@@ -512,8 +512,8 @@ mod tests {
     };
     use crate::AppError;
     use crate::git::GitState;
-    use crate::git::cli::GitCli;
     use crate::space::types::{AssetsSpaceConfig, AssetsStrategy, BinaryRoutingConfig};
+    use svode_core::git::cli::GitCli;
     use svode_core::storage::policy::{
         LEGACY_ASSETS_ONLY_LFS_RULE, LFS_END, LFS_START, managed_lfs_attributes_body,
         supported_binary_routing,
@@ -687,7 +687,7 @@ mod tests {
     #[tokio::test]
     async fn repair_migrates_legacy_registration_and_is_idempotent() -> Result<(), AppError> {
         let git_state = GitState::new();
-        let Some(cli) = git_state.cli.as_ref() else {
+        let Some(cli) = git_state.detected() else {
             return Ok(());
         };
         let temp = tempfile::tempdir()?;
@@ -780,7 +780,7 @@ mod tests {
     #[tokio::test]
     async fn repair_rewrites_stale_current_path() -> Result<(), AppError> {
         let git_state = GitState::new();
-        let Some(cli) = git_state.cli.as_ref() else {
+        let Some(cli) = git_state.detected() else {
             return Ok(());
         };
         let temp = tempfile::tempdir()?;
@@ -822,7 +822,7 @@ mod tests {
     #[tokio::test]
     async fn repair_leaves_foreign_configuration_untouched() -> Result<(), AppError> {
         let git_state = GitState::new();
-        let Some(cli) = git_state.cli.as_ref() else {
+        let Some(cli) = git_state.detected() else {
             return Ok(());
         };
         let temp = tempfile::tempdir()?;
@@ -874,7 +874,7 @@ mod tests {
     #[tokio::test]
     async fn teardown_removes_own_wiring_but_keeps_foreign_agent() -> Result<(), AppError> {
         let git_state = GitState::new();
-        let Some(cli) = git_state.cli.as_ref() else {
+        let Some(cli) = git_state.detected() else {
             return Ok(());
         };
         let temp = tempfile::tempdir()?;
@@ -944,7 +944,7 @@ mod tests {
             return Ok(());
         };
 
-        let cli = git_state.cli.as_ref().expect("checked above");
+        let cli = git_state.detected().expect("checked above");
         let head_before = git_stdout(cli, &repo, &["rev-parse", "HEAD"]).await?;
         let origin_head = git_stdout(cli, &repo, &["rev-parse", "origin/main"]).await?;
 
@@ -971,7 +971,7 @@ mod tests {
             return Ok(());
         };
 
-        let cli = git_state.cli.as_ref().expect("checked above");
+        let cli = git_state.detected().expect("checked above");
         let head_before = git_stdout(cli, &repo, &["rev-parse", "HEAD"]).await?;
         std::fs::write(
             repo.join(".gitattributes"),
@@ -1000,7 +1000,7 @@ mod tests {
         let Some((git_state, _temp, repo)) = setup_remote_tracking_repo().await? else {
             return Ok(());
         };
-        let cli = git_state.cli.as_ref().expect("checked above");
+        let cli = git_state.detected().expect("checked above");
         if !cli.lfs_available() {
             return Ok(());
         }
@@ -1028,7 +1028,7 @@ mod tests {
     async fn setup_remote_tracking_repo()
     -> Result<Option<(GitState, tempfile::TempDir, PathBuf)>, AppError> {
         let git_state = GitState::new();
-        let Some(cli) = git_state.cli.as_ref() else {
+        let Some(cli) = git_state.detected() else {
             return Ok(None);
         };
 

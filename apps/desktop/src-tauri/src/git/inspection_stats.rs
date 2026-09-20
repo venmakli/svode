@@ -3,11 +3,14 @@ use std::{collections::BTreeMap, io::Read, path::Path};
 use serde::Serialize;
 use tauri::State;
 
+use svode_core::git::ops;
+use svode_core::git::path::contained_file;
+
 use super::{
     GitState,
     cli::{GitCli, read_bounded},
-    inspection::{InspectionScope, contained_file, is_binary_format},
-    ops, require_cli,
+    inspection::{InspectionScope, is_binary_format},
+    require_cli,
 };
 use crate::{
     AppError,

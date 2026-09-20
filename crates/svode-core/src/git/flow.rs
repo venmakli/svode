@@ -1,11 +1,14 @@
+use super::GitError;
+use super::cli::GitCli;
+use super::host::GitHost;
 use super::operations::{
     Completion, Intent, Output, ParentEvidence, Request, SharedError, Snapshot,
 };
-use super::{GitState, access, branch, commands, ops, require_cli, sync::SyncResult};
-use crate::AppError;
+use super::state::GitRuntime;
+use super::{access, branch, ops, sync::SyncResult};
 use serde::Serialize;
 use std::path::Path;
-use tauri::{AppHandle, Emitter, Manager};
+use std::sync::Arc;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -34,7 +37,7 @@ pub struct ParentPublication {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum PointerState {
+pub enum PointerState {
     Pending,
     Local,
     Published,
@@ -42,8 +45,9 @@ pub(crate) enum PointerState {
 
 /// Lock order is child then root, matching clone, manual save and Actors.
 /// Root-only operations never acquire child locks or initiate child writes.
-pub(crate) async fn sync(
-    app: &AppHandle,
+pub async fn sync(
+    runtime: &Arc<GitRuntime>,
+    host: &Arc<dyn GitHost>,
     repo: &Path,
     background: bool,
     resolve: bool,
@@ -53,14 +57,13 @@ pub(crate) async fn sync(
     } else {
         Intent::Sync { background }
     };
-    match request(app, repo, intent).await? {
+    match request(runtime, host, repo, intent).await? {
         Output::Sync(mut report) => {
             if report.remote_status.is_some() {
-                let state = app.state::<GitState>();
-                let cli = require_cli(&state)?;
+                let cli = runtime.require_cli()?;
                 let repository = access::resolve_repository(&cli, repo).await?;
-                if std::fs::canonicalize(repo).map_err(AppError::from)? != repository {
-                    let lock = state.get_lock(&repository).await;
+                if std::fs::canonicalize(repo).map_err(GitError::from)? != repository {
+                    let lock = runtime.get_lock(&repository).await;
                     let _guard = lock.lock().await;
                     report.remote_status = ops::status_with_remote_counts(&cli, repo)
                         .await
@@ -78,23 +81,25 @@ pub(crate) async fn sync(
 }
 
 pub(crate) async fn request(
-    app: &AppHandle,
+    runtime: &Arc<GitRuntime>,
+    host: &Arc<dyn GitHost>,
     repo: &Path,
     intent: Intent,
 ) -> Result<Output, SharedError> {
-    let state = app.state::<GitState>();
-    let cli = require_cli(&state)?;
-    let owned_app = app.clone();
-    state
-        .operations
+    let cli = runtime.require_cli()?;
+    let owned_runtime = runtime.clone();
+    let owned_host = host.clone();
+    runtime
+        .operations()
         .run(cli, repo, intent, move |request| async move {
-            execute(&owned_app, request).await
+            execute(&owned_runtime, owned_host.as_ref(), request).await
         })
         .await
 }
 
-pub(crate) async fn push(
-    app: &AppHandle,
+pub async fn push(
+    runtime: &Arc<GitRuntime>,
+    host: &Arc<dyn GitHost>,
     path: &Path,
     publish: bool,
 ) -> Result<ops::GitStatus, SharedError> {
@@ -103,32 +108,30 @@ pub(crate) async fn push(
     } else {
         Intent::Push
     };
-    let Output::Status(mut status) = request(app, path, intent).await? else {
+    let Output::Status(mut status) = request(runtime, host, path, intent).await? else {
         unreachable!("push result")
     };
-    let state = app.state::<GitState>();
-    let cli = require_cli(&state)?;
+    let cli = runtime.require_cli()?;
     let repository = access::resolve_repository(&cli, path).await?;
     status.repository = Some(repository.to_string_lossy().into_owned());
-    if std::fs::canonicalize(path).map_err(AppError::from)? == repository {
+    if std::fs::canonicalize(path).map_err(GitError::from)? == repository {
         return Ok(status);
     }
     // The publication is repository-scoped; each inline caller keeps its
     // original display/status scope. This read never starts another publisher.
-    let lock = state.get_lock(&repository).await;
+    let lock = runtime.get_lock(&repository).await;
     let _guard = lock.lock().await;
     let mut status = ops::status(&cli, path).await?;
     status.repository = Some(repository.to_string_lossy().into_owned());
     Ok(status)
 }
 
-async fn execute(app: &AppHandle, request: Request) -> Completion {
-    let state = app.state::<GitState>();
+async fn execute(runtime: &GitRuntime, host: &dyn GitHost, request: Request) -> Completion {
     let repo = request.repo.as_path();
     if !request.intent.reader() {
-        emit_sync_state(app, repo, true, None, None);
+        host.publish_sync_state(repo, true, None, None);
     }
-    let lock = state.get_lock(repo).await;
+    let lock = runtime.get_lock(repo).await;
     let _guard = lock.lock().await;
     let mut before = request.snapshot.clone();
     let mut after = before.clone();
@@ -138,7 +141,7 @@ async fn execute(app: &AppHandle, request: Request) -> Completion {
         .and_then(|done| done.parent.clone());
     let mut read_sync = None;
     let result = async {
-        let cli = require_cli(&state)?;
+        let cli = runtime.require_cli()?;
         before = Snapshot::read(&cli, repo).await?;
         if before.target != request.snapshot.target {
             return Err(super::operations::target_changed(repo));
@@ -148,7 +151,8 @@ async fn execute(app: &AppHandle, request: Request) -> Completion {
         }
         let mut result = match &request.intent {
             Intent::Sync { background } => sync_locked(
-                app,
+                runtime,
+                host,
                 &cli,
                 repo,
                 *background,
@@ -158,13 +162,20 @@ async fn execute(app: &AppHandle, request: Request) -> Completion {
             )
             .await
             .map(Output::Sync),
-            Intent::Resolve => {
-                sync_locked(app, &cli, repo, false, true, &request, &mut parent_evidence)
-                    .await
-                    .map(Output::Sync)
-            }
+            Intent::Resolve => sync_locked(
+                runtime,
+                host,
+                &cli,
+                repo,
+                false,
+                true,
+                &request,
+                &mut parent_evidence,
+            )
+            .await
+            .map(Output::Sync),
             Intent::Push | Intent::Publish => {
-                direct_push_locked(app, &cli, repo, request.intent == Intent::Publish)
+                direct_push_locked(host, &cli, repo, request.intent == Intent::Publish)
                     .await
                     .map(Output::Status)
             }
@@ -172,36 +183,44 @@ async fn execute(app: &AppHandle, request: Request) -> Completion {
                 head,
                 parent,
                 target,
-            } => retry_parent_locked(app, &cli, repo, head, parent, target, &mut parent_evidence)
-                .await
-                .map(Output::Parent),
+            } => retry_parent_locked(
+                runtime,
+                host,
+                &cli,
+                repo,
+                head,
+                parent,
+                target,
+                &mut parent_evidence,
+            )
+            .await
+            .map(Output::Parent),
             Intent::FetchStatus => {
                 match super::readers::fetch_status(&cli, repo, request.previous.as_ref(), &before)
                     .await
                 {
                     Ok((status, fetched)) => {
                         if fetched {
-                            commands::invalidate_actor_space(app, repo).await;
+                            host.invalidate_actor_space(repo).await;
                         }
                         Ok(Output::Status(status))
                     }
                     Err(error) => {
-                        commands::invalidate_repository_access(
-                            app,
-                            &app.state::<access::RepositoryAccessState>(),
-                            &cli,
-                            repo,
-                        )
-                        .await;
+                        host.invalidate_repository_access(&cli, repo).await;
                         Err(error)
                     }
                 }
             }
-            Intent::InspectPublication => {
-                inspect_reader(app, &cli, repo, request.previous.as_ref(), &before)
-                    .await
-                    .map(Output::Inspection)
-            }
+            Intent::InspectPublication => inspect_reader(
+                runtime,
+                host,
+                &cli,
+                repo,
+                request.previous.as_ref(),
+                &before,
+            )
+            .await
+            .map(Output::Inspection),
         };
         after = Snapshot::read(&cli, repo)
             .await
@@ -229,15 +248,14 @@ async fn execute(app: &AppHandle, request: Request) -> Completion {
     .await;
     let result = result.map_err(SharedError::from);
     if !request.intent.reader() {
-        emit_sync_state(
-            app,
+        host.publish_sync_state(
             repo,
             false,
             match &result {
-                Ok(Output::Sync(report)) => Some(report.clone()),
+                Ok(Output::Sync(report)) => Some(report),
                 _ => None,
             },
-            result.as_ref().err().cloned(),
+            result.as_ref().err(),
         );
     }
     Completion {
@@ -250,11 +268,11 @@ async fn execute(app: &AppHandle, request: Request) -> Completion {
 }
 
 async fn direct_push_locked(
-    app: &AppHandle,
-    cli: &super::cli::GitCli,
+    host: &dyn GitHost,
+    cli: &GitCli,
     repo: &Path,
     publish: bool,
-) -> Result<ops::GitStatus, AppError> {
+) -> Result<ops::GitStatus, GitError> {
     let result = if publish {
         ops::push_set_upstream(cli, repo).await
     } else {
@@ -263,41 +281,27 @@ async fn direct_push_locked(
     if let Err(error) = result {
         if !matches!(
             error,
-            AppError::GitPublicationBlocked { .. } | AppError::GitBranchBlocked { .. }
+            GitError::PublicationBlocked { .. } | GitError::BranchBlocked { .. }
         ) {
-            commands::invalidate_repository_access(
-                app,
-                &app.state::<access::RepositoryAccessState>(),
-                cli,
-                repo,
-            )
-            .await;
+            host.invalidate_repository_access(cli, repo).await;
         }
         return Err(error);
     }
-    let access_state = app.state::<access::RepositoryAccessState>();
-    let store_path = access::access_store_path(app)?;
-    match access_state
-        .record_writable_evidence(cli, repo, &store_path)
-        .await
-    {
-        Ok(snapshot) => access::emit_repository_access_changed(app, &snapshot.repository_id),
-        Err(error) => {
-            tracing::warn!("failed to record repository write evidence after push: {error}")
-        }
-    }
+    host.record_write_evidence(cli, repo).await;
     ops::status(cli, repo).await
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn sync_locked(
-    app: &AppHandle,
-    cli: &super::cli::GitCli,
+    runtime: &GitRuntime,
+    host: &dyn GitHost,
+    cli: &GitCli,
     repo: &Path,
     background: bool,
     resolve: bool,
     request: &Request,
     parent_evidence: &mut Option<ParentEvidence>,
-) -> Result<SyncReport, AppError> {
+) -> Result<SyncReport, GitError> {
     if !request.intent.admitted(repo) {
         return Ok(SyncReport {
             child: SyncResult::NoRemote,
@@ -306,9 +310,9 @@ async fn sync_locked(
         });
     }
     if background {
-        access::require_repository_mutation(app, repo).await?;
+        host.authorize_repository(repo).await?;
     }
-    let child = run_repository(app, &cli, repo, resolve).await?;
+    let child = run_repository(host, cli, repo, resolve).await?;
     if !matches!(child, SyncResult::Success { .. }) {
         return Ok(SyncReport {
             child,
@@ -318,8 +322,8 @@ async fn sync_locked(
     }
     let remote_status = super::readers::sync_status(cli, repo, &child).await;
     // These effects belong to child success even if the parent later fails.
-    commands::refresh_synced_repository(app, &cli, repo).await;
-    let parent = match branch::parent(&cli, repo).await {
+    host.refresh_synced_repository(cli, repo).await;
+    let parent = match branch::parent(cli, repo).await {
         Ok(Some(root)) => root,
         Ok(None) => {
             return Ok(SyncReport {
@@ -354,7 +358,8 @@ async fn sync_locked(
         .and_then(|(_, snapshot)| snapshot.as_ref());
     let (outcome, evidence) = if expected_target.is_some() {
         parent_step_recorded(
-            app,
+            runtime,
+            host,
             cli,
             repo,
             &parent,
@@ -384,34 +389,17 @@ async fn sync_locked(
         remote_status,
         parent: Some(outcome),
     };
-    let _ = app.emit(
-        "git:publication",
-        PublicationEvent {
-            space_path: repo.to_string_lossy().into_owned(),
-            child_head: expected,
-            child: "published",
-            parent: report.parent.as_ref(),
-        },
-    );
+    host.publish_publication(repo, &expected, report.parent.as_ref());
     Ok(report)
-}
-
-#[derive(Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct PublicationEvent<'a> {
-    space_path: String,
-    child_head: String,
-    child: &'static str,
-    parent: Option<&'a ParentPublication>,
 }
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SaveReport {
     #[serde(flatten)]
-    pub(crate) status: ops::GitStatus,
+    pub status: ops::GitStatus,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) parent: Option<ParentPublication>,
+    pub parent: Option<ParentPublication>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -424,9 +412,11 @@ pub struct PublicationStatus {
     pub(crate) parent: ParentPublication,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn parent_step(
-    app: &AppHandle,
-    cli: &super::cli::GitCli,
+    runtime: &GitRuntime,
+    host: &dyn GitHost,
+    cli: &GitCli,
     repo: &Path,
     parent: &Path,
     expected: &str,
@@ -434,15 +424,17 @@ pub(crate) async fn parent_step(
     publish: bool,
 ) -> ParentPublication {
     parent_step_recorded(
-        app, cli, repo, parent, expected, background, publish, None, None,
+        runtime, host, cli, repo, parent, expected, background, publish, None, None,
     )
     .await
     .0
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn parent_step_recorded(
-    app: &AppHandle,
-    cli: &super::cli::GitCli,
+    runtime: &GitRuntime,
+    host: &dyn GitHost,
+    cli: &GitCli,
     repo: &Path,
     parent: &Path,
     expected: &str,
@@ -451,18 +443,15 @@ async fn parent_step_recorded(
     expected_target: Option<&Snapshot>,
     retry_target: Option<&str>,
 ) -> (ParentPublication, Option<ParentEvidence>) {
-    let state = app.state::<GitState>();
-    let parent_lock = state.get_lock(parent).await;
+    let parent_lock = runtime.get_lock(parent).await;
     let _parent_guard = parent_lock.lock().await;
     if publish {
-        emit_sync_state(app, parent, true, None, None);
+        host.publish_sync_state(parent, true, None, None);
     }
     let before = Snapshot::read(cli, parent).await;
     let mut permission = match &before {
         Ok(before) if expected_target.is_none_or(|expected| before.target == expected.target) => {
-            access::require_repository_mutation(app, parent)
-                .await
-                .map(|_| ())
+            host.authorize_repository(parent).await
         }
         _ => Err(super::operations::target_changed(parent)),
     };
@@ -474,24 +463,18 @@ async fn parent_step_recorded(
     let outcome =
         parent_step_locked(cli, repo, parent, expected, background, publish, permission).await;
     if matches!(outcome.result, Some(SyncResult::Success { .. })) {
-        commands::refresh_synced_repository(app, cli, parent).await;
+        host.refresh_synced_repository(cli, parent).await;
     } else if matches!(outcome.result, Some(SyncResult::AuthRequired { .. }))
         || outcome.error.as_ref().is_some_and(|error| {
             !matches!(
                 &**error,
-                AppError::RepositoryAccessDenied { .. }
-                    | AppError::GitBranchBlocked { .. }
-                    | AppError::GitPublicationBlocked { .. }
+                GitError::RepositoryAccessDenied { .. }
+                    | GitError::BranchBlocked { .. }
+                    | GitError::PublicationBlocked { .. }
             )
         })
     {
-        commands::invalidate_repository_access(
-            app,
-            &app.state::<access::RepositoryAccessState>(),
-            cli,
-            parent,
-        )
-        .await;
+        host.invalidate_repository_access(cli, parent).await;
     }
     let remote_status = match &outcome.result {
         Some(result) => super::readers::sync_status(cli, parent, result).await,
@@ -518,29 +501,25 @@ async fn parent_step_recorded(
         _ => None,
     };
     if publish {
-        emit_sync_state(
-            app,
-            parent,
-            false,
-            outcome.result.as_ref().map(|result| SyncReport {
-                child: result.clone(),
-                parent: None,
-                remote_status: evidence.as_ref().and_then(|e| e.remote_status.clone()),
-            }),
-            outcome.error.clone(),
-        );
+        let report = outcome.result.as_ref().map(|result| SyncReport {
+            child: result.clone(),
+            parent: None,
+            remote_status: evidence.as_ref().and_then(|e| e.remote_status.clone()),
+        });
+        host.publish_sync_state(parent, false, report.as_ref(), outcome.error.as_ref());
     }
     (outcome, evidence)
 }
 
-pub(crate) async fn parent_step_locked(
-    cli: &super::cli::GitCli,
+#[allow(clippy::too_many_arguments)]
+pub async fn parent_step_locked(
+    cli: &GitCli,
     repo: &Path,
     parent: &Path,
     expected: &str,
     background: bool,
     publish: bool,
-    permission: Result<(), AppError>,
+    permission: Result<(), GitError>,
 ) -> ParentPublication {
     let target = publication_target(cli, repo, parent).await;
     let transport = super::operations::read_transport(cli, parent).await;
@@ -553,7 +532,7 @@ pub(crate) async fn parent_step_locked(
         policy_skipped: None,
     };
     if let Ok(path) =
-        crate::repo_path::repo_relative_from_base(&parent, repo, crate::repo_path::RootMode::Reject)
+        crate::git::path::repo_relative_from_base(&parent, repo, crate::git::path::RootMode::Reject)
     {
         if let Ok(pointer) = cli
             .exec(&parent, &["rev-parse", &format!("HEAD:{path}")])
@@ -564,7 +543,7 @@ pub(crate) async fn parent_step_locked(
             }
         }
     }
-    let policy = crate::space::config::effective_git_user_policy(&parent);
+    let policy = super::policy::effective_user_policy(parent);
     if background && publish && !policy.auto_sync {
         outcome.policy_skipped = Some(true);
         return outcome;
@@ -573,12 +552,12 @@ pub(crate) async fn parent_step_locked(
         permission?;
         target?;
         if ops::current_branch(cli, parent).await? == "HEAD" {
-            return Err(AppError::GitBranchBlocked {
+            return Err(GitError::BranchBlocked {
                 reason: super::branch::BranchBlockReason::RootDetached,
             });
         }
         if ops::repository_head_oid(&cli, repo).await? != expected {
-            return Err(AppError::GitPublicationBlocked {
+            return Err(GitError::PublicationBlocked {
                 repository: parent.to_string_lossy().into_owned(),
                 child: Some(repo.to_string_lossy().into_owned()),
                 reason: super::publication::PublicationBlockReason::TargetChanged,
@@ -588,10 +567,10 @@ pub(crate) async fn parent_step_locked(
             super::published_pointer::commit(&cli, &parent, repo, &expected).await?;
         }
         // A pre-existing local pointer is allowed even when structural auto-commit is off.
-        let path = crate::repo_path::repo_relative_from_base(
+        let path = crate::git::path::repo_relative_from_base(
             &parent,
             repo,
-            crate::repo_path::RootMode::Reject,
+            crate::git::path::RootMode::Reject,
         )?;
         let pointer = cli
             .exec(&parent, &["rev-parse", &format!("HEAD:{path}")])
@@ -615,7 +594,7 @@ pub(crate) async fn parent_step_locked(
             };
         }
         outcome.result = Some(root_result);
-        Ok::<_, AppError>(())
+        Ok::<_, GitError>(())
     }
     .await;
     if let Err(error) = result {
@@ -624,68 +603,71 @@ pub(crate) async fn parent_step_locked(
     outcome
 }
 
-pub(crate) async fn fetch_status(
-    app: &AppHandle,
+pub async fn fetch_status(
+    runtime: &Arc<GitRuntime>,
+    host: &Arc<dyn GitHost>,
     path: &Path,
 ) -> Result<ops::GitStatus, SharedError> {
-    let Output::Status(mut status) = request(app, path, Intent::FetchStatus).await? else {
+    let Output::Status(mut status) = request(runtime, host, path, Intent::FetchStatus).await?
+    else {
         unreachable!("status reader result")
     };
-    let state = app.state::<GitState>();
-    let cli = require_cli(&state)?;
+    let cli = runtime.require_cli()?;
     let repository = access::resolve_repository(&cli, path).await?;
     status.repository = Some(repository.to_string_lossy().into_owned());
-    if std::fs::canonicalize(path).map_err(AppError::from)? == repository {
+    if std::fs::canonicalize(path).map_err(GitError::from)? == repository {
         return Ok(status);
     }
-    let lock = state.get_lock(&repository).await;
+    let lock = runtime.get_lock(&repository).await;
     let _guard = lock.lock().await;
     let mut status = ops::status_with_remote_counts(&cli, path).await?;
     status.repository = Some(repository.to_string_lossy().into_owned());
     Ok(status)
 }
 
-pub(crate) async fn inspect(
-    app: &AppHandle,
+pub async fn inspect(
+    runtime: &Arc<GitRuntime>,
+    host: &Arc<dyn GitHost>,
     repo: &Path,
 ) -> Result<Option<PublicationStatus>, SharedError> {
-    let Output::Inspection(read) = request(app, repo, Intent::InspectPublication).await? else {
+    let Output::Inspection(read) = request(runtime, host, repo, Intent::InspectPublication).await?
+    else {
         unreachable!("publication reader result")
     };
     Ok(read.status)
 }
 
 async fn inspect_reader(
-    app: &AppHandle,
-    cli: &super::cli::GitCli,
+    runtime: &GitRuntime,
+    host: &dyn GitHost,
+    cli: &GitCli,
     repo: &Path,
     previous: Option<&Completion>,
     current: &Snapshot,
-) -> Result<super::readers::PublicationRead, AppError> {
+) -> Result<super::readers::PublicationRead, GitError> {
     let Some(parent) = branch::parent(cli, repo).await? else {
         return Ok(super::readers::PublicationRead {
             status: None,
             parent: None,
         });
     };
-    let state = app.state::<GitState>();
-    let lock = state.get_lock(&parent).await;
+    let lock = runtime.get_lock(&parent).await;
     let _guard = lock.lock().await;
-    let permission = access::require_repository_mutation(app, &parent)
-        .await
-        .map(|_| ());
+    let permission = host.authorize_repository(&parent).await;
     super::readers::inspect(cli, repo, &parent, previous, current, permission).await
 }
 
-pub(crate) async fn retry_parent(
-    app: &AppHandle,
+pub async fn retry_parent(
+    runtime: &Arc<GitRuntime>,
+    host: &Arc<dyn GitHost>,
     repo: &Path,
     expected: &str,
     expected_parent: &Path,
     expected_target: &str,
 ) -> Result<PublicationStatus, SharedError> {
     match request(
-        app,
+        runtime,
+        host,
         repo,
         Intent::RetryParent {
             head: expected.into(),
@@ -700,27 +682,30 @@ pub(crate) async fn retry_parent(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn retry_parent_locked(
-    app: &AppHandle,
-    cli: &super::cli::GitCli,
+    runtime: &GitRuntime,
+    host: &dyn GitHost,
+    cli: &GitCli,
     repo: &Path,
     expected: &str,
     expected_parent: &Path,
     expected_target: &str,
     parent_evidence: &mut Option<ParentEvidence>,
-) -> Result<PublicationStatus, AppError> {
-    validate_parent_target(&cli, &repo, expected, expected_parent, expected_target).await?;
-    if !super::publication::head_is_published(&cli, &repo, expected).await? {
-        return Err(AppError::GitPublicationBlocked {
+) -> Result<PublicationStatus, GitError> {
+    validate_parent_target(cli, repo, expected, expected_parent, expected_target).await?;
+    if !super::publication::head_is_published(cli, repo, expected).await? {
+        return Err(GitError::PublicationBlocked {
             repository: expected_parent.to_string_lossy().into_owned(),
             child: Some(repo.to_string_lossy().into_owned()),
             reason: super::publication::PublicationBlockReason::RevisionUnavailable,
         });
     }
     let (outcome, evidence) = parent_step_recorded(
-        app,
-        &cli,
-        &repo,
+        runtime,
+        host,
+        cli,
+        repo,
         expected_parent,
         expected,
         false,
@@ -739,11 +724,11 @@ async fn retry_parent_locked(
 }
 
 async fn run_repository(
-    app: &AppHandle,
-    cli: &super::cli::GitCli,
+    host: &dyn GitHost,
+    cli: &GitCli,
     repo: &Path,
     resolve: bool,
-) -> Result<SyncResult, AppError> {
+) -> Result<SyncResult, GitError> {
     let result = if resolve {
         super::sync::resolve_and_continue(cli, repo).await
     } else {
@@ -751,27 +736,21 @@ async fn run_repository(
     };
     let invalidate = match &result {
         Ok(SyncResult::AuthRequired { .. }) => true,
-        Err(AppError::GitBranchBlocked { .. } | AppError::GitPublicationBlocked { .. }) => false,
+        Err(GitError::BranchBlocked { .. } | GitError::PublicationBlocked { .. }) => false,
         Err(_) => true,
         _ => false,
     };
     if invalidate {
-        commands::invalidate_repository_access(
-            app,
-            &app.state::<access::RepositoryAccessState>(),
-            cli,
-            repo,
-        )
-        .await;
+        host.invalidate_repository_access(cli, repo).await;
     }
     result
 }
 
-pub(crate) async fn publication_target(
-    cli: &super::cli::GitCli,
+pub async fn publication_target(
+    cli: &GitCli,
     repo: &Path,
     parent: &Path,
-) -> Result<String, AppError> {
+) -> Result<String, GitError> {
     use sha2::{Digest, Sha256};
     let mut hash = Sha256::new();
     for path in [repo, parent] {
@@ -787,7 +766,7 @@ pub(crate) async fn publication_target(
             )
             .await?;
         if config.exit_code > 1 {
-            return Err(AppError::GitCommandFailed(
+            return Err(GitError::GitCommandFailed(
                 "Cannot inspect publication target".into(),
             ));
         }
@@ -798,57 +777,30 @@ pub(crate) async fn publication_target(
     Ok(format!("{:x}", hash.finalize()))
 }
 
-pub(crate) async fn validate_parent_target(
-    cli: &super::cli::GitCli,
+pub async fn validate_parent_target(
+    cli: &GitCli,
     repo: &Path,
     expected: &str,
     expected_parent: &Path,
     expected_target: &str,
-) -> Result<(), AppError> {
-    let parent = branch::parent(&cli, &repo).await?;
+) -> Result<(), GitError> {
+    let parent = branch::parent(cli, repo).await?;
     let canonical_parent = std::fs::canonicalize(expected_parent)?;
     if parent.as_deref() != Some(canonical_parent.as_path())
-        || ops::repository_head_oid(&cli, &repo).await? != expected
+        || ops::repository_head_oid(cli, repo).await? != expected
     {
-        return Err(AppError::GitPublicationBlocked {
+        return Err(GitError::PublicationBlocked {
             repository: repo.to_string_lossy().into_owned(),
             child: None,
             reason: super::publication::PublicationBlockReason::TargetChanged,
         });
     }
-    if publication_target(&cli, &repo, expected_parent).await? != expected_target {
-        return Err(AppError::GitPublicationBlocked {
+    if publication_target(cli, repo, expected_parent).await? != expected_target {
+        return Err(GitError::PublicationBlocked {
             repository: expected_parent.to_string_lossy().into_owned(),
             child: None,
             reason: super::publication::PublicationBlockReason::TargetChanged,
         });
     }
     Ok(())
-}
-
-#[derive(Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct SyncStateEvent {
-    repository: String,
-    active: bool,
-    report: Option<SyncReport>,
-    error: Option<SharedError>,
-}
-
-fn emit_sync_state(
-    app: &AppHandle,
-    repo: &Path,
-    active: bool,
-    report: Option<SyncReport>,
-    error: Option<SharedError>,
-) {
-    let _ = app.emit(
-        "git:sync-state",
-        SyncStateEvent {
-            repository: repo.to_string_lossy().into_owned(),
-            active,
-            report,
-            error,
-        },
-    );
 }

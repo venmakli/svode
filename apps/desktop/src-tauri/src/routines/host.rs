@@ -77,7 +77,8 @@ pub(crate) async fn mutation_repository(
 ) -> Result<PathBuf, AppError> {
     let cli = require_cli(git_state)?;
     let (_, repository) =
-        crate::git::ops::resolve_target_repo(&cli, &owner.project_path, &owner.space_path).await?;
+        svode_core::git::ops::resolve_target_repo(&cli, &owner.project_path, &owner.space_path)
+            .await?;
     Ok(repository)
 }
 

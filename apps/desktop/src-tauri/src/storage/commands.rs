@@ -15,8 +15,6 @@ use super::strategy::ApplyStrategyResult;
 use crate::error::AppError;
 use crate::git::GitState;
 use crate::git::access::require_repository_mutation;
-use crate::git::autocommit::{AutocommitService, StructuralOp, SystemCommitKind};
-use crate::git::cli::GitCli;
 use crate::git::require_cli;
 use crate::index::IndexState;
 use crate::repo_path::{RootMode, repo_relative_from_base};
@@ -24,6 +22,8 @@ use crate::space::config::{read_space_config, write_space_config};
 use crate::space::types::{
     AssetsS3Config, AssetsSpaceConfig, AssetsStrategy, BinaryRoutingConfig, SpaceGitType,
 };
+use svode_core::git::autocommit::{AutocommitService, StructuralOp, SystemCommitKind};
+use svode_core::git::cli::GitCli;
 
 /// File data returned to the frontend after reading a user-selected path.
 /// Used to construct a `File` object on the JS side so Plate's media
@@ -200,7 +200,7 @@ fn ensure_supported_strategy_transition(
 }
 
 fn system_autocommit_enabled(config_dir: &Path) -> bool {
-    crate::space::config::effective_git_user_policy(config_dir).auto_commit_system
+    svode_core::git::policy::effective_user_policy(config_dir).auto_commit_system
 }
 
 fn document_id_for_scope(
@@ -564,9 +564,9 @@ mod tests {
         document_id_for_scope, ensure_supported_strategy_transition, strategy_autocommit_blocker,
     };
     use crate::AppError;
-    use crate::git::autocommit::SystemCommitKind;
-    use crate::git::cli::GitCli;
     use crate::space::types::AssetsStrategy;
+    use svode_core::git::autocommit::SystemCommitKind;
+    use svode_core::git::cli::GitCli;
 
     #[test]
     fn strategy_transition_guard_allows_only_local_enrollment_or_same_strategy() {

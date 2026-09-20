@@ -11,16 +11,16 @@ use super::resolver::{ActorCatalogState, ActorSnapshot, load_snapshot, resolve_r
 use crate::AppError;
 use crate::git::GitState;
 use crate::git::access::{RepositoryAccessState, RepositoryAccessStatus, access_store_path};
-use crate::git::autocommit::{
-    AutocommitService, ExactPathPersistenceOutcome, GuardedExactPathPlan,
-};
-use crate::git::cli::GitCli;
-use crate::git::ops;
 use crate::identity::{
     get_effective_identity, replace_local_identity_pair, restore_local_identity_fields,
     validate_email, validate_name,
 };
 use crate::space::types::SpaceGitType;
+use svode_core::git::autocommit::{
+    AutocommitService, ExactPathPersistenceOutcome, GuardedExactPathPlan,
+};
+use svode_core::git::cli::GitCli;
+use svode_core::git::ops;
 
 const MAILMAP_PATH: &str = ".mailmap";
 const MAILMAP_COMMIT_MESSAGE: &str = "Update contributor identities";
@@ -231,42 +231,42 @@ pub async fn preview(
 ) -> Result<ActorMutationPreviewResult, AppError> {
     if let Some(blocked) = access_block(
         access_state
-            .snapshot(cli, space_path, &access_store_path(app)?)
+            .snapshot(&cli, space_path, &access_store_path(app)?)
             .await?
             .status,
     ) {
         return Ok(blocked_preview(blocked));
     }
 
-    let repository = resolve_repository(cli.core(), space_path).await?;
+    let repository = resolve_repository(&cli, space_path).await?;
     let repository_lock = actor_catalog.repository_lock(&repository)?;
     let _guard = repository_lock.lock().await;
     let source = match read_mailmap_source(&repository)? {
         Ok(source) => source,
         Err((reason, message)) => return Ok(blocked_preview_with_message(reason, message)),
     };
-    let snapshot = load_snapshot(cli.core(), &repository, 0).await?;
+    let snapshot = load_snapshot(&cli, &repository, 0).await?;
     let plan = match plan_mutation(&snapshot, action) {
         Ok(plan) => plan,
         Err(result) => return Ok(result),
     };
     let current_identity_fingerprint = if plan.affects_current_identity {
-        Some(current_identity_fingerprint(cli, &repository).await?)
+        Some(current_identity_fingerprint(&cli, &repository).await?)
     } else {
         None
     };
     let commit_expectation =
-        if crate::space::config::effective_git_user_policy(&repository).auto_commit_system {
+        if svode_core::git::policy::effective_user_policy(&repository).auto_commit_system {
             ActorCommitExpectation::AutomaticIfSafe
         } else {
             ActorCommitExpectation::Manual
         };
     let root_pointer_commit_expectation =
-        if ops::detect_space_git_type(cli, project_path, space_path).await?
+        if ops::detect_space_git_type(&cli, project_path, space_path).await?
             == SpaceGitType::Submodule
         {
             Some(
-                if crate::space::config::effective_git_user_policy(project_path)
+                if svode_core::git::policy::effective_user_policy(project_path)
                     .auto_commit_structural
                 {
                     ActorCommitExpectation::AutomaticIfSafe
@@ -301,7 +301,7 @@ pub async fn apply(
     actor_catalog: &ActorCatalogState,
 ) -> Result<ActorMutationApplyResult, AppError> {
     let (repository, git_type, git_lock_path) =
-        resolve_actor_git_context(cli, project_path, space_path).await?;
+        resolve_actor_git_context(&cli, project_path, space_path).await?;
     let repository_lock = actor_catalog.repository_lock(&repository)?;
     let _guard = repository_lock.lock().await;
     let git_lock = git_state.get_lock(&git_lock_path).await;
@@ -314,13 +314,13 @@ pub async fn apply(
         return Ok(blocked_apply(ActorMutationBlockReason::StalePreview));
     }
 
-    let snapshot = load_snapshot(cli.core(), &repository, 0).await?;
+    let snapshot = load_snapshot(&cli, &repository, 0).await?;
     let plan = match plan_mutation(&snapshot, review.action.clone()) {
         Ok(plan) => plan,
         Err(result) => return Ok(preview_to_apply(result)),
     };
     let current_identity_fingerprint = if plan.affects_current_identity {
-        Some(current_identity_fingerprint(cli, &repository).await?)
+        Some(current_identity_fingerprint(&cli, &repository).await?)
     } else {
         None
     };
@@ -340,11 +340,11 @@ pub async fn apply(
     validate_patched_document(&patched, &plan).map_err(AppError::General)?;
 
     access_state
-        .require_mutation(cli, &repository, &access_store_path(app)?)
+        .require_mutation(&cli, &repository, &access_store_path(app)?)
         .await?;
 
     let commit_plan = autocommit
-        .plan_guarded_system_exact_path(cli, &repository, MAILMAP_PATH)
+        .plan_guarded_system_exact_path(&cli, &repository, MAILMAP_PATH)
         .await?;
     let root_pointer_target = if git_type == SpaceGitType::Submodule {
         Some(submodule_root_target(project_path, space_path)?)
@@ -356,7 +356,7 @@ pub async fn apply(
         let _root_guard = root_lock.lock().await;
         Some(
             match autocommit
-                .plan_guarded_structural_exact_path(cli, project_path, root_pointer_target, true)
+                .plan_guarded_structural_exact_path(&cli, project_path, root_pointer_target, true)
                 .await
             {
                 Ok(plan) => RootPointerCommitPlan::Guarded(plan),
@@ -370,7 +370,7 @@ pub async fn apply(
     let previous_identity = if plan.affects_current_identity {
         Some(
             replace_local_identity_pair(
-                cli,
+                &cli,
                 &repository,
                 &plan.display_name,
                 &plan.canonical_email,
@@ -384,7 +384,7 @@ pub async fn apply(
     if let Err(error) = atomic_replace_mailmap(&source, patched.as_bytes()) {
         if let Some(previous_identity) = previous_identity.as_ref() {
             if let Err(rollback_error) =
-                restore_local_identity_fields(cli, &repository, previous_identity).await
+                restore_local_identity_fields(&cli, &repository, previous_identity).await
             {
                 return Err(AppError::General(format!(
                     "mailmap write failed: {error:?}; local identity rollback failed: {rollback_error}"
@@ -399,10 +399,7 @@ pub async fn apply(
         };
     }
 
-    match actor_catalog
-        .load_and_publish(cli.core(), &repository)
-        .await
-    {
+    match actor_catalog.load_and_publish(&cli, &repository).await {
         Ok(_) => {
             let expected_fingerprint = mailmap_fingerprint(true, patched.as_bytes());
             let target_matches_expected = matches!(
@@ -411,7 +408,7 @@ pub async fn apply(
             );
             let mailmap = autocommit
                 .finish_guarded_exact_path_commit(
-                    cli,
+                    &cli,
                     space_path,
                     &repository,
                     MAILMAP_PATH,
@@ -427,7 +424,7 @@ pub async fn apply(
                         let _root_guard = root_lock.lock().await;
                         Some(
                             finish_guarded_submodule_pointer(
-                                cli,
+                                &cli,
                                 project_path,
                                 space_path,
                                 &repository,
@@ -444,9 +441,7 @@ pub async fn apply(
                 None
             };
             actor_catalog.mark_repository_dirty(&repository)?;
-            let snapshot = actor_catalog
-                .load_and_publish(cli.core(), &repository)
-                .await?;
+            let snapshot = actor_catalog.load_and_publish(&cli, &repository).await?;
             crate::actors::emit_published(app, &repository, snapshot.generation());
             Ok(ActorMutationApplyResult::Applied {
                 canonical_email: plan.canonical_email,
@@ -462,7 +457,7 @@ pub async fn apply(
             let mut rollback_errors = Vec::new();
             if let Some(previous_identity) = previous_identity.as_ref() {
                 if let Err(rollback_error) =
-                    restore_local_identity_fields(cli, &repository, previous_identity).await
+                    restore_local_identity_fields(&cli, &repository, previous_identity).await
                 {
                     rollback_errors.push(format!("local identity: {rollback_error}"));
                 }
@@ -501,7 +496,7 @@ async fn finish_guarded_submodule_pointer(
         return ExactPathPersistenceOutcome::Pending { reason };
     }
 
-    let expected_head = match ops::repository_head_oid(cli, repository).await {
+    let expected_head = match ops::repository_head_oid(&cli, repository).await {
         Ok(expected_head) => expected_head,
         Err(error) => {
             return ExactPathPersistenceOutcome::Failed {
@@ -510,7 +505,7 @@ async fn finish_guarded_submodule_pointer(
         }
     };
     let target_matches_expected = match ops::submodule_target_matches_expected_head(
-        cli,
+        &cli,
         project_path,
         root_pointer_target,
         repository,
@@ -527,7 +522,7 @@ async fn finish_guarded_submodule_pointer(
     };
     autocommit
         .finish_guarded_exact_path_commit(
-            cli,
+            &cli,
             space_path,
             project_path,
             root_pointer_target,
@@ -546,7 +541,7 @@ pub async fn get_mailmap_save_review(
     actor_catalog: &ActorCatalogState,
 ) -> Result<ActorMailmapSaveReviewResult, AppError> {
     let (repository, git_type, git_lock_path) =
-        resolve_actor_git_context(cli, project_path, space_path).await?;
+        resolve_actor_git_context(&cli, project_path, space_path).await?;
     let repository_lock = actor_catalog.repository_lock(&repository)?;
     let _guard = repository_lock.lock().await;
     let git_lock = git_state.get_lock(&git_lock_path).await;
@@ -572,20 +567,20 @@ pub async fn get_mailmap_save_review(
             return Ok(ActorMailmapSaveReviewResult::Blocked { reason, message });
         }
     };
-    let mailmap_dirty = ops::exact_path_has_changes(cli, &repository, MAILMAP_PATH).await?;
+    let mailmap_dirty = ops::exact_path_has_changes(&cli, &repository, MAILMAP_PATH).await?;
     let root_pointer_fingerprint = if let Some(root_pointer_target) = root_pointer_target.as_deref()
     {
-        Some(ops::exact_path_state_fingerprint(cli, project_path, root_pointer_target).await?)
+        Some(ops::exact_path_state_fingerprint(&cli, project_path, root_pointer_target).await?)
     } else {
         None
     };
     let root_pointer_recoverable = if let Some(root_pointer_target) = root_pointer_target.as_deref()
     {
-        let expected_head = ops::repository_head_oid(cli, &repository).await.ok();
-        ops::exact_path_has_changes(cli, project_path, root_pointer_target).await?
+        let expected_head = ops::repository_head_oid(&cli, &repository).await.ok();
+        ops::exact_path_has_changes(&cli, project_path, root_pointer_target).await?
             && if let Some(expected_head) = expected_head {
                 ops::submodule_target_matches_expected_head(
-                    cli,
+                    &cli,
                     project_path,
                     root_pointer_target,
                     &repository,
@@ -621,7 +616,7 @@ pub async fn save_mailmap(
     actor_catalog: &ActorCatalogState,
 ) -> Result<ActorMailmapSaveResult, AppError> {
     let (repository, git_type, git_lock_path) =
-        resolve_actor_git_context(cli, project_path, space_path).await?;
+        resolve_actor_git_context(&cli, project_path, space_path).await?;
     let repository_lock = actor_catalog.repository_lock(&repository)?;
     let _guard = repository_lock.lock().await;
     let git_lock = git_state.get_lock(&git_lock_path).await;
@@ -649,7 +644,7 @@ pub async fn save_mailmap(
     };
     let current_root_pointer_fingerprint =
         if let Some(root_pointer_target) = root_pointer_target.as_deref() {
-            Some(ops::exact_path_state_fingerprint(cli, project_path, root_pointer_target).await?)
+            Some(ops::exact_path_state_fingerprint(&cli, project_path, root_pointer_target).await?)
         } else {
             None
         };
@@ -659,10 +654,10 @@ pub async fn save_mailmap(
     {
         return Ok(ActorMailmapSaveResult::Stale);
     }
-    let mailmap = if ops::exact_path_has_changes(cli, &repository, MAILMAP_PATH).await? {
+    let mailmap = if ops::exact_path_has_changes(&cli, &repository, MAILMAP_PATH).await? {
         autocommit
             .commit_exact_path_manual(
-                cli,
+                &cli,
                 space_path,
                 &repository,
                 MAILMAP_PATH,
@@ -678,10 +673,10 @@ pub async fn save_mailmap(
     );
     let root_pointer = if child_allows_root {
         if let Some(root_pointer_target) = root_pointer_target.as_deref() {
-            if ops::exact_path_has_changes(cli, project_path, root_pointer_target).await? {
+            if ops::exact_path_has_changes(&cli, project_path, root_pointer_target).await? {
                 Some(
                     commit_manual_submodule_pointer(
-                        cli,
+                        &cli,
                         project_path,
                         space_path,
                         &repository,
@@ -716,7 +711,7 @@ async fn commit_manual_submodule_pointer(
     root_pointer_target: &str,
     autocommit: &AutocommitService,
 ) -> ExactPathPersistenceOutcome {
-    let expected_head = match ops::repository_head_oid(cli, repository).await {
+    let expected_head = match ops::repository_head_oid(&cli, repository).await {
         Ok(expected_head) => expected_head,
         Err(error) => {
             return ExactPathPersistenceOutcome::Failed {
@@ -725,7 +720,7 @@ async fn commit_manual_submodule_pointer(
         }
     };
     match ops::submodule_target_matches_expected_head(
-        cli,
+        &cli,
         project_path,
         root_pointer_target,
         repository,
@@ -749,7 +744,7 @@ async fn commit_manual_submodule_pointer(
 
     autocommit
         .commit_exact_path_manual(
-            cli,
+            &cli,
             space_path,
             project_path,
             root_pointer_target,
@@ -795,7 +790,7 @@ async fn resolve_actor_git_context(
     project_path: &Path,
     space_path: &Path,
 ) -> Result<(PathBuf, SpaceGitType, PathBuf), AppError> {
-    let repository = resolve_repository(cli.core(), space_path).await?;
+    let repository = resolve_repository(&cli, space_path).await?;
     let canonical_project = fs::canonicalize(project_path).map_err(|error| {
         AppError::GitCommandFailed(format!(
             "failed to canonicalize actor project {}: {error}",
@@ -811,7 +806,7 @@ async fn resolve_actor_git_context(
     let (git_type, git_lock_path) = if canonical_project == canonical_space {
         (SpaceGitType::Inline, project_path.to_path_buf())
     } else {
-        ops::resolve_target_repo(cli, project_path, space_path).await?
+        ops::resolve_target_repo(&cli, project_path, space_path).await?
     };
     let canonical_target = fs::canonicalize(&git_lock_path).map_err(|error| {
         AppError::GitCommandFailed(format!(
@@ -971,7 +966,7 @@ fn review_for(
 }
 
 async fn current_identity_fingerprint(cli: &GitCli, repository: &Path) -> Result<String, AppError> {
-    let identity = get_effective_identity(cli, repository).await?;
+    let identity = get_effective_identity(&cli, repository).await?;
     let fields = [
         identity.local_name.as_deref().unwrap_or_default(),
         identity.local_email.as_deref().unwrap_or_default(),
@@ -1603,7 +1598,7 @@ mod tests {
         let persistence = ActorPersistenceOutcome {
             mailmap: ExactPathPersistenceOutcome::Committed,
             root_pointer: Some(ExactPathPersistenceOutcome::Pending {
-                reason: crate::git::autocommit::ExactPathPendingReason::PolicyOff,
+                reason: svode_core::git::autocommit::ExactPathPendingReason::PolicyOff,
             }),
         };
         let value = serde_json::to_value(ActorMailmapSaveResult::Saved { persistence })
@@ -1666,7 +1661,7 @@ mod tests {
     async fn add_materializes_no_commit_row_and_duplicate_is_non_writing() {
         let repo = init_repo("Current", "current@example.test");
         let cli = GitCli::detect().expect("git CLI");
-        let snapshot = load_snapshot(cli.core(), repo.path(), 0)
+        let snapshot = load_snapshot(&cli, repo.path(), 0)
             .await
             .expect("initial snapshot");
         let action = ActorMutationAction::Add {
@@ -1680,7 +1675,7 @@ mod tests {
         let patched = patch_mailmap(&source.raw, &source.document, &mutation);
         atomic_replace_mailmap(&source, patched.as_bytes()).expect("write add");
 
-        let refreshed = load_snapshot(cli.core(), repo.path(), 0)
+        let refreshed = load_snapshot(&cli, repo.path(), 0)
             .await
             .expect("refreshed snapshot");
         let added = refreshed
@@ -1747,16 +1742,16 @@ mod tests {
         let cli = GitCli::detect().expect("git CLI");
         let state = ActorCatalogState::new();
         let initial = state
-            .snapshot(cli.core(), repo.path())
+            .snapshot(&cli, repo.path())
             .await
             .expect("initial snapshot");
         assert_eq!(initial.catalog().generation, 1);
-        let repository = resolve_repository(cli.core(), repo.path())
+        let repository = resolve_repository(&cli, repo.path())
             .await
             .expect("repository");
         let lock = state.repository_lock(&repository).expect("repository lock");
         let _guard = lock.lock().await;
-        let current = load_snapshot(cli.core(), &repository, 0)
+        let current = load_snapshot(&cli, &repository, 0)
             .await
             .expect("current snapshot");
         let mutation = plan_mutation(
@@ -1773,7 +1768,7 @@ mod tests {
         let patched = patch_mailmap(&source.raw, &source.document, &mutation);
         atomic_replace_mailmap(&source, patched.as_bytes()).expect("atomic replace");
         let published = state
-            .load_and_publish(cli.core(), &repository)
+            .load_and_publish(&cli, &repository)
             .await
             .expect("publish mutation");
 
@@ -1791,7 +1786,7 @@ mod tests {
         )
         .expect("write mailmap");
         let cli = GitCli::detect().expect("git CLI");
-        let snapshot = load_snapshot(cli.core(), repo.path(), 0)
+        let snapshot = load_snapshot(&cli, repo.path(), 0)
             .await
             .expect("initial snapshot");
         let mutation = plan_mutation(
@@ -1809,7 +1804,7 @@ mod tests {
         validate_patched_document(&patched, &mutation).expect("valid merge");
         atomic_replace_mailmap(&source, patched.as_bytes()).expect("write merge");
 
-        let refreshed = load_snapshot(cli.core(), repo.path(), 0)
+        let refreshed = load_snapshot(&cli, repo.path(), 0)
             .await
             .expect("refreshed snapshot");
         assert!(
@@ -1841,7 +1836,7 @@ mod tests {
         let repo = init_repo("Current", "current@example.test");
         commit_as(repo.path(), "other.txt", "Other", "other@example.test");
         let cli = GitCli::detect().expect("git CLI");
-        let snapshot = load_snapshot(cli.core(), repo.path(), 0)
+        let snapshot = load_snapshot(&cli, repo.path(), 0)
             .await
             .expect("initial snapshot");
         let non_current = plan_mutation(
@@ -1888,7 +1883,7 @@ mod tests {
                 Some("current-new@example.test".into())
             )
         );
-        let refreshed = load_snapshot(cli.core(), repo.path(), 0)
+        let refreshed = load_snapshot(&cli, repo.path(), 0)
             .await
             .expect("refreshed snapshot");
         assert_eq!(refreshed.current_email(), Some("current-new@example.test"));

@@ -14,16 +14,16 @@ use crate::agent_adapters::runtime::{
 use crate::agent_adapters::{AgentAdapterKind, AgentAdapterRegistry};
 use crate::git::GitState;
 use crate::git::access::{RepositoryAccessState, access_store_path};
-use crate::git::autocommit::{
-    AutocommitService, ExactPathPersistenceOutcome, GuardedExactPathPlan,
-};
-use crate::git::ops;
 use crate::git::require_cli;
 use crate::space::types::SpaceGitType;
 use svode_core::agent_actors::{
     AgentActorResolution, AgentAdapter, ApprovalMode, CatalogError, catalog_path, read_catalog,
     resolve_catalogs,
 };
+use svode_core::git::autocommit::{
+    AutocommitService, ExactPathPersistenceOutcome, GuardedExactPathPlan,
+};
+use svode_core::git::ops;
 
 const COMMIT_MESSAGE: &str = "Update agent actors";
 const SUBMODULE_POINTER_COMMIT_MESSAGE: &str = "Update space pointer";
@@ -855,7 +855,7 @@ fn canonical_space_path(path: &Path) -> Result<PathBuf, AppError> {
 }
 
 async fn finish_root_pointer(
-    cli: &crate::git::cli::GitCli,
+    cli: &svode_core::git::cli::GitCli,
     project: &Path,
     owner: &Path,
     repository: &Path,
@@ -907,7 +907,7 @@ async fn finish_root_pointer(
 }
 
 async fn commit_manual_root_pointer(
-    cli: &crate::git::cli::GitCli,
+    cli: &svode_core::git::cli::GitCli,
     project: &Path,
     owner: &Path,
     repository: &Path,

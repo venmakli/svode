@@ -1,6 +1,125 @@
-use super::{cli::GitCli, ops};
-use std::path::Path;
+use super::flow::{ParentPublication, SyncReport};
+use super::host::{GitHost, HostFuture};
+use super::operations::SharedError;
+use super::{GitError, cli::GitCli, ops};
+use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 use tempfile::TempDir;
+
+/// Counting host: the services keep their own effects, the fixture only
+/// records what the runtime was asked to deliver and whether it may write.
+#[derive(Default)]
+pub(super) struct TestHost {
+    pub(super) authorization: Option<GitError>,
+    pub(super) commits: Mutex<Vec<(PathBuf, PathBuf)>>,
+    pub(super) auto_syncs: Mutex<Vec<PathBuf>>,
+    pub(super) sync_states: Mutex<Vec<(PathBuf, bool)>>,
+    pub(super) publications: Mutex<Vec<(PathBuf, String)>>,
+    pub(super) refreshed: Mutex<Vec<PathBuf>>,
+}
+
+impl TestHost {
+    pub(super) fn denied(error: GitError) -> Self {
+        Self {
+            authorization: Some(error),
+            ..Self::default()
+        }
+    }
+
+    fn authorization(&self) -> Result<(), GitError> {
+        match &self.authorization {
+            None => Ok(()),
+            Some(GitError::RepositoryAccessDenied {
+                repository_id,
+                status,
+                reason,
+            }) => Err(GitError::RepositoryAccessDenied {
+                repository_id: repository_id.clone(),
+                status: status.clone(),
+                reason: reason.clone(),
+            }),
+            Some(error) => Err(GitError::General(error.to_string())),
+        }
+    }
+}
+
+impl GitHost for TestHost {
+    fn authorize_repository<'a>(&'a self, _: &'a Path) -> HostFuture<'a, Result<(), GitError>> {
+        Box::pin(async move { self.authorization() })
+    }
+
+    fn authorize_paths<'a>(&'a self, _: Vec<PathBuf>) -> HostFuture<'a, Result<(), GitError>> {
+        Box::pin(async move { self.authorization() })
+    }
+
+    fn invalidate_repository_access<'a>(
+        &'a self,
+        _: &'a GitCli,
+        _: &'a Path,
+    ) -> HostFuture<'a, ()> {
+        Box::pin(async {})
+    }
+
+    fn record_write_evidence<'a>(&'a self, _: &'a GitCli, _: &'a Path) -> HostFuture<'a, ()> {
+        Box::pin(async {})
+    }
+
+    fn refresh_synced_repository<'a>(
+        &'a self,
+        _: &'a GitCli,
+        repository: &'a Path,
+    ) -> HostFuture<'a, ()> {
+        Box::pin(async move {
+            self.refreshed
+                .lock()
+                .unwrap()
+                .push(repository.to_path_buf());
+        })
+    }
+
+    fn invalidate_actor_space<'a>(&'a self, _: &'a Path) -> HostFuture<'a, ()> {
+        Box::pin(async {})
+    }
+
+    fn publish_commit(&self, space: &Path, repository: &Path) {
+        self.commits
+            .lock()
+            .unwrap()
+            .push((space.to_path_buf(), repository.to_path_buf()));
+    }
+
+    fn schedule_auto_sync(&self, repository: &Path) {
+        self.auto_syncs
+            .lock()
+            .unwrap()
+            .push(repository.to_path_buf());
+    }
+
+    fn publish_sync_state(
+        &self,
+        repository: &Path,
+        active: bool,
+        _: Option<&SyncReport>,
+        _: Option<&SharedError>,
+    ) {
+        self.sync_states
+            .lock()
+            .unwrap()
+            .push((repository.to_path_buf(), active));
+    }
+
+    fn publish_publication(
+        &self,
+        repository: &Path,
+        child_head: &str,
+        _: Option<&ParentPublication>,
+    ) {
+        self.publications
+            .lock()
+            .unwrap()
+            .push((repository.to_path_buf(), child_head.to_string()));
+    }
+}
 
 pub(super) fn cli() -> GitCli {
     #[cfg(target_os = "macos")]
@@ -23,6 +142,22 @@ pub(super) fn write(repo: &Path, path: &str, content: &str) {
     let path = repo.join(path);
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     std::fs::write(path, content).unwrap();
+}
+
+/// Minimal Space source layout: portable config, local config and a home README.
+pub(super) fn scaffold(path: &Path, name: &str) {
+    std::fs::create_dir_all(path.join(".svode")).unwrap();
+    std::fs::write(
+        path.join(".svode/config.json"),
+        format!("{{\n  \"name\": \"{name}\",\n  \"description\": \"\",\n  \"icon\": \"\\u{{1F4C1}}\"\n}}\n"),
+    )
+    .unwrap();
+    std::fs::write(path.join(".svode/local.json"), "{}\n").unwrap();
+    std::fs::write(
+        path.join("README.md"),
+        format!("---\ntitle: {name}\n---\n\n"),
+    )
+    .unwrap();
 }
 
 pub(super) async fn repo(cli: &GitCli, born: bool) -> TempDir {
@@ -386,7 +521,7 @@ async fn conflict_preflight_preserves_index_and_worktree() {
     let source = std::fs::read(root.join("baseline.md")).unwrap();
     assert!(matches!(
         ops::commit_paths(&cli, root, &["baseline.md".into()]).await,
-        Err(crate::AppError::GitConflict(_))
+        Err(GitError::Conflict(_))
     ));
     assert_eq!(git(&cli, root, &["ls-files", "--stage", "-z"]).await, index);
     assert_eq!(std::fs::read(root.join("baseline.md")).unwrap(), source);

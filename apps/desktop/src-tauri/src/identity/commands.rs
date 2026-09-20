@@ -9,10 +9,10 @@ use super::{
     set_global_identity, set_local_identity, validate_email, validate_name,
 };
 use crate::AppError;
-use crate::git::ops;
 use crate::git::{GitState, require_cli};
 use crate::space::config;
 use crate::space::types::SpaceGitType;
+use svode_core::git::ops;
 
 const GLOBAL_IDENTITY_CHANGED_EVENT: &str = "git-identity:global-changed";
 

@@ -85,7 +85,7 @@ impl ProjectRuntimeState {
         project_path: PathBuf,
     ) -> Result<(), AppError> {
         self.stop_project_index_tasks(&project_path);
-        crate::git::local_repair::repair_project(app, &project_path).await;
+        crate::git::delivery::repair_project(app, &project_path).await;
         let index_state = app.state::<IndexState>();
         let prepared = index_state.open_project(&project_path).await;
         if prepared.is_ok() {
@@ -123,7 +123,7 @@ impl ProjectRuntimeState {
         status: SpaceStatus,
     ) {
         if matches!(status, SpaceStatus::Ready) {
-            crate::git::local_repair::repair_scope_best_effort(
+            crate::git::delivery::repair_scope_best_effort(
                 app,
                 project,
                 &project.join(folder_name),
@@ -185,7 +185,7 @@ impl ProjectRuntimeState {
                 .dir_for_key(&key)
                 .await
                 .unwrap_or_else(|_| project.to_path_buf());
-            crate::git::local_repair::repair_scope_best_effort(app, project, &dir).await;
+            crate::git::delivery::repair_scope_best_effort(app, project, &dir).await;
         }
         let index_state = app.state::<IndexState>();
         let prepared = index_state
@@ -221,7 +221,7 @@ impl ProjectRuntimeState {
         project: &Path,
     ) -> Result<(), AppError> {
         self.stop_project_index_tasks(project);
-        crate::git::local_repair::repair_project(app, project).await;
+        crate::git::delivery::repair_project(app, project).await;
         let tasks = app
             .state::<IndexState>()
             .refresh_after_root_pull(project)

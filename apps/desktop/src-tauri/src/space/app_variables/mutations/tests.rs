@@ -1,7 +1,5 @@
 use super::*;
-use crate::space::{
-    app_variables::storage_error, config::write_git_user_policy, types::GitUserPolicy,
-};
+use crate::space::{app_variables::storage_error, types::GitUserPolicy};
 use serde_json::json;
 use std::{
     cell::{Cell, RefCell},
@@ -44,12 +42,12 @@ struct Fixture {
     events: RefCell<Vec<(PathBuf, PathBuf, bool)>>,
     submodule: bool,
 }
-async fn git(cli: &crate::git::cli::GitCli, path: &Path, args: &[&str]) -> String {
+async fn git(cli: &svode_core::git::cli::GitCli, path: &Path, args: &[&str]) -> String {
     let out = cli.exec(path, args).await.unwrap();
     assert_eq!(out.exit_code, 0, "{args:?}: {}", out.stderr);
     out.stdout
 }
-async fn init(cli: &crate::git::cli::GitCli, path: &Path) {
+async fn init(cli: &svode_core::git::cli::GitCli, path: &Path) {
     fs::create_dir_all(path.join(".svode")).unwrap();
     git(cli, path, &["init"]).await;
     git(cli, path, &["config", "user.name", "Variables Test"]).await;
@@ -80,8 +78,7 @@ impl Fixture {
         let root = tmp.path().canonicalize().unwrap();
         let state = GitState::new();
         let cli = state
-            .cli
-            .as_ref()
+            .detected()
             .expect("Git is required for this acceptance");
         init(cli, &root).await;
         let path = if kind == "root" {
@@ -138,7 +135,7 @@ impl Fixture {
             },
         )
         .unwrap();
-        write_git_user_policy(
+        svode_core::git::policy::write_user_policy(
             &root,
             &GitUserPolicy {
                 auto_sync: true,
@@ -148,7 +145,7 @@ impl Fixture {
         )
         .unwrap();
         if separate {
-            write_git_user_policy(
+            svode_core::git::policy::write_user_policy(
                 &path,
                 &GitUserPolicy {
                     auto_sync: true,
@@ -170,8 +167,8 @@ impl Fixture {
             submodule: kind == "submodule",
         }
     }
-    fn cli(&self) -> &crate::git::cli::GitCli {
-        self.git.cli.as_ref().unwrap()
+    fn cli(&self) -> &svode_core::git::cli::GitCli {
+        self.git.detected().unwrap()
     }
     fn save_raw(
         &self,
@@ -519,7 +516,7 @@ async fn git_failure_and_missing_git_leave_successful_crud_without_secret_diagno
         let mut f = Fixture::new("root", true, true, true, true).await;
         let before = f.before().await;
         if missing {
-            f.git.cli = None;
+            f.git = GitState::without_cli();
         } else {
             fail_commit(&f.root);
         }
@@ -915,7 +912,7 @@ async fn sync_dispatch_follows_real_commits_and_independent_repo_policy() {
         for child_sync in [false, true] {
             for root_sync in [false, true] {
                 let f = Fixture::new("submodule", system, true, false, false).await;
-                write_git_user_policy(
+                svode_core::git::policy::write_user_policy(
                     &f.path,
                     &GitUserPolicy {
                         auto_sync: child_sync,
@@ -924,7 +921,7 @@ async fn sync_dispatch_follows_real_commits_and_independent_repo_policy() {
                     },
                 )
                 .unwrap();
-                write_git_user_policy(
+                svode_core::git::policy::write_user_policy(
                     &f.root,
                     &GitUserPolicy {
                         auto_sync: root_sync,
@@ -956,7 +953,7 @@ async fn sync_dispatch_follows_real_commits_and_independent_repo_policy() {
 async fn disabled_policy_with_missing_git_is_a_normal_save() {
     for kind in ["root", "inline", "independent", "submodule"] {
         let mut f = Fixture::new(kind, false, true, true, true).await;
-        f.git.cli = None;
+        f.git = GitState::without_cli();
         let result = f
             .save("DISABLED", Mode::Git, Kind::Variable, Some("confirmed"))
             .await;

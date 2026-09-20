@@ -3,14 +3,15 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use serde::Serialize;
-use tauri::{AppHandle, Manager};
 
-use super::GitState;
+use super::GitError;
+use super::cli::GitCli;
+use super::host::GitHost;
 use super::ops;
 use super::pending::PendingPaths;
 pub use super::pending::StructuralOp;
-use crate::AppError;
-use crate::space::types::SpaceGitType;
+use super::state::GitRuntime;
+use crate::storage::config::SpaceGitType;
 
 const FLUSH_ALL_TIMEOUT_SECS: u64 = 10;
 
@@ -46,7 +47,7 @@ impl SystemCommitKind {
     }
 
     /// Paths to stage, relative to the space root.
-    pub(crate) fn paths(self) -> &'static [&'static str] {
+    pub fn paths(self) -> &'static [&'static str] {
         match self {
             SystemCommitKind::SpaceConfig => &[".svode/config.json"],
             SystemCommitKind::ReorderSpaces => &[".svode/config.json"],
@@ -89,14 +90,24 @@ pub enum GuardedExactPathPlan {
     Pending(ExactPathPendingReason),
 }
 
+/// Managed Git history of Svode's own structural, system and scaffold
+/// changes. Policy admission, staging, the commit and the parent pointer
+/// belong here; the host only authorizes the repository and delivers the
+/// resulting notifications.
 pub struct AutocommitService {
-    app: AppHandle,
+    runtime: Arc<GitRuntime>,
+    host: Arc<dyn GitHost>,
     pending: Arc<PendingPaths>,
 }
 
 impl AutocommitService {
-    pub fn new(app: AppHandle, pending: Arc<PendingPaths>) -> Self {
-        Self { app, pending }
+    pub fn new(runtime: Arc<GitRuntime>, host: Arc<dyn GitHost>) -> Self {
+        let pending = runtime.pending();
+        Self {
+            runtime,
+            host,
+            pending,
+        }
     }
 
     /// Register path-scoped content/workspace changes for the next explicit
@@ -128,7 +139,7 @@ impl AutocommitService {
         project_path: PathBuf,
         space_path: PathBuf,
         kind: SystemCommitKind,
-    ) -> Result<(), AppError> {
+    ) -> Result<(), GitError> {
         if !space_path.exists() {
             tracing::warn!(
                 "commit_system_now: space path missing, skipping: {}",
@@ -137,8 +148,7 @@ impl AutocommitService {
             return Ok(());
         }
 
-        let git_state = self.app.state::<GitState>();
-        let cli = git_state.cli.clone().ok_or(AppError::GitNotFound)?;
+        let cli = self.runtime.require_cli()?;
         let git_type = ops::detect_space_git_type(&cli, &project_path, &space_path).await?;
         let policy_path = policy_path_for_git_type(&project_path, &space_path, git_type);
         if !background_commit_allowed(policy_path, CommitIntent::SystemConfig) {
@@ -146,7 +156,8 @@ impl AutocommitService {
         }
 
         do_commit_system(
-            &self.app,
+            &self.runtime,
+            self.host.as_ref(),
             &project_path,
             &space_path,
             git_type,
@@ -163,13 +174,12 @@ impl AutocommitService {
         project_path: PathBuf,
         space_path: PathBuf,
         kind: SystemCommitKind,
-    ) -> Result<(), AppError> {
+    ) -> Result<(), GitError> {
         if !space_path.exists() {
             return Ok(());
         }
 
-        let git_state = self.app.state::<GitState>();
-        let cli = git_state.cli.clone().ok_or(AppError::GitNotFound)?;
+        let cli = self.runtime.require_cli()?;
         let git_type = ops::detect_space_git_type(&cli, &project_path, &space_path).await?;
 
         if !background_commit_allowed(&space_path, CommitIntent::ManualExplicit) {
@@ -177,7 +187,8 @@ impl AutocommitService {
         }
 
         do_commit_system(
-            &self.app,
+            &self.runtime,
+            self.host.as_ref(),
             &project_path,
             &space_path,
             git_type,
@@ -192,10 +203,10 @@ impl AutocommitService {
     /// this preflight, the mutation, and `finish_guarded_exact_path_commit`.
     pub async fn plan_guarded_system_exact_path(
         &self,
-        cli: &super::cli::GitCli,
+        cli: &GitCli,
         repo: &Path,
         path: &str,
-    ) -> Result<GuardedExactPathPlan, AppError> {
+    ) -> Result<GuardedExactPathPlan, GitError> {
         plan_guarded_system_exact_path(cli, repo, path).await
     }
 
@@ -206,11 +217,11 @@ impl AutocommitService {
     /// that direct child as untracked.
     pub async fn plan_guarded_structural_exact_path(
         &self,
-        cli: &super::cli::GitCli,
+        cli: &GitCli,
         repo: &Path,
         path: &str,
         allow_registered_unborn_submodule: bool,
-    ) -> Result<GuardedExactPathPlan, AppError> {
+    ) -> Result<GuardedExactPathPlan, GitError> {
         plan_guarded_structural_exact_path(cli, repo, path, allow_registered_unborn_submodule).await
     }
 
@@ -219,7 +230,7 @@ impl AutocommitService {
     /// re-reads and validates the just-published result.
     pub async fn finish_guarded_exact_path_commit(
         &self,
-        cli: &super::cli::GitCli,
+        cli: &GitCli,
         space_path: &Path,
         repo: &Path,
         path: &str,
@@ -227,12 +238,13 @@ impl AutocommitService {
         plan: GuardedExactPathPlan,
         target_matches_expected: bool,
     ) -> ExactPathPersistenceOutcome {
-        super::local_repair::repair_locked_best_effort(&self.app, cli, repo).await;
+        super::local_repair::repair_locked_best_effort(self.host.as_ref(), cli, repo).await;
         let outcome =
             finish_guarded_exact_path(cli, repo, path, message, plan, target_matches_expected)
                 .await;
         if outcome == ExactPathPersistenceOutcome::Committed {
-            publish_exact_path_commit(&self.app, cli, space_path, repo);
+            self.host.publish_commit(space_path, repo);
+            schedule_auto_sync(self.host.as_ref(), repo);
         }
         outcome
     }
@@ -241,7 +253,7 @@ impl AutocommitService {
     /// consent and stale-review validation belong to the artifact owner.
     pub async fn commit_exact_path_manual(
         &self,
-        cli: &super::cli::GitCli,
+        cli: &GitCli,
         space_path: &Path,
         repo: &Path,
         path: &str,
@@ -253,16 +265,17 @@ impl AutocommitService {
 
     async fn commit_exact_path_with_effects(
         &self,
-        cli: &super::cli::GitCli,
+        cli: &GitCli,
         space_path: &Path,
         repo: &Path,
         path: &str,
         message: &str,
     ) -> ExactPathPersistenceOutcome {
-        super::local_repair::repair_locked_best_effort(&self.app, cli, repo).await;
+        super::local_repair::repair_locked_best_effort(self.host.as_ref(), cli, repo).await;
         let outcome = exact_path_outcome(cli, repo, path, message).await;
         if outcome == ExactPathPersistenceOutcome::Committed {
-            publish_exact_path_commit(&self.app, cli, space_path, repo);
+            self.host.publish_commit(space_path, repo);
+            schedule_auto_sync(self.host.as_ref(), repo);
         }
         outcome
     }
@@ -276,7 +289,7 @@ impl AutocommitService {
         space_path: PathBuf,
         paths: Vec<PathBuf>,
         _message: String,
-    ) -> Result<(), AppError> {
+    ) -> Result<(), GitError> {
         if paths.is_empty() || !space_path.exists() {
             return Ok(());
         }
@@ -296,13 +309,12 @@ impl AutocommitService {
         space_path: PathBuf,
         paths: Vec<PathBuf>,
         message: &'static str,
-    ) -> Result<(), AppError> {
+    ) -> Result<(), GitError> {
         if paths.is_empty() || !space_path.exists() {
             return Ok(());
         }
 
-        let git_state = self.app.state::<GitState>();
-        let cli = git_state.cli.clone().ok_or(AppError::GitNotFound)?;
+        let cli = self.runtime.require_cli()?;
         let git_type = ops::detect_space_git_type(&cli, &project_path, &space_path).await?;
         let policy_path = policy_path_for_git_type(&project_path, &space_path, git_type);
         if !background_commit_allowed(policy_path, CommitIntent::StructuralLifecycle) {
@@ -310,7 +322,8 @@ impl AutocommitService {
         }
 
         do_commit_paths(
-            &self.app,
+            &self.runtime,
+            self.host.as_ref(),
             &project_path,
             &space_path,
             git_type,
@@ -325,8 +338,15 @@ impl AutocommitService {
         &self,
         project_path: PathBuf,
         space_path: PathBuf,
-    ) -> Result<(), AppError> {
-        do_commit_scaffold(&self.app, &project_path, &space_path, false).await
+    ) -> Result<(), GitError> {
+        do_commit_scaffold(
+            &self.runtime,
+            self.host.as_ref(),
+            &project_path,
+            &space_path,
+            false,
+        )
+        .await
     }
 
     /// Commit the scaffolded `.svode/` directory plus a newly-created README.
@@ -334,8 +354,15 @@ impl AutocommitService {
         &self,
         project_path: PathBuf,
         space_path: PathBuf,
-    ) -> Result<(), AppError> {
-        do_commit_scaffold(&self.app, &project_path, &space_path, true).await
+    ) -> Result<(), GitError> {
+        do_commit_scaffold(
+            &self.runtime,
+            self.host.as_ref(),
+            &project_path,
+            &space_path,
+            true,
+        )
+        .await
     }
 
     /// Commit a newly-created scope home README without staging existing scaffold files.
@@ -343,13 +370,12 @@ impl AutocommitService {
         &self,
         project_path: PathBuf,
         space_path: PathBuf,
-    ) -> Result<(), AppError> {
+    ) -> Result<(), GitError> {
         if !space_path.exists() {
             return Ok(());
         }
 
-        let git_state = self.app.state::<GitState>();
-        let cli = git_state.cli.clone().ok_or(AppError::GitNotFound)?;
+        let cli = self.runtime.require_cli()?;
         let git_type = ops::detect_space_git_type(&cli, &project_path, &space_path).await?;
         let policy_path = policy_path_for_git_type(&project_path, &space_path, git_type);
         if !background_commit_allowed(policy_path, CommitIntent::StructuralLifecycle) {
@@ -357,7 +383,8 @@ impl AutocommitService {
         }
 
         do_commit_paths(
-            &self.app,
+            &self.runtime,
+            self.host.as_ref(),
             &project_path,
             &space_path,
             git_type,
@@ -384,11 +411,11 @@ impl AutocommitService {
     }
 }
 
-pub(crate) async fn plan_guarded_system_exact_path(
-    cli: &super::cli::GitCli,
+pub async fn plan_guarded_system_exact_path(
+    cli: &GitCli,
     repo: &Path,
     path: &str,
-) -> Result<GuardedExactPathPlan, AppError> {
+) -> Result<GuardedExactPathPlan, GitError> {
     if !background_commit_allowed(repo, CommitIntent::SystemConfig) {
         return Ok(classify_guarded_exact_path_preflight(false, false, false));
     }
@@ -401,12 +428,12 @@ pub(crate) async fn plan_guarded_system_exact_path(
         ops::has_staged_changes(cli, repo).await?,
     ))
 }
-pub(crate) async fn plan_guarded_structural_exact_path(
-    cli: &super::cli::GitCli,
+pub async fn plan_guarded_structural_exact_path(
+    cli: &GitCli,
     repo: &Path,
     path: &str,
     allow_registered_unborn_submodule: bool,
-) -> Result<GuardedExactPathPlan, AppError> {
+) -> Result<GuardedExactPathPlan, GitError> {
     if !background_commit_allowed(repo, CommitIntent::StructuralLifecycle) {
         return Ok(classify_guarded_exact_path_preflight(false, false, false));
     }
@@ -426,7 +453,7 @@ pub(crate) async fn plan_guarded_structural_exact_path(
         ops::has_staged_changes(cli, repo).await?,
     ))
 }
-pub(crate) struct ExactPathCommitResult {
+pub struct ExactPathCommitResult {
     pub outcome: ExactPathPersistenceOutcome,
     pub oid: Option<String>,
 }
@@ -435,8 +462,8 @@ impl From<ExactPathPersistenceOutcome> for ExactPathCommitResult {
         Self { outcome, oid: None }
     }
 }
-pub(crate) async fn finish_guarded_exact_path(
-    cli: &super::cli::GitCli,
+pub async fn finish_guarded_exact_path(
+    cli: &GitCli,
     repo: &Path,
     path: &str,
     message: &str,
@@ -447,8 +474,8 @@ pub(crate) async fn finish_guarded_exact_path(
         .await
         .outcome
 }
-pub(crate) async fn finish_guarded_exact_path_receipt(
-    cli: &super::cli::GitCli,
+pub async fn finish_guarded_exact_path_receipt(
+    cli: &GitCli,
     repo: &Path,
     path: &str,
     message: &str,
@@ -482,7 +509,7 @@ pub(crate) async fn finish_guarded_exact_path_receipt(
     exact_path_receipt(cli, repo, path, message).await
 }
 async fn exact_path_receipt(
-    cli: &super::cli::GitCli,
+    cli: &GitCli,
     repo: &Path,
     path: &str,
     message: &str,
@@ -500,22 +527,13 @@ async fn exact_path_receipt(
     }
 }
 async fn exact_path_outcome(
-    cli: &super::cli::GitCli,
+    cli: &GitCli,
     repo: &Path,
     path: &str,
     message: &str,
 ) -> ExactPathPersistenceOutcome {
     exact_path_receipt(cli, repo, path, message).await.outcome
 }
-pub(crate) fn publish_exact_path_commit(
-    app: &AppHandle,
-    _cli: &super::cli::GitCli,
-    space_path: &Path,
-    repo: &Path,
-) {
-    super::delivery::publish_commit(app, space_path, repo);
-}
-
 fn classify_guarded_exact_path_preflight(
     policy_enabled: bool,
     target_dirty: bool,
@@ -533,13 +551,13 @@ fn classify_guarded_exact_path_preflight(
 }
 
 async fn commit_prepared_paths(
-    cli: &super::cli::GitCli,
+    cli: &GitCli,
     repo: &Path,
     paths: &[String],
     message: &str,
     intent: CommitIntent,
     optional: bool,
-) -> Result<bool, AppError> {
+) -> Result<bool, GitError> {
     if !background_commit_allowed(repo, intent) {
         return Ok(false);
     }
@@ -606,33 +624,34 @@ async fn commit_prepared_paths(
 }
 
 async fn commit_parent_pointer(
-    cli: &super::cli::GitCli,
+    cli: &GitCli,
     root: &Path,
     child: &Path,
     intent: CommitIntent,
-) -> Result<bool, AppError> {
+) -> Result<bool, GitError> {
     if !background_commit_allowed(root, intent) {
         return Ok(false);
     }
     let path =
-        crate::repo_path::repo_relative_from_base(root, child, crate::repo_path::RootMode::Reject)?;
+        crate::git::path::repo_relative_from_base(root, child, crate::git::path::RootMode::Reject)?;
     ops::commit_exact_path(cli, root, &path, &format!("Update {path}")).await
 }
 
 /// Stage the paths for a system-kind commit, relative to the space root, and
 /// commit under the right repo lock. `space_path` may equal `project_path`
 /// for root-level spaces (inline).
+#[allow(clippy::too_many_arguments)]
 async fn do_commit_paths(
-    app: &AppHandle,
+    runtime: &GitRuntime,
+    host: &dyn GitHost,
     project_path: &Path,
     space_path: &Path,
     git_type: SpaceGitType,
     paths: Vec<PathBuf>,
     message: &str,
-) -> Result<(), AppError> {
-    super::local_repair::repair_scope_best_effort(app, project_path, space_path).await;
-    let git_state = app.state::<GitState>();
-    let cli = git_state.cli.clone().ok_or(AppError::GitNotFound)?;
+) -> Result<(), GitError> {
+    super::local_repair::repair_scope_best_effort(runtime, host, project_path, space_path).await;
+    let cli = runtime.require_cli()?;
 
     let (repo, needs_pointer_update) = match git_type {
         SpaceGitType::Inline => (project_path, false),
@@ -640,15 +659,15 @@ async fn do_commit_paths(
         SpaceGitType::Submodule => (space_path, true),
     };
 
-    let lock = git_state.get_lock(repo).await;
+    let lock = runtime.get_lock(repo).await;
     let guard = lock.lock().await;
     let paths = paths
         .iter()
         .map(|path| {
-            crate::repo_path::repo_relative_from_base(
+            crate::git::path::repo_relative_from_base(
                 repo,
                 path,
-                crate::repo_path::RootMode::Reject,
+                crate::git::path::RootMode::Reject,
             )
         })
         .collect::<Result<Vec<_>, _>>()?;
@@ -665,7 +684,8 @@ async fn do_commit_paths(
 
     if created {
         finish_commit(
-            app,
+            runtime,
+            host,
             &cli,
             project_path,
             space_path,
@@ -678,17 +698,18 @@ async fn do_commit_paths(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn do_commit_system(
-    app: &AppHandle,
+    runtime: &GitRuntime,
+    host: &dyn GitHost,
     project_path: &Path,
     space_path: &Path,
     git_type: SpaceGitType,
     kind: SystemCommitKind,
     intent: CommitIntent,
-) -> Result<(), AppError> {
-    super::local_repair::repair_scope_best_effort(app, project_path, space_path).await;
-    let git_state = app.state::<GitState>();
-    let cli = git_state.cli.clone().ok_or(AppError::GitNotFound)?;
+) -> Result<(), GitError> {
+    super::local_repair::repair_scope_best_effort(runtime, host, project_path, space_path).await;
+    let cli = runtime.require_cli()?;
     let message = kind.message();
     let paths = kind.paths();
 
@@ -696,14 +717,14 @@ async fn do_commit_system(
     let paths = paths
         .iter()
         .map(|path| {
-            crate::repo_path::repo_relative_from_base(
+            crate::git::path::repo_relative_from_base(
                 &target_repo,
                 &space_path.join(path),
-                crate::repo_path::RootMode::Reject,
+                crate::git::path::RootMode::Reject,
             )
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let lock = git_state.get_lock(&target_repo).await;
+    let lock = runtime.get_lock(&target_repo).await;
     let guard = lock.lock().await;
     let created = commit_prepared_paths(
         &cli,
@@ -722,7 +743,8 @@ async fn do_commit_system(
             CommitIntent::StructuralLifecycle
         };
         finish_commit(
-            app,
+            runtime,
+            host,
             &cli,
             project_path,
             space_path,
@@ -736,23 +758,23 @@ async fn do_commit_system(
 }
 
 async fn do_commit_scaffold(
-    app: &AppHandle,
+    runtime: &GitRuntime,
+    host: &dyn GitHost,
     project_path: &Path,
     space_path: &Path,
     include_readme: bool,
-) -> Result<(), AppError> {
+) -> Result<(), GitError> {
     if !space_path.exists() {
         return Ok(());
     }
 
-    if super::local_repair::repair_scope(app, project_path, space_path).await?
+    if super::local_repair::repair_scope(runtime, host, project_path, space_path).await?
         == super::local_repair::RepairOutcome::Skipped
     {
         return Ok(());
     }
 
-    let git_state = app.state::<GitState>();
-    let cli = git_state.cli.clone().ok_or(AppError::GitNotFound)?;
+    let cli = runtime.require_cli()?;
     let git_type = ops::detect_space_git_type(&cli, project_path, space_path).await?;
 
     let space_folder = space_path
@@ -762,7 +784,7 @@ async fn do_commit_scaffold(
     let message = "Scaffold .svode";
     match git_type {
         SpaceGitType::Inline => {
-            let lock = git_state.get_lock(project_path).await;
+            let lock = runtime.get_lock(project_path).await;
             let _guard = lock.lock().await;
             let rel = if space_path == project_path {
                 ".svode".to_string()
@@ -793,11 +815,20 @@ async fn do_commit_scaffold(
             )
             .await?;
             if created {
-                finish_commit(app, &cli, project_path, space_path, project_path, None).await?;
+                finish_commit(
+                    runtime,
+                    host,
+                    &cli,
+                    project_path,
+                    space_path,
+                    project_path,
+                    None,
+                )
+                .await?;
             }
         }
         SpaceGitType::Independent => {
-            let lock = git_state.get_lock(space_path).await;
+            let lock = runtime.get_lock(space_path).await;
             let _guard = lock.lock().await;
             if !background_commit_allowed(space_path, CommitIntent::StructuralLifecycle) {
                 return Ok(());
@@ -816,11 +847,20 @@ async fn do_commit_scaffold(
             )
             .await?;
             if created {
-                finish_commit(app, &cli, project_path, space_path, space_path, None).await?;
+                finish_commit(
+                    runtime,
+                    host,
+                    &cli,
+                    project_path,
+                    space_path,
+                    space_path,
+                    None,
+                )
+                .await?;
             }
         }
         SpaceGitType::Submodule => {
-            let lock = git_state.get_lock(space_path).await;
+            let lock = runtime.get_lock(space_path).await;
             let _guard = lock.lock().await;
             if !background_commit_allowed(space_path, CommitIntent::StructuralLifecycle) {
                 return Ok(());
@@ -841,7 +881,8 @@ async fn do_commit_scaffold(
             drop(_guard);
             if created {
                 finish_commit(
-                    app,
+                    runtime,
+                    host,
                     &cli,
                     project_path,
                     space_path,
@@ -856,41 +897,49 @@ async fn do_commit_scaffold(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn finish_commit(
-    app: &AppHandle,
-    cli: &super::cli::GitCli,
+    runtime: &GitRuntime,
+    host: &dyn GitHost,
+    cli: &GitCli,
     project: &Path,
     space: &Path,
     repo: &Path,
     pointer_intent: Option<CommitIntent>,
-) -> Result<(), AppError> {
-    super::delivery::emit_committed(app, space, repo);
+) -> Result<(), GitError> {
+    host.publish_commit(space, repo);
     let pointer = if let Some(intent) = pointer_intent {
-        let state = app.state::<GitState>();
-        let child_lock = state.get_lock(repo).await;
+        let child_lock = runtime.get_lock(repo).await;
         let _child_guard = child_lock.lock().await;
-        let lock = state.get_lock(project).await;
+        let lock = runtime.get_lock(project).await;
         let _guard = lock.lock().await;
-        match super::access::require_repository_mutation(app, project).await {
-            Ok(_) => commit_parent_pointer(cli, project, space, intent).await,
+        match host.authorize_repository(project).await {
+            Ok(()) => commit_parent_pointer(cli, project, space, intent).await,
             Err(error) => Err(error),
         }
     } else {
         Ok(false)
     };
-    super::delivery::schedule_auto_sync(app, repo);
+    schedule_auto_sync(host, repo);
     if pointer.unwrap_or_else(|error| {
         tracing::warn!(kind = error.kind(), "child saved; project pointer pending");
         false
     }) {
-        super::delivery::emit_committed(app, space, project);
+        host.publish_commit(space, project);
         // With child auto-sync enabled, its pipeline owns the parent step.
         // Otherwise root policy may publish only already available pointers.
-        if !super::delivery::auto_sync_enabled(repo) {
-            super::delivery::schedule_auto_sync(app, project);
+        if !super::policy::effective_user_policy(repo).auto_sync {
+            schedule_auto_sync(host, project);
         }
     }
     Ok(())
+}
+
+/// A commit only starts a background sync where the user enabled it.
+pub fn schedule_auto_sync(host: &dyn GitHost, repo: &Path) {
+    if super::policy::effective_user_policy(repo).auto_sync {
+        host.schedule_auto_sync(repo);
+    }
 }
 
 fn background_commit_allowed(config_path: &Path, intent: CommitIntent) -> bool {
@@ -898,10 +947,10 @@ fn background_commit_allowed(config_path: &Path, intent: CommitIntent) -> bool {
         CommitIntent::ContentWorkspace => false,
         CommitIntent::ManualExplicit => true,
         CommitIntent::StructuralLifecycle => {
-            crate::space::config::effective_git_user_policy(config_path).auto_commit_structural
+            super::policy::effective_user_policy(config_path).auto_commit_structural
         }
         CommitIntent::SystemConfig => {
-            crate::space::config::effective_git_user_policy(config_path).auto_commit_system
+            super::policy::effective_user_policy(config_path).auto_commit_system
         }
     }
 }
@@ -1270,9 +1319,9 @@ fn aggregate_message(ops: &[StructuralOp]) -> String {
 
 #[cfg(test)]
 mod tests {
+    use super::super::policy::{GitUserPolicy, write_user_policy};
     use super::*;
-    use crate::space::config::{write_git_user_policy, write_space_config};
-    use crate::space::types::{GitSpaceConfig, GitUserPolicy, SpaceConfig};
+    use crate::git::staging_tests::TestHost;
 
     #[tokio::test]
     async fn staging_consumers_execute_all_policy_combinations_and_routing() {
@@ -1322,10 +1371,10 @@ mod tests {
                             (CommitIntent::ManualExplicit, "manual.md", true),
                         ] {
                             let abs = child.join(name);
-                            let path = crate::repo_path::repo_relative_from_base(
+                            let path = crate::git::path::repo_relative_from_base(
                                 target,
                                 &abs,
-                                crate::repo_path::RootMode::Reject,
+                                crate::git::path::RootMode::Reject,
                             )
                             .unwrap();
                             write(target, &path, "source mutation\n");
@@ -1344,7 +1393,10 @@ mod tests {
                                 .unwrap(),
                                 expected
                             );
-                            assert_eq!(crate::git::delivery::auto_sync_enabled(target), sync);
+                            assert_eq!(
+                                super::super::policy::effective_user_policy(target).auto_sync,
+                                sync
+                            );
                             if expected {
                                 assert_ne!(git(&cli, target, &["rev-parse", "HEAD"]).await, head);
                                 assert_eq!(
@@ -1643,12 +1695,16 @@ mod tests {
             let created = ops::commit_paths(&cli, root, &["manual.md".into()])
                 .await
                 .unwrap();
-            super::super::sync::sync_if_enabled(&cli, root, false).await.unwrap();
+            super::super::sync::sync_if_enabled(&cli, root, false)
+                .await
+                .unwrap();
             assert_eq!(
                 git(&cli, remote.path(), &["rev-parse", branch]).await,
                 before
             );
-            super::super::sync::sync_if_enabled(&cli, root, created).await.unwrap();
+            super::super::sync::sync_if_enabled(&cli, root, created)
+                .await
+                .unwrap();
             let remote_head = git(&cli, remote.path(), &["rev-parse", branch]).await;
             if sync {
                 assert_eq!(remote_head, git(&cli, root, &["rev-parse", "HEAD"]).await);
@@ -1724,26 +1780,36 @@ mod tests {
         x.to_string()
     }
 
-    fn write_git_config(path: &Path, git: GitSpaceConfig) {
-        write_space_config(
-            path,
-            &SpaceConfig {
-                name: "Space".to_string(),
-                description: String::new(),
-                icon: "folder".to_string(),
-                spaces: None,
-                agent: None,
-                defaults: None,
-                git: Some(git),
-                assets: None,
-                tree: None,
-            },
+    /// Legacy shared Git automation in `.svode/config.json` is never a policy
+    /// source; only the device-local config decides.
+    fn write_git_config(path: &Path, git: LegacySharedGitConfig) {
+        std::fs::create_dir_all(path.join(".svode")).unwrap();
+        std::fs::write(
+            path.join(".svode/config.json"),
+            serde_json::json!({
+                "name": "Space",
+                "description": "",
+                "icon": "folder",
+                "git": {
+                    "autoSync": git.auto_sync,
+                    "autoCommitStructural": git.auto_commit_structural,
+                    "autoCommitSystem": git.auto_commit_system,
+                },
+            })
+            .to_string(),
         )
         .expect("write space config");
     }
 
+    struct LegacySharedGitConfig {
+        auto_sync: Option<bool>,
+        auto_commit_structural: Option<bool>,
+        auto_commit_system: Option<bool>,
+    }
+
     fn write_local_git_policy(path: &Path, policy: GitUserPolicy) {
-        write_git_user_policy(path, &policy).expect("write local git policy");
+        std::fs::create_dir_all(path.join(".svode")).unwrap();
+        write_user_policy(path, &policy).expect("write local git policy");
     }
 
     #[test]
@@ -1778,7 +1844,7 @@ mod tests {
 
         write_git_config(
             &project,
-            GitSpaceConfig {
+            LegacySharedGitConfig {
                 auto_sync: Some(true),
                 auto_commit_structural: Some(true),
                 auto_commit_system: Some(true),
@@ -1786,7 +1852,7 @@ mod tests {
         );
         write_git_config(
             &inline_space,
-            GitSpaceConfig {
+            LegacySharedGitConfig {
                 auto_sync: Some(true),
                 auto_commit_structural: Some(true),
                 auto_commit_system: Some(true),
@@ -1801,8 +1867,8 @@ mod tests {
             },
         );
 
-        assert!(!crate::git::delivery::auto_sync_enabled(&project));
-        assert!(crate::git::delivery::auto_sync_enabled(&inline_space));
+        assert!(!super::super::policy::effective_user_policy(&project).auto_sync);
+        assert!(super::super::policy::effective_user_policy(&inline_space).auto_sync);
         assert!(!background_commit_allowed(
             &project,
             CommitIntent::StructuralLifecycle
@@ -1830,11 +1896,14 @@ mod tests {
                 let child = root.join("space");
                 std::fs::create_dir_all(&child).unwrap();
                 for (repo, bits) in [(&child, child_bits), (&root, root_bits)] {
-                    write_local_git_policy(repo, GitUserPolicy {
-                        auto_sync: bits & 4 != 0,
-                        auto_commit_structural: bits & 2 != 0,
-                        auto_commit_system: bits & 1 != 0,
-                    });
+                    write_local_git_policy(
+                        repo,
+                        GitUserPolicy {
+                            auto_sync: bits & 4 != 0,
+                            auto_commit_structural: bits & 2 != 0,
+                            auto_commit_system: bits & 1 != 0,
+                        },
+                    );
                     for (intent, expected) in [
                         (CommitIntent::ContentWorkspace, false),
                         (CommitIntent::ManualExplicit, true),
@@ -1846,17 +1915,19 @@ mod tests {
                         let mut triggers = 0;
                         // Production callbacks are dispatched only for a commit receipt.
                         if created {
-                            crate::git::delivery::dispatch_commit(
-                                repo,
-                                repo,
-                                |_, _| {},
-                                |_| triggers += 1,
-                            );
+                            let host = TestHost::default();
+                            schedule_auto_sync(&host, repo);
+                            triggers += host.auto_syncs.lock().unwrap().len();
                         }
                         assert_eq!(triggers, usize::from(expected && bits & 4 != 0));
                     }
-                    assert_eq!(super::super::operations::Intent::Sync { background: true }.admitted(repo), bits & 4 != 0);
-                    assert!(super::super::operations::Intent::Sync { background: false }.admitted(repo));
+                    assert_eq!(
+                        super::super::operations::Intent::Sync { background: true }.admitted(repo),
+                        bits & 4 != 0
+                    );
+                    assert!(
+                        super::super::operations::Intent::Sync { background: false }.admitted(repo)
+                    );
                     assert!(super::super::operations::Intent::Push.admitted(repo));
                     assert!(super::super::operations::Intent::Publish.admitted(repo));
                 }

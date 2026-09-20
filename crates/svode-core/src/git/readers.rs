@@ -1,22 +1,22 @@
 use std::path::{Path, PathBuf};
 
+use super::GitError;
 use super::{
     cli::GitCli,
+    flow::{PublicationStatus, SyncReport},
     operations::{Completion, Snapshot},
     ops::{self, GitStatus},
-    publication_flow::{PublicationStatus, SyncReport},
     sync::SyncResult,
 };
-use crate::AppError;
 
 #[derive(Debug, Clone)]
-pub(crate) struct PublicationRead {
+pub struct PublicationRead {
     pub(crate) status: Option<PublicationStatus>,
     pub(crate) parent: Option<(PathBuf, Snapshot)>,
 }
 
 impl PublicationRead {
-    pub(crate) async fn is_current(&self, cli: &GitCli) -> Result<bool, AppError> {
+    pub(crate) async fn is_current(&self, cli: &GitCli) -> Result<bool, GitError> {
         match &self.parent {
             Some((repo, snapshot)) => Ok(Snapshot::read(cli, repo).await? == *snapshot),
             None => Ok(true),
@@ -26,7 +26,7 @@ impl PublicationRead {
 
 /// A successful ordinary sync observed precisely the origin/current branch
 /// used by counters and inspection. Custom mapping keeps the fresh read path.
-pub(crate) async fn origin_observed(cli: &GitCli, repo: &Path) -> Result<bool, AppError> {
+pub async fn origin_observed(cli: &GitCli, repo: &Path) -> Result<bool, GitError> {
     let (branch, config) = tokio::join!(
         ops::current_branch(cli, repo),
         cli.exec_redacted(repo, &["config", "--null", "--list"]),
@@ -81,11 +81,7 @@ pub(crate) async fn origin_observed(cli: &GitCli, repo: &Path) -> Result<bool, A
         && !fetch.stdout.contains("::"))
 }
 
-pub(crate) async fn sync_status(
-    cli: &GitCli,
-    repo: &Path,
-    result: &SyncResult,
-) -> Option<GitStatus> {
+pub async fn sync_status(cli: &GitCli, repo: &Path, result: &SyncResult) -> Option<GitStatus> {
     if matches!(result, SyncResult::Success { .. })
         && origin_observed(cli, repo).await.unwrap_or(false)
     {
@@ -101,7 +97,7 @@ pub(crate) async fn sync_status(
     }
 }
 
-pub(crate) fn covered_sync<'a>(
+pub fn covered_sync<'a>(
     previous: Option<&'a Completion>,
     current: &Snapshot,
 ) -> Option<&'a SyncReport> {
@@ -111,12 +107,12 @@ pub(crate) fn covered_sync<'a>(
         .filter(|report| report.remote_status.is_some())
 }
 
-pub(crate) async fn fetch_status(
+pub async fn fetch_status(
     cli: &GitCli,
     repo: &Path,
     previous: Option<&Completion>,
     current: &Snapshot,
-) -> Result<(GitStatus, bool), AppError> {
+) -> Result<(GitStatus, bool), GitError> {
     // A new local commit invalidates publication proof, not the remote facts
     // already observed by the operation this reader was waiting for. Recompute
     // counts against the current HEAD; inspection keeps its exact snapshot gate.
@@ -132,15 +128,15 @@ pub(crate) async fn fetch_status(
     Ok((ops::status_with_remote_counts(cli, repo).await?, fetched))
 }
 
-pub(crate) async fn inspect(
+pub async fn inspect(
     cli: &GitCli,
     repo: &Path,
     parent: &Path,
     previous: Option<&Completion>,
     current: &Snapshot,
-    permission: Result<(), AppError>,
-) -> Result<PublicationRead, AppError> {
-    use super::publication_flow::{ParentPublication, PointerState, publication_target};
+    permission: Result<(), GitError>,
+) -> Result<PublicationRead, GitError> {
+    use super::flow::{ParentPublication, PointerState, publication_target};
     let parent_snapshot = Snapshot::read(cli, parent).await?;
     let mut inspection_error = None;
     let child = if covered_sync(previous, current).is_some() {
@@ -155,10 +151,10 @@ pub(crate) async fn inspect(
             }
         }
     };
-    let path = crate::repo_path::repo_relative_from_base(
+    let path = crate::git::path::repo_relative_from_base(
         parent,
         repo,
-        crate::repo_path::RootMode::Reject,
+        crate::git::path::RootMode::Reject,
     )?;
     let pointer = cli
         .exec(parent, &["rev-parse", &format!("HEAD:{path}")])

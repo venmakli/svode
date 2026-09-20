@@ -99,10 +99,12 @@ pub fn run() {
             app.manage(routine_stores.clone());
             app.manage(index::IndexState::new());
             app.manage(index::update::IndexUpdateState::new(routine_stores));
-            let pending = app.state::<git::GitState>().pending();
-            let service = Arc::new(git::autocommit::AutocommitService::new(
-                app.handle().clone(),
-                pending,
+            app.manage(git::GitHostState::new(app.handle().clone()));
+            let git_runtime = app.state::<git::GitState>().runtime().clone();
+            let git_host = app.state::<git::GitHostState>().handle().clone();
+            let service = Arc::new(svode_core::git::autocommit::AutocommitService::new(
+                git_runtime,
+                git_host,
             ));
             app.manage(service);
             if let Err(error) = native_file_drop::clear_materialized_file_drops(app.handle()) {
@@ -382,7 +384,8 @@ pub fn run() {
                     tracing::warn!("failed to clear dropped-file cache during exit: {error}");
                 }
 
-                let autocommit = app_handle.state::<Arc<git::autocommit::AutocommitService>>();
+                let autocommit =
+                    app_handle.state::<Arc<svode_core::git::autocommit::AutocommitService>>();
                 tauri::async_runtime::block_on(async {
                     autocommit.flush_all().await;
                 });

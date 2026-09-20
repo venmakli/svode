@@ -4,11 +4,11 @@ use sqlx::SqlitePool;
 
 use crate::actors::ActorCatalogState;
 use crate::error::AppError;
-use crate::git::cli::GitCli;
 use svode_core::collections::engine::{
     Filter, Sort, View, read_collection_schema, resolve_query_filters,
 };
 use svode_core::collections::query::{entry_parent_dir, query_entry_rows, validate_ad_hoc_query};
+use svode_core::git::cli::GitCli;
 use svode_core::page::entry;
 
 pub async fn list_entries_for_view(
@@ -36,7 +36,7 @@ pub async fn list_entries_for_view(
     });
     let filters = resolve_query_filters(
         actor_catalog,
-        git_cli.map(GitCli::core),
+        git_cli,
         Path::new(space),
         &schema,
         view.filters(),
@@ -78,14 +78,8 @@ pub async fn query_entries(
     let sort = sort.unwrap_or_default();
     let include_nested = include_nested.unwrap_or(false);
     validate_ad_hoc_query(&schema, &filters, &sort)?;
-    let filters = resolve_query_filters(
-        actor_catalog,
-        git_cli.map(GitCli::core),
-        Path::new(space),
-        &schema,
-        &filters,
-    )
-    .await?;
+    let filters =
+        resolve_query_filters(actor_catalog, git_cli, Path::new(space), &schema, &filters).await?;
     let rows = query_entry_rows(
         pool,
         &schema,

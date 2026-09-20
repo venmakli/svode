@@ -379,7 +379,7 @@ pub async fn list_entries_for_view(
     actor_catalog: State<'_, crate::actors::ActorCatalogState>,
 ) -> Result<Vec<Entry>, AppError> {
     let target = read::target_for_space(&index_state, space, project_path.as_deref()).await?;
-    let git_cli = git_state.cli.clone();
+    let git_cli = git_state.detected().cloned();
     read::entries_for_view(
         &index_state,
         &actor_catalog,
@@ -407,7 +407,7 @@ pub async fn query_entries(
     actor_catalog: State<'_, crate::actors::ActorCatalogState>,
 ) -> Result<Vec<Entry>, AppError> {
     let target = read::target_for_space(&index_state, space, project_path.as_deref()).await?;
-    let git_cli = git_state.cli.clone();
+    let git_cli = git_state.detected().cloned();
     read::query_entries(
         &index_state,
         &actor_catalog,

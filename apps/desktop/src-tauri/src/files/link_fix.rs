@@ -3,8 +3,8 @@ use std::path::Path;
 use serde::Serialize;
 
 use crate::error::AppError;
-use crate::git::cli::GitCli;
 use crate::repo_path::{RootMode, normalize_repo_relative};
+use svode_core::git::cli::GitCli;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]

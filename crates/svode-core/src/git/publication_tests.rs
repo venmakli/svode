@@ -98,7 +98,7 @@ impl Fixture {
         git(&self.root, &["add", "Пространство one"]);
         git(&self.root, &["commit", "-m", "pointer"]);
     }
-    async fn push(&self) -> Result<GitOutput, AppError> {
+    async fn push(&self) -> Result<GitOutput, GitError> {
         super::push(&self.cli, &self.root, false).await
     }
 }
@@ -264,16 +264,9 @@ async fn rejecting_parent_hook_preserves_child_success_and_pointer_retry() {
         &f.root,
         "cat >/dev/null\necho 'fixture hook declined publication' >&2\nexit 1",
     );
-    let report = crate::git::publication_flow::parent_step_locked(
-        &f.cli,
-        &f.child,
-        &f.root,
-        &head,
-        false,
-        true,
-        Ok(()),
-    )
-    .await;
+    let report =
+        crate::git::flow::parent_step_locked(&f.cli, &f.child, &f.root, &head, false, true, Ok(()))
+            .await;
     let report = serde_json::to_value(report).unwrap();
     assert_eq!(report["pointer"], "local");
     assert!(
@@ -286,16 +279,9 @@ async fn rejecting_parent_hook_preserves_child_success_and_pointer_retry() {
     assert_eq!(git(&f.source, &["rev-parse", "main"]), head);
     assert_eq!(hook_count(&root_calls), 1);
     counting_hook(&f.root, "cat >/dev/null");
-    let report = crate::git::publication_flow::parent_step_locked(
-        &f.cli,
-        &f.child,
-        &f.root,
-        &head,
-        false,
-        true,
-        Ok(()),
-    )
-    .await;
+    let report =
+        crate::git::flow::parent_step_locked(&f.cli, &f.child, &f.root, &head, false, true, Ok(()))
+            .await;
     assert_eq!(
         serde_json::to_value(report).unwrap()["pointer"],
         "published"
@@ -423,7 +409,7 @@ async fn merge_cannot_hide_an_unpublished_gitlink() {
     let before = git(&f.remote, &["rev-parse", "main"]);
     assert!(matches!(
         f.push().await,
-        Err(AppError::GitPublicationBlocked {
+        Err(GitError::PublicationBlocked {
             reason: PublicationBlockReason::RevisionUnavailable,
             ..
         })
@@ -460,7 +446,7 @@ async fn source_proof_fetches_missing_remote_continuation_and_prunes_copied_loca
     f.pointer();
     assert!(matches!(
         f.push().await,
-        Err(AppError::GitPublicationBlocked {
+        Err(GitError::PublicationBlocked {
             reason: PublicationBlockReason::RevisionUnavailable,
             ..
         })
@@ -475,7 +461,7 @@ async fn child_must_be_reachable_from_project_source_and_fresh_clone_works() {
     f.pointer();
     assert!(matches!(
         f.push().await,
-        Err(AppError::GitPublicationBlocked {
+        Err(GitError::PublicationBlocked {
             reason: PublicationBlockReason::RevisionUnavailable,
             ..
         })
@@ -551,7 +537,7 @@ async fn first_publish_checks_all_history_and_uninitialized_child_is_blocked() {
     );
     assert!(matches!(
         super::push(&f.cli, &f.root, true).await,
-        Err(AppError::GitPublicationBlocked {
+        Err(GitError::PublicationBlocked {
             reason: PublicationBlockReason::UninitializedChild,
             ..
         })
@@ -661,7 +647,7 @@ async fn multiple_children_and_changed_historical_source_are_all_verified() {
     git(&f.root, &["commit", "-am", "restored source"]);
     assert!(matches!(
         f.push().await,
-        Err(AppError::GitPublicationBlocked {
+        Err(GitError::PublicationBlocked {
             reason: PublicationBlockReason::SourceUnavailable,
             ..
         })
@@ -673,7 +659,7 @@ async fn concurrent_root_and_child_publish_never_expose_an_unavailable_pointer()
     let f = Fixture::new();
     commit(&f.child, "note", "concurrent");
     f.pointer();
-    let state = super::super::GitState::new();
+    let state = super::super::state::GitRuntime::new();
     let child_lock = state.get_lock(&f.child).await;
     let root_lock = state.get_lock(&f.root).await;
     let (root_result, child_result) = tokio::join!(
@@ -796,7 +782,7 @@ async fn ref_or_target_change_during_proof_requires_a_new_attempt() {
         std::fs::write(f.cli.git_path(), script).unwrap();
         assert!(matches!(
             f.push().await,
-            Err(AppError::GitPublicationBlocked {
+            Err(GitError::PublicationBlocked {
                 reason: PublicationBlockReason::TargetChanged,
                 ..
             })
@@ -851,7 +837,7 @@ async fn parent_permission_is_optional_after_child_save_and_publication() {
                 .await
                 .map(|_| ());
         }
-        let local = crate::git::publication_flow::parent_step_locked(
+        let local = crate::git::flow::parent_step_locked(
             &f.cli, &f.child, &f.root, &head, false, false, permission,
         )
         .await;
@@ -868,7 +854,7 @@ async fn parent_permission_is_optional_after_child_save_and_publication() {
             .require_mutation(&f.cli, &f.root, &store)
             .await
             .map(|_| ());
-        let outcome = crate::git::publication_flow::parent_step_locked(
+        let outcome = crate::git::flow::parent_step_locked(
             &f.cli, &f.child, &f.root, &head, false, true, permission,
         )
         .await;
@@ -906,7 +892,7 @@ async fn restart_remote_evidence_and_pointer_only_retry_preserve_child_and_stage
     std::fs::write(f.root.join("other"), "working copy").unwrap();
     // Keep root dirty for the local pointer phase, then remove the unrelated
     // work only from this fixture before exercising pull/push.
-    let local = crate::git::publication_flow::parent_step_locked(
+    let local = crate::git::flow::parent_step_locked(
         &f.cli,
         &f.child,
         &f.root,
@@ -925,7 +911,7 @@ async fn restart_remote_evidence_and_pointer_only_retry_preserve_child_and_stage
     git(&f.root, &["reset", "--", "other"]);
     std::fs::remove_file(f.root.join("other")).unwrap();
     for _ in 0..2 {
-        let report = crate::git::publication_flow::parent_step_locked(
+        let report = crate::git::flow::parent_step_locked(
             &f.cli,
             &f.child,
             &f.root,
@@ -961,16 +947,9 @@ async fn late_parent_rejection_and_policy_skip_keep_child_published() {
     git(&f.child, &["push", "origin", "main"]);
     let head = git(&f.child, &["rev-parse", "HEAD"]);
     let root = git(&f.root, &["rev-parse", "HEAD"]);
-    let report = crate::git::publication_flow::parent_step_locked(
-        &f.cli,
-        &f.child,
-        &f.root,
-        &head,
-        true,
-        true,
-        Ok(()),
-    )
-    .await;
+    let report =
+        crate::git::flow::parent_step_locked(&f.cli, &f.child, &f.root, &head, true, true, Ok(()))
+            .await;
     assert_eq!(serde_json::to_value(report).unwrap()["policySkipped"], true);
     assert_eq!(git(&f.root, &["rev-parse", "HEAD"]), root);
     std::fs::write(
@@ -983,32 +962,18 @@ async fn late_parent_rejection_and_policy_skip_keep_child_published() {
         std::fs::Permissions::from_mode(0o755),
     )
     .unwrap();
-    let report = crate::git::publication_flow::parent_step_locked(
-        &f.cli,
-        &f.child,
-        &f.root,
-        &head,
-        false,
-        true,
-        Ok(()),
-    )
-    .await;
+    let report =
+        crate::git::flow::parent_step_locked(&f.cli, &f.child, &f.root, &head, false, true, Ok(()))
+            .await;
     let report = serde_json::to_value(report).unwrap();
     assert_eq!(report["pointer"], "local");
     assert!(report.get("error").is_some() || report["result"]["type"] == "authRequired");
     assert_eq!(git(&f.source, &["rev-parse", "main"]), head);
     assert_eq!(git(&f.remote, &["rev-parse", "main"]), root);
     std::fs::remove_file(f.remote.join("hooks/pre-receive")).unwrap();
-    let report = crate::git::publication_flow::parent_step_locked(
-        &f.cli,
-        &f.child,
-        &f.root,
-        &head,
-        false,
-        true,
-        Ok(()),
-    )
-    .await;
+    let report =
+        crate::git::flow::parent_step_locked(&f.cli, &f.child, &f.root, &head, false, true, Ok(()))
+            .await;
     assert_eq!(
         serde_json::to_value(report).unwrap()["pointer"],
         "published"
@@ -1020,10 +985,10 @@ async fn late_parent_rejection_and_policy_skip_keep_child_published() {
 async fn parent_retry_rejects_changed_head_or_remote_target() {
     let f = Fixture::new();
     let head = git(&f.child, &["rev-parse", "HEAD"]);
-    let target = crate::git::publication_flow::publication_target(&f.cli, &f.child, &f.root)
+    let target = crate::git::flow::publication_target(&f.cli, &f.child, &f.root)
         .await
         .unwrap();
-    crate::git::publication_flow::validate_parent_target(&f.cli, &f.child, &head, &f.root, &target)
+    crate::git::flow::validate_parent_target(&f.cli, &f.child, &head, &f.root, &target)
         .await
         .unwrap();
     git(
@@ -1036,11 +1001,9 @@ async fn parent_retry_rejects_changed_head_or_remote_target() {
         ],
     );
     assert!(
-        crate::git::publication_flow::validate_parent_target(
-            &f.cli, &f.child, &head, &f.root, &target
-        )
-        .await
-        .is_err()
+        crate::git::flow::validate_parent_target(&f.cli, &f.child, &head, &f.root, &target)
+            .await
+            .is_err()
     );
     git(
         &f.root,
@@ -1048,11 +1011,9 @@ async fn parent_retry_rejects_changed_head_or_remote_target() {
     );
     commit(&f.child, "note", "new local work");
     assert!(
-        crate::git::publication_flow::validate_parent_target(
-            &f.cli, &f.child, &head, &f.root, &target
-        )
-        .await
-        .is_err()
+        crate::git::flow::validate_parent_target(&f.cli, &f.child, &head, &f.root, &target)
+            .await
+            .is_err()
     );
 }
 
@@ -1072,16 +1033,9 @@ async fn parent_conflict_preserves_published_child_and_allows_retry_after_resolu
     commit(&f.child, "note", "published child");
     git(&f.child, &["push", "origin", "main"]);
     let head = git(&f.child, &["rev-parse", "HEAD"]);
-    let outcome = crate::git::publication_flow::parent_step_locked(
-        &f.cli,
-        &f.child,
-        &f.root,
-        &head,
-        false,
-        true,
-        Ok(()),
-    )
-    .await;
+    let outcome =
+        crate::git::flow::parent_step_locked(&f.cli, &f.child, &f.root, &head, false, true, Ok(()))
+            .await;
     let outcome = serde_json::to_value(outcome).unwrap();
     assert_eq!(outcome["result"]["type"], "conflict");
     assert_eq!(outcome["pointer"], "local");
@@ -1089,16 +1043,9 @@ async fn parent_conflict_preserves_published_child_and_allows_retry_after_resolu
     std::fs::write(f.root.join("note"), "resolved root").unwrap();
     git(&f.root, &["add", "note"]);
     git(&f.root, &["commit", "--no-edit"]);
-    let outcome = crate::git::publication_flow::parent_step_locked(
-        &f.cli,
-        &f.child,
-        &f.root,
-        &head,
-        false,
-        true,
-        Ok(()),
-    )
-    .await;
+    let outcome =
+        crate::git::flow::parent_step_locked(&f.cli, &f.child, &f.root, &head, false, true, Ok(()))
+            .await;
     assert_eq!(
         serde_json::to_value(outcome).unwrap()["pointer"],
         "published"

@@ -1,4 +1,26 @@
-use super::{cli::GitCli, inspection::read_item, ops};
+use super::{cli::GitCli, inspection::read_item};
+use svode_core::git::ops;
+
+async fn commit_file(
+    cli: &GitCli,
+    space_dir: &std::path::Path,
+    file_path: &str,
+) -> Result<bool, svode_core::git::GitError> {
+    ops::commit_paths(cli, space_dir, &[file_path.to_string()]).await
+}
+
+async fn commit_all(
+    cli: &GitCli,
+    space_dir: &std::path::Path,
+) -> Result<bool, svode_core::git::GitError> {
+    let paths = ops::status(cli, space_dir)
+        .await?
+        .files
+        .into_iter()
+        .map(|file| file.path)
+        .collect::<Vec<_>>();
+    ops::commit_paths(cli, space_dir, &paths).await
+}
 
 async fn repo() -> (tempfile::TempDir, GitCli) {
     let dir = tempfile::tempdir().unwrap();
@@ -75,7 +97,7 @@ async fn selected_commit_preserves_unrelated_staged_content() {
     for name in ["note.md", "other.md"] {
         std::fs::write(dir.path().join(name), "initial\n").unwrap();
     }
-    ops::commit_all(&cli, dir.path()).await.unwrap();
+    commit_all(&cli, dir.path()).await.unwrap();
     std::fs::write(dir.path().join("other.md"), "staged\n").unwrap();
     ops::add(&cli, dir.path(), "other.md").await.unwrap();
     std::fs::write(dir.path().join("other.md"), "working\n").unwrap();
@@ -85,7 +107,7 @@ async fn selected_commit_preserves_unrelated_staged_content() {
         .await
         .unwrap()
         .stdout;
-    ops::commit_file(&cli, dir.path(), "note.md").await.unwrap();
+    commit_file(&cli, dir.path(), "note.md").await.unwrap();
     assert_eq!(
         cli.exec(dir.path(), &["show", "HEAD:other.md"])
             .await
@@ -152,7 +174,7 @@ async fn inspection_bounds_text_and_rejects_child_repository_and_symlink_escape(
 async fn index_only_save_clears_selected_index_without_creating_commit() {
     let (dir, cli) = repo().await;
     std::fs::write(dir.path().join("[note].md"), "base\n").unwrap();
-    ops::commit_all(&cli, dir.path()).await.unwrap();
+    commit_all(&cli, dir.path()).await.unwrap();
     let head = cli
         .exec(dir.path(), &["rev-parse", "HEAD"])
         .await
@@ -195,7 +217,7 @@ async fn aggregate_scope_is_rechecked_and_exceptional_items_are_local() {
     ] {
         std::fs::write(dir.path().join("contract").join(name), "base\n").unwrap();
     }
-    ops::commit_all(&cli, dir.path()).await.unwrap();
+    commit_all(&cli, dir.path()).await.unwrap();
     std::fs::write(dir.path().join("contract/source.ts"), "changed\n").unwrap();
     cli.exec(
         dir.path(),
@@ -272,7 +294,7 @@ async fn project_status_contains_inline_paths_and_gitlink_but_not_child_working_
     let (dir, cli) = repo().await;
     let (child, _) = repo().await;
     std::fs::write(child.path().join("child.md"), "base\n").unwrap();
-    ops::commit_all(&cli, child.path()).await.unwrap();
+    commit_all(&cli, child.path()).await.unwrap();
     let added = cli
         .exec(
             dir.path(),
@@ -290,7 +312,7 @@ async fn project_status_contains_inline_paths_and_gitlink_but_not_child_working_
     assert_eq!(added.exit_code, 0, "{}", added.stderr);
     std::fs::create_dir(dir.path().join("inline")).unwrap();
     std::fs::write(dir.path().join("inline/README.md"), "base\n").unwrap();
-    ops::commit_all(&cli, dir.path()).await.unwrap();
+    commit_all(&cli, dir.path()).await.unwrap();
     std::fs::write(dir.path().join("sub/child.md"), "dirty child\n").unwrap();
     std::fs::write(dir.path().join("inline/README.md"), "dirty inline\n").unwrap();
     let independent = dir.path().join("independent");
@@ -325,9 +347,7 @@ async fn project_status_contains_inline_paths_and_gitlink_but_not_child_working_
     )
     .await
     .unwrap();
-    ops::commit_all(&cli, &dir.path().join("sub"))
-        .await
-        .unwrap();
+    commit_all(&cli, &dir.path().join("sub")).await.unwrap();
     assert!(
         ops::status(&cli, dir.path())
             .await
@@ -346,18 +366,18 @@ async fn project_status_contains_inline_paths_and_gitlink_but_not_child_working_
 async fn conflicts_and_non_regular_sources_never_become_normal_text() {
     let (dir, cli) = repo().await;
     std::fs::write(dir.path().join("note.md"), "base\n").unwrap();
-    ops::commit_all(&cli, dir.path()).await.unwrap();
+    commit_all(&cli, dir.path()).await.unwrap();
     let base_branch = ops::status(&cli, dir.path()).await.unwrap().branch;
     cli.exec(dir.path(), &["checkout", "-b", "other"])
         .await
         .unwrap();
     std::fs::write(dir.path().join("note.md"), "other\n").unwrap();
-    ops::commit_all(&cli, dir.path()).await.unwrap();
+    commit_all(&cli, dir.path()).await.unwrap();
     cli.exec(dir.path(), &["checkout", &base_branch])
         .await
         .unwrap();
     std::fs::write(dir.path().join("note.md"), "ours\n").unwrap();
-    ops::commit_all(&cli, dir.path()).await.unwrap();
+    commit_all(&cli, dir.path()).await.unwrap();
     assert_ne!(
         cli.exec(dir.path(), &["merge", "other"])
             .await
@@ -420,7 +440,7 @@ async fn inspection_stats_cover_collapsed_files_without_mutating_the_index() {
     ] {
         std::fs::write(dir.path().join(path), content).unwrap();
     }
-    ops::commit_all(&cli, dir.path()).await.unwrap();
+    commit_all(&cli, dir.path()).await.unwrap();
     std::fs::write(dir.path().join("contract/note.md"), "staged\n").unwrap();
     ops::add(&cli, dir.path(), "contract/note.md")
         .await
@@ -510,7 +530,7 @@ async fn inspection_stats_enforce_scope_size_and_child_repository_boundaries() {
         vec![b'a'; 512 * 1024 + 1],
     )
     .unwrap();
-    ops::commit_all(&cli, dir.path()).await.unwrap();
+    commit_all(&cli, dir.path()).await.unwrap();
     std::fs::write(dir.path().join("contract/large.md"), "small now\n").unwrap();
     std::fs::write(
         dir.path().join("contract/new-large.md"),

@@ -1,20 +1,8 @@
 use std::path::Path;
 
 use super::cli::GitCli;
-pub(crate) use super::state::detected_cli;
-
-pub(crate) use svode_core::page::dates::EntryDateOverrides;
-use svode_core::page::dates::{GitDateExecutor, GitDateOutput};
-
-impl GitDateExecutor for GitCli {
-    async fn exec(&self, directory: &Path, args: &[&str]) -> Option<GitDateOutput> {
-        let output = GitCli::exec(self, directory, args).await.ok()?;
-        Some(GitDateOutput {
-            stdout: output.stdout,
-            exit_code: output.exit_code,
-        })
-    }
-}
+pub(crate) use svode_core::git::state::detected_cli;
+use svode_core::page::dates::EntryDateOverrides;
 
 pub(crate) async fn derive_date_overrides(space: &Path, paths: &[String]) -> EntryDateOverrides {
     let Some(cli) = detected_cli() else {

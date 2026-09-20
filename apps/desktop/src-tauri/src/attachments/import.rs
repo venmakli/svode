@@ -12,9 +12,9 @@ use svode_core::storage::config::AssetsSpaceConfig;
 
 use crate::error::AppError;
 use crate::git::GitState;
-use crate::git::autocommit::AutocommitService;
 use crate::index::{IndexState, update::IndexUpdateState};
 use crate::storage::lfs::{LfsState, probe_lfs_config_with_git};
+use svode_core::git::autocommit::AutocommitService;
 
 pub(crate) use svode_core::attachments::import::{
     ManagedImportDelivery, ManagedImportPlan, ManagedImportResult, ManagedImportSourceInfo,
@@ -73,14 +73,14 @@ pub(crate) async fn execute_managed_import(
     origin: MutationOrigin,
     plan: ManagedImportPlan,
 ) -> Result<ManagedImportResult, AppError> {
-    let cli = git_state.cli.clone();
+    let cli = git_state.detected().cloned();
     let sink = crate::structure::sink(autocommit.map(AsRef::as_ref));
     let readiness = GitLfsReadiness(git_state);
     let runtime = ImportRuntime {
         index: &index_state.core,
         updates: index_updates.core(),
         repository: git_state.repository(),
-        cli: cli.as_ref().map(crate::git::cli::GitCli::core),
+        cli: cli.as_ref(),
         commits: sink
             .as_ref()
             .map(|sink| sink as &dyn svode_core::structure::StructuralCommitSink),

@@ -2,8 +2,8 @@ use std::path::Path;
 
 use serde::Serialize;
 
+use super::GitError;
 use super::cli::GitCli;
-use crate::AppError;
 
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -86,26 +86,26 @@ pub async fn approve_http_credentials(
     remote_url: &str,
     username: &str,
     password: &str,
-) -> Result<(), AppError> {
+) -> Result<(), GitError> {
     let username = username.trim();
     if username.is_empty() {
-        return Err(AppError::GitCommandFailed(
+        return Err(GitError::GitCommandFailed(
             "Git credential username is required".to_string(),
         ));
     }
     if password.is_empty() {
-        return Err(AppError::GitCommandFailed(
+        return Err(GitError::GitCommandFailed(
             "Git credential token is required".to_string(),
         ));
     }
     if contains_credential_newline(username) || contains_credential_newline(password) {
-        return Err(AppError::GitCommandFailed(
+        return Err(GitError::GitCommandFailed(
             "Git credentials cannot contain newlines".to_string(),
         ));
     }
 
     let Some(parts) = parse_http_remote_parts(remote_url) else {
-        return Err(AppError::GitCommandFailed(
+        return Err(GitError::GitCommandFailed(
             "Git HTTP(S) remote URL is required to save credentials".to_string(),
         ));
     };
@@ -118,7 +118,7 @@ pub async fn approve_http_credentials(
         .exec_no_dir_with_stdin(&["credential", "approve"], &payload)
         .await?;
     if out.exit_code != 0 {
-        return Err(AppError::GitCommandFailed(format!(
+        return Err(GitError::GitCommandFailed(format!(
             "git credential approve failed: {}",
             out.stderr.trim()
         )));

@@ -1,6 +1,5 @@
 use super::query::entries_from_rows;
 use crate::actors::ActorCatalogState;
-use crate::git::cli::GitCli;
 use crate::space::config::write_space_config;
 use crate::space::types::{SpaceConfig, SpaceRef, TreeSpaceConfig};
 use serde_yml::Value;
@@ -10,6 +9,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use svode_core::collections::engine::*;
 use svode_core::collections::query::query_entry_rows;
+use svode_core::git::cli::GitCli;
 use svode_core::page::entry;
 use svode_core::page::frontmatter;
 use tempfile::TempDir;
@@ -1588,10 +1588,9 @@ async fn actor_query_filters_expand_canonical_email_to_stored_aliases() {
     }];
     let cli = GitCli::detect().unwrap();
     let catalog = ActorCatalogState::new();
-    let resolved =
-        resolve_query_filters(&catalog, Some(cli.core()), repo.path(), &schema, &filters)
-            .await
-            .unwrap();
+    let resolved = resolve_query_filters(&catalog, Some(&cli), repo.path(), &schema, &filters)
+        .await
+        .unwrap();
 
     assert_eq!(resolved[0].op, FilterOp::In);
     assert_eq!(resolved[0].value, None);
@@ -1659,15 +1658,10 @@ async fn actor_query_filters_expand_canonical_email_to_stored_aliases() {
         value: Some(Value::String(" Explicit@Example.Test ".into())),
         values: None,
     }];
-    let resolved = resolve_query_filters(
-        &catalog,
-        Some(cli.core()),
-        not_a_repo.path(),
-        &schema,
-        &explicit,
-    )
-    .await
-    .unwrap();
+    let resolved =
+        resolve_query_filters(&catalog, Some(&cli), not_a_repo.path(), &schema, &explicit)
+            .await
+            .unwrap();
     assert_eq!(resolved[0].op, FilterOp::Eq);
     assert_eq!(
         resolved[0].value.as_ref().and_then(Value::as_str),

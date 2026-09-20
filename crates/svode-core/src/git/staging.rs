@@ -1,18 +1,16 @@
 use std::{collections::BTreeSet, path::Path};
 
+use super::GitError;
 use super::cli::{GitCli, GitOutput};
-use crate::{
-    AppError,
-    repo_path::{RootMode, normalize_repo_relative},
-};
+use crate::git::path::{RootMode, normalize_repo_relative};
 
-pub(super) fn failure(
+pub fn failure(
     stage: &'static str,
     reason: &'static str,
     exit_code: Option<i32>,
     paths: &[String],
-) -> AppError {
-    AppError::GitSaveFailed {
+) -> GitError {
+    GitError::SaveFailed {
         stage,
         reason,
         exit_code,
@@ -24,13 +22,13 @@ pub(super) fn failure(
     }
 }
 
-pub(super) async fn exec(
+pub async fn exec(
     cli: &GitCli,
     repo: &Path,
     args: &[&str],
     stage: &'static str,
     paths: &[String],
-) -> Result<GitOutput, AppError> {
+) -> Result<GitOutput, GitError> {
     cli.exec_redacted(repo, args)
         .await
         .map_err(|_| failure(stage, "command_unavailable", None, paths))
@@ -40,7 +38,7 @@ async fn read_paths(
     cli: &GitCli,
     repo: &Path,
     args: &[&str],
-) -> Result<BTreeSet<String>, AppError> {
+) -> Result<BTreeSet<String>, GitError> {
     let out = exec(cli, repo, args, "prepare", &[]).await?;
     if out.exit_code != 0 {
         return Err(failure(
@@ -70,11 +68,11 @@ fn within(path: &str, scope: &str) -> bool {
 }
 
 /// Enumerate through Git, which owns ignore rules, tracked deletions and repository boundaries.
-pub(super) async fn resolve(
+pub async fn resolve(
     cli: &GitCli,
     repo: &Path,
     requested: &[String],
-) -> Result<Vec<String>, AppError> {
+) -> Result<Vec<String>, GitError> {
     let scopes = requested
         .iter()
         .map(|path| {
@@ -83,7 +81,7 @@ pub(super) async fn resolve(
         })
         .collect::<Result<Vec<_>, _>>()?;
     for scope in &scopes {
-        if super::local_policy::contains(scope) {
+        if super::policy::contains(scope) {
             return Err(failure(
                 "prepare",
                 "local_file_excluded",
@@ -127,7 +125,7 @@ pub(super) async fn resolve(
             return Err(failure("prepare", "target_unavailable", None, &[scope]));
         }
         for path in matches {
-            if !super::local_policy::contains(path) {
+            if !super::policy::contains(path) {
                 selected.insert(path.clone());
             }
         }
@@ -135,11 +133,11 @@ pub(super) async fn resolve(
     Ok(selected.into_iter().collect())
 }
 
-pub(super) async fn prepare(
+pub async fn prepare(
     cli: &GitCli,
     repo: &Path,
     paths: &[String],
-) -> Result<BTreeSet<String>, AppError> {
+) -> Result<BTreeSet<String>, GitError> {
     let present = paths
         .iter()
         .filter(|p| repo.join(p).symlink_metadata().is_ok())
@@ -197,12 +195,12 @@ pub(super) async fn prepare(
     Ok(present)
 }
 
-pub(super) async fn verify(
+pub async fn verify(
     cli: &GitCli,
     repo: &Path,
     paths: &[String],
     present: &BTreeSet<String>,
-) -> Result<(), AppError> {
+) -> Result<(), GitError> {
     if paths.is_empty() {
         return Ok(());
     }
@@ -252,11 +250,7 @@ pub(super) async fn verify(
     Ok(())
 }
 
-pub(super) async fn has_changes(
-    cli: &GitCli,
-    repo: &Path,
-    paths: &[String],
-) -> Result<bool, AppError> {
+pub async fn has_changes(cli: &GitCli, repo: &Path, paths: &[String]) -> Result<bool, GitError> {
     let literals = paths
         .iter()
         .map(|p| format!(":(literal){p}"))

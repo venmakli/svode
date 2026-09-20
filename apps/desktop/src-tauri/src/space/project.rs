@@ -2,9 +2,9 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use crate::error::AppError;
-use crate::git::ops::SubmoduleConfig;
 use crate::repo_path::{RootMode, normalize_repo_relative};
 use crate::system_path;
+use svode_core::git::ops::SubmoduleConfig;
 
 use super::config;
 use super::registry;
@@ -387,7 +387,7 @@ pub fn delete_space(
                 std::fs::remove_dir_all(&space_path)?;
             }
         }
-        let _ = crate::git::ops::remove_independent_gitignore(parent_path, folder);
+        let _ = svode_core::git::ops::remove_independent_gitignore(parent_path, folder);
     }
 
     if let Some(ref mut spaces) = parent_config.spaces {
@@ -491,10 +491,10 @@ mod tests {
         has_schema_capability, import_existing_submodule_spaces, normalize_space_folder,
         open_project_folder, reorder_spaces, space_ref_status,
     };
-    use crate::git::ops::SubmoduleConfig;
     use crate::space::registry;
     use crate::space::scaffold;
     use crate::space::types::{SpaceRef, SpaceStatus};
+    use svode_core::git::ops::SubmoduleConfig;
 
     #[test]
     fn normalize_space_folder_allows_ascii_friendly_names() {

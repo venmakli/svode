@@ -187,3 +187,47 @@ mod tests {
         );
     }
 }
+
+/// Resolve a repo-relative path inside `root` without leaving it through a
+/// symlink or a parent traversal. The returned path may not exist yet.
+pub fn contained_file(root: &Path, path: &str) -> Result<std::path::PathBuf, GitError> {
+    let path = normalize_repo_relative(path, RootMode::Reject)?;
+    let root = root.canonicalize()?;
+    let target = root.join(&path);
+    let mut component = root.clone();
+    for part in path.split('/') {
+        component.push(part);
+        if std::fs::symlink_metadata(&component)
+            .is_ok_and(|metadata| metadata.file_type().is_symlink())
+        {
+            return Err(GitError::PathNotAccessible(
+                "Symlink source is unavailable".into(),
+            ));
+        }
+    }
+    let mut ancestor = target.as_path();
+    while !ancestor.exists() {
+        ancestor = ancestor
+            .parent()
+            .ok_or_else(|| GitError::PathNotAccessible("Source unavailable".into()))?;
+    }
+    if !ancestor.canonicalize()?.starts_with(&root) {
+        return Err(GitError::PathNotAccessible(
+            "Source leaves repository scope".into(),
+        ));
+    }
+    Ok(target)
+}
+
+/// A registered child Space folder: one ASCII path segment under its parent.
+pub fn normalize_space_folder(folder_name: &str) -> Result<String, GitError> {
+    let normalized = normalize_repo_relative(&folder_name.replace('\\', "/"), RootMode::Reject)?;
+    let is_single_ascii_segment = !normalized.contains('/')
+        && normalized
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
+    if !is_single_ascii_segment {
+        return Err(GitError::PathNotAccessible(folder_name.to_string()));
+    }
+    Ok(normalized)
+}

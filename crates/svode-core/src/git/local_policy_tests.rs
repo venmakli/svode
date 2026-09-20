@@ -1,5 +1,5 @@
 use super::{
-    local_policy, ops,
+    ops, policy as local_policy,
     staging_tests::{cli, git, repo, write},
 };
 

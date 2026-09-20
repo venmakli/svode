@@ -6,8 +6,8 @@ use tauri::{AppHandle, State};
 use crate::AppError;
 use crate::git::GitState;
 use crate::git::access::{require_repository_mutation_paths, scope_authorized_mutation_paths};
-use crate::git::autocommit::AutocommitService;
 use crate::index::IndexState;
+use svode_core::git::autocommit::AutocommitService;
 
 use super::import::{
     ManagedImportResult, ManagedImportSourceInfo, MutationOrigin, execute_managed_import,

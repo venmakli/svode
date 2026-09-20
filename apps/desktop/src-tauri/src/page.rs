@@ -11,10 +11,10 @@ use svode_core::page::nonce::WriteNonceRegistry;
 use svode_core::page::write::{PageRuntime, PageWrite, PageWriteOutcome};
 
 use crate::error::AppError;
-use crate::git::autocommit::AutocommitService;
-use crate::git::cli::GitCli;
 use crate::index::{IndexState, update::IndexUpdateState};
 use crate::structure::schedule_rename;
+use svode_core::git::autocommit::AutocommitService;
+use svode_core::git::cli::GitCli;
 
 fn runtime<'a>(
     state: &'a IndexState,

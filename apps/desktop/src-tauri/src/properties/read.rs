@@ -2,9 +2,9 @@ use std::path::{Path, PathBuf};
 
 use crate::actors::{ActorCandidate, ActorCatalogState};
 use crate::error::AppError;
-use crate::git::cli::GitCli;
 use crate::index::{IndexKey, IndexState};
 use svode_core::collections::engine::{Filter, ResolvedRelation, Sort};
+use svode_core::git::cli::GitCli;
 use svode_core::page::entry::Entry;
 
 #[derive(Debug, Clone)]
@@ -128,10 +128,7 @@ pub async fn actors(
     space: &Path,
     _all_time: bool,
 ) -> Result<Vec<ActorCandidate>, AppError> {
-    Ok(actor_catalog
-        .snapshot(git_cli.core(), space)
-        .await?
-        .candidates())
+    Ok(actor_catalog.snapshot(git_cli, space).await?.candidates())
 }
 
 pub async fn refresh_actors(
@@ -140,8 +137,5 @@ pub async fn refresh_actors(
     space: &Path,
     _all_time: bool,
 ) -> Result<Vec<ActorCandidate>, AppError> {
-    Ok(actor_catalog
-        .refresh(git_cli.core(), space)
-        .await?
-        .candidates())
+    Ok(actor_catalog.refresh(git_cli, space).await?.candidates())
 }

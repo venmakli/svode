@@ -267,7 +267,7 @@ pub async fn write_entry(
         && let Some(project) = project_path.as_deref().filter(|path| !path.is_empty())
     {
         let cli = crate::git::require_cli(&app.state::<crate::git::GitState>())?;
-        if crate::git::ops::detect_space_git_type(&cli, Path::new(project), Path::new(&space))
+        if svode_core::git::ops::detect_space_git_type(&cli, Path::new(project), Path::new(&space))
             .await?
             == crate::space::types::SpaceGitType::Submodule
         {

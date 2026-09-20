@@ -204,7 +204,13 @@ fn process_events(
 ) {
     let nonces = app.state::<Arc<WriteNonceRegistry>>();
     if let Err(error) = nonces.with_source_publication(|| {
-        process_published_events(events, space, app, root_schema_present, attachments_generation);
+        process_published_events(
+            events,
+            space,
+            app,
+            root_schema_present,
+            attachments_generation,
+        );
         Ok(())
     }) {
         tracing::warn!("watcher source publication failed: {error}");

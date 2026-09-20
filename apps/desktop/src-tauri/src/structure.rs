@@ -11,9 +11,9 @@ use svode_core::page::entry::Entry;
 use svode_core::structure::{StructuralCommitSink, StructureRuntime};
 
 use crate::error::AppError;
-use crate::git::autocommit::AutocommitService;
-use crate::git::cli::GitCli;
 use crate::index::{IndexState, update::IndexUpdateState};
+use svode_core::git::autocommit::AutocommitService;
+use svode_core::git::cli::GitCli;
 
 pub use svode_core::structure::delete_mutation_paths;
 pub use svode_core::structure::{

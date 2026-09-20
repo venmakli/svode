@@ -4,17 +4,21 @@ use std::sync::Arc;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 
-use super::autocommit::{AutocommitService, SystemCommitKind};
+use super::GitState;
 use super::cli::{GitAvailability, GitCli};
-use super::ops::{GitStatus, UnpushedCommit};
-use super::{GitState, require_cli};
+use super::delivery::host;
 use crate::AppError;
 use crate::index::update::IndexUpdateState;
 use crate::index::{IndexKey, IndexState};
-use crate::repo_path::{RootMode, normalize_repo_relative, repo_relative_from_base};
 use crate::space::project;
 use crate::space::types::{GitUserPolicy, SpaceGitType};
 use crate::system_path;
+use svode_core::git::autocommit::{AutocommitService, SystemCommitKind};
+use svode_core::git::operations::SharedError;
+use svode_core::git::ops::{GitStatus, UnpushedCommit};
+use svode_core::git::path::{RootMode, normalize_repo_relative, repo_relative_from_base};
+use svode_core::git::save::save;
+use svode_core::git::{flow, ops, sync};
 
 /// Emit `space:synced` after a successful `git_sync(space)` finishes (and any
 /// reindex/post-sync work is done). Consumers — file watcher reindex,
@@ -42,25 +46,6 @@ pub(crate) async fn invalidate_actor_space(app: &AppHandle, space: &Path) {
             space = %space.display(),
             "failed to invalidate actor catalog after successful Git operation: {error}"
         );
-    }
-}
-
-pub(crate) async fn invalidate_repository_access(
-    app: &AppHandle,
-    access_state: &super::access::RepositoryAccessState,
-    cli: &GitCli,
-    path: &Path,
-) {
-    match access_state.invalidate(cli, path).await {
-        Ok(repository_id) => {
-            super::access::emit_repository_access_changed(app, &repository_id);
-        }
-        Err(error) => {
-            tracing::warn!(
-                repository = %path.display(),
-                "failed to invalidate repository access: {error}"
-            );
-        }
     }
 }
 
@@ -141,12 +126,14 @@ impl GitTrackedRemoteReconciliation {
 }
 
 pub(crate) fn auto_commit_structural_enabled(space_path: &Path) -> bool {
-    crate::space::config::effective_git_user_policy(space_path).auto_commit_structural
+    svode_core::git::policy::effective_user_policy(space_path).auto_commit_structural
 }
 
 pub(crate) async fn init_repo_with_policy(cli: &GitCli, path: &Path) -> Result<(), AppError> {
-    super::ops::init_with_optional_scaffold_commit(cli, path, auto_commit_structural_enabled(path))
-        .await
+    Ok(
+        ops::init_with_optional_scaffold_commit(cli, path, auto_commit_structural_enabled(path))
+            .await?,
+    )
 }
 
 async fn resolve_git_user_policy_target(
@@ -164,7 +151,7 @@ async fn resolve_git_user_policy_target(
     }
 
     let cli = state.cli()?;
-    let git_type = super::ops::detect_space_git_type(cli, &project, space).await?;
+    let git_type = ops::detect_space_git_type(cli, &project, space).await?;
     Ok(match git_type {
         SpaceGitType::Inline => project,
         SpaceGitType::Independent | SpaceGitType::Submodule => space.to_path_buf(),
@@ -191,7 +178,7 @@ fn drop_legacy_shared_git_policy(config_target: &Path) {
 pub async fn git_check_availability(
     state: State<'_, GitState>,
 ) -> Result<GitAvailability, AppError> {
-    match &state.cli {
+    match state.detected() {
         Some(cli) => Ok(cli.check_availability().await),
         None => Ok(GitAvailability {
             git: false,
@@ -211,13 +198,13 @@ pub async fn git_init_space(
     let path = PathBuf::from(&space_path);
     if path.join(".git").symlink_metadata().is_ok() {
         super::access::require_repository_mutation(&app, &path).await?;
-        super::local_repair::require_scope_repair(&app, &path, &path).await?;
+        crate::git::delivery::require_scope_repair(&app, &path, &path).await?;
     }
     let lock = state.get_lock(&path).await;
     let _guard = lock.lock().await;
     init_repo_with_policy(state.cli()?, &path).await?;
     drop(_guard);
-    super::local_repair::repair_project(&app, &path).await;
+    crate::git::delivery::repair_project(&app, &path).await;
     Ok(())
 }
 
@@ -231,7 +218,7 @@ pub async fn git_clone_space(
     project_path: String,
     git_type: String,
 ) -> Result<(), AppError> {
-    super::ops::validate_clone_url(&url)?;
+    ops::validate_clone_url(&url)?;
     let project_dir = PathBuf::from(&project_path);
     let target = PathBuf::from(&target_path);
     let target_folder = repo_relative_from_base(&project_dir, &target, RootMode::Reject)?;
@@ -240,10 +227,10 @@ pub async fn git_clone_space(
         std::fs::create_dir_all(parent_dir)?;
     }
 
-    super::local_repair::require_scope_repair(&app, &project_dir, &project_dir).await?;
+    crate::git::delivery::require_scope_repair(&app, &project_dir, &project_dir).await?;
 
     if git_type == "submodule" {
-        let cli = require_cli(&state)?;
+        let cli = state.require_cli()?;
         let child_lock = state.get_lock(&target).await;
         let child_guard = child_lock.lock().await;
         let lock = state.get_lock(&project_dir).await;
@@ -261,7 +248,7 @@ pub async fn git_clone_space(
         }
         drop(_guard);
         drop(child_guard);
-        super::local_repair::repair_scope_best_effort(&app, &project_dir, &target).await;
+        crate::git::delivery::repair_scope_best_effort(&app, &project_dir, &target).await;
         if !svode_existed_before || !readme_existed_before {
             let commit_result = if !svode_existed_before && readme_existed_before {
                 autocommit.commit_scaffold(project_dir, target).await
@@ -278,13 +265,13 @@ pub async fn git_clone_space(
         }
     } else {
         // independent
-        let cli = require_cli(&state)?;
+        let cli = state.require_cli()?;
         let lock = state.get_lock(&target).await;
         let _guard = lock.lock().await;
         super::clone::clone_with_progress(&cli, &app, &url, &target).await?;
-        super::ops::add_independent_gitignore(&project_dir, &space_folder)?;
+        ops::add_independent_gitignore(&project_dir, &space_folder)?;
         drop(_guard);
-        super::local_repair::repair_scope_best_effort(&app, &project_dir, &target).await;
+        crate::git::delivery::repair_scope_best_effort(&app, &project_dir, &target).await;
     }
     Ok(())
 }
@@ -298,14 +285,13 @@ pub async fn git_get_remote(
     let repository = super::access::resolve_repository(state.cli()?, &path).await?;
     let lock = state.get_lock(&repository).await;
     let _guard = lock.lock().await;
-    super::ops::get_remote(state.cli()?, &path).await
+    Ok(ops::get_remote(state.cli()?, &path).await?)
 }
 
 #[tauri::command]
 pub async fn git_set_remote(
     app: AppHandle,
     state: State<'_, GitState>,
-    access_state: State<'_, super::access::RepositoryAccessState>,
     autocommit: State<'_, Arc<AutocommitService>>,
     space_path: String,
     url: String,
@@ -319,13 +305,13 @@ pub async fn git_set_remote(
         .zip(space_id.as_deref())
         .map(|(project, space_id)| (PathBuf::from(project), space_id.to_string()));
 
-    let cli = require_cli(&state)?;
+    let cli = state.require_cli()?;
     let repository = super::access::resolve_repository(state.cli()?, &path).await?;
     let lock = state.get_lock(&repository).await;
     let _guard = lock.lock().await;
-    super::ops::set_remote(&cli, &path, &url).await?;
+    ops::set_remote(&cli, &path, &url).await?;
     drop(_guard);
-    invalidate_repository_access(&app, &access_state, &cli, &path).await;
+    host(&app).invalidate_repository_access(&cli, &path).await;
 
     let tracked_reconciliation = if let Some((project, space_id)) = &reconcile_target {
         match super::access::require_repository_mutation_paths(
@@ -374,11 +360,14 @@ pub async fn git_set_remote(
 }
 
 #[tauri::command]
-pub async fn git_push(
-    app: AppHandle,
-    space_path: String,
-) -> Result<GitStatus, super::operations::SharedError> {
-    super::publication_flow::push(&app, Path::new(&space_path), false).await
+pub async fn git_push(app: AppHandle, space_path: String) -> Result<GitStatus, SharedError> {
+    flow::push(
+        app.state::<GitState>().runtime(),
+        &host(&app),
+        Path::new(&space_path),
+        false,
+    )
+    .await
 }
 
 #[tauri::command]
@@ -395,8 +384,13 @@ pub async fn git_status(
 pub async fn git_fetch_status(
     app: AppHandle,
     space_path: String,
-) -> Result<GitStatus, super::operations::SharedError> {
-    super::publication_flow::fetch_status(&app, Path::new(&space_path)).await
+) -> Result<GitStatus, SharedError> {
+    flow::fetch_status(
+        app.state::<GitState>().runtime(),
+        &host(&app),
+        Path::new(&space_path),
+    )
+    .await
 }
 
 #[tauri::command]
@@ -407,7 +401,7 @@ pub async fn git_commit_file(
     project_path: Option<String>,
     space_path: String,
     file_path: String,
-) -> Result<super::publication_flow::SaveReport, AppError> {
+) -> Result<flow::SaveReport, AppError> {
     let path = PathBuf::from(&space_path);
     let project = project_path
         .filter(|path| !path.is_empty())
@@ -423,19 +417,20 @@ pub async fn git_commit_file(
                 SystemCommitKind::AgentInstructions,
             )
             .await?;
-        return Ok(super::publication_flow::SaveReport {
-            status: super::ops::status(state.cli()?, &path).await?,
+        return Ok(flow::SaveReport {
+            status: ops::status(state.cli()?, &path).await?,
             parent: None,
         });
     }
-    let result = super::manual_save::save(
-        &app,
-        &state,
+    let result = save(
+        state.runtime(),
+        host(&app).as_ref(),
         project.as_deref(),
         &path,
         Some(normalize_commit_paths(vec![file_path])?),
     )
-    .await;
+    .await
+    .map_err(AppError::from);
     invalidate_actor_space(&app, &path).await;
     result
 }
@@ -446,12 +441,20 @@ pub async fn git_commit_all(
     state: State<'_, GitState>,
     project_path: Option<String>,
     space_path: String,
-) -> Result<super::publication_flow::SaveReport, AppError> {
+) -> Result<flow::SaveReport, AppError> {
     let path = PathBuf::from(&space_path);
     let project = project_path
         .filter(|path| !path.is_empty())
         .map(PathBuf::from);
-    let result = super::manual_save::save(&app, &state, project.as_deref(), &path, None).await;
+    let result = save(
+        state.runtime(),
+        host(&app).as_ref(),
+        project.as_deref(),
+        &path,
+        None,
+    )
+    .await
+    .map_err(AppError::from);
     invalidate_actor_space(&app, &path).await;
     result
 }
@@ -463,19 +466,20 @@ pub async fn git_commit_paths(
     project_path: Option<String>,
     space_path: String,
     file_paths: Vec<String>,
-) -> Result<super::publication_flow::SaveReport, AppError> {
+) -> Result<flow::SaveReport, AppError> {
     let path = PathBuf::from(&space_path);
     let project = project_path
         .filter(|path| !path.is_empty())
         .map(PathBuf::from);
-    let result = super::manual_save::save(
-        &app,
-        &state,
+    let result = save(
+        state.runtime(),
+        host(&app).as_ref(),
         project.as_deref(),
         &path,
         Some(normalize_commit_paths(file_paths)?),
     )
-    .await;
+    .await
+    .map_err(AppError::from);
     invalidate_actor_space(&app, &path).await;
     result
 }
@@ -485,8 +489,15 @@ pub async fn git_sync(
     app: AppHandle,
     space_path: String,
     background: Option<bool>,
-) -> Result<super::publication_flow::SyncReport, super::operations::SharedError> {
-    super::publication_flow::sync(&app, Path::new(&space_path), background.unwrap_or(false), false).await
+) -> Result<flow::SyncReport, SharedError> {
+    flow::sync(
+        app.state::<GitState>().runtime(),
+        &host(&app),
+        Path::new(&space_path),
+        background.unwrap_or(false),
+        false,
+    )
+    .await
 }
 
 pub(crate) async fn refresh_synced_repository(app: &AppHandle, cli: &GitCli, path: &Path) {
@@ -510,7 +521,7 @@ pub(crate) async fn refresh_synced_repository(app: &AppHandle, cli: &GitCli, pat
         .key_for_space_dir(&path)
         .await
         .unwrap_or_else(|| IndexKey::Root(path.to_path_buf()));
-    let changed = super::ops::diff_after_pull(cli, &path).await.ok();
+    let changed = ops::diff_after_pull(cli, &path).await.ok();
     if let Some(changed) = &changed {
         if !changed.is_empty() {
             if let Err(e) = crate::index::update::reindex_after_pull(
@@ -562,7 +573,10 @@ pub async fn git_save_http_credentials(
     password: String,
 ) -> Result<(), AppError> {
     let cli = state.cli()?;
-    super::auth::approve_http_credentials(cli, &remote_url, &username, &password).await
+    Ok(
+        svode_core::git::auth::approve_http_credentials(cli, &remote_url, &username, &password)
+            .await?,
+    )
 }
 
 fn normalize_commit_paths(file_paths: Vec<String>) -> Result<Vec<String>, AppError> {
@@ -585,15 +599,22 @@ pub async fn git_conflict_files(
     let repository = super::access::resolve_repository(state.cli()?, &path).await?;
     let lock = state.get_lock(&repository).await;
     let _guard = lock.lock().await;
-    super::sync::conflict_files(state.cli()?, &path).await
+    Ok(sync::conflict_files(state.cli()?, &path).await?)
 }
 
 #[tauri::command]
 pub async fn git_resolve_continue(
     app: AppHandle,
     space_path: String,
-) -> Result<super::publication_flow::SyncReport, super::operations::SharedError> {
-    super::publication_flow::sync(&app, Path::new(&space_path), false, true).await
+) -> Result<flow::SyncReport, SharedError> {
+    flow::sync(
+        app.state::<GitState>().runtime(),
+        &host(&app),
+        Path::new(&space_path),
+        false,
+        true,
+    )
+    .await
 }
 
 async fn emit_sync_domain_invalidations(
@@ -603,8 +624,8 @@ async fn emit_sync_domain_invalidations(
     synced_space: &Path,
     changed: &[String],
 ) {
-    let repository = match require_cli(&app.state::<GitState>()) {
-        Ok(cli) => super::ops::resolve_target_repo(&cli, key.project(), synced_space)
+    let repository = match app.state::<GitState>().require_cli() {
+        Ok(cli) => ops::resolve_target_repo(&cli, key.project(), synced_space)
             .await
             .map(|(_, repository)| repository)
             .unwrap_or_else(|_| synced_space.to_path_buf()),
@@ -692,7 +713,7 @@ pub async fn git_merge_abort(
     let repository = super::access::resolve_repository(state.cli()?, &path).await?;
     let lock = state.get_lock(&repository).await;
     let _guard = lock.lock().await;
-    super::sync::merge_abort(state.cli()?, &path).await
+    Ok(sync::merge_abort(state.cli()?, &path).await?)
 }
 
 #[tauri::command]
@@ -704,7 +725,7 @@ pub async fn get_space_git_type(
     let project = PathBuf::from(&project_path);
     let space = PathBuf::from(&space_path);
     let cli = state.cli()?;
-    super::ops::detect_space_git_type(cli, &project, &space).await
+    Ok(ops::detect_space_git_type(cli, &project, &space).await?)
 }
 
 #[tauri::command]
@@ -715,7 +736,7 @@ pub async fn git_get_submodule_url(
 ) -> Result<Option<String>, AppError> {
     let project = PathBuf::from(&project_path);
     let cli = state.cli()?;
-    super::ops::get_submodule_url(cli, &project, &space_folder).await
+    Ok(ops::get_submodule_url(cli, &project, &space_folder).await?)
 }
 
 #[tauri::command]
@@ -727,15 +748,18 @@ pub async fn git_unpushed_commits(
     let repository = super::access::resolve_repository(state.cli()?, &path).await?;
     let lock = state.get_lock(&repository).await;
     let _guard = lock.lock().await;
-    super::ops::unpushed_commits(state.cli()?, &path).await
+    Ok(ops::unpushed_commits(state.cli()?, &path).await?)
 }
 
 #[tauri::command]
-pub async fn git_publish(
-    app: AppHandle,
-    space_path: String,
-) -> Result<GitStatus, super::operations::SharedError> {
-    super::publication_flow::push(&app, Path::new(&space_path), true).await
+pub async fn git_publish(app: AppHandle, space_path: String) -> Result<GitStatus, SharedError> {
+    flow::push(
+        app.state::<GitState>().runtime(),
+        &host(&app),
+        Path::new(&space_path),
+        true,
+    )
+    .await
 }
 
 #[tauri::command]
@@ -757,9 +781,9 @@ pub async fn git_set_auto_sync(
     let space = PathBuf::from(&space_path);
     let config_target =
         resolve_git_user_policy_target(&state, &space, project_path.as_deref()).await?;
-    let mut policy = crate::space::config::read_git_user_policy(&config_target)?;
+    let mut policy = svode_core::git::policy::read_user_policy(&config_target)?;
     policy.auto_sync = enabled;
-    crate::space::config::write_git_user_policy(&config_target, &policy)?;
+    svode_core::git::policy::write_user_policy(&config_target, &policy)?;
     drop_legacy_shared_git_policy(&config_target);
     Ok(())
 }
@@ -773,7 +797,7 @@ pub async fn git_get_user_policy(
     let space = PathBuf::from(&space_path);
     let config_target =
         resolve_git_user_policy_target(&state, &space, project_path.as_deref()).await?;
-    crate::space::config::read_git_user_policy(&config_target)
+    Ok(svode_core::git::policy::read_user_policy(&config_target)?)
 }
 
 #[tauri::command]
@@ -786,7 +810,7 @@ pub async fn git_set_user_policy(
     let space = PathBuf::from(&space_path);
     let config_target =
         resolve_git_user_policy_target(&state, &space, project_path.as_deref()).await?;
-    crate::space::config::write_git_user_policy(&config_target, &policy)?;
+    svode_core::git::policy::write_user_policy(&config_target, &policy)?;
     drop_legacy_shared_git_policy(&config_target);
     Ok(())
 }
@@ -816,8 +840,13 @@ mod tests {
 pub async fn git_publication_status(
     app: AppHandle,
     space_path: String,
-) -> Result<Option<super::publication_flow::PublicationStatus>, super::operations::SharedError> {
-    super::publication_flow::inspect(&app, Path::new(&space_path)).await
+) -> Result<Option<flow::PublicationStatus>, SharedError> {
+    flow::inspect(
+        app.state::<GitState>().runtime(),
+        &host(&app),
+        Path::new(&space_path),
+    )
+    .await
 }
 
 #[tauri::command]
@@ -827,9 +856,10 @@ pub async fn git_retry_parent(
     expected_head: String,
     expected_parent: String,
     expected_target: String,
-) -> Result<super::publication_flow::PublicationStatus, super::operations::SharedError> {
-    super::publication_flow::retry_parent(
-        &app,
+) -> Result<flow::PublicationStatus, SharedError> {
+    flow::retry_parent(
+        app.state::<GitState>().runtime(),
+        &host(&app),
         Path::new(&space_path),
         &expected_head,
         Path::new(&expected_parent),

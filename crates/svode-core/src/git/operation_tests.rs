@@ -1,12 +1,10 @@
+use super::GitError;
 use super::{Fixture, commit, git};
+use crate::git::policy::{GitUserPolicy, write_user_policy as write_git_user_policy};
 use crate::git::{
+    flow,
     operations::*,
-    publication_flow,
     sync::{self, SyncResult},
-};
-use crate::{
-    AppError,
-    space::{config::write_git_user_policy, types::GitUserPolicy},
 };
 use std::{
     path::Path,
@@ -72,7 +70,7 @@ async fn execute(cli: crate::git::cli::GitCli, request: Request, run: Run) -> Co
             return Err(target_changed(&request.repo));
         }
         if !request.intent.admitted(&request.repo) {
-            return Ok(Output::Sync(publication_flow::SyncReport {
+            return Ok(Output::Sync(flow::SyncReport {
                 remote_status: None,
                 child: SyncResult::NoRemote,
                 parent: None,
@@ -132,13 +130,13 @@ async fn execute(cli: crate::git::cli::GitCli, request: Request, run: Run) -> Co
             let permission = if run.parent_permission {
                 Ok(())
             } else {
-                Err(AppError::RepositoryAccessDenied {
+                Err(GitError::RepositoryAccessDenied {
                     repository_id: "fixture-root".into(),
                     status: "unknown".into(),
                     reason: "verification_required".into(),
                 })
             };
-            let outcome = publication_flow::parent_step_locked(
+            let outcome = flow::parent_step_locked(
                 &cli,
                 &request.repo,
                 parent,
@@ -166,7 +164,7 @@ async fn execute(cli: crate::git::cli::GitCli, request: Request, run: Run) -> Co
             }
             parent_outcome = Some(outcome);
         }
-        Ok(Output::Sync(publication_flow::SyncReport {
+        Ok(Output::Sync(flow::SyncReport {
             remote_status: crate::git::readers::sync_status(&cli, &request.repo, &child).await,
             child,
             parent: parent_outcome,
@@ -597,11 +595,11 @@ async fn native_ssh_dns_failure_keeps_configured_remote_error() {
     );
     assert!(matches!(
         sync::sync(&f.cli, &f.root).await,
-        Err(AppError::GitCommandFailed(_))
+        Err(GitError::GitCommandFailed(_))
     ));
     assert!(matches!(
         crate::git::ops::fetch_remote(&f.cli, &f.root).await,
-        Err(AppError::GitCommandFailed(_))
+        Err(GitError::GitCommandFailed(_))
     ));
     git(&f.root, &["remote", "remove", "origin"]);
     assert!(matches!(
@@ -621,16 +619,9 @@ async fn every_parent_policy_preserves_local_pointer_and_existing_pointer_public
         let child_head = git(&f.child, &["rev-parse", "HEAD"]);
         let root_before = git(&f.root, &["rev-parse", "HEAD"]);
         let remote_before = git(&f.remote, &["rev-parse", "main"]);
-        let local = publication_flow::parent_step_locked(
-            &f.cli,
-            &f.child,
-            &f.root,
-            &child_head,
-            true,
-            false,
-            Ok(()),
-        )
-        .await;
+        let local =
+            flow::parent_step_locked(&f.cli, &f.child, &f.root, &child_head, true, false, Ok(()))
+                .await;
         let local = serde_json::to_value(local).unwrap();
         assert_eq!(
             local["pointer"] == "local",
@@ -647,16 +638,9 @@ async fn every_parent_policy_preserves_local_pointer_and_existing_pointer_public
             "local step must not publish"
         );
         git(&f.child, &["push", "origin", "main"]);
-        let automatic = publication_flow::parent_step_locked(
-            &f.cli,
-            &f.child,
-            &f.root,
-            &child_head,
-            true,
-            true,
-            Ok(()),
-        )
-        .await;
+        let automatic =
+            flow::parent_step_locked(&f.cli, &f.child, &f.root, &child_head, true, true, Ok(()))
+                .await;
         let automatic = serde_json::to_value(automatic).unwrap();
         assert_eq!(
             automatic["pointer"] == "published",
@@ -669,41 +653,19 @@ async fn every_parent_policy_preserves_local_pointer_and_existing_pointer_public
         );
         // Explicit local save remains authorized for every tuple. Subsequent
         // background publication of that existing pointer uses S alone.
-        publication_flow::parent_step_locked(
-            &f.cli,
-            &f.child,
-            &f.root,
-            &child_head,
-            false,
-            false,
-            Ok(()),
-        )
-        .await;
-        let existing = publication_flow::parent_step_locked(
-            &f.cli,
-            &f.child,
-            &f.root,
-            &child_head,
-            true,
-            true,
-            Ok(()),
-        )
-        .await;
+        flow::parent_step_locked(&f.cli, &f.child, &f.root, &child_head, false, false, Ok(()))
+            .await;
+        let existing =
+            flow::parent_step_locked(&f.cli, &f.child, &f.root, &child_head, true, true, Ok(()))
+                .await;
         assert_eq!(
             serde_json::to_value(existing).unwrap()["pointer"] == "published",
             bits & 4 != 0,
             "existing pointer S gate {bits}"
         );
-        let explicit = publication_flow::parent_step_locked(
-            &f.cli,
-            &f.child,
-            &f.root,
-            &child_head,
-            false,
-            true,
-            Ok(()),
-        )
-        .await;
+        let explicit =
+            flow::parent_step_locked(&f.cli, &f.child, &f.root, &child_head, false, true, Ok(()))
+                .await;
         assert_eq!(
             serde_json::to_value(explicit).unwrap()["pointer"],
             "published"
@@ -887,12 +849,12 @@ async fn observer_during_success_effects_shares_publication_without_a_noop_cycle
 #[test]
 fn shared_errors_preserve_original_structured_ipc_payloads() {
     for error in [
-        AppError::GitCommandFailed("transport unavailable".into()),
-        AppError::GitBranchBlocked {
+        GitError::GitCommandFailed("transport unavailable".into()),
+        GitError::BranchBlocked {
             reason: crate::git::branch::BranchBlockReason::LocalChanges,
         },
         target_changed(Path::new("fixture")),
-        AppError::RepositoryAccessDenied {
+        GitError::RepositoryAccessDenied {
             repository_id: "fixture".into(),
             status: "unknown".into(),
             reason: "expired".into(),
@@ -1023,7 +985,7 @@ async fn readers_join_child_and_parent_without_fetch_then_independent_focus_read
     assert_eq!(status.child, "published");
     assert!(matches!(
         status.parent.pointer,
-        publication_flow::PointerState::Published
+        flow::PointerState::Published
     ));
     assert!(status.inspection_error.is_none());
     assert_eq!(fetches.load(Ordering::SeqCst), 0);
@@ -1273,10 +1235,7 @@ async fn waiting_counters_keep_remote_facts_after_save_without_claiming_new_head
         };
         let status = read.status.unwrap();
         assert_eq!(status.child, "unpublished");
-        assert!(matches!(
-            status.parent.pointer,
-            publication_flow::PointerState::Pending
-        ));
+        assert!(matches!(status.parent.pointer, flow::PointerState::Pending));
         assert!(status.inspection_error.is_none());
 
         start(
