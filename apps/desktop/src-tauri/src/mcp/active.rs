@@ -151,9 +151,9 @@ mod tests {
     fn resolves_child_space_to_canonical_path() {
         let dir = tempfile::tempdir().unwrap();
         let project = dir.path().join("project");
-        let child = project.join("spaces").join("child");
+        let child = project.join("child");
         fs::create_dir_all(&child).unwrap();
-        write_project_config(&project, "spaces/child");
+        write_project_config(&project, "child");
 
         let context = build_context(
             project.to_string_lossy().to_string(),
@@ -197,11 +197,11 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let project = dir.path().join("project");
         let outside = dir.path().join("outside");
-        let link = project.join("spaces").join("escape");
+        let link = project.join("escape");
         fs::create_dir_all(link.parent().unwrap()).unwrap();
         fs::create_dir_all(&outside).unwrap();
         symlink(&outside, &link).unwrap();
-        write_project_config(&project, "spaces/escape");
+        write_project_config(&project, "escape");
 
         let result = build_context(
             project.to_string_lossy().to_string(),
@@ -216,11 +216,11 @@ mod tests {
     fn rejects_active_space_path_that_does_not_match_registered_id() {
         let dir = tempfile::tempdir().unwrap();
         let project = dir.path().join("project");
-        let child = project.join("spaces/child");
+        let child = project.join("child");
         let other = project.join("other");
         fs::create_dir_all(&child).unwrap();
         fs::create_dir_all(&other).unwrap();
-        write_project_config(&project, "spaces/child");
+        write_project_config(&project, "child");
 
         let result = build_context(
             project.to_string_lossy().to_string(),

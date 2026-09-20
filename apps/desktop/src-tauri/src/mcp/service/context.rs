@@ -189,19 +189,23 @@ mod tests {
         .unwrap();
     }
 
+    /// The Space model is flat: a Project knows only its direct children, each
+    /// registered as a single folder segment. A caller working deep inside a
+    /// registered Space still resolves to that Space, and unready references are
+    /// skipped.
     #[test]
     fn project_boundary_keeps_most_specific_ready_child_from_caller_cwd() {
         let temp = tempfile::tempdir().unwrap();
         let project = temp.path().join("project");
         let child = project.join("child");
-        let nested_child = child.join("nested");
-        let caller = nested_child.join("docs");
+        let caller = child.join("nested").join("docs");
         fs::create_dir_all(&caller).unwrap();
+        fs::create_dir_all(project.join("sibling")).unwrap();
         write_project(
             &project,
             &[
                 ("child-id", "child", None),
-                ("nested-id", "child/nested", None),
+                ("sibling-id", "sibling", None),
                 (
                     "missing-id",
                     "missing",
@@ -213,10 +217,10 @@ mod tests {
         let caller = caller.canonicalize().unwrap();
         let context = context_for_project_cwd(&project, Some(&caller)).unwrap();
 
-        assert_eq!(context.active_space_id.as_deref(), Some("nested-id"));
+        assert_eq!(context.active_space_id.as_deref(), Some("child-id"));
         assert_eq!(
             Path::new(&context.active_space_path),
-            nested_child.canonicalize().unwrap()
+            child.canonicalize().unwrap()
         );
     }
 

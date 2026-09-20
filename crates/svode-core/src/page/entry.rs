@@ -2839,7 +2839,9 @@ mod tests {
         let space = tmp.path().to_string_lossy();
         create_with_options(&space, None, "A-B", None, false, false).unwrap();
 
-        let created = create_with_options(&space, None, "A/B", None, false, false).unwrap();
+        // Filename warnings are produced while the source name is allocated, so the
+        // assertion uses the source create that returns them instead of a fresh read.
+        let created = create_source_with_options(&space, None, "A/B", false, false).unwrap();
 
         assert_eq!(created.path, "A-B-1.md");
         assert!(created.warnings.iter().any(|warning| {

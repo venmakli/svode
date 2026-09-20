@@ -2004,13 +2004,11 @@ mod tests {
             "---\ntrigger:\n  type: manual\naction:\n  type: run_agent\n  executor: agent:01arz3ndektsv4rrffq69g5fav\n---\nKept\n",
         )
         .unwrap();
+        // The store registry transparently reopens a closed pool, so an unavailable
+        // cache is simulated by making the database path itself unopenable.
+        fs::create_dir_all(temp.path().join(".svode/routines.db")).unwrap();
         let routine_stores = Arc::new(RoutineStoreState::new());
         let index_state = IndexState::new();
-        let pool = routine_stores
-            .get_or_create_for_index(&index_state, &owner.index_key)
-            .await
-            .unwrap();
-        pool.close().await;
 
         let (snapshot, warnings) = projection_after_write(
             &routine_stores,
