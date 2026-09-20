@@ -4,6 +4,7 @@ pub mod actors;
 pub mod agent_adapters;
 pub mod agent_context;
 pub mod apps;
+pub mod attachments;
 pub mod collections;
 pub mod content_tree;
 pub mod git;

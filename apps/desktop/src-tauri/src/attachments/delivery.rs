@@ -2,7 +2,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use tauri::{AppHandle, Emitter};
 
-use super::managed_import::ManagedImportDelivery;
+use super::import::ManagedImportDelivery;
 
 static MANAGED_IMPORT_GENERATION: AtomicU64 = AtomicU64::new(1);
 

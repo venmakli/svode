@@ -9,7 +9,7 @@ use crate::git::access::{require_repository_mutation_paths, scope_authorized_mut
 use crate::git::autocommit::AutocommitService;
 use crate::index::IndexState;
 
-use super::managed_import::{
+use super::import::{
     ManagedImportResult, ManagedImportSourceInfo, MutationOrigin, execute_managed_import,
     inspect_import_source, plan_managed_import,
 };

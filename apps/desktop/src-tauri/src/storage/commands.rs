@@ -158,7 +158,7 @@ pub struct EffectiveAssetsConfig {
     pub inherited_from_project: bool,
     pub owner_space_id: Option<String>,
     pub git_type: Option<SpaceGitType>,
-    pub binary_routing: super::policy::EffectiveBinaryRouting,
+    pub binary_routing: svode_core::storage::policy::EffectiveBinaryRouting,
 }
 
 #[tauri::command]
@@ -170,7 +170,7 @@ pub async fn get_assets_config(
     let project = PathBuf::from(&project_path);
     let scope =
         resolve_effective_storage_scope(&index_state, &project, space_id.as_deref()).await?;
-    let binary_routing = super::policy::effective_binary_routing(&scope.config);
+    let binary_routing = svode_core::storage::policy::effective_binary_routing(&scope.config);
     Ok(EffectiveAssetsConfig {
         strategy: scope.config.strategy,
         s3: scope.config.s3,
@@ -294,9 +294,9 @@ pub async fn set_assets_strategy(
         .unwrap_or_default();
     ensure_supported_strategy_transition(current_strategy, strategy)?;
     if let Some(current_assets) = config.assets.as_ref() {
-        super::policy::supported_binary_routing(current_assets)?;
+        svode_core::storage::policy::supported_binary_routing(current_assets)?;
     }
-    let binary_routing = super::policy::normalize_binary_routing(binary_routing)?;
+    let binary_routing = svode_core::storage::policy::normalize_binary_routing(binary_routing)?;
 
     let s3_config = s3_config.map(|mut config| {
         config.prefix = s3::normalize_prefix_path(&config.prefix, &scope.default_s3_prefix);

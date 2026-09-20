@@ -74,9 +74,10 @@ pub fn write_git_user_policy(path: &Path, policy: &GitUserPolicy) -> Result<(), 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::space::types::{AgentSessionsLocalConfig, BINARY_ROUTING_VERSION, GitSpaceConfig};
+    use crate::space::types::{AgentSessionsLocalConfig, GitSpaceConfig};
     use std::sync::Arc;
     use svode_core::routines::local::RoutinesLocalConfig;
+    use svode_core::storage::config::BINARY_ROUTING_VERSION;
 
     fn config_with_git() -> SpaceConfig {
         SpaceConfig {

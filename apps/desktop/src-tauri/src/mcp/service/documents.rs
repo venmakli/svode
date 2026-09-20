@@ -413,7 +413,7 @@ pub(super) async fn import_asset(
         .space_id
         .as_deref()
         .filter(|space_id| !is_mcp_root_space_id(space_id));
-    let plan = crate::attachments::managed_import::plan_managed_import(
+    let plan = crate::attachments::import::plan_managed_import(
         &index_state,
         Path::new(&context.project_path),
         selected_space_id,
@@ -422,12 +422,12 @@ pub(super) async fn import_asset(
         args.file_name.as_deref(),
     )
     .await?;
-    let result = crate::attachments::managed_import::execute_managed_import(
+    let result = crate::attachments::import::execute_managed_import(
         &app.state::<GitState>(),
         &index_state,
         &index_updates,
         None,
-        crate::attachments::managed_import::MutationOrigin::Mcp,
+        crate::attachments::import::MutationOrigin::Mcp,
         plan,
     )
     .await?;

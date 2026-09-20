@@ -6,7 +6,6 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 
 use crate::AppError;
-use svode_core::content_tree::children::{DirectoryFacts, DirectoryKind, is_regular_source};
 use crate::artifact::identity::{
     ArtifactKind, MarkdownIdentityFacts, SourceShape, resolve_markdown_identity,
 };
@@ -18,14 +17,9 @@ use crate::git::dates::derive_date_overrides;
 use crate::repo_path::{RootMode, normalize_repo_relative};
 use crate::space::read::resolve_space_target;
 use crate::system_path;
+use svode_core::content_tree::children::{DirectoryFacts, DirectoryKind, is_regular_source};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum AttachmentAvailability {
-    Available,
-    Limited,
-    ExternalOnly,
-}
+pub(crate) use svode_core::attachments::format::AttachmentAvailability;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -525,58 +519,7 @@ fn scan_mixed_children(
     Ok((items, diagnostics))
 }
 
-pub(crate) fn classify_binary_path(path: &Path) -> Option<ArtifactKind> {
-    let extension = path
-        .extension()
-        .and_then(|extension| extension.to_str())?
-        .to_ascii_lowercase();
-    classify_binary_extension(&extension).map(|(kind, _)| kind)
-}
-
-fn classify_binary_extension(extension: &str) -> Option<(ArtifactKind, AttachmentAvailability)> {
-    let document = match extension {
-        "pdf" | "docx" | "xlsx" | "pptx" => Some(AttachmentAvailability::Limited),
-        "doc" | "xls" | "ppt" | "docm" | "xlsm" | "pptm" | "odt" | "ods" | "odp" => {
-            Some(AttachmentAvailability::ExternalOnly)
-        }
-        _ => None,
-    };
-    if let Some(availability) = document {
-        return Some((ArtifactKind::Document, availability));
-    }
-
-    matches!(
-        extension,
-        "png"
-            | "jpg"
-            | "jpeg"
-            | "webp"
-            | "gif"
-            | "svg"
-            | "mp3"
-            | "wav"
-            | "m4a"
-            | "aac"
-            | "flac"
-            | "ogg"
-            | "opus"
-            | "mp4"
-            | "m4v"
-            | "mov"
-            | "webm"
-            | "mkv"
-            | "avi"
-            | "wmv"
-            | "mpg"
-            | "mpeg"
-            | "3gp"
-            | "wma"
-            | "aiff"
-            | "avif"
-            | "ico"
-    )
-    .then_some((ArtifactKind::Media, AttachmentAvailability::Limited))
-}
+pub(crate) use svode_core::attachments::format::{classify_binary_extension, classify_binary_path};
 
 fn has_mixed_child_hint(directory: &Path) -> bool {
     let Ok(entries) = fs::read_dir(directory) else {

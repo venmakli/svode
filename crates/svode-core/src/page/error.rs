@@ -146,3 +146,35 @@ impl From<ManagedRouteError> for PageError {
         }
     }
 }
+
+impl From<crate::storage::config::StorageConfigError> for PageError {
+    fn from(error: crate::storage::config::StorageConfigError) -> Self {
+        use crate::storage::config::StorageConfigError;
+        match error {
+            StorageConfigError::Missing(path) => Self::FileNotFound(path),
+            StorageConfigError::Io(error) => Self::Io(error),
+            StorageConfigError::Serde(error) => Self::Serde(error),
+        }
+    }
+}
+
+impl From<crate::storage::scope::AssetsScopeError> for PageError {
+    fn from(error: crate::storage::scope::AssetsScopeError) -> Self {
+        use crate::storage::scope::AssetsScopeError;
+        match error {
+            AssetsScopeError::Config(error) => error.into(),
+            AssetsScopeError::Index(error) => error.into(),
+        }
+    }
+}
+
+impl From<crate::storage::policy::StoragePolicyError> for PageError {
+    fn from(error: crate::storage::policy::StoragePolicyError) -> Self {
+        use crate::storage::policy::StoragePolicyError;
+        match error {
+            StoragePolicyError::Io(error) => Self::Io(error),
+            StoragePolicyError::Storage(message) => Self::Storage(message),
+            StoragePolicyError::Git(error) => Self::Git(error),
+        }
+    }
+}

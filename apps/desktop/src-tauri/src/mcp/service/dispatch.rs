@@ -240,7 +240,7 @@ async fn authorize_mutating_tool(
             let selected_space_id = requested_space_id
                 .as_deref()
                 .filter(|space_id| !is_mcp_root_space_id(space_id));
-            let plan = crate::attachments::managed_import::plan_managed_import(
+            let plan = crate::attachments::import::plan_managed_import(
                 &index_state,
                 Path::new(&context.project_path),
                 selected_space_id,

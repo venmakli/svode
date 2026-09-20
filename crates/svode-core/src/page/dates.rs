@@ -27,6 +27,20 @@ pub trait GitDateExecutor {
     async fn exec(&self, directory: &Path, args: &[&str]) -> Option<GitDateOutput>;
 }
 
+/// The detected Git CLI is already a date source; a host that holds one does
+/// not need a second executor.
+impl GitDateExecutor for crate::git::cli::GitCli {
+    async fn exec(&self, directory: &Path, args: &[&str]) -> Option<GitDateOutput> {
+        let output = crate::git::cli::GitCli::exec(self, directory, args)
+            .await
+            .ok()?;
+        Some(GitDateOutput {
+            stdout: output.stdout,
+            exit_code: output.exit_code,
+        })
+    }
+}
+
 pub struct SystemGitDateExecutor;
 
 impl GitDateExecutor for SystemGitDateExecutor {

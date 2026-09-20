@@ -46,6 +46,10 @@ impl GitState {
         self.cli.clone().ok_or(AppError::GitNotFound)
     }
 
+    pub(crate) fn repository(&self) -> &GitRepositoryState {
+        &self.repository
+    }
+
     pub(crate) async fn get_lock(&self, path: &Path) -> Arc<tokio::sync::Mutex<()>> {
         self.repository.get_lock(path).await
     }

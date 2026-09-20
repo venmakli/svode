@@ -49,7 +49,7 @@ pub(crate) fn maybe_autocommit_structural_paths(
 }
 
 /// Delivers a structural operation's history to the Desktop autocommit service.
-struct AutocommitSink<'a>(&'a AutocommitService);
+pub(crate) struct AutocommitSink<'a>(pub(crate) &'a AutocommitService);
 
 impl StructuralCommitSink for AutocommitSink<'_> {
     fn schedule(&self, project: &Path, space: &Path, op: StructuralOp, paths: Vec<PathBuf>) {
@@ -76,7 +76,7 @@ impl StructuralCommitSink for AutocommitSink<'_> {
     }
 }
 
-fn sink(autocommit: Option<&AutocommitService>) -> Option<AutocommitSink<'_>> {
+pub(crate) fn sink(autocommit: Option<&AutocommitService>) -> Option<AutocommitSink<'_>> {
     autocommit.map(AutocommitSink)
 }
 

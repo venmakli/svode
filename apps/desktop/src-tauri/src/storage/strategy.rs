@@ -2,16 +2,16 @@ use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 
-use super::{policy, s3};
+use super::s3;
 use crate::error::AppError;
 use crate::git::GitState;
 use crate::git::cli::{GitCli, GitOutput};
 use crate::git::require_cli;
 use crate::space::types::{AssetsS3Config, AssetsStrategy, BinaryRoutingConfig};
+use svode_core::storage::policy;
 use svode_core::storage::routes::{
     LFS_PATHS_END, LFS_PATHS_START, LOCAL_PATHS_END, LOCAL_PATHS_START, append_block,
-    normalize_trailing_newline, parse_managed_paths, read_or_empty, rewrite_managed_path_block,
-    strip_block, write_or_remove,
+    normalize_trailing_newline, read_or_empty, strip_block, write_or_remove,
 };
 
 /// Non-fatal diagnostics produced by `apply_strategy` — surfaced to the UI so
@@ -89,118 +89,6 @@ fn rewrite_managed_lfs_attributes(
         without_exact_paths
     };
     normalize_trailing_newline(next)
-}
-
-fn restore_file(path: &Path, contents: Option<&str>) {
-    match contents {
-        Some(contents) => {
-            let _ = std::fs::write(path, contents);
-        }
-        None => {
-            let _ = std::fs::remove_file(path);
-        }
-    }
-}
-
-/// Materialize only the exact rule required by one Svode-managed import.
-/// Extension-wide rules are owned by `apply_strategy`; external file-system
-/// activity never calls this function.
-pub(crate) async fn apply_managed_import_route(
-    git_state: &GitState,
-    repo_dir: &Path,
-    route: policy::ManagedBinaryRoute,
-    repo_relative_path: &str,
-) -> Result<Vec<PathBuf>, AppError> {
-    let cli = require_cli(git_state)?;
-    if matches!(
-        route,
-        policy::ManagedBinaryRoute::LfsExtension | policy::ManagedBinaryRoute::LfsThreshold
-    ) && !cli.lfs_available()
-    {
-        return Err(AppError::Storage(
-            "Git LFS route is not ready: git-lfs is not installed".to_string(),
-        ));
-    }
-
-    let lock = git_state.get_lock(repo_dir).await;
-    let _guard = lock.lock().await;
-    let mut changed = Vec::new();
-    let policy_path = match route {
-        policy::ManagedBinaryRoute::Local => Some((
-            repo_dir.join(".gitignore"),
-            LOCAL_PATHS_START,
-            LOCAL_PATHS_END,
-            false,
-        )),
-        policy::ManagedBinaryRoute::LfsThreshold => Some((
-            repo_dir.join(".gitattributes"),
-            LFS_PATHS_START,
-            LFS_PATHS_END,
-            true,
-        )),
-        policy::ManagedBinaryRoute::LfsExtension | policy::ManagedBinaryRoute::DirectGit => None,
-    };
-
-    let original = if let Some((path, start, end, lfs)) = policy_path.as_ref() {
-        let original = if path.exists() {
-            Some(read_or_empty(path)?)
-        } else {
-            None
-        };
-        let current = original.as_deref().unwrap_or_default();
-        let mut paths = parse_managed_paths(current, start, end)?;
-        paths.insert(repo_relative_path.to_string());
-        let next = rewrite_managed_path_block(current, start, end, &paths, *lfs);
-        if next != current {
-            write_or_remove(path, &next)?;
-            changed.push(path.clone());
-        }
-        original.map(|contents| (path.clone(), contents))
-    } else {
-        None
-    };
-
-    let verification = match route {
-        policy::ManagedBinaryRoute::Local => cli
-            .exec(
-                repo_dir,
-                &["check-ignore", "--quiet", "--", repo_relative_path],
-            )
-            .await
-            .and_then(|output| {
-                (output.exit_code == 0).then_some(()).ok_or_else(|| {
-                    AppError::Storage(format!(
-                        "managed local route is not effective for `{repo_relative_path}`"
-                    ))
-                })
-            }),
-        policy::ManagedBinaryRoute::LfsExtension | policy::ManagedBinaryRoute::LfsThreshold => {
-            policy::check_lfs_filters(&cli, repo_dir, &[repo_relative_path.to_string()])
-                .await
-                .and_then(|checks| {
-                    checks
-                        .first()
-                        .is_some_and(|check| check.value == "lfs")
-                        .then_some(())
-                        .ok_or_else(|| {
-                            AppError::Storage(format!(
-                                "Git LFS route is not effective for `{repo_relative_path}`"
-                            ))
-                        })
-                })
-        }
-        policy::ManagedBinaryRoute::DirectGit => Ok(()),
-    };
-
-    if let Err(error) = verification {
-        if let Some((path, contents)) = original.as_ref() {
-            restore_file(path, Some(contents));
-        } else if let Some((path, ..)) = policy_path.as_ref() {
-            restore_file(path, None);
-        }
-        return Err(error);
-    }
-    Ok(changed)
 }
 
 fn ensure_storage_strategy_git_args_safe(args: &[&str]) -> Result<(), AppError> {
@@ -544,7 +432,7 @@ pub async fn apply_strategy(
     // report that as a non-fatal warning without rewriting user configuration.
     if policy::strategy_uses_lfs_policy(new) {
         let paths = policy::representative_lfs_paths(binary_routing);
-        match policy::check_lfs_filters(&cli, space_dir, &paths).await {
+        match policy::check_lfs_filters(cli.core(), space_dir, &paths).await {
             Ok(checks) => {
                 for check in checks.into_iter().filter(|check| check.value != "lfs") {
                     result.warnings.push(format!(
@@ -617,8 +505,8 @@ mod tests {
     use std::path::{Path, PathBuf};
 
     use super::{
-        RegistrationOutcome, RepairAction, apply_managed_import_route, apply_strategy,
-        classify_registration, ensure_storage_strategy_git_args_safe, legacy_path_is_ours,
+        RegistrationOutcome, RepairAction, apply_strategy, classify_registration,
+        ensure_storage_strategy_git_args_safe, legacy_path_is_ours,
         repair_managed_registration_with, rewrite_managed_lfs_attributes,
         teardown_managed_registration,
     };
@@ -626,8 +514,7 @@ mod tests {
     use crate::git::GitState;
     use crate::git::cli::GitCli;
     use crate::space::types::{AssetsSpaceConfig, AssetsStrategy, BinaryRoutingConfig};
-    use crate::storage::policy::ManagedBinaryRoute;
-    use crate::storage::policy::{
+    use svode_core::storage::policy::{
         LEGACY_ASSETS_ONLY_LFS_RULE, LFS_END, LFS_START, managed_lfs_attributes_body,
         supported_binary_routing,
     };
@@ -722,51 +609,6 @@ mod tests {
         assert!(next.contains("docs/Renamed/archive.bin"));
         assert!(next.contains("other/keep.bin"));
         assert!(!next.contains("docs/Topic/archive.bin"));
-    }
-
-    #[tokio::test]
-    async fn exact_rules_use_git_effective_resolution_and_fail_on_nested_override()
-    -> Result<(), AppError> {
-        let git_state = GitState::new();
-        let Some(cli) = git_state.cli.as_ref() else {
-            return Ok(());
-        };
-        let temp = tempfile::tempdir()?;
-        let repo = temp.path();
-        git_ok(cli, repo, &["init"]).await?;
-
-        apply_managed_import_route(
-            &git_state,
-            repo,
-            ManagedBinaryRoute::Local,
-            "Topic/file [1].bin",
-        )
-        .await?;
-        let ignored = cli
-            .exec(
-                repo,
-                &["check-ignore", "--quiet", "--", "Topic/file [1].bin"],
-            )
-            .await?;
-        assert_eq!(ignored.exit_code, 0);
-
-        if !cli.lfs_available() {
-            return Ok(());
-        }
-        std::fs::create_dir_all(repo.join("Topic"))?;
-        std::fs::write(repo.join("Topic/.gitattributes"), "file.bin -filter\n")?;
-        let error = apply_managed_import_route(
-            &git_state,
-            repo,
-            ManagedBinaryRoute::LfsThreshold,
-            "Topic/file.bin",
-        )
-        .await
-        .expect_err("nested override must block LFS route");
-        assert!(error.to_string().contains("not effective"));
-        let attributes = std::fs::read_to_string(repo.join(".gitattributes")).unwrap_or_default();
-        assert!(!attributes.contains("Topic/file.bin"));
-        Ok(())
     }
 
     #[test]

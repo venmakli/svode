@@ -62,31 +62,7 @@ fn sanitize_filename(name: &str) -> String {
     }
 }
 
-/// Map an extension (lowercased, no dot) to the canonical MIME type. The old
-/// `asset_type` bucket is gone — it can be derived from the MIME on the
-/// frontend if a coarse type is needed.
-pub(crate) fn mime_for(ext: &str) -> &'static str {
-    match ext {
-        "png" => "image/png",
-        "jpg" | "jpeg" => "image/jpeg",
-        "gif" => "image/gif",
-        "webp" => "image/webp",
-        "svg" => "image/svg+xml",
-        "avif" => "image/avif",
-        "ico" => "image/x-icon",
-        "mp4" => "video/mp4",
-        "mov" => "video/quicktime",
-        "webm" => "video/webm",
-        "mkv" => "video/x-matroska",
-        "mp3" => "audio/mpeg",
-        "wav" => "audio/wav",
-        "ogg" => "audio/ogg",
-        "flac" => "audio/flac",
-        "m4a" => "audio/mp4",
-        "pdf" => "application/pdf",
-        _ => "application/octet-stream",
-    }
-}
+pub(crate) use svode_core::attachments::format::mime_for;
 
 /// Upload an asset into the target dir's `.assets/` directory and register
 /// it in the pool's SQLite `assets` table. Does NOT interact with git — the

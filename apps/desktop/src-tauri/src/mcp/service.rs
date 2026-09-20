@@ -66,12 +66,12 @@ pub enum CommitPolicy {
 
 #[derive(Debug, Clone, Copy)]
 struct McpMutationPolicy {
-    _origin: crate::attachments::managed_import::MutationOrigin,
+    _origin: crate::attachments::import::MutationOrigin,
     _commit_policy: CommitPolicy,
 }
 
 const MCP_MUTATION_POLICY: McpMutationPolicy = McpMutationPolicy {
-    _origin: crate::attachments::managed_import::MutationOrigin::Mcp,
+    _origin: crate::attachments::import::MutationOrigin::Mcp,
     _commit_policy: CommitPolicy::NoAutocommit,
 };
 

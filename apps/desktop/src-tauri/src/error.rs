@@ -225,6 +225,38 @@ impl From<svode_core::page::PageError> for AppError {
     }
 }
 
+impl From<svode_core::storage::config::StorageConfigError> for AppError {
+    fn from(error: svode_core::storage::config::StorageConfigError) -> Self {
+        use svode_core::storage::config::StorageConfigError;
+        match error {
+            StorageConfigError::Missing(path) => Self::FileNotFound(path),
+            StorageConfigError::Io(error) => Self::Io(error),
+            StorageConfigError::Serde(error) => Self::Serde(error),
+        }
+    }
+}
+
+impl From<svode_core::storage::scope::AssetsScopeError> for AppError {
+    fn from(error: svode_core::storage::scope::AssetsScopeError) -> Self {
+        use svode_core::storage::scope::AssetsScopeError;
+        match error {
+            AssetsScopeError::Config(error) => error.into(),
+            AssetsScopeError::Index(error) => error.into(),
+        }
+    }
+}
+
+impl From<svode_core::storage::policy::StoragePolicyError> for AppError {
+    fn from(error: svode_core::storage::policy::StoragePolicyError) -> Self {
+        use svode_core::storage::policy::StoragePolicyError;
+        match error {
+            StoragePolicyError::Io(error) => Self::Io(error),
+            StoragePolicyError::Storage(message) => Self::Storage(message),
+            StoragePolicyError::Git(error) => error.into(),
+        }
+    }
+}
+
 impl From<svode_core::storage::routes::ManagedRouteError> for AppError {
     fn from(error: svode_core::storage::routes::ManagedRouteError) -> Self {
         use svode_core::storage::routes::ManagedRouteError;
