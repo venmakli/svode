@@ -9,8 +9,8 @@ pub(super) async fn create_collection(
     let parent_path = validate_public_rel_path(&args.parent_path, true)?;
     ensure_inside(Path::new(&space), &parent_path)?;
     let schema = schema_for_create_collection(&args);
-    let outcome = crate::space::structural::create_collection(
-        crate::space::structural::CollectionCreate {
+    let outcome = crate::structure::create_collection(
+        crate::structure::CollectionCreate {
             space: space.clone(),
             parent_path: (!parent_path.is_empty()).then_some(parent_path),
             title: args.title,
@@ -55,7 +55,7 @@ pub(super) async fn convert_to_collection(
     let before = snapshot_structural_paths(Path::new(&space))?;
     let before_project = snapshot_structural_paths(Path::new(&context.project_path))?;
     let index_state = app.state::<IndexState>();
-    let conversion = crate::space::structural::convert_to_collection(
+    let conversion = crate::structure::convert_to_collection(
         &space,
         &path,
         Some(context.project_path.as_str()),
@@ -304,7 +304,7 @@ async fn delete_markdown_content(
     let _policy = MCP_MUTATION_POLICY;
     let (context, space) = resolve_space(app, space_id).await?;
     let index_state = app.state::<IndexState>();
-    let deleted = crate::space::structural::delete(
+    let deleted = crate::structure::delete(
         &space,
         &path,
         Some(context.project_path.as_str()),
@@ -337,7 +337,7 @@ pub(super) async fn rename_content(
     let before = snapshot_structural_paths(Path::new(&space))?;
     let before_project = snapshot_structural_paths(Path::new(&context.project_path))?;
     let index_state = app.state::<IndexState>();
-    crate::space::structural::rename(
+    crate::structure::rename(
         &space,
         &from,
         &to,
@@ -372,7 +372,7 @@ pub(super) async fn move_content(
     let before = snapshot_structural_paths(Path::new(&space))?;
     let before_project = snapshot_structural_paths(Path::new(&context.project_path))?;
     let index_state = app.state::<IndexState>();
-    let new_path = crate::space::structural::move_entry(
+    let new_path = crate::structure::move_entry(
         &space,
         &from,
         &to_parent,
@@ -471,7 +471,7 @@ pub(super) async fn convert_page_to_leaf(
     let before = snapshot_structural_paths(Path::new(&space))?;
     let before_project = snapshot_structural_paths(Path::new(&context.project_path))?;
     let index_state = app.state::<IndexState>();
-    let page = crate::space::structural::convert_to_leaf(
+    let page = crate::structure::convert_to_leaf(
         &space,
         &path,
         Some(context.project_path.as_str()),
@@ -569,7 +569,7 @@ fn structural_operation_result(
 }
 
 fn collection_conversion_result(
-    conversion: crate::space::structural::ConvertToCollectionOutcome,
+    conversion: crate::structure::ConvertToCollectionOutcome,
     changed_paths: Vec<String>,
     affected_project_paths: Vec<String>,
 ) -> ToolCallResult {

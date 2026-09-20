@@ -225,7 +225,7 @@ async fn authorize_mutating_tool(
         "create_collection" => {
             let decoded: CreateCollectionArgs = decode(args.clone())?;
             let parent_path = validate_public_rel_path(&decoded.parent_path, true)?;
-            paths.extend(crate::space::structural::collection_create_schema_paths(
+            paths.extend(crate::structure::collection_create_schema_paths(
                 &space,
                 (!parent_path.is_empty()).then_some(parent_path.as_str()),
                 &decoded.title,
@@ -450,7 +450,7 @@ async fn extend_entry_move_plan(
     paths: &mut Vec<PathBuf>,
 ) -> Result<(), McpBusinessError> {
     paths.extend(
-        crate::space::structural::move_mutation_paths(
+        crate::structure::move_mutation_paths(
             &app.state::<IndexState>(),
             space,
             Some(&context.project_path),
@@ -471,7 +471,7 @@ async fn extend_backlink_plan(
     paths: &mut Vec<PathBuf>,
 ) -> Result<(), McpBusinessError> {
     paths.extend(
-        crate::space::structural::backlink_mutation_paths(
+        crate::structure::backlink_mutation_paths(
             &app.state::<IndexState>(),
             space,
             Some(&context.project_path),

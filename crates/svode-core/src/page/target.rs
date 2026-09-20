@@ -68,6 +68,17 @@ fn project_config(project: &Path) -> Result<ProjectConfig, PageSourceError> {
     serde_json::from_slice(&bytes).map_err(PageSourceError::InvalidConfig)
 }
 
+/// Directories of every registered Space of `project`, in config order.
+/// Used to attribute changed paths to their owning Space.
+pub fn registered_space_dirs(project: &Path) -> Result<Vec<PathBuf>, PageSourceError> {
+    Ok(project_config(project)?
+        .spaces
+        .unwrap_or_default()
+        .iter()
+        .map(|reference| project.join(&reference.path))
+        .collect())
+}
+
 pub fn resolve_space_target(
     project: &Path,
     space_id: Option<&str>,

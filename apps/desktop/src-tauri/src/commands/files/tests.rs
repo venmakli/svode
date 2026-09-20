@@ -6,7 +6,6 @@ use crate::space::types::{SpaceConfig, TreeSpaceConfig};
 use sqlx::SqlitePool;
 use std::fs;
 use svode_core::content_tree::policy::TreeIgnorePolicy;
-use svode_core::index::backlinks::BacklinkIndex;
 use tempfile::TempDir;
 
 fn updates() -> &'static IndexUpdateState {
@@ -24,8 +23,8 @@ async fn collection_create_is_one_structural_action_under_a_leaf_parent() {
     )
     .unwrap();
     let root = tmp.path().to_string_lossy().into_owned();
-    let outcome = crate::space::structural::create_collection(
-        crate::space::structural::CollectionCreate {
+    let outcome = crate::structure::create_collection(
+        crate::structure::CollectionCreate {
             space: root.clone(),
             parent_path: Some("Parent.md".into()),
             title: "Tasks".into(),
@@ -66,8 +65,8 @@ async fn collection_create_rejects_invalid_schema_before_source_effects() {
     )
     .unwrap();
     let root = tmp.path().to_string_lossy().into_owned();
-    let result = crate::space::structural::create_collection(
-        crate::space::structural::CollectionCreate {
+    let result = crate::structure::create_collection(
+        crate::structure::CollectionCreate {
             space: root,
             parent_path: None,
             title: "Tasks".into(),
@@ -107,8 +106,8 @@ async fn collection_create_materializes_two_way_reverse_schema() {
     )
     .unwrap();
     let root = tmp.path().to_string_lossy().into_owned();
-    let outcome = crate::space::structural::create_collection(
-        crate::space::structural::CollectionCreate {
+    let outcome = crate::structure::create_collection(
+        crate::structure::CollectionCreate {
             space: root,
             parent_path: None,
             title: "Tasks".into(),
@@ -147,8 +146,8 @@ async fn collection_create_rolls_back_after_reverse_schema_conflict() {
     )
     .unwrap();
     let root = tmp.path().to_string_lossy().into_owned();
-    let result = crate::space::structural::create_collection(
-        crate::space::structural::CollectionCreate {
+    let result = crate::structure::create_collection(
+        crate::structure::CollectionCreate {
             space: root,
             parent_path: None,
             title: "Tasks".into(),
@@ -245,9 +244,9 @@ fn collect_markdown_rel_paths(tmp: &TempDir, root: &Path) -> Vec<String> {
     rels
 }
 
-async fn delete_for_test(tmp: &TempDir, path: &str) -> crate::space::structural::DeleteOutcome {
+async fn delete_for_test(tmp: &TempDir, path: &str) -> crate::structure::DeleteOutcome {
     let index_state = IndexState::new();
-    crate::space::structural::delete(
+    crate::structure::delete(
         tmp.path().to_str().unwrap(),
         path,
         None,
@@ -302,90 +301,6 @@ fn targeted_markdown_collection_uses_tree_ignore_policy() {
     assert!(collect_markdown_rel_paths(&tmp, &tmp.path().join("node_modules")).is_empty());
 }
 
-#[test]
-fn rebase_legacy_source_after_move_updates_content_and_source_identity() {
-    let tmp = TempDir::new().unwrap();
-    let index = BacklinkIndex::new();
-    std::fs::write(tmp.path().join("Source.md"), "See [Target](Target.md).\n").unwrap();
-    std::fs::write(tmp.path().join("Target.md"), "Target\n").unwrap();
-    index.build(tmp.path()).unwrap();
-
-    std::fs::create_dir_all(tmp.path().join("Moved")).unwrap();
-    std::fs::rename(
-        tmp.path().join("Source.md"),
-        tmp.path().join("Moved").join("Source.md"),
-    )
-    .unwrap();
-
-    let changed = crate::space::structural::rebase_legacy_source_after_move(
-        tmp.path().to_str().unwrap(),
-        &index,
-        "Source.md",
-        "Moved/Source.md",
-    )
-    .unwrap();
-
-    assert!(changed);
-    assert_eq!(
-        std::fs::read_to_string(tmp.path().join("Moved").join("Source.md")).unwrap(),
-        "See [Target](../Target.md).\n"
-    );
-    let backlinks = index.get_backlinks("Target.md");
-    assert_eq!(backlinks.len(), 1);
-    assert_eq!(backlinks[0].source_path, "Moved/Source.md");
-    assert!(
-        index
-            .get_backlinks("Target.md")
-            .iter()
-            .all(|item| item.source_path != "Source.md")
-    );
-}
-
-#[test]
-fn rebase_legacy_source_tree_after_move_preserves_internal_moved_targets() {
-    let tmp = TempDir::new().unwrap();
-    let index = BacklinkIndex::new();
-    std::fs::create_dir_all(tmp.path().join("Folder")).unwrap();
-    std::fs::write(
-        tmp.path().join("Folder").join("Source.md"),
-        "See [Sibling](Sibling.md) and [Outside](../Outside.md).\n",
-    )
-    .unwrap();
-    std::fs::write(tmp.path().join("Folder").join("Sibling.md"), "Sibling\n").unwrap();
-    std::fs::write(tmp.path().join("Outside.md"), "Outside\n").unwrap();
-    index.build(tmp.path()).unwrap();
-
-    std::fs::create_dir_all(tmp.path().join("Archive")).unwrap();
-    std::fs::rename(
-        tmp.path().join("Folder"),
-        tmp.path().join("Archive").join("Folder"),
-    )
-    .unwrap();
-
-    crate::space::structural::rebase_legacy_source_tree_after_move(
-        tmp.path().to_str().unwrap(),
-        &index,
-        "Folder",
-        "Archive/Folder",
-    );
-
-    assert_eq!(
-        std::fs::read_to_string(tmp.path().join("Archive").join("Folder").join("Source.md"))
-            .unwrap(),
-        "See [Sibling](Sibling.md) and [Outside](../../Outside.md).\n"
-    );
-    let moved_internal_backlinks = index.get_backlinks("Archive/Folder/Sibling.md");
-    assert_eq!(moved_internal_backlinks.len(), 1);
-    assert_eq!(
-        moved_internal_backlinks[0].source_path,
-        "Archive/Folder/Source.md"
-    );
-    let outside_backlinks = index.get_backlinks("Outside.md");
-    assert_eq!(outside_backlinks.len(), 1);
-    assert_eq!(outside_backlinks[0].source_path, "Archive/Folder/Source.md");
-    assert!(index.get_backlinks("Folder/Sibling.md").is_empty());
-}
-
 #[tokio::test]
 async fn shared_delete_entry_deletes_document_and_reports_changed_paths() {
     let tmp = TempDir::new().unwrap();
@@ -411,7 +326,7 @@ async fn shared_delete_entry_removes_targeted_index_rows_and_fts() {
         .unwrap();
     let pool = indexed_pool(&state, space).await;
 
-    let result = crate::space::structural::delete(
+    let result = crate::structure::delete(
         space.to_str().unwrap(),
         "Note.md",
         Some(space.to_str().unwrap()),
@@ -576,7 +491,7 @@ async fn targeted_duplicate_indexes_created_tree_only() {
         .unwrap();
     let pool = indexed_pool(&state, space).await;
 
-    let entry = crate::space::structural::duplicate(
+    let entry = crate::structure::duplicate(
         space.to_str().unwrap(),
         "Original.md",
         Some(space.to_str().unwrap()),
@@ -596,68 +511,6 @@ async fn targeted_duplicate_indexes_created_tree_only() {
         .await
         .unwrap();
     assert_eq!(hits.len(), 2);
-}
-
-#[tokio::test]
-async fn moved_collection_tree_replaces_descendant_index_paths() {
-    let tmp = TempDir::new().unwrap();
-    let space = tmp.path();
-    let state = IndexState::new();
-    std::fs::create_dir_all(space.join("Old collection")).unwrap();
-    std::fs::write(
-        space.join("Old collection").join("schema.yaml"),
-        "columns: []\n",
-    )
-    .unwrap();
-    std::fs::write(
-        space.join("Old collection").join("README.md"),
-        "---\ntitle: Old collection\n---\n",
-    )
-    .unwrap();
-    std::fs::write(
-        space.join("Old collection").join("Item.md"),
-        "---\ntitle: Item\n---\n",
-    )
-    .unwrap();
-    for path in ["Old collection/README.md", "Old collection/Item.md"] {
-        index::update::update_entry(&state, space, &space.join(path))
-            .await
-            .unwrap();
-    }
-    let pool = indexed_pool(&state, space).await;
-
-    std::fs::rename(
-        space.join("Old collection"),
-        space.join("Renamed collection"),
-    )
-    .unwrap();
-    crate::space::structural::rebase_project_source_tree_after_move(
-        &state,
-        updates(),
-        Some(space.to_str().unwrap()),
-        space.to_str().unwrap(),
-        None,
-        "Old collection",
-        "Renamed collection",
-        "test_collection_rename",
-    )
-    .await;
-
-    assert_eq!(
-        indexed_paths(&pool).await,
-        vec![
-            "Renamed collection/Item.md".to_string(),
-            "Renamed collection/README.md".to_string(),
-        ]
-    );
-    let item_flags: (Option<String>, i64, i64) = sqlx::query_as(
-        "SELECT collection_root_path, in_collection, is_entry_head FROM entries WHERE file_path = ?",
-    )
-    .bind("Renamed collection/Item.md")
-    .fetch_one(&pool)
-    .await
-    .unwrap();
-    assert_eq!(item_flags, (Some("Renamed collection".to_string()), 1, 1));
 }
 
 #[tokio::test]
@@ -1021,7 +874,7 @@ async fn shared_convert_to_collection_preserves_leaf_and_refreshes_index_tree() 
         .unwrap();
     let pool = indexed_pool(&state, space).await;
 
-    let result = crate::space::structural::convert_to_collection(
+    let result = crate::structure::convert_to_collection(
         space.to_str().unwrap(),
         "Topic.md",
         Some(space.to_str().unwrap()),
@@ -1078,7 +931,7 @@ async fn shared_convert_to_collection_supports_folder_document_and_bare_folder()
     .unwrap();
     std::fs::create_dir_all(space.join("Bare")).unwrap();
 
-    let folder_result = crate::space::structural::convert_to_collection(
+    let folder_result = crate::structure::convert_to_collection(
         space.to_str().unwrap(),
         "Folder/README.md",
         Some(space.to_str().unwrap()),
@@ -1088,7 +941,7 @@ async fn shared_convert_to_collection_supports_folder_document_and_bare_folder()
     )
     .await
     .expect("convert folder document");
-    let bare_result = crate::space::structural::convert_to_collection(
+    let bare_result = crate::structure::convert_to_collection(
         space.to_str().unwrap(),
         "Bare",
         Some(space.to_str().unwrap()),
@@ -1117,7 +970,7 @@ async fn shared_convert_to_collection_rejects_existing_collection_readme() {
     std::fs::write(space.join("Tasks").join("README.md"), "tasks").unwrap();
     std::fs::write(space.join("Tasks").join("schema.yaml"), "columns: []\n").unwrap();
 
-    let result = crate::space::structural::convert_to_collection(
+    let result = crate::structure::convert_to_collection(
         space.to_str().unwrap(),
         "Tasks/README.md",
         Some(space.to_str().unwrap()),
@@ -1140,7 +993,7 @@ async fn shared_convert_to_collection_preserves_leaf_when_target_folder_exists()
     std::fs::write(space.join("Topic.md"), "topic-body").unwrap();
     std::fs::create_dir(space.join("Topic")).unwrap();
 
-    let result = crate::space::structural::convert_to_collection(
+    let result = crate::structure::convert_to_collection(
         space.to_str().unwrap(),
         "Topic.md",
         Some(space.to_str().unwrap()),
@@ -1163,7 +1016,7 @@ async fn shared_delete_entry_returns_error_for_missing_path() {
     let tmp = TempDir::new().unwrap();
     let index_state = IndexState::new();
 
-    let result = crate::space::structural::delete(
+    let result = crate::structure::delete(
         tmp.path().to_str().unwrap(),
         "Missing.md",
         None,
@@ -1299,7 +1152,7 @@ async fn shared_rename_rejects_parent_change_and_preserves_sibling_position() {
     svode_core::content_tree::write_order(space, &order).unwrap();
     let index_state = IndexState::new();
 
-    let invalid = crate::space::structural::rename(
+    let invalid = crate::structure::rename(
         space.to_str().unwrap(),
         "a.md",
         "target/a.md",
@@ -1312,7 +1165,7 @@ async fn shared_rename_rejects_parent_change_and_preserves_sibling_position() {
     assert!(invalid.is_err());
     assert!(space.join("a.md").is_file());
 
-    crate::space::structural::rename(
+    crate::structure::rename(
         space.to_str().unwrap(),
         "a.md",
         "renamed.md",
@@ -1339,25 +1192,18 @@ async fn shared_move_nest_and_unnest_use_the_structural_owner() {
     std::fs::write(tmp.path().join("Page.md"), "---\ntitle: Page\n---\nbody").unwrap();
     let state = IndexState::new();
 
-    let moved = crate::space::structural::move_entry(
-        space,
-        "Page.md",
-        "target",
-        None,
-        &state,
-        updates(),
-        None,
-    )
-    .await
-    .unwrap();
+    let moved =
+        crate::structure::move_entry(space, "Page.md", "target", None, &state, updates(), None)
+            .await
+            .unwrap();
     assert_eq!(moved, "target/Page.md");
 
-    let nested = crate::space::structural::nest(space, &moved, None, &state, updates(), None)
+    let nested = crate::structure::nest(space, &moved, None, &state, updates(), None)
         .await
         .unwrap();
     assert_eq!(nested, "target/Page/README.md");
 
-    let leaf = crate::space::structural::unnest(space, &nested, None, &state, updates(), None)
+    let leaf = crate::structure::unnest(space, &nested, None, &state, updates(), None)
         .await
         .unwrap();
     assert_eq!(leaf, "target/Page.md");

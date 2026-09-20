@@ -110,6 +110,7 @@ pub async fn update_entry(
     .await?)
 }
 
+#[cfg(test)]
 pub async fn publish_managed_path(
     state: &IndexState,
     updates: &IndexUpdateState,

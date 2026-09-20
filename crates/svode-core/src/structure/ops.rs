@@ -1,21 +1,53 @@
+//! Structural workflows over the content tree: create, delete, move, rename,
+//! nest/unnest, duplicate and the shape conversions.
+//!
+//! Each operation authorizes its touched-set, changes the source, rewrites the
+//! links and relations it invalidates, republishes the derived projection and
+//! hands the resulting history to the commit sink. Only the compound Collection
+//! create rolls back; the other intents keep their existing partial outcomes.
+
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 
-use crate::error::AppError;
+use crate::collections::engine::{self, CollectionSchema};
+use crate::content_tree::policy::TreeIgnorePolicy;
 use crate::git::access::ensure_mutation_paths_were_authorized;
-use crate::git::autocommit::{AutocommitService, StructuralOp};
-use crate::index::update::IndexUpdateState;
-use crate::index::{self, IndexState};
-use crate::repo_path::{RootMode, normalize_repo_relative};
-use svode_core::collections::engine::{self as engine, CollectionSchema};
-use svode_core::content_tree::policy::TreeIgnorePolicy;
-use svode_core::index::backlinks::{BacklinkIndex, ModifiedLinkSource};
-use svode_core::page::entry::{self, Entry};
+use crate::git::path::{RootMode, normalize_repo_relative};
+use crate::git::pending::StructuralOp;
+use crate::index::backlinks::{BacklinkIndex, ModifiedLinkSource, dedupe_modified_sources};
+use crate::index::state::IndexRuntimeState;
+use crate::index::update::{self, IndexUpdateState};
+use crate::page::PageError;
+use crate::page::dates::GitDateExecutor;
+use crate::page::entry::{self, Entry};
 
-use super::config;
+use super::commit::{StructuralCommitSink, schedule_structural_paths};
+use super::naming::{
+    abs_entry_path, basename, collection_schema_path, collection_schema_path_rel,
+    entry_commit_name, entry_history_commit_name, entry_history_name,
+    entry_in_sensitive_collection, entry_paths_with_order, entry_rename_op, normalize_rel_lossy,
+    order_path, rel_changed_path, root_path_for_head, same_parent,
+};
+use super::plan::{delete_mutation_paths, revalidate_backlink_plan};
+
+/// Shared runtime a structural operation publishes into.
+pub struct StructureRuntime<'a, E> {
+    pub index: &'a IndexRuntimeState,
+    pub updates: &'a IndexUpdateState,
+    pub git_dates: Option<&'a E>,
+    pub commits: Option<&'a dyn StructuralCommitSink>,
+}
+
+impl<E> Clone for StructureRuntime<'_, E> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<E> Copy for StructureRuntime<'_, E> {}
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -58,197 +90,33 @@ pub struct CollectionCreateOutcome {
     pub changed_paths: Vec<PathBuf>,
 }
 
-fn collection_schema_path(space: &str, collection_path: &str) -> PathBuf {
-    if collection_path.is_empty() || collection_path == "." {
-        Path::new(space).join("schema.yaml")
-    } else {
-        Path::new(space).join(collection_path).join("schema.yaml")
+fn push_unique_path(paths: &mut Vec<String>, path: String) {
+    if !paths.iter().any(|existing| existing == &path) {
+        paths.push(path);
     }
 }
 
-fn collection_schema_path_rel(collection_path: &str) -> String {
-    if collection_path.is_empty() || collection_path == "." {
-        "schema.yaml".to_string()
-    } else {
-        format!("{collection_path}/schema.yaml")
-    }
-}
-
-fn root_path_for_head(path: &str) -> &str {
-    if path
-        .rsplit_once('/')
-        .is_some_and(|(_, name)| name.eq_ignore_ascii_case("README.md"))
-    {
-        path.rsplit_once('/')
-            .map(|(parent, _)| parent)
-            .unwrap_or(path)
-    } else {
-        path
-    }
-}
-
-pub fn abs_entry_path(space: &str, rel_path: &str) -> PathBuf {
-    Path::new(space).join(rel_path)
-}
-
-pub fn order_path(space: &str) -> PathBuf {
-    Path::new(space).join(".svode").join("order.json")
-}
-
-pub fn entry_paths_with_order(
-    space: &str,
-    paths: impl IntoIterator<Item = PathBuf>,
-) -> Vec<PathBuf> {
-    let mut out = vec![order_path(space)];
-    out.extend(paths);
-    out
-}
-
-pub fn grouped_abs_paths_by_space(
-    project_path: Option<&str>,
-    fallback_space: &str,
-    paths: &[PathBuf],
-) -> HashMap<PathBuf, Vec<PathBuf>> {
-    let mut spaces = vec![PathBuf::from(fallback_space)];
-    if let Some(project) = project_path.filter(|path| !path.is_empty()) {
-        let project_root = PathBuf::from(project);
-        if !spaces.iter().any(|space| same_path(space, &project_root)) {
-            spaces.push(project_root.clone());
-        }
-        match config::read_space_config(&project_root) {
-            Ok(config) => {
-                for space_ref in config.spaces.as_deref().unwrap_or(&[]) {
-                    let child = project_root.join(&space_ref.path);
-                    if !spaces.iter().any(|space| same_path(space, &child)) {
-                        spaces.push(child);
-                    }
-                }
-            }
-            Err(error) => {
-                tracing::warn!("could not read project config for changed paths: {error}")
-            }
-        }
-    }
-    spaces.sort_by_key(|space| std::cmp::Reverse(space.as_os_str().len()));
-
-    let mut grouped: HashMap<PathBuf, Vec<PathBuf>> = HashMap::new();
-    for path in paths {
-        let owner = spaces
-            .iter()
-            .find(|space| path.starts_with(space))
-            .cloned()
-            .unwrap_or_else(|| PathBuf::from(fallback_space));
-        grouped.entry(owner).or_default().push(path.clone());
-    }
-    grouped
-}
-
-fn same_path(left: &Path, right: &Path) -> bool {
-    let normalize = |path: &Path| {
-        path.canonicalize()
-            .unwrap_or_else(|_| path.to_path_buf())
-            .to_string_lossy()
-            .replace('\\', "/")
-            .trim_end_matches('/')
-            .to_string()
-    };
-    normalize(left) == normalize(right)
-}
-
-fn basename(path: &str) -> String {
-    path.rsplit('/').next().unwrap_or(path).to_string()
-}
-
-fn entry_history_name(path: &str) -> String {
-    let normalized = path.trim_matches('/').replace('\\', "/");
-    let path = Path::new(&normalized);
-    if path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .is_some_and(|name| name.eq_ignore_ascii_case("README.md"))
-    {
-        return path
-            .parent()
-            .and_then(|parent| parent.file_name())
-            .and_then(|name| name.to_str())
-            .unwrap_or("README.md")
-            .to_string();
-    }
-    path.file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or(&normalized)
-        .to_string()
-}
-
-fn entry_in_sensitive_collection(space: &str, path: &str) -> bool {
-    engine::schema_response(space, path)
-        .ok()
-        .flatten()
-        .is_some_and(|response| engine::schema_has_sensitive_columns(&response.schema))
-}
-
-pub fn entry_commit_name(space: &str, path: &str) -> String {
-    if entry_in_sensitive_collection(space, path) {
-        "collection entry".to_string()
-    } else {
-        basename(path)
-    }
-}
-
-pub fn entry_history_commit_name(space: &str, path: &str) -> String {
-    if entry_in_sensitive_collection(space, path) {
-        "collection entry".to_string()
-    } else {
-        entry_history_name(path)
-    }
-}
-
-pub fn entry_rename_op(space: &str, from: &str, to: &str) -> StructuralOp {
-    if entry_in_sensitive_collection(space, from) || entry_in_sensitive_collection(space, to) {
-        StructuralOp::Rename {
-            old: "collection entry".to_string(),
-            new: "collection entry".to_string(),
-        }
-    } else {
-        StructuralOp::Rename {
-            old: basename(from),
-            new: basename(to),
-        }
-    }
-}
-
-pub fn maybe_autocommit_structural_paths(
-    autocommit: &AutocommitService,
-    project_path: Option<&str>,
-    space_path: &str,
-    op: StructuralOp,
-    paths: Vec<PathBuf>,
-) {
-    let Some(project) = project_path.filter(|path| !path.is_empty()) else {
-        return;
-    };
-    autocommit.schedule_structural_paths(
-        PathBuf::from(project),
-        PathBuf::from(space_path),
-        op,
-        paths,
-    );
-}
-
-async fn schedule_modified_source_spaces(
-    state: &IndexState,
-    autocommit: &AutocommitService,
+/// Record the same structural op in every Space whose sources were rewritten.
+async fn schedule_modified_source_spaces<E: GitDateExecutor>(
+    runtime: StructureRuntime<'_, E>,
     project_path: Option<&str>,
     modified: &[ModifiedLinkSource],
     op: StructuralOp,
 ) {
-    let Some(project) = project_path.filter(|path| !path.is_empty()) else {
+    let (Some(commits), Some(project)) = (
+        runtime.commits,
+        project_path.filter(|path| !path.is_empty()),
+    ) else {
         return;
     };
     let project = Path::new(project);
     let mut by_space: HashMap<PathBuf, Vec<PathBuf>> = HashMap::new();
     for item in modified {
-        match state.space_path_of(project, item.space_id.as_deref()).await {
+        match runtime
+            .index
+            .space_path_of(project, item.space_id.as_deref())
+            .await
+        {
             Ok(space_path) => by_space
                 .entry(space_path.clone())
                 .or_default()
@@ -257,11 +125,11 @@ async fn schedule_modified_source_spaces(
         }
     }
     for (space_path, paths) in by_space {
-        autocommit.schedule_structural_paths(project.to_path_buf(), space_path, op.clone(), paths);
+        commits.schedule(project, &space_path, op.clone(), paths);
     }
 }
 
-async fn ensure_backlinks_before_structural(state: &IndexState, project_path: Option<&str>) {
+async fn ensure_backlinks_before_structural(state: &IndexRuntimeState, project_path: Option<&str>) {
     let Some(project) = project_path.filter(|path| !path.is_empty()) else {
         return;
     };
@@ -271,15 +139,6 @@ async fn ensure_backlinks_before_structural(state: &IndexState, project_path: Op
     {
         tracing::warn!("pre-structural backlink rebuild failed: {error}");
     }
-}
-
-fn same_parent(left: &str, right: &str) -> bool {
-    Path::new(left).parent().unwrap_or(Path::new(""))
-        == Path::new(right).parent().unwrap_or(Path::new(""))
-}
-
-fn normalize_rel_lossy(path: &Path) -> String {
-    path.to_string_lossy().replace('\\', "/")
 }
 
 fn moved_child_old_path(new_child: &str, old_root: &str, new_root: &str) -> String {
@@ -294,9 +153,9 @@ fn moved_child_old_path(new_child: &str, old_root: &str, new_root: &str) -> Stri
     }
 }
 
-async fn rebase_project_source_after_move(
-    state: &IndexState,
-    updates: &IndexUpdateState,
+/// Rewrite the links inside the single source that moved.
+async fn rebase_project_source_after_move<E: GitDateExecutor>(
+    runtime: StructureRuntime<'_, E>,
     project_path: Option<&str>,
     space: &str,
     space_id: Option<&str>,
@@ -308,15 +167,17 @@ async fn rebase_project_source_after_move(
     let Some(project) = project_path.filter(|path| !path.is_empty()) else {
         return Vec::new();
     };
-    match state
+    match runtime
+        .index
         .rebase_source_links_project(Path::new(project), space_id, old_path, new_path)
         .await
     {
         Ok(Some(source)) => {
             if publish_projection {
-                let _ = index::update::publish_paths_or_repair(
-                    state,
-                    updates,
+                let _ = update::publish_paths_or_repair(
+                    runtime.index,
+                    runtime.updates,
+                    runtime.git_dates,
                     project_path,
                     space,
                     vec![Path::new(space).join(new_path)],
@@ -334,9 +195,9 @@ async fn rebase_project_source_after_move(
     }
 }
 
-pub(crate) async fn rebase_project_source_tree_after_move(
-    state: &IndexState,
-    updates: &IndexUpdateState,
+/// Rewrite the links inside every source of a moved folder.
+pub(crate) async fn rebase_project_source_tree_after_move<E: GitDateExecutor>(
+    runtime: StructureRuntime<'_, E>,
     project_path: Option<&str>,
     space: &str,
     space_id: Option<&str>,
@@ -347,8 +208,9 @@ pub(crate) async fn rebase_project_source_tree_after_move(
     let Some(project) = project_path.filter(|path| !path.is_empty()) else {
         return Vec::new();
     };
+    let state = runtime.index;
     let root = Path::new(space);
-    let files = match svode_core::content_tree::collect_markdown_paths(
+    let files = match crate::content_tree::collect_markdown_paths(
         root,
         &root.join(new_root),
         &TreeIgnorePolicy::from_space_root(root),
@@ -375,7 +237,7 @@ pub(crate) async fn rebase_project_source_tree_after_move(
         let old_abs = root.join(&old_rel);
         let new_abs = root.join(&new_rel);
         if let Ok(content) = fs::read_to_string(&new_abs) {
-            let rebased = svode_core::index::backlinks::rebase_source_links_between_moved_tree(
+            let rebased = crate::index::backlinks::rebase_source_links_between_moved_tree(
                 &content,
                 &old_abs,
                 &new_abs,
@@ -393,9 +255,10 @@ pub(crate) async fn rebase_project_source_tree_after_move(
             .update_file_backlinks(Path::new(project), space_id, &new_rel)
             .await;
     }
-    let _ = index::update::publish_paths_or_repair(
+    let _ = update::publish_paths_or_repair(
         state,
-        updates,
+        runtime.updates,
+        runtime.git_dates,
         project_path,
         space,
         deleted
@@ -406,9 +269,9 @@ pub(crate) async fn rebase_project_source_tree_after_move(
         context,
     )
     .await;
-    if let Err(error) = svode_core::index::update::rebase_space_collection_schema_manifest(
-        &state.core,
-        updates.core(),
+    if let Err(error) = update::rebase_space_collection_schema_manifest(
+        state,
+        runtime.updates,
         root,
         old_root,
         new_root,
@@ -420,19 +283,20 @@ pub(crate) async fn rebase_project_source_tree_after_move(
     modified
 }
 
-pub fn rebase_legacy_source_after_move(
+/// Space without an open Project: rebase against the Space-local backlink index.
+pub(crate) fn rebase_legacy_source_after_move(
     space: &str,
     backlinks: &BacklinkIndex,
     old_path: &str,
     new_path: &str,
-) -> Result<bool, AppError> {
+) -> Result<bool, PageError> {
     let root = Path::new(space);
     let path = root.join(new_path);
     if !path.exists() {
         return Ok(false);
     }
     let content = fs::read_to_string(&path)?;
-    let updated = svode_core::index::backlinks::rebase_source_links(&content, old_path, new_path);
+    let updated = crate::index::backlinks::rebase_source_links(&content, old_path, new_path);
     backlinks.remove_file(old_path);
     if updated == content {
         let _ = backlinks.update_file(root, new_path);
@@ -450,7 +314,7 @@ pub(crate) fn rebase_legacy_source_tree_after_move(
     new_root: &str,
 ) {
     let root = Path::new(space);
-    let Ok(files) = svode_core::content_tree::collect_markdown_paths(
+    let Ok(files) = crate::content_tree::collect_markdown_paths(
         root,
         &root.join(new_root),
         &TreeIgnorePolicy::from_space_root(root),
@@ -468,7 +332,7 @@ pub(crate) fn rebase_legacy_source_tree_after_move(
         let Ok(content) = fs::read_to_string(&new_abs) else {
             continue;
         };
-        let updated = svode_core::index::backlinks::rebase_source_links_between_moved_tree(
+        let updated = crate::index::backlinks::rebase_source_links_between_moved_tree(
             &content,
             &old_abs,
             &new_abs,
@@ -482,116 +346,16 @@ pub(crate) fn rebase_legacy_source_tree_after_move(
     }
 }
 
-pub async fn move_mutation_paths(
-    state: &IndexState,
-    space: &str,
-    project_path: Option<&str>,
-    from: &str,
-    to: &str,
-) -> Result<Vec<PathBuf>, AppError> {
-    let Some(project) = project_path.filter(|path| !path.is_empty()) else {
-        let mut paths = vec![PathBuf::from(space)];
-        paths.extend(svode_core::storage::routes::managed_attachment_policy_paths(space, None));
-        return Ok(paths);
-    };
-    let mut paths =
-        engine::relation_move_mutation_paths_with_project(space, Some(project), from, to)?;
-    let space_id = state.core.space_id_for_dir(Path::new(space)).await;
-    let link_plan = if Path::new(space).join(from).is_dir() {
-        state
-            .plan_links_on_folder_rename_project(Path::new(project), space_id.as_deref(), from)
-            .await?
-    } else {
-        state
-            .plan_links_on_rename_project(Path::new(project), space_id.as_deref(), from)
-            .await?
-    };
-    paths.extend_from_slice(link_plan.mutation_paths());
-    paths
-        .extend(svode_core::storage::routes::managed_attachment_policy_paths(space, Some(project)));
-    paths.push(PathBuf::from(space));
-    paths.sort();
-    paths.dedup();
-    Ok(paths)
-}
-
-pub async fn backlink_mutation_paths(
-    state: &IndexState,
-    space: &str,
-    project_path: Option<&str>,
-    from: &str,
-    folder_rename: bool,
-) -> Result<Vec<PathBuf>, AppError> {
-    let Some(project) = project_path.filter(|path| !path.is_empty()) else {
-        return Ok(vec![PathBuf::from(space)]);
-    };
-    let space_id = state.core.space_id_for_dir(Path::new(space)).await;
-    let plan = if folder_rename {
-        state
-            .plan_links_on_folder_rename_project(Path::new(project), space_id.as_deref(), from)
-            .await?
-    } else {
-        state
-            .plan_links_on_rename_project(Path::new(project), space_id.as_deref(), from)
-            .await?
-    };
-    let mut paths = plan.mutation_paths().to_vec();
-    paths.push(PathBuf::from(space));
-    Ok(paths)
-}
-
-async fn revalidate_backlink_plan(
-    state: &IndexState,
-    space: &str,
-    project_path: Option<&str>,
-    from: &str,
-    folder_rename: bool,
-) -> Result<(), AppError> {
-    let paths = backlink_mutation_paths(state, space, project_path, from, folder_rename).await?;
-    ensure_mutation_paths_were_authorized(&paths)
-}
-
-fn rel_changed_path(space: &str, path: &Path) -> String {
-    path.strip_prefix(space)
-        .unwrap_or(path)
-        .to_string_lossy()
-        .replace('\\', "/")
-}
-
-fn push_unique_path(paths: &mut Vec<String>, path: String) {
-    if !paths.iter().any(|existing| existing == &path) {
-        paths.push(path);
-    }
-}
-
-pub fn delete_mutation_paths(
-    space: &str,
-    project_path: Option<&str>,
-    path: &str,
-) -> Result<Vec<PathBuf>, AppError> {
-    let deleted = entry::planned_deleted_entry_paths(space, path)?;
-    let mut paths = engine::cascade_clean_deleted_entries_mutation_paths_with_project(
-        space,
-        project_path.filter(|path| !path.is_empty()),
-        &deleted,
-    )?;
-    paths.push(PathBuf::from(space));
-    paths.sort();
-    paths.dedup();
-    Ok(paths)
-}
-
-pub async fn delete(
+pub async fn delete<E: GitDateExecutor>(
     space: &str,
     path: &str,
     project_path: Option<&str>,
-    state: &IndexState,
-    updates: &IndexUpdateState,
-    autocommit: Option<&AutocommitService>,
-) -> Result<DeleteOutcome, AppError> {
+    runtime: StructureRuntime<'_, E>,
+) -> Result<DeleteOutcome, PageError> {
     let planned = delete_mutation_paths(space, project_path, path)?;
     ensure_mutation_paths_were_authorized(&planned)?;
-    let backlink_index = state.core.backlinks_for_space_dir(Path::new(space)).await;
+    let state = runtime.index;
+    let backlink_index = state.backlinks_for_space_dir(Path::new(space)).await;
     let deleted = entry::delete_with_project(
         space,
         path,
@@ -599,7 +363,7 @@ pub async fn delete(
         project_path.filter(|path| !path.is_empty()),
     )?;
     let cascade_touched_by_space =
-        grouped_abs_paths_by_space(project_path, space, &deleted.cascade_touched);
+        super::naming::grouped_abs_paths_by_space(project_path, space, &deleted.cascade_touched);
     let cascade_touched = deleted
         .cascade_touched
         .iter()
@@ -617,9 +381,10 @@ pub async fn delete(
     if let Some(project) = project_path.filter(|path| !path.is_empty()) {
         let mut needs_reindex = false;
         for deleted_path in &deleted.deleted_paths {
-            if let Err(error) = index::update::publish_managed_path(
+            if let Err(error) = update::publish_managed_path(
                 state,
-                updates,
+                runtime.updates,
+                runtime.git_dates,
                 Path::new(project),
                 &Path::new(space).join(deleted_path),
             )
@@ -630,12 +395,13 @@ pub async fn delete(
             }
         }
         if needs_reindex {
-            index::update::repair_space_dir(state, updates, space).await;
+            update::repair_space_dir(state, runtime.updates, runtime.git_dates, space).await;
         } else {
             for (owner_space, paths) in &cascade_touched_by_space {
-                let _ = index::update::publish_paths_or_repair(
+                let _ = update::publish_paths_or_repair(
                     state,
-                    updates,
+                    runtime.updates,
+                    runtime.git_dates,
                     Some(project),
                     &owner_space.to_string_lossy(),
                     paths.clone(),
@@ -645,10 +411,10 @@ pub async fn delete(
             }
         }
     } else {
-        index::update::repair_space_dir(state, updates, space).await;
+        update::repair_space_dir(state, runtime.updates, runtime.git_dates, space).await;
     }
 
-    if let Some(autocommit) = autocommit {
+    if runtime.commits.is_some() {
         let mut paths_by_space = cascade_touched_by_space;
         paths_by_space
             .entry(PathBuf::from(space))
@@ -659,8 +425,8 @@ pub async fn delete(
             ));
         let op = StructuralOp::Delete(entry_commit_name(space, path));
         for (owner_space, paths) in paths_by_space {
-            maybe_autocommit_structural_paths(
-                autocommit,
+            schedule_structural_paths(
+                runtime.commits,
                 project_path,
                 &owner_space.to_string_lossy(),
                 op.clone(),
@@ -682,25 +448,25 @@ pub fn create_folder(
     parent_path: Option<&str>,
     name: &str,
     project_path: Option<&str>,
-    autocommit: Option<&AutocommitService>,
-) -> Result<String, AppError> {
+    commits: Option<&dyn StructuralCommitSink>,
+) -> Result<String, PageError> {
     let folder_path = entry::create_folder(space, parent_path, name)?;
-    if let Some(autocommit) = autocommit {
-        maybe_autocommit_structural_paths(
-            autocommit,
-            project_path,
-            space,
-            StructuralOp::Create(entry_commit_name(space, &folder_path)),
-            entry_paths_with_order(space, [abs_entry_path(space, &folder_path)]),
-        );
-    }
+    schedule_structural_paths(
+        commits,
+        project_path,
+        space,
+        StructuralOp::Create(entry_commit_name(space, &folder_path)),
+        entry_paths_with_order(space, [abs_entry_path(space, &folder_path)]),
+    );
     Ok(folder_path)
 }
 
-fn resolved_create_parent(
+/// Resolve the requested create parent. A leaf parent is reported together with
+/// the bytes needed to restore it if the compound create later rolls back.
+pub(crate) fn resolved_create_parent(
     space: &str,
     requested: Option<&str>,
-) -> Result<(Option<String>, Option<(String, String, Vec<u8>)>), AppError> {
+) -> Result<(Option<String>, Option<(String, String, Vec<u8>)>), PageError> {
     let Some(requested) = requested.map(str::trim).filter(|path| !path.is_empty()) else {
         return Ok((None, None));
     };
@@ -716,15 +482,15 @@ fn resolved_create_parent(
         if root.join(&candidate).is_file() {
             candidate
         } else {
-            return Err(AppError::FileNotFound(requested.to_string()));
+            return Err(PageError::FileNotFound(requested.to_string()));
         }
     } else {
-        return Err(AppError::FileNotFound(requested.to_string()));
+        return Err(PageError::FileNotFound(requested.to_string()));
     };
     let stem = Path::new(&leaf)
         .file_stem()
         .and_then(|stem| stem.to_str())
-        .ok_or_else(|| AppError::General("parent Page has an invalid filename".into()))?;
+        .ok_or_else(|| PageError::General("parent Page has an invalid filename".into()))?;
     let base = Path::new(&leaf).parent().unwrap_or(Path::new(""));
     let parent = if base.as_os_str().is_empty() {
         stem.to_string()
@@ -741,8 +507,8 @@ fn rollback_collection_create(
     collection_path: &str,
     parent_conversion: Option<&(String, String, Vec<u8>)>,
     order_before: Option<&[u8]>,
-    cause: AppError,
-) -> AppError {
+    cause: PageError,
+) -> PageError {
     let root = Path::new(space);
     let mut failed = Vec::new();
     for path in [root.join(collection_path), root.join(planned_page)] {
@@ -783,76 +549,58 @@ fn rollback_collection_create(
     if failed.is_empty() {
         cause
     } else {
-        AppError::PageWriteRecovery {
+        PageError::Recovery {
             cause: cause.to_string(),
             paths: failed,
         }
     }
 }
 
-pub fn collection_create_schema_paths(
-    space: &str,
-    parent_path: Option<&str>,
-    title: &str,
-    schema: CollectionSchema,
-    allocate_unique_title: bool,
-    project_path: Option<&str>,
-) -> Result<Vec<PathBuf>, AppError> {
-    let (parent, _) = resolved_create_parent(space, parent_path)?;
-    let planned = entry::planned_source_create(
-        space,
-        parent.as_deref(),
-        title,
-        allocate_unique_title,
-        false,
-    )?;
-    let collection_path = planned
-        .path
-        .strip_suffix(".md")
-        .ok_or_else(|| AppError::General("Collection Page must be Markdown".into()))?;
-    Ok(
-        engine::prepare_initial_collection_schema(space, collection_path, schema, project_path)?
-            .paths()
-            .to_vec(),
-    )
-}
-
-pub async fn create_collection<F, Fut>(
+/// Compound create: Page, folder conversion and initial schema succeed together
+/// or the Space is restored to its previous shape.
+pub async fn create_collection<E, F, Fut, Err>(
     request: CollectionCreate,
-    state: &IndexState,
-    updates: &IndexUpdateState,
-    autocommit: Option<&AutocommitService>,
+    runtime: StructureRuntime<'_, E>,
     authorize: F,
-) -> Result<CollectionCreateOutcome, AppError>
+) -> Result<CollectionCreateOutcome, Err>
 where
+    E: GitDateExecutor,
     F: FnOnce(Vec<PathBuf>) -> Fut,
-    Fut: std::future::Future<Output = Result<Vec<PathBuf>, AppError>>,
+    Fut: std::future::Future<Output = Result<Vec<PathBuf>, Err>>,
+    Err: From<PageError>,
 {
     let (parent, parent_conversion) =
-        resolved_create_parent(&request.space, request.parent_path.as_deref())?;
+        resolved_create_parent(&request.space, request.parent_path.as_deref())
+            .map_err(Err::from)?;
     let planned = entry::planned_source_create(
         &request.space,
         parent.as_deref(),
         &request.title,
         request.allocate_unique_title,
         false,
-    )?;
+    )
+    .map_err(Err::from)?;
     let collection_path = planned
         .path
         .strip_suffix(".md")
-        .ok_or_else(|| AppError::General("Collection Page must be Markdown".into()))?
+        .ok_or_else(|| {
+            Err::from(PageError::General(
+                "Collection Page must be Markdown".into(),
+            ))
+        })?
         .to_string();
     let prepared_schema = engine::prepare_initial_collection_schema(
         &request.space,
         &collection_path,
         request.schema,
         request.project.as_deref(),
-    )?;
+    )
+    .map_err(|error| Err::from(PageError::from(error)))?;
     let schema_paths = prepared_schema.paths().to_vec();
     let order_before = fs::read(order_path(&request.space)).ok();
     let authorization_space = request.space.clone();
-    let page = crate::page::create(
-        svode_core::page::create::PageCreate {
+    let page = crate::page::create::create(
+        crate::page::create::PageCreate {
             space: request.space.clone(),
             parent_path: parent,
             title: planned.title,
@@ -867,8 +615,9 @@ where
             project: request.project.clone(),
             publish_projection: false,
         },
-        state,
-        updates,
+        runtime.index,
+        runtime.updates,
+        runtime.git_dates,
         |mut paths| {
             paths.extend(schema_paths);
             paths.push(PathBuf::from(&authorization_space));
@@ -882,57 +631,60 @@ where
         .page
         .path
         .strip_suffix(".md")
-        .ok_or_else(|| AppError::General("created Collection Page must be Markdown".into()))?
+        .ok_or_else(|| {
+            Err::from(PageError::General(
+                "created Collection Page must be Markdown".into(),
+            ))
+        })?
         .to_string();
     if actual_collection_path != collection_path {
-        return Err(rollback_collection_create(
+        return Err(Err::from(rollback_collection_create(
             &request.space,
             &page.page.path,
             &actual_collection_path,
             parent_conversion.as_ref(),
             order_before.as_deref(),
-            AppError::General("Collection create plan changed before execution".into()),
-        ));
+            PageError::General("Collection create plan changed before execution".into()),
+        )));
     }
     let conversion = match convert_to_collection_with_publication(
         &request.space,
         &page.page.path,
         request.project.as_deref(),
-        state,
-        updates,
-        None,
+        runtime,
         false,
     )
     .await
     {
         Ok(conversion) => conversion,
         Err(error) => {
-            return Err(rollback_collection_create(
+            return Err(Err::from(rollback_collection_create(
                 &request.space,
                 &page.page.path,
                 &collection_path,
                 parent_conversion.as_ref(),
                 order_before.as_deref(),
                 error,
-            ));
+            )));
         }
     };
     let schema_outcome = match prepared_schema.apply() {
         Ok(outcome) => outcome,
         Err(error) => {
-            return Err(rollback_collection_create(
+            return Err(Err::from(rollback_collection_create(
                 &request.space,
                 &page.page.path,
                 &collection_path,
                 parent_conversion.as_ref(),
                 order_before.as_deref(),
                 error.into(),
-            ));
+            )));
         }
     };
-    index::update::publish_tree_or_repair(
-        state,
-        updates,
+    update::publish_tree_or_repair(
+        runtime.index,
+        runtime.updates,
+        runtime.git_dates,
         request.project.as_deref(),
         &request.space,
         &collection_path,
@@ -945,18 +697,16 @@ where
     changed_paths.push(collection_schema_path(&request.space, &collection_path));
     changed_paths.sort();
     changed_paths.dedup();
-    if let Some(autocommit) = autocommit {
-        maybe_autocommit_structural_paths(
-            autocommit,
-            request.project.as_deref(),
+    schedule_structural_paths(
+        runtime.commits,
+        request.project.as_deref(),
+        &request.space,
+        StructuralOp::Create(entry_history_commit_name(
             &request.space,
-            StructuralOp::Create(entry_history_commit_name(
-                &request.space,
-                &conversion.readme_path,
-            )),
-            changed_paths.clone(),
-        );
-    }
+            &conversion.readme_path,
+        )),
+        changed_paths.clone(),
+    );
     Ok(CollectionCreateOutcome {
         collection_path,
         collection: conversion.entry,
@@ -965,36 +715,24 @@ where
     })
 }
 
-pub async fn convert_to_folder(
+pub async fn convert_to_folder<E: GitDateExecutor>(
     space: &str,
     file_path: &str,
     project_path: Option<&str>,
-    state: &IndexState,
-    updates: &IndexUpdateState,
-    autocommit: Option<&AutocommitService>,
-) -> Result<Entry, AppError> {
-    convert_to_folder_with_publication(
-        space,
-        file_path,
-        project_path,
-        state,
-        updates,
-        autocommit,
-        true,
-    )
-    .await
+    runtime: StructureRuntime<'_, E>,
+) -> Result<Entry, PageError> {
+    convert_to_folder_with_publication(space, file_path, project_path, runtime, true).await
 }
 
-async fn convert_to_folder_with_publication(
+async fn convert_to_folder_with_publication<E: GitDateExecutor>(
     space: &str,
     file_path: &str,
     project_path: Option<&str>,
-    state: &IndexState,
-    updates: &IndexUpdateState,
-    autocommit: Option<&AutocommitService>,
+    runtime: StructureRuntime<'_, E>,
     publish_projection: bool,
-) -> Result<Entry, AppError> {
-    let backlinks = state.core.backlinks_for_space_dir(Path::new(space)).await;
+) -> Result<Entry, PageError> {
+    let state = runtime.index;
+    let backlinks = state.backlinks_for_space_dir(Path::new(space)).await;
     ensure_backlinks_before_structural(state, project_path).await;
     revalidate_backlink_plan(state, space, project_path, file_path, false).await?;
     let project_aware = project_path.filter(|path| !path.is_empty()).is_some();
@@ -1011,10 +749,11 @@ async fn convert_to_folder_with_publication(
     let old_leaf = format!("{folder_root}.md");
     if let Some(project) = project_path.filter(|path| !path.is_empty()) {
         let project = Path::new(project);
-        let target_space_id = state.core.space_id_for_dir(Path::new(space)).await;
+        let target_space_id = state.space_id_for_dir(Path::new(space)).await;
         let mut modified = state
             .update_links_on_rename_project(
-                updates,
+                runtime.updates,
+                runtime.git_dates,
                 project,
                 target_space_id.as_deref(),
                 &old_leaf,
@@ -1028,8 +767,7 @@ async fn convert_to_folder_with_publication(
             });
         modified.extend(
             rebase_project_source_after_move(
-                state,
-                updates,
+                runtime,
                 project_path,
                 space,
                 target_space_id.as_deref(),
@@ -1040,17 +778,14 @@ async fn convert_to_folder_with_publication(
             )
             .await,
         );
-        let modified = svode_core::index::backlinks::dedupe_modified_sources(modified);
-        if let Some(autocommit) = autocommit {
-            schedule_modified_source_spaces(
-                state,
-                autocommit,
-                project_path,
-                &modified,
-                StructuralOp::ConvertToFolder(entry_history_commit_name(space, &converted.path)),
-            )
-            .await;
-        }
+        let modified = dedupe_modified_sources(modified);
+        schedule_modified_source_spaces(
+            runtime,
+            project_path,
+            &modified,
+            StructuralOp::ConvertToFolder(entry_history_commit_name(space, &converted.path)),
+        )
+        .await;
         let _ = state
             .remove_file_backlinks(project, target_space_id.as_deref(), &old_leaf)
             .await;
@@ -1061,9 +796,10 @@ async fn convert_to_folder_with_publication(
         let _ = rebase_legacy_source_after_move(space, &backlinks, &old_leaf, &converted.path);
     }
     if publish_projection {
-        let _ = index::update::publish_paths_or_repair(
+        let _ = update::publish_paths_or_repair(
             state,
-            updates,
+            runtime.updates,
+            runtime.git_dates,
             project_path,
             space,
             std::slice::from_ref(&old_leaf)
@@ -1075,33 +811,30 @@ async fn convert_to_folder_with_publication(
         )
         .await;
     }
-    if let Some(autocommit) = autocommit {
-        maybe_autocommit_structural_paths(
-            autocommit,
-            project_path,
+    schedule_structural_paths(
+        runtime.commits,
+        project_path,
+        space,
+        StructuralOp::ConvertToFolder(entry_history_commit_name(space, &converted.path)),
+        entry_paths_with_order(
             space,
-            StructuralOp::ConvertToFolder(entry_history_commit_name(space, &converted.path)),
-            entry_paths_with_order(
-                space,
-                [
-                    abs_entry_path(space, &old_leaf),
-                    abs_entry_path(space, &converted.path),
-                ],
-            ),
-        );
-    }
+            [
+                abs_entry_path(space, &old_leaf),
+                abs_entry_path(space, &converted.path),
+            ],
+        ),
+    );
     Ok(converted)
 }
 
-pub async fn convert_to_leaf(
+pub async fn convert_to_leaf<E: GitDateExecutor>(
     space: &str,
     file_path: &str,
     project_path: Option<&str>,
-    state: &IndexState,
-    updates: &IndexUpdateState,
-    autocommit: Option<&AutocommitService>,
-) -> Result<Entry, AppError> {
-    let backlinks = state.core.backlinks_for_space_dir(Path::new(space)).await;
+    runtime: StructureRuntime<'_, E>,
+) -> Result<Entry, PageError> {
+    let state = runtime.index;
+    let backlinks = state.backlinks_for_space_dir(Path::new(space)).await;
     ensure_backlinks_before_structural(state, project_path).await;
     revalidate_backlink_plan(state, space, project_path, file_path, false).await?;
     let project_aware = project_path.filter(|path| !path.is_empty()).is_some();
@@ -1121,10 +854,11 @@ pub async fn convert_to_leaf(
         .unwrap_or_else(|| converted.path.clone());
     if let Some(project) = project_path.filter(|path| !path.is_empty()) {
         let project = Path::new(project);
-        let target_space_id = state.core.space_id_for_dir(Path::new(space)).await;
+        let target_space_id = state.space_id_for_dir(Path::new(space)).await;
         let mut modified = state
             .update_links_on_rename_project(
-                updates,
+                runtime.updates,
+                runtime.git_dates,
                 project,
                 target_space_id.as_deref(),
                 &old_readme,
@@ -1138,8 +872,7 @@ pub async fn convert_to_leaf(
             });
         modified.extend(
             rebase_project_source_after_move(
-                state,
-                updates,
+                runtime,
                 project_path,
                 space,
                 target_space_id.as_deref(),
@@ -1150,17 +883,14 @@ pub async fn convert_to_leaf(
             )
             .await,
         );
-        let modified = svode_core::index::backlinks::dedupe_modified_sources(modified);
-        if let Some(autocommit) = autocommit {
-            schedule_modified_source_spaces(
-                state,
-                autocommit,
-                project_path,
-                &modified,
-                StructuralOp::ConvertToLeaf(entry_history_commit_name(space, &converted.path)),
-            )
-            .await;
-        }
+        let modified = dedupe_modified_sources(modified);
+        schedule_modified_source_spaces(
+            runtime,
+            project_path,
+            &modified,
+            StructuralOp::ConvertToLeaf(entry_history_commit_name(space, &converted.path)),
+        )
+        .await;
         let _ = state
             .remove_file_backlinks(project, target_space_id.as_deref(), &old_readme)
             .await;
@@ -1170,9 +900,10 @@ pub async fn convert_to_leaf(
     } else {
         let _ = rebase_legacy_source_after_move(space, &backlinks, &old_readme, &converted.path);
     }
-    let _ = index::update::publish_paths_or_repair(
+    let _ = update::publish_paths_or_repair(
         state,
-        updates,
+        runtime.updates,
+        runtime.git_dates,
         project_path,
         space,
         std::slice::from_ref(&old_readme)
@@ -1183,65 +914,50 @@ pub async fn convert_to_leaf(
         "convert_to_leaf",
     )
     .await;
-    if let Some(autocommit) = autocommit {
-        maybe_autocommit_structural_paths(
-            autocommit,
-            project_path,
+    schedule_structural_paths(
+        runtime.commits,
+        project_path,
+        space,
+        StructuralOp::ConvertToLeaf(entry_history_commit_name(space, &converted.path)),
+        entry_paths_with_order(
             space,
-            StructuralOp::ConvertToLeaf(entry_history_commit_name(space, &converted.path)),
-            entry_paths_with_order(
-                space,
-                [
-                    abs_entry_path(space, &old_readme),
-                    abs_entry_path(space, &converted.path),
-                ],
-            ),
-        );
-    }
+            [
+                abs_entry_path(space, &old_readme),
+                abs_entry_path(space, &converted.path),
+            ],
+        ),
+    );
     Ok(converted)
 }
 
-pub async fn convert_to_collection(
+pub async fn convert_to_collection<E: GitDateExecutor>(
     space: &str,
     path: &str,
     project_path: Option<&str>,
-    state: &IndexState,
-    updates: &IndexUpdateState,
-    autocommit: Option<&AutocommitService>,
-) -> Result<ConvertToCollectionOutcome, AppError> {
-    convert_to_collection_with_publication(
-        space,
-        path,
-        project_path,
-        state,
-        updates,
-        autocommit,
-        true,
-    )
-    .await
+    runtime: StructureRuntime<'_, E>,
+) -> Result<ConvertToCollectionOutcome, PageError> {
+    convert_to_collection_with_publication(space, path, project_path, runtime, true).await
 }
 
-async fn convert_to_collection_with_publication(
+async fn convert_to_collection_with_publication<E: GitDateExecutor>(
     space: &str,
     path: &str,
     project_path: Option<&str>,
-    state: &IndexState,
-    updates: &IndexUpdateState,
-    autocommit: Option<&AutocommitService>,
+    runtime: StructureRuntime<'_, E>,
     publish_projection: bool,
-) -> Result<ConvertToCollectionOutcome, AppError> {
+) -> Result<ConvertToCollectionOutcome, PageError> {
     let old_path = normalize_repo_relative(path, RootMode::Reject)?;
     let source_abs = Path::new(space).join(&old_path);
     let metadata = fs::metadata(&source_abs).map_err(|error| match error.kind() {
-        std::io::ErrorKind::NotFound => AppError::FileNotFound(old_path.clone()),
-        _ => AppError::Io(error),
+        std::io::ErrorKind::NotFound => PageError::FileNotFound(old_path.clone()),
+        _ => PageError::Io(error),
     })?;
 
     let (collection_path, readme_path, converted, source_moved) = if metadata.is_dir() {
         let readme_path = format!("{old_path}/README.md");
         let schema_path = collection_schema_path(space, &old_path);
         if schema_path.exists() {
-            return Err(AppError::FileAlreadyExists(rel_changed_path(
+            return Err(PageError::FileAlreadyExists(rel_changed_path(
                 space,
                 &schema_path,
             )));
@@ -1262,7 +978,7 @@ async fn convert_to_collection_with_publication(
             .and_then(|name| name.to_str())
             .is_some_and(|name| name.eq_ignore_ascii_case("README.md"));
         if is_readme && parent_schema.as_ref().is_some_and(|schema| schema.exists()) {
-            return Err(AppError::General(format!(
+            return Err(PageError::General(format!(
                 "{old_path} is already a collection README.md; convert_to_collection cannot convert an existing collection"
             )));
         }
@@ -1279,9 +995,7 @@ async fn convert_to_collection_with_publication(
                 space,
                 &old_path,
                 project_path,
-                state,
-                updates,
-                autocommit,
+                runtime,
                 publish_projection,
             )
             .await?;
@@ -1290,22 +1004,23 @@ async fn convert_to_collection_with_publication(
                 .parent()
                 .map(normalize_rel_lossy)
                 .ok_or_else(|| {
-                    AppError::General("converted entry has no collection folder".to_string())
+                    PageError::General("converted entry has no collection folder".to_string())
                 })?;
             entry::convert_entry_to_nested_collection(Path::new(space), &readme_path)?;
             let converted = entry::read(space, &readme_path)?;
             (collection_path, readme_path, converted, true)
         }
     } else {
-        return Err(AppError::General(format!(
+        return Err(PageError::General(format!(
             "path must reference a markdown document or folder: {old_path}"
         )));
     };
 
     if publish_projection {
-        index::update::publish_tree_or_repair(
-            state,
-            updates,
+        update::publish_tree_or_repair(
+            runtime.index,
+            runtime.updates,
+            runtime.git_dates,
             project_path,
             space,
             &collection_path,
@@ -1313,7 +1028,7 @@ async fn convert_to_collection_with_publication(
         )
         .await;
     }
-    if let Some(autocommit) = autocommit {
+    if runtime.commits.is_some() {
         let mut paths = vec![
             abs_entry_path(space, &readme_path),
             collection_schema_path(space, &collection_path),
@@ -1322,8 +1037,8 @@ async fn convert_to_collection_with_publication(
             paths = entry_paths_with_order(space, paths);
             paths.push(abs_entry_path(space, &old_path));
         }
-        maybe_autocommit_structural_paths(
-            autocommit,
+        schedule_structural_paths(
+            runtime.commits,
             project_path,
             space,
             StructuralOp::MakeCollection(entry_history_commit_name(space, &readme_path)),
@@ -1339,55 +1054,33 @@ async fn convert_to_collection_with_publication(
     })
 }
 
-pub async fn rename(
+pub async fn rename<E: GitDateExecutor>(
     space: &str,
     from: &str,
     to: &str,
     project_path: Option<&str>,
-    state: &IndexState,
-    updates: &IndexUpdateState,
-    autocommit: Option<&AutocommitService>,
-) -> Result<Vec<String>, AppError> {
+    runtime: StructureRuntime<'_, E>,
+) -> Result<Vec<String>, PageError> {
     if !same_parent(from, to) {
-        return Err(AppError::General(
+        return Err(PageError::General(
             "rename_entry cannot change parent; use move_entry to move an entry".to_string(),
         ));
     }
-    apply_move(
-        space,
-        from,
-        Some(to),
-        None,
-        project_path,
-        state,
-        updates,
-        autocommit,
-    )
-    .await
-    .map(|outcome| outcome.modified_paths)
+    apply_move(space, from, Some(to), None, project_path, runtime)
+        .await
+        .map(|outcome| outcome.modified_paths)
 }
 
-pub async fn move_entry(
+pub async fn move_entry<E: GitDateExecutor>(
     space: &str,
     from: &str,
     to_parent: &str,
     project_path: Option<&str>,
-    state: &IndexState,
-    updates: &IndexUpdateState,
-    autocommit: Option<&AutocommitService>,
-) -> Result<String, AppError> {
-    apply_move(
-        space,
-        from,
-        None,
-        Some(to_parent),
-        project_path,
-        state,
-        updates,
-        autocommit,
-    )
-    .await
-    .map(|outcome| outcome.new_path)
+    runtime: StructureRuntime<'_, E>,
+) -> Result<String, PageError> {
+    apply_move(space, from, None, Some(to_parent), project_path, runtime)
+        .await
+        .map(|outcome| outcome.new_path)
 }
 
 struct MoveOutcome {
@@ -1395,17 +1088,16 @@ struct MoveOutcome {
     modified_paths: Vec<String>,
 }
 
-async fn apply_move(
+async fn apply_move<E: GitDateExecutor>(
     space: &str,
     from: &str,
     rename_to: Option<&str>,
     to_parent: Option<&str>,
     project_path: Option<&str>,
-    state: &IndexState,
-    updates: &IndexUpdateState,
-    autocommit: Option<&AutocommitService>,
-) -> Result<MoveOutcome, AppError> {
-    let backlinks = state.core.backlinks_for_space_dir(Path::new(space)).await;
+    runtime: StructureRuntime<'_, E>,
+) -> Result<MoveOutcome, PageError> {
+    let state = runtime.index;
+    let backlinks = state.backlinks_for_space_dir(Path::new(space)).await;
     let was_dir = Path::new(space).join(from).is_dir();
     let old_abs = Path::new(space).join(from);
     ensure_backlinks_before_structural(state, project_path).await;
@@ -1425,7 +1117,7 @@ async fn apply_move(
             project_path,
         )?
     };
-    let policy_paths = svode_core::storage::routes::rebase_managed_attachment_routes(
+    let policy_paths = crate::storage::routes::rebase_managed_attachment_routes(
         space,
         project_path,
         from,
@@ -1435,11 +1127,12 @@ async fn apply_move(
     let mut modified_paths = Vec::new();
     if let Some(project) = project_path.filter(|path| !path.is_empty()) {
         let project = Path::new(project);
-        let space_id = state.core.space_id_for_dir(Path::new(space)).await;
+        let space_id = state.space_id_for_dir(Path::new(space)).await;
         let mut modified = if was_dir {
             state
                 .update_links_on_folder_rename_project(
-                    updates,
+                    runtime.updates,
+                    runtime.git_dates,
                     project,
                     space_id.as_deref(),
                     from,
@@ -1450,7 +1143,8 @@ async fn apply_move(
         } else {
             state
                 .update_links_on_rename_project(
-                    updates,
+                    runtime.updates,
+                    runtime.git_dates,
                     project,
                     space_id.as_deref(),
                     from,
@@ -1470,8 +1164,7 @@ async fn apply_move(
         };
         modified.extend(if was_dir {
             rebase_project_source_tree_after_move(
-                state,
-                updates,
+                runtime,
                 project_path,
                 space,
                 space_id.as_deref(),
@@ -1482,8 +1175,7 @@ async fn apply_move(
             .await
         } else if rename_to.is_none() || !same_parent(from, &new_path) {
             rebase_project_source_after_move(
-                state,
-                updates,
+                runtime,
                 project_path,
                 space,
                 space_id.as_deref(),
@@ -1496,22 +1188,19 @@ async fn apply_move(
         } else {
             Vec::new()
         });
-        let modified = svode_core::index::backlinks::dedupe_modified_sources(modified);
+        let modified = dedupe_modified_sources(modified);
         modified_paths = modified.iter().map(|source| source.path.clone()).collect();
-        if let Some(autocommit) = autocommit {
-            schedule_modified_source_spaces(
-                state,
-                autocommit,
-                project_path,
-                &modified,
-                if rename_to.is_some() {
-                    entry_rename_op(space, from, &new_path)
-                } else {
-                    StructuralOp::Move(entry_commit_name(space, &new_path))
-                },
-            )
-            .await;
-        }
+        schedule_modified_source_spaces(
+            runtime,
+            project_path,
+            &modified,
+            if rename_to.is_some() {
+                entry_rename_op(space, from, &new_path)
+            } else {
+                StructuralOp::Move(entry_commit_name(space, &new_path))
+            },
+        )
+        .await;
         if !was_dir {
             let _ = state
                 .remove_file_backlinks(project, space_id.as_deref(), from)
@@ -1538,13 +1227,13 @@ async fn apply_move(
     } else {
         let _ = rebase_legacy_source_after_move(space, &backlinks, from, &new_path);
     }
-    if let Some(autocommit) = autocommit {
+    if let Some(commits) = runtime.commits {
         let mut paths =
             entry_paths_with_order(space, [old_abs.clone(), abs_entry_path(space, &new_path)]);
         paths.extend(policy_paths);
         if rename_to.is_some() {
-            maybe_autocommit_structural_paths(
-                autocommit,
+            schedule_structural_paths(
+                Some(commits),
                 project_path,
                 space,
                 entry_rename_op(space, from, &new_path),
@@ -1554,8 +1243,8 @@ async fn apply_move(
             let unique_id_paths =
                 engine::unique_id_mutation_paths_for_entry_tree(Path::new(space), &new_path)?;
             if unique_id_paths.is_empty() {
-                maybe_autocommit_structural_paths(
-                    autocommit,
+                schedule_structural_paths(
+                    Some(commits),
                     project_path,
                     space,
                     StructuralOp::Move(entry_commit_name(space, &new_path)),
@@ -1563,8 +1252,8 @@ async fn apply_move(
                 );
             } else {
                 paths.extend(unique_id_paths);
-                maybe_autocommit_schema(
-                    autocommit,
+                commit_schema_now(
+                    commits,
                     project_path,
                     space,
                     paths,
@@ -1584,65 +1273,51 @@ async fn apply_move(
     })
 }
 
-pub async fn nest(
+pub async fn nest<E: GitDateExecutor>(
     space: &str,
     path: &str,
     project_path: Option<&str>,
-    state: &IndexState,
-    updates: &IndexUpdateState,
-    autocommit: Option<&AutocommitService>,
-) -> Result<String, AppError> {
-    reshape(space, path, true, project_path, state, updates, autocommit).await
+    runtime: StructureRuntime<'_, E>,
+) -> Result<String, PageError> {
+    reshape(space, path, true, project_path, runtime).await
 }
 
-pub async fn unnest(
+pub async fn unnest<E: GitDateExecutor>(
     space: &str,
     path: &str,
     project_path: Option<&str>,
-    state: &IndexState,
-    updates: &IndexUpdateState,
-    autocommit: Option<&AutocommitService>,
-) -> Result<String, AppError> {
-    reshape(space, path, false, project_path, state, updates, autocommit).await
+    runtime: StructureRuntime<'_, E>,
+) -> Result<String, PageError> {
+    reshape(space, path, false, project_path, runtime).await
 }
 
-async fn reshape(
+async fn reshape<E: GitDateExecutor>(
     space: &str,
     path: &str,
     nesting: bool,
     project_path: Option<&str>,
-    state: &IndexState,
-    updates: &IndexUpdateState,
-    autocommit: Option<&AutocommitService>,
-) -> Result<String, AppError> {
-    let backlinks = state.core.backlinks_for_space_dir(Path::new(space)).await;
+    runtime: StructureRuntime<'_, E>,
+) -> Result<String, PageError> {
+    let state = runtime.index;
+    let backlinks = state.backlinks_for_space_dir(Path::new(space)).await;
     ensure_backlinks_before_structural(state, project_path).await;
     revalidate_backlink_plan(state, space, project_path, path, false).await?;
+    let local_backlinks = project_path
+        .filter(|path| !path.is_empty())
+        .is_none()
+        .then_some(&*backlinks);
     let new_path = if nesting {
-        entry::nest_entry(
-            Path::new(space),
-            path,
-            project_path
-                .filter(|path| !path.is_empty())
-                .is_none()
-                .then_some(&backlinks),
-        )?
+        entry::nest_entry(Path::new(space), path, local_backlinks)?
     } else {
-        entry::unnest_entry(
-            Path::new(space),
-            path,
-            project_path
-                .filter(|path| !path.is_empty())
-                .is_none()
-                .then_some(&backlinks),
-        )?
+        entry::unnest_entry(Path::new(space), path, local_backlinks)?
     };
     if let Some(project) = project_path.filter(|path| !path.is_empty()) {
         let project = Path::new(project);
-        let space_id = state.core.space_id_for_dir(Path::new(space)).await;
+        let space_id = state.space_id_for_dir(Path::new(space)).await;
         let mut modified = state
             .update_links_on_rename_project(
-                updates,
+                runtime.updates,
+                runtime.git_dates,
                 project,
                 space_id.as_deref(),
                 path,
@@ -1656,8 +1331,7 @@ async fn reshape(
             });
         modified.extend(
             rebase_project_source_after_move(
-                state,
-                updates,
+                runtime,
                 project_path,
                 space,
                 space_id.as_deref(),
@@ -1672,17 +1346,14 @@ async fn reshape(
             )
             .await,
         );
-        let modified = svode_core::index::backlinks::dedupe_modified_sources(modified);
-        if let Some(autocommit) = autocommit {
-            schedule_modified_source_spaces(
-                state,
-                autocommit,
-                project_path,
-                &modified,
-                StructuralOp::Move(entry_commit_name(space, &new_path)),
-            )
-            .await;
-        }
+        let modified = dedupe_modified_sources(modified);
+        schedule_modified_source_spaces(
+            runtime,
+            project_path,
+            &modified,
+            StructuralOp::Move(entry_commit_name(space, &new_path)),
+        )
+        .await;
         let _ = state
             .remove_file_backlinks(project, space_id.as_deref(), path)
             .await;
@@ -1692,32 +1363,28 @@ async fn reshape(
     } else {
         let _ = rebase_legacy_source_after_move(space, &backlinks, path, &new_path);
     }
-    if let Some(autocommit) = autocommit {
-        maybe_autocommit_structural_paths(
-            autocommit,
-            project_path,
+    schedule_structural_paths(
+        runtime.commits,
+        project_path,
+        space,
+        StructuralOp::Move(entry_commit_name(space, &new_path)),
+        entry_paths_with_order(
             space,
-            StructuralOp::Move(entry_commit_name(space, &new_path)),
-            entry_paths_with_order(
-                space,
-                [
-                    abs_entry_path(space, path),
-                    abs_entry_path(space, &new_path),
-                ],
-            ),
-        );
-    }
+            [
+                abs_entry_path(space, path),
+                abs_entry_path(space, &new_path),
+            ],
+        ),
+    );
     Ok(new_path)
 }
 
-pub async fn duplicate(
+pub async fn duplicate<E: GitDateExecutor>(
     space: &str,
     file_path: &str,
     project_path: Option<&str>,
-    state: &IndexState,
-    updates: &IndexUpdateState,
-    autocommit: Option<&AutocommitService>,
-) -> Result<Entry, AppError> {
+    runtime: StructureRuntime<'_, E>,
+) -> Result<Entry, PageError> {
     let old_name = entry_history_commit_name(space, file_path);
     let duplicated = entry::duplicate_entry(Path::new(space), file_path)?;
     let root_path = duplicated
@@ -1726,22 +1393,23 @@ pub async fn duplicate(
         .filter(|(_, name)| name.eq_ignore_ascii_case("README.md"))
         .map(|(parent, _)| parent)
         .unwrap_or(&duplicated.path);
-    index::update::publish_tree_or_repair(
-        state,
-        updates,
+    update::publish_tree_or_repair(
+        runtime.index,
+        runtime.updates,
+        runtime.git_dates,
         project_path,
         space,
         root_path,
         "duplicate_entry",
     )
     .await;
-    if let Some(autocommit) = autocommit {
+    if let Some(commits) = runtime.commits {
         let mut paths = entry_paths_with_order(space, [abs_entry_path(space, root_path)]);
         let unique_id_paths =
             engine::unique_id_mutation_paths_for_entry_tree(Path::new(space), &duplicated.path)?;
         if unique_id_paths.is_empty() {
-            maybe_autocommit_structural_paths(
-                autocommit,
+            schedule_structural_paths(
+                Some(commits),
                 project_path,
                 space,
                 StructuralOp::Duplicate {
@@ -1752,8 +1420,8 @@ pub async fn duplicate(
             );
         } else {
             paths.extend(unique_id_paths);
-            maybe_autocommit_schema(
-                autocommit,
+            commit_schema_now(
+                commits,
                 project_path,
                 space,
                 paths,
@@ -1774,8 +1442,10 @@ pub async fn duplicate(
     Ok(duplicated)
 }
 
-async fn maybe_autocommit_schema(
-    autocommit: &AutocommitService,
+/// Allocated unique ids must reach history immediately, so they are committed
+/// outside the pending structural batch.
+async fn commit_schema_now(
+    commits: &dyn StructuralCommitSink,
     project_path: Option<&str>,
     space: &str,
     paths: Vec<PathBuf>,
@@ -1784,10 +1454,7 @@ async fn maybe_autocommit_schema(
     let Some(project) = project_path.filter(|path| !path.is_empty()) else {
         return;
     };
-    if let Err(error) = autocommit
-        .commit_paths_now(PathBuf::from(project), PathBuf::from(space), paths, message)
-        .await
-    {
-        tracing::warn!("schema autocommit failed: {error}");
-    }
+    commits
+        .commit_now(Path::new(project), Path::new(space), paths, message)
+        .await;
 }

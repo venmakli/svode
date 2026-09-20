@@ -22,7 +22,7 @@ pub async fn nest_entry(
     )
     .await?;
     scope_authorized_mutation_paths(authorized_paths, async {
-        crate::space::structural::nest(
+        crate::structure::nest(
             &space,
             &path,
             project_path.as_deref(),
@@ -56,7 +56,7 @@ pub async fn unnest_entry(
     )
     .await?;
     scope_authorized_mutation_paths(authorized_paths, async {
-        crate::space::structural::unnest(
+        crate::structure::unnest(
             &space,
             &path,
             project_path.as_deref(),
@@ -90,7 +90,7 @@ pub async fn convert_entry_to_folder(
     )
     .await?;
     scope_authorized_mutation_paths(authorized_paths, async {
-        crate::space::structural::convert_to_folder(
+        crate::structure::convert_to_folder(
             &space,
             &file_path,
             project_path.as_deref(),
@@ -122,7 +122,7 @@ pub async fn convert_to_collection(
     )
     .await?;
     scope_authorized_mutation_paths(authorized_paths, async {
-        crate::space::structural::convert_to_collection(
+        crate::structure::convert_to_collection(
             &space,
             &path,
             project_path.as_deref(),
@@ -156,7 +156,7 @@ pub async fn convert_entry_to_leaf(
     )
     .await?;
     scope_authorized_mutation_paths(authorized_paths, async {
-        crate::space::structural::convert_to_leaf(
+        crate::structure::convert_to_leaf(
             &space,
             &file_path,
             project_path.as_deref(),
@@ -188,7 +188,7 @@ pub async fn convert_entry_to_nested_collection(
     )
     .await?;
     scope_authorized_mutation_paths(authorized_paths, async {
-        crate::space::structural::convert_to_collection(
+        crate::structure::convert_to_collection(
             &space,
             &file_path,
             project_path.as_deref(),
@@ -221,7 +221,7 @@ pub async fn convert_bare_folder_to_collection(
     )
     .await?;
     Ok(scope_authorized_mutation_paths(authorized_paths, async {
-        crate::space::structural::convert_to_collection(
+        crate::structure::convert_to_collection(
             &space,
             &folder_path,
             project_path.as_deref(),
@@ -246,7 +246,7 @@ pub async fn duplicate_entry(
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<Entry, AppError> {
     require_repository_mutation(&app, Path::new(&space)).await?;
-    crate::space::structural::duplicate(
+    crate::structure::duplicate(
         &space,
         &file_path,
         project_path.as_deref(),

@@ -43,13 +43,10 @@ pub use schema::*;
 pub use structure::*;
 pub use tree_links::*;
 
-fn basename(path: &str) -> String {
-    path.rsplit('/').next().unwrap_or(path).to_string()
-}
-
-fn abs_entry_path(space: &str, rel_path: &str) -> PathBuf {
-    Path::new(space).join(rel_path)
-}
+pub(crate) use crate::structure::{
+    abs_entry_path, basename, entry_commit_name, entry_history_name, entry_in_sensitive_collection,
+    entry_paths_with_order, maybe_autocommit_structural_paths, order_path, root_path_for_head,
+};
 
 fn path_name(path: &str) -> String {
     Path::new(path)
@@ -64,23 +61,6 @@ fn count_tree_nodes(nodes: &[TreeNode]) -> usize {
         .iter()
         .map(|node| 1 + count_tree_nodes(&node.children))
         .sum()
-}
-
-fn order_path(space: &str) -> PathBuf {
-    Path::new(space).join(".svode").join("order.json")
-}
-
-fn root_path_for_head(path: &str) -> &str {
-    if path
-        .rsplit_once('/')
-        .is_some_and(|(_, name)| name.eq_ignore_ascii_case("README.md"))
-    {
-        return path
-            .rsplit_once('/')
-            .map(|(parent, _)| parent)
-            .unwrap_or(path);
-    }
-    path
 }
 
 async fn apply_indexed_entry_dates(
@@ -108,34 +88,7 @@ pub struct ChangeSchemaTypeResult {
     pub warnings: Vec<SchemaMutationWarning>,
 }
 
-pub type ConvertToCollectionCommandResult = crate::space::structural::ConvertToCollectionOutcome;
-
-fn entry_paths_with_order(space: &str, paths: impl IntoIterator<Item = PathBuf>) -> Vec<PathBuf> {
-    let mut out = vec![order_path(space)];
-    out.extend(paths);
-    out
-}
-
-fn entry_history_name(path: &str) -> String {
-    let normalized = path.trim_matches('/').replace('\\', "/");
-    let path = Path::new(&normalized);
-    if path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .is_some_and(|name| name.eq_ignore_ascii_case("README.md"))
-    {
-        return path
-            .parent()
-            .and_then(|parent| parent.file_name())
-            .and_then(|name| name.to_str())
-            .unwrap_or("README.md")
-            .to_string();
-    }
-    path.file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or(&normalized)
-        .to_string()
-}
+pub type ConvertToCollectionCommandResult = crate::structure::ConvertToCollectionOutcome;
 
 fn property_type_message(type_: PropertyType) -> &'static str {
     match type_ {
@@ -182,40 +135,12 @@ fn collection_has_sensitive_columns(space: &str, collection_path: &str) -> bool 
         .unwrap_or(false)
 }
 
-fn entry_in_sensitive_collection(space: &str, path: &str) -> bool {
-    engine::schema_response(space, path)
-        .ok()
-        .flatten()
-        .is_some_and(|response| engine::schema_has_sensitive_columns(&response.schema))
-}
-
-fn entry_commit_name(space: &str, path: &str) -> String {
-    if entry_in_sensitive_collection(space, path) {
-        "collection entry".to_string()
-    } else {
-        basename(path)
-    }
-}
-
 fn template_name_for_commit(space: &str, collection_path: &str, name: String) -> String {
     if collection_has_sensitive_columns(space, collection_path) {
         "collection template".to_string()
     } else {
         name
     }
-}
-
-pub(crate) fn maybe_autocommit_structural_paths(
-    autocommit: &AutocommitService,
-    project_path: Option<&str>,
-    space_path: &str,
-    op: StructuralOp,
-    paths: Vec<PathBuf>,
-) {
-    let Some(proj) = project_path.filter(|p| !p.is_empty()) else {
-        return;
-    };
-    autocommit.schedule_structural_paths(PathBuf::from(proj), PathBuf::from(space_path), op, paths);
 }
 
 fn json_to_yaml_value(value: serde_json::Value) -> Result<serde_yml::Value, AppError> {
@@ -281,8 +206,7 @@ async fn require_entry_move_mutation_plan(
     to: &str,
 ) -> Result<Vec<PathBuf>, AppError> {
     let paths =
-        crate::space::structural::move_mutation_paths(index_state, space, project_path, from, to)
-            .await?;
+        crate::structure::move_mutation_paths(index_state, space, project_path, from, to).await?;
     require_planned_mutation_paths(app, space, paths).await
 }
 
@@ -308,14 +232,8 @@ pub(crate) async fn entry_backlink_mutation_paths(
     from: &str,
     folder_rename: bool,
 ) -> Result<Vec<PathBuf>, AppError> {
-    crate::space::structural::backlink_mutation_paths(
-        index_state,
-        space,
-        project_path,
-        from,
-        folder_rename,
-    )
-    .await
+    crate::structure::backlink_mutation_paths(index_state, space, project_path, from, folder_rename)
+        .await
 }
 
 async fn require_convert_to_collection_mutation_plan(

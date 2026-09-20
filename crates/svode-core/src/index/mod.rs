@@ -7,6 +7,7 @@ pub mod knowledge;
 pub mod knowledge_artifact;
 pub mod knowledge_rows;
 pub mod lifecycle;
+pub mod link_mutations;
 pub mod manifest;
 pub mod model;
 pub mod reconcile;

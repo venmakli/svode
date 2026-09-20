@@ -161,6 +161,7 @@ impl From<svode_core::content_tree::ContentTreeError> for AppError {
             ContentTreeError::FileNotFound(path) => Self::FileNotFound(path),
             ContentTreeError::PathNotAccessible(path) => Self::PathNotAccessible(path),
             ContentTreeError::Source(error) => error.into(),
+            ContentTreeError::Invalid(message) => Self::General(message),
         }
     }
 }

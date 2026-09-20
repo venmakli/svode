@@ -36,13 +36,6 @@ pub fn build_tree(space: &str) -> Result<Vec<TreeNode>, AppError> {
     svode_core::content_tree::build_tree(space).map_err(Into::into)
 }
 
-pub fn list_tree_children(
-    space: &str,
-    parent_path: Option<&str>,
-) -> Result<Vec<TreeChildNode>, AppError> {
-    svode_core::content_tree::list_tree_children(space, parent_path).map_err(Into::into)
-}
-
 pub fn list_tree_children_checked(
     space: &str,
     parent_path: Option<&str>,
@@ -66,15 +59,12 @@ pub fn list_tree_children_checked(
     })
 }
 
-pub(crate) fn normalize_tree_parent_path(parent_path: Option<&str>) -> Result<String, AppError> {
-    svode_core::content_tree::normalize_tree_parent_path(parent_path).map_err(Into::into)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::space::config::write_space_config;
     use crate::space::types::{SpaceConfig, TreeSpaceConfig};
+    use svode_core::content_tree::list_tree_children;
     use tempfile::TempDir;
 
     fn write_tree_config(tmp: &TempDir, exclude: Vec<&str>, include: Vec<&str>) {

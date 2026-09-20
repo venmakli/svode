@@ -28,6 +28,7 @@ mod repo_path;
 mod routines;
 mod space;
 mod storage;
+mod structure;
 mod system_path;
 mod terminal;
 

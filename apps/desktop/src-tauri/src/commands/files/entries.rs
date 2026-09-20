@@ -153,8 +153,8 @@ pub async fn create_collection(
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<Entry, AppError> {
     let authorization_space = space.clone();
-    let outcome = crate::space::structural::create_collection(
-        crate::space::structural::CollectionCreate {
+    let outcome = crate::structure::create_collection(
+        crate::structure::CollectionCreate {
             space,
             parent_path,
             title,
@@ -185,7 +185,7 @@ pub async fn create_folder(
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<String, AppError> {
     require_repository_mutation(&app, Path::new(&space)).await?;
-    crate::space::structural::create_folder(
+    crate::structure::create_folder(
         &space,
         parent_path.as_deref(),
         &name,
@@ -405,10 +405,10 @@ pub async fn delete_entry(
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<(), AppError> {
     let authorized_paths =
-        crate::space::structural::delete_mutation_paths(&space, project_path.as_deref(), &path)?;
+        crate::structure::delete_mutation_paths(&space, project_path.as_deref(), &path)?;
     require_repository_mutation_paths(&app, authorized_paths.clone()).await?;
     scope_authorized_mutation_paths(authorized_paths, async {
-        crate::space::structural::delete(
+        crate::structure::delete(
             &space,
             &path,
             project_path.as_deref(),
@@ -443,7 +443,7 @@ pub async fn rename_entry(
     )
     .await?;
     scope_authorized_mutation_paths(authorized_paths, async {
-        crate::space::structural::rename(
+        crate::structure::rename(
             &space,
             &from,
             &to,
@@ -487,7 +487,7 @@ pub async fn move_entry(
     )
     .await?;
     scope_authorized_mutation_paths(authorized_paths, async {
-        crate::space::structural::move_entry(
+        crate::structure::move_entry(
             &space,
             &from,
             &to_parent,

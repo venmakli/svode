@@ -11,4 +11,5 @@ pub mod index;
 pub mod page;
 pub mod routines;
 pub mod storage;
+pub mod structure;
 pub mod variables;

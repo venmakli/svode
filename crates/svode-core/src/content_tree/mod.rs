@@ -27,6 +27,8 @@ pub enum ContentTreeError {
     PathNotAccessible(String),
     #[error("Page source error: {0}")]
     Source(#[from] crate::page::PageSourceError),
+    #[error("{0}")]
+    Invalid(String),
 }
 
 #[derive(Deserialize)]
@@ -977,4 +979,69 @@ fn read_dir_recursive(
     apply_order(&mut nodes, order.get(&dir_key));
 
     Ok(nodes)
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct ContentOrderOutcome {
+    pub parent_path: String,
+    pub previous_order: Vec<String>,
+    pub ordered_children: Vec<String>,
+    pub changed: bool,
+}
+
+/// Replace the sibling order under `parent_path`. The proposal must be exactly
+/// the current direct children, so a stale client cannot drop or invent one.
+/// A no-op order never creates the order source.
+pub fn reorder_content(
+    space: &str,
+    parent_path: &str,
+    ordered_children: Vec<String>,
+) -> Result<ContentOrderOutcome, ContentTreeError> {
+    let parent_path = normalize_tree_parent_path(Some(parent_path))?;
+    let actual_children = list_tree_children(space, Some(&parent_path))?;
+    let previous_order = actual_children
+        .iter()
+        .map(|child| child.path.clone())
+        .collect::<Vec<_>>();
+    let expected = previous_order.iter().collect::<HashSet<_>>();
+    let proposed = ordered_children.iter().collect::<HashSet<_>>();
+
+    if proposed.len() != ordered_children.len() {
+        return Err(ContentTreeError::Invalid(
+            "orderedChildren contains duplicate paths".to_string(),
+        ));
+    }
+    if proposed != expected {
+        return Err(ContentTreeError::Invalid(
+            "orderedChildren must contain each current direct child exactly once".to_string(),
+        ));
+    }
+
+    let changed = previous_order != ordered_children;
+    if changed {
+        let names = ordered_children
+            .iter()
+            .map(|path| {
+                actual_children
+                    .iter()
+                    .find(|child| child.path == *path)
+                    .map(|child| child.name.clone())
+                    .ok_or_else(|| ContentTreeError::Invalid(format!("unknown child path: {path}")))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut order = read_order(Path::new(space));
+        order.insert(parent_path.clone(), names);
+        write_order(Path::new(space), &order)?;
+    }
+
+    Ok(ContentOrderOutcome {
+        parent_path: if parent_path == "." {
+            String::new()
+        } else {
+            parent_path
+        },
+        previous_order,
+        ordered_children,
+        changed,
+    })
 }

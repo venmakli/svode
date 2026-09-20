@@ -14,9 +14,7 @@ use crate::error::AppError;
 use crate::git::autocommit::AutocommitService;
 use crate::git::cli::GitCli;
 use crate::index::{IndexState, update::IndexUpdateState};
-use crate::space::structural::{
-    entry_rename_op, grouped_abs_paths_by_space, maybe_autocommit_structural_paths,
-};
+use crate::structure::schedule_rename;
 
 fn runtime<'a>(
     state: &'a IndexState,
@@ -159,27 +157,4 @@ where
         authorize,
     )
     .await
-}
-
-fn schedule_rename(
-    autocommit: Option<&AutocommitService>,
-    project: Option<&str>,
-    space: &str,
-    from: &str,
-    to: &str,
-    changed_paths: &[PathBuf],
-) {
-    let Some(service) = autocommit.filter(|_| !changed_paths.is_empty()) else {
-        return;
-    };
-    let operation = entry_rename_op(space, from, to);
-    for (owner, paths) in grouped_abs_paths_by_space(project, space, changed_paths) {
-        maybe_autocommit_structural_paths(
-            service,
-            project,
-            &owner.to_string_lossy(),
-            operation.clone(),
-            paths,
-        );
-    }
 }
