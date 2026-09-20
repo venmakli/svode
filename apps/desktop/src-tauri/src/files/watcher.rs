@@ -18,6 +18,7 @@ use crate::routines::{
 };
 use svode_core::content_tree::policy::{TreeIgnorePolicy, TreePathKind};
 use svode_core::page::nonce::WriteNonceRegistry;
+use svode_core::routines::parser as routine_parser;
 
 struct WatcherHandle {
     _watcher: RecommendedWatcher,
@@ -277,7 +278,9 @@ fn process_published_events(
             {
                 membership_only_paths.insert(path.clone(), kind);
             }
-            if let Some(owner_path) = routine_owner_for_path(space_root, path)
+            if let Some(owner_path) = relative_watched_path(space_root, path)
+                .as_deref()
+                .and_then(routine_parser::definition_file_owner_path)
                 && !is_under_child_space(&owner_path, &skip_dirs)
             {
                 routine_owner_paths.insert(owner_path);
@@ -646,13 +649,8 @@ fn emit_routine_invalidation(space_root: &Path, owner_path: &str, app: &AppHandl
             .key_for_space_dir(&canonical_space_root)
             .await
             .unwrap_or_else(|| IndexKey::Root(canonical_space_root.clone()));
-        let owner_kind = if owner_path != "." {
-            RoutineOwnerKind::Collection
-        } else if matches!(key, IndexKey::Root(_)) {
-            RoutineOwnerKind::Project
-        } else {
-            RoutineOwnerKind::Space
-        };
+        let owner_kind =
+            RoutineOwnerKind::for_owner_path(owner_path, matches!(key, IndexKey::Root(_)));
         crate::routines::emit_invalidation(
             app,
             RoutineInvalidationPayload {
@@ -663,25 +661,6 @@ fn emit_routine_invalidation(space_root: &Path, owner_path: &str, app: &AppHandl
             },
         );
     });
-}
-
-fn routine_owner_for_path(space_root: &Path, path: &Path) -> Option<String> {
-    let relative = relative_watched_path(space_root, path)?;
-    let parts = relative.split('/').collect::<Vec<_>>();
-    let routines_index = parts.iter().position(|part| *part == ".routines")?;
-    if parts.len() != routines_index + 2
-        || Path::new(parts.last()?)
-            .extension()
-            .and_then(|value| value.to_str())
-            != Some("md")
-    {
-        return None;
-    }
-    Some(if routines_index == 0 {
-        ".".to_string()
-    } else {
-        parts[..routines_index].join("/")
-    })
 }
 
 fn agent_actor_owner_for_path(space_root: &Path, path: &Path) -> Option<PathBuf> {
@@ -1117,20 +1096,19 @@ mod tests {
     }
 
     #[test]
-    fn routine_paths_are_classified_by_exact_owner() {
+    fn watched_routine_paths_reach_the_shared_definition_owner() {
         let root = Path::new("/project");
+        let owner = |path: &str| {
+            relative_watched_path(root, Path::new(path))
+                .as_deref()
+                .and_then(routine_parser::definition_file_owner_path)
+        };
+        assert_eq!(owner("/project/.routines/daily.md"), Some(".".into()));
         assert_eq!(
-            routine_owner_for_path(root, Path::new("/project/.routines/daily.md")),
-            Some(".".into())
-        );
-        assert_eq!(
-            routine_owner_for_path(root, Path::new("/project/tasks/.routines/daily.md")),
+            owner("/project/tasks/.routines/daily.md"),
             Some("tasks".into())
         );
-        assert_eq!(
-            routine_owner_for_path(root, Path::new("/project/tasks/.routines/nested/daily.md")),
-            None
-        );
+        assert_eq!(owner("/project/tasks/.routines/nested/daily.md"), None);
     }
 
     #[test]

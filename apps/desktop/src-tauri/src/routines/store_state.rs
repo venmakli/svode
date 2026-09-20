@@ -41,15 +41,6 @@ impl RoutineStoreState {
         self.get_or_create(key, &space_dir).await
     }
 
-    pub async fn owner_paths(
-        &self,
-        index_state: &IndexState,
-        key: &IndexKey,
-    ) -> Result<Vec<String>, AppError> {
-        let space_dir = index_state.dir_for_key(key).await?;
-        Ok(self.core.owner_paths(key, &space_dir).await?)
-    }
-
     pub async fn close_key(&self, key: &IndexKey) {
         self.core.close_key(key).await;
     }
@@ -95,6 +86,33 @@ impl RoutineStoreState {
 mod tests {
     use super::*;
     use std::sync::Arc;
+
+    use crate::routines::ResolvedRoutineOwner;
+    use crate::space::config;
+    use svode_core::routines::authority;
+
+    #[tokio::test]
+    async fn missing_store_after_generation_marker_forces_recovery_and_authority_off() {
+        let temp = tempfile::tempdir().unwrap();
+        let key = IndexKey::Root(temp.path().to_path_buf());
+        let owner_key = ResolvedRoutineOwner::indexed_collection_identity(&key, ".");
+        assert!(authority::set_key(temp.path(), &owner_key, true).unwrap());
+        authority::mark_storage_ready(temp.path()).unwrap();
+
+        let state = IndexState::new();
+        state.get_or_create_routines(&key).await.unwrap();
+
+        assert!(authority::recovery_required(temp.path()).unwrap());
+        assert!(!authority::read_key(temp.path(), &owner_key).unwrap());
+        assert!(
+            config::read_local_config(temp.path())
+                .unwrap()
+                .routines
+                .unwrap()
+                .automatic_authority
+                .is_empty()
+        );
+    }
 
     #[tokio::test]
     async fn concurrent_open_uses_one_pool_generation_and_close_drains_clones() {

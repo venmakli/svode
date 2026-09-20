@@ -8,9 +8,9 @@ use tauri::{AppHandle, Manager};
 use super::host::{self, RoutineGitTarget};
 use super::model::{
     CollectionEvent, ResolvedRoutineOwner, RoutineAction, RoutineDefinition,
-    RoutineDispatchBlockedCode, RoutineDispatchResult, RoutineOwnerKind, RoutineTrigger,
+    RoutineDispatchBlockedCode, RoutineDispatchResult, RoutineOwnerKind,
 };
-use super::{RoutineStoreState, cache};
+use super::{RoutineStoreState, lifecycle};
 use crate::AppError;
 use crate::agent_actors;
 use crate::agent_actors::launch::{AgentLaunchResolution, AgentLaunchValidationCode};
@@ -27,11 +27,19 @@ use crate::terminal::{AgentTerminalSpawn, TerminalManager, quote_agent_shell_com
 use svode_core::collections::engine::EntryFieldBatchIntent;
 use svode_core::page::fields::PageFieldUpdate;
 use svode_core::page::nonce::WriteNonceRegistry;
+use svode_core::routines::dispatch::{
+    RoutineDispatchRequest, RoutineDispatchSelection, select_dispatch_candidate,
+};
+use svode_core::routines::operational::{
+    self, NewRoutineRun, QueuedRoutineEvent, attach_pty, latest_run_record, record_terminal_outcome,
+};
 use svode_core::routines::service;
 
 #[derive(Debug, Clone)]
 pub(super) enum DispatchKind {
-    Manual,
+    Manual {
+        expected_fingerprint: Option<String>,
+    },
     Scheduled,
     Event {
         payload: Box<super::events::CollectionEventPayload>,
@@ -56,8 +64,9 @@ pub(crate) async fn dispatch_explicit(
         app,
         owner,
         routine_id,
-        expected_fingerprint,
-        DispatchKind::Manual,
+        DispatchKind::Manual {
+            expected_fingerprint,
+        },
         git_state,
         access_state,
         routine_stores,
@@ -70,7 +79,7 @@ pub(crate) async fn dispatch_explicit(
 pub(crate) async fn dispatch_event(
     app: &AppHandle,
     owner: ResolvedRoutineOwner,
-    event: cache::QueuedRoutineEvent,
+    event: QueuedRoutineEvent,
     execution_run_id: String,
 ) -> Result<RoutineDispatchResult, AppError> {
     let payload = serde_json::from_str(&event.payload_json)?;
@@ -83,7 +92,6 @@ pub(crate) async fn dispatch_event(
         app,
         owner,
         event.routine_id,
-        None,
         DispatchKind::Event {
             payload: Box::new(payload),
             execution_run_id,
@@ -106,24 +114,21 @@ pub(crate) enum EventDispatchPreflight {
 
 pub(crate) async fn event_dispatch_preflight(
     owner: &ResolvedRoutineOwner,
-    event: &cache::QueuedRoutineEvent,
+    event: &QueuedRoutineEvent,
 ) -> Option<EventDispatchPreflight> {
     let Ok(snapshot) = service::discover_owner(owner).await else {
         return None;
     };
-    let Some(row) = snapshot.routines.iter().find(|row| {
-        row.routine_id.as_deref() == Some(event.routine_id.as_str())
-            && row.execution_fingerprint == event.definition_fingerprint
-            && row.diagnostics.is_empty()
-    }) else {
+    let RoutineDispatchSelection::Ready(candidate) = select_dispatch_candidate(
+        &snapshot,
+        &RoutineDispatchRequest::Event {
+            routine_id: &event.routine_id,
+            definition_fingerprint: &event.definition_fingerprint,
+        },
+    ) else {
         return None;
     };
-    let Some(definition) = row.definition.as_ref().filter(|definition| {
-        definition.enabled == Some(true)
-            && matches!(definition.trigger, RoutineTrigger::Event { .. })
-    }) else {
-        return None;
-    };
+    let definition = &candidate.definition;
     match &definition.action {
         RoutineAction::RunAgent { .. } => scheduled_dispatch_ready(owner, definition)
             .await
@@ -165,7 +170,6 @@ pub(crate) async fn dispatch_scheduled(
         app,
         owner,
         routine_id,
-        None,
         DispatchKind::Scheduled,
         &git_state,
         &access_state,
@@ -227,7 +231,6 @@ pub(super) async fn dispatch_routine(
     app: &AppHandle,
     owner: ResolvedRoutineOwner,
     routine_id: String,
-    expected_fingerprint: Option<String>,
     dispatch_kind: DispatchKind,
     git_state: &GitState,
     access_state: &RepositoryAccessState,
@@ -241,103 +244,47 @@ pub(super) async fn dispatch_routine(
     let owner =
         service::revalidate_owner(&RoutineGitTarget::new(git_state), &owner, &repository).await?;
     let snapshot = service::discover_owner(&owner).await?;
-    let Some(row) = snapshot
-        .routines
-        .iter()
-        .find(|row| row.routine_id.as_deref() == Some(routine_id.as_str()))
-    else {
-        return Ok(dispatch_blocked(
-            routine_id,
-            if expected_fingerprint.is_some() {
-                RoutineDispatchBlockedCode::RoutineNotFound
-            } else {
-                RoutineDispatchBlockedCode::InvalidRoutine
-            },
-            "routine definition was not found for this owner",
-        ));
+    let request = match &dispatch_kind {
+        DispatchKind::Manual {
+            expected_fingerprint,
+        } => RoutineDispatchRequest::Manual {
+            routine_id: &routine_id,
+            expected_fingerprint: expected_fingerprint.as_deref(),
+        },
+        DispatchKind::Scheduled => RoutineDispatchRequest::Scheduled {
+            routine_id: &routine_id,
+        },
+        DispatchKind::Event {
+            definition_fingerprint,
+            ..
+        } => RoutineDispatchRequest::Event {
+            routine_id: &routine_id,
+            definition_fingerprint,
+        },
     };
-    if let Some(expected_fingerprint) = expected_fingerprint.as_deref()
-        && expected_fingerprint != row.fingerprint
-    {
-        return Ok(RoutineDispatchResult::Blocked {
-            routine_id,
-            code: RoutineDispatchBlockedCode::FingerprintConflict,
-            message: "routine definition changed after it was read".to_string(),
-            current_fingerprint: Some(row.fingerprint.clone()),
-        });
-    }
-    if let DispatchKind::Event {
-        definition_fingerprint,
-        ..
-    } = &dispatch_kind
-        && definition_fingerprint != &row.execution_fingerprint
-    {
-        return Ok(dispatch_blocked(
-            routine_id,
-            RoutineDispatchBlockedCode::InvalidRoutine,
-            "queued event definition is stale",
-        ));
-    }
-    let Some(definition) = row.definition.clone() else {
-        return Ok(dispatch_blocked(
-            routine_id,
-            RoutineDispatchBlockedCode::InvalidRoutine,
-            "routine definition is invalid and cannot be launched",
-        ));
-    };
-    if !row.diagnostics.is_empty() {
-        return Ok(dispatch_blocked(
-            routine_id,
-            RoutineDispatchBlockedCode::InvalidRoutine,
-            row.diagnostics
-                .first()
-                .map(|diagnostic| diagnostic.message.as_str())
-                .unwrap_or("routine definition is invalid"),
-        ));
-    }
-    let trigger_allowed = match &dispatch_kind {
-        DispatchKind::Manual => !matches!(definition.trigger, RoutineTrigger::Event { .. }),
-        DispatchKind::Scheduled => {
-            matches!(definition.trigger, RoutineTrigger::Schedule { .. })
-                && definition.enabled == Some(true)
-        }
-        DispatchKind::Event { .. } => {
-            matches!(definition.trigger, RoutineTrigger::Event { .. })
-                && definition.enabled == Some(true)
-        }
-    };
-    if !trigger_allowed {
-        return Ok(dispatch_blocked(
-            routine_id,
-            RoutineDispatchBlockedCode::NonManualTrigger,
-            match &dispatch_kind {
-                DispatchKind::Manual => "event routines require a concrete Collection event",
-                DispatchKind::Scheduled => "routine is not an enabled schedule",
-                DispatchKind::Event { .. } => "routine is not an enabled event routine",
-            },
-        ));
-    }
-    let executor = match &definition.action {
-        RoutineAction::RunAgent { executor } => Some(executor.as_str()),
-        RoutineAction::UpdateProperties { .. }
-            if matches!(dispatch_kind, DispatchKind::Event { .. }) =>
-        {
-            None
-        }
-        RoutineAction::UpdateProperties { .. } => {
-            return Ok(dispatch_blocked(
+    let candidate = match select_dispatch_candidate(&snapshot, &request) {
+        RoutineDispatchSelection::Ready(candidate) => *candidate,
+        RoutineDispatchSelection::Blocked {
+            code,
+            message,
+            current_fingerprint,
+        } => {
+            return Ok(RoutineDispatchResult::Blocked {
                 routine_id,
-                RoutineDispatchBlockedCode::UnsupportedAction,
-                "manual update_properties routines are not supported",
-            ));
+                code,
+                message,
+                current_fingerprint,
+            });
         }
     };
+    let definition = candidate.definition;
+    let executor = candidate.executor.as_deref();
 
     let pool = routine_stores
         .get_or_create_for_index(index_state, &owner.index_key)
         .await?;
     let live_pty_ids = super::runtime::live_evidence(terminal_manager)?;
-    if let Some(run) = cache::latest_run(&pool, &owner.descriptor.owner_path, &routine_id).await?
+    if let Some(run) = latest_run_record(&pool, &owner.descriptor.owner_path, &routine_id).await?
         && run.blocks_relaunch(live_pty_ids.live_agent_pty_ids())
     {
         return Ok(RoutineDispatchResult::AlreadyRunning {
@@ -500,19 +447,19 @@ pub(super) async fn dispatch_routine(
     let agent_session_id = format!("{}:{source_session_id}", source.as_str());
     let created_at = Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true);
 
-    cache::create_run(
+    operational::create_run(
         &pool,
-        cache::NewRoutineRun {
+        NewRoutineRun {
             routine_run_id: &routine_run_id,
             routine_id: &routine_id,
             owner_path: &owner.descriptor.owner_path,
             trigger_type: match &dispatch_kind {
-                DispatchKind::Manual => "manual",
+                DispatchKind::Manual { .. } => "manual",
                 DispatchKind::Scheduled => "schedule",
                 DispatchKind::Event { .. } => "event",
             },
-            definition_fingerprint: &row.execution_fingerprint,
-            definition: &definition,
+            definition_fingerprint: &candidate.execution_fingerprint,
+            definition_json: &serde_json::to_string(&definition)?,
             launch_id: &launch_id,
             source: source.as_str(),
             source_session_id: launch.source_session_id.as_deref(),
@@ -525,7 +472,7 @@ pub(super) async fn dispatch_routine(
     let command_display = quote_agent_shell_command(&launch.program, &launch.argv);
     let spawn = AgentTerminalSpawn {
         agent_session_id: agent_session_id.clone(),
-        title: Some(row.name.clone()),
+        title: Some(candidate.name.clone()),
         source,
         source_session_id: source_session_id.clone(),
         command: AgentSessionResumeCommand {
@@ -538,21 +485,23 @@ pub(super) async fn dispatch_routine(
         mcp_project_path: Some(owner.project_path.to_string_lossy().into_owned()),
         launch_id: Some(launch_id.clone()),
         routine_run_id: Some(routine_run_id.clone()),
-        lifecycle_sink: Some(Arc::new(cache::RoutineRunLifecycleSink::with_invalidation(
-            pool.clone(),
-            routine_stores.core_handle(),
-            owner.index_key.clone(),
-            owner.space_path.clone(),
-            routine_run_id.clone(),
-            app.clone(),
-            &owner,
-        ))),
+        lifecycle_sink: Some(Arc::new(
+            lifecycle::RoutineRunLifecycleSink::with_invalidation(
+                pool.clone(),
+                routine_stores.core_handle(),
+                owner.index_key.clone(),
+                owner.space_path.clone(),
+                routine_run_id.clone(),
+                app.clone(),
+                &owner,
+            ),
+        )),
     };
     let terminal = match terminal_manager.spawn_agent_shell_session(app.clone(), spawn) {
         Ok(terminal) => terminal,
         Err(error) => {
             let message = format!("failed to start agent CLI: {error}");
-            cache::record_terminal_outcome(
+            record_terminal_outcome(
                 &pool,
                 &routine_run_id,
                 super::model::RoutineRunTerminalStatus::Failed,
@@ -573,7 +522,7 @@ pub(super) async fn dispatch_routine(
             });
         }
     };
-    if let Err(error) = cache::attach_pty(
+    if let Err(error) = attach_pty(
         &pool,
         &routine_run_id,
         &terminal.pty_id,

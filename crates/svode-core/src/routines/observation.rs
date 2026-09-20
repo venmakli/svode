@@ -603,3 +603,127 @@ mod event_tests {
         assert!(lineage_allows(None, "routine-a"));
     }
 }
+
+#[cfg(test)]
+mod projection_tests {
+    use tempfile::tempdir;
+
+    use super::*;
+    use crate::page::dates::SystemGitDateExecutor;
+    use crate::routines::model::{
+        RoutineCatalogSnapshot, RoutineDiagnostic, RoutineOwnerDescriptor, RoutineOwnerKind,
+    };
+    use crate::routines::{operational, storage};
+
+    fn snapshot(owner_path: &str, rows: Vec<RoutineRow>) -> RoutineCatalogSnapshot {
+        RoutineCatalogSnapshot {
+            owner: RoutineOwnerDescriptor {
+                kind: RoutineOwnerKind::Collection,
+                space_id: "root".into(),
+                owner_path: owner_path.into(),
+            },
+            routines: rows,
+            diagnostics: vec![RoutineDiagnostic::new("catalog", "diagnostic")],
+            catalog_fingerprint: "catalog".into(),
+            refreshed_at: "2026-08-06T00:00:00Z".into(),
+        }
+    }
+
+    fn row(id: &str) -> RoutineRow {
+        RoutineRow {
+            routine_id: Some(id.into()),
+            portable_id: Some("01arz3ndektsv4rrffq69g5fav".into()),
+            filename: format!("{id}.md"),
+            path: format!("tasks/.routines/{id}.md"),
+            name: id.into(),
+            name_conflict: None,
+            description: None,
+            enabled: None,
+            trigger_type: None,
+            trigger_summary: None,
+            action_type: None,
+            action_summary: None,
+            executor: None,
+            last_run_at: None,
+            last_run_origin: None,
+            next_run_at: None,
+            last_run: None,
+            fingerprint: format!("fingerprint:{id}"),
+            execution_fingerprint: format!("execution:{id}"),
+            definition: None,
+            diagnostics: Vec::new(),
+        }
+    }
+
+    async fn count(pool: &SqlitePool, table: &str) -> i64 {
+        sqlx::query_scalar::<_, i64>(&format!("SELECT COUNT(*) FROM {table}"))
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn index_projection_reconciliation_preserves_operational_rows() {
+        let temp = tempdir().unwrap();
+        fs::create_dir_all(temp.path().join("tasks")).unwrap();
+        fs::write(
+            temp.path().join("tasks/schema.yaml"),
+            "columns:\n  - { name: Status, type: text }\nviews: []\n",
+        )
+        .unwrap();
+        fs::write(
+            temp.path().join("tasks/item.md"),
+            "---\ntitle: Item\nStatus: Open\n---\n",
+        )
+        .unwrap();
+        let index_pool = crate::index::db::create_pool(&temp.path().join("index.db"))
+            .await
+            .unwrap();
+        crate::index::db::ensure_schema(&index_pool).await.unwrap();
+        crate::index::reindex::full_reindex(
+            None::<&SystemGitDateExecutor>,
+            &index_pool,
+            temp.path(),
+            &[],
+        )
+        .await
+        .unwrap();
+        let routines_pool = storage::open_pool(&temp.path().join("routines.db"), false)
+            .await
+            .unwrap()
+            .pool;
+        operational::replace_catalog_snapshot(
+            &routines_pool,
+            &snapshot("tasks", vec![row("kept")]),
+        )
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO routine_event_queue (queue_key, event_key, owner_path, routine_id, definition_fingerprint, event_type, entry_path, payload_json, observed_at, state) VALUES ('queued', 'event', 'tasks', 'kept', 'execution:kept', 'collection.entry_created', 'tasks/item.md', '{}', '2026-08-08T00:00:00Z', 'pending')")
+            .execute(&routines_pool)
+            .await
+            .unwrap();
+
+        reconcile_projection_from_index(&routines_pool, &index_pool, temp.path())
+            .await
+            .unwrap();
+        assert_eq!(
+            count(&routines_pool, "routine_observation_baseline").await,
+            1
+        );
+
+        sqlx::query("DELETE FROM entries")
+            .execute(&index_pool)
+            .await
+            .unwrap();
+        reconcile_projection_from_index(&routines_pool, &index_pool, temp.path())
+            .await
+            .unwrap();
+
+        assert_eq!(count(&routines_pool, "routine_definitions").await, 1);
+        assert_eq!(count(&routines_pool, "routine_event_queue").await, 1);
+        assert_eq!(
+            count(&routines_pool, "routine_observation_baseline").await,
+            0
+        );
+    }
+}

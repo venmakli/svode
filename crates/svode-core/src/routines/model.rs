@@ -143,6 +143,20 @@ pub enum RoutineOwnerKind {
     Collection,
 }
 
+impl RoutineOwnerKind {
+    /// The owner kind of a `.routines` directory addressed by its Space-relative
+    /// owner path.
+    pub fn for_owner_path(owner_path: &str, space_is_project_root: bool) -> Self {
+        if owner_path != "." {
+            Self::Collection
+        } else if space_is_project_root {
+            Self::Project
+        } else {
+            Self::Space
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum RoutineOwnerInputKind {

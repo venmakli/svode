@@ -612,13 +612,6 @@ impl IndexState {
         self.core.keys_for_project(project).await
     }
 
-    pub(crate) async fn routine_inventory_keys(
-        &self,
-        project: &Path,
-    ) -> Result<Vec<IndexKey>, AppError> {
-        Ok(self.core.routine_inventory_keys(project).await?)
-    }
-
     /// Reverse lookup for callers that only know the absolute space directory
     /// (e.g. `git_sync` flow). Searches every loaded project for a child whose
     /// directory matches, falling back to `Root` when the dir IS the project.

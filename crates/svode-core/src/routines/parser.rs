@@ -461,6 +461,33 @@ fn valid_executor(value: &str) -> bool {
         && ulid::Ulid::from_string(&id.to_ascii_uppercase()).is_ok()
 }
 
+/// The Routine owner of a Space-relative path that addresses a definition file.
+///
+/// Returns the owner path (`.` for the Space itself) only for a direct
+/// `<owner>/.routines/<name>.md` child; nested or non-Markdown paths have no
+/// definition owner.
+pub fn definition_file_owner_path(space_relative: &str) -> Option<String> {
+    let parts = space_relative
+        .replace('\\', "/")
+        .split('/')
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    let routines_index = parts.iter().position(|part| part == ".routines")?;
+    if parts.len() != routines_index + 2
+        || Path::new(parts.last()?)
+            .extension()
+            .and_then(|value| value.to_str())
+            != Some("md")
+    {
+        return None;
+    }
+    Some(if routines_index == 0 {
+        ".".to_string()
+    } else {
+        parts[..routines_index].join("/")
+    })
+}
+
 pub fn scan_routine_directory(
     owner_root: &Path,
     owner_kind: RoutineOwnerKind,
@@ -1284,4 +1311,154 @@ mod tests {
             execution_fingerprint(&changed_body)
         );
     }
+}
+
+/// A Routine definition that runs one Agent Actor.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RoutineExecutorReference {
+    pub owner_path: String,
+    pub path: String,
+    pub filename: String,
+    pub title: String,
+}
+
+/// Why one owner directory or definition file could not be read while
+/// collecting executor references.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RoutineReferenceDiagnostic {
+    pub owner_path: String,
+    pub path: Option<String>,
+    pub code: &'static str,
+    pub message: String,
+}
+
+/// Every Routine of `owner_roots` whose `run_agent` action names `actor_id`.
+///
+/// Reads the same bounded definition files as the catalog owner; callers map
+/// the result onto their own transport shape.
+pub fn scan_executor_references(
+    owner_roots: &[std::path::PathBuf],
+    actor_id: &str,
+) -> (
+    Vec<RoutineExecutorReference>,
+    Vec<RoutineReferenceDiagnostic>,
+) {
+    let expected = format!("agent:{actor_id}");
+    let mut references = Vec::new();
+    let mut diagnostics = Vec::new();
+    for owner in owner_roots {
+        let owner_path = owner.to_string_lossy().into_owned();
+        let directory = owner.join(".routines");
+        let entries = match fs::read_dir(&directory) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => {
+                diagnostics.push(RoutineReferenceDiagnostic {
+                    owner_path,
+                    path: None,
+                    code: "routine_catalog_unavailable",
+                    message: error.to_string(),
+                });
+                continue;
+            }
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|value| value.to_str()) != Some("md") {
+                continue;
+            }
+            let file_path = path.to_string_lossy().into_owned();
+            match fs::symlink_metadata(&path) {
+                Ok(metadata)
+                    if metadata.file_type().is_file() && metadata.len() <= MAX_ROUTINE_BYTES => {}
+                Ok(_) => {
+                    diagnostics.push(RoutineReferenceDiagnostic {
+                        owner_path: owner_path.clone(),
+                        path: Some(file_path),
+                        code: "routine_file_unsafe",
+                        message: "routine must be a bounded regular file".to_string(),
+                    });
+                    continue;
+                }
+                Err(error) => {
+                    diagnostics.push(RoutineReferenceDiagnostic {
+                        owner_path: owner_path.clone(),
+                        path: Some(file_path),
+                        code: "routine_file_unavailable",
+                        message: error.to_string(),
+                    });
+                    continue;
+                }
+            }
+            let raw = match fs::read_to_string(&path) {
+                Ok(raw) => raw,
+                Err(error) => {
+                    diagnostics.push(RoutineReferenceDiagnostic {
+                        owner_path: owner_path.clone(),
+                        path: Some(file_path),
+                        code: "routine_file_unavailable",
+                        message: error.to_string(),
+                    });
+                    continue;
+                }
+            };
+            let meta = match crate::page::frontmatter::parse_status(&raw) {
+                crate::page::frontmatter::ParseStatus::Valid { meta, .. } => meta,
+                crate::page::frontmatter::ParseStatus::Missing { .. } => {
+                    diagnostics.push(RoutineReferenceDiagnostic {
+                        owner_path: owner_path.clone(),
+                        path: Some(file_path),
+                        code: "routine_frontmatter_missing",
+                        message: "routine has no YAML frontmatter".to_string(),
+                    });
+                    continue;
+                }
+                crate::page::frontmatter::ParseStatus::Malformed { message, .. } => {
+                    diagnostics.push(RoutineReferenceDiagnostic {
+                        owner_path: owner_path.clone(),
+                        path: Some(file_path),
+                        code: "routine_frontmatter_malformed",
+                        message,
+                    });
+                    continue;
+                }
+            };
+            let action = meta
+                .extra
+                .get("action")
+                .and_then(serde_yml::Value::as_mapping);
+            if action
+                .and_then(|value| value.get("type"))
+                .and_then(serde_yml::Value::as_str)
+                != Some("run_agent")
+            {
+                continue;
+            }
+            if action
+                .and_then(|value| value.get("executor"))
+                .and_then(serde_yml::Value::as_str)
+                != Some(expected.as_str())
+            {
+                continue;
+            }
+            let filename = path
+                .file_stem()
+                .and_then(|value| value.to_str())
+                .unwrap_or_default()
+                .to_string();
+            references.push(RoutineExecutorReference {
+                title: if meta.title.trim().is_empty() {
+                    filename.clone()
+                } else {
+                    meta.title
+                },
+                filename,
+                path: file_path,
+                owner_path: owner_path.clone(),
+            });
+        }
+    }
+    references.sort_by(|left, right| left.path.cmp(&right.path));
+    diagnostics.sort_by(|left, right| left.path.cmp(&right.path));
+    (references, diagnostics)
 }

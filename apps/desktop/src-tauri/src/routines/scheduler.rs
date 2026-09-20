@@ -6,14 +6,9 @@ use std::time::Duration;
 use chrono::{DateTime, SecondsFormat, TimeDelta, Utc};
 use tauri::{AppHandle, Manager};
 
-use super::authority;
-use super::cache;
 use super::dispatch;
 use super::host;
-use super::model::{
-    ResolvedRoutineOwner, RoutineDefinition, RoutineDispatchBlockedCode, RoutineDispatchResult,
-    RoutineTrigger,
-};
+use super::model::{ResolvedRoutineOwner, RoutineDispatchBlockedCode, RoutineDispatchResult};
 use crate::AppError;
 use crate::git::access::{
     RepositoryAccessState, RepositoryAccessStatus, RoutineClaimResult, access_store_path,
@@ -23,8 +18,13 @@ use crate::git::{GitState, require_cli};
 use crate::index::IndexState;
 use crate::routines::RoutineStoreState;
 use crate::terminal::TerminalManager;
+use svode_core::routines::dispatch::{event_run_key, schedule_candidates, scheduled_run_key};
+use svode_core::routines::operational::{
+    activate_event, claim_local_run, finish_event, latest_remote_claim, latest_run_record,
+    next_pending_event, record_remote_claim, schedule_state, write_schedule_state,
+};
 use svode_core::routines::schedule;
-use svode_core::routines::service;
+use svode_core::routines::{authority, service};
 
 const SCHEDULER_INTERVAL: Duration = Duration::from_secs(60);
 
@@ -76,7 +76,8 @@ async fn tick_project(
     let index_state = app.state::<IndexState>();
     let routine_stores = app.state::<Arc<RoutineStoreState>>();
     let owners =
-        authority::discover_project_owners(&routine_stores, &index_state, project_path).await?;
+        service::discover_project_owners(routine_stores.core(), &index_state.core, project_path)
+            .await?;
     for owner in owners {
         if let Err(error) = tick_owner(app, &owner).await {
             tracing::warn!(
@@ -95,7 +96,7 @@ async fn tick_owner(app: &AppHandle, owner: &ResolvedRoutineOwner) -> Result<(),
     let pool = routine_stores
         .get_or_create_for_index(&index_state, &owner.index_key)
         .await?;
-    let automatic_authority = match authority::read(owner) {
+    let automatic_authority = match authority::read_key(&owner.space_path, &owner.identity()) {
         Ok(enabled) => enabled,
         Err(error) => {
             tracing::warn!(
@@ -110,41 +111,22 @@ async fn tick_owner(app: &AppHandle, owner: &ResolvedRoutineOwner) -> Result<(),
     let live_pty_ids = super::runtime::live_evidence(&terminal_manager)?;
     let now = Utc::now();
 
-    for row in snapshot.routines {
-        let Some(routine_id) = row.routine_id.as_deref() else {
-            continue;
-        };
-        if !row.diagnostics.is_empty()
-            || row
-                .definition
-                .as_ref()
-                .is_none_or(|value| value.enabled != Some(true))
-        {
-            continue;
-        }
-        let Some(RoutineDefinition {
-            trigger:
-                RoutineTrigger::Schedule {
-                    cron,
-                    time_basis,
-                    missed_runs,
-                },
-            ..
-        }) = row.definition.as_ref()
-        else {
-            continue;
-        };
+    for candidate in schedule_candidates(&snapshot) {
+        let routine_id = candidate.routine_id.as_str();
+        let cron = candidate.cron.as_str();
+        let time_basis = &candidate.time_basis;
+        let missed_runs = &candidate.missed_runs;
 
-        let state = cache::schedule_state(&pool, &owner.descriptor.owner_path, routine_id).await?;
+        let state = schedule_state(&pool, &owner.descriptor.owner_path, routine_id).await?;
         let Some(state) =
-            state.filter(|state| state.definition_fingerprint == row.execution_fingerprint)
+            state.filter(|state| state.definition_fingerprint == candidate.execution_fingerprint)
         else {
             if let Err(error) = write_baseline(
                 app,
                 &pool,
                 owner,
                 routine_id,
-                &row.execution_fingerprint,
+                &candidate.execution_fingerprint,
                 cron,
                 time_basis,
                 now,
@@ -166,7 +148,7 @@ async fn tick_owner(app: &AppHandle, owner: &ResolvedRoutineOwner) -> Result<(),
                 &pool,
                 owner,
                 routine_id,
-                &row.execution_fingerprint,
+                &candidate.execution_fingerprint,
                 cron,
                 time_basis,
                 now,
@@ -195,11 +177,11 @@ async fn tick_owner(app: &AppHandle, owner: &ResolvedRoutineOwner) -> Result<(),
                 .next_at
                 .to_rfc3339_opts(SecondsFormat::Secs, true);
             if next != state.next_run_at {
-                cache::write_schedule_state(
+                write_schedule_state(
                     &pool,
                     &owner.descriptor.owner_path,
                     routine_id,
-                    &row.execution_fingerprint,
+                    &candidate.execution_fingerprint,
                     &state.checkpoint_at,
                     &next,
                 )
@@ -213,7 +195,7 @@ async fn tick_owner(app: &AppHandle, owner: &ResolvedRoutineOwner) -> Result<(),
             continue;
         }
         if let Some(run) =
-            cache::latest_run(&pool, &owner.descriptor.owner_path, routine_id).await?
+            latest_run_record(&pool, &owner.descriptor.owner_path, routine_id).await?
             && run.blocks_relaunch(live_pty_ids.live_agent_pty_ids())
         {
             advance_checkpoint(
@@ -221,19 +203,14 @@ async fn tick_owner(app: &AppHandle, owner: &ResolvedRoutineOwner) -> Result<(),
                 &pool,
                 owner,
                 routine_id,
-                &row.execution_fingerprint,
+                &candidate.execution_fingerprint,
                 now,
                 evaluation.next_at,
             )
             .await?;
             continue;
         }
-        if !dispatch::scheduled_dispatch_ready(
-            owner,
-            row.definition.as_ref().expect("validated definition"),
-        )
-        .await
-        {
+        if !dispatch::scheduled_dispatch_ready(owner, &candidate.definition).await {
             continue;
         }
 
@@ -258,7 +235,7 @@ async fn tick_owner(app: &AppHandle, owner: &ResolvedRoutineOwner) -> Result<(),
                 &pool,
                 owner,
                 routine_id,
-                &row.execution_fingerprint,
+                &candidate.execution_fingerprint,
                 now,
                 evaluation.next_at,
             )
@@ -286,7 +263,7 @@ async fn tick_owner(app: &AppHandle, owner: &ResolvedRoutineOwner) -> Result<(),
                 &access,
                 routine_id,
                 &run_key,
-                &row.execution_fingerprint,
+                &candidate.execution_fingerprint,
                 claim_time,
             )
             .await?;
@@ -295,7 +272,7 @@ async fn tick_owner(app: &AppHandle, owner: &ResolvedRoutineOwner) -> Result<(),
                 let leased_at = now.to_rfc3339_opts(SecondsFormat::Secs, true);
                 let expires_at =
                     (now + TimeDelta::minutes(5)).to_rfc3339_opts(SecondsFormat::Secs, true);
-                cache::claim_local_run(&pool, &run_key, routine_id, &leased_at, &expires_at).await?
+                claim_local_run(&pool, &run_key, routine_id, &leased_at, &expires_at).await?
             }
             RoutineClaimResult::Claimed {
                 claimed_by,
@@ -307,7 +284,7 @@ async fn tick_owner(app: &AppHandle, owner: &ResolvedRoutineOwner) -> Result<(),
                     owner,
                     routine_id,
                     &run_key,
-                    &row.execution_fingerprint,
+                    &candidate.execution_fingerprint,
                     &claimed_by,
                     claimed_at,
                 )
@@ -324,7 +301,7 @@ async fn tick_owner(app: &AppHandle, owner: &ResolvedRoutineOwner) -> Result<(),
                     owner,
                     routine_id,
                     &run_key,
-                    &row.execution_fingerprint,
+                    &candidate.execution_fingerprint,
                     &claimed_by,
                     claimed_at,
                 )
@@ -341,7 +318,7 @@ async fn tick_owner(app: &AppHandle, owner: &ResolvedRoutineOwner) -> Result<(),
             &pool,
             owner,
             routine_id,
-            &row.execution_fingerprint,
+            &candidate.execution_fingerprint,
             now,
             evaluation.next_at,
         )
@@ -384,18 +361,18 @@ async fn dispatch_next_event(
     if !consent {
         return Ok(());
     }
-    let Some(event) = cache::next_pending_event(pool, &owner.descriptor.owner_path).await? else {
+    let Some(event) = next_pending_event(pool, &owner.descriptor.owner_path).await? else {
         return Ok(());
     };
     let terminal_manager = app.state::<TerminalManager>();
     let live_pty_ids = super::runtime::live_evidence(&terminal_manager)?;
-    if let Some(run) = cache::latest_run(pool, &event.owner_path, &event.routine_id).await?
+    if let Some(run) = latest_run_record(pool, &event.owner_path, &event.routine_id).await?
         && run.blocks_relaunch(live_pty_ids.live_agent_pty_ids())
     {
         return Ok(());
     }
     let Some(preflight) = dispatch::event_dispatch_preflight(owner, &event).await else {
-        cache::finish_event(pool, &event.queue_key, "failed").await?;
+        finish_event(pool, &event.queue_key, "failed").await?;
         return Ok(());
     };
     if let dispatch::EventDispatchPreflight::UpdateProperties { mutation_paths } = &preflight
@@ -444,7 +421,7 @@ async fn dispatch_next_event(
         .await?;
     let should_dispatch = match claim {
         RoutineClaimResult::Local => {
-            cache::claim_local_run(
+            claim_local_run(
                 pool,
                 &run_key,
                 &event.routine_id,
@@ -490,11 +467,11 @@ async fn dispatch_next_event(
         RoutineClaimResult::Unavailable { .. } => return Ok(()),
     };
     if !should_dispatch {
-        cache::finish_event(pool, &event.queue_key, "completed").await?;
+        finish_event(pool, &event.queue_key, "completed").await?;
         return Ok(());
     }
     let execution_run_id = ulid::Ulid::new().to_string().to_ascii_lowercase();
-    if !cache::activate_event(pool, &event.queue_key, &execution_run_id).await? {
+    if !activate_event(pool, &event.queue_key, &execution_run_id).await? {
         return Ok(());
     }
     let result =
@@ -513,18 +490,8 @@ async fn dispatch_next_event(
             "failed"
         }
     };
-    cache::finish_event(pool, &event.queue_key, state).await?;
+    finish_event(pool, &event.queue_key, state).await?;
     result.map(|_| ())
-}
-
-fn event_run_key(repository_id: &str, routine_id: &str, event_key: &str) -> String {
-    let value = format!("{repository_id}\0{routine_id}\0{event_key}");
-    let mut hash = 0xcbf29ce484222325_u64;
-    for byte in value.as_bytes() {
-        hash ^= u64::from(*byte);
-        hash = hash.wrapping_mul(0x100000001b3);
-    }
-    format!("event-{hash:016x}")
 }
 
 async fn write_baseline(
@@ -550,7 +517,7 @@ async fn advance_checkpoint(
     checkpoint: DateTime<Utc>,
     next: DateTime<Utc>,
 ) -> Result<(), AppError> {
-    cache::write_schedule_state(
+    write_schedule_state(
         pool,
         &owner.descriptor.owner_path,
         routine_id,
@@ -576,9 +543,8 @@ async fn record_claim(
     let claimed_at = DateTime::<Utc>::from_timestamp(claimed_at, 0)
         .unwrap_or_else(Utc::now)
         .to_rfc3339_opts(SecondsFormat::Secs, true);
-    let previous =
-        cache::latest_remote_claim(pool, &owner.descriptor.owner_path, routine_id).await?;
-    cache::record_remote_claim(
+    let previous = latest_remote_claim(pool, &owner.descriptor.owner_path, routine_id).await?;
+    record_remote_claim(
         pool,
         &owner.descriptor.owner_path,
         routine_id,
@@ -596,42 +562,4 @@ async fn record_claim(
         super::emit_owner_invalidation(app, owner);
     }
     Ok(())
-}
-
-fn scheduled_run_key(
-    repository_id: &str,
-    routine_id: &str,
-    time_basis_identity: &str,
-    nominal_civil_time: &str,
-) -> String {
-    let value =
-        format!("{repository_id}\0{routine_id}\0{time_basis_identity}\0{nominal_civil_time}");
-    let mut hash = 0xcbf29ce484222325_u64;
-    for byte in value.as_bytes() {
-        hash ^= u64::from(*byte);
-        hash = hash.wrapping_mul(0x100000001b3);
-    }
-    format!("schedule-{hash:016x}")
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn scheduled_keys_are_stable_and_slot_specific() {
-        let first = scheduled_run_key("repo-1", "routine-1", "local", "2026-08-07T09:00");
-        assert_eq!(
-            first,
-            scheduled_run_key("repo-1", "routine-1", "local", "2026-08-07T09:00",)
-        );
-        assert_ne!(
-            first,
-            scheduled_run_key("repo-1", "routine-1", "local", "2026-08-08T09:00",)
-        );
-        assert_ne!(
-            first,
-            scheduled_run_key("repo-1", "routine-1", "fixed:UTC", "2026-08-07T09:00",)
-        );
-    }
 }

@@ -292,6 +292,74 @@ pub fn resolve_owner(
     })
 }
 
+/// Every Routine owner of an open project: each inventoried Space and the
+/// Collection owners its operational store already knows.
+pub async fn discover_project_owners(
+    routine_stores: &RoutineStoreState,
+    index_state: &IndexRuntimeState,
+    project_path: &Path,
+) -> Result<Vec<ResolvedRoutineOwner>, RoutineServiceError> {
+    let project_path = project_path.to_path_buf();
+    let mut owners = Vec::new();
+    for key in index_state.routine_inventory_keys(&project_path).await? {
+        let space_path = index_state.dir_for_key(&key).await?;
+        let space_id = match &key {
+            IndexKey::Root(_) => "root",
+            IndexKey::Space { space_id, .. } => space_id,
+        };
+        owners.push(resolve_owner(
+            &project_path,
+            &space_path,
+            space_id,
+            ".",
+            RoutineOwnerInputKind::RegisteredSpace,
+        )?);
+        for owner_path in routine_stores.owner_paths(&key, &space_path).await? {
+            owners.push(resolve_owner(
+                &project_path,
+                &space_path,
+                space_id,
+                &owner_path,
+                RoutineOwnerInputKind::CollectionDirectory,
+            )?);
+        }
+    }
+    Ok(owners)
+}
+
+/// The create candidate of a complete definition: bounded identity, trimmed
+/// text and an `enabled` value that only exists for an automatic trigger.
+pub fn normalize_create_candidate(
+    mut definition: RoutineDefinition,
+) -> Result<RoutineDefinition, String> {
+    let name = definition
+        .name
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "routine name must contain 1 to 240 characters".to_string())?;
+    if name.chars().count() > 240 {
+        return Err("routine name must contain 1 to 240 characters".into());
+    }
+    definition.name = Some(name);
+    definition.description = definition
+        .description
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty());
+    if definition
+        .description
+        .as_ref()
+        .is_some_and(|value| value.chars().count() > 2_000)
+    {
+        return Err("routine description must contain at most 2000 characters".into());
+    }
+    definition.enabled = if matches!(definition.trigger, RoutineTrigger::Manual) {
+        None
+    } else {
+        Some(false)
+    };
+    Ok(definition)
+}
+
 pub async fn read_catalog(
     routine_stores: &RoutineStoreState,
     index_state: &IndexRuntimeState,
@@ -1336,6 +1404,77 @@ mod tests {
     use crate::routines::model::{
         CollectionEvent, RoutineAction, RoutineActionTarget, RoutineTrigger,
     };
+    use crate::routines::model::{MissedRuns, RoutineTimeBasis};
+
+    #[test]
+    fn full_create_candidate_is_preserved_and_automatic_routines_are_disabled() {
+        let definition = normalize_create_candidate(RoutineDefinition {
+            name: Some("  Weekly review  ".into()),
+            description: Some("  Summarizes weekly changes.  ".into()),
+            enabled: Some(true),
+            trigger: RoutineTrigger::Schedule {
+                cron: "30 8 * * 1".into(),
+                time_basis: RoutineTimeBasis::Fixed {
+                    timezone: "Europe/Paris".into(),
+                },
+                missed_runs: MissedRuns::RunOnce,
+            },
+            action: RoutineAction::RunAgent {
+                executor: "agent:01arz3ndektsv4rrffq69g5fav".into(),
+            },
+            body: "Review the week.".into(),
+        })
+        .unwrap();
+        assert_eq!(definition.enabled, Some(false));
+        assert_eq!(definition.name.as_deref(), Some("Weekly review"));
+        assert_eq!(
+            definition.description.as_deref(),
+            Some("Summarizes weekly changes.")
+        );
+        assert!(matches!(
+            definition.trigger,
+            RoutineTrigger::Schedule {
+                missed_runs: MissedRuns::RunOnce,
+                ..
+            }
+        ));
+        assert_eq!(
+            definition.action.executor(),
+            Some("agent:01arz3ndektsv4rrffq69g5fav")
+        );
+        assert_eq!(definition.body, "Review the week.");
+    }
+
+    #[test]
+    fn manual_create_candidate_drops_an_inapplicable_enabled_value() {
+        let definition = normalize_create_candidate(RoutineDefinition {
+            name: Some("Manual".into()),
+            description: None,
+            enabled: Some(true),
+            trigger: RoutineTrigger::Manual,
+            action: RoutineAction::RunAgent {
+                executor: "agent:01arz3ndektsv4rrffq69g5fav".into(),
+            },
+            body: String::new(),
+        })
+        .unwrap();
+        assert_eq!(definition.enabled, None);
+    }
+
+    #[test]
+    fn full_create_candidate_requires_bounded_identity_before_service_write() {
+        let result = normalize_create_candidate(RoutineDefinition {
+            name: Some("   ".into()),
+            description: None,
+            enabled: None,
+            trigger: RoutineTrigger::Manual,
+            action: RoutineAction::RunAgent {
+                executor: "agent:01arz3ndektsv4rrffq69g5fav".into(),
+            },
+            body: String::new(),
+        });
+        assert!(result.is_err());
+    }
 
     /// Minimal Space config fixture: `spaces` registers child `(id, folder)`
     /// references of a Project.

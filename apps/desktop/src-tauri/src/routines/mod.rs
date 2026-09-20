@@ -1,9 +1,8 @@
-pub(crate) mod authority;
-pub(crate) mod cache;
 pub mod commands;
 pub(crate) mod dispatch;
 pub(crate) mod events;
 pub(crate) mod host;
+pub(crate) mod lifecycle;
 mod model;
 pub(crate) mod runtime;
 mod scheduler;

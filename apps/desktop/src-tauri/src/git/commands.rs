@@ -667,30 +667,15 @@ async fn emit_sync_domain_invalidations(
             } else {
                 continue;
             };
-            let parts = within_space.split('/').collect::<Vec<_>>();
-            let Some(routines_index) = parts.iter().position(|part| *part == ".routines") else {
+            let Some(owner_path) =
+                svode_core::routines::parser::definition_file_owner_path(within_space)
+            else {
                 continue;
             };
-            if parts.len() != routines_index + 2
-                || Path::new(parts.last().unwrap_or(&""))
-                    .extension()
-                    .and_then(|value| value.to_str())
-                    != Some("md")
-            {
-                continue;
-            }
-            let owner_path = if routines_index == 0 {
-                ".".to_string()
-            } else {
-                parts[..routines_index].join("/")
-            };
-            let owner_kind = if owner_path != "." {
-                crate::routines::RoutineOwnerKind::Collection
-            } else if matches!(owner_key, IndexKey::Root(_)) {
-                crate::routines::RoutineOwnerKind::Project
-            } else {
-                crate::routines::RoutineOwnerKind::Space
-            };
+            let owner_kind = crate::routines::RoutineOwnerKind::for_owner_path(
+                &owner_path,
+                matches!(owner_key, IndexKey::Root(_)),
+            );
             crate::routines::emit_invalidation(
                 app,
                 crate::routines::RoutineInvalidationPayload {

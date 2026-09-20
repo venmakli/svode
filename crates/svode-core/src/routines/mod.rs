@@ -1,4 +1,5 @@
 pub mod authority;
+pub mod dispatch;
 pub mod local;
 pub mod model;
 pub mod observation;

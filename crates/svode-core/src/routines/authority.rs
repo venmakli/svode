@@ -94,3 +94,124 @@ pub fn acknowledge_recovery(space_dir: &Path) -> Result<(), RoutineStoreError> {
     })
     .map_err(Into::into)
 }
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use tempfile::tempdir;
+
+    use super::*;
+    use crate::index::IndexKey;
+    use crate::routines::local::GitUserPolicy;
+    use crate::routines::model::{ResolvedRoutineOwner, RoutineOwnerDescriptor, RoutineOwnerKind};
+
+    fn owner(project_path: PathBuf, kind: RoutineOwnerKind, owner_path: &str) -> String {
+        ResolvedRoutineOwner {
+            descriptor: RoutineOwnerDescriptor {
+                kind,
+                space_id: "root".into(),
+                owner_path: owner_path.into(),
+            },
+            project_path: project_path.clone(),
+            space_path: project_path.clone(),
+            owner_root: project_path.join(owner_path),
+            index_key: IndexKey::Root(project_path),
+        }
+        .identity()
+    }
+
+    #[test]
+    fn exact_owner_values_are_local_and_default_off() {
+        let temp = tempdir().unwrap();
+        let root = owner(temp.path().into(), RoutineOwnerKind::Project, ".");
+        let collection = owner(temp.path().into(), RoutineOwnerKind::Collection, "tasks");
+        let renamed = owner(
+            temp.path().into(),
+            RoutineOwnerKind::Collection,
+            "renamed-tasks",
+        );
+
+        assert!(!read_key(temp.path(), &root).unwrap());
+        assert!(set_key(temp.path(), &root, true).unwrap());
+        assert!(set_key(temp.path(), &collection, true).unwrap());
+        assert!(read_key(temp.path(), &root).unwrap());
+        assert!(read_key(temp.path(), &collection).unwrap());
+        assert!(!read_key(temp.path(), &renamed).unwrap());
+        assert!(!set_key(temp.path(), &root, false).unwrap());
+        assert!(!read_key(temp.path(), &root).unwrap());
+        assert!(read_key(temp.path(), &collection).unwrap());
+    }
+
+    #[test]
+    fn recovery_clears_authority_and_explicit_enable_resolves_the_notice() {
+        let temp = tempdir().unwrap();
+        let root = owner(temp.path().into(), RoutineOwnerKind::Project, ".");
+        let collection = owner(temp.path().into(), RoutineOwnerKind::Collection, "tasks");
+        assert!(set_key(temp.path(), &root, true).unwrap());
+        assert!(set_key(temp.path(), &collection, true).unwrap());
+        mark_storage_ready(temp.path()).unwrap();
+
+        record_recovery(
+            temp.path(),
+            RecoveryEvidence {
+                reason: "corrupt",
+                quarantine_files: vec!["routines.db.corrupt-1".into()],
+            },
+        )
+        .unwrap();
+
+        assert!(recovery_required(temp.path()).unwrap());
+        assert!(!read_key(temp.path(), &root).unwrap());
+        assert!(!read_key(temp.path(), &collection).unwrap());
+
+        assert!(set_key(temp.path(), &root, true).unwrap());
+        assert!(!recovery_required(temp.path()).unwrap());
+        assert!(read_key(temp.path(), &root).unwrap());
+        assert!(!read_key(temp.path(), &collection).unwrap());
+    }
+
+    #[test]
+    fn dismissing_recovery_keeps_every_authority_off() {
+        let temp = tempdir().unwrap();
+        let root = owner(temp.path().into(), RoutineOwnerKind::Project, ".");
+        assert!(set_key(temp.path(), &root, true).unwrap());
+
+        record_recovery(
+            temp.path(),
+            RecoveryEvidence {
+                reason: "missing",
+                quarantine_files: Vec::new(),
+            },
+        )
+        .unwrap();
+
+        acknowledge_recovery(temp.path()).unwrap();
+
+        assert!(!recovery_required(temp.path()).unwrap());
+        assert!(!read_key(temp.path(), &root).unwrap());
+    }
+
+    #[test]
+    fn routine_mutations_preserve_other_local_config_owners() {
+        let temp = tempdir().unwrap();
+        crate::git::policy::write_user_policy(
+            temp.path(),
+            &GitUserPolicy {
+                auto_sync: true,
+                auto_commit_structural: false,
+                auto_commit_system: true,
+            },
+        )
+        .unwrap();
+        let root = owner(temp.path().into(), RoutineOwnerKind::Project, ".");
+
+        set_key(temp.path(), &root, true).unwrap();
+
+        assert!(
+            crate::git::policy::read_user_policy(temp.path())
+                .unwrap()
+                .auto_sync
+        );
+    }
+}

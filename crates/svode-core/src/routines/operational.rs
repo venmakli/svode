@@ -481,3 +481,206 @@ fn routine_run_from_row(row: sqlx::sqlite::SqliteRow) -> Result<RoutineRunRow, s
         session_status: row.try_get("session_status")?,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use tempfile::tempdir;
+
+    use super::*;
+    use crate::routines::model::{RoutineDiagnostic, RoutineOwnerDescriptor, RoutineRow};
+    use crate::routines::storage;
+
+    async fn routines_pool(path: &std::path::Path) -> SqlitePool {
+        storage::open_pool(path, false).await.unwrap().pool
+    }
+
+    fn snapshot(owner_path: &str, rows: Vec<RoutineRow>) -> RoutineCatalogSnapshot {
+        RoutineCatalogSnapshot {
+            owner: RoutineOwnerDescriptor {
+                kind: RoutineOwnerKind::Collection,
+                space_id: "root".into(),
+                owner_path: owner_path.into(),
+            },
+            routines: rows,
+            diagnostics: vec![RoutineDiagnostic::new("catalog", "diagnostic")],
+            catalog_fingerprint: "catalog".into(),
+            refreshed_at: "2026-08-06T00:00:00Z".into(),
+        }
+    }
+
+    fn row(id: &str) -> RoutineRow {
+        RoutineRow {
+            routine_id: Some(id.into()),
+            portable_id: Some("01arz3ndektsv4rrffq69g5fav".into()),
+            filename: format!("{id}.md"),
+            path: format!("tasks/.routines/{id}.md"),
+            name: id.into(),
+            name_conflict: None,
+            description: None,
+            enabled: None,
+            trigger_type: None,
+            trigger_summary: None,
+            action_type: None,
+            action_summary: None,
+            executor: None,
+            last_run_at: None,
+            last_run_origin: None,
+            next_run_at: None,
+            last_run: None,
+            fingerprint: format!("fingerprint:{id}"),
+            execution_fingerprint: format!("execution:{id}"),
+            definition: None,
+            diagnostics: Vec::new(),
+        }
+    }
+
+    async fn owner_routine_ids(pool: &SqlitePool, owner_path: &str) -> Vec<Option<String>> {
+        read_owner_rows_json(pool, owner_path)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|row| serde_json::from_str::<RoutineRow>(&row).unwrap().routine_id)
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn owner_replace_is_transactional_and_does_not_touch_siblings() {
+        let temp = tempdir().unwrap();
+        let pool = routines_pool(&temp.path().join("routines.db")).await;
+
+        replace_catalog_snapshot(&pool, &snapshot("tasks", vec![row("one"), row("two")]))
+            .await
+            .unwrap();
+        replace_catalog_snapshot(&pool, &snapshot("notes", vec![row("sibling")]))
+            .await
+            .unwrap();
+        let mut invalid = row("invalid");
+        invalid.routine_id = None;
+        invalid.portable_id = None;
+        replace_catalog_snapshot(&pool, &snapshot("tasks", vec![row("current"), invalid]))
+            .await
+            .unwrap();
+
+        assert_eq!(
+            owner_routine_ids(&pool, "tasks").await,
+            vec![Some("current".into())]
+        );
+        assert_eq!(owner_routine_ids(&pool, "notes").await.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn event_queue_is_ordered_and_one_active_per_routine() {
+        let temp = tempdir().unwrap();
+        let pool = routines_pool(&temp.path().join("routines.db")).await;
+        for (queue_key, routine_id, entry_path, observed_at) in [
+            (
+                "second",
+                "routine-a",
+                "tasks/two.md",
+                "2026-08-08T00:00:02Z",
+            ),
+            ("first", "routine-a", "tasks/one.md", "2026-08-08T00:00:01Z"),
+            (
+                "other",
+                "routine-b",
+                "tasks/three.md",
+                "2026-08-08T00:00:03Z",
+            ),
+        ] {
+            sqlx::query("INSERT INTO routine_event_queue (queue_key, event_key, owner_path, routine_id, definition_fingerprint, event_type, entry_path, payload_json, observed_at, state) VALUES (?, ?, 'tasks', ?, 'fp', 'collection.field_changed', ?, '{}', ?, 'pending')")
+                .bind(queue_key)
+                .bind(queue_key)
+                .bind(routine_id)
+                .bind(entry_path)
+                .bind(observed_at)
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+
+        let first = next_pending_event(&pool, "tasks").await.unwrap().unwrap();
+        assert_eq!(first.queue_key, "first");
+        assert!(activate_event(&pool, "first", "run-first").await.unwrap());
+        let next = next_pending_event(&pool, "tasks").await.unwrap().unwrap();
+        assert_eq!(next.queue_key, "other");
+        finish_event(&pool, "first", "completed").await.unwrap();
+        assert_eq!(
+            next_pending_event(&pool, "tasks")
+                .await
+                .unwrap()
+                .unwrap()
+                .queue_key,
+            "second"
+        );
+    }
+
+    #[tokio::test]
+    async fn schedule_checkpoint_and_claim_evidence_are_durable() {
+        let temp = tempdir().unwrap();
+        let db_path = temp.path().join("routines.db");
+        let pool = routines_pool(&db_path).await;
+
+        write_schedule_state(
+            &pool,
+            ".",
+            "routine-one",
+            "fingerprint",
+            "2026-08-07T09:00:00Z",
+            "2026-08-08T09:00:00Z",
+        )
+        .await
+        .unwrap();
+        assert!(
+            claim_local_run(
+                &pool,
+                "slot-one",
+                "routine-one",
+                "2026-08-07T09:00:00Z",
+                "2026-08-07T09:05:00Z",
+            )
+            .await
+            .unwrap()
+        );
+        assert!(
+            !claim_local_run(
+                &pool,
+                "slot-one",
+                "routine-one",
+                "2026-08-07T09:00:01Z",
+                "2026-08-07T09:05:01Z",
+            )
+            .await
+            .unwrap()
+        );
+        record_remote_claim(
+            &pool,
+            ".",
+            "routine-one",
+            "slot-remote",
+            "fingerprint",
+            "device-two",
+            "2026-08-07T10:00:00Z",
+        )
+        .await
+        .unwrap();
+
+        pool.close().await;
+        let reopened = storage::reopen_current_pool(&db_path).await.unwrap();
+        assert_eq!(
+            schedule_state(&reopened, ".", "routine-one")
+                .await
+                .unwrap()
+                .unwrap()
+                .next_run_at,
+            "2026-08-08T09:00:00Z"
+        );
+        assert_eq!(
+            latest_remote_claim(&reopened, ".", "routine-one")
+                .await
+                .unwrap()
+                .unwrap()
+                .claimed_by,
+            "device-two"
+        );
+    }
+}

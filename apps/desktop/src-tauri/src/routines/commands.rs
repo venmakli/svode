@@ -2,22 +2,22 @@ use std::path::Path;
 use std::sync::Arc;
 use tauri::{AppHandle, State};
 
+#[cfg(test)]
+use super::dispatch::{EventDispatchPreflight, event_dispatch_preflight};
 use super::host::RoutineMutationRuntime;
 use super::model::{
     ResolvedRoutineOwner, RoutineAutomaticConsent, RoutineCatalogSnapshot, RoutineDefinition,
     RoutineManualDispatchResult, RoutineMutationResult, RoutineOwnerInputKind,
 };
-use super::{RoutineStoreState, authority, dispatch};
-#[cfg(test)]
-use super::{
-    cache,
-    dispatch::{EventDispatchPreflight, event_dispatch_preflight},
-};
+use super::{RoutineStoreState, dispatch};
 use crate::AppError;
 use crate::git::GitState;
 use crate::git::access::{RepositoryAccessState, access_store_path};
 use crate::index::IndexState;
 use crate::terminal::TerminalManager;
+use svode_core::routines::authority;
+#[cfg(test)]
+use svode_core::routines::operational::QueuedRoutineEvent;
 #[cfg(test)]
 use svode_core::routines::parser;
 use svode_core::routines::service::{
@@ -152,14 +152,14 @@ pub async fn routines_set_automatic_consent(
         .get_or_create_for_index(&index_state, &owner.index_key)
         .await?;
     Ok(RoutineAutomaticConsent {
-        enabled: authority::set(&owner, enabled)?,
+        enabled: authority::set_key(&owner.space_path, &owner.identity(), enabled)?,
         storage_reset_pending: authority::recovery_required(&owner.space_path)?,
     })
 }
 
 #[tauri::command]
 pub async fn routines_acknowledge_storage_recovery(space_path: String) -> Result<(), AppError> {
-    authority::acknowledge_recovery(Path::new(&space_path))
+    Ok(authority::acknowledge_recovery(Path::new(&space_path))?)
 }
 
 #[tauri::command]
@@ -186,7 +186,7 @@ pub async fn routines_create(
         owner_kind,
     }
     .resolve()?;
-    let definition = match normalize_create_definition(definition) {
+    let definition = match service::normalize_create_candidate(definition) {
         Ok(definition) => definition,
         Err(message) => return Ok(RoutineMutationResult::Blocked { message }),
     };
@@ -402,37 +402,6 @@ pub async fn routines_dispatch_manual(
     .map(RoutineManualDispatchResult::from_dispatch)
 }
 
-fn normalize_create_definition(
-    mut definition: RoutineDefinition,
-) -> Result<RoutineDefinition, String> {
-    let name = definition
-        .name
-        .map(|value| value.trim().to_owned())
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| "routine name must contain 1 to 240 characters".to_string())?;
-    if name.chars().count() > 240 {
-        return Err("routine name must contain 1 to 240 characters".into());
-    }
-    definition.name = Some(name);
-    definition.description = definition
-        .description
-        .map(|value| value.trim().to_owned())
-        .filter(|value| !value.is_empty());
-    if definition
-        .description
-        .as_ref()
-        .is_some_and(|value| value.chars().count() > 2_000)
-    {
-        return Err("routine description must contain at most 2000 characters".into());
-    }
-    definition.enabled = if matches!(definition.trigger, super::model::RoutineTrigger::Manual) {
-        None
-    } else {
-        Some(false)
-    };
-    Ok(definition)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -456,79 +425,7 @@ mod tests {
         }
     }
 
-    use crate::routines::model::{
-        CollectionEvent, MissedRuns, RoutineAction, RoutineTimeBasis, RoutineTrigger,
-    };
-
-    #[test]
-    fn full_create_candidate_is_preserved_and_automatic_routines_are_disabled() {
-        let definition = normalize_create_definition(RoutineDefinition {
-            name: Some("  Weekly review  ".into()),
-            description: Some("  Summarizes weekly changes.  ".into()),
-            enabled: Some(true),
-            trigger: RoutineTrigger::Schedule {
-                cron: "30 8 * * 1".into(),
-                time_basis: RoutineTimeBasis::Fixed {
-                    timezone: "Europe/Paris".into(),
-                },
-                missed_runs: MissedRuns::RunOnce,
-            },
-            action: RoutineAction::RunAgent {
-                executor: "agent:01arz3ndektsv4rrffq69g5fav".into(),
-            },
-            body: "Review the week.".into(),
-        })
-        .unwrap();
-        assert_eq!(definition.enabled, Some(false));
-        assert_eq!(definition.name.as_deref(), Some("Weekly review"));
-        assert_eq!(
-            definition.description.as_deref(),
-            Some("Summarizes weekly changes.")
-        );
-        assert!(matches!(
-            definition.trigger,
-            RoutineTrigger::Schedule {
-                missed_runs: MissedRuns::RunOnce,
-                ..
-            }
-        ));
-        assert_eq!(
-            definition.action.executor(),
-            Some("agent:01arz3ndektsv4rrffq69g5fav")
-        );
-        assert_eq!(definition.body, "Review the week.");
-    }
-
-    #[test]
-    fn manual_create_candidate_drops_an_inapplicable_enabled_value() {
-        let definition = normalize_create_definition(RoutineDefinition {
-            name: Some("Manual".into()),
-            description: None,
-            enabled: Some(true),
-            trigger: RoutineTrigger::Manual,
-            action: RoutineAction::RunAgent {
-                executor: "agent:01arz3ndektsv4rrffq69g5fav".into(),
-            },
-            body: String::new(),
-        })
-        .unwrap();
-        assert_eq!(definition.enabled, None);
-    }
-
-    #[test]
-    fn full_create_candidate_requires_bounded_identity_before_service_write() {
-        let result = normalize_create_definition(RoutineDefinition {
-            name: Some("   ".into()),
-            description: None,
-            enabled: None,
-            trigger: RoutineTrigger::Manual,
-            action: RoutineAction::RunAgent {
-                executor: "agent:01arz3ndektsv4rrffq69g5fav".into(),
-            },
-            body: String::new(),
-        });
-        assert!(result.is_err());
-    }
+    use crate::routines::model::{CollectionEvent, RoutineAction, RoutineTrigger};
 
     #[tokio::test]
     async fn event_property_preflight_carries_the_exact_mutation_plan() {
@@ -606,7 +503,7 @@ mod tests {
             lineage_depth: 0,
             execution_run_id: None,
         };
-        let event = cache::QueuedRoutineEvent {
+        let event = QueuedRoutineEvent {
             queue_key: "queue".into(),
             event_key: "event".into(),
             owner_path: "tasks".into(),

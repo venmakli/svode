@@ -337,137 +337,28 @@ fn scan_routine_references(
     Vec<AgentActorRoutineReference>,
     Vec<AgentActorReferenceDiagnostic>,
 ) {
-    const MAX_ROUTINE_BYTES: u64 = 1024 * 1024;
-    let expected = format!("agent:{actor_id}");
-    let mut references = Vec::new();
-    let mut diagnostics = Vec::new();
-    for owner in owners {
-        let directory = owner.join(".routines");
-        let entries = match fs::read_dir(&directory) {
-            Ok(entries) => entries,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
-            Err(error) => {
-                diagnostics.push(reference_diagnostic(
-                    owner,
-                    None,
-                    "routine_catalog_unavailable",
-                    error,
-                ));
-                continue;
-            }
-        };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.extension().and_then(|value| value.to_str()) != Some("md") {
-                continue;
-            }
-            let metadata = match fs::symlink_metadata(&path) {
-                Ok(metadata)
-                    if metadata.file_type().is_file() && metadata.len() <= MAX_ROUTINE_BYTES =>
-                {
-                    metadata
-                }
-                Ok(_) => {
-                    diagnostics.push(reference_diagnostic(
-                        owner,
-                        Some(&path),
-                        "routine_file_unsafe",
-                        "routine must be a bounded regular file",
-                    ));
-                    continue;
-                }
-                Err(error) => {
-                    diagnostics.push(reference_diagnostic(
-                        owner,
-                        Some(&path),
-                        "routine_file_unavailable",
-                        error,
-                    ));
-                    continue;
-                }
-            };
-            let _ = metadata;
-            let raw = match fs::read_to_string(&path) {
-                Ok(raw) => raw,
-                Err(error) => {
-                    diagnostics.push(reference_diagnostic(
-                        owner,
-                        Some(&path),
-                        "routine_file_unavailable",
-                        error,
-                    ));
-                    continue;
-                }
-            };
-            let meta = match svode_core::page::frontmatter::parse_status(&raw) {
-                svode_core::page::frontmatter::ParseStatus::Valid { meta, .. } => meta,
-                svode_core::page::frontmatter::ParseStatus::Missing { .. } => {
-                    diagnostics.push(reference_diagnostic(
-                        owner,
-                        Some(&path),
-                        "routine_frontmatter_missing",
-                        "routine has no YAML frontmatter",
-                    ));
-                    continue;
-                }
-                svode_core::page::frontmatter::ParseStatus::Malformed { message, .. } => {
-                    diagnostics.push(reference_diagnostic(
-                        owner,
-                        Some(&path),
-                        "routine_frontmatter_malformed",
-                        message,
-                    ));
-                    continue;
-                }
-            };
-            let action = meta
-                .extra
-                .get("action")
-                .and_then(serde_yml::Value::as_mapping);
-            let action_type = action
-                .and_then(|value| value.get("type"))
-                .and_then(serde_yml::Value::as_str);
-            if action_type != Some("run_agent") {
-                continue;
-            }
-            let executor = action
-                .and_then(|value| value.get("executor"))
-                .and_then(serde_yml::Value::as_str);
-            if executor == Some(expected.as_str()) {
-                let filename = path
-                    .file_stem()
-                    .and_then(|value| value.to_str())
-                    .unwrap_or_default();
-                references.push(AgentActorRoutineReference {
-                    routine_id: format!("{}:{filename}", owner.to_string_lossy()),
-                    path: path.to_string_lossy().into_owned(),
-                    title: if meta.title.trim().is_empty() {
-                        filename.to_string()
-                    } else {
-                        meta.title
-                    },
-                    owner_path: owner.to_string_lossy().into_owned(),
-                });
-            }
-        }
-    }
-    references.sort_by(|left, right| left.path.cmp(&right.path));
-    diagnostics.sort_by(|left, right| left.path.cmp(&right.path));
-    (references, diagnostics)
-}
-
-fn reference_diagnostic(
-    owner: &Path,
-    path: Option<&Path>,
-    code: &str,
-    message: impl ToString,
-) -> AgentActorReferenceDiagnostic {
-    AgentActorReferenceDiagnostic {
-        owner_path: owner.to_string_lossy().into_owned(),
-        path: path.map(|path| path.to_string_lossy().into_owned()),
-        code: code.into(),
-        message: message.to_string(),
-    }
+    let (references, diagnostics) =
+        svode_core::routines::parser::scan_executor_references(owners, actor_id);
+    (
+        references
+            .into_iter()
+            .map(|reference| AgentActorRoutineReference {
+                routine_id: format!("{}:{}", reference.owner_path, reference.filename),
+                path: reference.path,
+                title: reference.title,
+                owner_path: reference.owner_path,
+            })
+            .collect(),
+        diagnostics
+            .into_iter()
+            .map(|diagnostic| AgentActorReferenceDiagnostic {
+                owner_path: diagnostic.owner_path,
+                path: diagnostic.path,
+                code: diagnostic.code.into(),
+                message: diagnostic.message,
+            })
+            .collect(),
+    )
 }
 
 #[tauri::command]
