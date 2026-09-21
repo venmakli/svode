@@ -80,7 +80,7 @@ pub(super) async fn list_collections(
     args: SpaceArgs,
 ) -> Result<ToolCallResult, McpBusinessError> {
     let (_, space) = resolve_space(app, args.space_id).await?;
-    let collections = engine::list_collections(&space)?;
+    let collections = engine::list_collections(&space).map_err(AppError::from)?;
     Ok(ToolCallResult::ok(
         format!("Found {} collections.", collections.len()),
         json!({ "collections": collections }),
@@ -94,7 +94,8 @@ pub(super) async fn get_collection_schema(
     let (_, space) = resolve_space(app, args.space_id).await?;
     let collection_path = validate_public_rel_path(&args.collection_path, true)?;
     ensure_inside(Path::new(&space), &collection_path)?;
-    let schema = engine::read_collection_schema(&space, &collection_path)?;
+    let schema =
+        engine::read_collection_schema(&space, &collection_path).map_err(AppError::from)?;
     Ok(ToolCallResult::ok(
         format!("Read schema for collection {collection_path}."),
         json!({ "collectionPath": collection_path, "schema": schema }),
@@ -145,7 +146,7 @@ pub(super) async fn read_collection_item(
     let path = validate_markdown_path(&args.path)?;
     ensure_inside(Path::new(&space), &path)?;
     require_collection_item(&space, &path)?;
-    let mut item = entry::read(&space, &path)?;
+    let mut item = entry::read(&space, &path).map_err(AppError::from)?;
     apply_indexed_entry_dates(
         app,
         &context,
@@ -200,7 +201,7 @@ pub(super) async fn update_collection_item_fields(
     ensure_inside(Path::new(&space), &path)?;
     require_collection_item(&space, &path)?;
     if args.fields.is_empty() {
-        let item = entry::read(&space, &path)?;
+        let item = entry::read(&space, &path).map_err(AppError::from)?;
         return Ok(ToolCallResult::ok(
             format!("No field changes for {path}."),
             json!({ "item": item, "changedPaths": [] }),
@@ -513,7 +514,8 @@ pub(super) async fn validate_collection_integrity(
         &space,
         collection_path.as_deref(),
         Some(context.project_path.as_str()),
-    )?;
+    )
+    .map_err(AppError::from)?;
     let error_count = report.errors.len();
     let warning_count = report.warnings.len();
     Ok(ToolCallResult::ok(
@@ -708,8 +710,9 @@ pub(super) async fn add_collection_column(
         &collection_path,
         args.column,
         Some(context.project_path.as_str()),
-    )?;
-    let outcome = mutation.apply()?;
+    )
+    .map_err(AppError::from)?;
+    let outcome = mutation.apply().map_err(AppError::from)?;
     let changed_paths = rel_paths_from_space(&space, outcome.changed_paths);
     Ok(ToolCallResult::ok(
         format!("Added column to collection {collection_path}."),
@@ -731,8 +734,9 @@ pub(super) async fn update_collection_column(
         &args.column_name,
         json_to_yaml(args.patch)?,
         Some(context.project_path.as_str()),
-    )?;
-    let outcome = mutation.apply()?;
+    )
+    .map_err(AppError::from)?;
+    let outcome = mutation.apply().map_err(AppError::from)?;
     let changed_paths = rel_paths_from_space(&space, outcome.changed_paths);
     Ok(ToolCallResult::ok(
         format!(
@@ -758,8 +762,9 @@ pub(super) async fn delete_collection_column(
         &args.column_name,
         delete_values,
         Some(context.project_path.as_str()),
-    )?;
-    let outcome = mutation.apply()?;
+    )
+    .map_err(AppError::from)?;
+    let outcome = mutation.apply().map_err(AppError::from)?;
     let changed_paths = rel_paths_from_space(&space, outcome.changed_paths);
     Ok(ToolCallResult::ok(
         format!(
@@ -778,8 +783,9 @@ pub(super) async fn add_collection_view(
     let (_, space) = resolve_space(app, args.space_id).await?;
     let collection_path = validate_public_rel_path(&args.collection_path, true)?;
     ensure_inside(Path::new(&space), &collection_path)?;
-    let mutation = engine::prepare_add_view(&space, &collection_path, args.view, args.position)?;
-    let outcome = mutation.apply()?;
+    let mutation = engine::prepare_add_view(&space, &collection_path, args.view, args.position)
+        .map_err(AppError::from)?;
+    let outcome = mutation.apply().map_err(AppError::from)?;
     let changed_paths = rel_paths_from_space(&space, outcome.changed_paths);
     Ok(ToolCallResult::ok(
         format!("Added view to collection {collection_path}."),
@@ -800,8 +806,9 @@ pub(super) async fn update_collection_view(
         &collection_path,
         &args.view_name,
         json_to_yaml(args.patch)?,
-    )?;
-    let outcome = mutation.apply()?;
+    )
+    .map_err(AppError::from)?;
+    let outcome = mutation.apply().map_err(AppError::from)?;
     let changed_paths = rel_paths_from_space(&space, outcome.changed_paths);
     Ok(ToolCallResult::ok(
         format!(
@@ -820,8 +827,9 @@ pub(super) async fn delete_collection_view(
     let (_, space) = resolve_space(app, args.space_id).await?;
     let collection_path = validate_public_rel_path(&args.collection_path, true)?;
     ensure_inside(Path::new(&space), &collection_path)?;
-    let mutation = engine::prepare_delete_view(&space, &collection_path, &args.view_name)?;
-    let outcome = mutation.apply()?;
+    let mutation = engine::prepare_delete_view(&space, &collection_path, &args.view_name)
+        .map_err(AppError::from)?;
+    let outcome = mutation.apply().map_err(AppError::from)?;
     let changed_paths = rel_paths_from_space(&space, outcome.changed_paths);
     Ok(ToolCallResult::ok(
         format!(

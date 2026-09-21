@@ -4,8 +4,9 @@ use tauri::{AppHandle, Emitter, Manager, State, Window};
 use tokio::sync::Mutex;
 
 use super::active::{self, ActiveProjectContext, ActiveProjectState};
-use super::config::{self, DoctorReport, ManualConfig, McpClient, McpStatus};
 use crate::AppError;
+use svode_mcp::bridge;
+use svode_mcp::config::{self, DoctorReport, ManualConfig, McpClient, McpStatus};
 
 const MCP_STATUS_CHANGED_EVENT: &str = "mcp:status-changed";
 
@@ -85,8 +86,8 @@ pub async fn mcp_remove_client(
 #[tauri::command]
 pub async fn mcp_run_doctor(_app: AppHandle) -> Result<DoctorReport, AppError> {
     Ok(config::doctor(
-        super::ipc::discovery_exists(),
-        super::ipc::desktop_reachable().await,
+        bridge::discovery_exists(),
+        bridge::desktop_reachable().await,
     ))
 }
 
@@ -127,8 +128,8 @@ async fn mutate_client_config(
 async fn canonical_status(app: &AppHandle) -> config::ConfigMaintenanceResult {
     let project_path = active_project_path(app);
     config::maintain_and_status(
-        super::ipc::discovery_exists(),
-        super::ipc::desktop_reachable().await,
+        bridge::discovery_exists(),
+        bridge::desktop_reachable().await,
         project_path.as_deref(),
     )
 }
@@ -235,7 +236,7 @@ mod tests {
                 binary_exists: true,
                 binary_executable: true,
                 version: "test".to_string(),
-                bridge_protocol: super::super::MCP_BRIDGE_PROTOCOL.to_string(),
+                bridge_protocol: svode_mcp::MCP_BRIDGE_PROTOCOL.to_string(),
                 discovery_present: true,
                 desktop_reachable: true,
                 issues: Vec::new(),

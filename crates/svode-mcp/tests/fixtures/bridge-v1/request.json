@@ -1,0 +1,1 @@
+{"token":"01jz0token","bridgeProtocol":"svode-desktop-bridge-v1","method":"tools/call","params":{"name":"read_page","arguments":{"path":"notes.md"}},"context":{"projectPath":"/work/project","callerCwd":"/work/project/space","routineCallerToken":"opaque-token"}}

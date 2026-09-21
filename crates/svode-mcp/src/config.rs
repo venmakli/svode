@@ -8,10 +8,8 @@ use std::process::Command;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
-use crate::process;
-
-use super::error::McpBusinessError;
-use super::{MCP_BRIDGE_PROTOCOL, MCP_MANAGED_MARKER_ENV, MCP_MANAGED_MARKER_VALUE, MCP_VERSION};
+use crate::error::McpBusinessError;
+use crate::{MCP_BRIDGE_PROTOCOL, MCP_MANAGED_MARKER_ENV, MCP_MANAGED_MARKER_VALUE, MCP_VERSION};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -184,12 +182,17 @@ fn mcp_binary_name_for(windows: bool) -> &'static str {
     }
 }
 
+fn is_mcp_binary_name(name: &str) -> bool {
+    let stem = name.strip_suffix(".exe").unwrap_or(name);
+    stem == "svode-mcp" || stem.starts_with("svode-mcp-")
+}
+
 pub fn resolve_binary_path() -> PathBuf {
     if let Ok(current) = env::current_exe() {
         if current
             .file_name()
             .and_then(|name| name.to_str())
-            .is_some_and(|name| name == mcp_binary_name())
+            .is_some_and(is_mcp_binary_name)
         {
             return current;
         }
@@ -213,24 +216,6 @@ pub fn resolve_binary_path() -> PathBuf {
         }
     }
 
-    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    if let Some(triple) = env::var("TARGET").ok().or_else(rustc_host_triple) {
-        let candidate = manifest_dir
-            .join("binaries")
-            .join(mcp_suffixed_name(&triple));
-        if candidate.exists() {
-            return candidate;
-        }
-    }
-    for profile in ["release", "debug"] {
-        let candidate = manifest_dir
-            .join("target")
-            .join(profile)
-            .join(mcp_binary_name());
-        if candidate.exists() {
-            return candidate;
-        }
-    }
     PathBuf::from(mcp_binary_name())
 }
 
@@ -447,7 +432,7 @@ fn doctor_with_probe(
         );
     }
     let command = binary.to_string_lossy().to_string();
-    let discovery_file = super::ipc::default_discovery_path()
+    let discovery_file = crate::bridge::default_discovery_path()
         .ok()
         .map(|path| path.to_string_lossy().to_string());
     let mut messages = vec![
@@ -1129,7 +1114,7 @@ fn probe_bridge(path: &Path) -> BridgeCompatibility {
         return BridgeCompatibility::Missing;
     }
     let mut command = Command::new(path);
-    process::hide_window(&mut command);
+    hide_window(&mut command);
     match command.arg("--bridge-protocol").output() {
         Ok(output)
             if output.status.success()
@@ -1236,35 +1221,7 @@ fn push_unique_path(paths: &mut Vec<PathBuf>, path: PathBuf) {
     }
 }
 
-fn mcp_suffixed_name(triple: &str) -> String {
-    mcp_suffixed_name_for(triple, cfg!(windows))
-}
-
-fn mcp_suffixed_name_for(triple: &str, windows: bool) -> String {
-    if windows {
-        format!("svode-mcp-{triple}.exe")
-    } else {
-        format!("svode-mcp-{triple}")
-    }
-}
-
-fn rustc_host_triple() -> Option<String> {
-    let mut command = Command::new("rustc");
-    process::hide_window(&mut command);
-    let output = command.arg("-vV").output().ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let stdout = String::from_utf8(output.stdout).ok()?;
-    stdout.lines().find_map(|line| {
-        line.strip_prefix("host:")
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(str::to_string)
-    })
-}
-
-fn home_path() -> Result<PathBuf, McpBusinessError> {
+pub(crate) fn home_path() -> Result<PathBuf, McpBusinessError> {
     env::var_os("HOME")
         .or_else(|| env::var_os("USERPROFILE"))
         .map(PathBuf::from)
@@ -1281,6 +1238,21 @@ fn shell_quote(path: &Path) -> String {
         format!("\"{}\"", raw.replace('"', "\\\""))
     } else {
         format!("'{}'", raw.replace('\'', "'\\''"))
+    }
+}
+
+fn hide_window(command: &mut Command) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+
+    #[cfg(not(windows))]
+    {
+        let _ = command;
     }
 }
 
@@ -1541,14 +1513,11 @@ mod tests {
     fn platform_binary_names_are_deterministic() {
         assert_eq!(mcp_binary_name_for(false), "svode-mcp");
         assert_eq!(mcp_binary_name_for(true), "svode-mcp.exe");
-        assert_eq!(
-            mcp_suffixed_name_for("x86_64-unknown-linux-gnu", false),
-            "svode-mcp-x86_64-unknown-linux-gnu"
-        );
-        assert_eq!(
-            mcp_suffixed_name_for("x86_64-pc-windows-msvc", true),
-            "svode-mcp-x86_64-pc-windows-msvc.exe"
-        );
+        assert!(is_mcp_binary_name("svode-mcp"));
+        assert!(is_mcp_binary_name("svode-mcp.exe"));
+        assert!(is_mcp_binary_name("svode-mcp-aarch64-apple-darwin"));
+        assert!(is_mcp_binary_name("svode-mcp-x86_64-pc-windows-msvc.exe"));
+        assert!(!is_mcp_binary_name("svode-desktop"));
     }
 
     #[test]

@@ -39,7 +39,7 @@ pub(super) async fn read_page(
     let path = validate_markdown_path(&args.path)?;
     ensure_inside(Path::new(&space), &path)?;
     require_standalone_page(&space, &path)?;
-    let mut page = entry::read(&space, &path)?;
+    let mut page = entry::read(&space, &path).map_err(AppError::from)?;
     apply_indexed_entry_dates(
         app,
         &context,
@@ -184,7 +184,7 @@ pub(super) async fn read_space_readme(
     let path = "README.md".to_string();
     ensure_inside(Path::new(&space), &path)?;
     require_owner(&space, &path, ContentOwnerKind::Space)?;
-    let mut readme = entry::read(&space, &path)?;
+    let mut readme = entry::read(&space, &path).map_err(AppError::from)?;
     apply_indexed_entry_dates(
         app,
         &context,
@@ -262,7 +262,7 @@ pub(super) async fn read_collection_readme(
     let path = collection_readme_path(&collection_path);
     ensure_inside(Path::new(&space), &path)?;
     require_owner(&space, &path, ContentOwnerKind::Collection)?;
-    let mut readme = entry::read(&space, &path)?;
+    let mut readme = entry::read(&space, &path).map_err(AppError::from)?;
     apply_indexed_entry_dates(
         app,
         &context,
@@ -386,7 +386,7 @@ pub(super) fn page_name_conflict_result(
 ) -> ToolCallResult {
     let message = "Page name is already used in this container";
     ToolCallResult {
-        content: vec![crate::mcp::protocol::ContentBlock::text(message)],
+        content: vec![svode_mcp::protocol::ContentBlock::text(message)],
         structured_content: Some(json!({
             "error": {
                 "code": "PAGE_NAME_CONFLICT",

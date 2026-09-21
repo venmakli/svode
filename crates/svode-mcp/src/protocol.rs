@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use super::error::McpBusinessError;
+use crate::error::McpBusinessError;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -53,31 +53,6 @@ impl ToolCallResult {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ToolDefinition {
-    pub name: &'static str,
-    pub description: &'static str,
-    pub input_schema: Value,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub output_schema: Option<Value>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub annotations: Option<ToolAnnotations>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ToolAnnotations {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub read_only_hint: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub destructive_hint: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub idempotent_hint: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub open_world_hint: Option<bool>,
-}
-
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct IpcContextOverride {
@@ -110,4 +85,16 @@ pub struct IpcResponse {
     pub tool_result: Option<ToolCallResult>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<McpBusinessError>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiscoveryFile {
+    pub host: String,
+    pub port: u16,
+    pub token: String,
+    pub pid: u32,
+    pub version: String,
+    #[serde(default)]
+    pub bridge_protocol: String,
 }

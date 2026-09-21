@@ -1,0 +1,1 @@
+{"toolResult":{"content":[{"type":"text","text":"repository is read only"}],"structuredContent":{"error":{"code":"REPOSITORY_ACCESS_DENIED","message":"repository is read only"}},"isError":true}}

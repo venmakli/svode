@@ -7,9 +7,8 @@ use serde_json::{Value, json};
 use tauri::{AppHandle, Manager};
 
 use super::active::{self, ActiveProjectContext, ActiveProjectState};
-use super::error::McpBusinessError;
 use super::path::{ensure_inside, validate_markdown_path, validate_public_rel_path};
-use super::protocol::{IpcContextOverride, ToolCallResult};
+use crate::AppError;
 use crate::artifact::identity::{
     ContentOwnerKind, PageRole, SemanticIdentity, resolve_markdown_identity_for_path,
 };
@@ -25,6 +24,8 @@ use svode_core::collections::engine::{
 };
 use svode_core::page::entry;
 use svode_core::page::fields::PageFieldUpdate;
+use svode_mcp::error::McpBusinessError;
+use svode_mcp::protocol::{IpcContextOverride, ToolCallResult};
 
 const DEFAULT_LIMIT: i64 = 50;
 const MAX_LIMIT: i64 = 200;

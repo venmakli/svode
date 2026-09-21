@@ -263,11 +263,12 @@ async fn authorize_mutating_tool(
                 &path,
                 &decoded.fields,
                 engine::EntryFieldBatchIntent::Literal,
-            )?;
+            )
+            .map_err(AppError::from)?;
             paths.extend_from_slice(batch.mutation_paths());
             if let Some(title) = batch.title()
-                && let Some(rename) =
-                    entry::planned_write_rename(&space, &path, Some(title), false)?
+                && let Some(rename) = entry::planned_write_rename(&space, &path, Some(title), false)
+                    .map_err(AppError::from)?
             {
                 extend_entry_move_plan(app, &context, &space, &path, &rename.new_path, &mut paths)
                     .await?;
@@ -275,25 +276,29 @@ async fn authorize_mutating_tool(
         }
         "delete_page" | "delete_collection_item" => {
             let decoded: PathArgs = decode(args.clone())?;
-            let deleted = entry::planned_deleted_entry_paths(&space, &decoded.path)?;
+            let deleted = entry::planned_deleted_entry_paths(&space, &decoded.path)
+                .map_err(AppError::from)?;
             paths.extend(
                 engine::cascade_clean_deleted_entries_mutation_paths_with_project(
                     &space,
                     Some(&context.project_path),
                     &deleted,
-                )?,
+                )
+                .map_err(AppError::from)?,
             );
         }
         "delete_collection" => {
             let decoded: CollectionArgs = decode(args.clone())?;
             let path = collection_readme_path(&decoded.collection_path);
-            let deleted = entry::planned_deleted_entry_paths(&space, &path)?;
+            let deleted =
+                entry::planned_deleted_entry_paths(&space, &path).map_err(AppError::from)?;
             paths.extend(
                 engine::cascade_clean_deleted_entries_mutation_paths_with_project(
                     &space,
                     Some(&context.project_path),
                     &deleted,
-                )?,
+                )
+                .map_err(AppError::from)?,
             );
         }
         "rename_content" => {
@@ -346,7 +351,8 @@ async fn authorize_mutating_tool(
                     &decoded.collection_path,
                     decoded.column,
                     Some(&context.project_path),
-                )?
+                )
+                .map_err(AppError::from)?
                 .paths()
                 .iter()
                 .cloned(),
@@ -362,7 +368,8 @@ async fn authorize_mutating_tool(
                     &decoded.column_name,
                     patch,
                     Some(&context.project_path),
-                )?
+                )
+                .map_err(AppError::from)?
                 .paths()
                 .iter()
                 .cloned(),
@@ -377,7 +384,8 @@ async fn authorize_mutating_tool(
                     &decoded.column_name,
                     decoded.delete_values.unwrap_or(false),
                     Some(&context.project_path),
-                )?
+                )
+                .map_err(AppError::from)?
                 .paths()
                 .iter()
                 .cloned(),

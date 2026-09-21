@@ -247,18 +247,18 @@ impl TerminalManager {
         cmd.env("COLORTERM", "truecolor");
         if let Ok(discovery_path) = crate::mcp::ipc::discovery_path_for_app(&app) {
             cmd.env(
-                crate::mcp::MCP_DISCOVERY_ENV,
+                svode_mcp::MCP_DISCOVERY_ENV,
                 system_path::user_facing_path(&discovery_path),
             );
         }
         if let Some(path) = mcp_project_path {
             cmd.env(
-                crate::mcp::MCP_PROJECT_PATH_ENV,
+                svode_mcp::MCP_PROJECT_PATH_ENV,
                 system_path::user_facing_path(&path),
             );
         }
         if let Some(token) = routine_caller_token {
-            cmd.env(crate::mcp::MCP_ROUTINE_CALLER_TOKEN_ENV, token);
+            cmd.env(svode_mcp::MCP_ROUTINE_CALLER_TOKEN_ENV, token);
         }
 
         let child = pair

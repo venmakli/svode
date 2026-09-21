@@ -617,7 +617,7 @@ fn mutation_error(code: &str, message: &str, evidence: Value) -> ToolCallResult 
         error.extend(evidence);
     }
     ToolCallResult {
-        content: vec![crate::mcp::protocol::ContentBlock::text(message)],
+        content: vec![svode_mcp::protocol::ContentBlock::text(message)],
         structured_content: Some(json!({ "error": error })),
         is_error: true,
     }

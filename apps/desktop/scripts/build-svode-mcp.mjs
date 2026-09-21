@@ -10,15 +10,14 @@ import {
   mkdirSync,
   readFileSync,
   rmSync,
-  writeFileSync,
 } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { cargoTargetDir } from "./cargo-target.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const crateDir = resolve(__dirname, "../src-tauri");
-const binariesDir = resolve(crateDir, "binaries");
+const crateDir = resolve(__dirname, "../../../crates/svode-mcp");
+const binariesDir = resolve(__dirname, "../src-tauri/binaries");
 const targetDir = cargoTargetDir();
 
 function rustcHostTriple() {
@@ -66,30 +65,14 @@ function sidecarPath(triple) {
   );
 }
 
-function ensureBuildPlaceholder(triple) {
-  const dest = sidecarPath(triple);
-  if (existsSync(dest)) return;
-
-  writeFileSync(
-    dest,
-    triple.includes("windows")
-      ? "@echo off\r\nexit /b 1\r\n"
-      : "#!/bin/sh\nexit 1\n",
-  );
-  if (process.platform !== "win32") {
-    chmodSync(dest, 0o755);
-  }
-}
-
 function buildTarget(triple) {
   console.log(`[svode-mcp] building for ${triple}`);
-  ensureBuildPlaceholder(triple);
   run(
     "cargo",
     [
       "build",
       "-p",
-      "svode-desktop",
+      "svode-mcp",
       "--release",
       "--bin",
       "svode-mcp",
