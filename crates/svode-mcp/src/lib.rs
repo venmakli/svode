@@ -1,9 +1,19 @@
+pub mod args;
 pub mod bridge;
+pub mod catalog;
 pub mod cli;
 pub mod config;
+pub mod control;
+pub mod dispatch;
+mod domain_error;
 pub mod error;
+pub mod host;
+pub mod owner;
+pub mod path;
 pub mod protocol;
 mod stdio;
+pub mod target;
+mod tools;
 
 pub const MCP_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const MCP_BRIDGE_PROTOCOL: &str = "svode-desktop-bridge-v1";

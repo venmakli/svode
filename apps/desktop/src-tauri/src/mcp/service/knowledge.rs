@@ -380,7 +380,7 @@ async fn resolve_scope(
                 },
                 response: json!({
                     "kind": "space",
-                    "spaceId": effective_space_id.as_deref().unwrap_or(MCP_ROOT_SPACE_ID),
+                    "spaceId": effective_space_id.as_deref().unwrap_or(ROOT_SPACE_ID),
                 }),
             })
         }
@@ -421,7 +421,7 @@ fn normalize_space_id(space_id: Option<String>) -> Result<Option<String>, McpBus
             "spaceId must not be empty",
         ));
     }
-    if is_mcp_root_space_id(space_id) {
+    if is_root_space_id(space_id) {
         Ok(None)
     } else {
         Ok(Some(space_id.to_string()))
@@ -446,7 +446,7 @@ fn parse_node_id(node_id: &str) -> Result<KnowledgeSource, McpBusinessError> {
         )
     })?;
     Ok(KnowledgeSource {
-        space_id: (space != MCP_ROOT_SPACE_ID).then(|| space.to_string()),
+        space_id: (space != ROOT_SPACE_ID).then(|| space.to_string()),
         path,
         kind: kind.to_string(),
     })

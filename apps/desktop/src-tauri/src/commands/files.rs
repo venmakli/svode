@@ -14,7 +14,7 @@ use crate::git::access::{
 };
 use crate::git::{GitState, require_cli};
 use crate::index::update::IndexUpdateState;
-use crate::index::{self, IndexState, ResolvedDocLink};
+use crate::index::{IndexState, ResolvedDocLink};
 use crate::properties::read;
 use crate::repo_path::{RootMode, normalize_repo_relative};
 use crate::space::config;
@@ -78,7 +78,7 @@ async fn apply_indexed_entry_dates(
     let Ok(pool) = index_state.get_or_create(&key).await else {
         return;
     };
-    index::page_dates::apply_indexed_dates(&pool, &normalized, entry).await;
+    svode_core::page::indexed_dates::apply_indexed_dates(&pool, &normalized, entry).await;
 }
 
 #[derive(Debug, Clone, Serialize)]

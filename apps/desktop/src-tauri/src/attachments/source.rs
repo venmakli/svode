@@ -6,9 +6,6 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 
 use crate::AppError;
-use crate::artifact::identity::{
-    ArtifactKind, MarkdownIdentityFacts, SourceShape, resolve_markdown_identity,
-};
 use crate::files::tree::{
     child_folder_names, has_direct_schema, read_frontmatter_meta_head,
     read_frontmatter_meta_head_with_fallback,
@@ -18,6 +15,9 @@ use crate::repo_path::{RootMode, normalize_repo_relative};
 use crate::space::read::resolve_space_target;
 use crate::system_path;
 use svode_core::content_tree::children::{DirectoryFacts, DirectoryKind, is_regular_source};
+use svode_core::page::identity::{
+    ArtifactKind, MarkdownIdentityFacts, SourceShape, resolve_markdown_identity,
+};
 
 pub(crate) use svode_core::attachments::format::AttachmentAvailability;
 

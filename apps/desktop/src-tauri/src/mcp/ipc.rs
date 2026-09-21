@@ -2,8 +2,8 @@ use std::fs;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
 
-use serde_json::{Value, json};
 use svode_mcp::MCP_BRIDGE_PROTOCOL;
+use svode_mcp::control::{BridgeCall, bridge_request};
 use svode_mcp::error::McpBusinessError;
 use svode_mcp::protocol::{DiscoveryFile, IpcRequest, IpcResponse};
 use tauri::{AppHandle, Manager};
@@ -123,63 +123,15 @@ async fn handle_connection(
 }
 
 async fn dispatch(app: AppHandle, request: IpcRequest) -> IpcResponse {
-    match request.method.as_str() {
-        "initialize" => IpcResponse {
-            result: Some(super::control::initialize()),
-            tool_result: None,
-            error: None,
-        },
-        "tools/list" => IpcResponse {
-            result: Some(super::control::tools_list()),
-            tool_result: None,
-            error: None,
-        },
-        "tools/call" => {
-            let Some(name) = request.params.get("name").and_then(Value::as_str) else {
-                return IpcResponse {
-                    result: None,
-                    tool_result: None,
-                    error: Some(McpBusinessError::new(
-                        "INVALID_REQUEST",
-                        "tools/call requires name",
-                    )),
-                };
-            };
-            let args = request
-                .params
-                .get("arguments")
-                .cloned()
-                .unwrap_or_else(|| json!({}));
-            if !super::tools::is_public_tool(name) {
-                return IpcResponse {
-                    result: None,
-                    tool_result: None,
-                    error: Some(McpBusinessError::new(
-                        "UNKNOWN_TOOL",
-                        format!("unknown Svode MCP tool: {name}"),
-                    )),
-                };
-            }
-            let tool_result =
-                super::service::call_tool_with_context(app, name, args, request.context).await;
-            IpcResponse {
-                result: None,
-                tool_result: Some(tool_result),
-                error: None,
-            }
-        }
-        "ping" => IpcResponse {
-            result: Some(json!({ "ok": true })),
-            tool_result: None,
-            error: None,
-        },
-        _ => IpcResponse {
+    let host = super::service::DesktopMcpHost { app: app.clone() };
+    match bridge_request(&host, &request.method, &request.params) {
+        BridgeCall::Respond(response) => response,
+        BridgeCall::CallTool { name, args } => IpcResponse {
             result: None,
-            tool_result: None,
-            error: Some(McpBusinessError::new(
-                "UNKNOWN_METHOD",
-                "unknown desktop IPC method",
-            )),
+            tool_result: Some(
+                super::service::call_tool_with_context(app, &name, args, request.context).await,
+            ),
+            error: None,
         },
     }
 }

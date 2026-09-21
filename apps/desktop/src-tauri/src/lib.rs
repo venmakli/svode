@@ -6,7 +6,6 @@ mod agent_context;
 mod agent_sessions;
 mod app_windows;
 mod apps;
-mod artifact;
 mod attachments;
 mod commands;
 mod document;

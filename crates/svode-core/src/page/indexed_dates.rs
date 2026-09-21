@@ -1,10 +1,10 @@
 use sqlx::SqlitePool;
 
-use svode_core::page::entry::Entry;
+use super::entry::Entry;
 
 /// Enrich a source read using its selected pool and normalized repository-relative path.
 /// Missing rows and unavailable indexed dates leave filesystem-derived dates intact.
-pub(crate) async fn apply_indexed_dates(pool: &SqlitePool, path: &str, page: &mut Entry) {
+pub async fn apply_indexed_dates(pool: &SqlitePool, path: &str, page: &mut Entry) {
     let Ok(Some((created, updated))) = sqlx::query_as::<_, (String, String)>(
         "SELECT created, updated FROM entries WHERE file_path = ?",
     )
@@ -14,10 +14,10 @@ pub(crate) async fn apply_indexed_dates(pool: &SqlitePool, path: &str, page: &mu
     else {
         return;
     };
-    svode_core::page::dates::apply_date_override(
+    super::dates::apply_date_override(
         &mut page.meta.created,
         &mut page.meta.updated,
-        Some(&svode_core::page::dates::EntryDateOverride {
+        Some(&super::dates::EntryDateOverride {
             created: Some(created),
             updated: Some(updated),
         }),
@@ -27,7 +27,7 @@ pub(crate) async fn apply_indexed_dates(pool: &SqlitePool, path: &str, page: &mu
 #[cfg(test)]
 mod tests {
     use super::*;
-    use svode_core::page::entry;
+    use crate::page::entry;
 
     #[tokio::test]
     async fn enrichment_preserves_source_facts_and_never_writes_sources() {

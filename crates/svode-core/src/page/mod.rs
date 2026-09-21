@@ -6,6 +6,7 @@ pub mod fields;
 pub mod filename;
 pub mod frontmatter;
 pub mod identity;
+pub mod indexed_dates;
 pub mod links;
 pub mod metadata;
 pub mod naming;

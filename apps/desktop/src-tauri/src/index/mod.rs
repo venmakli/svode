@@ -2,7 +2,6 @@ pub mod commands;
 #[cfg(test)]
 mod knowledge_tests;
 mod lifecycle;
-pub(crate) mod page_dates;
 pub mod reconcile;
 pub mod reindex;
 mod retention;

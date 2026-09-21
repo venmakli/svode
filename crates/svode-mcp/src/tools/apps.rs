@@ -1,6 +1,16 @@
-use super::*;
+use serde::Deserialize;
+use serde_json::json;
 
-pub(super) async fn validate_app_manifest(
+use crate::error::McpBusinessError;
+use crate::protocol::ToolCallResult;
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ValidateAppManifestArgs {
+    yaml: String,
+}
+
+pub(crate) fn validate_app_manifest(
     args: ValidateAppManifestArgs,
 ) -> Result<ToolCallResult, McpBusinessError> {
     let result = svode_core::apps::manifest::validate_manifest_source(&args.yaml);
@@ -34,14 +44,15 @@ pub(super) async fn validate_app_manifest(
 
 #[cfg(test)]
 mod tests {
+    use serde_json::Value;
+
     use super::*;
 
-    #[tokio::test]
-    async fn validates_with_the_host_parser_and_reports_only_reference_names() {
+    #[test]
+    fn validates_with_the_host_parser_and_reports_only_reference_names() {
         let result = validate_app_manifest(ValidateAppManifestArgs {
             yaml: "runtime:\n  type: process\n  start:\n    argv: [bun, run, dev]\n  url: http://127.0.0.1:3210\nenvironment:\n  TOKEN: Bearer ${API_TOKEN}\n".to_string(),
         })
-        .await
         .unwrap()
         .structured_content
         .unwrap();
@@ -52,12 +63,11 @@ mod tests {
         assert_eq!(result["diagnostics"], json!([]));
     }
 
-    #[tokio::test]
-    async fn returns_structured_diagnostics_without_touching_runtime_or_settings() {
+    #[test]
+    fn returns_structured_diagnostics_without_touching_runtime_or_settings() {
         let result = validate_app_manifest(ValidateAppManifestArgs {
             yaml: "runtime:\n  type: url\n  url: javascript:alert(1)\n".to_string(),
         })
-        .await
         .unwrap()
         .structured_content
         .unwrap();

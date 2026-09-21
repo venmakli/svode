@@ -1,6 +1,6 @@
 use std::path::{Component, Path, PathBuf};
 
-use svode_mcp::error::McpBusinessError;
+use crate::error::McpBusinessError;
 
 pub fn validate_public_rel_path(path: &str, allow_root: bool) -> Result<String, McpBusinessError> {
     let raw = path.trim();

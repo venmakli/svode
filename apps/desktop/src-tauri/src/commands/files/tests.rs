@@ -1,4 +1,5 @@
 use super::*;
+use crate::index;
 use crate::index::IndexKey;
 use crate::space::config::write_space_config;
 use crate::space::content_tree::reorder_content;

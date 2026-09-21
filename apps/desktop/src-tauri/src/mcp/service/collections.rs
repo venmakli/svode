@@ -75,18 +75,6 @@ pub(super) async fn convert_to_collection(
     ))
 }
 
-pub(super) async fn list_collections(
-    app: &AppHandle,
-    args: SpaceArgs,
-) -> Result<ToolCallResult, McpBusinessError> {
-    let (_, space) = resolve_space(app, args.space_id).await?;
-    let collections = engine::list_collections(&space).map_err(AppError::from)?;
-    Ok(ToolCallResult::ok(
-        format!("Found {} collections.", collections.len()),
-        json!({ "collections": collections }),
-    ))
-}
-
 pub(super) async fn get_collection_schema(
     app: &AppHandle,
     args: CollectionArgs,
@@ -113,7 +101,7 @@ pub(super) async fn query_collection_items(
     let offset = args.offset.unwrap_or(0).max(0);
     let target = read::CollectionReadTarget::from_index_key(
         space,
-        index_key_for_context(&context, args.space_id.as_deref()),
+        svode_mcp::target::index_key(&request_target(&context), args.space_id.as_deref()),
     );
     let index_state = app.state::<IndexState>();
     let git_state = app.state::<GitState>();
@@ -135,30 +123,6 @@ pub(super) async fn query_collection_items(
     Ok(ToolCallResult::ok(
         format!("Returned {} Collection items.", items.len()),
         json!({ "items": items, "limit": limit, "offset": offset }),
-    ))
-}
-
-pub(super) async fn read_collection_item(
-    app: &AppHandle,
-    args: PathArgs,
-) -> Result<ToolCallResult, McpBusinessError> {
-    let (context, space) = resolve_space(app, args.space_id.clone()).await?;
-    let path = validate_markdown_path(&args.path)?;
-    ensure_inside(Path::new(&space), &path)?;
-    require_collection_item(&space, &path)?;
-    let mut item = entry::read(&space, &path).map_err(AppError::from)?;
-    apply_indexed_entry_dates(
-        app,
-        &context,
-        args.space_id.as_deref(),
-        &space,
-        &path,
-        &mut item,
-    )
-    .await;
-    Ok(ToolCallResult::ok(
-        format!("Read Collection item {path}."),
-        json!({ "item": item }),
     ))
 }
 
@@ -427,11 +391,7 @@ pub(super) async fn reorder_spaces(
 ) -> Result<ToolCallResult, McpBusinessError> {
     let _policy = MCP_MUTATION_POLICY;
     let context = active_context(app)?;
-    if args
-        .ordered_space_ids
-        .iter()
-        .any(|id| is_mcp_root_space_id(id))
-    {
+    if args.ordered_space_ids.iter().any(|id| is_root_space_id(id)) {
         return Err(McpBusinessError::new(
             "INVALID_SPACE_ORDER",
             "the root space is pinned and must not be included",

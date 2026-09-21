@@ -2,20 +2,15 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use serde::{Deserialize, Deserializer};
+use serde::Deserialize;
 use serde_json::{Value, json};
 use tauri::{AppHandle, Manager};
 
 use super::active::{self, ActiveProjectContext, ActiveProjectState};
-use super::path::{ensure_inside, validate_markdown_path, validate_public_rel_path};
 use crate::AppError;
-use crate::artifact::identity::{
-    ContentOwnerKind, PageRole, SemanticIdentity, resolve_markdown_identity_for_path,
-};
-use crate::git::access::repository_access_snapshot;
 use crate::git::{self, GitState};
+use crate::index::IndexState;
 use crate::index::update::IndexUpdateState;
-use crate::index::{IndexKey, IndexState};
 use crate::properties::read;
 use crate::repo_path::{RootMode, normalize_repo_relative};
 use crate::space::{config as space_config, content_tree, project, registry};
@@ -24,12 +19,18 @@ use svode_core::collections::engine::{
 };
 use svode_core::page::entry;
 use svode_core::page::fields::PageFieldUpdate;
+use svode_core::page::identity::ContentOwnerKind;
+use svode_mcp::args::{
+    CollectionArgs, PathArgs, SpaceArgs, clamp_limit, deserialize_present, offset,
+};
 use svode_mcp::error::McpBusinessError;
+use svode_mcp::host::RequestTarget;
+use svode_mcp::owner::{
+    collection_readme_path, require_collection_item, require_owner, require_standalone_page,
+};
+use svode_mcp::path::{ensure_inside, validate_markdown_path, validate_public_rel_path};
 use svode_mcp::protocol::{IpcContextOverride, ToolCallResult};
-
-const DEFAULT_LIMIT: i64 = 50;
-const MAX_LIMIT: i64 = 200;
-const MCP_ROOT_SPACE_ID: &str = "root";
+use svode_mcp::target::{ROOT_SPACE_ID, default_space_id, is_root_space_id};
 
 tokio::task_local! {
     static MCP_CONTEXT_OVERRIDE: Option<ActiveProjectContext>;
@@ -39,7 +40,6 @@ tokio::task_local! {
     static MCP_ROUTINE_CALLER: Option<crate::terminal::RoutineMcpCallerProvenance>;
 }
 
-mod apps;
 mod collections;
 mod context;
 mod dispatch;
@@ -52,9 +52,19 @@ mod routines;
 #[cfg(test)]
 use context::resolve_project_root_for_cwd;
 use context::{active_context, resolve_space};
+pub(crate) use dispatch::DesktopMcpHost;
 #[cfg(test)]
 use dispatch::decode;
 pub use dispatch::{call_tool, call_tool_with_context};
+
+/// Frozen target of a request in the public MCP addressing vocabulary.
+fn request_target(context: &ActiveProjectContext) -> RequestTarget {
+    RequestTarget {
+        project_path: context.project_path.clone(),
+        default_space_id: context.active_space_id.clone(),
+        default_space_path: context.active_space_path.clone(),
+    }
+}
 
 pub(crate) fn routine_caller_provenance() -> Option<crate::terminal::RoutineMcpCallerProvenance> {
     MCP_ROUTINE_CALLER.try_with(Clone::clone).ok().flatten()
@@ -75,27 +85,6 @@ const MCP_MUTATION_POLICY: McpMutationPolicy = McpMutationPolicy {
     _origin: crate::attachments::import::MutationOrigin::Mcp,
     _commit_policy: CommitPolicy::NoAutocommit,
 };
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct SpaceArgs {
-    #[serde(default)]
-    space_id: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct ValidateAppManifestArgs {
-    yaml: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct PathArgs {
-    #[serde(default)]
-    space_id: Option<String>,
-    path: String,
-}
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -137,19 +126,6 @@ struct IntegrityArgs {
     space_id: Option<String>,
     #[serde(default)]
     collection_path: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct ListPagesArgs {
-    #[serde(default)]
-    space_id: Option<String>,
-    #[serde(default)]
-    path: Option<String>,
-    #[serde(default)]
-    limit: Option<i64>,
-    #[serde(default)]
-    offset: Option<i64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -251,14 +227,6 @@ struct UpdateCollectionMetadataArgs {
     cover: Option<Option<entry::Cover>>,
 }
 
-fn deserialize_present<'de, D, T>(deserializer: D) -> Result<Option<Option<T>>, D::Error>
-where
-    D: Deserializer<'de>,
-    T: Deserialize<'de>,
-{
-    Option::<T>::deserialize(deserializer).map(Some)
-}
-
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
@@ -303,14 +271,6 @@ struct SearchArgs {
     limit: Option<i64>,
     #[serde(default)]
     offset: Option<i64>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct CollectionArgs {
-    #[serde(default)]
-    space_id: Option<String>,
-    collection_path: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -421,69 +381,6 @@ fn json_to_yaml(value: Value) -> Result<serde_yml::Value, McpBusinessError> {
         .map_err(|error| McpBusinessError::new("INVALID_YAML_VALUE", error.to_string()))
 }
 
-fn clamp_limit(limit: Option<i64>) -> i64 {
-    limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LIMIT)
-}
-
-fn offset(offset: Option<i64>) -> usize {
-    offset.unwrap_or(0).max(0) as usize
-}
-
-fn semantic_identity_for_path(
-    space: &str,
-    path: &str,
-) -> Result<SemanticIdentity, McpBusinessError> {
-    resolve_markdown_identity_for_path(
-        Path::new(space),
-        path,
-        svode_core::index::knowledge::is_agent_context_source(path),
-    )
-    .map_err(Into::into)
-}
-
-fn require_standalone_page(space: &str, path: &str) -> Result<(), McpBusinessError> {
-    let identity = semantic_identity_for_path(space, path)?;
-    if identity.is_page() && identity.page_role == Some(PageRole::Standalone) {
-        return Ok(());
-    }
-    Err(McpBusinessError::new(
-        "NOT_A_STANDALONE_PAGE",
-        "path belongs to owner content or a Collection item; use its canonical owner-specific tool",
-    ))
-}
-
-fn require_collection_item(space: &str, path: &str) -> Result<(), McpBusinessError> {
-    if semantic_identity_for_path(space, path)?.is_collection_item() {
-        return Ok(());
-    }
-    Err(McpBusinessError::new(
-        "NOT_A_COLLECTION_ITEM",
-        "path is not an item inside a schema-backed Collection",
-    ))
-}
-
-fn require_owner(
-    space: &str,
-    path: &str,
-    expected: ContentOwnerKind,
-) -> Result<(), McpBusinessError> {
-    if semantic_identity_for_path(space, path)?.owner_kind == Some(expected) {
-        return Ok(());
-    }
-    Err(McpBusinessError::new(
-        "CONTENT_OWNER_MISMATCH",
-        "path does not belong to the requested content owner",
-    ))
-}
-
-fn collection_readme_path(collection_path: &str) -> String {
-    if collection_path.is_empty() || collection_path == "." {
-        "README.md".to_string()
-    } else {
-        format!("{}/README.md", collection_path.trim_end_matches('/'))
-    }
-}
-
 fn rel_path_from_space(space: &str, path: &Path) -> String {
     path.strip_prefix(space)
         .unwrap_or(path)
@@ -496,96 +393,6 @@ fn rel_paths_from_space(space: &str, paths: Vec<PathBuf>) -> Vec<String> {
         .into_iter()
         .map(|path| rel_path_from_space(space, &path))
         .collect()
-}
-
-fn is_mcp_root_space_id(space_id: &str) -> bool {
-    space_id == MCP_ROOT_SPACE_ID
-}
-
-fn active_mcp_space_id(context: &ActiveProjectContext) -> String {
-    context
-        .active_space_id
-        .clone()
-        .unwrap_or_else(|| MCP_ROOT_SPACE_ID.to_string())
-}
-
-async fn mcp_spaces_payload(
-    app: &AppHandle,
-    project_path: &Path,
-) -> Result<Vec<Value>, McpBusinessError> {
-    let cfg = space_config::read_space_config(project_path)?;
-    let child_spaces = content_tree::list_child_spaces(project_path)?;
-    let mut spaces = Vec::with_capacity(child_spaces.len() + 1);
-    let (root_access, root_access_diagnostic) = mcp_repository_access(app, project_path).await;
-    spaces.push(json!({
-        "id": MCP_ROOT_SPACE_ID,
-        "name": cfg.name,
-        "icon": cfg.icon,
-        "description": cfg.description,
-        "path": project_path.to_string_lossy().to_string(),
-        "kind": "root",
-        "isRoot": true,
-        "spaceId": MCP_ROOT_SPACE_ID,
-        "hasSpaces": !child_spaces.is_empty(),
-        "status": "ready",
-        "repositoryAccess": root_access,
-        "repositoryAccessDiagnostic": root_access_diagnostic,
-        "capabilities": mcp_space_capabilities("root"),
-        "addressing": {
-            "spaceId": MCP_ROOT_SPACE_ID,
-            "nullBehavior": "active-default"
-        }
-    }));
-    for space in child_spaces {
-        let (repository_access, repository_access_diagnostic) =
-            mcp_repository_access(app, Path::new(&space.path)).await;
-        spaces.push(json!({
-            "id": space.id,
-            "name": space.name,
-            "icon": space.icon,
-            "description": space.description,
-            "path": space.path,
-            "kind": "child",
-            "isRoot": false,
-            "spaceId": space.id,
-            "hasSpaces": space.has_spaces,
-            "lastOpened": space.last_opened,
-            "status": space.status,
-            "repositoryAccess": repository_access,
-            "repositoryAccessDiagnostic": repository_access_diagnostic,
-            "lfsState": space.lfs_state,
-            "capabilities": mcp_space_capabilities("child"),
-            "addressing": {
-                "spaceId": space.id,
-                "nullBehavior": "active-default"
-            }
-        }));
-    }
-    Ok(spaces)
-}
-
-async fn mcp_repository_access(
-    app: &AppHandle,
-    path: &Path,
-) -> (
-    Option<git::access::RepositoryAccessSnapshot>,
-    Option<McpBusinessError>,
-) {
-    match repository_access_snapshot(app, path).await {
-        Ok(snapshot) => (Some(snapshot), None),
-        Err(error) => (None, Some(error.into())),
-    }
-}
-
-fn mcp_space_capabilities(kind: &str) -> Value {
-    json!({
-        "kind": kind,
-        "pages": true,
-        "collections": true,
-        "gitStatus": true,
-        "commitChanges": false,
-        "autocommit": false
-    })
 }
 
 fn schema_for_create_collection(args: &CreateCollectionArgs) -> CollectionSchema {
@@ -605,62 +412,6 @@ fn schema_for_create_collection(args: &CreateCollectionArgs) -> CollectionSchema
         schema.views = views;
     }
     schema
-}
-
-async fn pool_for_space(
-    app: &AppHandle,
-    context: &ActiveProjectContext,
-    space_id: Option<&str>,
-    space: &str,
-) -> Result<sqlx::SqlitePool, McpBusinessError> {
-    let state = app.state::<IndexState>();
-    let key = index_key_for_context(context, space_id);
-    match state.get_or_create(&key).await {
-        Ok(pool) => Ok(pool),
-        Err(_) => {
-            let fallback = state
-                .key_for_space_dir(Path::new(space))
-                .await
-                .unwrap_or(IndexKey::Root(PathBuf::from(space)));
-            Ok(state.get_or_create(&fallback).await?)
-        }
-    }
-}
-
-async fn apply_indexed_entry_dates(
-    app: &AppHandle,
-    context: &ActiveProjectContext,
-    space_id: Option<&str>,
-    space: &str,
-    path: &str,
-    entry: &mut entry::Entry,
-) {
-    let Ok(normalized) = normalize_repo_relative(path, RootMode::Reject) else {
-        return;
-    };
-    let Ok(pool) = pool_for_space(app, context, space_id, space).await else {
-        return;
-    };
-    crate::index::page_dates::apply_indexed_dates(&pool, &normalized, entry).await;
-}
-
-fn index_key_for_context(context: &ActiveProjectContext, space_id: Option<&str>) -> IndexKey {
-    if let Some(space_id) = space_id {
-        if is_mcp_root_space_id(space_id) {
-            return IndexKey::Root(PathBuf::from(&context.project_path));
-        }
-        IndexKey::Space {
-            project: PathBuf::from(&context.project_path),
-            space_id: space_id.to_string(),
-        }
-    } else if let Some(space_id) = context.active_space_id.as_ref() {
-        IndexKey::Space {
-            project: PathBuf::from(&context.project_path),
-            space_id: space_id.clone(),
-        }
-    } else {
-        IndexKey::Root(PathBuf::from(&context.project_path))
-    }
 }
 
 #[cfg(test)]
@@ -755,39 +506,6 @@ mod tests {
         crate::space::scaffold::scaffold_space(path, name, "", "").expect("scaffold space");
     }
 
-    fn context(active_space_id: Option<&str>) -> ActiveProjectContext {
-        ActiveProjectContext {
-            project_path: "/project".to_string(),
-            active_space_id: active_space_id.map(ToString::to_string),
-            active_space_path: active_space_id
-                .map(|id| format!("/project/spaces/{id}"))
-                .unwrap_or_else(|| "/project".to_string()),
-        }
-    }
-
-    #[test]
-    fn root_space_id_targets_root_even_when_child_space_is_active() {
-        assert_eq!(
-            index_key_for_context(&context(Some("child")), Some(MCP_ROOT_SPACE_ID)),
-            IndexKey::Root(PathBuf::from("/project"))
-        );
-    }
-
-    #[test]
-    fn null_space_id_still_targets_active_default_space() {
-        assert_eq!(
-            index_key_for_context(&context(Some("child")), None),
-            IndexKey::Space {
-                project: PathBuf::from("/project"),
-                space_id: "child".to_string()
-            }
-        );
-        assert_eq!(
-            index_key_for_context(&context(None), None),
-            IndexKey::Root(PathBuf::from("/project"))
-        );
-    }
-
     #[test]
     fn create_collection_rejects_removed_document_label_argument() {
         let args = json!({
@@ -848,95 +566,6 @@ mod tests {
         assert_eq!(values.icon, Some(Some("star".into())));
         assert_eq!(values.description, Some(Some("  preserved  ".into())));
         assert!(values.cover.flatten().is_some());
-    }
-
-    #[test]
-    fn semantic_identity_distinguishes_collection_owner_readme_from_item_page() {
-        let temp = tempfile::tempdir().expect("temp dir");
-        let collection = temp.path().join("tasks");
-        std::fs::create_dir_all(&collection).expect("collection dir");
-        std::fs::write(collection.join("schema.yaml"), "columns: []\nviews: []\n").expect("schema");
-
-        let owner =
-            semantic_identity_for_path(temp.path().to_string_lossy().as_ref(), "tasks/README.md")
-                .expect("owner identity");
-        let item =
-            semantic_identity_for_path(temp.path().to_string_lossy().as_ref(), "tasks/item.md")
-                .expect("item identity");
-
-        assert_eq!(owner.owner_kind, Some(ContentOwnerKind::Collection));
-        assert!(!owner.is_page());
-        assert_eq!(item.page_role, Some(PageRole::CollectionItem));
-        assert!(item.is_page());
-    }
-
-    #[tokio::test]
-    async fn page_read_dates_preserve_mcp_roles_and_source_facts() {
-        let temp = tempfile::tempdir().unwrap();
-        let space = temp.path().to_str().unwrap();
-        fs::create_dir_all(temp.path().join("tasks")).unwrap();
-        fs::create_dir_all(temp.path().join("folder")).unwrap();
-        fs::write(
-            temp.path().join("tasks/schema.yaml"),
-            "columns: []\nviews: []\n",
-        )
-        .unwrap();
-        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query(
-            "CREATE TABLE entries (file_path TEXT PRIMARY KEY, created TEXT, updated TEXT)",
-        )
-        .execute(&pool)
-        .await
-        .unwrap();
-        for path in [
-            "leaf.md",
-            "folder/README.md",
-            "tasks/item.md",
-            "tasks/README.md",
-            "README.md",
-        ] {
-            let source = "---\ntitle: [malformed\n---\nOriginal body\n";
-            fs::write(temp.path().join(path), source).unwrap();
-            let normalized = validate_markdown_path(path).unwrap();
-            ensure_inside(temp.path(), &normalized).unwrap();
-            match path {
-                "tasks/item.md" => require_collection_item(space, path).unwrap(),
-                "tasks/README.md" => {
-                    require_owner(space, path, ContentOwnerKind::Collection).unwrap()
-                }
-                "README.md" => require_owner(space, path, ContentOwnerKind::Space).unwrap(),
-                _ => require_standalone_page(space, path).unwrap(),
-            }
-            if path.starts_with("tasks/") || path == "README.md" {
-                assert_eq!(
-                    require_standalone_page(space, path).unwrap_err().code,
-                    "NOT_A_STANDALONE_PAGE"
-                );
-            }
-            let mut page = entry::read(space, path).unwrap();
-            let core = svode_core::page::read_page_source(
-                svode_core::page::resolve_page_target(temp.path(), path).unwrap(),
-            )
-            .unwrap();
-            assert_eq!(core.body, page.body);
-            assert_eq!(core.meta.title, page.meta.title);
-            assert_eq!(core.warnings.len(), page.warnings.len());
-            let mut expected = serde_json::to_value(&page).unwrap();
-            sqlx::query("INSERT INTO entries VALUES (?, 'indexed-created', 'indexed-updated')")
-                .bind(path)
-                .execute(&pool)
-                .await
-                .unwrap();
-            crate::index::page_dates::apply_indexed_dates(&pool, &normalized, &mut page).await;
-            expected["meta"]["created"] = "indexed-created".into();
-            expected["meta"]["updated"] = "indexed-updated".into();
-            assert_eq!(serde_json::to_value(page).unwrap(), expected);
-            assert_eq!(fs::read_to_string(temp.path().join(path)).unwrap(), source);
-        }
-        assert!(validate_markdown_path("../outside.md").is_err());
-        assert!(entry::read(space, "missing.md").is_err());
-        assert!(!temp.path().join(".svode").exists());
-        assert!(!temp.path().join(".git").exists());
     }
 
     #[test]

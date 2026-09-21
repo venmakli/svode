@@ -784,12 +784,6 @@ pub fn definitions() -> Vec<ToolDefinition> {
     ]
 }
 
-pub fn is_public_tool(name: &str) -> bool {
-    definitions()
-        .iter()
-        .any(|definition| definition.name == name)
-}
-
 pub fn is_mutating_tool(name: &str) -> Option<bool> {
     definitions()
         .into_iter()

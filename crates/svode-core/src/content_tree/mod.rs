@@ -80,6 +80,23 @@ fn read_tree_config_checked(root: &Path) -> Result<TreeConfigSource, ContentTree
     Ok(serde_json::from_str(&raw)?)
 }
 
+/// Display facts of a Space from its own `.svode/config.json`.
+#[derive(Debug, Clone)]
+pub struct SpaceDisplay {
+    pub name: String,
+    pub icon: String,
+    pub description: String,
+}
+
+pub fn read_space_display(root: &Path) -> Result<SpaceDisplay, ContentTreeError> {
+    let config = read_tree_config_checked(root)?;
+    Ok(SpaceDisplay {
+        name: config.name,
+        icon: config.icon,
+        description: config.description,
+    })
+}
+
 #[derive(Debug, Clone)]
 pub struct ProjectChild {
     pub id: String,

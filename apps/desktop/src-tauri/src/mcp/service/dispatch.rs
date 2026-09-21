@@ -27,19 +27,64 @@ pub async fn call_tool_with_context(
             Ok(provenance) => provenance,
             Err(error) => return ToolCallResult::business_error(error),
         };
-    let execute = async move {
-        if let Some(context) = request_context {
-            MCP_CONTEXT_OVERRIDE
-                .scope(Some(context), call_tool_inner(app, name, args))
-                .await
-        } else {
-            call_tool_inner(app, name, args).await
-        }
-    };
+    let target = request_context.as_ref().map(request_target);
+    let host = DesktopMcpHost { app };
+    let execute =
+        async { svode_mcp::dispatch::call_tool(&host, target.as_ref(), name, args).await };
+    MCP_ROUTINE_CALLER
+        .scope(
+            routine_caller,
+            MCP_CONTEXT_OVERRIDE.scope(request_context, execute),
+        )
+        .await
+}
 
-    match MCP_ROUTINE_CALLER.scope(routine_caller, execute).await {
-        Ok(result) => result,
-        Err(error) => ToolCallResult::business_error(error),
+/// Desktop host of the shared MCP mapping: active-context resolution happens
+/// before dispatch, runtime handles come from managed state.
+pub(crate) struct DesktopMcpHost {
+    pub(crate) app: AppHandle,
+}
+
+impl svode_mcp::host::McpHost for DesktopMcpHost {
+    fn version(&self) -> &str {
+        env!("CARGO_PKG_VERSION")
+    }
+
+    fn serves_tool(&self, _name: &str) -> bool {
+        true
+    }
+
+    async fn index_pool(
+        &self,
+        key: &svode_core::index::IndexKey,
+        space_path: &Path,
+    ) -> Option<sqlx::SqlitePool> {
+        let state = self.app.state::<IndexState>();
+        if let Ok(pool) = state.get_or_create(key).await {
+            return Some(pool);
+        }
+        let fallback = state
+            .key_for_space_dir(space_path)
+            .await
+            .unwrap_or_else(|| svode_core::index::IndexKey::Root(space_path.to_path_buf()));
+        state.get_or_create(&fallback).await.ok()
+    }
+
+    async fn repository_access(
+        &self,
+        space_path: &Path,
+    ) -> Result<svode_core::git::access::RepositoryAccessSnapshot, McpBusinessError> {
+        crate::git::access::repository_access_snapshot(&self.app, space_path)
+            .await
+            .map_err(Into::into)
+    }
+
+    async fn call_host_tool(
+        &self,
+        name: &str,
+        args: Value,
+    ) -> Result<ToolCallResult, McpBusinessError> {
+        call_host_tool(self.app.clone(), name, args).await
     }
 }
 
@@ -79,7 +124,7 @@ fn freeze_request_context(
     resolved_context.or_else(|| active_state.get())
 }
 
-async fn call_tool_inner(
+async fn call_host_tool(
     app: AppHandle,
     name: &str,
     args: Value,
@@ -87,21 +132,12 @@ async fn call_tool_inner(
     let authorized_paths = authorize_mutating_tool(&app, name, &args).await?;
     let execute = async {
         match name {
-            "get_project_info" => project_tools::get_project_info(&app).await,
-            "validate_app_manifest" => apps::validate_app_manifest(decode(args)?).await,
-            "list_spaces" => project_tools::list_spaces(&app).await,
-            "list_pages" => documents::list_pages(&app, decode(args)?).await,
-            "read_page" => documents::read_page(&app, decode(args)?).await,
             "write_page" => documents::write_page(&app, decode(args)?).await,
             "create_page" => documents::create_page(&app, decode(args)?).await,
             "update_page_metadata" => documents::update_page_metadata(&app, decode(args)?).await,
             "delete_page" => collections::delete_page(&app, decode(args)?).await,
-            "read_space_readme" => documents::read_space_readme(&app, decode(args)?).await,
             "write_space_readme" => documents::write_space_readme(&app, decode(args)?).await,
             "update_space_metadata" => documents::update_space_metadata(&app, decode(args)?).await,
-            "read_collection_readme" => {
-                documents::read_collection_readme(&app, decode(args)?).await
-            }
             "write_collection_readme" => {
                 documents::write_collection_readme(&app, decode(args)?).await
             }
@@ -127,14 +163,12 @@ async fn call_tool_inner(
             "update_routine" => routines::update_routine(&app, decode(args)?).await,
             "delete_routine" => routines::delete_routine(&app, decode(args)?).await,
             "run_routine" => routines::run_routine(&app, decode(args)?).await,
-            "list_collections" => collections::list_collections(&app, decode(args)?).await,
             "get_collection_schema" => {
                 collections::get_collection_schema(&app, decode(args)?).await
             }
             "query_collection_items" => {
                 collections::query_collection_items(&app, decode(args)?).await
             }
-            "read_collection_item" => collections::read_collection_item(&app, decode(args)?).await,
             "update_collection_item_fields" => {
                 collections::update_collection_item_fields(&app, decode(args)?).await
             }
@@ -174,7 +208,6 @@ async fn call_tool_inner(
             }
             "list_actors" => project_tools::list_actors(&app, decode(args)?).await,
             "get_git_status" => project_tools::get_git_status(&app, decode(args)?).await,
-            "get_svode_guide" => project_tools::get_svode_guide().await,
             _ => Err(McpBusinessError::new(
                 "UNKNOWN_TOOL",
                 format!("unknown Svode MCP tool: {name}"),
@@ -193,7 +226,7 @@ async fn authorize_mutating_tool(
     name: &str,
     args: &Value,
 ) -> Result<Option<Vec<PathBuf>>, McpBusinessError> {
-    if crate::mcp::tools::is_mutating_tool(name) != Some(true) {
+    if svode_mcp::catalog::is_mutating_tool(name) != Some(true) {
         return Ok(None);
     }
     if matches!(name, "create_routine" | "update_routine" | "run_routine")
@@ -239,7 +272,7 @@ async fn authorize_mutating_tool(
             let index_state = app.state::<IndexState>();
             let selected_space_id = requested_space_id
                 .as_deref()
-                .filter(|space_id| !is_mcp_root_space_id(space_id));
+                .filter(|space_id| !is_root_space_id(space_id));
             let plan = crate::attachments::import::plan_managed_import(
                 &index_state,
                 Path::new(&context.project_path),

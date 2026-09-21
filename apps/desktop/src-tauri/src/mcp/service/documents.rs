@@ -1,60 +1,5 @@
 use super::*;
 
-pub(super) async fn list_pages(
-    app: &AppHandle,
-    args: ListPagesArgs,
-) -> Result<ToolCallResult, McpBusinessError> {
-    let (_, space) = resolve_space(app, args.space_id.clone()).await?;
-    let root = args
-        .path
-        .as_deref()
-        .map(|p| validate_public_rel_path(p, true))
-        .transpose()?
-        .unwrap_or_default();
-    ensure_inside(Path::new(&space), &root)?;
-    let mut nodes = content_tree::list_recursive(&space).map_err(McpBusinessError::from)?;
-    if !root.is_empty() {
-        let prefix = format!("{root}/");
-        nodes.retain(|node| node.path == root || node.path.starts_with(&prefix));
-    }
-    let total = nodes.len();
-    let start = offset(args.offset);
-    let limit = clamp_limit(args.limit) as usize;
-    let items = nodes
-        .into_iter()
-        .skip(start)
-        .take(limit)
-        .collect::<Vec<_>>();
-    Ok(ToolCallResult::ok(
-        format!("Found {total} Page-tree items."),
-        json!({ "items": items, "total": total, "limit": limit, "offset": start }),
-    ))
-}
-
-pub(super) async fn read_page(
-    app: &AppHandle,
-    args: PathArgs,
-) -> Result<ToolCallResult, McpBusinessError> {
-    let (context, space) = resolve_space(app, args.space_id.clone()).await?;
-    let path = validate_markdown_path(&args.path)?;
-    ensure_inside(Path::new(&space), &path)?;
-    require_standalone_page(&space, &path)?;
-    let mut page = entry::read(&space, &path).map_err(AppError::from)?;
-    apply_indexed_entry_dates(
-        app,
-        &context,
-        args.space_id.as_deref(),
-        &space,
-        &path,
-        &mut page,
-    )
-    .await;
-    Ok(ToolCallResult::ok(
-        format!("Read Page {path}."),
-        json!({ "page": page }),
-    ))
-}
-
 pub(super) async fn write_page(
     app: &AppHandle,
     args: WritePageArgs,
@@ -176,30 +121,6 @@ pub(super) async fn update_page_metadata(
     ))
 }
 
-pub(super) async fn read_space_readme(
-    app: &AppHandle,
-    args: SpaceArgs,
-) -> Result<ToolCallResult, McpBusinessError> {
-    let (context, space) = resolve_space(app, args.space_id.clone()).await?;
-    let path = "README.md".to_string();
-    ensure_inside(Path::new(&space), &path)?;
-    require_owner(&space, &path, ContentOwnerKind::Space)?;
-    let mut readme = entry::read(&space, &path).map_err(AppError::from)?;
-    apply_indexed_entry_dates(
-        app,
-        &context,
-        args.space_id.as_deref(),
-        &space,
-        &path,
-        &mut readme,
-    )
-    .await;
-    Ok(ToolCallResult::ok(
-        "Read Space README.",
-        json!({ "spaceReadme": readme }),
-    ))
-}
-
 pub(super) async fn write_space_readme(
     app: &AppHandle,
     args: WriteSpaceReadmeArgs,
@@ -250,31 +171,6 @@ pub(super) async fn update_space_metadata(
     Ok(ToolCallResult::ok(
         "Updated Space metadata.",
         json!({ "spaceReadme": outcome.page, "changedPaths": changed_paths, "warnings": warnings }),
-    ))
-}
-
-pub(super) async fn read_collection_readme(
-    app: &AppHandle,
-    args: CollectionArgs,
-) -> Result<ToolCallResult, McpBusinessError> {
-    let (context, space) = resolve_space(app, args.space_id.clone()).await?;
-    let collection_path = validate_public_rel_path(&args.collection_path, true)?;
-    let path = collection_readme_path(&collection_path);
-    ensure_inside(Path::new(&space), &path)?;
-    require_owner(&space, &path, ContentOwnerKind::Collection)?;
-    let mut readme = entry::read(&space, &path).map_err(AppError::from)?;
-    apply_indexed_entry_dates(
-        app,
-        &context,
-        args.space_id.as_deref(),
-        &space,
-        &path,
-        &mut readme,
-    )
-    .await;
-    Ok(ToolCallResult::ok(
-        format!("Read Collection README for {collection_path}."),
-        json!({ "collectionPath": collection_path, "collectionReadme": readme }),
     ))
 }
 
@@ -412,7 +308,7 @@ pub(super) async fn import_asset(
     let selected_space_id = args
         .space_id
         .as_deref()
-        .filter(|space_id| !is_mcp_root_space_id(space_id));
+        .filter(|space_id| !is_root_space_id(space_id));
     let plan = crate::attachments::import::plan_managed_import(
         &index_state,
         Path::new(&context.project_path),
@@ -434,7 +330,7 @@ pub(super) async fn import_asset(
     crate::attachments::delivery::emit_managed_import_invalidations(app, &result.delivery);
     let owner_space_id = args
         .space_id
-        .unwrap_or_else(|| active_mcp_space_id(&context));
+        .unwrap_or_else(|| default_space_id(&request_target(&context)));
 
     Ok(ToolCallResult::ok(
         format!(
@@ -461,7 +357,7 @@ pub(super) async fn search_pages(
 ) -> Result<ToolCallResult, McpBusinessError> {
     let (context, _) = resolve_space(app, args.space_id.clone()).await?;
     let state = app.state::<IndexState>();
-    let key = index_key_for_context(&context, args.space_id.as_deref());
+    let key = svode_mcp::target::index_key(&request_target(&context), args.space_id.as_deref());
     let limit = clamp_limit(args.limit);
     let start = offset(args.offset);
     let response = crate::index::service::search_content(
