@@ -11,8 +11,8 @@ use tauri::{AppHandle, Emitter, Manager};
 
 use super::GitState;
 use super::access::{self, RepositoryAccessState};
-use super::cli::GitCli;
 use svode_core::git::GitError;
+use svode_core::git::cli::GitCli;
 use svode_core::git::flow::{ParentPublication, SyncReport};
 use svode_core::git::host::{GitHost, HostFuture};
 use svode_core::git::operations::SharedError;

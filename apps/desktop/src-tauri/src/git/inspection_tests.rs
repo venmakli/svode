@@ -1,4 +1,5 @@
-use super::{cli::GitCli, inspection::read_item};
+use super::inspection::read_item;
+use svode_core::git::cli::GitCli;
 use svode_core::git::ops;
 
 async fn commit_file(

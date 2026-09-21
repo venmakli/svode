@@ -43,6 +43,10 @@ jobs:
       - uses: oven-sh/setup-bun@v2
       - run: bun run --cwd apps/desktop check:sidecars
       - run: cargo check --workspace --all-targets
+      - name: Core package tests without the desktop crate
+        run: cargo test -p svode-core
+      - name: Workspace tests
+        run: cargo test --workspace
       - name: Clippy
         run: |
           cargo clippy --workspace -- \

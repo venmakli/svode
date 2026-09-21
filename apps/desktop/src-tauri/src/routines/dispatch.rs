@@ -6,10 +6,6 @@ use chrono::{SecondsFormat, Utc};
 use tauri::{AppHandle, Manager};
 
 use super::host::{self, RoutineGitTarget};
-use super::model::{
-    CollectionEvent, ResolvedRoutineOwner, RoutineAction, RoutineDefinition,
-    RoutineDispatchBlockedCode, RoutineDispatchResult, RoutineOwnerKind,
-};
 use super::{RoutineStoreState, lifecycle};
 use crate::AppError;
 use crate::agent_actors;
@@ -30,6 +26,10 @@ use svode_core::page::nonce::WriteNonceRegistry;
 use svode_core::routines::dispatch::{
     RoutineDispatchRequest, RoutineDispatchSelection, select_dispatch_candidate,
 };
+use svode_core::routines::model::{
+    CollectionEvent, ResolvedRoutineOwner, RoutineAction, RoutineDefinition,
+    RoutineDispatchBlockedCode, RoutineDispatchResult, RoutineOwnerKind,
+};
 use svode_core::routines::operational::{
     self, NewRoutineRun, QueuedRoutineEvent, attach_pty, latest_run_record, record_terminal_outcome,
 };
@@ -42,7 +42,7 @@ pub(super) enum DispatchKind {
     },
     Scheduled,
     Event {
-        payload: Box<super::events::CollectionEventPayload>,
+        payload: Box<svode_core::routines::observation::CollectionEventPayload>,
         execution_run_id: String,
         definition_fingerprint: String,
     },
@@ -134,9 +134,9 @@ pub(crate) async fn event_dispatch_preflight(
             .await
             .then_some(EventDispatchPreflight::RunAgent),
         RoutineAction::UpdateProperties { set, .. } => {
-            let Ok(payload) =
-                serde_json::from_str::<super::events::CollectionEventPayload>(&event.payload_json)
-            else {
+            let Ok(payload) = serde_json::from_str::<
+                svode_core::routines::observation::CollectionEventPayload,
+            >(&event.payload_json) else {
                 return None;
             };
             if payload.event_type == CollectionEvent::EntryDeleted.as_str()
@@ -504,7 +504,7 @@ pub(super) async fn dispatch_routine(
             record_terminal_outcome(
                 &pool,
                 &routine_run_id,
-                super::model::RoutineRunTerminalStatus::Failed,
+                svode_core::routines::model::RoutineRunTerminalStatus::Failed,
                 None,
                 &message,
                 &Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true),

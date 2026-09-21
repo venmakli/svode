@@ -1,5 +1,4 @@
 pub mod access;
-pub mod cli;
 pub mod clone;
 pub mod commands;
 pub mod dates;
@@ -13,6 +12,8 @@ mod state;
 pub use delivery::GitHostState;
 pub use state::GitState;
 
-pub(crate) fn require_cli(state: &GitState) -> Result<cli::GitCli, crate::AppError> {
+pub(crate) fn require_cli(
+    state: &GitState,
+) -> Result<svode_core::git::cli::GitCli, crate::AppError> {
     state.require_cli()
 }

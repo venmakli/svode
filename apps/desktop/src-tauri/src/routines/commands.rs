@@ -5,10 +5,6 @@ use tauri::{AppHandle, State};
 #[cfg(test)]
 use super::dispatch::{EventDispatchPreflight, event_dispatch_preflight};
 use super::host::RoutineMutationRuntime;
-use super::model::{
-    ResolvedRoutineOwner, RoutineAutomaticConsent, RoutineCatalogSnapshot, RoutineDefinition,
-    RoutineManualDispatchResult, RoutineMutationResult, RoutineOwnerInputKind,
-};
 use super::{RoutineStoreState, dispatch};
 use crate::AppError;
 use crate::git::GitState;
@@ -16,6 +12,10 @@ use crate::git::access::{RepositoryAccessState, access_store_path};
 use crate::index::IndexState;
 use crate::terminal::TerminalManager;
 use svode_core::routines::authority;
+use svode_core::routines::model::{
+    ResolvedRoutineOwner, RoutineAutomaticConsent, RoutineCatalogSnapshot, RoutineDefinition,
+    RoutineManualDispatchResult, RoutineMutationResult, RoutineOwnerInputKind,
+};
 #[cfg(test)]
 use svode_core::routines::operational::QueuedRoutineEvent;
 #[cfg(test)]
@@ -425,7 +425,7 @@ mod tests {
         }
     }
 
-    use crate::routines::model::{CollectionEvent, RoutineAction, RoutineTrigger};
+    use svode_core::routines::model::{CollectionEvent, RoutineAction, RoutineTrigger};
 
     #[tokio::test]
     async fn event_property_preflight_carries_the_exact_mutation_plan() {
@@ -458,14 +458,14 @@ mod tests {
             enabled: Some(true),
             trigger: RoutineTrigger::Event {
                 event: CollectionEvent::FieldChanged,
-                match_: Some(super::super::model::EventMatch {
+                match_: Some(svode_core::routines::model::EventMatch {
                     field: "reviewed".into(),
                     from: Some(serde_json::Value::Bool(false)),
                     to: Some(serde_json::Value::Bool(true)),
                 }),
             },
             action: RoutineAction::UpdateProperties {
-                target: super::super::model::RoutineActionTarget::TriggerEntry,
+                target: svode_core::routines::model::RoutineActionTarget::TriggerEntry,
                 set: BTreeMap::from([("reviewed".into(), serde_json::Value::Bool(true))]),
             },
             body: String::new(),
@@ -477,7 +477,7 @@ mod tests {
         )
         .unwrap();
         let row = parser::discover_owner(&owner).routines.remove(0);
-        let snapshot = super::super::events::IndexedEntrySnapshot {
+        let snapshot = svode_core::routines::observation::IndexedEntrySnapshot {
             repository_path: project.to_string_lossy().into_owned(),
             collection_path: "tasks".into(),
             entry_path: "tasks/item.md".into(),
@@ -486,7 +486,7 @@ mod tests {
             created: "2026-08-08T00:00:00Z".into(),
             updated: "2026-08-08T00:00:00Z".into(),
         };
-        let payload = super::super::events::CollectionEventPayload {
+        let payload = svode_core::routines::observation::CollectionEventPayload {
             repository_path: snapshot.repository_path.clone(),
             collection_path: snapshot.collection_path.clone(),
             entry_path: snapshot.entry_path.clone(),

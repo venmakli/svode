@@ -181,12 +181,12 @@ where
 {
     let cli = crate::git::dates::detected_cli();
     let sink = sink(autocommit);
-    Ok(svode_core::structure::create_collection(
+    svode_core::structure::create_collection(
         request,
         runtime(state, updates, cli.as_ref(), sink.as_ref()),
         authorize,
     )
-    .await?)
+    .await
 }
 
 pub async fn convert_to_folder(

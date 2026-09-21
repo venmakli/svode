@@ -5,7 +5,6 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 
 use super::GitState;
-use super::cli::{GitAvailability, GitCli};
 use super::delivery::host;
 use crate::AppError;
 use crate::index::update::IndexUpdateState;
@@ -14,6 +13,7 @@ use crate::space::project;
 use crate::space::types::{GitUserPolicy, SpaceGitType};
 use crate::system_path;
 use svode_core::git::autocommit::{AutocommitService, SystemCommitKind};
+use svode_core::git::cli::{GitAvailability, GitCli};
 use svode_core::git::operations::SharedError;
 use svode_core::git::ops::{GitStatus, UnpushedCommit};
 use svode_core::git::path::{RootMode, normalize_repo_relative, repo_relative_from_base};

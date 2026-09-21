@@ -1,12 +1,16 @@
-use super::*;
-
 #[cfg(test)]
 mod tests {
+    use std::fs;
+    use std::path::{Path, PathBuf};
     use std::process::Command;
+    use std::sync::Arc;
 
     use tempfile::TempDir;
 
-    use super::*;
+    use crate::files::actor_observation::ActorObservation;
+    use svode_core::actors::resolver::ActorCatalogState;
+    use svode_core::git::actor_sources::ActorSources;
+    use svode_core::git::cli::GitCli;
 
     fn git(path: &Path, args: &[&str]) {
         let output = Command::new("git")
@@ -39,7 +43,6 @@ mod tests {
 
     #[tokio::test]
     async fn overlapping_observations_recover_and_release_without_duplicate_generation() {
-        use crate::files::actor_observation::ActorObservation;
         use std::sync::mpsc;
         use std::time::Duration;
         let repo = init_repo("Root", "root@example.test");
@@ -119,7 +122,6 @@ mod tests {
 
     #[tokio::test]
     async fn observed_submodule_sources_refresh_catalog_and_activity() {
-        use crate::files::actor_observation::ActorObservation;
         use std::sync::mpsc;
         use std::time::Duration;
 

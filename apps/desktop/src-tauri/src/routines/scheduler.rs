@@ -8,7 +8,6 @@ use tauri::{AppHandle, Manager};
 
 use super::dispatch;
 use super::host;
-use super::model::{ResolvedRoutineOwner, RoutineDispatchBlockedCode, RoutineDispatchResult};
 use crate::AppError;
 use crate::git::access::{
     RepositoryAccessState, RepositoryAccessStatus, RoutineClaimResult, access_store_path,
@@ -19,6 +18,9 @@ use crate::index::IndexState;
 use crate::routines::RoutineStoreState;
 use crate::terminal::TerminalManager;
 use svode_core::routines::dispatch::{event_run_key, schedule_candidates, scheduled_run_key};
+use svode_core::routines::model::{
+    ResolvedRoutineOwner, RoutineDispatchBlockedCode, RoutineDispatchResult,
+};
 use svode_core::routines::operational::{
     activate_event, claim_local_run, finish_event, latest_remote_claim, latest_run_record,
     next_pending_event, record_remote_claim, schedule_state, write_schedule_state,
@@ -501,7 +503,7 @@ async fn write_baseline(
     routine_id: &str,
     fingerprint: &str,
     cron: &str,
-    time_basis: &super::model::RoutineTimeBasis,
+    time_basis: &svode_core::routines::model::RoutineTimeBasis,
     now: DateTime<Utc>,
 ) -> Result<(), AppError> {
     let next = schedule::next_after(cron, time_basis, now).map_err(AppError::General)?;

@@ -6,8 +6,8 @@ use tauri::{AppHandle, Emitter};
 use tokio::io::AsyncReadExt;
 use tokio::process::Command;
 
-use super::cli::GitCli;
 use crate::{AppError, process};
+use svode_core::git::cli::GitCli;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]

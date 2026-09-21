@@ -1,8 +1,8 @@
 use std::collections::HashSet;
 
-use super::model::RoutineLiveEvidence;
 use crate::AppError;
 use crate::terminal::TerminalManager;
+use svode_core::routines::model::RoutineLiveEvidence;
 
 pub(crate) fn live_evidence(
     terminal_manager: &TerminalManager,

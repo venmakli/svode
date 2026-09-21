@@ -266,7 +266,7 @@ pub async fn refresh_agent_context_projection(
         .await
         .unwrap_or_else(|| IndexKey::Root(space_dir.to_path_buf()));
     let keys = if matches!(&key, IndexKey::Root(_)) {
-        state.keys_for_project(&key.project().to_path_buf()).await
+        state.keys_for_project(key.project()).await
     } else {
         vec![key]
     };

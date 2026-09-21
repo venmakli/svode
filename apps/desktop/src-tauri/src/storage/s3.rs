@@ -12,10 +12,6 @@ use crate::process;
 
 pub const AGENT_CONFIG_REL: &str = svode_core::storage::s3::CONFIG_REL;
 
-/// Managed `.gitignore` block that hides the agent config file. Kept tiny on
-/// purpose so it can sit alongside the existing `# svode:assets-ignore`
-/// block without confusion.
-
 fn slug_source(source: &str) -> String {
     let mut out = String::new();
     let mut pending_separator = false;

@@ -3,9 +3,9 @@ use std::path::{Path, PathBuf};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 
-use super::cli::GitCli;
 use super::{GitState, require_cli};
 use crate::AppError;
+use svode_core::git::cli::GitCli;
 
 pub use svode_core::git::access::{
     RepositoryAccessSnapshot, RepositoryAccessStatus, RoutineClaimResult,

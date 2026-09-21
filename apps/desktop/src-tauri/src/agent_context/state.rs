@@ -4,7 +4,7 @@ use std::sync::Mutex;
 
 use crate::AppError;
 
-use super::model::{AgentContextSnapshot, AgentContextSnapshotContent};
+use svode_core::agent_context::model::{AgentContextSnapshot, AgentContextSnapshotContent};
 
 #[derive(Debug, Clone)]
 struct PublishedSnapshot {

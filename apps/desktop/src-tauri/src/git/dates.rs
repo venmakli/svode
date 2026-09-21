@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use super::cli::GitCli;
+use svode_core::git::cli::GitCli;
 pub(crate) use svode_core::git::state::detected_cli;
 use svode_core::page::dates::EntryDateOverrides;
 

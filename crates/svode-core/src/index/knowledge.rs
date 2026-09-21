@@ -1735,7 +1735,7 @@ async fn scoped_keys(
             }
         }
         Some(KnowledgeScope::Project) | None => {
-            let keys = state.keys_for_project(&project.to_path_buf()).await;
+            let keys = state.keys_for_project(project).await;
             let cache = state.spaces_cache.lock().await;
             let mut diagnostics = Vec::new();
             let mut unavailable = 0;

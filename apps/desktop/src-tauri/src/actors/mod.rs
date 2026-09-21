@@ -1,10 +1,10 @@
 pub mod commands;
-mod mailmap;
 mod mutations;
-mod resolver;
 
-pub(crate) use resolver::ActorInvalidationPayload;
-pub use resolver::{ActorActivity, ActorCandidate, ActorCatalog, ActorCatalogState};
+pub(crate) use svode_core::actors::resolver::ActorInvalidationPayload;
+pub use svode_core::actors::resolver::{
+    ActorActivity, ActorCandidate, ActorCatalog, ActorCatalogState,
+};
 
 pub(crate) const INVALIDATED_EVENT: &str = "actors:invalidated";
 
@@ -37,7 +37,7 @@ pub(crate) async fn invalidate_space(
 
     let git_state = app.state::<crate::git::GitState>();
     let cli = crate::git::require_cli(&git_state)?;
-    let repository = resolver::resolve_repository(&cli, space_path).await?;
+    let repository = svode_core::actors::resolver::resolve_repository(&cli, space_path).await?;
     invalidate_repository(app, &repository)
 }
 

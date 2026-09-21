@@ -474,7 +474,7 @@ fn routine_run_from_row(row: sqlx::sqlite::SqliteRow) -> Result<RoutineRunRow, s
         created_at: row.try_get("created_at")?,
         terminal_status: terminal_status
             .as_deref()
-            .and_then(RoutineRunTerminalStatus::from_str),
+            .and_then(RoutineRunTerminalStatus::parse),
         terminal_exit_code: row.try_get("terminal_exit_code")?,
         terminal_reason: row.try_get("terminal_reason")?,
         terminal_observed_at: row.try_get("terminal_observed_at")?,

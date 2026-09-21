@@ -1,9 +1,7 @@
 pub mod commands;
 pub(crate) mod dispatch;
-pub(crate) mod events;
 pub(crate) mod host;
 pub(crate) mod lifecycle;
-mod model;
 pub(crate) mod runtime;
 mod scheduler;
 mod store_state;
@@ -11,14 +9,14 @@ mod store_state;
 pub(crate) use scheduler::RoutineSchedulerState;
 pub(crate) use store_state::RoutineStoreState;
 
-pub(crate) use model::ResolvedRoutineOwner;
-pub(crate) use model::{CollectionEventOrigin, CollectionEventSourceKind};
+pub(crate) use svode_core::routines::model::ResolvedRoutineOwner;
+pub(crate) use svode_core::routines::model::{CollectionEventOrigin, CollectionEventSourceKind};
 #[cfg(test)]
-pub(crate) use model::{
+pub(crate) use svode_core::routines::model::{
     RoutineAction, RoutineDiagnostic, RoutineOwnerDescriptor, RoutineRunOrigin, RoutineTrigger,
     RoutineTriggerType,
 };
-pub(crate) use model::{
+pub(crate) use svode_core::routines::model::{
     RoutineCatalogSnapshot, RoutineDefinition, RoutineDispatchBlockedCode, RoutineDispatchResult,
     RoutineInvalidationPayload, RoutineOwnerInputKind, RoutineOwnerKind, RoutineRow,
 };

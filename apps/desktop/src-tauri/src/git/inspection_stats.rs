@@ -3,12 +3,12 @@ use std::{collections::BTreeMap, io::Read, path::Path};
 use serde::Serialize;
 use tauri::State;
 
+use svode_core::git::cli::{GitCli, read_bounded};
 use svode_core::git::ops;
 use svode_core::git::path::contained_file;
 
 use super::{
     GitState,
-    cli::{GitCli, read_bounded},
     inspection::{InspectionScope, is_binary_format},
     require_cli,
 };

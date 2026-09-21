@@ -6,8 +6,6 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use super::ActorCatalog;
-use super::mailmap::{MailmapDocument, MailmapRule, mailmap_size_is_safe, normalize_email};
-use super::resolver::{ActorCatalogState, ActorSnapshot, load_snapshot, resolve_repository};
 use crate::AppError;
 use crate::git::GitState;
 use crate::git::access::{RepositoryAccessState, RepositoryAccessStatus, access_store_path};
@@ -16,6 +14,12 @@ use crate::identity::{
     validate_email, validate_name,
 };
 use crate::space::types::SpaceGitType;
+use svode_core::actors::mailmap::{
+    MailmapDocument, MailmapRule, mailmap_size_is_safe, normalize_email,
+};
+use svode_core::actors::resolver::{
+    ActorCatalogState, ActorSnapshot, load_snapshot, resolve_repository,
+};
 use svode_core::git::autocommit::{
     AutocommitService, ExactPathPersistenceOutcome, GuardedExactPathPlan,
 };
@@ -1387,8 +1391,8 @@ mod tests {
     use std::process::Command;
 
     use super::*;
-    use crate::actors::resolver::ActorContribution;
     use crate::identity::get_local_identity_fields;
+    use svode_core::actors::resolver::ActorContribution;
 
     fn plan(
         display_name: &str,

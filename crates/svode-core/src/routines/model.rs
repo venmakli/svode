@@ -24,7 +24,7 @@ impl RoutineRunTerminalStatus {
         }
     }
 
-    pub fn from_str(value: &str) -> Option<Self> {
+    pub fn parse(value: &str) -> Option<Self> {
         match value {
             "done" => Some(Self::Done),
             "failed" => Some(Self::Failed),

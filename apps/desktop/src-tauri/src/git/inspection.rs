@@ -3,8 +3,9 @@ use std::{io::Read, path::Path};
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
-use super::{GitState, cli::GitCli, require_cli};
+use super::{GitState, require_cli};
 use crate::AppError;
+use svode_core::git::cli::GitCli;
 use svode_core::git::path::{RootMode, contained_file, normalize_repo_relative};
 
 const MAX_BYTES: usize = 512 * 1024;
@@ -55,7 +56,7 @@ async fn bounded_git(
     repo: &Path,
     args: &[&str],
 ) -> Result<(bool, Vec<u8>), AppError> {
-    Ok(super::cli::read_bounded(cli, repo, args, MAX_BYTES).await?)
+    Ok(svode_core::git::cli::read_bounded(cli, repo, args, MAX_BYTES).await?)
 }
 
 #[cfg(test)]

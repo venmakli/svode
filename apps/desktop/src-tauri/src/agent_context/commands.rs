@@ -5,9 +5,9 @@ use tauri::State;
 use crate::AppError;
 use crate::agent_adapters::system_source_registry_environment;
 
-use super::model::AgentContextSnapshot;
-use super::scanner;
 use super::state::AgentContextState;
+use svode_core::agent_context::model::AgentContextSnapshot;
+use svode_core::agent_context::scanner;
 
 #[tauri::command]
 pub async fn agent_context_get_instructions(

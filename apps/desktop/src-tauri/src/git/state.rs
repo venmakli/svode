@@ -1,8 +1,8 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use super::cli::GitCli;
 use crate::AppError;
+use svode_core::git::cli::GitCli;
 use svode_core::git::ops::GitStatus;
 use svode_core::git::state::GitRuntime;
 

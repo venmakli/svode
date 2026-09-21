@@ -7,11 +7,13 @@ use std::sync::{Arc, Mutex};
 use sqlx::SqlitePool;
 use svode_core::routines::operational::{reconcile_agent_session, record_terminal_outcome};
 
-use super::model::{ResolvedRoutineOwner, RoutineInvalidationPayload, RoutineRunTerminalStatus};
 use crate::AppError;
 use crate::agent_sessions::types::AgentSessionStatus;
 use crate::terminal::{
     AgentTerminalLifecycleSink, AgentTerminalOutcomeEvidence, AgentTerminalOutcomeStatus,
+};
+use svode_core::routines::model::{
+    ResolvedRoutineOwner, RoutineInvalidationPayload, RoutineRunTerminalStatus,
 };
 
 pub(crate) struct RoutineRunLifecycleSink {
@@ -143,7 +145,7 @@ mod tests {
     use tempfile::tempdir;
 
     use super::*;
-    use crate::routines::model::{RoutineAction, RoutineDefinition, RoutineTrigger};
+    use svode_core::routines::model::{RoutineAction, RoutineDefinition, RoutineTrigger};
     use svode_core::routines::operational::{
         NewRoutineRun, attach_pty, create_run, latest_run_record,
     };
