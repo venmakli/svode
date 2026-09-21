@@ -114,7 +114,6 @@ if (process.env.SVODE_S3_TEST !== "1") {
             defaultS3Prefix: "default",
             inheritedFromProject: args.spaceId === "inline",
             ownerSpaceId: args.spaceId === "inline" ? null : args.spaceId,
-            gitType: args.spaceId === "inline" ? "inline" : null,
             binaryRouting: {
               status: "v1",
               version: 1,

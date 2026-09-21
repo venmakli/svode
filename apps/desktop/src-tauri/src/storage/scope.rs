@@ -7,7 +7,7 @@ use super::s3;
 use crate::error::AppError;
 use crate::index::{IndexKey, IndexState};
 use crate::space::config::read_space_config;
-use crate::space::types::{AssetsSpaceConfig, SpaceGitType};
+use crate::space::types::AssetsSpaceConfig;
 use svode_core::storage::scope::{self as core_scope, AssetsScope};
 
 #[derive(Debug, Clone)]
@@ -18,7 +18,6 @@ pub struct AssetsStorageScope {
     pub config_dir: PathBuf,
     pub config: AssetsSpaceConfig,
     pub default_s3_prefix: String,
-    pub git_type: Option<SpaceGitType>,
     pub inherited_from_project: bool,
 }
 
@@ -57,7 +56,6 @@ fn with_default_s3_prefix(project: &Path, scope: AssetsScope) -> AssetsStorageSc
         config_dir: scope.config_dir,
         config: scope.config,
         default_s3_prefix,
-        git_type: scope.git_type,
         inherited_from_project: scope.inherited_from_project,
     }
 }

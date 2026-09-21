@@ -19,9 +19,7 @@ use crate::git::require_cli;
 use crate::index::IndexState;
 use crate::repo_path::{RootMode, repo_relative_from_base};
 use crate::space::config::{read_space_config, write_space_config};
-use crate::space::types::{
-    AssetsS3Config, AssetsSpaceConfig, AssetsStrategy, BinaryRoutingConfig, SpaceGitType,
-};
+use crate::space::types::{AssetsS3Config, AssetsSpaceConfig, AssetsStrategy, BinaryRoutingConfig};
 use svode_core::git::autocommit::{AutocommitService, StructuralOp, SystemCommitKind};
 use svode_core::git::cli::GitCli;
 
@@ -157,7 +155,6 @@ pub struct EffectiveAssetsConfig {
     pub default_s3_prefix: String,
     pub inherited_from_project: bool,
     pub owner_space_id: Option<String>,
-    pub git_type: Option<SpaceGitType>,
     pub binary_routing: svode_core::storage::policy::EffectiveBinaryRouting,
 }
 
@@ -177,7 +174,6 @@ pub async fn get_assets_config(
         default_s3_prefix: scope.default_s3_prefix,
         inherited_from_project: scope.inherited_from_project,
         owner_space_id: IndexState::space_id_for_key(&scope.pool_key),
-        git_type: scope.git_type,
         binary_routing,
     })
 }

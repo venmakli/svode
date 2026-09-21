@@ -18,7 +18,6 @@ import type {
   AssetsStrategy,
   BinaryRoutingConfig,
   LfsState,
-  SpaceGitType,
 } from "@/features/space";
 
 export interface SpacePoolInput extends Record<string, unknown> {
@@ -59,7 +58,6 @@ export interface EffectiveAssetsConfig {
   defaultS3Prefix: string;
   inheritedFromProject: boolean;
   ownerSpaceId: string | null;
-  gitType: SpaceGitType | null;
   binaryRouting: {
     status: "legacy-preset" | "v1" | "unsupported";
     version: number | null;

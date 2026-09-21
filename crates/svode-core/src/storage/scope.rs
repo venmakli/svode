@@ -11,9 +11,7 @@ use crate::index::IndexError;
 use crate::index::IndexKey;
 use crate::index::state::IndexRuntimeState;
 
-use super::config::{
-    AssetsSpaceConfig, SpaceGitType, StorageConfigError, read_space_assets_config,
-};
+use super::config::{AssetsSpaceConfig, StorageConfigError, read_space_assets_config};
 
 #[derive(Debug, thiserror::Error)]
 pub enum AssetsScopeError {
@@ -31,7 +29,6 @@ pub struct AssetsScope {
     pub repo_dir: PathBuf,
     pub config_dir: PathBuf,
     pub config: AssetsSpaceConfig,
-    pub git_type: Option<SpaceGitType>,
     pub inherited_from_project: bool,
 }
 
@@ -58,39 +55,32 @@ fn build_assets_scope(
     requested_key: IndexKey,
     requested_dir: PathBuf,
 ) -> Result<AssetsScope, StorageConfigError> {
-    let (pool_key, pool_dir, repo_dir, config_dir, git_type, inherited_from_project) =
-        match &requested_key {
-            IndexKey::Root(project_dir) => (
-                requested_key.clone(),
-                project_dir.clone(),
-                project_dir.clone(),
-                project_dir.clone(),
-                None,
-                false,
-            ),
-            IndexKey::Space { .. } if is_inline_space_dir(&requested_dir) => {
-                let root_key = IndexKey::Root(project.to_path_buf());
-                (
-                    root_key,
-                    project.to_path_buf(),
-                    project.to_path_buf(),
-                    project.to_path_buf(),
-                    Some(SpaceGitType::Inline),
-                    true,
-                )
-            }
-            IndexKey::Space { .. } => {
-                let git_type = detect_repo_owned_space_type(project, &requested_dir);
-                (
-                    requested_key.clone(),
-                    requested_dir.clone(),
-                    requested_dir.clone(),
-                    requested_dir.clone(),
-                    Some(git_type),
-                    false,
-                )
-            }
-        };
+    let (pool_key, pool_dir, repo_dir, config_dir, inherited_from_project) = match &requested_key {
+        IndexKey::Root(project_dir) => (
+            requested_key.clone(),
+            project_dir.clone(),
+            project_dir.clone(),
+            project_dir.clone(),
+            false,
+        ),
+        IndexKey::Space { .. } if is_inline_space_dir(&requested_dir) => {
+            let root_key = IndexKey::Root(project.to_path_buf());
+            (
+                root_key,
+                project.to_path_buf(),
+                project.to_path_buf(),
+                project.to_path_buf(),
+                true,
+            )
+        }
+        IndexKey::Space { .. } => (
+            requested_key.clone(),
+            requested_dir.clone(),
+            requested_dir.clone(),
+            requested_dir.clone(),
+            false,
+        ),
+    };
 
     let owner_config = read_space_assets_config(&config_dir)?;
 
@@ -100,7 +90,6 @@ fn build_assets_scope(
         repo_dir,
         config_dir,
         config: owner_config.assets.unwrap_or_default(),
-        git_type,
         inherited_from_project,
     })
 }
@@ -109,36 +98,11 @@ fn is_inline_space_dir(space_dir: &Path) -> bool {
     space_dir.join(".git").symlink_metadata().is_err()
 }
 
-fn detect_repo_owned_space_type(project: &Path, space_dir: &Path) -> SpaceGitType {
-    let Some(folder) = space_dir.file_name().and_then(|name| name.to_str()) else {
-        return SpaceGitType::Independent;
-    };
-    let gitmodules = project.join(".gitmodules");
-    let Ok(contents) = std::fs::read_to_string(gitmodules) else {
-        return SpaceGitType::Independent;
-    };
-
-    if contents
-        .lines()
-        .filter_map(|line| line.split_once('='))
-        .any(|(key, value)| {
-            let key = key.trim();
-            (key == "path" || key.ends_with(".path")) && value.trim() == folder
-        })
-    {
-        SpaceGitType::Submodule
-    } else {
-        SpaceGitType::Independent
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{
-        AssetsScope, build_assets_scope, detect_repo_owned_space_type, is_inline_space_dir,
-    };
+    use super::{AssetsScope, build_assets_scope, is_inline_space_dir};
     use crate::index::IndexKey;
-    use crate::storage::config::{AssetsStrategy, SpaceGitType};
+    use crate::storage::config::AssetsStrategy;
     use std::path::Path;
 
     fn write_config(dir: &Path, strategy: &str) {
@@ -182,24 +146,6 @@ mod tests {
     }
 
     #[test]
-    fn repo_owned_space_type_detects_submodule_from_gitmodules() {
-        let temp = tempfile::tempdir().expect("temp dir");
-        let project = temp.path();
-        let space = project.join("docs");
-        std::fs::create_dir_all(space.join(".git")).expect("git dir");
-        std::fs::write(
-            project.join(".gitmodules"),
-            "[submodule \"docs\"]\n\tpath = docs\n\turl = https://example.test/docs.git\n",
-        )
-        .expect("gitmodules");
-
-        assert_eq!(
-            detect_repo_owned_space_type(project, &space),
-            SpaceGitType::Submodule
-        );
-    }
-
-    #[test]
     fn effective_scope_ignores_stale_inline_child_assets_config() {
         let temp = tempfile::tempdir().expect("temp dir");
         let project = temp.path().join("Project");
@@ -213,7 +159,6 @@ mod tests {
         assert!(scope.inherited_from_project);
         assert_eq!(scope.pool_key, IndexKey::Root(project.to_path_buf()));
         assert_eq!(scope.config.strategy, AssetsStrategy::InGit);
-        assert_eq!(scope.git_type, Some(SpaceGitType::Inline));
     }
 
     #[test]
@@ -236,6 +181,5 @@ mod tests {
             }
         );
         assert_eq!(scope.config.strategy, AssetsStrategy::LfsRemote);
-        assert_eq!(scope.git_type, Some(SpaceGitType::Independent));
     }
 }

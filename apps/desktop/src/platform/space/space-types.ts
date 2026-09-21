@@ -94,7 +94,6 @@ export interface EffectiveAssetsConfigDto extends Omit<
   defaultS3Prefix: string;
   inheritedFromProject: boolean;
   ownerSpaceId: string | null;
-  gitType: SpaceGitTypeDto | null;
   binaryRouting: EffectiveBinaryRoutingDto;
 }
 
