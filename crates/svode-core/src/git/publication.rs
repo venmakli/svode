@@ -130,6 +130,12 @@ pub async fn push_snapshot(
     ];
     args.extend(mappings.iter().map(String::as_str));
     let out = sensitive(cli, repo, &args).await?;
+    if out.exit_code != 0 {
+        if let Some(rejection) = super::push_rejection::push_rejection(cli, repo, &out.stderr).await
+        {
+            return Err(rejection);
+        }
+    }
     if out.exit_code == 0 && first {
         set_upstream(cli, repo).await?;
     }

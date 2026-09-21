@@ -16,6 +16,7 @@ pub mod pending;
 pub mod policy;
 pub mod publication;
 pub mod published_pointer;
+pub mod push_rejection;
 pub mod readers;
 pub mod save;
 #[cfg(test)]
@@ -53,6 +54,12 @@ pub enum GitError {
         "Git branch preparation blocked: {reason:?}. Restore the branch and local work in Git, then retry."
     )]
     BranchBlocked { reason: branch::BranchBlockReason },
+    #[error("Git push rejected: {reason:?}")]
+    PushRejected {
+        reason: push_rejection::PushRejectionReason,
+        object_count: Option<usize>,
+        lfs_declaration: Option<crate::storage::lfs_declaration::LfsDeclarationState>,
+    },
     #[error("Git save failed during {stage}: {reason} ({path_count} paths)")]
     SaveFailed {
         stage: &'static str,
@@ -89,6 +96,7 @@ impl GitError {
             GitError::RepositoryAccessDenied { .. } => "repository_access_denied",
             GitError::PublicationBlocked { .. } => "git_publication_blocked",
             GitError::BranchBlocked { .. } => "git_branch_blocked",
+            GitError::PushRejected { .. } => "git_push_rejected",
             GitError::SaveFailed { .. } => "git_save_failed",
             GitError::Conflict(_) => "git_conflict",
             GitError::AuthRequired(_) => "git_auth_required",
@@ -121,6 +129,17 @@ impl serde::Serialize for GitError {
             GitError::BranchBlocked { reason } => {
                 serde_json::json!({ "kind": self.kind(), "reason": reason }).serialize(serializer)
             }
+            GitError::PushRejected {
+                reason,
+                object_count,
+                lfs_declaration,
+            } => serde_json::json!({
+                "kind": self.kind(),
+                "reason": reason,
+                "objectCount": object_count,
+                "lfsDeclaration": lfs_declaration,
+            })
+            .serialize(serializer),
             GitError::SaveFailed {
                 stage,
                 reason,

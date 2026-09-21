@@ -2040,5 +2040,13 @@
   "git_sync_remote_checking": "Checking remote status…",
   "git_sync_outgoing_unchecked": "The outgoing commit list is unavailable until remote status is checked.",
   "git_sync_access_read_only": "This repository is read-only. Publishing requires write access.",
-  "git_sync_access_unknown": "Verify write access to this repository in Git settings, then retry."
+  "git_sync_access_unknown": "Verify write access to this repository in Git settings, then retry.",
+  "git_push_lfs_objects_missing": "The Git provider rejected the push: LFS objects referenced by the commits are missing there ({count}).",
+  "git_push_lfs_recovery_generic": "Make sure these objects are uploaded to the provider's LFS storage, then sync again.",
+  "git_push_lfs_recovery_missing": "Update the LFS policy in Settings → Storage to add the repository LFS declaration, then sync again.",
+  "git_push_lfs_recovery_pending": "Save .lfsconfig, then sync again.",
+  "git_push_lfs_recovery_foreign": "Remove your own lfs.url from .lfsconfig, then sync again.",
+  "git_push_lfs_recovery_published": "This repository's objects are split between S3 and the provider's LFS storage; Svode cannot fix this automatically.",
+  "git_push_lfs_transfer_unconfigured": "The push stopped: S3 transfer for LFS files is not set up on this device.",
+  "git_push_lfs_transfer_recovery": "Set up S3 in Settings → Storage for this space, then sync again."
 }

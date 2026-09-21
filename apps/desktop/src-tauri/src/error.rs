@@ -174,6 +174,15 @@ impl From<svode_core::git::GitError> for AppError {
                 reason,
             },
             GitError::BranchBlocked { reason } => Self::GitBranchBlocked { reason },
+            GitError::PushRejected {
+                reason,
+                object_count,
+                lfs_declaration,
+            } => Self::GitPushRejected {
+                reason,
+                object_count,
+                lfs_declaration,
+            },
             GitError::SaveFailed {
                 stage,
                 reason,
@@ -368,6 +377,13 @@ pub enum AppError {
         reason: svode_core::git::branch::BranchBlockReason,
     },
 
+    #[error("Git push rejected: {reason:?}")]
+    GitPushRejected {
+        reason: svode_core::git::push_rejection::PushRejectionReason,
+        object_count: Option<usize>,
+        lfs_declaration: Option<svode_core::storage::lfs_declaration::LfsDeclarationState>,
+    },
+
     #[error("Git save failed during {stage}: {reason} ({path_count} paths)")]
     GitSaveFailed {
         stage: &'static str,
@@ -447,6 +463,7 @@ impl AppError {
             AppError::GitCommandFailed(_) => "git_command_failed",
             AppError::GitPublicationBlocked { .. } => "git_publication_blocked",
             AppError::GitBranchBlocked { .. } => "git_branch_blocked",
+            AppError::GitPushRejected { .. } => "git_push_rejected",
             AppError::GitSaveFailed { .. } => "git_save_failed",
             AppError::GitConflict(_) => "git_conflict",
             AppError::GitAuthRequired(_) => "git_auth_required",
@@ -481,6 +498,9 @@ impl Serialize for AppError {
             }
             AppError::GitBranchBlocked { reason } => {
                 serde_json::json!({ "kind": self.kind(), "reason": reason }).serialize(serializer)
+            }
+            AppError::GitPushRejected { reason, object_count, lfs_declaration } => {
+                serde_json::json!({ "kind": self.kind(), "reason": reason, "objectCount": object_count, "lfsDeclaration": lfs_declaration }).serialize(serializer)
             }
             AppError::GitSaveFailed { stage, reason, exit_code, path_count, path_sample } => {
                 serde_json::json!({ "kind": self.kind(), "stage": stage, "reason": reason, "exitCode": exit_code, "pathCount": path_count, "pathSample": path_sample }).serialize(serializer)
@@ -562,5 +582,22 @@ mod tests {
         assert_eq!(value["repositoryId"], "repo-opaque");
         assert_eq!(value["status"], "unknown");
         assert_eq!(value["reason"], "mutation_plan_changed");
+    }
+
+    #[test]
+    fn push_rejection_keeps_the_core_transport_shape() {
+        let core = svode_core::git::GitError::PushRejected {
+            reason: svode_core::git::push_rejection::PushRejectionReason::LfsObjectsMissing,
+            object_count: Some(2),
+            lfs_declaration: Some(
+                svode_core::storage::lfs_declaration::LfsDeclarationState::Pending,
+            ),
+        };
+        let expected = serde_json::to_value(&core).unwrap();
+        let value = serde_json::to_value(AppError::from(core)).unwrap();
+
+        assert_eq!(value, expected);
+        assert_eq!(value["kind"], "git_push_rejected");
+        assert_eq!(value["lfsDeclaration"], "pending");
     }
 }
