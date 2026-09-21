@@ -8,6 +8,7 @@ use crate::git::GitState;
 use crate::git::require_cli;
 use crate::space::types::{AssetsS3Config, AssetsStrategy, BinaryRoutingConfig};
 use svode_core::git::cli::{GitCli, GitOutput};
+use svode_core::storage::lfs_declaration::{self, LfsDeclarationWrite};
 use svode_core::storage::policy;
 use svode_core::storage::routes::{
     LFS_PATHS_END, LFS_PATHS_START, LOCAL_PATHS_END, LOCAL_PATHS_START, append_block,
@@ -427,6 +428,13 @@ pub async fn apply_strategy(
         write_or_remove(&gitattributes_path, &next)?;
     }
 
+    // --- .lfsconfig: portable lfs-s3 declaration, committed with the strategy. ---
+    if lfs_declaration::apply_lfs_declaration(space_dir, new)? == LfsDeclarationWrite::Foreign {
+        result.warnings.push(
+            ".lfsconfig already sets lfs.url to another value, so Svode left it unchanged; clients without the Svode LFS agent may upload objects to the Git provider.".into(),
+        );
+    }
+
     // Verify positive representative paths against Git's effective attribute
     // resolution. Nested/user `.gitattributes` files can override root rules;
     // report that as a non-fatal warning without rewriting user configuration.
@@ -493,7 +501,7 @@ pub async fn apply_strategy(
         }
     }
 
-    // Staging of `.gitignore`/`.gitattributes`/`.svode/config.json` is now
+    // Staging of `.gitignore`/`.gitattributes`/`.lfsconfig`/`.svode/config.json` is now
     // done by the caller via `AutocommitService::commit_system_now` with
     // `SystemCommitKind::AssetsStrategy` — see `storage::commands`.
     Ok(result)
@@ -512,7 +520,9 @@ mod tests {
     };
     use crate::AppError;
     use crate::git::GitState;
-    use crate::space::types::{AssetsSpaceConfig, AssetsStrategy, BinaryRoutingConfig};
+    use crate::space::types::{
+        AssetsS3Config, AssetsSpaceConfig, AssetsStrategy, BinaryRoutingConfig,
+    };
     use svode_core::git::cli::GitCli;
     use svode_core::storage::policy::{
         LEGACY_ASSETS_ONLY_LFS_RULE, LFS_END, LFS_START, managed_lfs_attributes_body,
@@ -1022,6 +1032,90 @@ mod tests {
         let merge_base = git_stdout(cli, &repo, &["merge-base", "HEAD", "origin/main"]).await?;
         assert_eq!(head_after, head_before);
         assert_eq!(merge_base, origin_head);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn lfs_s3_apply_declares_once_and_other_strategy_removes_only_own_value()
+    -> Result<(), AppError> {
+        let Some((git_state, temp, repo)) = setup_remote_tracking_repo().await? else {
+            return Ok(());
+        };
+        let cli = git_state.detected().expect("checked above");
+        if !cli.lfs_available() {
+            return Ok(());
+        }
+        let bin = make_fake_binary(&temp.path().join("bin"), "svode-lfs")?;
+        let s3 = AssetsS3Config {
+            endpoint: "https://s3.example.test".into(),
+            bucket: "bucket".into(),
+            region: "us-east-1".into(),
+            prefix: "project".into(),
+        };
+        let user = "# team\n[lfs]\n\tfetchexclude = archive/**\n";
+        std::fs::write(repo.join(".lfsconfig"), user)?;
+        let declared = format!("{user}[lfs]\n\turl = https://lfs-s3.svode.invalid/\n");
+
+        for _ in 0..2 {
+            let result = apply_strategy(
+                &git_state,
+                &repo,
+                AssetsStrategy::LfsS3,
+                &legacy_routing(),
+                Some(&s3),
+                Some(&bin),
+            )
+            .await?;
+            assert!(result.warnings.iter().all(|w| !w.contains(".lfsconfig")));
+            assert_eq!(std::fs::read_to_string(repo.join(".lfsconfig"))?, declared);
+        }
+
+        apply_strategy(
+            &git_state,
+            &repo,
+            AssetsStrategy::InGit,
+            &legacy_routing(),
+            None,
+            None,
+        )
+        .await?;
+        assert_eq!(std::fs::read_to_string(repo.join(".lfsconfig"))?, user);
+
+        std::fs::write(
+            repo.join(".lfsconfig"),
+            "[lfs]\n\turl = https://lfs.example.test/\n",
+        )?;
+        let result = apply_strategy(
+            &git_state,
+            &repo,
+            AssetsStrategy::LfsS3,
+            &legacy_routing(),
+            Some(&s3),
+            Some(&bin),
+        )
+        .await?;
+        assert!(result.warnings.iter().any(|w| w.contains(".lfsconfig")));
+        assert_eq!(
+            std::fs::read_to_string(repo.join(".lfsconfig"))?,
+            "[lfs]\n\turl = https://lfs.example.test/\n"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn repair_does_not_declare_or_commit_for_existing_lfs_s3_owner() -> Result<(), AppError> {
+        let Some((git_state, temp, repo)) = setup_remote_tracking_repo().await? else {
+            return Ok(());
+        };
+        let cli = git_state.detected().expect("checked above");
+        let head = git_stdout(cli, &repo, &["rev-parse", "HEAD"]).await?;
+        let bin = make_fake_binary(&temp.path().join("bin"), "svode-lfs")?;
+
+        let outcome =
+            repair_managed_registration_with(&git_state, &repo, || Ok(bin.clone())).await?;
+        assert_eq!(outcome, RegistrationOutcome::Repaired);
+        assert!(!repo.join(".lfsconfig").exists());
+        assert_eq!(git_stdout(cli, &repo, &["rev-parse", "HEAD"]).await?, head);
         Ok(())
     }
 

@@ -3,6 +3,7 @@ use std::path::Path;
 use super::config::{
     AssetsSpaceConfig, AssetsStrategy, BINARY_ROUTING_VERSION, BinaryRoutingConfig,
 };
+use super::lfs_declaration::LfsDeclarationState;
 use super::policy::{
     LEGACY_ASSETS_ONLY_LFS_RULE, LFS_END, LFS_START, ManagedBinaryRoute, REPOSITORY_LFS_EXTENSIONS,
     StoragePolicyError, check_lfs_filters, diagnose_repo_lfs_policy, evaluate_managed_binary_route,
@@ -180,6 +181,17 @@ async fn diagnostics_report_only_dirty_uncovered_policy_candidates()
         ]
     );
     assert_eq!(diagnostic.truncated_count, 0);
+    assert_eq!(diagnostic.lfs_declaration, None);
+
+    let s3_config = AssetsSpaceConfig {
+        strategy: AssetsStrategy::LfsS3,
+        ..lfs_config(legacy_routing())
+    };
+    let diagnostic = diagnose_repo_lfs_policy(&cli, repo, &s3_config).await?;
+    assert_eq!(
+        diagnostic.lfs_declaration,
+        Some(LfsDeclarationState::Missing)
+    );
     Ok(())
 }
 

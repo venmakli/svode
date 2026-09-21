@@ -450,7 +450,8 @@ export function useSpaceStorageSettings({
     binaryRoutingStatus !== "unsupported" &&
     binaryRoutingConfig !== null &&
     (binaryRoutingChanged ||
-      lfsPolicyDiagnostic?.managedPolicyCurrent === false) &&
+      lfsPolicyDiagnostic?.managedPolicyCurrent === false ||
+      lfsPolicyDiagnostic?.lfsDeclaration === "missing") &&
     canReapplyLfsPolicy({
       strategy: savedAssetsStrategy,
       lfsAvailable,

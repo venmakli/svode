@@ -54,9 +54,12 @@ impl SystemCommitKind {
             SystemCommitKind::Gitignore => &[".gitignore"],
             SystemCommitKind::AgentInstructions => &[".svode/AGENTS.md"],
             SystemCommitKind::CliIntegration => &["CLAUDE.md", ".mcp.json", ".claude"],
-            SystemCommitKind::AssetsStrategy => {
-                &[".gitattributes", ".gitignore", ".svode/config.json"]
-            }
+            SystemCommitKind::AssetsStrategy => &[
+                ".gitattributes",
+                ".gitignore",
+                ".lfsconfig",
+                ".svode/config.json",
+            ],
         }
     }
 }
@@ -732,7 +735,10 @@ async fn do_commit_system(
         &paths,
         message,
         intent,
-        matches!(kind, SystemCommitKind::CliIntegration),
+        matches!(
+            kind,
+            SystemCommitKind::CliIntegration | SystemCommitKind::AssetsStrategy
+        ),
     )
     .await?;
     drop(guard);
@@ -1511,6 +1517,103 @@ mod tests {
             assert_eq!(
                 std::fs::read_to_string(root.join("Исследования/config.json")).unwrap(),
                 "source mutation\n"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn assets_strategy_commit_carries_lfs_declaration_for_repository_owners() {
+        use crate::git::staging_tests::{cli, git, repo, write};
+        use crate::storage::config::AssetsStrategy;
+        use crate::storage::lfs_declaration::apply_lfs_declaration;
+        let cli = cli();
+        let service =
+            AutocommitService::new(Arc::new(GitRuntime::new()), Arc::new(TestHost::default()));
+        for kind in [
+            None,
+            Some(SpaceGitType::Independent),
+            Some(SpaceGitType::Submodule),
+        ] {
+            let tmp = repo(&cli, true).await;
+            let root = tmp.path();
+            let owner = match kind {
+                None => root.to_path_buf(),
+                Some(kind) => {
+                    let child = root.join("Исследования");
+                    std::fs::create_dir(&child).unwrap();
+                    git(&cli, &child, &["init"]).await;
+                    git(&cli, &child, &["config", "user.name", "Test"]).await;
+                    git(&cli, &child, &["config", "user.email", "test@example.test"]).await;
+                    write(&child, "README.md", "child baseline\n");
+                    ops::commit_paths(&cli, &child, &["README.md".into()])
+                        .await
+                        .unwrap();
+                    if kind == SpaceGitType::Submodule {
+                        write(
+                            root,
+                            ".gitmodules",
+                            "[submodule \"Исследования\"]\n\tpath = Исследования\n\turl = ./Исследования\n",
+                        );
+                        ops::commit_paths(
+                            &cli,
+                            root,
+                            &[".gitmodules".into(), "Исследования".into()],
+                        )
+                        .await
+                        .unwrap();
+                    }
+                    child
+                }
+            };
+            write_local_git_policy(
+                &owner,
+                GitUserPolicy {
+                    auto_sync: false,
+                    auto_commit_structural: false,
+                    auto_commit_system: true,
+                },
+            );
+            // Other strategies commit without a `.lfsconfig` to stage.
+            write(&owner, ".gitignore", "strategy\n");
+            service
+                .commit_system_now(
+                    root.to_path_buf(),
+                    owner.clone(),
+                    SystemCommitKind::AssetsStrategy,
+                )
+                .await
+                .unwrap();
+            assert!(
+                git(&cli, &owner, &["show", "HEAD:.gitignore"])
+                    .await
+                    .starts_with("strategy\n")
+            );
+
+            apply_lfs_declaration(&owner, AssetsStrategy::LfsS3).unwrap();
+            let head = git(&cli, &owner, &["rev-parse", "HEAD"]).await;
+            service
+                .commit_system_now(
+                    root.to_path_buf(),
+                    owner.clone(),
+                    SystemCommitKind::AssetsStrategy,
+                )
+                .await
+                .unwrap();
+            assert_ne!(git(&cli, &owner, &["rev-parse", "HEAD"]).await, head);
+            assert_eq!(
+                git(&cli, &owner, &["log", "-1", "--format=%s"])
+                    .await
+                    .trim(),
+                "Update assets strategy"
+            );
+            assert_eq!(
+                git(&cli, &owner, &["show", "HEAD:.lfsconfig"]).await,
+                "[lfs]\n\turl = https://lfs-s3.svode.invalid/\n"
+            );
+            assert!(
+                git(&cli, &owner, &["status", "--porcelain", "--", ".lfsconfig"])
+                    .await
+                    .is_empty()
             );
         }
     }

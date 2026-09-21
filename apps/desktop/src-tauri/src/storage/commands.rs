@@ -392,7 +392,7 @@ pub async fn set_assets_strategy(
         let _ = app.emit(APP_VARIABLES_CHANGED_EVENT, ());
     }
 
-    // Commit `.gitattributes` + `.gitignore` + `.svode/config.json` via the
+    // Commit `.gitattributes` + `.gitignore` + `.lfsconfig` + `.svode/config.json` via the
     // system-commit pipeline so it routes to the correct repo (inline → root,
     // independent/submodule → space) under a single "Update assets strategy"
     // commit. This replaces the bare `git add` that previously lived inside
@@ -626,6 +626,24 @@ mod tests {
         };
 
         std::fs::write(repo.join(".gitignore"), "dirty\n")?;
+
+        let blocker =
+            strategy_autocommit_blocker(&cli, &repo, SystemCommitKind::AssetsStrategy.paths())
+                .await?;
+        assert!(blocker.is_some_and(|message| message.contains("already dirty")));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn strategy_autocommit_blocker_detects_dirty_lfs_declaration() -> Result<(), AppError> {
+        let Some((cli, _temp, repo)) = setup_clean_repo().await? else {
+            return Ok(());
+        };
+
+        std::fs::write(
+            repo.join(".lfsconfig"),
+            "[lfs]\n\turl = https://lfs.example.test/\n",
+        )?;
 
         let blocker =
             strategy_autocommit_blocker(&cli, &repo, SystemCommitKind::AssetsStrategy.paths())

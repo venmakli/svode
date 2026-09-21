@@ -23,10 +23,17 @@ export interface LfsRemoteDiagnosticDto {
   detail: string | null;
 }
 
+export type LfsDeclarationStateDto =
+  | "published"
+  | "pending"
+  | "missing"
+  | "foreign";
+
 export interface LfsPolicyDiagnosticDto {
   managedPolicyCurrent: boolean;
   uncoveredPaths: string[];
   truncatedCount: number;
+  lfsDeclaration: LfsDeclarationStateDto | null;
 }
 
 export interface SpaceInfoDto {

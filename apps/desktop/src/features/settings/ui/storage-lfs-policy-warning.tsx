@@ -6,6 +6,15 @@ import type { LfsPolicyDiagnostic } from "../api";
 
 const VISIBLE_PATH_LIMIT = 5;
 
+const DECLARATION_LABELS: Record<
+  Exclude<NonNullable<LfsPolicyDiagnostic["lfsDeclaration"]>, "missing">,
+  () => string
+> = {
+  published: m.storage_lfs_declaration_published,
+  pending: m.storage_lfs_declaration_pending,
+  foreign: m.storage_lfs_declaration_foreign,
+};
+
 interface StorageLfsPolicyWarningProps {
   diagnostic: LfsPolicyDiagnostic | null;
   loading: boolean;
@@ -25,38 +34,50 @@ export function StorageLfsPolicyWarning({
   onUpdate,
   onRefresh,
 }: StorageLfsPolicyWarningProps) {
-  if (
-    !error &&
-    (!diagnostic ||
-      (diagnostic.managedPolicyCurrent &&
-        diagnostic.uncoveredPaths.length === 0))
-  ) {
-    return null;
-  }
-
   const uncoveredCount =
     (diagnostic?.uncoveredPaths.length ?? 0) +
     (diagnostic?.truncatedCount ?? 0);
+  const policyStale = diagnostic?.managedPolicyCurrent === false;
+  const declaration = diagnostic?.lfsDeclaration ?? null;
+  const declarationMissing = declaration === "missing";
+  const declarationStatus =
+    declaration && declaration !== "missing" ? (
+      <p className="text-xs text-muted-foreground">
+        {m.storage_lfs_declaration_status({
+          state: DECLARATION_LABELS[declaration](),
+        })}
+      </p>
+    ) : null;
+
+  if (!error && !policyStale && uncoveredCount === 0 && !declarationMissing) {
+    return declarationStatus;
+  }
+
   const visiblePaths =
     diagnostic?.uncoveredPaths.slice(0, VISIBLE_PATH_LIMIT) ?? [];
   const hiddenCount = Math.max(0, uncoveredCount - visiblePaths.length);
 
-  return (
+  const alert = (
     <Alert>
       <TriangleAlert />
       <AlertTitle>
         {error
           ? m.storage_lfs_policy_error_title()
-          : diagnostic?.managedPolicyCurrent
-            ? m.storage_lfs_policy_uncovered_title({
-                count: String(uncoveredCount),
-              })
-            : m.storage_lfs_policy_update_title()}
+          : policyStale
+            ? m.storage_lfs_policy_update_title()
+            : uncoveredCount > 0
+              ? m.storage_lfs_policy_uncovered_title({
+                  count: String(uncoveredCount),
+                })
+              : m.storage_lfs_declaration_missing_title()}
       </AlertTitle>
       <AlertDescription className="flex flex-col gap-3">
         {error && <span>{m.storage_lfs_policy_error_description()}</span>}
-        {diagnostic && !diagnostic.managedPolicyCurrent && (
+        {policyStale && (
           <span>{m.storage_lfs_policy_update_description()}</span>
+        )}
+        {declarationMissing && (
+          <span>{m.storage_lfs_declaration_missing_description()}</span>
         )}
         {uncoveredCount > 0 && (
           <>
@@ -76,7 +97,7 @@ export function StorageLfsPolicyWarning({
           </>
         )}
         <div className="flex flex-wrap items-center gap-2">
-          {diagnostic && !diagnostic.managedPolicyCurrent && (
+          {(policyStale || declarationMissing) && (
             <Button
               type="button"
               size="sm"
@@ -107,5 +128,13 @@ export function StorageLfsPolicyWarning({
         </div>
       </AlertDescription>
     </Alert>
+  );
+
+  if (!declarationStatus) return alert;
+  return (
+    <div className="flex flex-col gap-2">
+      {alert}
+      {declarationStatus}
+    </div>
   );
 }

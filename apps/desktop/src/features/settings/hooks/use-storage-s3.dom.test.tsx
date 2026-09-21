@@ -61,7 +61,11 @@ if (process.env.SVODE_S3_TEST !== "1") {
     name,
   });
 
-  async function setup(saved = false, strategy: "local" | "lfs-s3" = "lfs-s3") {
+  async function setup(
+    saved = false,
+    strategy: "local" | "lfs-s3" = "lfs-s3",
+    diagnosticsActive = false,
+  ) {
     let state!: UseSpaceStorageSettingsResult;
     const fixture = {
       entries: [
@@ -98,6 +102,7 @@ if (process.env.SVODE_S3_TEST !== "1") {
       checkGate: null as Promise<void> | null,
       mutationGate: null as Promise<void> | null,
       bindingGate: null as Promise<void> | null,
+      lfsDeclaration: "published" as string,
     };
     mockNativeIpc(
       async (command, rawArgs = {}) => {
@@ -137,6 +142,7 @@ if (process.env.SVODE_S3_TEST !== "1") {
             managedPolicyCurrent: true,
             uncoveredPaths: [],
             truncatedCount: 0,
+            lfsDeclaration: fixture.lfsDeclaration,
           };
         if (command === "get_s3_bindings") {
           const snapshot = args.spaceId === "other" ? null : fixture.bindings;
@@ -225,7 +231,7 @@ if (process.env.SVODE_S3_TEST !== "1") {
     }) {
       const value = useSpaceStorageSettings({
         open,
-        diagnosticsActive: false,
+        diagnosticsActive,
         spacePath: "/repo",
         projectPath: "/repo",
         currentSpaceId: spaceId,
@@ -645,6 +651,31 @@ if (process.env.SVODE_S3_TEST !== "1") {
       });
       expect(h.state.s3.canSubmit).toBe(false);
       expect(h.state.s3.editor!.draft.value).toBe("draft");
+    } finally {
+      await h.cleanup();
+    }
+  });
+
+  test("missing LFS declaration enables re-applying the saved S3 target unchanged", async () => {
+    const h = await setup(true, "lfs-s3", true);
+    try {
+      expect(h.state.lfsPolicyDiagnostic?.lfsDeclaration).toBe("published");
+      expect(h.state.canUpdateLfsPolicy).toBe(false);
+
+      h.fixture.lfsDeclaration = "missing";
+      await act(async () => {
+        await h.state.refreshLfsPolicyDiagnostic();
+      });
+      expect(h.state.canUpdateLfsPolicy).toBe(true);
+      await act(async () => {
+        await h.state.updateLfsPolicy();
+      });
+      const save = h.fixture.calls.find(
+        (call) => call.command === "set_assets_strategy",
+      )!;
+      expect(save.args.strategy).toBe("lfs-s3");
+      expect(save.args.s3Config).toEqual(target);
+      expect(save.args.s3Bindings).toBe(null);
     } finally {
       await h.cleanup();
     }

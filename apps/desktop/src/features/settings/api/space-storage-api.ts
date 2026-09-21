@@ -92,10 +92,17 @@ export interface LfsRemoteDiagnostic {
   detail: string | null;
 }
 
+export type LfsDeclarationState =
+  | "published"
+  | "pending"
+  | "missing"
+  | "foreign";
+
 export interface LfsPolicyDiagnostic {
   managedPolicyCurrent: boolean;
   uncoveredPaths: string[];
   truncatedCount: number;
+  lfsDeclaration: LfsDeclarationState | null;
 }
 
 interface SettingsEvent<T> {

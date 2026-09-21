@@ -17,6 +17,7 @@ use crate::git::status;
 use super::config::{
     AssetsSpaceConfig, AssetsStrategy, BINARY_ROUTING_VERSION, BinaryRoutingConfig,
 };
+use super::lfs_declaration::{LfsDeclarationState, lfs_declaration_state};
 use super::routes::read_or_empty;
 
 pub const LFS_START: &str = "# svode:assets-lfs:start";
@@ -62,6 +63,8 @@ pub struct LfsPolicyDiagnostic {
     pub managed_policy_current: bool,
     pub uncovered_paths: Vec<String>,
     pub truncated_count: usize,
+    /// Portable `.lfsconfig` declaration state; only reported for `lfs-s3`.
+    pub lfs_declaration: Option<LfsDeclarationState>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -436,8 +439,14 @@ pub async fn diagnose_repo_lfs_policy(
             managed_policy_current,
             uncovered_paths: Vec::new(),
             truncated_count: 0,
+            lfs_declaration: None,
         });
     }
+    let lfs_declaration = if config.strategy == AssetsStrategy::LfsS3 {
+        Some(lfs_declaration_state(cli, repo_dir).await?)
+    } else {
+        None
+    };
 
     let status = status::status(cli, repo_dir).await?;
     let candidates: Vec<String> = status
@@ -462,6 +471,7 @@ pub async fn diagnose_repo_lfs_policy(
         managed_policy_current,
         uncovered_paths,
         truncated_count,
+        lfs_declaration,
     })
 }
 
