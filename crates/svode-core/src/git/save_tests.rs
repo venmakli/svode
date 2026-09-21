@@ -7,7 +7,7 @@ use std::sync::Arc;
 use super::GitError;
 use super::pending::StructuralOp;
 use super::save::save;
-use super::staging_tests::{TestHost, cli, git, repo, write};
+use super::staging_tests::{TestHost, cli, git, repo, submodule_project, write};
 use super::state::GitRuntime;
 
 fn runtime() -> Arc<GitRuntime> {
@@ -154,4 +154,76 @@ async fn save_without_a_scope_excludes_device_local_files() {
     let committed = git(&cli, space, &["show", "--name-only", "--format=", "HEAD"]).await;
     assert!(committed.contains("portable.md"));
     assert!(!committed.contains("local.json"));
+}
+
+#[tokio::test]
+async fn project_root_with_submodule_spaces_saves_file_paths_and_all() {
+    let cli = cli();
+    let (tmp, _) = submodule_project(&cli).await;
+    let root = tmp.path();
+    let runtime = runtime();
+    let host = TestHost::default();
+
+    for (requested, expected) in [
+        (Some(vec!["tseli/schema.yaml"]), vec!["tseli/schema.yaml"]),
+        (
+            Some(vec!["tseli/schema.yaml", ".lfsconfig"]),
+            vec![".lfsconfig", "tseli/schema.yaml"],
+        ),
+        (
+            None,
+            vec![".gitignore", ".lfsconfig", "other.md", "tseli/schema.yaml"],
+        ),
+    ] {
+        write(root, "tseli/schema.yaml", &format!("{requested:?}\n"));
+        write(root, ".lfsconfig", &format!("{requested:?}\n"));
+        write(root, "other.md", &format!("{requested:?}\n"));
+        let before = head(root).await;
+
+        let report = save(
+            &runtime,
+            &host,
+            Some(root),
+            root,
+            requested.map(|paths| paths.into_iter().map(str::to_string).collect()),
+        )
+        .await
+        .expect("root save");
+
+        assert!(report.parent.is_none());
+        assert_ne!(head(root).await, before);
+        let committed = git(&cli, root, &["show", "--name-only", "--format=", "HEAD"]).await;
+        let mut committed = committed.lines().collect::<Vec<_>>();
+        committed.sort_unstable();
+        assert_eq!(committed, expected);
+    }
+}
+
+#[tokio::test]
+async fn submodule_space_save_keeps_its_parent_pointer_step() {
+    let cli = cli();
+    let (tmp, child) = submodule_project(&cli).await;
+    let root = tmp.path();
+    write(&child, "note.md", "note\n");
+    let root_before = head(root).await;
+
+    let runtime = runtime();
+    let host = TestHost::default();
+    let report = save(
+        &runtime,
+        &host,
+        Some(root),
+        &child,
+        Some(vec!["note.md".to_string()]),
+    )
+    .await
+    .expect("child save");
+
+    assert_eq!(git(&cli, &child, &["show", "HEAD:note.md"]).await, "note\n");
+    assert!(report.parent.is_some());
+    assert_ne!(head(root).await, root_before);
+    assert_eq!(
+        git(&cli, root, &["rev-parse", "HEAD:Исследования"]).await,
+        head(&child).await
+    );
 }

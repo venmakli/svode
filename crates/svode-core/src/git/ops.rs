@@ -883,8 +883,12 @@ pub async fn detect_space_git_type(
         return Ok(SpaceGitType::Independent);
     }
 
+    // The project root owns its own repository; `.gitmodules` lists children only.
     let relative =
-        crate::git::path::repo_relative_from_base(project_path, space_path, RootMode::Reject)?;
+        crate::git::path::repo_relative_from_base(project_path, space_path, RootMode::Allow)?;
+    if relative == "." {
+        return Ok(SpaceGitType::Independent);
+    }
     if list_submodules(cli, project_path)
         .await?
         .iter()
@@ -2352,5 +2356,51 @@ mod tests {
             .unwrap();
         assert!(parent_status.stdout.contains("?? .gitmodules"));
         assert!(parent_status.stdout.contains("?? docs/"));
+    }
+
+    #[tokio::test]
+    async fn project_root_with_submodule_spaces_is_its_own_independent_owner() {
+        use crate::git::staging_tests::{cli, git, submodule_project, write};
+        let cli = cli();
+        let (tmp, submodule) = submodule_project(&cli).await;
+        let root = tmp.path();
+        let independent = root.join("independent");
+        std::fs::create_dir(&independent).unwrap();
+        git(&cli, &independent, &["init"]).await;
+        write(root, "inline/README.md", "inline\n");
+
+        for space in [root.to_path_buf(), root.join(".")] {
+            assert_eq!(
+                detect_space_git_type(&cli, root, &space).await.unwrap(),
+                SpaceGitType::Independent
+            );
+            assert_eq!(
+                resolve_target_repo(&cli, root, &space).await.unwrap(),
+                (SpaceGitType::Independent, space.clone())
+            );
+        }
+        assert_eq!(
+            detect_space_git_type(&cli, root, &submodule).await.unwrap(),
+            SpaceGitType::Submodule
+        );
+        assert_eq!(
+            detect_space_git_type(&cli, root, &independent)
+                .await
+                .unwrap(),
+            SpaceGitType::Independent
+        );
+        assert_eq!(
+            detect_space_git_type(&cli, root, &root.join("inline"))
+                .await
+                .unwrap(),
+            SpaceGitType::Inline
+        );
+
+        let outside = TempDir::new().unwrap();
+        git(&cli, outside.path(), &["init"]).await;
+        assert!(matches!(
+            detect_space_git_type(&cli, root, outside.path()).await,
+            Err(GitError::PathNotAccessible(_))
+        ));
     }
 }

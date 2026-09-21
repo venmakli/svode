@@ -179,6 +179,32 @@ pub(super) async fn repo(cli: &GitCli, born: bool) -> TempDir {
     tmp
 }
 
+/// Born root repository that tracks one real submodule Space `Исследования`
+/// (own repository, `.gitmodules` entry and a committed gitlink).
+pub(super) async fn submodule_project(cli: &GitCli) -> (TempDir, PathBuf) {
+    let tmp = repo(cli, true).await;
+    let root = tmp.path();
+    let child = root.join("Исследования");
+    std::fs::create_dir(&child).unwrap();
+    git(cli, &child, &["init"]).await;
+    git(cli, &child, &["config", "user.name", "Test"]).await;
+    git(cli, &child, &["config", "user.email", "test@example.test"]).await;
+    git(cli, &child, &["config", "commit.gpgsign", "false"]).await;
+    write(&child, "README.md", "child baseline\n");
+    ops::commit_paths(cli, &child, &["README.md".into()])
+        .await
+        .unwrap();
+    write(
+        root,
+        ".gitmodules",
+        "[submodule \"Исследования\"]\n\tpath = Исследования\n\turl = ./Исследования\n",
+    );
+    ops::commit_paths(cli, root, &[".gitmodules".into(), "Исследования".into()])
+        .await
+        .unwrap();
+    (tmp, child)
+}
+
 #[tokio::test]
 async fn selected_prefix_and_index_matrix() {
     let cli = cli();

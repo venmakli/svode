@@ -1619,6 +1619,67 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn project_root_with_submodule_spaces_gets_system_and_structural_commits() {
+        use crate::git::staging_tests::{cli, git, submodule_project, write};
+        let cli = cli();
+        let (tmp, _) = submodule_project(&cli).await;
+        let root = tmp.path();
+        write_local_git_policy(
+            root,
+            GitUserPolicy {
+                auto_sync: false,
+                auto_commit_structural: true,
+                auto_commit_system: true,
+            },
+        );
+        let service =
+            AutocommitService::new(Arc::new(GitRuntime::new()), Arc::new(TestHost::default()));
+
+        for (kind, path, message) in [
+            (
+                SystemCommitKind::SpaceConfig,
+                ".svode/config.json",
+                "Update space config",
+            ),
+            (
+                SystemCommitKind::AssetsStrategy,
+                ".lfsconfig",
+                "Update assets strategy",
+            ),
+        ] {
+            write(root, path, "system\n");
+            service
+                .commit_system_now(root.to_path_buf(), root.to_path_buf(), kind)
+                .await
+                .unwrap();
+            assert_eq!(
+                git(&cli, root, &["log", "-1", "--format=%s"]).await.trim(),
+                message
+            );
+            assert_eq!(
+                git(&cli, root, &["show", &format!("HEAD:{path}")]).await,
+                "system\n"
+            );
+        }
+
+        write(root, "README.md", "root home\n");
+        service
+            .commit_scope_readme(root.to_path_buf(), root.to_path_buf())
+            .await
+            .unwrap();
+        assert_eq!(
+            git(&cli, root, &["log", "-1", "--format=%s"]).await.trim(),
+            "Scaffold README"
+        );
+        assert_eq!(
+            git(&cli, root, &["show", "--name-only", "--format=", "HEAD"])
+                .await
+                .trim(),
+            "README.md"
+        );
+    }
+
+    #[tokio::test]
     async fn optional_cli_absence_is_not_a_failed_expected_target() {
         use crate::git::staging_tests::{cli, git, repo, write};
         let cli = cli();
