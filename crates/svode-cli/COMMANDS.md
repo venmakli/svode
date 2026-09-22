@@ -18,7 +18,7 @@ Global selectors may appear before or after the command. The target is resolved 
 
 ## Runtime modes
 
-This build runs standalone reads answered from project sources. Commands that need the index, the Git runtime or the Actor catalog of the headless runtime answer `MODE_UNAVAILABLE` (exit 1) and run nothing; `svode doctor` lists the served capabilities.
+This build runs standalone reads answered from project sources. Commands that need the index, the Git runtime, the Actor catalog or the mutation runtime of the headless runtime answer `MODE_UNAVAILABLE` (exit 1) and run nothing; `svode doctor` lists the served capabilities. Writes read and validate their input first, so grammar and input failures still exit 2.
 
 | Command | Capability | Standalone in this build |
 |---|---|---|
@@ -40,6 +40,16 @@ This build runs standalone reads answered from project sources. Commands that ne
 | `knowledge context <query> [--scope] [--limit --text-budget] [--kind …]` | `get_related_context` | no |
 | `knowledge status [--scope]` | `get_knowledge_status` | no |
 | `git status` | `get_git_status` | no |
+| `page create --parent <dir\|""> --title [--body-file\|--body] [--icon --description --cover-file] [--properties-file]` | `create_page` (Page, or Collection item under a Collection) | no |
+| `page write --path --body-file\|--body [--title]` | `write_page` | no |
+| `page meta set --path [metadata patch]` | `update_page_metadata` | no |
+| `space readme write --body-file\|--body [--title]` | `write_space_readme` | no |
+| `space meta set [metadata patch]` | `update_space_metadata` | no |
+| `collection readme write --collection --body-file\|--body [--title]` | `write_collection_readme` | no |
+| `collection meta set --collection [metadata patch]` | `update_collection_metadata` | no |
+| `item write --path --body-file\|--body` | `update_collection_item_body` | no |
+| `item fields set --path --fields-file` | `update_collection_item_fields` | no |
+| `item meta set --path [metadata patch]` | `update_collection_item_metadata` | no |
 | `guide` | `get_svode_guide` plus files-first rules | yes, without a Project |
 | `doctor` | CLI diagnostics | yes, target failures are part of the result |
 
@@ -48,6 +58,19 @@ Flags follow the tool arguments: `collectionPath → --collection`, `path → --
 ## Structured input
 
 Filter and sort of `collection query` are JSON arrays of the shared query shape, read with `--filter-file <path|->` and `--sort-file <path|->`. A relative path is read from the current directory, `-` reads stdin, and a command reads stdin at most once. Unreadable input is `INPUT_UNREADABLE`, invalid JSON or two `-` are `INVALID_ARGUMENT`; both exit 2 before the command runs.
+
+## Writes
+
+Page, owner and item writes run the shared operation of the same capability: validation, Desktop naming and rename, link and relation effects, Collection defaults and schema validation, and authorization of every affected repository before the first write. `svode` never commits to Git.
+
+- Body: `--body-file <path>` or `--body-file -` for stdin; `--body <text>` for short inline text. Exactly one is required for `write` commands and optional for `page create`. An empty body is valid.
+- Structured input: `--cover-file`, `--properties-file`, `--fields-file` take a JSON object from a file or `-`. A command reads stdin at most once.
+- Metadata patch of `meta set`: `--title`, `--icon`, `--description`, `--cover-file` write a value; `--clear-icon`, `--clear-description`, `--clear-cover` clear the field; a missing flag keeps it. `--title` always means a title change with managed rename.
+- Human output: the summary line, then each changed path. Warnings of an applied outcome (such as `filename_rename_collision`) go to stderr and keep exit 0; the JSON result carries them in `warnings`.
+- A rejected write is exit 1 with the code of the shared operation, and the whole request is rolled back. `PAGE_WRITE_RECOVERY_FAILED` means restoration failed; its message names the unrestored paths, so inspect them before any retry. After any failure reread the source and apply the intent again; do not delete or hand-repair `.svode` metadata.
+- There is no `--force` and no confirmation. Busy/stale preconditions are not part of this build.
+
+The JSON result is the MCP `structuredContent` of the capability, for example `page write` returns `path`, `newPath` (only after a performed rename), `changedPaths` and `warnings`, plus `schemaVersion`, `ok` and `target` (with `path`, `collection` or `parent` selectors).
 
 ## page read
 
@@ -75,7 +98,7 @@ Context and input codes are owned by the CLI; every other code comes unchanged f
 | Code | Meaning |
 |---|---|
 | `INVALID_ARGUMENT` | Unknown command/flag, missing flag, invalid JSON input or stdin named twice (exit 2) |
-| `INPUT_UNREADABLE` | An input file or stdin cannot be read (exit 2) |
+| `INPUT_UNREADABLE` | An input file or stdin cannot be read, or is not UTF-8 (exit 2) |
 | `PROJECT_UNAVAILABLE` | The Project directory or `.svode/config.json` is missing or unreadable, or no Project contains the current directory |
 | `INVALID_PROJECT_CONFIG` | `.svode/config.json` is not a valid Project config |
 | `SPACE_UNAVAILABLE` | Unknown, missing or broken child Space |

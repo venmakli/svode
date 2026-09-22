@@ -4,6 +4,12 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 
 const HEADLESS: &str = "Mode: needs the Svode headless runtime; until it is connected this build answers MODE_UNAVAILABLE and runs nothing.";
 
+const WRITE: &str = "Safe cycle: read the current source, edit it, then write the whole result. Bodies come from --body-file <path> or --body-file - (stdin); --body <text> is for short inline text. A command reads stdin at most once. The write does not commit to Git. If it fails, the code and target say why: reread the source and apply the intent again; never delete or hand-repair .svode metadata.";
+
+fn write_help(example: &str) -> String {
+    format!("{WRITE}\n\n{HEADLESS}\n\nExample:\n  {example}")
+}
+
 #[derive(Debug, Parser)]
 #[command(
     name = "svode",
@@ -100,6 +106,88 @@ pub enum SpaceVerb {
         #[command(subcommand)]
         verb: SpaceReadmeVerb,
     },
+    /// Metadata of the Space README.
+    Meta {
+        #[command(subcommand)]
+        verb: MetaVerb<NoSelector>,
+    },
+}
+
+/// Only verb of a `meta` noun: set metadata fields.
+#[derive(Debug, Subcommand)]
+pub enum MetaVerb<S: Args> {
+    /// Set, keep or clear title, icon, description and cover.
+    #[command(after_help = write_help("svode page meta set --path notes/today.md --icon 📝 --clear-description\n  svode item meta set --path tasks/fix-login.md --title \"Fix sign-in\"\n  svode collection meta set --collection tasks --cover-file cover.json\n  svode space meta set --space research --description \"Research notes\""))]
+    Set {
+        #[command(flatten)]
+        selector: S,
+        #[command(flatten)]
+        patch: MetadataPatch,
+    },
+}
+
+/// Selector of a command addressed by the target alone.
+#[derive(Debug, Args)]
+pub struct NoSelector {}
+
+/// Metadata patch: a missing flag keeps the field, `--clear-*` clears it,
+/// a value writes it. `--title` renames by the shared naming rules.
+#[derive(Debug, Args)]
+pub struct MetadataPatch {
+    /// New title; the source is renamed by the shared naming rules.
+    #[arg(long)]
+    pub title: Option<String>,
+    /// New icon.
+    #[arg(long)]
+    pub icon: Option<String>,
+    /// Clear the icon.
+    #[arg(long, conflicts_with = "icon")]
+    pub clear_icon: bool,
+    /// New description.
+    #[arg(long)]
+    pub description: Option<String>,
+    /// Clear the description.
+    #[arg(long, conflicts_with = "description")]
+    pub clear_description: bool,
+    /// Cover as a JSON object from a file, or `-` for stdin.
+    #[arg(long, value_name = "PATH|-")]
+    pub cover_file: Option<String>,
+    /// Clear the cover.
+    #[arg(long, conflicts_with = "cover_file")]
+    pub clear_cover: bool,
+}
+
+/// Required body of a write.
+#[derive(Debug, Args)]
+#[group(required = true, multiple = false)]
+pub struct Body {
+    /// Body from a file, or `-` for stdin.
+    #[arg(long, value_name = "PATH|-")]
+    pub body_file: Option<String>,
+    /// Short inline body.
+    #[arg(long, value_name = "TEXT")]
+    pub body: Option<String>,
+}
+
+/// Optional initial body.
+#[derive(Debug, Args)]
+#[group(multiple = false)]
+pub struct OptionalBody {
+    /// Body from a file, or `-` for stdin.
+    #[arg(long, value_name = "PATH|-")]
+    pub body_file: Option<String>,
+    /// Short inline body.
+    #[arg(long, value_name = "TEXT")]
+    pub body: Option<String>,
+}
+
+#[derive(Debug, Args)]
+pub struct ReadmeWriteArgs {
+    #[command(flatten)]
+    pub body: Body,
+    /// New title of the owner README.
+    #[arg(long)]
+    pub title: Option<String>,
 }
 
 #[derive(Debug, Subcommand)]
@@ -109,6 +197,9 @@ pub enum SpaceReadmeVerb {
         after_help = "Example:\n  svode --project ~/Notes space readme read --space research"
     )]
     Read,
+    /// Replace the README body of the selected Space.
+    #[command(after_help = write_help("svode --project ~/Notes space readme write --space research --body-file README.draft.md"))]
+    Write(ReadmeWriteArgs),
 }
 
 #[derive(Debug, Subcommand)]
@@ -122,6 +213,61 @@ svode --project ~/Notes page read --space research --path ideas/README.md --json
     /// List the Page tree of the selected Space.
     #[command(after_help = "Example:\n  svode --project ~/Notes page list --path notes --limit 20")]
     List(PageListArgs),
+    /// Create a Page, or a Collection item when the parent is a Collection.
+    #[command(after_help = write_help("svode --project ~/Notes page create --parent notes --title \"Weekly review\" --body-file review.md --json"))]
+    Create(PageCreateArgs),
+    /// Replace the body of a standalone Page.
+    #[command(after_help = write_help("svode page read --path notes/today.md > today.md && $EDITOR today.md && svode page write --path notes/today.md --body-file today.md"))]
+    Write(PageWriteArgs),
+    /// Metadata of a standalone Page.
+    Meta {
+        #[command(subcommand)]
+        verb: MetaVerb<PathSelector>,
+    },
+}
+
+#[derive(Debug, Args)]
+pub struct PathSelector {
+    /// Markdown source relative to the selected Space.
+    #[arg(long, value_name = "RELATIVE.md")]
+    pub path: String,
+}
+
+#[derive(Debug, Args)]
+pub struct PageCreateArgs {
+    /// Containing directory relative to the selected Space; `""` for the
+    /// Space root. A Collection directory creates an item with its defaults.
+    #[arg(long, value_name = "DIR")]
+    pub parent: String,
+    /// Title; the filename follows the shared naming rules.
+    #[arg(long)]
+    pub title: String,
+    #[command(flatten)]
+    pub body: OptionalBody,
+    /// Icon.
+    #[arg(long)]
+    pub icon: Option<String>,
+    /// Description.
+    #[arg(long)]
+    pub description: Option<String>,
+    /// Cover as a JSON object from a file, or `-` for stdin.
+    #[arg(long, value_name = "PATH|-")]
+    pub cover_file: Option<String>,
+    /// Initial Collection properties as a JSON object from a file, or `-`.
+    #[arg(long, value_name = "PATH|-")]
+    pub properties_file: Option<String>,
+}
+
+#[derive(Debug, Args)]
+pub struct PageWriteArgs {
+    /// Existing standalone Page source relative to the selected Space.
+    #[arg(long, value_name = "RELATIVE.md")]
+    pub path: String,
+    #[command(flatten)]
+    pub body: Body,
+    /// New title; the source is renamed by the shared naming rules.
+    #[arg(long)]
+    pub title: Option<String>,
 }
 
 #[derive(Debug, Args)]
@@ -169,6 +315,11 @@ pub enum CollectionVerb {
         #[command(subcommand)]
         verb: CollectionReadmeVerb,
     },
+    /// Metadata of the Collection README.
+    Meta {
+        #[command(subcommand)]
+        verb: MetaVerb<CollectionSelector>,
+    },
 }
 
 #[derive(Debug, Args)]
@@ -199,6 +350,17 @@ pub enum CollectionReadmeVerb {
         after_help = "Example:\n  svode --project ~/Notes collection readme read --collection tasks"
     )]
     Read(CollectionSelector),
+    /// Replace the README body of one Collection.
+    #[command(after_help = write_help("svode --project ~/Notes collection readme write --collection tasks --body-file tasks.md"))]
+    Write(CollectionReadmeWriteArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct CollectionReadmeWriteArgs {
+    #[command(flatten)]
+    pub collection: CollectionSelector,
+    #[command(flatten)]
+    pub readme: ReadmeWriteArgs,
 }
 
 #[derive(Debug, Subcommand)]
@@ -208,6 +370,45 @@ pub enum ItemVerb {
         after_help = "Example:\n  svode --project ~/Notes item read --path tasks/fix-login.md --json"
     )]
     Read(ItemReadArgs),
+    /// Replace the body of one Collection item.
+    #[command(after_help = write_help("svode --project ~/Notes item write --path tasks/fix-login.md --body-file - < body.md"))]
+    Write(ItemWriteArgs),
+    /// Fields of one Collection item.
+    Fields {
+        #[command(subcommand)]
+        verb: ItemFieldsVerb,
+    },
+    /// Metadata of one Collection item.
+    Meta {
+        #[command(subcommand)]
+        verb: MetaVerb<PathSelector>,
+    },
+}
+
+#[derive(Debug, Args)]
+pub struct ItemWriteArgs {
+    /// Markdown source of the item relative to the selected Space.
+    #[arg(long, value_name = "RELATIVE.md")]
+    pub path: String,
+    #[command(flatten)]
+    pub body: Body,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ItemFieldsVerb {
+    /// Atomically set system and custom fields with schema validation.
+    #[command(after_help = write_help("svode --project ~/Notes item fields set --path tasks/fix-login.md --fields-file fields.json"))]
+    Set(ItemFieldsArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct ItemFieldsArgs {
+    /// Markdown source of the item relative to the selected Space.
+    #[arg(long, value_name = "RELATIVE.md")]
+    pub path: String,
+    /// Fields as a JSON object from a file, or `-` for stdin.
+    #[arg(long, value_name = "PATH|-")]
+    pub fields_file: String,
 }
 
 #[derive(Debug, Args)]

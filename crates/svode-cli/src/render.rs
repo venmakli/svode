@@ -108,3 +108,30 @@ pub fn actors(value: &Value) -> String {
             .map(|actor| format!("{} <{}>", text(&actor["name"]), text(&actor["email"]))),
     )
 }
+
+/// Changed paths of a mutation, one per line.
+pub fn changes(value: &Value) -> String {
+    lines(
+        value["changedPaths"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|path| text(path).to_string()),
+    )
+}
+
+/// `warning[kind]: message` per warning of an applied outcome.
+pub fn warnings(warnings: &Value) -> Vec<String> {
+    warnings
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|warning| {
+            format!(
+                "warning[{}]: {}",
+                text(&warning["kind"]),
+                text(&warning["message"])
+            )
+        })
+        .collect()
+}

@@ -5,13 +5,15 @@
 use std::path::Path;
 
 use serde_json::{Map, Value, json};
+use svode_tools::catalog;
 use svode_tools::dispatch::call_tool;
 use svode_tools::host::ToolHost;
 
 use crate::error::CliError;
 use crate::grammar::{
-    ActorVerb, CollectionReadmeVerb, CollectionVerb, GitVerb, ItemVerb, KnowledgeScope,
-    KnowledgeVerb, Noun, Pagination, ProjectVerb, SpaceReadmeVerb, SpaceVerb,
+    ActorVerb, CollectionReadmeVerb, CollectionVerb, GitVerb, ItemFieldsVerb, ItemVerb,
+    KnowledgeScope, KnowledgeVerb, MetaVerb, MetadataPatch, Noun, Pagination, ProjectVerb,
+    SpaceReadmeVerb, SpaceVerb,
 };
 use crate::host::mode_unavailable;
 use crate::input;
@@ -73,12 +75,49 @@ impl ToolCommand {
             .optional("offset", page.offset)
     }
 
+    /// Metadata patch with the shared missing/null/value semantics:
+    /// `--clear-*` sends `null`, a missing flag sends nothing.
+    fn patch(self, cwd: &Path, patch: MetadataPatch) -> Result<Self, CliError> {
+        let cover = json_input(cwd, "cover-file", patch.cover_file.as_deref())?;
+        Ok(self
+            .optional("title", patch.title)
+            .field("icon", patch.icon, patch.clear_icon)
+            .field("description", patch.description, patch.clear_description)
+            .field("cover", cover, patch.clear_cover))
+    }
+
+    fn field(self, key: &str, value: Option<impl Into<Value>>, clear: bool) -> Self {
+        if clear {
+            self.arg(key, Value::Null)
+        } else {
+            self.optional(key, value)
+        }
+    }
+
     /// Argument that also selects the target, like `path` or `collection`.
     fn selector(mut self, key: &str, public: &str, value: impl Into<Value>) -> Self {
         let value = value.into();
         self.selectors.insert(public.into(), value.clone());
         self.arg(key, value)
     }
+}
+
+/// Body of a write from `--body-file <path|->` or inline `--body`.
+fn body(
+    cwd: &Path,
+    file: Option<&str>,
+    inline: Option<String>,
+) -> Result<Option<String>, CliError> {
+    match file {
+        Some(source) => input::text(cwd, "body-file", source).map(Some),
+        None => Ok(inline),
+    }
+}
+
+fn json_input(cwd: &Path, flag: &str, source: Option<&str>) -> Result<Option<Value>, CliError> {
+    source
+        .map(|source| input::json(cwd, flag, source))
+        .transpose()
 }
 
 /// Maps a data command to its tool; `None` for commands the CLI owns.
@@ -98,11 +137,71 @@ pub fn command(noun: Noun, cwd: &Path) -> Result<Option<ToolCommand>, CliError> 
         } => ToolCommand::new("space readme read", "read_space_readme", |value| {
             render::source(&value["spaceReadme"])
         }),
+        Noun::Space {
+            verb:
+                SpaceVerb::Readme {
+                    verb: SpaceReadmeVerb::Write(args),
+                },
+        } => ToolCommand::new("space readme write", "write_space_readme", render::changes)
+            .optional(
+                "content",
+                body(cwd, args.body.body_file.as_deref(), args.body.body)?,
+            )
+            .optional("title", args.title),
+        Noun::Space {
+            verb: SpaceVerb::Meta {
+                verb: MetaVerb::Set { patch, .. },
+            },
+        } => ToolCommand::new("space meta set", "update_space_metadata", render::changes)
+            .patch(cwd, patch)?,
         Noun::Page {
             verb: PageVerb::List(args),
         } => ToolCommand::new("page list", "list_pages", render::tree)
             .optional("path", args.path.clone())
             .page(args.page),
+        Noun::Page {
+            verb: PageVerb::Create(args),
+        } => {
+            input::one_stdin(&[
+                ("body-file", args.body.body_file.as_deref()),
+                ("cover-file", args.cover_file.as_deref()),
+                ("properties-file", args.properties_file.as_deref()),
+            ])?;
+            ToolCommand::new("page create", "create_page", render::changes)
+                .selector("parentPath", "parent", args.parent)
+                .arg("title", args.title)
+                .optional(
+                    "content",
+                    body(cwd, args.body.body_file.as_deref(), args.body.body)?,
+                )
+                .optional("icon", args.icon)
+                .optional("description", args.description)
+                .optional(
+                    "cover",
+                    json_input(cwd, "cover-file", args.cover_file.as_deref())?,
+                )
+                .optional(
+                    "properties",
+                    json_input(cwd, "properties-file", args.properties_file.as_deref())?,
+                )
+        }
+        Noun::Page {
+            verb: PageVerb::Write(args),
+        } => ToolCommand::new("page write", "write_page", render::changes)
+            .selector("path", "path", args.path)
+            .optional(
+                "content",
+                body(cwd, args.body.body_file.as_deref(), args.body.body)?,
+            )
+            .optional("title", args.title),
+        Noun::Page {
+            verb:
+                PageVerb::Meta {
+                    verb: MetaVerb::Set { selector, patch },
+                },
+        } => ToolCommand::new("page meta set", "update_page_metadata", render::changes)
+            .selector("path", "path", selector.path)
+            .patch(cwd, patch)?,
         Noun::Collection { verb } => match verb {
             CollectionVerb::List => {
                 ToolCommand::new("collection list", "list_collections", |value| {
@@ -146,13 +245,70 @@ pub fn command(noun: Noun, cwd: &Path) -> Result<Option<ToolCommand>, CliError> 
                 |value| render::source(&value["collectionReadme"]),
             )
             .selector("collectionPath", "collection", args.collection),
+            CollectionVerb::Readme {
+                verb: CollectionReadmeVerb::Write(args),
+            } => ToolCommand::new(
+                "collection readme write",
+                "write_collection_readme",
+                render::changes,
+            )
+            .selector("collectionPath", "collection", args.collection.collection)
+            .optional(
+                "content",
+                body(
+                    cwd,
+                    args.readme.body.body_file.as_deref(),
+                    args.readme.body.body,
+                )?,
+            )
+            .optional("title", args.readme.title),
+            CollectionVerb::Meta {
+                verb: MetaVerb::Set { selector, patch },
+            } => ToolCommand::new(
+                "collection meta set",
+                "update_collection_metadata",
+                render::changes,
+            )
+            .selector("collectionPath", "collection", selector.collection)
+            .patch(cwd, patch)?,
         },
-        Noun::Item {
-            verb: ItemVerb::Read(args),
-        } => ToolCommand::new("item read", "read_collection_item", |value| {
-            render::source(&value["item"])
-        })
-        .selector("path", "path", args.path),
+        Noun::Item { verb } => match verb {
+            ItemVerb::Read(args) => {
+                ToolCommand::new("item read", "read_collection_item", |value| {
+                    render::source(&value["item"])
+                })
+                .selector("path", "path", args.path)
+            }
+            ItemVerb::Write(args) => {
+                ToolCommand::new("item write", "update_collection_item_body", render::changes)
+                    .selector("path", "path", args.path)
+                    .optional(
+                        "body",
+                        body(cwd, args.body.body_file.as_deref(), args.body.body)?,
+                    )
+            }
+            ItemVerb::Fields {
+                verb: ItemFieldsVerb::Set(args),
+            } => ToolCommand::new(
+                "item fields set",
+                "update_collection_item_fields",
+                render::changes,
+            )
+            .selector("path", "path", args.path)
+            .arg(
+                "fields",
+                input::json(cwd, "fields-file", &args.fields_file)?,
+            ),
+            ItemVerb::Meta {
+                verb: MetaVerb::Set { selector, patch },
+            } => ToolCommand::new(
+                "item meta set",
+                "update_collection_item_metadata",
+                render::changes,
+            )
+            .selector("path", "path", selector.path)
+            .patch(cwd, patch)?,
+        },
         Noun::Actor {
             verb: ActorVerb::List(args),
         } => ToolCommand::new("actor list", "list_actors", render::actors)
@@ -231,15 +387,27 @@ pub async fn run(
     }
     let request = target.request();
     let result = call_tool(host, Some(&request), command.tool, Value::Object(args)).await;
+    let summary = result
+        .content
+        .first()
+        .map(|block| block.text.clone())
+        .unwrap_or_default();
     let structured = result.structured_content.unwrap_or_else(|| json!({}));
     if result.is_error {
         return Err(business_error(structured).with_target(known));
     }
-    let human = (command.render)(&structured);
+    let mut human = (command.render)(&structured);
+    let mut warnings = Vec::new();
+    // A mutation prints its summary before the changed paths; warnings of
+    // an applied outcome go to stderr and keep exit 0.
+    if catalog::is_mutating_tool(command.tool) == Some(true) {
+        human = format!("{summary}\n{human}");
+        warnings = render::warnings(&structured["warnings"]);
+    }
     Ok(Outcome {
         envelope: envelope(known, structured),
         human,
-        warnings: Vec::new(),
+        warnings,
     })
 }
 
