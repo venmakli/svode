@@ -23,4 +23,4 @@ pub use plan::{
     backlink_mutation_paths, collection_create_schema_paths, delete_mutation_paths,
     move_mutation_paths,
 };
-pub use spaces::{plan_child_space_order, unknown_child_space};
+pub use spaces::{ChildSpaceOrderOutcome, reorder_child_spaces};

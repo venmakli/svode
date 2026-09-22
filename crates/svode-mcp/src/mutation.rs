@@ -6,10 +6,11 @@
 //! of the planned touched-set is authorized through the host access state.
 
 use std::collections::HashSet;
+use std::future::Future;
 use std::path::PathBuf;
 
 use serde_json::json;
-use svode_core::git::access::local_repository_root;
+use svode_core::git::access::{local_repository_root, scope_authorized_mutation_paths};
 use svode_core::git::cli::GitCli;
 use svode_core::git::state::detected_cli;
 use svode_core::page::PageError;
@@ -83,6 +84,14 @@ pub(crate) async fn authorize(
     mut paths: Vec<PathBuf>,
 ) -> Result<Vec<PathBuf>, MutationError> {
     paths.push(PathBuf::from(space));
+    authorize_paths(host, paths).await
+}
+
+/// Authorizes exactly the planned touched-set, without adding its Space.
+pub(crate) async fn authorize_paths(
+    host: &impl McpHost,
+    paths: Vec<PathBuf>,
+) -> Result<Vec<PathBuf>, MutationError> {
     let mut repositories = HashSet::new();
     for path in &paths {
         let repository = local_repository_root(path).map_err(McpBusinessError::from)?;
@@ -91,6 +100,15 @@ pub(crate) async fn authorize(
         }
     }
     Ok(paths)
+}
+
+/// Runs an operation that re-checks its touched-set against the repositories
+/// authorized before it started.
+pub(crate) async fn within_authorized<T>(
+    paths: Vec<PathBuf>,
+    operation: impl Future<Output = Result<T, McpBusinessError>>,
+) -> Result<T, McpBusinessError> {
+    scope_authorized_mutation_paths(paths, operation, McpBusinessError::from).await
 }
 
 /// Host mutation runtime with the detected Git CLI as date provider.

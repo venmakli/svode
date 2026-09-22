@@ -563,18 +563,22 @@ pub async fn reorder_spaces(
 ) -> Result<Vec<SpaceInfo>, AppError> {
     let parent = PathBuf::from(&project_path);
     require_repository_mutation(&app, &parent).await?;
-    let outcome = content_tree::reorder_child_spaces(&parent, ordered_space_ids)?;
+    let outcome = svode_core::structure::reorder_child_spaces(&parent, ordered_space_ids)?;
 
     if outcome.changed {
         if let Err(e) = autocommit
-            .commit_system_now(parent.clone(), parent, SystemCommitKind::ReorderSpaces)
+            .commit_system_now(
+                parent.clone(),
+                parent.clone(),
+                SystemCommitKind::ReorderSpaces,
+            )
             .await
         {
             tracing::warn!("commit reorder spaces failed: {e}");
         }
     }
 
-    Ok(outcome.spaces)
+    content_tree::list_child_spaces(&parent)
 }
 
 #[tauri::command]

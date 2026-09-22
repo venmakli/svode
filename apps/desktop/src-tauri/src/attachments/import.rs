@@ -32,10 +32,18 @@ impl LfsReadiness for GitLfsReadiness<'_> {
         repo_dir: &'a Path,
         config: &'a AssetsSpaceConfig,
     ) -> Pin<Box<dyn Future<Output = bool> + Send + 'a>> {
-        Box::pin(async move {
-            probe_lfs_config_with_git(self.0, repo_dir, config).await == LfsState::Ready
-        })
+        Box::pin(lfs_ready(self.0, repo_dir, config))
     }
+}
+
+/// Whether the configured Git LFS backend of `repo_dir` is ready for a
+/// managed import.
+pub(crate) async fn lfs_ready(
+    git_state: &GitState,
+    repo_dir: &Path,
+    config: &AssetsSpaceConfig,
+) -> bool {
+    probe_lfs_config_with_git(git_state, repo_dir, config).await == LfsState::Ready
 }
 
 pub(crate) fn inspect_import_source(

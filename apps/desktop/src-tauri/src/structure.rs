@@ -24,7 +24,6 @@ pub use svode_core::structure::{
 };
 use svode_core::structure::{
     backlink_mutation_paths as core_backlink_mutation_paths,
-    collection_create_schema_paths as core_collection_create_schema_paths,
     move_mutation_paths as core_move_mutation_paths,
 };
 
@@ -112,24 +111,6 @@ pub async fn backlink_mutation_paths(
     folder_rename: bool,
 ) -> Result<Vec<PathBuf>, AppError> {
     Ok(core_backlink_mutation_paths(&state.core, space, project_path, from, folder_rename).await?)
-}
-
-pub fn collection_create_schema_paths(
-    space: &str,
-    parent_path: Option<&str>,
-    title: &str,
-    schema: svode_core::collections::engine::CollectionSchema,
-    allocate_unique_title: bool,
-    project_path: Option<&str>,
-) -> Result<Vec<PathBuf>, AppError> {
-    Ok(core_collection_create_schema_paths(
-        space,
-        parent_path,
-        title,
-        schema,
-        allocate_unique_title,
-        project_path,
-    )?)
 }
 
 pub async fn delete(

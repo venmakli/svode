@@ -2,11 +2,11 @@ use super::*;
 use crate::index;
 use crate::index::IndexKey;
 use crate::space::config::write_space_config;
-use crate::space::content_tree::reorder_content;
 use crate::space::types::{SpaceConfig, TreeSpaceConfig};
 use sqlx::SqlitePool;
 use std::fs;
 use svode_core::content_tree::policy::TreeIgnorePolicy;
+use svode_core::content_tree::reorder_content;
 use tempfile::TempDir;
 
 fn updates() -> &'static IndexUpdateState {

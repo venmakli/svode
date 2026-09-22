@@ -11,6 +11,7 @@ use std::path::Path;
 use serde_json::Value;
 use sqlx::SqlitePool;
 use svode_core::actors::resolver::ActorCatalogState;
+use svode_core::attachments::import::{LfsReadiness, ManagedImportDelivery};
 use svode_core::git::access::RepositoryAccessSnapshot;
 use svode_core::git::state::GitRuntime;
 use svode_core::index::IndexKey;
@@ -84,6 +85,14 @@ pub trait McpHost: Sync {
 
     /// Shared runtime handles of index-backed reads.
     fn read_runtime(&self) -> ReadRuntime<'_>;
+
+    /// Live Git LFS readiness of the host storage backend. `None` means the
+    /// host cannot prove readiness, so a managed import refuses LFS routes.
+    fn lfs_readiness(&self) -> Option<&dyn LfsReadiness>;
+
+    /// Delivers the invalidation of a successful managed import to the host
+    /// consumers. The source result does not depend on it.
+    fn deliver_managed_import(&self, delivery: &ManagedImportDelivery);
 
     /// Temporary routing of tool families not yet mapped by the library.
     /// Removed together with the last host-owned handlers in slice 3.2.5.

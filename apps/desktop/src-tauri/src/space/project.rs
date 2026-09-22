@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::path::Path;
 
 use crate::error::AppError;
@@ -422,41 +421,6 @@ pub fn list_spaces(parent_path: &Path) -> Result<Vec<SpaceInfo>, AppError> {
     )
 }
 
-/// Reorder child spaces in the root project's `.svode/config.json`.
-///
-/// The root project is not part of the input. The input must contain exactly
-/// the current child-space ids, with no duplicates, missing ids, or unknown ids.
-pub fn reorder_spaces(
-    parent_path: &Path,
-    ordered_space_ids: Vec<String>,
-) -> Result<Vec<SpaceInfo>, AppError> {
-    let mut parent_config = config::read_space_config(parent_path)?;
-    let current_spaces = parent_config.spaces.clone().unwrap_or_default();
-    let registered_ids = current_spaces
-        .iter()
-        .map(|space| space.id.clone())
-        .collect::<Vec<_>>();
-    let ordered_space_ids =
-        svode_core::structure::plan_child_space_order(&registered_ids, ordered_space_ids)?;
-
-    let mut by_id: HashMap<String, SpaceRef> = current_spaces
-        .into_iter()
-        .map(|space| (space.id.clone(), space))
-        .collect();
-    let mut reordered = Vec::with_capacity(ordered_space_ids.len());
-    for id in ordered_space_ids {
-        let space_ref = by_id
-            .remove(&id)
-            .ok_or_else(|| svode_core::structure::unknown_child_space(&id))?;
-        reordered.push(space_ref);
-    }
-
-    parent_config.spaces = Some(reordered);
-    config::write_space_config(parent_path, &parent_config)?;
-
-    list_spaces(parent_path)
-}
-
 /// Update the repo URL for a space in the parent config.
 pub fn reconcile_space_url(
     parent_path: &Path,
@@ -489,7 +453,7 @@ pub fn remove_missing_space(parent_path: &Path, space_id: &str) -> Result<(), Ap
 mod tests {
     use super::{
         has_schema_capability, import_existing_submodule_spaces, normalize_space_folder,
-        open_project_folder, reorder_spaces, space_ref_status,
+        open_project_folder, space_ref_status,
     };
     use crate::space::registry;
     use crate::space::scaffold;
@@ -592,73 +556,6 @@ mod tests {
             std::fs::read_to_string(project_path.join("README.md")).expect("read readme"),
             "custom home"
         );
-    }
-
-    #[test]
-    fn reorder_spaces_persists_saved_order() {
-        let project_dir = tempfile::tempdir().expect("project dir");
-        let project_path = project_dir.path();
-        scaffold::scaffold_space(project_path, "Root", "", "").expect("root scaffold");
-
-        let mut cfg = crate::space::config::read_space_config(project_path).expect("read config");
-        cfg.spaces = Some(vec![
-            SpaceRef {
-                id: "a".to_string(),
-                path: "alpha".to_string(),
-                repo: None,
-            },
-            SpaceRef {
-                id: "b".to_string(),
-                path: "beta".to_string(),
-                repo: Some("https://example.com/beta.git".to_string()),
-            },
-        ]);
-        crate::space::config::write_space_config(project_path, &cfg).expect("write config");
-
-        let spaces =
-            reorder_spaces(project_path, vec!["b".to_string(), "a".to_string()]).expect("reorder");
-        let cfg = crate::space::config::read_space_config(project_path).expect("read config");
-        let refs = cfg.spaces.expect("spaces");
-
-        assert_eq!(refs[0].id, "b");
-        assert_eq!(
-            refs[0].repo,
-            Some("https://example.com/beta.git".to_string())
-        );
-        assert_eq!(refs[1].id, "a");
-        assert_eq!(
-            spaces
-                .iter()
-                .map(|space| space.id.as_str())
-                .collect::<Vec<_>>(),
-            vec!["b", "a"]
-        );
-    }
-
-    #[test]
-    fn reorder_spaces_rejects_duplicate_missing_and_unknown_ids() {
-        let project_dir = tempfile::tempdir().expect("project dir");
-        let project_path = project_dir.path();
-        scaffold::scaffold_space(project_path, "Root", "", "").expect("root scaffold");
-
-        let mut cfg = crate::space::config::read_space_config(project_path).expect("read config");
-        cfg.spaces = Some(vec![
-            SpaceRef {
-                id: "a".to_string(),
-                path: "alpha".to_string(),
-                repo: None,
-            },
-            SpaceRef {
-                id: "b".to_string(),
-                path: "beta".to_string(),
-                repo: None,
-            },
-        ]);
-        crate::space::config::write_space_config(project_path, &cfg).expect("write config");
-
-        assert!(reorder_spaces(project_path, vec!["a".to_string(), "a".to_string()]).is_err());
-        assert!(reorder_spaces(project_path, vec!["a".to_string()]).is_err());
-        assert!(reorder_spaces(project_path, vec!["a".to_string(), "c".to_string()]).is_err());
     }
 
     #[test]

@@ -3,13 +3,16 @@
 //! capability.
 
 use std::fs;
+use std::future::Future;
 use std::path::{Path, PathBuf};
+use std::pin::Pin;
 use std::process::Command;
 use std::sync::{Arc, Mutex};
 
 use serde_json::{Value, json};
 use sqlx::SqlitePool;
 use svode_core::actors::resolver::ActorCatalogState;
+use svode_core::attachments::import::{LfsReadiness, ManagedImportDelivery};
 use svode_core::git::access::{RepositoryAccessSnapshot, RepositoryAccessStatus};
 use svode_core::git::cli::GitCli;
 use svode_core::git::state::GitRuntime;
@@ -20,6 +23,7 @@ use svode_core::index::state::IndexRuntimeState;
 use svode_core::index::update::IndexUpdateState;
 use svode_core::page::nonce::WriteNonceRegistry;
 use svode_core::routines::store_state::RoutineStoreState;
+use svode_core::storage::config::AssetsSpaceConfig;
 use svode_mcp::catalog;
 use svode_mcp::control::{self, BridgeCall, MCP_PROTOCOL_VERSION};
 use svode_mcp::dispatch::call_tool;
@@ -47,6 +51,9 @@ struct FixtureHost {
     host_calls: Mutex<Vec<String>>,
     deny_mutations: bool,
     authorized: Mutex<Vec<PathBuf>>,
+    lfs_ready: Option<bool>,
+    lfs_probes: Mutex<Vec<PathBuf>>,
+    deliveries: Mutex<Vec<ManagedImportDelivery>>,
     index: IndexRuntimeState,
     updates: IndexUpdateState,
     nonces: WriteNonceRegistry,
@@ -63,6 +70,9 @@ impl FixtureHost {
             host_calls: Mutex::new(Vec::new()),
             deny_mutations: false,
             authorized: Mutex::new(Vec::new()),
+            lfs_ready: None,
+            lfs_probes: Mutex::new(Vec::new()),
+            deliveries: Mutex::new(Vec::new()),
             index: IndexRuntimeState::default(),
             updates: IndexUpdateState::new(Arc::new(RoutineStoreState::new())),
             nonces: WriteNonceRegistry::new(),
@@ -161,6 +171,14 @@ impl McpHost for FixtureHost {
         }
     }
 
+    fn lfs_readiness(&self) -> Option<&dyn LfsReadiness> {
+        self.lfs_ready.map(|_| self as &dyn LfsReadiness)
+    }
+
+    fn deliver_managed_import(&self, delivery: &ManagedImportDelivery) {
+        self.deliveries.lock().unwrap().push(delivery.clone());
+    }
+
     async fn call_host_tool(
         &self,
         name: &str,
@@ -168,6 +186,18 @@ impl McpHost for FixtureHost {
     ) -> Result<ToolCallResult, McpBusinessError> {
         self.host_calls.lock().unwrap().push(name.to_string());
         Ok(ToolCallResult::ok("host", json!({ "host": name })))
+    }
+}
+
+impl LfsReadiness for FixtureHost {
+    fn lfs_ready<'a>(
+        &'a self,
+        repo_dir: &'a Path,
+        _config: &'a AssetsSpaceConfig,
+    ) -> Pin<Box<dyn Future<Output = bool> + Send + 'a>> {
+        self.lfs_probes.lock().unwrap().push(repo_dir.to_path_buf());
+        let ready = self.lfs_ready.unwrap_or(false);
+        Box::pin(async move { ready })
     }
 }
 
@@ -623,11 +653,11 @@ async fn requests_without_project_and_unmapped_families() {
     assert_eq!(structured(&manifest)["valid"], true);
 
     let target = root_target(&fixture);
-    let routed = call_tool(&host, Some(&target), "delete_page", json!({})).await;
-    assert_eq!(structured(&routed)["host"], "delete_page");
+    let routed = call_tool(&host, Some(&target), "list_routines", json!({})).await;
+    assert_eq!(structured(&routed)["host"], "list_routines");
     let unknown = call_tool(&host, Some(&target), "legacy_tool", json!({})).await;
     assert_eq!(error_code(&unknown), "UNKNOWN_TOOL");
-    assert_eq!(host.host_calls(), vec!["delete_page".to_string()]);
+    assert_eq!(host.host_calls(), vec!["list_routines".to_string()]);
 
     let limited = FixtureHost::serving(&FIRST_SLICE_TOOLS);
     let excluded = call_tool(&limited, Some(&target), "write_page", json!({})).await;
@@ -1669,4 +1699,480 @@ async fn integrity_git_status_and_actors_read_through_the_host_runtime() {
         assert_eq!(error_code(&result), "UNKNOWN_TOOL", "{name}");
     }
     assert!(host.host_calls().is_empty() && limited.host_calls().is_empty());
+}
+
+const STRUCTURAL_TOOLS: [&str; 11] = [
+    "delete_page",
+    "delete_collection_item",
+    "delete_collection",
+    "rename_content",
+    "move_content",
+    "reorder_content",
+    "reorder_spaces",
+    "convert_page_to_leaf",
+    "convert_to_collection",
+    "create_collection",
+    "import_asset",
+];
+
+/// Committed fixture for structural actions: a link source, dir-backed
+/// Pages, a Collection whose items relate to a second Collection and a
+/// registered child Space.
+fn structure_fixture() -> Fixture {
+    let temp = tempfile::tempdir().unwrap();
+    let project = temp.path().join("project").canonicalize_or_create();
+    write(
+        &project.join(".svode/config.json"),
+        &json!({
+            "name": "Project",
+            "spaces": [{ "id": "child", "path": "child", "repo": null }]
+        })
+        .to_string(),
+    );
+    write(
+        &project.join("child/.svode/config.json"),
+        &json!({ "name": "Child" }).to_string(),
+    );
+    for (path, source) in [
+        ("README.md", "---\ntitle: Project\n---\n"),
+        ("leaf.md", "---\ntitle: Leaf\n---\nLeaf body\n"),
+        ("notes.md", "---\ntitle: Notes\n---\n[Leaf](leaf.md)\n"),
+        ("archive/README.md", "---\ntitle: Archive\n---\n"),
+        ("archive/a.md", "---\ntitle: A\n---\n"),
+        ("archive/b.md", "---\ntitle: B\n---\n"),
+        ("solo/README.md", "---\ntitle: Solo\n---\nSolo body\n"),
+        (
+            "tasks/schema.yaml",
+            "columns:\n  - name: Sprint\n    type: relation\n    relation: sprints\nviews: []\n",
+        ),
+        ("tasks/README.md", "---\ntitle: Tasks\n---\n"),
+        (
+            "tasks/alpha.md",
+            "---\ntitle: Alpha\nSprint: one.md\n---\nAlpha body\n",
+        ),
+        ("sprints/schema.yaml", "columns: []\nviews: []\n"),
+        ("sprints/README.md", "---\ntitle: Sprints\n---\n"),
+        ("sprints/one.md", "---\ntitle: One\n---\n"),
+        ("sprints/two.md", "---\ntitle: Two\n---\n"),
+        ("child/README.md", "---\ntitle: Child\n---\n"),
+    ] {
+        write(&project.join(path), source);
+    }
+    git(&project, &["init", "-q"]);
+    git(&project, &["config", "user.email", "agent@example.com"]);
+    git(&project, &["config", "user.name", "Agent"]);
+    git(&project, &["add", "-A"]);
+    git(&project, &["commit", "-q", "-m", "fixture"]);
+    Fixture {
+        _temp: temp,
+        project,
+    }
+}
+
+fn commit_count(fixture: &Fixture) -> String {
+    let output = Command::new("git")
+        .args(["rev-list", "--count", "HEAD"])
+        .current_dir(&fixture.project)
+        .output()
+        .unwrap();
+    String::from_utf8(output.stdout).unwrap().trim().to_string()
+}
+
+/// Every source file of the project outside `.git` and the index, with its
+/// contents.
+fn source_snapshot(root: &Path) -> Vec<(PathBuf, Vec<u8>)> {
+    let mut files = Vec::new();
+    let mut pending = vec![root.to_path_buf()];
+    while let Some(dir) = pending.pop() {
+        for entry in fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            let name = path.file_name().unwrap().to_string_lossy();
+            if name == ".git" || name.starts_with("index.db") {
+                continue;
+            }
+            if path.is_dir() {
+                pending.push(path);
+            } else {
+                files.push((path.clone(), fs::read(&path).unwrap()));
+            }
+        }
+    }
+    files.sort();
+    files
+}
+
+fn strings(value: &Value) -> Vec<String> {
+    value
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|path| path.as_str().unwrap().to_string())
+        .collect()
+}
+
+#[tokio::test]
+async fn structural_actions_keep_link_relation_order_and_conversion_effects() {
+    let fixture = structure_fixture();
+    let host = indexed_host(&fixture, FixtureHost::new(None)).await;
+    let target = root_target(&fixture);
+
+    let renamed = call_tool(
+        &host,
+        Some(&target),
+        "rename_content",
+        json!({ "from": "leaf.md", "to": "Renamed.md" }),
+    )
+    .await;
+    let renamed = structured(&renamed);
+    assert_eq!(renamed["newPath"], "Renamed.md");
+    assert!(read(&fixture, "notes.md").contains("(Renamed.md)"));
+    assert!(changed(renamed).contains(&"notes.md".to_string()));
+    assert!(changed(renamed).contains(&"Renamed.md".to_string()));
+    assert!(strings(&renamed["touchedPaths"]["backlinks"]).contains(&"notes.md".to_string()));
+
+    let moved = call_tool(
+        &host,
+        Some(&target),
+        "move_content",
+        json!({ "from": "Renamed.md", "toParent": "archive" }),
+    )
+    .await;
+    let moved = structured(&moved);
+    assert_eq!(moved["newPath"], "archive/Renamed.md");
+    assert!(fixture.project.join("archive/Renamed.md").is_file());
+    assert!(read(&fixture, "notes.md").contains("archive/Renamed.md"));
+
+    let reordered = call_tool(
+        &host,
+        Some(&target),
+        "reorder_content",
+        json!({
+            "parentPath": "archive/README.md",
+            "orderedChildren": ["archive/b.md", "archive/Renamed.md", "archive/a.md"]
+        }),
+    )
+    .await;
+    let reordered = structured(&reordered);
+    assert_eq!(reordered["parentPath"], "archive");
+    assert_eq!(changed(reordered), vec![".svode/order.json"]);
+    let order = read(&fixture, ".svode/order.json");
+    let invalid = call_tool(
+        &host,
+        Some(&target),
+        "reorder_content",
+        json!({ "parentPath": "archive/README.md", "orderedChildren": ["archive/a.md"] }),
+    )
+    .await;
+    assert!(invalid.is_error);
+    assert_eq!(read(&fixture, ".svode/order.json"), order);
+
+    let leaf = call_tool(
+        &host,
+        Some(&target),
+        "convert_page_to_leaf",
+        json!({ "path": "solo/README.md" }),
+    )
+    .await;
+    let leaf = structured(&leaf);
+    assert_eq!(leaf["newPath"], "solo.md");
+    assert_eq!(leaf["page"]["path"], "solo.md");
+    assert!(read(&fixture, "solo.md").contains("Solo body"));
+
+    let collection = call_tool(
+        &host,
+        Some(&target),
+        "convert_to_collection",
+        json!({ "path": "notes.md" }),
+    )
+    .await;
+    let collection = structured(&collection);
+    assert_eq!(collection["collectionPath"], "notes");
+    assert_eq!(collection["readmePath"], "notes/README.md");
+    assert_eq!(collection["schemaPath"], "notes/schema.yaml");
+    assert!(fixture.project.join("notes/schema.yaml").is_file());
+    let again = call_tool(
+        &host,
+        Some(&target),
+        "convert_to_collection",
+        json!({ "path": "notes/README.md" }),
+    )
+    .await;
+    assert_eq!(error_code(&again), "INVALID_COLLECTION_CONVERSION");
+
+    let wrong_owner = call_tool(
+        &host,
+        Some(&target),
+        "delete_page",
+        json!({ "path": "tasks/alpha.md" }),
+    )
+    .await;
+    assert_eq!(error_code(&wrong_owner), "NOT_A_STANDALONE_PAGE");
+    let item = call_tool(
+        &host,
+        Some(&target),
+        "delete_collection_item",
+        json!({ "path": "sprints/one.md" }),
+    )
+    .await;
+    let item = structured(&item);
+    assert!(strings(&item["deletedPaths"]).contains(&"sprints/one.md".to_string()));
+    assert!(strings(&item["cascadeTouched"]).contains(&"tasks/alpha.md".to_string()));
+    assert!(!read(&fixture, "tasks/alpha.md").contains("one.md"));
+
+    let page = call_tool(
+        &host,
+        Some(&target),
+        "delete_page",
+        json!({ "path": "archive/a.md" }),
+    )
+    .await;
+    assert_eq!(structured(&page)["deletedRoot"], "archive/a.md");
+    let deleted = call_tool(
+        &host,
+        Some(&target),
+        "delete_collection",
+        json!({ "collectionPath": "sprints" }),
+    )
+    .await;
+    assert!(!deleted.is_error, "{:?}", deleted.structured_content);
+    assert!(!fixture.project.join("sprints/README.md").exists());
+
+    let pinned_root = call_tool(
+        &host,
+        Some(&target),
+        "reorder_spaces",
+        json!({ "orderedSpaceIds": ["root"] }),
+    )
+    .await;
+    assert_eq!(error_code(&pinned_root), "INVALID_SPACE_ORDER");
+    let unknown = call_tool(
+        &host,
+        Some(&target),
+        "reorder_spaces",
+        json!({ "orderedSpaceIds": ["child", "ghost"] }),
+    )
+    .await;
+    assert!(unknown.is_error);
+    let same = call_tool(
+        &host,
+        Some(&target),
+        "reorder_spaces",
+        json!({ "orderedSpaceIds": ["child"] }),
+    )
+    .await;
+    assert!(changed(structured(&same)).is_empty());
+
+    assert_eq!(commit_count(&fixture), "1");
+    assert!(host.host_calls().is_empty());
+}
+
+#[tokio::test]
+async fn collection_create_is_one_action_without_an_empty_collection_on_invalid_data() {
+    let fixture = write_fixture();
+    let host = FixtureHost::new(None);
+    let target = root_target(&fixture);
+
+    let created = call_tool(
+        &host,
+        Some(&target),
+        "create_collection",
+        json!({
+            "parentPath": "",
+            "title": "Backlog",
+            "columns": [{ "name": "Owner", "type": "text" }]
+        }),
+    )
+    .await;
+    let created = structured(&created);
+    assert_eq!(created["collectionPath"], "Backlog");
+    assert_eq!(created["collection"]["path"], "Backlog/README.md");
+    assert_eq!(created["schema"]["columns"][0]["name"], "Owner");
+    assert_eq!(
+        created["schema"]["views"][0]["visible_fields"],
+        json!(["title", "Owner"])
+    );
+    assert!(changed(created).contains(&"Backlog/schema.yaml".to_string()));
+
+    let nested = call_tool(
+        &host,
+        Some(&target),
+        "create_collection",
+        json!({ "parentPath": "leaf.md", "title": "Inside", "columns": [], "views": [] }),
+    )
+    .await;
+    let nested = structured(&nested);
+    assert_eq!(nested["collectionPath"], "leaf/Inside");
+    assert_eq!(nested["schema"]["views"], json!([]));
+
+    let invalid = call_tool(
+        &host,
+        Some(&target),
+        "create_collection",
+        json!({
+            "parentPath": "",
+            "title": "Broken",
+            "columns": [{ "name": "Link", "type": "relation", "relation": "missing" }]
+        }),
+    )
+    .await;
+    assert!(invalid.is_error);
+    assert!(!fixture.project.join("Broken").exists());
+    assert!(!fixture.project.join("Broken.md").exists());
+
+    let legacy = call_tool(
+        &host,
+        Some(&target),
+        "create_collection",
+        json!({ "path": "Legacy", "parentPath": "", "title": "Legacy" }),
+    )
+    .await;
+    assert_eq!(error_code(&legacy), "SERIALIZATION_ERROR");
+    assert!(!fixture.project.join("Legacy").exists());
+}
+
+#[tokio::test]
+async fn structural_and_import_actions_authorize_before_the_first_write() {
+    let fixture = structure_fixture();
+    let denied = indexed_host(&fixture, FixtureHost::denying_mutations()).await;
+    let target = root_target(&fixture);
+    let photo = fixture.project.parent().unwrap().join("photo.png");
+    fs::write(&photo, b"image").unwrap();
+    let before = source_snapshot(&fixture.project);
+
+    for (name, args) in [
+        ("delete_page", json!({ "path": "leaf.md" })),
+        (
+            "delete_collection_item",
+            json!({ "path": "sprints/one.md" }),
+        ),
+        ("delete_collection", json!({ "collectionPath": "sprints" })),
+        (
+            "rename_content",
+            json!({ "from": "leaf.md", "to": "Renamed.md" }),
+        ),
+        (
+            "move_content",
+            json!({ "from": "leaf.md", "toParent": "archive" }),
+        ),
+        (
+            "reorder_content",
+            json!({ "parentPath": "archive/README.md", "orderedChildren": ["archive/b.md", "archive/a.md"] }),
+        ),
+        ("reorder_spaces", json!({ "orderedSpaceIds": ["child"] })),
+        ("convert_page_to_leaf", json!({ "path": "solo/README.md" })),
+        ("convert_to_collection", json!({ "path": "notes.md" })),
+        (
+            "create_collection",
+            json!({ "parentPath": "", "title": "Backlog" }),
+        ),
+        (
+            "import_asset",
+            json!({ "contentPath": "notes.md", "sourcePath": photo.to_string_lossy() }),
+        ),
+    ] {
+        let result = call_tool(&denied, Some(&target), name, args).await;
+        assert_eq!(error_code(&result), "REPOSITORY_ACCESS_DENIED", "{name}");
+    }
+
+    assert_eq!(source_snapshot(&fixture.project), before);
+    assert!(
+        denied
+            .authorized()
+            .iter()
+            .all(|repository| repository == &fixture.project)
+    );
+    assert!(denied.deliveries.lock().unwrap().is_empty());
+    assert!(denied.host_calls().is_empty());
+
+    let limited = FixtureHost::serving(&FIRST_SLICE_TOOLS);
+    for name in STRUCTURAL_TOOLS {
+        let result = call_tool(&limited, Some(&target), name, json!({})).await;
+        assert_eq!(error_code(&result), "UNKNOWN_TOOL", "{name}");
+    }
+    assert!(limited.host_calls().is_empty());
+}
+
+#[tokio::test]
+async fn managed_import_uses_the_shared_plan_and_host_delivery() {
+    let fixture = write_fixture();
+    let target = root_target(&fixture);
+    let photo = fixture.project.parent().unwrap().join("photo.png");
+    fs::write(&photo, b"image").unwrap();
+    write(
+        &fixture.project.join(".svode/config.json"),
+        &json!({
+            "name": "Project",
+            "assets": { "strategy": "in-git" },
+            "spaces": [{ "id": "child", "path": "child", "repo": null }]
+        })
+        .to_string(),
+    );
+    let host = FixtureHost::new(None);
+
+    let imported = call_tool(
+        &host,
+        Some(&target),
+        "import_asset",
+        json!({ "contentPath": "leaf.md", "sourcePath": photo.to_string_lossy() }),
+    )
+    .await;
+    let imported = structured(&imported);
+    assert_eq!(imported["contentPath"], "leaf/README.md");
+    assert_eq!(imported["fileName"], "photo.png");
+    let attachment = imported["attachmentPath"].as_str().unwrap();
+    assert!(fixture.project.join(attachment).is_file());
+    assert!(!changed(imported).is_empty());
+    let deliveries = host.deliveries.lock().unwrap().clone();
+    assert_eq!(deliveries.len(), 1);
+    assert!(deliveries[0].converted_page);
+    assert_eq!(deliveries[0].canonical_content_path, "leaf/README.md");
+
+    let escaped = call_tool(
+        &host,
+        Some(&target),
+        "import_asset",
+        json!({ "contentPath": ".git/config.md", "sourcePath": photo.to_string_lossy() }),
+    )
+    .await;
+    assert_eq!(error_code(&escaped), "PATH_FORBIDDEN");
+    let legacy = call_tool(
+        &host,
+        Some(&target),
+        "import_asset",
+        json!({ "contentPath": "links.md", "sourcePath": photo.to_string_lossy(), "path": "x" }),
+    )
+    .await;
+    assert_eq!(error_code(&legacy), "SERIALIZATION_ERROR");
+
+    write(
+        &fixture.project.join(".svode/config.json"),
+        &json!({
+            "name": "Project",
+            "assets": {
+                "strategy": "lfs-remote",
+                "binaryRouting": { "version": 1, "lfsExtensions": ["png"] }
+            }
+        })
+        .to_string(),
+    );
+    let not_ready = FixtureHost {
+        lfs_ready: Some(false),
+        ..FixtureHost::new(None)
+    };
+    let refused = call_tool(
+        &not_ready,
+        Some(&target),
+        "import_asset",
+        json!({ "contentPath": "README.md", "sourcePath": photo.to_string_lossy() }),
+    )
+    .await;
+    assert!(refused.is_error);
+    assert!(
+        refused.content[0]
+            .text
+            .contains("Git LFS route is not ready")
+    );
+    assert_eq!(not_ready.lfs_probes.lock().unwrap().len(), 1);
+    assert!(!fixture.project.join("photo.png").exists());
+    assert!(not_ready.deliveries.lock().unwrap().is_empty());
 }

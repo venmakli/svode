@@ -7,7 +7,7 @@ use crate::control::check_tool;
 use crate::error::McpBusinessError;
 use crate::host::{McpHost, RequestTarget};
 use crate::protocol::ToolCallResult;
-use crate::tools::{apps, collections, content, pages, project, search};
+use crate::tools::{apps, collections, content, import, pages, project, search, structure};
 
 /// Executes one tool within a request target frozen by the host. `None`
 /// means the host has no open project for this request.
@@ -166,6 +166,50 @@ async fn call(
         "get_knowledge_status" => {
             let args = decode(args)?;
             search::get_knowledge_status(host, require(target)?, args).await
+        }
+        "create_collection" => {
+            let args = decode(args)?;
+            structure::create_collection(host, require(target)?, args).await
+        }
+        "convert_to_collection" => {
+            let args = decode(args)?;
+            structure::convert_to_collection(host, require(target)?, args).await
+        }
+        "convert_page_to_leaf" => {
+            let args = decode(args)?;
+            structure::convert_page_to_leaf(host, require(target)?, args).await
+        }
+        "delete_page" => {
+            let args = decode(args)?;
+            structure::delete_page(host, require(target)?, args).await
+        }
+        "delete_collection_item" => {
+            let args = decode(args)?;
+            structure::delete_collection_item(host, require(target)?, args).await
+        }
+        "delete_collection" => {
+            let args = decode(args)?;
+            structure::delete_collection(host, require(target)?, args).await
+        }
+        "rename_content" => {
+            let args = decode(args)?;
+            structure::rename_content(host, require(target)?, args).await
+        }
+        "move_content" => {
+            let args = decode(args)?;
+            structure::move_content(host, require(target)?, args).await
+        }
+        "reorder_content" => {
+            let args = decode(args)?;
+            structure::reorder_content(host, require(target)?, args).await
+        }
+        "reorder_spaces" => {
+            let args = decode(args)?;
+            structure::reorder_spaces(host, require(target)?, args).await
+        }
+        "import_asset" => {
+            let args = decode(args)?;
+            import::import_asset(host, require(target)?, args).await
         }
         _ => host.call_host_tool(name, args).await,
     }
