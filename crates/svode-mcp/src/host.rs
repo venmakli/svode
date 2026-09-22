@@ -12,9 +12,22 @@ use serde_json::Value;
 use sqlx::SqlitePool;
 use svode_core::git::access::RepositoryAccessSnapshot;
 use svode_core::index::IndexKey;
+use svode_core::index::state::IndexRuntimeState;
+use svode_core::index::update::IndexUpdateState;
+use svode_core::page::nonce::WriteNonceRegistry;
 
 use crate::error::McpBusinessError;
 use crate::protocol::ToolCallResult;
+
+/// Host-owned runtime a managed mutation publishes into: the Project index,
+/// Routine observation updates and watcher echo nonces. One instance per
+/// host, shared with its other writers.
+#[derive(Clone, Copy)]
+pub struct MutationRuntime<'a> {
+    pub index: &'a IndexRuntimeState,
+    pub updates: &'a IndexUpdateState,
+    pub nonces: &'a WriteNonceRegistry,
+}
 
 /// Project and default Space frozen by the host for one request.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -46,6 +59,16 @@ pub trait McpHost: Sync {
         &self,
         space_path: &Path,
     ) -> impl Future<Output = Result<RepositoryAccessSnapshot, McpBusinessError>> + Send;
+
+    /// Authorizes a managed mutation of one local repository from its
+    /// current access state, without a network probe.
+    fn require_mutation_access(
+        &self,
+        repository: &Path,
+    ) -> impl Future<Output = Result<(), McpBusinessError>> + Send;
+
+    /// Shared runtime handles of managed mutations.
+    fn mutation_runtime(&self) -> MutationRuntime<'_>;
 
     /// Temporary routing of tool families not yet mapped by the library.
     /// Removed together with the last host-owned handlers in slice 3.2.5.

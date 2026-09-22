@@ -79,6 +79,24 @@ impl svode_mcp::host::McpHost for DesktopMcpHost {
             .map_err(Into::into)
     }
 
+    async fn require_mutation_access(&self, repository: &Path) -> Result<(), McpBusinessError> {
+        crate::git::access::require_repository_mutation(&self.app, repository)
+            .await
+            .map(|_| ())
+            .map_err(Into::into)
+    }
+
+    fn mutation_runtime(&self) -> svode_mcp::host::MutationRuntime<'_> {
+        svode_mcp::host::MutationRuntime {
+            index: &self.app.state::<IndexState>().inner().core,
+            updates: self.app.state::<IndexUpdateState>().inner().core(),
+            nonces: self
+                .app
+                .state::<std::sync::Arc<svode_core::page::nonce::WriteNonceRegistry>>()
+                .inner(),
+        }
+    }
+
     async fn call_host_tool(
         &self,
         name: &str,
@@ -132,18 +150,7 @@ async fn call_host_tool(
     let authorized_paths = authorize_mutating_tool(&app, name, &args).await?;
     let execute = async {
         match name {
-            "write_page" => documents::write_page(&app, decode(args)?).await,
-            "create_page" => documents::create_page(&app, decode(args)?).await,
-            "update_page_metadata" => documents::update_page_metadata(&app, decode(args)?).await,
             "delete_page" => collections::delete_page(&app, decode(args)?).await,
-            "write_space_readme" => documents::write_space_readme(&app, decode(args)?).await,
-            "update_space_metadata" => documents::update_space_metadata(&app, decode(args)?).await,
-            "write_collection_readme" => {
-                documents::write_collection_readme(&app, decode(args)?).await
-            }
-            "update_collection_metadata" => {
-                documents::update_collection_metadata(&app, decode(args)?).await
-            }
             "import_asset" => documents::import_asset(&app, decode(args)?).await,
             "create_collection" => collections::create_collection(&app, decode(args)?).await,
             "convert_to_collection" => {
@@ -168,15 +175,6 @@ async fn call_host_tool(
             }
             "query_collection_items" => {
                 collections::query_collection_items(&app, decode(args)?).await
-            }
-            "update_collection_item_fields" => {
-                collections::update_collection_item_fields(&app, decode(args)?).await
-            }
-            "update_collection_item_body" => {
-                collections::update_collection_item_body(&app, decode(args)?).await
-            }
-            "update_collection_item_metadata" => {
-                collections::update_collection_item_metadata(&app, decode(args)?).await
             }
             "delete_collection_item" => {
                 collections::delete_collection_item(&app, decode(args)?).await
@@ -283,29 +281,6 @@ async fn authorize_mutating_tool(
             )
             .await?;
             paths = plan.affected_paths().to_vec();
-        }
-        "update_collection_item_fields" => {
-            let decoded: UpdateCollectionItemFieldsArgs = decode(args.clone())?;
-            let path = validate_markdown_path(&decoded.path)?;
-            if decoded.fields.is_empty() {
-                return Ok(None);
-            }
-            let batch = engine::prepare_entry_field_batch(
-                &space,
-                Some(&context.project_path),
-                &path,
-                &decoded.fields,
-                engine::EntryFieldBatchIntent::Literal,
-            )
-            .map_err(AppError::from)?;
-            paths.extend_from_slice(batch.mutation_paths());
-            if let Some(title) = batch.title()
-                && let Some(rename) = entry::planned_write_rename(&space, &path, Some(title), false)
-                    .map_err(AppError::from)?
-            {
-                extend_entry_move_plan(app, &context, &space, &path, &rename.new_path, &mut paths)
-                    .await?;
-            }
         }
         "delete_page" | "delete_collection_item" => {
             let decoded: PathArgs = decode(args.clone())?;

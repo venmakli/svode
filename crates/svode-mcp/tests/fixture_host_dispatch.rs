@@ -4,17 +4,21 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use serde_json::{Value, json};
 use sqlx::SqlitePool;
 use svode_core::git::access::{RepositoryAccessSnapshot, RepositoryAccessStatus};
 use svode_core::index::IndexKey;
+use svode_core::index::state::IndexRuntimeState;
+use svode_core::index::update::IndexUpdateState;
+use svode_core::page::nonce::WriteNonceRegistry;
+use svode_core::routines::store_state::RoutineStoreState;
 use svode_mcp::catalog;
 use svode_mcp::control::{self, BridgeCall, MCP_PROTOCOL_VERSION};
 use svode_mcp::dispatch::call_tool;
 use svode_mcp::error::McpBusinessError;
-use svode_mcp::host::{McpHost, RequestTarget};
+use svode_mcp::host::{McpHost, MutationRuntime, RequestTarget};
 use svode_mcp::protocol::ToolCallResult;
 
 const FIRST_SLICE_TOOLS: [&str; 10] = [
@@ -35,6 +39,11 @@ struct FixtureHost {
     pool: Option<SqlitePool>,
     pool_keys: Mutex<Vec<IndexKey>>,
     host_calls: Mutex<Vec<String>>,
+    deny_mutations: bool,
+    authorized: Mutex<Vec<PathBuf>>,
+    index: IndexRuntimeState,
+    updates: IndexUpdateState,
+    nonces: WriteNonceRegistry,
 }
 
 impl FixtureHost {
@@ -44,7 +53,23 @@ impl FixtureHost {
             pool,
             pool_keys: Mutex::new(Vec::new()),
             host_calls: Mutex::new(Vec::new()),
+            deny_mutations: false,
+            authorized: Mutex::new(Vec::new()),
+            index: IndexRuntimeState::default(),
+            updates: IndexUpdateState::new(Arc::new(RoutineStoreState::new())),
+            nonces: WriteNonceRegistry::new(),
         }
+    }
+
+    fn denying_mutations() -> Self {
+        Self {
+            deny_mutations: true,
+            ..Self::new(None)
+        }
+    }
+
+    fn authorized(&self) -> Vec<PathBuf> {
+        self.authorized.lock().unwrap().clone()
     }
 
     fn serving(served: &[&'static str]) -> Self {
@@ -91,6 +116,28 @@ impl McpHost for FixtureHost {
             expires_at: None,
             last_known_status: None,
         })
+    }
+
+    async fn require_mutation_access(&self, repository: &Path) -> Result<(), McpBusinessError> {
+        self.authorized
+            .lock()
+            .unwrap()
+            .push(repository.to_path_buf());
+        if self.deny_mutations {
+            return Err(McpBusinessError::new(
+                "REPOSITORY_ACCESS_DENIED",
+                "Repository access denied: status=read_only",
+            ));
+        }
+        Ok(())
+    }
+
+    fn mutation_runtime(&self) -> MutationRuntime<'_> {
+        MutationRuntime {
+            index: &self.index,
+            updates: &self.updates,
+            nonces: &self.nonces,
+        }
     }
 
     async fn call_host_tool(
@@ -555,14 +602,486 @@ async fn requests_without_project_and_unmapped_families() {
     assert_eq!(structured(&manifest)["valid"], true);
 
     let target = root_target(&fixture);
-    let routed = call_tool(&host, Some(&target), "write_page", json!({})).await;
-    assert_eq!(structured(&routed)["host"], "write_page");
+    let routed = call_tool(&host, Some(&target), "delete_page", json!({})).await;
+    assert_eq!(structured(&routed)["host"], "delete_page");
     let unknown = call_tool(&host, Some(&target), "legacy_tool", json!({})).await;
     assert_eq!(error_code(&unknown), "UNKNOWN_TOOL");
-    assert_eq!(host.host_calls(), vec!["write_page".to_string()]);
+    assert_eq!(host.host_calls(), vec!["delete_page".to_string()]);
 
     let limited = FixtureHost::serving(&FIRST_SLICE_TOOLS);
     let excluded = call_tool(&limited, Some(&target), "write_page", json!({})).await;
     assert_eq!(error_code(&excluded), "UNKNOWN_TOOL");
     assert!(limited.host_calls().is_empty());
+}
+
+/// Writable fixture: one local repository with a standalone Page, a link
+/// source, a schema-backed Collection and a child Space.
+fn write_fixture() -> Fixture {
+    let temp = tempfile::tempdir().unwrap();
+    let project = temp.path().join("project").canonicalize_or_create();
+    fs::create_dir_all(project.join(".git")).unwrap();
+    write(
+        &project.join(".svode/config.json"),
+        &json!({ "name": "Project", "spaces": [{ "id": "child", "path": "child", "repo": null }] })
+            .to_string(),
+    );
+    write(
+        &project.join("child/.svode/config.json"),
+        &json!({ "name": "Child" }).to_string(),
+    );
+    write(
+        &project.join("tasks/schema.yaml"),
+        "columns:\n  - { name: Status, type: text, default: Todo }\n  - { name: Points, type: number }\nviews: []\n",
+    );
+    for (path, source) in [
+        ("README.md", "---\ntitle: Project\n---\nOwner body\n"),
+        (
+            "leaf.md",
+            "---\ntitle: Leaf\nicon: L\ndescription: Kept\n---\nLeaf body\n",
+        ),
+        ("links.md", "---\ntitle: Links\n---\n[Leaf](leaf.md)\n"),
+        (
+            "tasks/README.md",
+            "---\ntitle: Tasks\n---\nCollection body\n",
+        ),
+        (
+            "tasks/a.md",
+            "---\ntitle: A\nStatus: Todo\n---\nItem body\n",
+        ),
+        ("child/README.md", "---\ntitle: Child\n---\nChild owner\n"),
+    ] {
+        write(&project.join(path), source);
+    }
+    Fixture {
+        _temp: temp,
+        project,
+    }
+}
+
+fn read(fixture: &Fixture, path: &str) -> String {
+    fs::read_to_string(fixture.project.join(path)).unwrap()
+}
+
+fn changed(value: &Value) -> Vec<String> {
+    let mut paths = value["changedPaths"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|path| path.as_str().unwrap().to_string())
+        .collect::<Vec<_>>();
+    paths.sort();
+    paths
+}
+
+#[tokio::test]
+async fn body_writes_project_actual_paths_through_the_shared_operation() {
+    let fixture = write_fixture();
+    let host = FixtureHost::new(None);
+    let target = root_target(&fixture);
+    let call = |name: &'static str, args: Value| call_tool(&host, Some(&target), name, args);
+
+    // Missing and null title are body-only; the path never changes.
+    for args in [
+        json!({ "path": "leaf.md", "content": "First body\n" }),
+        json!({ "path": "leaf.md", "content": "Second body\n", "title": null }),
+    ] {
+        let result = call("write_page", args).await;
+        let result = structured(&result);
+        assert_eq!(result["path"], "leaf.md");
+        assert_eq!(result["newPath"], Value::Null);
+        assert_eq!(changed(result), ["leaf.md"]);
+    }
+    assert!(read(&fixture, "leaf.md").ends_with("Second body\n"));
+    assert!(
+        host.nonces
+            .take_metadata(&fixture.project.join("leaf.md"))
+            .is_some(),
+        "watcher echo nonce is published into the host registry"
+    );
+
+    let noop = call(
+        "write_page",
+        json!({ "path": "leaf.md", "content": "Second body\n" }),
+    )
+    .await;
+    assert!(changed(structured(&noop)).is_empty());
+
+    // A title intent renames through Desktop naming and rewrites links.
+    let renamed = call(
+        "write_page",
+        json!({ "path": "leaf.md", "content": "Renamed body\n", "title": "Renamed" }),
+    )
+    .await;
+    let renamed = structured(&renamed);
+    assert_eq!(renamed["path"], "Renamed.md");
+    assert_eq!(renamed["newPath"], "Renamed.md");
+    assert_eq!(changed(renamed), ["Renamed.md", "leaf.md", "links.md"]);
+    assert!(!fixture.project.join("leaf.md").exists());
+    assert!(read(&fixture, "links.md").contains("(Renamed.md)"));
+
+    // Root README keeps its path; a nested Collection README renames its
+    // directory and reports the resulting owner.
+    let space = call(
+        "write_space_readme",
+        json!({ "content": "New owner body\n", "title": "Renamed Project" }),
+    )
+    .await;
+    assert_eq!(structured(&space)["path"], "README.md");
+    assert_eq!(structured(&space)["newPath"], Value::Null);
+    assert!(read(&fixture, "README.md").contains("title: Renamed Project"));
+
+    let collection = call(
+        "write_collection_readme",
+        json!({ "collectionPath": "tasks", "content": "Board\n", "title": "Backlog" }),
+    )
+    .await;
+    let collection = structured(&collection);
+    assert_eq!(collection["path"], "Backlog/README.md");
+    assert_eq!(collection["collectionPath"], "Backlog");
+    assert!(fixture.project.join("Backlog/a.md").exists());
+
+    let body = call(
+        "update_collection_item_body",
+        json!({ "path": "Backlog/a.md", "body": "Item update\n" }),
+    )
+    .await;
+    assert_eq!(structured(&body)["path"], "Backlog/a.md");
+    assert!(read(&fixture, "Backlog/a.md").contains("Status: Todo"));
+    assert!(read(&fixture, "Backlog/a.md").ends_with("Item update\n"));
+
+    let child = call(
+        "write_space_readme",
+        json!({ "spaceId": "child", "content": "Child update\n" }),
+    )
+    .await;
+    assert_eq!(changed(structured(&child)), ["README.md"]);
+    assert!(read(&fixture, "child/README.md").ends_with("Child update\n"));
+
+    for (name, args, code) in [
+        (
+            "write_page",
+            json!({ "path": "Backlog/a.md", "content": "x" }),
+            "NOT_A_STANDALONE_PAGE",
+        ),
+        (
+            "update_collection_item_body",
+            json!({ "path": "Renamed.md", "body": "x" }),
+            "NOT_A_COLLECTION_ITEM",
+        ),
+        (
+            "write_page",
+            json!({ "path": ".svode/x.md", "content": "x" }),
+            "PATH_FORBIDDEN",
+        ),
+        (
+            "write_page",
+            json!({ "path": "Renamed.md" }),
+            "SERIALIZATION_ERROR",
+        ),
+    ] {
+        assert_eq!(error_code(&call(name, args).await), code, "{name}");
+    }
+    assert!(host.host_calls().is_empty());
+}
+
+#[tokio::test]
+async fn metadata_patches_keep_missing_clear_null_and_read_on_empty_patch() {
+    let fixture = write_fixture();
+    let host = FixtureHost::new(None);
+    let target = root_target(&fixture);
+    let call = |name: &'static str, args: Value| call_tool(&host, Some(&target), name, args);
+
+    let before = read(&fixture, "leaf.md");
+    let empty = call("update_page_metadata", json!({ "path": "leaf.md" })).await;
+    assert!(changed(structured(&empty)).is_empty());
+    assert_eq!(structured(&empty)["page"]["meta"]["icon"], "L");
+    assert_eq!(read(&fixture, "leaf.md"), before);
+
+    let cleared = call(
+        "update_page_metadata",
+        json!({ "path": "leaf.md", "description": null, "icon": "N" }),
+    )
+    .await;
+    let cleared = structured(&cleared);
+    assert_eq!(cleared["page"]["meta"]["icon"], "N");
+    assert!(
+        cleared["page"]["meta"]
+            .get("description")
+            .is_none_or(Value::is_null)
+    );
+    assert!(!read(&fixture, "leaf.md").contains("description"));
+    assert!(read(&fixture, "leaf.md").ends_with("Leaf body\n"));
+
+    let item = call(
+        "update_collection_item_metadata",
+        json!({ "path": "tasks/a.md", "title": "Item B" }),
+    )
+    .await;
+    assert_eq!(structured(&item)["item"]["path"], "tasks/Item B.md");
+    assert!(read(&fixture, "tasks/Item B.md").contains("Status: Todo"));
+
+    let collection = call(
+        "update_collection_metadata",
+        json!({ "collectionPath": "tasks", "title": "Board" }),
+    )
+    .await;
+    let collection = structured(&collection);
+    assert_eq!(collection["collectionPath"], "Board");
+    assert_eq!(collection["collectionReadme"]["path"], "Board/README.md");
+
+    let space = call(
+        "update_space_metadata",
+        json!({ "title": "Renamed Project", "icon": "R" }),
+    )
+    .await;
+    assert_eq!(structured(&space)["spaceReadme"]["path"], "README.md");
+    assert_eq!(structured(&space)["spaceReadme"]["meta"]["icon"], "R");
+
+    assert_eq!(
+        error_code(
+            &call(
+                "update_collection_item_metadata",
+                json!({ "path": "leaf.md", "icon": "x" })
+            )
+            .await
+        ),
+        "NOT_A_COLLECTION_ITEM"
+    );
+}
+
+#[tokio::test]
+async fn create_page_uses_the_shared_create_and_rejects_legacy_arguments() {
+    let fixture = write_fixture();
+    let host = FixtureHost::new(None);
+    let target = root_target(&fixture);
+    let call = |name: &'static str, args: Value| call_tool(&host, Some(&target), name, args);
+
+    let page = call(
+        "create_page",
+        json!({ "parentPath": "", "title": "Fresh", "content": "Hello\n", "icon": "F" }),
+    )
+    .await;
+    let page = structured(&page);
+    assert_eq!(page["path"], "Fresh.md");
+    assert_eq!(page["page"]["meta"]["icon"], "F");
+    assert!(changed(page).contains(&"Fresh.md".to_string()));
+    assert!(read(&fixture, "Fresh.md").ends_with("Hello\n"));
+
+    let item = call(
+        "create_page",
+        json!({ "parentPath": "tasks", "title": "Scheduled", "properties": { "Points": 3 } }),
+    )
+    .await;
+    let item = structured(&item);
+    assert_eq!(item["path"], "tasks/Scheduled.md");
+    let source = read(&fixture, "tasks/Scheduled.md");
+    assert!(source.contains("Status: Todo"), "{source}");
+    assert!(source.contains("Points: 3"), "{source}");
+
+    let conflict = call("create_page", json!({ "parentPath": "", "title": "Fresh" })).await;
+    assert_eq!(error_code(&conflict), "PAGE_NAME_CONFLICT");
+    let evidence = &conflict.structured_content.as_ref().unwrap()["error"];
+    assert_eq!(evidence["conflicts"][0]["path"], "Fresh.md");
+
+    for (args, code) in [
+        (
+            json!({ "parentPath": "", "title": "Legacy", "path": "Legacy.md" }),
+            "SERIALIZATION_ERROR",
+        ),
+        (
+            json!({ "parentPath": "tasks", "title": "Legacy", "fields": { "Status": "x" } }),
+            "SERIALIZATION_ERROR",
+        ),
+        (json!({ "path": "Legacy.md" }), "SERIALIZATION_ERROR"),
+        (
+            json!({ "parentPath": "", "title": "Legacy", "properties": { "title": "x" } }),
+            "SVODE_ERROR",
+        ),
+    ] {
+        assert_eq!(
+            error_code(&call("create_page", args.clone()).await),
+            code,
+            "{args}"
+        );
+    }
+    assert!(!fixture.project.join("Legacy.md").exists());
+    assert!(!fixture.project.join("tasks/Legacy.md").exists());
+}
+
+#[tokio::test]
+async fn item_field_batch_is_one_action_with_the_shared_rename() {
+    let fixture = write_fixture();
+    let host = FixtureHost::new(None);
+    let target = root_target(&fixture);
+    let call = |name: &'static str, args: Value| call_tool(&host, Some(&target), name, args);
+
+    let empty = call(
+        "update_collection_item_fields",
+        json!({ "path": "tasks/a.md", "fields": {} }),
+    )
+    .await;
+    assert!(changed(structured(&empty)).is_empty());
+
+    let before = read(&fixture, "tasks/a.md");
+    let invalid = call(
+        "update_collection_item_fields",
+        json!({ "path": "tasks/a.md", "fields": { "Status": "Done", "Points": "many" } }),
+    )
+    .await;
+    assert!(invalid.is_error);
+    assert_eq!(read(&fixture, "tasks/a.md"), before);
+
+    let updated = call(
+        "update_collection_item_fields",
+        json!({ "path": "tasks/a.md", "fields": { "Points": 5, "Status": "Done", "title": "Shipped" } }),
+    )
+    .await;
+    let updated = structured(&updated);
+    assert_eq!(updated["item"]["path"], "tasks/Shipped.md");
+    assert_eq!(changed(updated), ["tasks/Shipped.md", "tasks/a.md"]);
+    let source = read(&fixture, "tasks/Shipped.md");
+    assert!(source.contains("Status: Done") && source.contains("Points: 5"));
+}
+
+#[tokio::test]
+async fn mutations_authorize_every_repository_before_the_first_write() {
+    let fixture = write_fixture();
+    let denied = FixtureHost::denying_mutations();
+    let target = root_target(&fixture);
+    let sources = [
+        "README.md",
+        "leaf.md",
+        "links.md",
+        "tasks/a.md",
+        "child/README.md",
+    ]
+    .map(|path| read(&fixture, path));
+    for (name, args) in [
+        (
+            "write_page",
+            json!({ "path": "leaf.md", "content": "x", "title": "Moved" }),
+        ),
+        ("create_page", json!({ "parentPath": "", "title": "New" })),
+        (
+            "update_page_metadata",
+            json!({ "path": "leaf.md", "icon": "x" }),
+        ),
+        ("write_space_readme", json!({ "content": "x" })),
+        ("update_space_metadata", json!({ "icon": "x" })),
+        (
+            "write_collection_readme",
+            json!({ "collectionPath": "tasks", "content": "x" }),
+        ),
+        (
+            "update_collection_metadata",
+            json!({ "collectionPath": "tasks", "icon": "x" }),
+        ),
+        (
+            "update_collection_item_fields",
+            json!({ "path": "tasks/a.md", "fields": { "Status": "x" } }),
+        ),
+        (
+            "update_collection_item_body",
+            json!({ "path": "tasks/a.md", "body": "x" }),
+        ),
+        (
+            "update_collection_item_metadata",
+            json!({ "path": "tasks/a.md", "icon": "x" }),
+        ),
+        (
+            "write_space_readme",
+            json!({ "spaceId": "child", "content": "x" }),
+        ),
+    ] {
+        let result = call_tool(&denied, Some(&target), name, args).await;
+        assert_eq!(error_code(&result), "REPOSITORY_ACCESS_DENIED", "{name}");
+    }
+    for (path, source) in [
+        "README.md",
+        "leaf.md",
+        "links.md",
+        "tasks/a.md",
+        "child/README.md",
+    ]
+    .iter()
+    .zip(&sources)
+    {
+        assert_eq!(&read(&fixture, path), source, "{path}");
+    }
+    assert!(!fixture.project.join("New.md").exists());
+    assert!(
+        denied
+            .authorized()
+            .iter()
+            .all(|repository| repository == &fixture.project)
+    );
+    assert!(denied.host_calls().is_empty());
+}
+
+#[tokio::test]
+async fn filename_collision_is_an_applied_write_with_a_warning() {
+    let fixture = write_fixture();
+    write(
+        &fixture.project.join("Taken.md"),
+        "---\ntitle: Other\n---\nOccupied\n",
+    );
+    let host = FixtureHost::new(None);
+    let target = root_target(&fixture);
+
+    let result = call_tool(
+        &host,
+        Some(&target),
+        "write_page",
+        json!({ "path": "leaf.md", "content": "Body\n", "title": "Taken" }),
+    )
+    .await;
+    let result = structured(&result);
+    // The display name is saved; the occupied filename keeps the prior path
+    // without a fictitious rename.
+    assert_eq!(result["path"], "leaf.md");
+    assert_eq!(result["newPath"], Value::Null);
+    assert_eq!(result["warnings"][0]["kind"], "filename_rename_collision");
+    assert_eq!(
+        read(&fixture, "Taken.md"),
+        "---\ntitle: Other\n---\nOccupied\n"
+    );
+    let source = read(&fixture, "leaf.md");
+    assert!(source.contains("title: Taken") && source.ends_with("Body\n"));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn handled_source_failure_rolls_back_the_whole_request() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let fixture = write_fixture();
+    let links = fixture.project.join("links.md");
+    fs::set_permissions(&links, fs::Permissions::from_mode(0o444)).unwrap();
+    let host = FixtureHost::new(None);
+    let target = root_target(&fixture);
+    let before = read(&fixture, "leaf.md");
+
+    let result = call_tool(
+        &host,
+        Some(&target),
+        "write_page",
+        json!({ "path": "leaf.md", "content": "Lost body\n", "title": "Moved" }),
+    )
+    .await;
+    fs::set_permissions(&links, fs::Permissions::from_mode(0o644)).unwrap();
+
+    // The rejected write is a business failure with the source cause, not an
+    // applied result or a recovery failure.
+    assert_eq!(error_code(&result), "SVODE_ERROR");
+    assert!(
+        result.content[0].text.contains("ermission denied"),
+        "{:?}",
+        result.content
+    );
+    assert_eq!(read(&fixture, "leaf.md"), before);
+    assert!(!fixture.project.join("Moved.md").exists());
+    assert_eq!(
+        read(&fixture, "links.md"),
+        "---\ntitle: Links\n---\n[Leaf](leaf.md)\n"
+    );
 }

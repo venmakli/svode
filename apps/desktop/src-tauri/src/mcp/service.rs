@@ -15,14 +15,11 @@ use crate::properties::read;
 use crate::repo_path::{RootMode, normalize_repo_relative};
 use crate::space::{config as space_config, content_tree, project, registry};
 use svode_core::collections::engine::{
-    self as engine, CollectionSchema, Column, EntryFieldBatchIntent, Filter, Sort, View,
+    self as engine, CollectionSchema, Column, Filter, Sort, View,
 };
 use svode_core::page::entry;
-use svode_core::page::fields::PageFieldUpdate;
 use svode_core::page::identity::ContentOwnerKind;
-use svode_mcp::args::{
-    CollectionArgs, PathArgs, SpaceArgs, clamp_limit, deserialize_present, offset,
-};
+use svode_mcp::args::{CollectionArgs, PathArgs, SpaceArgs, clamp_limit, offset};
 use svode_mcp::error::McpBusinessError;
 use svode_mcp::host::RequestTarget;
 use svode_mcp::owner::{
@@ -126,105 +123,6 @@ struct IntegrityArgs {
     space_id: Option<String>,
     #[serde(default)]
     collection_path: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct WritePageArgs {
-    #[serde(default)]
-    space_id: Option<String>,
-    path: String,
-    content: String,
-    #[serde(default)]
-    title: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-#[serde(deny_unknown_fields)]
-struct CreatePageArgs {
-    #[serde(default)]
-    space_id: Option<String>,
-    parent_path: String,
-    title: String,
-    #[serde(default)]
-    content: Option<String>,
-    #[serde(default)]
-    icon: Option<String>,
-    #[serde(default)]
-    description: Option<String>,
-    #[serde(default)]
-    cover: Option<entry::Cover>,
-    #[serde(default)]
-    properties: Option<HashMap<String, Value>>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct UpdatePageMetadataArgs {
-    #[serde(default)]
-    space_id: Option<String>,
-    path: String,
-    #[serde(default)]
-    title: Option<String>,
-    #[serde(default, deserialize_with = "deserialize_present")]
-    icon: Option<Option<String>>,
-    #[serde(default, deserialize_with = "deserialize_present")]
-    description: Option<Option<String>>,
-    #[serde(default, deserialize_with = "deserialize_present")]
-    cover: Option<Option<entry::Cover>>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct WriteSpaceReadmeArgs {
-    #[serde(default)]
-    space_id: Option<String>,
-    content: String,
-    #[serde(default)]
-    title: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct UpdateSpaceMetadataArgs {
-    #[serde(default)]
-    space_id: Option<String>,
-    #[serde(default)]
-    title: Option<String>,
-    #[serde(default, deserialize_with = "deserialize_present")]
-    icon: Option<Option<String>>,
-    #[serde(default, deserialize_with = "deserialize_present")]
-    description: Option<Option<String>>,
-    #[serde(default, deserialize_with = "deserialize_present")]
-    cover: Option<Option<entry::Cover>>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct WriteCollectionReadmeArgs {
-    #[serde(default)]
-    space_id: Option<String>,
-    collection_path: String,
-    content: String,
-    #[serde(default)]
-    title: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct UpdateCollectionMetadataArgs {
-    #[serde(default)]
-    space_id: Option<String>,
-    collection_path: String,
-    #[serde(default)]
-    title: Option<String>,
-    #[serde(default, deserialize_with = "deserialize_present")]
-    icon: Option<Option<String>>,
-    #[serde(default, deserialize_with = "deserialize_present")]
-    description: Option<Option<String>>,
-    #[serde(default, deserialize_with = "deserialize_present")]
-    cover: Option<Option<entry::Cover>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -351,24 +249,6 @@ struct DeleteCollectionViewArgs {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct UpdateCollectionItemFieldsArgs {
-    #[serde(default)]
-    space_id: Option<String>,
-    path: String,
-    fields: std::collections::BTreeMap<String, Value>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct UpdateCollectionItemBodyArgs {
-    #[serde(default)]
-    space_id: Option<String>,
-    path: String,
-    body: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
 struct ListActorsArgs {
     #[serde(default)]
     space_id: Option<String>,
@@ -418,90 +298,6 @@ fn schema_for_create_collection(args: &CreateCollectionArgs) -> CollectionSchema
 mod tests {
     use super::*;
 
-    #[tokio::test]
-    async fn body_write_json_intent_and_canonical_result_use_shared_operation() {
-        for title in [None, Some(Value::Null), Some(json!("New"))] {
-            for path in ["Old.md", "README.md", "Old/README.md", "Tasks/item.md"] {
-                let temp = tempfile::tempdir().unwrap();
-                let root = temp.path();
-                fs::create_dir_all(root.join(".git")).unwrap();
-                fs::create_dir_all(root.join(path).parent().unwrap()).unwrap();
-                fs::write(root.join(path), "---\ntitle: Old\n---\nOriginal").unwrap();
-                if path.starts_with("Tasks/") {
-                    fs::write(root.join("Tasks/schema.yaml"), "columns: []\n").unwrap();
-                }
-                let mut json_args = json!({"path": path, "content": "New body"});
-                if let Some(value) = &title {
-                    json_args["title"] = value.clone();
-                }
-                let args: WritePageArgs = decode(json_args.clone()).unwrap();
-                let space_args: WriteSpaceReadmeArgs = decode(json_args.clone()).unwrap();
-                json_args["collectionPath"] = json!("Old");
-                let collection_args: WriteCollectionReadmeArgs = decode(json_args).unwrap();
-                assert_eq!(args.title, space_args.title);
-                assert_eq!(args.title, collection_args.title);
-                let state = IndexState::new();
-                let nonces = svode_core::page::nonce::WriteNonceRegistry::new();
-                let outcome = crate::page::write(
-                    svode_core::page::write::PageWrite {
-                        space: root.to_str().unwrap(),
-                        path,
-                        content: &args.content,
-                        title: args.title.as_deref(),
-                        icon: None,
-                        extra: None,
-                        metadata: None,
-                        field_batch: None,
-                        skip_rename: args.title.is_none(),
-                        project: None,
-                    },
-                    &state,
-                    crate::index::update::test_update_state(),
-                    &nonces,
-                    None,
-                    |mut paths| async move {
-                        paths.push(root.to_path_buf());
-                        Ok(paths)
-                    },
-                )
-                .await
-                .unwrap();
-                let response = page_write_response(root.to_str().unwrap(), path, outcome);
-                let expected = if args.title.is_none() || path == "README.md" {
-                    path
-                } else if path == "Old/README.md" {
-                    "New/README.md"
-                } else if path == "Tasks/item.md" {
-                    "Tasks/New.md"
-                } else {
-                    "New.md"
-                };
-                assert_eq!(response["path"], expected);
-                assert!(
-                    response["changedPaths"]
-                        .as_array()
-                        .unwrap()
-                        .contains(&json!(path))
-                );
-                assert!(
-                    response["changedPaths"]
-                        .as_array()
-                        .unwrap()
-                        .contains(&json!(expected))
-                );
-                assert_eq!(
-                    entry::read(root.to_str().unwrap(), expected).unwrap().body,
-                    "New body"
-                );
-                if expected != path {
-                    assert_eq!(response["newPath"], expected);
-                } else {
-                    assert_eq!(response["newPath"], Value::Null);
-                }
-            }
-        }
-    }
-
     fn scaffold_test_space(path: &Path, name: &str) {
         crate::space::scaffold::scaffold_space(path, name, "", "").expect("scaffold space");
     }
@@ -514,58 +310,6 @@ mod tests {
             "documentLabel": "Documents"
         });
         assert!(decode::<CreateCollectionArgs>(args).is_err());
-    }
-
-    #[test]
-    fn create_page_requires_parent_and_title_and_rejects_legacy_inputs() {
-        let args: CreatePageArgs = decode(json!({
-            "parentPath": "tasks",
-            "title": "First",
-            "content": "Body",
-            "properties": { "Status": "Todo" }
-        }))
-        .unwrap();
-        assert_eq!(args.parent_path, "tasks");
-        assert_eq!(args.title, "First");
-        assert!(decode::<CreatePageArgs>(json!({ "path": "tasks/first.md" })).is_err());
-        assert!(
-            decode::<CreatePageArgs>(json!({
-                "parentPath": "tasks",
-                "title": "First",
-                "fields": { "Status": "Todo" }
-            }))
-            .is_err()
-        );
-    }
-
-    #[test]
-    fn metadata_decode_preserves_missing_null_and_value() {
-        let missing: UpdatePageMetadataArgs = decode(json!({ "path": "Page.md" })).unwrap();
-        let nulls: UpdatePageMetadataArgs = decode(json!({
-            "path": "Page.md",
-            "title": null,
-            "icon": null,
-            "description": null,
-            "cover": null
-        }))
-        .unwrap();
-        let values: UpdatePageMetadataArgs = decode(json!({
-            "path": "Page.md",
-            "title": "New",
-            "icon": "star",
-            "description": "  preserved  ",
-            "cover": { "type": "color", "value": "blue" }
-        }))
-        .unwrap();
-        assert!(missing.icon.is_none());
-        assert_eq!(nulls.title, None);
-        assert_eq!(nulls.icon, Some(None));
-        assert_eq!(nulls.description, Some(None));
-        assert_eq!(nulls.cover, Some(None));
-        assert_eq!(values.title.as_deref(), Some("New"));
-        assert_eq!(values.icon, Some(Some("star".into())));
-        assert_eq!(values.description, Some(Some("  preserved  ".into())));
-        assert!(values.cover.flatten().is_some());
     }
 
     #[test]
@@ -614,61 +358,4 @@ mod tests {
 
         assert_eq!(root, project);
     }
-}
-
-async fn write_page_content(
-    app: &AppHandle,
-    context: &ActiveProjectContext,
-    space: &str,
-    path: &str,
-    content: &str,
-    title: Option<&str>,
-) -> Result<svode_core::page::write::PageWriteOutcome, crate::error::AppError> {
-    let state = app.state::<IndexState>();
-    let updates = app.state::<IndexUpdateState>();
-    let nonces = app.state::<std::sync::Arc<svode_core::page::nonce::WriteNonceRegistry>>();
-    crate::page::write(
-        svode_core::page::write::PageWrite {
-            space,
-            path,
-            content,
-            title,
-            icon: None,
-            extra: None,
-            metadata: None,
-            field_batch: None,
-            skip_rename: title.is_none(),
-            project: Some(&context.project_path),
-        },
-        &state,
-        &updates,
-        &nonces,
-        None,
-        |mut paths| async move {
-            paths.push(PathBuf::from(space));
-            crate::git::access::require_repository_mutation_paths(app, paths.clone()).await?;
-            Ok(paths)
-        },
-    )
-    .await
-}
-
-fn page_write_response(
-    space: &str,
-    original: &str,
-    outcome: svode_core::page::write::PageWriteOutcome,
-) -> Value {
-    let canonical = outcome.result.new_path.as_deref().unwrap_or(original);
-    let changed = outcome
-        .changed_paths
-        .iter()
-        .map(|path| {
-            path.strip_prefix(space)
-                .unwrap_or(path)
-                .to_string_lossy()
-                .replace('\\', "/")
-        })
-        .collect::<Vec<_>>();
-    json!({ "path": canonical, "newPath": outcome.result.new_path,
-        "changedPaths": changed, "warnings": outcome.result.warnings })
 }

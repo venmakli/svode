@@ -8,6 +8,7 @@ pub mod dispatch;
 mod domain_error;
 pub mod error;
 pub mod host;
+mod mutation;
 pub mod owner;
 pub mod path;
 pub mod protocol;

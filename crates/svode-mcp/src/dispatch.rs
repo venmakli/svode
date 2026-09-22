@@ -7,7 +7,7 @@ use crate::control::check_tool;
 use crate::error::McpBusinessError;
 use crate::host::{McpHost, RequestTarget};
 use crate::protocol::ToolCallResult;
-use crate::tools::{apps, content, project};
+use crate::tools::{apps, content, pages, project};
 
 /// Executes one tool within a request target frozen by the host. `None`
 /// means the host has no open project for this request.
@@ -58,6 +58,46 @@ async fn call(
         "read_collection_item" => {
             let args = decode(args)?;
             content::read_collection_item(host, require(target)?, args).await
+        }
+        "write_page" => {
+            let args = decode(args)?;
+            pages::write_page(host, require(target)?, args).await
+        }
+        "create_page" => {
+            let args = decode(args)?;
+            pages::create_page(host, require(target)?, args).await
+        }
+        "update_page_metadata" => {
+            let args = decode(args)?;
+            pages::update_page_metadata(host, require(target)?, args).await
+        }
+        "write_space_readme" => {
+            let args = decode(args)?;
+            pages::write_space_readme(host, require(target)?, args).await
+        }
+        "update_space_metadata" => {
+            let args = decode(args)?;
+            pages::update_space_metadata(host, require(target)?, args).await
+        }
+        "write_collection_readme" => {
+            let args = decode(args)?;
+            pages::write_collection_readme(host, require(target)?, args).await
+        }
+        "update_collection_metadata" => {
+            let args = decode(args)?;
+            pages::update_collection_metadata(host, require(target)?, args).await
+        }
+        "update_collection_item_fields" => {
+            let args = decode(args)?;
+            pages::update_collection_item_fields(host, require(target)?, args).await
+        }
+        "update_collection_item_body" => {
+            let args = decode(args)?;
+            pages::update_collection_item_body(host, require(target)?, args).await
+        }
+        "update_collection_item_metadata" => {
+            let args = decode(args)?;
+            pages::update_collection_item_metadata(host, require(target)?, args).await
         }
         _ => host.call_host_tool(name, args).await,
     }
