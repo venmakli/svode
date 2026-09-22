@@ -14,10 +14,6 @@ pub struct CollectionReadTarget {
 }
 
 impl CollectionReadTarget {
-    pub fn from_index_key(space: String, index_key: IndexKey) -> Self {
-        Self { space, index_key }
-    }
-
     pub fn space(&self) -> &str {
         &self.space
     }
@@ -58,7 +54,7 @@ pub async fn entries_for_view(
     include_nested: Option<bool>,
 ) -> Result<Vec<Entry>, AppError> {
     let pool = pool_for_target(index_state, target).await?;
-    super::list_entries_for_view(
+    Ok(svode_core::collections::entries::list_entries_for_view(
         &pool,
         actor_catalog,
         git_cli,
@@ -67,7 +63,7 @@ pub async fn entries_for_view(
         view_name,
         include_nested,
     )
-    .await
+    .await?)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -84,7 +80,7 @@ pub async fn query_entries(
     offset: Option<i64>,
 ) -> Result<Vec<Entry>, AppError> {
     let pool = pool_for_target(index_state, target).await?;
-    super::query_entries(
+    Ok(svode_core::collections::entries::query_entries(
         &pool,
         actor_catalog,
         git_cli,
@@ -96,7 +92,7 @@ pub async fn query_entries(
         limit,
         offset,
     )
-    .await
+    .await?)
 }
 
 pub async fn resolve_relation(

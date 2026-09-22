@@ -7,9 +7,7 @@ use tokio::task::JoinSet;
 use crate::error::AppError;
 use crate::index::update::IndexUpdateState;
 use crate::index::{IndexKey, IndexState};
-use svode_core::index::knowledge::{
-    KnowledgeFilters, KnowledgeRelatedContext, KnowledgeResponse, KnowledgeScope,
-};
+use svode_core::index::knowledge::{KnowledgeFilters, KnowledgeResponse, KnowledgeScope};
 pub use svode_core::index::service::{SearchResponse, SearchScope};
 
 const REINDEX_PARALLELISM: usize = 4;
@@ -82,51 +80,6 @@ pub async fn read_project_knowledge(
         edge_limit,
         search_limit,
         filters,
-    )
-    .await
-}
-
-#[allow(clippy::too_many_arguments)]
-pub async fn read_scoped_knowledge(
-    state: &IndexState,
-    project: &Path,
-    scope: KnowledgeScope,
-    query: Option<&str>,
-    node_limit: usize,
-    edge_limit: usize,
-    search_limit: usize,
-    filters: KnowledgeFilters,
-) -> KnowledgeResponse {
-    svode_core::index::service::read_scoped_knowledge(
-        &state.core,
-        project,
-        scope,
-        query,
-        node_limit,
-        edge_limit,
-        search_limit,
-        filters,
-    )
-    .await
-}
-
-pub async fn read_related_context(
-    state: &IndexState,
-    project: &Path,
-    scope: KnowledgeScope,
-    query: &str,
-    limit: usize,
-    text_budget: usize,
-    node_kinds: Option<Vec<String>>,
-) -> KnowledgeRelatedContext {
-    svode_core::index::service::read_related_context(
-        &state.core,
-        project,
-        scope,
-        query,
-        limit,
-        text_budget,
-        node_kinds,
     )
     .await
 }

@@ -1,8 +1,5 @@
 //! Desktop adapter over the core Collections engine: index pool selection for
-//! Collection reads, Entry hydration and the Actor catalog commands.
-
-mod query;
-pub use query::{list_entries_for_view, query_entries};
+//! Collection reads and the Actor catalog commands.
 
 pub(crate) mod read;
 

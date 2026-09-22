@@ -5429,6 +5429,7 @@ version = "0.0.8"
 dependencies = [
  "serde",
  "serde_json",
+ "serde_yml",
  "sqlx",
  "svode-core",
  "tempfile",

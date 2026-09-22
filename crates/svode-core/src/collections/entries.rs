@@ -1,15 +1,20 @@
+//! Collection item reads over a prepared index pool: view and ad-hoc
+//! queries hydrated into source Entries with indexed dates.
+
 use std::path::Path;
 
 use sqlx::SqlitePool;
 
-use crate::actors::ActorCatalogState;
-use crate::error::AppError;
-use svode_core::collections::engine::{
-    Filter, Sort, View, read_collection_schema, resolve_query_filters,
+use super::CollectionError;
+use super::engine::{Filter, Sort, View, read_collection_schema, resolve_query_filters};
+use super::query::{
+    EntryQueryRow, collection_root_for_sql, entry_parent_dir, order_rows, query_entry_rows,
+    validate_ad_hoc_query,
 };
-use svode_core::collections::query::{entry_parent_dir, query_entry_rows, validate_ad_hoc_query};
-use svode_core::git::cli::GitCli;
-use svode_core::page::entry;
+use crate::actors::resolver::ActorCatalogState;
+use crate::git::cli::GitCli;
+use crate::page::PageError;
+use crate::page::entry::{self, Entry};
 
 pub async fn list_entries_for_view(
     pool: &SqlitePool,
@@ -19,17 +24,13 @@ pub async fn list_entries_for_view(
     collection_path: &str,
     view_name: &str,
     include_nested: Option<bool>,
-) -> Result<Vec<entry::Entry>, AppError> {
+) -> Result<Vec<Entry>, PageError> {
     let schema = read_collection_schema(space, collection_path)?;
     let view = schema
         .views
         .iter()
         .find(|view| view.name() == view_name)
-        .ok_or_else(|| {
-            AppError::from(svode_core::collections::CollectionError::Schema(format!(
-                "view '{view_name}' not found"
-            )))
-        })?;
+        .ok_or_else(|| CollectionError::Schema(format!("view '{view_name}' not found")))?;
     let include_nested = include_nested.unwrap_or_else(|| match view {
         View::Table { show_nested, .. } => show_nested.unwrap_or(true),
         _ => false,
@@ -61,6 +62,7 @@ pub async fn list_entries_for_view(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn query_entries(
     pool: &SqlitePool,
     actor_catalog: &ActorCatalogState,
@@ -72,7 +74,7 @@ pub async fn query_entries(
     include_nested: Option<bool>,
     limit: Option<i64>,
     offset: Option<i64>,
-) -> Result<Vec<entry::Entry>, AppError> {
+) -> Result<Vec<Entry>, PageError> {
     let schema = read_collection_schema(space, collection_path)?;
     let filters = filters.unwrap_or_default();
     let sort = sort.unwrap_or_default();
@@ -99,20 +101,20 @@ pub async fn query_entries(
     )
 }
 
-pub(super) fn entries_from_rows(
+pub fn entries_from_rows(
     space: &str,
     collection_path: &str,
-    rows: Vec<svode_core::collections::query::EntryQueryRow>,
+    rows: Vec<EntryQueryRow>,
     include_nested: bool,
     manual_order: bool,
-) -> Result<Vec<entry::Entry>, AppError> {
-    let collection = svode_core::collections::query::collection_root_for_sql(collection_path);
+) -> Result<Vec<Entry>, PageError> {
+    let collection = collection_root_for_sql(collection_path);
     let rows = rows
         .into_iter()
         .filter(|row| include_nested || entry_parent_dir(&row.file_path) == collection)
         .collect();
     let rows = if manual_order {
-        svode_core::collections::query::order_rows(space, collection_path, rows, include_nested)
+        order_rows(space, collection_path, rows, include_nested)
     } else {
         rows
     };

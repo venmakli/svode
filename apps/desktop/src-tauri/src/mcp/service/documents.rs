@@ -55,37 +55,3 @@ pub(super) async fn import_asset(
         }),
     ))
 }
-
-pub(super) async fn search_pages(
-    app: &AppHandle,
-    args: SearchArgs,
-) -> Result<ToolCallResult, McpBusinessError> {
-    let (context, _) = resolve_space(app, args.space_id.clone()).await?;
-    let state = app.state::<IndexState>();
-    let key = svode_mcp::target::index_key(&request_target(&context), args.space_id.as_deref());
-    let limit = clamp_limit(args.limit);
-    let start = offset(args.offset);
-    let response = crate::index::service::search_content(
-        &state,
-        PathBuf::from(&context.project_path),
-        args.query,
-        None,
-        None,
-        Some(crate::index::service::SearchScope::Space {
-            space_id: IndexState::space_id_for_key(&key),
-        }),
-        Some(limit.saturating_add(start as i64)),
-    )
-    .await?;
-    let total = response.items.len();
-    let results = response
-        .items
-        .into_iter()
-        .skip(start)
-        .take(limit as usize)
-        .collect::<Vec<_>>();
-    Ok(ToolCallResult::ok(
-        format!("Found {} matching Pages.", results.len()),
-        json!({ "items": results, "total": total, "limit": limit, "offset": start }),
-    ))
-}

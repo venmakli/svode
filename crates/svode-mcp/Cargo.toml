@@ -18,6 +18,7 @@ path = "src/main.rs"
 svode-core = { path = "../svode-core" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+serde_yml = "0.0.12"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util"] }
 toml = "0.9"
 ulid = "1"

@@ -1,4 +1,5 @@
 pub mod engine;
+pub mod entries;
 pub mod knowledge_projection;
 pub mod list;
 pub mod model;

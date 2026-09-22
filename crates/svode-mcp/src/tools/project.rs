@@ -2,11 +2,12 @@ use std::path::Path;
 
 use serde_json::{Value, json};
 
+use crate::args::SpaceArgs;
 use crate::catalog;
 use crate::error::McpBusinessError;
 use crate::host::{McpHost, RequestTarget};
 use crate::protocol::ToolCallResult;
-use crate::target::{ROOT_SPACE_ID, default_space_id};
+use crate::target::{ROOT_SPACE_ID, default_space_id, resolve_space};
 
 pub(crate) async fn get_project_info(
     host: &impl McpHost,
@@ -147,4 +148,21 @@ fn space_capabilities(kind: &str) -> Value {
         "commitChanges": false,
         "autocommit": false
     })
+}
+
+pub(crate) async fn get_git_status(
+    host: &impl McpHost,
+    target: &RequestTarget,
+    args: SpaceArgs,
+) -> Result<ToolCallResult, McpBusinessError> {
+    let space = resolve_space(target, args.space_id.as_deref())?;
+    let status = host
+        .read_runtime()
+        .git
+        .status(Path::new(&space), false)
+        .await?;
+    Ok(ToolCallResult::ok(
+        "Git status for active Svode space.",
+        json!({ "status": status }),
+    ))
 }

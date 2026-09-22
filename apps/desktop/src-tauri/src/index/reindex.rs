@@ -302,7 +302,7 @@ mod tests {
             serde_json::from_str::<serde_json::Value>(&row.4).unwrap()["Key"],
             7
         );
-        let collection_rows = crate::properties::query_entries(
+        let collection_rows = svode_core::collections::entries::query_entries(
             &pool,
             &crate::actors::ActorCatalogState::new(),
             None,
@@ -438,7 +438,7 @@ mod tests {
             .await
             .unwrap();
 
-        let direct = crate::properties::query_entries(
+        let direct = svode_core::collections::entries::query_entries(
             &root_pool,
             &crate::actors::ActorCatalogState::new(),
             None,
@@ -465,7 +465,7 @@ mod tests {
             ]
         );
 
-        let nested = crate::properties::query_entries(
+        let nested = svode_core::collections::entries::query_entries(
             &root_pool,
             &crate::actors::ActorCatalogState::new(),
             None,

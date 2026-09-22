@@ -86,6 +86,14 @@ impl svode_mcp::host::McpHost for DesktopMcpHost {
             .map_err(Into::into)
     }
 
+    fn read_runtime(&self) -> svode_mcp::host::ReadRuntime<'_> {
+        svode_mcp::host::ReadRuntime {
+            index: &self.app.state::<IndexState>().inner().core,
+            actors: self.app.state::<crate::actors::ActorCatalogState>().inner(),
+            git: self.app.state::<GitState>().inner().runtime(),
+        }
+    }
+
     fn mutation_runtime(&self) -> svode_mcp::host::MutationRuntime<'_> {
         svode_mcp::host::MutationRuntime {
             index: &self.app.state::<IndexState>().inner().core,
@@ -156,26 +164,12 @@ async fn call_host_tool(
             "convert_to_collection" => {
                 collections::convert_to_collection(&app, decode(args)?).await
             }
-            "search_pages" => documents::search_pages(&app, decode(args)?).await,
-            "search_knowledge" => knowledge::search_knowledge(&app, decode(args)?).await,
-            "get_knowledge_node" => knowledge::get_knowledge_node(&app, decode(args)?).await,
-            "get_knowledge_neighbors" => {
-                knowledge::get_knowledge_neighbors(&app, decode(args)?).await
-            }
-            "get_related_context" => knowledge::get_related_context(&app, decode(args)?).await,
-            "get_knowledge_status" => knowledge::get_knowledge_status(&app, decode(args)?).await,
             "list_routines" => routines::list_routines(&app, decode(args)?).await,
             "get_routine" => routines::get_routine(&app, decode(args)?).await,
             "create_routine" => routines::create_routine(&app, decode(args)?).await,
             "update_routine" => routines::update_routine(&app, decode(args)?).await,
             "delete_routine" => routines::delete_routine(&app, decode(args)?).await,
             "run_routine" => routines::run_routine(&app, decode(args)?).await,
-            "get_collection_schema" => {
-                collections::get_collection_schema(&app, decode(args)?).await
-            }
-            "query_collection_items" => {
-                collections::query_collection_items(&app, decode(args)?).await
-            }
             "delete_collection_item" => {
                 collections::delete_collection_item(&app, decode(args)?).await
             }
@@ -185,27 +179,6 @@ async fn call_host_tool(
             "reorder_content" => collections::reorder_content(&app, decode(args)?).await,
             "reorder_spaces" => collections::reorder_spaces(&app, decode(args)?).await,
             "convert_page_to_leaf" => collections::convert_page_to_leaf(&app, decode(args)?).await,
-            "validate_collection_integrity" => {
-                collections::validate_collection_integrity(&app, decode(args)?).await
-            }
-            "add_collection_column" => {
-                collections::add_collection_column(&app, decode(args)?).await
-            }
-            "update_collection_column" => {
-                collections::update_collection_column(&app, decode(args)?).await
-            }
-            "delete_collection_column" => {
-                collections::delete_collection_column(&app, decode(args)?).await
-            }
-            "add_collection_view" => collections::add_collection_view(&app, decode(args)?).await,
-            "update_collection_view" => {
-                collections::update_collection_view(&app, decode(args)?).await
-            }
-            "delete_collection_view" => {
-                collections::delete_collection_view(&app, decode(args)?).await
-            }
-            "list_actors" => project_tools::list_actors(&app, decode(args)?).await,
-            "get_git_status" => project_tools::get_git_status(&app, decode(args)?).await,
             _ => Err(McpBusinessError::new(
                 "UNKNOWN_TOOL",
                 format!("unknown Svode MCP tool: {name}"),
@@ -350,54 +323,6 @@ async fn authorize_mutating_tool(
                 extend_backlink_plan(app, &context, &space, &decoded.path, false, &mut paths)
                     .await?;
             }
-        }
-        "add_collection_column" => {
-            let decoded: AddCollectionColumnArgs = decode(args.clone())?;
-            paths.extend(
-                engine::prepare_add_schema_column(
-                    &space,
-                    &decoded.collection_path,
-                    decoded.column,
-                    Some(&context.project_path),
-                )
-                .map_err(AppError::from)?
-                .paths()
-                .iter()
-                .cloned(),
-            );
-        }
-        "update_collection_column" => {
-            let decoded: UpdateCollectionColumnArgs = decode(args.clone())?;
-            let patch = json_to_yaml(decoded.patch)?;
-            paths.extend(
-                engine::prepare_update_schema_column(
-                    &space,
-                    &decoded.collection_path,
-                    &decoded.column_name,
-                    patch,
-                    Some(&context.project_path),
-                )
-                .map_err(AppError::from)?
-                .paths()
-                .iter()
-                .cloned(),
-            );
-        }
-        "delete_collection_column" => {
-            let decoded: DeleteCollectionColumnArgs = decode(args.clone())?;
-            paths.extend(
-                engine::prepare_delete_schema_column(
-                    &space,
-                    &decoded.collection_path,
-                    &decoded.column_name,
-                    decoded.delete_values.unwrap_or(false),
-                    Some(&context.project_path),
-                )
-                .map_err(AppError::from)?
-                .paths()
-                .iter()
-                .cloned(),
-            );
         }
         _ => {}
     }

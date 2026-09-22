@@ -7,7 +7,7 @@ use crate::control::check_tool;
 use crate::error::McpBusinessError;
 use crate::host::{McpHost, RequestTarget};
 use crate::protocol::ToolCallResult;
-use crate::tools::{apps, content, pages, project};
+use crate::tools::{apps, collections, content, pages, project, search};
 
 /// Executes one tool within a request target frozen by the host. `None`
 /// means the host has no open project for this request.
@@ -98,6 +98,74 @@ async fn call(
         "update_collection_item_metadata" => {
             let args = decode(args)?;
             pages::update_collection_item_metadata(host, require(target)?, args).await
+        }
+        "get_git_status" => {
+            let args = decode(args)?;
+            project::get_git_status(host, require(target)?, args).await
+        }
+        "get_collection_schema" => {
+            let args = decode(args)?;
+            collections::get_collection_schema(require(target)?, args)
+        }
+        "query_collection_items" => {
+            let args = decode(args)?;
+            collections::query_collection_items(host, require(target)?, args).await
+        }
+        "list_actors" => {
+            let args = decode(args)?;
+            collections::list_actors(host, require(target)?, args).await
+        }
+        "validate_collection_integrity" => {
+            let args = decode(args)?;
+            collections::validate_collection_integrity(require(target)?, args)
+        }
+        "add_collection_column" => {
+            let args = decode(args)?;
+            collections::add_collection_column(host, require(target)?, args).await
+        }
+        "update_collection_column" => {
+            let args = decode(args)?;
+            collections::update_collection_column(host, require(target)?, args).await
+        }
+        "delete_collection_column" => {
+            let args = decode(args)?;
+            collections::delete_collection_column(host, require(target)?, args).await
+        }
+        "add_collection_view" => {
+            let args = decode(args)?;
+            collections::add_collection_view(host, require(target)?, args).await
+        }
+        "update_collection_view" => {
+            let args = decode(args)?;
+            collections::update_collection_view(host, require(target)?, args).await
+        }
+        "delete_collection_view" => {
+            let args = decode(args)?;
+            collections::delete_collection_view(host, require(target)?, args).await
+        }
+        "search_pages" => {
+            let args = decode(args)?;
+            search::search_pages(host, require(target)?, args).await
+        }
+        "search_knowledge" => {
+            let args = decode(args)?;
+            search::search_knowledge(host, require(target)?, args).await
+        }
+        "get_knowledge_node" => {
+            let args = decode(args)?;
+            search::get_knowledge_node(host, require(target)?, args).await
+        }
+        "get_knowledge_neighbors" => {
+            let args = decode(args)?;
+            search::get_knowledge_neighbors(host, require(target)?, args).await
+        }
+        "get_related_context" => {
+            let args = decode(args)?;
+            search::get_related_context(host, require(target)?, args).await
+        }
+        "get_knowledge_status" => {
+            let args = decode(args)?;
+            search::get_knowledge_status(host, require(target)?, args).await
         }
         _ => host.call_host_tool(name, args).await,
     }

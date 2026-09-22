@@ -10,7 +10,9 @@ use std::path::Path;
 
 use serde_json::Value;
 use sqlx::SqlitePool;
+use svode_core::actors::resolver::ActorCatalogState;
 use svode_core::git::access::RepositoryAccessSnapshot;
+use svode_core::git::state::GitRuntime;
 use svode_core::index::IndexKey;
 use svode_core::index::state::IndexRuntimeState;
 use svode_core::index::update::IndexUpdateState;
@@ -27,6 +29,16 @@ pub struct MutationRuntime<'a> {
     pub index: &'a IndexRuntimeState,
     pub updates: &'a IndexUpdateState,
     pub nonces: &'a WriteNonceRegistry,
+}
+
+/// Host-owned runtime shared by index-backed reads: the Project index state
+/// with its pools and knowledge snapshots, the Actor catalog and the Git
+/// runtime. The library reads through them and never opens its own.
+#[derive(Clone, Copy)]
+pub struct ReadRuntime<'a> {
+    pub index: &'a IndexRuntimeState,
+    pub actors: &'a ActorCatalogState,
+    pub git: &'a GitRuntime,
 }
 
 /// Project and default Space frozen by the host for one request.
@@ -69,6 +81,9 @@ pub trait McpHost: Sync {
 
     /// Shared runtime handles of managed mutations.
     fn mutation_runtime(&self) -> MutationRuntime<'_>;
+
+    /// Shared runtime handles of index-backed reads.
+    fn read_runtime(&self) -> ReadRuntime<'_>;
 
     /// Temporary routing of tool families not yet mapped by the library.
     /// Removed together with the last host-owned handlers in slice 3.2.5.

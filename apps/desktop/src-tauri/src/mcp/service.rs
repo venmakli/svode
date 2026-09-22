@@ -8,18 +8,14 @@ use tauri::{AppHandle, Manager};
 
 use super::active::{self, ActiveProjectContext, ActiveProjectState};
 use crate::AppError;
-use crate::git::{self, GitState};
+use crate::git::GitState;
 use crate::index::IndexState;
 use crate::index::update::IndexUpdateState;
-use crate::properties::read;
-use crate::repo_path::{RootMode, normalize_repo_relative};
 use crate::space::{config as space_config, content_tree, project, registry};
-use svode_core::collections::engine::{
-    self as engine, CollectionSchema, Column, Filter, Sort, View,
-};
+use svode_core::collections::engine::{self as engine, CollectionSchema, Column, View};
 use svode_core::page::entry;
 use svode_core::page::identity::ContentOwnerKind;
-use svode_mcp::args::{CollectionArgs, PathArgs, SpaceArgs, clamp_limit, offset};
+use svode_mcp::args::{CollectionArgs, PathArgs};
 use svode_mcp::error::McpBusinessError;
 use svode_mcp::host::RequestTarget;
 use svode_mcp::owner::{
@@ -27,7 +23,7 @@ use svode_mcp::owner::{
 };
 use svode_mcp::path::{ensure_inside, validate_markdown_path, validate_public_rel_path};
 use svode_mcp::protocol::{IpcContextOverride, ToolCallResult};
-use svode_mcp::target::{ROOT_SPACE_ID, default_space_id, is_root_space_id};
+use svode_mcp::target::{default_space_id, is_root_space_id};
 
 tokio::task_local! {
     static MCP_CONTEXT_OVERRIDE: Option<ActiveProjectContext>;
@@ -41,9 +37,6 @@ mod collections;
 mod context;
 mod dispatch;
 mod documents;
-mod knowledge;
-#[path = "service/project.rs"]
-mod project_tools;
 mod routines;
 
 #[cfg(test)]
@@ -118,15 +111,6 @@ struct ReorderSpacesArgs {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct IntegrityArgs {
-    #[serde(default)]
-    space_id: Option<String>,
-    #[serde(default)]
-    collection_path: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
 struct ImportAssetArgs {
     #[serde(default)]
@@ -159,120 +143,11 @@ struct CreateCollectionArgs {
     views: Option<Vec<View>>,
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct SearchArgs {
-    #[serde(default)]
-    space_id: Option<String>,
-    query: String,
-    #[serde(default)]
-    limit: Option<i64>,
-    #[serde(default)]
-    offset: Option<i64>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct QueryCollectionItemsArgs {
-    #[serde(default)]
-    space_id: Option<String>,
-    collection_path: String,
-    #[serde(default, alias = "filters")]
-    filter: Vec<Filter>,
-    #[serde(default)]
-    sort: Vec<Sort>,
-    #[serde(default)]
-    limit: Option<i64>,
-    #[serde(default)]
-    offset: Option<i64>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct AddCollectionColumnArgs {
-    #[serde(default)]
-    space_id: Option<String>,
-    collection_path: String,
-    column: Column,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct UpdateCollectionColumnArgs {
-    #[serde(default)]
-    space_id: Option<String>,
-    collection_path: String,
-    column_name: String,
-    patch: Value,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct DeleteCollectionColumnArgs {
-    #[serde(default)]
-    space_id: Option<String>,
-    collection_path: String,
-    column_name: String,
-    #[serde(default)]
-    delete_values: Option<bool>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct AddCollectionViewArgs {
-    #[serde(default)]
-    space_id: Option<String>,
-    collection_path: String,
-    view: View,
-    #[serde(default)]
-    position: Option<usize>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct UpdateCollectionViewArgs {
-    #[serde(default)]
-    space_id: Option<String>,
-    collection_path: String,
-    view_name: String,
-    patch: Value,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct DeleteCollectionViewArgs {
-    #[serde(default)]
-    space_id: Option<String>,
-    collection_path: String,
-    view_name: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct ListActorsArgs {
-    #[serde(default)]
-    space_id: Option<String>,
-    #[serde(default)]
-    all_time: Option<bool>,
-}
-
-fn json_to_yaml(value: Value) -> Result<serde_yml::Value, McpBusinessError> {
-    serde_yml::to_value(value)
-        .map_err(|error| McpBusinessError::new("INVALID_YAML_VALUE", error.to_string()))
-}
-
 fn rel_path_from_space(space: &str, path: &Path) -> String {
     path.strip_prefix(space)
         .unwrap_or(path)
         .to_string_lossy()
         .replace('\\', "/")
-}
-
-fn rel_paths_from_space(space: &str, paths: Vec<PathBuf>) -> Vec<String> {
-    paths
-        .into_iter()
-        .map(|path| rel_path_from_space(space, &path))
-        .collect()
 }
 
 fn schema_for_create_collection(args: &CreateCollectionArgs) -> CollectionSchema {

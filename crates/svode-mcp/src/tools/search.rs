@@ -1,8 +1,23 @@
-use super::*;
-use crate::index::service;
+//! Page search and Knowledge reads over the host-prepared index snapshots:
+//! bounded limits and text budget, frozen Space/Project scope and explicit
+//! freshness. No crawler or rebuild runs for a request.
+
+use std::path::{Path, PathBuf};
+
+use serde::Deserialize;
+use serde_json::{Value, json};
+use svode_core::git::path::{RootMode, normalize_repo_relative};
 use svode_core::index::knowledge::{
     KnowledgeFilters, KnowledgeResponse, KnowledgeScope, KnowledgeSource,
 };
+use svode_core::index::service::{self, SearchScope};
+use svode_core::index::state::IndexRuntimeState;
+
+use crate::args::{clamp_limit, offset};
+use crate::error::McpBusinessError;
+use crate::host::{McpHost, RequestTarget};
+use crate::protocol::ToolCallResult;
+use crate::target::{ROOT_SPACE_ID, index_key, is_root_space_id, resolve_space};
 
 const DEFAULT_SEARCH_LIMIT: usize = 20;
 const MAX_SEARCH_LIMIT: usize = 50;
@@ -18,6 +33,18 @@ const MAX_RESPONSE_DIAGNOSTICS: usize = 100;
 const NODE_KINDS: [&str; 4] = ["page", "collection", "agent_instruction", "skill"];
 const EDGE_KINDS: [&str; 4] = ["links_to", "relation", "member_of", "references"];
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SearchArgs {
+    #[serde(default)]
+    space_id: Option<String>,
+    query: String,
+    #[serde(default)]
+    limit: Option<i64>,
+    #[serde(default)]
+    offset: Option<i64>,
+}
+
 #[derive(Debug, Clone, Copy, Default, Deserialize)]
 #[serde(rename_all = "lowercase")]
 enum McpKnowledgeScope {
@@ -28,7 +55,7 @@ enum McpKnowledgeScope {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub(super) struct SearchKnowledgeArgs {
+pub(crate) struct SearchKnowledgeArgs {
     query: String,
     #[serde(default)]
     scope: Option<McpKnowledgeScope>,
@@ -42,7 +69,7 @@ pub(super) struct SearchKnowledgeArgs {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub(super) struct KnowledgeNodeArgs {
+pub(crate) struct KnowledgeNodeArgs {
     node_id: String,
     #[serde(default)]
     scope: Option<McpKnowledgeScope>,
@@ -52,7 +79,7 @@ pub(super) struct KnowledgeNodeArgs {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub(super) struct KnowledgeNeighborsArgs {
+pub(crate) struct KnowledgeNeighborsArgs {
     node_id: String,
     #[serde(default)]
     scope: Option<McpKnowledgeScope>,
@@ -66,7 +93,7 @@ pub(super) struct KnowledgeNeighborsArgs {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub(super) struct RelatedContextArgs {
+pub(crate) struct RelatedContextArgs {
     query: String,
     #[serde(default)]
     scope: Option<McpKnowledgeScope>,
@@ -82,30 +109,64 @@ pub(super) struct RelatedContextArgs {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub(super) struct KnowledgeStatusArgs {
+pub(crate) struct KnowledgeStatusArgs {
     #[serde(default)]
     scope: Option<McpKnowledgeScope>,
     #[serde(default)]
     space_id: Option<String>,
 }
 
-#[derive(Clone)]
 struct ResolvedScope {
     project: PathBuf,
     scope: KnowledgeScope,
     response: Value,
 }
 
-pub(super) async fn search_knowledge(
-    app: &AppHandle,
+pub(crate) async fn search_pages(
+    host: &impl McpHost,
+    target: &RequestTarget,
+    args: SearchArgs,
+) -> Result<ToolCallResult, McpBusinessError> {
+    resolve_space(target, args.space_id.as_deref())?;
+    let key = index_key(target, args.space_id.as_deref());
+    let limit = clamp_limit(args.limit);
+    let start = offset(args.offset);
+    let response = service::search_content(
+        host.read_runtime().index,
+        PathBuf::from(&target.project_path),
+        args.query,
+        None,
+        None,
+        Some(SearchScope::Space {
+            space_id: IndexRuntimeState::space_id_for_key(&key),
+        }),
+        Some(limit.saturating_add(start as i64)),
+    )
+    .await?;
+    let total = response.items.len();
+    let results = response
+        .items
+        .into_iter()
+        .skip(start)
+        .take(limit as usize)
+        .collect::<Vec<_>>();
+    Ok(ToolCallResult::ok(
+        format!("Found {} matching Pages.", results.len()),
+        json!({ "items": results, "total": total, "limit": limit, "offset": start }),
+    ))
+}
+
+pub(crate) async fn search_knowledge(
+    host: &impl McpHost,
+    target: &RequestTarget,
     args: SearchKnowledgeArgs,
 ) -> Result<ToolCallResult, McpBusinessError> {
     let query = validate_query(&args.query)?.to_string();
     let limit = bounded_limit(args.limit, DEFAULT_SEARCH_LIMIT, MAX_SEARCH_LIMIT, "limit")?;
     let node_kinds = validate_kinds(args.node_kinds, &NODE_KINDS, "nodeKinds")?;
-    let resolved = resolve_scope(app, args.scope, args.space_id).await?;
+    let resolved = resolve_scope(host, target, args.scope, args.space_id).await?;
     let mut response = read_effective_snapshot(
-        app,
+        host,
         &resolved,
         Some(&query),
         1,
@@ -145,37 +206,18 @@ pub(super) async fn search_knowledge(
     json_result(structured)
 }
 
-pub(super) async fn get_knowledge_node(
-    app: &AppHandle,
+pub(crate) async fn get_knowledge_node(
+    host: &impl McpHost,
+    target: &RequestTarget,
     args: KnowledgeNodeArgs,
 ) -> Result<ToolCallResult, McpBusinessError> {
     let source = parse_node_id(&args.node_id)?;
-    let resolved = resolve_scope(app, args.scope, args.space_id).await?;
-    let mut response = read_effective_snapshot(
-        app,
-        &resolved,
-        None,
-        1,
-        1,
-        1,
-        KnowledgeFilters {
-            node_kinds: Some(vec![source.kind.clone()]),
-            edge_kinds: Some(Vec::new()),
-            edge_source_kinds: Some(Vec::new()),
-            neighbor: None,
-            neighbor_limit: None,
-            source: Some(source),
-            sources: None,
-            edge_sources: None,
-        },
-    )
-    .await;
+    let resolved = resolve_scope(host, target, args.scope, args.space_id).await?;
+    let mut response =
+        read_effective_snapshot(host, &resolved, None, 1, 1, 1, node_filters(source)).await;
     let metadata_truncated = truncate_response_metadata(&mut response);
     let Some(node) = response.nodes.into_iter().next() else {
-        return Err(McpBusinessError::new(
-            "KNOWLEDGE_NODE_NOT_FOUND",
-            "the requested knowledge node is unavailable in this scope",
-        ));
+        return Err(node_not_found());
     };
     let search_item = response.search_items.into_iter().next();
     let structured = json!({
@@ -190,8 +232,9 @@ pub(super) async fn get_knowledge_node(
     json_result(structured)
 }
 
-pub(super) async fn get_knowledge_neighbors(
-    app: &AppHandle,
+pub(crate) async fn get_knowledge_neighbors(
+    host: &impl McpHost,
+    target: &RequestTarget,
     args: KnowledgeNeighborsArgs,
 ) -> Result<ToolCallResult, McpBusinessError> {
     let source = parse_node_id(&args.node_id)?;
@@ -202,10 +245,14 @@ pub(super) async fn get_knowledge_neighbors(
         "limit",
     )?;
     let edge_kinds = validate_kinds(args.edge_kinds, &EDGE_KINDS, "edgeKinds")?;
-    let resolved = resolve_scope(app, args.scope, args.space_id).await?;
-    ensure_node_exists(app, &resolved, &source).await?;
+    let resolved = resolve_scope(host, target, args.scope, args.space_id).await?;
+    let existing =
+        read_effective_snapshot(host, &resolved, None, 1, 1, 1, node_filters(source.clone())).await;
+    if existing.nodes.is_empty() {
+        return Err(node_not_found());
+    }
     let mut response = read_effective_snapshot(
-        app,
+        host,
         &resolved,
         None,
         1,
@@ -238,8 +285,9 @@ pub(super) async fn get_knowledge_neighbors(
     json_result(structured)
 }
 
-pub(super) async fn get_related_context(
-    app: &AppHandle,
+pub(crate) async fn get_related_context(
+    host: &impl McpHost,
+    target: &RequestTarget,
     args: RelatedContextArgs,
 ) -> Result<ToolCallResult, McpBusinessError> {
     let query = validate_query(&args.query)?.to_string();
@@ -256,10 +304,9 @@ pub(super) async fn get_related_context(
         "textBudget",
     )?;
     let node_kinds = validate_kinds(args.node_kinds, &NODE_KINDS, "nodeKinds")?;
-    let resolved = resolve_scope(app, args.scope, args.space_id).await?;
-    let state = app.state::<IndexState>();
+    let resolved = resolve_scope(host, target, args.scope, args.space_id).await?;
     let mut response = service::read_related_context(
-        &state,
+        host.read_runtime().index,
         &resolved.project,
         resolved.scope.clone(),
         &query,
@@ -284,13 +331,14 @@ pub(super) async fn get_related_context(
     json_result(structured)
 }
 
-pub(super) async fn get_knowledge_status(
-    app: &AppHandle,
+pub(crate) async fn get_knowledge_status(
+    host: &impl McpHost,
+    target: &RequestTarget,
     args: KnowledgeStatusArgs,
 ) -> Result<ToolCallResult, McpBusinessError> {
-    let resolved = resolve_scope(app, args.scope, args.space_id).await?;
+    let resolved = resolve_scope(host, target, args.scope, args.space_id).await?;
     let mut response =
-        read_effective_snapshot(app, &resolved, None, 1, 1, 1, KnowledgeFilters::default()).await;
+        read_effective_snapshot(host, &resolved, None, 1, 1, 1, KnowledgeFilters::default()).await;
     let truncated = truncate_response_metadata(&mut response);
     let structured = json!({
         "scope": resolved.response,
@@ -308,47 +356,35 @@ pub(super) async fn get_knowledge_status(
     json_result(structured)
 }
 
-async fn ensure_node_exists(
-    app: &AppHandle,
-    resolved: &ResolvedScope,
-    source: &KnowledgeSource,
-) -> Result<(), McpBusinessError> {
-    let response = read_effective_snapshot(
-        app,
-        resolved,
-        None,
-        1,
-        1,
-        1,
-        KnowledgeFilters {
-            node_kinds: Some(vec![source.kind.clone()]),
-            edge_kinds: Some(Vec::new()),
-            edge_source_kinds: Some(Vec::new()),
-            neighbor: None,
-            neighbor_limit: None,
-            source: Some(source.clone()),
-            sources: None,
-            edge_sources: None,
-        },
-    )
-    .await;
-    if response.nodes.is_empty() {
-        Err(McpBusinessError::new(
-            "KNOWLEDGE_NODE_NOT_FOUND",
-            "the requested knowledge node is unavailable in this scope",
-        ))
-    } else {
-        Ok(())
+fn node_filters(source: KnowledgeSource) -> KnowledgeFilters {
+    KnowledgeFilters {
+        node_kinds: Some(vec![source.kind.clone()]),
+        edge_kinds: Some(Vec::new()),
+        edge_source_kinds: Some(Vec::new()),
+        neighbor: None,
+        neighbor_limit: None,
+        source: Some(source),
+        sources: None,
+        edge_sources: None,
     }
 }
 
+fn node_not_found() -> McpBusinessError {
+    McpBusinessError::new(
+        "KNOWLEDGE_NODE_NOT_FOUND",
+        "the requested knowledge node is unavailable in this scope",
+    )
+}
+
+/// Knowledge scope inside the frozen request target: the default Space of
+/// the request unless `spaceId` or Project scope is explicit.
 async fn resolve_scope(
-    app: &AppHandle,
+    host: &impl McpHost,
+    target: &RequestTarget,
     scope: Option<McpKnowledgeScope>,
     space_id: Option<String>,
 ) -> Result<ResolvedScope, McpBusinessError> {
-    let context = active_context(app)?;
-    let project = PathBuf::from(&context.project_path);
+    let project = PathBuf::from(&target.project_path);
     match scope.unwrap_or_default() {
         McpKnowledgeScope::Project => {
             if space_id.is_some() {
@@ -365,30 +401,31 @@ async fn resolve_scope(
         }
         McpKnowledgeScope::Space => {
             let effective_space_id = match space_id {
-                Some(space_id) => normalize_space_id(Some(space_id))?,
-                None => context.active_space_id.clone(),
+                Some(space_id) => normalize_space_id(&space_id)?,
+                None => target.default_space_id.clone(),
             };
             if let Some(space_id) = effective_space_id.as_deref() {
-                app.state::<IndexState>()
+                host.read_runtime()
+                    .index
                     .key_for_project_space_id(&project, Some(space_id))
                     .await?;
             }
             Ok(ResolvedScope {
                 project,
-                scope: KnowledgeScope::Space {
-                    space_id: effective_space_id.clone(),
-                },
                 response: json!({
                     "kind": "space",
                     "spaceId": effective_space_id.as_deref().unwrap_or(ROOT_SPACE_ID),
                 }),
+                scope: KnowledgeScope::Space {
+                    space_id: effective_space_id,
+                },
             })
         }
     }
 }
 
 async fn read_effective_snapshot(
-    app: &AppHandle,
+    host: &impl McpHost,
     resolved: &ResolvedScope,
     query: Option<&str>,
     node_limit: usize,
@@ -396,10 +433,9 @@ async fn read_effective_snapshot(
     search_limit: usize,
     filters: KnowledgeFilters,
 ) -> KnowledgeResponse {
-    let state = app.state::<IndexState>();
     service::read_scoped_knowledge(
-        &state,
-        &resolved.project,
+        host.read_runtime().index,
+        Path::new(&resolved.project),
         resolved.scope.clone(),
         query,
         node_limit,
@@ -410,10 +446,7 @@ async fn read_effective_snapshot(
     .await
 }
 
-fn normalize_space_id(space_id: Option<String>) -> Result<Option<String>, McpBusinessError> {
-    let Some(space_id) = space_id else {
-        return Ok(None);
-    };
+fn normalize_space_id(space_id: &str) -> Result<Option<String>, McpBusinessError> {
     let space_id = space_id.trim();
     if space_id.is_empty() {
         return Err(McpBusinessError::new(
@@ -421,11 +454,7 @@ fn normalize_space_id(space_id: Option<String>) -> Result<Option<String>, McpBus
             "spaceId must not be empty",
         ));
     }
-    if is_root_space_id(space_id) {
-        Ok(None)
-    } else {
-        Ok(Some(space_id.to_string()))
-    }
+    Ok((!is_root_space_id(space_id)).then(|| space_id.to_string()))
 }
 
 fn parse_node_id(node_id: &str) -> Result<KnowledgeSource, McpBusinessError> {

@@ -4,12 +4,18 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::sync::{Arc, Mutex};
 
 use serde_json::{Value, json};
 use sqlx::SqlitePool;
+use svode_core::actors::resolver::ActorCatalogState;
 use svode_core::git::access::{RepositoryAccessSnapshot, RepositoryAccessStatus};
+use svode_core::git::cli::GitCli;
+use svode_core::git::state::GitRuntime;
 use svode_core::index::IndexKey;
+use svode_core::index::reindex::full_reindex;
+use svode_core::index::resolver::SpaceStatus;
 use svode_core::index::state::IndexRuntimeState;
 use svode_core::index::update::IndexUpdateState;
 use svode_core::page::nonce::WriteNonceRegistry;
@@ -18,7 +24,7 @@ use svode_mcp::catalog;
 use svode_mcp::control::{self, BridgeCall, MCP_PROTOCOL_VERSION};
 use svode_mcp::dispatch::call_tool;
 use svode_mcp::error::McpBusinessError;
-use svode_mcp::host::{McpHost, MutationRuntime, RequestTarget};
+use svode_mcp::host::{McpHost, MutationRuntime, ReadRuntime, RequestTarget};
 use svode_mcp::protocol::ToolCallResult;
 
 const FIRST_SLICE_TOOLS: [&str; 10] = [
@@ -44,6 +50,8 @@ struct FixtureHost {
     index: IndexRuntimeState,
     updates: IndexUpdateState,
     nonces: WriteNonceRegistry,
+    actors: ActorCatalogState,
+    git: GitRuntime,
 }
 
 impl FixtureHost {
@@ -58,6 +66,8 @@ impl FixtureHost {
             index: IndexRuntimeState::default(),
             updates: IndexUpdateState::new(Arc::new(RoutineStoreState::new())),
             nonces: WriteNonceRegistry::new(),
+            actors: ActorCatalogState::new(),
+            git: GitRuntime::new(),
         }
     }
 
@@ -97,7 +107,10 @@ impl McpHost for FixtureHost {
 
     async fn index_pool(&self, key: &IndexKey, _space_path: &Path) -> Option<SqlitePool> {
         self.pool_keys.lock().unwrap().push(key.clone());
-        self.pool.clone()
+        match &self.pool {
+            Some(pool) => Some(pool.clone()),
+            None => self.index.existing_pool(key).await,
+        }
     }
 
     async fn repository_access(
@@ -130,6 +143,14 @@ impl McpHost for FixtureHost {
             ));
         }
         Ok(())
+    }
+
+    fn read_runtime(&self) -> ReadRuntime<'_> {
+        ReadRuntime {
+            index: &self.index,
+            actors: &self.actors,
+            git: &self.git,
+        }
     }
 
     fn mutation_runtime(&self) -> MutationRuntime<'_> {
@@ -1084,4 +1105,568 @@ async fn handled_source_failure_rolls_back_the_whole_request() {
         read(&fixture, "links.md"),
         "---\ntitle: Links\n---\n[Leaf](leaf.md)\n"
     );
+}
+
+/// Indexed fixture in one Git repository: root Space with a linked Page,
+/// a schema-backed Collection and a relation target Collection, and a
+/// registered child Space with its own index pool.
+fn index_fixture() -> Fixture {
+    let temp = tempfile::tempdir().unwrap();
+    let project = temp.path().join("project").canonicalize_or_create();
+    write(
+        &project.join(".svode/config.json"),
+        &json!({
+            "name": "Project",
+            "spaces": [{ "id": "child", "path": "child", "repo": null }]
+        })
+        .to_string(),
+    );
+    write(
+        &project.join("child/.svode/config.json"),
+        &json!({ "name": "Child" }).to_string(),
+    );
+    write(&project.join("README.md"), "---\ntitle: Project\n---\n");
+    write(
+        &project.join("notes.md"),
+        "---\ntitle: Root Needle\n---\nNeedle root body [Alpha](tasks/alpha.md)\n",
+    );
+    write(
+        &project.join("tasks/schema.yaml"),
+        "columns:\n  - name: Status\n    type: text\n  - name: Points\n    type: number\nviews:\n  - type: table\n    name: Table\n",
+    );
+    write(&project.join("tasks/README.md"), "---\ntitle: Tasks\n---\n");
+    write(
+        &project.join("tasks/alpha.md"),
+        "---\ntitle: Alpha\nStatus: Todo\nPoints: 3\n---\nAlpha body\n",
+    );
+    write(
+        &project.join("tasks/beta.md"),
+        "---\ntitle: Beta\nStatus: Done\nPoints: 1\n---\nBeta body\n",
+    );
+    write(
+        &project.join("sprints/schema.yaml"),
+        "columns: []\nviews: []\n",
+    );
+    write(
+        &project.join("sprints/README.md"),
+        "---\ntitle: Sprints\n---\n",
+    );
+    write(&project.join("sprints/one.md"), "---\ntitle: One\n---\n");
+    write(&project.join("child/README.md"), "---\ntitle: Child\n---\n");
+    write(
+        &project.join("child/brief.md"),
+        "---\ntitle: Child Needle\n---\nNeedle child body\n",
+    );
+    git(&project, &["init", "-q"]);
+    git(&project, &["config", "user.email", "agent@example.com"]);
+    git(&project, &["config", "user.name", "Agent"]);
+    git(&project, &["add", "-A"]);
+    git(&project, &["commit", "-q", "-m", "fixture"]);
+    Fixture {
+        _temp: temp,
+        project,
+    }
+}
+
+fn git(dir: &Path, args: &[&str]) {
+    let status = Command::new("git")
+        .args(args)
+        .current_dir(dir)
+        .status()
+        .unwrap();
+    assert!(status.success(), "git {args:?}");
+}
+
+/// Host whose index state holds reindexed root and child pools, as the
+/// Desktop host keeps them for an open project.
+async fn indexed_host(fixture: &Fixture, host: FixtureHost) -> FixtureHost {
+    let project = &fixture.project;
+    host.index
+        .upsert_space(
+            project,
+            "child",
+            "child",
+            SpaceStatus::Ready,
+            Some("Child".to_string()),
+        )
+        .await;
+    let root = host
+        .index
+        .get_or_create(&IndexKey::Root(project.clone()))
+        .await
+        .unwrap();
+    full_reindex::<GitCli>(None, &root, project, &["child".to_string()])
+        .await
+        .unwrap();
+    let child = host
+        .index
+        .get_or_create(&IndexKey::Space {
+            project: project.clone(),
+            space_id: "child".to_string(),
+        })
+        .await
+        .unwrap();
+    full_reindex::<GitCli>(None, &child, &project.join("child"), &[])
+        .await
+        .unwrap();
+    host
+}
+
+fn titles(items: &Value) -> Vec<String> {
+    items
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|item| {
+            item["title"]
+                .as_str()
+                .or_else(|| item["meta"]["title"].as_str())
+                .unwrap()
+                .to_string()
+        })
+        .collect()
+}
+
+const INDEX_BACKED_TOOLS: [&str; 17] = [
+    "get_collection_schema",
+    "query_collection_items",
+    "list_actors",
+    "search_pages",
+    "search_knowledge",
+    "get_knowledge_node",
+    "get_knowledge_neighbors",
+    "get_related_context",
+    "get_knowledge_status",
+    "get_git_status",
+    "add_collection_column",
+    "update_collection_column",
+    "delete_collection_column",
+    "add_collection_view",
+    "update_collection_view",
+    "delete_collection_view",
+    "validate_collection_integrity",
+];
+
+#[tokio::test]
+async fn collection_schema_and_query_read_the_host_index() {
+    let fixture = index_fixture();
+    let host = indexed_host(&fixture, FixtureHost::new(None)).await;
+    let target = root_target(&fixture);
+
+    let schema = call_tool(
+        &host,
+        Some(&target),
+        "get_collection_schema",
+        json!({ "collectionPath": "tasks" }),
+    )
+    .await;
+    let columns = structured(&schema)["schema"]["columns"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|column| column["name"].as_str().unwrap().to_string())
+        .collect::<Vec<_>>();
+    assert_eq!(columns, vec!["Status", "Points"]);
+
+    let sorted = call_tool(
+        &host,
+        Some(&target),
+        "query_collection_items",
+        json!({
+            "collectionPath": "tasks",
+            "sort": [{ "field": "Points", "desc": false }],
+            "limit": 500,
+            "offset": -3
+        }),
+    )
+    .await;
+    let sorted = structured(&sorted);
+    assert_eq!(titles(&sorted["items"]), vec!["Beta", "Alpha"]);
+    assert_eq!(sorted["limit"], 200);
+    assert_eq!(sorted["offset"], 0);
+    assert!(sorted["items"][0]["meta"]["created"].is_string());
+
+    let filtered = call_tool(
+        &host,
+        Some(&target),
+        "query_collection_items",
+        json!({
+            "collectionPath": "tasks",
+            "filter": [{ "field": "Status", "op": "eq", "value": "Done" }],
+            "limit": 1
+        }),
+    )
+    .await;
+    assert_eq!(titles(&structured(&filtered)["items"]), vec!["Beta"]);
+
+    let unknown_field = call_tool(
+        &host,
+        Some(&target),
+        "query_collection_items",
+        json!({
+            "collectionPath": "tasks",
+            "filter": [{ "field": "Missing", "op": "eq", "value": "x" }]
+        }),
+    )
+    .await;
+    assert!(unknown_field.is_error);
+
+    let escaped = call_tool(
+        &host,
+        Some(&target),
+        "query_collection_items",
+        json!({ "collectionPath": "../outside" }),
+    )
+    .await;
+    assert!(escaped.is_error);
+    assert!(host.host_calls().is_empty());
+}
+
+#[tokio::test]
+async fn search_and_knowledge_stay_inside_the_frozen_scope() {
+    let fixture = index_fixture();
+    let host = indexed_host(&fixture, FixtureHost::new(None)).await;
+    let root = root_target(&fixture);
+    let child = child_target(&fixture);
+
+    let paths = |result: &ToolCallResult| {
+        structured(result)["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|item| item["path"].as_str().unwrap().to_string())
+            .collect::<Vec<_>>()
+    };
+    let root_search = call_tool(
+        &host,
+        Some(&root),
+        "search_pages",
+        json!({ "query": "Needle" }),
+    )
+    .await;
+    assert_eq!(paths(&root_search), vec!["notes.md"]);
+    let child_search = call_tool(
+        &host,
+        Some(&child),
+        "search_pages",
+        json!({ "query": "Needle", "limit": 0 }),
+    )
+    .await;
+    assert_eq!(paths(&child_search), vec!["brief.md"]);
+    assert_eq!(structured(&child_search)["limit"], 1);
+    let explicit_root = call_tool(
+        &host,
+        Some(&child),
+        "search_pages",
+        json!({ "query": "Needle", "spaceId": "root" }),
+    )
+    .await;
+    assert_eq!(paths(&explicit_root), vec!["notes.md"]);
+
+    let knowledge = call_tool(
+        &host,
+        Some(&child),
+        "search_knowledge",
+        json!({ "query": "Needle" }),
+    )
+    .await;
+    let knowledge = structured(&knowledge);
+    assert_eq!(
+        knowledge["scope"],
+        json!({ "kind": "space", "spaceId": "child" })
+    );
+    let node_ids = knowledge["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|item| item["nodeId"].as_str().unwrap().to_string())
+        .collect::<Vec<_>>();
+    assert!(!node_ids.is_empty());
+    assert!(
+        node_ids.iter().all(|id| id.contains(":child:")),
+        "{node_ids:?}"
+    );
+    assert!(knowledge["freshness"].is_array());
+    assert!(knowledge["status"].is_string());
+
+    let node = call_tool(
+        &host,
+        Some(&root),
+        "get_knowledge_node",
+        json!({ "nodeId": "page:root:notes.md" }),
+    )
+    .await;
+    assert_eq!(structured(&node)["node"]["source"]["path"], "notes.md");
+    let sibling = call_tool(
+        &host,
+        Some(&root),
+        "get_knowledge_node",
+        json!({ "nodeId": "page:child:brief.md" }),
+    )
+    .await;
+    assert_eq!(error_code(&sibling), "KNOWLEDGE_NODE_NOT_FOUND");
+
+    let neighbors = call_tool(
+        &host,
+        Some(&root),
+        "get_knowledge_neighbors",
+        json!({ "nodeId": "page:root:notes.md", "limit": 1 }),
+    )
+    .await;
+    let neighbors = structured(&neighbors);
+    assert_eq!(neighbors["limit"], 1);
+    assert!(neighbors["neighbors"].as_array().unwrap().len() <= 1);
+
+    let related = call_tool(
+        &host,
+        Some(&root),
+        "get_related_context",
+        json!({ "query": "Needle", "textBudget": 100 }),
+    )
+    .await;
+    let related = structured(&related);
+    assert_eq!(related["textBudget"], 100);
+    assert!(related["usedBudget"].as_u64().unwrap() <= 100);
+
+    let status = call_tool(
+        &host,
+        Some(&root),
+        "get_knowledge_status",
+        json!({ "scope": "project" }),
+    )
+    .await;
+    let status = structured(&status);
+    assert_eq!(status["scope"], json!({ "kind": "project" }));
+    assert_eq!(status["counts"]["totalPools"], 2);
+    assert_eq!(status["counts"]["readablePools"], 2);
+
+    for (tool, args, code) in [
+        (
+            "search_knowledge",
+            json!({ "query": "x", "scope": "project", "spaceId": "child" }),
+            "INVALID_KNOWLEDGE_SCOPE",
+        ),
+        (
+            "search_knowledge",
+            json!({ "query": "x", "spaceId": "missing" }),
+            "SPACE_NOT_FOUND",
+        ),
+        (
+            "search_knowledge",
+            json!({ "query": "x", "limit": 51 }),
+            "INVALID_KNOWLEDGE_LIMIT",
+        ),
+        (
+            "get_related_context",
+            json!({ "query": "x", "textBudget": 16_001 }),
+            "INVALID_KNOWLEDGE_LIMIT",
+        ),
+        (
+            "get_knowledge_node",
+            json!({ "nodeId": "page:root:../secret.md" }),
+            "INVALID_KNOWLEDGE_NODE_ID",
+        ),
+        (
+            "search_knowledge",
+            json!({ "query": "   " }),
+            "INVALID_KNOWLEDGE_QUERY",
+        ),
+    ] {
+        let result = call_tool(&host, Some(&root), tool, args).await;
+        assert_eq!(error_code(&result), code, "{tool}");
+    }
+    assert!(host.host_calls().is_empty());
+}
+
+#[tokio::test]
+async fn schema_and_view_changes_authorize_the_planned_set_and_return_the_normalized_schema() {
+    let fixture = index_fixture();
+    let project = fixture.project.clone();
+    let host = FixtureHost::new(None);
+    let target = root_target(&fixture);
+
+    let added = call_tool(
+        &host,
+        Some(&target),
+        "add_collection_column",
+        json!({
+            "collectionPath": "tasks",
+            "column": { "name": "Sprint", "type": "relation", "relation": "sprints", "two_way": "Tasks" }
+        }),
+    )
+    .await;
+    let added = structured(&added);
+    assert!(changed(added).contains(&"sprints/schema.yaml".to_string()));
+    assert!(changed(added).contains(&"tasks/schema.yaml".to_string()));
+    assert!(
+        added["schema"]["columns"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|column| column["name"] == "Sprint")
+    );
+    assert!(read(&fixture, "sprints/schema.yaml").contains("name: Tasks"));
+    assert!(host.authorized().contains(&project));
+
+    let updated = call_tool(
+        &host,
+        Some(&target),
+        "update_collection_column",
+        json!({ "collectionPath": "tasks", "columnName": "Points", "patch": { "min": 0 } }),
+    )
+    .await;
+    assert!(read(&fixture, "tasks/schema.yaml").contains("min: 0"));
+    assert_eq!(changed(structured(&updated)), vec!["tasks/schema.yaml"]);
+
+    let deleted = call_tool(
+        &host,
+        Some(&target),
+        "delete_collection_column",
+        json!({ "collectionPath": "tasks", "columnName": "Points", "deleteValues": true }),
+    )
+    .await;
+    assert!(changed(structured(&deleted)).contains(&"tasks/alpha.md".to_string()));
+    assert!(!read(&fixture, "tasks/alpha.md").contains("Points"));
+
+    let view = call_tool(
+        &host,
+        Some(&target),
+        "add_collection_view",
+        json!({
+            "collectionPath": "tasks",
+            "view": { "type": "table", "name": "Board" }
+        }),
+    )
+    .await;
+    let views = structured(&view)["schema"]["views"]
+        .as_array()
+        .unwrap()
+        .clone();
+    assert_eq!(views.len(), 2);
+    let before = read(&fixture, "tasks/schema.yaml");
+    let incompatible = call_tool(
+        &host,
+        Some(&target),
+        "add_collection_view",
+        json!({
+            "collectionPath": "tasks",
+            "view": { "type": "board", "name": "Bad", "group_by": "Status" }
+        }),
+    )
+    .await;
+    assert!(incompatible.is_error);
+    assert_eq!(before, read(&fixture, "tasks/schema.yaml"));
+    let renamed = call_tool(
+        &host,
+        Some(&target),
+        "update_collection_view",
+        json!({ "collectionPath": "tasks", "viewName": "Board", "patch": { "name": "Kanban" } }),
+    )
+    .await;
+    assert!(structured(&renamed)["schema"]["views"][1]["name"] == "Kanban");
+    assert_ne!(before, read(&fixture, "tasks/schema.yaml"));
+    let removed = call_tool(
+        &host,
+        Some(&target),
+        "delete_collection_view",
+        json!({ "collectionPath": "tasks", "viewName": "Kanban" }),
+    )
+    .await;
+    assert_eq!(
+        structured(&removed)["schema"]["views"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+
+    let schema_before = read(&fixture, "tasks/schema.yaml");
+    let denied = FixtureHost::denying_mutations();
+    for (tool, args) in [
+        (
+            "add_collection_column",
+            json!({ "collectionPath": "tasks", "column": { "name": "Extra", "type": "text" } }),
+        ),
+        (
+            "update_collection_column",
+            json!({ "collectionPath": "tasks", "columnName": "Status", "patch": { "color": "red" } }),
+        ),
+        (
+            "delete_collection_column",
+            json!({ "collectionPath": "tasks", "columnName": "Status" }),
+        ),
+        (
+            "add_collection_view",
+            json!({ "collectionPath": "tasks", "view": { "type": "table", "name": "Other" } }),
+        ),
+        (
+            "update_collection_view",
+            json!({ "collectionPath": "tasks", "viewName": "Table", "patch": { "name": "T" } }),
+        ),
+        (
+            "delete_collection_view",
+            json!({ "collectionPath": "tasks", "viewName": "Table" }),
+        ),
+    ] {
+        let result = call_tool(&denied, Some(&target), tool, args).await;
+        assert_eq!(error_code(&result), "REPOSITORY_ACCESS_DENIED", "{tool}");
+    }
+    assert_eq!(schema_before, read(&fixture, "tasks/schema.yaml"));
+    assert!(host.host_calls().is_empty() && denied.host_calls().is_empty());
+}
+
+#[tokio::test]
+async fn integrity_git_status_and_actors_read_through_the_host_runtime() {
+    let fixture = index_fixture();
+    let host = FixtureHost::new(None);
+    let target = root_target(&fixture);
+
+    let integrity = call_tool(
+        &host,
+        Some(&target),
+        "validate_collection_integrity",
+        json!({}),
+    )
+    .await;
+    let integrity = structured(&integrity);
+    assert_eq!(integrity["errorCount"], 0);
+    assert!(integrity["collectionPath"].is_null());
+    let escaped = call_tool(
+        &host,
+        Some(&target),
+        "validate_collection_integrity",
+        json!({ "collectionPath": "../x" }),
+    )
+    .await;
+    assert!(escaped.is_error);
+
+    write(&fixture.project.join("notes.md"), "changed");
+    let status = call_tool(&host, Some(&target), "get_git_status", json!({})).await;
+    let status = &structured(&status)["status"];
+    assert_eq!(status["hasUnstaged"], true);
+    assert!(
+        status["files"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|file| file["path"] == "notes.md")
+    );
+
+    let actors = call_tool(&host, Some(&target), "list_actors", json!({})).await;
+    let actors = structured(&actors)["actors"].as_array().unwrap().clone();
+    let agent = actors
+        .iter()
+        .find(|actor| actor["email"] == "agent@example.com")
+        .unwrap();
+    assert_eq!(agent["name"], "Agent");
+    assert_eq!(agent["commitCount"], 1);
+    assert_eq!(agent["isMe"], true);
+
+    // None of the family routes through the host handlers any more.
+    let limited = FixtureHost::serving(&FIRST_SLICE_TOOLS);
+    for name in INDEX_BACKED_TOOLS {
+        let result = call_tool(&limited, Some(&target), name, json!({})).await;
+        assert_eq!(error_code(&result), "UNKNOWN_TOOL", "{name}");
+    }
+    assert!(host.host_calls().is_empty() && limited.host_calls().is_empty());
 }
