@@ -1,0 +1,136 @@
+//! JSON, exit and output contract of every public command through the real
+//! `svode` binary with the desktop app closed. Commands served from project
+//! sources succeed; the rest answer `MODE_UNAVAILABLE` until the headless
+//! runtime is connected. No command changes a file.
+
+mod common;
+
+use std::process::{Command, Stdio};
+
+use common::commands::{CASES, argv, command_paths, fixture};
+use common::process::{BIN, json, snapshot, svode};
+use serde_json::Value;
+use svode_cli::host::SourceHost;
+use svode_tools::host::ToolHost;
+
+fn served(tools: &[&str]) -> bool {
+    tools.iter().all(|tool| SourceHost.serves_tool(tool))
+}
+
+#[test]
+fn every_command_keeps_the_json_envelope_exit_codes_and_output_streams() {
+    let fixture = fixture();
+    let before = snapshot(fixture.temp.path());
+    for case in CASES {
+        let args = argv(&fixture, case);
+        let (exit, value) = json(&fixture.input, &args, None);
+        assert_eq!(value["schemaVersion"], 1, "{}: {value}", case.name);
+        if served(case.tools) {
+            assert_eq!(exit, 0, "{}: {value}", case.name);
+            assert_eq!(value["ok"], true, "{}", case.name);
+            assert!(value["target"].is_object(), "{}: {value}", case.name);
+            assert!(value.get("error").is_none(), "{}", case.name);
+        } else {
+            assert_eq!(exit, 1, "{}: {value}", case.name);
+            assert_eq!(value["ok"], false, "{}", case.name);
+            let error = &value["error"];
+            assert_eq!(error["code"], "MODE_UNAVAILABLE", "{}", case.name);
+            assert!(error["message"].is_string(), "{}", case.name);
+            assert_eq!(
+                error["target"]["projectPath"],
+                fixture.project.to_str().unwrap(),
+                "{}: failure keeps the resolved target",
+                case.name
+            );
+        }
+        if value["ok"] == true && case.name != "app validate" && case.name != "guide" {
+            assert_eq!(
+                value["target"]["projectPath"],
+                fixture.project.to_str().unwrap(),
+                "{}",
+                case.name
+            );
+            assert_eq!(value["target"]["spaceId"], "root", "{}", case.name);
+        }
+
+        // Human mode: the same exit; a result on stdout, or the code and
+        // target on stderr with nothing on stdout.
+        let human = svode(&fixture.input, &args);
+        assert_eq!(human.status.code(), Some(exit), "{}", case.name);
+        let stdout = String::from_utf8(human.stdout).unwrap();
+        let stderr = String::from_utf8(human.stderr).unwrap();
+        if exit == 0 {
+            assert!(!stdout.trim().is_empty(), "{}", case.name);
+            assert!(
+                serde_json::from_str::<Value>(&stdout)
+                    .map_or(true, |value| value.get("schemaVersion").is_none()),
+                "{}: human output is not the JSON envelope",
+                case.name
+            );
+        } else {
+            assert!(stdout.is_empty(), "{}: {stdout}", case.name);
+            assert!(
+                stderr.starts_with("error[MODE_UNAVAILABLE]"),
+                "{}: {stderr}",
+                case.name
+            );
+            assert!(stderr.contains("target: "), "{}: {stderr}", case.name);
+        }
+    }
+    assert_eq!(snapshot(fixture.temp.path()), before);
+}
+
+#[test]
+fn every_command_rejects_an_unknown_flag_with_exit_two_and_usage() {
+    let fixture = fixture();
+    for case in CASES {
+        let mut args = argv(&fixture, case);
+        args.push("--no-such-flag");
+        let (exit, value) = json(&fixture.input, &args, None);
+        assert_eq!(exit, 2, "{}: {value}", case.name);
+        assert_eq!(value["schemaVersion"], 1);
+        assert_eq!(value["error"]["code"], "INVALID_ARGUMENT", "{}", case.name);
+
+        let human = svode(&fixture.input, &args);
+        assert_eq!(human.status.code(), Some(2), "{}", case.name);
+        assert!(human.stdout.is_empty(), "{}", case.name);
+        let stderr = String::from_utf8(human.stderr).unwrap();
+        assert!(stderr.contains("Usage:"), "{}: {stderr}", case.name);
+    }
+}
+
+/// Root, every noun, verb group and command explain themselves with a
+/// working example, outside any Project and without a runtime.
+#[test]
+fn every_help_page_has_an_example_and_needs_no_project() {
+    let empty = tempfile::tempdir().unwrap();
+    let mut paths = vec![String::new()];
+    paths.extend(command_paths().into_iter().map(|(path, _)| path));
+    for path in paths {
+        let mut args = path.split_whitespace().collect::<Vec<_>>();
+        args.push("--help");
+        let output = Command::new(BIN)
+            .args(&args)
+            .current_dir(empty.path())
+            .stdin(Stdio::null())
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(0), "{path}");
+        assert!(output.stderr.is_empty(), "{path}");
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        assert!(stdout.contains("Usage: svode"), "{path}: {stdout}");
+        assert!(
+            stdout.contains("Example"),
+            "`svode {path} --help`: {stdout}"
+        );
+        assert!(!stdout.contains("run_routine"), "{path}");
+    }
+    let routine = svode(empty.path(), &["routine", "--help"]);
+    let routine = String::from_utf8(routine.stdout).unwrap();
+    assert!(
+        !routine
+            .lines()
+            .any(|line| line.trim_start().starts_with("run"))
+    );
+    assert!(empty.path().read_dir().unwrap().next().is_none());
+}

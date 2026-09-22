@@ -163,4 +163,8 @@ Context and input codes are owned by the CLI; every other code comes unchanged f
 
 ## Help and version
 
-`svode --help`, `svode <noun> --help`, `svode <noun> <verb> --help` and `svode --version` work without a Project and name a working example.
+`svode --help`, `svode <noun> --help`, `svode <noun> <verb> --help` and `svode --version` work without a Project, and every help page names a working example. Mutating commands describe the safe read → edit → write cycle and recovery; commands that need the headless runtime say so.
+
+## Installation
+
+The desktop app bundle ships the `svode` binary of the same version as a sidecar next to its own executable (Linux packages place sidecars in `/usr/bin`). Managed `PATH` setup, installation without the desktop app and updates are not part of this build.

@@ -2,5 +2,6 @@
 //! part of them.
 #![allow(dead_code)]
 
+pub mod commands;
 pub mod harness;
 pub mod process;

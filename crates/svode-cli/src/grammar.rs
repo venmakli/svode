@@ -58,37 +58,54 @@ pub struct Cli {
 #[derive(Debug, Subcommand)]
 pub enum Noun {
     /// The Project and its Spaces.
+    #[command(after_help = "Example:\n  svode --project ~/Notes project info --json")]
     Project {
         #[command(subcommand)]
         verb: ProjectVerb,
     },
     /// Spaces of the Project.
+    #[command(
+        after_help = "Examples:\n  svode --project ~/Notes space list\n  svode --project ~/Notes space readme read --space research"
+    )]
     Space {
         #[command(subcommand)]
         verb: SpaceVerb,
     },
     /// Standalone Pages.
+    #[command(
+        after_help = "Examples:\n  svode --project ~/Notes page list --path notes\n  svode --project ~/Notes page read --path notes/today.md --json"
+    )]
     Page {
         #[command(subcommand)]
         verb: PageVerb,
     },
     /// Collections: schema, items query and README.
+    #[command(
+        after_help = "Examples:\n  svode --project ~/Notes collection list\n  svode --project ~/Notes collection schema --collection tasks --json"
+    )]
     Collection {
         #[command(subcommand)]
         verb: CollectionVerb,
     },
     /// Collection items.
+    #[command(
+        after_help = "Example:\n  svode --project ~/Notes item read --path tasks/fix-login.md --json"
+    )]
     Item {
         #[command(subcommand)]
         verb: ItemVerb,
     },
     /// Structure of Pages, folders and Collections: rename, move, reorder
     /// and convert.
+    #[command(
+        after_help = "Example:\n  svode --project ~/Notes content move --path notes/Plan.md --to-parent archive"
+    )]
     Content {
         #[command(subcommand)]
         verb: ContentVerb,
     },
     /// Actors from Git history.
+    #[command(after_help = "Example:\n  svode --project ~/Notes actor list --json")]
     Actor {
         #[command(subcommand)]
         verb: ActorVerb,
@@ -97,26 +114,37 @@ pub enum Noun {
     #[command(after_help = format!("{HEADLESS}\n\nExample:\n  svode search \"release notes\" --limit 10 --json"))]
     Search(SearchArgs),
     /// Knowledge projection: search, nodes, neighbors, context and status.
+    #[command(
+        after_help = "Examples:\n  svode --project ~/Notes knowledge search \"onboarding\" --json\n  svode --project ~/Notes knowledge status"
+    )]
     Knowledge {
         #[command(subcommand)]
         verb: KnowledgeVerb,
     },
     /// Git state of the selected Space.
+    #[command(after_help = "Example:\n  svode --project ~/Notes git status --json")]
     Git {
         #[command(subcommand)]
         verb: GitVerb,
     },
     /// Managed file assets next to Markdown content.
+    #[command(
+        after_help = "Example:\n  svode --project ~/Notes asset import --path notes/today.md --file chart.png --json"
+    )]
     Asset {
         #[command(subcommand)]
         verb: AssetVerb,
     },
     /// Svode Apps.
+    #[command(after_help = "Example:\n  svode app validate --file apps/board/app.yaml --json")]
     App {
         #[command(subcommand)]
         verb: AppVerb,
     },
     /// Routine definitions of a Space or Collection owner.
+    #[command(
+        after_help = "Examples:\n  svode --project ~/Notes routine list --space root --json\n  svode --project ~/Notes routine get --collection tasks --id routine:01j9… --json"
+    )]
     Routine {
         #[command(subcommand)]
         verb: RoutineVerb,
@@ -144,11 +172,17 @@ pub enum SpaceVerb {
     #[command(after_help = "Example:\n  svode --project ~/Notes space list")]
     List,
     /// The Space README.
+    #[command(
+        after_help = "Example:\n  svode --project ~/Notes space readme read --space research"
+    )]
     Readme {
         #[command(subcommand)]
         verb: SpaceReadmeVerb,
     },
     /// Metadata of the Space README.
+    #[command(
+        after_help = "Example:\n  svode --project ~/Notes space meta set --space research --description \"Research notes\""
+    )]
     Meta {
         #[command(subcommand)]
         verb: MetaVerb<NoSelector>,
@@ -273,6 +307,9 @@ svode --project ~/Notes page read --space research --path ideas/README.md --json
     #[command(after_help = write_help("svode page read --path notes/today.md > today.md && $EDITOR today.md && svode page write --path notes/today.md --body-file today.md"))]
     Write(PageWriteArgs),
     /// Metadata of a standalone Page.
+    #[command(
+        after_help = "Example:\n  svode --project ~/Notes page meta set --path notes/today.md --icon 📝"
+    )]
     Meta {
         #[command(subcommand)]
         verb: MetaVerb<PathSelector>,
@@ -367,11 +404,17 @@ pub enum CollectionVerb {
     #[command(after_help = format!("Filter and sort are JSON arrays of the shared query shape, read from a file or stdin (`-`).\n\n{HEADLESS}\n\nExample:\n  svode --project ~/Notes collection query --collection tasks --filter-file filter.json --limit 20 --json"))]
     Query(CollectionQueryArgs),
     /// The Collection README.
+    #[command(
+        after_help = "Example:\n  svode --project ~/Notes collection readme read --collection tasks"
+    )]
     Readme {
         #[command(subcommand)]
         verb: CollectionReadmeVerb,
     },
     /// Metadata of the Collection README.
+    #[command(
+        after_help = "Example:\n  svode --project ~/Notes collection meta set --collection tasks --clear-description"
+    )]
     Meta {
         #[command(subcommand)]
         verb: MetaVerb<CollectionSelector>,
@@ -388,11 +431,17 @@ pub enum CollectionVerb {
     )]
     Check(CollectionCheckArgs),
     /// Schema columns of one Collection.
+    #[command(
+        after_help = "Example:\n  svode --project ~/Notes collection column add --collection tasks --column-file column.json"
+    )]
     Column {
         #[command(subcommand)]
         verb: ColumnVerb,
     },
     /// Views of one Collection.
+    #[command(
+        after_help = "Example:\n  svode --project ~/Notes collection view add --collection tasks --view-file board.json"
+    )]
     View {
         #[command(subcommand)]
         verb: ViewVerb,
@@ -562,11 +611,17 @@ pub enum ItemVerb {
     #[command(after_help = write_help("svode --project ~/Notes item write --path tasks/fix-login.md --body-file - < body.md"))]
     Write(ItemWriteArgs),
     /// Fields of one Collection item.
+    #[command(
+        after_help = "Example:\n  svode --project ~/Notes item fields set --path tasks/fix-login.md --fields-file fields.json"
+    )]
     Fields {
         #[command(subcommand)]
         verb: ItemFieldsVerb,
     },
     /// Metadata of one Collection item.
+    #[command(
+        after_help = "Example:\n  svode --project ~/Notes item meta set --path tasks/fix-login.md --title \"Fix sign-in\""
+    )]
     Meta {
         #[command(subcommand)]
         verb: MetaVerb<PathSelector>,
