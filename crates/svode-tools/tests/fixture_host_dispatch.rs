@@ -2132,6 +2132,31 @@ async fn managed_import_uses_the_shared_plan_and_host_delivery() {
     assert!(deliveries[0].converted_page);
     assert_eq!(deliveries[0].canonical_content_path, "leaf/README.md");
 
+    // Without spaceId the frozen default child Space owns the import, not
+    // the root Space with a README at the same relative path.
+    host.index
+        .upsert_space(
+            &fixture.project,
+            "child",
+            "child",
+            SpaceStatus::Ready,
+            Some("Child".to_string()),
+        )
+        .await;
+    let child = call_tool(
+        &host,
+        Some(&child_target(&fixture)),
+        "import_asset",
+        json!({ "contentPath": "README.md", "sourcePath": photo.to_string_lossy() }),
+    )
+    .await;
+    let child = structured(&child);
+    assert_eq!(child["spaceId"], "child");
+    assert_eq!(child["contentPath"], "README.md");
+    let attachment = child["attachmentPath"].as_str().unwrap();
+    assert!(fixture.project.join("child").join(attachment).is_file());
+    assert!(!fixture.project.join(attachment).exists());
+
     let escaped = call_tool(
         &host,
         Some(&target),

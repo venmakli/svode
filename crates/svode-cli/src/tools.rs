@@ -11,9 +11,10 @@ use svode_tools::host::ToolHost;
 
 use crate::error::CliError;
 use crate::grammar::{
-    ActorVerb, CollectionReadmeVerb, CollectionVerb, ColumnVerb, ContentVerb, ConvertTarget,
-    GitVerb, ItemFieldsVerb, ItemVerb, KnowledgeScope, KnowledgeVerb, MetaVerb, MetadataPatch,
-    NamedSelector, Noun, Pagination, ProjectVerb, SpaceReadmeVerb, SpaceVerb, ViewVerb,
+    ActorVerb, AppVerb, AssetVerb, CollectionReadmeVerb, CollectionVerb, ColumnVerb, ContentVerb,
+    ConvertTarget, GitVerb, ItemFieldsVerb, ItemVerb, KnowledgeScope, KnowledgeVerb, MetaVerb,
+    MetadataPatch, NamedSelector, Noun, Pagination, ProjectVerb, SpaceReadmeVerb, SpaceVerb,
+    ViewVerb,
 };
 use crate::host::mode_unavailable;
 use crate::input;
@@ -36,6 +37,8 @@ pub struct ToolCommand {
     /// Whether the tool addresses a Space; a Project-level tool gets no
     /// `spaceId`.
     pub space_scoped: bool,
+    /// Whether the tool runs without a Project, so no target is resolved.
+    pub project_free: bool,
 }
 
 impl ToolCommand {
@@ -47,11 +50,17 @@ impl ToolCommand {
             selectors: Map::new(),
             render,
             space_scoped: true,
+            project_free: false,
         }
     }
 
     fn project_scoped(mut self) -> Self {
         self.space_scoped = false;
+        self
+    }
+
+    fn project_free(mut self) -> Self {
+        self.project_free = true;
         self
     }
 
@@ -515,6 +524,22 @@ pub fn command(noun: Noun, cwd: &Path) -> Result<Option<ToolCommand>, CliError> 
         } => ToolCommand::new("git status", "get_git_status", |value| {
             render::pretty(&value["status"])
         }),
+        Noun::Asset {
+            verb: AssetVerb::Import(args),
+        } => ToolCommand::new("asset import", "import_asset", render::import)
+            .selector("contentPath", "path", args.path)
+            // The shared operation takes an absolute source path; a relative
+            // one is the caller's current directory.
+            .arg(
+                "sourcePath",
+                cwd.join(&args.file).to_string_lossy().to_string(),
+            )
+            .optional("fileName", args.name),
+        Noun::App {
+            verb: AppVerb::Validate(args),
+        } => ToolCommand::new("app validate", "validate_app_manifest", render::manifest)
+            .arg("yaml", input::text(cwd, "file", &args.file)?)
+            .project_free(),
         Noun::Page {
             verb: PageVerb::Read(_),
         }
@@ -523,14 +548,15 @@ pub fn command(noun: Noun, cwd: &Path) -> Result<Option<ToolCommand>, CliError> 
     }))
 }
 
-/// Runs one tool command in the resolved target. A tool the host does not
-/// serve fails with `MODE_UNAVAILABLE` before any effect.
+/// Runs one tool command in the resolved target, or without one for a
+/// Project-free command. A tool the host does not serve fails with
+/// `MODE_UNAVAILABLE` before any effect.
 pub async fn run(
     host: &impl ToolHost,
-    target: &Target,
+    target: Option<&Target>,
     command: ToolCommand,
 ) -> Result<Outcome, CliError> {
-    let mut known = target.envelope();
+    let mut known = target.map(Target::envelope).unwrap_or_default();
     known.extend(command.selectors);
     if !host.serves_tool(command.tool) {
         let error = mode_unavailable(&format!("`svode {}`", command.name));
@@ -539,11 +565,11 @@ pub async fn run(
             .with_hint(RUNTIME_HINT));
     }
     let mut args = command.args;
-    if target.explicit_space && command.space_scoped {
+    if let Some(target) = target.filter(|target| target.explicit_space && command.space_scoped) {
         args.insert("spaceId".into(), json!(target.space_id()));
     }
-    let request = target.request();
-    let result = call_tool(host, Some(&request), command.tool, Value::Object(args)).await;
+    let request = target.map(Target::request);
+    let result = call_tool(host, request.as_ref(), command.tool, Value::Object(args)).await;
     let summary = result
         .content
         .first()

@@ -136,6 +136,48 @@ pub fn integrity(value: &Value) -> String {
     )
 }
 
+/// Validity and runtime type of an App manifest with its Settings
+/// references, or `code path: message` per diagnostic.
+pub fn manifest(value: &Value) -> String {
+    if value["valid"] == true {
+        let references = value["settingsReferences"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|reference| format!("setting {}", text(reference)));
+        return lines(
+            std::iter::once(format!("valid {} App", text(&value["runtimeType"]))).chain(references),
+        );
+    }
+    let diagnostics = value["diagnostics"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|diagnostic| {
+            format!(
+                "{} {}: {}",
+                text(&diagnostic["code"]),
+                text(&diagnostic["path"]),
+                text(&diagnostic["message"])
+            )
+        });
+    lines(std::iter::once("invalid".to_string()).chain(diagnostics))
+}
+
+/// Canonical paths of an imported asset, then the changed paths.
+pub fn import(value: &Value) -> String {
+    let mut out = format!(
+        "contentPath {}\nattachmentPath {}\nmarkdownUrl {}\n",
+        text(&value["contentPath"]),
+        text(&value["attachmentPath"]),
+        text(&value["markdownUrl"])
+    );
+    if let Some(cover) = value["coverPath"].as_str() {
+        out.push_str(&format!("coverPath {cover}\n"));
+    }
+    out + &changes(value)
+}
+
 /// Changed paths of a mutation, one per line.
 pub fn changes(value: &Value) -> String {
     lines(

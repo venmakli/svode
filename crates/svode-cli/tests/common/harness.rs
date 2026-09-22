@@ -5,20 +5,25 @@
 use std::collections::BTreeSet;
 use std::ffi::OsString;
 use std::fs;
+use std::future::Future;
 use std::path::{Path, PathBuf};
+use std::pin::Pin;
 use std::process::Command;
 use std::sync::{Arc, Mutex};
 
 use serde_json::Value;
 use sqlx::SqlitePool;
+use svode_core::actors::resolver::ActorCatalogState;
 use svode_core::attachments::import::{LfsReadiness, ManagedImportDelivery};
 use svode_core::git::access::{RepositoryAccessSnapshot, RepositoryAccessStatus};
+use svode_core::git::state::GitRuntime;
 use svode_core::index::IndexKey;
 use svode_core::index::state::IndexRuntimeState;
 use svode_core::index::update::IndexUpdateState;
 use svode_core::page::nonce::WriteNonceRegistry;
 use svode_core::routines::model::{ResolvedRoutineOwner, RoutineLiveEvidence};
 use svode_core::routines::store_state::RoutineStoreState;
+use svode_core::storage::config::AssetsSpaceConfig;
 use svode_tools::error::ToolError;
 use svode_tools::host::{MutationRuntime, ReadRuntime, RoutineRunner, RoutineRuntime, ToolHost};
 
@@ -37,6 +42,13 @@ pub struct WriteHost {
     pub index: IndexRuntimeState,
     updates: IndexUpdateState,
     nonces: WriteNonceRegistry,
+    actors: ActorCatalogState,
+    git: GitRuntime,
+    /// Answer of the Git LFS readiness probe; `None` means the host has no
+    /// probe.
+    lfs_ready: Option<bool>,
+    pub lfs_probes: Mutex<Vec<PathBuf>>,
+    pub deliveries: Mutex<Vec<ManagedImportDelivery>>,
 }
 
 impl WriteHost {
@@ -50,6 +62,19 @@ impl WriteHost {
             routines,
             index: IndexRuntimeState::default(),
             nonces: WriteNonceRegistry::new(),
+            actors: ActorCatalogState::new(),
+            git: GitRuntime::new(),
+            lfs_ready: None,
+            lfs_probes: Mutex::new(Vec::new()),
+            deliveries: Mutex::new(Vec::new()),
+        }
+    }
+
+    /// Host whose Git LFS readiness probe answers `ready`.
+    pub fn with_lfs(ready: bool) -> Self {
+        Self {
+            lfs_ready: Some(ready),
+            ..Self::new(Access::Grant)
         }
     }
 
@@ -112,15 +137,19 @@ impl ToolHost for WriteHost {
     }
 
     fn read_runtime(&self) -> ReadRuntime<'_> {
-        unreachable!("writes only")
+        ReadRuntime {
+            index: &self.index,
+            actors: &self.actors,
+            git: &self.git,
+        }
     }
 
     fn lfs_readiness(&self) -> Option<&dyn LfsReadiness> {
-        None
+        self.lfs_ready.map(|_| self as &dyn LfsReadiness)
     }
 
-    fn deliver_managed_import(&self, _delivery: &ManagedImportDelivery) {
-        unreachable!("no managed import")
+    fn deliver_managed_import(&self, delivery: &ManagedImportDelivery) {
+        self.deliveries.lock().unwrap().push(delivery.clone());
     }
 
     fn routine_runtime(&self) -> Result<RoutineRuntime<'_>, ToolError> {
@@ -134,6 +163,18 @@ impl ToolHost for WriteHost {
 
     fn routine_runner(&self) -> Option<&dyn RoutineRunner> {
         None
+    }
+}
+
+impl LfsReadiness for WriteHost {
+    fn lfs_ready<'a>(
+        &'a self,
+        repo_dir: &'a Path,
+        _config: &'a AssetsSpaceConfig,
+    ) -> Pin<Box<dyn Future<Output = bool> + Send + 'a>> {
+        self.lfs_probes.lock().unwrap().push(repo_dir.to_path_buf());
+        let ready = self.lfs_ready.unwrap_or(false);
+        Box::pin(async move { ready })
     }
 }
 

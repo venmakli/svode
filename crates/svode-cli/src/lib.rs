@@ -70,8 +70,12 @@ async fn execute(host: &impl ToolHost, cli: Cli, cwd: &Path) -> Result<Outcome, 
         Noun::Doctor => Ok(doctor::run(host, selectors).await),
         noun => {
             let command = tools::command(noun, cwd)?.expect("CLI-owned commands are handled above");
-            let target = selectors.resolve()?;
-            tools::run(host, &target, command).await
+            let target = if command.project_free {
+                None
+            } else {
+                Some(selectors.resolve()?)
+            };
+            tools::run(host, target.as_ref(), command).await
         }
     }
 }

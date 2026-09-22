@@ -91,6 +91,16 @@ pub enum Noun {
         #[command(subcommand)]
         verb: GitVerb,
     },
+    /// Managed file assets next to Markdown content.
+    Asset {
+        #[command(subcommand)]
+        verb: AssetVerb,
+    },
+    /// Svode Apps.
+    App {
+        #[command(subcommand)]
+        verb: AppVerb,
+    },
     /// Product guidance and files-first rules for agents and scripts.
     #[command(after_help = "Example:\n  svode guide")]
     Guide,
@@ -773,4 +783,42 @@ pub enum GitVerb {
     /// Read-only Git status of the selected Space.
     #[command(after_help = format!("{HEADLESS}\n\nExample:\n  svode --project ~/Notes git status --json"))]
     Status,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum AssetVerb {
+    /// Copy one local file next to the Markdown content that owns it.
+    #[command(after_help = format!("The source is copied, never moved, and stored by the asset routing of its Space (local, in Git or Git LFS); a Git LFS route that is not ready refuses the import before any write. A leaf Page becomes directory-backed first, so use the returned contentPath for the next command and insert markdownUrl (or pass coverPath as a cover) yourself: the import changes no body or cover. The import does not commit to Git.\n\n{HEADLESS}\n\nExample:\n  svode --project ~/Notes asset import --path notes/today.md --file ~/Pictures/chart.png --json"))]
+    Import(AssetImportArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct AssetImportArgs {
+    /// Existing Page, Collection item, Space README or Collection README
+    /// relative to the selected Space.
+    #[arg(long, value_name = "RELATIVE.md")]
+    pub path: String,
+    /// Local regular file to copy: absolute or relative to the current
+    /// directory. Directories, symbolic links and stdin are not accepted.
+    #[arg(long, value_name = "PATH")]
+    pub file: String,
+    /// File name of the copy; the source file name by default.
+    #[arg(long)]
+    pub name: Option<String>,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum AppVerb {
+    /// Validate a complete app.yaml candidate without a Project.
+    #[command(
+        after_help = "Read-only: uses the same safe parser as the Svode App host, writes nothing, launches no App and reads no Variable or Secret value. An invalid manifest is a result, not a failure: `valid` is false, `diagnostics` name each problem, and the exit status is 0. Validate the complete candidate before writing app.yaml and again after edits.\n\nExamples:\n  svode app validate --file apps/board/app.yaml --json\n  cat app.yaml | svode app validate --file -"
+    )]
+    Validate(AppValidateArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct AppValidateArgs {
+    /// app.yaml candidate as UTF-8 text from a file, or `-` for stdin.
+    #[arg(long, value_name = "PATH|-")]
+    pub file: String,
 }

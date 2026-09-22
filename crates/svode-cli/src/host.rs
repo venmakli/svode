@@ -12,9 +12,10 @@ use svode_core::routines::model::ResolvedRoutineOwner;
 use svode_tools::error::ToolError;
 use svode_tools::host::{MutationRuntime, ReadRuntime, RoutineRunner, RoutineRuntime, ToolHost};
 
-/// Catalog tools answered from project sources alone.
-const SOURCE_TOOLS: [&str; 10] = [
+/// Catalog tools answered from project sources alone, or from their input.
+const SOURCE_TOOLS: [&str; 11] = [
     "get_svode_guide",
+    "validate_app_manifest",
     "get_project_info",
     "list_spaces",
     "list_pages",

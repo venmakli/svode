@@ -40,10 +40,12 @@ pub(crate) async fn import_asset(
     ensure_inside(Path::new(&space), &content_path)?;
     let mutation = host.mutation_runtime();
     let git = host.read_runtime().git;
-    let selected_space_id = args
-        .space_id
-        .as_deref()
-        .filter(|space_id| !is_root_space_id(space_id));
+    // Child Space of the plan: the requested one, otherwise the frozen
+    // default of the request, as `resolve_space` selected it above.
+    let selected_space_id = match args.space_id.as_deref() {
+        Some(space_id) => Some(space_id).filter(|space_id| !is_root_space_id(space_id)),
+        None => target.default_space_id.as_deref(),
+    };
     let plan = plan_managed_import(
         mutation.index,
         Path::new(&target.project_path),

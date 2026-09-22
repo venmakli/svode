@@ -18,7 +18,7 @@ Global selectors may appear before or after the command. The target is resolved 
 
 ## Runtime modes
 
-This build runs standalone reads answered from project sources, including `collection check`. Commands that need the index, the Git runtime, the Actor catalog or the mutation runtime of the headless runtime answer `MODE_UNAVAILABLE` (exit 1) and run nothing; `svode doctor` lists the served capabilities. Writes read and validate their input first, so grammar and input failures still exit 2.
+This build runs standalone reads answered from project sources, including `collection check`, and `app validate`, which needs no Project. Commands that need the index, the Git runtime, the Actor catalog or the mutation runtime of the headless runtime answer `MODE_UNAVAILABLE` (exit 1) and run nothing; `svode doctor` lists the served capabilities. Writes read and validate their input first, so grammar and input failures still exit 2.
 
 | Command | Capability | Standalone in this build |
 |---|---|---|
@@ -67,10 +67,12 @@ This build runs standalone reads answered from project sources, including `colle
 | `page delete --path` | `delete_page` | no |
 | `item delete --path` | `delete_collection_item` | no |
 | `space reorder --id …` | `reorder_spaces` (Project level; `--space` is not used) | no |
+| `asset import --path <content.md> --file <local> [--name]` | `import_asset` | no |
+| `app validate --file <app.yaml\|->` | `validate_app_manifest` | yes, without a Project |
 | `guide` | `get_svode_guide` plus files-first rules | yes, without a Project |
 | `doctor` | CLI diagnostics | yes, target failures are part of the result |
 
-Flags follow the tool arguments: `collectionPath → --collection`, `path` and `from → --path`, `parentPath → --parent`, `toParent → --to-parent`, `columnName`/`viewName → --name`, `orderedChildren → --child`, `orderedSpaceIds → --id`, `nodeId → --id`, `nodeKinds → --kind`, `edgeKinds → --edge-kind`, camelCase → kebab-case. Repeated flags keep their order. `--scope` is `space` (default) or `project`.
+Flags follow the tool arguments: `collectionPath → --collection`, `path`, `from` and `contentPath → --path`, `sourcePath → --file`, `fileName → --name`, `yaml → --file`, `parentPath → --parent`, `toParent → --to-parent`, `columnName`/`viewName → --name`, `orderedChildren → --child`, `orderedSpaceIds → --id`, `nodeId → --id`, `nodeKinds → --kind`, `edgeKinds → --edge-kind`, camelCase → kebab-case. Repeated flags keep their order. `--scope` is `space` (default) or `project`.
 
 ## Structured input
 
@@ -99,6 +101,16 @@ Collection create/delete, schema columns and views, content rename/move/reorder/
 - Human output: the summary line, then each changed path; `collection check` prints the counts, then one line per issue.
 
 The JSON result is the MCP `structuredContent` of the capability, for example `page write` returns `path`, `newPath` (only after a performed rename), `changedPaths` and `warnings`, plus `schemaVersion`, `ok` and `target` (with `path`, `collection`, `parent` or `name` selectors).
+
+## Assets and Apps
+
+`asset import` copies one local regular file next to existing Markdown content through the shared managed import: `--path` is a Page, Collection item, Space README or Collection README relative to the selected Space; `--file` is absolute or relative to the current directory and is copied, never moved. Directories, symbolic links and stdin are not accepted. The copy is stored by the asset routing of its Space (local with a `.gitignore` entry, in Git, or Git LFS); a Git LFS route that is not ready refuses before any write. A leaf Page becomes directory-backed first, with its links rewritten. The import authorizes the affected repository before the first write and never commits to Git; it changes no body or cover.
+
+- JSON result: `spaceId`, canonical `contentPath` (use it for the next command), `attachmentPath` and `coverPath` relative to the Space, `markdownUrl` relative to the content, `fileName`, `mime`, `sizeBytes`, `changedPaths`.
+- Human output: the summary line, `contentPath`, `attachmentPath`, `markdownUrl`, `coverPath`, then each changed path.
+- Failures keep the codes of the shared operation: `INVALID_PATH`, `PATH_FORBIDDEN`, `PATH_NOT_ACCESSIBLE` (missing content, missing or non-regular source), `REPOSITORY_ACCESS_DENIED`, `SVODE_ERROR` with a `Storage:` message for an unsupported format or a Git LFS route that is not ready.
+
+`app validate --file <app.yaml|->` validates a complete app.yaml candidate from a file or stdin with the parser of the Svode App host. It needs no Project, ignores `--project` and `--space`, writes nothing, launches no App and reads no Variable or Secret value. The result is `valid`, `runtimeType`, `settingsReferences` and `diagnostics` (`code`, `path`, `message`); an invalid manifest is a result with exit 0, not a failure. Unreadable or non-UTF-8 input is `INPUT_UNREADABLE` (exit 2). Human output: `valid <type> App` and one `setting <NAME>` line per reference, or `invalid` and one line per diagnostic.
 
 ## page read
 

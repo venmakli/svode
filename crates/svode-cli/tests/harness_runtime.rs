@@ -332,8 +332,8 @@ async fn every_read_capability_has_exactly_one_command() {
     }
 
     // Every read-only baseline capability except those of later families
-    // (Collection integrity 4.4, App manifest 4.5, Routine definitions 4.6)
-    // is published.
+    // (Collection integrity 4.4, App manifest 4.5, Routine definitions 4.6),
+    // which their own family tests cover, is published.
     let later = [
         "validate_collection_integrity",
         "validate_app_manifest",
