@@ -8,10 +8,6 @@ use svode_core::routines::model::{ResolvedRoutineOwner, RoutineDispatchResult};
 use svode_core::storage::config::AssetsSpaceConfig;
 use svode_mcp::host::{RoutineCaller, RoutineRunner, RoutineRuntime};
 
-pub async fn call_tool(app: AppHandle, name: &str, args: Value) -> ToolCallResult {
-    call_tool_with_context(app, name, args, None).await
-}
-
 pub async fn call_tool_with_context(
     app: AppHandle,
     name: &str,

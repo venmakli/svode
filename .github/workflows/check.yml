@@ -42,6 +42,8 @@ jobs:
             libsecret-1-dev
       - uses: oven-sh/setup-bun@v2
       - run: bun run --cwd apps/desktop check:sidecars
+      - name: Host-free packages do not depend on Tauri or the desktop crate
+        run: bun run check:crates
       - run: cargo check --workspace --all-targets
       - name: Core package tests without the desktop crate
         run: cargo test -p svode-core

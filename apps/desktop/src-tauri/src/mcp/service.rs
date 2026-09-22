@@ -18,7 +18,7 @@ mod dispatch;
 #[cfg(test)]
 use context::resolve_project_root_for_cwd;
 pub(crate) use dispatch::DesktopMcpHost;
-pub use dispatch::{call_tool, call_tool_with_context};
+pub use dispatch::call_tool_with_context;
 
 /// Frozen target of a request in the public MCP addressing vocabulary.
 fn request_target(
