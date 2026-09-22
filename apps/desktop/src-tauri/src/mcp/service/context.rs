@@ -70,7 +70,7 @@ fn context_for_project_cwd(
     })?;
     let child = caller_cwd
         .filter(|cwd| cwd.starts_with(&project))
-        .and_then(|cwd| most_specific_ready_child(&project, cwd));
+        .and_then(|cwd| svode_core::page::ready_child_space_for_directory(&project, cwd));
     let active_space_id = child.as_ref().map(|(space_id, _)| space_id.clone());
     let active_space_path = child
         .map(|(_, path)| path.to_string_lossy().to_string())
@@ -81,25 +81,6 @@ fn context_for_project_cwd(
         active_space_path,
     )
     .map_err(Into::into)
-}
-
-fn most_specific_ready_child(project_path: &Path, cwd: &Path) -> Option<(String, PathBuf)> {
-    let config = space_config::read_space_config(project_path).ok()?;
-    config
-        .spaces
-        .unwrap_or_default()
-        .into_iter()
-        .filter(|space| {
-            matches!(
-                project::space_ref_status(project_path, space),
-                crate::space::types::SpaceStatus::Ready
-            )
-        })
-        .filter_map(|space| {
-            let path = project_path.join(&space.path).canonicalize().ok()?;
-            cwd.starts_with(&path).then_some((space.id, path))
-        })
-        .max_by_key(|(_, path)| path.components().count())
 }
 
 pub(super) fn resolve_project_root_for_cwd(
@@ -161,6 +142,7 @@ fn ancestor_svode_project_root(cwd: &Path) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::space::project;
     use std::fs;
 
     fn write_project(project: &Path, children: &[(&str, &str, Option<&str>)]) {

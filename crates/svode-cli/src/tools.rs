@@ -1,0 +1,278 @@
+//! Commands mapped onto catalog tools of the shared surface: one command per
+//! capability, flags derived from the tool arguments, the structured result
+//! of the operation as the envelope payload.
+
+use std::path::Path;
+
+use serde_json::{Map, Value, json};
+use svode_tools::dispatch::call_tool;
+use svode_tools::host::ToolHost;
+
+use crate::error::CliError;
+use crate::grammar::{
+    ActorVerb, CollectionReadmeVerb, CollectionVerb, GitVerb, ItemVerb, KnowledgeScope,
+    KnowledgeVerb, Noun, Pagination, ProjectVerb, SpaceReadmeVerb, SpaceVerb,
+};
+use crate::host::mode_unavailable;
+use crate::input;
+use crate::output::Outcome;
+use crate::render;
+use crate::target::Target;
+
+const RUNTIME_HINT: &str = "run `svode doctor` to see what this build can serve";
+
+/// One command bound to its catalog tool.
+pub struct ToolCommand {
+    /// Public command name, e.g. `collection query`.
+    pub name: &'static str,
+    pub tool: &'static str,
+    /// Tool arguments except `spaceId`, which comes from the target.
+    pub args: Map<String, Value>,
+    /// Command-specific selectors echoed in the envelope target.
+    pub selectors: Map<String, Value>,
+    pub render: fn(&Value) -> String,
+}
+
+impl ToolCommand {
+    fn new(name: &'static str, tool: &'static str, render: fn(&Value) -> String) -> Self {
+        Self {
+            name,
+            tool,
+            args: Map::new(),
+            selectors: Map::new(),
+            render,
+        }
+    }
+
+    fn arg(mut self, key: &str, value: impl Into<Value>) -> Self {
+        self.args.insert(key.into(), value.into());
+        self
+    }
+
+    fn optional(self, key: &str, value: Option<impl Into<Value>>) -> Self {
+        match value {
+            Some(value) => self.arg(key, value),
+            None => self,
+        }
+    }
+
+    fn list(self, key: &str, values: Vec<String>) -> Self {
+        if values.is_empty() {
+            self
+        } else {
+            self.arg(key, values)
+        }
+    }
+
+    fn scope(self, scope: Option<KnowledgeScope>) -> Self {
+        self.optional("scope", scope.map(KnowledgeScope::as_str))
+    }
+
+    fn page(self, page: Pagination) -> Self {
+        self.optional("limit", page.limit)
+            .optional("offset", page.offset)
+    }
+
+    /// Argument that also selects the target, like `path` or `collection`.
+    fn selector(mut self, key: &str, public: &str, value: impl Into<Value>) -> Self {
+        let value = value.into();
+        self.selectors.insert(public.into(), value.clone());
+        self.arg(key, value)
+    }
+}
+
+/// Maps a data command to its tool; `None` for commands the CLI owns.
+pub fn command(noun: Noun, cwd: &Path) -> Result<Option<ToolCommand>, CliError> {
+    use crate::grammar::PageVerb;
+    Ok(Some(match noun {
+        Noun::Project {
+            verb: ProjectVerb::Info,
+        } => ToolCommand::new("project info", "get_project_info", render::project),
+        Noun::Space {
+            verb: SpaceVerb::List,
+        } => ToolCommand::new("space list", "list_spaces", render::spaces),
+        Noun::Space {
+            verb: SpaceVerb::Readme {
+                verb: SpaceReadmeVerb::Read,
+            },
+        } => ToolCommand::new("space readme read", "read_space_readme", |value| {
+            render::source(&value["spaceReadme"])
+        }),
+        Noun::Page {
+            verb: PageVerb::List(args),
+        } => ToolCommand::new("page list", "list_pages", render::tree)
+            .optional("path", args.path.clone())
+            .page(args.page),
+        Noun::Collection { verb } => match verb {
+            CollectionVerb::List => {
+                ToolCommand::new("collection list", "list_collections", |value| {
+                    render::rows(&value["collections"])
+                })
+            }
+            CollectionVerb::Schema(args) => {
+                ToolCommand::new("collection schema", "get_collection_schema", |value| {
+                    render::pretty(&value["schema"])
+                })
+                .selector("collectionPath", "collection", args.collection)
+            }
+            CollectionVerb::Query(args) => {
+                input::one_stdin(&[
+                    ("filter-file", args.filter_file.as_deref()),
+                    ("sort-file", args.sort_file.as_deref()),
+                ])?;
+                let filter = args
+                    .filter_file
+                    .as_deref()
+                    .map(|source| input::json(cwd, "filter-file", source))
+                    .transpose()?;
+                let sort = args
+                    .sort_file
+                    .as_deref()
+                    .map(|source| input::json(cwd, "sort-file", source))
+                    .transpose()?;
+                ToolCommand::new("collection query", "query_collection_items", |value| {
+                    render::rows(&value["items"])
+                })
+                .selector("collectionPath", "collection", args.collection.collection)
+                .optional("filter", filter)
+                .optional("sort", sort)
+                .page(args.page)
+            }
+            CollectionVerb::Readme {
+                verb: CollectionReadmeVerb::Read(args),
+            } => ToolCommand::new(
+                "collection readme read",
+                "read_collection_readme",
+                |value| render::source(&value["collectionReadme"]),
+            )
+            .selector("collectionPath", "collection", args.collection),
+        },
+        Noun::Item {
+            verb: ItemVerb::Read(args),
+        } => ToolCommand::new("item read", "read_collection_item", |value| {
+            render::source(&value["item"])
+        })
+        .selector("path", "path", args.path),
+        Noun::Actor {
+            verb: ActorVerb::List(args),
+        } => ToolCommand::new("actor list", "list_actors", render::actors)
+            .optional("allTime", args.all_time.then_some(true)),
+        Noun::Search(args) => ToolCommand::new("search", "search_pages", |value| {
+            render::rows(&value["items"])
+        })
+        .arg("query", args.query)
+        .page(args.page),
+        Noun::Knowledge { verb } => match verb {
+            KnowledgeVerb::Search(args) => {
+                ToolCommand::new("knowledge search", "search_knowledge", render::pretty)
+                    .arg("query", args.query)
+                    .scope(args.scope)
+                    .list("nodeKinds", args.kinds)
+                    .optional("limit", args.limit)
+            }
+            KnowledgeVerb::Node(args) => {
+                ToolCommand::new("knowledge node", "get_knowledge_node", render::pretty)
+                    .selector("nodeId", "id", args.id)
+                    .scope(args.scope)
+            }
+            KnowledgeVerb::Neighbors(args) => ToolCommand::new(
+                "knowledge neighbors",
+                "get_knowledge_neighbors",
+                render::pretty,
+            )
+            .selector("nodeId", "id", args.id)
+            .scope(args.scope)
+            .list("edgeKinds", args.edge_kinds)
+            .optional("limit", args.limit),
+            KnowledgeVerb::Context(args) => {
+                ToolCommand::new("knowledge context", "get_related_context", render::pretty)
+                    .arg("query", args.query)
+                    .scope(args.scope)
+                    .optional("limit", args.limit)
+                    .optional("textBudget", args.text_budget)
+                    .list("nodeKinds", args.kinds)
+            }
+            KnowledgeVerb::Status(args) => {
+                ToolCommand::new("knowledge status", "get_knowledge_status", render::pretty)
+                    .scope(args.scope)
+            }
+        },
+        Noun::Git {
+            verb: GitVerb::Status,
+        } => ToolCommand::new("git status", "get_git_status", |value| {
+            render::pretty(&value["status"])
+        }),
+        Noun::Page {
+            verb: PageVerb::Read(_),
+        }
+        | Noun::Guide
+        | Noun::Doctor => return Ok(None),
+    }))
+}
+
+/// Runs one tool command in the resolved target. A tool the host does not
+/// serve fails with `MODE_UNAVAILABLE` before any effect.
+pub async fn run(
+    host: &impl ToolHost,
+    target: &Target,
+    command: ToolCommand,
+) -> Result<Outcome, CliError> {
+    let mut known = target.envelope();
+    known.extend(command.selectors);
+    if !host.serves_tool(command.tool) {
+        let error = mode_unavailable(&format!("`svode {}`", command.name));
+        return Err(CliError::operation(error.code, error.message)
+            .with_target(known)
+            .with_hint(RUNTIME_HINT));
+    }
+    let mut args = command.args;
+    if target.explicit_space {
+        args.insert("spaceId".into(), json!(target.space_id()));
+    }
+    let request = target.request();
+    let result = call_tool(host, Some(&request), command.tool, Value::Object(args)).await;
+    let structured = result.structured_content.unwrap_or_else(|| json!({}));
+    if result.is_error {
+        return Err(business_error(structured).with_target(known));
+    }
+    let human = (command.render)(&structured);
+    Ok(Outcome {
+        envelope: envelope(known, structured),
+        human,
+        warnings: Vec::new(),
+    })
+}
+
+/// Success envelope around the structured result of a shared operation.
+pub fn envelope(target: Map<String, Value>, structured: Value) -> Value {
+    let mut envelope = Map::new();
+    envelope.insert("schemaVersion".into(), json!(1));
+    envelope.insert("ok".into(), json!(true));
+    envelope.insert("target".into(), Value::Object(target));
+    if let Value::Object(result) = structured {
+        envelope.extend(result);
+    }
+    Value::Object(envelope)
+}
+
+/// Business failure of the shared operation with its code and evidence.
+fn business_error(structured: Value) -> CliError {
+    let mut error = match structured {
+        Value::Object(mut object) => match object.remove("error") {
+            Some(Value::Object(error)) => error,
+            _ => Map::new(),
+        },
+        _ => Map::new(),
+    };
+    let code = error
+        .remove("code")
+        .and_then(|code| code.as_str().map(str::to_string))
+        .unwrap_or_else(|| "SVODE_ERROR".to_string());
+    let message = error
+        .remove("message")
+        .and_then(|message| message.as_str().map(str::to_string))
+        .unwrap_or_default();
+    let mut failure = CliError::operation(code, message);
+    failure.evidence = error;
+    failure
+}

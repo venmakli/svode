@@ -86,6 +86,42 @@ pub fn registered_space_dirs(project: &Path) -> Result<Vec<PathBuf>, PageSourceE
         .collect())
 }
 
+/// Project that owns `dir`: the nearest ancestor holding a Space config,
+/// or its parent Project when that ancestor is a registered child Space of
+/// it. The config is not parsed here; an invalid one surfaces when the
+/// target is resolved.
+pub fn project_for_directory(dir: &Path) -> Option<PathBuf> {
+    let nearest = dir
+        .ancestors()
+        .find(|candidate| candidate.join(".svode/config.json").is_file())?;
+    let parent_project = nearest.parent().filter(|parent| {
+        let name = nearest.file_name().map(|name| name.to_string_lossy());
+        registered_spaces(parent).is_ok_and(|spaces| {
+            spaces
+                .iter()
+                .any(|space| Some(space.path.as_str()) == name.as_deref())
+        })
+    });
+    Some(parent_project.unwrap_or(nearest).to_path_buf())
+}
+
+/// Most specific ready child Space of `project` that contains `dir`, with
+/// its canonical directory. `dir` must be canonical.
+pub fn ready_child_space_for_directory(project: &Path, dir: &Path) -> Option<(String, PathBuf)> {
+    registered_spaces(project)
+        .ok()?
+        .into_iter()
+        .filter(|space| {
+            space_reference_status(project, &space.path, space.repo.as_deref())
+                == SpaceReadiness::Ready
+        })
+        .filter_map(|space| {
+            let path = project.join(&space.path).canonicalize().ok()?;
+            dir.starts_with(&path).then_some((space.id, path))
+        })
+        .max_by_key(|(_, path)| path.components().count())
+}
+
 pub fn resolve_space_target(
     project: &Path,
     space_id: Option<&str>,
@@ -206,4 +242,69 @@ pub async fn read_standalone_page(
     let mut source = read_page_source(target)?;
     enrich_source_git_dates(&mut source).await;
     Ok(source)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn project(root: &Path, spaces: &str) {
+        fs::create_dir_all(root.join(".svode")).unwrap();
+        fs::write(
+            root.join(".svode/config.json"),
+            format!(r#"{{"name":"Project","spaces":{spaces}}}"#),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn project_for_directory_prefers_the_parent_of_a_registered_child() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap().join("project");
+        project(&root, r#"[{"id":"child","path":"child","repo":null}]"#);
+        project(&root.join("child"), "[]");
+        project(&root.join("nested"), "[]");
+        fs::create_dir_all(root.join("child/deep")).unwrap();
+        fs::create_dir_all(root.join("notes")).unwrap();
+
+        assert_eq!(
+            project_for_directory(&root.join("notes")),
+            Some(root.clone())
+        );
+        assert_eq!(
+            project_for_directory(&root.join("child/deep")),
+            Some(root.clone())
+        );
+        // An unregistered Project inside another one is its own Project.
+        assert_eq!(
+            project_for_directory(&root.join("nested")),
+            Some(root.join("nested"))
+        );
+        assert_eq!(project_for_directory(temp.path()), None);
+    }
+
+    #[test]
+    fn ready_child_space_for_directory_skips_unready_children() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        project(
+            &root,
+            r#"[{"id":"child","path":"child","repo":null},{"id":"gone","path":"gone","repo":"https://example.invalid/gone.git"}]"#,
+        );
+        fs::create_dir_all(root.join("child/deep")).unwrap();
+        fs::create_dir_all(root.join("notes")).unwrap();
+
+        assert_eq!(
+            ready_child_space_for_directory(&root, &root.join("child/deep")),
+            Some(("child".to_string(), root.join("child")))
+        );
+        assert_eq!(
+            ready_child_space_for_directory(&root, &root.join("notes")),
+            None
+        );
+        assert_eq!(
+            ready_child_space_for_directory(&root, &root.join("gone")),
+            None
+        );
+    }
 }

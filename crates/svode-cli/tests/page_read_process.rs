@@ -312,19 +312,6 @@ fn grammar_failures_exit_two_with_usage_on_stderr() {
     fixture(root);
     let project = root.to_str().unwrap();
     for args in [
-        vec!["page", "read", "--path", "a.md", "--json"],
-        vec![
-            "--project",
-            project,
-            "page",
-            "read",
-            "--path",
-            "a.md",
-            "--json",
-        ],
-        vec![
-            "--space", "root", "page", "read", "--path", "a.md", "--json",
-        ],
         vec![
             "--project",
             project,
@@ -347,7 +334,7 @@ fn grammar_failures_exit_two_with_usage_on_stderr() {
             "{args:?}"
         );
     }
-    let human = svode(root, &["page", "read", "--path", "a.md"]);
+    let human = svode(root, &["page", "read"]);
     assert_eq!(human.status.code(), Some(2));
     assert!(human.stdout.is_empty());
 }

@@ -5452,7 +5452,9 @@ version = "0.0.8"
 dependencies = [
  "clap",
  "serde_json",
+ "sqlx",
  "svode-core",
+ "svode-tools",
  "tempfile",
  "tokio",
 ]

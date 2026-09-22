@@ -68,6 +68,15 @@ impl IndexPools {
     }
 }
 
+/// File name of a Space index inside its `.svode` directory.
+pub const INDEX_FILE_NAME: &str = "index.db";
+
+/// Location of the index of the Space at `space_dir`. Checking it does not
+/// open or create the index.
+pub fn index_path(space_dir: &Path) -> PathBuf {
+    space_dir.join(".svode").join(INDEX_FILE_NAME)
+}
+
 pub async fn open(
     mut pools: OwnedMutexGuard<IndexPools>,
     key: IndexKey,
@@ -78,7 +87,7 @@ pub async fn open(
     tokio::spawn(async move {
         let storage = dir.join(".svode");
         std::fs::create_dir_all(&storage)?;
-        let path = storage.canonicalize()?.join("index.db");
+        let path = storage.canonicalize()?.join(INDEX_FILE_NAME);
         let path = if path.exists() {
             path.canonicalize()?
         } else {
@@ -122,7 +131,7 @@ pub async fn cleanup_using<F, Fut, E>(
     let Some(path) = pools.owners.get(&key) else {
         return;
     };
-    if path.file_name().is_none_or(|name| name != "index.db") {
+    if path.file_name().is_none_or(|name| name != INDEX_FILE_NAME) {
         return;
     }
     let physical = &pools.physical[path];

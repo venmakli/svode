@@ -1,7 +1,5 @@
 //! stdout carries only the result; stderr carries warnings, diagnostics and usage.
 
-use std::io::Write;
-
 use serde_json::Value;
 
 use crate::error::CliError;
@@ -13,21 +11,38 @@ pub struct Outcome {
     pub warnings: Vec<String>,
 }
 
-pub fn success(outcome: &Outcome, json: bool) {
-    for warning in &outcome.warnings {
-        eprintln!("{warning}");
-    }
-    if json {
-        stdout(&format!("{}\n", outcome.envelope));
+/// Rendered process output of one command.
+#[derive(Debug)]
+pub struct Rendered {
+    pub stdout: String,
+    pub stderr: String,
+    pub exit: i32,
+}
+
+pub fn success(outcome: &Outcome, json: bool) -> Rendered {
+    let stderr = outcome
+        .warnings
+        .iter()
+        .map(|warning| format!("{warning}\n"))
+        .collect();
+    let stdout = if json {
+        format!("{}\n", outcome.envelope)
     } else {
-        stdout(&outcome.human);
+        outcome.human.clone()
+    };
+    Rendered {
+        stdout,
+        stderr,
+        exit: 0,
     }
 }
 
-pub fn failure(error: &CliError, json: bool) {
-    if json {
-        stdout(&format!("{}\n", error.envelope()));
-    }
+pub fn failure(error: &CliError, json: bool) -> Rendered {
+    let stdout = if json {
+        format!("{}\n", error.envelope())
+    } else {
+        String::new()
+    };
     let mut report = format!("error[{}]: {}", error.code, error.message);
     if !error.target.is_empty() {
         let target = error
@@ -44,14 +59,10 @@ pub fn failure(error: &CliError, json: bool) {
     if let Some(hint) = error.hint {
         report.push_str(&format!("\n  hint: {hint}"));
     }
-    if let Some(usage) = &error.usage {
-        report.push_str(&format!("\n\n{usage}"));
+    report.push('\n');
+    Rendered {
+        stdout,
+        stderr: report,
+        exit: error.exit,
     }
-    eprintln!("{report}");
-}
-
-fn stdout(text: &str) {
-    let mut out = std::io::stdout().lock();
-    // A closed pipe on the reader side is not a command failure.
-    let _ = out.write_all(text.as_bytes()).and_then(|()| out.flush());
 }

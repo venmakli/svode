@@ -7,14 +7,13 @@ use svode_core::page::{PageSourceError, read_standalone_page};
 use crate::error::CliError;
 use crate::grammar::PageReadArgs;
 use crate::output::Outcome;
-use crate::target::{self, Selectors};
+use crate::target::Target;
 
 /// `svode page read`: source-only read of one standalone Page.
-pub async fn read(selectors: Selectors<'_>, args: PageReadArgs) -> Result<Outcome, CliError> {
-    let space = selectors.resolve()?;
-    let mut known = target::resolved(&space);
+pub async fn read(target: Target, args: PageReadArgs) -> Result<Outcome, CliError> {
+    let mut known = target.envelope();
     known.insert("path".into(), json!(args.path));
-    let source = read_standalone_page(&space, &args.path)
+    let source = read_standalone_page(&target.space, &args.path)
         .await
         .map_err(|error| source_error(error).with_target(known.clone()))?;
     let source_version = source.version.as_str().to_string();

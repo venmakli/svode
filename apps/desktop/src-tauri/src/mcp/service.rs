@@ -7,7 +7,7 @@ use super::active::{self, ActiveProjectContext, ActiveProjectState};
 use crate::git::GitState;
 use crate::index::IndexState;
 use crate::index::update::IndexUpdateState;
-use crate::space::{config as space_config, project, registry};
+use crate::space::{config as space_config, registry};
 use svode_mcp::protocol::IpcContextOverride;
 use svode_tools::error::ToolError;
 use svode_tools::host::{RequestTarget, RoutineCaller};

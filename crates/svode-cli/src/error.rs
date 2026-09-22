@@ -3,38 +3,40 @@ use serde_json::{Map, Value};
 /// Failure of one command with its stable code and exit status.
 #[derive(Debug)]
 pub struct CliError {
-    pub code: &'static str,
+    pub code: String,
     pub message: String,
     pub exit: i32,
     /// Selectors known at the moment of failure.
     pub target: Map<String, Value>,
-    /// Usage printed to stderr for grammar failures.
-    pub usage: Option<String>,
+    /// Evidence fields of a business failure of the shared operation.
+    pub evidence: Map<String, Value>,
     /// Short recovery hint printed to stderr in human mode.
     pub hint: Option<&'static str>,
 }
 
 impl CliError {
-    pub fn operation(code: &'static str, message: impl Into<String>) -> Self {
+    fn new(code: impl Into<String>, message: impl Into<String>, exit: i32) -> Self {
         Self {
-            code,
+            code: code.into(),
             message: message.into(),
-            exit: 1,
+            exit,
             target: Map::new(),
-            usage: None,
+            evidence: Map::new(),
             hint: None,
         }
     }
 
-    pub fn argument(message: impl Into<String>, usage: Option<String>) -> Self {
-        Self {
-            code: "INVALID_ARGUMENT",
-            message: message.into(),
-            exit: 2,
-            target: Map::new(),
-            usage,
-            hint: None,
-        }
+    pub fn operation(code: impl Into<String>, message: impl Into<String>) -> Self {
+        Self::new(code, message, 1)
+    }
+
+    pub fn argument(message: impl Into<String>) -> Self {
+        Self::new("INVALID_ARGUMENT", message, 2)
+    }
+
+    /// Input that cannot be read or decoded before the command runs.
+    pub fn input(code: impl Into<String>, message: impl Into<String>) -> Self {
+        Self::new(code, message, 2)
     }
 
     pub fn with_target(mut self, target: Map<String, Value>) -> Self {
@@ -48,14 +50,15 @@ impl CliError {
     }
 
     pub fn envelope(&self) -> Value {
+        let mut error = Map::new();
+        error.insert("code".into(), Value::from(self.code.as_str()));
+        error.insert("message".into(), Value::from(self.message.as_str()));
+        error.insert("target".into(), Value::Object(self.target.clone()));
+        error.extend(self.evidence.clone());
         serde_json::json!({
             "schemaVersion": 1,
             "ok": false,
-            "error": {
-                "code": self.code,
-                "message": self.message,
-                "target": self.target,
-            },
+            "error": error,
         })
     }
 }
