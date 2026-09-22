@@ -1,14 +1,17 @@
 #!/usr/bin/env node
 // Fail when a host-independent package pulls in the desktop crate or Tauri.
 //
-// svode-core, svode-mcp and svode-lfs must build and run with the Desktop
-// closed, so neither they nor anything they depend on may reach
-// `svode-desktop` or any `tauri*` package.
+// svode-core, svode-mcp, svode-cli and svode-lfs must build and run with the
+// Desktop closed, so neither they nor anything they depend on may reach
+// `svode-desktop` or any `tauri*` package. The CLI and MCP entrypoints are
+// independent of each other, so svode-cli must not reach `svode-mcp`.
 
 import { execFileSync } from "node:child_process";
 
-const packages = ["svode-core", "svode-mcp", "svode-lfs"];
-const forbidden = (name) => name === "svode-desktop" || /^tauri(-|$)/.test(name);
+const packages = ["svode-core", "svode-mcp", "svode-cli", "svode-lfs"];
+const hostBound = (name) => name === "svode-desktop" || /^tauri(-|$)/.test(name);
+const extraForbidden = { "svode-cli": ["svode-mcp"] };
+const forbidden = (pkg, name) => hostBound(name) || (extraForbidden[pkg] ?? []).includes(name);
 
 let failed = false;
 for (const pkg of packages) {
@@ -34,7 +37,7 @@ for (const pkg of packages) {
       tree
         .split("\n")
         .map((line) => line.trim().split(" ")[0])
-        .filter((name) => name && forbidden(name)),
+        .filter((name) => name && forbidden(pkg, name)),
     ),
   ];
   if (hits.length > 0) {
@@ -46,4 +49,6 @@ for (const pkg of packages) {
 if (failed) {
   process.exit(1);
 }
-console.log(`[crate-boundaries] ok: ${packages.join(", ")} are host-free`);
+console.log(
+  `[crate-boundaries] ok: ${packages.join(", ")} are host-free; svode-cli does not depend on svode-mcp`,
+);

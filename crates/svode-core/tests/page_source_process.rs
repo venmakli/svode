@@ -3,7 +3,15 @@ use std::path::Path;
 use std::process::Command;
 
 use svode_core::page::dates::{SystemGitDateExecutor, derive_date_overrides};
-use svode_core::page::{PageSourceError, read_standalone_page};
+use svode_core::page::{PageSource, PageSourceError, read_standalone_page, resolve_space_target};
+
+async fn read(
+    project: &Path,
+    space_id: Option<&str>,
+    path: &str,
+) -> Result<PageSource, PageSourceError> {
+    read_standalone_page(&resolve_space_target(project, space_id)?, path).await
+}
 
 fn project(root: &Path) {
     fs::create_dir_all(root.join(".svode")).unwrap();
@@ -47,7 +55,7 @@ async fn source_only_read_preserves_source_and_rejects_owners_and_escape() {
     fs::write(root.join("collection/README.md"), "Collection owner").unwrap();
     fs::write(root.join("inline/child.md"), "Child body").unwrap();
 
-    let first = read_standalone_page(root, None, "valid.md").await.unwrap();
+    let first = read(root, None, "valid.md").await.unwrap();
     assert_eq!(first.meta.title, "Named");
     assert_eq!(
         first
@@ -71,32 +79,20 @@ async fn source_only_read_preserves_source_and_rejects_owners_and_escape() {
         "duplicate.md"
     );
     assert_eq!(first.target.path, "valid.md");
-    let plain = read_standalone_page(root, None, "plain.md").await.unwrap();
+    let plain = read(root, None, "plain.md").await.unwrap();
     assert_eq!(plain.meta.title, "Plain");
     assert_eq!(plain.body, "Plain body");
-    assert_eq!(
-        read_standalone_page(root, None, "empty.md")
-            .await
-            .unwrap()
-            .body,
-        ""
-    );
+    assert_eq!(read(root, None, "empty.md").await.unwrap().body, "");
     assert!(matches!(
-        read_standalone_page(root, None, "bad-encoding.md").await,
+        read(root, None, "bad-encoding.md").await,
         Err(PageSourceError::InvalidEncoding(_))
     ));
-    let malformed = read_standalone_page(root, None, "malformed.md")
-        .await
-        .unwrap();
+    let malformed = read(root, None, "malformed.md").await.unwrap();
     assert_eq!(malformed.body, "---\ntitle: [bad\n---\nBody");
     assert_eq!(malformed.warnings[0].kind, "malformed_frontmatter");
-    let folder = read_standalone_page(root, None, "folder/README.md")
-        .await
-        .unwrap();
+    let folder = read(root, None, "folder/README.md").await.unwrap();
     assert_eq!(folder.body, "Folder body");
-    let child = read_standalone_page(root, Some("inline"), "child.md")
-        .await
-        .unwrap();
+    let child = read(root, Some("inline"), "child.md").await.unwrap();
     assert_eq!(child.body, "Child body");
     for path in [
         "README.md",
@@ -107,17 +103,23 @@ async fn source_only_read_preserves_source_and_rejects_owners_and_escape() {
     ] {
         assert!(
             matches!(
-                read_standalone_page(root, None, path).await,
+                read(root, None, path).await,
                 Err(PageSourceError::InvalidOwner(_))
             ),
             "{path}"
         );
     }
-    for path in ["missing.md", "../valid.md", "/tmp/valid.md", "plain.txt"] {
+    for path in [".git/config.md", ".svode/notes.md", ".SVODE/notes.md"] {
         assert!(
-            read_standalone_page(root, None, path).await.is_err(),
+            matches!(
+                read(root, None, path).await,
+                Err(PageSourceError::Forbidden(_))
+            ),
             "{path}"
         );
+    }
+    for path in ["missing.md", "../valid.md", "/tmp/valid.md", "plain.txt"] {
+        assert!(read(root, None, path).await.is_err(), "{path}");
     }
     #[cfg(unix)]
     {
@@ -127,18 +129,18 @@ async fn source_only_read_preserves_source_and_rejects_owners_and_escape() {
         fs::write(&outside, "Outside").unwrap();
         symlink(&outside, root.join("escape.md")).unwrap();
         assert!(matches!(
-            read_standalone_page(root, None, "escape.md").await,
-            Err(PageSourceError::InvalidPath(_))
+            read(root, None, "escape.md").await,
+            Err(PageSourceError::Forbidden(_))
         ));
         symlink(root.join("inline/child.md"), root.join("child-alias.md")).unwrap();
         assert!(matches!(
-            read_standalone_page(root, None, "child-alias.md").await,
+            read(root, None, "child-alias.md").await,
             Err(PageSourceError::InvalidOwner(_))
         ));
     }
     let before = first.version;
     fs::write(root.join("valid.md"), "---\ntitle: Changed\nid: custom\ncreated: custom-created\nupdated: custom-updated\n---\nBody\n").unwrap();
-    let after = read_standalone_page(root, None, "valid.md").await.unwrap();
+    let after = read(root, None, "valid.md").await.unwrap();
     assert_ne!(before, after.version);
     assert_eq!(after.body, "Body\n");
     assert!(!root.join(".svode/index.db").exists());
@@ -151,18 +153,18 @@ async fn invalid_project_config_and_child_selection_do_not_create_scaffold() {
     let root = temp.path();
     fs::write(root.join("note.md"), "Body").unwrap();
     assert!(matches!(
-        read_standalone_page(root, None, "note.md").await,
+        read(root, None, "note.md").await,
         Err(PageSourceError::Missing(_))
     ));
     fs::create_dir(root.join(".svode")).unwrap();
     fs::write(root.join(".svode/config.json"), "{").unwrap();
     assert!(matches!(
-        read_standalone_page(root, None, "note.md").await,
+        read(root, None, "note.md").await,
         Err(PageSourceError::InvalidConfig(_))
     ));
     project(root);
     assert!(matches!(
-        read_standalone_page(root, Some("unknown"), "note.md").await,
+        read(root, Some("unknown"), "note.md").await,
         Err(PageSourceError::SpaceNotFound(_))
     ));
     assert!(!root.join(".svode/index.db").exists());
@@ -171,13 +173,7 @@ async fn invalid_project_config_and_child_selection_do_not_create_scaffold() {
         r#"{"name":"Project","spaces":null}"#,
     )
     .unwrap();
-    assert_eq!(
-        read_standalone_page(root, None, "note.md")
-            .await
-            .unwrap()
-            .body,
-        "Body"
-    );
+    assert_eq!(read(root, None, "note.md").await.unwrap().body, "Body");
 }
 
 #[cfg(unix)]
@@ -197,14 +193,11 @@ async fn registered_child_symlink_alias_keeps_root_out_of_child_content() {
     )
     .unwrap();
     assert!(matches!(
-        read_standalone_page(root, None, "real/note.md").await,
+        read(root, None, "real/note.md").await,
         Err(PageSourceError::InvalidOwner(_))
     ));
     assert_eq!(
-        read_standalone_page(root, Some("alias"), "note.md")
-            .await
-            .unwrap()
-            .body,
+        read(root, Some("alias"), "note.md").await.unwrap().body,
         "Child"
     );
 }
@@ -239,20 +232,18 @@ async fn git_history_dates_and_dirty_fallback_are_read_only() {
         Some("2026-02-03T04:05:06Z"),
     );
     let index = fs::read(root.join(".git/index")).unwrap();
-    let clean = read_standalone_page(root, None, "note.md").await.unwrap();
+    let clean = read(root, None, "note.md").await.unwrap();
     assert_eq!(clean.created, "2026-01-01T00:00:00Z");
     assert_eq!(clean.updated, "2026-02-03T04:05:06Z");
     fs::write(root.join("note.md"), "three").unwrap();
-    let dirty = read_standalone_page(root, None, "note.md").await.unwrap();
+    let dirty = read(root, None, "note.md").await.unwrap();
     assert_eq!(dirty.created, clean.created);
     assert_ne!(dirty.updated, clean.updated);
     assert_eq!(dirty.body, "three");
     assert_ne!(dirty.version, clean.version);
     assert_eq!(fs::read(root.join(".git/index")).unwrap(), index);
     fs::write(root.join("untracked.md"), "Untracked").unwrap();
-    let untracked = read_standalone_page(root, None, "untracked.md")
-        .await
-        .unwrap();
+    let untracked = read(root, None, "untracked.md").await.unwrap();
     assert_eq!(untracked.body, "Untracked");
     assert!(!untracked.created.is_empty());
     assert!(!root.join(".svode/index.db").exists());
@@ -282,9 +273,7 @@ async fn inline_independent_and_submodule_use_their_effective_git_history() {
         &["commit", "-m", "inline"],
         Some("2026-01-01T00:00:00Z"),
     );
-    let inline = read_standalone_page(&root, Some("inline"), "note.md")
-        .await
-        .unwrap();
+    let inline = read(&root, Some("inline"), "note.md").await.unwrap();
     assert_eq!(inline.created, "2026-01-01T00:00:00Z");
 
     let independent = root.join("independent");
@@ -302,9 +291,7 @@ async fn inline_independent_and_submodule_use_their_effective_git_history() {
         &["commit", "-m", "independent"],
         Some("2026-02-02T00:00:00Z"),
     );
-    let independent_read = read_standalone_page(&root, Some("independent"), "note.md")
-        .await
-        .unwrap();
+    let independent_read = read(&root, Some("independent"), "note.md").await.unwrap();
     assert_eq!(independent_read.created, "2026-02-02T00:00:00Z");
 
     let source = temp.path().join("sub-source");
@@ -338,9 +325,7 @@ async fn inline_independent_and_submodule_use_their_effective_git_history() {
     );
     fs::write(root.join(".svode/config.json"), r#"{"name":"Project","spaces":[{"id":"inline","path":"inline","repo":null},{"id":"independent","path":"independent","repo":null},{"id":"sub","path":"sub","repo":null}]}"#).unwrap();
     assert!(root.join("sub/.git").is_file());
-    let submodule = read_standalone_page(&root, Some("sub"), "note.md")
-        .await
-        .unwrap();
+    let submodule = read(&root, Some("sub"), "note.md").await.unwrap();
     assert_eq!(submodule.created, "2026-03-03T00:00:00Z");
     assert!(!root.join(".svode/index.db").exists());
     assert!(!root.join(".svode/routines.db").exists());
@@ -380,7 +365,7 @@ async fn shallow_history_uses_filesystem_dates() {
     let overrides =
         derive_date_overrides(&SystemGitDateExecutor, &clone, &["note.md".into()]).await;
     assert!(overrides.is_empty());
-    let page = read_standalone_page(&clone, None, "note.md").await.unwrap();
+    let page = read(&clone, None, "note.md").await.unwrap();
     assert_eq!(page.body, "Body");
     assert_ne!(page.created, "2020-01-01T00:00:00Z");
 }

@@ -239,9 +239,9 @@ impl From<svode_core::page::PageSourceError> for AppError {
             PageSourceError::Missing(path) => Self::FileNotFound(path),
             PageSourceError::SpaceNotFound(id) => Self::SpaceNotFound(id),
             PageSourceError::InvalidConfig(error) => Self::Serde(error),
-            PageSourceError::InvalidPath(path) | PageSourceError::InvalidOwner(path) => {
-                Self::PathNotAccessible(path)
-            }
+            PageSourceError::InvalidPath(path)
+            | PageSourceError::Forbidden(path)
+            | PageSourceError::InvalidOwner(path) => Self::PathNotAccessible(path),
             PageSourceError::InvalidEncoding(path) => Self::Io(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
                 format!("invalid UTF-8: {path}"),

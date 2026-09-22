@@ -7,7 +7,9 @@ use super::dates::enrich_source_git_dates;
 use super::identity::{
     ContentOwnerKind, PageRole, is_agent_context_source, resolve_markdown_identity_for_path,
 };
-use super::source::{PageSource, PageSourceError, read_page_source, resolve_page_target};
+use super::source::{
+    PageSource, PageSourceError, normalize_page_path, read_page_source, resolve_page_target,
+};
 
 #[derive(Debug, Clone)]
 pub struct ResolvedSpaceTarget {
@@ -156,12 +158,17 @@ fn gitmodules_contains_path(project: &Path, child_path: &str) -> bool {
     })
 }
 
+/// Source-only read of one standalone Page inside an already resolved Space.
 pub async fn read_standalone_page(
-    project: &Path,
-    space_id: Option<&str>,
+    space: &ResolvedSpaceTarget,
     path: &str,
 ) -> Result<PageSource, PageSourceError> {
-    let space = resolve_space_target(project, space_id)?;
+    let normalized = normalize_page_path(path)?;
+    if normalized.split('/').next().is_some_and(|first| {
+        first.eq_ignore_ascii_case(".git") || first.eq_ignore_ascii_case(".svode")
+    }) {
+        return Err(PageSourceError::Forbidden(path.to_string()));
+    }
     let target = resolve_page_target(&space.space_path, path)?;
     let config = project_config(&space.project_path)?;
     if space.space_id.is_none()

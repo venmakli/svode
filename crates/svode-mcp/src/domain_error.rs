@@ -104,9 +104,9 @@ impl From<PageSourceError> for McpBusinessError {
             PageSourceError::Missing(path) => file_not_found(path),
             PageSourceError::SpaceNotFound(id) => space_not_found(id),
             PageSourceError::InvalidConfig(error) => serde(error),
-            PageSourceError::InvalidPath(path) | PageSourceError::InvalidOwner(path) => {
-                path_not_accessible(path)
-            }
+            PageSourceError::InvalidPath(path)
+            | PageSourceError::Forbidden(path)
+            | PageSourceError::InvalidOwner(path) => path_not_accessible(path),
             PageSourceError::InvalidEncoding(path) => io(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
                 format!("invalid UTF-8: {path}"),

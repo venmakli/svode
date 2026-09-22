@@ -13,6 +13,8 @@ pub enum PageSourceError {
     Missing(String),
     #[error("invalid Page path: {0}")]
     InvalidPath(String),
+    #[error("Page path is outside the public Space content: {0}")]
+    Forbidden(String),
     #[error("path is not a standalone Page: {0}")]
     InvalidOwner(String),
     #[error("Space not found or not ready: {0}")]
@@ -156,7 +158,7 @@ pub fn resolve_page_target(
     let absolute = space.join(&path);
     let absolute = fs::canonicalize(&absolute).map_err(|error| source_error(&absolute, error))?;
     if !absolute.starts_with(&space) {
-        return Err(PageSourceError::InvalidPath(path));
+        return Err(PageSourceError::Forbidden(path));
     }
     if !absolute.is_file() {
         return Err(PageSourceError::InvalidPath(path));

@@ -1,0 +1,20 @@
+[package]
+name = "svode-cli"
+version = "0.0.8"
+edition = "2024"
+authors = ["Kamnev Ilya"]
+repository = "https://github.com/venmakli/svode"
+description = "Svode CLI: the `svode` command for reading and changing Svode project data without the desktop app."
+
+[[bin]]
+name = "svode"
+path = "src/main.rs"
+
+[dependencies]
+svode-core = { path = "../svode-core" }
+clap = { version = "4", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt", "macros"] }
+
+[dev-dependencies]
+tempfile = "3"
