@@ -11,15 +11,7 @@ pub(crate) use store_state::RoutineStoreState;
 
 pub(crate) use svode_core::routines::model::ResolvedRoutineOwner;
 pub(crate) use svode_core::routines::model::{CollectionEventOrigin, CollectionEventSourceKind};
-#[cfg(test)]
-pub(crate) use svode_core::routines::model::{
-    RoutineAction, RoutineDiagnostic, RoutineOwnerDescriptor, RoutineRunOrigin, RoutineTrigger,
-    RoutineTriggerType,
-};
-pub(crate) use svode_core::routines::model::{
-    RoutineCatalogSnapshot, RoutineDefinition, RoutineDispatchBlockedCode, RoutineDispatchResult,
-    RoutineInvalidationPayload, RoutineOwnerInputKind, RoutineOwnerKind, RoutineRow,
-};
+pub(crate) use svode_core::routines::model::{RoutineInvalidationPayload, RoutineOwnerKind};
 
 pub(crate) const INVALIDATED_EVENT: &str = "routines:invalidated";
 

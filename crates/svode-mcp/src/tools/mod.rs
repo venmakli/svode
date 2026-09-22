@@ -4,5 +4,6 @@ pub(crate) mod content;
 pub(crate) mod import;
 pub(crate) mod pages;
 pub(crate) mod project;
+pub(crate) mod routines;
 pub(crate) mod search;
 pub(crate) mod structure;

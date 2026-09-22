@@ -1,7 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use serde::Deserialize;
-use serde_json::{Value, json};
+use serde_json::Value;
 use tauri::{AppHandle, Manager};
 
 use super::active::{self, ActiveProjectContext, ActiveProjectState};
@@ -10,41 +9,28 @@ use crate::index::IndexState;
 use crate::index::update::IndexUpdateState;
 use crate::space::{config as space_config, project, registry};
 use svode_mcp::error::McpBusinessError;
-use svode_mcp::host::RequestTarget;
-use svode_mcp::path::validate_public_rel_path;
+use svode_mcp::host::{RequestTarget, RoutineCaller};
 use svode_mcp::protocol::{IpcContextOverride, ToolCallResult};
-
-tokio::task_local! {
-    static MCP_CONTEXT_OVERRIDE: Option<ActiveProjectContext>;
-}
-
-tokio::task_local! {
-    static MCP_ROUTINE_CALLER: Option<crate::terminal::RoutineMcpCallerProvenance>;
-}
 
 mod context;
 mod dispatch;
-mod routines;
 
 #[cfg(test)]
 use context::resolve_project_root_for_cwd;
-use context::resolve_space;
 pub(crate) use dispatch::DesktopMcpHost;
-#[cfg(test)]
-use dispatch::decode;
 pub use dispatch::{call_tool, call_tool_with_context};
 
 /// Frozen target of a request in the public MCP addressing vocabulary.
-fn request_target(context: &ActiveProjectContext) -> RequestTarget {
+fn request_target(
+    context: &ActiveProjectContext,
+    routine_caller: Option<RoutineCaller>,
+) -> RequestTarget {
     RequestTarget {
         project_path: context.project_path.clone(),
         default_space_id: context.active_space_id.clone(),
         default_space_path: context.active_space_path.clone(),
+        routine_caller,
     }
-}
-
-pub(crate) fn routine_caller_provenance() -> Option<crate::terminal::RoutineMcpCallerProvenance> {
-    MCP_ROUTINE_CALLER.try_with(Clone::clone).ok().flatten()
 }
 
 #[cfg(test)]

@@ -83,6 +83,7 @@ mod tests {
             default_space_path: default_space_id
                 .map(|id| format!("/project/{id}"))
                 .unwrap_or_else(|| "/project".to_string()),
+            routine_caller: None,
         }
     }
 

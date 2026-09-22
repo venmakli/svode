@@ -1,14 +1,5 @@
 use super::*;
 
-pub(super) fn active_context(app: &AppHandle) -> Result<ActiveProjectContext, McpBusinessError> {
-    if let Ok(Some(context)) = MCP_CONTEXT_OVERRIDE.try_with(Clone::clone) {
-        return Ok(context);
-    }
-
-    app.state::<ActiveProjectState>()
-        .get()
-        .ok_or_else(McpBusinessError::no_active_project)
-}
 pub(super) fn resolve_context_override(
     app: &AppHandle,
     context_override: Option<&IpcContextOverride>,
@@ -262,14 +253,4 @@ mod tests {
             project.canonicalize().unwrap()
         );
     }
-}
-
-pub(super) async fn resolve_space(
-    app: &AppHandle,
-    requested_space_id: Option<String>,
-) -> Result<(ActiveProjectContext, String), McpBusinessError> {
-    let context = active_context(app)?;
-    let space =
-        svode_mcp::target::resolve_space(&request_target(&context), requested_space_id.as_deref())?;
-    Ok((context, space))
 }

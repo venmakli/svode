@@ -1,19 +1,40 @@
-use super::*;
-use crate::AppError;
-use crate::routines::{
+//! Routine definitions through the shared core service and explicit launch
+//! through the host execution owner.
+//!
+//! Create and update confirm a complete definition with canonical naming.
+//! The core service authorizes the owner repository before the first write
+//! and runs without autocommit; `run_routine` authorizes the owner Space and
+//! hands the launch to the host. A Routine-launched caller keeps the Routine
+//! origin policy and cannot start another Routine.
+
+use std::path::{Path, PathBuf};
+
+use serde::Deserialize;
+use serde_json::{Value, json};
+use svode_core::git::state::GitRuntime;
+use svode_core::routines::model::{
     ResolvedRoutineOwner, RoutineCatalogSnapshot, RoutineDefinition, RoutineDispatchBlockedCode,
     RoutineDispatchResult, RoutineOwnerInputKind, RoutineRow,
 };
-use crate::terminal::TerminalManager;
-use std::sync::Arc;
+use svode_core::routines::service::{
+    self, ManagedRoutineMutationResult, RoutineMutationContext, RoutineMutationHost,
+    RoutineMutationIntent, RoutineMutationOrigin, RoutineMutationPolicyContext,
+    RoutineNamingIntent, RoutineRepositoryTarget, RoutineServiceError, RoutineValidationIntent,
+};
 
-const DEFAULT_ROUTINE_LIMIT: i64 = 50;
-const MAX_ROUTINE_LIMIT: i64 = 200;
+use crate::args::{clamp_limit, offset};
+use crate::error::McpBusinessError;
+use crate::host::{McpHost, RequestTarget};
+use crate::mutation::{authorize_paths, within_authorized};
+use crate::path::validate_public_rel_path;
+use crate::protocol::{ContentBlock, ToolCallResult};
+use crate::target::resolve_space;
+
 const AUTHORITY_UNAVAILABLE_CODE: &str = "routine_authority_unavailable";
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub(super) struct ListRoutinesArgs {
+pub(crate) struct ListRoutinesArgs {
     space_id: String,
     #[serde(default)]
     collection_path: Option<String>,
@@ -25,7 +46,7 @@ pub(super) struct ListRoutinesArgs {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub(super) struct GetRoutineArgs {
+pub(crate) struct GetRoutineArgs {
     space_id: String,
     #[serde(default)]
     collection_path: Option<String>,
@@ -34,7 +55,7 @@ pub(super) struct GetRoutineArgs {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub(super) struct CreateRoutineArgs {
+pub(crate) struct CreateRoutineArgs {
     space_id: String,
     #[serde(default)]
     collection_path: Option<String>,
@@ -46,7 +67,7 @@ pub(super) struct CreateRoutineArgs {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub(super) struct UpdateRoutineArgs {
+pub(crate) struct UpdateRoutineArgs {
     space_id: String,
     #[serde(default)]
     collection_path: Option<String>,
@@ -60,7 +81,7 @@ pub(super) struct UpdateRoutineArgs {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub(super) struct DeleteRoutineArgs {
+pub(crate) struct DeleteRoutineArgs {
     space_id: String,
     #[serde(default)]
     collection_path: Option<String>,
@@ -70,7 +91,7 @@ pub(super) struct DeleteRoutineArgs {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub(super) struct RunRoutineArgs {
+pub(crate) struct RunRoutineArgs {
     space_id: String,
     #[serde(default)]
     collection_path: Option<String>,
@@ -175,32 +196,44 @@ fn reject_unknown_keys(
     Ok(())
 }
 
-pub(super) async fn list_routines(
-    app: &AppHandle,
+/// Host capabilities of a managed Routine mutation: the Git target of an
+/// owner from the host Git runtime and repository authorization through the
+/// host access state.
+struct RoutineHost<'a, H> {
+    host: &'a H,
+    git: &'a GitRuntime,
+}
+
+impl<H: McpHost> RoutineRepositoryTarget for RoutineHost<'_, H> {
+    type Error = McpBusinessError;
+
+    async fn mutation_repository(
+        &self,
+        owner: &ResolvedRoutineOwner,
+    ) -> Result<PathBuf, McpBusinessError> {
+        let (_, repository) = svode_core::git::ops::resolve_target_repo(
+            self.git.cli()?,
+            &owner.project_path,
+            &owner.space_path,
+        )
+        .await?;
+        Ok(repository)
+    }
+}
+
+impl<H: McpHost> RoutineMutationHost for RoutineHost<'_, H> {
+    async fn authorize_mutation(&self, repository: &Path) -> Result<(), McpBusinessError> {
+        self.host.require_mutation_access(repository).await
+    }
+}
+
+pub(crate) async fn list_routines(
+    host: &impl McpHost,
+    target: &RequestTarget,
     args: ListRoutinesArgs,
 ) -> Result<ToolCallResult, McpBusinessError> {
-    let owner = resolve_routine_owner(app, &args.space_id, args.collection_path.as_deref()).await?;
-    let routine_stores = app.state::<Arc<crate::routines::RoutineStoreState>>();
-    let index_state = app.state::<IndexState>();
-    let terminal_manager = app.state::<TerminalManager>();
-    let live_evidence = crate::routines::runtime::live_evidence(&terminal_manager)?;
-    let snapshot = svode_core::routines::service::read_catalog(
-        routine_stores.core(),
-        &index_state.core,
-        &live_evidence,
-        &owner,
-    )
-    .await
-    .map_err(AppError::from)?;
-    let authority = authority_projection(
-        svode_core::routines::service::read_automatic_authority(
-            routine_stores.core(),
-            &index_state.core,
-            &owner,
-        )
-        .await
-        .map_err(AppError::from),
-    );
+    let owner = resolve_routine_owner(target, &args.space_id, args.collection_path.as_deref())?;
+    let (snapshot, authority) = read_owner(host, &owner).await?;
     let structured = list_payload(&snapshot, authority, args.limit, args.offset);
     let returned = structured["routines"]
         .as_array()
@@ -214,153 +247,132 @@ pub(super) async fn list_routines(
     ))
 }
 
-pub(super) async fn get_routine(
-    app: &AppHandle,
+pub(crate) async fn get_routine(
+    host: &impl McpHost,
+    target: &RequestTarget,
     args: GetRoutineArgs,
 ) -> Result<ToolCallResult, McpBusinessError> {
-    let owner = resolve_routine_owner(app, &args.space_id, args.collection_path.as_deref()).await?;
-    let routine_stores = app.state::<Arc<crate::routines::RoutineStoreState>>();
-    let index_state = app.state::<IndexState>();
-    let terminal_manager = app.state::<TerminalManager>();
-    let live_evidence = crate::routines::runtime::live_evidence(&terminal_manager)?;
-    let snapshot = svode_core::routines::service::read_catalog(
-        routine_stores.core(),
-        &index_state.core,
-        &live_evidence,
-        &owner,
-    )
-    .await
-    .map_err(AppError::from)?;
+    let owner = resolve_routine_owner(target, &args.space_id, args.collection_path.as_deref())?;
+    let (snapshot, authority) = read_owner(host, &owner).await?;
     let row = find_routine(&snapshot, &args.routine_id)?;
-    let authority = authority_projection(
-        svode_core::routines::service::read_automatic_authority(
-            routine_stores.core(),
-            &index_state.core,
-            &owner,
-        )
-        .await
-        .map_err(AppError::from),
-    );
     Ok(ToolCallResult::ok(
         format!("Read routine {} for the explicit owner.", args.routine_id),
         detail_payload(&snapshot, row, authority),
     ))
 }
 
-pub(super) async fn create_routine(
-    app: &AppHandle,
+/// Catalog of one owner with its exact-owner automatic authority.
+async fn read_owner(
+    host: &impl McpHost,
+    owner: &ResolvedRoutineOwner,
+) -> Result<(RoutineCatalogSnapshot, AuthorityProjection), McpBusinessError> {
+    let routines = host.routine_runtime()?;
+    let index = host.read_runtime().index;
+    let snapshot =
+        service::read_catalog(routines.stores, index, &routines.live_evidence, owner).await?;
+    let authority = authority_projection(
+        service::read_automatic_authority(routines.stores, index, owner).await,
+    );
+    Ok((snapshot, authority))
+}
+
+pub(crate) async fn create_routine(
+    host: &impl McpHost,
+    target: &RequestTarget,
     args: CreateRoutineArgs,
 ) -> Result<ToolCallResult, McpBusinessError> {
-    let owner = resolve_routine_owner(app, &args.space_id, args.collection_path.as_deref()).await?;
-    let routine_stores = app.state::<Arc<crate::routines::RoutineStoreState>>();
-    let index_state = app.state::<IndexState>();
-    let terminal_manager = app.state::<TerminalManager>();
-    let git_state = app.state::<GitState>();
-    let access_state = app.state::<crate::git::access::RepositoryAccessState>();
-    let access_store_path = crate::git::access::access_store_path(app)?;
-    let live_evidence = crate::routines::runtime::live_evidence(&terminal_manager)?;
-    let host = crate::routines::host::RoutineMutationRuntime::new(
-        &git_state,
-        &access_state,
-        &access_store_path,
-    );
-    let context = svode_core::routines::service::RoutineMutationContext {
-        repositories: git_state.repository(),
-        routine_stores: routine_stores.core(),
-        index_state: &index_state.core,
-        live_evidence: &live_evidence,
+    let owner = resolve_routine_owner(target, &args.space_id, args.collection_path.as_deref())?;
+    let routines = host.routine_runtime()?;
+    let read = host.read_runtime();
+    let context = RoutineMutationContext {
+        repositories: read.git.repository(),
+        routine_stores: routines.stores,
+        index_state: read.index,
+        live_evidence: &routines.live_evidence,
     };
-    let result = svode_core::routines::service::create_managed(
+    let result = Box::pin(service::create_managed(
         owner.clone(),
         args.definition,
         strict_materializing_intent(),
-        mutation_policy(args.confirm_automatic_execution.unwrap_or(false)),
+        mutation_policy(target, args.confirm_automatic_execution.unwrap_or(false)),
         &context,
-        &host,
-    )
+        &RoutineHost {
+            host,
+            git: read.git,
+        },
+    ))
     .await?;
-    mutation_result(app, &owner, result, MutationKind::Create).await
+    mutation_result(host, &owner, result, MutationKind::Create).await
 }
 
-pub(super) async fn update_routine(
-    app: &AppHandle,
+pub(crate) async fn update_routine(
+    host: &impl McpHost,
+    target: &RequestTarget,
     args: UpdateRoutineArgs,
 ) -> Result<ToolCallResult, McpBusinessError> {
     validate_mutation_identity(&args.routine_id, &args.expected_fingerprint)?;
-    let owner = resolve_routine_owner(app, &args.space_id, args.collection_path.as_deref()).await?;
-    let routine_stores = app.state::<Arc<crate::routines::RoutineStoreState>>();
-    let index_state = app.state::<IndexState>();
-    let terminal_manager = app.state::<TerminalManager>();
-    let git_state = app.state::<GitState>();
-    let access_state = app.state::<crate::git::access::RepositoryAccessState>();
-    let access_store_path = crate::git::access::access_store_path(app)?;
-    let live_evidence = crate::routines::runtime::live_evidence(&terminal_manager)?;
-    let host = crate::routines::host::RoutineMutationRuntime::new(
-        &git_state,
-        &access_state,
-        &access_store_path,
-    );
-    let context = svode_core::routines::service::RoutineMutationContext {
-        repositories: git_state.repository(),
-        routine_stores: routine_stores.core(),
-        index_state: &index_state.core,
-        live_evidence: &live_evidence,
+    let owner = resolve_routine_owner(target, &args.space_id, args.collection_path.as_deref())?;
+    let routines = host.routine_runtime()?;
+    let read = host.read_runtime();
+    let context = RoutineMutationContext {
+        repositories: read.git.repository(),
+        routine_stores: routines.stores,
+        index_state: read.index,
+        live_evidence: &routines.live_evidence,
     };
-    let result = svode_core::routines::service::update_managed(
+    let result = Box::pin(service::update_managed(
         owner.clone(),
         args.routine_id,
         args.expected_fingerprint,
         args.definition,
         strict_materializing_intent(),
-        mutation_policy(args.confirm_automatic_execution.unwrap_or(false)),
+        mutation_policy(target, args.confirm_automatic_execution.unwrap_or(false)),
         &context,
-        &host,
-    )
+        &RoutineHost {
+            host,
+            git: read.git,
+        },
+    ))
     .await?;
-    mutation_result(app, &owner, result, MutationKind::Update).await
+    mutation_result(host, &owner, result, MutationKind::Update).await
 }
 
-pub(super) async fn delete_routine(
-    app: &AppHandle,
+pub(crate) async fn delete_routine(
+    host: &impl McpHost,
+    target: &RequestTarget,
     args: DeleteRoutineArgs,
 ) -> Result<ToolCallResult, McpBusinessError> {
     validate_mutation_identity(&args.routine_id, &args.expected_fingerprint)?;
-    let owner = resolve_routine_owner(app, &args.space_id, args.collection_path.as_deref()).await?;
-    let routine_stores = app.state::<Arc<crate::routines::RoutineStoreState>>();
-    let index_state = app.state::<IndexState>();
-    let terminal_manager = app.state::<TerminalManager>();
-    let git_state = app.state::<GitState>();
-    let access_state = app.state::<crate::git::access::RepositoryAccessState>();
-    let access_store_path = crate::git::access::access_store_path(app)?;
-    let live_evidence = crate::routines::runtime::live_evidence(&terminal_manager)?;
-    let host = crate::routines::host::RoutineMutationRuntime::new(
-        &git_state,
-        &access_state,
-        &access_store_path,
-    );
-    let context = svode_core::routines::service::RoutineMutationContext {
-        repositories: git_state.repository(),
-        routine_stores: routine_stores.core(),
-        index_state: &index_state.core,
-        live_evidence: &live_evidence,
+    let owner = resolve_routine_owner(target, &args.space_id, args.collection_path.as_deref())?;
+    let routines = host.routine_runtime()?;
+    let read = host.read_runtime();
+    let context = RoutineMutationContext {
+        repositories: read.git.repository(),
+        routine_stores: routines.stores,
+        index_state: read.index,
+        live_evidence: &routines.live_evidence,
     };
-    let result = svode_core::routines::service::delete_managed(
+    let result = Box::pin(service::delete_managed(
         owner.clone(),
         args.routine_id,
         args.expected_fingerprint,
         &context,
-        &host,
-    )
+        &RoutineHost {
+            host,
+            git: read.git,
+        },
+    ))
     .await?;
-    mutation_result(app, &owner, result, MutationKind::Delete).await
+    mutation_result(host, &owner, result, MutationKind::Delete).await
 }
 
-pub(super) async fn run_routine(
-    app: &AppHandle,
+pub(crate) async fn run_routine(
+    host: &impl McpHost,
+    target: &RequestTarget,
     args: RunRoutineArgs,
 ) -> Result<ToolCallResult, McpBusinessError> {
     validate_mutation_identity(&args.routine_id, &args.expected_fingerprint)?;
-    if crate::mcp::service::routine_caller_provenance().is_some() {
+    if target.routine_caller.is_some() {
         return Ok(dispatch_result(RoutineDispatchResult::Blocked {
             routine_id: args.routine_id,
             code: RoutineDispatchBlockedCode::RecursionGuard,
@@ -368,44 +380,37 @@ pub(super) async fn run_routine(
             current_fingerprint: None,
         }));
     }
-    let owner = resolve_routine_owner(app, &args.space_id, args.collection_path.as_deref()).await?;
-    let result = crate::routines::dispatch::dispatch_explicit(
-        app,
-        owner,
-        args.routine_id,
-        Some(args.expected_fingerprint),
-        &app.state::<GitState>(),
-        &app.state::<crate::git::access::RepositoryAccessState>(),
-        &app.state::<Arc<crate::routines::RoutineStoreState>>(),
-        &app.state::<IndexState>(),
-        &app.state::<TerminalManager>(),
+    let runner = host.routine_runner().ok_or_else(|| {
+        McpBusinessError::new("UNKNOWN_TOOL", "unknown Svode MCP tool: run_routine")
+    })?;
+    let owner = resolve_routine_owner(target, &args.space_id, args.collection_path.as_deref())?;
+    let paths = authorize_paths(host, vec![owner.space_path.clone()]).await?;
+    let result = within_authorized(
+        paths,
+        runner.run(owner, args.routine_id, args.expected_fingerprint),
     )
     .await?;
     Ok(dispatch_result(result))
 }
 
 fn mutation_policy(
+    target: &RequestTarget,
     confirm_automatic_execution: bool,
-) -> svode_core::routines::service::RoutineMutationPolicyContext {
-    use svode_core::routines::service::{RoutineMutationOrigin, RoutineMutationPolicyContext};
-
-    if crate::mcp::service::routine_caller_provenance().is_some() {
-        RoutineMutationPolicyContext {
-            origin: RoutineMutationOrigin::RoutineAgent,
-            automatic_execution_acknowledged: confirm_automatic_execution,
-        }
-    } else {
-        RoutineMutationPolicyContext {
-            origin: RoutineMutationOrigin::ExternalAgent,
-            automatic_execution_acknowledged: confirm_automatic_execution,
-        }
+) -> RoutineMutationPolicyContext {
+    RoutineMutationPolicyContext {
+        origin: if target.routine_caller.is_some() {
+            RoutineMutationOrigin::RoutineAgent
+        } else {
+            RoutineMutationOrigin::ExternalAgent
+        },
+        automatic_execution_acknowledged: confirm_automatic_execution,
     }
 }
 
-fn strict_materializing_intent() -> svode_core::routines::service::RoutineMutationIntent {
-    svode_core::routines::service::RoutineMutationIntent {
-        validation: svode_core::routines::service::RoutineValidationIntent::CompleteDefinition,
-        naming: svode_core::routines::service::RoutineNamingIntent::MaterializeCanonicalFilename,
+fn strict_materializing_intent() -> RoutineMutationIntent {
+    RoutineMutationIntent {
+        validation: RoutineValidationIntent::CompleteDefinition,
+        naming: RoutineNamingIntent::MaterializeCanonicalFilename,
     }
 }
 
@@ -510,33 +515,26 @@ impl MutationKind {
 }
 
 async fn mutation_result(
-    app: &AppHandle,
+    host: &impl McpHost,
     owner: &ResolvedRoutineOwner,
-    result: svode_core::routines::service::ManagedRoutineMutationResult,
+    result: ManagedRoutineMutationResult,
     kind: MutationKind,
 ) -> Result<ToolCallResult, McpBusinessError> {
-    if matches!(
-        &result,
-        svode_core::routines::service::ManagedRoutineMutationResult::Applied { .. }
-    ) {
-        crate::routines::emit_owner_invalidation(app, owner);
-    }
     match result {
-        svode_core::routines::service::ManagedRoutineMutationResult::Applied {
+        ManagedRoutineMutationResult::Applied {
             routine_id,
             snapshot,
             changed_paths,
             warnings,
         } => {
+            host.deliver_routine_invalidation(owner);
             let authority = authority_projection(
-                svode_core::routines::service::read_automatic_authority(
-                    app.state::<Arc<crate::routines::RoutineStoreState>>()
-                        .core(),
-                    &app.state::<IndexState>().core,
+                service::read_automatic_authority(
+                    host.routine_runtime()?.stores,
+                    host.read_runtime().index,
                     owner,
                 )
-                .await
-                .map_err(AppError::from),
+                .await,
             );
             let structured = match kind {
                 MutationKind::Delete => json!({
@@ -571,7 +569,7 @@ async fn mutation_result(
                 structured,
             ))
         }
-        svode_core::routines::service::ManagedRoutineMutationResult::Conflict {
+        ManagedRoutineMutationResult::Conflict {
             current_fingerprint,
         } => Ok(mutation_error(
             if current_fingerprint.is_some() {
@@ -586,17 +584,15 @@ async fn mutation_result(
             },
             json!({ "currentFingerprint": current_fingerprint }),
         )),
-        svode_core::routines::service::ManagedRoutineMutationResult::NameConflict { conflict } => {
-            Ok(mutation_error(
-                "ROUTINE_NAME_CONFLICT",
-                "routine name is already used inside the explicit owner",
-                json!({
-                    "owner": conflict.owner,
-                    "conflicts": conflict.conflicts,
-                }),
-            ))
-        }
-        svode_core::routines::service::ManagedRoutineMutationResult::Blocked {
+        ManagedRoutineMutationResult::NameConflict { conflict } => Ok(mutation_error(
+            "ROUTINE_NAME_CONFLICT",
+            "routine name is already used inside the explicit owner",
+            json!({
+                "owner": conflict.owner,
+                "conflicts": conflict.conflicts,
+            }),
+        )),
+        ManagedRoutineMutationResult::Blocked {
             code,
             message,
             diagnostics,
@@ -617,7 +613,7 @@ fn mutation_error(code: &str, message: &str, evidence: Value) -> ToolCallResult 
         error.extend(evidence);
     }
     ToolCallResult {
-        content: vec![svode_mcp::protocol::ContentBlock::text(message)],
+        content: vec![ContentBlock::text(message)],
         structured_content: Some(json!({ "error": error })),
         is_error: true,
     }
@@ -642,8 +638,8 @@ fn validate_mutation_identity(
     Ok(())
 }
 
-async fn resolve_routine_owner(
-    app: &AppHandle,
+fn resolve_routine_owner(
+    target: &RequestTarget,
     space_id: &str,
     collection_path: Option<&str>,
 ) -> Result<ResolvedRoutineOwner, McpBusinessError> {
@@ -656,20 +652,18 @@ async fn resolve_routine_owner(
     let collection_path = collection_path
         .map(validate_routine_collection_path)
         .transpose()?;
-    let (context, space) = resolve_space(app, Some(space_id.to_string())).await?;
+    let space = resolve_space(target, Some(space_id))?;
     let (owner_kind, owner_path) = match collection_path {
         Some(path) => (RoutineOwnerInputKind::CollectionDirectory, path),
         None => (RoutineOwnerInputKind::RegisteredSpace, ".".to_string()),
     };
-    svode_core::routines::service::resolve_owner(
-        Path::new(&context.project_path),
+    Ok(service::resolve_owner(
+        Path::new(&target.project_path),
         Path::new(&space),
         space_id,
         &owner_path,
         owner_kind,
-    )
-    .map_err(AppError::from)
-    .map_err(Into::into)
+    )?)
 }
 
 fn validate_routine_collection_path(path: &str) -> Result<String, McpBusinessError> {
@@ -686,7 +680,7 @@ fn validate_routine_collection_path(path: &str) -> Result<String, McpBusinessErr
     Ok(path)
 }
 
-fn authority_projection(result: Result<bool, AppError>) -> AuthorityProjection {
+fn authority_projection(result: Result<bool, RoutineServiceError>) -> AuthorityProjection {
     match result {
         Ok(enabled) => AuthorityProjection {
             enabled: Some(enabled),
@@ -709,9 +703,10 @@ fn list_payload(
     snapshot: &RoutineCatalogSnapshot,
     authority: AuthorityProjection,
     limit: Option<i64>,
-    offset: Option<i64>,
+    offset_arg: Option<i64>,
 ) -> Value {
-    let (limit, offset) = bounded_page(limit, offset);
+    let limit = clamp_limit(limit) as usize;
+    let offset = offset(offset_arg);
     let total = snapshot.routines.len();
     let routines = snapshot
         .routines
@@ -802,21 +797,14 @@ fn find_routine<'a>(
         })
 }
 
-fn bounded_page(limit: Option<i64>, offset: Option<i64>) -> (usize, usize) {
-    (
-        limit
-            .unwrap_or(DEFAULT_ROUTINE_LIMIT)
-            .clamp(1, MAX_ROUTINE_LIMIT) as usize,
-        offset.unwrap_or(0).max(0) as usize,
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::routines::{
-        RoutineAction, RoutineDefinition, RoutineDiagnostic, RoutineOwnerDescriptor,
-        RoutineOwnerKind, RoutineRunOrigin, RoutineTrigger, RoutineTriggerType,
+    use crate::dispatch::decode;
+    use crate::host::RoutineCaller;
+    use svode_core::routines::model::{
+        RoutineAction, RoutineDiagnostic, RoutineOwnerDescriptor, RoutineOwnerKind,
+        RoutineRunOrigin, RoutineTrigger, RoutineTriggerType,
     };
 
     fn row(id: &str, body: Option<&str>) -> RoutineRow {
@@ -879,6 +867,15 @@ mod tests {
             diagnostics: Vec::new(),
             catalog_fingerprint: "catalog".into(),
             refreshed_at: "2026-08-20T00:00:00Z".into(),
+        }
+    }
+
+    fn target(routine_caller: Option<RoutineCaller>) -> RequestTarget {
+        RequestTarget {
+            project_path: "/project".into(),
+            default_space_id: None,
+            default_space_path: "/project".into(),
+            routine_caller,
         }
     }
 
@@ -970,37 +967,38 @@ mod tests {
             }))
             .is_err()
         );
+        assert!(
+            decode::<RunRoutineArgs>(json!({
+                "spaceId": "root",
+                "routineId": "routine:one",
+                "expectedFingerprint": "fingerprint",
+                "routineCallerToken": "opaque-token",
+            }))
+            .is_err()
+        );
     }
 
-    #[tokio::test]
-    async fn verified_routine_provenance_selects_recursive_mutation_policy() {
+    #[test]
+    fn verified_routine_provenance_selects_recursive_mutation_policy() {
         assert_eq!(
-            mutation_policy(true),
-            svode_core::routines::service::RoutineMutationPolicyContext {
-                origin: svode_core::routines::service::RoutineMutationOrigin::ExternalAgent,
+            mutation_policy(&target(None), true),
+            RoutineMutationPolicyContext {
+                origin: RoutineMutationOrigin::ExternalAgent,
                 automatic_execution_acknowledged: true,
             }
         );
-
-        super::super::MCP_ROUTINE_CALLER
-            .scope(
-                Some(crate::terminal::RoutineMcpCallerProvenance {
-                    routine_run_id: "run-one".into(),
-                    launch_id: "launch-one".into(),
-                    pty_id: "pty-one".into(),
-                }),
-                async {
-                    assert_eq!(
-                        mutation_policy(true),
-                        svode_core::routines::service::RoutineMutationPolicyContext {
-                            origin:
-                                svode_core::routines::service::RoutineMutationOrigin::RoutineAgent,
-                            automatic_execution_acknowledged: true,
-                        }
-                    );
-                },
-            )
-            .await;
+        let caller = RoutineCaller {
+            routine_run_id: "run-one".into(),
+            launch_id: "launch-one".into(),
+            pty_id: "pty-one".into(),
+        };
+        assert_eq!(
+            mutation_policy(&target(Some(caller)), true),
+            RoutineMutationPolicyContext {
+                origin: RoutineMutationOrigin::RoutineAgent,
+                automatic_execution_acknowledged: true,
+            }
+        );
     }
 
     #[test]
@@ -1120,13 +1118,26 @@ mod tests {
 
     #[test]
     fn pagination_defaults_and_clamps_to_the_public_bound() {
-        assert_eq!(bounded_page(None, None), (50, 0));
-        assert_eq!(bounded_page(Some(500), Some(-1)), (200, 0));
-        assert_eq!(bounded_page(Some(0), Some(4)), (1, 4));
-
         let rows = (0..205)
             .map(|index| row(&format!("routine-{index}"), Some("body")))
-            .collect();
+            .collect::<Vec<_>>();
+        let defaults = list_payload(
+            &snapshot(rows.clone()),
+            authority_projection(Ok(false)),
+            None,
+            None,
+        );
+        assert_eq!(defaults["limit"], 50);
+        assert_eq!(defaults["offset"], 0);
+        let minimum = list_payload(
+            &snapshot(rows.clone()),
+            authority_projection(Ok(false)),
+            Some(0),
+            Some(-1),
+        );
+        assert_eq!(minimum["limit"], 1);
+        assert_eq!(minimum["offset"], 0);
+
         let payload = list_payload(
             &snapshot(rows),
             authority_projection(Ok(false)),
@@ -1180,7 +1191,8 @@ mod tests {
         let off = authority_projection(Ok(false));
         assert_eq!(off.enabled, Some(false));
         assert!(off.diagnostics.is_empty());
-        let unavailable = authority_projection(Err(AppError::General("private detail".into())));
+        let unavailable =
+            authority_projection(Err(RoutineServiceError::General("private detail".into())));
         assert_eq!(unavailable.enabled, None);
         assert_eq!(unavailable.diagnostics.len(), 1);
         assert_eq!(

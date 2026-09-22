@@ -164,13 +164,6 @@ pub(crate) struct AgentTerminalSurface {
     pub(crate) exit_marker_buffer: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct RoutineMcpCallerProvenance {
-    pub routine_run_id: String,
-    pub launch_id: String,
-    pub pty_id: String,
-}
-
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct AgentTerminalStatusEvidence {
@@ -589,7 +582,7 @@ impl TerminalManager {
         &self,
         token: &str,
         frozen_project_path: &Path,
-    ) -> Result<Option<RoutineMcpCallerProvenance>, AppError> {
+    ) -> Result<Option<svode_mcp::host::RoutineCaller>, AppError> {
         let token = token.trim();
         if token.is_empty() {
             return Ok(None);
@@ -613,7 +606,7 @@ impl TerminalManager {
         if canonical_cwd(project_path)? != frozen_project_path {
             return Ok(None);
         }
-        Ok(Some(RoutineMcpCallerProvenance {
+        Ok(Some(svode_mcp::host::RoutineCaller {
             routine_run_id: surface
                 .routine_run_id
                 .clone()

@@ -15,6 +15,7 @@ use svode_core::page::{PageError, PageSourceError};
 use svode_core::routines::RoutineStoreError;
 use svode_core::routines::local::LocalConfigError;
 use svode_core::routines::observation::ObservationError;
+use svode_core::routines::service::RoutineServiceError;
 
 use crate::error::McpBusinessError;
 
@@ -28,6 +29,13 @@ fn path_not_accessible(path: String) -> McpBusinessError {
     McpBusinessError::new(
         "PATH_NOT_ACCESSIBLE",
         format!("Path not accessible: {path}"),
+    )
+}
+
+fn file_already_exists(path: String) -> McpBusinessError {
+    McpBusinessError::new(
+        "FILE_ALREADY_EXISTS",
+        format!("File already exists: {path}"),
     )
 }
 
@@ -184,6 +192,24 @@ impl From<RoutineStoreError> for McpBusinessError {
     }
 }
 
+impl From<RoutineServiceError> for McpBusinessError {
+    fn from(error: RoutineServiceError) -> Self {
+        match error {
+            RoutineServiceError::Io(error) => io(error),
+            RoutineServiceError::Serde(error) => serde(error),
+            RoutineServiceError::FileNotFound(path) => file_not_found(path),
+            RoutineServiceError::FileAlreadyExists(path) => file_already_exists(path),
+            RoutineServiceError::SpaceNotFound(id) => space_not_found(id),
+            RoutineServiceError::PathNotAccessible(path) => path_not_accessible(path),
+            RoutineServiceError::Db(error) => database(error),
+            RoutineServiceError::General(message) => general(message),
+            RoutineServiceError::Git(error) => error.into(),
+            RoutineServiceError::Index(error) => error.into(),
+            RoutineServiceError::Store(error) => error.into(),
+        }
+    }
+}
+
 impl From<ObservationError> for McpBusinessError {
     fn from(error: ObservationError) -> Self {
         match error {
@@ -199,10 +225,7 @@ impl From<PageError> for McpBusinessError {
             PageError::Io(error) => io(error),
             PageError::Serde(error) => serde(error),
             PageError::FileNotFound(path) => file_not_found(path),
-            PageError::FileAlreadyExists(path) => McpBusinessError::new(
-                "FILE_ALREADY_EXISTS",
-                format!("File already exists: {path}"),
-            ),
+            PageError::FileAlreadyExists(path) => file_already_exists(path),
             PageError::FrontmatterParse(message) => frontmatter(message),
             PageError::SpaceNotFound(id) => space_not_found(id),
             PageError::PathNotAccessible(path) => path_not_accessible(path),
@@ -291,6 +314,14 @@ mod tests {
             ),
             (CollectionError::Index("stale".into()).into(), "INDEX_ERROR"),
             (CollectionError::Schema("bad".into()).into(), SVODE_ERROR),
+            (
+                RoutineServiceError::PathNotAccessible("tasks".into()).into(),
+                "PATH_NOT_ACCESSIBLE",
+            ),
+            (
+                RoutineServiceError::Git(GitError::GitNotFound).into(),
+                "GIT_NOT_FOUND",
+            ),
         ];
         for (error, code) in cases {
             assert_eq!(error.code, code, "{}", error.message);

@@ -4,7 +4,9 @@ use std::future::Future;
 use std::pin::Pin;
 
 use svode_core::attachments::import::{LfsReadiness, ManagedImportDelivery};
+use svode_core::routines::model::{ResolvedRoutineOwner, RoutineDispatchResult};
 use svode_core::storage::config::AssetsSpaceConfig;
+use svode_mcp::host::{RoutineCaller, RoutineRunner, RoutineRuntime};
 
 pub async fn call_tool(app: AppHandle, name: &str, args: Value) -> ToolCallResult {
     call_tool_with_context(app, name, args, None).await
@@ -22,9 +24,9 @@ pub async fn call_tool_with_context(
             Err(error) => return ToolCallResult::business_error(error),
         };
 
-    // Freeze the desktop active context for the whole request. Authorization
-    // and the handler must resolve the same active Space even if the user
-    // changes selection while the tool call is in flight.
+    // Freeze the desktop active context for the whole request. The request
+    // resolves the same active Space even if the user changes selection
+    // while the tool call is in flight.
     let request_context =
         freeze_request_context(resolved_context, &app.state::<ActiveProjectState>());
 
@@ -33,16 +35,11 @@ pub async fn call_tool_with_context(
             Ok(provenance) => provenance,
             Err(error) => return ToolCallResult::business_error(error),
         };
-    let target = request_context.as_ref().map(request_target);
+    let target = request_context
+        .as_ref()
+        .map(|context| request_target(context, routine_caller));
     let host = DesktopMcpHost { app };
-    let execute =
-        async { svode_mcp::dispatch::call_tool(&host, target.as_ref(), name, args).await };
-    MCP_ROUTINE_CALLER
-        .scope(
-            routine_caller,
-            MCP_CONTEXT_OVERRIDE.scope(request_context, execute),
-        )
-        .await
+    svode_mcp::dispatch::call_tool(&host, target.as_ref(), name, args).await
 }
 
 /// Desktop host of the shared MCP mapping: active-context resolution happens
@@ -119,12 +116,56 @@ impl svode_mcp::host::McpHost for DesktopMcpHost {
         crate::attachments::delivery::emit_managed_import_invalidations(&self.app, delivery);
     }
 
-    async fn call_host_tool(
+    fn routine_runtime(&self) -> Result<RoutineRuntime<'_>, McpBusinessError> {
+        Ok(RoutineRuntime {
+            stores: self
+                .app
+                .state::<std::sync::Arc<crate::routines::RoutineStoreState>>()
+                .inner()
+                .core(),
+            live_evidence: crate::routines::runtime::live_evidence(
+                &self.app.state::<crate::terminal::TerminalManager>(),
+            )?,
+        })
+    }
+
+    fn deliver_routine_invalidation(&self, owner: &ResolvedRoutineOwner) {
+        crate::routines::emit_owner_invalidation(&self.app, owner);
+    }
+
+    fn routine_runner(&self) -> Option<&dyn RoutineRunner> {
+        Some(self)
+    }
+}
+
+/// Explicit Routine launches go through the Desktop dispatch/PTY owner.
+impl RoutineRunner for DesktopMcpHost {
+    fn run(
         &self,
-        name: &str,
-        args: Value,
-    ) -> Result<ToolCallResult, McpBusinessError> {
-        call_host_tool(self.app.clone(), name, args).await
+        owner: ResolvedRoutineOwner,
+        routine_id: String,
+        expected_fingerprint: String,
+    ) -> Pin<Box<dyn Future<Output = Result<RoutineDispatchResult, McpBusinessError>> + Send + '_>>
+    {
+        Box::pin(async move {
+            crate::routines::dispatch::dispatch_explicit(
+                &self.app,
+                owner,
+                routine_id,
+                Some(expected_fingerprint),
+                &self.app.state::<GitState>(),
+                &self
+                    .app
+                    .state::<crate::git::access::RepositoryAccessState>(),
+                &self
+                    .app
+                    .state::<std::sync::Arc<crate::routines::RoutineStoreState>>(),
+                &self.app.state::<IndexState>(),
+                &self.app.state::<crate::terminal::TerminalManager>(),
+            )
+            .await
+            .map_err(Into::into)
+        })
     }
 }
 
@@ -147,7 +188,7 @@ fn resolve_routine_caller(
     app: &AppHandle,
     context_override: Option<&IpcContextOverride>,
     request_context: Option<&ActiveProjectContext>,
-) -> Result<Option<crate::terminal::RoutineMcpCallerProvenance>, McpBusinessError> {
+) -> Result<Option<RoutineCaller>, McpBusinessError> {
     let Some(token) = context_override
         .and_then(|context| context.routine_caller_token.as_deref())
         .map(str::trim)
@@ -179,63 +220,6 @@ fn freeze_request_context(
     resolved_context.or_else(|| active_state.get())
 }
 
-async fn call_host_tool(
-    app: AppHandle,
-    name: &str,
-    args: Value,
-) -> Result<ToolCallResult, McpBusinessError> {
-    let authorized_paths = authorize_mutating_tool(&app, name, &args).await?;
-    let execute = async {
-        match name {
-            "list_routines" => routines::list_routines(&app, decode(args)?).await,
-            "get_routine" => routines::get_routine(&app, decode(args)?).await,
-            "create_routine" => routines::create_routine(&app, decode(args)?).await,
-            "update_routine" => routines::update_routine(&app, decode(args)?).await,
-            "delete_routine" => routines::delete_routine(&app, decode(args)?).await,
-            "run_routine" => routines::run_routine(&app, decode(args)?).await,
-            _ => Err(McpBusinessError::new(
-                "UNKNOWN_TOOL",
-                format!("unknown Svode MCP tool: {name}"),
-            )),
-        }
-    };
-    if let Some(paths) = authorized_paths {
-        crate::git::access::scope_authorized_mutation_paths(paths, execute).await
-    } else {
-        execute.await
-    }
-}
-
-async fn authorize_mutating_tool(
-    app: &AppHandle,
-    name: &str,
-    args: &Value,
-) -> Result<Option<Vec<PathBuf>>, McpBusinessError> {
-    if svode_mcp::catalog::is_mutating_tool(name) != Some(true) {
-        return Ok(None);
-    }
-    if matches!(name, "create_routine" | "update_routine" | "run_routine")
-        && crate::mcp::service::routine_caller_provenance().is_some()
-    {
-        return Ok(None);
-    }
-
-    let requested_space_id = match args.get("spaceId") {
-        None | Some(Value::Null) => None,
-        Some(Value::String(space_id)) => Some(space_id.clone()),
-        Some(_) => {
-            return Err(McpBusinessError::new(
-                "SERIALIZATION_ERROR",
-                "spaceId must be a string or null",
-            ));
-        }
-    };
-    let (_, space) = resolve_space(app, requested_space_id).await?;
-    let paths = vec![PathBuf::from(&space)];
-    crate::git::access::require_repository_mutation_paths(app, paths.clone()).await?;
-    Ok(Some(paths))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -248,30 +232,22 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn desktop_selection_change_does_not_replace_frozen_request_context() {
+    #[test]
+    fn desktop_selection_change_does_not_replace_frozen_request_context() {
         let state = ActiveProjectState::new();
         state.set(context("first"));
-        let frozen = freeze_request_context(None, &state);
+        let target = freeze_request_context(None, &state)
+            .map(|context| request_target(&context, None))
+            .unwrap();
 
-        MCP_CONTEXT_OVERRIDE
-            .scope(frozen, async {
-                state.set(context("second"));
-                assert_eq!(
-                    MCP_CONTEXT_OVERRIDE
-                        .try_with(Clone::clone)
-                        .unwrap()
-                        .unwrap()
-                        .active_space_id
-                        .as_deref(),
-                    Some("first")
-                );
-                assert_eq!(
-                    state.get().unwrap().active_space_id.as_deref(),
-                    Some("second")
-                );
-            })
-            .await;
+        state.set(context("second"));
+
+        assert_eq!(target.default_space_id.as_deref(), Some("first"));
+        assert_eq!(target.default_space_path, "/project/first");
+        assert_eq!(
+            state.get().unwrap().active_space_id.as_deref(),
+            Some("second")
+        );
     }
 
     #[test]
@@ -283,8 +259,4 @@ mod tests {
 
         assert_eq!(frozen.active_space_id.as_deref(), Some("caller"));
     }
-}
-
-pub(super) fn decode<T: for<'de> Deserialize<'de>>(value: Value) -> Result<T, McpBusinessError> {
-    serde_json::from_value(value).map_err(Into::into)
 }

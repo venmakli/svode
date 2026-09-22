@@ -7,8 +7,8 @@
 
 use std::future::Future;
 use std::path::Path;
+use std::pin::Pin;
 
-use serde_json::Value;
 use sqlx::SqlitePool;
 use svode_core::actors::resolver::ActorCatalogState;
 use svode_core::attachments::import::{LfsReadiness, ManagedImportDelivery};
@@ -18,9 +18,12 @@ use svode_core::index::IndexKey;
 use svode_core::index::state::IndexRuntimeState;
 use svode_core::index::update::IndexUpdateState;
 use svode_core::page::nonce::WriteNonceRegistry;
+use svode_core::routines::model::{
+    ResolvedRoutineOwner, RoutineDispatchResult, RoutineLiveEvidence,
+};
+use svode_core::routines::store_state::RoutineStoreState;
 
 use crate::error::McpBusinessError;
-use crate::protocol::ToolCallResult;
 
 /// Host-owned runtime a managed mutation publishes into: the Project index,
 /// Routine observation updates and watcher echo nonces. One instance per
@@ -42,13 +45,44 @@ pub struct ReadRuntime<'a> {
     pub git: &'a GitRuntime,
 }
 
-/// Project and default Space frozen by the host for one request.
+/// Host-owned Routine runtime of one call: the shared operational stores and
+/// the live execution evidence observed by the host when the call started.
+pub struct RoutineRuntime<'a> {
+    pub stores: &'a RoutineStoreState,
+    pub live_evidence: RoutineLiveEvidence,
+}
+
+/// Routine-launched caller of a request. The host verifies it against a live
+/// managed launch before dispatch; the library only distinguishes Routine
+/// origin and never takes caller identity from public arguments.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RoutineCaller {
+    pub routine_run_id: String,
+    pub launch_id: String,
+    pub pty_id: String,
+}
+
+/// Explicit launch of a manual or schedule Routine by the host execution
+/// owner. It returns once the launch is decided, without waiting for the run.
+pub trait RoutineRunner: Sync {
+    fn run(
+        &self,
+        owner: ResolvedRoutineOwner,
+        routine_id: String,
+        expected_fingerprint: String,
+    ) -> Pin<Box<dyn Future<Output = Result<RoutineDispatchResult, McpBusinessError>> + Send + '_>>;
+}
+
+/// Project, default Space and caller provenance frozen by the host for one
+/// request.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RequestTarget {
     pub project_path: String,
     /// Registered child Space id of the default Space; `None` means the root.
     pub default_space_id: Option<String>,
     pub default_space_path: String,
+    /// Verified Routine provenance; `None` for an ordinary external caller.
+    pub routine_caller: Option<RoutineCaller>,
 }
 
 pub trait McpHost: Sync {
@@ -94,11 +128,15 @@ pub trait McpHost: Sync {
     /// consumers. The source result does not depend on it.
     fn deliver_managed_import(&self, delivery: &ManagedImportDelivery);
 
-    /// Temporary routing of tool families not yet mapped by the library.
-    /// Removed together with the last host-owned handlers in slice 3.2.5.
-    fn call_host_tool(
-        &self,
-        name: &str,
-        args: Value,
-    ) -> impl Future<Output = Result<ToolCallResult, McpBusinessError>> + Send;
+    /// Shared Routine runtime of one call.
+    fn routine_runtime(&self) -> Result<RoutineRuntime<'_>, McpBusinessError>;
+
+    /// Delivers the invalidation of an applied Routine definition change to
+    /// the host consumers of that owner. The source result does not depend
+    /// on it.
+    fn deliver_routine_invalidation(&self, owner: &ResolvedRoutineOwner);
+
+    /// Explicit Routine launch of the host. `None` means the host cannot run
+    /// Routines, so `run_routine` is neither published nor dispatched.
+    fn routine_runner(&self) -> Option<&dyn RoutineRunner>;
 }

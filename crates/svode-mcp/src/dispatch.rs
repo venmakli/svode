@@ -7,7 +7,9 @@ use crate::control::check_tool;
 use crate::error::McpBusinessError;
 use crate::host::{McpHost, RequestTarget};
 use crate::protocol::ToolCallResult;
-use crate::tools::{apps, collections, content, import, pages, project, search, structure};
+use crate::tools::{
+    apps, collections, content, import, pages, project, routines, search, structure,
+};
 
 /// Executes one tool within a request target frozen by the host. `None`
 /// means the host has no open project for this request.
@@ -211,7 +213,34 @@ async fn call(
             let args = decode(args)?;
             import::import_asset(host, require(target)?, args).await
         }
-        _ => host.call_host_tool(name, args).await,
+        "list_routines" => {
+            let args = decode(args)?;
+            routines::list_routines(host, require(target)?, args).await
+        }
+        "get_routine" => {
+            let args = decode(args)?;
+            routines::get_routine(host, require(target)?, args).await
+        }
+        "create_routine" => {
+            let args = decode(args)?;
+            routines::create_routine(host, require(target)?, args).await
+        }
+        "update_routine" => {
+            let args = decode(args)?;
+            routines::update_routine(host, require(target)?, args).await
+        }
+        "delete_routine" => {
+            let args = decode(args)?;
+            routines::delete_routine(host, require(target)?, args).await
+        }
+        "run_routine" => {
+            let args = decode(args)?;
+            routines::run_routine(host, require(target)?, args).await
+        }
+        _ => Err(McpBusinessError::new(
+            "UNKNOWN_TOOL",
+            format!("unknown Svode MCP tool: {name}"),
+        )),
     }
 }
 

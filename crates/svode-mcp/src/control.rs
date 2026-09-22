@@ -21,11 +21,17 @@ pub fn initialize(host_version: &str) -> Value {
     })
 }
 
+/// Whether the host serves a catalog tool: it declares the tool and has the
+/// capability the tool needs.
+fn serves(host: &impl McpHost, name: &str) -> bool {
+    host.serves_tool(name) && (name != "run_routine" || host.routine_runner().is_some())
+}
+
 /// Catalog limited to the tools the host declares.
 pub fn tools_list(host: &impl McpHost) -> Value {
     let tools = catalog::definitions()
         .into_iter()
-        .filter(|definition| host.serves_tool(definition.name))
+        .filter(|definition| serves(host, definition.name))
         .collect::<Vec<_>>();
     json!({ "tools": tools })
 }
@@ -33,7 +39,7 @@ pub fn tools_list(host: &impl McpHost) -> Value {
 /// Rejects a tool outside the host catalog before any effect. Stale tools of
 /// an already open connection end here.
 pub fn check_tool(host: &impl McpHost, name: &str) -> Result<(), McpBusinessError> {
-    if catalog::is_mutating_tool(name).is_some() && host.serves_tool(name) {
+    if catalog::is_mutating_tool(name).is_some() && serves(host, name) {
         return Ok(());
     }
     Err(McpBusinessError::new(

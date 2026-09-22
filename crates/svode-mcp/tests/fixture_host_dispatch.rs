@@ -22,13 +22,19 @@ use svode_core::index::resolver::SpaceStatus;
 use svode_core::index::state::IndexRuntimeState;
 use svode_core::index::update::IndexUpdateState;
 use svode_core::page::nonce::WriteNonceRegistry;
+use svode_core::routines::model::{
+    ResolvedRoutineOwner, RoutineDispatchResult, RoutineLiveEvidence, RoutineOwnerDescriptor,
+};
 use svode_core::routines::store_state::RoutineStoreState;
 use svode_core::storage::config::AssetsSpaceConfig;
 use svode_mcp::catalog;
 use svode_mcp::control::{self, BridgeCall, MCP_PROTOCOL_VERSION};
 use svode_mcp::dispatch::call_tool;
 use svode_mcp::error::McpBusinessError;
-use svode_mcp::host::{McpHost, MutationRuntime, ReadRuntime, RequestTarget};
+use svode_mcp::host::{
+    McpHost, MutationRuntime, ReadRuntime, RequestTarget, RoutineCaller, RoutineRunner,
+    RoutineRuntime,
+};
 use svode_mcp::protocol::ToolCallResult;
 
 const FIRST_SLICE_TOOLS: [&str; 10] = [
@@ -48,12 +54,14 @@ struct FixtureHost {
     served: Option<Vec<&'static str>>,
     pool: Option<SqlitePool>,
     pool_keys: Mutex<Vec<IndexKey>>,
-    host_calls: Mutex<Vec<String>>,
     deny_mutations: bool,
     authorized: Mutex<Vec<PathBuf>>,
     lfs_ready: Option<bool>,
     lfs_probes: Mutex<Vec<PathBuf>>,
     deliveries: Mutex<Vec<ManagedImportDelivery>>,
+    routine_invalidations: Mutex<Vec<RoutineOwnerDescriptor>>,
+    runner: Option<FixtureRunner>,
+    routines: Arc<RoutineStoreState>,
     index: IndexRuntimeState,
     updates: IndexUpdateState,
     nonces: WriteNonceRegistry,
@@ -63,18 +71,21 @@ struct FixtureHost {
 
 impl FixtureHost {
     fn new(pool: Option<SqlitePool>) -> Self {
+        let routines = Arc::new(RoutineStoreState::new());
         Self {
             served: None,
             pool,
             pool_keys: Mutex::new(Vec::new()),
-            host_calls: Mutex::new(Vec::new()),
             deny_mutations: false,
             authorized: Mutex::new(Vec::new()),
             lfs_ready: None,
             lfs_probes: Mutex::new(Vec::new()),
             deliveries: Mutex::new(Vec::new()),
+            routine_invalidations: Mutex::new(Vec::new()),
+            runner: Some(FixtureRunner::default()),
+            updates: IndexUpdateState::new(routines.clone()),
+            routines,
             index: IndexRuntimeState::default(),
-            updates: IndexUpdateState::new(Arc::new(RoutineStoreState::new())),
             nonces: WriteNonceRegistry::new(),
             actors: ActorCatalogState::new(),
             git: GitRuntime::new(),
@@ -99,8 +110,52 @@ impl FixtureHost {
         }
     }
 
-    fn host_calls(&self) -> Vec<String> {
-        self.host_calls.lock().unwrap().clone()
+    fn without_runner() -> Self {
+        Self {
+            runner: None,
+            ..Self::new(None)
+        }
+    }
+
+    fn runs(&self) -> Vec<(String, String, String)> {
+        self.runner
+            .as_ref()
+            .map(|runner| runner.runs.lock().unwrap().clone())
+            .unwrap_or_default()
+    }
+}
+
+/// Stand-in for the host Routine execution owner: records the launch it
+/// was handed and reports it as started. Routine execution is a host effect,
+/// so the fixture replaces only this step.
+#[derive(Default)]
+struct FixtureRunner {
+    runs: Mutex<Vec<(String, String, String)>>,
+}
+
+impl RoutineRunner for FixtureRunner {
+    fn run(
+        &self,
+        owner: ResolvedRoutineOwner,
+        routine_id: String,
+        expected_fingerprint: String,
+    ) -> Pin<Box<dyn Future<Output = Result<RoutineDispatchResult, McpBusinessError>> + Send + '_>>
+    {
+        self.runs.lock().unwrap().push((
+            owner.descriptor.owner_path.clone(),
+            routine_id.clone(),
+            expected_fingerprint,
+        ));
+        Box::pin(async move {
+            Ok(RoutineDispatchResult::Started {
+                routine_id,
+                routine_run_id: "run-fixture".to_string(),
+                launch_id: "launch-fixture".to_string(),
+                agent_session_id: "agent:fixture".to_string(),
+                source_session_id: None,
+                pty_id: "pty-fixture".to_string(),
+            })
+        })
     }
 }
 
@@ -179,13 +234,24 @@ impl McpHost for FixtureHost {
         self.deliveries.lock().unwrap().push(delivery.clone());
     }
 
-    async fn call_host_tool(
-        &self,
-        name: &str,
-        _args: Value,
-    ) -> Result<ToolCallResult, McpBusinessError> {
-        self.host_calls.lock().unwrap().push(name.to_string());
-        Ok(ToolCallResult::ok("host", json!({ "host": name })))
+    fn routine_runtime(&self) -> Result<RoutineRuntime<'_>, McpBusinessError> {
+        Ok(RoutineRuntime {
+            stores: &self.routines,
+            live_evidence: RoutineLiveEvidence::default(),
+        })
+    }
+
+    fn deliver_routine_invalidation(&self, owner: &ResolvedRoutineOwner) {
+        self.routine_invalidations
+            .lock()
+            .unwrap()
+            .push(owner.descriptor.clone());
+    }
+
+    fn routine_runner(&self) -> Option<&dyn RoutineRunner> {
+        self.runner
+            .as_ref()
+            .map(|runner| runner as &dyn RoutineRunner)
     }
 }
 
@@ -277,6 +343,7 @@ fn root_target(fixture: &Fixture) -> RequestTarget {
         project_path: fixture.project.to_string_lossy().to_string(),
         default_space_id: None,
         default_space_path: fixture.project.to_string_lossy().to_string(),
+        routine_caller: None,
     }
 }
 
@@ -396,7 +463,6 @@ fn bridge_methods_keep_protocol_and_business_envelopes_apart() {
         }
         BridgeCall::Respond(_) => panic!("known tool must reach the host request context"),
     }
-    assert!(host.host_calls().is_empty());
 }
 
 #[tokio::test]
@@ -622,11 +688,10 @@ async fn public_path_policy_rejects_escapes_before_reading() {
     )
     .await;
     assert_eq!(error_code(&listing), "INVALID_PATH");
-    assert!(host.host_calls().is_empty());
 }
 
 #[tokio::test]
-async fn requests_without_project_and_unmapped_families() {
+async fn requests_without_project_and_tools_outside_the_host_catalog() {
     let fixture = fixture();
     let host = FixtureHost::new(None);
 
@@ -652,17 +717,18 @@ async fn requests_without_project_and_unmapped_families() {
     .await;
     assert_eq!(structured(&manifest)["valid"], true);
 
+    assert_eq!(
+        error_code(&call_tool(&host, None, "list_routines", json!({ "spaceId": "root" })).await),
+        "NO_ACTIVE_PROJECT"
+    );
+
     let target = root_target(&fixture);
-    let routed = call_tool(&host, Some(&target), "list_routines", json!({})).await;
-    assert_eq!(structured(&routed)["host"], "list_routines");
     let unknown = call_tool(&host, Some(&target), "legacy_tool", json!({})).await;
     assert_eq!(error_code(&unknown), "UNKNOWN_TOOL");
-    assert_eq!(host.host_calls(), vec!["list_routines".to_string()]);
 
     let limited = FixtureHost::serving(&FIRST_SLICE_TOOLS);
     let excluded = call_tool(&limited, Some(&target), "write_page", json!({})).await;
     assert_eq!(error_code(&excluded), "UNKNOWN_TOOL");
-    assert!(limited.host_calls().is_empty());
 }
 
 /// Writable fixture: one local repository with a standalone Page, a link
@@ -832,7 +898,6 @@ async fn body_writes_project_actual_paths_through_the_shared_operation() {
     ] {
         assert_eq!(error_code(&call(name, args).await), code, "{name}");
     }
-    assert!(host.host_calls().is_empty());
 }
 
 #[tokio::test]
@@ -1066,7 +1131,6 @@ async fn mutations_authorize_every_repository_before_the_first_write() {
             .iter()
             .all(|repository| repository == &fixture.project)
     );
-    assert!(denied.host_calls().is_empty());
 }
 
 #[tokio::test]
@@ -1349,7 +1413,6 @@ async fn collection_schema_and_query_read_the_host_index() {
     )
     .await;
     assert!(escaped.is_error);
-    assert!(host.host_calls().is_empty());
 }
 
 #[tokio::test]
@@ -1505,7 +1568,6 @@ async fn search_and_knowledge_stay_inside_the_frozen_scope() {
         let result = call_tool(&host, Some(&root), tool, args).await;
         assert_eq!(error_code(&result), code, "{tool}");
     }
-    assert!(host.host_calls().is_empty());
 }
 
 #[tokio::test]
@@ -1642,7 +1704,6 @@ async fn schema_and_view_changes_authorize_the_planned_set_and_return_the_normal
         assert_eq!(error_code(&result), "REPOSITORY_ACCESS_DENIED", "{tool}");
     }
     assert_eq!(schema_before, read(&fixture, "tasks/schema.yaml"));
-    assert!(host.host_calls().is_empty() && denied.host_calls().is_empty());
 }
 
 #[tokio::test]
@@ -1698,7 +1759,6 @@ async fn integrity_git_status_and_actors_read_through_the_host_runtime() {
         let result = call_tool(&limited, Some(&target), name, json!({})).await;
         assert_eq!(error_code(&result), "UNKNOWN_TOOL", "{name}");
     }
-    assert!(host.host_calls().is_empty() && limited.host_calls().is_empty());
 }
 
 const STRUCTURAL_TOOLS: [&str; 11] = [
@@ -1963,7 +2023,6 @@ async fn structural_actions_keep_link_relation_order_and_conversion_effects() {
     assert!(changed(structured(&same)).is_empty());
 
     assert_eq!(commit_count(&fixture), "1");
-    assert!(host.host_calls().is_empty());
 }
 
 #[tokio::test]
@@ -2082,14 +2141,12 @@ async fn structural_and_import_actions_authorize_before_the_first_write() {
             .all(|repository| repository == &fixture.project)
     );
     assert!(denied.deliveries.lock().unwrap().is_empty());
-    assert!(denied.host_calls().is_empty());
 
     let limited = FixtureHost::serving(&FIRST_SLICE_TOOLS);
     for name in STRUCTURAL_TOOLS {
         let result = call_tool(&limited, Some(&target), name, json!({})).await;
         assert_eq!(error_code(&result), "UNKNOWN_TOOL", "{name}");
     }
-    assert!(limited.host_calls().is_empty());
 }
 
 #[tokio::test]
@@ -2175,4 +2232,377 @@ async fn managed_import_uses_the_shared_plan_and_host_delivery() {
     assert_eq!(not_ready.lfs_probes.lock().unwrap().len(), 1);
     assert!(!fixture.project.join("photo.png").exists());
     assert!(not_ready.deliveries.lock().unwrap().is_empty());
+}
+
+const ROUTINE_TOOLS: [&str; 6] = [
+    "list_routines",
+    "get_routine",
+    "create_routine",
+    "update_routine",
+    "delete_routine",
+    "run_routine",
+];
+
+fn review_routine(name: &str, enabled: bool) -> Value {
+    json!({
+        "name": name,
+        "enabled": enabled,
+        "trigger": { "type": "event", "event": "collection.entry_created" },
+        "action": {
+            "type": "update_properties",
+            "target": "trigger.entry",
+            "set": { "reviewed": true }
+        },
+        "body": "Managed by Svode."
+    })
+}
+
+fn routine_caller() -> RoutineCaller {
+    RoutineCaller {
+        routine_run_id: "run-one".to_string(),
+        launch_id: "launch-one".to_string(),
+        pty_id: "pty-one".to_string(),
+    }
+}
+
+fn routine_files(fixture: &Fixture) -> Vec<String> {
+    let dir = fixture.project.join("tasks/.routines");
+    let Ok(entries) = fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut names = entries
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().to_string())
+        .collect::<Vec<_>>();
+    names.sort();
+    names
+}
+
+#[tokio::test]
+async fn routine_definitions_use_the_shared_owner_with_strict_candidate_cas_and_policy() {
+    let fixture = structure_fixture();
+    let host = FixtureHost::new(None);
+    let target = root_target(&fixture);
+    let call = |name: &'static str, args: Value| call_tool(&host, Some(&target), name, args);
+
+    let empty = call(
+        "list_routines",
+        json!({ "spaceId": "root", "collectionPath": "tasks" }),
+    )
+    .await;
+    assert_eq!(structured(&empty)["total"], 0);
+    assert_eq!(structured(&empty)["automaticAuthorityEnabled"], false);
+    assert_eq!(structured(&empty)["owner"]["ownerPath"], "tasks");
+
+    let unknown_executor = call(
+        "create_routine",
+        json!({
+            "spaceId": "root",
+            "collectionPath": "tasks",
+            "definition": {
+                "name": "Agent task",
+                "trigger": { "type": "manual" },
+                "action": { "type": "run_agent", "executor": "agent:01arz3ndektsv4rrffq69g5fav" },
+                "body": "Do it."
+            }
+        }),
+    )
+    .await;
+    assert_eq!(error_code(&unknown_executor), "ROUTINE_INVALID");
+    let unconfirmed = call(
+        "create_routine",
+        json!({
+            "spaceId": "root",
+            "collectionPath": "tasks",
+            "definition": review_routine("Keep review state", true)
+        }),
+    )
+    .await;
+    assert_eq!(
+        error_code(&unconfirmed),
+        "ROUTINE_AUTOMATIC_CONFIRMATION_REQUIRED"
+    );
+    let routine_target = RequestTarget {
+        routine_caller: Some(routine_caller()),
+        ..root_target(&fixture)
+    };
+    let recursive = call_tool(
+        &host,
+        Some(&routine_target),
+        "create_routine",
+        json!({
+            "spaceId": "root",
+            "collectionPath": "tasks",
+            "definition": review_routine("Keep review state", true),
+            "confirmAutomaticExecution": true
+        }),
+    )
+    .await;
+    assert_eq!(error_code(&recursive), "ROUTINE_RECURSION_GUARD");
+    assert!(routine_files(&fixture).is_empty());
+    assert!(host.authorized().is_empty());
+    assert!(host.routine_invalidations.lock().unwrap().is_empty());
+
+    let created = call(
+        "create_routine",
+        json!({
+            "spaceId": "root",
+            "collectionPath": "tasks",
+            "definition": review_routine("Keep review state", false)
+        }),
+    )
+    .await;
+    let created = structured(&created).clone();
+    assert_eq!(created["path"], "tasks/.routines/Keep review state.md");
+    assert_eq!(
+        created["changedPaths"],
+        json!(["tasks/.routines/Keep review state.md"])
+    );
+    assert_eq!(created["detail"]["valid"], true);
+    assert_eq!(created["detail"]["definition"]["body"], "Managed by Svode.");
+    assert_eq!(host.authorized(), vec![fixture.project.clone()]);
+    assert_eq!(
+        host.routine_invalidations.lock().unwrap()[0].owner_path,
+        "tasks"
+    );
+    let routine_id = created["routineId"].as_str().unwrap().to_string();
+    let fingerprint = created["fingerprint"].as_str().unwrap().to_string();
+
+    let duplicate = call(
+        "create_routine",
+        json!({
+            "spaceId": "root",
+            "collectionPath": "tasks",
+            "definition": review_routine("Keep review state", false)
+        }),
+    )
+    .await;
+    assert_eq!(error_code(&duplicate), "ROUTINE_NAME_CONFLICT");
+
+    let detail = call(
+        "get_routine",
+        json!({ "spaceId": "root", "collectionPath": "tasks", "routineId": routine_id }),
+    )
+    .await;
+    assert_eq!(structured(&detail)["fingerprint"], fingerprint.as_str());
+    let listed = call(
+        "list_routines",
+        json!({ "spaceId": "root", "collectionPath": "tasks" }),
+    )
+    .await;
+    assert_eq!(structured(&listed)["total"], 1);
+    assert!(
+        structured(&listed)["routines"][0]
+            .get("definition")
+            .is_none()
+    );
+
+    let source = read(&fixture, "tasks/.routines/Keep review state.md");
+    let stale = call(
+        "update_routine",
+        json!({
+            "spaceId": "root",
+            "collectionPath": "tasks",
+            "routineId": routine_id,
+            "expectedFingerprint": "stale",
+            "definition": review_routine("Review state", false)
+        }),
+    )
+    .await;
+    assert_eq!(error_code(&stale), "ROUTINE_FINGERPRINT_CONFLICT");
+    assert_eq!(
+        stale.structured_content.as_ref().unwrap()["error"]["currentFingerprint"],
+        fingerprint.as_str()
+    );
+    let invalid = call(
+        "update_routine",
+        json!({
+            "spaceId": "root",
+            "collectionPath": "tasks",
+            "routineId": routine_id,
+            "expectedFingerprint": fingerprint,
+            "definition": {
+                "name": "Keep review state",
+                "trigger": { "type": "manual" },
+                "action": { "type": "run_agent", "executor": "agent:01arz3ndektsv4rrffq69g5fav" },
+                "body": ""
+            }
+        }),
+    )
+    .await;
+    assert_eq!(error_code(&invalid), "ROUTINE_INVALID");
+    assert_eq!(
+        read(&fixture, "tasks/.routines/Keep review state.md"),
+        source
+    );
+
+    let updated = call(
+        "update_routine",
+        json!({
+            "spaceId": "root",
+            "collectionPath": "tasks",
+            "routineId": routine_id,
+            "expectedFingerprint": fingerprint,
+            "definition": review_routine("Review state", false)
+        }),
+    )
+    .await;
+    let updated = structured(&updated).clone();
+    assert_eq!(
+        updated["changedPaths"],
+        json!([
+            "tasks/.routines/Keep review state.md",
+            "tasks/.routines/Review state.md"
+        ])
+    );
+    assert_eq!(routine_files(&fixture), vec!["Review state.md".to_string()]);
+
+    let deleted = call(
+        "delete_routine",
+        json!({
+            "spaceId": "root",
+            "collectionPath": "tasks",
+            "routineId": routine_id,
+            "expectedFingerprint": updated["fingerprint"]
+        }),
+    )
+    .await;
+    assert_eq!(
+        structured(&deleted)["path"],
+        "tasks/.routines/Review state.md"
+    );
+    assert!(routine_files(&fixture).is_empty());
+    assert_eq!(host.routine_invalidations.lock().unwrap().len(), 3);
+    assert_eq!(commit_count(&fixture), "1");
+
+    for (args, code) in [
+        (json!({ "spaceId": " root" }), "INVALID_SPACE_ID"),
+        (
+            json!({ "spaceId": "root", "collectionPath": "tasks/.routines" }),
+            "PATH_FORBIDDEN",
+        ),
+        (
+            json!({ "spaceId": "root", "collectionPath": "../tasks" }),
+            "INVALID_PATH",
+        ),
+    ] {
+        assert_eq!(error_code(&call("list_routines", args).await), code);
+    }
+}
+
+#[tokio::test]
+async fn run_routine_goes_through_the_host_runner_and_is_blocked_for_routine_callers() {
+    let fixture = structure_fixture();
+    let host = FixtureHost::new(None);
+    let target = root_target(&fixture);
+    let run_args = json!({
+        "spaceId": "root",
+        "collectionPath": "tasks",
+        "routineId": "routine:one",
+        "expectedFingerprint": "fingerprint-one"
+    });
+
+    let started = call_tool(&host, Some(&target), "run_routine", run_args.clone()).await;
+    assert_eq!(structured(&started)["status"], "started");
+    assert_eq!(structured(&started)["routineRunId"], "run-fixture");
+    assert_eq!(
+        host.runs(),
+        vec![(
+            "tasks".to_string(),
+            "routine:one".to_string(),
+            "fingerprint-one".to_string()
+        )]
+    );
+    assert_eq!(host.authorized(), vec![fixture.project.clone()]);
+
+    let routine_target = RequestTarget {
+        routine_caller: Some(routine_caller()),
+        ..root_target(&fixture)
+    };
+    let recursive = call_tool(
+        &host,
+        Some(&routine_target),
+        "run_routine",
+        run_args.clone(),
+    )
+    .await;
+    assert_eq!(structured(&recursive)["status"], "blocked");
+    assert_eq!(structured(&recursive)["code"], "ROUTINE_RECURSION_GUARD");
+    assert_eq!(host.runs().len(), 1);
+
+    let denied = FixtureHost::denying_mutations();
+    let denied_run = call_tool(&denied, Some(&target), "run_routine", run_args.clone()).await;
+    assert_eq!(error_code(&denied_run), "REPOSITORY_ACCESS_DENIED");
+    assert!(denied.runs().is_empty());
+    for (tool, args) in [
+        (
+            "create_routine",
+            json!({
+                "spaceId": "root",
+                "collectionPath": "tasks",
+                "definition": review_routine("Keep review state", false)
+            }),
+        ),
+        (
+            "delete_routine",
+            json!({
+                "spaceId": "root",
+                "collectionPath": "tasks",
+                "routineId": "routine:one",
+                "expectedFingerprint": "fingerprint-one"
+            }),
+        ),
+    ] {
+        let result = call_tool(&denied, Some(&target), tool, args).await;
+        assert_eq!(error_code(&result), "REPOSITORY_ACCESS_DENIED", "{tool}");
+    }
+    assert!(routine_files(&fixture).is_empty());
+
+    let without_runner = FixtureHost::without_runner();
+    let names = control::tools_list(&without_runner)["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|tool| tool["name"].as_str().unwrap().to_string())
+        .collect::<Vec<_>>();
+    assert_eq!(names.len(), 53);
+    assert!(!names.contains(&"run_routine".to_string()));
+    assert_eq!(
+        error_code(&call_tool(&without_runner, Some(&target), "run_routine", run_args).await),
+        "UNKNOWN_TOOL"
+    );
+    match control::bridge_request(
+        &without_runner,
+        "tools/call",
+        &json!({ "name": "run_routine" }),
+    ) {
+        BridgeCall::Respond(response) => assert_eq!(response.error.unwrap().code, "UNKNOWN_TOOL"),
+        BridgeCall::CallTool { .. } => panic!("run_routine must not reach a host without runner"),
+    }
+
+    let limited = FixtureHost::serving(&FIRST_SLICE_TOOLS);
+    for name in ROUTINE_TOOLS {
+        let result = call_tool(&limited, Some(&target), name, json!({})).await;
+        assert_eq!(error_code(&result), "UNKNOWN_TOOL", "{name}");
+    }
+}
+
+/// Proof of the seam over the whole catalog: every published tool is
+/// dispatched by the library on a host without Tauri; none falls through
+/// to a host-owned handler.
+#[tokio::test]
+async fn every_catalog_tool_is_dispatched_by_the_library() {
+    let fixture = fixture();
+    let host = FixtureHost::new(None);
+    let target = root_target(&fixture);
+    let names = catalog::definitions()
+        .into_iter()
+        .map(|definition| definition.name)
+        .collect::<Vec<_>>();
+    assert_eq!(names.len(), 54);
+    for name in names {
+        let result = call_tool(&host, Some(&target), name, json!({})).await;
+        if result.is_error {
+            assert_ne!(error_code(&result), "UNKNOWN_TOOL", "{name}");
+        }
+    }
 }
