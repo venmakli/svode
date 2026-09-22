@@ -13,7 +13,7 @@ use svode_tools::error::ToolError;
 use svode_tools::host::{MutationRuntime, ReadRuntime, RoutineRunner, RoutineRuntime, ToolHost};
 
 /// Catalog tools answered from project sources alone.
-const SOURCE_TOOLS: [&str; 9] = [
+const SOURCE_TOOLS: [&str; 10] = [
     "get_svode_guide",
     "get_project_info",
     "list_spaces",
@@ -23,6 +23,7 @@ const SOURCE_TOOLS: [&str; 9] = [
     "read_space_readme",
     "read_collection_readme",
     "read_collection_item",
+    "validate_collection_integrity",
 ];
 
 pub struct SourceHost;

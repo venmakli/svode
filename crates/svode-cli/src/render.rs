@@ -109,6 +109,33 @@ pub fn actors(value: &Value) -> String {
     )
 }
 
+/// Issue counts of an integrity check, then `severity code path: message`
+/// per issue.
+pub fn integrity(value: &Value) -> String {
+    let report = &value["issuesBySeverity"];
+    let issues = report["errors"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .chain(report["warnings"].as_array().into_iter().flatten())
+        .map(|issue| {
+            format!(
+                "{} {} {}: {}",
+                text(&issue["severity"]),
+                text(&issue["code"]),
+                text(&issue["path"]),
+                text(&issue["message"])
+            )
+        });
+    lines(
+        std::iter::once(format!(
+            "{} errors, {} warnings",
+            value["errorCount"], value["warningCount"]
+        ))
+        .chain(issues),
+    )
+}
+
 /// Changed paths of a mutation, one per line.
 pub fn changes(value: &Value) -> String {
     lines(

@@ -11,9 +11,9 @@ use svode_tools::host::ToolHost;
 
 use crate::error::CliError;
 use crate::grammar::{
-    ActorVerb, CollectionReadmeVerb, CollectionVerb, GitVerb, ItemFieldsVerb, ItemVerb,
-    KnowledgeScope, KnowledgeVerb, MetaVerb, MetadataPatch, Noun, Pagination, ProjectVerb,
-    SpaceReadmeVerb, SpaceVerb,
+    ActorVerb, CollectionReadmeVerb, CollectionVerb, ColumnVerb, ContentVerb, ConvertTarget,
+    GitVerb, ItemFieldsVerb, ItemVerb, KnowledgeScope, KnowledgeVerb, MetaVerb, MetadataPatch,
+    NamedSelector, Noun, Pagination, ProjectVerb, SpaceReadmeVerb, SpaceVerb, ViewVerb,
 };
 use crate::host::mode_unavailable;
 use crate::input;
@@ -33,6 +33,9 @@ pub struct ToolCommand {
     /// Command-specific selectors echoed in the envelope target.
     pub selectors: Map<String, Value>,
     pub render: fn(&Value) -> String,
+    /// Whether the tool addresses a Space; a Project-level tool gets no
+    /// `spaceId`.
+    pub space_scoped: bool,
 }
 
 impl ToolCommand {
@@ -43,7 +46,23 @@ impl ToolCommand {
             args: Map::new(),
             selectors: Map::new(),
             render,
+            space_scoped: true,
         }
+    }
+
+    fn project_scoped(mut self) -> Self {
+        self.space_scoped = false;
+        self
+    }
+
+    /// Collection and column/view name of a schema command.
+    fn named(self, selector: NamedSelector, key: &str) -> Self {
+        self.selector(
+            "collectionPath",
+            "collection",
+            selector.collection.collection,
+        )
+        .selector(key, "name", selector.name)
     }
 
     fn arg(mut self, key: &str, value: impl Into<Value>) -> Self {
@@ -154,6 +173,11 @@ pub fn command(noun: Noun, cwd: &Path) -> Result<Option<ToolCommand>, CliError> 
             },
         } => ToolCommand::new("space meta set", "update_space_metadata", render::changes)
             .patch(cwd, patch)?,
+        Noun::Space {
+            verb: SpaceVerb::Reorder(args),
+        } => ToolCommand::new("space reorder", "reorder_spaces", render::changes)
+            .arg("orderedSpaceIds", args.ids)
+            .project_scoped(),
         Noun::Page {
             verb: PageVerb::List(args),
         } => ToolCommand::new("page list", "list_pages", render::tree)
@@ -202,6 +226,13 @@ pub fn command(noun: Noun, cwd: &Path) -> Result<Option<ToolCommand>, CliError> 
         } => ToolCommand::new("page meta set", "update_page_metadata", render::changes)
             .selector("path", "path", selector.path)
             .patch(cwd, patch)?,
+        Noun::Page {
+            verb: PageVerb::Delete(selector),
+        } => ToolCommand::new("page delete", "delete_page", render::changes).selector(
+            "path",
+            "path",
+            selector.path,
+        ),
         Noun::Collection { verb } => match verb {
             CollectionVerb::List => {
                 ToolCommand::new("collection list", "list_collections", |value| {
@@ -271,43 +302,169 @@ pub fn command(noun: Noun, cwd: &Path) -> Result<Option<ToolCommand>, CliError> 
             )
             .selector("collectionPath", "collection", selector.collection)
             .patch(cwd, patch)?,
-        },
-        Noun::Item { verb } => match verb {
-            ItemVerb::Read(args) => {
-                ToolCommand::new("item read", "read_collection_item", |value| {
-                    render::source(&value["item"])
-                })
-                .selector("path", "path", args.path)
-            }
-            ItemVerb::Write(args) => {
-                ToolCommand::new("item write", "update_collection_item_body", render::changes)
-                    .selector("path", "path", args.path)
+            CollectionVerb::Create(args) => {
+                input::one_stdin(&[
+                    ("body-file", args.body.body_file.as_deref()),
+                    ("cover-file", args.cover_file.as_deref()),
+                    ("columns-file", args.columns_file.as_deref()),
+                    ("views-file", args.views_file.as_deref()),
+                ])?;
+                ToolCommand::new("collection create", "create_collection", render::changes)
+                    .selector("parentPath", "parent", args.parent)
+                    .arg("title", args.title)
                     .optional(
                         "body",
                         body(cwd, args.body.body_file.as_deref(), args.body.body)?,
                     )
+                    .optional("icon", args.icon)
+                    .optional("description", args.description)
+                    .optional(
+                        "cover",
+                        json_input(cwd, "cover-file", args.cover_file.as_deref())?,
+                    )
+                    .optional(
+                        "columns",
+                        json_input(cwd, "columns-file", args.columns_file.as_deref())?,
+                    )
+                    .optional(
+                        "views",
+                        json_input(cwd, "views-file", args.views_file.as_deref())?,
+                    )
             }
-            ItemVerb::Fields {
-                verb: ItemFieldsVerb::Set(args),
-            } => ToolCommand::new(
-                "item fields set",
-                "update_collection_item_fields",
-                render::changes,
-            )
-            .selector("path", "path", args.path)
-            .arg(
-                "fields",
-                input::json(cwd, "fields-file", &args.fields_file)?,
-            ),
-            ItemVerb::Meta {
-                verb: MetaVerb::Set { selector, patch },
-            } => ToolCommand::new(
-                "item meta set",
-                "update_collection_item_metadata",
-                render::changes,
-            )
-            .selector("path", "path", selector.path)
-            .patch(cwd, patch)?,
+            CollectionVerb::Delete(args) => {
+                ToolCommand::new("collection delete", "delete_collection", render::changes)
+                    .selector("collectionPath", "collection", args.collection)
+            }
+            CollectionVerb::Check(args) => {
+                let command = ToolCommand::new(
+                    "collection check",
+                    "validate_collection_integrity",
+                    render::integrity,
+                );
+                match args.collection {
+                    Some(collection) => {
+                        command.selector("collectionPath", "collection", collection)
+                    }
+                    None => command,
+                }
+            }
+            CollectionVerb::Column { verb } => match verb {
+                ColumnVerb::Add(args) => ToolCommand::new(
+                    "collection column add",
+                    "add_collection_column",
+                    render::changes,
+                )
+                .selector("collectionPath", "collection", args.collection.collection)
+                .arg(
+                    "column",
+                    input::json(cwd, "column-file", &args.column_file)?,
+                ),
+                ColumnVerb::Update(args) => ToolCommand::new(
+                    "collection column update",
+                    "update_collection_column",
+                    render::changes,
+                )
+                .named(args.selector, "columnName")
+                .arg("patch", input::json(cwd, "patch-file", &args.patch_file)?),
+                ColumnVerb::Delete(args) => ToolCommand::new(
+                    "collection column delete",
+                    "delete_collection_column",
+                    render::changes,
+                )
+                .named(args.selector, "columnName")
+                .optional("deleteValues", args.delete_values.then_some(true)),
+            },
+            CollectionVerb::View { verb } => match verb {
+                ViewVerb::Add(args) => ToolCommand::new(
+                    "collection view add",
+                    "add_collection_view",
+                    render::changes,
+                )
+                .selector("collectionPath", "collection", args.collection.collection)
+                .arg("view", input::json(cwd, "view-file", &args.view_file)?)
+                .optional("position", args.position),
+                ViewVerb::Update(args) => ToolCommand::new(
+                    "collection view update",
+                    "update_collection_view",
+                    render::changes,
+                )
+                .named(args.selector, "viewName")
+                .arg("patch", input::json(cwd, "patch-file", &args.patch_file)?),
+                ViewVerb::Delete(selector) => ToolCommand::new(
+                    "collection view delete",
+                    "delete_collection_view",
+                    render::changes,
+                )
+                .named(selector, "viewName"),
+            },
+        },
+        Noun::Item { verb } => {
+            match verb {
+                ItemVerb::Read(args) => {
+                    ToolCommand::new("item read", "read_collection_item", |value| {
+                        render::source(&value["item"])
+                    })
+                    .selector("path", "path", args.path)
+                }
+                ItemVerb::Write(args) => {
+                    ToolCommand::new("item write", "update_collection_item_body", render::changes)
+                        .selector("path", "path", args.path)
+                        .optional(
+                            "body",
+                            body(cwd, args.body.body_file.as_deref(), args.body.body)?,
+                        )
+                }
+                ItemVerb::Fields {
+                    verb: ItemFieldsVerb::Set(args),
+                } => ToolCommand::new(
+                    "item fields set",
+                    "update_collection_item_fields",
+                    render::changes,
+                )
+                .selector("path", "path", args.path)
+                .arg(
+                    "fields",
+                    input::json(cwd, "fields-file", &args.fields_file)?,
+                ),
+                ItemVerb::Meta {
+                    verb: MetaVerb::Set { selector, patch },
+                } => ToolCommand::new(
+                    "item meta set",
+                    "update_collection_item_metadata",
+                    render::changes,
+                )
+                .selector("path", "path", selector.path)
+                .patch(cwd, patch)?,
+                ItemVerb::Delete(selector) => {
+                    ToolCommand::new("item delete", "delete_collection_item", render::changes)
+                        .selector("path", "path", selector.path)
+                }
+            }
+        }
+        Noun::Content { verb } => match verb {
+            ContentVerb::Rename(args) => {
+                ToolCommand::new("content rename", "rename_content", render::changes)
+                    .selector("from", "path", args.path)
+                    .arg("to", args.to)
+            }
+            ContentVerb::Move(args) => {
+                ToolCommand::new("content move", "move_content", render::changes)
+                    .selector("from", "path", args.path)
+                    .arg("toParent", args.to_parent)
+            }
+            ContentVerb::Reorder(args) => {
+                ToolCommand::new("content reorder", "reorder_content", render::changes)
+                    .selector("parentPath", "parent", args.parent)
+                    .arg("orderedChildren", args.children)
+            }
+            ContentVerb::Convert(args) => {
+                let tool = match args.to {
+                    ConvertTarget::Leaf => "convert_page_to_leaf",
+                    ConvertTarget::Collection => "convert_to_collection",
+                };
+                ToolCommand::new("content convert", tool, render::changes)
+                    .selector("path", "path", args.path)
+            }
         },
         Noun::Actor {
             verb: ActorVerb::List(args),
@@ -382,7 +539,7 @@ pub async fn run(
             .with_hint(RUNTIME_HINT));
     }
     let mut args = command.args;
-    if target.explicit_space {
+    if target.explicit_space && command.space_scoped {
         args.insert("spaceId".into(), json!(target.space_id()));
     }
     let request = target.request();

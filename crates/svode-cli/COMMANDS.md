@@ -18,7 +18,7 @@ Global selectors may appear before or after the command. The target is resolved 
 
 ## Runtime modes
 
-This build runs standalone reads answered from project sources. Commands that need the index, the Git runtime, the Actor catalog or the mutation runtime of the headless runtime answer `MODE_UNAVAILABLE` (exit 1) and run nothing; `svode doctor` lists the served capabilities. Writes read and validate their input first, so grammar and input failures still exit 2.
+This build runs standalone reads answered from project sources, including `collection check`. Commands that need the index, the Git runtime, the Actor catalog or the mutation runtime of the headless runtime answer `MODE_UNAVAILABLE` (exit 1) and run nothing; `svode doctor` lists the served capabilities. Writes read and validate their input first, so grammar and input failures still exit 2.
 
 | Command | Capability | Standalone in this build |
 |---|---|---|
@@ -50,10 +50,27 @@ This build runs standalone reads answered from project sources. Commands that ne
 | `item write --path --body-file\|--body` | `update_collection_item_body` | no |
 | `item fields set --path --fields-file` | `update_collection_item_fields` | no |
 | `item meta set --path [metadata patch]` | `update_collection_item_metadata` | no |
+| `collection create --parent <dir\|""> --title [--body-file\|--body] [--icon --description --cover-file] [--columns-file] [--views-file]` | `create_collection` | no |
+| `collection delete --collection` | `delete_collection` | no |
+| `collection check [--collection]` | `validate_collection_integrity` | yes |
+| `collection column add --collection --column-file` | `add_collection_column` | no |
+| `collection column update --collection --name --patch-file` | `update_collection_column` | no |
+| `collection column delete --collection --name [--delete-values]` | `delete_collection_column` | no |
+| `collection view add --collection --view-file [--position]` | `add_collection_view` | no |
+| `collection view update --collection --name --patch-file` | `update_collection_view` | no |
+| `collection view delete --collection --name` | `delete_collection_view` | no |
+| `content rename --path --to` | `rename_content` | no |
+| `content move --path --to-parent <dir\|"">` | `move_content` | no |
+| `content reorder --parent <dir\|""> --child …` | `reorder_content` | no |
+| `content convert --path --to leaf` | `convert_page_to_leaf` | no |
+| `content convert --path --to collection` | `convert_to_collection` | no |
+| `page delete --path` | `delete_page` | no |
+| `item delete --path` | `delete_collection_item` | no |
+| `space reorder --id …` | `reorder_spaces` (Project level; `--space` is not used) | no |
 | `guide` | `get_svode_guide` plus files-first rules | yes, without a Project |
 | `doctor` | CLI diagnostics | yes, target failures are part of the result |
 
-Flags follow the tool arguments: `collectionPath → --collection`, `path → --path`, `nodeId → --id`, `nodeKinds → --kind`, `edgeKinds → --edge-kind`, camelCase → kebab-case. Repeated flags keep their order. `--scope` is `space` (default) or `project`.
+Flags follow the tool arguments: `collectionPath → --collection`, `path` and `from → --path`, `parentPath → --parent`, `toParent → --to-parent`, `columnName`/`viewName → --name`, `orderedChildren → --child`, `orderedSpaceIds → --id`, `nodeId → --id`, `nodeKinds → --kind`, `edgeKinds → --edge-kind`, camelCase → kebab-case. Repeated flags keep their order. `--scope` is `space` (default) or `project`.
 
 ## Structured input
 
@@ -70,7 +87,18 @@ Page, owner and item writes run the shared operation of the same capability: val
 - A rejected write is exit 1 with the code of the shared operation, and the whole request is rolled back. `PAGE_WRITE_RECOVERY_FAILED` means restoration failed; its message names the unrestored paths, so inspect them before any retry. After any failure reread the source and apply the intent again; do not delete or hand-repair `.svode` metadata.
 - There is no `--force` and no confirmation. Busy/stale preconditions are not part of this build.
 
-The JSON result is the MCP `structuredContent` of the capability, for example `page write` returns `path`, `newPath` (only after a performed rename), `changedPaths` and `warnings`, plus `schemaVersion`, `ok` and `target` (with `path`, `collection` or `parent` selectors).
+## Structural commands
+
+Collection create/delete, schema columns and views, content rename/move/reorder/convert, Page and item delete and child Space order run the shared structural operation of the same capability: link, backlink and relation rewrites, relation cleanup on delete, sidebar order, conversion effects, schema normalization and reverse relation schema writes, and authorization of every affected repository before the first write. `svode` never commits to Git.
+
+- Structured input: `--columns-file` and `--views-file` take a JSON array, `--column-file`, `--view-file`, `--patch-file` and `--cover-file` a JSON object, from a file or `-`. A command reads stdin at most once.
+- Ordered lists are repeated flags in their order: `content reorder --child a.md --child b.md` is the complete order of the direct children as `page list` shows them (directory-backed Pages and Collections use their `README.md` path); `space reorder --id a --id b` is the complete order of the child Spaces without `root`.
+- `column delete` keeps stored values unless `--delete-values` is set. `view add --position` counts from 0; the end by default.
+- Destructive targets are exact selectors; there is no confirmation and no `--force`. A rejected command is exit 1 with the code of the shared operation (for example `NOT_A_STANDALONE_PAGE`, `INVALID_COLLECTION_CONVERSION`, `INVALID_SPACE_ORDER`, `REPOSITORY_ACCESS_DENIED`). Reread the structure before trying again.
+- `collection check` is read-only: it reports `errorCount`, `warningCount` and `issuesBySeverity` for relation targets, stored item references and stale order entries of one Collection or of every Collection in the Space. Issues are a result, not a failure (exit 0). Run it after a deliberate raw structural edit.
+- Human output: the summary line, then each changed path; `collection check` prints the counts, then one line per issue.
+
+The JSON result is the MCP `structuredContent` of the capability, for example `page write` returns `path`, `newPath` (only after a performed rename), `changedPaths` and `warnings`, plus `schemaVersion`, `ok` and `target` (with `path`, `collection`, `parent` or `name` selectors).
 
 ## page read
 

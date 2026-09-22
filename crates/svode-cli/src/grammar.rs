@@ -6,8 +6,14 @@ const HEADLESS: &str = "Mode: needs the Svode headless runtime; until it is conn
 
 const WRITE: &str = "Safe cycle: read the current source, edit it, then write the whole result. Bodies come from --body-file <path> or --body-file - (stdin); --body <text> is for short inline text. A command reads stdin at most once. The write does not commit to Git. If it fails, the code and target say why: reread the source and apply the intent again; never delete or hand-repair .svode metadata.";
 
+const STRUCTURAL: &str = "Structural change through the shared operation: it applies the required link, relation, order and index effects and reports every changed path. The target must be exact; there is no confirmation prompt and no --force. The change does not commit to Git. If it fails, the code and target say why: reread the structure and apply the intent again; never delete or hand-repair .svode metadata.";
+
 fn write_help(example: &str) -> String {
     format!("{WRITE}\n\n{HEADLESS}\n\nExample:\n  {example}")
+}
+
+fn structural_help(example: &str) -> String {
+    format!("{STRUCTURAL}\n\n{HEADLESS}\n\nExample:\n  {example}")
 }
 
 #[derive(Debug, Parser)]
@@ -61,6 +67,12 @@ pub enum Noun {
         #[command(subcommand)]
         verb: ItemVerb,
     },
+    /// Structure of Pages, folders and Collections: rename, move, reorder
+    /// and convert.
+    Content {
+        #[command(subcommand)]
+        verb: ContentVerb,
+    },
     /// Actors from Git history.
     Actor {
         #[command(subcommand)]
@@ -111,6 +123,17 @@ pub enum SpaceVerb {
         #[command(subcommand)]
         verb: MetaVerb<NoSelector>,
     },
+    /// Set the complete order of the child Spaces of the Project.
+    #[command(after_help = structural_help("svode --project ~/Notes space reorder --id research --id archive"))]
+    Reorder(SpaceReorderArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct SpaceReorderArgs {
+    /// Child Space id in the new order; repeat for every child Space. The
+    /// pinned root Space is not listed.
+    #[arg(long = "id", value_name = "SPACE-ID", required = true)]
+    pub ids: Vec<String>,
 }
 
 /// Only verb of a `meta` noun: set metadata fields.
@@ -224,6 +247,9 @@ svode --project ~/Notes page read --space research --path ideas/README.md --json
         #[command(subcommand)]
         verb: MetaVerb<PathSelector>,
     },
+    /// Delete one standalone Page.
+    #[command(after_help = structural_help("svode --project ~/Notes page delete --path notes/old.md"))]
+    Delete(PathSelector),
 }
 
 #[derive(Debug, Args)]
@@ -320,6 +346,27 @@ pub enum CollectionVerb {
         #[command(subcommand)]
         verb: MetaVerb<CollectionSelector>,
     },
+    /// Create a Collection: a directory with its README and schema.
+    #[command(after_help = structural_help("svode --project ~/Notes collection create --parent \"\" --title Tasks --columns-file columns.json --json"))]
+    Create(CollectionCreateArgs),
+    /// Delete one Collection with its items.
+    #[command(after_help = structural_help("svode --project ~/Notes collection delete --collection old-tasks"))]
+    Delete(CollectionSelector),
+    /// Read-only check of relation targets, item references and order.
+    #[command(
+        after_help = "Without --collection every Collection of the selected Space is checked. Run it after a deliberate raw structural edit and fix every reported issue.\n\nExample:\n  svode --project ~/Notes collection check --collection tasks --json"
+    )]
+    Check(CollectionCheckArgs),
+    /// Schema columns of one Collection.
+    Column {
+        #[command(subcommand)]
+        verb: ColumnVerb,
+    },
+    /// Views of one Collection.
+    View {
+        #[command(subcommand)]
+        verb: ViewVerb,
+    },
 }
 
 #[derive(Debug, Args)]
@@ -327,6 +374,117 @@ pub struct CollectionSelector {
     /// Collection directory relative to the selected Space.
     #[arg(long, value_name = "DIR")]
     pub collection: String,
+}
+
+#[derive(Debug, Args)]
+pub struct CollectionCheckArgs {
+    /// Collection directory relative to the selected Space; every
+    /// Collection of the Space by default.
+    #[arg(long, value_name = "DIR")]
+    pub collection: Option<String>,
+}
+
+#[derive(Debug, Args)]
+pub struct CollectionCreateArgs {
+    /// Containing directory or Page relative to the selected Space; `""`
+    /// for the Space root. A leaf parent Page becomes directory-backed.
+    #[arg(long, value_name = "DIR")]
+    pub parent: String,
+    /// Title; the directory name follows the shared naming rules.
+    #[arg(long)]
+    pub title: String,
+    #[command(flatten)]
+    pub body: OptionalBody,
+    /// Icon.
+    #[arg(long)]
+    pub icon: Option<String>,
+    /// Description.
+    #[arg(long)]
+    pub description: Option<String>,
+    /// Cover as a JSON object from a file, or `-` for stdin.
+    #[arg(long, value_name = "PATH|-")]
+    pub cover_file: Option<String>,
+    /// Initial schema columns as a JSON array from a file, or `-`.
+    #[arg(long, value_name = "PATH|-")]
+    pub columns_file: Option<String>,
+    /// Initial views as a JSON array from a file, or `-`.
+    #[arg(long, value_name = "PATH|-")]
+    pub views_file: Option<String>,
+}
+
+/// Collection and the name of one of its columns or views.
+#[derive(Debug, Args)]
+pub struct NamedSelector {
+    #[command(flatten)]
+    pub collection: CollectionSelector,
+    /// Name of the column or view.
+    #[arg(long)]
+    pub name: String,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ColumnVerb {
+    /// Add a schema column.
+    #[command(after_help = structural_help("svode --project ~/Notes collection column add --collection tasks --column-file column.json"))]
+    Add(ColumnAddArgs),
+    /// Patch the settings of an existing column.
+    #[command(after_help = structural_help("svode --project ~/Notes collection column update --collection tasks --name Status --patch-file patch.json"))]
+    Update(PatchArgs),
+    /// Delete a column; stored values stay unless --delete-values is set.
+    #[command(after_help = structural_help("svode --project ~/Notes collection column delete --collection tasks --name Estimate --delete-values"))]
+    Delete(ColumnDeleteArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct ColumnAddArgs {
+    #[command(flatten)]
+    pub collection: CollectionSelector,
+    /// Column as a JSON object from a file, or `-` for stdin.
+    #[arg(long, value_name = "PATH|-")]
+    pub column_file: String,
+}
+
+#[derive(Debug, Args)]
+pub struct PatchArgs {
+    #[command(flatten)]
+    pub selector: NamedSelector,
+    /// Patch as a JSON object from a file, or `-` for stdin.
+    #[arg(long, value_name = "PATH|-")]
+    pub patch_file: String,
+}
+
+#[derive(Debug, Args)]
+pub struct ColumnDeleteArgs {
+    #[command(flatten)]
+    pub selector: NamedSelector,
+    /// Also remove the stored values from the Collection items.
+    #[arg(long)]
+    pub delete_values: bool,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ViewVerb {
+    /// Add a table, board, calendar, list or gallery view.
+    #[command(after_help = structural_help("svode --project ~/Notes collection view add --collection tasks --view-file board.json --position 0"))]
+    Add(ViewAddArgs),
+    /// Patch an existing view.
+    #[command(after_help = structural_help("svode --project ~/Notes collection view update --collection tasks --name Board --patch-file patch.json"))]
+    Update(PatchArgs),
+    /// Delete a view.
+    #[command(after_help = structural_help("svode --project ~/Notes collection view delete --collection tasks --name Board"))]
+    Delete(NamedSelector),
+}
+
+#[derive(Debug, Args)]
+pub struct ViewAddArgs {
+    #[command(flatten)]
+    pub collection: CollectionSelector,
+    /// View as a JSON object from a file, or `-` for stdin.
+    #[arg(long, value_name = "PATH|-")]
+    pub view_file: String,
+    /// Position among the views; the end by default.
+    #[arg(long)]
+    pub position: Option<u64>,
 }
 
 #[derive(Debug, Args)]
@@ -383,6 +541,76 @@ pub enum ItemVerb {
         #[command(subcommand)]
         verb: MetaVerb<PathSelector>,
     },
+    /// Delete one Collection item.
+    #[command(after_help = structural_help("svode --project ~/Notes item delete --path tasks/fix-login.md"))]
+    Delete(PathSelector),
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ContentVerb {
+    /// Rename a Page, folder or Collection within its parent.
+    #[command(after_help = structural_help("svode --project ~/Notes content rename --path notes/draft.md --to notes/Plan.md"))]
+    Rename(ContentRenameArgs),
+    /// Move a Page, folder or Collection under another parent.
+    #[command(after_help = structural_help("svode --project ~/Notes content move --path notes/Plan.md --to-parent archive"))]
+    Move(ContentMoveArgs),
+    /// Set the complete order of the direct children of one parent.
+    #[command(after_help = structural_help("svode --project ~/Notes content reorder --parent archive --child archive/b.md --child archive/a.md"))]
+    Reorder(ContentReorderArgs),
+    /// Convert a directory-backed Page to a leaf Page, or a Page or folder
+    /// to a Collection in place.
+    #[command(after_help = structural_help("svode --project ~/Notes content convert --path notes/ideas.md --to collection"))]
+    Convert(ContentConvertArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct ContentRenameArgs {
+    /// Existing Page, folder or Collection relative to the selected Space.
+    #[arg(long, value_name = "RELATIVE")]
+    pub path: String,
+    /// New path in the same parent.
+    #[arg(long, value_name = "RELATIVE")]
+    pub to: String,
+}
+
+#[derive(Debug, Args)]
+pub struct ContentMoveArgs {
+    /// Existing Page, folder or Collection relative to the selected Space.
+    #[arg(long, value_name = "RELATIVE")]
+    pub path: String,
+    /// Destination parent directory; `""` for the Space root.
+    #[arg(long, value_name = "DIR")]
+    pub to_parent: String,
+}
+
+#[derive(Debug, Args)]
+pub struct ContentReorderArgs {
+    /// Parent directory; `""` for the Space root.
+    #[arg(long, value_name = "DIR")]
+    pub parent: String,
+    /// Direct child path in the new order, as `page list` shows it; repeat
+    /// for every child. Directory-backed Pages and Collections use their
+    /// README.md path.
+    #[arg(long = "child", value_name = "RELATIVE", required = true)]
+    pub children: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum ConvertTarget {
+    /// Directory-backed Page at README.md into a leaf Page.
+    Leaf,
+    /// Leaf Page, directory-backed Page or folder into a Collection.
+    Collection,
+}
+
+#[derive(Debug, Args)]
+pub struct ContentConvertArgs {
+    /// Page or folder relative to the selected Space.
+    #[arg(long, value_name = "RELATIVE")]
+    pub path: String,
+    /// Shape to convert to.
+    #[arg(long, value_enum)]
+    pub to: ConvertTarget,
 }
 
 #[derive(Debug, Args)]
