@@ -18,7 +18,7 @@ Global selectors may appear before or after the command. The target is resolved 
 
 ## Runtime modes
 
-This build runs standalone reads answered from project sources, including `collection check`, and `app validate`, which needs no Project. Commands that need the index, the Git runtime, the Actor catalog or the mutation runtime of the headless runtime answer `MODE_UNAVAILABLE` (exit 1) and run nothing; `svode doctor` lists the served capabilities. Writes read and validate their input first, so grammar and input failures still exit 2.
+This build runs standalone reads answered from project sources, including `collection check`, and `app validate`, which needs no Project. Commands that need the index, the Git runtime, the Actor catalog, the Routine stores or the mutation runtime of the headless runtime answer `MODE_UNAVAILABLE` (exit 1) and run nothing; `svode doctor` lists the served capabilities. Writes read and validate their input first, so grammar and input failures still exit 2.
 
 | Command | Capability | Standalone in this build |
 |---|---|---|
@@ -69,10 +69,15 @@ This build runs standalone reads answered from project sources, including `colle
 | `space reorder --id …` | `reorder_spaces` (Project level; `--space` is not used) | no |
 | `asset import --path <content.md> --file <local> [--name]` | `import_asset` | no |
 | `app validate --file <app.yaml\|->` | `validate_app_manifest` | yes, without a Project |
+| `routine list [--collection] [--limit --offset]` | `list_routines` | no |
+| `routine get [--collection] --id` | `get_routine` | no |
+| `routine create [--collection] --definition-file [--confirm-automatic-execution]` | `create_routine` | no |
+| `routine update [--collection] --id --fingerprint --definition-file [--confirm-automatic-execution]` | `update_routine` | no |
+| `routine delete [--collection] --id --fingerprint` | `delete_routine` | no |
 | `guide` | `get_svode_guide` plus files-first rules | yes, without a Project |
 | `doctor` | CLI diagnostics | yes, target failures are part of the result |
 
-Flags follow the tool arguments: `collectionPath → --collection`, `path`, `from` and `contentPath → --path`, `sourcePath → --file`, `fileName → --name`, `yaml → --file`, `parentPath → --parent`, `toParent → --to-parent`, `columnName`/`viewName → --name`, `orderedChildren → --child`, `orderedSpaceIds → --id`, `nodeId → --id`, `nodeKinds → --kind`, `edgeKinds → --edge-kind`, camelCase → kebab-case. Repeated flags keep their order. `--scope` is `space` (default) or `project`.
+Flags follow the tool arguments: `collectionPath → --collection`, `path`, `from` and `contentPath → --path`, `sourcePath → --file`, `fileName → --name`, `yaml → --file`, `parentPath → --parent`, `toParent → --to-parent`, `columnName`/`viewName → --name`, `orderedChildren → --child`, `orderedSpaceIds → --id`, `nodeId → --id`, `routineId → --id`, `expectedFingerprint → --fingerprint`, `definition → --definition-file`, `nodeKinds → --kind`, `edgeKinds → --edge-kind`, camelCase → kebab-case. Repeated flags keep their order. `--scope` is `space` (default) or `project`.
 
 ## Structured input
 
@@ -111,6 +116,17 @@ The JSON result is the MCP `structuredContent` of the capability, for example `p
 - Failures keep the codes of the shared operation: `INVALID_PATH`, `PATH_FORBIDDEN`, `PATH_NOT_ACCESSIBLE` (missing content, missing or non-regular source), `REPOSITORY_ACCESS_DENIED`, `SVODE_ERROR` with a `Storage:` message for an unsupported format or a Git LFS route that is not ready.
 
 `app validate --file <app.yaml|->` validates a complete app.yaml candidate from a file or stdin with the parser of the Svode App host. It needs no Project, ignores `--project` and `--space`, writes nothing, launches no App and reads no Variable or Secret value. The result is `valid`, `runtimeType`, `settingsReferences` and `diagnostics` (`code`, `path`, `message`); an invalid manifest is a result with exit 0, not a failure. Unreadable or non-UTF-8 input is `INPUT_UNREADABLE` (exit 2). Human output: `valid <type> App` and one `setting <NAME>` line per reference, or `invalid` and one line per diagnostic.
+
+## Routines
+
+Routine commands read and change Routine definitions through the shared Routine service. The owner is always explicit: the selected Space (`--space`, or the Space containing the current directory) is passed to the operation, and `--collection <dir>` selects one of its Collections instead. `.routines` is not an owner address. `routine run` is not part of this build.
+
+- `routine list` returns bounded summaries of the owner, including invalid definitions and their diagnostics, with `total`/`limit`/`offset`, `catalogFingerprint` and the exact-owner device authority evidence (`automaticAuthorityEnabled`, `authorityDiagnostics`); it never returns the Markdown body. `routine get --id` returns the normalized `definition`, `diagnostics`, `valid` and the `fingerprint` of the definition.
+- `routine create` and `routine update` take a complete definition as a JSON object (`name`, `description`, `enabled`, `trigger`, `action`, `body`) from `--definition-file <path|->`. Unknown fields are rejected by the shared decode (`SERIALIZATION_ERROR`) and an invalid definition by the service (`ROUTINE_INVALID` with `diagnostics`), before any write. The file name follows the Routine name; a taken name is `ROUTINE_NAME_CONFLICT`.
+- An enabled schedule or event Routine needs `--confirm-automatic-execution`, otherwise `ROUTINE_AUTOMATIC_CONFIRMATION_REQUIRED`. Saving never starts the Routine and never changes the automatic authority of this device.
+- `routine update` and `routine delete` are compare-and-set: pass `--id` and the `--fingerprint` of your last read. A changed definition fails with `ROUTINE_FINGERPRINT_CONFLICT` and `currentFingerprint`; a missing one with `ROUTINE_NOT_FOUND`. Read it again and reapply the intent. Delete keeps run history and does not cancel an active run.
+- The owner repository is authorized before the first write, and nothing is committed to Git.
+- JSON result: the `structuredContent` of the capability, for mutations `owner`, `routineId`, `path`, `fingerprint` (create/update), `catalogFingerprint`, `changedPaths`, `detail` (create/update) and `warnings`. Human output: `routine list` prints `routineId name trigger enabled|disabled|invalid fingerprint` per Routine, `routine get` the detail as JSON, mutations the summary line, `routineId`, `fingerprint` and each changed path.
 
 ## page read
 

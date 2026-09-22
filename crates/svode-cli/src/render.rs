@@ -178,6 +178,45 @@ pub fn import(value: &Value) -> String {
     out + &changes(value)
 }
 
+/// `routineId<TAB>name<TAB>trigger<TAB>enabled|disabled|invalid<TAB>fingerprint`
+/// per Routine; an invalid definition shows its path in place of an id.
+pub fn routines(value: &Value) -> String {
+    lines(
+        value["routines"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|routine| {
+                let state = if routine["valid"] != true {
+                    "invalid"
+                } else if routine["enabled"] == true {
+                    "enabled"
+                } else {
+                    "disabled"
+                };
+                format!(
+                    "{}\t{}\t{}\t{state}\t{}",
+                    routine["routineId"]
+                        .as_str()
+                        .unwrap_or_else(|| text(&routine["path"])),
+                    text(&routine["name"]),
+                    text(&routine["triggerSummary"]),
+                    text(&routine["fingerprint"])
+                )
+            }),
+    )
+}
+
+/// Identity and new fingerprint of a changed Routine, then the changed
+/// paths.
+pub fn routine_change(value: &Value) -> String {
+    let mut out = format!("routineId {}\n", text(&value["routineId"]));
+    if let Some(fingerprint) = value["fingerprint"].as_str() {
+        out.push_str(&format!("fingerprint {fingerprint}\n"));
+    }
+    out + &changes(value)
+}
+
 /// Changed paths of a mutation, one per line.
 pub fn changes(value: &Value) -> String {
     lines(
@@ -189,7 +228,8 @@ pub fn changes(value: &Value) -> String {
     )
 }
 
-/// `warning[kind]: message` per warning of an applied outcome.
+/// `warning[kind]: message` per warning of an applied outcome; Routine
+/// warnings name their `code`.
 pub fn warnings(warnings: &Value) -> Vec<String> {
     warnings
         .as_array()
@@ -198,7 +238,9 @@ pub fn warnings(warnings: &Value) -> Vec<String> {
         .map(|warning| {
             format!(
                 "warning[{}]: {}",
-                text(&warning["kind"]),
+                warning["kind"]
+                    .as_str()
+                    .unwrap_or_else(|| text(&warning["code"])),
                 text(&warning["message"])
             )
         })

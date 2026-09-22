@@ -13,8 +13,8 @@ use crate::error::CliError;
 use crate::grammar::{
     ActorVerb, AppVerb, AssetVerb, CollectionReadmeVerb, CollectionVerb, ColumnVerb, ContentVerb,
     ConvertTarget, GitVerb, ItemFieldsVerb, ItemVerb, KnowledgeScope, KnowledgeVerb, MetaVerb,
-    MetadataPatch, NamedSelector, Noun, Pagination, ProjectVerb, SpaceReadmeVerb, SpaceVerb,
-    ViewVerb,
+    MetadataPatch, NamedSelector, Noun, Pagination, ProjectVerb, RoutineOwner, RoutineVerb,
+    SpaceReadmeVerb, SpaceVerb, ViewVerb,
 };
 use crate::host::mode_unavailable;
 use crate::input;
@@ -39,6 +39,9 @@ pub struct ToolCommand {
     pub space_scoped: bool,
     /// Whether the tool runs without a Project, so no target is resolved.
     pub project_free: bool,
+    /// Whether the tool requires an explicit `spaceId`, so the resolved
+    /// Space is always passed, even when it came from the current directory.
+    pub explicit_space: bool,
 }
 
 impl ToolCommand {
@@ -51,7 +54,23 @@ impl ToolCommand {
             render,
             space_scoped: true,
             project_free: false,
+            explicit_space: false,
         }
+    }
+
+    /// Routine owner: the resolved Space, or one of its Collections.
+    fn routine_owner(mut self, owner: RoutineOwner) -> Self {
+        self.explicit_space = true;
+        match owner.collection {
+            Some(collection) => self.selector("collectionPath", "collection", collection),
+            None => self,
+        }
+    }
+
+    /// Routine id and the fingerprint of the caller's last read.
+    fn routine_cas(self, id: String, fingerprint: String) -> Self {
+        self.selector("routineId", "id", id)
+            .arg("expectedFingerprint", fingerprint)
     }
 
     fn project_scoped(mut self) -> Self {
@@ -540,6 +559,48 @@ pub fn command(noun: Noun, cwd: &Path) -> Result<Option<ToolCommand>, CliError> 
         } => ToolCommand::new("app validate", "validate_app_manifest", render::manifest)
             .arg("yaml", input::text(cwd, "file", &args.file)?)
             .project_free(),
+        Noun::Routine { verb } => match verb {
+            RoutineVerb::List(args) => {
+                ToolCommand::new("routine list", "list_routines", render::routines)
+                    .routine_owner(args.owner)
+                    .page(args.page)
+            }
+            RoutineVerb::Get(args) => {
+                ToolCommand::new("routine get", "get_routine", render::pretty)
+                    .routine_owner(args.owner)
+                    .selector("routineId", "id", args.id)
+            }
+            RoutineVerb::Create(args) => {
+                ToolCommand::new("routine create", "create_routine", render::routine_change)
+                    .routine_owner(args.owner)
+                    .arg(
+                        "definition",
+                        input::json(cwd, "definition-file", &args.definition_file)?,
+                    )
+                    .optional(
+                        "confirmAutomaticExecution",
+                        args.confirm_automatic_execution.then_some(true),
+                    )
+            }
+            RoutineVerb::Update(args) => {
+                ToolCommand::new("routine update", "update_routine", render::routine_change)
+                    .routine_owner(args.owner)
+                    .routine_cas(args.id, args.fingerprint)
+                    .arg(
+                        "definition",
+                        input::json(cwd, "definition-file", &args.definition_file)?,
+                    )
+                    .optional(
+                        "confirmAutomaticExecution",
+                        args.confirm_automatic_execution.then_some(true),
+                    )
+            }
+            RoutineVerb::Delete(args) => {
+                ToolCommand::new("routine delete", "delete_routine", render::routine_change)
+                    .routine_owner(args.owner)
+                    .routine_cas(args.id, args.fingerprint)
+            }
+        },
         Noun::Page {
             verb: PageVerb::Read(_),
         }
@@ -565,7 +626,9 @@ pub async fn run(
             .with_hint(RUNTIME_HINT));
     }
     let mut args = command.args;
-    if let Some(target) = target.filter(|target| target.explicit_space && command.space_scoped) {
+    if let Some(target) = target
+        .filter(|target| command.space_scoped && (target.explicit_space || command.explicit_space))
+    {
         args.insert("spaceId".into(), json!(target.space_id()));
     }
     let request = target.map(Target::request);

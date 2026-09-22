@@ -16,6 +16,21 @@ fn structural_help(example: &str) -> String {
     format!("{STRUCTURAL}\n\n{HEADLESS}\n\nExample:\n  {example}")
 }
 
+const ROUTINE_OWNER: &str = "Owner: the selected Space (--space, or the Space containing the current directory), or one of its Collections with --collection.";
+
+const ROUTINE_WRITE: &str = "The definition is a complete JSON object (name, description, enabled, trigger, action, body) from --definition-file <path> or - for stdin; unknown fields are rejected and nothing is written. Saving a definition never starts the Routine and never enables automatic execution on this device; an enabled schedule or event Routine additionally needs --confirm-automatic-execution. The change does not commit to Git.";
+
+const ROUTINE_CAS: &str = "Pass the routineId and the fingerprint of your last read. If the definition changed since, the command fails with ROUTINE_FINGERPRINT_CONFLICT and currentFingerprint: run `svode routine get` again and reapply the intent.";
+
+fn routine_help(parts: &[&str], example: &str) -> String {
+    let mut help = String::from(ROUTINE_OWNER);
+    for part in parts {
+        help.push_str("\n\n");
+        help.push_str(part);
+    }
+    format!("{help}\n\n{HEADLESS}\n\nExample:\n  {example}")
+}
+
 #[derive(Debug, Parser)]
 #[command(
     name = "svode",
@@ -100,6 +115,11 @@ pub enum Noun {
     App {
         #[command(subcommand)]
         verb: AppVerb,
+    },
+    /// Routine definitions of a Space or Collection owner.
+    Routine {
+        #[command(subcommand)]
+        verb: RoutineVerb,
     },
     /// Product guidance and files-first rules for agents and scripts.
     #[command(after_help = "Example:\n  svode guide")]
@@ -821,4 +841,95 @@ pub struct AppValidateArgs {
     /// app.yaml candidate as UTF-8 text from a file, or `-` for stdin.
     #[arg(long, value_name = "PATH|-")]
     pub file: String,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum RoutineVerb {
+    /// Routine summaries of one owner, including invalid definitions.
+    #[command(after_help = routine_help(&[], "svode --project ~/Notes routine list --space root --collection tasks --json"))]
+    List(RoutineListArgs),
+    /// One normalized Routine definition with its diagnostics and
+    /// fingerprint.
+    #[command(after_help = routine_help(&[], "svode --project ~/Notes routine get --collection tasks --id routine:01j9… --json"))]
+    Get(RoutineGetArgs),
+    /// Create one Routine in its owner under a canonical file name.
+    #[command(after_help = routine_help(&[ROUTINE_WRITE], "svode --project ~/Notes routine create --collection tasks --definition-file review.json --json"))]
+    Create(RoutineCreateArgs),
+    /// Replace one Routine definition by fingerprint compare-and-set.
+    #[command(after_help = routine_help(&[ROUTINE_WRITE, ROUTINE_CAS], "svode --project ~/Notes routine update --collection tasks --id routine:01j9… --fingerprint 3f2a… --definition-file review.json"))]
+    Update(RoutineUpdateArgs),
+    /// Delete one Routine definition by fingerprint compare-and-set; run
+    /// history stays and an active run is not cancelled.
+    #[command(after_help = routine_help(&[ROUTINE_CAS, "The change does not commit to Git."], "svode --project ~/Notes routine delete --collection tasks --id routine:01j9… --fingerprint 3f2a…"))]
+    Delete(RoutineDeleteArgs),
+}
+
+/// Owner of a Routine command inside the selected Space.
+#[derive(Debug, Args)]
+pub struct RoutineOwner {
+    /// Collection owner directory relative to the selected Space; the
+    /// Space itself by default.
+    #[arg(long, value_name = "DIR")]
+    pub collection: Option<String>,
+}
+
+#[derive(Debug, Args)]
+pub struct RoutineListArgs {
+    #[command(flatten)]
+    pub owner: RoutineOwner,
+    #[command(flatten)]
+    pub page: Pagination,
+}
+
+#[derive(Debug, Args)]
+pub struct RoutineGetArgs {
+    #[command(flatten)]
+    pub owner: RoutineOwner,
+    /// Routine id from `routine list`.
+    #[arg(long, value_name = "ROUTINE-ID")]
+    pub id: String,
+}
+
+#[derive(Debug, Args)]
+pub struct RoutineCreateArgs {
+    #[command(flatten)]
+    pub owner: RoutineOwner,
+    /// Complete definition as a JSON object from a file, or `-` for stdin.
+    #[arg(long, value_name = "PATH|-")]
+    pub definition_file: String,
+    /// Acknowledge that an enabled schedule or event Routine may run
+    /// automatically once this device grants authority.
+    #[arg(long)]
+    pub confirm_automatic_execution: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct RoutineUpdateArgs {
+    #[command(flatten)]
+    pub owner: RoutineOwner,
+    /// Routine id from `routine list`.
+    #[arg(long, value_name = "ROUTINE-ID")]
+    pub id: String,
+    /// Fingerprint of the last read of this Routine.
+    #[arg(long)]
+    pub fingerprint: String,
+    /// Complete definition as a JSON object from a file, or `-` for stdin.
+    #[arg(long, value_name = "PATH|-")]
+    pub definition_file: String,
+    /// Acknowledge that an enabled schedule or event Routine may run
+    /// automatically once this device grants authority.
+    #[arg(long)]
+    pub confirm_automatic_execution: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct RoutineDeleteArgs {
+    #[command(flatten)]
+    pub owner: RoutineOwner,
+    /// Routine id from `routine list`.
+    #[arg(long, value_name = "ROUTINE-ID")]
+    pub id: String,
+    /// Fingerprint of the last read of this Routine.
+    #[arg(long)]
+    pub fingerprint: String,
 }
