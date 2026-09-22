@@ -6,7 +6,7 @@ use std::pin::Pin;
 use svode_core::attachments::import::{LfsReadiness, ManagedImportDelivery};
 use svode_core::routines::model::{ResolvedRoutineOwner, RoutineDispatchResult};
 use svode_core::storage::config::AssetsSpaceConfig;
-use svode_mcp::host::{RoutineCaller, RoutineRunner, RoutineRuntime};
+use svode_tools::host::{RoutineCaller, RoutineRunner, RoutineRuntime};
 
 pub async fn call_tool_with_context(
     app: AppHandle,
@@ -35,7 +35,7 @@ pub async fn call_tool_with_context(
         .as_ref()
         .map(|context| request_target(context, routine_caller));
     let host = DesktopMcpHost { app };
-    svode_mcp::dispatch::call_tool(&host, target.as_ref(), name, args).await
+    svode_tools::dispatch::call_tool(&host, target.as_ref(), name, args).await
 }
 
 /// Desktop host of the shared MCP mapping: active-context resolution happens
@@ -44,7 +44,7 @@ pub(crate) struct DesktopMcpHost {
     pub(crate) app: AppHandle,
 }
 
-impl svode_mcp::host::McpHost for DesktopMcpHost {
+impl svode_tools::host::ToolHost for DesktopMcpHost {
     fn version(&self) -> &str {
         env!("CARGO_PKG_VERSION")
     }
@@ -72,29 +72,29 @@ impl svode_mcp::host::McpHost for DesktopMcpHost {
     async fn repository_access(
         &self,
         space_path: &Path,
-    ) -> Result<svode_core::git::access::RepositoryAccessSnapshot, McpBusinessError> {
+    ) -> Result<svode_core::git::access::RepositoryAccessSnapshot, ToolError> {
         crate::git::access::repository_access_snapshot(&self.app, space_path)
             .await
             .map_err(Into::into)
     }
 
-    async fn require_mutation_access(&self, repository: &Path) -> Result<(), McpBusinessError> {
+    async fn require_mutation_access(&self, repository: &Path) -> Result<(), ToolError> {
         crate::git::access::require_repository_mutation(&self.app, repository)
             .await
             .map(|_| ())
             .map_err(Into::into)
     }
 
-    fn read_runtime(&self) -> svode_mcp::host::ReadRuntime<'_> {
-        svode_mcp::host::ReadRuntime {
+    fn read_runtime(&self) -> svode_tools::host::ReadRuntime<'_> {
+        svode_tools::host::ReadRuntime {
             index: &self.app.state::<IndexState>().inner().core,
             actors: self.app.state::<crate::actors::ActorCatalogState>().inner(),
             git: self.app.state::<GitState>().inner().runtime(),
         }
     }
 
-    fn mutation_runtime(&self) -> svode_mcp::host::MutationRuntime<'_> {
-        svode_mcp::host::MutationRuntime {
+    fn mutation_runtime(&self) -> svode_tools::host::MutationRuntime<'_> {
+        svode_tools::host::MutationRuntime {
             index: &self.app.state::<IndexState>().inner().core,
             updates: self.app.state::<IndexUpdateState>().inner().core(),
             nonces: self
@@ -112,7 +112,7 @@ impl svode_mcp::host::McpHost for DesktopMcpHost {
         crate::attachments::delivery::emit_managed_import_invalidations(&self.app, delivery);
     }
 
-    fn routine_runtime(&self) -> Result<RoutineRuntime<'_>, McpBusinessError> {
+    fn routine_runtime(&self) -> Result<RoutineRuntime<'_>, ToolError> {
         Ok(RoutineRuntime {
             stores: self
                 .app
@@ -141,8 +141,7 @@ impl RoutineRunner for DesktopMcpHost {
         owner: ResolvedRoutineOwner,
         routine_id: String,
         expected_fingerprint: String,
-    ) -> Pin<Box<dyn Future<Output = Result<RoutineDispatchResult, McpBusinessError>> + Send + '_>>
-    {
+    ) -> Pin<Box<dyn Future<Output = Result<RoutineDispatchResult, ToolError>> + Send + '_>> {
         Box::pin(async move {
             crate::routines::dispatch::dispatch_explicit(
                 &self.app,
@@ -184,7 +183,7 @@ fn resolve_routine_caller(
     app: &AppHandle,
     context_override: Option<&IpcContextOverride>,
     request_context: Option<&ActiveProjectContext>,
-) -> Result<Option<RoutineCaller>, McpBusinessError> {
+) -> Result<Option<RoutineCaller>, ToolError> {
     let Some(token) = context_override
         .and_then(|context| context.routine_caller_token.as_deref())
         .map(str::trim)
@@ -193,7 +192,7 @@ fn resolve_routine_caller(
         return Ok(None);
     };
     let context = request_context.ok_or_else(|| {
-        McpBusinessError::new(
+        ToolError::new(
             "ROUTINE_CALLER_PROVENANCE_INVALID",
             "routine caller provenance has no frozen Svode project context",
         )
@@ -201,7 +200,7 @@ fn resolve_routine_caller(
     app.state::<crate::terminal::TerminalManager>()
         .resolve_routine_mcp_caller(token, Path::new(&context.project_path))?
         .ok_or_else(|| {
-            McpBusinessError::new(
+            ToolError::new(
                 "ROUTINE_CALLER_PROVENANCE_INVALID",
                 "routine caller provenance is not attached to a live managed Routine launch in this project",
             )

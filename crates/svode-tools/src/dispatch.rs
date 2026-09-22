@@ -3,18 +3,44 @@
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::control::check_tool;
-use crate::error::McpBusinessError;
-use crate::host::{McpHost, RequestTarget};
-use crate::protocol::ToolCallResult;
+use crate::catalog::{self, ToolDefinition};
+use crate::error::ToolError;
+use crate::host::{RequestTarget, ToolHost};
+use crate::result::ToolCallResult;
 use crate::tools::{
     apps, collections, content, import, pages, project, routines, search, structure,
 };
 
+/// Whether the host serves a catalog tool: it declares the tool and has the
+/// capability the tool needs.
+fn serves(host: &impl ToolHost, name: &str) -> bool {
+    host.serves_tool(name) && (name != "run_routine" || host.routine_runner().is_some())
+}
+
+/// Catalog limited to the tools the host declares.
+pub fn served_definitions(host: &impl ToolHost) -> Vec<ToolDefinition> {
+    catalog::definitions()
+        .into_iter()
+        .filter(|definition| serves(host, definition.name))
+        .collect()
+}
+
+/// Rejects a tool outside the host catalog before any effect. Stale tools of
+/// an already open connection end here.
+pub fn check_tool(host: &impl ToolHost, name: &str) -> Result<(), ToolError> {
+    if catalog::is_mutating_tool(name).is_some() && serves(host, name) {
+        return Ok(());
+    }
+    Err(ToolError::new(
+        "UNKNOWN_TOOL",
+        format!("unknown Svode MCP tool: {name}"),
+    ))
+}
+
 /// Executes one tool within a request target frozen by the host. `None`
 /// means the host has no open project for this request.
 pub async fn call_tool(
-    host: &impl McpHost,
+    host: &impl ToolHost,
     target: Option<&RequestTarget>,
     name: &str,
     args: Value,
@@ -26,11 +52,11 @@ pub async fn call_tool(
 }
 
 async fn call(
-    host: &impl McpHost,
+    host: &impl ToolHost,
     target: Option<&RequestTarget>,
     name: &str,
     args: Value,
-) -> Result<ToolCallResult, McpBusinessError> {
+) -> Result<ToolCallResult, ToolError> {
     check_tool(host, name)?;
     match name {
         "get_svode_guide" => project::get_svode_guide(),
@@ -237,17 +263,17 @@ async fn call(
             let args = decode(args)?;
             routines::run_routine(host, require(target)?, args).await
         }
-        _ => Err(McpBusinessError::new(
+        _ => Err(ToolError::new(
             "UNKNOWN_TOOL",
             format!("unknown Svode MCP tool: {name}"),
         )),
     }
 }
 
-fn require(target: Option<&RequestTarget>) -> Result<&RequestTarget, McpBusinessError> {
-    target.ok_or_else(McpBusinessError::no_active_project)
+fn require(target: Option<&RequestTarget>) -> Result<&RequestTarget, ToolError> {
+    target.ok_or_else(ToolError::no_active_project)
 }
 
-pub fn decode<T: for<'de> Deserialize<'de>>(value: Value) -> Result<T, McpBusinessError> {
+pub fn decode<T: for<'de> Deserialize<'de>>(value: Value) -> Result<T, ToolError> {
     serde_json::from_value(value).map_err(Into::into)
 }

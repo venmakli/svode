@@ -1,0 +1,19 @@
+[package]
+name = "svode-tools"
+version = "0.0.1"
+edition = "2024"
+authors = ["Kamnev Ilya"]
+repository = "https://github.com/venmakli/svode"
+description = "Svode tool surface shared by the MCP and CLI entrypoints: catalog, argument decoding, path and mutation policy, host seam, dispatch over svode-core and stable business codes."
+
+[dependencies]
+svode-core = { path = "../svode-core" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yml = "0.0.12"
+tracing = "0.1"
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite"] }
+
+[dev-dependencies]
+tempfile = "3"
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }

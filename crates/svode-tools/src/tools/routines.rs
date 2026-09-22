@@ -23,11 +23,11 @@ use svode_core::routines::service::{
 };
 
 use crate::args::{clamp_limit, offset};
-use crate::error::McpBusinessError;
-use crate::host::{McpHost, RequestTarget};
+use crate::error::ToolError;
+use crate::host::{RequestTarget, ToolHost};
 use crate::mutation::{authorize_paths, within_authorized};
 use crate::path::validate_public_rel_path;
-use crate::protocol::{ContentBlock, ToolCallResult};
+use crate::result::{ContentBlock, ToolCallResult};
 use crate::target::resolve_space;
 
 const AUTHORITY_UNAVAILABLE_CODE: &str = "routine_authority_unavailable";
@@ -204,13 +204,13 @@ struct RoutineHost<'a, H> {
     git: &'a GitRuntime,
 }
 
-impl<H: McpHost> RoutineRepositoryTarget for RoutineHost<'_, H> {
-    type Error = McpBusinessError;
+impl<H: ToolHost> RoutineRepositoryTarget for RoutineHost<'_, H> {
+    type Error = ToolError;
 
     async fn mutation_repository(
         &self,
         owner: &ResolvedRoutineOwner,
-    ) -> Result<PathBuf, McpBusinessError> {
+    ) -> Result<PathBuf, ToolError> {
         let (_, repository) = svode_core::git::ops::resolve_target_repo(
             self.git.cli()?,
             &owner.project_path,
@@ -221,17 +221,17 @@ impl<H: McpHost> RoutineRepositoryTarget for RoutineHost<'_, H> {
     }
 }
 
-impl<H: McpHost> RoutineMutationHost for RoutineHost<'_, H> {
-    async fn authorize_mutation(&self, repository: &Path) -> Result<(), McpBusinessError> {
+impl<H: ToolHost> RoutineMutationHost for RoutineHost<'_, H> {
+    async fn authorize_mutation(&self, repository: &Path) -> Result<(), ToolError> {
         self.host.require_mutation_access(repository).await
     }
 }
 
 pub(crate) async fn list_routines(
-    host: &impl McpHost,
+    host: &impl ToolHost,
     target: &RequestTarget,
     args: ListRoutinesArgs,
-) -> Result<ToolCallResult, McpBusinessError> {
+) -> Result<ToolCallResult, ToolError> {
     let owner = resolve_routine_owner(target, &args.space_id, args.collection_path.as_deref())?;
     let (snapshot, authority) = read_owner(host, &owner).await?;
     let structured = list_payload(&snapshot, authority, args.limit, args.offset);
@@ -248,10 +248,10 @@ pub(crate) async fn list_routines(
 }
 
 pub(crate) async fn get_routine(
-    host: &impl McpHost,
+    host: &impl ToolHost,
     target: &RequestTarget,
     args: GetRoutineArgs,
-) -> Result<ToolCallResult, McpBusinessError> {
+) -> Result<ToolCallResult, ToolError> {
     let owner = resolve_routine_owner(target, &args.space_id, args.collection_path.as_deref())?;
     let (snapshot, authority) = read_owner(host, &owner).await?;
     let row = find_routine(&snapshot, &args.routine_id)?;
@@ -263,9 +263,9 @@ pub(crate) async fn get_routine(
 
 /// Catalog of one owner with its exact-owner automatic authority.
 async fn read_owner(
-    host: &impl McpHost,
+    host: &impl ToolHost,
     owner: &ResolvedRoutineOwner,
-) -> Result<(RoutineCatalogSnapshot, AuthorityProjection), McpBusinessError> {
+) -> Result<(RoutineCatalogSnapshot, AuthorityProjection), ToolError> {
     let routines = host.routine_runtime()?;
     let index = host.read_runtime().index;
     let snapshot =
@@ -277,10 +277,10 @@ async fn read_owner(
 }
 
 pub(crate) async fn create_routine(
-    host: &impl McpHost,
+    host: &impl ToolHost,
     target: &RequestTarget,
     args: CreateRoutineArgs,
-) -> Result<ToolCallResult, McpBusinessError> {
+) -> Result<ToolCallResult, ToolError> {
     let owner = resolve_routine_owner(target, &args.space_id, args.collection_path.as_deref())?;
     let routines = host.routine_runtime()?;
     let read = host.read_runtime();
@@ -306,10 +306,10 @@ pub(crate) async fn create_routine(
 }
 
 pub(crate) async fn update_routine(
-    host: &impl McpHost,
+    host: &impl ToolHost,
     target: &RequestTarget,
     args: UpdateRoutineArgs,
-) -> Result<ToolCallResult, McpBusinessError> {
+) -> Result<ToolCallResult, ToolError> {
     validate_mutation_identity(&args.routine_id, &args.expected_fingerprint)?;
     let owner = resolve_routine_owner(target, &args.space_id, args.collection_path.as_deref())?;
     let routines = host.routine_runtime()?;
@@ -338,10 +338,10 @@ pub(crate) async fn update_routine(
 }
 
 pub(crate) async fn delete_routine(
-    host: &impl McpHost,
+    host: &impl ToolHost,
     target: &RequestTarget,
     args: DeleteRoutineArgs,
-) -> Result<ToolCallResult, McpBusinessError> {
+) -> Result<ToolCallResult, ToolError> {
     validate_mutation_identity(&args.routine_id, &args.expected_fingerprint)?;
     let owner = resolve_routine_owner(target, &args.space_id, args.collection_path.as_deref())?;
     let routines = host.routine_runtime()?;
@@ -367,10 +367,10 @@ pub(crate) async fn delete_routine(
 }
 
 pub(crate) async fn run_routine(
-    host: &impl McpHost,
+    host: &impl ToolHost,
     target: &RequestTarget,
     args: RunRoutineArgs,
-) -> Result<ToolCallResult, McpBusinessError> {
+) -> Result<ToolCallResult, ToolError> {
     validate_mutation_identity(&args.routine_id, &args.expected_fingerprint)?;
     if target.routine_caller.is_some() {
         return Ok(dispatch_result(RoutineDispatchResult::Blocked {
@@ -380,9 +380,9 @@ pub(crate) async fn run_routine(
             current_fingerprint: None,
         }));
     }
-    let runner = host.routine_runner().ok_or_else(|| {
-        McpBusinessError::new("UNKNOWN_TOOL", "unknown Svode MCP tool: run_routine")
-    })?;
+    let runner = host
+        .routine_runner()
+        .ok_or_else(|| ToolError::new("UNKNOWN_TOOL", "unknown Svode MCP tool: run_routine"))?;
     let owner = resolve_routine_owner(target, &args.space_id, args.collection_path.as_deref())?;
     let paths = authorize_paths(host, vec![owner.space_path.clone()]).await?;
     let result = within_authorized(
@@ -515,11 +515,11 @@ impl MutationKind {
 }
 
 async fn mutation_result(
-    host: &impl McpHost,
+    host: &impl ToolHost,
     owner: &ResolvedRoutineOwner,
     result: ManagedRoutineMutationResult,
     kind: MutationKind,
-) -> Result<ToolCallResult, McpBusinessError> {
+) -> Result<ToolCallResult, ToolError> {
     match result {
         ManagedRoutineMutationResult::Applied {
             routine_id,
@@ -622,15 +622,15 @@ fn mutation_error(code: &str, message: &str, evidence: Value) -> ToolCallResult 
 fn validate_mutation_identity(
     routine_id: &str,
     expected_fingerprint: &str,
-) -> Result<(), McpBusinessError> {
+) -> Result<(), ToolError> {
     if routine_id.is_empty() || routine_id.trim() != routine_id {
-        return Err(McpBusinessError::new(
+        return Err(ToolError::new(
             "INVALID_ROUTINE_ID",
             "routineId must be a non-empty exact id from list_routines",
         ));
     }
     if expected_fingerprint.is_empty() || expected_fingerprint.trim() != expected_fingerprint {
-        return Err(McpBusinessError::new(
+        return Err(ToolError::new(
             "INVALID_ROUTINE_FINGERPRINT",
             "expectedFingerprint must be a non-empty exact fingerprint from a Routine read",
         ));
@@ -642,9 +642,9 @@ fn resolve_routine_owner(
     target: &RequestTarget,
     space_id: &str,
     collection_path: Option<&str>,
-) -> Result<ResolvedRoutineOwner, McpBusinessError> {
+) -> Result<ResolvedRoutineOwner, ToolError> {
     if space_id.is_empty() || space_id.trim() != space_id {
-        return Err(McpBusinessError::new(
+        return Err(ToolError::new(
             "INVALID_SPACE_ID",
             "spaceId must be a non-empty explicit id from list_spaces",
         ));
@@ -666,13 +666,13 @@ fn resolve_routine_owner(
     )?)
 }
 
-fn validate_routine_collection_path(path: &str) -> Result<String, McpBusinessError> {
+fn validate_routine_collection_path(path: &str) -> Result<String, ToolError> {
     let path = validate_public_rel_path(path, false)?;
     if path
         .split('/')
         .any(|segment| segment.eq_ignore_ascii_case(".routines"))
     {
-        return Err(McpBusinessError::new(
+        return Err(ToolError::new(
             "PATH_FORBIDDEN",
             ".routines is not a public Routine owner address",
         ));
@@ -784,13 +784,13 @@ fn detail_payload(
 fn find_routine<'a>(
     snapshot: &'a RoutineCatalogSnapshot,
     routine_id: &str,
-) -> Result<&'a RoutineRow, McpBusinessError> {
+) -> Result<&'a RoutineRow, ToolError> {
     snapshot
         .routines
         .iter()
         .find(|row| row.routine_id.as_deref() == Some(routine_id))
         .ok_or_else(|| {
-            McpBusinessError::new(
+            ToolError::new(
                 "ROUTINE_NOT_FOUND",
                 format!("routine {routine_id} was not found for the explicit owner"),
             )

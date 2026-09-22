@@ -2,10 +2,10 @@
 //! host publishes and routing of bridge methods.
 
 use serde_json::{Value, json};
+use svode_tools::dispatch::{check_tool, served_definitions};
+use svode_tools::error::ToolError;
+use svode_tools::host::ToolHost;
 
-use crate::catalog;
-use crate::error::McpBusinessError;
-use crate::host::McpHost;
 use crate::protocol::IpcResponse;
 
 pub const MCP_PROTOCOL_VERSION: &str = "2025-06-18";
@@ -21,31 +21,9 @@ pub fn initialize(host_version: &str) -> Value {
     })
 }
 
-/// Whether the host serves a catalog tool: it declares the tool and has the
-/// capability the tool needs.
-fn serves(host: &impl McpHost, name: &str) -> bool {
-    host.serves_tool(name) && (name != "run_routine" || host.routine_runner().is_some())
-}
-
 /// Catalog limited to the tools the host declares.
-pub fn tools_list(host: &impl McpHost) -> Value {
-    let tools = catalog::definitions()
-        .into_iter()
-        .filter(|definition| serves(host, definition.name))
-        .collect::<Vec<_>>();
-    json!({ "tools": tools })
-}
-
-/// Rejects a tool outside the host catalog before any effect. Stale tools of
-/// an already open connection end here.
-pub fn check_tool(host: &impl McpHost, name: &str) -> Result<(), McpBusinessError> {
-    if catalog::is_mutating_tool(name).is_some() && serves(host, name) {
-        return Ok(());
-    }
-    Err(McpBusinessError::new(
-        "UNKNOWN_TOOL",
-        format!("unknown Svode MCP tool: {name}"),
-    ))
+pub fn tools_list(host: &impl ToolHost) -> Value {
+    json!({ "tools": served_definitions(host) })
 }
 
 /// Result of routing one private bridge method.
@@ -56,14 +34,14 @@ pub enum BridgeCall {
     CallTool { name: String, args: Value },
 }
 
-pub fn bridge_request(host: &impl McpHost, method: &str, params: &Value) -> BridgeCall {
+pub fn bridge_request(host: &impl ToolHost, method: &str, params: &Value) -> BridgeCall {
     let result = match method {
         "initialize" => Ok(initialize(host.version())),
         "tools/list" => Ok(tools_list(host)),
         "ping" => Ok(json!({ "ok": true })),
         "tools/call" => {
             let Some(name) = params.get("name").and_then(Value::as_str) else {
-                return protocol_error(McpBusinessError::new(
+                return protocol_error(ToolError::new(
                     "INVALID_REQUEST",
                     "tools/call requires name",
                 ));
@@ -80,7 +58,7 @@ pub fn bridge_request(host: &impl McpHost, method: &str, params: &Value) -> Brid
                 args,
             };
         }
-        _ => Err(McpBusinessError::new(
+        _ => Err(ToolError::new(
             "UNKNOWN_METHOD",
             "unknown desktop IPC method",
         )),
@@ -95,7 +73,7 @@ pub fn bridge_request(host: &impl McpHost, method: &str, params: &Value) -> Brid
     }
 }
 
-fn protocol_error(error: McpBusinessError) -> BridgeCall {
+fn protocol_error(error: ToolError) -> BridgeCall {
     BridgeCall::Respond(IpcResponse {
         result: None,
         tool_result: None,

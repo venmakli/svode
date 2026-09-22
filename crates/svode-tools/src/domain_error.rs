@@ -17,71 +17,71 @@ use svode_core::routines::local::LocalConfigError;
 use svode_core::routines::observation::ObservationError;
 use svode_core::routines::service::RoutineServiceError;
 
-use crate::error::McpBusinessError;
+use crate::error::ToolError;
 
 const SVODE_ERROR: &str = "SVODE_ERROR";
 
-fn file_not_found(path: String) -> McpBusinessError {
-    McpBusinessError::new("FILE_NOT_FOUND", format!("File not found: {path}"))
+fn file_not_found(path: String) -> ToolError {
+    ToolError::new("FILE_NOT_FOUND", format!("File not found: {path}"))
 }
 
-fn path_not_accessible(path: String) -> McpBusinessError {
-    McpBusinessError::new(
+fn path_not_accessible(path: String) -> ToolError {
+    ToolError::new(
         "PATH_NOT_ACCESSIBLE",
         format!("Path not accessible: {path}"),
     )
 }
 
-fn file_already_exists(path: String) -> McpBusinessError {
-    McpBusinessError::new(
+fn file_already_exists(path: String) -> ToolError {
+    ToolError::new(
         "FILE_ALREADY_EXISTS",
         format!("File already exists: {path}"),
     )
 }
 
-fn space_not_found(id: String) -> McpBusinessError {
-    McpBusinessError::new("SPACE_NOT_FOUND", format!("Space not found: {id}"))
+fn space_not_found(id: String) -> ToolError {
+    ToolError::new("SPACE_NOT_FOUND", format!("Space not found: {id}"))
 }
 
-fn index(message: String) -> McpBusinessError {
-    McpBusinessError::new("INDEX_ERROR", format!("Index error: {message}"))
+fn index(message: String) -> ToolError {
+    ToolError::new("INDEX_ERROR", format!("Index error: {message}"))
 }
 
-fn database(error: sqlx::Error) -> McpBusinessError {
-    McpBusinessError::new("DATABASE_ERROR", format!("Database error: {error}"))
+fn database(error: sqlx::Error) -> ToolError {
+    ToolError::new("DATABASE_ERROR", format!("Database error: {error}"))
 }
 
-fn io(error: std::io::Error) -> McpBusinessError {
-    McpBusinessError::new(SVODE_ERROR, format!("IO error: {error}"))
+fn io(error: std::io::Error) -> ToolError {
+    ToolError::new(SVODE_ERROR, format!("IO error: {error}"))
 }
 
-fn serde(error: serde_json::Error) -> McpBusinessError {
-    McpBusinessError::new(SVODE_ERROR, format!("Serialization error: {error}"))
+fn serde(error: serde_json::Error) -> ToolError {
+    ToolError::new(SVODE_ERROR, format!("Serialization error: {error}"))
 }
 
-fn frontmatter(message: String) -> McpBusinessError {
-    McpBusinessError::new(SVODE_ERROR, format!("Frontmatter parse error: {message}"))
+fn frontmatter(message: String) -> ToolError {
+    ToolError::new(SVODE_ERROR, format!("Frontmatter parse error: {message}"))
 }
 
-fn general(message: impl Into<String>) -> McpBusinessError {
-    McpBusinessError::new(SVODE_ERROR, message)
+fn general(message: impl Into<String>) -> ToolError {
+    ToolError::new(SVODE_ERROR, message)
 }
 
-fn recovery(cause: String, paths: Vec<String>) -> McpBusinessError {
-    McpBusinessError::new(
+fn recovery(cause: String, paths: Vec<String>) -> ToolError {
+    ToolError::new(
         "PAGE_WRITE_RECOVERY_FAILED",
         format!("Page write recovery failed after {cause}; unrestored paths: {paths:?}"),
     )
 }
 
-fn name_conflict() -> McpBusinessError {
-    McpBusinessError::new(
+fn name_conflict() -> ToolError {
+    ToolError::new(
         "PAGE_NAME_CONFLICT",
         "Page name is already used in this container",
     )
 }
 
-impl From<GitError> for McpBusinessError {
+impl From<GitError> for ToolError {
     fn from(error: GitError) -> Self {
         let code = match &error {
             GitError::GitNotFound => "GIT_NOT_FOUND",
@@ -94,11 +94,11 @@ impl From<GitError> for McpBusinessError {
             _ => SVODE_ERROR,
         };
         // Git error wording already matches the public messages.
-        McpBusinessError::new(code, error.to_string())
+        ToolError::new(code, error.to_string())
     }
 }
 
-impl From<PageSourceError> for McpBusinessError {
+impl From<PageSourceError> for ToolError {
     fn from(error: PageSourceError) -> Self {
         match error {
             PageSourceError::Missing(path) => file_not_found(path),
@@ -120,7 +120,7 @@ impl From<PageSourceError> for McpBusinessError {
     }
 }
 
-impl From<ContentTreeError> for McpBusinessError {
+impl From<ContentTreeError> for ToolError {
     fn from(error: ContentTreeError) -> Self {
         match error {
             ContentTreeError::Io(error) => io(error),
@@ -133,7 +133,7 @@ impl From<ContentTreeError> for McpBusinessError {
     }
 }
 
-impl From<ActorError> for McpBusinessError {
+impl From<ActorError> for ToolError {
     fn from(error: ActorError) -> Self {
         match error {
             ActorError::Io(error) => io(error),
@@ -145,7 +145,7 @@ impl From<ActorError> for McpBusinessError {
     }
 }
 
-impl From<AgentContextError> for McpBusinessError {
+impl From<AgentContextError> for ToolError {
     fn from(error: AgentContextError) -> Self {
         match error {
             AgentContextError::PathNotAccessible(path)
@@ -157,7 +157,7 @@ impl From<AgentContextError> for McpBusinessError {
     }
 }
 
-impl From<IndexError> for McpBusinessError {
+impl From<IndexError> for ToolError {
     fn from(error: IndexError) -> Self {
         match error {
             IndexError::Io(error) => io(error),
@@ -170,7 +170,7 @@ impl From<IndexError> for McpBusinessError {
     }
 }
 
-impl From<LocalConfigError> for McpBusinessError {
+impl From<LocalConfigError> for ToolError {
     fn from(error: LocalConfigError) -> Self {
         match error {
             LocalConfigError::Io(error) => io(error),
@@ -180,7 +180,7 @@ impl From<LocalConfigError> for McpBusinessError {
     }
 }
 
-impl From<RoutineStoreError> for McpBusinessError {
+impl From<RoutineStoreError> for ToolError {
     fn from(error: RoutineStoreError) -> Self {
         match error {
             RoutineStoreError::Io(error) => io(error),
@@ -192,7 +192,7 @@ impl From<RoutineStoreError> for McpBusinessError {
     }
 }
 
-impl From<RoutineServiceError> for McpBusinessError {
+impl From<RoutineServiceError> for ToolError {
     fn from(error: RoutineServiceError) -> Self {
         match error {
             RoutineServiceError::Io(error) => io(error),
@@ -210,7 +210,7 @@ impl From<RoutineServiceError> for McpBusinessError {
     }
 }
 
-impl From<ObservationError> for McpBusinessError {
+impl From<ObservationError> for ToolError {
     fn from(error: ObservationError) -> Self {
         match error {
             ObservationError::Sqlx(error) => database(error),
@@ -219,7 +219,7 @@ impl From<ObservationError> for McpBusinessError {
     }
 }
 
-impl From<PageError> for McpBusinessError {
+impl From<PageError> for ToolError {
     fn from(error: PageError) -> Self {
         match error {
             PageError::Io(error) => io(error),
@@ -244,7 +244,7 @@ impl From<PageError> for McpBusinessError {
     }
 }
 
-impl From<CollectionError> for McpBusinessError {
+impl From<CollectionError> for ToolError {
     fn from(error: CollectionError) -> Self {
         match error {
             CollectionError::Io(error) => io(error),
@@ -270,7 +270,7 @@ mod tests {
 
     #[test]
     fn stable_codes_survive_core_mapping() {
-        let cases: Vec<(McpBusinessError, &str)> = vec![
+        let cases: Vec<(ToolError, &str)> = vec![
             (
                 GitError::RepositoryAccessDenied {
                     repository_id: "repo".to_string(),
@@ -330,14 +330,14 @@ mod tests {
 
     #[test]
     fn messages_keep_the_established_wording() {
-        let denied: McpBusinessError = GitError::RepositoryAccessDenied {
+        let denied: ToolError = GitError::RepositoryAccessDenied {
             repository_id: "repo".to_string(),
             status: "read_only".to_string(),
             reason: "none".to_string(),
         }
         .into();
         assert!(denied.message.contains("status=read_only"));
-        let missing: McpBusinessError = PageError::FileNotFound("a.md".into()).into();
+        let missing: ToolError = PageError::FileNotFound("a.md".into()).into();
         assert_eq!(missing.message, "File not found: a.md");
     }
 }

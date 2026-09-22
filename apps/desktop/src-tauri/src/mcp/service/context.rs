@@ -3,7 +3,7 @@ use super::*;
 pub(super) fn resolve_context_override(
     app: &AppHandle,
     context_override: Option<&IpcContextOverride>,
-) -> Result<Option<ActiveProjectContext>, McpBusinessError> {
+) -> Result<Option<ActiveProjectContext>, ToolError> {
     let Some(context_override) = context_override else {
         return Ok(None);
     };
@@ -40,7 +40,7 @@ pub(super) fn resolve_context_override(
     Ok(Some(context_for_project_cwd(&root, Some(&cwd))?))
 }
 
-fn canonical_caller_cwd(caller_cwd: Option<&str>) -> Result<Option<PathBuf>, McpBusinessError> {
+fn canonical_caller_cwd(caller_cwd: Option<&str>) -> Result<Option<PathBuf>, ToolError> {
     let Some(caller_cwd) = caller_cwd.map(str::trim).filter(|value| !value.is_empty()) else {
         return Ok(None);
     };
@@ -48,7 +48,7 @@ fn canonical_caller_cwd(caller_cwd: Option<&str>) -> Result<Option<PathBuf>, Mcp
         .canonicalize()
         .map(Some)
         .map_err(|error| {
-            McpBusinessError::new(
+            ToolError::new(
                 "CALLER_CWD_NOT_ACCESSIBLE",
                 format!("caller cwd '{caller_cwd}' is not accessible: {error}"),
             )
@@ -58,9 +58,9 @@ fn canonical_caller_cwd(caller_cwd: Option<&str>) -> Result<Option<PathBuf>, Mcp
 fn context_for_project_cwd(
     project_path: &Path,
     caller_cwd: Option<&Path>,
-) -> Result<ActiveProjectContext, McpBusinessError> {
+) -> Result<ActiveProjectContext, ToolError> {
     let project = project_path.canonicalize().map_err(|error| {
-        McpBusinessError::new(
+        ToolError::new(
             "PROJECT_PATH_NOT_ACCESSIBLE",
             format!(
                 "project path '{}' is not accessible: {error}",
@@ -105,7 +105,7 @@ fn most_specific_ready_child(project_path: &Path, cwd: &Path) -> Option<(String,
 pub(super) fn resolve_project_root_for_cwd(
     config_dir: Option<&Path>,
     cwd: &Path,
-) -> Result<PathBuf, McpBusinessError> {
+) -> Result<PathBuf, ToolError> {
     if let Some(config_dir) = config_dir
         && let Some(root) = registry_project_root_for_cwd(config_dir, cwd)?
     {
@@ -113,7 +113,7 @@ pub(super) fn resolve_project_root_for_cwd(
     }
 
     ancestor_svode_project_root(cwd).ok_or_else(|| {
-        McpBusinessError::new(
+        ToolError::new(
             "PROJECT_CONTEXT_NOT_FOUND",
             format!(
                 "could not resolve a Svode project root from caller cwd '{}'",
@@ -126,7 +126,7 @@ pub(super) fn resolve_project_root_for_cwd(
 fn registry_project_root_for_cwd(
     config_dir: &Path,
     cwd: &Path,
-) -> Result<Option<PathBuf>, McpBusinessError> {
+) -> Result<Option<PathBuf>, ToolError> {
     let registry = registry::read_registry(config_dir)?;
     let mut best: Option<PathBuf> = None;
 

@@ -17,15 +17,15 @@ use svode_core::page::PageError;
 use svode_core::page::naming::DocumentNameConflict;
 use svode_core::page::write::PageRuntime;
 
-use crate::error::McpBusinessError;
-use crate::host::{McpHost, MutationRuntime};
-use crate::protocol::{ContentBlock, ToolCallResult};
+use crate::error::ToolError;
+use crate::host::{MutationRuntime, ToolHost};
+use crate::result::{ContentBlock, ToolCallResult};
 
 /// Failure of a shared mutation: core errors keep their evidence until the
 /// public projection, host failures are already business errors.
 pub(crate) enum MutationError {
     Page(PageError),
-    Business(McpBusinessError),
+    Business(ToolError),
 }
 
 impl From<PageError> for MutationError {
@@ -34,13 +34,13 @@ impl From<PageError> for MutationError {
     }
 }
 
-impl From<McpBusinessError> for MutationError {
-    fn from(error: McpBusinessError) -> Self {
+impl From<ToolError> for MutationError {
+    fn from(error: ToolError) -> Self {
         Self::Business(error)
     }
 }
 
-impl From<MutationError> for McpBusinessError {
+impl From<MutationError> for ToolError {
     fn from(error: MutationError) -> Self {
         match error {
             MutationError::Page(error) => error.into(),
@@ -51,7 +51,7 @@ impl From<MutationError> for McpBusinessError {
 
 /// Public projection of a failed mutation. A name conflict keeps its
 /// container and conflicting Page evidence.
-pub(crate) fn failure(error: MutationError) -> Result<ToolCallResult, McpBusinessError> {
+pub(crate) fn failure(error: MutationError) -> Result<ToolCallResult, ToolError> {
     match error {
         MutationError::Page(PageError::DocumentNameConflict(conflict)) => {
             Ok(page_name_conflict_result(conflict))
@@ -79,7 +79,7 @@ fn page_name_conflict_result(conflict: DocumentNameConflict) -> ToolCallResult {
 /// Authorizes the planned touched-set of a mutation in `space`: every
 /// distinct local repository once, all before the first write.
 pub(crate) async fn authorize(
-    host: &impl McpHost,
+    host: &impl ToolHost,
     space: &str,
     mut paths: Vec<PathBuf>,
 ) -> Result<Vec<PathBuf>, MutationError> {
@@ -89,12 +89,12 @@ pub(crate) async fn authorize(
 
 /// Authorizes exactly the planned touched-set, without adding its Space.
 pub(crate) async fn authorize_paths(
-    host: &impl McpHost,
+    host: &impl ToolHost,
     paths: Vec<PathBuf>,
 ) -> Result<Vec<PathBuf>, MutationError> {
     let mut repositories = HashSet::new();
     for path in &paths {
-        let repository = local_repository_root(path).map_err(McpBusinessError::from)?;
+        let repository = local_repository_root(path).map_err(ToolError::from)?;
         if repositories.insert(repository.clone()) {
             host.require_mutation_access(&repository).await?;
         }
@@ -106,9 +106,9 @@ pub(crate) async fn authorize_paths(
 /// authorized before it started.
 pub(crate) async fn within_authorized<T>(
     paths: Vec<PathBuf>,
-    operation: impl Future<Output = Result<T, McpBusinessError>>,
-) -> Result<T, McpBusinessError> {
-    scope_authorized_mutation_paths(paths, operation, McpBusinessError::from).await
+    operation: impl Future<Output = Result<T, ToolError>>,
+) -> Result<T, ToolError> {
+    scope_authorized_mutation_paths(paths, operation, ToolError::from).await
 }
 
 /// Host mutation runtime with the detected Git CLI as date provider.
@@ -118,7 +118,7 @@ pub(crate) struct PageHandles<'a> {
 }
 
 impl<'a> PageHandles<'a> {
-    pub(crate) fn of(host: &'a impl McpHost) -> Self {
+    pub(crate) fn of(host: &'a impl ToolHost) -> Self {
         Self {
             runtime: host.mutation_runtime(),
             git_dates: detected_cli(),

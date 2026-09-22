@@ -1,8 +1,8 @@
-use svode_mcp::error::McpBusinessError;
+use svode_tools::error::ToolError;
 
 use crate::AppError;
 
-impl From<AppError> for McpBusinessError {
+impl From<AppError> for ToolError {
     fn from(error: AppError) -> Self {
         let code = match &error {
             AppError::FileNotFound(_) => "FILE_NOT_FOUND",
@@ -31,7 +31,7 @@ mod tests {
 
     #[test]
     fn repository_access_denial_has_stable_business_code() {
-        let error = McpBusinessError::from(AppError::RepositoryAccessDenied {
+        let error = ToolError::from(AppError::RepositoryAccessDenied {
             repository_id: "repo".to_string(),
             status: "read_only".to_string(),
             reason: "none".to_string(),

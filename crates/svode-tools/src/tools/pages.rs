@@ -15,14 +15,14 @@ use svode_core::page::metadata::{PageMetadataPatch, relative_changed_paths};
 use svode_core::page::write::{PageWrite, PageWriteOutcome};
 
 use crate::args::deserialize_present;
-use crate::error::McpBusinessError;
-use crate::host::{McpHost, RequestTarget};
+use crate::error::ToolError;
+use crate::host::{RequestTarget, ToolHost};
 use crate::mutation::{MutationError, PageHandles, authorize, failure};
 use crate::owner::{
     collection_readme_path, require_collection_item, require_owner, require_standalone_page,
 };
 use crate::path::{ensure_inside, validate_markdown_path, validate_public_rel_path};
-use crate::protocol::ToolCallResult;
+use crate::result::ToolCallResult;
 use crate::target::resolve_space;
 
 #[derive(Debug, Deserialize)]
@@ -145,10 +145,10 @@ pub(crate) struct UpdateCollectionItemBodyArgs {
 }
 
 pub(crate) async fn write_page(
-    host: &impl McpHost,
+    host: &impl ToolHost,
     target: &RequestTarget,
     args: WritePageArgs,
-) -> Result<ToolCallResult, McpBusinessError> {
+) -> Result<ToolCallResult, ToolError> {
     let space = resolve_space(target, args.space_id.as_deref())?;
     let path = validate_markdown_path(&args.path)?;
     ensure_inside(Path::new(&space), &path)?;
@@ -173,10 +173,10 @@ pub(crate) async fn write_page(
 }
 
 pub(crate) async fn create_page(
-    host: &impl McpHost,
+    host: &impl ToolHost,
     target: &RequestTarget,
     args: CreatePageArgs,
-) -> Result<ToolCallResult, McpBusinessError> {
+) -> Result<ToolCallResult, ToolError> {
     let space = resolve_space(target, args.space_id.as_deref())?;
     let parent_path = validate_public_rel_path(&args.parent_path, true)?;
     ensure_inside(Path::new(&space), &parent_path)?;
@@ -216,10 +216,10 @@ pub(crate) async fn create_page(
 }
 
 pub(crate) async fn update_page_metadata(
-    host: &impl McpHost,
+    host: &impl ToolHost,
     target: &RequestTarget,
     args: UpdatePageMetadataArgs,
-) -> Result<ToolCallResult, McpBusinessError> {
+) -> Result<ToolCallResult, ToolError> {
     let space = resolve_space(target, args.space_id.as_deref())?;
     let path = validate_markdown_path(&args.path)?;
     ensure_inside(Path::new(&space), &path)?;
@@ -243,10 +243,10 @@ pub(crate) async fn update_page_metadata(
 }
 
 pub(crate) async fn write_space_readme(
-    host: &impl McpHost,
+    host: &impl ToolHost,
     target: &RequestTarget,
     args: WriteSpaceReadmeArgs,
-) -> Result<ToolCallResult, McpBusinessError> {
+) -> Result<ToolCallResult, ToolError> {
     let space = resolve_space(target, args.space_id.as_deref())?;
     let path = "README.md";
     ensure_inside(Path::new(&space), path)?;
@@ -271,10 +271,10 @@ pub(crate) async fn write_space_readme(
 }
 
 pub(crate) async fn update_space_metadata(
-    host: &impl McpHost,
+    host: &impl ToolHost,
     target: &RequestTarget,
     args: UpdateSpaceMetadataArgs,
-) -> Result<ToolCallResult, McpBusinessError> {
+) -> Result<ToolCallResult, ToolError> {
     let space = resolve_space(target, args.space_id.as_deref())?;
     let path = "README.md";
     ensure_inside(Path::new(&space), path)?;
@@ -298,10 +298,10 @@ pub(crate) async fn update_space_metadata(
 }
 
 pub(crate) async fn write_collection_readme(
-    host: &impl McpHost,
+    host: &impl ToolHost,
     target: &RequestTarget,
     args: WriteCollectionReadmeArgs,
-) -> Result<ToolCallResult, McpBusinessError> {
+) -> Result<ToolCallResult, ToolError> {
     let space = resolve_space(target, args.space_id.as_deref())?;
     let collection_path = validate_public_rel_path(&args.collection_path, true)?;
     let path = collection_readme_path(&collection_path);
@@ -329,10 +329,10 @@ pub(crate) async fn write_collection_readme(
 }
 
 pub(crate) async fn update_collection_metadata(
-    host: &impl McpHost,
+    host: &impl ToolHost,
     target: &RequestTarget,
     args: UpdateCollectionMetadataArgs,
-) -> Result<ToolCallResult, McpBusinessError> {
+) -> Result<ToolCallResult, ToolError> {
     let space = resolve_space(target, args.space_id.as_deref())?;
     let collection_path = validate_public_rel_path(&args.collection_path, true)?;
     let path = collection_readme_path(&collection_path);
@@ -358,10 +358,10 @@ pub(crate) async fn update_collection_metadata(
 }
 
 pub(crate) async fn update_collection_item_metadata(
-    host: &impl McpHost,
+    host: &impl ToolHost,
     target: &RequestTarget,
     args: UpdatePageMetadataArgs,
-) -> Result<ToolCallResult, McpBusinessError> {
+) -> Result<ToolCallResult, ToolError> {
     let space = resolve_space(target, args.space_id.as_deref())?;
     let path = validate_markdown_path(&args.path)?;
     ensure_inside(Path::new(&space), &path)?;
@@ -385,10 +385,10 @@ pub(crate) async fn update_collection_item_metadata(
 }
 
 pub(crate) async fn update_collection_item_fields(
-    host: &impl McpHost,
+    host: &impl ToolHost,
     target: &RequestTarget,
     args: UpdateCollectionItemFieldsArgs,
-) -> Result<ToolCallResult, McpBusinessError> {
+) -> Result<ToolCallResult, ToolError> {
     let space = resolve_space(target, args.space_id.as_deref())?;
     let path = validate_markdown_path(&args.path)?;
     ensure_inside(Path::new(&space), &path)?;
@@ -425,10 +425,10 @@ pub(crate) async fn update_collection_item_fields(
 }
 
 pub(crate) async fn update_collection_item_body(
-    host: &impl McpHost,
+    host: &impl ToolHost,
     target: &RequestTarget,
     args: UpdateCollectionItemBodyArgs,
-) -> Result<ToolCallResult, McpBusinessError> {
+) -> Result<ToolCallResult, ToolError> {
     let space = resolve_space(target, args.space_id.as_deref())?;
     let path = validate_markdown_path(&args.path)?;
     ensure_inside(Path::new(&space), &path)?;
@@ -446,7 +446,7 @@ pub(crate) async fn update_collection_item_body(
 /// Body write with an optional explicit title intent; a missing title is
 /// body-only and never renames.
 async fn write_body(
-    host: &impl McpHost,
+    host: &impl ToolHost,
     target: &RequestTarget,
     space: &str,
     path: &str,
@@ -474,7 +474,7 @@ async fn write_body(
 }
 
 async fn patch_metadata(
-    host: &impl McpHost,
+    host: &impl ToolHost,
     target: &RequestTarget,
     space: &str,
     path: &str,

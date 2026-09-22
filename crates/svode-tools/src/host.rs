@@ -1,4 +1,4 @@
-//! Host seam of the shared MCP mapping.
+//! Host seam of the shared tool surface.
 //!
 //! A host decides the project and default Space of a request before dispatch
 //! and owns every runtime handle (index pools, repository access, Routine
@@ -23,7 +23,7 @@ use svode_core::routines::model::{
 };
 use svode_core::routines::store_state::RoutineStoreState;
 
-use crate::error::McpBusinessError;
+use crate::error::ToolError;
 
 /// Host-owned runtime a managed mutation publishes into: the Project index,
 /// Routine observation updates and watcher echo nonces. One instance per
@@ -70,7 +70,7 @@ pub trait RoutineRunner: Sync {
         owner: ResolvedRoutineOwner,
         routine_id: String,
         expected_fingerprint: String,
-    ) -> Pin<Box<dyn Future<Output = Result<RoutineDispatchResult, McpBusinessError>> + Send + '_>>;
+    ) -> Pin<Box<dyn Future<Output = Result<RoutineDispatchResult, ToolError>> + Send + '_>>;
 }
 
 /// Project, default Space and caller provenance frozen by the host for one
@@ -85,7 +85,7 @@ pub struct RequestTarget {
     pub routine_caller: Option<RoutineCaller>,
 }
 
-pub trait McpHost: Sync {
+pub trait ToolHost: Sync {
     /// Build version of the host process, reported as `serverInfo.version`.
     fn version(&self) -> &str;
 
@@ -105,14 +105,14 @@ pub trait McpHost: Sync {
     fn repository_access(
         &self,
         space_path: &Path,
-    ) -> impl Future<Output = Result<RepositoryAccessSnapshot, McpBusinessError>> + Send;
+    ) -> impl Future<Output = Result<RepositoryAccessSnapshot, ToolError>> + Send;
 
     /// Authorizes a managed mutation of one local repository from its
     /// current access state, without a network probe.
     fn require_mutation_access(
         &self,
         repository: &Path,
-    ) -> impl Future<Output = Result<(), McpBusinessError>> + Send;
+    ) -> impl Future<Output = Result<(), ToolError>> + Send;
 
     /// Shared runtime handles of managed mutations.
     fn mutation_runtime(&self) -> MutationRuntime<'_>;
@@ -129,7 +129,7 @@ pub trait McpHost: Sync {
     fn deliver_managed_import(&self, delivery: &ManagedImportDelivery);
 
     /// Shared Routine runtime of one call.
-    fn routine_runtime(&self) -> Result<RoutineRuntime<'_>, McpBusinessError>;
+    fn routine_runtime(&self) -> Result<RoutineRuntime<'_>, ToolError>;
 
     /// Delivers the invalidation of an applied Routine definition change to
     /// the host consumers of that owner. The source result does not depend

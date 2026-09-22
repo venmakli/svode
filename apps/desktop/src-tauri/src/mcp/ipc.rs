@@ -4,21 +4,21 @@ use std::path::PathBuf;
 
 use svode_mcp::MCP_BRIDGE_PROTOCOL;
 use svode_mcp::control::{BridgeCall, bridge_request};
-use svode_mcp::error::McpBusinessError;
 use svode_mcp::protocol::{DiscoveryFile, IpcRequest, IpcResponse};
+use svode_tools::error::ToolError;
 use tauri::{AppHandle, Manager};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
 
-pub fn discovery_path_for_app(app: &AppHandle) -> Result<PathBuf, McpBusinessError> {
+pub fn discovery_path_for_app(app: &AppHandle) -> Result<PathBuf, ToolError> {
     let dir = app
         .path()
         .app_data_dir()
-        .map_err(|error| McpBusinessError::new("APP_DIR_ERROR", error.to_string()))?;
+        .map_err(|error| ToolError::new("APP_DIR_ERROR", error.to_string()))?;
     Ok(dir.join("desktop-mcp.json"))
 }
 
-pub async fn start_desktop_ipc(app: AppHandle) -> Result<(), McpBusinessError> {
+pub async fn start_desktop_ipc(app: AppHandle) -> Result<(), ToolError> {
     let listener = TcpListener::bind(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0)).await?;
     let port = listener.local_addr()?.port();
     let token = ulid::Ulid::new().to_string().to_lowercase();
@@ -53,10 +53,7 @@ pub async fn start_desktop_ipc(app: AppHandle) -> Result<(), McpBusinessError> {
     Ok(())
 }
 
-fn write_discovery_file(
-    app: &AppHandle,
-    discovery: &DiscoveryFile,
-) -> Result<(), McpBusinessError> {
+fn write_discovery_file(app: &AppHandle, discovery: &DiscoveryFile) -> Result<(), ToolError> {
     let path = discovery_path_for_app(app)?;
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
@@ -67,7 +64,7 @@ fn write_discovery_file(
 }
 
 #[cfg(unix)]
-fn write_user_only(path: &PathBuf, bytes: &[u8]) -> Result<(), McpBusinessError> {
+fn write_user_only(path: &PathBuf, bytes: &[u8]) -> Result<(), ToolError> {
     use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
     let mut options = fs::OpenOptions::new();
     options.create(true).truncate(true).write(true).mode(0o600);
@@ -79,7 +76,7 @@ fn write_user_only(path: &PathBuf, bytes: &[u8]) -> Result<(), McpBusinessError>
 }
 
 #[cfg(not(unix))]
-fn write_user_only(path: &PathBuf, bytes: &[u8]) -> Result<(), McpBusinessError> {
+fn write_user_only(path: &PathBuf, bytes: &[u8]) -> Result<(), ToolError> {
     fs::write(path, bytes)?;
     Ok(())
 }
@@ -88,7 +85,7 @@ async fn handle_connection(
     app: AppHandle,
     stream: TcpStream,
     expected_token: String,
-) -> Result<(), McpBusinessError> {
+) -> Result<(), ToolError> {
     let mut reader = BufReader::new(stream);
     let mut line = String::new();
     reader.read_line(&mut line).await?;
@@ -97,7 +94,7 @@ async fn handle_connection(
         IpcResponse {
             result: None,
             tool_result: None,
-            error: Some(McpBusinessError::new(
+            error: Some(ToolError::new(
                 "AUTH_FAILED",
                 "invalid Svode desktop IPC token",
             )),
@@ -106,7 +103,7 @@ async fn handle_connection(
         IpcResponse {
             result: None,
             tool_result: None,
-            error: Some(McpBusinessError::new(
+            error: Some(ToolError::new(
                 "BRIDGE_PROTOCOL_INCOMPATIBLE",
                 "svode-mcp bridge protocol is not compatible with this Svode desktop",
             )),

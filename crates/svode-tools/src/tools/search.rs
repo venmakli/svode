@@ -14,9 +14,9 @@ use svode_core::index::service::{self, SearchScope};
 use svode_core::index::state::IndexRuntimeState;
 
 use crate::args::{clamp_limit, offset};
-use crate::error::McpBusinessError;
-use crate::host::{McpHost, RequestTarget};
-use crate::protocol::ToolCallResult;
+use crate::error::ToolError;
+use crate::host::{RequestTarget, ToolHost};
+use crate::result::ToolCallResult;
 use crate::target::{ROOT_SPACE_ID, index_key, is_root_space_id, resolve_space};
 
 const DEFAULT_SEARCH_LIMIT: usize = 20;
@@ -123,10 +123,10 @@ struct ResolvedScope {
 }
 
 pub(crate) async fn search_pages(
-    host: &impl McpHost,
+    host: &impl ToolHost,
     target: &RequestTarget,
     args: SearchArgs,
-) -> Result<ToolCallResult, McpBusinessError> {
+) -> Result<ToolCallResult, ToolError> {
     resolve_space(target, args.space_id.as_deref())?;
     let key = index_key(target, args.space_id.as_deref());
     let limit = clamp_limit(args.limit);
@@ -157,10 +157,10 @@ pub(crate) async fn search_pages(
 }
 
 pub(crate) async fn search_knowledge(
-    host: &impl McpHost,
+    host: &impl ToolHost,
     target: &RequestTarget,
     args: SearchKnowledgeArgs,
-) -> Result<ToolCallResult, McpBusinessError> {
+) -> Result<ToolCallResult, ToolError> {
     let query = validate_query(&args.query)?.to_string();
     let limit = bounded_limit(args.limit, DEFAULT_SEARCH_LIMIT, MAX_SEARCH_LIMIT, "limit")?;
     let node_kinds = validate_kinds(args.node_kinds, &NODE_KINDS, "nodeKinds")?;
@@ -207,10 +207,10 @@ pub(crate) async fn search_knowledge(
 }
 
 pub(crate) async fn get_knowledge_node(
-    host: &impl McpHost,
+    host: &impl ToolHost,
     target: &RequestTarget,
     args: KnowledgeNodeArgs,
-) -> Result<ToolCallResult, McpBusinessError> {
+) -> Result<ToolCallResult, ToolError> {
     let source = parse_node_id(&args.node_id)?;
     let resolved = resolve_scope(host, target, args.scope, args.space_id).await?;
     let mut response =
@@ -233,10 +233,10 @@ pub(crate) async fn get_knowledge_node(
 }
 
 pub(crate) async fn get_knowledge_neighbors(
-    host: &impl McpHost,
+    host: &impl ToolHost,
     target: &RequestTarget,
     args: KnowledgeNeighborsArgs,
-) -> Result<ToolCallResult, McpBusinessError> {
+) -> Result<ToolCallResult, ToolError> {
     let source = parse_node_id(&args.node_id)?;
     let limit = bounded_limit(
         args.limit,
@@ -286,10 +286,10 @@ pub(crate) async fn get_knowledge_neighbors(
 }
 
 pub(crate) async fn get_related_context(
-    host: &impl McpHost,
+    host: &impl ToolHost,
     target: &RequestTarget,
     args: RelatedContextArgs,
-) -> Result<ToolCallResult, McpBusinessError> {
+) -> Result<ToolCallResult, ToolError> {
     let query = validate_query(&args.query)?.to_string();
     let limit = bounded_limit(
         args.limit,
@@ -332,10 +332,10 @@ pub(crate) async fn get_related_context(
 }
 
 pub(crate) async fn get_knowledge_status(
-    host: &impl McpHost,
+    host: &impl ToolHost,
     target: &RequestTarget,
     args: KnowledgeStatusArgs,
-) -> Result<ToolCallResult, McpBusinessError> {
+) -> Result<ToolCallResult, ToolError> {
     let resolved = resolve_scope(host, target, args.scope, args.space_id).await?;
     let mut response =
         read_effective_snapshot(host, &resolved, None, 1, 1, 1, KnowledgeFilters::default()).await;
@@ -369,8 +369,8 @@ fn node_filters(source: KnowledgeSource) -> KnowledgeFilters {
     }
 }
 
-fn node_not_found() -> McpBusinessError {
-    McpBusinessError::new(
+fn node_not_found() -> ToolError {
+    ToolError::new(
         "KNOWLEDGE_NODE_NOT_FOUND",
         "the requested knowledge node is unavailable in this scope",
     )
@@ -379,16 +379,16 @@ fn node_not_found() -> McpBusinessError {
 /// Knowledge scope inside the frozen request target: the default Space of
 /// the request unless `spaceId` or Project scope is explicit.
 async fn resolve_scope(
-    host: &impl McpHost,
+    host: &impl ToolHost,
     target: &RequestTarget,
     scope: Option<McpKnowledgeScope>,
     space_id: Option<String>,
-) -> Result<ResolvedScope, McpBusinessError> {
+) -> Result<ResolvedScope, ToolError> {
     let project = PathBuf::from(&target.project_path);
     match scope.unwrap_or_default() {
         McpKnowledgeScope::Project => {
             if space_id.is_some() {
-                return Err(McpBusinessError::new(
+                return Err(ToolError::new(
                     "INVALID_KNOWLEDGE_SCOPE",
                     "spaceId is only valid when scope is space",
                 ));
@@ -425,7 +425,7 @@ async fn resolve_scope(
 }
 
 async fn read_effective_snapshot(
-    host: &impl McpHost,
+    host: &impl ToolHost,
     resolved: &ResolvedScope,
     query: Option<&str>,
     node_limit: usize,
@@ -446,10 +446,10 @@ async fn read_effective_snapshot(
     .await
 }
 
-fn normalize_space_id(space_id: &str) -> Result<Option<String>, McpBusinessError> {
+fn normalize_space_id(space_id: &str) -> Result<Option<String>, ToolError> {
     let space_id = space_id.trim();
     if space_id.is_empty() {
-        return Err(McpBusinessError::new(
+        return Err(ToolError::new(
             "INVALID_SPACE_ID",
             "spaceId must not be empty",
         ));
@@ -457,19 +457,19 @@ fn normalize_space_id(space_id: &str) -> Result<Option<String>, McpBusinessError
     Ok((!is_root_space_id(space_id)).then(|| space_id.to_string()))
 }
 
-fn parse_node_id(node_id: &str) -> Result<KnowledgeSource, McpBusinessError> {
+fn parse_node_id(node_id: &str) -> Result<KnowledgeSource, ToolError> {
     let mut parts = node_id.splitn(3, ':');
     let kind = parts.next().unwrap_or_default();
     let space = parts.next().unwrap_or_default();
     let path = parts.next().unwrap_or_default();
     if !NODE_KINDS.contains(&kind) || space.is_empty() || path.is_empty() {
-        return Err(McpBusinessError::new(
+        return Err(ToolError::new(
             "INVALID_KNOWLEDGE_NODE_ID",
             "nodeId must be kind:spaceId:path using a published knowledge kind",
         ));
     }
     let path = normalize_repo_relative(path, RootMode::Allow).map_err(|_| {
-        McpBusinessError::new(
+        ToolError::new(
             "INVALID_KNOWLEDGE_NODE_ID",
             "nodeId contains an invalid public source path",
         )
@@ -481,10 +481,10 @@ fn parse_node_id(node_id: &str) -> Result<KnowledgeSource, McpBusinessError> {
     })
 }
 
-fn validate_query(query: &str) -> Result<&str, McpBusinessError> {
+fn validate_query(query: &str) -> Result<&str, ToolError> {
     let query = query.trim();
     if query.is_empty() || query.chars().count() > MAX_QUERY_CHARS {
-        return Err(McpBusinessError::new(
+        return Err(ToolError::new(
             "INVALID_KNOWLEDGE_QUERY",
             format!("query must contain 1 to {MAX_QUERY_CHARS} characters"),
         ));
@@ -496,12 +496,12 @@ fn validate_kinds(
     kinds: Option<Vec<String>>,
     allowed: &[&str],
     field: &str,
-) -> Result<Option<Vec<String>>, McpBusinessError> {
+) -> Result<Option<Vec<String>>, ToolError> {
     let Some(mut kinds) = kinds else {
         return Ok(None);
     };
     if kinds.iter().any(|kind| !allowed.contains(&kind.as_str())) {
-        return Err(McpBusinessError::new(
+        return Err(ToolError::new(
             "INVALID_KNOWLEDGE_FILTER",
             format!("{field} contains an unsupported value"),
         ));
@@ -516,10 +516,10 @@ fn bounded_limit(
     default: usize,
     maximum: usize,
     field: &str,
-) -> Result<usize, McpBusinessError> {
+) -> Result<usize, ToolError> {
     let value = value.unwrap_or(default);
     if value == 0 || value > maximum {
-        return Err(McpBusinessError::new(
+        return Err(ToolError::new(
             "INVALID_KNOWLEDGE_LIMIT",
             format!("{field} must be between 1 and {maximum}"),
         ));
@@ -535,7 +535,7 @@ fn truncate_response_metadata(response: &mut KnowledgeResponse) -> bool {
     truncated
 }
 
-fn json_result(structured: Value) -> Result<ToolCallResult, McpBusinessError> {
+fn json_result(structured: Value) -> Result<ToolCallResult, ToolError> {
     let text = serde_json::to_string(&structured)?;
     Ok(ToolCallResult::ok(text, structured))
 }

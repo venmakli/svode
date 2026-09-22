@@ -11,11 +11,11 @@ use svode_core::collections::engine::{
 use svode_core::page::metadata::relative_changed_paths;
 
 use crate::args::{CollectionArgs, clamp_limit};
-use crate::error::McpBusinessError;
-use crate::host::{McpHost, RequestTarget};
+use crate::error::ToolError;
+use crate::host::{RequestTarget, ToolHost};
 use crate::mutation::authorize;
 use crate::path::{ensure_inside, validate_public_rel_path};
-use crate::protocol::ToolCallResult;
+use crate::result::ToolCallResult;
 use crate::target::{index_key, resolve_space};
 
 #[derive(Debug, Deserialize)]
@@ -118,7 +118,7 @@ fn collection_target(
     target: &RequestTarget,
     space_id: Option<&str>,
     collection_path: &str,
-) -> Result<(String, String), McpBusinessError> {
+) -> Result<(String, String), ToolError> {
     let space = resolve_space(target, space_id)?;
     let collection_path = validate_public_rel_path(collection_path, true)?;
     ensure_inside(Path::new(&space), &collection_path)?;
@@ -128,7 +128,7 @@ fn collection_target(
 pub(crate) fn get_collection_schema(
     target: &RequestTarget,
     args: CollectionArgs,
-) -> Result<ToolCallResult, McpBusinessError> {
+) -> Result<ToolCallResult, ToolError> {
     let (space, collection_path) =
         collection_target(target, args.space_id.as_deref(), &args.collection_path)?;
     let schema = engine::read_collection_schema(&space, &collection_path)?;
@@ -139,10 +139,10 @@ pub(crate) fn get_collection_schema(
 }
 
 pub(crate) async fn query_collection_items(
-    host: &impl McpHost,
+    host: &impl ToolHost,
     target: &RequestTarget,
     args: QueryCollectionItemsArgs,
-) -> Result<ToolCallResult, McpBusinessError> {
+) -> Result<ToolCallResult, ToolError> {
     let (space, collection_path) =
         collection_target(target, args.space_id.as_deref(), &args.collection_path)?;
     let limit = clamp_limit(args.limit);
@@ -151,9 +151,7 @@ pub(crate) async fn query_collection_items(
     let pool = host
         .index_pool(&key, Path::new(&space))
         .await
-        .ok_or_else(|| {
-            McpBusinessError::new("INDEX_ERROR", "Index error: Space index is unavailable")
-        })?;
+        .ok_or_else(|| ToolError::new("INDEX_ERROR", "Index error: Space index is unavailable"))?;
     let runtime = host.read_runtime();
     let git_cli = runtime.git.require_cli().ok();
     let items = svode_core::collections::entries::query_entries(
@@ -176,10 +174,10 @@ pub(crate) async fn query_collection_items(
 }
 
 pub(crate) async fn list_actors(
-    host: &impl McpHost,
+    host: &impl ToolHost,
     target: &RequestTarget,
     args: ListActorsArgs,
-) -> Result<ToolCallResult, McpBusinessError> {
+) -> Result<ToolCallResult, ToolError> {
     let space = resolve_space(target, args.space_id.as_deref())?;
     let runtime = host.read_runtime();
     let cli = runtime.git.require_cli()?;
@@ -206,7 +204,7 @@ pub(crate) async fn list_actors(
 pub(crate) fn validate_collection_integrity(
     target: &RequestTarget,
     args: IntegrityArgs,
-) -> Result<ToolCallResult, McpBusinessError> {
+) -> Result<ToolCallResult, ToolError> {
     let space = resolve_space(target, args.space_id.as_deref())?;
     let collection_path = args
         .collection_path
@@ -237,10 +235,10 @@ pub(crate) fn validate_collection_integrity(
 }
 
 pub(crate) async fn add_collection_column(
-    host: &impl McpHost,
+    host: &impl ToolHost,
     target: &RequestTarget,
     args: AddCollectionColumnArgs,
-) -> Result<ToolCallResult, McpBusinessError> {
+) -> Result<ToolCallResult, ToolError> {
     let (space, collection_path) =
         collection_target(target, args.space_id.as_deref(), &args.collection_path)?;
     let mutation = engine::prepare_add_schema_column(
@@ -260,10 +258,10 @@ pub(crate) async fn add_collection_column(
 }
 
 pub(crate) async fn update_collection_column(
-    host: &impl McpHost,
+    host: &impl ToolHost,
     target: &RequestTarget,
     args: UpdateCollectionColumnArgs,
-) -> Result<ToolCallResult, McpBusinessError> {
+) -> Result<ToolCallResult, ToolError> {
     let (space, collection_path) =
         collection_target(target, args.space_id.as_deref(), &args.collection_path)?;
     let mutation = engine::prepare_update_schema_column(
@@ -287,10 +285,10 @@ pub(crate) async fn update_collection_column(
 }
 
 pub(crate) async fn delete_collection_column(
-    host: &impl McpHost,
+    host: &impl ToolHost,
     target: &RequestTarget,
     args: DeleteCollectionColumnArgs,
-) -> Result<ToolCallResult, McpBusinessError> {
+) -> Result<ToolCallResult, ToolError> {
     let (space, collection_path) =
         collection_target(target, args.space_id.as_deref(), &args.collection_path)?;
     let mutation = engine::prepare_delete_schema_column(
@@ -314,10 +312,10 @@ pub(crate) async fn delete_collection_column(
 }
 
 pub(crate) async fn add_collection_view(
-    host: &impl McpHost,
+    host: &impl ToolHost,
     target: &RequestTarget,
     args: AddCollectionViewArgs,
-) -> Result<ToolCallResult, McpBusinessError> {
+) -> Result<ToolCallResult, ToolError> {
     let (space, collection_path) =
         collection_target(target, args.space_id.as_deref(), &args.collection_path)?;
     let mutation = engine::prepare_add_view(&space, &collection_path, args.view, args.position)?;
@@ -332,10 +330,10 @@ pub(crate) async fn add_collection_view(
 }
 
 pub(crate) async fn update_collection_view(
-    host: &impl McpHost,
+    host: &impl ToolHost,
     target: &RequestTarget,
     args: UpdateCollectionViewArgs,
-) -> Result<ToolCallResult, McpBusinessError> {
+) -> Result<ToolCallResult, ToolError> {
     let (space, collection_path) =
         collection_target(target, args.space_id.as_deref(), &args.collection_path)?;
     let mutation = engine::prepare_update_view(
@@ -358,10 +356,10 @@ pub(crate) async fn update_collection_view(
 }
 
 pub(crate) async fn delete_collection_view(
-    host: &impl McpHost,
+    host: &impl ToolHost,
     target: &RequestTarget,
     args: DeleteCollectionViewArgs,
-) -> Result<ToolCallResult, McpBusinessError> {
+) -> Result<ToolCallResult, ToolError> {
     let (space, collection_path) =
         collection_target(target, args.space_id.as_deref(), &args.collection_path)?;
     let mutation = engine::prepare_delete_view(&space, &collection_path, &args.view_name)?;
@@ -382,12 +380,12 @@ pub(crate) async fn delete_collection_view(
 /// schemas and cleaned item sources, then applies it with the engine
 /// rollback.
 async fn apply_schema_mutation(
-    host: &impl McpHost,
+    host: &impl ToolHost,
     space: &str,
     collection_path: &str,
     mutation: PreparedCollectionMutation<CollectionSchema>,
     message: String,
-) -> Result<ToolCallResult, McpBusinessError> {
+) -> Result<ToolCallResult, ToolError> {
     authorize(host, space, mutation.paths().to_vec()).await?;
     let outcome = mutation.apply()?;
     let changed_paths = relative_changed_paths(space, &outcome.changed_paths);
@@ -397,7 +395,7 @@ async fn apply_schema_mutation(
     ))
 }
 
-fn json_to_yaml(value: Value) -> Result<serde_yml::Value, McpBusinessError> {
+fn json_to_yaml(value: Value) -> Result<serde_yml::Value, ToolError> {
     serde_yml::to_value(value)
-        .map_err(|error| McpBusinessError::new("INVALID_YAML_VALUE", error.to_string()))
+        .map_err(|error| ToolError::new("INVALID_YAML_VALUE", error.to_string()))
 }

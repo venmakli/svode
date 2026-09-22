@@ -8,13 +8,13 @@ use svode_core::page::entry::{self, Entry};
 use svode_core::page::identity::ContentOwnerKind;
 
 use crate::args::{CollectionArgs, PathArgs, SpaceArgs, clamp_limit, offset};
-use crate::error::McpBusinessError;
-use crate::host::{McpHost, RequestTarget};
+use crate::error::ToolError;
+use crate::host::{RequestTarget, ToolHost};
 use crate::owner::{
     collection_readme_path, require_collection_item, require_owner, require_standalone_page,
 };
 use crate::path::{ensure_inside, validate_markdown_path, validate_public_rel_path};
-use crate::protocol::ToolCallResult;
+use crate::result::ToolCallResult;
 use crate::target::{index_key, resolve_space};
 
 #[derive(Debug, Deserialize)]
@@ -33,7 +33,7 @@ pub(crate) struct ListPagesArgs {
 pub(crate) fn list_pages(
     target: &RequestTarget,
     args: ListPagesArgs,
-) -> Result<ToolCallResult, McpBusinessError> {
+) -> Result<ToolCallResult, ToolError> {
     let space = resolve_space(target, args.space_id.as_deref())?;
     let root = args
         .path
@@ -64,7 +64,7 @@ pub(crate) fn list_pages(
 pub(crate) fn list_collections(
     target: &RequestTarget,
     args: SpaceArgs,
-) -> Result<ToolCallResult, McpBusinessError> {
+) -> Result<ToolCallResult, ToolError> {
     let space = resolve_space(target, args.space_id.as_deref())?;
     let collections = engine::list_collections(&space)?;
     Ok(ToolCallResult::ok(
@@ -74,10 +74,10 @@ pub(crate) fn list_collections(
 }
 
 pub(crate) async fn read_page(
-    host: &impl McpHost,
+    host: &impl ToolHost,
     target: &RequestTarget,
     args: PathArgs,
-) -> Result<ToolCallResult, McpBusinessError> {
+) -> Result<ToolCallResult, ToolError> {
     let space = resolve_space(target, args.space_id.as_deref())?;
     let path = validate_markdown_path(&args.path)?;
     ensure_inside(Path::new(&space), &path)?;
@@ -90,10 +90,10 @@ pub(crate) async fn read_page(
 }
 
 pub(crate) async fn read_space_readme(
-    host: &impl McpHost,
+    host: &impl ToolHost,
     target: &RequestTarget,
     args: SpaceArgs,
-) -> Result<ToolCallResult, McpBusinessError> {
+) -> Result<ToolCallResult, ToolError> {
     let space = resolve_space(target, args.space_id.as_deref())?;
     let path = "README.md";
     ensure_inside(Path::new(&space), path)?;
@@ -106,10 +106,10 @@ pub(crate) async fn read_space_readme(
 }
 
 pub(crate) async fn read_collection_readme(
-    host: &impl McpHost,
+    host: &impl ToolHost,
     target: &RequestTarget,
     args: CollectionArgs,
-) -> Result<ToolCallResult, McpBusinessError> {
+) -> Result<ToolCallResult, ToolError> {
     let space = resolve_space(target, args.space_id.as_deref())?;
     let collection_path = validate_public_rel_path(&args.collection_path, true)?;
     let path = collection_readme_path(&collection_path);
@@ -123,10 +123,10 @@ pub(crate) async fn read_collection_readme(
 }
 
 pub(crate) async fn read_collection_item(
-    host: &impl McpHost,
+    host: &impl ToolHost,
     target: &RequestTarget,
     args: PathArgs,
-) -> Result<ToolCallResult, McpBusinessError> {
+) -> Result<ToolCallResult, ToolError> {
     let space = resolve_space(target, args.space_id.as_deref())?;
     let path = validate_markdown_path(&args.path)?;
     ensure_inside(Path::new(&space), &path)?;
@@ -140,12 +140,12 @@ pub(crate) async fn read_collection_item(
 
 /// One source read enriched with indexed dates from the host-owned pool.
 async fn read_source(
-    host: &impl McpHost,
+    host: &impl ToolHost,
     target: &RequestTarget,
     requested_space_id: Option<&str>,
     space: &str,
     path: &str,
-) -> Result<Entry, McpBusinessError> {
+) -> Result<Entry, ToolError> {
     let mut source = entry::read(space, path)?;
     if let Ok(normalized) = normalize_repo_relative(path, RootMode::Reject)
         && let Some(pool) = host

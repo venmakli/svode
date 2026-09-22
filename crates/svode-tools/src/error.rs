@@ -2,12 +2,12 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct McpBusinessError {
+pub struct ToolError {
     pub code: String,
     pub message: String,
 }
 
-impl McpBusinessError {
+impl ToolError {
     pub fn new(code: impl Into<String>, message: impl Into<String>) -> Self {
         Self {
             code: code.into(),
@@ -20,13 +20,13 @@ impl McpBusinessError {
     }
 }
 
-impl From<std::io::Error> for McpBusinessError {
+impl From<std::io::Error> for ToolError {
     fn from(error: std::io::Error) -> Self {
         Self::new("IO_ERROR", error.to_string())
     }
 }
 
-impl From<serde_json::Error> for McpBusinessError {
+impl From<serde_json::Error> for ToolError {
     fn from(error: serde_json::Error) -> Self {
         Self::new("SERIALIZATION_ERROR", error.to_string())
     }

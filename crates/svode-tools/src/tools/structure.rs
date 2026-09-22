@@ -20,14 +20,14 @@ use svode_core::page::metadata::relative_changed_paths;
 use svode_core::structure::{self, CollectionCreate, ConvertToCollectionOutcome, StructureRuntime};
 
 use crate::args::{CollectionArgs, PathArgs};
-use crate::error::McpBusinessError;
-use crate::host::{McpHost, RequestTarget};
+use crate::error::ToolError;
+use crate::host::{RequestTarget, ToolHost};
 use crate::mutation::{PageHandles, authorize, failure, within_authorized};
 use crate::owner::{
     collection_readme_path, require_collection_item, require_owner, require_standalone_page,
 };
 use crate::path::{ensure_inside, validate_markdown_path, validate_public_rel_path};
-use crate::protocol::ToolCallResult;
+use crate::result::ToolCallResult;
 use crate::target::{is_root_space_id, resolve_space};
 
 #[derive(Debug, Deserialize)]
@@ -96,10 +96,10 @@ fn structure_runtime<'a>(handles: &'a PageHandles<'a>) -> StructureRuntime<'a, G
 }
 
 pub(crate) async fn create_collection(
-    host: &impl McpHost,
+    host: &impl ToolHost,
     target: &RequestTarget,
     args: CreateCollectionArgs,
-) -> Result<ToolCallResult, McpBusinessError> {
+) -> Result<ToolCallResult, ToolError> {
     let space = resolve_space(target, args.space_id.as_deref())?;
     let parent_path = validate_public_rel_path(&args.parent_path, true)?;
     ensure_inside(Path::new(&space), &parent_path)?;
@@ -163,10 +163,10 @@ fn schema_for_create_collection(
 }
 
 pub(crate) async fn convert_to_collection(
-    host: &impl McpHost,
+    host: &impl ToolHost,
     target: &RequestTarget,
     args: PathArgs,
-) -> Result<ToolCallResult, McpBusinessError> {
+) -> Result<ToolCallResult, ToolError> {
     let space = resolve_space(target, args.space_id.as_deref())?;
     let path = validate_public_rel_path(&args.path, false)?;
     ensure_inside(Path::new(&space), &path)?;
@@ -209,10 +209,10 @@ pub(crate) async fn convert_to_collection(
 }
 
 pub(crate) async fn delete_page(
-    host: &impl McpHost,
+    host: &impl ToolHost,
     target: &RequestTarget,
     args: PathArgs,
-) -> Result<ToolCallResult, McpBusinessError> {
+) -> Result<ToolCallResult, ToolError> {
     let space = resolve_space(target, args.space_id.as_deref())?;
     let path = validate_markdown_path(&args.path)?;
     ensure_inside(Path::new(&space), &path)?;
@@ -221,10 +221,10 @@ pub(crate) async fn delete_page(
 }
 
 pub(crate) async fn delete_collection_item(
-    host: &impl McpHost,
+    host: &impl ToolHost,
     target: &RequestTarget,
     args: PathArgs,
-) -> Result<ToolCallResult, McpBusinessError> {
+) -> Result<ToolCallResult, ToolError> {
     let space = resolve_space(target, args.space_id.as_deref())?;
     let path = validate_markdown_path(&args.path)?;
     ensure_inside(Path::new(&space), &path)?;
@@ -233,10 +233,10 @@ pub(crate) async fn delete_collection_item(
 }
 
 pub(crate) async fn delete_collection(
-    host: &impl McpHost,
+    host: &impl ToolHost,
     target: &RequestTarget,
     args: CollectionArgs,
-) -> Result<ToolCallResult, McpBusinessError> {
+) -> Result<ToolCallResult, ToolError> {
     let space = resolve_space(target, args.space_id.as_deref())?;
     let collection_path = validate_public_rel_path(&args.collection_path, true)?;
     let path = collection_readme_path(&collection_path);
@@ -248,12 +248,12 @@ pub(crate) async fn delete_collection(
 /// Deletes an entry with its relation cleanup; the touched-set includes every
 /// source whose relations reference a deleted entry.
 async fn delete_markdown_content(
-    host: &impl McpHost,
+    host: &impl ToolHost,
     target: &RequestTarget,
     space: &str,
     path: String,
     label: &str,
-) -> Result<ToolCallResult, McpBusinessError> {
+) -> Result<ToolCallResult, ToolError> {
     let project = target.project_path.as_str();
     let planned = structure::delete_mutation_paths(space, Some(project), &path)?;
     let authorized = authorize(host, space, planned).await?;
@@ -280,10 +280,10 @@ async fn delete_markdown_content(
 }
 
 pub(crate) async fn rename_content(
-    host: &impl McpHost,
+    host: &impl ToolHost,
     target: &RequestTarget,
     args: RenameContentArgs,
-) -> Result<ToolCallResult, McpBusinessError> {
+) -> Result<ToolCallResult, ToolError> {
     let space = resolve_space(target, args.space_id.as_deref())?;
     let from = validate_public_rel_path(&args.from, false)?;
     let to = validate_public_rel_path(&args.to, false)?;
@@ -318,10 +318,10 @@ pub(crate) async fn rename_content(
 }
 
 pub(crate) async fn move_content(
-    host: &impl McpHost,
+    host: &impl ToolHost,
     target: &RequestTarget,
     args: MoveContentArgs,
-) -> Result<ToolCallResult, McpBusinessError> {
+) -> Result<ToolCallResult, ToolError> {
     let space = resolve_space(target, args.space_id.as_deref())?;
     let from = validate_public_rel_path(&args.from, false)?;
     let to_parent = validate_public_rel_path(&args.to_parent, true)?;
@@ -329,7 +329,7 @@ pub(crate) async fn move_content(
     ensure_inside(Path::new(&space), &to_parent)?;
     let file_name = Path::new(&from)
         .file_name()
-        .ok_or_else(|| McpBusinessError::new("INVALID_PATH", "invalid source path"))?
+        .ok_or_else(|| ToolError::new("INVALID_PATH", "invalid source path"))?
         .to_string_lossy();
     let planned_to = if to_parent.is_empty() {
         file_name.to_string()
@@ -370,10 +370,10 @@ pub(crate) async fn move_content(
 }
 
 pub(crate) async fn reorder_content(
-    host: &impl McpHost,
+    host: &impl ToolHost,
     target: &RequestTarget,
     args: ReorderContentArgs,
-) -> Result<ToolCallResult, McpBusinessError> {
+) -> Result<ToolCallResult, ToolError> {
     let space = resolve_space(target, args.space_id.as_deref())?;
     let parent_path = validate_public_rel_path(&args.parent_path, true)?;
     ensure_inside(Path::new(&space), &parent_path)?;
@@ -397,12 +397,12 @@ pub(crate) async fn reorder_content(
 }
 
 pub(crate) async fn reorder_spaces(
-    host: &impl McpHost,
+    host: &impl ToolHost,
     target: &RequestTarget,
     args: ReorderSpacesArgs,
-) -> Result<ToolCallResult, McpBusinessError> {
+) -> Result<ToolCallResult, ToolError> {
     if args.ordered_space_ids.iter().any(|id| is_root_space_id(id)) {
-        return Err(McpBusinessError::new(
+        return Err(ToolError::new(
             "INVALID_SPACE_ORDER",
             "the root space is pinned and must not be included",
         ));
@@ -429,10 +429,10 @@ pub(crate) async fn reorder_spaces(
 }
 
 pub(crate) async fn convert_page_to_leaf(
-    host: &impl McpHost,
+    host: &impl ToolHost,
     target: &RequestTarget,
     args: PathArgs,
-) -> Result<ToolCallResult, McpBusinessError> {
+) -> Result<ToolCallResult, ToolError> {
     let space = resolve_space(target, args.space_id.as_deref())?;
     let path = validate_markdown_path(&args.path)?;
     ensure_inside(Path::new(&space), &path)?;
@@ -486,8 +486,8 @@ struct StructuralChanges {
 async fn observe_structural_change<T>(
     space: &str,
     project: &str,
-    operation: impl Future<Output = Result<T, McpBusinessError>>,
-) -> Result<(T, StructuralChanges), McpBusinessError> {
+    operation: impl Future<Output = Result<T, ToolError>>,
+) -> Result<(T, StructuralChanges), ToolError> {
     let before = snapshot_structural_paths(Path::new(space))?;
     let before_project = snapshot_structural_paths(Path::new(project))?;
     let value = operation.await?;
@@ -577,9 +577,9 @@ fn collection_conversion_result(
 
 /// Conversion rule violations keep their own stable code in the public
 /// Page vocabulary.
-fn collection_conversion_error(error: PageError) -> McpBusinessError {
+fn collection_conversion_error(error: PageError) -> ToolError {
     match error {
-        PageError::General(message) => McpBusinessError::new(
+        PageError::General(message) => ToolError::new(
             "INVALID_COLLECTION_CONVERSION",
             message
                 .replace("folder document", "directory-backed Page")
@@ -589,7 +589,7 @@ fn collection_conversion_error(error: PageError) -> McpBusinessError {
     }
 }
 
-fn snapshot_structural_paths(root: &Path) -> Result<HashMap<String, u64>, McpBusinessError> {
+fn snapshot_structural_paths(root: &Path) -> Result<HashMap<String, u64>, ToolError> {
     let mut snapshot = HashMap::new();
     snapshot_structural_paths_inner(root, root, &mut snapshot)?;
     Ok(snapshot)
@@ -599,7 +599,7 @@ fn snapshot_structural_paths_inner(
     root: &Path,
     directory: &Path,
     snapshot: &mut HashMap<String, u64>,
-) -> Result<(), McpBusinessError> {
+) -> Result<(), ToolError> {
     for item in fs::read_dir(directory)? {
         let item = item?;
         let path = item.path();
@@ -647,7 +647,7 @@ fn snapshot_structural_paths_inner(
 fn changed_structural_paths(
     before: HashMap<String, u64>,
     root: &Path,
-) -> Result<Vec<String>, McpBusinessError> {
+) -> Result<Vec<String>, ToolError> {
     let after = snapshot_structural_paths(root)?;
     let mut paths = before
         .keys()

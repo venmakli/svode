@@ -1,8 +1,8 @@
 use serde::Deserialize;
 use serde_json::json;
 
-use crate::error::McpBusinessError;
-use crate::protocol::ToolCallResult;
+use crate::error::ToolError;
+use crate::result::ToolCallResult;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -12,7 +12,7 @@ pub(crate) struct ValidateAppManifestArgs {
 
 pub(crate) fn validate_app_manifest(
     args: ValidateAppManifestArgs,
-) -> Result<ToolCallResult, McpBusinessError> {
+) -> Result<ToolCallResult, ToolError> {
     let result = svode_core::apps::manifest::validate_manifest_source(&args.yaml);
     let structured = match result {
         Ok(runtime) => {

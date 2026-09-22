@@ -1,12 +1,13 @@
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
-use svode_mcp::error::McpBusinessError;
-use svode_mcp::protocol::{DiscoveryFile, IpcRequest, IpcResponse, ToolCallResult};
+use svode_mcp::protocol::{DiscoveryFile, IpcRequest, IpcResponse};
 use svode_mcp::{
     MCP_BRIDGE_PROTOCOL, MCP_DISCOVERY_ENV, MCP_MANAGED_MARKER_ENV, MCP_MANAGED_MARKER_VALUE,
     MCP_PROJECT_PATH_ENV, MCP_ROUTINE_CALLER_TOKEN_ENV,
 };
+use svode_tools::error::ToolError;
+use svode_tools::result::ToolCallResult;
 
 fn fixture(name: &str) -> String {
     std::fs::read_to_string(
@@ -64,7 +65,7 @@ fn responses_keep_bridge_v1_shape() {
     assert_round_trip::<IpcResponse>("response-error.json");
 
     let business: IpcResponse = assert_round_trip("response-tool-business-error.json");
-    let expected = ToolCallResult::business_error(McpBusinessError::new(
+    let expected = ToolCallResult::business_error(ToolError::new(
         "REPOSITORY_ACCESS_DENIED",
         "repository is read only",
     ));

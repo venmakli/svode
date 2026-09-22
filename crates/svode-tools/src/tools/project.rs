@@ -4,15 +4,15 @@ use serde_json::{Value, json};
 
 use crate::args::SpaceArgs;
 use crate::catalog;
-use crate::error::McpBusinessError;
-use crate::host::{McpHost, RequestTarget};
-use crate::protocol::ToolCallResult;
+use crate::error::ToolError;
+use crate::host::{RequestTarget, ToolHost};
+use crate::result::ToolCallResult;
 use crate::target::{ROOT_SPACE_ID, default_space_id, resolve_space};
 
 pub(crate) async fn get_project_info(
-    host: &impl McpHost,
+    host: &impl ToolHost,
     target: &RequestTarget,
-) -> Result<ToolCallResult, McpBusinessError> {
+) -> Result<ToolCallResult, ToolError> {
     let project_path = Path::new(&target.project_path);
     let spaces = spaces_payload(host, project_path).await?;
     let project = svode_core::content_tree::read_space_display(project_path)?;
@@ -43,9 +43,9 @@ pub(crate) async fn get_project_info(
 }
 
 pub(crate) async fn list_spaces(
-    host: &impl McpHost,
+    host: &impl ToolHost,
     target: &RequestTarget,
-) -> Result<ToolCallResult, McpBusinessError> {
+) -> Result<ToolCallResult, ToolError> {
     let spaces = spaces_payload(host, Path::new(&target.project_path)).await?;
     let structured = json!({
         "rootSpaceId": ROOT_SPACE_ID,
@@ -63,7 +63,7 @@ pub(crate) async fn list_spaces(
     ))
 }
 
-pub(crate) fn get_svode_guide() -> Result<ToolCallResult, McpBusinessError> {
+pub(crate) fn get_svode_guide() -> Result<ToolCallResult, ToolError> {
     Ok(ToolCallResult::ok(
         "Svode MCP guide.",
         json!({ "guide": catalog::guide_text() }),
@@ -71,9 +71,9 @@ pub(crate) fn get_svode_guide() -> Result<ToolCallResult, McpBusinessError> {
 }
 
 async fn spaces_payload(
-    host: &impl McpHost,
+    host: &impl ToolHost,
     project_path: &Path,
-) -> Result<Vec<Value>, McpBusinessError> {
+) -> Result<Vec<Value>, ToolError> {
     let root = svode_core::content_tree::read_space_display(project_path)?;
     let children = svode_core::content_tree::list_project_children(project_path)?;
     let mut spaces = Vec::with_capacity(children.len() + 1);
@@ -132,7 +132,7 @@ async fn spaces_payload(
     Ok(spaces)
 }
 
-async fn repository_access(host: &impl McpHost, path: &Path) -> (Option<Value>, Option<Value>) {
+async fn repository_access(host: &impl ToolHost, path: &Path) -> (Option<Value>, Option<Value>) {
     match host.repository_access(path).await {
         Ok(snapshot) => (serde_json::to_value(snapshot).ok(), None),
         Err(error) => (None, serde_json::to_value(error).ok()),
@@ -151,10 +151,10 @@ fn space_capabilities(kind: &str) -> Value {
 }
 
 pub(crate) async fn get_git_status(
-    host: &impl McpHost,
+    host: &impl ToolHost,
     target: &RequestTarget,
     args: SpaceArgs,
-) -> Result<ToolCallResult, McpBusinessError> {
+) -> Result<ToolCallResult, ToolError> {
     let space = resolve_space(target, args.space_id.as_deref())?;
     let status = host
         .read_runtime()

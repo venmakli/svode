@@ -7,8 +7,8 @@ use std::process::Command;
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
+use svode_tools::error::ToolError;
 
-use crate::error::McpBusinessError;
 use crate::{MCP_BRIDGE_PROTOCOL, MCP_MANAGED_MARKER_ENV, MCP_MANAGED_MARKER_VALUE, MCP_VERSION};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -19,11 +19,11 @@ pub enum McpClient {
 }
 
 impl McpClient {
-    pub fn parse(value: &str) -> Result<Self, McpBusinessError> {
+    pub fn parse(value: &str) -> Result<Self, ToolError> {
         match value {
             "claude-code" | "claude" => Ok(Self::ClaudeCode),
             "codex" => Ok(Self::Codex),
-            _ => Err(McpBusinessError::new(
+            _ => Err(ToolError::new(
                 "UNSUPPORTED_CLIENT",
                 format!("unsupported MCP client: {value}"),
             )),
@@ -153,7 +153,7 @@ struct ConfigPaths {
 }
 
 impl ConfigPaths {
-    fn system(project: Option<&Path>) -> Result<Self, McpBusinessError> {
+    fn system(project: Option<&Path>) -> Result<Self, ToolError> {
         let home = home_path()?;
         Ok(Self {
             claude_user: home.join(".claude.json"),
@@ -245,14 +245,14 @@ pub fn print_config(client: McpClient) -> ClientConfigResult {
     }
 }
 
-pub fn install_client(client: McpClient) -> Result<ClientConfigResult, McpBusinessError> {
+pub fn install_client(client: McpClient) -> Result<ClientConfigResult, ToolError> {
     install_client_for_project(client, None)
 }
 
 pub fn install_client_for_project(
     client: McpClient,
     project_path: Option<&Path>,
-) -> Result<ClientConfigResult, McpBusinessError> {
+) -> Result<ClientConfigResult, ToolError> {
     let paths = ConfigPaths::system(project_path)?;
     let command = resolve_binary_path();
     connect_client_at(client, &paths, &command, &probe_bridge)?;
@@ -262,7 +262,7 @@ pub fn install_client_for_project(
     Ok(result)
 }
 
-pub fn remove_client(client: McpClient) -> Result<ClientConfigResult, McpBusinessError> {
+pub fn remove_client(client: McpClient) -> Result<ClientConfigResult, ToolError> {
     let paths = ConfigPaths::system(None)?;
     disconnect_client_at(client, &paths)?;
     let mut result = print_config(client);
@@ -469,7 +469,7 @@ fn maintain_client_at(
     paths: &ConfigPaths,
     current_binary: &Path,
     bridge_probe: &dyn Fn(&Path) -> BridgeCompatibility,
-) -> Result<bool, McpBusinessError> {
+) -> Result<bool, ToolError> {
     match read_user_entry(client, paths) {
         EntryState::Legacy(entry) => {
             let command = if launch_is_compatible(&entry, bridge_probe) {
@@ -487,9 +487,7 @@ fn maintain_client_at(
             Ok(true)
         }
         EntryState::Absent | EntryState::Custom => Ok(false),
-        EntryState::Unreadable(message) => {
-            Err(McpBusinessError::new("MCP_CONFIG_UNREADABLE", message))
-        }
+        EntryState::Unreadable(message) => Err(ToolError::new("MCP_CONFIG_UNREADABLE", message)),
     }
 }
 
@@ -498,9 +496,9 @@ fn connect_client_at(
     paths: &ConfigPaths,
     current_binary: &Path,
     bridge_probe: &dyn Fn(&Path) -> BridgeCompatibility,
-) -> Result<bool, McpBusinessError> {
+) -> Result<bool, ToolError> {
     if has_higher_precedence_entry(client, paths)? {
-        return Err(McpBusinessError::new(
+        return Err(ToolError::new(
             "MCP_HIGHER_PRECEDENCE_CONFLICT",
             format!(
                 "{} has a project/local svode MCP entry that overrides user scope",
@@ -518,45 +516,41 @@ fn connect_client_at(
             write_managed_entry(client, paths, &command)?;
             Ok(true)
         }
-        EntryState::Custom => Err(McpBusinessError::new(
+        EntryState::Custom => Err(ToolError::new(
             "MCP_CUSTOM_CONFIG_CONFLICT",
             format!(
                 "{} already has a custom svode MCP entry; Svode did not replace it",
                 client.name()
             ),
         )),
-        EntryState::Unreadable(message) => {
-            Err(McpBusinessError::new("MCP_CONFIG_UNREADABLE", message))
-        }
+        EntryState::Unreadable(message) => Err(ToolError::new("MCP_CONFIG_UNREADABLE", message)),
     }
 }
 
-fn disconnect_client_at(client: McpClient, paths: &ConfigPaths) -> Result<bool, McpBusinessError> {
+fn disconnect_client_at(client: McpClient, paths: &ConfigPaths) -> Result<bool, ToolError> {
     match read_user_entry(client, paths) {
         EntryState::Absent => Ok(false),
         EntryState::Legacy(_) | EntryState::Managed(_) | EntryState::ManagedInvalid => {
             remove_managed_entry(client, paths)?;
             Ok(true)
         }
-        EntryState::Custom => Err(McpBusinessError::new(
+        EntryState::Custom => Err(ToolError::new(
             "MCP_CUSTOM_CONFIG_CONFLICT",
             format!(
                 "{} svode MCP entry is custom; Svode did not remove it",
                 client.name()
             ),
         )),
-        EntryState::Unreadable(message) => {
-            Err(McpBusinessError::new("MCP_CONFIG_UNREADABLE", message))
-        }
+        EntryState::Unreadable(message) => Err(ToolError::new("MCP_CONFIG_UNREADABLE", message)),
     }
 }
 
 fn require_current_bridge(
     current_binary: &Path,
     bridge_probe: &dyn Fn(&Path) -> BridgeCompatibility,
-) -> Result<PathBuf, McpBusinessError> {
+) -> Result<PathBuf, ToolError> {
     if bridge_probe(current_binary) != BridgeCompatibility::Compatible {
-        return Err(McpBusinessError::new(
+        return Err(ToolError::new(
             "MCP_BRIDGE_UNAVAILABLE",
             format!("current svode-mcp does not support bridge protocol {MCP_BRIDGE_PROTOCOL}"),
         ));
@@ -569,7 +563,7 @@ fn client_status_at(
     paths: &ConfigPaths,
     bridge_probe: &dyn Fn(&Path) -> BridgeCompatibility,
     client_command: Option<PathBuf>,
-    maintenance_error: Option<&McpBusinessError>,
+    maintenance_error: Option<&ToolError>,
 ) -> McpClientStatus {
     let config_path = paths.user_path(client).to_string_lossy().to_string();
     let found = client_command.is_some() || paths.user_path(client).is_file();
@@ -890,10 +884,7 @@ fn launch_is_compatible(
         && bridge_probe(Path::new(&entry.command)) == BridgeCompatibility::Compatible
 }
 
-fn has_higher_precedence_entry(
-    client: McpClient,
-    paths: &ConfigPaths,
-) -> Result<bool, McpBusinessError> {
+fn has_higher_precedence_entry(client: McpClient, paths: &ConfigPaths) -> Result<bool, ToolError> {
     let Some(project) = paths.project.as_deref() else {
         return Ok(false);
     };
@@ -921,9 +912,8 @@ fn has_higher_precedence_entry(
             if content.trim().is_empty() {
                 return Ok(false);
             }
-            let root: toml::Value = toml::from_str(&content).map_err(|error| {
-                McpBusinessError::new("MCP_CONFIG_UNREADABLE", error.to_string())
-            })?;
+            let root: toml::Value = toml::from_str(&content)
+                .map_err(|error| ToolError::new("MCP_CONFIG_UNREADABLE", error.to_string()))?;
             Ok(root
                 .get("mcp_servers")
                 .and_then(toml::Value::as_table)
@@ -932,7 +922,7 @@ fn has_higher_precedence_entry(
     }
 }
 
-fn json_has_root_svode_entry(path: &Path) -> Result<bool, McpBusinessError> {
+fn json_has_root_svode_entry(path: &Path) -> Result<bool, ToolError> {
     let content = read_config_text(path)?;
     if content.trim().is_empty() {
         return Ok(false);
@@ -948,7 +938,7 @@ fn write_managed_entry(
     client: McpClient,
     paths: &ConfigPaths,
     command: &Path,
-) -> Result<(), McpBusinessError> {
+) -> Result<(), ToolError> {
     let path = paths.user_path(client);
     let before = read_config_text(path)?;
     let after = match client {
@@ -958,7 +948,7 @@ fn write_managed_entry(
     write_if_unchanged(path, &before, &after)
 }
 
-fn remove_managed_entry(client: McpClient, paths: &ConfigPaths) -> Result<(), McpBusinessError> {
+fn remove_managed_entry(client: McpClient, paths: &ConfigPaths) -> Result<(), ToolError> {
     let path = paths.user_path(client);
     let before = read_config_text(path)?;
     let after = match client {
@@ -968,14 +958,14 @@ fn remove_managed_entry(client: McpClient, paths: &ConfigPaths) -> Result<(), Mc
     write_if_unchanged(path, &before, &after)
 }
 
-fn set_claude_entry(content: &str, command: &Path) -> Result<String, McpBusinessError> {
+fn set_claude_entry(content: &str, command: &Path) -> Result<String, ToolError> {
     let mut root: Value = if content.trim().is_empty() {
         json!({})
     } else {
         serde_json::from_str(content)?
     };
     let root = root.as_object_mut().ok_or_else(|| {
-        McpBusinessError::new(
+        ToolError::new(
             "MCP_CONFIG_UNREADABLE",
             "Claude config root must be an object",
         )
@@ -985,7 +975,7 @@ fn set_claude_entry(content: &str, command: &Path) -> Result<String, McpBusiness
         .or_insert_with(|| Value::Object(Map::new()))
         .as_object_mut()
         .ok_or_else(|| {
-            McpBusinessError::new(
+            ToolError::new(
                 "MCP_CONFIG_UNREADABLE",
                 "Claude mcpServers must be an object",
             )
@@ -1002,7 +992,7 @@ fn set_claude_entry(content: &str, command: &Path) -> Result<String, McpBusiness
     Ok(format!("{}\n", serde_json::to_string_pretty(&root)?))
 }
 
-fn remove_claude_entry(content: &str) -> Result<String, McpBusinessError> {
+fn remove_claude_entry(content: &str) -> Result<String, ToolError> {
     if content.trim().is_empty() {
         return Ok(content.to_string());
     }
@@ -1057,7 +1047,7 @@ fn is_svode_toml_table(trimmed: &str) -> bool {
     table == "mcp_servers.svode" || table.starts_with("mcp_servers.svode.")
 }
 
-fn read_config_text(path: &Path) -> Result<String, McpBusinessError> {
+fn read_config_text(path: &Path) -> Result<String, ToolError> {
     match fs::read_to_string(path) {
         Ok(content) => Ok(content),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
@@ -1065,10 +1055,10 @@ fn read_config_text(path: &Path) -> Result<String, McpBusinessError> {
     }
 }
 
-fn write_if_unchanged(path: &Path, before: &str, after: &str) -> Result<(), McpBusinessError> {
+fn write_if_unchanged(path: &Path, before: &str, after: &str) -> Result<(), ToolError> {
     let current = read_config_text(path)?;
     if current != before {
-        return Err(McpBusinessError::new(
+        return Err(ToolError::new(
             "MCP_CONFIG_CONFLICT",
             format!(
                 "MCP config {} changed during mutation; no Svode changes were written",
@@ -1079,10 +1069,10 @@ fn write_if_unchanged(path: &Path, before: &str, after: &str) -> Result<(), McpB
     atomic_write(path, after.as_bytes())
 }
 
-fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), McpBusinessError> {
-    let parent = path.parent().ok_or_else(|| {
-        McpBusinessError::new("MCP_CONFIG_WRITE_FAILED", "MCP config has no parent")
-    })?;
+fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), ToolError> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| ToolError::new("MCP_CONFIG_WRITE_FAILED", "MCP config has no parent"))?;
     fs::create_dir_all(parent)?;
     let temp = parent.join(format!(".svode-mcp-{}.tmp", ulid::Ulid::new()));
     let result = (|| {
@@ -1221,11 +1211,11 @@ fn push_unique_path(paths: &mut Vec<PathBuf>, path: PathBuf) {
     }
 }
 
-pub(crate) fn home_path() -> Result<PathBuf, McpBusinessError> {
+pub(crate) fn home_path() -> Result<PathBuf, ToolError> {
     env::var_os("HOME")
         .or_else(|| env::var_os("USERPROFILE"))
         .map(PathBuf::from)
-        .ok_or_else(|| McpBusinessError::new("HOME_NOT_FOUND", "could not resolve home directory"))
+        .ok_or_else(|| ToolError::new("HOME_NOT_FOUND", "could not resolve home directory"))
 }
 
 fn toml_escape(value: &str) -> String {

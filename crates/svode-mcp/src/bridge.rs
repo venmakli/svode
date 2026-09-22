@@ -2,24 +2,23 @@ use std::fs;
 use std::path::PathBuf;
 
 use serde_json::{Value, json};
+use svode_tools::error::ToolError;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
 
 use crate::config::home_path;
-use crate::error::McpBusinessError;
 use crate::protocol::{DiscoveryFile, IpcContextOverride, IpcRequest, IpcResponse};
 use crate::{
     MCP_BRIDGE_PROTOCOL, MCP_DISCOVERY_ENV, MCP_PROJECT_PATH_ENV, MCP_ROUTINE_CALLER_TOKEN_ENV,
 };
 
-pub fn default_discovery_path() -> Result<PathBuf, McpBusinessError> {
+pub fn default_discovery_path() -> Result<PathBuf, ToolError> {
     if cfg!(target_os = "macos") {
         return discovery_path_for_platform("macos", Some(home_path()?), None, None);
     }
     if cfg!(windows) {
-        let appdata = std::env::var_os("APPDATA").ok_or_else(|| {
-            McpBusinessError::new("APPDATA_NOT_FOUND", "could not resolve APPDATA")
-        })?;
+        let appdata = std::env::var_os("APPDATA")
+            .ok_or_else(|| ToolError::new("APPDATA_NOT_FOUND", "could not resolve APPDATA"))?;
         return discovery_path_for_platform("windows", None, Some(PathBuf::from(appdata)), None);
     }
     discovery_path_for_platform(
@@ -35,19 +34,19 @@ fn discovery_path_for_platform(
     home: Option<PathBuf>,
     appdata: Option<PathBuf>,
     xdg_data_home: Option<PathBuf>,
-) -> Result<PathBuf, McpBusinessError> {
+) -> Result<PathBuf, ToolError> {
     let base = match platform {
         "macos" => home
-            .ok_or_else(|| McpBusinessError::new("HOME_NOT_FOUND", "missing home"))?
+            .ok_or_else(|| ToolError::new("HOME_NOT_FOUND", "missing home"))?
             .join("Library")
             .join("Application Support"),
         "windows" => {
-            appdata.ok_or_else(|| McpBusinessError::new("APPDATA_NOT_FOUND", "missing APPDATA"))?
+            appdata.ok_or_else(|| ToolError::new("APPDATA_NOT_FOUND", "missing APPDATA"))?
         }
         _ => match xdg_data_home {
             Some(path) => path,
             None => home
-                .ok_or_else(|| McpBusinessError::new("HOME_NOT_FOUND", "missing home"))?
+                .ok_or_else(|| ToolError::new("HOME_NOT_FOUND", "missing home"))?
                 .join(".local")
                 .join("share"),
         },
@@ -55,10 +54,10 @@ fn discovery_path_for_platform(
     Ok(base.join("app.svode.desktop").join("desktop-mcp.json"))
 }
 
-pub async fn desktop_request(method: &str, params: Value) -> Result<IpcResponse, McpBusinessError> {
+pub async fn desktop_request(method: &str, params: Value) -> Result<IpcResponse, ToolError> {
     let discovery = read_discovery()?;
     if discovery.host != "127.0.0.1" {
-        return Err(McpBusinessError::new(
+        return Err(ToolError::new(
             "DISCOVERY_INVALID",
             "Svode desktop discovery host is not loopback",
         ));
@@ -80,7 +79,7 @@ pub async fn desktop_request(method: &str, params: Value) -> Result<IpcResponse,
     let mut line = String::new();
     reader.read_line(&mut line).await?;
     if line.is_empty() {
-        return Err(McpBusinessError::new(
+        return Err(ToolError::new(
             "DESKTOP_CLOSED",
             "Svode desktop closed the IPC connection",
         ));
@@ -132,9 +131,9 @@ pub async fn desktop_reachable() -> bool {
         .unwrap_or(false)
 }
 
-fn read_discovery() -> Result<DiscoveryFile, McpBusinessError> {
+fn read_discovery() -> Result<DiscoveryFile, ToolError> {
     let path = read_discovery_path().ok_or_else(|| {
-        McpBusinessError::new(
+        ToolError::new(
             "DESKTOP_NOT_RUNNING",
             "Svode desktop discovery file was not found",
         )
@@ -142,7 +141,7 @@ fn read_discovery() -> Result<DiscoveryFile, McpBusinessError> {
     let content = fs::read_to_string(path)?;
     let discovery: DiscoveryFile = serde_json::from_str(&content)?;
     if discovery.bridge_protocol != MCP_BRIDGE_PROTOCOL {
-        return Err(McpBusinessError::new(
+        return Err(ToolError::new(
             "BRIDGE_PROTOCOL_INCOMPATIBLE",
             "Svode desktop discovery uses an incompatible bridge protocol",
         ));

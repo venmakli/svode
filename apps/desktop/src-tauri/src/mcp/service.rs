@@ -8,9 +8,10 @@ use crate::git::GitState;
 use crate::index::IndexState;
 use crate::index::update::IndexUpdateState;
 use crate::space::{config as space_config, project, registry};
-use svode_mcp::error::McpBusinessError;
-use svode_mcp::host::{RequestTarget, RoutineCaller};
-use svode_mcp::protocol::{IpcContextOverride, ToolCallResult};
+use svode_mcp::protocol::IpcContextOverride;
+use svode_tools::error::ToolError;
+use svode_tools::host::{RequestTarget, RoutineCaller};
+use svode_tools::result::ToolCallResult;
 
 mod context;
 mod dispatch;

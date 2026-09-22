@@ -8,11 +8,11 @@ use svode_core::attachments::import::{
     ImportRuntime, MutationOrigin, execute_managed_import, plan_managed_import,
 };
 
-use crate::error::McpBusinessError;
-use crate::host::{McpHost, RequestTarget};
+use crate::error::ToolError;
+use crate::host::{RequestTarget, ToolHost};
 use crate::mutation::{authorize_paths, within_authorized};
 use crate::path::{ensure_inside, validate_markdown_path};
-use crate::protocol::ToolCallResult;
+use crate::result::ToolCallResult;
 use crate::target::{default_space_id, is_root_space_id, resolve_space};
 
 #[derive(Debug, Deserialize)]
@@ -31,10 +31,10 @@ pub(crate) struct ImportAssetArgs {
 /// repositories of the actual asset owner, which are authorized before the
 /// first write; the host delivers the invalidation after source success.
 pub(crate) async fn import_asset(
-    host: &impl McpHost,
+    host: &impl ToolHost,
     target: &RequestTarget,
     args: ImportAssetArgs,
-) -> Result<ToolCallResult, McpBusinessError> {
+) -> Result<ToolCallResult, ToolError> {
     let space = resolve_space(target, args.space_id.as_deref())?;
     let content_path = validate_markdown_path(&args.content_path)?;
     ensure_inside(Path::new(&space), &content_path)?;

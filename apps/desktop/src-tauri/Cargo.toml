@@ -16,6 +16,7 @@ tauri-build = { version = "2", features = [] }
 tempfile = "3"
 svode-core = { path = "../../../crates/svode-core" }
 svode-mcp = { path = "../../../crates/svode-mcp" }
+svode-tools = { path = "../../../crates/svode-tools" }
 tauri = { version = "2", features = ["protocol-asset"] }
 tauri-plugin-shell = "2"
 tauri-plugin-dialog = "2"

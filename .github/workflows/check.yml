@@ -47,6 +47,8 @@ jobs:
       - run: cargo check --workspace --all-targets
       - name: Core package tests without the desktop crate
         run: cargo test -p svode-core
+      - name: Tool surface package tests without the desktop crate
+        run: cargo test -p svode-tools
       - name: MCP package tests without the desktop crate
         run: cargo test -p svode-mcp
       - name: CLI package tests without the desktop crate

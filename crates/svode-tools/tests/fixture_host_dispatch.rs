@@ -27,15 +27,14 @@ use svode_core::routines::model::{
 };
 use svode_core::routines::store_state::RoutineStoreState;
 use svode_core::storage::config::AssetsSpaceConfig;
-use svode_mcp::catalog;
-use svode_mcp::control::{self, BridgeCall, MCP_PROTOCOL_VERSION};
-use svode_mcp::dispatch::call_tool;
-use svode_mcp::error::McpBusinessError;
-use svode_mcp::host::{
-    McpHost, MutationRuntime, ReadRuntime, RequestTarget, RoutineCaller, RoutineRunner,
-    RoutineRuntime,
+use svode_tools::catalog;
+use svode_tools::dispatch::{call_tool, check_tool, served_definitions};
+use svode_tools::error::ToolError;
+use svode_tools::host::{
+    MutationRuntime, ReadRuntime, RequestTarget, RoutineCaller, RoutineRunner, RoutineRuntime,
+    ToolHost,
 };
-use svode_mcp::protocol::ToolCallResult;
+use svode_tools::result::ToolCallResult;
 
 const FIRST_SLICE_TOOLS: [&str; 10] = [
     "get_project_info",
@@ -139,8 +138,7 @@ impl RoutineRunner for FixtureRunner {
         owner: ResolvedRoutineOwner,
         routine_id: String,
         expected_fingerprint: String,
-    ) -> Pin<Box<dyn Future<Output = Result<RoutineDispatchResult, McpBusinessError>> + Send + '_>>
-    {
+    ) -> Pin<Box<dyn Future<Output = Result<RoutineDispatchResult, ToolError>> + Send + '_>> {
         self.runs.lock().unwrap().push((
             owner.descriptor.owner_path.clone(),
             routine_id.clone(),
@@ -159,7 +157,7 @@ impl RoutineRunner for FixtureRunner {
     }
 }
 
-impl McpHost for FixtureHost {
+impl ToolHost for FixtureHost {
     fn version(&self) -> &str {
         "9.9.9-fixture"
     }
@@ -181,9 +179,9 @@ impl McpHost for FixtureHost {
     async fn repository_access(
         &self,
         space_path: &Path,
-    ) -> Result<RepositoryAccessSnapshot, McpBusinessError> {
+    ) -> Result<RepositoryAccessSnapshot, ToolError> {
         if space_path.ends_with("child") {
-            return Err(McpBusinessError::new("GIT_NOT_FOUND", "Git not found"));
+            return Err(ToolError::new("GIT_NOT_FOUND", "Git not found"));
         }
         Ok(RepositoryAccessSnapshot {
             repository_id: "fixture".to_string(),
@@ -196,13 +194,13 @@ impl McpHost for FixtureHost {
         })
     }
 
-    async fn require_mutation_access(&self, repository: &Path) -> Result<(), McpBusinessError> {
+    async fn require_mutation_access(&self, repository: &Path) -> Result<(), ToolError> {
         self.authorized
             .lock()
             .unwrap()
             .push(repository.to_path_buf());
         if self.deny_mutations {
-            return Err(McpBusinessError::new(
+            return Err(ToolError::new(
                 "REPOSITORY_ACCESS_DENIED",
                 "Repository access denied: status=read_only",
             ));
@@ -234,7 +232,7 @@ impl McpHost for FixtureHost {
         self.deliveries.lock().unwrap().push(delivery.clone());
     }
 
-    fn routine_runtime(&self) -> Result<RoutineRuntime<'_>, McpBusinessError> {
+    fn routine_runtime(&self) -> Result<RoutineRuntime<'_>, ToolError> {
         Ok(RoutineRuntime {
             stores: &self.routines,
             live_evidence: RoutineLiveEvidence::default(),
@@ -389,80 +387,30 @@ fn error_code(result: &ToolCallResult) -> String {
 }
 
 #[test]
-fn control_plane_reports_host_version_and_filtered_catalog() {
+fn served_catalog_is_filtered_by_host_declaration_and_capabilities() {
     let host = FixtureHost::new(None);
-    let initialize = control::initialize(host.version());
-    assert_eq!(initialize["protocolVersion"], MCP_PROTOCOL_VERSION);
-    assert_eq!(initialize["protocolVersion"], "2025-06-18");
-    assert_eq!(initialize["serverInfo"]["version"], "9.9.9-fixture");
-    assert!(initialize["instructions"].as_str().is_some_and(|value| {
-        value.contains("Call get_svode_guide")
-            && value.contains("Routine-launched")
-            && value.contains("canonical contentPath")
-            && value.contains("validate_app_manifest")
-    }));
-
-    let all = control::tools_list(&host);
-    assert_eq!(all["tools"].as_array().unwrap().len(), 54);
+    assert_eq!(served_definitions(&host).len(), 54);
     assert_eq!(catalog::definitions().len(), 54);
 
     let limited = FixtureHost::serving(&FIRST_SLICE_TOOLS);
-    let names = control::tools_list(&limited)["tools"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|tool| tool["name"].as_str().unwrap().to_string())
-        .collect::<Vec<_>>();
+    let names = served_names(&limited);
     assert_eq!(names.len(), FIRST_SLICE_TOOLS.len());
     assert!(!names.contains(&"run_routine".to_string()));
     assert_eq!(
-        control::check_tool(&limited, "run_routine")
-            .unwrap_err()
-            .code,
+        check_tool(&limited, "run_routine").unwrap_err().code,
         "UNKNOWN_TOOL"
     );
     assert_eq!(
-        control::check_tool(&host, "legacy_tool").unwrap_err().code,
+        check_tool(&host, "legacy_tool").unwrap_err().code,
         "UNKNOWN_TOOL"
     );
 }
 
-#[test]
-fn bridge_methods_keep_protocol_and_business_envelopes_apart() {
-    let host = FixtureHost::new(None);
-    let respond =
-        |method: &str, params: Value| match control::bridge_request(&host, method, &params) {
-            BridgeCall::Respond(response) => response,
-            BridgeCall::CallTool { name, .. } => panic!("unexpected tool call {name}"),
-        };
-
-    assert_eq!(
-        respond("initialize", json!({})).result.unwrap()["serverInfo"]["version"],
-        "9.9.9-fixture"
-    );
-    assert_eq!(respond("ping", json!({})).result.unwrap()["ok"], true);
-    assert_eq!(
-        respond("tools/call", json!({ "name": "legacy_tool" }))
-            .error
-            .unwrap()
-            .code,
-        "UNKNOWN_TOOL"
-    );
-    assert_eq!(
-        respond("tools/call", json!({})).error.unwrap().code,
-        "INVALID_REQUEST"
-    );
-    assert_eq!(
-        respond("resources/list", json!({})).error.unwrap().code,
-        "UNKNOWN_METHOD"
-    );
-    match control::bridge_request(&host, "tools/call", &json!({ "name": "read_page" })) {
-        BridgeCall::CallTool { name, args } => {
-            assert_eq!(name, "read_page");
-            assert_eq!(args, json!({}));
-        }
-        BridgeCall::Respond(_) => panic!("known tool must reach the host request context"),
-    }
+fn served_names(host: &FixtureHost) -> Vec<String> {
+    served_definitions(host)
+        .into_iter()
+        .map(|definition| definition.name.to_string())
+        .collect()
 }
 
 #[tokio::test]
@@ -2558,26 +2506,13 @@ async fn run_routine_goes_through_the_host_runner_and_is_blocked_for_routine_cal
     assert!(routine_files(&fixture).is_empty());
 
     let without_runner = FixtureHost::without_runner();
-    let names = control::tools_list(&without_runner)["tools"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|tool| tool["name"].as_str().unwrap().to_string())
-        .collect::<Vec<_>>();
+    let names = served_names(&without_runner);
     assert_eq!(names.len(), 53);
     assert!(!names.contains(&"run_routine".to_string()));
     assert_eq!(
         error_code(&call_tool(&without_runner, Some(&target), "run_routine", run_args).await),
         "UNKNOWN_TOOL"
     );
-    match control::bridge_request(
-        &without_runner,
-        "tools/call",
-        &json!({ "name": "run_routine" }),
-    ) {
-        BridgeCall::Respond(response) => assert_eq!(response.error.unwrap().code, "UNKNOWN_TOOL"),
-        BridgeCall::CallTool { .. } => panic!("run_routine must not reach a host without runner"),
-    }
 
     let limited = FixtureHost::serving(&FIRST_SLICE_TOOLS);
     for name in ROUTINE_TOOLS {

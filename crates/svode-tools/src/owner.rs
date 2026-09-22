@@ -6,12 +6,9 @@ use svode_core::page::identity::{
     ContentOwnerKind, PageRole, SemanticIdentity, resolve_markdown_identity_for_path,
 };
 
-use crate::error::McpBusinessError;
+use crate::error::ToolError;
 
-pub fn semantic_identity_for_path(
-    space: &str,
-    path: &str,
-) -> Result<SemanticIdentity, McpBusinessError> {
+pub fn semantic_identity_for_path(space: &str, path: &str) -> Result<SemanticIdentity, ToolError> {
     resolve_markdown_identity_for_path(
         Path::new(space),
         path,
@@ -20,36 +17,32 @@ pub fn semantic_identity_for_path(
     .map_err(Into::into)
 }
 
-pub fn require_standalone_page(space: &str, path: &str) -> Result<(), McpBusinessError> {
+pub fn require_standalone_page(space: &str, path: &str) -> Result<(), ToolError> {
     let identity = semantic_identity_for_path(space, path)?;
     if identity.is_page() && identity.page_role == Some(PageRole::Standalone) {
         return Ok(());
     }
-    Err(McpBusinessError::new(
+    Err(ToolError::new(
         "NOT_A_STANDALONE_PAGE",
         "path belongs to owner content or a Collection item; use its canonical owner-specific tool",
     ))
 }
 
-pub fn require_collection_item(space: &str, path: &str) -> Result<(), McpBusinessError> {
+pub fn require_collection_item(space: &str, path: &str) -> Result<(), ToolError> {
     if semantic_identity_for_path(space, path)?.is_collection_item() {
         return Ok(());
     }
-    Err(McpBusinessError::new(
+    Err(ToolError::new(
         "NOT_A_COLLECTION_ITEM",
         "path is not an item inside a schema-backed Collection",
     ))
 }
 
-pub fn require_owner(
-    space: &str,
-    path: &str,
-    expected: ContentOwnerKind,
-) -> Result<(), McpBusinessError> {
+pub fn require_owner(space: &str, path: &str, expected: ContentOwnerKind) -> Result<(), ToolError> {
     if semantic_identity_for_path(space, path)?.owner_kind == Some(expected) {
         return Ok(());
     }
-    Err(McpBusinessError::new(
+    Err(ToolError::new(
         "CONTENT_OWNER_MISMATCH",
         "path does not belong to the requested content owner",
     ))

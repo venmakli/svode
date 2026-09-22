@@ -1,12 +1,13 @@
 use std::io::{self, BufRead, Write};
 
 use serde_json::{Value, json};
+use svode_tools::error::ToolError;
+use svode_tools::result::ToolCallResult;
 
 use crate::bridge;
-use crate::error::McpBusinessError;
-use crate::protocol::{IpcResponse, ToolCallResult};
+use crate::protocol::IpcResponse;
 
-pub(crate) async fn run_stdio() -> Result<(), McpBusinessError> {
+pub(crate) async fn run_stdio() -> Result<(), ToolError> {
     let stdin = io::stdin();
     let mut stdout = io::stdout();
     for line in stdin.lock().lines() {
@@ -37,7 +38,7 @@ async fn handle_jsonrpc_line_with<Request, Future>(
 ) -> Option<Value>
 where
     Request: Fn(String, Value) -> Future,
-    Future: std::future::Future<Output = Result<IpcResponse, McpBusinessError>>,
+    Future: std::future::Future<Output = Result<IpcResponse, ToolError>>,
 {
     let request: Value = match serde_json::from_str(line) {
         Ok(value) => value,
@@ -67,7 +68,7 @@ where
 fn forward_desktop_response(
     id: Value,
     method: &str,
-    response: Result<IpcResponse, McpBusinessError>,
+    response: Result<IpcResponse, ToolError>,
 ) -> Value {
     let response = match response {
         Ok(response) => response,
@@ -95,7 +96,7 @@ fn forward_desktop_response(
             Some(result) => ok_tool_response(id, result),
             None => ok_tool_response(
                 id,
-                ToolCallResult::business_error(McpBusinessError::new(
+                ToolCallResult::business_error(ToolError::new(
                     "DESKTOP_PROTOCOL_ERROR",
                     "desktop did not return a tool result",
                 )),
@@ -184,7 +185,7 @@ mod tests {
                 Ok(IpcResponse {
                     result: None,
                     tool_result: None,
-                    error: Some(McpBusinessError::new(
+                    error: Some(ToolError::new(
                         "UNKNOWN_TOOL",
                         "unknown Svode MCP tool: legacy_tool",
                     )),

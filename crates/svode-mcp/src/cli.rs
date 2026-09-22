@@ -1,5 +1,6 @@
+use svode_tools::error::ToolError;
+
 use crate::config::{self, McpClient};
-use crate::error::McpBusinessError;
 use crate::{MCP_BRIDGE_PROTOCOL, MCP_VERSION, bridge, stdio};
 
 pub async fn run() -> i32 {
@@ -13,7 +14,7 @@ pub async fn run() -> i32 {
     }
 }
 
-async fn run_args(args: &[String]) -> Result<(), McpBusinessError> {
+async fn run_args(args: &[String]) -> Result<(), ToolError> {
     match args.first().map(String::as_str) {
         Some("--app") if args.get(1).map(String::as_str) == Some("desktop") => {
             stdio::run_stdio().await
@@ -60,20 +61,18 @@ async fn run_args(args: &[String]) -> Result<(), McpBusinessError> {
     }
 }
 
-fn project_mode_unavailable() -> McpBusinessError {
-    McpBusinessError::new(
+fn project_mode_unavailable() -> ToolError {
+    ToolError::new(
         "MODE_UNAVAILABLE",
         "svode-mcp --project is not available in this build; use --app desktop with a running Svode desktop",
     )
 }
 
-fn parse_client_arg(args: &[String]) -> Result<McpClient, McpBusinessError> {
+fn parse_client_arg(args: &[String]) -> Result<McpClient, ToolError> {
     let client = args
         .windows(2)
         .find_map(|pair| (pair[0] == "--client").then(|| pair[1].as_str()))
-        .ok_or_else(|| {
-            McpBusinessError::new("INVALID_ARGS", "expected --client <claude-code|codex>")
-        })?;
+        .ok_or_else(|| ToolError::new("INVALID_ARGS", "expected --client <claude-code|codex>"))?;
     McpClient::parse(client)
 }
 

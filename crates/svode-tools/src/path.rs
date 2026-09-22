@@ -1,17 +1,14 @@
 use std::path::{Component, Path, PathBuf};
 
-use crate::error::McpBusinessError;
+use crate::error::ToolError;
 
-pub fn validate_public_rel_path(path: &str, allow_root: bool) -> Result<String, McpBusinessError> {
+pub fn validate_public_rel_path(path: &str, allow_root: bool) -> Result<String, ToolError> {
     let raw = path.trim();
     if raw.is_empty() {
         if allow_root {
             return Ok(String::new());
         }
-        return Err(McpBusinessError::new(
-            "INVALID_PATH",
-            "path must not be empty",
-        ));
+        return Err(ToolError::new("INVALID_PATH", "path must not be empty"));
     }
     if raw.starts_with('/')
         || raw.starts_with('\\')
@@ -19,7 +16,7 @@ pub fn validate_public_rel_path(path: &str, allow_root: bool) -> Result<String, 
         || raw.starts_with("\\\\")
         || has_windows_drive_prefix(raw)
     {
-        return Err(McpBusinessError::new(
+        return Err(ToolError::new(
             "INVALID_PATH",
             "absolute paths are not accepted",
         ));
@@ -30,38 +27,29 @@ pub fn validate_public_rel_path(path: &str, allow_root: bool) -> Result<String, 
         if allow_root {
             return Ok(String::new());
         }
-        return Err(McpBusinessError::new(
-            "INVALID_PATH",
-            "path must not be empty",
-        ));
+        return Err(ToolError::new("INVALID_PATH", "path must not be empty"));
     }
     let mut parts = Vec::new();
     for part in normalized.split('/') {
         match part {
             "" | "." => {
-                return Err(McpBusinessError::new(
+                return Err(ToolError::new(
                     "INVALID_PATH",
                     "path must not contain empty or '.' segments",
                 ));
             }
             ".." => {
-                return Err(McpBusinessError::new(
-                    "INVALID_PATH",
-                    "path must not contain '..'",
-                ));
+                return Err(ToolError::new("INVALID_PATH", "path must not contain '..'"));
             }
             _ => parts.push(part),
         }
     }
     if parts.is_empty() && !allow_root {
-        return Err(McpBusinessError::new(
-            "INVALID_PATH",
-            "path must not be empty",
-        ));
+        return Err(ToolError::new("INVALID_PATH", "path must not be empty"));
     }
     if let Some(first) = parts.first() {
         if first.eq_ignore_ascii_case(".git") || first.eq_ignore_ascii_case(".svode") {
-            return Err(McpBusinessError::new(
+            return Err(ToolError::new(
                 "PATH_FORBIDDEN",
                 ".git and .svode paths are not exposed through public MCP content tools",
             ));
@@ -70,7 +58,7 @@ pub fn validate_public_rel_path(path: &str, allow_root: bool) -> Result<String, 
     Ok(parts.join("/"))
 }
 
-pub fn validate_markdown_path(path: &str) -> Result<String, McpBusinessError> {
+pub fn validate_markdown_path(path: &str) -> Result<String, ToolError> {
     let path = validate_public_rel_path(path, false)?;
     if Path::new(&path)
         .extension()
@@ -79,26 +67,25 @@ pub fn validate_markdown_path(path: &str) -> Result<String, McpBusinessError> {
     {
         Ok(path)
     } else {
-        Err(McpBusinessError::new(
+        Err(ToolError::new(
             "INVALID_PATH",
             "markdown content path must end with .md",
         ))
     }
 }
 
-pub fn ensure_inside(root: &Path, rel: &str) -> Result<PathBuf, McpBusinessError> {
+pub fn ensure_inside(root: &Path, rel: &str) -> Result<PathBuf, ToolError> {
     let normalized_root = root.canonicalize().map_err(|error| {
-        McpBusinessError::new(
+        ToolError::new(
             "PATH_FORBIDDEN",
             format!("root path could not be canonicalized: {error}"),
         )
     })?;
     let target = normalized_root.join(rel);
-    let normalized = normalize_path(&target).ok_or_else(|| {
-        McpBusinessError::new("INVALID_PATH", "path could not be normalized safely")
-    })?;
+    let normalized = normalize_path(&target)
+        .ok_or_else(|| ToolError::new("INVALID_PATH", "path could not be normalized safely"))?;
     if !normalized.starts_with(&normalized_root) {
-        return Err(McpBusinessError::new(
+        return Err(ToolError::new(
             "PATH_FORBIDDEN",
             "path resolves outside the active Svode space",
         ));
@@ -106,7 +93,7 @@ pub fn ensure_inside(root: &Path, rel: &str) -> Result<PathBuf, McpBusinessError
 
     let existing = nearest_existing_path(&normalized);
     let existing = existing.canonicalize().map_err(|error| {
-        McpBusinessError::new(
+        ToolError::new(
             "PATH_FORBIDDEN",
             format!("path could not be canonicalized safely: {error}"),
         )
@@ -114,7 +101,7 @@ pub fn ensure_inside(root: &Path, rel: &str) -> Result<PathBuf, McpBusinessError
     if existing.starts_with(&normalized_root) {
         Ok(normalized)
     } else {
-        Err(McpBusinessError::new(
+        Err(ToolError::new(
             "PATH_FORBIDDEN",
             "path resolves outside the active Svode space",
         ))

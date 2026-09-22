@@ -582,7 +582,7 @@ impl TerminalManager {
         &self,
         token: &str,
         frozen_project_path: &Path,
-    ) -> Result<Option<svode_mcp::host::RoutineCaller>, AppError> {
+    ) -> Result<Option<svode_tools::host::RoutineCaller>, AppError> {
         let token = token.trim();
         if token.is_empty() {
             return Ok(None);
@@ -606,7 +606,7 @@ impl TerminalManager {
         if canonical_cwd(project_path)? != frozen_project_path {
             return Ok(None);
         }
-        Ok(Some(svode_mcp::host::RoutineCaller {
+        Ok(Some(svode_tools::host::RoutineCaller {
             routine_run_id: surface
                 .routine_run_id
                 .clone()

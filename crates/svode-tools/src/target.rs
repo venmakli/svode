@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use svode_core::index::IndexKey;
 
-use crate::error::McpBusinessError;
+use crate::error::ToolError;
 use crate::host::RequestTarget;
 
 /// Public `spaceId` of the project root Space.
@@ -42,7 +42,7 @@ fn space_selection(requested_space_id: Option<&str>) -> SpaceSelection<'_> {
 pub fn resolve_space(
     target: &RequestTarget,
     requested_space_id: Option<&str>,
-) -> Result<String, McpBusinessError> {
+) -> Result<String, ToolError> {
     Ok(match space_selection(requested_space_id) {
         SpaceSelection::FrozenDefault => target.default_space_path.clone(),
         SpaceSelection::Root => target.project_path.clone(),
