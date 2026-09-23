@@ -231,45 +231,59 @@ impl RepositoryAccessState {
             }
             RemoteInspection::Remote(remote) => {
                 let now = self.clock.now_unix();
-                if let Some(current) = self.cached(&repository)? {
-                    if current.remote_fingerprint.as_deref() == Some(&remote.fingerprint) {
-                        let refreshed = refresh_expiration(&current.snapshot, now);
-                        if refreshed == current.snapshot {
-                            return Ok(refreshed);
-                        }
-                        return self.publish(&repository, Some(remote.fingerprint), refreshed);
+                let observed = self.cached(&repository)?;
+                if let Some(observed) = &observed
+                    && observed.snapshot.status == RepositoryAccessStatus::Checking
+                {
+                    return Ok(observed.snapshot.clone());
+                }
+                let current = observed.as_ref().filter(|current| {
+                    current.remote_fingerprint.as_deref() == Some(remote.fingerprint.as_str())
+                });
+                // The shared store is authoritative across processes; the cache
+                // only wins with a strictly newer result of this process.
+                let stored = match self.read_store(store_path) {
+                    Ok(store) => {
+                        snapshot_from_store(&repository_id, &store, &remote.fingerprint, now)
+                    }
+                    Err(error) => {
+                        let Some(current) = current else {
+                            return Err(error);
+                        };
+                        tracing::warn!("failed to read repository access evidence: {error}");
+                        refresh_expiration(&current.snapshot, now)
+                    }
+                };
+                let mut selected = match current {
+                    Some(current) if current.snapshot.checked_at > stored.checked_at => {
+                        refresh_expiration(&current.snapshot, now)
+                    }
+                    _ => stored,
+                };
+                if let Some(current) = current {
+                    selected.generation = current.snapshot.generation;
+                    if selected == current.snapshot {
+                        return Ok(selected);
                     }
                 }
-
-                let store = self.read_store(store_path)?;
-                let mut snapshot = snapshot_from_store(
-                    &repository_id,
-                    store.evidence.get(&repository_id),
-                    &remote.fingerprint,
-                    now,
-                );
-                if let Some(attempt) = store.automatic_attempts.get(&repository_id) {
-                    if attempt.remote_fingerprint != remote.fingerprint {
-                        snapshot = unknown_snapshot(
-                            &repository_id,
-                            RepositoryAccessReason::RemoteChanged,
-                            snapshot.last_known_status,
-                        );
-                    } else if attempt.consumed
-                        && (snapshot.status == RepositoryAccessStatus::Writable
-                            || snapshot.reason == Some(RepositoryAccessReason::NotChecked)
-                            || (snapshot.reason == Some(RepositoryAccessReason::Expired)
-                                && snapshot.last_known_status
-                                    == Some(RepositoryAccessStatus::Writable)))
-                    {
-                        if snapshot.status == RepositoryAccessStatus::Writable {
-                            snapshot.last_known_status = Some(RepositoryAccessStatus::Writable);
-                        }
-                        snapshot.status = RepositoryAccessStatus::Unknown;
-                        snapshot.reason = Some(RepositoryAccessReason::AmbiguousRejection);
-                    }
+                let mut snapshots = self.snapshots.lock().map_err(|_| {
+                    GitError::General("repository access snapshot lock poisoned".into())
+                })?;
+                // A concurrent publication of this process, such as its own
+                // `checking`, is newer than what this read selected from.
+                if let Some(latest) = snapshots.get(&repository)
+                    && observed.as_ref().is_none_or(|observed| {
+                        observed.snapshot.generation != latest.snapshot.generation
+                    })
+                {
+                    return Ok(latest.snapshot.clone());
                 }
-                Ok(self.publish(&repository, Some(remote.fingerprint), snapshot)?)
+                Ok(self.publish_locked(
+                    &mut snapshots,
+                    &repository,
+                    Some(remote.fingerprint),
+                    selected,
+                ))
             }
         }
     }
@@ -1657,6 +1671,41 @@ fn automatic_attempt_eligible(
 }
 
 fn snapshot_from_store(
+    repository_id: &str,
+    store: &AccessStore,
+    remote_fingerprint: &str,
+    now: i64,
+) -> RepositoryAccessSnapshot {
+    let mut snapshot = snapshot_from_evidence(
+        repository_id,
+        store.evidence.get(repository_id),
+        remote_fingerprint,
+        now,
+    );
+    if let Some(attempt) = store.automatic_attempts.get(repository_id) {
+        if attempt.remote_fingerprint != remote_fingerprint {
+            snapshot = unknown_snapshot(
+                repository_id,
+                RepositoryAccessReason::RemoteChanged,
+                snapshot.last_known_status,
+            );
+        } else if attempt.consumed
+            && (snapshot.status == RepositoryAccessStatus::Writable
+                || snapshot.reason == Some(RepositoryAccessReason::NotChecked)
+                || (snapshot.reason == Some(RepositoryAccessReason::Expired)
+                    && snapshot.last_known_status == Some(RepositoryAccessStatus::Writable)))
+        {
+            if snapshot.status == RepositoryAccessStatus::Writable {
+                snapshot.last_known_status = Some(RepositoryAccessStatus::Writable);
+            }
+            snapshot.status = RepositoryAccessStatus::Unknown;
+            snapshot.reason = Some(RepositoryAccessReason::AmbiguousRejection);
+        }
+    }
+    snapshot
+}
+
+fn snapshot_from_evidence(
     repository_id: &str,
     evidence: Option<&PersistedEvidence>,
     remote_fingerprint: &str,

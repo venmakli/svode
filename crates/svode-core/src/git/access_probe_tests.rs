@@ -847,3 +847,242 @@ async fn failed_manual_probe_cannot_revive_previous_fresh_writable_after_restart
     );
     assert_eq!(network_calls(&f), before);
 }
+
+#[tokio::test]
+async fn independent_owners_follow_foreign_store_evidence_without_restart_or_network() {
+    let f = Fixture::new("").await;
+    let store = f._temp.path().join("access.json");
+    let clock = Arc::new(AutoClock::new(1_000_000));
+    let desktop = RepositoryAccessState::with_clock(clock.clone());
+    let cli = RepositoryAccessState::with_clock(clock.clone());
+    let denial = |error: GitError| match error {
+        GitError::RepositoryAccessDenied { status, reason, .. } => (status, reason),
+        other => panic!("unexpected error: {other}"),
+    };
+
+    let initial = desktop.snapshot(&f.cli, &f.repo, &store).await.unwrap();
+    assert_eq!(initial.reason, Some(RepositoryAccessReason::NotChecked));
+    assert!(
+        desktop
+            .require_mutation(&f.cli, &f.repo, &store)
+            .await
+            .is_err()
+    );
+
+    clock.set(1_000_100);
+    let verified = cli.verify(&f.cli, &f.repo, &store).await.unwrap();
+    assert_eq!(verified.status, RepositoryAccessStatus::Writable);
+    let calls = network_calls(&f);
+    let seen = desktop
+        .require_mutation(&f.cli, &f.repo, &store)
+        .await
+        .unwrap();
+    assert_eq!(seen.checked_at, verified.checked_at);
+    assert!(seen.generation > initial.generation);
+    // An unchanged result keeps its publication; foreign success makes activation a no-op.
+    assert_eq!(
+        desktop.snapshot(&f.cli, &f.repo, &store).await.unwrap(),
+        seen
+    );
+    assert_eq!(activate(&f, &desktop, &store).await, seen);
+    assert_eq!(network_calls(&f), calls);
+
+    let mut generation = seen.generation;
+    for (at, status, reason) in [
+        (1_000_200, RepositoryAccessStatus::ReadOnly, None),
+        (
+            1_000_300,
+            RepositoryAccessStatus::Unknown,
+            Some(RepositoryAccessReason::AuthRequired),
+        ),
+    ] {
+        let mut persisted = read_store_file(&store).unwrap();
+        let evidence = persisted.evidence.get_mut(&seen.repository_id).unwrap();
+        evidence.status = status;
+        evidence.reason = reason;
+        evidence.checked_at = at;
+        evidence.expires_at = (status == RepositoryAccessStatus::ReadOnly)
+            .then_some(at + ACCESS_EVIDENCE_TTL_SECONDS);
+        let attempt = persisted
+            .automatic_attempts
+            .get_mut(&seen.repository_id)
+            .unwrap();
+        attempt.checked_at = Some(at);
+        attempt.consumed = true;
+        write_store_file(&store, &persisted).unwrap();
+        clock.set(at + 1);
+
+        let (denied_status, denied_reason) = denial(
+            desktop
+                .require_mutation(&f.cli, &f.repo, &store)
+                .await
+                .unwrap_err(),
+        );
+        assert_eq!(denied_status, status_name(status));
+        assert_eq!(denied_reason, reason.map(reason_name).unwrap_or("none"));
+        let failed = desktop.snapshot(&f.cli, &f.repo, &store).await.unwrap();
+        assert_eq!((failed.status, failed.checked_at), (status, Some(at)));
+        assert!(failed.generation > generation);
+        generation = failed.generation;
+        // A foreign failure leaves manual recovery: activation does not probe.
+        assert_eq!(activate(&f, &desktop, &store).await, failed);
+        assert_eq!(network_calls(&f), calls);
+    }
+
+    clock.set(1_000_400);
+    let renewed = cli
+        .record_writable_evidence(&f.real, &f.repo, &store)
+        .await
+        .unwrap();
+    let writable = desktop.snapshot(&f.cli, &f.repo, &store).await.unwrap();
+    assert_eq!(
+        (writable.status, writable.checked_at),
+        (RepositoryAccessStatus::Writable, renewed.checked_at)
+    );
+    assert!(writable.generation > generation);
+    clock.set(renewed.expires_at.unwrap());
+    assert_eq!(
+        denial(
+            desktop
+                .require_mutation(&f.cli, &f.repo, &store)
+                .await
+                .unwrap_err()
+        ),
+        ("unknown".to_string(), "expired".to_string())
+    );
+
+    let other = f._temp.path().join("other.git");
+    fs::create_dir(&other).unwrap();
+    ok(&f.real, &other, &["init", "--bare"]).await;
+    ok(
+        &f.real,
+        &f.repo,
+        &["remote", "set-url", "origin", other.to_str().unwrap()],
+    )
+    .await;
+    let changed = desktop.snapshot(&f.cli, &f.repo, &store).await.unwrap();
+    assert_eq!(changed.reason, Some(RepositoryAccessReason::RemoteChanged));
+    let moved = cli
+        .record_writable_evidence(&f.real, &f.repo, &store)
+        .await
+        .unwrap();
+    let followed = desktop
+        .require_mutation(&f.cli, &f.repo, &store)
+        .await
+        .unwrap();
+    assert_eq!(followed.checked_at, moved.checked_at);
+    assert!(followed.generation > changed.generation);
+
+    ok(&f.real, &f.repo, &["remote", "remove", "origin"]).await;
+    for owner in [&desktop, &cli] {
+        assert_eq!(
+            owner
+                .require_mutation(&f.cli, &f.repo, &store)
+                .await
+                .unwrap()
+                .status,
+            RepositoryAccessStatus::Local
+        );
+    }
+    assert_eq!(network_calls(&f), calls);
+}
+
+#[tokio::test]
+async fn own_checking_and_newer_own_result_are_not_replaced_by_store() {
+    let f = Fixture::new(
+        r#"
+if [ "$1" = push ]; then
+  touch .git/probe-wait
+  while [ ! -f .git/probe-release ]; do sleep 0.01; done
+fi
+"#,
+    )
+    .await;
+    let store = f._temp.path().join("access.json");
+    let clock = Arc::new(AutoClock::new(1_000_000));
+    let desktop = Arc::new(RepositoryAccessState::with_clock(clock.clone()));
+    let cli = RepositoryAccessState::with_clock(clock.clone());
+    let pending = {
+        let desktop = desktop.clone();
+        let (probe_cli, repo, store) = (f.cli.clone(), f.repo.clone(), store.clone());
+        tokio::spawn(async move {
+            desktop
+                .verify_requested(&probe_cli, &repo, &store, false, |_| {})
+                .await
+        })
+    };
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while !f.repo.join(".git/probe-wait").exists() {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .unwrap();
+
+    clock.set(1_000_100);
+    cli.record_writable_evidence(&f.real, &f.repo, &store)
+        .await
+        .unwrap();
+    let checking = desktop.snapshot(&f.real, &f.repo, &store).await.unwrap();
+    assert_eq!(checking.status, RepositoryAccessStatus::Checking);
+    assert!(
+        desktop
+            .require_mutation(&f.real, &f.repo, &store)
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        desktop.snapshot(&f.real, &f.repo, &store).await.unwrap(),
+        checking
+    );
+
+    clock.set(1_000_200);
+    fs::write(f.repo.join(".git/probe-release"), "").unwrap();
+    let own = pending.await.unwrap().unwrap();
+    assert_eq!(
+        (own.status, own.checked_at),
+        (RepositoryAccessStatus::Writable, Some(1_000_200))
+    );
+    assert_eq!(
+        desktop.snapshot(&f.real, &f.repo, &store).await.unwrap(),
+        own
+    );
+
+    // An older store result, such as a foreign write racing this process or its
+    // own failed persistence, does not roll back the newer own result.
+    let mut persisted = read_store_file(&store).unwrap();
+    let evidence = persisted.evidence.get_mut(&own.repository_id).unwrap();
+    evidence.status = RepositoryAccessStatus::ReadOnly;
+    evidence.checked_at = 1_000_150;
+    evidence.expires_at = Some(1_000_150 + ACCESS_EVIDENCE_TTL_SECONDS);
+    write_store_file(&store, &persisted).unwrap();
+    assert_eq!(
+        desktop.snapshot(&f.real, &f.repo, &store).await.unwrap(),
+        own
+    );
+    assert!(
+        desktop
+            .require_mutation(&f.real, &f.repo, &store)
+            .await
+            .is_ok()
+    );
+    // The other owner's own result (1_000_100) is older than the store.
+    assert_eq!(
+        cli.snapshot(&f.real, &f.repo, &store).await.unwrap().status,
+        RepositoryAccessStatus::ReadOnly
+    );
+
+    // An unreadable store keeps the own result and fails closed without one.
+    fs::write(&store, "broken JSON").unwrap();
+    assert_eq!(
+        desktop.snapshot(&f.real, &f.repo, &store).await.unwrap(),
+        own
+    );
+    assert!(
+        RepositoryAccessState::with_clock(clock)
+            .require_mutation(&f.real, &f.repo, &store)
+            .await
+            .is_err()
+    );
+    assert_eq!(network_calls(&f), 2);
+}
