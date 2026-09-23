@@ -1,10 +1,10 @@
 use std::collections::HashMap;
-use std::fs;
+use std::fs::{self, File, OpenOptions, TryLockError};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::sync::{Arc, Mutex, MutexGuard};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use tokio::sync::{Mutex as AsyncMutex, OwnedMutexGuard};
@@ -18,6 +18,9 @@ pub const ACCESS_STORE_FILE: &str = "repository-access.json";
 const ACCESS_STORE_VERSION: u32 = 1;
 const MAX_EVIDENCE_ENTRIES: usize = 128;
 const PROBE_TIMEOUT: Duration = Duration::from_secs(30);
+/// Longest wait for the store lock held by another process. Not a public contract.
+const STORE_LOCK_WAIT: Duration = Duration::from_secs(2);
+const STORE_LOCK_RETRY: Duration = Duration::from_millis(5);
 pub const ACCESS_EVIDENCE_TTL_SECONDS: i64 = 7 * 24 * 60 * 60;
 
 const SERVICE_AUTHOR_NAME: &str = "Svode Access Probe";
@@ -89,6 +92,38 @@ struct RoutineClaimPayload {
 struct PublishedSnapshot {
     remote_fingerprint: Option<String>,
     snapshot: RepositoryAccessSnapshot,
+    /// Stored evidence the own verification behind this result started from;
+    /// `None` when the result does not come from an own verification.
+    verification_base: Option<Option<PersistedEvidence>>,
+}
+
+impl PublishedSnapshot {
+    /// An inconclusive result yields to conclusive evidence that another
+    /// process saved after the verification behind it started.
+    fn yields_to(&self, stored: Option<&PersistedEvidence>) -> bool {
+        let Some(stored) = stored.filter(|stored| conclusive(stored.status)) else {
+            return false;
+        };
+        !conclusive(self.snapshot.status)
+            && self
+                .verification_base
+                .as_ref()
+                .is_none_or(|base| base.as_ref() != Some(stored))
+    }
+}
+
+/// The own verification a result comes from: the generation of its
+/// `checking` publication and the stored evidence it started from.
+struct Verification {
+    generation: u64,
+    base: Option<PersistedEvidence>,
+}
+
+/// Exclusive read-modify-write access to the store across the processes of
+/// one installation.
+struct StoreLock<'a> {
+    _process: MutexGuard<'a, ()>,
+    _file: File,
 }
 
 #[derive(Debug, Clone)]
@@ -97,7 +132,7 @@ struct RemoteConfig {
     fingerprint: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct PersistedEvidence {
     remote_fingerprint: String,
@@ -241,21 +276,30 @@ impl RepositoryAccessState {
                     current.remote_fingerprint.as_deref() == Some(remote.fingerprint.as_str())
                 });
                 // The shared store is authoritative across processes; the cache
-                // only wins with a strictly newer result of this process.
-                let stored = match self.read_store(store_path) {
-                    Ok(store) => {
-                        snapshot_from_store(&repository_id, &store, &remote.fingerprint, now)
-                    }
+                // only wins with a strictly newer result of this process, and an
+                // inconclusive one yields to conclusive evidence saved after it started.
+                let (stored, stored_evidence) = match self.read_store(store_path) {
+                    Ok(store) => (
+                        snapshot_from_store(&repository_id, &store, &remote.fingerprint, now),
+                        store
+                            .evidence
+                            .get(&repository_id)
+                            .filter(|evidence| evidence.remote_fingerprint == remote.fingerprint)
+                            .cloned(),
+                    ),
                     Err(error) => {
                         let Some(current) = current else {
                             return Err(error);
                         };
                         tracing::warn!("failed to read repository access evidence: {error}");
-                        refresh_expiration(&current.snapshot, now)
+                        (refresh_expiration(&current.snapshot, now), None)
                     }
                 };
                 let mut selected = match current {
-                    Some(current) if current.snapshot.checked_at > stored.checked_at => {
+                    Some(current)
+                        if current.snapshot.checked_at > stored.checked_at
+                            && !current.yields_to(stored_evidence.as_ref()) =>
+                    {
                         refresh_expiration(&current.snapshot, now)
                     }
                     _ => stored,
@@ -283,6 +327,7 @@ impl RepositoryAccessState {
                     &repository,
                     Some(remote.fingerprint),
                     selected,
+                    None,
                 ))
             }
         }
@@ -359,11 +404,12 @@ impl RepositoryAccessState {
             let mut snapshots = self.snapshots.lock().map_err(|_| {
                 GitError::General("repository access snapshot lock poisoned".into())
             })?;
-            let _guard = self.persistence_lock.lock().map_err(|_| {
-                GitError::General("repository access persistence lock poisoned".into())
-            })?;
+            let _lock = self.lock_store(store_path)?;
             let mut store = read_store_file(store_path)?;
             let evidence = store.evidence.get(&repository_id);
+            let base = evidence
+                .filter(|value| value.remote_fingerprint == remote.fingerprint)
+                .cloned();
             let eligible = automatic_attempt_eligible(
                 evidence,
                 store.automatic_attempts.get(&repository_id),
@@ -395,7 +441,7 @@ impl RepositoryAccessState {
                 let last_known_status = snapshots
                     .get(&repository)
                     .map(|current| current.snapshot.status);
-                Some(self.publish_locked(
+                let checking = self.publish_locked(
                     &mut snapshots,
                     &repository,
                     Some(remote.fingerprint.clone()),
@@ -408,10 +454,15 @@ impl RepositoryAccessState {
                         expires_at: None,
                         last_known_status,
                     },
-                ))
+                    None,
+                );
+                Some(Verification {
+                    generation: checking.generation,
+                    base,
+                })
             }
         };
-        let Some(checking) = checking else {
+        let Some(verification) = checking else {
             return self.snapshot(cli, &repository, store_path).await;
         };
         guard.attempted = true;
@@ -424,7 +475,7 @@ impl RepositoryAccessState {
                     &repository,
                     &repository_id,
                     &remote.fingerprint,
-                    checking.generation,
+                    &verification,
                 )?;
                 return Err(error);
             }
@@ -439,7 +490,7 @@ impl RepositoryAccessState {
                         &repository,
                         &repository_id,
                         &remote.fingerprint,
-                        checking.generation,
+                        &verification,
                     )?;
                     return Err(error);
                 }
@@ -452,7 +503,7 @@ impl RepositoryAccessState {
                     &repository,
                     &repository_id,
                     &remote.fingerprint,
-                    checking.generation,
+                    &verification,
                 )?;
                 return Err(error);
             }
@@ -465,7 +516,7 @@ impl RepositoryAccessState {
                 })?;
                 if snapshots
                     .get(&repository)
-                    .is_some_and(|current| current.snapshot.generation == checking.generation)
+                    .is_some_and(|current| current.snapshot.generation == verification.generation)
                 {
                     snapshots.remove(&repository);
                 }
@@ -490,7 +541,7 @@ impl RepositoryAccessState {
             &remote.fingerprint,
             snapshot,
             store_path,
-            Some(checking.generation),
+            Some(&verification),
         )
     }
 
@@ -663,7 +714,13 @@ impl RepositoryAccessState {
             .snapshots
             .lock()
             .map_err(|_| GitError::General("repository access snapshot lock poisoned".into()))?;
-        Ok(self.publish_locked(&mut snapshots, repository, remote_fingerprint, snapshot))
+        Ok(self.publish_locked(
+            &mut snapshots,
+            repository,
+            remote_fingerprint,
+            snapshot,
+            None,
+        ))
     }
 
     fn publish_locked(
@@ -672,6 +729,7 @@ impl RepositoryAccessState {
         repository: &Path,
         remote_fingerprint: Option<String>,
         mut snapshot: RepositoryAccessSnapshot,
+        verification_base: Option<Option<PersistedEvidence>>,
     ) -> RepositoryAccessSnapshot {
         snapshot.generation = self.generation.fetch_add(1, Ordering::Relaxed) + 1;
         snapshots.insert(
@@ -679,6 +737,7 @@ impl RepositoryAccessState {
             Arc::new(PublishedSnapshot {
                 remote_fingerprint,
                 snapshot: snapshot.clone(),
+                verification_base,
             }),
         );
         snapshot
@@ -690,45 +749,54 @@ impl RepositoryAccessState {
         remote_fingerprint: &str,
         snapshot: RepositoryAccessSnapshot,
         store_path: &Path,
-        expected_generation: Option<u64>,
+        verification: Option<&Verification>,
     ) -> Result<RepositoryAccessSnapshot, GitError> {
         let mut snapshots = self
             .snapshots
             .lock()
             .map_err(|_| GitError::General("repository access snapshot lock poisoned".into()))?;
-        if let Some(expected) = expected_generation {
+        if let Some(verification) = verification {
             let current = snapshots.get(repository).ok_or_else(|| {
                 GitError::General(
                     "Repository access changed during verification. Check again.".into(),
                 )
             })?;
-            if current.snapshot.generation != expected {
+            if current.snapshot.generation != verification.generation {
                 return Ok(current.snapshot.clone());
             }
         }
-        let persist_result = (|| {
-            let _guard = self.persistence_lock.lock().map_err(|_| {
-                GitError::General("repository access persistence lock poisoned".into())
-            })?;
+        let verification_base = verification.map(|verification| verification.base.clone());
+        let persist_result = (|| -> Result<Option<RepositoryAccessSnapshot>, GitError> {
+            let _lock = self.lock_store(store_path)?;
             let mut store = read_store_file(store_path)?;
-            store.evidence.insert(
-                snapshot.repository_id.clone(),
-                PersistedEvidence {
-                    remote_fingerprint: remote_fingerprint.to_string(),
-                    status: snapshot.status,
-                    reason: snapshot.reason,
-                    checked_at: snapshot.checked_at.unwrap_or_else(|| self.clock.now_unix()),
-                    expires_at: snapshot.expires_at,
-                },
-            );
+            let result = PersistedEvidence {
+                remote_fingerprint: remote_fingerprint.to_string(),
+                status: snapshot.status,
+                reason: snapshot.reason,
+                checked_at: snapshot.checked_at.unwrap_or_else(|| self.clock.now_unix()),
+                expires_at: snapshot.expires_at,
+            };
+            let kept = store
+                .evidence
+                .get(&snapshot.repository_id)
+                .filter(|stored| {
+                    stored.remote_fingerprint == remote_fingerprint
+                        && stored_prevails(stored, &result, verification_base.as_ref())
+                })
+                .cloned();
+            let recorded = kept.clone().unwrap_or(result);
+            // Bookkeeping follows the evidence that is actually stored.
             store.automatic_attempts.insert(
                 snapshot.repository_id.clone(),
                 AutomaticAttempt {
                     remote_fingerprint: remote_fingerprint.to_string(),
-                    checked_at: snapshot.checked_at,
-                    consumed: snapshot.status != RepositoryAccessStatus::Writable,
+                    checked_at: Some(recorded.checked_at),
+                    consumed: recorded.status != RepositoryAccessStatus::Writable,
                 },
             );
+            store
+                .evidence
+                .insert(snapshot.repository_id.clone(), recorded);
             // Preserve legacy negative recovery even if its detailed evidence is evicted.
             for (id, evidence) in &store.evidence {
                 store
@@ -741,18 +809,31 @@ impl RepositoryAccessState {
                     });
             }
             trim_evidence(&mut store.evidence);
-            write_store_file(store_path, &store)
+            write_store_file(store_path, &store)?;
+            Ok(kept.map(|_| {
+                snapshot_from_store(
+                    &snapshot.repository_id,
+                    &store,
+                    remote_fingerprint,
+                    self.clock.now_unix(),
+                )
+            }))
         })();
-        let published = self.publish_locked(
+        let (snapshot, verification_base) = match persist_result {
+            Ok(Some(stored)) => (stored, None),
+            Ok(None) => (snapshot, verification_base),
+            Err(error) => {
+                tracing::warn!("failed to persist repository access evidence: {error}");
+                (snapshot, verification_base)
+            }
+        };
+        Ok(self.publish_locked(
             &mut snapshots,
             repository,
             Some(remote_fingerprint.to_string()),
             snapshot,
-        );
-        if let Err(error) = persist_result {
-            tracing::warn!("failed to persist repository access evidence: {error}");
-        }
-        Ok(published)
+            verification_base,
+        ))
     }
 
     fn publish_probe_error(
@@ -760,7 +841,7 @@ impl RepositoryAccessState {
         repository: &Path,
         repository_id: &str,
         remote_fingerprint: &str,
-        expected_generation: u64,
+        verification: &Verification,
     ) -> Result<(), GitError> {
         let mut snapshots = self
             .snapshots
@@ -768,7 +849,7 @@ impl RepositoryAccessState {
             .map_err(|_| GitError::General("repository access snapshot lock poisoned".into()))?;
         if !snapshots
             .get(repository)
-            .is_some_and(|current| current.snapshot.generation == expected_generation)
+            .is_some_and(|current| current.snapshot.generation == verification.generation)
         {
             return Ok(());
         }
@@ -785,6 +866,7 @@ impl RepositoryAccessState {
                 expires_at: None,
                 last_known_status: None,
             },
+            Some(verification.base.clone()),
         );
         Ok(())
     }
@@ -798,16 +880,55 @@ impl RepositoryAccessState {
     }
 
     fn ensure_installation_id(&self, store_path: &Path) -> Result<String, GitError> {
-        let _guard = self
-            .persistence_lock
-            .lock()
-            .map_err(|_| GitError::General("repository access persistence lock poisoned".into()))?;
+        let _lock = self.lock_store(store_path)?;
         let mut store = read_store_file(store_path)?;
         if store.installation_id.is_empty() {
             store.installation_id = ulid::Ulid::new().to_string().to_lowercase();
             write_store_file(store_path, &store)?;
         }
         Ok(store.installation_id)
+    }
+
+    /// Every read-modify-write of the store holds this lock, so processes of
+    /// one installation do not lose each other's changes. The advisory lock on
+    /// the device-local file next to the store is held only for the local
+    /// file work, never across network IO, and the operating system releases
+    /// it when its holder exits.
+    fn lock_store(&self, store_path: &Path) -> Result<StoreLock<'_>, GitError> {
+        let process = self
+            .persistence_lock
+            .lock()
+            .map_err(|_| GitError::General("repository access persistence lock poisoned".into()))?;
+        let path = store_path.with_extension("lock");
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let file = OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(path)?;
+        let deadline = Instant::now() + STORE_LOCK_WAIT;
+        loop {
+            match file.try_lock() {
+                Ok(()) => {
+                    return Ok(StoreLock {
+                        _process: process,
+                        _file: file,
+                    });
+                }
+                Err(TryLockError::WouldBlock) if Instant::now() < deadline => {
+                    std::thread::sleep(STORE_LOCK_RETRY);
+                }
+                Err(TryLockError::WouldBlock) => {
+                    return Err(GitError::General(
+                        "Repository access state is busy in another Svode process. Try again."
+                            .into(),
+                    ));
+                }
+                Err(TryLockError::Error(error)) => return Err(error.into()),
+            }
+        }
     }
 
     fn probe_lock(&self, repository: &Path) -> Result<Arc<ProbeFlight>, GitError> {
@@ -1667,6 +1788,30 @@ fn automatic_attempt_eligible(
                 && value.status == RepositoryAccessStatus::Writable
                 && value.expires_at.is_some_and(|expiry| expiry <= now)
         }
+    }
+}
+
+fn conclusive(status: RepositoryAccessStatus) -> bool {
+    matches!(
+        status,
+        RepositoryAccessStatus::Writable | RepositoryAccessStatus::ReadOnly
+    )
+}
+
+/// Whether stored evidence of the same remote stays instead of a new result.
+/// Conclusive results are ordered by `checked_at`; conclusive evidence
+/// replaces an inconclusive result of a concurrent verification, and an
+/// inconclusive result never replaces conclusive evidence saved after its
+/// own verification started.
+fn stored_prevails(
+    stored: &PersistedEvidence,
+    result: &PersistedEvidence,
+    verification_base: Option<&Option<PersistedEvidence>>,
+) -> bool {
+    match (conclusive(stored.status), conclusive(result.status)) {
+        (true, false) if verification_base.is_none_or(|base| base.as_ref() != Some(stored)) => true,
+        (false, true) => false,
+        _ => stored.checked_at > result.checked_at,
     }
 }
 

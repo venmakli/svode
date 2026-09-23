@@ -1086,3 +1086,459 @@ fi
     );
     assert_eq!(network_calls(&f), 2);
 }
+
+const CHILD_ROLE: &str = "SVODE_ACCESS_CHILD_ROLE";
+const CHILD_STORE: &str = "SVODE_ACCESS_STORE_PATH";
+const CHILD_WRITES: i64 = 10;
+
+fn child_var(name: &str) -> String {
+    std::env::var(format!("SVODE_ACCESS_CHILD_{name}")).unwrap()
+}
+
+fn spawn_child(role: &str, store: &Path, vars: &[(&str, &str)]) -> std::process::Child {
+    let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+    command
+        .args([
+            "--exact",
+            "git::access::probe_tests::store_child_process",
+            "--nocapture",
+        ])
+        .env(CHILD_ROLE, role)
+        .env(CHILD_STORE, store)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    for (name, value) in vars {
+        command.env(format!("SVODE_ACCESS_CHILD_{name}"), value);
+    }
+    command.spawn().unwrap()
+}
+
+fn child_output(child: std::process::Child) -> String {
+    let output = child.wait_with_output().unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+    assert!(
+        output.status.success() && stdout.contains("1 passed;"),
+        "{stdout}\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    stdout
+}
+
+fn child_line<'a>(stdout: &'a str, key: &str) -> &'a str {
+    stdout
+        .lines()
+        .find_map(|line| line.strip_prefix(&format!("{key}=")))
+        .unwrap()
+}
+
+async fn wait_for_file(path: &Path) {
+    tokio::time::timeout(Duration::from_secs(20), async {
+        while !path.exists() {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .unwrap();
+}
+
+/// One role of a child process of the multi-process store tests; a regular
+/// test run has no role and passes immediately.
+#[tokio::test]
+async fn store_child_process() {
+    let Ok(role) = std::env::var(CHILD_ROLE) else {
+        return;
+    };
+    let store = PathBuf::from(std::env::var(CHILD_STORE).unwrap());
+    if let Ok(start) = std::env::var("SVODE_ACCESS_CHILD_START") {
+        wait_for_file(Path::new(&start)).await;
+    }
+    let state = RepositoryAccessState::new();
+    match role.as_str() {
+        "writer" => {
+            let prefix = child_var("PREFIX");
+            for index in 0..CHILD_WRITES {
+                let repository_id = format!("{prefix}-{index}");
+                state
+                    .persist_and_publish(
+                        Path::new(&format!("/{repository_id}")),
+                        "fixture",
+                        RepositoryAccessSnapshot {
+                            repository_id,
+                            generation: 0,
+                            status: RepositoryAccessStatus::Writable,
+                            reason: None,
+                            checked_at: Some(1_000_000 + index),
+                            expires_at: Some(1_000_000 + index + ACCESS_EVIDENCE_TTL_SECONDS),
+                            last_known_status: None,
+                        },
+                        &store,
+                        None,
+                    )
+                    .unwrap();
+            }
+        }
+        "installation" => {
+            println!(
+                "installation={}",
+                state.ensure_installation_id(&store).unwrap()
+            );
+        }
+        "hold" => {
+            let _lock = state.lock_store(&store).unwrap();
+            fs::write(child_var("MARKER"), "").unwrap();
+            std::thread::sleep(Duration::from_secs(60));
+        }
+        "verify" => {
+            let cli = GitCli::for_test(PathBuf::from(child_var("GIT")));
+            let repo = PathBuf::from(child_var("REPO"));
+            let result = state.verify(&cli, &repo, &store).await.unwrap();
+            println!("result={}", serde_json::to_string(&result).unwrap());
+            // The other process may still be finishing its own verification.
+            let mut seen = state.snapshot(&cli, &repo, &store).await.unwrap();
+            let deadline = Instant::now() + Duration::from_secs(20);
+            while seen.status != RepositoryAccessStatus::Writable {
+                assert!(
+                    Instant::now() < deadline,
+                    "{seen:?}\n{}",
+                    fs::read_to_string(&store).unwrap()
+                );
+                tokio::time::sleep(Duration::from_millis(10)).await;
+                seen = state.snapshot(&cli, &repo, &store).await.unwrap();
+            }
+            println!("seen={}", serde_json::to_string(&seen).unwrap());
+            println!(
+                "gate={}",
+                state.require_mutation(&cli, &repo, &store).await.is_ok()
+            );
+        }
+        other => panic!("unknown child role {other}"),
+    }
+}
+
+#[tokio::test]
+async fn parallel_processes_keep_every_store_change_and_one_installation_id() {
+    for round in 0..3 {
+        let temp = TempDir::new().unwrap();
+        let store = temp.path().join("access.json");
+        let start = temp.path().join("start");
+        let start_path = start.to_str().unwrap();
+        let prefixes: Vec<String> = (0..4).map(|index| format!("r{round}-p{index}")).collect();
+        let writers: Vec<_> = prefixes
+            .iter()
+            .map(|prefix| {
+                spawn_child(
+                    "writer",
+                    &store,
+                    &[("PREFIX", prefix.as_str()), ("START", start_path)],
+                )
+            })
+            .collect();
+        let installations: Vec<_> = (0..4)
+            .map(|_| spawn_child("installation", &store, &[("START", start_path)]))
+            .collect();
+        fs::write(&start, "").unwrap();
+        for writer in writers {
+            child_output(writer);
+        }
+        let ids: Vec<String> = installations
+            .into_iter()
+            .map(|child| child_line(&child_output(child), "installation").to_owned())
+            .collect();
+
+        let persisted = read_store_file(&store).unwrap();
+        assert_eq!(
+            persisted.evidence.len(),
+            prefixes.len() * CHILD_WRITES as usize
+        );
+        for prefix in &prefixes {
+            for index in 0..CHILD_WRITES {
+                let id = format!("{prefix}-{index}");
+                assert_eq!(persisted.evidence[&id].checked_at, 1_000_000 + index);
+                assert!(!persisted.automatic_attempts[&id].consumed);
+            }
+        }
+        assert!(!persisted.installation_id.is_empty());
+        assert!(ids.iter().all(|id| *id == persisted.installation_id));
+    }
+}
+
+#[tokio::test]
+async fn store_lock_holder_exit_and_unavailable_lock() {
+    let f = Fixture::new("").await;
+    let store = f._temp.path().join("access.json");
+    let marker = f._temp.path().join("held");
+    let mut holder = spawn_child("hold", &store, &[("MARKER", marker.to_str().unwrap())]);
+    wait_for_file(&marker).await;
+
+    // An unavailable lock writes no reservation and starts no probe.
+    for automatic in [true, false] {
+        let state = RepositoryAccessState::new();
+        assert!(
+            state
+                .verify_requested(&f.cli, &f.repo, &store, automatic, |_| {})
+                .await
+                .is_err()
+        );
+        assert!(!store.exists());
+        assert_eq!(network_calls(&f), 0);
+    }
+    // Evidence that cannot be stored stays in this process only.
+    let state = RepositoryAccessState::new();
+    let renewed = state
+        .record_writable_evidence(&f.real, &f.repo, &store)
+        .await
+        .unwrap();
+    assert_eq!(renewed.status, RepositoryAccessStatus::Writable);
+    assert!(!store.exists());
+    assert!(
+        state
+            .require_mutation(&f.real, &f.repo, &store)
+            .await
+            .is_ok()
+    );
+
+    // The operating system releases the lock of a holder that exits.
+    holder.kill().unwrap();
+    holder.wait().unwrap();
+    let next = RepositoryAccessState::new();
+    let verified = next.verify(&f.cli, &f.repo, &store).await.unwrap();
+    assert_eq!(verified.status, RepositoryAccessStatus::Writable);
+    assert_eq!(
+        read_store_file(&store).unwrap().evidence[&verified.repository_id].checked_at,
+        verified.checked_at.unwrap()
+    );
+    assert_eq!(network_calls(&f), 2);
+}
+
+#[tokio::test]
+async fn concurrent_process_verification_keeps_conclusive_evidence() {
+    // Both processes read the missing service ref before either pushes; the
+    // second pushes after the first has moved it and loses the lease. With
+    // `last`, the winner persists only after the loser stored its conflict.
+    let fault = r#"
+wait_until() {
+  tries=0
+  until eval "$1"; do
+    tries=$((tries + 1)); [ "$tries" -gt 2000 ] && exit 97
+    sleep 0.01
+  done
+}
+if [ "$1" = push ]; then
+  touch ".git/push-ready-$PPID"
+  wait_until '[ "$(ls .git | grep -c "^push-ready-")" -ge 2 ]'
+  if [ "$SVODE_ACCESS_CHILD_PUSH" = second ]; then
+    wait_until '[ -n "$(ls ../remote.git/refs/svode/access 2>/dev/null | grep -v "\.lock$")" ]'
+  elif [ "$SVODE_ACCESS_CHILD_PERSIST" = last ]; then
+    touch ".git/persist-after-$PPID"
+  fi
+fi
+if [ "$1" = config ] && [ -f ".git/persist-after-$PPID" ]; then
+  rm ".git/persist-after-$PPID"
+  wait_until 'grep -q lease_conflict "$SVODE_ACCESS_STORE_PATH" 2>/dev/null'
+fi
+"#;
+    for winner_persists in ["first", "last"] {
+        let f = Fixture::new(fault).await;
+        let store = f._temp.path().join("access.json");
+        let git = f._temp.path().join("git-fault");
+        let (git, repo) = (git.to_str().unwrap(), f.repo.to_str().unwrap());
+        let winner = spawn_child(
+            "verify",
+            &store,
+            &[
+                ("GIT", git),
+                ("REPO", repo),
+                ("PUSH", "first"),
+                ("PERSIST", winner_persists),
+            ],
+        );
+        let loser = spawn_child(
+            "verify",
+            &store,
+            &[("GIT", git), ("REPO", repo), ("PUSH", "second")],
+        );
+        let (winner, loser) = (child_output(winner), child_output(loser));
+        let parse = |stdout: &str, key: &str| {
+            serde_json::from_str::<RepositoryAccessSnapshot>(child_line(stdout, key)).unwrap()
+        };
+
+        let won = parse(&winner, "result");
+        assert_eq!(won.status, RepositoryAccessStatus::Writable);
+        let lost = parse(&loser, "result");
+        if winner_persists == "last" {
+            assert_eq!(lost.reason, Some(RepositoryAccessReason::LeaseConflict));
+        } else {
+            assert_eq!(lost.checked_at, won.checked_at);
+        }
+        for stdout in [&winner, &loser] {
+            assert_eq!(parse(stdout, "seen").checked_at, won.checked_at);
+            assert_eq!(child_line(stdout, "gate"), "true");
+        }
+        let persisted = read_store_file(&store).unwrap();
+        let evidence = &persisted.evidence[&won.repository_id];
+        assert_eq!(
+            (evidence.status, Some(evidence.checked_at)),
+            (RepositoryAccessStatus::Writable, won.checked_at)
+        );
+        assert!(!persisted.automatic_attempts[&won.repository_id].consumed);
+        // One read and one push per process, no automatic retry.
+        assert_eq!(network_calls(&f), 4);
+        assert!(
+            RepositoryAccessState::new()
+                .require_mutation(&f.real, &f.repo, &store)
+                .await
+                .is_ok()
+        );
+    }
+}
+
+#[tokio::test]
+async fn concurrent_results_keep_conclusive_evidence_ordered_by_checked_at() {
+    let f = Fixture::new("").await;
+    let store = f._temp.path().join("access.json");
+    let clock = Arc::new(AutoClock::new(1_000_400));
+    let repository = resolve_repository(&f.real, &f.repo).await.unwrap();
+    let RemoteInspection::Remote(remote) = inspect_remote(&f.real, &repository).await.unwrap()
+    else {
+        panic!("fixture has an origin");
+    };
+    let repository_id = opaque_id("access-repo", &repository.to_string_lossy());
+    let stored = || read_store_file(&store).unwrap().evidence[&repository_id].clone();
+    let consumed = || read_store_file(&store).unwrap().automatic_attempts[&repository_id].consumed;
+    // `base` is the stored evidence an own verification started from; `None`
+    // records a positive push outcome.
+    let result = |state: &RepositoryAccessState,
+                  status: RepositoryAccessStatus,
+                  reason: Option<RepositoryAccessReason>,
+                  at: i64,
+                  base: Option<Option<PersistedEvidence>>| {
+        let snapshot = RepositoryAccessSnapshot {
+            repository_id: repository_id.clone(),
+            generation: 0,
+            status,
+            reason,
+            checked_at: Some(at),
+            expires_at: conclusive(status).then_some(at + ACCESS_EVIDENCE_TTL_SECONDS),
+            last_known_status: None,
+        };
+        let verification = base.map(|base| Verification {
+            generation: state
+                .publish(
+                    &repository,
+                    Some(remote.fingerprint.clone()),
+                    RepositoryAccessSnapshot {
+                        status: RepositoryAccessStatus::Checking,
+                        reason: None,
+                        checked_at: None,
+                        expires_at: None,
+                        ..snapshot.clone()
+                    },
+                )
+                .unwrap()
+                .generation,
+            base,
+        });
+        state
+            .persist_and_publish(
+                &repository,
+                &remote.fingerprint,
+                snapshot,
+                &store,
+                verification.as_ref(),
+            )
+            .unwrap()
+    };
+    let lease = Some(RepositoryAccessReason::LeaseConflict);
+    let writable = RepositoryAccessStatus::Writable;
+    let unknown = RepositoryAccessStatus::Unknown;
+
+    // The loser of a concurrent verification stores its conflict last.
+    let (desktop, cli) = (
+        RepositoryAccessState::with_clock(clock.clone()),
+        RepositoryAccessState::with_clock(clock.clone()),
+    );
+    assert_eq!(
+        result(&desktop, writable, None, 1_000_100, Some(None)).checked_at,
+        Some(1_000_100)
+    );
+    let kept = result(&cli, unknown, lease, 1_000_110, Some(None));
+    assert_eq!((kept.status, kept.checked_at), (writable, Some(1_000_100)));
+    assert_eq!(stored().checked_at, 1_000_100);
+    assert!(!consumed());
+    for owner in [&desktop, &cli] {
+        assert!(
+            owner
+                .require_mutation(&f.cli, &f.repo, &store)
+                .await
+                .is_ok()
+        );
+    }
+
+    // The loser stores its newer conflict first; the winner still replaces it,
+    // and the loser's own newer conflict yields to the saved success.
+    fs::remove_file(&store).unwrap();
+    let (desktop, cli) = (
+        RepositoryAccessState::with_clock(clock.clone()),
+        RepositoryAccessState::with_clock(clock.clone()),
+    );
+    assert_eq!(
+        result(&cli, unknown, lease, 1_000_210, Some(None)).reason,
+        lease
+    );
+    result(&desktop, writable, None, 1_000_200, Some(None));
+    assert_eq!(
+        (stored().status, stored().checked_at),
+        (writable, 1_000_200)
+    );
+    assert!(!consumed());
+    let seen = cli.snapshot(&f.cli, &f.repo, &store).await.unwrap();
+    assert_eq!((seen.status, seen.checked_at), (writable, Some(1_000_200)));
+    assert!(cli.require_mutation(&f.cli, &f.repo, &store).await.is_ok());
+    // Foreign success leaves no automatic attempt to spend.
+    assert_eq!(activate(&f, &cli, &store).await, seen);
+
+    // A verification started after the success was saved may replace it.
+    let offline = result(
+        &cli,
+        unknown,
+        Some(RepositoryAccessReason::OfflineOrTimeout),
+        1_000_220,
+        Some(Some(stored())),
+    );
+    assert_eq!(offline.checked_at, Some(1_000_220));
+    assert!(consumed());
+    for owner in [&desktop, &cli] {
+        assert_eq!(
+            owner
+                .snapshot(&f.cli, &f.repo, &store)
+                .await
+                .unwrap()
+                .reason,
+            Some(RepositoryAccessReason::OfflineOrTimeout)
+        );
+    }
+
+    // Conclusive results are ordered by `checked_at`, whatever the arrival.
+    let read_only = RepositoryAccessStatus::ReadOnly;
+    result(&desktop, read_only, None, 1_000_300, Some(Some(stored())));
+    let older = result(&cli, writable, None, 1_000_250, None);
+    assert_eq!(
+        (older.status, older.checked_at),
+        (read_only, Some(1_000_300))
+    );
+    assert_eq!(stored().status, read_only);
+    assert!(consumed());
+    assert!(cli.require_mutation(&f.cli, &f.repo, &store).await.is_err());
+    result(&cli, writable, None, 1_000_350, None);
+    assert_eq!(
+        (stored().status, stored().checked_at),
+        (writable, 1_000_350)
+    );
+    assert!(
+        desktop
+            .require_mutation(&f.cli, &f.repo, &store)
+            .await
+            .is_ok()
+    );
+    assert_eq!(network_calls(&f), 0);
+}
