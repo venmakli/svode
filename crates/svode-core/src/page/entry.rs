@@ -5,7 +5,7 @@ pub use model::{
     Cover, DeleteResult, Entry, EntryDetailForm, EntryDetailState, EntryMeta, EntryWarning,
     WriteResult,
 };
-pub use persistence::{entry_from_source, read, read_with_git_dates};
+pub use persistence::{entry_from_source, read, read_with_git_dates, replaced_by_staged_copy};
 
 use std::collections::HashMap;
 use std::fs;
@@ -438,6 +438,7 @@ fn create_source_with_options_inner(
         path: rel_path,
         warnings,
         name_conflict: None,
+        source_version: None,
     })
 }
 
@@ -779,6 +780,7 @@ pub fn write_under_name_lock(
             modified_sources: Vec::new(),
             write_nonce,
             warnings: Vec::new(),
+            source_version: None,
         });
     }
 
@@ -831,6 +833,7 @@ pub fn write_under_name_lock(
                 modified_sources: Vec::new(),
                 write_nonce,
                 warnings: Vec::new(),
+                source_version: None,
             });
         }
     }
@@ -852,6 +855,7 @@ pub fn write_under_name_lock(
             modified_sources: Vec::new(),
             write_nonce,
             warnings: Vec::new(),
+            source_version: None,
         });
     }
 
@@ -1037,6 +1041,7 @@ pub fn write_under_name_lock(
         modified_files,
         write_nonce,
         warnings,
+        source_version: None,
     })
 }
 
@@ -1078,6 +1083,7 @@ pub fn replace_created_body(space: &str, path: &str, body: &str) -> Result<Entry
         path: path.to_string(),
         warnings: Vec::new(),
         name_conflict: None,
+        source_version: None,
     })
 }
 
@@ -1116,6 +1122,7 @@ fn update_field_inner(
                 path,
                 warnings: Vec::new(),
                 name_conflict,
+                source_version: None,
             });
         }
     }
@@ -1177,6 +1184,7 @@ fn update_field_inner(
         path: path.to_string(),
         warnings: Vec::new(),
         name_conflict,
+        source_version: None,
     })
 }
 

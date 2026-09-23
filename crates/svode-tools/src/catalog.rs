@@ -59,7 +59,7 @@ pub fn definitions() -> Vec<ToolDefinition> {
         ),
         def(
             "read_page",
-            "Read a standalone Svode Page by repo-relative Markdown path. Collection items and owner README content use their canonical tools.",
+            "Read a standalone Svode Page by repo-relative Markdown path. Returns sourceVersion, the token a later write_page of this Page requires. Collection items and owner README content use their canonical tools.",
             schema(
                 &[
                     space_id(),
@@ -72,15 +72,16 @@ pub fn definitions() -> Vec<ToolDefinition> {
         ),
         def(
             "write_page",
-            "Replace a standalone Page body. Use this instead of direct filesystem writes so Svode preserves metadata, validates paths, and reports changedPaths. For new local media, call import_asset first and insert its returned markdownUrl. Does not autocommit.",
+            "Replace a standalone Page body; Svode preserves its metadata and validates the path. Pass sourceVersion from your last read of this source or from the previous write of it; a changed source fails with SOURCE_STALE (read again and reapply your change), SOURCE_BUSY means another Svode operation is writing (retry later). Returns the canonical path, changedPaths and the new sourceVersion. With file access, edit the body below the frontmatter with your own tools instead; this tool is the path for clients without file access. For new local media, call import_asset first and insert its returned markdownUrl. Does not autocommit.",
             schema(
                 &[
                     space_id(),
                     markdown_path_req("path", "Existing standalone Page path."),
                     str_req("content"),
                     str_opt("title"),
+                    source_version_req(),
                 ],
-                &["path", "content"],
+                &["path", "content", "sourceVersion"],
             ),
             write_ann(false, None),
             None,
@@ -139,17 +140,22 @@ pub fn definitions() -> Vec<ToolDefinition> {
         ),
         def(
             "read_space_readme",
-            "Read the selected Project/Space owner's README content without classifying it as a Page.",
+            "Read the selected Project/Space owner's README content without classifying it as a Page. Returns sourceVersion, the token a later write_space_readme requires.",
             schema(&[space_id()], &[]),
             read_only_ann(),
             None,
         ),
         def(
             "write_space_readme",
-            "Replace the selected Project/Space owner's README body. Does not autocommit.",
+            "Replace the selected Project/Space owner's README body. Pass sourceVersion from your last read of this source or from the previous write of it; a changed source fails with SOURCE_STALE (read again and reapply your change), SOURCE_BUSY means another Svode operation is writing (retry later). Returns the canonical path, changedPaths and the new sourceVersion. With file access, edit the body below the frontmatter with your own tools instead; this tool is the path for clients without file access. Does not autocommit.",
             schema(
-                &[space_id(), str_req("content"), str_opt("title")],
-                &["content"],
+                &[
+                    space_id(),
+                    str_req("content"),
+                    str_opt("title"),
+                    source_version_req(),
+                ],
+                &["content", "sourceVersion"],
             ),
             write_ann(false, None),
             None,
@@ -172,7 +178,7 @@ pub fn definitions() -> Vec<ToolDefinition> {
         ),
         def(
             "read_collection_readme",
-            "Read one Collection owner's README content without classifying it as a Page or Collection item.",
+            "Read one Collection owner's README content without classifying it as a Page or Collection item. Returns sourceVersion, the token a later write_collection_readme requires.",
             schema(
                 &[space_id(), collection_path_req("collectionPath")],
                 &["collectionPath"],
@@ -182,15 +188,16 @@ pub fn definitions() -> Vec<ToolDefinition> {
         ),
         def(
             "write_collection_readme",
-            "Replace one Collection owner's README body. Does not autocommit.",
+            "Replace one Collection owner's README body. Pass sourceVersion from your last read of this source or from the previous write of it; a changed source fails with SOURCE_STALE (read again and reapply your change), SOURCE_BUSY means another Svode operation is writing (retry later). Returns the canonical path, changedPaths and the new sourceVersion. With file access, edit the body below the frontmatter with your own tools instead; this tool is the path for clients without file access. Does not autocommit.",
             schema(
                 &[
                     space_id(),
                     collection_path_req("collectionPath"),
                     str_req("content"),
                     str_opt("title"),
+                    source_version_req(),
                 ],
-                &["collectionPath", "content"],
+                &["collectionPath", "content", "sourceVersion"],
             ),
             write_ann(false, None),
             None,
@@ -477,7 +484,7 @@ pub fn definitions() -> Vec<ToolDefinition> {
         ),
         def(
             "read_collection_item",
-            "Read one item inside a schema-backed Collection by its Markdown path.",
+            "Read one item inside a schema-backed Collection by its Markdown path. Returns sourceVersion, the token a later update_collection_item_body of this item requires.",
             schema(
                 &[
                     space_id(),
@@ -504,14 +511,15 @@ pub fn definitions() -> Vec<ToolDefinition> {
         ),
         def(
             "update_collection_item_body",
-            "Replace one Collection item's body. For new local media, call import_asset first and insert its returned markdownUrl. Does not autocommit.",
+            "Replace one Collection item's body; its fields stay unchanged. Pass sourceVersion from your last read of this source or from the previous write of it; a changed source fails with SOURCE_STALE (read again and reapply your change), SOURCE_BUSY means another Svode operation is writing (retry later). Returns the canonical path, changedPaths and the new sourceVersion. With file access, edit the body below the frontmatter with your own tools instead; this tool is the path for clients without file access. For new local media, call import_asset first and insert its returned markdownUrl. Does not autocommit.",
             schema(
                 &[
                     space_id(),
                     markdown_path_req("path", "Collection item path."),
                     str_req("body"),
+                    source_version_req(),
                 ],
-                &["path", "body"],
+                &["path", "body", "sourceVersion"],
             ),
             write_ann(false, None),
             None,
@@ -829,11 +837,14 @@ Metadata and fields:
 - System metadata is title, icon, description, cover, created, and updated. Do not create custom columns for these. For a Collection item, update_collection_item_fields accepts title, icon, description, and cover in the same atomic map as custom fields; created and updated remain read-only.
 - Use create_page with parentPath + title for both standalone Pages and Collection items. Put initial Collection values in properties; never pass system metadata keys inside properties. Always continue with the returned canonical path.
 - Collection identity lives in README.md owner metadata. Schema.yaml stores columns, views, system field labels, and template settings. Use the Collection README tools for that owner content.
-- Prefer domain tools over direct filesystem writes: update_page_metadata for standalone Page metadata, owner-specific metadata tools for Space/Collection README content, schema tools for columns/views, write_page or update_collection_item_body for body replacement, and update_collection_item_fields for atomic Collection item metadata/property changes.
+- Use domain tools, not direct filesystem writes, for everything that changes frontmatter, names, structure, schema or system folders: update_page_metadata for standalone Page metadata, owner-specific metadata tools for Space/Collection README content, schema tools for columns/views, and update_collection_item_fields for atomic Collection item metadata/property changes. The body below the frontmatter is the exception described under Body saves.
 
 Body saves:
+- With file access, edit the text below the frontmatter of an existing Page, Collection item or owner README with your own tools: keep the frontmatter byte for byte, the line endings and the file location. Svode picks the edit up. write_page, update_collection_item_body, write_space_readme and write_collection_readme are the path for clients without file access.
+- Every body write requires sourceVersion: the token returned by the read of that source (read_page, read_collection_item, read_space_readme, read_collection_readme) or by the previous write, create, metadata or fields result of the same source. Pass it whole.
+- SOURCE_STALE means the source changed after you read it: read it again and reapply your change to the current text; never resend the old body with the new version. SOURCE_BUSY means another Svode operation is writing the same repository: retry later. Neither writes anything. If a response is lost, read the source and compare its sourceVersion before retrying.
 - write_page, write_space_readme and write_collection_readme treat missing/null title as body-only; a title string saves body and title together using managed naming. update_collection_item_body is always body-only.
-- A successful body save returns the actual canonical path, newPath on rename, actual changedPaths (empty for no-op), and warnings. Collection writes also return the canonical collectionPath. Use these returned paths for subsequent calls.
+- A successful body save returns the actual canonical path, newPath on rename, actual changedPaths (empty for no-op), warnings and the sourceVersion of the result. Collection writes also return the canonical collectionPath. Use these returned paths and versions for subsequent calls.
 - A rejected combined body/title save restores the complete affected source set. PAGE_WRITE_RECOVERY_FAILED reports failed restoration and affected paths; inspect them before retrying. Filename warnings and projection_update_failed are applied outcomes: do not repeat the write as though it failed. Git commit remains separate.
 
 Structural work and integrity:
@@ -1105,6 +1116,17 @@ fn routine_definition_req() -> (&'static str, Value) {
                 "body": { "type": "string" }
             },
             "required": ["name", "trigger", "action", "body"]
+        }),
+    )
+}
+
+fn source_version_req() -> (&'static str, Value) {
+    (
+        "sourceVersion",
+        json!({
+            "type": "string",
+            "minLength": 1,
+            "description": "Opaque sourceVersion returned by the read of this source or by its previous write, create, metadata or fields result. Pass it whole. A mismatch fails with SOURCE_STALE without writing."
         }),
     )
 }

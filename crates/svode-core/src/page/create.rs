@@ -399,6 +399,10 @@ where
             }
             checkpoint("body")?;
             page.warnings.extend(warnings);
+            page.source_version = Some(crate::page::current_source_version(
+                Path::new(&request.space),
+                &page.path,
+            )?);
             Ok(page)
         },
         PageError::from,

@@ -4,6 +4,7 @@ pub const S3_AGENT: &str = crate::storage::s3::CONFIG_REL;
 
 pub const ENTRIES: &[&str] = &[
     ".svode/local.json",
+    crate::git::write_guard::WRITE_LOCK_FILE,
     S3_AGENT,
     ".svode/variables.*",
     ".svode/*.db*",

@@ -198,9 +198,67 @@ pub fn has_git() -> bool {
     Command::new("git").arg("--version").output().is_ok()
 }
 
+/// Read command of a body write without `--source-version`: the same
+/// selectors, without body and title.
+fn source_read(args: &[&str]) -> Option<Vec<String>> {
+    if args.contains(&"--source-version") {
+        return None;
+    }
+    let write = args.iter().position(|arg| *arg == "write")?;
+    let noun = args[..write]
+        .iter()
+        .rev()
+        .find(|arg| !arg.starts_with('-'))
+        .copied()?;
+    if !matches!(noun, "page" | "item" | "readme") {
+        return None;
+    }
+    let mut read = Vec::new();
+    let mut rest = args.iter();
+    while let Some(arg) = rest.next() {
+        match *arg {
+            "write" => read.push("read".to_string()),
+            "--body" | "--body-file" | "--title" => {
+                rest.next();
+            }
+            "--path" | "--collection" | "--space" | "--project" => {
+                read.push(arg.to_string());
+                read.extend(rest.next().map(|value| value.to_string()));
+            }
+            arg => read.push(arg.to_string()),
+        }
+    }
+    Some(read)
+}
+
+/// Arguments of one command; a body write without `--source-version` runs
+/// the safe cycle of a caller: it reads the source first and passes the
+/// `sourceVersion` of that read (a placeholder when the read fails).
+async fn with_source_version(host: &WriteHost, cwd: &Path, args: &[&str]) -> Vec<String> {
+    let mut args = args.iter().map(|arg| arg.to_string()).collect::<Vec<_>>();
+    let refs = args.iter().map(String::as_str).collect::<Vec<_>>();
+    if let Some(read) = source_read(&refs) {
+        // The read belongs to the caller, not to the audited command.
+        let asked = std::mem::take(&mut *host.asked.lock().unwrap());
+        let mut raw = vec![OsString::from("svode"), OsString::from("--json")];
+        raw.extend(read.iter().map(OsString::from));
+        let version = match svode_cli::parse(&raw) {
+            Ok(cli) => serde_json::from_str::<Value>(&svode_cli::run(host, cli, cwd).await.stdout)
+                .ok()
+                .and_then(|value| value["sourceVersion"].as_str().map(str::to_string)),
+            Err(_) => None,
+        };
+        *host.asked.lock().unwrap() = asked;
+        args.push("--source-version".into());
+        args.push(version.unwrap_or_else(|| "unread".into()));
+    }
+    args
+}
+
 /// Runs one JSON command through the public frame; returns the exit code
 /// and the single stdout object.
 pub async fn svode(host: &WriteHost, cwd: &Path, args: &[&str]) -> (i32, Value) {
+    let args = with_source_version(host, cwd, args).await;
     let mut raw = vec![OsString::from("svode"), OsString::from("--json")];
     raw.extend(args.iter().map(OsString::from));
     let cli = svode_cli::parse(&raw).unwrap_or_else(|rendered| panic!("{args:?}: {rendered:?}"));
@@ -213,6 +271,7 @@ pub async fn svode(host: &WriteHost, cwd: &Path, args: &[&str]) -> (i32, Value) 
 }
 
 pub async fn human(host: &WriteHost, cwd: &Path, args: &[&str]) -> svode_cli::Rendered {
+    let args = with_source_version(host, cwd, args).await;
     let mut raw = vec![OsString::from("svode")];
     raw.extend(args.iter().map(OsString::from));
     let cli = svode_cli::parse(&raw).unwrap();

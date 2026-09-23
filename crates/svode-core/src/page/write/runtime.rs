@@ -72,7 +72,14 @@ where
                 })
                 .map_err(Err::from)
         },
-        |error| Err::from(PageError::from(error)),
+        |error| {
+            Err::from(match error {
+                crate::git::GitError::SourceBusy { .. } => {
+                    PageError::SourceBusy { path: path.clone() }
+                }
+                error => PageError::from(error),
+            })
+        },
     )
     .await?;
     if outcome.changed_paths.is_empty() {

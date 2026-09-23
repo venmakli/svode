@@ -23,11 +23,12 @@ pub use error::PageError;
 pub use target::{
     ProjectConfig, ResolvedSpaceTarget, SpaceReadiness, SpaceReference, project_for_directory,
     read_project_config, read_standalone_page, ready_child_space_for_directory,
-    registered_space_dirs, registered_spaces, resolve_space_target, space_reference_status,
+    registered_space_dirs, registered_spaces, resolve_owned_page_target, resolve_space_target,
+    space_reference_status,
 };
 
 pub use source::{
     ColorName, Cover, PageSource, PageSourceError, PageSourceMeta, PageSourceWarning,
-    ParsedMarkdown, ResolvedPageTarget, SourceVersion, fallback_title, filesystem_dates,
-    parse_markdown, read_page_source, resolve_page_target,
+    ParsedMarkdown, ResolvedPageTarget, SourceVersion, current_source_version, fallback_title,
+    filesystem_dates, parse_markdown, read_page_source, resolve_page_target,
 };

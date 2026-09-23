@@ -909,7 +909,35 @@ pub fn local_repository_root(path: &Path) -> Result<PathBuf, GitError> {
     }
 }
 
+/// Runs the source phase of a managed mutation over its authorized
+/// touched-set: it holds the write guard of every repository of `paths`
+/// and rechecks later writes against these repositories.
 pub async fn scope_authorized_mutation_paths<F, T, E>(
+    paths: Vec<PathBuf>,
+    future: F,
+    map_error: impl Fn(GitError) -> E,
+) -> Result<T, E>
+where
+    F: std::future::Future<Output = Result<T, E>>,
+{
+    let repositories = paths
+        .iter()
+        .map(|path| local_repository_root(path))
+        .collect::<Result<std::collections::BTreeSet<_>, _>>()
+        .map_err(&map_error)?;
+    let authorized = repositories.iter().cloned().collect();
+    super::write_guard::scope(
+        repositories,
+        &paths,
+        AUTHORIZED_MUTATION_REPOSITORIES.scope(Some(Arc::new(authorized)), future),
+        map_error,
+    )
+    .await
+}
+
+/// Runs an operation that is not itself a source write, such as a Routine
+/// launch, with the repositories authorized for it; it takes no write guard.
+pub async fn scope_authorized_paths<F, T, E>(
     paths: Vec<PathBuf>,
     future: F,
     map_error: impl Fn(GitError) -> E,

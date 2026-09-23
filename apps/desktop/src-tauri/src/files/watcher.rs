@@ -241,12 +241,17 @@ fn process_published_events(
     let mut agent_actor_owners = BTreeSet::new();
     let mut attachment_invalidations =
         BTreeMap::<String, BTreeMap<String, AttachmentInvalidationKind>>::new();
+    // Sources that a Svode write of any process replaced in place.
+    let mut replaced_in_place = BTreeSet::new();
     let space_root = Path::new(space);
     let policy = TreeIgnorePolicy::from_space_root(space_root);
     let skip_dirs = child_folder_names(space_root);
     for event in events {
         for (path_index, path) in event.paths.iter().enumerate() {
             let event_kind = event_kind_for_path(event, path_index);
+            if let Some(source) = svode_core::page::entry::replaced_by_staged_copy(path) {
+                replaced_in_place.insert(source);
+            }
             if path
                 .parent()
                 .is_some_and(|parent| parent.file_name().is_some_and(|name| name == ".svode"))
@@ -336,6 +341,7 @@ fn process_published_events(
         }
     }
 
+    report_replacements_as_changes(&mut seen, &replaced_in_place);
     let (current_root_schema_present, root_schema_changed) =
         queue_root_schema_transition(&mut seen, space_root, *root_schema_present);
     *root_schema_present = current_root_schema_present;
@@ -964,6 +970,23 @@ fn repo_relative_from_path_or_root(path: &Path) -> Option<String> {
     }
 }
 
+/// A source replaced in place from a staged copy existed before and still
+/// exists: backends that report the rename as a creation of the source get
+/// a change, so the editor filters its own write or reloads another one.
+fn report_replacements_as_changes(
+    seen: &mut HashMap<PathBuf, EventKind>,
+    replaced_in_place: &BTreeSet<PathBuf>,
+) {
+    for source in replaced_in_place {
+        if let Some(kind) = seen.get_mut(source)
+            && matches!(kind, EventKind::Create(_))
+            && source.is_file()
+        {
+            *kind = EventKind::Modify(ModifyKind::Data(notify::event::DataChange::Content));
+        }
+    }
+}
+
 fn merge_event_kind(current: EventKind, next: EventKind) -> EventKind {
     match next {
         EventKind::Remove(_) => next,
@@ -1263,6 +1286,92 @@ mod tests {
                 "{relative}"
             );
         }
+    }
+
+    /// A managed write replaces the source from a staged sibling copy. The
+    /// OS events of that replacement must still reach the editor as one
+    /// `file:changed` of the Page, which carries the write nonce, and the
+    /// hidden staged copy must produce no content-tree or attachment event.
+    #[test]
+    fn an_atomic_managed_write_is_a_page_change_for_the_watcher() {
+        let tmp = TempDir::new().unwrap();
+        let space = tmp.path().canonicalize().unwrap();
+        let page = space.join("note.md");
+        std::fs::write(&page, "---\ntitle: Note\n---\nOld body\n").unwrap();
+
+        let (tx, rx) = mpsc::channel::<Event>();
+        let mut watcher = notify::recommended_watcher(move |res: Result<Event, notify::Error>| {
+            if let Ok(event) = res {
+                let _ = tx.send(event);
+            }
+        })
+        .unwrap();
+        watcher.watch(&space, RecursiveMode::Recursive).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        while rx.try_recv().is_ok() {}
+
+        svode_core::page::entry::write_under_name_lock(
+            space.to_str().unwrap(),
+            "note.md",
+            "New body\n",
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            true,
+            None,
+            None,
+        )
+        .unwrap();
+        let mut events = Vec::new();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(1500);
+        while let Some(left) = deadline.checked_duration_since(std::time::Instant::now()) {
+            match rx.recv_timeout(left) {
+                Ok(event) => events.push(event),
+                Err(_) => break,
+            }
+        }
+        drop(watcher);
+
+        let policy = TreeIgnorePolicy::from_space_root(&space);
+        let skip_dirs = child_folder_names(&space);
+        let mut seen: HashMap<PathBuf, EventKind> = HashMap::new();
+        let mut replaced = BTreeSet::new();
+        for event in &events {
+            for (index, path) in event.paths.iter().enumerate() {
+                let kind = event_kind_for_path(event, index);
+                replaced.extend(svode_core::page::entry::replaced_by_staged_copy(path));
+                assert!(
+                    classify_attachment_invalidations(&space, path, &kind)
+                        .iter()
+                        .all(|invalidation| invalidation.path == "note.md"),
+                    "{path:?}: {kind:?}"
+                );
+                if classify_content_tree_event(&space, &policy, &skip_dirs, path, &kind).is_some() {
+                    seen.entry(path.clone())
+                        .and_modify(|current| *current = merge_event_kind(*current, kind))
+                        .or_insert(kind);
+                }
+            }
+        }
+        report_replacements_as_changes(&mut seen, &replaced);
+        assert_eq!(
+            seen.keys().cloned().collect::<Vec<_>>(),
+            vec![page.clone()],
+            "{events:?}"
+        );
+        assert!(
+            matches!(seen[&page], EventKind::Modify(_)),
+            "{:?}: {events:?}",
+            seen[&page]
+        );
+        assert!(
+            std::fs::read_to_string(&page)
+                .unwrap()
+                .ends_with("New body\n")
+        );
     }
 
     #[test]

@@ -7,8 +7,8 @@ use crate::index::backlinks::ModifiedLinkSource;
 use crate::index::backlinks::{
     link_stem, rebase_source_links_between_moved_tree, replace_link_urls_between,
 };
-use crate::page::PageError;
 use crate::page::entry::{self, EntryWarning, WriteResult};
+use crate::page::{PageError, SourceVersion, current_source_version};
 
 mod runtime;
 pub use runtime::{PageRuntime, write};
@@ -24,6 +24,10 @@ pub struct PageWrite<'a> {
     pub field_batch: Option<PreparedEntryFieldBatch>,
     pub skip_rename: bool,
     pub project: Option<&'a str>,
+    /// Version of the source the caller prepared `content` from. The write
+    /// fails with `SourceStale` when the target changed since; `None` for
+    /// intents without a caller baseline.
+    pub source_version: Option<&'a SourceVersion>,
 }
 
 fn requested_title<'a>(request: &'a PageWrite<'_>) -> Option<&'a str> {
@@ -155,6 +159,13 @@ impl SourceSnapshot {
 
 fn apply_sources(request: PageWrite<'_>, plan: WritePlan) -> Result<PageWriteOutcome, PageError> {
     crate::page::naming::with_document_name_lock(request.space, || {
+        if let Some(expected) = request.source_version
+            && current_source_version(Path::new(request.space), request.path)? != *expected
+        {
+            return Err(PageError::SourceStale {
+                path: request.path.to_string(),
+            });
+        }
         let title = requested_title(&request).map(str::to_string);
         let current = entry::planned_write_rename(
             request.space,
@@ -317,12 +328,17 @@ fn apply_sources(request: PageWrite<'_>, plan: WritePlan) -> Result<PageWriteOut
                 changed_paths,
             })
         })();
-        operation.map_err(|error| {
+        let mut outcome = operation.map_err(|error| {
             if had_naming_intent {
                 crate::page::filename::mark_managed_naming_intent(request.space, request.path);
             }
             snapshot.rollback(error)
-        })
+        })?;
+        let current = outcome.result.new_path.as_deref().unwrap_or(request.path);
+        outcome.result.source_version = current_source_version(Path::new(request.space), current)
+            .ok()
+            .map(|version| version.as_str().to_string());
+        Ok(outcome)
     })
 }
 

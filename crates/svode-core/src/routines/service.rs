@@ -561,6 +561,7 @@ pub async fn create_managed<H: RoutineMutationHost>(
     let repository = host.mutation_repository(&owner).await?;
     let lock = context.repositories.get_lock(&repository).await;
     let _guard = lock.lock().await;
+    let _write_guard = source_write_guard(&repository, &owner).await?;
     let owner = revalidate_owner(host, &owner, &repository).await?;
     host.authorize_mutation(&repository).await?;
 
@@ -654,6 +655,7 @@ pub async fn update_managed<H: RoutineMutationHost>(
     let repository = host.mutation_repository(&owner).await?;
     let lock = context.repositories.get_lock(&repository).await;
     let _guard = lock.lock().await;
+    let _write_guard = source_write_guard(&repository, &owner).await?;
     let owner = revalidate_owner(host, &owner, &repository).await?;
     host.authorize_mutation(&repository).await?;
 
@@ -842,6 +844,7 @@ pub async fn delete_managed<H: RoutineMutationHost>(
     let repository = host.mutation_repository(&owner).await?;
     let lock = context.repositories.get_lock(&repository).await;
     let _guard = lock.lock().await;
+    let _write_guard = source_write_guard(&repository, &owner).await?;
     let owner = revalidate_owner(host, &owner, &repository).await?;
     host.authorize_mutation(&repository).await?;
 
@@ -1113,6 +1116,19 @@ fn ensure_routines_directory(directory: &Path) -> Result<(), RoutineServiceError
         }
         Err(error) => Err(RoutineServiceError::Io(error)),
     }
+}
+
+/// Write guard of the owner repository for the source phase of one
+/// definition change.
+async fn source_write_guard(
+    repository: &Path,
+    owner: &ResolvedRoutineOwner,
+) -> Result<crate::git::write_guard::WriteGuard, RoutineServiceError> {
+    Ok(crate::git::write_guard::acquire(
+        &std::collections::BTreeSet::from([repository.to_path_buf()]),
+        &[owner.routines_dir()],
+    )
+    .await?)
 }
 
 fn write_new_file(path: &Path, bytes: &[u8]) -> Result<(), std::io::Error> {

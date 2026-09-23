@@ -17,7 +17,8 @@ pub struct Case {
     /// from the fixture input directory.
     pub argv: &'static [&'static str],
     /// Catalog tools the invocation asks the host for; empty for the
-    /// source-only `page read` and the CLI-owned `doctor`.
+    /// CLI-owned `doctor`. Body writes pass a `sourceVersion` of no read,
+    /// so a served write is refused as stale before any effect.
     pub tools: &'static [&'static str],
 }
 
@@ -29,6 +30,9 @@ const fn case(
     Case { name, argv, tools }
 }
 
+/// `--source-version` of no read of the addressed source.
+pub const STALE: &str = "stale-source-version";
+
 pub const CASES: &[Case] = &[
     case("project info", &["project", "info"], &["get_project_info"]),
     case("space list", &["space", "list"], &["list_spaces"]),
@@ -39,7 +43,15 @@ pub const CASES: &[Case] = &[
     ),
     case(
         "space readme write",
-        &["space", "readme", "write", "--body-file", "body.md"],
+        &[
+            "space",
+            "readme",
+            "write",
+            "--body-file",
+            "body.md",
+            "--source-version",
+            STALE,
+        ],
         &["write_space_readme"],
     ),
     case(
@@ -53,7 +65,11 @@ pub const CASES: &[Case] = &[
         &["reorder_spaces"],
     ),
     case("page list", &["page", "list"], &["list_pages"]),
-    case("page read", &["page", "read", "--path", "notes.md"], &[]),
+    case(
+        "page read",
+        &["page", "read", "--path", "notes.md"],
+        &["read_page"],
+    ),
     case(
         "page create",
         &[
@@ -79,6 +95,8 @@ pub const CASES: &[Case] = &[
             "notes.md",
             "--body-file",
             "body.md",
+            "--source-version",
+            STALE,
         ],
         &["write_page"],
     ),
@@ -133,6 +151,8 @@ pub const CASES: &[Case] = &[
             "tasks",
             "--body",
             "Tasks",
+            "--source-version",
+            STALE,
         ],
         &["write_collection_readme"],
     ),
@@ -274,6 +294,8 @@ pub const CASES: &[Case] = &[
             "tasks/alpha.md",
             "--body-file",
             "body.md",
+            "--source-version",
+            STALE,
         ],
         &["update_collection_item_body"],
     ),

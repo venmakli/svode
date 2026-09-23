@@ -15,7 +15,7 @@ use svode_core::page::metadata::relative_changed_paths;
 use crate::args::{CollectionArgs, clamp_limit};
 use crate::error::ToolError;
 use crate::host::{RequestTarget, ToolHost};
-use crate::mutation::authorize;
+use crate::mutation::{authorize, within_authorized};
 use crate::path::{ensure_inside, validate_public_rel_path};
 use crate::result::ToolCallResult;
 use crate::target::{index_key, resolve_space};
@@ -401,8 +401,8 @@ async fn apply_schema_mutation(
     mutation: PreparedCollectionMutation<CollectionSchema>,
     message: String,
 ) -> Result<ToolCallResult, ToolError> {
-    authorize(host, space, mutation.paths().to_vec()).await?;
-    let outcome = mutation.apply()?;
+    let authorized = authorize(host, space, mutation.paths().to_vec()).await?;
+    let outcome = within_authorized(authorized, async { Ok(mutation.apply()?) }).await?;
     let changed_paths = relative_changed_paths(space, &outcome.changed_paths);
     Ok(ToolCallResult::ok(
         message,

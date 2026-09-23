@@ -114,6 +114,12 @@ pub struct PageSourceWarning {
 pub struct SourceVersion(String);
 
 impl SourceVersion {
+    /// Token a caller received from a read or write and passes back whole;
+    /// it is compared, never parsed.
+    pub fn from_token(token: impl Into<String>) -> Self {
+        Self(token.into())
+    }
+
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -198,7 +204,7 @@ pub(super) fn normalize_page_path(path: &str) -> Result<String, PageSourceError>
 pub fn read_page_source(target: ResolvedPageTarget) -> Result<PageSource, PageSourceError> {
     let bytes =
         fs::read(&target.absolute).map_err(|error| source_error(&target.absolute, error))?;
-    let content = String::from_utf8(bytes.clone())
+    let content = std::str::from_utf8(&bytes)
         .map_err(|_| PageSourceError::InvalidEncoding(target.path.clone()))?;
     let (created, updated) = filesystem_dates(&target.absolute)?;
     let (meta, body, warnings) = match parse_markdown(&content, &target.path) {
@@ -218,13 +224,7 @@ pub fn read_page_source(target: ResolvedPageTarget) -> Result<PageSource, PageSo
             }],
         ),
     };
-    let mut hasher = Sha256::new();
-    hasher.update(target.space.to_string_lossy().as_bytes());
-    hasher.update([0]);
-    hasher.update(target.path.as_bytes());
-    hasher.update([0]);
-    hasher.update(bytes);
-    let version = SourceVersion(format!("{:x}", hasher.finalize()));
+    let version = version_of(&target, &bytes);
     let name_conflict = document_name_conflict(&target.space, &target.path, &meta.title)?;
     Ok(PageSource {
         target,
@@ -236,6 +236,25 @@ pub fn read_page_source(target: ResolvedPageTarget) -> Result<PageSource, PageSo
         name_conflict,
         version,
     })
+}
+
+/// Version of the current bytes of one Page source.
+pub fn current_source_version(space: &Path, path: &str) -> Result<SourceVersion, PageSourceError> {
+    let target = resolve_page_target(space, path)?;
+    let bytes =
+        fs::read(&target.absolute).map_err(|error| source_error(&target.absolute, error))?;
+    Ok(version_of(&target, &bytes))
+}
+
+/// Digest of the canonical target and the full bytes of one read.
+fn version_of(target: &ResolvedPageTarget, bytes: &[u8]) -> SourceVersion {
+    let mut hasher = Sha256::new();
+    hasher.update(target.space.to_string_lossy().as_bytes());
+    hasher.update([0]);
+    hasher.update(target.path.as_bytes());
+    hasher.update([0]);
+    hasher.update(bytes);
+    SourceVersion(format!("{:x}", hasher.finalize()))
 }
 
 pub fn filesystem_dates(path: &Path) -> Result<(String, String), PageSourceError> {

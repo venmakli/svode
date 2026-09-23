@@ -6,6 +6,7 @@ use svode_core::collections::engine;
 use svode_core::git::path::{RootMode, normalize_repo_relative};
 use svode_core::page::entry::{self, Entry};
 use svode_core::page::identity::ContentOwnerKind;
+use svode_core::page::{PageSourceError, ResolvedSpaceTarget, resolve_owned_page_target};
 
 use crate::args::{CollectionArgs, PathArgs, SpaceArgs, clamp_limit, offset};
 use crate::error::ToolError;
@@ -14,7 +15,7 @@ use crate::owner::{
     collection_readme_path, require_collection_item, require_owner, require_standalone_page,
 };
 use crate::path::{ensure_inside, validate_markdown_path, validate_public_rel_path};
-use crate::result::ToolCallResult;
+use crate::result::{ToolCallResult, source_version};
 use crate::target::{index_key, resolve_space};
 
 #[derive(Debug, Deserialize)]
@@ -82,10 +83,11 @@ pub(crate) async fn read_page(
     let path = validate_markdown_path(&args.path)?;
     ensure_inside(Path::new(&space), &path)?;
     require_standalone_page(&space, &path)?;
+    require_owned_page(target, &space, &path)?;
     let page = read_source(host, target, args.space_id.as_deref(), &space, &path).await?;
     Ok(ToolCallResult::ok(
         format!("Read Page {path}."),
-        json!({ "page": page }),
+        json!({ "sourceVersion": source_version(&page), "page": page }),
     ))
 }
 
@@ -101,7 +103,7 @@ pub(crate) async fn read_space_readme(
     let readme = read_source(host, target, args.space_id.as_deref(), &space, path).await?;
     Ok(ToolCallResult::ok(
         "Read Space README.",
-        json!({ "spaceReadme": readme }),
+        json!({ "sourceVersion": source_version(&readme), "spaceReadme": readme }),
     ))
 }
 
@@ -118,7 +120,7 @@ pub(crate) async fn read_collection_readme(
     let readme = read_source(host, target, args.space_id.as_deref(), &space, &path).await?;
     Ok(ToolCallResult::ok(
         format!("Read Collection README for {collection_path}."),
-        json!({ "collectionPath": collection_path, "collectionReadme": readme }),
+        json!({ "collectionPath": collection_path, "sourceVersion": source_version(&readme), "collectionReadme": readme }),
     ))
 }
 
@@ -134,8 +136,28 @@ pub(crate) async fn read_collection_item(
     let item = read_source(host, target, args.space_id.as_deref(), &space, &path).await?;
     Ok(ToolCallResult::ok(
         format!("Read Collection item {path}."),
-        json!({ "item": item }),
+        json!({ "sourceVersion": source_version(&item), "item": item }),
     ))
+}
+
+/// A standalone Page source of the root Space never lies inside a
+/// registered child Space or under a hidden directory, also through a
+/// symlink.
+fn require_owned_page(target: &RequestTarget, space: &str, path: &str) -> Result<(), ToolError> {
+    let project = Path::new(&target.project_path);
+    let space_target = ResolvedSpaceTarget {
+        project_path: project.to_path_buf(),
+        space_id: (Path::new(space) != project).then(|| space.to_string()),
+        space_path: space.into(),
+    };
+    match resolve_owned_page_target(&space_target, path) {
+        Ok(_) => Ok(()),
+        Err(PageSourceError::InvalidOwner(_)) => Err(ToolError::new(
+            "NOT_A_STANDALONE_PAGE",
+            "path belongs to another Space or to hidden content; read it in its own Space",
+        )),
+        Err(error) => Err(error.into()),
+    }
 }
 
 /// One source read with indexed dates from the host-owned pool, or with

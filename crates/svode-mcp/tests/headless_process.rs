@@ -18,7 +18,7 @@ const BIN: &str = env!("CARGO_BIN_EXE_svode-mcp");
 const COMMIT_DATE: &str = "2020-01-02T03:04:05Z";
 
 /// Tools a standalone process serves in this build.
-const SERVED: [&str; 21] = [
+const SERVED: [&str; 25] = [
     "get_collection_schema",
     "get_git_status",
     "get_knowledge_neighbors",
@@ -38,8 +38,12 @@ const SERVED: [&str; 21] = [
     "read_space_readme",
     "search_knowledge",
     "search_pages",
+    "update_collection_item_body",
     "validate_app_manifest",
     "validate_collection_integrity",
+    "write_collection_readme",
+    "write_page",
+    "write_space_readme",
 ];
 
 /// Recheck window of the session plus a margin; not a public contract.
@@ -137,8 +141,10 @@ fn spawn(cwd: &Path, args: &[&str]) -> Child {
     Command::new(BIN)
         .args(args)
         .current_dir(cwd)
-        // No desktop discovery can be reached from this process.
+        // No desktop discovery can be reached from this process, and its
+        // device-local settings are apart from the user's own.
         .env("SVODE_MCP_DISCOVERY", cwd.join("no-desktop.json"))
+        .env("SVODE_PRODUCT_IDENTIFIER", "app.svode.desktop.test")
         .env("GIT_TERMINAL_PROMPT", "0")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -238,10 +244,15 @@ fn headless_session_serves_source_reads_without_desktop_and_changes_nothing() {
             call(14, "no_such_tool", json!({})),
             json!({ "jsonrpc": "2.0", "id": 15, "method": "ping" }),
             json!({ "jsonrpc": "2.0", "id": 16, "method": "resources/list" }),
+            call(
+                17,
+                "update_page_metadata",
+                json!({ "path": "notes.md", "icon": "x" }),
+            ),
         ],
     );
 
-    assert_eq!(responses.len(), 16, "{responses:?}");
+    assert_eq!(responses.len(), 17, "{responses:?}");
     let info = &responses[&1]["result"];
     assert_eq!(info["serverInfo"]["version"], env!("CARGO_PKG_VERSION"));
     let mut tools = responses[&2]["result"]["tools"]
@@ -298,7 +309,18 @@ fn headless_session_serves_source_reads_without_desktop_and_changes_nothing() {
     }
 
     assert_eq!(business_code(&responses[&11]), "MODE_UNAVAILABLE");
-    assert_eq!(business_code(&responses[&12]), "MODE_UNAVAILABLE");
+    assert_eq!(business_code(&responses[&17]), "MODE_UNAVAILABLE");
+    // A body write of a client with the schema before `sourceVersion` is an
+    // argument error before any effect, never a versionless overwrite.
+    assert_eq!(business_code(&responses[&12]), "SERIALIZATION_ERROR");
+    assert!(
+        responses[&12]["result"]["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("sourceVersion"),
+        "{}",
+        responses[&12]
+    );
     for id in [13, 14] {
         assert_eq!(
             responses[&id]["error"]["code"], -32602,
@@ -620,4 +642,143 @@ fn sigterm_ends_an_open_session() {
     assert!(status.success(), "{status}");
     drop(stdin);
     assert_eq!(snapshot(fixture.temp.path()), before);
+}
+
+fn write_args(path: &str, content: &str, version: &Value) -> Value {
+    json!({ "path": path, "content": content, "sourceVersion": version })
+}
+
+#[test]
+fn body_writes_of_two_sessions_use_the_read_version_and_refuse_stale_or_busy_writes() {
+    let fixture = fixture();
+    if !fixture.git {
+        return;
+    }
+    let project = fixture.project.to_str().unwrap();
+    let mut first = Live::start(fixture.temp.path(), &["--project", project]);
+    let mut second = Live::start(fixture.temp.path(), &["--project", project]);
+
+    // The published schema requires the version of the replaced source.
+    let tools = {
+        writeln!(
+            first.stdin,
+            "{}",
+            json!({ "jsonrpc": "2.0", "id": 0, "method": "tools/list" })
+        )
+        .unwrap();
+        let mut line = String::new();
+        first.stdout.read_line(&mut line).unwrap();
+        serde_json::from_str::<Value>(&line).unwrap()
+    };
+    for name in [
+        "write_page",
+        "update_collection_item_body",
+        "write_space_readme",
+        "write_collection_readme",
+    ] {
+        let tool = tools["result"]["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|tool| tool["name"] == name)
+            .unwrap();
+        assert!(
+            tool["inputSchema"]["required"]
+                .as_array()
+                .unwrap()
+                .contains(&json!("sourceVersion")),
+            "{name}"
+        );
+        assert!(
+            tool["description"].as_str().unwrap().contains("own tools"),
+            "{name}"
+        );
+    }
+
+    // Both sessions read the same source; the first write applies and
+    // returns the version of its result.
+    let read = first.ok("read_page", json!({ "path": "notes.md" }));
+    let v1 = read["sourceVersion"].clone();
+    assert_eq!(
+        second.ok("read_page", json!({ "path": "notes.md" }))["sourceVersion"],
+        v1
+    );
+    let written = first.ok("write_page", write_args("notes.md", "First session\n", &v1));
+    assert_eq!(written["changedPaths"], json!(["notes.md"]));
+    let v2 = written["sourceVersion"].clone();
+    assert_ne!(v2, v1);
+
+    // The second session wrote nothing meanwhile: its write from the old
+    // read is stale, keeps the first write and hands out no version.
+    let stale = second.call(
+        "write_page",
+        write_args("notes.md", "Second session\n", &v1),
+    );
+    assert_eq!(business_code(&stale), "SOURCE_STALE");
+    let error = &stale["result"]["structuredContent"]["error"];
+    assert_eq!(error["path"], "notes.md");
+    assert!(error.get("sourceVersion").is_none(), "{stale}");
+    let reread = second.ok("read_page", json!({ "path": "notes.md" }));
+    assert_eq!(reread["page"]["body"], "First session\n");
+    assert_eq!(reread["sourceVersion"], v2);
+    let applied = second.ok(
+        "write_page",
+        write_args("notes.md", "Second session\n", &reread["sourceVersion"]),
+    );
+    let v3 = applied["sourceVersion"].clone();
+
+    // While this test process holds the write guard, a session is busy and
+    // writes nothing; after the release the same write applies.
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let guard = runtime
+        .block_on(svode_core::git::write_guard::acquire(
+            &std::collections::BTreeSet::from([fixture.project.clone()]),
+            &[],
+        ))
+        .unwrap();
+    let busy = first.call("write_page", write_args("notes.md", "Busy\n", &v3));
+    assert_eq!(business_code(&busy), "SOURCE_BUSY");
+    assert_eq!(
+        busy["result"]["structuredContent"]["error"]["path"],
+        "notes.md"
+    );
+    assert!(
+        fs::read_to_string(fixture.project.join("notes.md"))
+            .unwrap()
+            .ends_with("Second session\n")
+    );
+    drop(guard);
+    first.ok("write_page", write_args("notes.md", "Released\n", &v3));
+
+    // Owner and item bodies take the version of their own reads.
+    let item = first.ok("read_collection_item", json!({ "path": "tasks/alpha.md" }));
+    let item = first.ok(
+        "update_collection_item_body",
+        json!({ "path": "tasks/alpha.md", "body": "Item\n", "sourceVersion": item["sourceVersion"] }),
+    );
+    assert!(item["sourceVersion"].is_string());
+    let readme = first.ok("read_space_readme", json!({ "spaceId": "child" }));
+    first.ok(
+        "write_space_readme",
+        json!({ "spaceId": "child", "content": "Child owner\n", "sourceVersion": readme["sourceVersion"] }),
+    );
+    let readme = first.ok(
+        "read_collection_readme",
+        json!({ "collectionPath": "tasks" }),
+    );
+    first.ok(
+        "write_collection_readme",
+        json!({ "collectionPath": "tasks", "content": "Board\n", "sourceVersion": readme["sourceVersion"] }),
+    );
+
+    // The other session sees the writes in its index after the window.
+    std::thread::sleep(RECHECK);
+    let found = second.ok("search_pages", json!({ "query": "Released" }));
+    assert_eq!(result_paths(&found), ["notes.md"]);
+    first.finish();
+    second.finish();
+    assert_closed(&fixture.project);
 }

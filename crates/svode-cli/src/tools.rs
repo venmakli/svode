@@ -182,7 +182,7 @@ pub fn command(noun: Noun, cwd: &Path) -> Result<Option<ToolCommand>, CliError> 
                 verb: SpaceReadmeVerb::Read,
             },
         } => ToolCommand::new("space readme read", "read_space_readme", |value| {
-            render::source(&value["spaceReadme"])
+            render::source(value, "spaceReadme")
         }),
         Noun::Space {
             verb:
@@ -194,7 +194,8 @@ pub fn command(noun: Noun, cwd: &Path) -> Result<Option<ToolCommand>, CliError> 
                 "content",
                 body(cwd, args.body.body_file.as_deref(), args.body.body)?,
             )
-            .optional("title", args.title),
+            .optional("title", args.title)
+            .arg("sourceVersion", args.source_version),
         Noun::Space {
             verb: SpaceVerb::Meta {
                 verb: MetaVerb::Set { patch, .. },
@@ -206,6 +207,12 @@ pub fn command(noun: Noun, cwd: &Path) -> Result<Option<ToolCommand>, CliError> 
         } => ToolCommand::new("space reorder", "reorder_spaces", render::changes)
             .arg("orderedSpaceIds", args.ids)
             .project_scoped(),
+        Noun::Page {
+            verb: PageVerb::Read(args),
+        } => ToolCommand::new("page read", "read_page", |value| {
+            render::source(value, "page")
+        })
+        .selector("path", "path", args.path),
         Noun::Page {
             verb: PageVerb::List(args),
         } => ToolCommand::new("page list", "list_pages", render::tree)
@@ -245,7 +252,8 @@ pub fn command(noun: Noun, cwd: &Path) -> Result<Option<ToolCommand>, CliError> 
                 "content",
                 body(cwd, args.body.body_file.as_deref(), args.body.body)?,
             )
-            .optional("title", args.title),
+            .optional("title", args.title)
+            .arg("sourceVersion", args.source_version),
         Noun::Page {
             verb:
                 PageVerb::Meta {
@@ -301,7 +309,7 @@ pub fn command(noun: Noun, cwd: &Path) -> Result<Option<ToolCommand>, CliError> 
             } => ToolCommand::new(
                 "collection readme read",
                 "read_collection_readme",
-                |value| render::source(&value["collectionReadme"]),
+                |value| render::source(value, "collectionReadme"),
             )
             .selector("collectionPath", "collection", args.collection),
             CollectionVerb::Readme {
@@ -320,7 +328,8 @@ pub fn command(noun: Noun, cwd: &Path) -> Result<Option<ToolCommand>, CliError> 
                     args.readme.body.body,
                 )?,
             )
-            .optional("title", args.readme.title),
+            .optional("title", args.readme.title)
+            .arg("sourceVersion", args.readme.source_version),
             CollectionVerb::Meta {
                 verb: MetaVerb::Set { selector, patch },
             } => ToolCommand::new(
@@ -430,7 +439,7 @@ pub fn command(noun: Noun, cwd: &Path) -> Result<Option<ToolCommand>, CliError> 
             match verb {
                 ItemVerb::Read(args) => {
                     ToolCommand::new("item read", "read_collection_item", |value| {
-                        render::source(&value["item"])
+                        render::source(value, "item")
                     })
                     .selector("path", "path", args.path)
                 }
@@ -441,6 +450,7 @@ pub fn command(noun: Noun, cwd: &Path) -> Result<Option<ToolCommand>, CliError> 
                             "body",
                             body(cwd, args.body.body_file.as_deref(), args.body.body)?,
                         )
+                        .arg("sourceVersion", args.source_version)
                 }
                 ItemVerb::Fields {
                     verb: ItemFieldsVerb::Set(args),
@@ -601,11 +611,7 @@ pub fn command(noun: Noun, cwd: &Path) -> Result<Option<ToolCommand>, CliError> 
                     .routine_cas(args.id, args.fingerprint)
             }
         },
-        Noun::Page {
-            verb: PageVerb::Read(_),
-        }
-        | Noun::Guide
-        | Noun::Doctor => return Ok(None),
+        Noun::Guide | Noun::Doctor => return Ok(None),
     }))
 }
 
@@ -643,13 +649,14 @@ pub async fn run(
         return Err(business_error(structured).with_target(known));
     }
     let mut human = (command.render)(&structured);
-    let mut warnings = Vec::new();
     // A mutation prints its summary before the changed paths; warnings of
-    // an applied outcome go to stderr and keep exit 0.
-    if catalog::is_mutating_tool(command.tool) == Some(true) {
+    // an applied outcome and of a read source go to stderr and keep exit 0.
+    let mut warnings = if catalog::is_mutating_tool(command.tool) == Some(true) {
         human = format!("{summary}\n{human}");
-        warnings = render::warnings(&structured["warnings"]);
-    }
+        render::warnings(&structured["warnings"])
+    } else {
+        render::source_warnings(&structured)
+    };
     // A partial index answers from its earlier rows; say so on stderr.
     if structured["index"]["status"] == "partial" {
         warnings.extend(

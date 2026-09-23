@@ -25,7 +25,7 @@ use svode_core::routines::service::{
 use crate::args::{clamp_limit, offset};
 use crate::error::ToolError;
 use crate::host::{RequestTarget, ToolHost};
-use crate::mutation::{authorize_paths, within_authorized};
+use crate::mutation::{authorize_paths, within_authorized_launch};
 use crate::path::validate_public_rel_path;
 use crate::result::{ContentBlock, ToolCallResult};
 use crate::target::resolve_space;
@@ -385,7 +385,7 @@ pub(crate) async fn run_routine(
         .ok_or_else(|| ToolError::new("UNKNOWN_TOOL", "unknown Svode MCP tool: run_routine"))?;
     let owner = resolve_routine_owner(target, &args.space_id, args.collection_path.as_deref())?;
     let paths = authorize_paths(host, vec![owner.space_path.clone()]).await?;
-    let result = within_authorized(
+    let result = within_authorized_launch(
         paths,
         runner.run(owner, args.routine_id, args.expected_fingerprint),
     )

@@ -10,12 +10,16 @@ use serde_json::Value;
 
 pub const BIN: &str = env!("CARGO_BIN_EXE_svode");
 
+/// Device-local settings of test processes, apart from the user's own.
+pub const TEST_IDENTIFIER: &str = "app.svode.desktop.test";
+
 pub fn svode(cwd: &Path, args: &[&str]) -> Output {
     Command::new(BIN)
         .args(args)
         .current_dir(cwd)
         .stdin(Stdio::null())
         .env("GIT_TERMINAL_PROMPT", "0")
+        .env("SVODE_PRODUCT_IDENTIFIER", TEST_IDENTIFIER)
         .output()
         .unwrap()
 }
@@ -27,6 +31,7 @@ pub fn json(cwd: &Path, args: &[&str], stdin: Option<&str>) -> (i32, Value) {
         .args(args)
         .arg("--json")
         .current_dir(cwd)
+        .env("SVODE_PRODUCT_IDENTIFIER", TEST_IDENTIFIER)
         .stdin(if stdin.is_some() {
             Stdio::piped()
         } else {

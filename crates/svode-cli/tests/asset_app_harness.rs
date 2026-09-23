@@ -80,7 +80,11 @@ fn source(fixture: &Fixture, name: &str) -> String {
 /// Every file of the Project except the index the host runtime opens.
 fn sources(project: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
     let mut files = common::process::snapshot(project);
-    files.retain(|path, _| !path.to_string_lossy().starts_with(".svode/index.db"));
+    // The derived index and the device-local write lock are not sources.
+    files.retain(|path, _| {
+        let path = path.to_string_lossy();
+        !path.starts_with(".svode/index.db") && path != ".svode/write.lock"
+    });
     files
 }
 

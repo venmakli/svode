@@ -72,9 +72,6 @@ async fn every_catalog_capability_has_exactly_one_command() {
             }
         }
     }
-    // `page read` keeps the source-only read of `read_page` from Slice 4.1
-    // and asks the host nothing.
-    assert!(owner.insert("read_page".into(), "page read").is_none());
     let mut expected = catalog_tools();
     expected.remove(RUN_ROUTINE);
     assert_eq!(owner.keys().cloned().collect::<BTreeSet<_>>(), expected);
@@ -132,14 +129,9 @@ fn command_reference_matches_the_catalog_the_grammar_and_the_standalone_host() {
             .all(|tool| StandaloneHost::new("test").serves_tool(tool));
         assert_eq!(*standalone, served, "standalone column of `{name}`");
     }
-    // `page read` is the source-only read of `read_page`, `doctor` owns no
-    // capability; every other command lists exactly its tools.
-    let mut table = table_map();
-    table
-        .get_mut("page read")
-        .unwrap()
-        .insert("read_page".into());
-    assert_eq!(reference, table);
+    // `doctor` owns no capability; every other command lists exactly its
+    // tools.
+    assert_eq!(reference, table_map());
 
     let mut documented = reference.into_values().flatten().collect::<BTreeSet<_>>();
     documented.insert(RUN_ROUTINE.into());

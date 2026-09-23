@@ -321,12 +321,9 @@ async fn every_read_capability_has_exactly_one_command() {
         assert_eq!(code, 0, "{args:?}: {value}");
         assert_eq!(value["ok"], true, "{args:?}");
         let asked = host.take_asked();
+        assert_eq!(asked, BTreeSet::from([tool.to_string()]), "{args:?}");
         if tool == "read_page" {
-            // Slice 4.1 keeps its source-only read with `sourceVersion`.
-            assert!(asked.is_empty(), "{asked:?}");
             assert!(value["sourceVersion"].is_string());
-        } else {
-            assert_eq!(asked, BTreeSet::from([tool.to_string()]), "{args:?}");
         }
         assert!(published.insert(tool), "{tool} has two commands");
     }

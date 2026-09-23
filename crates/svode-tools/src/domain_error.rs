@@ -75,6 +75,18 @@ fn recovery(cause: String, paths: Vec<String>) -> ToolError {
     )
 }
 
+fn invalid_encoding(path: String) -> ToolError {
+    ToolError::new(
+        "INVALID_SOURCE_ENCODING",
+        format!("Page source is not UTF-8: {path}"),
+    )
+}
+
+/// Busy or stale target of a source write, before any effect.
+fn source_refused(code: &str, message: String, path: String) -> ToolError {
+    ToolError::new(code, message).with_evidence("path", serde_json::Value::String(path))
+}
+
 fn name_conflict() -> ToolError {
     ToolError::new(
         "PAGE_NAME_CONFLICT",
@@ -84,6 +96,9 @@ fn name_conflict() -> ToolError {
 
 impl From<GitError> for ToolError {
     fn from(error: GitError) -> Self {
+        if let GitError::SourceBusy { path } = &error {
+            return source_refused("SOURCE_BUSY", error.to_string(), path.clone());
+        }
         let code = match &error {
             GitError::GitNotFound => "GIT_NOT_FOUND",
             GitError::GitCommandFailed(_) => "GIT_COMMAND_FAILED",
@@ -108,10 +123,7 @@ impl From<PageSourceError> for ToolError {
             PageSourceError::InvalidPath(path)
             | PageSourceError::Forbidden(path)
             | PageSourceError::InvalidOwner(path) => path_not_accessible(path),
-            PageSourceError::InvalidEncoding(path) => io(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                format!("invalid UTF-8: {path}"),
-            )),
+            PageSourceError::InvalidEncoding(path) => invalid_encoding(path),
             PageSourceError::Access(path) => io(std::io::Error::new(
                 std::io::ErrorKind::PermissionDenied,
                 path,
@@ -233,6 +245,7 @@ impl From<ObservationError> for ToolError {
 
 impl From<PageError> for ToolError {
     fn from(error: PageError) -> Self {
+        let message = error.to_string();
         match error {
             PageError::Io(error) => io(error),
             PageError::Serde(error) => serde(error),
@@ -246,6 +259,9 @@ impl From<PageError> for ToolError {
             PageError::Storage(message) => general(format!("Storage: {message}")),
             PageError::DocumentNameConflict(_) => name_conflict(),
             PageError::Recovery { cause, paths } => recovery(cause, paths),
+            PageError::InvalidEncoding(path) => invalid_encoding(path),
+            PageError::SourceBusy { path } => source_refused("SOURCE_BUSY", message, path),
+            PageError::SourceStale { path } => source_refused("SOURCE_STALE", message, path),
             PageError::General(message) => general(message),
             PageError::Git(error) => error.into(),
             PageError::Actor(error) => error.into(),

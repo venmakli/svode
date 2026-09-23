@@ -5,7 +5,9 @@
 //! target before the first operation; the session binds to that Project on
 //! first need and opens stores only for the capabilities that need them.
 //! Index-backed reads reconcile their pools with the files first, since no
-//! watcher keeps them current. Capabilities of the headless catalog that
+//! watcher keeps them current. A body write is authorized from the access
+//! evidence the install shares and publishes into the index and Routine
+//! stores of this process. Capabilities of the headless catalog that
 //! this build does not serve yet answer `MODE_UNAVAILABLE` before any
 //! effect.
 
@@ -27,9 +29,9 @@ use crate::host::{MutationRuntime, ReadRuntime, RoutineRunner, RoutineRuntime, T
 use crate::target::context_error;
 
 /// Catalog tools a standalone process serves: reads answered from project
-/// sources, the index reconciled with them, Git or the Actor catalog, and
-/// tools answered from their input.
-const SERVED_TOOLS: [&str; 21] = [
+/// sources, the index reconciled with them, Git or the Actor catalog, tools
+/// answered from their input, and body writes from a read source version.
+const SERVED_TOOLS: [&str; 25] = [
     "get_svode_guide",
     "validate_app_manifest",
     "get_project_info",
@@ -51,6 +53,10 @@ const SERVED_TOOLS: [&str; 21] = [
     "get_related_context",
     "get_knowledge_status",
     "get_git_status",
+    "write_page",
+    "update_collection_item_body",
+    "write_space_readme",
+    "write_collection_readme",
 ];
 
 /// Capability that is never headless: an explicit Routine launch needs the
@@ -161,8 +167,8 @@ impl ToolHost for StandaloneHost {
         Ok(self.session.repository_access(space_path).await?)
     }
 
-    async fn require_mutation_access(&self, _repository: &Path) -> Result<(), ToolError> {
-        Err(mode_unavailable("A managed mutation"))
+    async fn require_mutation_access(&self, repository: &Path) -> Result<(), ToolError> {
+        Ok(self.session.require_mutation(repository).await?)
     }
 
     fn mutation_runtime(&self) -> MutationRuntime<'_> {
@@ -218,7 +224,7 @@ mod tests {
             assert!(check_tool(&host, name).is_ok());
         }
 
-        let pending = host.check_call("write_page").unwrap_err();
+        let pending = host.check_call("update_page_metadata").unwrap_err();
         assert_eq!(pending.code, "MODE_UNAVAILABLE");
         for name in [DESKTOP_ONLY_TOOL, "no_such_tool"] {
             assert!(host.check_call(name).is_ok());

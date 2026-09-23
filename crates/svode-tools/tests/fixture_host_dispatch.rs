@@ -727,6 +727,14 @@ fn read(fixture: &Fixture, path: &str) -> String {
     fs::read_to_string(fixture.project.join(path)).unwrap()
 }
 
+/// Current `sourceVersion` of a source of the fixture project.
+fn version(space: &Path, path: &str) -> String {
+    svode_core::page::current_source_version(space, path)
+        .unwrap()
+        .as_str()
+        .to_string()
+}
+
 fn changed(value: &Value) -> Vec<String> {
     let mut paths = value["changedPaths"]
         .as_array()
@@ -745,11 +753,13 @@ async fn body_writes_project_actual_paths_through_the_shared_operation() {
     let target = root_target(&fixture);
     let call = |name: &'static str, args: Value| call_tool(&host, Some(&target), name, args);
 
+    let root = fixture.project.as_path();
     // Missing and null title are body-only; the path never changes.
-    for args in [
+    for mut args in [
         json!({ "path": "leaf.md", "content": "First body\n" }),
         json!({ "path": "leaf.md", "content": "Second body\n", "title": null }),
     ] {
+        args["sourceVersion"] = json!(version(root, "leaf.md"));
         let result = call("write_page", args).await;
         let result = structured(&result);
         assert_eq!(result["path"], "leaf.md");
@@ -766,18 +776,20 @@ async fn body_writes_project_actual_paths_through_the_shared_operation() {
 
     let noop = call(
         "write_page",
-        json!({ "path": "leaf.md", "content": "Second body\n" }),
+        json!({ "path": "leaf.md", "content": "Second body\n", "sourceVersion": version(root, "leaf.md") }),
     )
     .await;
     assert!(changed(structured(&noop)).is_empty());
+    assert_eq!(structured(&noop)["sourceVersion"], version(root, "leaf.md"));
 
     // A title intent renames through Desktop naming and rewrites links.
     let renamed = call(
         "write_page",
-        json!({ "path": "leaf.md", "content": "Renamed body\n", "title": "Renamed" }),
+        json!({ "path": "leaf.md", "content": "Renamed body\n", "title": "Renamed", "sourceVersion": version(root, "leaf.md") }),
     )
     .await;
     let renamed = structured(&renamed);
+    assert_eq!(renamed["sourceVersion"], version(root, "Renamed.md"));
     assert_eq!(renamed["path"], "Renamed.md");
     assert_eq!(renamed["newPath"], "Renamed.md");
     assert_eq!(changed(renamed), ["Renamed.md", "leaf.md", "links.md"]);
@@ -788,7 +800,7 @@ async fn body_writes_project_actual_paths_through_the_shared_operation() {
     // directory and reports the resulting owner.
     let space = call(
         "write_space_readme",
-        json!({ "content": "New owner body\n", "title": "Renamed Project" }),
+        json!({ "content": "New owner body\n", "title": "Renamed Project", "sourceVersion": version(root, "README.md") }),
     )
     .await;
     assert_eq!(structured(&space)["path"], "README.md");
@@ -797,7 +809,7 @@ async fn body_writes_project_actual_paths_through_the_shared_operation() {
 
     let collection = call(
         "write_collection_readme",
-        json!({ "collectionPath": "tasks", "content": "Board\n", "title": "Backlog" }),
+        json!({ "collectionPath": "tasks", "content": "Board\n", "title": "Backlog", "sourceVersion": version(root, "tasks/README.md") }),
     )
     .await;
     let collection = structured(&collection);
@@ -807,7 +819,7 @@ async fn body_writes_project_actual_paths_through_the_shared_operation() {
 
     let body = call(
         "update_collection_item_body",
-        json!({ "path": "Backlog/a.md", "body": "Item update\n" }),
+        json!({ "path": "Backlog/a.md", "body": "Item update\n", "sourceVersion": version(root, "Backlog/a.md") }),
     )
     .await;
     assert_eq!(structured(&body)["path"], "Backlog/a.md");
@@ -816,7 +828,7 @@ async fn body_writes_project_actual_paths_through_the_shared_operation() {
 
     let child = call(
         "write_space_readme",
-        json!({ "spaceId": "child", "content": "Child update\n" }),
+        json!({ "spaceId": "child", "content": "Child update\n", "sourceVersion": version(&root.join("child"), "README.md") }),
     )
     .await;
     assert_eq!(changed(structured(&child)), ["README.md"]);
@@ -825,17 +837,17 @@ async fn body_writes_project_actual_paths_through_the_shared_operation() {
     for (name, args, code) in [
         (
             "write_page",
-            json!({ "path": "Backlog/a.md", "content": "x" }),
+            json!({ "path": "Backlog/a.md", "content": "x", "sourceVersion": "v" }),
             "NOT_A_STANDALONE_PAGE",
         ),
         (
             "update_collection_item_body",
-            json!({ "path": "Renamed.md", "body": "x" }),
+            json!({ "path": "Renamed.md", "body": "x", "sourceVersion": "v" }),
             "NOT_A_COLLECTION_ITEM",
         ),
         (
             "write_page",
-            json!({ "path": ".svode/x.md", "content": "x" }),
+            json!({ "path": ".svode/x.md", "content": "x", "sourceVersion": "v" }),
             "PATH_FORBIDDEN",
         ),
         (
@@ -846,6 +858,42 @@ async fn body_writes_project_actual_paths_through_the_shared_operation() {
     ] {
         assert_eq!(error_code(&call(name, args).await), code, "{name}");
     }
+    // Every body write requires the version of the source it replaces; the
+    // decode fails before any effect.
+    let before = read(&fixture, "Renamed.md");
+    for (name, args) in [
+        (
+            "write_page",
+            json!({ "path": "Renamed.md", "content": "x" }),
+        ),
+        ("write_space_readme", json!({ "content": "x" })),
+        (
+            "write_collection_readme",
+            json!({ "collectionPath": "Backlog", "content": "x" }),
+        ),
+        (
+            "update_collection_item_body",
+            json!({ "path": "Backlog/a.md", "body": "x" }),
+        ),
+    ] {
+        let result = call(name, args).await;
+        assert_eq!(error_code(&result), "SERIALIZATION_ERROR", "{name}");
+        assert!(result.content[0].text.contains("sourceVersion"), "{name}");
+    }
+    assert_eq!(read(&fixture, "Renamed.md"), before);
+
+    // A version of other bytes is stale: nothing is written and no fresh
+    // version is handed out, so the caller has to read again.
+    let stale = call(
+        "write_page",
+        json!({ "path": "Renamed.md", "content": "Stale\n", "sourceVersion": "outdated" }),
+    )
+    .await;
+    assert_eq!(error_code(&stale), "SOURCE_STALE");
+    let error = &stale.structured_content.as_ref().unwrap()["error"];
+    assert_eq!(error["path"], "Renamed.md");
+    assert!(error.get("sourceVersion").is_none());
+    assert_eq!(read(&fixture, "Renamed.md"), before);
 }
 
 #[tokio::test]
@@ -1023,18 +1071,21 @@ async fn mutations_authorize_every_repository_before_the_first_write() {
     for (name, args) in [
         (
             "write_page",
-            json!({ "path": "leaf.md", "content": "x", "title": "Moved" }),
+            json!({ "path": "leaf.md", "content": "x", "title": "Moved", "sourceVersion": "v" }),
         ),
         ("create_page", json!({ "parentPath": "", "title": "New" })),
         (
             "update_page_metadata",
             json!({ "path": "leaf.md", "icon": "x" }),
         ),
-        ("write_space_readme", json!({ "content": "x" })),
+        (
+            "write_space_readme",
+            json!({ "content": "x", "sourceVersion": "v" }),
+        ),
         ("update_space_metadata", json!({ "icon": "x" })),
         (
             "write_collection_readme",
-            json!({ "collectionPath": "tasks", "content": "x" }),
+            json!({ "collectionPath": "tasks", "content": "x", "sourceVersion": "v" }),
         ),
         (
             "update_collection_metadata",
@@ -1046,7 +1097,7 @@ async fn mutations_authorize_every_repository_before_the_first_write() {
         ),
         (
             "update_collection_item_body",
-            json!({ "path": "tasks/a.md", "body": "x" }),
+            json!({ "path": "tasks/a.md", "body": "x", "sourceVersion": "v" }),
         ),
         (
             "update_collection_item_metadata",
@@ -1054,7 +1105,7 @@ async fn mutations_authorize_every_repository_before_the_first_write() {
         ),
         (
             "write_space_readme",
-            json!({ "spaceId": "child", "content": "x" }),
+            json!({ "spaceId": "child", "content": "x", "sourceVersion": "v" }),
         ),
     ] {
         let result = call_tool(&denied, Some(&target), name, args).await;
@@ -1095,7 +1146,7 @@ async fn filename_collision_is_an_applied_write_with_a_warning() {
         &host,
         Some(&target),
         "write_page",
-        json!({ "path": "leaf.md", "content": "Body\n", "title": "Taken" }),
+        json!({ "path": "leaf.md", "content": "Body\n", "title": "Taken", "sourceVersion": version(&fixture.project, "leaf.md") }),
     )
     .await;
     let result = structured(&result);
@@ -1128,7 +1179,7 @@ async fn handled_source_failure_rolls_back_the_whole_request() {
         &host,
         Some(&target),
         "write_page",
-        json!({ "path": "leaf.md", "content": "Lost body\n", "title": "Moved" }),
+        json!({ "path": "leaf.md", "content": "Lost body\n", "title": "Moved", "sourceVersion": version(&fixture.project, "leaf.md") }),
     )
     .await;
     fs::set_permissions(&links, fs::Permissions::from_mode(0o644)).unwrap();

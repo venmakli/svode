@@ -1284,3 +1284,61 @@ async fn title_update_isolates_other_spaces_and_preserves_scoped_relation_rewrit
         );
     }
 }
+
+#[tokio::test]
+async fn write_entry_passes_the_source_version_and_returns_the_version_of_its_result() {
+    let tmp = TempDir::new().unwrap();
+    let space = tmp.path();
+    write_tree_config(&tmp, vec![], vec![]);
+    std::fs::create_dir_all(space.join(".git")).unwrap();
+    std::fs::write(space.join("Page.md"), "---\ntitle: Page\n---\nLoaded\n").unwrap();
+    let space_str = space.to_string_lossy().into_owned();
+    let loaded = entry::read(&space_str, "Page.md").unwrap();
+    let loaded = loaded.source_version.unwrap().as_str().to_string();
+    let (index_state, nonces) = (IndexState::new(), WriteNonceRegistry::new());
+    let save = |content: &'static str, version: Option<String>| {
+        write_entry_shared(
+            WriteEntryAuthorization::Preauthorized,
+            space_str.clone(),
+            "Page.md".into(),
+            content.into(),
+            None,
+            None,
+            None,
+            None,
+            Some(true),
+            None,
+            version,
+            &index_state,
+            updates(),
+            &nonces,
+            None,
+        )
+    };
+
+    let saved = save("Draft\n", Some(loaded.clone())).await.unwrap();
+    let current = entry::read(&space_str, "Page.md").unwrap();
+    assert_eq!(
+        saved.source_version.as_deref(),
+        Some(current.source_version.unwrap().as_str())
+    );
+
+    // An external edit after the load makes the loaded baseline stale; the
+    // draft is not written and the file keeps the external bytes.
+    std::fs::write(space.join("Page.md"), "---\ntitle: Page\n---\nExternal\n").unwrap();
+    let stale = save("Late draft\n", saved.source_version.clone())
+        .await
+        .unwrap_err();
+    assert!(matches!(stale, AppError::SourceStale { ref path } if path == "Page.md"));
+    let wire = serde_json::to_value(&stale).unwrap();
+    assert_eq!(wire["kind"], "source_stale");
+    assert_eq!(wire["path"], "Page.md");
+    assert!(
+        std::fs::read_to_string(space.join("Page.md"))
+            .unwrap()
+            .ends_with("External\n")
+    );
+
+    // A save without a baseline, such as a metadata save, is not compared.
+    save("Unversioned\n", None).await.unwrap();
+}

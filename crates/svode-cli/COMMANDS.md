@@ -13,12 +13,12 @@ Global selectors may appear before or after the command. The target is resolved 
 - stdout carries only the result; warnings, diagnostics and usage go to stderr.
 - With `--json`, stdout holds exactly one JSON object. Success: `{"schemaVersion":1,"ok":true,"target":{…},…result}`, where `…result` is the structured result of the shared operation in the same shape as the MCP `structuredContent` of that capability. Failure: `{"schemaVersion":1,"ok":false,"error":{"code":"…","message":"…","target":{…},…evidence}}`; `target` holds only the selectors known at the moment of failure.
 - `target` holds the resolved `projectPath`, `spaceId`, `spacePath` plus command selectors such as `path`, `collection` or `id`.
-- Exit `0` — success (including warnings); `1` — operation failure, including `MODE_UNAVAILABLE`; `2` — grammar or input failure (`INVALID_ARGUMENT`, `INPUT_UNREADABLE`).
+- Exit `0` — success (including warnings); `1` — operation failure, including `SOURCE_BUSY`, `SOURCE_STALE` and `MODE_UNAVAILABLE`; `2` — grammar or input failure (`INVALID_ARGUMENT`, `INPUT_UNREADABLE`).
 - Lists keep the bounds of the shared operation: `--limit` default 50, max 200, `--offset` from 0; Knowledge commands have their own limits.
 
 ## Runtime modes
 
-Each command runs on the Svode headless runtime shared with `svode-mcp --project`: it opens only what its capability needs and closes it before exit, also on SIGINT/SIGTERM (exit 130/143). This build serves every read — from project sources, including `collection check`, from the index, from Git and from the Actor catalog — and `app validate`, which needs no Project. Commands whose capability the headless runtime of this build does not serve yet (the Routine stores or the mutation runtime) answer `MODE_UNAVAILABLE` (exit 1) and run nothing; `svode doctor` lists the served capabilities. Writes read and validate their input first, so grammar and input failures still exit 2.
+Each command runs on the Svode headless runtime shared with `svode-mcp --project`: it opens only what its capability needs and closes it before exit, also on SIGINT/SIGTERM (exit 130/143); a write already inside its source phase completes or rolls back before the command stops. This build serves every read — from project sources, including `collection check`, from the index, from Git and from the Actor catalog — the body writes (`page write`, `item write`, `space readme write`, `collection readme write`) and `app validate`, which needs no Project. Commands whose capability the headless runtime of this build does not serve yet (the Routine stores or the other mutations) answer `MODE_UNAVAILABLE` (exit 1) and run nothing; `svode doctor` lists the served capabilities. Writes read and validate their input first, so grammar and input failures still exit 2.
 
 Index-backed commands (`collection query`, `search`, `knowledge …`) check the index of their Spaces against the files before answering, with no watcher: a missing index is built, an incompatible or corrupt one is moved aside and rebuilt, and each command runs one check. Their result carries `index`: `{"status":"fresh"|"partial","verifiedAt":"<time of the check>","diagnostics":[…]}`, where `partial` means some sources could not be read and their earlier rows are kept. An index that cannot be prepared fails with `INDEX_UNAVAILABLE` and its diagnostics, never with an empty list. `space list`, `project info` and `doctor` report repository access from the evidence store shared with the desktop app, without contacting the remote; a repository never checked is `unknown` with reason `not_checked`.
 
@@ -29,7 +29,7 @@ Device-local settings, such as that evidence store, are found in the OS config d
 | `project info` | `get_project_info` | yes |
 | `space list` | `list_spaces` | yes |
 | `space readme read` | `read_space_readme` | yes |
-| `page read --path` | `read_page` (source-only read with `sourceVersion`) | yes |
+| `page read --path` | `read_page` (source read with `sourceVersion`, no index or store) | yes |
 | `page list [--path <dir>] [--limit --offset]` | `list_pages` | yes |
 | `collection list` | `list_collections` | yes |
 | `collection schema --collection` | `get_collection_schema` | yes |
@@ -45,13 +45,13 @@ Device-local settings, such as that evidence store, are found in the OS config d
 | `knowledge status [--scope]` | `get_knowledge_status` | yes |
 | `git status` | `get_git_status` | yes |
 | `page create --parent <dir\|""> --title [--body-file\|--body] [--icon --description --cover-file] [--properties-file]` | `create_page` (Page, or Collection item under a Collection) | no |
-| `page write --path --body-file\|--body [--title]` | `write_page` | no |
+| `page write --path --body-file\|--body --source-version <token> [--title]` | `write_page` | yes |
 | `page meta set --path [metadata patch]` | `update_page_metadata` | no |
-| `space readme write --body-file\|--body [--title]` | `write_space_readme` | no |
+| `space readme write --body-file\|--body --source-version <token> [--title]` | `write_space_readme` | yes |
 | `space meta set [metadata patch]` | `update_space_metadata` | no |
-| `collection readme write --collection --body-file\|--body [--title]` | `write_collection_readme` | no |
+| `collection readme write --collection --body-file\|--body --source-version <token> [--title]` | `write_collection_readme` | yes |
 | `collection meta set --collection [metadata patch]` | `update_collection_metadata` | no |
-| `item write --path --body-file\|--body` | `update_collection_item_body` | no |
+| `item write --path --body-file\|--body --source-version <token>` | `update_collection_item_body` | yes |
 | `item fields set --path --fields-file` | `update_collection_item_fields` | no |
 | `item meta set --path [metadata patch]` | `update_collection_item_metadata` | no |
 | `collection create --parent <dir\|""> --title [--body-file\|--body] [--icon --description --cover-file] [--columns-file] [--views-file]` | `create_collection` | no |
@@ -92,11 +92,14 @@ Filter and sort of `collection query` are JSON arrays of the shared query shape,
 Page, owner and item writes run the shared operation of the same capability: validation, Desktop naming and rename, link and relation effects, Collection defaults and schema validation, and authorization of every affected repository before the first write. `svode` never commits to Git.
 
 - Body: `--body-file <path>` or `--body-file -` for stdin; `--body <text>` for short inline text. Exactly one is required for `write` commands and optional for `page create`. An empty body is valid.
+- Source version: every body write (`page write`, `item write`, `space readme write`, `collection readme write`) requires `--source-version <token>`, the opaque `sourceVersion` of the JSON result of the read of that source (`page read`, `item read`, the README reads) or of the previous write, create, metadata or fields result of the same source; store and pass it whole. A missing flag is `INVALID_ARGUMENT` (exit 2) before anything runs. `page create` takes no version. Every read, write, create, metadata and fields result carries the top-level `sourceVersion` of the resulting source, and human output of a read prints it under the path.
+- Safe cycle: `page read --json` → edit the body → `page write --source-version <sourceVersion>`. `SOURCE_STALE` (exit 1, `path` in the error) means the source changed after your read: nothing was written and no new version is returned, so read it again and reapply your change to the current text; never resend the old body with a fresh version. `SOURCE_BUSY` (exit 1, `path`) means another Svode operation is writing the same repository: nothing was written; retry later. If a result is lost, read the source and compare its `sourceVersion` before any retry.
+- Direct edits: an agent with file access edits the text below the frontmatter of an existing Page, item or README with its own tools, keeping the frontmatter byte for byte, the line endings and the file location; Svode and the desktop app pick the edit up. The body write commands are the path for clients without file access. Frontmatter, names, structure, schema, attachments and `.svode`, `.routines`, `.templates` always change through Svode commands.
 - Structured input: `--cover-file`, `--properties-file`, `--fields-file` take a JSON object from a file or `-`. A command reads stdin at most once.
 - Metadata patch of `meta set`: `--title`, `--icon`, `--description`, `--cover-file` write a value; `--clear-icon`, `--clear-description`, `--clear-cover` clear the field; a missing flag keeps it. `--title` always means a title change with managed rename.
 - Human output: the summary line, then each changed path. Warnings of an applied outcome (such as `filename_rename_collision`) go to stderr and keep exit 0; the JSON result carries them in `warnings`.
 - A rejected write is exit 1 with the code of the shared operation, and the whole request is rolled back. `PAGE_WRITE_RECOVERY_FAILED` means restoration failed; its message names the unrestored paths, so inspect them before any retry. After any failure reread the source and apply the intent again; do not delete or hand-repair `.svode` metadata.
-- There is no `--force` and no confirmation. Busy/stale preconditions are not part of this build.
+- There is no `--force` and no confirmation.
 
 ## Structural commands
 
@@ -109,7 +112,7 @@ Collection create/delete, schema columns and views, content rename/move/reorder/
 - `collection check` is read-only: it reports `errorCount`, `warningCount` and `issuesBySeverity` for relation targets, stored item references and stale order entries of one Collection or of every Collection in the Space. Issues are a result, not a failure (exit 0). Run it after a deliberate raw structural edit.
 - Human output: the summary line, then each changed path; `collection check` prints the counts, then one line per issue.
 
-The JSON result is the MCP `structuredContent` of the capability, for example `page write` returns `path`, `newPath` (only after a performed rename), `changedPaths` and `warnings`, plus `schemaVersion`, `ok` and `target` (with `path`, `collection`, `parent` or `name` selectors).
+The JSON result is the MCP `structuredContent` of the capability, for example `page write` returns `path`, `newPath` (only after a performed rename), `sourceVersion`, `changedPaths` and `warnings`, plus `schemaVersion`, `ok` and `target` (with `path`, `collection`, `parent` or `name` selectors).
 
 ## Assets and Apps
 
@@ -136,7 +139,7 @@ Routine commands read and change Routine definitions through the shared Routine 
 
 `svode [--project <path>] [--space <root|space-id>] page read --path <relative.md> [--json]`
 
-Reads one standalone Page from its Markdown source, without the desktop app, the index or Routine stores. A directory-backed Page is read through its `README.md`. Human output prints the scoped Page path, a blank line and the body. JSON output:
+Reads one standalone Page from its Markdown source through the shared `read_page` operation, without the desktop app, the index or Routine stores. A directory-backed Page is read through its `README.md`; a file inside a registered child Space is read in that Space, not through the root. Human output prints the scoped Page path, a `sourceVersion: <token>` line, a blank line and the body; warnings go to stderr. JSON output:
 
 ```json
 { "schemaVersion": 1, "ok": true,
@@ -145,7 +148,7 @@ Reads one standalone Page from its Markdown source, without the desktop app, the
   "sourceVersion": "…" }
 ```
 
-`page` has the same shape as the MCP `read_page` result. `sourceVersion` is an opaque token of the exact bytes read; store it whole. Malformed frontmatter is a successful read with a `malformed_frontmatter` warning, and the source is never rewritten.
+`page` has the same shape as the MCP `read_page` result. `sourceVersion` is an opaque token of the exact bytes read; store it whole and pass it to `page write --source-version`. Malformed frontmatter is a successful read with a `malformed_frontmatter` warning, and the source is never rewritten. Failures keep the codes of the shared operation: `INVALID_PATH`, `PATH_FORBIDDEN`, `NOT_A_STANDALONE_PAGE`, `FILE_NOT_FOUND`, `INVALID_SOURCE_ENCODING`, `PATH_NOT_ACCESSIBLE`.
 
 ## doctor
 
@@ -153,7 +156,7 @@ Reads one standalone Page from its Markdown source, without the desktop app, the
 
 ## Codes
 
-Context and input codes are owned by the CLI; every other code comes unchanged from the shared operation (`INVALID_PATH`, `PATH_FORBIDDEN`, `PATH_NOT_ACCESSIBLE`, `FILE_NOT_FOUND`, `NOT_A_STANDALONE_PAGE`, `NOT_A_COLLECTION_ITEM`, `CONTENT_OWNER_MISMATCH`, `SPACE_NOT_FOUND`, `INDEX_UNAVAILABLE` with `diagnostics` naming each Space and cause, `INDEX_ERROR` for a failed index query, `IO_ERROR`, Knowledge codes and others).
+Context and input codes are owned by the CLI; every other code comes unchanged from the shared operation (`INVALID_PATH`, `PATH_FORBIDDEN`, `PATH_NOT_ACCESSIBLE`, `FILE_NOT_FOUND`, `INVALID_SOURCE_ENCODING`, `NOT_A_STANDALONE_PAGE`, `NOT_A_COLLECTION_ITEM`, `CONTENT_OWNER_MISMATCH`, `SPACE_NOT_FOUND`, `SOURCE_BUSY` and `SOURCE_STALE` with the target `path`, `INDEX_UNAVAILABLE` with `diagnostics` naming each Space and cause, `INDEX_ERROR` for a failed index query, `IO_ERROR`, Knowledge codes and others).
 
 | Code | Meaning |
 |---|---|
@@ -163,11 +166,10 @@ Context and input codes are owned by the CLI; every other code comes unchanged f
 | `INVALID_PROJECT_CONFIG` | `.svode/config.json` is not a valid Project config |
 | `SPACE_UNAVAILABLE` | Unknown, missing or broken child Space |
 | `MODE_UNAVAILABLE` | The headless runtime of this build does not serve the command's capability yet |
-| `INVALID_SOURCE_ENCODING` | `page read`: the source is not UTF-8 |
 
 ## Help and version
 
-`svode --help`, `svode <noun> --help`, `svode <noun> <verb> --help` and `svode --version` work without a Project, and every help page names a working example. Mutating commands describe the safe read → edit → write cycle and recovery; commands the headless runtime of this build does not serve yet say so.
+`svode --help`, `svode <noun> --help`, `svode <noun> <verb> --help` and `svode --version` work without a Project, and every help page names a working example. Mutating commands describe the safe read → edit → write cycle and recovery, body writes with `--source-version` and the direct-edit alternative; commands the headless runtime of this build does not serve yet say so.
 
 ## Installation
 

@@ -7,7 +7,6 @@ mod error;
 pub mod grammar;
 mod input;
 mod output;
-mod page;
 mod render;
 mod target;
 mod tools;
@@ -22,7 +21,7 @@ use svode_tools::dispatch::call_tool;
 use svode_tools::host::ToolHost;
 
 use error::CliError;
-use grammar::{Cli, Noun, PageVerb};
+use grammar::{Cli, Noun};
 use output::Outcome;
 pub use output::Rendered;
 use target::Selectors;
@@ -62,9 +61,6 @@ async fn execute(host: &impl ToolHost, cli: Cli, cwd: &Path) -> Result<Outcome, 
         cwd,
     };
     match cli.command {
-        Noun::Page {
-            verb: PageVerb::Read(args),
-        } => page::read(selectors.resolve()?, args).await,
         Noun::Guide => guide(host).await,
         Noun::Doctor => Ok(doctor::run(host, selectors).await),
         noun => {

@@ -25,6 +25,7 @@ async fn save(
             field_batch: None,
             skip_rename: title.is_none(),
             project: Some(root.to_str().unwrap()),
+            source_version: None,
         },
         runtime(state, nonces),
         |mut paths| async move {
@@ -204,6 +205,7 @@ async fn projection_failure_is_applied_and_authorization_denial_is_not() {
             field_batch: None,
             skip_rename: false,
             project: None,
+            source_version: None,
         },
         runtime(&state, &nonces),
         |_| async { Err(PageError::General("denied".into())) },
@@ -410,5 +412,196 @@ async fn combined_write_keeps_git_head_and_unrelated_staged_bytes() {
     assert_eq!(
         fs::read_to_string(root.join("Other.txt")).unwrap(),
         "Unstaged unrelated edit"
+    );
+}
+
+async fn save_from(
+    root: &Path,
+    path: &str,
+    body: &str,
+    version: &SourceVersion,
+    state: &IndexState,
+    nonces: &WriteNonceRegistry,
+) -> Result<PageWriteOutcome, PageError> {
+    write(
+        PageWrite {
+            space: root.to_str().unwrap(),
+            path,
+            content: body,
+            title: None,
+            icon: None,
+            extra: None,
+            metadata: None,
+            field_batch: None,
+            skip_rename: true,
+            project: None,
+            source_version: Some(version),
+        },
+        runtime(state, nonces),
+        |mut paths| async move {
+            paths.push(root.to_path_buf());
+            Ok(paths)
+        },
+    )
+    .await
+}
+
+#[tokio::test]
+async fn a_write_from_the_current_version_returns_the_version_of_its_result() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    fs::create_dir_all(root.join(".git")).unwrap();
+    fs::write(root.join("Page.md"), "---\ntitle: Page\n---\nOld\n").unwrap();
+    let (state, nonces) = (IndexState::default(), WriteNonceRegistry::new());
+    let read = entry::read(root.to_str().unwrap(), "Page.md").unwrap();
+
+    let written = save_from(
+        root,
+        "Page.md",
+        "New\n",
+        read.source_version.as_ref().unwrap(),
+        &state,
+        &nonces,
+    )
+    .await
+    .unwrap();
+
+    let after = entry::read(root.to_str().unwrap(), "Page.md").unwrap();
+    assert_eq!(after.body, "New\n");
+    assert_eq!(
+        written.result.source_version.as_deref(),
+        Some(after.source_version.as_ref().unwrap().as_str())
+    );
+    // The returned version chains the next write without another read.
+    let chained = SourceVersion::from_token(written.result.source_version.unwrap());
+    save_from(root, "Page.md", "Next\n", &chained, &state, &nonces)
+        .await
+        .unwrap();
+    assert!(
+        fs::read_to_string(root.join("Page.md"))
+            .unwrap()
+            .ends_with("Next\n")
+    );
+    // No staged copy is left next to the source.
+    let names = fs::read_dir(root)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|name| name.ends_with(".tmp"))
+        .collect::<Vec<_>>();
+    assert!(names.is_empty(), "{names:?}");
+}
+
+#[tokio::test]
+async fn a_write_from_an_outdated_version_is_stale_without_effects() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    fs::create_dir_all(root.join(".git")).unwrap();
+    fs::write(root.join("Page.md"), "---\ntitle: Page\n---\nOld\n").unwrap();
+    let (state, nonces) = (IndexState::default(), WriteNonceRegistry::new());
+    let read = entry::read(root.to_str().unwrap(), "Page.md").unwrap();
+    let external = "---\ntitle: Page\n---\nExternal\n";
+    fs::write(root.join("Page.md"), external).unwrap();
+
+    let error = save_from(
+        root,
+        "Page.md",
+        "Mine\n",
+        read.source_version.as_ref().unwrap(),
+        &state,
+        &nonces,
+    )
+    .await
+    .map(|_| ())
+    .unwrap_err();
+
+    assert!(matches!(error, PageError::SourceStale { ref path } if path == "Page.md"));
+    assert_eq!(fs::read_to_string(root.join("Page.md")).unwrap(), external);
+    assert!(nonces.take_metadata(&root.join("Page.md")).is_none());
+}
+
+#[tokio::test]
+async fn a_write_to_a_repository_held_by_another_writer_is_busy_without_effects() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    fs::create_dir_all(root.join(".git")).unwrap();
+    fs::write(root.join("Page.md"), "Old\n").unwrap();
+    let (state, nonces) = (IndexState::default(), WriteNonceRegistry::new());
+    let read = entry::read(root.to_str().unwrap(), "Page.md").unwrap();
+    let held =
+        crate::git::write_guard::acquire(&std::collections::BTreeSet::from([root.clone()]), &[])
+            .await
+            .unwrap();
+
+    let writer = tokio::spawn({
+        let root = root.clone();
+        let version = read.source_version.clone().unwrap();
+        async move {
+            let (state, nonces) = (IndexState::default(), WriteNonceRegistry::new());
+            save_from(&root, "Page.md", "Mine\n", &version, &state, &nonces)
+                .await
+                .map(|_| ())
+        }
+    });
+    let error = writer.await.unwrap().unwrap_err();
+    assert!(matches!(error, PageError::SourceBusy { ref path } if path == "Page.md"));
+    assert_eq!(fs::read_to_string(root.join("Page.md")).unwrap(), "Old\n");
+
+    // After the other writer releases the guard, the same intent applies.
+    drop(held);
+    save_from(
+        &root,
+        "Page.md",
+        "Mine\n",
+        read.source_version.as_ref().unwrap(),
+        &state,
+        &nonces,
+    )
+    .await
+    .unwrap();
+    assert_eq!(fs::read_to_string(root.join("Page.md")).unwrap(), "Mine\n");
+}
+
+#[tokio::test]
+async fn a_reader_sees_the_old_or_the_new_bytes_of_a_write() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    fs::create_dir_all(root.join(".git")).unwrap();
+    let old = format!("---\ntitle: Page\n---\n{}", "a".repeat(4 << 20));
+    let new_body = "b".repeat(4 << 20);
+    fs::write(root.join("Page.md"), &old).unwrap();
+    let (state, nonces) = (IndexState::default(), WriteNonceRegistry::new());
+    let read = entry::read(root.to_str().unwrap(), "Page.md").unwrap();
+    let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let reader = std::thread::spawn({
+        let path = root.join("Page.md");
+        let stop = stop.clone();
+        move || {
+            let mut observed = std::collections::BTreeSet::new();
+            while !stop.load(std::sync::atomic::Ordering::SeqCst) {
+                let bytes = fs::read(&path).unwrap();
+                observed.insert(bytes.len());
+            }
+            observed
+        }
+    });
+
+    save_from(
+        root,
+        "Page.md",
+        &new_body,
+        read.source_version.as_ref().unwrap(),
+        &state,
+        &nonces,
+    )
+    .await
+    .unwrap();
+    stop.store(true, std::sync::atomic::Ordering::SeqCst);
+    let observed = reader.join().unwrap();
+    let new_len = fs::metadata(root.join("Page.md")).unwrap().len() as usize;
+    assert!(
+        observed
+            .iter()
+            .all(|len| *len == old.len() || *len == new_len),
+        "{observed:?}"
     );
 }

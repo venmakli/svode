@@ -36,6 +36,12 @@ pub enum PageError {
     DocumentNameConflict(DocumentNameConflict),
     #[error("Page write recovery failed after {cause}; unrestored paths: {paths:?}")]
     Recovery { cause: String, paths: Vec<String> },
+    #[error("IO error: invalid UTF-8: {0}")]
+    InvalidEncoding(String),
+    #[error("Source is busy: another Svode operation is writing {path}; retry later")]
+    SourceBusy { path: String },
+    #[error("Source changed after it was read: {path}; read it again and reapply the change")]
+    SourceStale { path: String },
     #[error("{0}")]
     General(String),
     #[error(transparent)]
@@ -79,10 +85,7 @@ impl From<PageSourceError> for PageError {
             PageSourceError::InvalidPath(path)
             | PageSourceError::Forbidden(path)
             | PageSourceError::InvalidOwner(path) => Self::PathNotAccessible(path),
-            PageSourceError::InvalidEncoding(path) => Self::Io(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                format!("invalid UTF-8: {path}"),
-            )),
+            PageSourceError::InvalidEncoding(path) => Self::InvalidEncoding(path),
             PageSourceError::Access(path) => Self::Io(std::io::Error::new(
                 std::io::ErrorKind::PermissionDenied,
                 path,

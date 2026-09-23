@@ -183,12 +183,19 @@ impl ProjectSession {
         &self,
         space_path: &Path,
     ) -> Result<RepositoryAccessSnapshot, GitError> {
-        let store = super::device::repository_access_store().ok_or_else(|| {
-            GitError::General("the device-local Svode settings directory is unavailable".into())
-        })?;
         self.access
-            .snapshot(self.git().cli()?, space_path, &store)
+            .snapshot(self.git().cli()?, space_path, &access_store()?)
             .await
+    }
+
+    /// Authorizes a managed mutation of `repository` from the shared
+    /// evidence store without a probe: only `local` and fresh `writable`
+    /// evidence allow it.
+    pub async fn require_mutation(&self, repository: &Path) -> Result<(), GitError> {
+        self.access
+            .require_mutation(self.git().cli()?, repository, &access_store()?)
+            .await
+            .map(|_| ())
     }
 
     /// Closes every Routine store and index pool the session opened. The
@@ -199,6 +206,12 @@ impl ProjectSession {
             self.index.close_project(project).await;
         }
     }
+}
+
+fn access_store() -> Result<PathBuf, GitError> {
+    super::device::repository_access_store().ok_or_else(|| {
+        GitError::General("the device-local Svode settings directory is unavailable".into())
+    })
 }
 
 #[cfg(test)]

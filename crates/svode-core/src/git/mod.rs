@@ -27,6 +27,7 @@ pub(crate) mod staging_tests;
 pub mod state;
 pub mod status;
 pub mod sync;
+pub mod write_guard;
 
 #[derive(Debug, thiserror::Error)]
 pub enum GitError {
@@ -44,6 +45,8 @@ pub enum GitError {
         status: String,
         reason: String,
     },
+    #[error("Source is busy: another Svode operation is writing {path}; retry later")]
+    SourceBusy { path: String },
     #[error("Project publication blocked: {reason:?}")]
     PublicationBlocked {
         repository: String,
@@ -94,6 +97,7 @@ impl GitError {
             GitError::GitCommandFailed(_) => "git_command_failed",
             GitError::PathNotAccessible(_) => "path_not_accessible",
             GitError::RepositoryAccessDenied { .. } => "repository_access_denied",
+            GitError::SourceBusy { .. } => "source_busy",
             GitError::PublicationBlocked { .. } => "git_publication_blocked",
             GitError::BranchBlocked { .. } => "git_branch_blocked",
             GitError::PushRejected { .. } => "git_push_rejected",
@@ -155,6 +159,9 @@ impl serde::Serialize for GitError {
                 "pathSample": path_sample,
             })
             .serialize(serializer),
+            GitError::SourceBusy { path } => {
+                serde_json::json!({ "kind": self.kind(), "path": path }).serialize(serializer)
+            }
             GitError::RepositoryAccessDenied {
                 repository_id,
                 status,

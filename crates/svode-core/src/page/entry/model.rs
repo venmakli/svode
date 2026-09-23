@@ -21,6 +21,9 @@ pub struct WriteResult {
     pub write_nonce: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub warnings: Vec<EntryWarning>,
+    /// Version of the resulting source, the precondition of the next write.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_version: Option<String>,
 }
 
 pub struct DeleteResult {
@@ -86,6 +89,10 @@ pub struct Entry {
     pub warnings: Vec<EntryWarning>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name_conflict: Option<crate::page::naming::DocumentNameConflict>,
+    /// Version of the bytes this entry was read from. Results publish it
+    /// next to the entry, never inside it.
+    #[serde(skip)]
+    pub source_version: Option<crate::page::SourceVersion>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

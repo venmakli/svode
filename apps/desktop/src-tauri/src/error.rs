@@ -164,6 +164,7 @@ impl From<svode_core::git::GitError> for AppError {
                 status,
                 reason,
             },
+            GitError::SourceBusy { path } => Self::SourceBusy { path },
             GitError::PublicationBlocked {
                 repository,
                 child,
@@ -271,6 +272,12 @@ impl From<svode_core::page::PageError> for AppError {
             PageError::Storage(message) => Self::Storage(message),
             PageError::DocumentNameConflict(conflict) => Self::DocumentNameConflict(conflict),
             PageError::Recovery { cause, paths } => Self::PageWriteRecovery { cause, paths },
+            PageError::InvalidEncoding(path) => Self::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("invalid UTF-8: {path}"),
+            )),
+            PageError::SourceBusy { path } => Self::SourceBusy { path },
+            PageError::SourceStale { path } => Self::SourceStale { path },
             PageError::General(message) => Self::General(message),
             PageError::Git(error) => error.into(),
             PageError::Actor(error) => error.into(),
@@ -441,6 +448,12 @@ pub enum AppError {
     #[error("Page write recovery failed after {cause}; unrestored paths: {paths:?}")]
     PageWriteRecovery { cause: String, paths: Vec<String> },
 
+    #[error("Source is busy: another Svode operation is writing {path}; retry later")]
+    SourceBusy { path: String },
+
+    #[error("Source changed after it was read: {path}; read it again and reapply the change")]
+    SourceStale { path: String },
+
     #[error("{0}")]
     General(String),
 }
@@ -479,6 +492,8 @@ impl AppError {
             AppError::IdentityInvalid(_) => "identity_invalid",
             AppError::DocumentNameConflict(_) => "page_name_conflict",
             AppError::PageWriteRecovery { .. } => "page_write_recovery",
+            AppError::SourceBusy { .. } => "source_busy",
+            AppError::SourceStale { .. } => "source_stale",
             AppError::General(_) => "general",
         }
     }
@@ -492,6 +507,9 @@ impl Serialize for AppError {
         match self {
             AppError::PageWriteRecovery { cause, paths } => {
                 serde_json::json!({ "kind": self.kind(), "message": self.to_string(), "cause": cause, "paths": paths }).serialize(serializer)
+            }
+            AppError::SourceBusy { path } | AppError::SourceStale { path } => {
+                serde_json::json!({ "kind": self.kind(), "message": self.to_string(), "path": path }).serialize(serializer)
             }
             AppError::GitPublicationBlocked { repository, child, reason } => {
                 serde_json::json!({ "kind": self.kind(), "repository": repository, "child": child, "reason": reason }).serialize(serializer)

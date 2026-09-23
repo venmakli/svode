@@ -337,9 +337,13 @@ fn source_reads_follow_the_shared_mapping_and_change_nothing() {
 
     let human = svode(root, &["item", "read", "--path", "tasks/alpha.md"]);
     assert_eq!(human.status.code(), Some(0));
+    let (_, item) = json(root, &["item", "read", "--path", "tasks/alpha.md"]);
     assert_eq!(
         String::from_utf8(human.stdout).unwrap(),
-        "tasks/alpha.md\n\nAlpha body\n"
+        format!(
+            "tasks/alpha.md\nsourceVersion: {}\n\nAlpha body\n",
+            item["sourceVersion"].as_str().unwrap()
+        )
     );
     let human = svode(root, &["collection", "list"]);
     assert_eq!(String::from_utf8(human.stdout).unwrap(), "tasks\tTasks\n");
@@ -423,7 +427,8 @@ fn doctor_reports_project_spaces_git_and_runtime_without_opening_stores() {
     let served = doctor["runtime"]["servedTools"].as_array().unwrap();
     assert!(served.contains(&Value::from("list_pages")));
     assert!(served.contains(&Value::from("query_collection_items")));
-    assert!(!served.contains(&Value::from("write_page")));
+    assert!(served.contains(&Value::from("write_page")));
+    assert!(!served.contains(&Value::from("update_page_metadata")));
     let human = svode(&root.join("child/deep"), &["doctor"]);
     let human = String::from_utf8(human.stdout).unwrap();
     assert!(human.contains("space child: ready"), "{human}");
@@ -467,7 +472,7 @@ fn guide_prints_the_shared_guide_and_files_first_rules_without_a_project() {
 fn help_of_every_command_works_without_a_project_or_runtime() {
     let temp = tempfile::tempdir().unwrap();
     let headless = [
-        vec!["page", "write"],
+        vec!["item", "fields", "set"],
         vec!["collection", "create"],
         vec!["routine", "list"],
     ];
@@ -487,6 +492,7 @@ fn help_of_every_command_works_without_a_project_or_runtime() {
         vec!["space", "list"],
         vec!["space", "readme", "read"],
         vec!["page", "read"],
+        vec!["page", "write"],
         vec!["page", "list"],
         vec!["collection", "list"],
         vec!["collection", "schema"],

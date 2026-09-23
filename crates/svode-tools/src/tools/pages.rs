@@ -7,6 +7,7 @@ use std::path::Path;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use svode_core::collections::engine::EntryFieldBatchIntent;
+use svode_core::page::SourceVersion;
 use svode_core::page::create::PageCreate;
 use svode_core::page::entry::{self, Cover};
 use svode_core::page::fields::PageFieldUpdate;
@@ -22,7 +23,7 @@ use crate::owner::{
     collection_readme_path, require_collection_item, require_owner, require_standalone_page,
 };
 use crate::path::{ensure_inside, validate_markdown_path, validate_public_rel_path};
-use crate::result::ToolCallResult;
+use crate::result::{ToolCallResult, source_version};
 use crate::target::resolve_space;
 
 #[derive(Debug, Deserialize)]
@@ -34,6 +35,7 @@ pub(crate) struct WritePageArgs {
     content: String,
     #[serde(default)]
     title: Option<String>,
+    source_version: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -82,6 +84,7 @@ pub(crate) struct WriteSpaceReadmeArgs {
     content: String,
     #[serde(default)]
     title: Option<String>,
+    source_version: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -108,6 +111,7 @@ pub(crate) struct WriteCollectionReadmeArgs {
     content: String,
     #[serde(default)]
     title: Option<String>,
+    source_version: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -142,6 +146,7 @@ pub(crate) struct UpdateCollectionItemBodyArgs {
     space_id: Option<String>,
     path: String,
     body: String,
+    source_version: String,
 }
 
 pub(crate) async fn write_page(
@@ -160,6 +165,7 @@ pub(crate) async fn write_page(
         &path,
         &args.content,
         args.title.as_deref(),
+        &args.source_version,
     )
     .await
     {
@@ -211,7 +217,7 @@ pub(crate) async fn create_page(
     let warnings = outcome.page.warnings.clone();
     Ok(ToolCallResult::ok(
         format!("Created Page {}.", outcome.page.path),
-        json!({ "path": outcome.page.path, "page": outcome.page, "changedPaths": changed_paths, "warnings": warnings }),
+        json!({ "path": outcome.page.path, "sourceVersion": source_version(&outcome.page), "page": outcome.page, "changedPaths": changed_paths, "warnings": warnings }),
     ))
 }
 
@@ -238,7 +244,7 @@ pub(crate) async fn update_page_metadata(
     let warnings = outcome.page.warnings.clone();
     Ok(ToolCallResult::ok(
         format!("Updated metadata for {path}."),
-        json!({ "page": outcome.page, "changedPaths": changed_paths, "warnings": warnings }),
+        json!({ "sourceVersion": source_version(&outcome.page), "page": outcome.page, "changedPaths": changed_paths, "warnings": warnings }),
     ))
 }
 
@@ -258,6 +264,7 @@ pub(crate) async fn write_space_readme(
         path,
         &args.content,
         args.title.as_deref(),
+        &args.source_version,
     )
     .await
     {
@@ -293,7 +300,7 @@ pub(crate) async fn update_space_metadata(
     let warnings = outcome.page.warnings.clone();
     Ok(ToolCallResult::ok(
         "Updated Space metadata.",
-        json!({ "spaceReadme": outcome.page, "changedPaths": changed_paths, "warnings": warnings }),
+        json!({ "sourceVersion": source_version(&outcome.page), "spaceReadme": outcome.page, "changedPaths": changed_paths, "warnings": warnings }),
     ))
 }
 
@@ -314,6 +321,7 @@ pub(crate) async fn write_collection_readme(
         &path,
         &args.content,
         args.title.as_deref(),
+        &args.source_version,
     )
     .await
     {
@@ -353,7 +361,7 @@ pub(crate) async fn update_collection_metadata(
     let warnings = outcome.page.warnings.clone();
     Ok(ToolCallResult::ok(
         format!("Updated Collection metadata for {collection_path}."),
-        json!({ "collectionPath": collection_path, "collectionReadme": outcome.page, "changedPaths": changed_paths, "warnings": warnings }),
+        json!({ "collectionPath": collection_path, "sourceVersion": source_version(&outcome.page), "collectionReadme": outcome.page, "changedPaths": changed_paths, "warnings": warnings }),
     ))
 }
 
@@ -380,7 +388,7 @@ pub(crate) async fn update_collection_item_metadata(
     let warnings = outcome.page.warnings.clone();
     Ok(ToolCallResult::ok(
         format!("Updated metadata for Collection item {path}."),
-        json!({ "item": outcome.page, "changedPaths": changed_paths, "warnings": warnings }),
+        json!({ "sourceVersion": source_version(&outcome.page), "item": outcome.page, "changedPaths": changed_paths, "warnings": warnings }),
     ))
 }
 
@@ -397,7 +405,7 @@ pub(crate) async fn update_collection_item_fields(
         let item = entry::read(&space, &path)?;
         return Ok(ToolCallResult::ok(
             format!("No field changes for {path}."),
-            json!({ "item": item, "changedPaths": [] }),
+            json!({ "sourceVersion": source_version(&item), "item": item, "changedPaths": [] }),
         ));
     }
     let handles = PageHandles::of(host);
@@ -420,7 +428,7 @@ pub(crate) async fn update_collection_item_fields(
     let changed_paths = relative_changed_paths(&space, &outcome.changed_paths);
     Ok(ToolCallResult::ok(
         format!("Updated fields for {path}."),
-        json!({ "item": outcome.page, "changedPaths": changed_paths }),
+        json!({ "sourceVersion": source_version(&outcome.page), "item": outcome.page, "changedPaths": changed_paths }),
     ))
 }
 
@@ -433,7 +441,17 @@ pub(crate) async fn update_collection_item_body(
     let path = validate_markdown_path(&args.path)?;
     ensure_inside(Path::new(&space), &path)?;
     require_collection_item(&space, &path)?;
-    let outcome = match write_body(host, target, &space, &path, &args.body, None).await {
+    let outcome = match write_body(
+        host,
+        target,
+        &space,
+        &path,
+        &args.body,
+        None,
+        &args.source_version,
+    )
+    .await
+    {
         Ok(outcome) => outcome,
         Err(error) => return failure(error),
     };
@@ -443,8 +461,8 @@ pub(crate) async fn update_collection_item_body(
     ))
 }
 
-/// Body write with an optional explicit title intent; a missing title is
-/// body-only and never renames.
+/// Body write from the source version the caller read, with an optional
+/// explicit title intent; a missing title is body-only and never renames.
 async fn write_body(
     host: &impl ToolHost,
     target: &RequestTarget,
@@ -452,8 +470,10 @@ async fn write_body(
     path: &str,
     content: &str,
     title: Option<&str>,
+    source_version: &str,
 ) -> Result<PageWriteOutcome, MutationError> {
     let handles = PageHandles::of(host);
+    let source_version = SourceVersion::from_token(source_version);
     svode_core::page::write::write(
         PageWrite {
             space,
@@ -466,6 +486,7 @@ async fn write_body(
             field_batch: None,
             skip_rename: title.is_none(),
             project: Some(&target.project_path),
+            source_version: Some(&source_version),
         },
         handles.page(),
         |paths| authorize(host, space, paths),
@@ -499,6 +520,7 @@ fn write_response(space: &str, original: &str, outcome: PageWriteOutcome) -> Val
     json!({
         "path": canonical,
         "newPath": outcome.result.new_path,
+        "sourceVersion": outcome.result.source_version,
         "changedPaths": relative_changed_paths(space, &outcome.changed_paths),
         "warnings": outcome.result.warnings,
     })
@@ -550,7 +572,7 @@ mod tests {
             (Some(Value::Null), None),
             (Some(json!("New")), Some("New")),
         ] {
-            let mut raw = json!({ "path": "Old.md", "collectionPath": "Old", "content": "Body" });
+            let mut raw = json!({ "path": "Old.md", "collectionPath": "Old", "content": "Body", "sourceVersion": "v1" });
             if let Some(title) = title {
                 raw["title"] = title;
             }

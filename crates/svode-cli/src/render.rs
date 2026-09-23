@@ -26,12 +26,45 @@ pub fn pretty(value: &Value) -> String {
     )
 }
 
-/// Scoped path, a blank line and the body of one source read.
-pub fn source(entry: &Value) -> String {
+/// Scoped path, the `sourceVersion` line, a blank line and the body of the
+/// source under `key` of one read result.
+pub fn source(value: &Value, key: &str) -> String {
+    let entry = &value[key];
     let body = text(&entry["body"]);
-    let mut out = format!("{}\n\n{body}", text(&entry["path"]));
+    let mut out = format!(
+        "{}\nsourceVersion: {}\n\n{body}",
+        text(&entry["path"]),
+        text(&value["sourceVersion"])
+    );
     if !body.is_empty() && !body.ends_with('\n') {
         out.push('\n');
+    }
+    out
+}
+
+/// Warnings of a read source (malformed frontmatter, a title shared with
+/// another Page) for stderr; the JSON result keeps them in the source.
+pub fn source_warnings(value: &Value) -> Vec<String> {
+    let mut out = Vec::new();
+    for key in ["page", "item", "spaceReadme", "collectionReadme"] {
+        let entry = &value[key];
+        for warning in entry["warnings"].as_array().into_iter().flatten() {
+            out.push(format!(
+                "warning[{}]: {}",
+                text(&warning["kind"]),
+                text(&warning["message"])
+            ));
+        }
+        if let Some(conflicts) = entry["name_conflict"]["conflicts"].as_array() {
+            let paths = conflicts
+                .iter()
+                .map(|conflict| text(&conflict["path"]))
+                .collect::<Vec<_>>()
+                .join(", ");
+            out.push(format!(
+                "warning[name_conflict]: Page title is also used by: {paths}"
+            ));
+        }
     }
     out
 }

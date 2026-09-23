@@ -563,7 +563,14 @@ pub async fn reorder_spaces(
 ) -> Result<Vec<SpaceInfo>, AppError> {
     let parent = PathBuf::from(&project_path);
     require_repository_mutation(&app, &parent).await?;
-    let outcome = svode_core::structure::reorder_child_spaces(&parent, ordered_space_ids)?;
+    let outcome =
+        crate::git::access::scope_authorized_mutation_paths(vec![parent.clone()], async {
+            Ok::<_, AppError>(svode_core::structure::reorder_child_spaces(
+                &parent,
+                ordered_space_ids,
+            )?)
+        })
+        .await?;
 
     if outcome.changed {
         if let Err(e) = autocommit

@@ -1,6 +1,7 @@
 use std::io::Write;
 
 use svode_cli::{Rendered, parse, run, runtime_failure};
+use svode_core::git::write_guard;
 use svode_tools::standalone::StandaloneHost;
 
 fn main() {
@@ -19,10 +20,20 @@ fn main() {
                     // closed before the process exits, also on a signal.
                     let host = StandaloneHost::new(env!("CARGO_PKG_VERSION"));
                     let signal = shutdown_signal();
+                    let mut command = Box::pin(run(&host, cli, &cwd));
                     let outcome = tokio::select! {
-                        rendered = run(&host, cli, &cwd) => Ok(rendered),
+                        rendered = &mut command => Ok(rendered),
                         signal = signal => Err(signal),
                     };
+                    // A source phase already started completes or rolls
+                    // back before the command stops.
+                    if outcome.is_err() {
+                        tokio::select! {
+                            _ = &mut command => {}
+                            () = write_guard::idle() => {}
+                        }
+                    }
+                    drop(command);
                     host.close().await;
                     match outcome {
                         Ok(rendered) => rendered,

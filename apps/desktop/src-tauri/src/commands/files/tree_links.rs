@@ -16,7 +16,10 @@ pub async fn save_tree_order(
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<(), AppError> {
     require_repository_mutation(&app, Path::new(&space)).await?;
-    let changed = crate::space::content_tree::replace_order(Path::new(&space), order)?;
+    let changed = scope_authorized_mutation_paths(vec![PathBuf::from(&space)], async {
+        crate::space::content_tree::replace_order(Path::new(&space), order)
+    })
+    .await?;
     if changed {
         maybe_autocommit_structural_paths(
             &autocommit,

@@ -13,6 +13,12 @@ fn write_help(example: &str) -> String {
     format!("{WRITE}\n\n{HEADLESS}\n\nExample:\n  {example}")
 }
 
+const BODY_WRITE: &str = "Safe cycle: read the source with --json and keep its sourceVersion, edit the body, then write the whole result with --source-version <token>. If the source changed after your read, the write fails with SOURCE_STALE and writes nothing: read it again and reapply your change to the current text. SOURCE_BUSY means another Svode operation is writing the same repository: retry later. The result carries the sourceVersion of the written source for the next write. Bodies come from --body-file <path> or --body-file - (stdin); --body <text> is for short inline text. A command reads stdin at most once. The write does not commit to Git; never delete or hand-repair .svode metadata.\n\nWith file access, edit the text below the frontmatter with your own tools instead and keep the frontmatter unchanged; this command is the path for clients without file access.";
+
+fn body_write_help(example: &str) -> String {
+    format!("{BODY_WRITE}\n\nExample:\n  {example}")
+}
+
 fn structural_help(example: &str) -> String {
     format!("{STRUCTURAL}\n\n{HEADLESS}\n\nExample:\n  {example}")
 }
@@ -276,6 +282,9 @@ pub struct ReadmeWriteArgs {
     /// New title of the owner README.
     #[arg(long)]
     pub title: Option<String>,
+    /// `sourceVersion` of the README read this body was prepared from.
+    #[arg(long, value_name = "TOKEN")]
+    pub source_version: String,
 }
 
 #[derive(Debug, Subcommand)]
@@ -286,7 +295,7 @@ pub enum SpaceReadmeVerb {
     )]
     Read,
     /// Replace the README body of the selected Space.
-    #[command(after_help = write_help("svode --project ~/Notes space readme write --space research --body-file README.draft.md"))]
+    #[command(after_help = body_write_help("svode --project ~/Notes space readme write --space research --body-file README.draft.md --source-version 3f2a…"))]
     Write(ReadmeWriteArgs),
 }
 
@@ -294,7 +303,7 @@ pub enum SpaceReadmeVerb {
 pub enum PageVerb {
     /// Read one standalone Page from its Markdown source.
     #[command(
-        after_help = "Examples:\n  svode --project ~/Notes page read --space root --path notes/today.md\n  \
+        after_help = "Reads the source without opening the index or Routine stores. The result carries sourceVersion, the token `page write --source-version` needs; human output prints it under the path.\n\nExamples:\n  svode --project ~/Notes page read --space root --path notes/today.md\n  \
 svode --project ~/Notes page read --space research --path ideas/README.md --json"
     )]
     Read(PageReadArgs),
@@ -305,7 +314,7 @@ svode --project ~/Notes page read --space research --path ideas/README.md --json
     #[command(after_help = write_help("svode --project ~/Notes page create --parent notes --title \"Weekly review\" --body-file review.md --json"))]
     Create(PageCreateArgs),
     /// Replace the body of a standalone Page.
-    #[command(after_help = write_help("svode page read --path notes/today.md > today.md && $EDITOR today.md && svode page write --path notes/today.md --body-file today.md"))]
+    #[command(after_help = body_write_help("svode page read --path notes/today.md --json > today.json\n  jq -r .page.body today.json > today.md && $EDITOR today.md\n  svode page write --path notes/today.md --body-file today.md --source-version \"$(jq -r .sourceVersion today.json)\""))]
     Write(PageWriteArgs),
     /// Metadata of a standalone Page.
     #[command(
@@ -362,6 +371,9 @@ pub struct PageWriteArgs {
     /// New title; the source is renamed by the shared naming rules.
     #[arg(long)]
     pub title: Option<String>,
+    /// `sourceVersion` of the Page read this body was prepared from.
+    #[arg(long, value_name = "TOKEN")]
+    pub source_version: String,
 }
 
 #[derive(Debug, Args)]
@@ -589,7 +601,7 @@ pub enum CollectionReadmeVerb {
     )]
     Read(CollectionSelector),
     /// Replace the README body of one Collection.
-    #[command(after_help = write_help("svode --project ~/Notes collection readme write --collection tasks --body-file tasks.md"))]
+    #[command(after_help = body_write_help("svode --project ~/Notes collection readme write --collection tasks --body-file tasks.md --source-version 3f2a…"))]
     Write(CollectionReadmeWriteArgs),
 }
 
@@ -609,7 +621,7 @@ pub enum ItemVerb {
     )]
     Read(ItemReadArgs),
     /// Replace the body of one Collection item.
-    #[command(after_help = write_help("svode --project ~/Notes item write --path tasks/fix-login.md --body-file - < body.md"))]
+    #[command(after_help = body_write_help("svode --project ~/Notes item write --path tasks/fix-login.md --body-file - --source-version 3f2a… < body.md"))]
     Write(ItemWriteArgs),
     /// Fields of one Collection item.
     #[command(
@@ -706,6 +718,9 @@ pub struct ItemWriteArgs {
     pub path: String,
     #[command(flatten)]
     pub body: Body,
+    /// `sourceVersion` of the item read this body was prepared from.
+    #[arg(long, value_name = "TOKEN")]
+    pub source_version: String,
 }
 
 #[derive(Debug, Subcommand)]

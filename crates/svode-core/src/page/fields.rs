@@ -71,6 +71,7 @@ where
             field_batch: Some(batch),
             skip_rename: !has_title,
             project,
+            source_version: None,
         },
         runtime,
         authorize,

@@ -258,6 +258,7 @@ pub async fn write_entry(
     existing_id: Option<String>,
     skip_rename: Option<bool>,
     project_path: Option<String>,
+    source_version: Option<String>,
     index_state: State<'_, IndexState>,
     index_updates: State<'_, IndexUpdateState>,
     nonces: State<'_, Arc<WriteNonceRegistry>>,
@@ -285,6 +286,7 @@ pub async fn write_entry(
         existing_id,
         skip_rename,
         project_path,
+        source_version,
         &index_state,
         &index_updates,
         &nonces,
@@ -328,6 +330,7 @@ pub(super) async fn update_entry_title_shared(
         None,
         Some(false),
         project_path,
+        None,
         index_state,
         index_updates,
         nonces,
@@ -351,11 +354,13 @@ pub(super) async fn write_entry_shared(
     existing_id: Option<String>,
     skip_rename: Option<bool>,
     project_path: Option<String>,
+    source_version: Option<String>,
     index_state: &IndexState,
     index_updates: &IndexUpdateState,
     nonces: &WriteNonceRegistry,
     autocommit: Option<&AutocommitService>,
 ) -> Result<WriteResult, AppError> {
+    let source_version = source_version.map(svode_core::page::SourceVersion::from_token);
     let request = svode_core::page::write::PageWrite {
         space: &space,
         path: &path,
@@ -367,6 +372,7 @@ pub(super) async fn write_entry_shared(
         field_batch: None,
         skip_rename: skip_rename.unwrap_or(false),
         project: project_path.as_deref().filter(|path| !path.is_empty()),
+        source_version: source_version.as_ref(),
     };
     let _ = existing_id;
     let authorization_space = &space;

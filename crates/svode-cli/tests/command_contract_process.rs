@@ -1,5 +1,6 @@
 //! JSON, exit and output contract of every public command through the real
-//! `svode` binary with the desktop app closed. Served commands succeed; the
+//! `svode` binary with the desktop app closed. Served commands succeed, and
+//! served body writes from a version of no read are refused as stale; the
 //! rest answer `MODE_UNAVAILABLE` until the headless runtime serves them.
 //! No command changes a source file: index-backed reads only add the
 //! derived index and the device-local stores it keeps in `.svode/`.
@@ -8,7 +9,7 @@ mod common;
 
 use std::process::{Command, Stdio};
 
-use common::commands::{CASES, argv, command_paths, fixture};
+use common::commands::{CASES, STALE, argv, command_paths, fixture};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -26,7 +27,8 @@ fn sources(root: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
         let derived = name.starts_with("index.db")
             || name.starts_with("routines.db")
             || name == "local.json"
-            || name == "variables.lock";
+            || name == "variables.lock"
+            || name == "write.lock";
         !(derived
             && path
                 .parent()
@@ -49,16 +51,18 @@ fn every_command_keeps_the_json_envelope_exit_codes_and_output_streams() {
         let args = argv(&fixture, case);
         let (exit, value) = json(&fixture.input, &args, None);
         assert_eq!(value["schemaVersion"], 1, "{}: {value}", case.name);
-        if served(case.tools) {
-            assert_eq!(exit, 0, "{}: {value}", case.name);
-            assert_eq!(value["ok"], true, "{}", case.name);
-            assert!(value["target"].is_object(), "{}: {value}", case.name);
-            assert!(value.get("error").is_none(), "{}", case.name);
+        let refused = if !served(case.tools) {
+            Some("MODE_UNAVAILABLE")
+        } else if args.contains(&STALE) {
+            Some("SOURCE_STALE")
         } else {
+            None
+        };
+        if let Some(code) = refused {
             assert_eq!(exit, 1, "{}: {value}", case.name);
             assert_eq!(value["ok"], false, "{}", case.name);
             let error = &value["error"];
-            assert_eq!(error["code"], "MODE_UNAVAILABLE", "{}", case.name);
+            assert_eq!(error["code"], code, "{}", case.name);
             assert!(error["message"].is_string(), "{}", case.name);
             assert_eq!(
                 error["target"]["projectPath"],
@@ -66,6 +70,11 @@ fn every_command_keeps_the_json_envelope_exit_codes_and_output_streams() {
                 "{}: failure keeps the resolved target",
                 case.name
             );
+        } else {
+            assert_eq!(exit, 0, "{}: {value}", case.name);
+            assert_eq!(value["ok"], true, "{}", case.name);
+            assert!(value["target"].is_object(), "{}: {value}", case.name);
+            assert!(value.get("error").is_none(), "{}", case.name);
         }
         if value["ok"] == true && case.name != "app validate" && case.name != "guide" {
             assert_eq!(
@@ -94,7 +103,7 @@ fn every_command_keeps_the_json_envelope_exit_codes_and_output_streams() {
         } else {
             assert!(stdout.is_empty(), "{}: {stdout}", case.name);
             assert!(
-                stderr.starts_with("error[MODE_UNAVAILABLE]"),
+                stderr.starts_with(&format!("error[{}]", refused.unwrap())),
                 "{}: {stderr}",
                 case.name
             );

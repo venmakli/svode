@@ -8,7 +8,8 @@ use super::identity::{
     ContentOwnerKind, PageRole, is_agent_context_source, resolve_markdown_identity_for_path,
 };
 use super::source::{
-    PageSource, PageSourceError, normalize_page_path, read_page_source, resolve_page_target,
+    PageSource, PageSourceError, ResolvedPageTarget, normalize_page_path, read_page_source,
+    resolve_page_target,
 };
 
 #[derive(Debug, Clone)]
@@ -196,11 +197,14 @@ fn gitmodules_contains_path(project: &Path, child_path: &str) -> bool {
     })
 }
 
-/// Source-only read of one standalone Page inside an already resolved Space.
-pub async fn read_standalone_page(
+/// Markdown source `path` that the Space itself owns: `.git`/`.svode` are
+/// forbidden, and a file under a hidden directory or inside a registered
+/// child Space reached from the Project root Space is not a Page of it.
+/// Canonical resolution applies, so a symlink cannot reach around it.
+pub fn resolve_owned_page_target(
     space: &ResolvedSpaceTarget,
     path: &str,
-) -> Result<PageSource, PageSourceError> {
+) -> Result<ResolvedPageTarget, PageSourceError> {
     let normalized = normalize_page_path(path)?;
     if normalized.split('/').next().is_some_and(|first| {
         first.eq_ignore_ascii_case(".git") || first.eq_ignore_ascii_case(".svode")
@@ -229,6 +233,15 @@ pub async fn read_standalone_page(
     {
         return Err(PageSourceError::InvalidOwner(path.to_string()));
     }
+    Ok(target)
+}
+
+/// Source-only read of one standalone Page inside an already resolved Space.
+pub async fn read_standalone_page(
+    space: &ResolvedSpaceTarget,
+    path: &str,
+) -> Result<PageSource, PageSourceError> {
+    let target = resolve_owned_page_target(space, path)?;
     let identity = resolve_markdown_identity_for_path(
         &space.space_path,
         &target.path,

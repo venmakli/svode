@@ -377,9 +377,15 @@ pub(crate) async fn reorder_content(
     let space = resolve_space(target, args.space_id.as_deref())?;
     let parent_path = validate_public_rel_path(&args.parent_path, true)?;
     ensure_inside(Path::new(&space), &parent_path)?;
-    authorize(host, &space, Vec::new()).await?;
-    let result =
-        svode_core::content_tree::reorder_content(&space, &parent_path, args.ordered_children)?;
+    let authorized = authorize(host, &space, Vec::new()).await?;
+    let result = within_authorized(authorized, async {
+        Ok(svode_core::content_tree::reorder_content(
+            &space,
+            &parent_path,
+            args.ordered_children,
+        )?)
+    })
+    .await?;
     let changed_paths = if result.changed {
         vec![".svode/order.json"]
     } else {
@@ -407,9 +413,14 @@ pub(crate) async fn reorder_spaces(
             "the root space is pinned and must not be included",
         ));
     }
-    authorize(host, &target.project_path, Vec::new()).await?;
-    let outcome =
-        structure::reorder_child_spaces(Path::new(&target.project_path), args.ordered_space_ids)?;
+    let authorized = authorize(host, &target.project_path, Vec::new()).await?;
+    let outcome = within_authorized(authorized, async {
+        Ok(structure::reorder_child_spaces(
+            Path::new(&target.project_path),
+            args.ordered_space_ids,
+        )?)
+    })
+    .await?;
     let changed_paths = if outcome.changed {
         vec![".svode/config.json"]
     } else {

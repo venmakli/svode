@@ -225,7 +225,10 @@ fn malformed_frontmatter_is_a_successful_read_with_warning_on_stderr() {
     assert_eq!(human.status.code(), Some(0));
     assert_eq!(
         String::from_utf8(human.stdout).unwrap(),
-        "notes/malformed.md\n\n---\ntitle: [bad\n---\nBody\n"
+        format!(
+            "notes/malformed.md\nsourceVersion: {}\n\n---\ntitle: [bad\n---\nBody\n",
+            value["sourceVersion"].as_str().unwrap()
+        )
     );
     assert!(
         String::from_utf8(human.stderr)

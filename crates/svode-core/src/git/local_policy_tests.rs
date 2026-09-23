@@ -7,6 +7,7 @@ const LOCALS: &[&str] = &[
     "local.json",
     "lfs-s3-agent.json",
     "variables.lock",
+    "write.lock",
     "variables.pending.json",
     "variables.tmp-1",
     "index.db",

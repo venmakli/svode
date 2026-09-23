@@ -10,7 +10,9 @@ use std::future::Future;
 use std::path::PathBuf;
 
 use serde_json::json;
-use svode_core::git::access::{local_repository_root, scope_authorized_mutation_paths};
+use svode_core::git::access::{
+    local_repository_root, scope_authorized_mutation_paths, scope_authorized_paths,
+};
 use svode_core::git::cli::GitCli;
 use svode_core::git::state::detected_cli;
 use svode_core::page::PageError;
@@ -102,13 +104,23 @@ pub(crate) async fn authorize_paths(
     Ok(paths)
 }
 
-/// Runs an operation that re-checks its touched-set against the repositories
+/// Runs the source phase of a mutation under the write guard of its
+/// touched-set; later writes are re-checked against the repositories
 /// authorized before it started.
 pub(crate) async fn within_authorized<T>(
     paths: Vec<PathBuf>,
     operation: impl Future<Output = Result<T, ToolError>>,
 ) -> Result<T, ToolError> {
     scope_authorized_mutation_paths(paths, operation, ToolError::from).await
+}
+
+/// Runs a Routine launch with the repositories authorized for it. A launch
+/// is not a source write and holds no write guard.
+pub(crate) async fn within_authorized_launch<T>(
+    paths: Vec<PathBuf>,
+    operation: impl Future<Output = Result<T, ToolError>>,
+) -> Result<T, ToolError> {
+    scope_authorized_paths(paths, operation, ToolError::from).await
 }
 
 /// Host mutation runtime with the detected Git CLI as date provider.
