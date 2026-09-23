@@ -146,10 +146,10 @@ test("a source conflict holds navigation and offers both explicit choices", asyn
       ),
     ).toBe(true);
     expect(region.querySelector("[role=alert]") !== null).toBe(true);
-    // The editor keeps focus while the user may be typing.
-    expect(page.dom.window.document.activeElement).toBe(
-      page.dom.window.document.body,
-    );
+    // The editor keeps Tab for indentation: the recovery takes focus.
+    expect(
+      page.dom.window.document.activeElement?.contains(region) ?? false,
+    ).toBe(true);
     let ready = true;
     await act(async () => {
       ready = await page.session().prepareForNavigation();

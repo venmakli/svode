@@ -24,13 +24,13 @@ export function PageAccessRecovery({
   const statusRef = useRef<HTMLDivElement>(null);
   const returnFocusRef = useRef<HTMLElement | null>(null);
   const wasVisibleRef = useRef(false);
-  // A source conflict appears while the user may be typing, so it is
-  // announced and reachable from the editor instead of taking focus.
+  const conflict = session.sourceConflict;
+  // The editor keeps Tab for indentation, so a recovery that appears takes
+  // focus to stay reachable from the keyboard and returns it when resolved.
   const visible =
     (session.recovery.open &&
       session.recovery.pending?.placement === "inline") ||
-    Boolean(session.persistenceError || error);
-  const conflict = session.sourceConflict;
+    Boolean(session.persistenceError || error || conflict);
 
   useEffect(() => {
     if (visible && !wasVisibleRef.current) {
@@ -46,7 +46,7 @@ export function PageAccessRecovery({
     wasVisibleRef.current = visible;
   }, [visible]);
 
-  if (!visible && !conflict) return null;
+  if (!visible) return null;
   return (
     <div
       ref={statusRef}

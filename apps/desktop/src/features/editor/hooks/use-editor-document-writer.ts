@@ -278,11 +278,9 @@ export function useEditorDocumentWriter({
     report: (conflict) => onSourceConflict?.(conflict),
     onResolved: (choice) => {
       if (choice === "loaded") toast.info(m.page_source_conflict_loaded());
-      // The resolved choice removes the focused recovery action.
-      requestAnimationFrame(() => {
-        const active = document.activeElement;
-        if (!active || active === document.body) editor?.tf.focus();
-      });
+      // Back from the recovery actions at the kept caret; a plain DOM focus
+      // of the editable would put it at the start of the document.
+      editor?.tf.focus();
     },
   });
 
