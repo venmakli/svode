@@ -1,4 +1,5 @@
 pub mod config;
+pub mod lfs;
 pub mod lfs_declaration;
 pub mod managed_route;
 pub mod policy;

@@ -22,7 +22,7 @@ use svode_core::structure::{self, CollectionCreate, ConvertToCollectionOutcome, 
 use crate::args::{CollectionArgs, PathArgs};
 use crate::error::ToolError;
 use crate::host::{RequestTarget, ToolHost};
-use crate::mutation::{PageHandles, authorize, failure, within_authorized};
+use crate::mutation::{PageHandles, authorize, failure, space_relative_busy, within_authorized};
 use crate::owner::{
     collection_readme_path, require_collection_item, require_owner, require_standalone_page,
 };
@@ -124,7 +124,7 @@ pub(crate) async fn create_collection(
     .await
     {
         Ok(outcome) => outcome,
-        Err(error) => return failure(error),
+        Err(error) => return failure(error).map_err(|error| space_relative_busy(&space, error)),
     };
     let changed_paths = relative_changed_paths(&space, &outcome.changed_paths);
     Ok(ToolCallResult::ok(
@@ -204,7 +204,8 @@ pub(crate) async fn convert_to_collection(
             .map_err(collection_conversion_error)
         }),
     )
-    .await?;
+    .await
+    .map_err(|error| space_relative_busy(&space, error))?;
     Ok(collection_conversion_result(conversion, changes))
 }
 
@@ -267,7 +268,8 @@ async fn delete_markdown_content(
         ))
         .await?)
     })
-    .await?;
+    .await
+    .map_err(|error| space_relative_busy(space, error))?;
     Ok(ToolCallResult::ok(
         format!("Deleted {label} {path}."),
         json!({
@@ -308,7 +310,8 @@ pub(crate) async fn rename_content(
             .await?)
         }),
     )
-    .await?;
+    .await
+    .map_err(|error| space_relative_busy(&space, error))?;
     Ok(structural_operation_result(
         "Renamed content",
         &from,
@@ -360,7 +363,8 @@ pub(crate) async fn move_content(
             .await?)
         }),
     )
-    .await?;
+    .await
+    .map_err(|error| space_relative_busy(&space, error))?;
     Ok(structural_operation_result(
         "Moved content",
         &from,
@@ -385,7 +389,8 @@ pub(crate) async fn reorder_content(
             args.ordered_children,
         )?)
     })
-    .await?;
+    .await
+    .map_err(|error| space_relative_busy(&space, error))?;
     let changed_paths = if result.changed {
         vec![".svode/order.json"]
     } else {
@@ -420,7 +425,8 @@ pub(crate) async fn reorder_spaces(
             args.ordered_space_ids,
         )?)
     })
-    .await?;
+    .await
+    .map_err(|error| space_relative_busy(&target.project_path, error))?;
     let changed_paths = if outcome.changed {
         vec![".svode/config.json"]
     } else {
@@ -471,7 +477,8 @@ pub(crate) async fn convert_page_to_leaf(
             .await?)
         }),
     )
-    .await?;
+    .await
+    .map_err(|error| space_relative_busy(&space, error))?;
     let mut result = structural_operation_result(
         "Converted directory-backed Page to leaf Page",
         &path,

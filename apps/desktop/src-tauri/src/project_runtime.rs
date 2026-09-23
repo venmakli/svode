@@ -205,7 +205,11 @@ impl ProjectRuntimeState {
             }
             SpaceStatus::Missing | SpaceStatus::Broken => {
                 index_state
-                    .set_lfs_state_with(app, &key, crate::storage::lfs::LfsState::NotApplicable)
+                    .set_lfs_state_with(
+                        app,
+                        &key,
+                        svode_core::storage::lfs::LfsState::NotApplicable,
+                    )
                     .await;
                 routine_stores.close_key(&key).await;
             }

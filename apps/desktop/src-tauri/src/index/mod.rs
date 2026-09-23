@@ -18,11 +18,11 @@ use tokio::sync::Mutex;
 use crate::error::AppError;
 use crate::repo_path::{RootMode, normalize_repo_relative};
 use crate::space::types::SpaceStatus;
-use crate::storage::lfs::LfsState;
 use crate::system_path;
 #[cfg(test)]
 use svode_core::index::backlinks::BacklinkIndex;
 use svode_core::index::backlinks::{is_external_or_anchor_url, markdown_url_path};
+use svode_core::storage::lfs::LfsState;
 
 /// Normalize a relative path to forward slashes for cross-platform DB storage.
 pub(crate) fn normalize_rel(path: &str) -> String {

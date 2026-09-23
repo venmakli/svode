@@ -18,11 +18,18 @@ const BIN: &str = env!("CARGO_BIN_EXE_svode-mcp");
 const COMMIT_DATE: &str = "2020-01-02T03:04:05Z";
 
 /// Tools a standalone process serves in this build.
-const SERVED: [&str; 36] = [
+const SERVED: [&str; 48] = [
     "add_collection_column",
     "add_collection_view",
+    "convert_page_to_leaf",
+    "convert_to_collection",
+    "create_collection",
+    "create_page",
+    "delete_collection",
     "delete_collection_column",
+    "delete_collection_item",
     "delete_collection_view",
+    "delete_page",
     "get_collection_schema",
     "get_git_status",
     "get_knowledge_neighbors",
@@ -31,15 +38,20 @@ const SERVED: [&str; 36] = [
     "get_project_info",
     "get_related_context",
     "get_svode_guide",
+    "import_asset",
     "list_actors",
     "list_collections",
     "list_pages",
     "list_spaces",
+    "move_content",
     "query_collection_items",
     "read_collection_item",
     "read_collection_readme",
     "read_page",
     "read_space_readme",
+    "rename_content",
+    "reorder_content",
+    "reorder_spaces",
     "search_knowledge",
     "search_pages",
     "update_collection_column",
@@ -193,15 +205,21 @@ fn session(cwd: &Path, args: &[&str], requests: &[Value]) -> BTreeMap<u64, Value
         writeln!(stdin, "{request}").unwrap();
     }
     drop(stdin);
+    // Responses are drained while the process runs: a large `tools/list`
+    // would otherwise fill the pipe and block its exit.
+    let stdout = child.stdout.take().unwrap();
+    let responses = std::thread::spawn(move || {
+        BufReader::new(stdout)
+            .lines()
+            .map(|line| serde_json::from_str::<Value>(&line.unwrap()).unwrap())
+            .map(|response| (response["id"].as_u64().unwrap(), response))
+            .collect::<BTreeMap<_, _>>()
+    });
     let status = wait(&mut child);
     let mut stderr = String::new();
     std::io::Read::read_to_string(&mut child.stderr.take().unwrap(), &mut stderr).unwrap();
     assert!(status.success(), "{status}: {stderr}");
-    BufReader::new(child.stdout.take().unwrap())
-        .lines()
-        .map(|line| serde_json::from_str::<Value>(&line.unwrap()).unwrap())
-        .map(|response| (response["id"].as_u64().unwrap(), response))
-        .collect()
+    responses.join().unwrap()
 }
 
 fn structured(response: &Value) -> &Value {
@@ -257,8 +275,8 @@ fn headless_session_serves_source_reads_without_desktop_and_changes_nothing() {
             json!({ "jsonrpc": "2.0", "id": 16, "method": "resources/list" }),
             call(
                 17,
-                "create_page",
-                json!({ "parentPath": "", "title": "New" }),
+                "create_routine",
+                json!({ "spaceId": "root", "definition": {} }),
             ),
         ],
     );
@@ -934,4 +952,136 @@ fn a_change_without_access_evidence_is_a_typed_refusal_with_the_next_step() {
     let mut expected = before;
     expected.retain(|path, _| !path.starts_with(".svode") || path.ends_with("config.json"));
     assert_eq!(after, expected);
+}
+
+#[test]
+fn create_structural_reorder_and_import_changes_are_served_in_one_session() {
+    let fixture = fixture();
+    if !fixture.git {
+        return;
+    }
+    let project = &fixture.project;
+    let head = String::from_utf8(
+        Command::new("git")
+            .args(["rev-parse", "HEAD"])
+            .current_dir(project)
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .unwrap();
+    let photo = fixture.temp.path().join("photo.png");
+    fs::write(&photo, "image").unwrap();
+    let mut live = Live::start(
+        fixture.temp.path(),
+        &["--project", project.to_str().unwrap()],
+    );
+
+    // A created Page is published into the index of this session at once.
+    let created = live.ok(
+        "create_page",
+        json!({ "parentPath": "", "title": "Weekly", "content": "Weekly body\n" }),
+    );
+    assert_eq!(created["path"], "Weekly.md", "{created}");
+    assert!(created["sourceVersion"].is_string());
+    let found = live.ok("search_pages", json!({ "query": "Weekly body" }));
+    assert_eq!(result_paths(&found), ["Weekly.md"]);
+    assert_fresh(&found);
+
+    // A Page under a leaf Page makes it directory-backed; move and order
+    // inside it, then turn it back into a leaf.
+    let sub = live.ok(
+        "create_page",
+        json!({ "parentPath": "Weekly", "title": "Sub" }),
+    );
+    assert_eq!(sub["path"], "Weekly/Sub.md", "{sub}");
+    let moved = live.ok(
+        "move_content",
+        json!({ "from": "notes.md", "toParent": "Weekly" }),
+    );
+    assert_eq!(moved["newPath"], "Weekly/notes.md", "{moved}");
+    let renamed = live.ok(
+        "rename_content",
+        json!({ "from": "Weekly/notes.md", "to": "Weekly/Journal.md" }),
+    );
+    assert_eq!(renamed["newPath"], "Weekly/Journal.md", "{renamed}");
+    let ordered = live.ok(
+        "reorder_content",
+        json!({ "parentPath": "Weekly", "orderedChildren": ["Weekly/Journal.md", "Weekly/Sub.md"] }),
+    );
+    assert_eq!(
+        ordered["changedPaths"],
+        json!([".svode/order.json"]),
+        "{ordered}"
+    );
+    live.ok("delete_page", json!({ "path": "Weekly/Sub.md" }));
+    live.ok("delete_page", json!({ "path": "Weekly/Journal.md" }));
+    let leaf = live.ok(
+        "convert_page_to_leaf",
+        json!({ "path": "Weekly/README.md" }),
+    );
+    assert_eq!(leaf["newPath"], "Weekly.md", "{leaf}");
+
+    // Collections: convert, create, delete an item and a Collection.
+    let converted = live.ok("convert_to_collection", json!({ "path": "Weekly.md" }));
+    assert_eq!(converted["collectionPath"], "Weekly", "{converted}");
+    let backlog = live.ok(
+        "create_collection",
+        json!({ "parentPath": "", "title": "Backlog", "columns": [{ "name": "Owner", "type": "text" }] }),
+    );
+    assert_eq!(backlog["collectionPath"], "Backlog", "{backlog}");
+    live.ok(
+        "delete_collection_item",
+        json!({ "path": "tasks/alpha.md" }),
+    );
+    live.ok("delete_collection", json!({ "collectionPath": "Weekly" }));
+    assert!(!project.join("Weekly").exists() && !project.join("tasks/alpha.md").exists());
+    let spaces = live.ok("reorder_spaces", json!({ "orderedSpaceIds": ["child"] }));
+    assert_eq!(spaces["orderedSpaceIds"], json!(["child"]), "{spaces}");
+
+    // An import into the child Space by its local routing.
+    let imported = live.ok(
+        "import_asset",
+        json!({ "spaceId": "child", "contentPath": "brief.md", "sourcePath": photo }),
+    );
+    let attachment = imported["attachmentPath"].as_str().unwrap();
+    assert!(
+        project.join("child").join(attachment).is_file(),
+        "{imported}"
+    );
+
+    // A held repository refuses with the path inside the Space.
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let guard = runtime
+        .block_on(svode_core::git::write_guard::acquire(
+            &std::collections::BTreeSet::from([project.clone()]),
+            &[],
+        ))
+        .unwrap();
+    let busy = live.call(
+        "rename_content",
+        json!({ "from": "Backlog/README.md", "to": "Backlog/Moved.md" }),
+    );
+    assert_eq!(business_code(&busy), "SOURCE_BUSY", "{busy}");
+    let path = busy["result"]["structuredContent"]["error"]["path"]
+        .as_str()
+        .unwrap();
+    assert!(!path.starts_with('/'), "{busy}");
+    drop(guard);
+
+    live.finish();
+    assert_closed(project);
+    let after = String::from_utf8(
+        Command::new("git")
+            .args(["rev-parse", "HEAD"])
+            .current_dir(project)
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .unwrap();
+    assert_eq!(after, head, "no commit");
 }

@@ -5,7 +5,6 @@ use std::pin::Pin;
 
 use svode_core::attachments::import::{LfsReadiness, ManagedImportDelivery};
 use svode_core::routines::model::{ResolvedRoutineOwner, RoutineDispatchResult};
-use svode_core::storage::config::AssetsSpaceConfig;
 use svode_tools::host::{RoutineCaller, RoutineRunner, RoutineRuntime};
 
 pub async fn call_tool_with_context(
@@ -104,7 +103,7 @@ impl svode_tools::host::ToolHost for DesktopMcpHost {
     }
 
     fn lfs_readiness(&self) -> Option<&dyn LfsReadiness> {
-        Some(self)
+        Some(self.app.state::<GitState>().inner().runtime().as_ref())
     }
 
     fn deliver_managed_import(&self, delivery: &ManagedImportDelivery) {
@@ -160,21 +159,6 @@ impl RoutineRunner for DesktopMcpHost {
             .await
             .map_err(Into::into)
         })
-    }
-}
-
-/// Managed imports see the live readiness of the configured Git LFS backend.
-impl LfsReadiness for DesktopMcpHost {
-    fn lfs_ready<'a>(
-        &'a self,
-        repo_dir: &'a Path,
-        config: &'a AssetsSpaceConfig,
-    ) -> Pin<Box<dyn Future<Output = bool> + Send + 'a>> {
-        Box::pin(crate::attachments::import::lfs_ready(
-            self.app.state::<GitState>().inner(),
-            repo_dir,
-            config,
-        ))
     }
 }
 

@@ -9,9 +9,10 @@
 //! pools it publishes into before its source phase, so its Routine events
 //! describe only its own change. A mutation is authorized from the access
 //! evidence the install shares and publishes into the index and Routine
-//! stores of this process. Capabilities of the headless catalog that
-//! this build does not serve yet answer `MODE_UNAVAILABLE` before any
-//! effect.
+//! stores of this process; a managed import proves Git LFS readiness with
+//! the core probe of the process Git runtime. Capabilities of the headless
+//! catalog that this build does not serve yet answer `MODE_UNAVAILABLE`
+//! before any effect.
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -32,9 +33,10 @@ use crate::target::context_error;
 
 /// Catalog tools a standalone process serves: reads answered from project
 /// sources, the index reconciled with them, Git or the Actor catalog, tools
-/// answered from their input, body writes from a read source version, and
-/// metadata, field, schema column and view changes of the current source.
-const SERVED_TOOLS: [&str; 36] = [
+/// answered from their input, body writes from a read source version,
+/// metadata, field, schema column and view changes of the current source,
+/// and create, delete, structural, reorder and managed import changes.
+const SERVED_TOOLS: [&str; 48] = [
     "get_svode_guide",
     "validate_app_manifest",
     "get_project_info",
@@ -71,6 +73,18 @@ const SERVED_TOOLS: [&str; 36] = [
     "add_collection_view",
     "update_collection_view",
     "delete_collection_view",
+    "create_page",
+    "create_collection",
+    "delete_page",
+    "delete_collection_item",
+    "delete_collection",
+    "rename_content",
+    "move_content",
+    "reorder_content",
+    "reorder_spaces",
+    "convert_to_collection",
+    "convert_page_to_leaf",
+    "import_asset",
 ];
 
 /// Capability that is never headless: an explicit Routine launch needs the
@@ -215,7 +229,7 @@ impl ToolHost for StandaloneHost {
     }
 
     fn lfs_readiness(&self) -> Option<&dyn LfsReadiness> {
-        None
+        Some(self.session.git())
     }
 
     /// A headless process has no invalidation consumers.
@@ -251,7 +265,7 @@ mod tests {
             assert!(check_tool(&host, name).is_ok());
         }
 
-        let pending = host.check_call("create_page").unwrap_err();
+        let pending = host.check_call("create_routine").unwrap_err();
         assert_eq!(pending.code, "MODE_UNAVAILABLE");
         for name in [DESKTOP_ONLY_TOOL, "no_such_tool"] {
             assert!(host.check_call(name).is_ok());

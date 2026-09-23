@@ -11,10 +11,10 @@ use crate::git::{GitState, require_cli};
 use crate::index::IndexState;
 use crate::project_runtime::ProjectRuntimeState;
 use crate::space::{config, content_tree, project, registry, settings, symlinks, types::*};
-use crate::storage::lfs::LfsState;
 use crate::system_path;
 use svode_core::git::autocommit::{AutocommitService, SystemCommitKind};
 use svode_core::git::{local_repair, ops};
+use svode_core::storage::lfs::LfsState;
 
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]

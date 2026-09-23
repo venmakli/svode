@@ -1,10 +1,9 @@
 //! Page, owner and item writes through the real `svode` binary with the
 //! desktop app closed. Body writes are served from a read source version
 //! (their cycle is covered by `source_write_process`), metadata and field
-//! changes of the current source by `metadata_schema_process`; `page
-//! create` answers `MODE_UNAVAILABLE` and changes nothing until the
-//! headless runtime serves it. Grammar and input fail before either with
-//! exit 2.
+//! changes of the current source by `metadata_schema_process`, creation by
+//! `structural_families_process`. Grammar and input fail before any of
+//! them with exit 2.
 
 mod common;
 
@@ -33,19 +32,6 @@ fn fixture() -> (tempfile::TempDir, PathBuf) {
     );
     (temp, root)
 }
-
-/// Writes the headless runtime of this build does not serve yet, with
-/// readable input.
-const UNSERVED_WRITES: [&[&str]; 1] = [&[
-    "page",
-    "create",
-    "--parent",
-    "",
-    "--title",
-    "New",
-    "--body-file",
-    "input/body.md",
-]];
 
 /// Body writes with a body but without `--source-version`.
 const UNVERSIONED_BODY_WRITES: [&[&str]; 4] = [
@@ -76,44 +62,6 @@ const UNVERSIONED_BODY_WRITES: [&[&str]; 4] = [
         "input/body.md",
     ],
 ];
-
-#[test]
-fn unserved_standalone_writes_are_mode_unavailable_and_change_nothing() {
-    let (_temp, root) = fixture();
-    let before = snapshot(&root);
-    for args in UNSERVED_WRITES {
-        let (exit, value) = json(&root, args, None);
-        assert_eq!(exit, 1, "{args:?}: {value}");
-        assert_eq!(code(&value), "MODE_UNAVAILABLE", "{args:?}");
-        assert_eq!(value["error"]["target"]["spaceId"], "root", "{args:?}");
-        let human = svode(&root, args);
-        assert_eq!(human.status.code(), Some(1), "{args:?}");
-        assert!(human.stdout.is_empty(), "{args:?}");
-        assert!(
-            String::from_utf8(human.stderr)
-                .unwrap()
-                .contains("MODE_UNAVAILABLE"),
-            "{args:?}"
-        );
-    }
-    // Input from stdin is read and passed on before the mode check.
-    let (exit, value) = json(
-        &root,
-        &[
-            "page",
-            "create",
-            "--parent",
-            "",
-            "--title",
-            "Piped",
-            "--body-file",
-            "-",
-        ],
-        Some("Piped body\n"),
-    );
-    assert_eq!((exit, code(&value)), (1, "MODE_UNAVAILABLE"));
-    assert_eq!(snapshot(&root), before);
-}
 
 #[test]
 fn a_body_write_without_a_source_version_is_an_argument_error_without_effects() {
@@ -304,11 +252,7 @@ fn write_help_shows_the_safe_cycle_without_a_project() {
                 "{command:?}: {expected}"
             );
         }
-        assert_eq!(
-            help.contains("MODE_UNAVAILABLE"),
-            command == &&["page", "create"][..],
-            "{command:?}"
-        );
+        assert!(!help.contains("MODE_UNAVAILABLE"), "{command:?}");
         assert!(!help.contains("--force"), "{command:?}");
     }
     assert!(fs::read_dir(temp.path()).unwrap().next().is_none());

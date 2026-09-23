@@ -1,23 +1,24 @@
 //! LFS-side runtime state and helpers for repository storage.
 //!
-//! - `LfsState` is the per-pool runtime indicator the frontend uses to show
-//!   whether LFS-backed files in this storage scope are loadable right now.
+//! - `LfsState` (core) is the per-pool runtime indicator the frontend uses to
+//!   show whether LFS-backed files in this storage scope are loadable now.
 //! - `is_lfs_pointer` is a cheap inspector for repository files that lets
 //!   sync/watcher code detect an LFS placeholder without shelling out to git.
-//! - `probe_lfs` runs the strategy-appropriate probe to compute the state.
+//! - `probe_lfs` runs the core readiness probe for the effective scope.
 //! - `repair_lfs` is the user-gesture IPC: probe + `git lfs pull` under the
 //!   git lock, transitioning `Pulling → Ready` on success.
 
 use std::path::{Path, PathBuf};
 
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
+use svode_core::storage::lfs::{LfsState, REMOTE_PROBE_ARGS, probe_readiness};
 use tauri::{AppHandle, Manager, State};
 
 use crate::error::AppError;
 use crate::git::GitState;
 use crate::index::{IndexKey, IndexState};
 use crate::repo_path::{RootMode, normalize_repo_relative};
-use crate::space::types::{AssetsSpaceConfig, AssetsStrategy};
+use crate::space::types::AssetsStrategy;
 use svode_core::git::ops;
 
 use super::scope::{
@@ -26,19 +27,6 @@ use super::scope::{
 
 const LFS_POINTER_PREFIX: &str = "version https://git-lfs.github.com/spec/v1";
 const LFS_POINTER_MAX_BYTES: u64 = 200;
-const LFS_REMOTE_PROBE_ARGS: &[&str] = &["lfs", "fetch", "--dry-run", "origin"];
-
-/// Per-pool LFS runtime state. Serialized in kebab-case (`n/a` for
-/// `NotApplicable`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum LfsState {
-    #[serde(rename = "n/a")]
-    NotApplicable,
-    Ready,
-    MissingCreds,
-    Pulling,
-}
 
 fn strategy_uses_lfs_runtime(strategy: AssetsStrategy) -> bool {
     matches!(strategy, AssetsStrategy::LfsRemote | AssetsStrategy::LfsS3)
@@ -78,12 +66,6 @@ pub struct LfsRemoteDiagnostic {
     pub detail: Option<String>,
 }
 
-impl Default for LfsState {
-    fn default() -> Self {
-        LfsState::NotApplicable
-    }
-}
-
 /// Detect whether `path` is an LFS pointer file. Reads up to 256 bytes; the
 /// file must be under 200 bytes total AND start with the canonical pointer
 /// version header. Read errors fall back to `false` (conservative — non-LFS
@@ -116,12 +98,8 @@ fn changed_paths_contain_lfs_pointer(repo_dir: &Path, changed_rel_paths: &[Strin
         .any(|path| is_lfs_pointer(&repo_dir.join(path)))
 }
 
-/// Probe the LFS state of the effective storage scope for `key`:
-/// - Local / InGit → NotApplicable (no LFS in play).
-/// - LfsS3 → Ready iff the keychain entry exists, else MissingCreds.
-/// - LfsRemote → run `git lfs fetch --dry-run origin`; success → Ready,
-///   any failure → MissingCreds (conservative: we surface the repair
-///   affordance instead of pretending everything is fine).
+/// Probe the LFS state of the effective storage scope for `key` with the
+/// core readiness probe.
 pub async fn probe_lfs(
     app: &AppHandle,
     project: &Path,
@@ -141,60 +119,12 @@ pub async fn probe_lfs(
 }
 
 async fn probe_lfs_scope(app: &AppHandle, scope: &AssetsStorageScope) -> LfsState {
-    probe_lfs_config(app, &scope.repo_dir, &scope.config).await
-}
-
-pub(crate) async fn probe_lfs_config(
-    app: &AppHandle,
-    repo_dir: &Path,
-    config: &AssetsSpaceConfig,
-) -> LfsState {
-    probe_lfs_config_with_git(&app.state::<GitState>(), repo_dir, config).await
-}
-
-pub(crate) async fn probe_lfs_config_with_git(
-    git_state: &GitState,
-    repo_dir: &Path,
-    config: &AssetsSpaceConfig,
-) -> LfsState {
-    match config.strategy {
-        AssetsStrategy::Local | AssetsStrategy::InGit => LfsState::NotApplicable,
-        AssetsStrategy::LfsS3 => {
-            let Some(s3_cfg) = config.s3.as_ref() else {
-                return LfsState::MissingCreds;
-            };
-            let target = s3_cfg.clone();
-            let repo = repo_dir.to_path_buf();
-            let present = tokio::task::spawn_blocking(move || {
-                super::bindings::resolve_saved(&repo, &target).is_ok()
-            })
-            .await
-            .unwrap_or(false);
-            if !present {
-                return LfsState::MissingCreds;
-            }
-            // Managed readiness before transfer: ensure Git spawns the current
-            // svode-lfs sidecar, migrating a previous install's lfs-dal
-            // registration. A repair failure must not be reported as a ready
-            // S3 strategy, so surface the repair affordance instead.
-            match super::strategy::repair_managed_registration(git_state, repo_dir).await {
-                Ok(_) => LfsState::Ready,
-                Err(error) => {
-                    tracing::warn!("svode-lfs registration repair failed: {error}");
-                    LfsState::MissingCreds
-                }
-            }
-        }
-        AssetsStrategy::LfsRemote => {
-            let Some(cli) = git_state.detected().cloned() else {
-                return LfsState::MissingCreds;
-            };
-            match cli.exec(repo_dir, LFS_REMOTE_PROBE_ARGS).await {
-                Ok(out) if out.exit_code == 0 => LfsState::Ready,
-                _ => LfsState::MissingCreds,
-            }
-        }
-    }
+    probe_readiness(
+        app.state::<GitState>().runtime(),
+        &scope.repo_dir,
+        &scope.config,
+    )
+    .await
 }
 
 /// IPC: diagnostics-only Git LFS remote probe for Settings. It does not pull
@@ -260,7 +190,7 @@ async fn diagnose_lfs_remote_with_cli(
 
     let auth_method = lfs_remote_auth_method(&remote_url);
     let safe_remote_url = redact_url_credentials(&remote_url);
-    let out = cli.exec(repo_dir, LFS_REMOTE_PROBE_ARGS).await?;
+    let out = cli.exec(repo_dir, REMOTE_PROBE_ARGS).await?;
     if out.exit_code == 0 {
         return Ok(LfsRemoteDiagnostic {
             state: LfsState::Ready,
@@ -661,14 +591,6 @@ size 42\n";
         assert!(!strategy_supports_lfs_remote_diagnostic(
             AssetsStrategy::LfsS3
         ));
-    }
-
-    #[test]
-    fn lfs_remote_probe_uses_supported_fetch_dry_run_command() {
-        assert_eq!(
-            LFS_REMOTE_PROBE_ARGS,
-            &["lfs", "fetch", "--dry-run", "origin"]
-        );
     }
 
     #[test]

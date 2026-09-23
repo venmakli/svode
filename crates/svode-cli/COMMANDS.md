@@ -18,7 +18,7 @@ Global selectors may appear before or after the command. The target is resolved 
 
 ## Runtime modes
 
-Each command runs on the Svode headless runtime shared with `svode-mcp --project`: it opens only what its capability needs and closes it before exit, also on SIGINT/SIGTERM (exit 130/143); a write already inside its source phase completes or rolls back before the command stops. This build serves every read — from project sources, including `collection check`, from the index, from Git and from the Actor catalog — the body writes (`page write`, `item write`, `space readme write`, `collection readme write`), the metadata, field, schema column and view changes (`… meta set`, `item fields set`, `collection column …`, `collection view …`), `git access verify` and `app validate`, which needs no Project. Commands whose capability the headless runtime of this build does not serve yet (create, delete and structural changes, `asset import` and the Routine stores) answer `MODE_UNAVAILABLE` (exit 1) and run nothing; `svode doctor` lists the served capabilities. Writes read and validate their input first, so grammar and input failures still exit 2.
+Each command runs on the Svode headless runtime shared with `svode-mcp --project`: it opens only what its capability needs and closes it before exit, also on SIGINT/SIGTERM (exit 130/143); a write already inside its source phase completes or rolls back before the command stops. This build serves every read — from project sources, including `collection check`, from the index, from Git and from the Actor catalog — the body writes (`page write`, `item write`, `space readme write`, `collection readme write`), the metadata, field, schema column and view changes (`… meta set`, `item fields set`, `collection column …`, `collection view …`), creation (`page create`, `collection create`), deletion, structural changes and reordering (`content …`, `page delete`, `item delete`, `collection delete`, `space reorder`), `asset import`, `git access verify` and `app validate`, which needs no Project. The Routine stores (`routine …`) are not served yet: those commands answer `MODE_UNAVAILABLE` (exit 1) and run nothing; `svode doctor` lists the served capabilities. Writes read and validate their input first, so grammar and input failures still exit 2.
 
 Index-backed commands (`collection query`, `search`, `knowledge …`) check the index of their Spaces against the files before answering, with no watcher: a missing index is built, an incompatible or corrupt one is moved aside and rebuilt, and each command runs one check. Their result carries `index`: `{"status":"fresh"|"partial","verifiedAt":"<time of the check>","diagnostics":[…]}`, where `partial` means some sources could not be read and their earlier rows are kept. An index that cannot be prepared fails with `INDEX_UNAVAILABLE` and its diagnostics, never with an empty list. `space list`, `project info` and `doctor` report repository access from the evidence store shared with the desktop app, without contacting the remote; a repository never checked is `unknown` with reason `not_checked`. A write to a repository with a remote is allowed only while it is `local` or freshly `writable`: otherwise it fails before any effect with `REPOSITORY_ACCESS_DENIED`, its `status`, `reason` and a `hint`, and `git access verify` records new evidence.
 
@@ -47,7 +47,7 @@ Device-local settings, such as that evidence store, are found in the OS config d
 | `knowledge status [--scope]` | `get_knowledge_status` | yes |
 | `git status` | `get_git_status` | yes |
 | `git access verify` | CLI diagnostics: explicit verification of repository access | yes |
-| `page create --parent <dir\|""> --title [--body-file\|--body] [--icon --description --cover-file] [--properties-file]` | `create_page` (Page, or Collection item under a Collection) | no |
+| `page create --parent <dir\|""> --title [--body-file\|--body] [--icon --description --cover-file] [--properties-file]` | `create_page` (Page, or Collection item under a Collection) | yes |
 | `page write --path --body-file\|--body --source-version <token> [--title]` | `write_page` | yes |
 | `page meta set --path [metadata patch]` | `update_page_metadata` | yes |
 | `space readme write --body-file\|--body --source-version <token> [--title]` | `write_space_readme` | yes |
@@ -57,8 +57,8 @@ Device-local settings, such as that evidence store, are found in the OS config d
 | `item write --path --body-file\|--body --source-version <token>` | `update_collection_item_body` | yes |
 | `item fields set --path --fields-file` | `update_collection_item_fields` | yes |
 | `item meta set --path [metadata patch]` | `update_collection_item_metadata` | yes |
-| `collection create --parent <dir\|""> --title [--body-file\|--body] [--icon --description --cover-file] [--columns-file] [--views-file]` | `create_collection` | no |
-| `collection delete --collection` | `delete_collection` | no |
+| `collection create --parent <dir\|""> --title [--body-file\|--body] [--icon --description --cover-file] [--columns-file] [--views-file]` | `create_collection` | yes |
+| `collection delete --collection` | `delete_collection` | yes |
 | `collection check [--collection]` | `validate_collection_integrity` | yes |
 | `collection column add --collection --column-file` | `add_collection_column` | yes |
 | `collection column update --collection --name --patch-file` | `update_collection_column` | yes |
@@ -66,15 +66,15 @@ Device-local settings, such as that evidence store, are found in the OS config d
 | `collection view add --collection --view-file [--position]` | `add_collection_view` | yes |
 | `collection view update --collection --name --patch-file` | `update_collection_view` | yes |
 | `collection view delete --collection --name` | `delete_collection_view` | yes |
-| `content rename --path --to` | `rename_content` | no |
-| `content move --path --to-parent <dir\|"">` | `move_content` | no |
-| `content reorder --parent <dir\|""> --child …` | `reorder_content` | no |
-| `content convert --path --to leaf` | `convert_page_to_leaf` | no |
-| `content convert --path --to collection` | `convert_to_collection` | no |
-| `page delete --path` | `delete_page` | no |
-| `item delete --path` | `delete_collection_item` | no |
-| `space reorder --id …` | `reorder_spaces` (Project level; `--space` is not used) | no |
-| `asset import --path <content.md> --file <local> [--name]` | `import_asset` | no |
+| `content rename --path --to` | `rename_content` | yes |
+| `content move --path --to-parent <dir\|"">` | `move_content` | yes |
+| `content reorder --parent <dir\|""> --child …` | `reorder_content` | yes |
+| `content convert --path --to leaf` | `convert_page_to_leaf` | yes |
+| `content convert --path --to collection` | `convert_to_collection` | yes |
+| `page delete --path` | `delete_page` | yes |
+| `item delete --path` | `delete_collection_item` | yes |
+| `space reorder --id …` | `reorder_spaces` (Project level; `--space` is not used) | yes |
+| `asset import --path <content.md> --file <local> [--name]` | `import_asset` | yes |
 | `app validate --file <app.yaml\|->` | `validate_app_manifest` | yes, without a Project |
 | `routine list [--collection] [--limit --offset]` | `list_routines` | no |
 | `routine get [--collection] --id` | `get_routine` | no |
@@ -119,7 +119,7 @@ The JSON result is the MCP `structuredContent` of the capability, for example `p
 
 ## Assets and Apps
 
-`asset import` copies one local regular file next to existing Markdown content through the shared managed import: `--path` is a Page, Collection item, Space README or Collection README relative to the selected Space; `--file` is absolute or relative to the current directory and is copied, never moved. Directories, symbolic links and stdin are not accepted. The copy is stored by the asset routing of its Space (local with a `.gitignore` entry, in Git, or Git LFS); a Git LFS route that is not ready refuses before any write. A leaf Page becomes directory-backed first, with its links rewritten. The import authorizes the affected repository before the first write and never commits to Git; it changes no body or cover.
+`asset import` copies one local regular file next to existing Markdown content through the shared managed import: `--path` is a Page, Collection item, Space README or Collection README relative to the selected Space; `--file` is absolute or relative to the current directory and is copied, never moved. Directories, symbolic links and stdin are not accepted. The copy is stored by the asset routing of its Space (local with a `.gitignore` entry, in Git, or Git LFS); a Git LFS route that is not ready refuses before any write. Readiness is the same live check the desktop app runs: an S3-backed route needs the S3 setup saved for this device with its credentials in the OS keychain, a remote route needs Git LFS to reach `origin`. A leaf Page becomes directory-backed first, with its links rewritten. The import authorizes the affected repository before the first write and never commits to Git; it changes no body or cover.
 
 - JSON result: `spaceId`, canonical `contentPath` (use it for the next command), `attachmentPath` and `coverPath` relative to the Space, `markdownUrl` relative to the content, `fileName`, `mime`, `sizeBytes`, `changedPaths`.
 - Human output: the summary line, `contentPath`, `attachmentPath`, `markdownUrl`, `coverPath`, then each changed path.

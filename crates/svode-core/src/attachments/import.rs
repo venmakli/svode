@@ -4,8 +4,8 @@
 //!
 //! The operation owns validation, the planned touched-set, the canonical
 //! content handoff and the staged cleanup. The host supplies the shared
-//! runtime handles, the live Git LFS readiness evidence and the delivery of
-//! the resulting invalidation.
+//! runtime handles, the Git LFS readiness evidence and the delivery of the
+//! resulting invalidation.
 
 use std::collections::{BTreeSet, HashMap};
 use std::fs::{self, File, OpenOptions};
@@ -46,9 +46,10 @@ pub enum MutationOrigin {
     Mcp,
 }
 
-/// Live Git LFS readiness evidence. Keychain-backed credentials and the
-/// installed transfer agent belong to the host, so the operation asks instead
-/// of probing them itself.
+/// Live Git LFS readiness evidence of a route. Every host answers it with
+/// the core probe of its Git runtime (`storage::lfs`); the operation asks
+/// instead of probing itself, so fixtures can stand in for the keychain and
+/// the remote.
 pub trait LfsReadiness: Sync {
     fn lfs_ready<'a>(
         &'a self,

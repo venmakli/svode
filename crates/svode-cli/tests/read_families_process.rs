@@ -429,7 +429,9 @@ fn doctor_reports_project_spaces_git_and_runtime_without_opening_stores() {
     assert!(served.contains(&Value::from("query_collection_items")));
     assert!(served.contains(&Value::from("write_page")));
     assert!(served.contains(&Value::from("update_page_metadata")));
-    assert!(!served.contains(&Value::from("create_page")));
+    assert!(served.contains(&Value::from("create_page")));
+    assert!(served.contains(&Value::from("import_asset")));
+    assert!(!served.contains(&Value::from("create_routine")));
     let human = svode(&root.join("child/deep"), &["doctor"]);
     let human = String::from_utf8(human.stdout).unwrap();
     assert!(human.contains("space child: ready"), "{human}");
@@ -472,11 +474,7 @@ fn guide_prints_the_shared_guide_and_files_first_rules_without_a_project() {
 #[test]
 fn help_of_every_command_works_without_a_project_or_runtime() {
     let temp = tempfile::tempdir().unwrap();
-    let headless = [
-        vec!["page", "create"],
-        vec!["collection", "create"],
-        vec!["routine", "list"],
-    ];
+    let headless = [vec!["routine", "list"], vec!["routine", "create"]];
     let indexed = [
         vec!["collection", "query"],
         vec!["search"],
@@ -494,6 +492,7 @@ fn help_of_every_command_works_without_a_project_or_runtime() {
         vec!["space", "readme", "read"],
         vec!["page", "read"],
         vec!["page", "write"],
+        vec!["page", "create"],
         vec!["page", "list"],
         vec!["collection", "list"],
         vec!["collection", "schema"],

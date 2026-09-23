@@ -3,12 +3,11 @@
 //! The split between this module and `strategy.rs` keeps strategy.rs focused
 //! on git/.gitattributes wiring while all S3-specific concerns live here.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use opendal::{Operator, services::S3};
 
 use crate::error::AppError;
-use crate::process;
 
 pub const AGENT_CONFIG_REL: &str = svode_core::storage::s3::CONFIG_REL;
 
@@ -105,149 +104,6 @@ pub fn delete_agent_config(space_dir: &Path) -> Result<(), AppError> {
     Ok(())
 }
 
-/// Resolve the bundled `svode-lfs` sidecar binary on disk. Looks first next
-/// to the host executable (production / `tauri build`), then falls back to
-/// the `src-tauri/binaries/svode-lfs-<triple>` artifact written by
-/// `scripts/build-svode-lfs.mjs` (dev mode), and finally to the cargo target
-/// shared Cargo workspace output. Returns an absolute path so git's
-/// `lfs.customtransfer.svode-lfs.path` config never relies on cwd.
-pub fn resolve_agent_binary() -> Result<PathBuf, AppError> {
-    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let mut candidates = Vec::new();
-
-    // 1. Bundled sidecar — Tauri places externalBin next to the host binary
-    //    after stripping the target-triple suffix, so a plain `svode-lfs[.exe]`
-    //    in the same directory wins for production builds.
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(parent) = exe.parent() {
-            for name in svode_lfs_plain_names() {
-                candidates.push(parent.join(name));
-            }
-        }
-    }
-
-    // 2. Dev mode — the build script copies a triple-suffixed artifact to
-    //    `src-tauri/binaries/`. cwd at runtime is `src-tauri/`, so a
-    //    relative lookup is enough.
-    let triple = std::env::var("TARGET").ok().or_else(rustc_host_triple);
-    if let Some(triple) = triple.as_deref() {
-        for name in svode_lfs_suffixed_names(triple) {
-            candidates.push(manifest_dir.join("binaries").join(name));
-        }
-    }
-
-    // 3. Last-ditch dev fallback for direct Cargo builds in the shared workspace.
-    let workspace_dir = manifest_dir.join("../../..");
-    let target_dir = std::env::var_os("CARGO_TARGET_DIR")
-        .filter(|value| PathBuf::from(value).is_absolute())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| workspace_dir.join("target"));
-    for profile in ["lfs-release", "release", "debug"] {
-        for name in svode_lfs_plain_names() {
-            candidates.push(target_dir.join(profile).join(&name));
-            if let Some(triple) = triple.as_deref() {
-                candidates.push(target_dir.join(triple).join(profile).join(&name));
-            }
-        }
-    }
-
-    for candidate in candidates {
-        if !candidate.exists() {
-            continue;
-        }
-        let absolute = candidate.canonicalize().map_err(|e| {
-            AppError::Storage(format!(
-                "svode-lfs binary path could not be canonicalized ({}): {e}",
-                candidate.display()
-            ))
-        })?;
-        validate_agent_binary(&absolute)?;
-        return Ok(absolute);
-    }
-
-    Err(AppError::Storage(
-        "svode-lfs binary not found — run `bun run build:svode-lfs` or rebuild the app bundle"
-            .into(),
-    ))
-}
-
-fn svode_lfs_plain_names() -> Vec<String> {
-    svode_lfs_plain_names_for(cfg!(windows))
-}
-
-fn svode_lfs_plain_names_for(windows: bool) -> Vec<String> {
-    if windows {
-        vec!["svode-lfs.exe".to_string(), "svode-lfs".to_string()]
-    } else {
-        vec!["svode-lfs".to_string()]
-    }
-}
-
-fn svode_lfs_suffixed_names(triple: &str) -> Vec<String> {
-    svode_lfs_suffixed_names_for(triple, cfg!(windows))
-}
-
-fn svode_lfs_suffixed_names_for(triple: &str, windows: bool) -> Vec<String> {
-    if windows {
-        vec![
-            format!("svode-lfs-{triple}.exe"),
-            format!("svode-lfs-{triple}"),
-        ]
-    } else {
-        vec![format!("svode-lfs-{triple}")]
-    }
-}
-
-fn validate_agent_binary(path: &Path) -> Result<(), AppError> {
-    if !path.is_absolute() {
-        return Err(AppError::Storage(format!(
-            "svode-lfs binary path must be absolute: {}",
-            path.display()
-        )));
-    }
-    if !path.is_file() {
-        return Err(AppError::Storage(format!(
-            "svode-lfs binary is not a file: {}",
-            path.display()
-        )));
-    }
-    validate_agent_binary_executable(path)
-}
-
-#[cfg(target_os = "linux")]
-fn validate_agent_binary_executable(path: &Path) -> Result<(), AppError> {
-    use std::os::unix::fs::PermissionsExt;
-
-    let mode = std::fs::metadata(path)?.permissions().mode();
-    if mode & 0o111 == 0 {
-        return Err(AppError::Storage(format!(
-            "svode-lfs binary is not executable: {}",
-            path.display()
-        )));
-    }
-    Ok(())
-}
-
-#[cfg(not(target_os = "linux"))]
-fn validate_agent_binary_executable(_path: &Path) -> Result<(), AppError> {
-    Ok(())
-}
-
-/// Cheap shell-out to ask rustc for the host triple. Cached lazily would be
-/// nice but resolve_agent_binary is only called for managed readiness/setup,
-/// so we just spawn the process each time.
-fn rustc_host_triple() -> Option<String> {
-    let mut cmd = std::process::Command::new("rustc");
-    process::hide_window(&mut cmd);
-    let out = cmd.arg("-vV").output().ok()?;
-    if !out.status.success() {
-        return None;
-    }
-    let s = String::from_utf8(out.stdout).ok()?;
-    s.lines()
-        .find_map(|l| l.strip_prefix("host:").map(|v| v.trim().to_string()))
-}
-
 /// Build an OpenDAL operator from backend-resolved credentials, without the
 /// keychain round-trip.
 pub fn operator_for(
@@ -342,33 +198,6 @@ mod tests {
         assert_eq!(
             normalize_prefix_path("///", "fallback/root"),
             "fallback/root"
-        );
-    }
-
-    #[test]
-    fn svode_lfs_names_include_windows_exe_fallbacks() {
-        assert_eq!(
-            svode_lfs_plain_names_for(true),
-            vec!["svode-lfs.exe".to_string(), "svode-lfs".to_string()]
-        );
-        assert_eq!(
-            svode_lfs_suffixed_names_for("x86_64-pc-windows-msvc", true),
-            vec![
-                "svode-lfs-x86_64-pc-windows-msvc.exe".to_string(),
-                "svode-lfs-x86_64-pc-windows-msvc".to_string(),
-            ]
-        );
-    }
-
-    #[test]
-    fn svode_lfs_names_use_plain_unix_binary_names() {
-        assert_eq!(
-            svode_lfs_plain_names_for(false),
-            vec!["svode-lfs".to_string()]
-        );
-        assert_eq!(
-            svode_lfs_suffixed_names_for("aarch64-apple-darwin", false),
-            vec!["svode-lfs-aarch64-apple-darwin".to_string()]
         );
     }
 }

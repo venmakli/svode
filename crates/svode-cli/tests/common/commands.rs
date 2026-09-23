@@ -61,7 +61,7 @@ pub const CASES: &[Case] = &[
     ),
     case(
         "space reorder",
-        &["space", "reorder", "--id", "child"],
+        &["space", "reorder", "--id", "wiki", "--id", "child"],
         &["reorder_spaces"],
     ),
     case("page list", &["page", "list"], &["list_pages"]),
@@ -353,11 +353,11 @@ pub const CASES: &[Case] = &[
             "content",
             "reorder",
             "--parent",
-            "",
+            "list",
             "--child",
-            "notes.md",
+            "list/b.md",
             "--child",
-            "tasks/README.md",
+            "list/a.md",
         ],
         &["reorder_content"],
     ),
@@ -515,11 +515,15 @@ pub fn fixture() -> Fixture {
     let input = base.join("input");
     write(
         &project.join(".svode/config.json"),
-        r#"{"name":"Project","spaces":[{"id":"child","path":"child","repo":null}]}"#,
+        r#"{"name":"Project","spaces":[{"id":"child","path":"child","repo":null},{"id":"wiki","path":"wiki","repo":null}]}"#,
     );
     write(
         &project.join("child/.svode/config.json"),
         r#"{"name":"Child"}"#,
+    );
+    write(
+        &project.join("wiki/.svode/config.json"),
+        r#"{"name":"Wiki"}"#,
     );
     write(
         &project.join("README.md"),
@@ -533,6 +537,9 @@ pub fn fixture() -> Fixture {
         &project.join("folder/README.md"),
         "---\ntitle: Folder\n---\nFolder body\n",
     );
+    write(&project.join("list/README.md"), "---\ntitle: List\n---\n");
+    write(&project.join("list/a.md"), "---\ntitle: A\n---\n");
+    write(&project.join("list/b.md"), "---\ntitle: B\n---\n");
     write(
         &project.join("tasks/schema.yaml"),
         "columns:\n  - name: Status\n    type: text\nviews:\n  - type: table\n    name: Table\n",

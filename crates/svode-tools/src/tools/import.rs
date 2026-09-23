@@ -10,7 +10,7 @@ use svode_core::attachments::import::{
 
 use crate::error::ToolError;
 use crate::host::{RequestTarget, ToolHost};
-use crate::mutation::{authorize_paths, within_authorized};
+use crate::mutation::{authorize_paths, space_relative_busy, within_authorized};
 use crate::path::{ensure_inside, validate_markdown_path};
 use crate::result::ToolCallResult;
 use crate::target::{default_space_id, is_root_space_id, resolve_space};
@@ -67,7 +67,8 @@ pub(crate) async fn import_asset(
     let result = within_authorized(authorized, async {
         Ok(Box::pin(execute_managed_import(runtime, MutationOrigin::Mcp, plan)).await?)
     })
-    .await?;
+    .await
+    .map_err(|error| space_relative_busy(&space, error))?;
     host.deliver_managed_import(&result.delivery);
     let owner_space_id = args.space_id.unwrap_or_else(|| default_space_id(target));
 

@@ -358,7 +358,7 @@ pub async fn set_assets_strategy(
             })
             .await?,
         );
-        Some(s3::resolve_agent_binary()?)
+        Some(svode_core::storage::lfs::resolve_agent_binary()?)
     } else {
         None
     };
@@ -445,7 +445,10 @@ pub async fn has_s3_credentials(
         return Ok(false);
     };
     tokio::task::spawn_blocking(move || {
-        super::bindings::resolve_saved(&scope.repo_dir, &target).map(|_| true)
+        svode_core::storage::s3::AgentConfig::read_for_target(&scope.repo_dir, &target)
+            .and_then(|config| config.resolve())
+            .map(|_| true)
+            .map_err(AppError::Storage)
     })
     .await
     .map_err(|e| AppError::Storage(format!("S3 credentials task failed: {e}")))?

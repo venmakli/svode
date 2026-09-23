@@ -1,4 +1,5 @@
 //! Shared S3 bindings, local agent configuration and credential resolution.
+use super::config::AssetsS3Config;
 use crate::variables::{self, Context, KeyringSecretStore, SecretStore, Service};
 pub use crate::variables::{SecretPair as SecretBindings, SecretValues as Credentials};
 use serde::{Deserialize, Serialize};
@@ -83,6 +84,19 @@ impl AgentConfig {
             serde_json::from_slice(&bytes).map_err(|_| SETUP_REQUIRED.to_string())?;
         let config: Self = serde_json::from_value(input).map_err(|_| SETUP_REQUIRED.to_string())?;
         config.validate()?;
+        Ok(config)
+    }
+    /// Saved agent config of `repo` for the current S3 `target`; a config
+    /// written for another target needs setup again.
+    pub fn read_for_target(repo: &Path, target: &AssetsS3Config) -> Result<Self, String> {
+        let config = Self::read(repo)?;
+        if config.endpoint != target.endpoint
+            || config.bucket != target.bucket
+            || config.region != target.region
+            || config.prefix.as_deref() != Some(target.prefix.as_str())
+        {
+            return Err(SETUP_REQUIRED.into());
+        }
         Ok(config)
     }
     pub fn write(&self, repo: &Path) -> Result<(), String> {

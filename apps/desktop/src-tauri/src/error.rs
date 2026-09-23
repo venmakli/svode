@@ -320,6 +320,16 @@ impl From<svode_core::storage::policy::StoragePolicyError> for AppError {
     }
 }
 
+impl From<svode_core::storage::lfs::LfsError> for AppError {
+    fn from(error: svode_core::storage::lfs::LfsError) -> Self {
+        use svode_core::storage::lfs::LfsError;
+        match error {
+            LfsError::Git(error) => error.into(),
+            LfsError::Storage(message) => Self::Storage(message),
+        }
+    }
+}
+
 impl From<svode_core::storage::routes::ManagedRouteError> for AppError {
     fn from(error: svode_core::storage::routes::ManagedRouteError) -> Self {
         use svode_core::storage::routes::ManagedRouteError;

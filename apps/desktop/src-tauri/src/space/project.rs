@@ -9,7 +9,7 @@ use super::config;
 use super::registry;
 use super::scaffold;
 use super::types::{SpaceConfig, SpaceInfo, SpaceRef, SpaceStatus};
-use crate::storage::lfs::LfsState;
+use svode_core::storage::lfs::LfsState;
 
 /// Where to register a newly created/opened space.
 enum RegistrationTarget<'a> {

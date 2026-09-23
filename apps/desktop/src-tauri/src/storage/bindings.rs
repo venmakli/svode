@@ -50,27 +50,6 @@ pub(crate) fn publish(
     config.write(repo).map_err(AppError::Storage)
 }
 
-pub(crate) fn saved_config(repo: &Path, target: &AssetsS3Config) -> Result<AgentConfig, AppError> {
-    let config = AgentConfig::read(repo).map_err(AppError::Storage)?;
-    if config.endpoint != target.endpoint
-        || config.bucket != target.bucket
-        || config.region != target.region
-        || config.prefix.as_deref() != Some(target.prefix.as_str())
-    {
-        return Err(AppError::Storage(
-            svode_core::storage::s3::SETUP_REQUIRED.into(),
-        ));
-    }
-    Ok(config)
-}
-
-pub(crate) fn resolve_saved(repo: &Path, target: &AssetsS3Config) -> Result<(), AppError> {
-    saved_config(repo, target)?
-        .resolve()
-        .map_err(AppError::Storage)?;
-    Ok(())
-}
-
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct S3BindingState {
@@ -98,7 +77,9 @@ pub(crate) async fn get_s3_bindings(
             .s3
             .as_ref()
             .ok_or_else(|| AppError::Storage(svode_core::storage::s3::SETUP_REQUIRED.into()))
-            .and_then(|target| saved_config(&scope.repo_dir, target));
+            .and_then(|target| {
+                AgentConfig::read_for_target(&scope.repo_dir, target).map_err(AppError::Storage)
+            });
         let (bindings, result) = match config {
             Ok(config) => (
                 Some(config.bindings.clone()),
@@ -374,7 +355,7 @@ mod tests {
         let settings = std::fs::read_to_string(dir.path().join("settings.json")).unwrap();
         assert!(!settings.contains("private-value"));
         let clone = dir.path().join("clone");
-        assert!(saved_config(&clone, &target()).is_err());
+        assert!(AgentConfig::read_for_target(&clone, &target()).is_err());
     }
 
     #[test]
@@ -570,13 +551,13 @@ mod tests {
         );
         let mut changed_target = target();
         changed_target.bucket = "other-bucket".into();
-        assert!(saved_config(&repo, &changed_target).is_err());
+        assert!(AgentConfig::read_for_target(&repo, &changed_target).is_err());
         changed_target = target();
         changed_target.prefix = "new-prefix".into();
         let next = prepare(dir.path(), &changed_target, next.bindings, &secrets).unwrap();
         publish(dir.path(), &repo, &next, &secrets).unwrap();
         assert_eq!(
-            saved_config(&repo, &changed_target)
+            AgentConfig::read_for_target(&repo, &changed_target)
                 .unwrap()
                 .bindings
                 .secret_key

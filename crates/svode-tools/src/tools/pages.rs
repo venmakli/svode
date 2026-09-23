@@ -18,7 +18,7 @@ use svode_core::page::write::{PageWrite, PageWriteOutcome};
 use crate::args::deserialize_present;
 use crate::error::ToolError;
 use crate::host::{RequestTarget, ToolHost};
-use crate::mutation::{MutationError, PageHandles, authorize, failure};
+use crate::mutation::{MutationError, PageHandles, authorize, failure, space_relative_busy};
 use crate::owner::{
     collection_readme_path, require_collection_item, require_owner, require_standalone_page,
 };
@@ -211,7 +211,7 @@ pub(crate) async fn create_page(
     .await
     {
         Ok(outcome) => outcome,
-        Err(error) => return failure(error),
+        Err(error) => return failure(error).map_err(|error| space_relative_busy(&space, error)),
     };
     let changed_paths = relative_changed_paths(&space, &outcome.changed_paths);
     let warnings = outcome.page.warnings.clone();

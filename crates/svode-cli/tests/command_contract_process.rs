@@ -1,7 +1,8 @@
 //! JSON, exit and output contract of every public command through the real
 //! `svode` binary with the desktop app closed. Served commands succeed, and
 //! served body writes from a version of no read are refused as stale; the
-//! rest answer `MODE_UNAVAILABLE` until the headless runtime serves them.
+//! Routine store commands answer `MODE_UNAVAILABLE` until the headless
+//! runtime serves them.
 //! A served mutation runs on a fresh fixture in each output mode; no other
 //! command changes a source file: index-backed reads only add the derived
 //! index and the device-local stores it keeps in `.svode/`.
