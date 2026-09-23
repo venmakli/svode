@@ -5,7 +5,7 @@ pub use model::{
     Cover, DeleteResult, Entry, EntryDetailForm, EntryDetailState, EntryMeta, EntryWarning,
     WriteResult,
 };
-pub use persistence::{entry_from_source, read};
+pub use persistence::{entry_from_source, read, read_with_git_dates};
 
 use std::collections::HashMap;
 use std::fs;

@@ -18,8 +18,7 @@ use tokio::sync::Mutex;
 
 use crate::error::AppError;
 use crate::repo_path::{RootMode, normalize_repo_relative};
-use crate::space::types::{SpaceConfig, SpaceStatus};
-use crate::space::{config, project};
+use crate::space::types::SpaceStatus;
 use crate::storage::lfs::LfsState;
 use crate::system_path;
 #[cfg(test)]
@@ -49,45 +48,7 @@ pub struct ResolvedDocLink {
 }
 
 pub use svode_core::index::resolver::ProjectSpacesCache;
-
-fn project_spaces_cache_from_config(project: &Path, cfg: &SpaceConfig) -> ProjectSpacesCache {
-    let mut cache = ProjectSpacesCache {
-        root_name: cfg.name.clone(),
-        ..ProjectSpacesCache::default()
-    };
-    if let Some(spaces) = &cfg.spaces {
-        for sp in spaces {
-            let folder = sp.path.clone();
-            let space_dir = project.join(&folder);
-            let status = project::space_ref_status(project, sp);
-            if matches!(status, SpaceStatus::Ready) {
-                cache
-                    .name_by_id
-                    .insert(sp.id.clone(), read_child_space_name(&space_dir, &folder));
-            }
-            cache.by_folder.insert(folder.clone(), sp.id.clone());
-            cache.folder_by_id.insert(sp.id.clone(), folder);
-            cache.status_by_id.insert(sp.id.clone(), status);
-        }
-    }
-    cache
-}
-
-/// Read a child space's display name from its `.svode/config.json`. Falls
-/// back to `folder_name` and logs a warning if the read fails — name is a
-/// UI nicety, not a critical path.
-fn read_child_space_name(space_dir: &Path, folder_name: &str) -> String {
-    match config::read_space_config(space_dir) {
-        Ok(cfg) => cfg.name,
-        Err(e) => {
-            tracing::warn!(
-                "read child space name failed for {}: {e}",
-                space_dir.display()
-            );
-            folder_name.to_string()
-        }
-    }
-}
+use svode_core::index::resolver::child_space_name;
 
 fn normalize_abs_path(path: &Path) -> Option<PathBuf> {
     let mut out = PathBuf::new();
@@ -435,8 +396,7 @@ impl IndexState {
     }
 
     pub async fn open_project(&self, project: &Path) -> Result<Vec<IndexKey>, AppError> {
-        let cfg = config::read_space_config(project)?;
-        let cache = project_spaces_cache_from_config(project, &cfg);
+        let cache = ProjectSpacesCache::from_project(project)?;
         let ready_ids: Vec<String> = cache
             .status_by_id
             .iter()
@@ -491,7 +451,7 @@ impl IndexState {
         status: SpaceStatus,
     ) -> Option<IndexKey> {
         let display = matches!(status, SpaceStatus::Ready)
-            .then(|| read_child_space_name(&project.join(folder_name), folder_name));
+            .then(|| child_space_name(&project.join(folder_name), folder_name));
         self.core
             .upsert_space(project, space_id, folder_name, status, display)
             .await;
@@ -536,7 +496,7 @@ impl IndexState {
             self.core
                 .folder_for_space(project, space_id)
                 .await
-                .map(|folder| read_child_space_name(&project.join(&folder), &folder))
+                .map(|folder| child_space_name(&project.join(&folder), &folder))
         } else {
             None
         };
@@ -571,8 +531,7 @@ impl IndexState {
     /// the pools that survived. Existing pools whose status is unchanged are
     /// untouched (no reindex storm).
     pub async fn refresh_after_root_pull(&self, project: &Path) -> Result<Vec<IndexKey>, AppError> {
-        let cfg = config::read_space_config(project)?;
-        let fresh = project_spaces_cache_from_config(project, &cfg);
+        let fresh = ProjectSpacesCache::from_project(project)?;
 
         let known = self.core.status_by_id(project).await;
 

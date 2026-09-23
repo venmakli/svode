@@ -8,6 +8,7 @@ use serde_json::{Map, Value, json};
 use svode_tools::catalog;
 use svode_tools::dispatch::call_tool;
 use svode_tools::host::ToolHost;
+use svode_tools::standalone::mode_unavailable;
 
 use crate::error::CliError;
 use crate::grammar::{
@@ -16,7 +17,6 @@ use crate::grammar::{
     MetadataPatch, NamedSelector, Noun, Pagination, ProjectVerb, RoutineOwner, RoutineVerb,
     SpaceReadmeVerb, SpaceVerb, ViewVerb,
 };
-use crate::host::mode_unavailable;
 use crate::input;
 use crate::output::Outcome;
 use crate::render;

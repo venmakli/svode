@@ -1,7 +1,7 @@
 use svode_tools::error::ToolError;
 
 use crate::config::{self, McpClient};
-use crate::{MCP_BRIDGE_PROTOCOL, MCP_VERSION, bridge, stdio};
+use crate::{MCP_BRIDGE_PROTOCOL, MCP_VERSION, bridge, headless, stdio};
 
 pub async fn run() -> i32 {
     let args = std::env::args().skip(1).collect::<Vec<_>>();
@@ -19,7 +19,10 @@ async fn run_args(args: &[String]) -> Result<(), ToolError> {
         Some("--app") if args.get(1).map(String::as_str) == Some("desktop") => {
             stdio::run_stdio().await
         }
-        Some("--project") => Err(project_mode_unavailable()),
+        Some("--project" | "--space") => {
+            let (project, space) = parse_project_args(args)?;
+            headless::run(project, space).await
+        }
         Some("install") => {
             let client = parse_client_arg(args)?;
             let result = config::install_client(client)?;
@@ -61,11 +64,29 @@ async fn run_args(args: &[String]) -> Result<(), ToolError> {
     }
 }
 
-fn project_mode_unavailable() -> ToolError {
-    ToolError::new(
-        "MODE_UNAVAILABLE",
-        "svode-mcp --project is not available in this build; use --app desktop with a running Svode desktop",
-    )
+/// `--project <path> [--space <root|space-id>]`, each given once.
+fn parse_project_args(args: &[String]) -> Result<(&str, Option<&str>), ToolError> {
+    let invalid = || {
+        ToolError::new(
+            "INVALID_ARGUMENT",
+            "expected --project <path> [--space <root|space-id>]",
+        )
+    };
+    let (mut project, mut space) = (None, None);
+    let mut rest = args.iter().map(String::as_str);
+    while let Some(flag) = rest.next() {
+        let value = rest.next().filter(|value| !value.starts_with("--"));
+        let slot = match flag {
+            "--project" => &mut project,
+            "--space" => &mut space,
+            _ => return Err(invalid()),
+        };
+        if slot.is_some() {
+            return Err(invalid());
+        }
+        *slot = Some(value.ok_or_else(invalid)?);
+    }
+    Ok((project.ok_or_else(invalid)?, space))
 }
 
 fn parse_client_arg(args: &[String]) -> Result<McpClient, ToolError> {
@@ -79,6 +100,7 @@ fn parse_client_arg(args: &[String]) -> Result<McpClient, ToolError> {
 fn usage() -> &'static str {
     "Usage:
   svode-mcp --app desktop
+  svode-mcp --project <path> [--space <root|space-id>]
   svode-mcp install --client <claude-code|codex>
   svode-mcp remove --client <claude-code|codex>
   svode-mcp print-config --client <claude-code|codex>
@@ -91,14 +113,40 @@ fn usage() -> &'static str {
 mod tests {
     use super::*;
 
-    #[tokio::test]
-    async fn project_mode_is_a_controlled_unavailable_error_outside_usage() {
-        let args = ["--project".to_string(), "/tmp/project".to_string()];
-        let error = run_args(&args)
-            .await
-            .expect_err("project mode is unavailable");
-
-        assert_eq!(error.code, "MODE_UNAVAILABLE");
-        assert!(!usage().contains("--project"));
+    #[test]
+    fn project_mode_takes_one_project_and_an_optional_space() {
+        let args = |raw: &[&str]| raw.iter().map(ToString::to_string).collect::<Vec<_>>();
+        assert_eq!(
+            parse_project_args(&args(&["--project", "/p"])).unwrap(),
+            ("/p", None)
+        );
+        assert_eq!(
+            parse_project_args(&args(&["--project", "p", "--space", "root"])).unwrap(),
+            ("p", Some("root"))
+        );
+        for invalid in [
+            &["--project"][..],
+            &["--project", "--space", "root"],
+            &["--project", "a", "--project", "b"],
+            &["--project", "a", "--space"],
+            &["--project", "a", "--other", "x"],
+        ] {
+            assert_eq!(
+                parse_project_args(&args(invalid)).unwrap_err().code,
+                "INVALID_ARGUMENT",
+                "{invalid:?}"
+            );
+        }
+        assert_eq!(
+            parse_project_args(&args(&["--space", "child", "--project", "p"])).unwrap(),
+            ("p", Some("child"))
+        );
+        assert_eq!(
+            parse_project_args(&args(&["--space", "child"]))
+                .unwrap_err()
+                .code,
+            "INVALID_ARGUMENT"
+        );
+        assert!(usage().contains("--project <path> [--space <root|space-id>]"));
     }
 }

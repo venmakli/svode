@@ -1,11 +1,10 @@
 //! The `svode` command over the shared tool surface. The binary runs it on
-//! the standalone [`host::SourceHost`]; tests run the same frame on a
-//! harness host with a prepared runtime.
+//! the shared standalone host of `svode-tools`; tests run the same frame on
+//! a harness host with a prepared runtime.
 
 mod doctor;
 mod error;
 pub mod grammar;
-pub mod host;
 mod input;
 mod output;
 mod page;

@@ -17,6 +17,7 @@ use svode_core::git::state::GitRuntime;
 use svode_core::index::IndexKey;
 use svode_core::index::state::IndexRuntimeState;
 use svode_core::index::update::IndexUpdateState;
+use svode_core::page::ResolvedSpaceTarget;
 use svode_core::page::nonce::WriteNonceRegistry;
 use svode_core::routines::model::{
     ResolvedRoutineOwner, RoutineDispatchResult, RoutineLiveEvidence,
@@ -83,6 +84,18 @@ pub struct RequestTarget {
     pub default_space_path: String,
     /// Verified Routine provenance; `None` for an ordinary external caller.
     pub routine_caller: Option<RoutineCaller>,
+}
+
+impl RequestTarget {
+    /// Target of an ordinary caller whose default Space is `space`.
+    pub fn for_space(space: &ResolvedSpaceTarget) -> Self {
+        Self {
+            project_path: space.project_path.to_string_lossy().to_string(),
+            default_space_id: space.space_id.clone(),
+            default_space_path: space.space_path.to_string_lossy().to_string(),
+            routine_caller: None,
+        }
+    }
 }
 
 pub trait ToolHost: Sync {

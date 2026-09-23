@@ -13,6 +13,7 @@ serde_json = "1"
 serde_yml = "0.0.12"
 tracing = "0.1"
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite"] }
+tokio = { version = "1", features = ["time"] }
 
 [dev-dependencies]
 tempfile = "3"

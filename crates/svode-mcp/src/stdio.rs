@@ -1,35 +1,67 @@
-use std::io::{self, BufRead, Write};
-
 use serde_json::{Value, json};
 use svode_tools::error::ToolError;
 use svode_tools::result::ToolCallResult;
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
 use crate::bridge;
 use crate::protocol::IpcResponse;
 
 pub(crate) async fn run_stdio() -> Result<(), ToolError> {
-    let stdin = io::stdin();
-    let mut stdout = io::stdout();
-    for line in stdin.lock().lines() {
-        let line = line?;
+    serve(|method, params| async move { bridge::desktop_request(&method, params).await }).await
+}
+
+/// Serves one MCP stdio session until stdin ends or the process receives
+/// SIGINT/SIGTERM. A request in flight completes first; nothing runs after
+/// the loop ends.
+pub(crate) async fn serve<Request, Future>(request: Request) -> Result<(), ToolError>
+where
+    Request: Fn(String, Value) -> Future,
+    Future: std::future::Future<Output = Result<IpcResponse, ToolError>>,
+{
+    let mut lines = BufReader::new(tokio::io::stdin()).lines();
+    let mut stdout = tokio::io::stdout();
+    let shutdown = shutdown_signal();
+    tokio::pin!(shutdown);
+    loop {
+        let line = tokio::select! {
+            line = lines.next_line() => line?,
+            () = &mut shutdown => break,
+        };
+        let Some(line) = line else { break };
         if line.trim().is_empty() {
             continue;
         }
-        let response = handle_jsonrpc_line(&line).await;
-        if let Some(response) = response {
-            stdout.write_all(serde_json::to_string(&response)?.as_bytes())?;
-            stdout.write_all(b"\n")?;
-            stdout.flush()?;
+        if let Some(response) = handle_jsonrpc_line_with(&line, &request).await {
+            let mut bytes = serde_json::to_vec(&response)?;
+            bytes.push(b'\n');
+            stdout.write_all(&bytes).await?;
+            stdout.flush().await?;
         }
     }
     Ok(())
 }
 
-async fn handle_jsonrpc_line(line: &str) -> Option<Value> {
-    handle_jsonrpc_line_with(line, |method, params| async move {
-        bridge::desktop_request(&method, params).await
-    })
-    .await
+/// Resolves on the first SIGINT or SIGTERM; a signal received while a
+/// request runs is kept until the loop polls again.
+async fn shutdown_signal() {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{SignalKind, signal};
+        let (Ok(mut interrupt), Ok(mut terminate)) = (
+            signal(SignalKind::interrupt()),
+            signal(SignalKind::terminate()),
+        ) else {
+            return std::future::pending().await;
+        };
+        tokio::select! {
+            _ = interrupt.recv() => {}
+            _ = terminate.recv() => {}
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = tokio::signal::ctrl_c().await;
+    }
 }
 
 async fn handle_jsonrpc_line_with<Request, Future>(

@@ -5,12 +5,10 @@
 use std::path::{Path, PathBuf};
 
 use serde_json::{Map, Value, json};
-use svode_core::page::{
-    PageSourceError, ResolvedSpaceTarget, project_for_directory, ready_child_space_for_directory,
-    resolve_space_target,
-};
+use svode_core::page::{ResolvedSpaceTarget, project_for_directory};
+use svode_tools::error::ToolError;
 use svode_tools::host::RequestTarget;
-use svode_tools::target::ROOT_SPACE_ID;
+use svode_tools::target::{ROOT_SPACE_ID, resolve_default_space, resolve_project};
 
 use crate::error::CliError;
 
@@ -51,53 +49,37 @@ impl Selectors<'_> {
     }
 
     pub fn resolve(&self) -> Result<Target, CliError> {
-        let context_error = |error: PageSourceError, fallback: &'static str| {
-            let code = match error {
-                PageSourceError::InvalidConfig(_) => "INVALID_PROJECT_CONFIG",
-                _ => fallback,
-            };
-            CliError::operation(code, error.to_string())
+        let context_error = |error: ToolError| {
+            CliError::operation(error.code, error.message)
                 .with_target(self.known())
                 .with_hint(SELECTOR_HINT)
         };
-        let cwd = self
-            .cwd
-            .canonicalize()
-            .unwrap_or_else(|_| self.cwd.to_path_buf());
         let project_dir = match self.project_dir() {
             Some(project) => project,
-            None => project_for_directory(&cwd).ok_or_else(|| {
-                CliError::operation(
-                    "PROJECT_UNAVAILABLE",
-                    format!("no Svode project contains {}", cwd.display()),
-                )
-                .with_target(self.known())
-                .with_hint(SELECTOR_HINT)
-            })?,
-        };
-        let project = resolve_space_target(&project_dir, None)
-            .map_err(|error| context_error(error, "PROJECT_UNAVAILABLE"))?;
-        let space = match self.space {
-            Some(ROOT_SPACE_ID) => project,
-            Some(space_id) => {
-                resolve_space_target(&project.project_path, Some(space_id)).map_err(|error| {
-                    let mut error = context_error(error, "SPACE_UNAVAILABLE");
-                    error.target.insert(
-                        "projectPath".into(),
-                        json!(project.project_path.display().to_string()),
-                    );
-                    error
+            None => {
+                let cwd = self
+                    .cwd
+                    .canonicalize()
+                    .unwrap_or_else(|_| self.cwd.to_path_buf());
+                project_for_directory(&cwd).ok_or_else(|| {
+                    CliError::operation(
+                        "PROJECT_UNAVAILABLE",
+                        format!("no Svode project contains {}", cwd.display()),
+                    )
+                    .with_target(self.known())
+                    .with_hint(SELECTOR_HINT)
                 })?
             }
-            None => match ready_child_space_for_directory(&project.project_path, &cwd) {
-                Some((space_id, space_path)) => ResolvedSpaceTarget {
-                    project_path: project.project_path,
-                    space_id: Some(space_id),
-                    space_path,
-                },
-                None => project,
-            },
         };
+        let project = resolve_project(&project_dir).map_err(context_error)?;
+        let project_path = project.project_path.display().to_string();
+        let space = resolve_default_space(project, self.space, self.cwd).map_err(|error| {
+            let mut error = context_error(error);
+            error
+                .target
+                .insert("projectPath".into(), json!(project_path));
+            error
+        })?;
         Ok(Target {
             space,
             explicit_space: self.space.is_some(),
@@ -128,11 +110,6 @@ impl Target {
     /// Request target of the shared tool surface: the resolved Space is the
     /// frozen default of the call.
     pub fn request(&self) -> RequestTarget {
-        RequestTarget {
-            project_path: self.space.project_path.to_string_lossy().to_string(),
-            default_space_id: self.space.space_id.clone(),
-            default_space_path: self.space.space_path.to_string_lossy().to_string(),
-            routine_caller: None,
-        }
+        RequestTarget::for_space(&self.space)
     }
 }

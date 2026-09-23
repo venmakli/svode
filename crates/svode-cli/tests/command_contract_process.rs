@@ -10,11 +10,13 @@ use std::process::{Command, Stdio};
 use common::commands::{CASES, argv, command_paths, fixture};
 use common::process::{BIN, json, snapshot, svode};
 use serde_json::Value;
-use svode_cli::host::SourceHost;
 use svode_tools::host::ToolHost;
+use svode_tools::standalone::StandaloneHost;
 
 fn served(tools: &[&str]) -> bool {
-    tools.iter().all(|tool| SourceHost.serves_tool(tool))
+    tools
+        .iter()
+        .all(|tool| StandaloneHost::new("test").serves_tool(tool))
 }
 
 #[test]

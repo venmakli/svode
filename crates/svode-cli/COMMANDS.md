@@ -18,7 +18,7 @@ Global selectors may appear before or after the command. The target is resolved 
 
 ## Runtime modes
 
-This build runs standalone reads answered from project sources, including `collection check`, and `app validate`, which needs no Project. Commands that need the index, the Git runtime, the Actor catalog, the Routine stores or the mutation runtime of the headless runtime answer `MODE_UNAVAILABLE` (exit 1) and run nothing; `svode doctor` lists the served capabilities. Writes read and validate their input first, so grammar and input failures still exit 2.
+Each command runs on the Svode headless runtime shared with `svode-mcp --project`: it opens only what its capability needs and closes it before exit, also on SIGINT/SIGTERM (exit 130/143). This build serves reads answered from project sources, including `collection check`, and `app validate`, which needs no Project. Commands whose capability the headless runtime of this build does not serve yet (the index, the Git runtime, the Actor catalog, the Routine stores or the mutation runtime) answer `MODE_UNAVAILABLE` (exit 1) and run nothing; `svode doctor` lists the served capabilities. Writes read and validate their input first, so grammar and input failures still exit 2.
 
 | Command | Capability | Standalone in this build |
 |---|---|---|
@@ -158,12 +158,12 @@ Context and input codes are owned by the CLI; every other code comes unchanged f
 | `PROJECT_UNAVAILABLE` | The Project directory or `.svode/config.json` is missing or unreadable, or no Project contains the current directory |
 | `INVALID_PROJECT_CONFIG` | `.svode/config.json` is not a valid Project config |
 | `SPACE_UNAVAILABLE` | Unknown, missing or broken child Space |
-| `MODE_UNAVAILABLE` | The command needs the headless runtime, which this build does not include |
+| `MODE_UNAVAILABLE` | The headless runtime of this build does not serve the command's capability yet |
 | `INVALID_SOURCE_ENCODING` | `page read`: the source is not UTF-8 |
 
 ## Help and version
 
-`svode --help`, `svode <noun> --help`, `svode <noun> <verb> --help` and `svode --version` work without a Project, and every help page names a working example. Mutating commands describe the safe read → edit → write cycle and recovery; commands that need the headless runtime say so.
+`svode --help`, `svode <noun> --help`, `svode <noun> <verb> --help` and `svode --version` work without a Project, and every help page names a working example. Mutating commands describe the safe read → edit → write cycle and recovery; commands the headless runtime of this build does not serve yet say so.
 
 ## Installation
 

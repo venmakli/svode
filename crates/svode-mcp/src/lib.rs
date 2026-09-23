@@ -2,6 +2,7 @@ pub mod bridge;
 pub mod cli;
 pub mod config;
 pub mod control;
+mod headless;
 pub mod protocol;
 mod stdio;
 

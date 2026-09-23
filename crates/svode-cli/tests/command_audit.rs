@@ -8,9 +8,9 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use common::commands::{CASES, argv, fixture, leaf_commands};
 use common::harness::{Access, WriteHost, svode};
-use svode_cli::host::SourceHost;
 use svode_tools::catalog;
 use svode_tools::host::ToolHost;
+use svode_tools::standalone::StandaloneHost;
 
 /// Capability waiting for G04; it has no command and no help entry.
 const RUN_ROUTINE: &str = "run_routine";
@@ -129,7 +129,7 @@ fn command_reference_matches_the_catalog_the_grammar_and_the_standalone_host() {
             .iter()
             .filter(|case| case.name == name)
             .flat_map(|case| case.tools)
-            .all(|tool| SourceHost.serves_tool(tool));
+            .all(|tool| StandaloneHost::new("test").serves_tool(tool));
         assert_eq!(*standalone, served, "standalone column of `{name}`");
     }
     // `page read` is the source-only read of `read_page`, `doctor` owns no

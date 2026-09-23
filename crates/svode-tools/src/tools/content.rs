@@ -138,7 +138,8 @@ pub(crate) async fn read_collection_item(
     ))
 }
 
-/// One source read enriched with indexed dates from the host-owned pool.
+/// One source read with indexed dates from the host-owned pool, or with
+/// dates from Git history when the host has no pool for the Space.
 async fn read_source(
     host: &impl ToolHost,
     target: &RequestTarget,
@@ -146,12 +147,14 @@ async fn read_source(
     space: &str,
     path: &str,
 ) -> Result<Entry, ToolError> {
+    let pool = host
+        .index_pool(&index_key(target, requested_space_id), Path::new(space))
+        .await;
+    let Some(pool) = pool else {
+        return Ok(entry::read_with_git_dates(space, path).await?);
+    };
     let mut source = entry::read(space, path)?;
-    if let Ok(normalized) = normalize_repo_relative(path, RootMode::Reject)
-        && let Some(pool) = host
-            .index_pool(&index_key(target, requested_space_id), Path::new(space))
-            .await
-    {
+    if let Ok(normalized) = normalize_repo_relative(path, RootMode::Reject) {
         svode_core::page::indexed_dates::apply_indexed_dates(&pool, &normalized, &mut source).await;
     }
     Ok(source)

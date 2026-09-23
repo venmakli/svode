@@ -49,6 +49,15 @@ pub fn read(space: &str, path: &str) -> Result<Entry, PageError> {
     entry_from_source(source)
 }
 
+/// Source read of an entry with dates from the Git history of its effective
+/// repository, for a reader without an index; falls back to file dates.
+pub async fn read_with_git_dates(space: &str, path: &str) -> Result<Entry, PageError> {
+    let target = crate::page::resolve_page_target(Path::new(space), path)?;
+    let mut source = crate::page::read_page_source(target)?;
+    crate::page::dates::enrich_source_git_dates(&mut source).await;
+    entry_from_source(source)
+}
+
 pub fn entry_from_source(source: crate::page::PageSource) -> Result<Entry, PageError> {
     let meta = EntryMeta::from_page_source(&source);
     Ok(Entry {

@@ -25,12 +25,13 @@ pub enum SpaceReadiness {
     Broken,
 }
 
+/// Portable config of a Project or Space: its display name and registered
+/// child Spaces.
 #[derive(Deserialize)]
-struct ProjectConfig {
-    #[serde(rename = "name")]
-    _name: String,
+pub struct ProjectConfig {
+    pub name: String,
     #[serde(default)]
-    spaces: Option<Vec<SpaceReference>>,
+    pub spaces: Option<Vec<SpaceReference>>,
 }
 
 /// One registered child Space reference of a Project config.
@@ -61,7 +62,8 @@ pub fn space_reference_status(
     }
 }
 
-fn project_config(project: &Path) -> Result<ProjectConfig, PageSourceError> {
+/// Reads `.svode/config.json` of a Project or Space directory.
+pub fn read_project_config(project: &Path) -> Result<ProjectConfig, PageSourceError> {
     let path = project.join(".svode/config.json");
     let bytes = fs::read(&path).map_err(|error| match error.kind() {
         std::io::ErrorKind::NotFound => PageSourceError::Missing(path.display().to_string()),
@@ -74,7 +76,7 @@ fn project_config(project: &Path) -> Result<ProjectConfig, PageSourceError> {
 /// Registered Space references of `project`, in config order. Reading them
 /// also proves that the directory has a readable Space config.
 pub fn registered_spaces(project: &Path) -> Result<Vec<SpaceReference>, PageSourceError> {
-    Ok(project_config(project)?.spaces.unwrap_or_default())
+    Ok(read_project_config(project)?.spaces.unwrap_or_default())
 }
 
 /// Directories of every registered Space of `project`, in config order.
@@ -132,7 +134,7 @@ pub fn resolve_space_target(
     if !project_path.is_dir() {
         return Err(PageSourceError::InvalidPath(project.display().to_string()));
     }
-    let config = project_config(&project_path)?;
+    let config = read_project_config(&project_path)?;
     let space_path = match space_id {
         None => project_path.clone(),
         Some(id) => {
@@ -206,7 +208,7 @@ pub async fn read_standalone_page(
         return Err(PageSourceError::Forbidden(path.to_string()));
     }
     let target = resolve_page_target(&space.space_path, path)?;
-    let config = project_config(&space.project_path)?;
+    let config = read_project_config(&space.project_path)?;
     if space.space_id.is_none()
         && config
             .spaces

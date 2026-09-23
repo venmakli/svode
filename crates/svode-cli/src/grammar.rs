@@ -2,7 +2,7 @@
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
 
-const HEADLESS: &str = "Mode: needs the Svode headless runtime; until it is connected this build answers MODE_UNAVAILABLE and runs nothing.";
+const HEADLESS: &str = "Mode: not served yet by the Svode headless runtime of this build; it answers MODE_UNAVAILABLE and runs nothing.";
 
 const WRITE: &str = "Safe cycle: read the current source, edit it, then write the whole result. Bodies come from --body-file <path> or --body-file - (stdin); --body <text> is for short inline text. A command reads stdin at most once. The write does not commit to Git. If it fails, the code and target say why: reread the source and apply the intent again; never delete or hand-repair .svode metadata.";
 

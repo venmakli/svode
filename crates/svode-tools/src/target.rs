@@ -1,8 +1,12 @@
-//! Public Space addressing inside a frozen request target.
+//! Public Space addressing inside a frozen request target, and the rule a
+//! standalone process freezes that target with.
 
 use std::path::{Path, PathBuf};
 
 use svode_core::index::IndexKey;
+use svode_core::page::{
+    PageSourceError, ResolvedSpaceTarget, ready_child_space_for_directory, resolve_space_target,
+};
 
 use crate::error::ToolError;
 use crate::host::RequestTarget;
@@ -53,6 +57,47 @@ pub fn resolve_space(
                 .to_string()
         }
     })
+}
+
+/// Project of a standalone process from an explicit or discovered
+/// directory; its root Space is the returned target.
+pub fn resolve_project(project: &Path) -> Result<ResolvedSpaceTarget, ToolError> {
+    resolve_space_target(project, None).map_err(|error| context_error(error, "PROJECT_UNAVAILABLE"))
+}
+
+/// Default Space of a standalone process: an explicit selector wins (`root`
+/// or a registered child id); otherwise the most specific ready child Space
+/// containing `cwd`, else the root. `project` is the root target from
+/// [`resolve_project`].
+pub fn resolve_default_space(
+    project: ResolvedSpaceTarget,
+    space: Option<&str>,
+    cwd: &Path,
+) -> Result<ResolvedSpaceTarget, ToolError> {
+    Ok(match space {
+        Some(ROOT_SPACE_ID) => project,
+        Some(space_id) => resolve_space_target(&project.project_path, Some(space_id))
+            .map_err(|error| context_error(error, "SPACE_UNAVAILABLE"))?,
+        None => {
+            let cwd = cwd.canonicalize().unwrap_or_else(|_| cwd.to_path_buf());
+            match ready_child_space_for_directory(&project.project_path, &cwd) {
+                Some((space_id, space_path)) => ResolvedSpaceTarget {
+                    project_path: project.project_path,
+                    space_id: Some(space_id),
+                    space_path,
+                },
+                None => project,
+            }
+        }
+    })
+}
+
+pub(crate) fn context_error(error: PageSourceError, fallback: &str) -> ToolError {
+    let code = match error {
+        PageSourceError::InvalidConfig(_) => "INVALID_PROJECT_CONFIG",
+        _ => fallback,
+    };
+    ToolError::new(code, error.to_string())
 }
 
 /// Index key of the Space selected by a public `spaceId`.
