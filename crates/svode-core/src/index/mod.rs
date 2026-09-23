@@ -2,6 +2,7 @@ mod backlink_state;
 pub mod backlinks;
 pub mod db;
 pub mod entry_projection;
+pub mod freshness;
 pub mod inventory;
 pub mod knowledge;
 pub mod knowledge_artifact;

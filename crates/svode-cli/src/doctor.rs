@@ -1,5 +1,7 @@
 //! `svode doctor`: read-only diagnostics composed from existing reads. It
-//! opens no index or store, and a target failure is part of the result.
+//! opens no index or store, reads repository access from the shared
+//! evidence store without a probe, and a target failure is part of the
+//! result.
 
 use serde_json::{Value, json};
 use svode_core::git::cli::GitCli;
@@ -90,8 +92,17 @@ fn human(report: &Value) -> String {
         )),
     }
     for space in report["spaces"].as_array().into_iter().flatten() {
+        let access = &space["repositoryAccess"];
+        let access = match (access["status"].as_str(), access["reason"].as_str()) {
+            (Some(status), Some(reason)) => format!("{status} ({reason})"),
+            (Some(status), None) => status.to_string(),
+            _ => space["repositoryAccessDiagnostic"]["code"]
+                .as_str()
+                .unwrap_or("unavailable")
+                .to_string(),
+        };
         out.push_str(&format!(
-            "space {}: {} ({}), index {}\n",
+            "space {}: {} ({}), index {}, access {access}\n",
             space["id"].as_str().unwrap_or_default(),
             space["status"].as_str().unwrap_or_default(),
             space["path"].as_str().unwrap_or_default(),

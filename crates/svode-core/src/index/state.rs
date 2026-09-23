@@ -9,6 +9,7 @@ use tokio::sync::Mutex;
 
 use super::backlinks::BacklinkIndex;
 use super::backlinks::{is_external_or_anchor_url, markdown_url_path};
+use super::freshness::Verification;
 use super::lifecycle::IndexPools;
 use super::resolver::{ProjectSpacesCache, SpaceStatus, resolve_index_target};
 use super::{IndexError, IndexKey};
@@ -21,6 +22,7 @@ pub struct IndexRuntimeState {
     pub reconcile_active: Arc<Mutex<HashMap<IndexKey, Arc<AtomicBool>>>>,
     pub spaces_cache: Arc<Mutex<HashMap<PathBuf, ProjectSpacesCache>>>,
     backlinks: Arc<Mutex<HashMap<IndexKey, Arc<BacklinkIndex>>>>,
+    pub(super) verifications: Arc<Mutex<HashMap<IndexKey, Verification>>>,
 }
 
 impl IndexRuntimeState {
@@ -244,6 +246,7 @@ impl IndexRuntimeState {
         self.reindex_locks.lock().await.remove(key);
         self.reindex_active.lock().await.remove(key);
         self.reconcile_active.lock().await.remove(key);
+        self.verifications.lock().await.remove(key);
     }
 
     pub async fn close_project(&self, project: &Path) -> HashSet<IndexKey> {

@@ -1,10 +1,14 @@
 use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ToolError {
     pub code: String,
     pub message: String,
+    /// Recovery evidence published next to the code, such as diagnostics.
+    #[serde(flatten, default)]
+    pub evidence: Map<String, Value>,
 }
 
 impl ToolError {
@@ -12,7 +16,13 @@ impl ToolError {
         Self {
             code: code.into(),
             message: message.into(),
+            evidence: Map::new(),
         }
+    }
+
+    pub fn with_evidence(mut self, key: &str, value: Value) -> Self {
+        self.evidence.insert(key.to_string(), value);
+        self
     }
 
     pub fn no_active_project() -> Self {

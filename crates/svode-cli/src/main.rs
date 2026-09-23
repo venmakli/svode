@@ -18,9 +18,10 @@ fn main() {
                     // The command owns its runtime: whatever it opened is
                     // closed before the process exits, also on a signal.
                     let host = StandaloneHost::new(env!("CARGO_PKG_VERSION"));
+                    let signal = shutdown_signal();
                     let outcome = tokio::select! {
                         rendered = run(&host, cli, &cwd) => Ok(rendered),
-                        signal = shutdown_signal() => Err(signal),
+                        signal = signal => Err(signal),
                     };
                     host.close().await;
                     match outcome {
@@ -45,25 +46,31 @@ fn main() {
     std::process::exit(rendered.exit);
 }
 
-/// Number of the first SIGINT or SIGTERM the process receives.
-async fn shutdown_signal() -> i32 {
+/// Installs the SIGINT and SIGTERM handlers at once, before the command
+/// starts, and resolves with the number of the first signal received. A
+/// signal that arrives while the command blocks is handled at its next
+/// await, never by the default action that would skip closing.
+fn shutdown_signal() -> impl std::future::Future<Output = i32> {
     #[cfg(unix)]
     {
         use tokio::signal::unix::{SignalKind, signal};
-        let (Ok(mut interrupt), Ok(mut terminate)) = (
-            signal(SignalKind::interrupt()),
-            signal(SignalKind::terminate()),
-        ) else {
-            return std::future::pending().await;
-        };
-        tokio::select! {
-            _ = interrupt.recv() => 2,
-            _ = terminate.recv() => 15,
+        let handlers = signal(SignalKind::interrupt())
+            .and_then(|interrupt| Ok((interrupt, signal(SignalKind::terminate())?)));
+        async move {
+            let Ok((mut interrupt, mut terminate)) = handlers else {
+                return std::future::pending().await;
+            };
+            tokio::select! {
+                _ = interrupt.recv() => 2,
+                _ = terminate.recv() => 15,
+            }
         }
     }
     #[cfg(not(unix))]
     {
-        let _ = tokio::signal::ctrl_c().await;
-        2
+        async {
+            let _ = tokio::signal::ctrl_c().await;
+            2
+        }
     }
 }

@@ -1,13 +1,12 @@
 use sqlx::SqlitePool;
 use std::path::Path;
 use std::sync::Arc;
-use std::sync::atomic::Ordering;
 
 use crate::error::AppError;
 use crate::git::dates::derive_date_overrides;
 use crate::index::normalize_rel_result;
 use crate::index::reindex::{build_entry_with_dates, markdown_projection, markdown_source_record};
-use crate::index::{IndexKey, IndexState, ReindexActiveGuard};
+use crate::index::{IndexKey, IndexState};
 use crate::routines::{CollectionEventOrigin, RoutineStoreState};
 use svode_core::content_tree::policy::TreeIgnorePolicy;
 
@@ -43,40 +42,16 @@ impl IndexUpdateState {
         Ok(self.core.routines_pool(&index_state.core, key).await?)
     }
 
-    pub(crate) async fn sync_routine_projection(
-        &self,
-        index_state: &IndexState,
-        key: &IndexKey,
-    ) -> Result<(), AppError> {
-        Ok(self
-            .core
-            .sync_routine_projection(&index_state.core, key)
-            .await?)
-    }
-
     pub async fn run_reconciliation(
         &self,
         index_state: &IndexState,
         key: &IndexKey,
     ) -> Result<(), AppError> {
-        let flag = index_state.reconcile_active_flag(key).await;
-        flag.store(true, Ordering::SeqCst);
-        let _flag_guard = ReindexActiveGuard(flag);
-        for _ in 0..3 {
-            match crate::index::reconcile::reconcile_pool(index_state, key).await? {
-                crate::index::reconcile::ReconcileOutcome::Applied => {
-                    self.sync_routine_projection(index_state, key).await?;
-                    return Ok(());
-                }
-                crate::index::reconcile::ReconcileOutcome::Retry => continue,
-                crate::index::reconcile::ReconcileOutcome::Rebuild => {
-                    return self.run_full_reindex(index_state, key).await;
-                }
-            }
-        }
-        Err(AppError::Index(format!(
-            "source manifest kept changing during reconciliation for {key:?}"
-        )))
+        let cli = crate::git::dates::detected_cli();
+        Ok(self
+            .core
+            .reconcile_space(&index_state.core, key, cli.as_ref())
+            .await?)
     }
 
     pub async fn run_full_reindex(

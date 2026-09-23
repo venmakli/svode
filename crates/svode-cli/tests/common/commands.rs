@@ -553,6 +553,20 @@ pub fn fixture() -> Fixture {
         &input.join("routine.json"),
         r#"{"name":"Review","trigger":{"type":"manual"},"action":{"type":"run_agent","executor":"agent:01arz3ndektsv4rrffq69g5fav"},"body":"Review."}"#,
     );
+    // Git history for the Actor catalog and Git status; reads never change it.
+    for args in [
+        &["init", "-q"][..],
+        &["config", "user.email", "agent@example.com"],
+        &["config", "user.name", "Agent"],
+        &["add", "-A"],
+        &["commit", "-q", "-m", "fixture"],
+    ] {
+        let _ = std::process::Command::new("git")
+            .args(args)
+            .current_dir(&project)
+            .env("GIT_TERMINAL_PROMPT", "0")
+            .output();
+    }
     Fixture {
         temp,
         project,

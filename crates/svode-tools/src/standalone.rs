@@ -4,8 +4,10 @@
 //! runtime session, shared by both entrypoints. The process freezes its
 //! target before the first operation; the session binds to that Project on
 //! first need and opens stores only for the capabilities that need them.
-//! Capabilities of the headless catalog that this build does not serve yet
-//! answer `MODE_UNAVAILABLE` before any effect.
+//! Index-backed reads reconcile their pools with the files first, since no
+//! watcher keeps them current. Capabilities of the headless catalog that
+//! this build does not serve yet answer `MODE_UNAVAILABLE` before any
+//! effect.
 
 use std::path::Path;
 use std::time::Duration;
@@ -14,6 +16,8 @@ use sqlx::SqlitePool;
 use svode_core::attachments::import::{LfsReadiness, ManagedImportDelivery};
 use svode_core::git::access::RepositoryAccessSnapshot;
 use svode_core::index::IndexKey;
+use svode_core::index::freshness::IndexFreshness;
+use svode_core::index::knowledge::KnowledgeScope;
 use svode_core::routines::model::ResolvedRoutineOwner;
 use svode_core::runtime::session::{ProjectSession, SessionError};
 
@@ -22,9 +26,10 @@ use crate::error::ToolError;
 use crate::host::{MutationRuntime, ReadRuntime, RoutineRunner, RoutineRuntime, ToolHost};
 use crate::target::context_error;
 
-/// Catalog tools a standalone process serves: answered from project
-/// sources alone, or from their input.
-const SERVED_TOOLS: [&str; 12] = [
+/// Catalog tools a standalone process serves: reads answered from project
+/// sources, the index reconciled with them, Git or the Actor catalog, and
+/// tools answered from their input.
+const SERVED_TOOLS: [&str; 21] = [
     "get_svode_guide",
     "validate_app_manifest",
     "get_project_info",
@@ -37,6 +42,15 @@ const SERVED_TOOLS: [&str; 12] = [
     "read_collection_readme",
     "read_collection_item",
     "validate_collection_integrity",
+    "query_collection_items",
+    "list_actors",
+    "search_pages",
+    "search_knowledge",
+    "get_knowledge_node",
+    "get_knowledge_neighbors",
+    "get_related_context",
+    "get_knowledge_status",
+    "get_git_status",
 ];
 
 /// Capability that is never headless: an explicit Routine launch needs the
@@ -121,6 +135,20 @@ impl ToolHost for StandaloneHost {
         SERVED_TOOLS.contains(&name)
     }
 
+    async fn prepare_index(
+        &self,
+        project: &Path,
+        scope: &KnowledgeScope,
+    ) -> Result<IndexFreshness, ToolError> {
+        let project = self
+            .session
+            .open_project(project)
+            .await
+            .map_err(session_error)?;
+        let keys = self.session.index().keys_for_scope(project, scope).await?;
+        Ok(self.session.prepare_index(&keys).await?)
+    }
+
     async fn index_pool(&self, key: &IndexKey, _space_path: &Path) -> Option<SqlitePool> {
         self.session.open_project(key.project()).await.ok()?;
         self.session.index().existing_pool(key).await
@@ -128,9 +156,9 @@ impl ToolHost for StandaloneHost {
 
     async fn repository_access(
         &self,
-        _space_path: &Path,
+        space_path: &Path,
     ) -> Result<RepositoryAccessSnapshot, ToolError> {
-        Err(mode_unavailable("Repository access state"))
+        Ok(self.session.repository_access(space_path).await?)
     }
 
     async fn require_mutation_access(&self, _repository: &Path) -> Result<(), ToolError> {
@@ -190,7 +218,7 @@ mod tests {
             assert!(check_tool(&host, name).is_ok());
         }
 
-        let pending = host.check_call("search_pages").unwrap_err();
+        let pending = host.check_call("write_page").unwrap_err();
         assert_eq!(pending.code, "MODE_UNAVAILABLE");
         for name in [DESKTOP_ONLY_TOOL, "no_such_tool"] {
             assert!(host.check_call(name).is_ok());

@@ -2566,3 +2566,80 @@ async fn every_catalog_tool_is_dispatched_by_the_library() {
         }
     }
 }
+
+/// A host that does not prepare indexes on demand (the desktop bridge)
+/// reports the index its runtime keeps open: a project it has not opened is
+/// `INDEX_UNAVAILABLE` for every index-backed read, never an empty result,
+/// and no index is created for it.
+#[tokio::test]
+async fn index_backed_reads_of_a_project_the_host_has_not_opened_are_unavailable() {
+    let fixture = index_fixture();
+    let host = FixtureHost::new(None);
+    let target = root_target(&fixture);
+    for (name, arguments) in [
+        ("search_pages", json!({ "query": "Needle" })),
+        (
+            "query_collection_items",
+            json!({ "collectionPath": "tasks" }),
+        ),
+        ("get_knowledge_status", json!({})),
+        (
+            "search_knowledge",
+            json!({ "query": "Needle", "scope": "project" }),
+        ),
+        (
+            "get_related_context",
+            json!({ "query": "Needle", "spaceId": "child" }),
+        ),
+    ] {
+        let result = call_tool(&host, Some(&target), name, arguments).await;
+        assert_eq!(error_code(&result), "INDEX_UNAVAILABLE", "{name}");
+        let error = &result.structured_content.as_ref().unwrap()["error"];
+        assert_eq!(
+            error["diagnostics"][0]["code"], "project_not_open",
+            "{name}"
+        );
+    }
+    assert!(!fixture.project.join(".svode/index.db").exists());
+    assert!(!fixture.project.join("child/.svode/index.db").exists());
+}
+
+/// The same host reports the state of an open index in `index`: fresh
+/// without a completed check of this process until its reconciliation
+/// cycle runs.
+#[tokio::test]
+async fn index_backed_reads_report_the_open_index_of_the_host() {
+    let fixture = index_fixture();
+    let host = indexed_host(&fixture, FixtureHost::new(None)).await;
+    let target = root_target(&fixture);
+    let search = call_tool(
+        &host,
+        Some(&target),
+        "search_pages",
+        json!({ "query": "Needle" }),
+    )
+    .await;
+    let index = &structured(&search)["index"];
+    assert_eq!(index["status"], "fresh");
+    assert_eq!(index["verifiedAt"], Value::Null);
+
+    let root = IndexKey::Root(fixture.project.clone());
+    host.updates
+        .reconcile_space(&host.index, &root, None::<&GitCli>)
+        .await
+        .unwrap();
+    for (name, arguments) in [
+        ("search_pages", json!({ "query": "Needle" })),
+        (
+            "query_collection_items",
+            json!({ "collectionPath": "tasks" }),
+        ),
+        ("get_knowledge_status", json!({})),
+    ] {
+        let result = call_tool(&host, Some(&target), name, arguments).await;
+        let index = &structured(&result)["index"];
+        assert_eq!(index["status"], "fresh", "{name}");
+        assert!(index["verifiedAt"].is_string(), "{name}");
+    }
+    host.routines.close_key(&root).await;
+}

@@ -1,12 +1,14 @@
 //! Page search and Knowledge reads over the host-prepared index snapshots:
 //! bounded limits and text budget, frozen Space/Project scope and explicit
-//! freshness. No crawler or rebuild runs for a request.
+//! freshness. The host prepares the pools of the read and reports them in
+//! `index`; the library never opens or rebuilds an index itself.
 
 use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 use serde_json::{Value, json};
 use svode_core::git::path::{RootMode, normalize_repo_relative};
+use svode_core::index::freshness::IndexFreshness;
 use svode_core::index::knowledge::{
     KnowledgeFilters, KnowledgeResponse, KnowledgeScope, KnowledgeSource,
 };
@@ -120,6 +122,7 @@ struct ResolvedScope {
     project: PathBuf,
     scope: KnowledgeScope,
     response: Value,
+    index: IndexFreshness,
 }
 
 pub(crate) async fn search_pages(
@@ -131,15 +134,22 @@ pub(crate) async fn search_pages(
     let key = index_key(target, args.space_id.as_deref());
     let limit = clamp_limit(args.limit);
     let start = offset(args.offset);
+    let space_id = IndexRuntimeState::space_id_for_key(&key);
+    let index = host
+        .prepare_index(
+            Path::new(&target.project_path),
+            &KnowledgeScope::Space {
+                space_id: space_id.clone(),
+            },
+        )
+        .await?;
     let response = service::search_content(
         host.read_runtime().index,
         PathBuf::from(&target.project_path),
         args.query,
         None,
         None,
-        Some(SearchScope::Space {
-            space_id: IndexRuntimeState::space_id_for_key(&key),
-        }),
+        Some(SearchScope::Space { space_id }),
         Some(limit.saturating_add(start as i64)),
     )
     .await?;
@@ -152,7 +162,7 @@ pub(crate) async fn search_pages(
         .collect::<Vec<_>>();
     Ok(ToolCallResult::ok(
         format!("Found {} matching Pages.", results.len()),
-        json!({ "items": results, "total": total, "limit": limit, "offset": start }),
+        json!({ "items": results, "total": total, "limit": limit, "offset": start, "index": index }),
     ))
 }
 
@@ -202,6 +212,7 @@ pub(crate) async fn search_knowledge(
         "freshness": response.freshness,
         "truncated": truncated,
         "limit": limit,
+        "index": resolved.index,
     });
     json_result(structured)
 }
@@ -228,6 +239,7 @@ pub(crate) async fn get_knowledge_node(
         "freshness": response.freshness,
         "diagnostics": response.diagnostics,
         "truncated": metadata_truncated || search_item.as_ref().is_some_and(|item| item.snippet_truncated),
+        "index": resolved.index,
     });
     json_result(structured)
 }
@@ -281,6 +293,7 @@ pub(crate) async fn get_knowledge_neighbors(
         "diagnostics": response.diagnostics,
         "truncated": truncated,
         "limit": limit,
+        "index": resolved.index,
     });
     json_result(structured)
 }
@@ -327,6 +340,7 @@ pub(crate) async fn get_related_context(
         "truncated": response.truncated || diagnostics_truncated,
         "status": response.status,
         "diagnostics": response.diagnostics,
+        "index": resolved.index,
     });
     json_result(structured)
 }
@@ -352,6 +366,7 @@ pub(crate) async fn get_knowledge_status(
         "freshness": response.freshness,
         "diagnostics": response.diagnostics,
         "truncated": truncated,
+        "index": resolved.index,
     });
     json_result(structured)
 }
@@ -377,7 +392,8 @@ fn node_not_found() -> ToolError {
 }
 
 /// Knowledge scope inside the frozen request target: the default Space of
-/// the request unless `spaceId` or Project scope is explicit.
+/// the request unless `spaceId` or Project scope is explicit. The host
+/// prepares the pools of the scope before the read.
 async fn resolve_scope(
     host: &impl ToolHost,
     target: &RequestTarget,
@@ -385,7 +401,7 @@ async fn resolve_scope(
     space_id: Option<String>,
 ) -> Result<ResolvedScope, ToolError> {
     let project = PathBuf::from(&target.project_path);
-    match scope.unwrap_or_default() {
+    let (scope, response) = match scope.unwrap_or_default() {
         McpKnowledgeScope::Project => {
             if space_id.is_some() {
                 return Err(ToolError::new(
@@ -393,35 +409,32 @@ async fn resolve_scope(
                     "spaceId is only valid when scope is space",
                 ));
             }
-            Ok(ResolvedScope {
-                project,
-                scope: KnowledgeScope::Project,
-                response: json!({ "kind": "project" }),
-            })
+            (KnowledgeScope::Project, json!({ "kind": "project" }))
         }
         McpKnowledgeScope::Space => {
             let effective_space_id = match space_id {
                 Some(space_id) => normalize_space_id(&space_id)?,
                 None => target.default_space_id.clone(),
             };
-            if let Some(space_id) = effective_space_id.as_deref() {
-                host.read_runtime()
-                    .index
-                    .key_for_project_space_id(&project, Some(space_id))
-                    .await?;
-            }
-            Ok(ResolvedScope {
-                project,
-                response: json!({
-                    "kind": "space",
-                    "spaceId": effective_space_id.as_deref().unwrap_or(ROOT_SPACE_ID),
-                }),
-                scope: KnowledgeScope::Space {
+            let response = json!({
+                "kind": "space",
+                "spaceId": effective_space_id.as_deref().unwrap_or(ROOT_SPACE_ID),
+            });
+            (
+                KnowledgeScope::Space {
                     space_id: effective_space_id,
                 },
-            })
+                response,
+            )
         }
-    }
+    };
+    let index = host.prepare_index(&project, &scope).await?;
+    Ok(ResolvedScope {
+        project,
+        scope,
+        response,
+        index,
+    })
 }
 
 async fn read_effective_snapshot(

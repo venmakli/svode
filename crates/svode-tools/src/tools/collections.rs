@@ -8,6 +8,8 @@ use serde_json::{Value, json};
 use svode_core::collections::engine::{
     self, CollectionSchema, Column, Filter, PreparedCollectionMutation, Sort, View,
 };
+use svode_core::index::knowledge::KnowledgeScope;
+use svode_core::index::state::IndexRuntimeState;
 use svode_core::page::metadata::relative_changed_paths;
 
 use crate::args::{CollectionArgs, clamp_limit};
@@ -148,10 +150,23 @@ pub(crate) async fn query_collection_items(
     let limit = clamp_limit(args.limit);
     let offset = args.offset.unwrap_or(0).max(0);
     let key = index_key(target, args.space_id.as_deref());
+    let index = host
+        .prepare_index(
+            Path::new(&target.project_path),
+            &KnowledgeScope::Space {
+                space_id: IndexRuntimeState::space_id_for_key(&key),
+            },
+        )
+        .await?;
     let pool = host
         .index_pool(&key, Path::new(&space))
         .await
-        .ok_or_else(|| ToolError::new("INDEX_ERROR", "Index error: Space index is unavailable"))?;
+        .ok_or_else(|| {
+            ToolError::new(
+                "INDEX_UNAVAILABLE",
+                "The Svode index of this Space is not open",
+            )
+        })?;
     let runtime = host.read_runtime();
     let git_cli = runtime.git.require_cli().ok();
     let items = svode_core::collections::entries::query_entries(
@@ -169,7 +184,7 @@ pub(crate) async fn query_collection_items(
     .await?;
     Ok(ToolCallResult::ok(
         format!("Returned {} Collection items.", items.len()),
-        json!({ "items": items, "limit": limit, "offset": offset }),
+        json!({ "items": items, "limit": limit, "offset": offset, "index": index }),
     ))
 }
 

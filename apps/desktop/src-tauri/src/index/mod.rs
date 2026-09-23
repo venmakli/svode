@@ -12,7 +12,6 @@ use sqlx::SqlitePool;
 use std::collections::HashMap;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::{AppHandle, Emitter};
 use tokio::sync::Mutex;
 
@@ -76,15 +75,6 @@ pub struct IndexState {
     /// `NotApplicable`; the actual probe is lazy (triggered by user gestures
     /// or post-clone/sync events). See `storage/lfs.rs`.
     lfs_states: Arc<Mutex<HashMap<IndexKey, LfsState>>>,
-}
-
-/// RAII guard: clears the `reindex_active` flag when dropped, even on panic.
-pub(crate) struct ReindexActiveGuard(pub(crate) Arc<AtomicBool>);
-
-impl Drop for ReindexActiveGuard {
-    fn drop(&mut self) {
-        self.0.store(false, Ordering::SeqCst);
-    }
 }
 
 impl IndexState {
@@ -349,12 +339,6 @@ impl IndexState {
         self.core.reindex_lock(key).await
     }
 
-    /// Get (or create) the per-key `reindex_active` flag. Read-only check
-    /// surface for `fan_out`; writers go through `run_full_reindex`.
-    pub async fn reconcile_active_flag(&self, key: &IndexKey) -> Arc<AtomicBool> {
-        self.core.reconcile_active_flag(key).await
-    }
-
     #[cfg(test)]
     pub(crate) async fn cleanup_reconciled_index(&self, key: &IndexKey, pool: &SqlitePool) {
         self.core.cleanup_reconciled_index(key, pool).await;
@@ -605,6 +589,87 @@ mod tests {
             .fetch_one(&pool)
             .await
             .unwrap()
+    }
+
+    async fn entry_paths(state: &IndexState, key: &IndexKey) -> Vec<String> {
+        let pool = state.core.existing_pool(key).await.unwrap();
+        sqlx::query_scalar("SELECT file_path FROM entries ORDER BY file_path")
+            .fetch_all(&pool)
+            .await
+            .unwrap()
+    }
+
+    /// The project runtime prepares its pools with the core reconciliation
+    /// cycle on open, reopen and a child status change, and the freshness it
+    /// reports follows that cycle.
+    #[tokio::test]
+    async fn open_reopen_and_child_status_change_run_the_core_reconciliation_cycle() {
+        let tmp = TempDir::new().unwrap();
+        let project = tmp.path().canonicalize().unwrap();
+        fs::create_dir_all(project.join(".svode")).unwrap();
+        fs::create_dir_all(project.join("child/.svode")).unwrap();
+        fs::write(
+            project.join(".svode/config.json"),
+            r#"{"name":"Project","spaces":[{"id":"child","path":"child","repo":null}]}"#,
+        )
+        .unwrap();
+        fs::write(
+            project.join("child/.svode/config.json"),
+            r#"{"name":"Child"}"#,
+        )
+        .unwrap();
+        fs::write(project.join("note.md"), "# Note\n").unwrap();
+        fs::write(project.join("child/inner.md"), "# Inner\n").unwrap();
+        let state = IndexState::new();
+        let child_key = IndexKey::Space {
+            project: project.clone(),
+            space_id: "child".to_string(),
+        };
+
+        let keys = state.open_project(&project).await.unwrap();
+        assert_eq!(keys.len(), 2);
+        for key in &keys {
+            state.run_reconciliation(key).await.unwrap();
+        }
+        let opened = state.core.freshness(&keys).await.unwrap();
+        assert!(opened.verified_at.is_some());
+        assert_eq!(entry_paths(&state, &keys[0]).await, ["note.md"]);
+        assert_eq!(entry_paths(&state, &child_key).await, ["inner.md"]);
+
+        fs::write(project.join("later.md"), "# Later\n").unwrap();
+        let keys = state.open_project(&project).await.unwrap();
+        // A reopened pool holds its snapshot but no check of this runtime.
+        assert_eq!(state.core.freshness(&keys).await.unwrap().verified_at, None);
+        for key in &keys {
+            state.run_reconciliation(key).await.unwrap();
+        }
+        assert!(
+            state
+                .core
+                .freshness(&keys)
+                .await
+                .unwrap()
+                .verified_at
+                .is_some()
+        );
+        assert_eq!(entry_paths(&state, &keys[0]).await, ["later.md", "note.md"]);
+
+        assert!(
+            state
+                .on_space_status_changed(&project, "child", SpaceStatus::Missing)
+                .await
+                .is_none()
+        );
+        let missing = state.core.freshness(std::slice::from_ref(&child_key)).await;
+        assert_eq!(missing.unwrap_err().diagnostics[0].code, "pool_unavailable");
+        let ready = state
+            .on_space_status_changed(&project, "child", SpaceStatus::Ready)
+            .await
+            .unwrap();
+        state.run_full_reindex(&ready).await.unwrap();
+        let child = state.core.freshness(&[ready]).await.unwrap();
+        assert!(child.verified_at.is_some());
+        state.close_project(&project).await;
     }
 
     #[tokio::test]

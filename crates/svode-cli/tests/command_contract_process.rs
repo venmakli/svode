@@ -1,17 +1,39 @@
 //! JSON, exit and output contract of every public command through the real
-//! `svode` binary with the desktop app closed. Commands served from project
-//! sources succeed; the rest answer `MODE_UNAVAILABLE` until the headless
-//! runtime is connected. No command changes a file.
+//! `svode` binary with the desktop app closed. Served commands succeed; the
+//! rest answer `MODE_UNAVAILABLE` until the headless runtime serves them.
+//! No command changes a source file: index-backed reads only add the
+//! derived index and the device-local stores it keeps in `.svode/`.
 
 mod common;
 
 use std::process::{Command, Stdio};
 
 use common::commands::{CASES, argv, command_paths, fixture};
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
+
 use common::process::{BIN, json, snapshot, svode};
 use serde_json::Value;
 use svode_tools::host::ToolHost;
 use svode_tools::standalone::StandaloneHost;
+
+/// Files of `root` without the derived index, its Routine projection and
+/// the device-local stores next to them.
+fn sources(root: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
+    let mut files = snapshot(root);
+    files.retain(|path, _| {
+        let name = path.file_name().unwrap_or_default().to_string_lossy();
+        let derived = name.starts_with("index.db")
+            || name.starts_with("routines.db")
+            || name == "local.json"
+            || name == "variables.lock";
+        !(derived
+            && path
+                .parent()
+                .is_some_and(|parent| parent.ends_with(".svode")))
+    });
+    files
+}
 
 fn served(tools: &[&str]) -> bool {
     tools
@@ -22,7 +44,7 @@ fn served(tools: &[&str]) -> bool {
 #[test]
 fn every_command_keeps_the_json_envelope_exit_codes_and_output_streams() {
     let fixture = fixture();
-    let before = snapshot(fixture.temp.path());
+    let before = sources(fixture.temp.path());
     for case in CASES {
         let args = argv(&fixture, case);
         let (exit, value) = json(&fixture.input, &args, None);
@@ -79,7 +101,7 @@ fn every_command_keeps_the_json_envelope_exit_codes_and_output_streams() {
             assert!(stderr.contains("target: "), "{}: {stderr}", case.name);
         }
     }
-    assert_eq!(snapshot(fixture.temp.path()), before);
+    assert_eq!(sources(fixture.temp.path()), before);
 }
 
 #[test]

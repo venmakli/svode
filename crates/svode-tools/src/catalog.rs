@@ -814,6 +814,10 @@ Space targeting:
 - Use a child space id from list_spaces to target a child space.
 - Omit spaceId or pass null only when you intentionally want the active/default space; null is not a stable alias for root when a child space is active.
 
+Index-backed reads:
+- search_pages, query_collection_items and the Knowledge tools answer from the Svode index and return `index`: status fresh, or partial when some sources could not be read and their earlier rows are kept, plus verifiedAt and diagnostics.
+- INDEX_UNAVAILABLE means the index of a Space could not be prepared, for example because the project is not open in the Svode app. It is not an empty result: do not conclude that nothing matches.
+
 Routine workflow:
 - Call list_spaces, then list_collections when needed, before working with Routines. Every Routine tool requires a non-null explicit spaceId: use "root" for the project owner or a child id from list_spaces; add collectionPath only for an existing Collection owner.
 - Use list_routines for bounded body-less discovery and get_routine for the normalized definition, Markdown body, and fingerprint. Definitions with missing, malformed, or duplicate portable id remain visible with routineId null and an exact recovery path, but fail closed for addressed tools. Device-local automatic authority and last/next run fields are evidence, not a promise that a Routine can run now.

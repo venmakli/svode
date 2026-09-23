@@ -12,6 +12,9 @@ use tokio::sync::{Mutex as AsyncMutex, OwnedMutexGuard};
 use super::GitError;
 use super::cli::{GitCli, GitOutput};
 
+/// File name of the device-local repository access evidence store inside
+/// the config directory of the install.
+pub const ACCESS_STORE_FILE: &str = "repository-access.json";
 const ACCESS_STORE_VERSION: u32 = 1;
 const MAX_EVIDENCE_ENTRIES: usize = 128;
 const PROBE_TIMEOUT: Duration = Duration::from_secs(30);

@@ -18,28 +18,32 @@ Global selectors may appear before or after the command. The target is resolved 
 
 ## Runtime modes
 
-Each command runs on the Svode headless runtime shared with `svode-mcp --project`: it opens only what its capability needs and closes it before exit, also on SIGINT/SIGTERM (exit 130/143). This build serves reads answered from project sources, including `collection check`, and `app validate`, which needs no Project. Commands whose capability the headless runtime of this build does not serve yet (the index, the Git runtime, the Actor catalog, the Routine stores or the mutation runtime) answer `MODE_UNAVAILABLE` (exit 1) and run nothing; `svode doctor` lists the served capabilities. Writes read and validate their input first, so grammar and input failures still exit 2.
+Each command runs on the Svode headless runtime shared with `svode-mcp --project`: it opens only what its capability needs and closes it before exit, also on SIGINT/SIGTERM (exit 130/143). This build serves every read — from project sources, including `collection check`, from the index, from Git and from the Actor catalog — and `app validate`, which needs no Project. Commands whose capability the headless runtime of this build does not serve yet (the Routine stores or the mutation runtime) answer `MODE_UNAVAILABLE` (exit 1) and run nothing; `svode doctor` lists the served capabilities. Writes read and validate their input first, so grammar and input failures still exit 2.
+
+Index-backed commands (`collection query`, `search`, `knowledge …`) check the index of their Spaces against the files before answering, with no watcher: a missing index is built, an incompatible or corrupt one is moved aside and rebuilt, and each command runs one check. Their result carries `index`: `{"status":"fresh"|"partial","verifiedAt":"<time of the check>","diagnostics":[…]}`, where `partial` means some sources could not be read and their earlier rows are kept. An index that cannot be prepared fails with `INDEX_UNAVAILABLE` and its diagnostics, never with an empty list. `space list`, `project info` and `doctor` report repository access from the evidence store shared with the desktop app, without contacting the remote; a repository never checked is `unknown` with reason `not_checked`.
+
+Device-local settings, such as that evidence store, are found in the OS config directory under the product identifier `app.svode.desktop`, like the desktop app. `SVODE_PRODUCT_IDENTIFIER` overrides the identifier for dev/QA builds that run under another one (one path segment); it never selects a target.
 
 | Command | Capability | Standalone in this build |
 |---|---|---|
 | `project info` | `get_project_info` | yes |
-| `space list` | `list_spaces` | yes; repository access reports `MODE_UNAVAILABLE` per Space |
+| `space list` | `list_spaces` | yes |
 | `space readme read` | `read_space_readme` | yes |
 | `page read --path` | `read_page` (source-only read with `sourceVersion`) | yes |
 | `page list [--path <dir>] [--limit --offset]` | `list_pages` | yes |
 | `collection list` | `list_collections` | yes |
 | `collection schema --collection` | `get_collection_schema` | yes |
-| `collection query --collection [--filter-file] [--sort-file] [--limit --offset]` | `query_collection_items` | no |
+| `collection query --collection [--filter-file] [--sort-file] [--limit --offset]` | `query_collection_items` | yes |
 | `collection readme read --collection` | `read_collection_readme` | yes |
 | `item read --path` | `read_collection_item` | yes |
-| `actor list [--all-time]` | `list_actors` | no |
-| `search <query> [--limit --offset]` | `search_pages` | no |
-| `knowledge search <query> [--scope] [--kind …] [--limit]` | `search_knowledge` | no |
-| `knowledge node --id [--scope]` | `get_knowledge_node` | no |
-| `knowledge neighbors --id [--scope] [--edge-kind …] [--limit]` | `get_knowledge_neighbors` | no |
-| `knowledge context <query> [--scope] [--limit --text-budget] [--kind …]` | `get_related_context` | no |
-| `knowledge status [--scope]` | `get_knowledge_status` | no |
-| `git status` | `get_git_status` | no |
+| `actor list [--all-time]` | `list_actors` | yes |
+| `search <query> [--limit --offset]` | `search_pages` | yes |
+| `knowledge search <query> [--scope] [--kind …] [--limit]` | `search_knowledge` | yes |
+| `knowledge node --id [--scope]` | `get_knowledge_node` | yes |
+| `knowledge neighbors --id [--scope] [--edge-kind …] [--limit]` | `get_knowledge_neighbors` | yes |
+| `knowledge context <query> [--scope] [--limit --text-budget] [--kind …]` | `get_related_context` | yes |
+| `knowledge status [--scope]` | `get_knowledge_status` | yes |
+| `git status` | `get_git_status` | yes |
 | `page create --parent <dir\|""> --title [--body-file\|--body] [--icon --description --cover-file] [--properties-file]` | `create_page` (Page, or Collection item under a Collection) | no |
 | `page write --path --body-file\|--body [--title]` | `write_page` | no |
 | `page meta set --path [metadata patch]` | `update_page_metadata` | no |
@@ -149,7 +153,7 @@ Reads one standalone Page from its Markdown source, without the desktop app, the
 
 ## Codes
 
-Context and input codes are owned by the CLI; every other code comes unchanged from the shared operation (`INVALID_PATH`, `PATH_FORBIDDEN`, `PATH_NOT_ACCESSIBLE`, `FILE_NOT_FOUND`, `NOT_A_STANDALONE_PAGE`, `NOT_A_COLLECTION_ITEM`, `CONTENT_OWNER_MISMATCH`, `SPACE_NOT_FOUND`, `INDEX_ERROR`, `IO_ERROR`, Knowledge codes and others).
+Context and input codes are owned by the CLI; every other code comes unchanged from the shared operation (`INVALID_PATH`, `PATH_FORBIDDEN`, `PATH_NOT_ACCESSIBLE`, `FILE_NOT_FOUND`, `NOT_A_STANDALONE_PAGE`, `NOT_A_COLLECTION_ITEM`, `CONTENT_OWNER_MISMATCH`, `SPACE_NOT_FOUND`, `INDEX_UNAVAILABLE` with `diagnostics` naming each Space and cause, `INDEX_ERROR` for a failed index query, `IO_ERROR`, Knowledge codes and others).
 
 | Code | Meaning |
 |---|---|

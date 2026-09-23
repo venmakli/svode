@@ -1,34 +1,23 @@
 #[cfg(test)]
-use sqlx::SqlitePool;
-
-use crate::error::AppError;
-use crate::index::{IndexKey, IndexState};
-
-#[cfg(test)]
-use svode_core::index::reconcile::MAX_INDEXED_MARKDOWN_BYTES;
-
-#[cfg(test)]
-use svode_core::index::manifest::{
-    SourceManifestRecord, advance_generation, read_generation, read_revision, read_source_manifest,
-    reconcile_source_manifest, replace_source_manifest,
-};
-
-pub(crate) use svode_core::index::reconcile::ReconcileOutcome;
-
-pub(crate) async fn reconcile_pool(
-    state: &IndexState,
-    key: &IndexKey,
-) -> Result<ReconcileOutcome, AppError> {
-    let cli = crate::git::dates::detected_cli();
-    svode_core::index::reconcile::reconcile_pool(cli.as_ref(), &state.core, key)
-        .await
-        .map_err(Into::into)
-}
-
-#[cfg(test)]
 mod tests {
-    use super::*;
+    use sqlx::SqlitePool;
+    use svode_core::index::manifest::{
+        SourceManifestRecord, advance_generation, read_generation, read_revision,
+        read_source_manifest, reconcile_source_manifest, replace_source_manifest,
+    };
+    use svode_core::index::reconcile::{MAX_INDEXED_MARKDOWN_BYTES, ReconcileOutcome};
     use tempfile::TempDir;
+
+    use crate::error::AppError;
+    use crate::index::{IndexKey, IndexState};
+
+    async fn reconcile_pool(
+        state: &IndexState,
+        key: &IndexKey,
+    ) -> Result<ReconcileOutcome, AppError> {
+        let cli = crate::git::dates::detected_cli();
+        Ok(svode_core::index::reconcile::reconcile_pool(cli.as_ref(), &state.core, key).await?)
+    }
 
     async fn pool() -> SqlitePool {
         let temp = TempDir::new().unwrap();

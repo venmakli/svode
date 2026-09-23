@@ -165,6 +165,7 @@ mod tests {
             .unwrap();
         }
         state
+            .core
             .reconcile_active_flag(&key)
             .await
             .store(true, Ordering::SeqCst);

@@ -11,6 +11,7 @@ use svode_core::collections::CollectionError;
 use svode_core::content_tree::ContentTreeError;
 use svode_core::git::GitError;
 use svode_core::index::IndexError;
+use svode_core::index::freshness::IndexUnavailable;
 use svode_core::page::{PageError, PageSourceError};
 use svode_core::routines::RoutineStoreError;
 use svode_core::routines::local::LocalConfigError;
@@ -154,6 +155,17 @@ impl From<AgentContextError> for ToolError {
             }
             AgentContextError::General(message) => general(message),
         }
+    }
+}
+
+/// An index-backed read without a prepared index: the caller gets the
+/// diagnostics instead of an empty result.
+impl From<IndexUnavailable> for ToolError {
+    fn from(error: IndexUnavailable) -> Self {
+        ToolError::new("INDEX_UNAVAILABLE", error.message).with_evidence(
+            "diagnostics",
+            serde_json::to_value(error.diagnostics).unwrap_or_default(),
+        )
     }
 }
 

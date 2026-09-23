@@ -1,7 +1,9 @@
 //! `svode-mcp --project` as a real process with the desktop app closed: one
 //! stdio session served in-process on the standalone host, the frozen
 //! target, source reads that open no store and leave every byte of the
-//! project unchanged, and shutdown on EOF and SIGTERM.
+//! project unchanged, index-backed reads that reconcile the index with the
+//! files first and again after the recheck window, and shutdown on EOF and
+//! SIGTERM.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -16,20 +18,32 @@ const BIN: &str = env!("CARGO_BIN_EXE_svode-mcp");
 const COMMIT_DATE: &str = "2020-01-02T03:04:05Z";
 
 /// Tools a standalone process serves in this build.
-const SERVED: [&str; 12] = [
+const SERVED: [&str; 21] = [
     "get_collection_schema",
+    "get_git_status",
+    "get_knowledge_neighbors",
+    "get_knowledge_node",
+    "get_knowledge_status",
     "get_project_info",
+    "get_related_context",
     "get_svode_guide",
+    "list_actors",
     "list_collections",
     "list_pages",
     "list_spaces",
+    "query_collection_items",
     "read_collection_item",
     "read_collection_readme",
     "read_page",
     "read_space_readme",
+    "search_knowledge",
+    "search_pages",
     "validate_app_manifest",
     "validate_collection_integrity",
 ];
+
+/// Recheck window of the session plus a margin; not a public contract.
+const RECHECK: Duration = Duration::from_millis(2_300);
 
 struct Fixture {
     temp: tempfile::TempDir,
@@ -214,7 +228,7 @@ fn headless_session_serves_source_reads_without_desktop_and_changes_nothing() {
                 json!({ "path": "tasks/alpha.md" }),
             ),
             call(10, "get_project_info", json!({})),
-            call(11, "search_pages", json!({ "query": "Notes" })),
+            call(11, "list_routines", json!({ "spaceId": "root" })),
             call(
                 12,
                 "write_page",
@@ -273,6 +287,15 @@ fn headless_session_serves_source_reads_without_desktop_and_changes_nothing() {
     let project_info = structured(&responses[&10]);
     assert_eq!(project_info["projectPath"], project);
     assert_eq!(project_info["activeMcpSpaceId"], "root");
+    if fixture.git {
+        // Repository access comes from the shared evidence store without a
+        // probe: a repository without a remote is local.
+        assert_eq!(spaces["spaces"][0]["repositoryAccess"]["status"], "local");
+        assert_eq!(
+            spaces["spaces"][0]["repositoryAccessDiagnostic"],
+            Value::Null
+        );
+    }
 
     assert_eq!(business_code(&responses[&11]), "MODE_UNAVAILABLE");
     assert_eq!(business_code(&responses[&12]), "MODE_UNAVAILABLE");
@@ -288,6 +311,219 @@ fn headless_session_serves_source_reads_without_desktop_and_changes_nothing() {
 
     // No index, Routine store or source file was created or changed.
     assert_eq!(snapshot(fixture.temp.path()), before);
+}
+
+/// An open session: one request at a time, stdin kept open.
+struct Live {
+    child: Child,
+    stdin: std::process::ChildStdin,
+    stdout: BufReader<std::process::ChildStdout>,
+    next: u64,
+}
+
+impl Live {
+    fn start(cwd: &Path, args: &[&str]) -> Self {
+        let mut child = spawn(cwd, args);
+        let stdin = child.stdin.take().unwrap();
+        let stdout = BufReader::new(child.stdout.take().unwrap());
+        Self {
+            child,
+            stdin,
+            stdout,
+            next: 1,
+        }
+    }
+
+    fn call(&mut self, name: &str, arguments: Value) -> Value {
+        let id = self.next;
+        self.next += 1;
+        writeln!(self.stdin, "{}", call(id, name, arguments)).unwrap();
+        let mut line = String::new();
+        self.stdout.read_line(&mut line).unwrap();
+        let response: Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(response["id"], id, "{response}");
+        response
+    }
+
+    fn ok(&mut self, name: &str, arguments: Value) -> Value {
+        let response = self.call(name, arguments);
+        structured(&response).clone()
+    }
+
+    fn finish(mut self) {
+        drop(self.stdin);
+        let status = wait(&mut self.child);
+        assert!(status.success(), "{status}");
+    }
+}
+
+fn result_paths(value: &Value) -> Vec<String> {
+    let mut paths = value["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|item| item["path"].as_str().unwrap().to_string())
+        .collect::<Vec<_>>();
+    paths.sort();
+    paths
+}
+
+fn assert_fresh(value: &Value) -> String {
+    assert_eq!(value["index"]["status"], "fresh", "{value}");
+    assert_eq!(value["index"]["diagnostics"], json!([]), "{value}");
+    value["index"]["verifiedAt"].as_str().unwrap().to_string()
+}
+
+/// No SQLite write-ahead log is left: the session closed its pools.
+fn assert_closed(space: &Path) {
+    for name in ["index.db-wal", "routines.db-wal"] {
+        assert!(!space.join(".svode").join(name).exists(), "{name}");
+    }
+}
+
+#[test]
+fn index_backed_reads_prepare_the_index_and_recheck_it_after_the_window() {
+    let fixture = fixture();
+    let project = &fixture.project;
+    assert!(!project.join(".svode/index.db").exists());
+    let mut live = Live::start(
+        fixture.temp.path(),
+        &["--project", project.to_str().unwrap()],
+    );
+
+    // The first index-backed read builds the cold index before answering.
+    let first = live.ok("search_pages", json!({ "query": "Notes" }));
+    let verified = assert_fresh(&first);
+    assert_eq!(result_paths(&first), ["notes.md"]);
+    assert!(project.join(".svode/index.db").is_file());
+    let query = live.ok(
+        "query_collection_items",
+        json!({ "collectionPath": "tasks" }),
+    );
+    assert_eq!(query["index"]["verifiedAt"], verified.as_str());
+    assert_eq!(query["items"][0]["meta"]["title"], "Alpha");
+
+    // An external edit inside the session is visible once the last check
+    // is older than the window.
+    write(
+        &project.join("extra.md"),
+        "---\ntitle: Extra\n---\nNotes appendix\n",
+    );
+    write(
+        &project.join("tasks/alpha.md"),
+        "---\ntitle: Alpha\nStatus: Done\n---\nAlpha body\n",
+    );
+    std::thread::sleep(RECHECK);
+    let later = live.ok("search_pages", json!({ "query": "Notes" }));
+    assert!(assert_fresh(&later) > verified);
+    assert_eq!(result_paths(&later), ["extra.md", "notes.md"]);
+    let done = live.ok(
+        "query_collection_items",
+        json!({
+            "collectionPath": "tasks",
+            "filter": [{ "field": "Status", "op": "eq", "value": "Done" }]
+        }),
+    );
+    assert_eq!(done["items"].as_array().unwrap().len(), 1);
+
+    // A child Space and the whole Project scope prepare their own pools.
+    let child = live.ok(
+        "search_pages",
+        json!({ "spaceId": "child", "query": "Child" }),
+    );
+    assert_fresh(&child);
+    assert_eq!(result_paths(&child), ["brief.md"]);
+    let status = live.ok("get_knowledge_status", json!({ "scope": "project" }));
+    assert_fresh(&status);
+    assert_eq!(status["counts"]["readablePools"], 2);
+    let node = live.ok(
+        "get_knowledge_node",
+        json!({ "nodeId": "page:root:extra.md" }),
+    );
+    assert_fresh(&node);
+    assert_eq!(node["node"]["title"], "Extra");
+    for (name, arguments) in [
+        ("search_knowledge", json!({ "query": "Notes" })),
+        (
+            "get_knowledge_neighbors",
+            json!({ "nodeId": "page:root:notes.md" }),
+        ),
+        ("get_related_context", json!({ "query": "Notes" })),
+    ] {
+        assert_fresh(&live.ok(name, arguments));
+    }
+    if fixture.git {
+        let actors = live.ok("list_actors", json!({}));
+        assert_eq!(actors["actors"][0]["email"], "agent@example.com");
+        assert!(live.ok("get_git_status", json!({}))["status"].is_object());
+    }
+    live.finish();
+    assert_closed(project);
+    assert_closed(&project.join("child"));
+}
+
+#[test]
+fn an_incompatible_index_is_quarantined_and_rebuilt() {
+    let fixture = fixture();
+    let project = &fixture.project;
+    let db = project.join(".svode/index.db");
+    tokio::runtime::Runtime::new().unwrap().block_on(async {
+        let options = sqlx::sqlite::SqliteConnectOptions::new()
+            .filename(&db)
+            .create_if_missing(true);
+        let pool = sqlx::SqlitePool::connect_with(options).await.unwrap();
+        sqlx::query("CREATE TABLE foreign_cache (value TEXT)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        pool.close().await;
+    });
+
+    let responses = session(
+        fixture.temp.path(),
+        &["--project", project.to_str().unwrap()],
+        &[call(1, "search_pages", json!({ "query": "Notes" }))],
+    );
+    let search = structured(&responses[&1]);
+    assert_fresh(search);
+    assert_eq!(result_paths(search), ["notes.md"]);
+    let quarantined = fs::read_dir(project.join(".svode"))
+        .unwrap()
+        .filter(|entry| {
+            entry
+                .as_ref()
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with("index.db.incompatible-")
+        })
+        .count();
+    assert_eq!(quarantined, 1);
+}
+
+#[test]
+fn an_index_that_cannot_be_prepared_is_a_business_error() {
+    let fixture = fixture();
+    let project = &fixture.project;
+    fs::create_dir_all(project.join(".svode/index.db")).unwrap();
+    let responses = session(
+        fixture.temp.path(),
+        &["--project", project.to_str().unwrap()],
+        &[
+            call(1, "search_pages", json!({ "query": "Notes" })),
+            call(2, "get_knowledge_status", json!({})),
+            call(
+                3,
+                "query_collection_items",
+                json!({ "collectionPath": "tasks" }),
+            ),
+        ],
+    );
+    for id in 1..=3 {
+        assert_eq!(business_code(&responses[&id]), "INDEX_UNAVAILABLE");
+        let diagnostics = &responses[&id]["result"]["structuredContent"]["error"]["diagnostics"];
+        assert_eq!(diagnostics[0]["code"], "index_unavailable", "{diagnostics}");
+    }
 }
 
 fn default_space(cwd: &Path, args: &[&str]) -> Value {

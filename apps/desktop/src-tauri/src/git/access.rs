@@ -11,7 +11,6 @@ pub use svode_core::git::access::{
     RepositoryAccessSnapshot, RepositoryAccessStatus, RoutineClaimResult,
 };
 
-const ACCESS_STORE_FILE: &str = "repository-access.json";
 const REPOSITORY_ACCESS_CHANGED_EVENT: &str = "git:repository-access-changed";
 
 #[derive(Debug, Clone, Serialize)]
@@ -249,7 +248,7 @@ pub(crate) fn access_store_path(app: &AppHandle) -> Result<PathBuf, AppError> {
     let config_dir = app.path().app_config_dir().map_err(|error| {
         AppError::General(format!("failed to resolve app config path: {error}"))
     })?;
-    Ok(config_dir.join(ACCESS_STORE_FILE))
+    Ok(config_dir.join(svode_core::git::access::ACCESS_STORE_FILE))
 }
 
 pub async fn resolve_repository(cli: &GitCli, path: &Path) -> Result<PathBuf, AppError> {

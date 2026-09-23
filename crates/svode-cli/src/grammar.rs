@@ -3,6 +3,7 @@
 use clap::{Args, Parser, Subcommand, ValueEnum};
 
 const HEADLESS: &str = "Mode: not served yet by the Svode headless runtime of this build; it answers MODE_UNAVAILABLE and runs nothing.";
+const INDEXED: &str = "Index: the index of the Space is checked against the files before the answer (built on first use). The result carries `index` (status fresh or partial); INDEX_UNAVAILABLE means no answer could be prepared from it.";
 
 const WRITE: &str = "Safe cycle: read the current source, edit it, then write the whole result. Bodies come from --body-file <path> or --body-file - (stdin); --body <text> is for short inline text. A command reads stdin at most once. The write does not commit to Git. If it fails, the code and target say why: reread the source and apply the intent again; never delete or hand-repair .svode metadata.";
 
@@ -111,7 +112,7 @@ pub enum Noun {
         verb: ActorVerb,
     },
     /// Full-text search of Pages in the selected Space.
-    #[command(after_help = format!("{HEADLESS}\n\nExample:\n  svode search \"release notes\" --limit 10 --json"))]
+    #[command(after_help = format!("{INDEXED}\n\nExample:\n  svode search \"release notes\" --limit 10 --json"))]
     Search(SearchArgs),
     /// Knowledge projection: search, nodes, neighbors, context and status.
     #[command(
@@ -401,7 +402,7 @@ pub enum CollectionVerb {
     )]
     Schema(CollectionSelector),
     /// Query Collection items with optional filter and sort.
-    #[command(after_help = format!("Filter and sort are JSON arrays of the shared query shape, read from a file or stdin (`-`).\n\n{HEADLESS}\n\nExample:\n  svode --project ~/Notes collection query --collection tasks --filter-file filter.json --limit 20 --json"))]
+    #[command(after_help = format!("Filter and sort are JSON arrays of the shared query shape, read from a file or stdin (`-`).\n\n{INDEXED}\n\nExample:\n  svode --project ~/Notes collection query --collection tasks --filter-file filter.json --limit 20 --json"))]
     Query(CollectionQueryArgs),
     /// The Collection README.
     #[command(
@@ -734,7 +735,7 @@ pub struct ItemReadArgs {
 #[derive(Debug, Subcommand)]
 pub enum ActorVerb {
     /// Actor candidates for actor fields.
-    #[command(after_help = format!("{HEADLESS}\n\nExample:\n  svode --project ~/Notes actor list --json"))]
+    #[command(after_help = "Example:\n  svode --project ~/Notes actor list --json")]
     List(ActorListArgs),
 }
 
@@ -771,19 +772,19 @@ impl KnowledgeScope {
 #[derive(Debug, Subcommand)]
 pub enum KnowledgeVerb {
     /// Search the Knowledge projection.
-    #[command(after_help = format!("{HEADLESS}\n\nExample:\n  svode knowledge search \"onboarding\" --kind page --limit 10 --json"))]
+    #[command(after_help = format!("{INDEXED}\n\nExample:\n  svode knowledge search \"onboarding\" --kind page --limit 10 --json"))]
     Search(KnowledgeSearchArgs),
     /// One Knowledge node.
-    #[command(after_help = format!("{HEADLESS}\n\nExample:\n  svode knowledge node --id page:root:notes/today.md --json"))]
+    #[command(after_help = format!("{INDEXED}\n\nExample:\n  svode knowledge node --id page:root:notes/today.md --json"))]
     Node(KnowledgeNodeArgs),
     /// Direct explicit neighbors of one Knowledge node.
-    #[command(after_help = format!("{HEADLESS}\n\nExample:\n  svode knowledge neighbors --id page:root:notes/today.md --edge-kind links_to --json"))]
+    #[command(after_help = format!("{INDEXED}\n\nExample:\n  svode knowledge neighbors --id page:root:notes/today.md --edge-kind links_to --json"))]
     Neighbors(KnowledgeNeighborsArgs),
     /// Related context for a query within a text budget.
-    #[command(after_help = format!("{HEADLESS}\n\nExample:\n  svode knowledge context \"release plan\" --text-budget 2000 --json"))]
+    #[command(after_help = format!("{INDEXED}\n\nExample:\n  svode knowledge context \"release plan\" --text-budget 2000 --json"))]
     Context(KnowledgeContextArgs),
     /// Freshness and counts of the Knowledge projection.
-    #[command(after_help = format!("{HEADLESS}\n\nExample:\n  svode knowledge status --scope project --json"))]
+    #[command(after_help = format!("{INDEXED}\n\nExample:\n  svode knowledge status --scope project --json"))]
     Status(KnowledgeStatusArgs),
 }
 
@@ -856,7 +857,7 @@ pub struct KnowledgeStatusArgs {
 #[derive(Debug, Subcommand)]
 pub enum GitVerb {
     /// Read-only Git status of the selected Space.
-    #[command(after_help = format!("{HEADLESS}\n\nExample:\n  svode --project ~/Notes git status --json"))]
+    #[command(after_help = "Example:\n  svode --project ~/Notes git status --json")]
     Status,
 }
 

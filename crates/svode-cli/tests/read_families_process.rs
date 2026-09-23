@@ -1,7 +1,6 @@
 //! Acceptance of the common frame and read families through the real
-//! `svode` binary with the desktop app closed. Source reads run standalone;
-//! index-backed reads answer `MODE_UNAVAILABLE` until the headless runtime
-//! is connected.
+//! `svode` binary with the desktop app closed. Index-backed reads have
+//! their own acceptance in `index_process`.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -277,12 +276,15 @@ fn source_reads_follow_the_shared_mapping_and_change_nothing() {
             ("gone".to_string(), "missing".to_string()),
         ]
     );
-    // Repository access state needs the device runtime of phase 5.
-    assert_eq!(spaces["spaces"][0]["repositoryAccess"], Value::Null);
-    assert_eq!(
-        spaces["spaces"][0]["repositoryAccessDiagnostic"]["code"],
-        "MODE_UNAVAILABLE"
-    );
+    // Repository access comes from the shared evidence store; a repository
+    // without a remote is local and nothing probes a remote.
+    if has_git() {
+        assert_eq!(spaces["spaces"][0]["repositoryAccess"]["status"], "local");
+        assert_eq!(
+            spaces["spaces"][0]["repositoryAccessDiagnostic"],
+            Value::Null
+        );
+    }
 
     let (_, pages) = json(root, &["page", "list", "--path", "notes", "--limit", "500"]);
     assert_eq!(pages["limit"], 200);
@@ -348,34 +350,6 @@ fn source_reads_follow_the_shared_mapping_and_change_nothing() {
 }
 
 #[test]
-fn index_backed_commands_are_mode_unavailable_and_run_nothing() {
-    let fixture = fixture();
-    let root = &fixture.root;
-    let before = snapshot(root);
-    for args in [
-        vec!["collection", "query", "--collection", "tasks"],
-        vec!["actor", "list"],
-        vec!["search", "Body"],
-        vec!["knowledge", "search", "Body"],
-        vec!["knowledge", "node", "--id", "page:root:notes/valid.md"],
-        vec!["knowledge", "neighbors", "--id", "page:root:notes/valid.md"],
-        vec!["knowledge", "context", "Body"],
-        vec!["knowledge", "status"],
-        vec!["git", "status"],
-    ] {
-        let (exit, value) = json(root, &args);
-        assert_eq!(exit, 1, "{args:?}");
-        assert_eq!(code(&value), "MODE_UNAVAILABLE", "{args:?}");
-        assert_eq!(value["error"]["target"]["spaceId"], "root", "{args:?}");
-        let human = svode(root, &args);
-        assert!(human.stdout.is_empty(), "{args:?}");
-        let stderr = String::from_utf8(human.stderr).unwrap();
-        assert!(stderr.contains("MODE_UNAVAILABLE"), "{args:?}");
-    }
-    assert_eq!(snapshot(root), before);
-}
-
-#[test]
 fn structured_input_comes_from_a_file_or_one_stdin() {
     let fixture = fixture();
     let root = &fixture.root;
@@ -391,11 +365,13 @@ fn structured_input_comes_from_a_file_or_one_stdin() {
         args
     };
 
-    // Readable input passes on to the command, which needs phase 5.
+    // Readable input passes on to the command.
     let (exit, value) = json(root, &with(&["--filter-file", "filter.json"]));
-    assert_eq!((exit, code(&value)), (1, "MODE_UNAVAILABLE"));
+    assert_eq!(exit, 0, "{value}");
+    assert_eq!(value["items"][0]["path"], "tasks/alpha.md");
     let (exit, value) = with_stdin(root, &with(&["--filter-file", "-"]), "[]");
-    assert_eq!((exit, code(&value)), (1, "MODE_UNAVAILABLE"));
+    assert_eq!(exit, 0, "{value}");
+    assert_eq!(value["items"].as_array().unwrap().len(), 1);
 
     for (args, expected) in [
         (with(&["--filter-file", "missing.json"]), "INPUT_UNREADABLE"),
@@ -418,6 +394,9 @@ fn doctor_reports_project_spaces_git_and_runtime_without_opening_stores() {
     let fixture = fixture();
     let root = &fixture.root;
     write(&root.join("child/.svode/index.db"), "not opened");
+    if has_git() {
+        git(root, &["init", "-q"]);
+    }
     let before = snapshot(root);
 
     let (exit, value) = json(&root.join("child/deep"), &["doctor"]);
@@ -431,14 +410,24 @@ fn doctor_reports_project_spaces_git_and_runtime_without_opening_stores() {
     assert_eq!(spaces[0]["index"]["present"], false);
     assert_eq!(spaces[1]["index"]["present"], true);
     assert_eq!(spaces[2]["status"], "missing");
-    assert_eq!(
-        spaces[0]["repositoryAccessDiagnostic"]["code"],
-        "MODE_UNAVAILABLE"
-    );
+    if has_git() {
+        assert_eq!(spaces[0]["repositoryAccess"]["status"], "local");
+    }
+    for space in spaces {
+        assert_ne!(
+            space["repositoryAccessDiagnostic"]["code"], "MODE_UNAVAILABLE",
+            "{space}"
+        );
+    }
     assert_eq!(doctor["git"]["available"], has_git());
     let served = doctor["runtime"]["servedTools"].as_array().unwrap();
     assert!(served.contains(&Value::from("list_pages")));
-    assert!(!served.contains(&Value::from("query_collection_items")));
+    assert!(served.contains(&Value::from("query_collection_items")));
+    assert!(!served.contains(&Value::from("write_page")));
+    let human = svode(&root.join("child/deep"), &["doctor"]);
+    let human = String::from_utf8(human.stdout).unwrap();
+    assert!(human.contains("space child: ready"), "{human}");
+    assert!(human.contains(", access "), "{human}");
     assert_eq!(snapshot(root), before);
 
     // Target failures are part of the report, not a failed command.
@@ -478,17 +467,22 @@ fn guide_prints_the_shared_guide_and_files_first_rules_without_a_project() {
 fn help_of_every_command_works_without_a_project_or_runtime() {
     let temp = tempfile::tempdir().unwrap();
     let headless = [
+        vec!["page", "write"],
+        vec!["collection", "create"],
+        vec!["routine", "list"],
+    ];
+    let indexed = [
         vec!["collection", "query"],
-        vec!["actor", "list"],
         vec!["search"],
         vec!["knowledge", "search"],
         vec!["knowledge", "node"],
         vec!["knowledge", "neighbors"],
         vec!["knowledge", "context"],
         vec!["knowledge", "status"],
-        vec!["git", "status"],
     ];
     let source = [
+        vec!["actor", "list"],
+        vec!["git", "status"],
         vec!["project", "info"],
         vec!["space", "list"],
         vec!["space", "readme", "read"],
@@ -504,6 +498,7 @@ fn help_of_every_command_works_without_a_project_or_runtime() {
     for (command, needs_runtime) in headless
         .iter()
         .map(|command| (command, true))
+        .chain(indexed.iter().map(|command| (command, false)))
         .chain(source.iter().map(|command| (command, false)))
     {
         let mut args = vec!["--project", "/definitely/missing"];
@@ -516,6 +511,11 @@ fn help_of_every_command_works_without_a_project_or_runtime() {
         assert_eq!(
             help.contains("MODE_UNAVAILABLE"),
             needs_runtime,
+            "{command:?}"
+        );
+        assert_eq!(
+            help.contains("INDEX_UNAVAILABLE"),
+            indexed.contains(command),
             "{command:?}"
         );
     }

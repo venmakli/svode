@@ -43,14 +43,10 @@ impl ToolCallResult {
     }
 
     pub fn business_error(error: ToolError) -> Self {
+        let text = error.message.clone();
         Self {
-            content: vec![ContentBlock::text(error.message.clone())],
-            structured_content: Some(serde_json::json!({
-                "error": {
-                    "code": error.code,
-                    "message": error.message,
-                }
-            })),
+            content: vec![ContentBlock::text(text)],
+            structured_content: Some(serde_json::json!({ "error": error })),
             is_error: true,
         }
     }

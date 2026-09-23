@@ -650,6 +650,17 @@ pub async fn run(
         human = format!("{summary}\n{human}");
         warnings = render::warnings(&structured["warnings"]);
     }
+    // A partial index answers from its earlier rows; say so on stderr.
+    if structured["index"]["status"] == "partial" {
+        warnings.extend(
+            structured["index"]["diagnostics"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|diagnostic| diagnostic["message"].as_str())
+                .map(|message| format!("index partial: {message}")),
+        );
+    }
     Ok(Outcome {
         envelope: envelope(known, structured),
         human,

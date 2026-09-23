@@ -516,17 +516,16 @@ async fn index_backed_reads_without_a_ready_index_say_so() {
     )
     .await;
     assert_eq!(exit, 1);
-    assert_eq!(query["error"]["code"], "INDEX_ERROR");
+    assert_eq!(query["error"]["code"], "INDEX_UNAVAILABLE");
+    // An unready index is a failure with diagnostics, never an empty result.
     let (exit, status) = svode(&host, &fixture.project, &["knowledge", "status"]).await;
-    assert_eq!(exit, 0);
-    assert_eq!(status["counts"]["readablePools"], 0);
-    // An unready index is a status with diagnostics, not an empty success.
+    assert_eq!(exit, 1);
+    assert_eq!(status["error"]["code"], "INDEX_UNAVAILABLE", "{status}");
     assert!(
-        ["error", "partial"].contains(&status["status"].as_str().unwrap()),
-        "{status}"
-    );
-    assert!(
-        !status["diagnostics"].as_array().unwrap().is_empty(),
+        !status["error"]["diagnostics"]
+            .as_array()
+            .unwrap()
+            .is_empty(),
         "{status}"
     );
 }

@@ -19,6 +19,12 @@ pub fn config_dir() -> Option<PathBuf> {
     config_dir_in(dirs::config_dir()?.as_path(), identifier.as_deref())
 }
 
+/// Repository access evidence store of the install, shared with the desktop
+/// app. `None` when the OS has no config directory for the user.
+pub fn repository_access_store() -> Option<PathBuf> {
+    Some(config_dir()?.join(crate::git::access::ACCESS_STORE_FILE))
+}
+
 fn config_dir_in(os_config_dir: &Path, identifier: Option<&str>) -> Option<PathBuf> {
     let identifier = match identifier.map(str::trim) {
         None | Some("") => PRODUCT_IDENTIFIER,

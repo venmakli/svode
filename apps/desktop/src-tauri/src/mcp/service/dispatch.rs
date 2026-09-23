@@ -53,20 +53,19 @@ impl svode_tools::host::ToolHost for DesktopMcpHost {
         true
     }
 
+    /// Only a pool the project runtime opened: a request never creates an
+    /// empty index for a project that is not open.
     async fn index_pool(
         &self,
         key: &svode_core::index::IndexKey,
         space_path: &Path,
     ) -> Option<sqlx::SqlitePool> {
-        let state = self.app.state::<IndexState>();
-        if let Ok(pool) = state.get_or_create(key).await {
+        let state = &self.app.state::<IndexState>().inner().core;
+        if let Some(pool) = state.existing_pool(key).await {
             return Some(pool);
         }
-        let fallback = state
-            .key_for_space_dir(space_path)
-            .await
-            .unwrap_or_else(|| svode_core::index::IndexKey::Root(space_path.to_path_buf()));
-        state.get_or_create(&fallback).await.ok()
+        let fallback = state.key_for_space_dir(space_path).await?;
+        state.existing_pool(&fallback).await
     }
 
     async fn repository_access(

@@ -6,6 +6,7 @@ use sqlx::SqlitePool;
 
 use super::manifest::SourceManifestRecord;
 use super::model::{IndexedEntry, KnowledgeArtifact};
+use super::reconcile::{ReconcileOutcome, reconcile_pool};
 use super::state::IndexRuntimeState;
 use super::{IndexError, IndexKey};
 use crate::page::dates::GitDateExecutor;
@@ -71,22 +72,60 @@ impl IndexUpdateState {
         let flag = index_state.reindex_active_flag(key).await;
         let _guard = lock.lock().await;
         flag.store(true, Ordering::SeqCst);
-        let _flag_guard = ActiveRepairGuard(flag);
+        let _flag_guard = ActiveFlagGuard(flag);
         let complete =
             super::reindex::full_reindex_for_target(executor, &pool, key.project(), &dir, &skip)
                 .await?;
         index_state.rebuild_source_backlinks(key).await?;
         self.sync_routine_projection(index_state, key).await?;
+        index_state.record_verification(key).await;
         if complete {
             index_state.cleanup_reconciled_index(key, &pool).await;
         }
         Ok(())
     }
+
+    /// Brings the open pool of `key` in line with its sources: a manifest
+    /// check, repeated when another writer advanced the generation meanwhile,
+    /// or a full rebuild when the pool holds no compatible snapshot. The
+    /// Routine observation projection follows the applied index. Every host
+    /// runs this one cycle.
+    pub async fn reconcile_space<E: GitDateExecutor>(
+        &self,
+        index_state: &IndexRuntimeState,
+        key: &IndexKey,
+        executor: Option<&E>,
+    ) -> Result<(), IndexUpdateError> {
+        let flag = index_state.reconcile_active_flag(key).await;
+        flag.store(true, Ordering::SeqCst);
+        let _flag_guard = ActiveFlagGuard(flag);
+        for _ in 0..RECONCILE_ATTEMPTS {
+            match reconcile_pool(executor, index_state, key).await? {
+                ReconcileOutcome::Applied => {
+                    self.sync_routine_projection(index_state, key).await?;
+                    index_state.record_verification(key).await;
+                    return Ok(());
+                }
+                ReconcileOutcome::Retry => continue,
+                ReconcileOutcome::Rebuild => {
+                    return self.repair_space(index_state, key, executor).await;
+                }
+            }
+        }
+        Err(IndexError::Index(format!(
+            "source manifest kept changing during reconciliation for {key:?}"
+        ))
+        .into())
+    }
 }
 
-struct ActiveRepairGuard(Arc<AtomicBool>);
+/// Manifest checks of one reconciliation before it gives up on a source set
+/// that keeps changing.
+const RECONCILE_ATTEMPTS: usize = 3;
 
-impl Drop for ActiveRepairGuard {
+struct ActiveFlagGuard(Arc<AtomicBool>);
+
+impl Drop for ActiveFlagGuard {
     fn drop(&mut self) {
         self.0.store(false, Ordering::SeqCst);
     }
