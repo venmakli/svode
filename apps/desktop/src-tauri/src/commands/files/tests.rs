@@ -1317,10 +1317,14 @@ async fn write_entry_passes_the_source_version_and_returns_the_version_of_its_re
     };
 
     let saved = save("Draft\n", Some(loaded.clone())).await.unwrap();
-    let current = entry::read(&space_str, "Page.md").unwrap();
+    // The editor reads its baseline next to the entry fields.
+    let read =
+        serde_json::to_value(EntryRead::from(entry::read(&space_str, "Page.md").unwrap())).unwrap();
+    assert_eq!(read["body"], "Draft\n");
+    assert_eq!(read["meta"]["title"], "Page");
     assert_eq!(
-        saved.source_version.as_deref(),
-        Some(current.source_version.unwrap().as_str())
+        read["source_version"].as_str(),
+        saved.source_version.as_deref()
     );
 
     // An external edit after the load makes the loaded baseline stale; the

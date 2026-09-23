@@ -64,6 +64,8 @@ export interface WritePageInput {
   content: string;
   skipRename: boolean;
   projectPath: string | null;
+  /** Version of the source this body was edited from. */
+  sourceVersion: string;
 }
 
 export interface ValidatePageLinksInput {
@@ -170,13 +172,16 @@ export async function updatePageField(
   return pageFromDto(page);
 }
 
-export async function writePage(input: WritePageInput): Promise<WritePageResult> {
+export async function writePage(
+  input: WritePageInput,
+): Promise<WritePageResult> {
   const result = await writePageDto({
     space: input.spacePath,
     path: input.path,
     content: input.content,
     skipRename: input.skipRename,
     projectPath: input.projectPath,
+    sourceVersion: input.sourceVersion,
   });
   return writeResultFromDto(result);
 }
@@ -200,9 +205,7 @@ export function deletePage(input: DeletePageInput): Promise<void> {
   });
 }
 
-export async function duplicatePage(
-  input: DuplicatePageInput,
-): Promise<Page> {
+export async function duplicatePage(input: DuplicatePageInput): Promise<Page> {
   const page = await duplicatePageDto({
     space: input.spacePath,
     filePath: input.filePath,
@@ -296,6 +299,7 @@ function writeResultFromDto(result: WritePageResultDto): WritePageResult {
     modifiedSources: result.modified_sources,
     writeNonce: result.write_nonce,
     warnings: result.warnings ?? [],
+    sourceVersion: result.source_version ?? null,
   };
 }
 

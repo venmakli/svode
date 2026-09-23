@@ -15,6 +15,7 @@ import {
   useRepositoryAccessPreflight,
   type RepositoryAccessRequest,
 } from "@/features/git";
+import type { PageSourceConflict } from "../model/source-conflict";
 import {
   usePagePersistence,
   type PagePersistenceFlush,
@@ -36,8 +37,10 @@ interface PageSurfaceSessionContextValue {
     flush: PagePersistenceFlush,
     retry?: PagePersistenceFlush,
   ) => () => void;
+  reportSourceConflict: (conflict: PageSourceConflict | null) => void;
   retryPersistence: () => Promise<void>;
   runMutation: (operation: () => Promise<void>) => Promise<void>;
+  sourceConflict: PageSourceConflict | null;
 }
 
 const PageSurfaceSessionContext =
@@ -104,8 +107,10 @@ function PageSurfaceSession({
     persistenceError,
     recoverWriteError,
     registerPersistence,
+    reportSourceConflict,
     retryPersistence,
     runMutation,
+    sourceConflict,
   } = usePagePersistence({
     makeAccessRequest,
     recovery,
@@ -148,8 +153,10 @@ function PageSurfaceSession({
       recoverWriteError,
       recovery,
       registerPersistence,
+      reportSourceConflict,
       retryPersistence,
       runMutation,
+      sourceConflict,
     }),
     [
       dismissRecovery,
@@ -159,8 +166,10 @@ function PageSurfaceSession({
       recoverWriteError,
       recovery,
       registerPersistence,
+      reportSourceConflict,
       retryPersistence,
       runMutation,
+      sourceConflict,
     ],
   );
 

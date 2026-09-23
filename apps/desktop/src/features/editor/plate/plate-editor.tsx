@@ -5,7 +5,7 @@ import { Editor, EditorContainer } from "@/components/ui/editor";
 import { FixedToolbar } from "@/components/ui/fixed-toolbar";
 import { FixedToolbarButtons } from "@/components/ui/fixed-toolbar-buttons";
 import { Skeleton } from "@/components/ui/skeleton";
-import type { Page, PageMeta } from "@/features/page";
+import type { Page, PageMeta, PageSourceConflict } from "@/features/page";
 import { cn } from "@/shared/lib/utils";
 import { detailPageBodyClassName } from "@/shared/ui/page-layout";
 
@@ -39,6 +39,7 @@ interface PlateDocumentEditorProps {
     error: unknown,
     retry: () => Promise<void>,
   ) => Promise<boolean>;
+  onSourceConflict?: (conflict: PageSourceConflict | null) => void;
 }
 
 export function PlateDocumentEditor({
@@ -57,6 +58,7 @@ export function PlateDocumentEditor({
   readOnly = false,
   registerPersistence,
   onWriteAccessError,
+  onSourceConflict,
 }: PlateDocumentEditorProps) {
   const editor = usePlateEditor({
     plugins: EditorKit,
@@ -86,6 +88,7 @@ export function PlateDocumentEditor({
     spacePath: spacePathProp,
     readOnly,
     onWriteAccessError,
+    onSourceConflict,
   });
 
   useEffect(() => {

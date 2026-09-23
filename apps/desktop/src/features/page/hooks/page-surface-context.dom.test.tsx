@@ -86,9 +86,140 @@ test("a positive canonical reread restores editable presentation automatically",
   }
 });
 
+test("a busy source after its retries is a save error with an explicit retry", async () => {
+  let busy = true;
+  const page = await renderPage("local", {
+    renderRecovery: true,
+    bodyFlush: async () => {
+      if (busy) throw { kind: "source_busy", path: "page.md" };
+    },
+  });
+  try {
+    let ready = true;
+    await act(async () => {
+      ready = await page.session().prepareForNavigation();
+    });
+    expect(ready).toBe(false);
+    expect(
+      textOf(page.dom, "[data-slot=alert]").includes(
+        "Another Svode operation is writing this file",
+      ),
+    ).toBe(true);
+
+    busy = false;
+    await act(async () => {
+      buttonWithText(page.dom, "Retry save").click();
+      await nextTurn();
+    });
+    expect(page.dom.window.document.querySelector("[data-slot=alert]")).toBe(
+      null,
+    );
+    await act(async () => {
+      ready = await page.session().prepareForNavigation();
+    });
+    expect(ready).toBe(true);
+  } finally {
+    await page.cleanup();
+  }
+});
+
+test("a source conflict holds navigation and offers both explicit choices", async () => {
+  const page = await renderPage("local", { renderRecovery: true });
+  try {
+    const choices: string[] = [];
+    const conflict = {
+      status: "ready" as const,
+      pending: null,
+      failure: null,
+      writeDraft: () => choices.push("write"),
+      loadFile: () => choices.push("load"),
+      retryRead: () => choices.push("read"),
+    };
+    await act(async () => page.session().reportSourceConflict(conflict));
+
+    const region = page.dom.window.document.querySelector(
+      "[data-page-source-conflict]",
+    )!;
+    expect(
+      region.textContent?.includes(
+        "The file changed outside. Your text isn't saved yet",
+      ),
+    ).toBe(true);
+    expect(region.querySelector("[role=alert]") !== null).toBe(true);
+    // The editor keeps focus while the user may be typing.
+    expect(page.dom.window.document.activeElement).toBe(
+      page.dom.window.document.body,
+    );
+    let ready = true;
+    await act(async () => {
+      ready = await page.session().prepareForNavigation();
+    });
+    expect(ready).toBe(false);
+    expect(page.events).toEqual(["body", "metadata"]);
+
+    await act(async () => {
+      buttonWithText(page.dom, "Load file version").click();
+      buttonWithText(page.dom, "Save my text").click();
+    });
+    expect(choices).toEqual(["load", "write"]);
+
+    await act(async () =>
+      page.session().reportSourceConflict({ ...conflict, pending: "write" }),
+    );
+    expect(buttonWithText(page.dom, "Save my text").disabled).toBe(true);
+    expect(buttonWithText(page.dom, "Load file version").disabled).toBe(true);
+
+    await act(async () => page.session().reportSourceConflict(null));
+    expect(
+      page.dom.window.document.querySelector("[data-page-source-conflict]"),
+    ).toBe(null);
+    await act(async () => {
+      ready = await page.session().prepareForNavigation();
+    });
+    expect(ready).toBe(true);
+  } finally {
+    await page.cleanup();
+  }
+});
+
+test("a failed fresh read offers only reading again", async () => {
+  const page = await renderPage("local", { renderRecovery: true });
+  try {
+    const choices: string[] = [];
+    await act(async () =>
+      page.session().reportSourceConflict({
+        status: "read_failed",
+        pending: null,
+        failure: null,
+        writeDraft: () => choices.push("write"),
+        loadFile: () => choices.push("load"),
+        retryRead: () => choices.push("read"),
+      }),
+    );
+    expect(
+      textOf(page.dom, "[data-page-source-conflict-note]").includes(
+        "Couldn't read the file",
+      ),
+    ).toBe(true);
+    expect(
+      page.dom.window.document.querySelector(
+        "[data-page-source-conflict-write]",
+      ),
+    ).toBe(null);
+    await act(async () => buttonWithText(page.dom, "Read again").click());
+    expect(choices).toEqual(["read"]);
+  } finally {
+    await page.cleanup();
+  }
+});
+
 async function renderPage(
   initialStatus: AccessStatus,
-  options: { renderTitle?: boolean } = {},
+  options: {
+    renderTitle?: boolean;
+    renderRecovery?: boolean;
+    bodyFlush?: () => Promise<void>;
+  } = {},
 ) {
   const dom = new JSDOM(
     "<!doctype html><html><body><div id=app></div></body></html>",
@@ -118,15 +249,21 @@ async function renderPage(
   const { PageSurfaceSessionProvider, usePageSurfaceSession } =
     await import("./page-surface-context");
   const { TitleZone } = await import("../ui/title-zone");
+  const { PageAccessRecovery } = await import("../ui/page-access-recovery");
+  let currentSession: ReturnType<typeof usePageSurfaceSession> | null = null;
 
   function Probe() {
     const session = usePageSurfaceSession();
+    useEffect(() => {
+      currentSession = session;
+    });
     const [savedTitle, setSavedTitle] = useState("Page");
     const registerPersistence = session.registerPersistence;
     useEffect(() => {
       mounted += 1;
       const unregisterBody = registerPersistence("body", async () => {
         events.push("body");
+        await options.bodyFlush?.();
       });
       const unregisterMetadata = registerPersistence("metadata", async () => {
         events.push("metadata");
@@ -141,6 +278,7 @@ async function renderPage(
         <span data-read-only>
           {session.readOnly ? "read-only" : "editable"}
         </span>
+        {options.renderRecovery ? <PageAccessRecovery /> : null}
         {options.renderTitle ? (
           <>
             <div data-page-title>
@@ -197,6 +335,7 @@ async function renderPage(
     events,
     dom,
     mountCount: () => mounted,
+    session: () => currentSession!,
     setAccessStatus: (status: AccessStatus) => {
       accessStatus = status;
     },
@@ -229,6 +368,14 @@ function snapshot(
 
 function textOf(dom: JSDOM, selector: string) {
   return dom.window.document.querySelector(selector)?.textContent ?? "";
+}
+
+function buttonWithText(dom: JSDOM, text: string) {
+  const button = [
+    ...dom.window.document.querySelectorAll<HTMLButtonElement>("button"),
+  ].find((candidate) => candidate.textContent?.trim() === text);
+  if (!button) throw new Error(`No button "${text}"`);
+  return button;
 }
 
 function nextTurn() {

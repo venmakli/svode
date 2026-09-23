@@ -76,6 +76,7 @@ export function ReadmeSurface() {
         readOnly={pageSurface.readOnly}
         registerPersistence={pageSurface.registerPersistence}
         onWriteAccessError={pageSurface.recoverWriteError}
+        onSourceConflict={pageSurface.reportSourceConflict}
         prepareManagedImport={async () => {
           if (!(await pageSurface.prepareForNavigation()))
             throw new Error(m.page_surface_save_error());

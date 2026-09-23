@@ -2,6 +2,17 @@ import type { Descendant } from "platejs";
 
 const DOCUMENT_CACHE_SEPARATOR = "\0";
 const documentValueCache = new Map<string, Descendant[]>();
+const documentBaselines = new Map<string, DocumentSourceBaseline>();
+
+/**
+ * The source a document's editor value was loaded from or last written as.
+ * It outlives a dropped cached value: an open editor keeps writing from it,
+ * and a reopen without a cached value reads a new one.
+ */
+export interface DocumentSourceBaseline {
+  version: string;
+  body: string;
+}
 
 export function getDocumentCacheKey(spacePath: string, path: string): string {
   return `${spacePath}${DOCUMENT_CACHE_SEPARATOR}${path}`;
@@ -27,6 +38,23 @@ export function setCachedDocumentValueByKey(
   value: Descendant[],
 ): void {
   documentValueCache.set(key, value);
+}
+
+export function getDocumentBaseline(
+  key: string,
+): DocumentSourceBaseline | null {
+  return documentBaselines.get(key) ?? null;
+}
+
+export function setDocumentBaseline(
+  key: string,
+  baseline: DocumentSourceBaseline,
+): void {
+  documentBaselines.set(key, baseline);
+}
+
+export function deleteDocumentBaseline(key: string): void {
+  documentBaselines.delete(key);
 }
 
 export function deleteCachedDocumentValue(

@@ -12,9 +12,11 @@ import { useEditorStore } from "../model";
 import {
   deleteCachedDocumentValue,
   getCachedDocumentValue,
+  getDocumentBaseline,
   getDocumentCacheKey,
   setCachedDocumentValue,
   setCachedDocumentValueByKey,
+  setDocumentBaseline,
 } from "../model/plate-document-cache";
 import * as m from "@/paraglide/messages.js";
 
@@ -59,6 +61,14 @@ function waitForNextFrame(): Promise<void> {
 
   return new Promise((resolve) => {
     window.requestAnimationFrame(() => resolve());
+  });
+}
+
+function adoptPageBaseline(cacheKey: string, page: Page) {
+  if (!page.source_version) return;
+  setDocumentBaseline(cacheKey, {
+    version: page.source_version,
+    body: page.body,
   });
 }
 
@@ -186,6 +196,13 @@ export function useEditorDocumentLoader({
           documentPathHandoff.previousPath,
         );
         setCachedDocumentValue(spacePath, currentDocument, editor.children);
+        // A rename by another writer keeps the edited baseline; the next
+        // write adopts the source at its new path when the body is unchanged.
+        const previousBaseline = getDocumentBaseline(
+          getDocumentCacheKey(spacePath, documentPathHandoff.previousPath),
+        );
+        if (previousBaseline)
+          setDocumentBaseline(currentCacheKey, previousBaseline);
         deleteCachedDocumentValue(documentPathHandoff.previousPath, spacePath);
         editorState.clearUnsaved(spacePath, documentPathHandoff.previousPath);
         if (wasUnsaved) editorState.markUnsaved(spacePath, currentDocument);
@@ -225,9 +242,11 @@ export function useEditorDocumentLoader({
       editorState.hasStale(spacePath, currentDocument);
     const cachedBody = cached && !wasExternallyModified ? cached : null;
     const initialPageSpacePathForDocument = initialPageSpacePathRef.current;
+    // Without its source version a provided Page cannot be a write baseline.
     const initialForDocument =
       initialPageRef.current?.path === currentDocument &&
-      initialPageSpacePathForDocument === spacePath
+      initialPageSpacePathForDocument === spacePath &&
+      initialPageRef.current.source_version
         ? initialPageRef.current
         : null;
     const bodyOnlyMetaForDocument =
@@ -264,12 +283,14 @@ export function useEditorDocumentLoader({
     if (cachedBody) {
       void (async () => {
         try {
+          const hasBaseline = Boolean(getDocumentBaseline(currentCacheKey));
           const pageMeta =
-            metaForCachedBody ??
+            (hasBaseline ? metaForCachedBody : null) ??
             (await readPage({ spacePath, path: currentDocument }));
           if (sequence !== loadSeqRef.current) return;
           if ("meta" in pageMeta) {
             applyLoadedPage(pageMeta);
+            if (!hasBaseline) adoptPageBaseline(currentCacheKey, pageMeta);
           } else {
             applyMeta(pageMeta);
           }
@@ -300,6 +321,7 @@ export function useEditorDocumentLoader({
             (await readPage({ spacePath, path: currentDocument }));
           if (sequence !== loadSeqRef.current) return;
           applyLoadedPage(page);
+          adoptPageBaseline(currentCacheKey, page);
           const value = deserializeWithConflicts(editor, page.body);
           const loadedValue = loadEditorValue(value);
           setCachedDocumentValue(spacePath, currentDocument, loadedValue);

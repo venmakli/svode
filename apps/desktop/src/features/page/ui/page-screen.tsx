@@ -425,6 +425,7 @@ export function PageScreen({
       readOnly={pageSurface.readOnly}
       registerPersistence={pageSurface.registerPersistence}
       recoverWriteError={pageSurface.recoverWriteError}
+      reportSourceConflict={pageSurface.reportSourceConflict}
       spaceId={spaceId}
       spacePath={spacePath}
       prepareManagedImport={pageSurface.prepareForNavigation}
@@ -462,6 +463,7 @@ function PageBody({
   readOnly,
   registerPersistence,
   recoverWriteError,
+  reportSourceConflict,
   spaceId,
   spacePath,
   prepareManagedImport,
@@ -477,6 +479,9 @@ function PageBody({
   recoverWriteError: Parameters<
     typeof PlateDocumentEditor
   >[0]["onWriteAccessError"];
+  reportSourceConflict: Parameters<
+    typeof PlateDocumentEditor
+  >[0]["onSourceConflict"];
   spaceId: string;
   spacePath: string;
   prepareManagedImport: () => Promise<boolean>;
@@ -500,6 +505,7 @@ function PageBody({
         readOnly={readOnly}
         registerPersistence={registerPersistence}
         onWriteAccessError={recoverWriteError}
+        onSourceConflict={reportSourceConflict}
         prepareManagedImport={async () => {
           if (!(await prepareManagedImport())) {
             throw new Error(m.page_surface_save_error());

@@ -7,7 +7,7 @@ import {
   useActiveContentSpaceId,
 } from "@/features/artifact";
 import { useOpenPage } from "@/features/page/navigation";
-import type { Page, PageMeta } from "@/features/page";
+import type { Page, PageMeta, PageSourceConflict } from "@/features/page";
 import { useSpace, useSpaceTreeSync } from "@/features/space";
 
 import { deserializeEditorMarkdownInsertion } from "../model/markdown-io";
@@ -39,6 +39,7 @@ interface UsePlateDocumentSessionInput {
     error: unknown,
     retry: () => Promise<void>,
   ) => Promise<boolean>;
+  onSourceConflict?: (conflict: PageSourceConflict | null) => void;
 }
 
 interface UsePlateDocumentSessionResult {
@@ -67,6 +68,7 @@ export function usePlateDocumentSession({
   spacePath: spacePathProp,
   readOnly,
   onWriteAccessError,
+  onSourceConflict,
 }: UsePlateDocumentSessionInput): UsePlateDocumentSessionResult {
   const activeDocument = useActiveContentPath();
   const activeDocumentSpaceId = useActiveContentSpaceId();
@@ -183,33 +185,51 @@ export function usePlateDocumentSession({
 
   useEffect(() => cancelDebounce, [cancelDebounce]);
 
-  const { flushPendingSource, handleSave, handleSaveAll, scheduleAutoSave } =
-    useEditorDocumentWriter({
-      activeRootId,
-      activeWsId,
-      bufferTimerRef,
-      cancelDebounce,
-      clearUnsaved,
-      currentCacheKeyRef,
-      currentDocument,
-      currentPathRef,
-      debounceTimerRef,
-      descriptionRef,
-      editor,
-      iconRef,
-      isDebouncePendingRef,
-      ownNoncesRef,
-      patchPageTreeMeta,
-      projectPath,
-      reloadTreePathParents,
-      removeTreePath,
-      saveScopeTree,
-      setCurrentDocument,
-      spacePath,
-      titleRef,
-      readOnly,
-      onWriteAccessError,
-    });
+  const handleSourcePageLoaded = useCallback(
+    (page: Page) => {
+      applyLoadedPage(page);
+      refreshLoadedDocumentKey(currentCacheKeyRef.current);
+    },
+    [applyLoadedPage, currentCacheKeyRef, refreshLoadedDocumentKey],
+  );
+
+  const {
+    flushPendingSource,
+    handleSave,
+    handleSaveAll,
+    reconcileExternalChange,
+    scheduleAutoSave,
+  } = useEditorDocumentWriter({
+    activeRootId,
+    activeWsId,
+    bufferTimerRef,
+    cancelDebounce,
+    clearUnsaved,
+    currentCacheKeyRef,
+    currentDocument,
+    currentPathRef,
+    debounceTimerRef,
+    descriptionRef,
+    editor,
+    iconRef,
+    isDebouncePendingRef,
+    isLoadingRef,
+    loadEditorValue,
+    onSourcePageLoaded: handleSourcePageLoaded,
+    onSourceMetadata: applyLoadedPage,
+    onSourceConflict,
+    ownNoncesRef,
+    patchPageTreeMeta,
+    projectPath,
+    reloadTreePathParents,
+    removeTreePath,
+    saveScopeTree,
+    setCurrentDocument,
+    spacePath,
+    titleRef,
+    readOnly,
+    onWriteAccessError,
+  });
 
   useEffect(() => {
     if (!currentDocument || !spacePath) return;
@@ -225,28 +245,11 @@ export function usePlateDocumentSession({
     onSaveAll: handleSaveAll,
   });
 
-  const handleWatcherPageReloaded = useCallback(
-    (page: Page) => {
-      applyLoadedPage(page);
-      refreshLoadedDocumentKey(currentCacheKeyRef.current);
-    },
-    [applyLoadedPage, currentCacheKeyRef, refreshLoadedDocumentKey],
-  );
-
-  const handleEditorValueReload = useCallback(
-    (_path: string, value: Descendant[]) => loadEditorValue(value),
-    [loadEditorValue],
-  );
-
   useFileWatcher({
-    editor,
     spacePath,
     activeDocument: currentDocument,
     ownNoncesRef,
-    isDebouncePendingRef,
-    isLoadingRef,
-    onEditorValueReload: handleEditorValueReload,
-    onPageReloaded: handleWatcherPageReloaded,
+    onActiveDocumentChanged: reconcileExternalChange,
   });
 
   const handleChange = useCallback(

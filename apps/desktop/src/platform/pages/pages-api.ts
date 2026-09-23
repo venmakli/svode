@@ -31,6 +31,7 @@ export interface PageDto {
   path: string;
   warnings?: PageWarningDto[];
   name_conflict?: PageNameConflictDto;
+  source_version?: string | null;
 }
 
 export interface PageLinkValidationResultDto {
@@ -56,6 +57,7 @@ export interface WritePageInputDto extends Record<string, unknown> {
   content: string;
   skipRename: boolean;
   projectPath: string | null;
+  sourceVersion: string;
 }
 
 export interface WritePageResultDto {
@@ -64,6 +66,7 @@ export interface WritePageResultDto {
   modified_sources?: { spaceId: string | null; path: string }[];
   write_nonce: string;
   warnings?: PageWarningDto[];
+  source_version?: string | null;
 }
 
 export function createPage(input: {
@@ -100,7 +103,9 @@ export function getPageDetailState(input: {
   });
 }
 
-export function writePage(input: WritePageInputDto): Promise<WritePageResultDto> {
+export function writePage(
+  input: WritePageInputDto,
+): Promise<WritePageResultDto> {
   return invokeCommand<WritePageResultDto>("write_entry", input);
 }
 

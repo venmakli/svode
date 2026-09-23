@@ -1,13 +1,8 @@
 import { useEffect, useRef } from "react";
-import type { Descendant } from "platejs";
-import { readPage } from "@/features/page/page-api";
 import { toast } from "sonner";
-import type { PlateEditor } from "platejs/react";
-import { deserializeWithConflicts } from "../conflict/parse-conflicts";
 import { useCloseActiveContent } from "@/features/artifact";
 import { getSpaceSnapshot } from "@/features/space";
 import { useEditorStore } from "../model";
-import { setCachedDocumentValue } from "../model/plate-document-cache";
 import * as m from "@/paraglide/messages.js";
 import {
   listenToEditorFileChanged,
@@ -17,16 +12,12 @@ import {
 } from "../api/editor-file-watch-api";
 
 interface UseFileWatcherOptions {
-  editor: PlateEditor | null;
   spacePath: string;
   activeDocument: string | null;
   /** Nonces emitted by our own Page writes — own-write echoes are filtered out. */
   ownNoncesRef: React.RefObject<Set<string>>;
-  /** True while a debounce-auto-save is pending for the active document — local-wins. */
-  isDebouncePendingRef: React.RefObject<boolean>;
-  isLoadingRef: React.RefObject<boolean>;
-  onEditorValueReload: (path: string, value: Descendant[]) => Descendant[];
-  onPageReloaded?: (page: Awaited<ReturnType<typeof readPage>>) => void;
+  /** Another writer changed the active document's source. */
+  onActiveDocumentChanged: (path: string) => void;
 }
 
 function isSchemaPath(path: string) {
@@ -42,14 +33,10 @@ function reindexProjectForSchemaChange() {
 }
 
 export function useFileWatcher({
-  editor,
   spacePath,
   activeDocument,
   ownNoncesRef,
-  isDebouncePendingRef,
-  isLoadingRef,
-  onEditorValueReload,
-  onPageReloaded,
+  onActiveDocumentChanged,
 }: UseFileWatcherOptions) {
   const closeDocument = useCloseActiveContent();
   const { markAiModified, clearAiModified } = useEditorStore();
@@ -97,27 +84,10 @@ export function useFileWatcher({
         return;
       }
 
-      if (changedPath === activeDocRef.current && editor) {
-        // Local-wins: debounce pending for this doc — our buffered write will
-        // land within 1s and overwrite the external change on disk.
-        if (isDebouncePendingRef.current) {
-          return;
-        }
-        // Debounce not active — reload from disk.
-        readPage({ spacePath, path: changedPath })
-          .then((page) => {
-            isLoadingRef.current = true;
-            try {
-              const value = deserializeWithConflicts(editor, page.body);
-              const loadedValue = onEditorValueReload(changedPath, value);
-              setCachedDocumentValue(spacePath, changedPath, loadedValue);
-              useEditorStore.getState().clearUnsaved(spacePath, changedPath);
-              onPageReloaded?.(page);
-            } finally {
-              isLoadingRef.current = false;
-            }
-          })
-          .catch((err) => console.error("Failed to reload document:", err));
+      if (changedPath === activeDocRef.current) {
+        // Reloaded without a draft; a draft against a changed body is kept
+        // for an explicit choice instead of being written over the change.
+        onActiveDocumentChanged(changedPath);
       } else {
         // Document not currently open — mark cache stale until it is opened.
         markAiModified(spacePath, changedPath);
@@ -155,15 +125,11 @@ export function useFileWatcher({
       unlisteners.forEach((fn) => fn());
     };
   }, [
-    editor,
     spacePath,
     markAiModified,
     closeDocument,
     ownNoncesRef,
-    isDebouncePendingRef,
-    isLoadingRef,
-    onEditorValueReload,
-    onPageReloaded,
+    onActiveDocumentChanged,
   ]);
 
   // Clear external-edit reload flag when opening a document.

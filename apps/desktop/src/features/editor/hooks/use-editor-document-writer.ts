@@ -1,14 +1,18 @@
 import { getSpaceTreeSyncSnapshot } from "@/features/space";
 import { useCallback, useEffect, useRef } from "react";
 import { MarkdownPlugin } from "@platejs/markdown";
+import type { Descendant } from "platejs";
 import type { PlateEditor } from "platejs/react";
 import { toast } from "sonner";
 
 import {
+  pageSourceErrorKind,
   publishPageFilenameWarnings,
+  type Page,
+  type PageSourceConflict,
   type WritePageResult,
 } from "@/features/page";
-import { writePage } from "@/features/page/page-api";
+import { readPage, writePage } from "@/features/page/page-api";
 import {
   commitFileAndMaybeSync,
   commitSaveScopeAndMaybeSync,
@@ -25,12 +29,26 @@ import {
   type GitSaveScopeTreeNode,
 } from "@/features/git/editor";
 
-import { hasUnresolvedConflicts } from "../conflict/parse-conflicts";
+import {
+  deserializeWithConflicts,
+  hasUnresolvedConflicts,
+} from "../conflict/parse-conflicts";
 import { useEditorStore } from "../model";
+import {
+  deleteDocumentBaseline,
+  getDocumentBaseline,
+  getDocumentCacheKey,
+  setCachedDocumentValue,
+  setDocumentBaseline,
+} from "../model/plate-document-cache";
+import { retryWhileSourceBusy } from "../model/source-sync";
 import { useEditorSaveResultHandler } from "./use-editor-save-result-handler";
+import { useEditorSourceSync } from "./use-editor-source-sync";
 import * as m from "@/paraglide/messages.js";
 
 const AUTOSAVE_DEBOUNCE_MS = 1000;
+/** Body-preserving source changes adopted before a stale write becomes a conflict. */
+const STALE_REBASE_ATTEMPTS = 2;
 
 interface MutableRef<T> {
   current: T;
@@ -50,6 +68,11 @@ interface UseEditorDocumentWriterInput {
   editor: PlateEditor | null;
   iconRef: MutableRef<string | null>;
   isDebouncePendingRef: MutableRef<boolean>;
+  isLoadingRef: MutableRef<boolean>;
+  loadEditorValue: (value: Descendant[]) => Descendant[];
+  onSourcePageLoaded: (page: Page) => void;
+  onSourceMetadata: (page: Page) => void;
+  onSourceConflict?: (conflict: PageSourceConflict | null) => void;
   ownNoncesRef: MutableRef<Set<string>>;
   patchPageTreeMeta: (
     spaceId: string,
@@ -77,6 +100,8 @@ interface UseEditorDocumentWriterResult {
   handleSaveAll: () => Promise<void>;
   scheduleAutoSave: () => void;
   flushPendingSource: () => Promise<void>;
+  /** Brings the editor in line with a source another writer changed. */
+  reconcileExternalChange: (path: string) => Promise<void>;
 }
 
 export function useEditorDocumentWriter({
@@ -93,6 +118,11 @@ export function useEditorDocumentWriter({
   editor,
   iconRef,
   isDebouncePendingRef,
+  isLoadingRef,
+  loadEditorValue,
+  onSourcePageLoaded,
+  onSourceMetadata,
+  onSourceConflict,
   ownNoncesRef,
   patchPageTreeMeta,
   projectPath,
@@ -126,14 +156,20 @@ export function useEditorDocumentWriter({
     titleRef,
   });
 
-  const performWrite = useCallback(
+  const baselineKey = useCallback(
+    (path: string) => getDocumentCacheKey(spacePath, path),
+    [spacePath],
+  );
+
+  /** Writes the editor text as the body of `path` edited from `sourceVersion`. */
+  const writeSource = useCallback(
     async (
       skipRename: boolean,
-      targetPath?: string,
+      path: string,
+      sourceVersion: string,
     ): Promise<WritePageResult | null> => {
       const write = async () => {
-        const path = targetPath ?? currentPathRef.current;
-        if (!editor || !path || !spacePath) return null;
+        if (!editor || !spacePath) return null;
 
         if (hasUnresolvedConflicts(editor.children)) {
           if (!skipRename) {
@@ -149,13 +185,16 @@ export function useEditorDocumentWriter({
           : tree.beginTreePathMutation(spacePath);
         let result: WritePageResult;
         try {
-          result = await writePage({
-            spacePath,
-            path,
-            content: markdown,
-            skipRename,
-            projectPath: projectPath ?? null,
-          });
+          result = await retryWhileSourceBusy(() =>
+            writePage({
+              spacePath,
+              path,
+              content: markdown,
+              skipRename,
+              projectPath: projectPath ?? null,
+              sourceVersion,
+            }),
+          );
 
           if (result.newPath)
             tree.handoffTreePath(spacePath, path, result.newPath);
@@ -165,6 +204,14 @@ export function useEditorDocumentWriter({
 
         if (result.writeNonce) {
           ownNoncesRef.current.add(result.writeNonce);
+        }
+        if (result.sourceVersion) {
+          setDocumentBaseline(baselineKey(result.newPath ?? path), {
+            version: result.sourceVersion,
+            body: markdown,
+          });
+          // The path handoff of this rename must not carry the old baseline.
+          if (result.newPath) deleteDocumentBaseline(baselineKey(path));
         }
         if (!skipRename) {
           publishPageFilenameWarnings(result.warnings);
@@ -179,7 +226,101 @@ export function useEditorDocumentWriter({
       );
       return result;
     },
-    [currentPathRef, editor, ownNoncesRef, projectPath, spacePath],
+    [baselineKey, editor, ownNoncesRef, projectPath, spacePath],
+  );
+
+  const setAutoSavePaused = useCallback(
+    (paused: boolean) => {
+      autoSavePausedRef.current = paused;
+      if (paused) cancelDebounce();
+    },
+    [cancelDebounce],
+  );
+
+  const sourceSync = useEditorSourceSync({
+    baseline: (path) => getDocumentBaseline(baselineKey(path)),
+    setBaseline: (path, baseline) =>
+      setDocumentBaseline(baselineKey(path), baseline),
+    hasDraft: (path) =>
+      debounceTimerRef.current !== null ||
+      useEditorStore.getState().hasUnsaved(spacePath, path),
+    whenWritesSettled: () => sourceWriteChainRef.current,
+    readSource: (path) => readPage({ spacePath, path }),
+    loadSource: (path, page) => {
+      if (!editor) return;
+      isLoadingRef.current = true;
+      try {
+        const loadedValue = loadEditorValue(
+          deserializeWithConflicts(editor, page.body),
+        );
+        setCachedDocumentValue(spacePath, path, loadedValue);
+        if (page.source_version) {
+          setDocumentBaseline(baselineKey(path), {
+            version: page.source_version,
+            body: page.body,
+          });
+        }
+        clearUnsaved(spacePath, path);
+        onSourcePageLoaded(page);
+      } finally {
+        isLoadingRef.current = false;
+      }
+    },
+    adoptMetadata: onSourceMetadata,
+    writeDraft: async (path, sourceVersion) => {
+      const cacheKey = currentCacheKeyRef.current;
+      const result = await writeSource(true, path, sourceVersion);
+      applyAutoSaveResult(result, path, cacheKey);
+      if (result) void refreshGitSpaceStatus(spacePath);
+      return result;
+    },
+    setAutoSavePaused,
+    report: (conflict) => onSourceConflict?.(conflict),
+    onResolved: (choice) => {
+      if (choice === "loaded") toast.info(m.page_source_conflict_loaded());
+      // The resolved choice removes the focused recovery action.
+      requestAnimationFrame(() => {
+        const active = document.activeElement;
+        if (!active || active === document.body) editor?.tf.focus();
+      });
+    },
+  });
+
+  const performWrite = useCallback(
+    async (
+      skipRename: boolean,
+      targetPath?: string,
+    ): Promise<WritePageResult | null> => {
+      const path = targetPath ?? currentPathRef.current;
+      if (!editor || !path || !spacePath) return null;
+      for (let attempt = 0; ; attempt += 1) {
+        if (sourceSync.isOpen()) return null;
+        const baseline = getDocumentBaseline(baselineKey(path));
+        if (baseline) {
+          try {
+            return await writeSource(skipRename, path, baseline.version);
+          } catch (error) {
+            if (pageSourceErrorKind(error) !== "source_stale") throw error;
+          }
+        }
+        const outcome = await sourceSync.reconcile(path, "stale", {
+          rebase: attempt < STALE_REBASE_ATTEMPTS,
+        });
+        if (outcome !== "rebased") return null;
+      }
+    },
+    [baselineKey, currentPathRef, editor, sourceSync, spacePath, writeSource],
+  );
+
+  const reconcileExternalChange = useCallback(
+    async (path: string) => {
+      try {
+        await sourceSync.reconcile(path, "external");
+      } catch (error) {
+        console.error("Failed to reload document:", error);
+      }
+    },
+    [sourceSync],
   );
 
   const persistLatestSource = useCallback(async () => {
@@ -190,15 +331,19 @@ export function useEditorDocumentWriter({
       applyAutoSaveResult(result, path, cacheKey);
       if (result) void refreshGitSpaceStatus(spacePath);
     };
+    // A write that opened a source conflict keeps autosave paused for it.
+    const resume = () => {
+      if (!sourceSync.isOpen()) autoSavePausedRef.current = false;
+    };
     try {
       await write();
-      autoSavePausedRef.current = false;
+      resume();
     } catch (error) {
       if (
         onWriteAccessError &&
         (await onWriteAccessError(error, async () => {
           await write();
-          autoSavePausedRef.current = false;
+          resume();
         }))
       ) {
         autoSavePausedRef.current = true;
@@ -212,12 +357,13 @@ export function useEditorDocumentWriter({
     currentPathRef,
     onWriteAccessError,
     performWrite,
+    sourceSync,
     spacePath,
   ]);
 
   useEffect(() => {
-    if (!readOnly) autoSavePausedRef.current = false;
-  }, [readOnly]);
+    if (!readOnly && !sourceSync.isOpen()) autoSavePausedRef.current = false;
+  }, [readOnly, sourceSync]);
 
   const scheduleAutoSave = useCallback(() => {
     if (
@@ -431,6 +577,7 @@ export function useEditorDocumentWriter({
     flushPendingSource,
     handleSave,
     handleSaveAll,
+    reconcileExternalChange,
     scheduleAutoSave,
   };
 }

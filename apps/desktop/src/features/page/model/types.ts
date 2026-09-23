@@ -41,6 +41,8 @@ export interface Page {
   path: string;
   warnings?: PageWarning[];
   name_conflict?: PageNameConflict;
+  /** Version of the bytes this Page was read from, when the read reports it. */
+  source_version?: string | null;
 }
 
 export interface PageDetailState {
@@ -55,6 +57,7 @@ export interface WritePageResult {
   modifiedSources?: { spaceId: string | null; path: string }[];
   writeNonce: string;
   warnings: PageWarning[];
+  sourceVersion: string | null;
 }
 
 export interface PageLinkValidationResult {

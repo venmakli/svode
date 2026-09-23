@@ -9,6 +9,7 @@ import * as m from "@/paraglide/messages.js";
 import { cn } from "@/shared/lib/utils";
 
 import { usePageSurfaceSession } from "../hooks/page-surface-context";
+import { PageSourceConflictRecovery } from "./page-source-conflict-recovery";
 
 export function PageAccessRecovery({
   className,
@@ -23,10 +24,13 @@ export function PageAccessRecovery({
   const statusRef = useRef<HTMLDivElement>(null);
   const returnFocusRef = useRef<HTMLElement | null>(null);
   const wasVisibleRef = useRef(false);
+  // A source conflict appears while the user may be typing, so it is
+  // announced and reachable from the editor instead of taking focus.
   const visible =
     (session.recovery.open &&
       session.recovery.pending?.placement === "inline") ||
     Boolean(session.persistenceError || error);
+  const conflict = session.sourceConflict;
 
   useEffect(() => {
     if (visible && !wasVisibleRef.current) {
@@ -42,13 +46,14 @@ export function PageAccessRecovery({
     wasVisibleRef.current = visible;
   }, [visible]);
 
-  if (!visible) return null;
+  if (!visible && !conflict) return null;
   return (
     <div
       ref={statusRef}
       className={cn("flex flex-col gap-2 outline-none", className)}
       tabIndex={-1}
     >
+      {conflict ? <PageSourceConflictRecovery conflict={conflict} /> : null}
       <RepositoryAccessInlineRecovery recovery={session.recovery} />
       {session.recovery.open ? (
         <div className="flex flex-wrap justify-end gap-2">

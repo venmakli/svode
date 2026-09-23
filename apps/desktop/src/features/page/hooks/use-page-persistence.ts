@@ -6,6 +6,11 @@ import type {
 } from "@/features/git";
 import * as m from "@/paraglide/messages.js";
 
+import {
+  pageSourceErrorKind,
+  type PageSourceConflict,
+} from "../model/source-conflict";
+
 export type PagePersistenceKind = "body" | "metadata";
 export type PagePersistenceFlush = () => Promise<void>;
 export type MakePageAccessRequest = (
@@ -34,13 +39,24 @@ export function usePagePersistence({
       }
     >(),
   );
-  const accessBlockedRef = useRef(false);
+  const writeBlockedRef = useRef(false);
+  const sourceConflictRef = useRef<PageSourceConflict | null>(null);
   const recoverWriteErrorRef = useRef<
     (error: unknown, retry: () => Promise<void>) => Promise<boolean>
   >(async () => false);
   const retryPersistenceRef = useRef<(() => Promise<void>) | null>(null);
   const persistenceQueueRef = useRef<Promise<void>>(Promise.resolve());
   const [persistenceError, setPersistenceError] = useState<string | null>(null);
+  const [sourceConflict, setSourceConflict] =
+    useState<PageSourceConflict | null>(null);
+
+  const reportSourceConflict = useCallback(
+    (conflict: PageSourceConflict | null) => {
+      sourceConflictRef.current = conflict;
+      setSourceConflict(conflict);
+    },
+    [],
+  );
 
   const registerPersistence = useCallback(
     (
@@ -62,7 +78,7 @@ export function usePagePersistence({
     );
     try {
       for (const participant of participants) await participant.flush();
-      if (accessBlockedRef.current) return false;
+      if (writeBlockedRef.current || sourceConflictRef.current) return false;
       setPersistenceError(null);
       retryPersistenceRef.current = null;
       return true;
@@ -70,7 +86,7 @@ export function usePagePersistence({
       const retry = async () => {
         for (const participant of participants)
           await (participant.retry ?? participant.flush)();
-        accessBlockedRef.current = false;
+        writeBlockedRef.current = false;
         setPersistenceError(null);
         retryPersistenceRef.current = null;
       };
@@ -102,10 +118,16 @@ export function usePagePersistence({
     async (error: unknown, retry: () => Promise<void>) => {
       const explicitRetry = async () => {
         await enqueuePersistenceTask(retry);
-        accessBlockedRef.current = false;
+        writeBlockedRef.current = false;
         setPersistenceError(null);
         retryPersistenceRef.current = null;
       };
+      if (pageSourceErrorKind(error) === "source_busy") {
+        writeBlockedRef.current = true;
+        retryPersistenceRef.current = explicitRetry;
+        setPersistenceError(m.page_surface_save_busy());
+        return true;
+      }
       const request = makeAccessRequest(
         "explicit",
         `page-save:${targetKey}`,
@@ -127,7 +149,7 @@ export function usePagePersistence({
       );
       const handled = await recovery.recoverFromError(error, request);
       if (handled) {
-        accessBlockedRef.current = true;
+        writeBlockedRef.current = true;
         retryPersistenceRef.current = explicitRetry;
       }
       return handled;
@@ -140,7 +162,7 @@ export function usePagePersistence({
 
   const dismissRecovery = useCallback(() => {
     recovery.close();
-    if (accessBlockedRef.current && retryPersistenceRef.current) {
+    if (writeBlockedRef.current && retryPersistenceRef.current) {
       setPersistenceError(m.page_surface_save_error());
     }
   }, [recovery]);
@@ -177,8 +199,10 @@ export function usePagePersistence({
     persistenceError,
     recoverWriteError,
     registerPersistence,
+    reportSourceConflict,
     retryPersistence,
     runMutation,
+    sourceConflict,
   };
 }
 

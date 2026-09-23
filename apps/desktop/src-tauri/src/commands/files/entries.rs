@@ -194,15 +194,37 @@ pub async fn create_folder(
     )
 }
 
+/// An entry with the version of the bytes it was read from, the baseline
+/// of the editor's next body write.
+#[derive(Debug, Serialize)]
+pub struct EntryRead {
+    #[serde(flatten)]
+    entry: Entry,
+    source_version: Option<String>,
+}
+
+impl From<Entry> for EntryRead {
+    fn from(entry: Entry) -> Self {
+        let source_version = entry
+            .source_version
+            .as_ref()
+            .map(|version| version.as_str().to_string());
+        Self {
+            entry,
+            source_version,
+        }
+    }
+}
+
 #[tauri::command]
 pub async fn read_entry(
     space: String,
     path: String,
     index_state: State<'_, IndexState>,
-) -> Result<Entry, AppError> {
+) -> Result<EntryRead, AppError> {
     let mut entry = entry::read(&space, &path)?;
     apply_indexed_entry_dates(&index_state, &space, &path, &mut entry).await;
-    Ok(entry)
+    Ok(entry.into())
 }
 
 #[tauri::command]
