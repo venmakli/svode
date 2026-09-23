@@ -807,6 +807,7 @@ pub fn guide_text() -> &'static str {
     r#"Svode MCP guide:
 - Target: Svode MCP is a tools-only local product API. It currently negotiates protocolVersion 2025-06-18 for client compatibility while using 2025-11-25-friendly tool definitions: object inputSchema, optional outputSchema only when it matches structuredContent, annotations, and tools/list pagination tolerance.
 - Mutating tools do not autocommit. They return changedPaths in structuredContent. Svode app owns commit/sync/autocommit policy.
+- A mutation of a repository with a remote needs current write evidence. REPOSITORY_ACCESS_DENIED carries status, reason and hint and writes nothing: MCP never probes the remote itself, so verify access with `svode git access verify` for that Space or in the Svode app, then retry.
 
 Structure choice:
 - Use a standalone Page for narrative notes, specs, plans, and one-off knowledge.

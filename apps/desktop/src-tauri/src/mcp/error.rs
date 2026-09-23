@@ -4,6 +4,21 @@ use crate::AppError;
 
 impl From<AppError> for ToolError {
     fn from(error: AppError) -> Self {
+        // An access refusal keeps the typed evidence and next step of the
+        // shared mapping.
+        if let AppError::RepositoryAccessDenied {
+            repository_id,
+            status,
+            reason,
+        } = error
+        {
+            return svode_core::git::GitError::RepositoryAccessDenied {
+                repository_id,
+                status,
+                reason,
+            }
+            .into();
+        }
         let code = match &error {
             AppError::FileNotFound(_) => "FILE_NOT_FOUND",
             AppError::FileAlreadyExists(_) => "FILE_ALREADY_EXISTS",
@@ -39,5 +54,7 @@ mod tests {
 
         assert_eq!(error.code, "REPOSITORY_ACCESS_DENIED");
         assert!(error.message.contains("status=read_only"));
+        assert_eq!(error.evidence["status"], "read_only");
+        assert!(error.evidence.contains_key("hint"));
     }
 }

@@ -176,6 +176,46 @@ impl ProjectSession {
             .await
     }
 
+    /// Brings the pools a managed mutation publishes into in line with the
+    /// files before its source phase, like an index-backed read. Without a
+    /// watcher the Routine observation baseline is the one of the last
+    /// check, so changes made meanwhile by other programs would otherwise be
+    /// reported as events of this mutation, and an item never observed as
+    /// created. A pool checked within the recheck window is not checked
+    /// again.
+    pub async fn prepare_mutation(&self, paths: &[PathBuf]) -> Result<(), IndexUnavailable> {
+        let Some(project) = self.project() else {
+            return Ok(());
+        };
+        let mut keys = Vec::new();
+        for path in paths {
+            if let Ok((key, _)) = self.index.resolve(project, path).await
+                && !keys.contains(&key)
+            {
+                keys.push(key);
+            }
+        }
+        self.prepare_index(&keys).await.map(|_| ())
+    }
+
+    /// Explicit verification of the repository access of the Space at
+    /// `space_path`: the shared service-ref probe of the remote, recorded in
+    /// the evidence store the install shares with the desktop app.
+    pub async fn verify_repository_access(
+        &self,
+        space_path: &Path,
+    ) -> Result<RepositoryAccessSnapshot, GitError> {
+        self.access
+            .verify_requested(
+                self.git().cli()?,
+                space_path,
+                &access_store()?,
+                false,
+                |_| {},
+            )
+            .await
+    }
+
     /// Repository access of the Space at `space_path` from the evidence
     /// store the install shares with the desktop app. It never probes the
     /// remote; a repository without evidence is `unknown / not_checked`.
@@ -382,6 +422,36 @@ mod tests {
             .unwrap();
         assert!(rechecked.verified_at > first.verified_at);
         assert_eq!(entries(&session, &root_key).await, ["later.md", "note.md"]);
+        session.close().await;
+    }
+
+    #[tokio::test]
+    async fn a_mutation_prepares_only_the_pools_of_its_paths() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        project(&root);
+        fs::write(root.join("note.md"), "# Note\n").unwrap();
+        fs::write(root.join("child/inner.md"), "# Inner\n").unwrap();
+        let session = ProjectSession::new();
+        // An unbound session has no Project whose pools it could prepare.
+        session
+            .prepare_mutation(&[root.join("note.md")])
+            .await
+            .unwrap();
+        assert!(!root.join(".svode/index.db").exists());
+
+        session.open_project(&root).await.unwrap();
+        session
+            .prepare_mutation(&[root.join("note.md"), root.join(".svode/order.json")])
+            .await
+            .unwrap();
+        let root_key = IndexKey::Root(root.clone());
+        assert_eq!(entries(&session, &root_key).await, ["note.md"]);
+        let child_key = IndexKey::Space {
+            project: root.clone(),
+            space_id: "child".to_string(),
+        };
+        assert!(session.index().existing_pool(&child_key).await.is_none());
         session.close().await;
     }
 

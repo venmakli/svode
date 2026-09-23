@@ -26,9 +26,10 @@ pub struct PageFieldOutcome {
     pub changed_paths: Vec<PathBuf>,
 }
 
-/// Prepare the Collection field plan and apply it through the Page write
-/// owner: one authorization over the full touched-set, one source apply with
-/// rollback and one projection publication.
+/// Prepare the Collection field plan from the current source and apply it
+/// through the Page write owner: one authorization over the full
+/// touched-set, one source apply with rollback and one projection
+/// publication. A source changed after the plan was read is planned again.
 pub async fn update<E, F, Fut, Err>(
     request: PageFieldUpdate<'_>,
     runtime: PageRuntime<'_, E>,
@@ -36,7 +37,7 @@ pub async fn update<E, F, Fut, Err>(
 ) -> Result<PageFieldOutcome, Err>
 where
     E: GitDateExecutor,
-    F: FnOnce(Vec<PathBuf>) -> Fut,
+    F: Fn(Vec<PathBuf>) -> Fut,
     Fut: std::future::Future<Output = Result<Vec<PathBuf>, Err>>,
     Err: From<PageError>,
 {
@@ -52,30 +53,37 @@ where
             "property batch cannot be empty".to_string(),
         ))));
     }
-    let batch =
-        prepare_entry_field_batch(space, project, path, values, intent).map_err(PageError::from)?;
-    let has_title = batch.title().is_some();
-    let current = entry::read(space, path)?;
+    let authorize = &authorize;
     let PageWriteOutcome {
         result,
         changed_paths,
-    } = super::write::write(
-        PageWrite {
-            space,
-            path,
-            content: &current.body,
-            title: None,
-            icon: None,
-            extra: None,
-            metadata: None,
-            field_batch: Some(batch),
-            skip_rename: !has_title,
-            project,
-            source_version: None,
-        },
-        runtime,
-        authorize,
-    )
+    } = super::write::on_current_source(path, || async move {
+        let current = entry::read(space, path)?;
+        let batch = prepare_entry_field_batch(space, project, path, values, intent)
+            .map_err(PageError::from)?;
+        let has_title = batch.title().is_some();
+        super::write::write(
+            PageWrite {
+                space,
+                path,
+                content: &current.body,
+                title: None,
+                icon: None,
+                extra: None,
+                metadata: None,
+                field_batch: Some(batch),
+                skip_rename: !has_title,
+                project,
+                source_version: current.source_version.as_ref(),
+            },
+            runtime,
+            |paths| {
+                let authorized = authorize(paths);
+                async move { authorized.await.map_err(super::write::Attempt::Failed) }
+            },
+        )
+        .await
+    })
     .await?;
     let current_path = result.new_path.as_deref().unwrap_or(path);
     let mut page = entry::read(space, current_path)?;
@@ -273,6 +281,71 @@ mod tests {
             source
         );
         assert!(!root.join("tasks/New.md").exists());
+    }
+
+    #[tokio::test]
+    async fn a_field_batch_keeps_a_change_made_after_its_read() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        fs::create_dir_all(root.join(".git")).unwrap();
+        fs::create_dir_all(root.join("tasks")).unwrap();
+        fs::write(
+            root.join("tasks/schema.yaml"),
+            "columns:\n  - { name: Status, type: text }\n  - { name: note, type: text }\nviews: []\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("tasks/item.md"),
+            "---\ntitle: Item\nStatus: Todo\nnote: first\n---\nBody\n",
+        )
+        .unwrap();
+        let values = BTreeMap::from([("Status".into(), Value::String("Done".into()))]);
+        let calls = std::sync::atomic::AtomicUsize::new(0);
+        let outcome = update(
+            PageFieldUpdate {
+                space: root.to_str().unwrap(),
+                path: "tasks/item.md",
+                project: None,
+                values: &values,
+                intent: EntryFieldBatchIntent::Literal,
+            },
+            runtime(&IndexRuntimeState::default(), &WriteNonceRegistry::new()),
+            |mut paths| {
+                // Another writer changes another field and the body after
+                // the batch read the item and before its write guard.
+                if calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
+                    fs::write(
+                        root.join("tasks/item.md"),
+                        "---\ntitle: Item\nStatus: Todo\nnote: second\n---\nOther body\n",
+                    )
+                    .unwrap();
+                }
+                async move {
+                    paths.push(root.to_path_buf());
+                    Ok::<_, PageError>(paths)
+                }
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 2);
+        let item = entry::read(root.to_str().unwrap(), "tasks/item.md").unwrap();
+        assert_eq!(item.body, "Other body\n");
+        assert_eq!(
+            item.meta
+                .extra
+                .get("note")
+                .and_then(serde_yml::Value::as_str),
+            Some("second")
+        );
+        assert_eq!(
+            item.meta
+                .extra
+                .get("Status")
+                .and_then(serde_yml::Value::as_str),
+            Some("Done")
+        );
+        assert_eq!(outcome.page.body, "Other body\n");
     }
 
     #[tokio::test]

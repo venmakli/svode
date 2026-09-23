@@ -15,7 +15,7 @@ use svode_core::page::metadata::relative_changed_paths;
 use crate::args::{CollectionArgs, clamp_limit};
 use crate::error::ToolError;
 use crate::host::{RequestTarget, ToolHost};
-use crate::mutation::{authorize, within_authorized};
+use crate::mutation::{authorize, space_relative_busy, within_authorized};
 use crate::path::{ensure_inside, validate_public_rel_path};
 use crate::result::ToolCallResult;
 use crate::target::{index_key, resolve_space};
@@ -264,6 +264,7 @@ pub(crate) async fn add_collection_column(
     )?;
     apply_schema_mutation(
         host,
+        target,
         &space,
         &collection_path,
         mutation,
@@ -288,6 +289,7 @@ pub(crate) async fn update_collection_column(
     )?;
     apply_schema_mutation(
         host,
+        target,
         &space,
         &collection_path,
         mutation,
@@ -315,6 +317,7 @@ pub(crate) async fn delete_collection_column(
     )?;
     apply_schema_mutation(
         host,
+        target,
         &space,
         &collection_path,
         mutation,
@@ -336,6 +339,7 @@ pub(crate) async fn add_collection_view(
     let mutation = engine::prepare_add_view(&space, &collection_path, args.view, args.position)?;
     apply_schema_mutation(
         host,
+        target,
         &space,
         &collection_path,
         mutation,
@@ -359,6 +363,7 @@ pub(crate) async fn update_collection_view(
     )?;
     apply_schema_mutation(
         host,
+        target,
         &space,
         &collection_path,
         mutation,
@@ -380,6 +385,7 @@ pub(crate) async fn delete_collection_view(
     let mutation = engine::prepare_delete_view(&space, &collection_path, &args.view_name)?;
     apply_schema_mutation(
         host,
+        target,
         &space,
         &collection_path,
         mutation,
@@ -393,16 +399,24 @@ pub(crate) async fn delete_collection_view(
 
 /// Authorizes the planned schema touched-set, including reverse-relation
 /// schemas and cleaned item sources, then applies it with the engine
-/// rollback.
+/// rollback. The change is not published into the index here: the next
+/// index-backed read checks its pools against the files again.
 async fn apply_schema_mutation(
     host: &impl ToolHost,
+    target: &RequestTarget,
     space: &str,
     collection_path: &str,
     mutation: PreparedCollectionMutation<CollectionSchema>,
     message: String,
 ) -> Result<ToolCallResult, ToolError> {
     let authorized = authorize(host, space, mutation.paths().to_vec()).await?;
-    let outcome = within_authorized(authorized, async { Ok(mutation.apply()?) }).await?;
+    let outcome = within_authorized(authorized, async { Ok(mutation.apply()?) })
+        .await
+        .map_err(|error| space_relative_busy(space, error))?;
+    host.read_runtime()
+        .index
+        .expire_verification(Path::new(&target.project_path), &outcome.changed_paths)
+        .await;
     let changed_paths = relative_changed_paths(space, &outcome.changed_paths);
     Ok(ToolCallResult::ok(
         message,

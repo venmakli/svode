@@ -10,7 +10,13 @@ const WRITE: &str = "Safe cycle: read the current source, edit it, then write th
 const STRUCTURAL: &str = "Structural change through the shared operation: it applies the required link, relation, order and index effects and reports every changed path. The target must be exact; there is no confirmation prompt and no --force. The change does not commit to Git. If it fails, the code and target say why: reread the structure and apply the intent again; never delete or hand-repair .svode metadata.";
 
 fn write_help(example: &str) -> String {
-    format!("{WRITE}\n\n{HEADLESS}\n\nExample:\n  {example}")
+    format!("{WRITE}\n\nExample:\n  {example}")
+}
+
+/// Help of a command whose capability the headless runtime of this build
+/// does not serve yet.
+fn unserved(help: String) -> String {
+    help.replacen("\n\nExample:", &format!("\n\n{HEADLESS}\n\nExample:"), 1)
 }
 
 const BODY_WRITE: &str = "Safe cycle: read the source with --json and keep its sourceVersion, edit the body, then write the whole result with --source-version <token>. If the source changed after your read, the write fails with SOURCE_STALE and writes nothing: read it again and reapply your change to the current text. SOURCE_BUSY means another Svode operation is writing the same repository: retry later. The result carries the sourceVersion of the written source for the next write. Bodies come from --body-file <path> or --body-file - (stdin); --body <text> is for short inline text. A command reads stdin at most once. The write does not commit to Git; never delete or hand-repair .svode metadata.\n\nWith file access, edit the text below the frontmatter with your own tools instead and keep the frontmatter unchanged; this command is the path for clients without file access.";
@@ -20,7 +26,7 @@ fn body_write_help(example: &str) -> String {
 }
 
 fn structural_help(example: &str) -> String {
-    format!("{STRUCTURAL}\n\n{HEADLESS}\n\nExample:\n  {example}")
+    format!("{STRUCTURAL}\n\nExample:\n  {example}")
 }
 
 const ROUTINE_OWNER: &str = "Owner: the selected Space (--space, or the Space containing the current directory), or one of its Collections with --collection.";
@@ -195,7 +201,7 @@ pub enum SpaceVerb {
         verb: MetaVerb<NoSelector>,
     },
     /// Set the complete order of the child Spaces of the Project.
-    #[command(after_help = structural_help("svode --project ~/Notes space reorder --id research --id archive"))]
+    #[command(after_help = unserved(structural_help("svode --project ~/Notes space reorder --id research --id archive")))]
     Reorder(SpaceReorderArgs),
 }
 
@@ -311,7 +317,7 @@ svode --project ~/Notes page read --space research --path ideas/README.md --json
     #[command(after_help = "Example:\n  svode --project ~/Notes page list --path notes --limit 20")]
     List(PageListArgs),
     /// Create a Page, or a Collection item when the parent is a Collection.
-    #[command(after_help = write_help("svode --project ~/Notes page create --parent notes --title \"Weekly review\" --body-file review.md --json"))]
+    #[command(after_help = unserved(write_help("svode --project ~/Notes page create --parent notes --title \"Weekly review\" --body-file review.md --json")))]
     Create(PageCreateArgs),
     /// Replace the body of a standalone Page.
     #[command(after_help = body_write_help("svode page read --path notes/today.md --json > today.json\n  jq -r .page.body today.json > today.md && $EDITOR today.md\n  svode page write --path notes/today.md --body-file today.md --source-version \"$(jq -r .sourceVersion today.json)\""))]
@@ -325,7 +331,7 @@ svode --project ~/Notes page read --space research --path ideas/README.md --json
         verb: MetaVerb<PathSelector>,
     },
     /// Delete one standalone Page.
-    #[command(after_help = structural_help("svode --project ~/Notes page delete --path notes/old.md"))]
+    #[command(after_help = unserved(structural_help("svode --project ~/Notes page delete --path notes/old.md")))]
     Delete(PathSelector),
 }
 
@@ -433,10 +439,10 @@ pub enum CollectionVerb {
         verb: MetaVerb<CollectionSelector>,
     },
     /// Create a Collection: a directory with its README and schema.
-    #[command(after_help = structural_help("svode --project ~/Notes collection create --parent \"\" --title Tasks --columns-file columns.json --json"))]
+    #[command(after_help = unserved(structural_help("svode --project ~/Notes collection create --parent \"\" --title Tasks --columns-file columns.json --json")))]
     Create(CollectionCreateArgs),
     /// Delete one Collection with its items.
-    #[command(after_help = structural_help("svode --project ~/Notes collection delete --collection old-tasks"))]
+    #[command(after_help = unserved(structural_help("svode --project ~/Notes collection delete --collection old-tasks")))]
     Delete(CollectionSelector),
     /// Read-only check of relation targets, item references and order.
     #[command(
@@ -640,24 +646,24 @@ pub enum ItemVerb {
         verb: MetaVerb<PathSelector>,
     },
     /// Delete one Collection item.
-    #[command(after_help = structural_help("svode --project ~/Notes item delete --path tasks/fix-login.md"))]
+    #[command(after_help = unserved(structural_help("svode --project ~/Notes item delete --path tasks/fix-login.md")))]
     Delete(PathSelector),
 }
 
 #[derive(Debug, Subcommand)]
 pub enum ContentVerb {
     /// Rename a Page, folder or Collection within its parent.
-    #[command(after_help = structural_help("svode --project ~/Notes content rename --path notes/draft.md --to notes/Plan.md"))]
+    #[command(after_help = unserved(structural_help("svode --project ~/Notes content rename --path notes/draft.md --to notes/Plan.md")))]
     Rename(ContentRenameArgs),
     /// Move a Page, folder or Collection under another parent.
-    #[command(after_help = structural_help("svode --project ~/Notes content move --path notes/Plan.md --to-parent archive"))]
+    #[command(after_help = unserved(structural_help("svode --project ~/Notes content move --path notes/Plan.md --to-parent archive")))]
     Move(ContentMoveArgs),
     /// Set the complete order of the direct children of one parent.
-    #[command(after_help = structural_help("svode --project ~/Notes content reorder --parent archive --child archive/b.md --child archive/a.md"))]
+    #[command(after_help = unserved(structural_help("svode --project ~/Notes content reorder --parent archive --child archive/b.md --child archive/a.md")))]
     Reorder(ContentReorderArgs),
     /// Convert a directory-backed Page to a leaf Page, or a Page or folder
     /// to a Collection in place.
-    #[command(after_help = structural_help("svode --project ~/Notes content convert --path notes/ideas.md --to collection"))]
+    #[command(after_help = unserved(structural_help("svode --project ~/Notes content convert --path notes/ideas.md --to collection")))]
     Convert(ContentConvertArgs),
 }
 
@@ -874,6 +880,21 @@ pub enum GitVerb {
     /// Read-only Git status of the selected Space.
     #[command(after_help = "Example:\n  svode --project ~/Notes git status --json")]
     Status,
+    /// Repository access of the selected Space.
+    #[command(after_help = "Example:\n  svode --project ~/Notes git access verify --space root")]
+    Access {
+        #[command(subcommand)]
+        verb: AccessVerb,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum AccessVerb {
+    /// Verify write access to the remote of the selected Space.
+    #[command(
+        after_help = "Pushes a Svode service ref to the origin remote and reads it back, the same verification as in the desktop app; branches, the index and the working tree stay untouched and nothing is committed. The result is recorded in the evidence store shared with the desktop app and printed as `repositoryAccess`: `local` (no remote), `writable`, `read_only`, or `unknown` with its reason. Every outcome is a result with exit 0; writes to a remote repository are allowed only while it is `local` or freshly `writable`. Run it when a write fails with REPOSITORY_ACCESS_DENIED.\n\nExample:\n  svode --project ~/Notes git access verify --space root --json"
+    )]
+    Verify,
 }
 
 #[derive(Debug, Subcommand)]

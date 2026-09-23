@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use serde_json::{Map, Value, json};
 use svode_core::page::{ResolvedSpaceTarget, project_for_directory};
 use svode_tools::error::ToolError;
-use svode_tools::host::RequestTarget;
+use svode_tools::host::{RequestTarget, ToolHost};
 use svode_tools::target::{ROOT_SPACE_ID, resolve_default_space, resolve_project};
 
 use crate::error::CliError;
@@ -105,6 +105,17 @@ impl Target {
 
     pub fn space_id(&self) -> &str {
         self.space.space_id.as_deref().unwrap_or(ROOT_SPACE_ID)
+    }
+
+    /// Binds the runtime of `host` to the resolved Project before the
+    /// command runs, so its operations resolve Spaces and pools of this
+    /// Project.
+    pub async fn open(&self, host: &impl ToolHost) -> Result<(), CliError> {
+        host.open_project(&self.space.project_path)
+            .await
+            .map_err(|error| {
+                CliError::operation(error.code, error.message).with_target(self.envelope())
+            })
     }
 
     /// Request target of the shared tool surface: the resolved Space is the

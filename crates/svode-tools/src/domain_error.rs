@@ -94,10 +94,26 @@ fn name_conflict() -> ToolError {
     )
 }
 
+/// Next step of a mutation refused by the repository access gate: access is
+/// verified explicitly, never by the refused write itself.
+const ACCESS_HINT: &str = "Verify repository access with `svode git access verify` for this Space or in Svode Desktop, then retry.";
+
 impl From<GitError> for ToolError {
     fn from(error: GitError) -> Self {
         if let GitError::SourceBusy { path } = &error {
             return source_refused("SOURCE_BUSY", error.to_string(), path.clone());
+        }
+        if let GitError::RepositoryAccessDenied {
+            repository_id,
+            status,
+            reason,
+        } = &error
+        {
+            return ToolError::new("REPOSITORY_ACCESS_DENIED", error.to_string())
+                .with_evidence("repositoryId", repository_id.as_str().into())
+                .with_evidence("status", status.as_str().into())
+                .with_evidence("reason", reason.as_str().into())
+                .with_evidence("hint", ACCESS_HINT.into());
         }
         let code = match &error {
             GitError::GitNotFound => "GIT_NOT_FOUND",
@@ -365,6 +381,16 @@ mod tests {
         }
         .into();
         assert!(denied.message.contains("status=read_only"));
+        // The refusal is typed and names the next step.
+        assert_eq!(denied.evidence["status"], "read_only");
+        assert_eq!(denied.evidence["reason"], "none");
+        assert_eq!(denied.evidence["repositoryId"], "repo");
+        assert!(
+            denied.evidence["hint"]
+                .as_str()
+                .unwrap()
+                .contains("svode git access verify")
+        );
         let missing: ToolError = PageError::FileNotFound("a.md".into()).into();
         assert_eq!(missing.message, "File not found: a.md");
     }

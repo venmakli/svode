@@ -56,7 +56,11 @@ pub fn failure(error: &CliError, json: bool) -> Rendered {
             .join(" ");
         report.push_str(&format!("\n  target: {target}"));
     }
-    if let Some(hint) = error.hint {
+    // A next step published by the operation is said like a CLI hint.
+    let hint = error
+        .hint
+        .or_else(|| error.evidence.get("hint").and_then(Value::as_str));
+    if let Some(hint) = hint {
         report.push_str(&format!("\n  hint: {hint}"));
     }
     report.push('\n');

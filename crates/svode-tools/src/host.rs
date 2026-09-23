@@ -6,7 +6,7 @@
 //! and calls `svode-core`; it never opens stores or looks up a window.
 
 use std::future::Future;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::pin::Pin;
 
 use sqlx::SqlitePool;
@@ -107,6 +107,38 @@ pub trait ToolHost: Sync {
     /// Whether this host serves a catalog tool. Tools outside the declared
     /// set are neither published nor dispatched.
     fn serves_tool(&self, name: &str) -> bool;
+
+    /// Binds the host runtime to the frozen target Project of a process
+    /// before its first operation. A host whose runtime already serves its
+    /// open Projects needs nothing.
+    fn open_project(&self, _project: &Path) -> impl Future<Output = Result<(), ToolError>> + Send {
+        async { Ok(()) }
+    }
+
+    /// Prepares the index pools and Routine observation a managed mutation
+    /// of `paths` publishes into, once its repositories are authorized and
+    /// before its source phase. A host whose watcher keeps its open pools
+    /// current needs nothing; a failure leaves the mutation to publish with
+    /// a projection warning.
+    fn prepare_mutation(&self, _paths: &[PathBuf]) -> impl Future<Output = ()> + Send {
+        async {}
+    }
+
+    /// Explicit verification of the repository access of a Space through
+    /// the shared service-ref probe, recorded in the evidence store of the
+    /// install. It is CLI diagnostics, not a catalog tool; a host that does
+    /// not run it refuses.
+    fn verify_repository_access(
+        &self,
+        _space_path: &Path,
+    ) -> impl Future<Output = Result<RepositoryAccessSnapshot, ToolError>> + Send {
+        async {
+            Err(ToolError::new(
+                "MODE_UNAVAILABLE",
+                "This Svode host does not verify repository access",
+            ))
+        }
+    }
 
     /// Prepares the index pools of an index-backed read in `scope` and
     /// reports their freshness; an index that cannot answer fails with

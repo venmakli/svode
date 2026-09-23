@@ -2,6 +2,7 @@
 //! the shared standalone host of `svode-tools`; tests run the same frame on
 //! a harness host with a prepared runtime.
 
+mod access;
 mod doctor;
 mod error;
 pub mod grammar;
@@ -21,7 +22,7 @@ use svode_tools::dispatch::call_tool;
 use svode_tools::host::ToolHost;
 
 use error::CliError;
-use grammar::{Cli, Noun};
+use grammar::{AccessVerb, Cli, GitVerb, Noun};
 use output::Outcome;
 pub use output::Rendered;
 use target::Selectors;
@@ -63,6 +64,11 @@ async fn execute(host: &impl ToolHost, cli: Cli, cwd: &Path) -> Result<Outcome, 
     match cli.command {
         Noun::Guide => guide(host).await,
         Noun::Doctor => Ok(doctor::run(host, selectors).await),
+        Noun::Git {
+            verb: GitVerb::Access {
+                verb: AccessVerb::Verify,
+            },
+        } => access::verify(host, selectors).await,
         noun => {
             let command = tools::command(noun, cwd)?.expect("CLI-owned commands are handled above");
             let target = if command.project_free {
@@ -70,6 +76,9 @@ async fn execute(host: &impl ToolHost, cli: Cli, cwd: &Path) -> Result<Outcome, 
             } else {
                 Some(selectors.resolve()?)
             };
+            if let Some(target) = &target {
+                target.open(host).await?;
+            }
             tools::run(host, target.as_ref(), command).await
         }
     }

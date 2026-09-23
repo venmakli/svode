@@ -73,7 +73,7 @@ pub(crate) async fn update_fields<F, Fut>(
     authorize: F,
 ) -> Result<PageFieldOutcome, AppError>
 where
-    F: FnOnce(Vec<PathBuf>) -> Fut,
+    F: Fn(Vec<PathBuf>) -> Fut,
     Fut: Future<Output = Result<Vec<PathBuf>, AppError>>,
 {
     let space = request.space.to_string();

@@ -6,7 +6,7 @@ use std::path::Path;
 use serde_json::Value;
 use svode_tools::dispatch::call_tool;
 use svode_tools::error::ToolError;
-use svode_tools::host::RequestTarget;
+use svode_tools::host::{RequestTarget, ToolHost};
 use svode_tools::standalone::StandaloneHost;
 use svode_tools::target::{resolve_default_space, resolve_project};
 

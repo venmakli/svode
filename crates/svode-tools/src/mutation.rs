@@ -7,9 +7,9 @@
 
 use std::collections::HashSet;
 use std::future::Future;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-use serde_json::json;
+use serde_json::{Value, json};
 use svode_core::git::access::{
     local_repository_root, scope_authorized_mutation_paths, scope_authorized_paths,
 };
@@ -89,7 +89,8 @@ pub(crate) async fn authorize(
     authorize_paths(host, paths).await
 }
 
-/// Authorizes exactly the planned touched-set, without adding its Space.
+/// Authorizes exactly the planned touched-set, without adding its Space,
+/// then lets the host prepare what the mutation publishes into.
 pub(crate) async fn authorize_paths(
     host: &impl ToolHost,
     paths: Vec<PathBuf>,
@@ -101,6 +102,7 @@ pub(crate) async fn authorize_paths(
             host.require_mutation_access(&repository).await?;
         }
     }
+    host.prepare_mutation(&paths).await;
     Ok(paths)
 }
 
@@ -112,6 +114,19 @@ pub(crate) async fn within_authorized<T>(
     operation: impl Future<Output = Result<T, ToolError>>,
 ) -> Result<T, ToolError> {
     scope_authorized_mutation_paths(paths, operation, ToolError::from).await
+}
+
+/// `SOURCE_BUSY` of the write guard names the first touched source of the
+/// held repository; a source inside `space` is named relative to it, like
+/// every other path of the public result.
+pub(crate) fn space_relative_busy(space: &str, mut error: ToolError) -> ToolError {
+    if error.code == "SOURCE_BUSY"
+        && let Some(Value::String(path)) = error.evidence.get_mut("path")
+        && let Ok(relative) = Path::new(path.as_str()).strip_prefix(space)
+    {
+        *path = relative.to_string_lossy().replace('\\', "/");
+    }
+    error
 }
 
 /// Runs a Routine launch with the repositories authorized for it. A launch

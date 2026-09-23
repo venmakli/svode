@@ -611,7 +611,11 @@ pub fn command(noun: Noun, cwd: &Path) -> Result<Option<ToolCommand>, CliError> 
                     .routine_cas(args.id, args.fingerprint)
             }
         },
-        Noun::Guide | Noun::Doctor => return Ok(None),
+        Noun::Git {
+            verb: GitVerb::Access { .. },
+        }
+        | Noun::Guide
+        | Noun::Doctor => return Ok(None),
     }))
 }
 

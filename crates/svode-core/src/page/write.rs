@@ -30,6 +30,51 @@ pub struct PageWrite<'a> {
     pub source_version: Option<&'a SourceVersion>,
 }
 
+/// Attempts of an intent without a caller baseline before a target that
+/// keeps changing under other writers is reported busy. Not a public
+/// contract.
+const CURRENT_SOURCE_ATTEMPTS: usize = 3;
+
+/// Failure of one attempt of an intent applied to the source it read: a
+/// change of the target between that read and the write guard is not a
+/// failure of the intent, which is applied again from a fresh read.
+pub(crate) enum Attempt<E> {
+    Changed,
+    Failed(E),
+}
+
+impl<E: From<PageError>> From<PageError> for Attempt<E> {
+    fn from(error: PageError) -> Self {
+        match error {
+            PageError::SourceStale { .. } => Self::Changed,
+            error => Self::Failed(E::from(error)),
+        }
+    }
+}
+
+/// Applies an intent without a caller baseline, such as a metadata patch or
+/// a field batch, to the current source. Each attempt reads the target,
+/// plans from it and writes with the version it read, so the write guard
+/// confirms that the source the intent was applied to is still current. A
+/// target that keeps changing is busy.
+pub(crate) async fn on_current_source<T, E, Op, Fut>(path: &str, mut attempt: Op) -> Result<T, E>
+where
+    E: From<PageError>,
+    Op: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<T, Attempt<E>>>,
+{
+    for _ in 0..CURRENT_SOURCE_ATTEMPTS {
+        match attempt().await {
+            Ok(value) => return Ok(value),
+            Err(Attempt::Changed) => continue,
+            Err(Attempt::Failed(error)) => return Err(error),
+        }
+    }
+    Err(E::from(PageError::SourceBusy {
+        path: path.to_string(),
+    }))
+}
+
 fn requested_title<'a>(request: &'a PageWrite<'_>) -> Option<&'a str> {
     request
         .title

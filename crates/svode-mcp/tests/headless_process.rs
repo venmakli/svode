@@ -18,7 +18,11 @@ const BIN: &str = env!("CARGO_BIN_EXE_svode-mcp");
 const COMMIT_DATE: &str = "2020-01-02T03:04:05Z";
 
 /// Tools a standalone process serves in this build.
-const SERVED: [&str; 25] = [
+const SERVED: [&str; 36] = [
+    "add_collection_column",
+    "add_collection_view",
+    "delete_collection_column",
+    "delete_collection_view",
     "get_collection_schema",
     "get_git_status",
     "get_knowledge_neighbors",
@@ -38,7 +42,14 @@ const SERVED: [&str; 25] = [
     "read_space_readme",
     "search_knowledge",
     "search_pages",
+    "update_collection_column",
     "update_collection_item_body",
+    "update_collection_item_fields",
+    "update_collection_item_metadata",
+    "update_collection_metadata",
+    "update_collection_view",
+    "update_page_metadata",
+    "update_space_metadata",
     "validate_app_manifest",
     "validate_collection_integrity",
     "write_collection_readme",
@@ -246,8 +257,8 @@ fn headless_session_serves_source_reads_without_desktop_and_changes_nothing() {
             json!({ "jsonrpc": "2.0", "id": 16, "method": "resources/list" }),
             call(
                 17,
-                "update_page_metadata",
-                json!({ "path": "notes.md", "icon": "x" }),
+                "create_page",
+                json!({ "parentPath": "", "title": "New" }),
             ),
         ],
     );
@@ -781,4 +792,146 @@ fn body_writes_of_two_sessions_use_the_read_version_and_refuse_stale_or_busy_wri
     first.finish();
     second.finish();
     assert_closed(&fixture.project);
+}
+
+#[test]
+fn metadata_field_schema_and_view_changes_are_served_with_their_shared_outcome() {
+    let fixture = fixture();
+    if !fixture.git {
+        return;
+    }
+    let project = &fixture.project;
+    let mut live = Live::start(
+        fixture.temp.path(),
+        &["--project", project.to_str().unwrap()],
+    );
+
+    let page = live.ok(
+        "update_page_metadata",
+        json!({ "path": "notes.md", "icon": "📝", "description": null }),
+    );
+    assert_eq!(page["page"]["meta"]["icon"], "📝");
+    assert_eq!(
+        page["sourceVersion"],
+        live.ok("read_page", json!({ "path": "notes.md" }))["sourceVersion"]
+    );
+    live.ok(
+        "update_space_metadata",
+        json!({ "spaceId": "child", "description": "Child" }),
+    );
+    live.ok(
+        "update_collection_metadata",
+        json!({ "collectionPath": "tasks", "icon": "✅" }),
+    );
+
+    // A field change is published into the index of this session at once.
+    let fields = live.ok(
+        "update_collection_item_fields",
+        json!({ "path": "tasks/alpha.md", "fields": { "Status": "Done" } }),
+    );
+    assert_eq!(fields["changedPaths"], json!(["tasks/alpha.md"]));
+    let done = json!({
+        "collectionPath": "tasks",
+        "filter": [{ "field": "Status", "op": "eq", "value": "Done" }]
+    });
+    let query = live.ok("query_collection_items", done.clone());
+    assert_eq!(result_paths(&query), ["tasks/alpha.md"]);
+    let checked = assert_fresh(&query);
+
+    // A schema change is not published by the change itself: the next
+    // index-backed read checks the files again, even inside the window.
+    let schema = live.ok(
+        "add_collection_column",
+        json!({ "collectionPath": "tasks", "column": { "name": "Stage", "type": "text" } }),
+    );
+    assert_eq!(schema["changedPaths"], json!(["tasks/schema.yaml"]));
+    let requery = live.ok("query_collection_items", done);
+    assert!(assert_fresh(&requery) > checked, "{requery}");
+    assert_eq!(result_paths(&requery), ["tasks/alpha.md"]);
+    live.ok(
+        "update_collection_column",
+        json!({ "collectionPath": "tasks", "columnName": "Stage", "patch": { "color": "blue" } }),
+    );
+    live.ok(
+        "delete_collection_column",
+        json!({ "collectionPath": "tasks", "columnName": "Stage" }),
+    );
+    live.ok(
+        "add_collection_view",
+        json!({ "collectionPath": "tasks", "view": { "type": "table", "name": "Board" } }),
+    );
+    live.ok(
+        "update_collection_view",
+        json!({ "collectionPath": "tasks", "viewName": "Board", "patch": { "name": "All" } }),
+    );
+    let views = live.ok(
+        "delete_collection_view",
+        json!({ "collectionPath": "tasks", "viewName": "Table" }),
+    );
+    assert_eq!(views["schema"]["views"][0]["name"], "All");
+    let item = live.ok(
+        "update_collection_item_metadata",
+        json!({ "path": "tasks/alpha.md", "title": "Beta" }),
+    );
+    assert_eq!(item["item"]["path"], "tasks/Beta.md");
+    live.finish();
+    assert_closed(project);
+    assert!(
+        fs::read_to_string(project.join("tasks/Beta.md"))
+            .unwrap()
+            .contains("Status: Done")
+    );
+}
+
+#[test]
+fn a_change_without_access_evidence_is_a_typed_refusal_with_the_next_step() {
+    let fixture = fixture();
+    if !fixture.git
+        || !git(
+            &fixture.project,
+            &[
+                "remote",
+                "add",
+                "origin",
+                "https://example.invalid/never.git",
+            ],
+        )
+    {
+        return;
+    }
+    let before = snapshot(&fixture.project);
+    let responses = session(
+        fixture.temp.path(),
+        &["--project", fixture.project.to_str().unwrap()],
+        &[
+            call(
+                1,
+                "update_collection_item_fields",
+                json!({ "path": "tasks/alpha.md", "fields": { "Status": "Done" } }),
+            ),
+            call(
+                2,
+                "add_collection_column",
+                json!({ "collectionPath": "tasks", "column": { "name": "Stage", "type": "text" } }),
+            ),
+        ],
+    );
+    for id in [1, 2] {
+        assert_eq!(business_code(&responses[&id]), "REPOSITORY_ACCESS_DENIED");
+        let error = &responses[&id]["result"]["structuredContent"]["error"];
+        assert_eq!(error["status"], "unknown", "{error}");
+        assert_eq!(error["reason"], "not_checked", "{error}");
+        assert!(
+            error["hint"]
+                .as_str()
+                .unwrap()
+                .contains("svode git access verify"),
+            "{error}"
+        );
+    }
+    let mut after = snapshot(&fixture.project);
+    after.retain(|path, _| !path.starts_with(".svode") || path.ends_with("config.json"));
+    let mut expected = before;
+    expected.retain(|path, _| !path.starts_with(".svode") || path.ends_with("config.json"));
+    assert_eq!(after, expected);
 }

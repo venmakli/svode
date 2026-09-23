@@ -17,7 +17,7 @@ pub struct Case {
     /// from the fixture input directory.
     pub argv: &'static [&'static str],
     /// Catalog tools the invocation asks the host for; empty for the
-    /// CLI-owned `doctor`. Body writes pass a `sourceVersion` of no read,
+    /// CLI-owned diagnostics `doctor` and `git access verify`. Body writes pass a `sourceVersion` of no read,
     /// so a served write is refused as stale before any effect.
     pub tools: &'static [&'static str],
 }
@@ -436,6 +436,7 @@ pub const CASES: &[Case] = &[
         &["get_knowledge_status"],
     ),
     case("git status", &["git", "status"], &["get_git_status"]),
+    case("git access verify", &["git", "access", "verify"], &[]),
     case(
         "asset import",
         &[

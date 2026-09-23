@@ -2,19 +2,21 @@
 //! `svode` binary with the desktop app closed. Served commands succeed, and
 //! served body writes from a version of no read are refused as stale; the
 //! rest answer `MODE_UNAVAILABLE` until the headless runtime serves them.
-//! No command changes a source file: index-backed reads only add the
-//! derived index and the device-local stores it keeps in `.svode/`.
+//! A served mutation runs on a fresh fixture in each output mode; no other
+//! command changes a source file: index-backed reads only add the derived
+//! index and the device-local stores it keeps in `.svode/`.
 
 mod common;
 
 use std::process::{Command, Stdio};
 
-use common::commands::{CASES, STALE, argv, command_paths, fixture};
+use common::commands::{CASES, Case, STALE, argv, command_paths, fixture};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use common::process::{BIN, json, snapshot, svode};
 use serde_json::Value;
+use svode_tools::catalog;
 use svode_tools::host::ToolHost;
 use svode_tools::standalone::StandaloneHost;
 
@@ -43,12 +45,28 @@ fn served(tools: &[&str]) -> bool {
         .all(|tool| StandaloneHost::new("test").serves_tool(tool))
 }
 
+/// A served mutation that applies, so each run needs its own fixture.
+fn applies(case: &Case) -> bool {
+    served(case.tools)
+        && !case.argv.contains(&STALE)
+        && case
+            .tools
+            .iter()
+            .any(|tool| catalog::is_mutating_tool(tool) == Some(true))
+}
+
 #[test]
 fn every_command_keeps_the_json_envelope_exit_codes_and_output_streams() {
-    let fixture = fixture();
-    let before = sources(fixture.temp.path());
+    let shared = fixture();
+    let before = sources(shared.temp.path());
     for case in CASES {
-        let args = argv(&fixture, case);
+        let (own_json, own_human) = if applies(case) {
+            (Some(fixture()), Some(fixture()))
+        } else {
+            (None, None)
+        };
+        let fixture = own_json.as_ref().unwrap_or(&shared);
+        let args = argv(fixture, case);
         let (exit, value) = json(&fixture.input, &args, None);
         assert_eq!(value["schemaVersion"], 1, "{}: {value}", case.name);
         let refused = if !served(case.tools) {
@@ -75,6 +93,13 @@ fn every_command_keeps_the_json_envelope_exit_codes_and_output_streams() {
             assert_eq!(value["ok"], true, "{}", case.name);
             assert!(value["target"].is_object(), "{}: {value}", case.name);
             assert!(value.get("error").is_none(), "{}", case.name);
+            if applies(case) {
+                assert!(
+                    !value["changedPaths"].as_array().unwrap().is_empty(),
+                    "{}: {value}",
+                    case.name
+                );
+            }
         }
         if value["ok"] == true && case.name != "app validate" && case.name != "guide" {
             assert_eq!(
@@ -88,6 +113,8 @@ fn every_command_keeps_the_json_envelope_exit_codes_and_output_streams() {
 
         // Human mode: the same exit; a result on stdout, or the code and
         // target on stderr with nothing on stdout.
+        let fixture = own_human.as_ref().unwrap_or(&shared);
+        let args = argv(fixture, case);
         let human = svode(&fixture.input, &args);
         assert_eq!(human.status.code(), Some(exit), "{}", case.name);
         let stdout = String::from_utf8(human.stdout).unwrap();
@@ -110,7 +137,7 @@ fn every_command_keeps_the_json_envelope_exit_codes_and_output_streams() {
             assert!(stderr.contains("target: "), "{}: {stderr}", case.name);
         }
     }
-    assert_eq!(sources(fixture.temp.path()), before);
+    assert_eq!(sources(shared.temp.path()), before);
 }
 
 #[test]

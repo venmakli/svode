@@ -124,6 +124,18 @@ impl IndexRuntimeState {
         );
     }
 
+    /// Forgets the last check of the pools owning `paths` after a mutation
+    /// changed these sources without publishing them, so the next
+    /// index-backed read checks the files again instead of answering from
+    /// the earlier check.
+    pub async fn expire_verification(&self, project: &Path, paths: &[std::path::PathBuf]) {
+        for path in paths {
+            if let Ok((key, _)) = self.resolve(project, path).await {
+                self.verifications.lock().await.remove(&key);
+            }
+        }
+    }
+
     /// Whether the last completed check of `key` is younger than `window`.
     pub async fn verified_within(&self, key: &IndexKey, window: Duration) -> bool {
         self.verifications

@@ -5,13 +5,15 @@
 //! target before the first operation; the session binds to that Project on
 //! first need and opens stores only for the capabilities that need them.
 //! Index-backed reads reconcile their pools with the files first, since no
-//! watcher keeps them current. A body write is authorized from the access
+//! watcher keeps them current; a managed mutation does the same for the
+//! pools it publishes into before its source phase, so its Routine events
+//! describe only its own change. A mutation is authorized from the access
 //! evidence the install shares and publishes into the index and Routine
 //! stores of this process. Capabilities of the headless catalog that
 //! this build does not serve yet answer `MODE_UNAVAILABLE` before any
 //! effect.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use sqlx::SqlitePool;
@@ -30,8 +32,9 @@ use crate::target::context_error;
 
 /// Catalog tools a standalone process serves: reads answered from project
 /// sources, the index reconciled with them, Git or the Actor catalog, tools
-/// answered from their input, and body writes from a read source version.
-const SERVED_TOOLS: [&str; 25] = [
+/// answered from their input, body writes from a read source version, and
+/// metadata, field, schema column and view changes of the current source.
+const SERVED_TOOLS: [&str; 36] = [
     "get_svode_guide",
     "validate_app_manifest",
     "get_project_info",
@@ -57,6 +60,17 @@ const SERVED_TOOLS: [&str; 25] = [
     "update_collection_item_body",
     "write_space_readme",
     "write_collection_readme",
+    "update_page_metadata",
+    "update_space_metadata",
+    "update_collection_metadata",
+    "update_collection_item_metadata",
+    "update_collection_item_fields",
+    "add_collection_column",
+    "update_collection_column",
+    "delete_collection_column",
+    "add_collection_view",
+    "update_collection_view",
+    "delete_collection_view",
 ];
 
 /// Capability that is never headless: an explicit Routine launch needs the
@@ -87,16 +101,6 @@ impl StandaloneHost {
             version,
             session: ProjectSession::new(),
         }
-    }
-
-    /// Binds the runtime session to the frozen target Project. A session
-    /// never switches to another Project.
-    pub async fn open_project(&self, project: &Path) -> Result<(), ToolError> {
-        self.session
-            .open_project(project)
-            .await
-            .map(|_| ())
-            .map_err(session_error)
     }
 
     /// Rejects a call of a headless capability that this build does not
@@ -139,6 +143,29 @@ impl ToolHost for StandaloneHost {
 
     fn serves_tool(&self, name: &str) -> bool {
         SERVED_TOOLS.contains(&name)
+    }
+
+    /// Binds the runtime session to the frozen target Project. A session
+    /// never switches to another Project.
+    async fn open_project(&self, project: &Path) -> Result<(), ToolError> {
+        self.session
+            .open_project(project)
+            .await
+            .map(|_| ())
+            .map_err(session_error)
+    }
+
+    async fn prepare_mutation(&self, paths: &[PathBuf]) {
+        if let Err(error) = self.session.prepare_mutation(paths).await {
+            tracing::warn!("the index a mutation publishes into could not be prepared: {error}");
+        }
+    }
+
+    async fn verify_repository_access(
+        &self,
+        space_path: &Path,
+    ) -> Result<RepositoryAccessSnapshot, ToolError> {
+        Ok(self.session.verify_repository_access(space_path).await?)
     }
 
     async fn prepare_index(
@@ -224,7 +251,7 @@ mod tests {
             assert!(check_tool(&host, name).is_ok());
         }
 
-        let pending = host.check_call("update_page_metadata").unwrap_err();
+        let pending = host.check_call("create_page").unwrap_err();
         assert_eq!(pending.code, "MODE_UNAVAILABLE");
         for name in [DESKTOP_ONLY_TOOL, "no_such_tool"] {
             assert!(host.check_call(name).is_ok());

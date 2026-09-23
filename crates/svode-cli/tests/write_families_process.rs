@@ -1,8 +1,10 @@
 //! Page, owner and item writes through the real `svode` binary with the
 //! desktop app closed. Body writes are served from a read source version
-//! (their cycle is covered by `source_write_process`); the other writes
-//! answer `MODE_UNAVAILABLE` and change nothing until the headless runtime
-//! serves them. Grammar and input fail before either with exit 2.
+//! (their cycle is covered by `source_write_process`), metadata and field
+//! changes of the current source by `metadata_schema_process`; `page
+//! create` answers `MODE_UNAVAILABLE` and changes nothing until the
+//! headless runtime serves it. Grammar and input fail before either with
+//! exit 2.
 
 mod common;
 
@@ -34,47 +36,16 @@ fn fixture() -> (tempfile::TempDir, PathBuf) {
 
 /// Writes the headless runtime of this build does not serve yet, with
 /// readable input.
-const UNSERVED_WRITES: [&[&str]; 6] = [
-    &[
-        "page",
-        "create",
-        "--parent",
-        "",
-        "--title",
-        "New",
-        "--body-file",
-        "input/body.md",
-    ],
-    &["page", "meta", "set", "--path", "notes.md", "--icon", "x"],
-    &["space", "meta", "set", "--clear-description"],
-    &[
-        "collection",
-        "meta",
-        "set",
-        "--collection",
-        "tasks",
-        "--cover-file",
-        "input/cover.json",
-    ],
-    &[
-        "item",
-        "fields",
-        "set",
-        "--path",
-        "tasks/alpha.md",
-        "--fields-file",
-        "input/fields.json",
-    ],
-    &[
-        "item",
-        "meta",
-        "set",
-        "--path",
-        "tasks/alpha.md",
-        "--title",
-        "Renamed",
-    ],
-];
+const UNSERVED_WRITES: [&[&str]; 1] = [&[
+    "page",
+    "create",
+    "--parent",
+    "",
+    "--title",
+    "New",
+    "--body-file",
+    "input/body.md",
+]];
 
 /// Body writes with a body but without `--source-version`.
 const UNVERSIONED_BODY_WRITES: [&[&str]; 4] = [
@@ -129,15 +100,16 @@ fn unserved_standalone_writes_are_mode_unavailable_and_change_nothing() {
     let (exit, value) = json(
         &root,
         &[
-            "item",
-            "fields",
-            "set",
-            "--path",
-            "tasks/alpha.md",
-            "--fields-file",
+            "page",
+            "create",
+            "--parent",
+            "",
+            "--title",
+            "Piped",
+            "--body-file",
             "-",
         ],
-        Some(r#"{"Status":"Piped"}"#),
+        Some("Piped body\n"),
     );
     assert_eq!((exit, code(&value)), (1, "MODE_UNAVAILABLE"));
     assert_eq!(snapshot(&root), before);
@@ -334,7 +306,7 @@ fn write_help_shows_the_safe_cycle_without_a_project() {
         }
         assert_eq!(
             help.contains("MODE_UNAVAILABLE"),
-            !body_write,
+            command == &&["page", "create"][..],
             "{command:?}"
         );
         assert!(!help.contains("--force"), "{command:?}");

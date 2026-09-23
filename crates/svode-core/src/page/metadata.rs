@@ -27,6 +27,8 @@ pub struct PageMetadataOutcome {
     pub changed_paths: Vec<PathBuf>,
 }
 
+/// Patches the metadata of the current source; the body and the other
+/// fields stay as they are on disk when the write guard is taken.
 pub async fn patch<E, F, Fut, Err>(
     space: &str,
     path: &str,
@@ -37,41 +39,47 @@ pub async fn patch<E, F, Fut, Err>(
 ) -> Result<PageMetadataOutcome, Err>
 where
     E: GitDateExecutor,
-    F: FnOnce(Vec<PathBuf>) -> Fut,
+    F: Fn(Vec<PathBuf>) -> Fut,
     Fut: std::future::Future<Output = Result<Vec<PathBuf>, Err>>,
     Err: From<PageError>,
 {
-    let current = entry::read(space, path)?;
     if patch.is_empty() {
         return Ok(PageMetadataOutcome {
-            page: current,
+            page: entry::read(space, path)?,
             changed_paths: Vec::new(),
         });
     }
 
-    let candidate = patched_metadata(&current.meta, &patch)?;
-
     let explicit_title = patch.title.as_deref();
+    let (patch, authorize) = (&patch, &authorize);
     let PageWriteOutcome {
         result,
         changed_paths,
-    } = super::write::write(
-        PageWrite {
-            space,
-            path,
-            content: &current.body,
-            title: explicit_title,
-            icon: None,
-            extra: None,
-            metadata: Some(candidate),
-            field_batch: None,
-            skip_rename: explicit_title.is_none(),
-            project,
-            source_version: None,
-        },
-        runtime,
-        authorize,
-    )
+    } = super::write::on_current_source(path, || async move {
+        let current = entry::read(space, path)?;
+        let candidate = patched_metadata(&current.meta, patch)?;
+        super::write::write(
+            PageWrite {
+                space,
+                path,
+                content: &current.body,
+                title: explicit_title,
+                icon: None,
+                extra: None,
+                metadata: Some(candidate),
+                field_batch: None,
+                skip_rename: explicit_title.is_none(),
+                project,
+                source_version: current.source_version.as_ref(),
+            },
+            runtime,
+            |paths| {
+                let authorized = authorize(paths);
+                async move { authorized.await.map_err(super::write::Attempt::Failed) }
+            },
+        )
+        .await
+    })
     .await?;
     let current_path = result.new_path.as_deref().unwrap_or(path);
     let mut page = entry::read(space, current_path)?;
@@ -243,5 +251,83 @@ mod tests {
             outcome.page.meta.description.as_deref(),
             Some("  keep whitespace  ")
         );
+    }
+
+    fn icon_patch() -> PageMetadataPatch {
+        PageMetadataPatch {
+            title: None,
+            icon: Some(Some("star".into())),
+            description: None,
+            cover: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn a_source_changed_after_the_read_is_patched_as_it_is_under_the_guard() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        fs::create_dir_all(root.join(".git")).unwrap();
+        fs::write(root.join("Page.md"), "---\ntitle: Page\n---\nFirst").unwrap();
+        let calls = std::sync::atomic::AtomicUsize::new(0);
+        let outcome = patch(
+            root.to_str().unwrap(),
+            "Page.md",
+            icon_patch(),
+            None,
+            runtime(&IndexRuntimeState::default(), &WriteNonceRegistry::new()),
+            |mut paths| {
+                // Another writer replaces the body after the patch read the
+                // source and before its write guard is taken.
+                if calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
+                    fs::write(root.join("Page.md"), "---\ntitle: Page\n---\nOther writer").unwrap();
+                }
+                async move {
+                    paths.push(root.to_path_buf());
+                    Ok::<_, PageError>(paths)
+                }
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 2);
+        assert_eq!(outcome.page.body, "Other writer");
+        assert_eq!(outcome.page.meta.icon.as_deref(), Some("star"));
+        let source = fs::read_to_string(root.join("Page.md")).unwrap();
+        assert!(source.ends_with("Other writer"), "{source}");
+        assert!(source.contains("icon: star"), "{source}");
+    }
+
+    #[tokio::test]
+    async fn a_source_that_keeps_changing_is_busy_without_effects() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        fs::create_dir_all(root.join(".git")).unwrap();
+        fs::write(root.join("Page.md"), "---\ntitle: Page\n---\nBody").unwrap();
+        let calls = std::sync::atomic::AtomicUsize::new(0);
+        let error = patch(
+            root.to_str().unwrap(),
+            "Page.md",
+            icon_patch(),
+            None,
+            runtime(&IndexRuntimeState::default(), &WriteNonceRegistry::new()),
+            |mut paths| {
+                let call = calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                fs::write(
+                    root.join("Page.md"),
+                    format!("---\ntitle: Page\n---\nWriter {call}"),
+                )
+                .unwrap();
+                async move {
+                    paths.push(root.to_path_buf());
+                    Ok::<_, PageError>(paths)
+                }
+            },
+        )
+        .await
+        .err()
+        .unwrap();
+        assert!(matches!(error, PageError::SourceBusy { ref path } if path == "Page.md"));
+        let source = fs::read_to_string(root.join("Page.md")).unwrap();
+        assert!(!source.contains("icon"), "{source}");
     }
 }

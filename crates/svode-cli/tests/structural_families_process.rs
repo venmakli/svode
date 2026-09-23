@@ -1,8 +1,9 @@
 //! Collection schema/views/integrity and structural commands through the
 //! real `svode` binary with the desktop app closed. The integrity check reads
-//! only sources and runs standalone; until the headless runtime is connected
-//! every structural mutation answers `MODE_UNAVAILABLE` and changes nothing;
-//! grammar and input fail before it with exit 2.
+//! only sources and runs standalone, schema column and view changes are
+//! served (`metadata_schema_process`); until the headless runtime serves
+//! them the other structural mutations answer `MODE_UNAVAILABLE` and change
+//! nothing; grammar and input fail before it with exit 2.
 
 mod common;
 
@@ -58,8 +59,9 @@ fn fixture() -> (tempfile::TempDir, PathBuf) {
     (temp, root)
 }
 
-/// Structural mutations of slice 4.4 with readable input.
-const MUTATIONS: [&[&str]; 16] = [
+/// Structural mutations of slice 4.4 the headless runtime of this build
+/// does not serve yet, with readable input.
+const MUTATIONS: [&[&str]; 10] = [
     &[
         "collection",
         "create",
@@ -71,67 +73,6 @@ const MUTATIONS: [&[&str]; 16] = [
         "input/columns.json",
     ],
     &["collection", "delete", "--collection", "sprints"],
-    &[
-        "collection",
-        "column",
-        "add",
-        "--collection",
-        "tasks",
-        "--column-file",
-        "input/column.json",
-    ],
-    &[
-        "collection",
-        "column",
-        "update",
-        "--collection",
-        "tasks",
-        "--name",
-        "Sprint",
-        "--patch-file",
-        "input/patch.json",
-    ],
-    &[
-        "collection",
-        "column",
-        "delete",
-        "--collection",
-        "tasks",
-        "--name",
-        "Sprint",
-        "--delete-values",
-    ],
-    &[
-        "collection",
-        "view",
-        "add",
-        "--collection",
-        "tasks",
-        "--view-file",
-        "input/view.json",
-        "--position",
-        "0",
-    ],
-    &[
-        "collection",
-        "view",
-        "update",
-        "--collection",
-        "tasks",
-        "--name",
-        "Table",
-        "--patch-file",
-        "input/patch.json",
-    ],
-    &[
-        "collection",
-        "view",
-        "delete",
-        "--collection",
-        "tasks",
-        "--name",
-        "Table",
-    ],
     &[
         "content", "rename", "--path", "notes.md", "--to", "Moved.md",
     ],
@@ -364,14 +305,15 @@ fn structural_grammar_and_input_fail_before_the_command_runs() {
         &root,
         &[
             "collection",
-            "column",
-            "add",
-            "--collection",
-            "tasks",
-            "--column-file",
+            "create",
+            "--parent",
+            "",
+            "--title",
+            "Piped",
+            "--columns-file",
             "-",
         ],
-        Some(r#"{"name":"Piped","type":"text"}"#),
+        Some(r#"[{"name":"Piped","type":"text"}]"#),
     );
     assert_eq!((exit, code(&value)), (1, "MODE_UNAVAILABLE"));
     assert_eq!(snapshot(&root), before);
@@ -403,14 +345,13 @@ fn structural_help_explains_effects_without_a_project() {
         let output = svode(temp.path(), &args);
         assert_eq!(output.status.code(), Some(0), "{command:?}");
         let help = String::from_utf8(output.stdout).unwrap();
-        for expected in [
-            "Structural change",
-            "no --force",
-            "MODE_UNAVAILABLE",
-            "Example",
-        ] {
+        for expected in ["Structural change", "no --force", "Example"] {
             assert!(help.contains(expected), "{command:?}: {expected}\n{help}");
         }
+        // Schema column and view changes are served by this build.
+        let schema =
+            command[..2] == ["collection", "column"] || command[..2] == ["collection", "view"];
+        assert_eq!(help.contains("MODE_UNAVAILABLE"), !schema, "{command:?}");
     }
     let check = svode(temp.path(), &["collection", "check", "--help"]);
     assert_eq!(check.status.code(), Some(0));
