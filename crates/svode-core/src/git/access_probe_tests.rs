@@ -987,6 +987,142 @@ async fn independent_owners_follow_foreign_store_evidence_without_restart_or_net
     assert_eq!(network_calls(&f), calls);
 }
 
+#[derive(Default)]
+struct RecordingObserver(Mutex<Vec<String>>);
+
+impl RecordingObserver {
+    fn count(&self) -> usize {
+        self.0.lock().unwrap().len()
+    }
+}
+
+impl RepositoryAccessObserver for RecordingObserver {
+    fn publication_changed(&self, repository_id: &str) {
+        self.0.lock().unwrap().push(repository_id.to_string());
+    }
+}
+
+#[tokio::test]
+async fn host_is_notified_once_when_a_read_publishes_foreign_store_changes() {
+    let f = Fixture::new("").await;
+    let store = f._temp.path().join("access.json");
+    let clock = Arc::new(AutoClock::new(1_000_000));
+    let observer = Arc::new(RecordingObserver::default());
+    let desktop = RepositoryAccessState::build(clock.clone(), Some(observer.clone()));
+    let cli = RepositoryAccessState::with_clock(clock.clone());
+
+    // The first publication and repeated unchanged reads are not changes.
+    let initial = desktop.snapshot(&f.cli, &f.repo, &store).await.unwrap();
+    assert_eq!(initial.reason, Some(RepositoryAccessReason::NotChecked));
+    assert_eq!(
+        desktop.snapshot(&f.cli, &f.repo, &store).await.unwrap(),
+        initial
+    );
+    assert!(
+        desktop
+            .require_mutation(&f.cli, &f.repo, &store)
+            .await
+            .is_err()
+    );
+    assert_eq!(observer.count(), 0);
+
+    // A gate that picks up foreign verification reports it exactly once.
+    clock.set(1_000_100);
+    cli.verify(&f.cli, &f.repo, &store).await.unwrap();
+    let seen = desktop
+        .require_mutation(&f.cli, &f.repo, &store)
+        .await
+        .unwrap();
+    assert_eq!(seen.status, RepositoryAccessStatus::Writable);
+    assert_eq!(
+        *observer.0.lock().unwrap(),
+        vec![seen.repository_id.clone()]
+    );
+    assert_eq!(
+        desktop.snapshot(&f.cli, &f.repo, &store).await.unwrap(),
+        seen
+    );
+    desktop
+        .require_mutation(&f.cli, &f.repo, &store)
+        .await
+        .unwrap();
+    assert_eq!(activate(&f, &desktop, &store).await, seen);
+    assert_eq!(observer.count(), 1);
+
+    // A foreign failure seen by a read is a change as well.
+    let mut persisted = read_store_file(&store).unwrap();
+    let evidence = persisted.evidence.get_mut(&seen.repository_id).unwrap();
+    evidence.status = RepositoryAccessStatus::ReadOnly;
+    evidence.checked_at = 1_000_200;
+    evidence.expires_at = Some(1_000_200 + ACCESS_EVIDENCE_TTL_SECONDS);
+    write_store_file(&store, &persisted).unwrap();
+    clock.set(1_000_201);
+    let denied = desktop.snapshot(&f.cli, &f.repo, &store).await.unwrap();
+    assert_eq!(denied.status, RepositoryAccessStatus::ReadOnly);
+    assert_eq!(observer.count(), 2);
+    assert!(
+        desktop
+            .require_mutation(&f.cli, &f.repo, &store)
+            .await
+            .is_err()
+    );
+    assert_eq!(observer.count(), 2);
+
+    // Own verification is delivered by its host, not reported as a read change.
+    clock.set(1_000_300);
+    let own = desktop.verify(&f.cli, &f.repo, &store).await.unwrap();
+    assert_eq!(own.status, RepositoryAccessStatus::Writable);
+    assert_eq!(
+        desktop.snapshot(&f.cli, &f.repo, &store).await.unwrap(),
+        own
+    );
+    assert_eq!(observer.count(), 2);
+
+    // An activation that only reads foreign evidence is delivered by its host too.
+    clock.set(1_000_400);
+    let renewed = cli
+        .record_writable_evidence(&f.real, &f.repo, &store)
+        .await
+        .unwrap();
+    let activated = activate(&f, &desktop, &store).await;
+    assert_eq!(activated.checked_at, renewed.checked_at);
+    assert_eq!(
+        desktop.snapshot(&f.cli, &f.repo, &store).await.unwrap(),
+        activated
+    );
+    assert_eq!(observer.count(), 2);
+
+    // Another process's evidence for another fingerprint replaces `remote_changed`.
+    let other = f._temp.path().join("other.git");
+    fs::create_dir(&other).unwrap();
+    ok(&f.real, &other, &["init", "--bare"]).await;
+    ok(
+        &f.real,
+        &f.repo,
+        &["remote", "set-url", "origin", other.to_str().unwrap()],
+    )
+    .await;
+    let changed = desktop.snapshot(&f.cli, &f.repo, &store).await.unwrap();
+    assert_eq!(changed.reason, Some(RepositoryAccessReason::RemoteChanged));
+    assert_eq!(observer.count(), 3);
+    cli.record_writable_evidence(&f.real, &f.repo, &store)
+        .await
+        .unwrap();
+    desktop
+        .require_mutation(&f.cli, &f.repo, &store)
+        .await
+        .unwrap();
+    assert_eq!(observer.count(), 4);
+    assert!(
+        observer
+            .0
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|id| id == &seen.repository_id)
+    );
+}
+
 #[tokio::test]
 async fn own_checking_and_newer_own_result_are_not_replaced_by_store() {
     let f = Fixture::new(

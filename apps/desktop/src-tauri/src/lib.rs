@@ -66,7 +66,6 @@ pub fn run() {
         .manage(Arc::new(svode_core::page::nonce::WriteNonceRegistry::new()))
         .manage(git::GitState::new())
         .manage(identity::IdentityState::new())
-        .manage(git::access::RepositoryAccessState::new())
         .manage(routines::RoutineSchedulerState::new())
         .manage(project_runtime::ProjectRuntimeState::new())
         .manage(app_windows::AppWindowState::new())
@@ -99,6 +98,9 @@ pub fn run() {
             app.manage(index::IndexState::new());
             app.manage(index::update::IndexUpdateState::new(routine_stores));
             app.manage(git::GitHostState::new(app.handle().clone()));
+            app.manage(git::access::RepositoryAccessState::new(
+                app.handle().clone(),
+            ));
             let git_runtime = app.state::<git::GitState>().runtime().clone();
             let git_host = app.state::<git::GitHostState>().handle().clone();
             let service = Arc::new(svode_core::git::autocommit::AutocommitService::new(

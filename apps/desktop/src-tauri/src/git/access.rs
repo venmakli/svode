@@ -1,10 +1,12 @@
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 
 use super::{GitState, require_cli};
 use crate::AppError;
+use svode_core::git::access::RepositoryAccessObserver;
 use svode_core::git::cli::GitCli;
 
 pub use svode_core::git::access::{
@@ -21,9 +23,25 @@ struct RepositoryAccessChangedPayload<'a> {
 
 pub struct RepositoryAccessState(svode_core::git::access::RepositoryAccessState);
 
+/// Delivers changes that passive reads and gates of this process pick up,
+/// such as evidence saved by `svode git access verify`, to the windows.
+struct DesktopAccessObserver {
+    app: AppHandle,
+}
+
+impl RepositoryAccessObserver for DesktopAccessObserver {
+    fn publication_changed(&self, repository_id: &str) {
+        emit_repository_access_changed(&self.app, repository_id);
+    }
+}
+
 impl RepositoryAccessState {
-    pub fn new() -> Self {
-        Self(svode_core::git::access::RepositoryAccessState::new())
+    pub fn new(app: AppHandle) -> Self {
+        Self(
+            svode_core::git::access::RepositoryAccessState::with_observer(Arc::new(
+                DesktopAccessObserver { app },
+            )),
+        )
     }
 
     pub(crate) fn core(&self) -> &svode_core::git::access::RepositoryAccessState {
@@ -107,12 +125,6 @@ impl RepositoryAccessState {
         store: &Path,
     ) -> Result<RepositoryAccessSnapshot, AppError> {
         Ok(self.0.record_writable_evidence(cli, space, store).await?)
-    }
-}
-
-impl Default for RepositoryAccessState {
-    fn default() -> Self {
-        Self::new()
     }
 }
 

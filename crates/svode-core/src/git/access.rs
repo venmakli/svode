@@ -182,8 +182,17 @@ impl Clock for SystemClock {
     }
 }
 
+/// Host notification about a passive read or mutation gate that replaced the
+/// result this process published for a repository, for example with evidence
+/// another process saved to the shared store. Verification and write
+/// evidence paths are not reported here: their hosts deliver those results.
+pub trait RepositoryAccessObserver: Send + Sync {
+    fn publication_changed(&self, repository_id: &str);
+}
+
 pub struct RepositoryAccessState {
     clock: Arc<dyn Clock>,
+    observer: Option<Arc<dyn RepositoryAccessObserver>>,
     generation: AtomicU64,
     snapshots: Mutex<HashMap<PathBuf, Arc<PublishedSnapshot>>>,
     probe_locks: Mutex<HashMap<PathBuf, Arc<ProbeFlight>>>,
@@ -192,12 +201,22 @@ pub struct RepositoryAccessState {
 
 impl RepositoryAccessState {
     pub fn new() -> Self {
-        Self::with_clock(Arc::new(SystemClock))
+        Self::build(Arc::new(SystemClock), None)
     }
 
+    pub fn with_observer(observer: Arc<dyn RepositoryAccessObserver>) -> Self {
+        Self::build(Arc::new(SystemClock), Some(observer))
+    }
+
+    #[cfg(test)]
     fn with_clock(clock: Arc<dyn Clock>) -> Self {
+        Self::build(clock, None)
+    }
+
+    fn build(clock: Arc<dyn Clock>, observer: Option<Arc<dyn RepositoryAccessObserver>>) -> Self {
         Self {
             clock,
+            observer,
             generation: AtomicU64::new(0),
             snapshots: Mutex::new(HashMap::new()),
             probe_locks: Mutex::new(HashMap::new()),
@@ -211,23 +230,39 @@ impl RepositoryAccessState {
         space_path: &Path,
         store_path: &Path,
     ) -> Result<RepositoryAccessSnapshot, GitError> {
+        let (snapshot, replaced) = self.read_snapshot(cli, space_path, store_path).await?;
+        if replaced && let Some(observer) = &self.observer {
+            observer.publication_changed(&snapshot.repository_id);
+        }
+        Ok(snapshot)
+    }
+
+    /// Select and publish the current result; `true` when it replaced a
+    /// different earlier publication of this process.
+    async fn read_snapshot(
+        &self,
+        cli: &GitCli,
+        space_path: &Path,
+        store_path: &Path,
+    ) -> Result<(RepositoryAccessSnapshot, bool), GitError> {
         let repository = resolve_repository(cli, space_path).await?;
-        if let Some(current) = self.cached(&repository)? {
-            if current.snapshot.status == RepositoryAccessStatus::Checking {
-                return Ok(current.snapshot.clone());
-            }
+        if let Some(current) = self.cached(&repository)?
+            && current.snapshot.status == RepositoryAccessStatus::Checking
+        {
+            return Ok((current.snapshot.clone(), false));
         }
 
         let repository_id = opaque_id("access-repo", &repository.to_string_lossy());
         match inspect_remote(cli, &repository).await? {
             RemoteInspection::Local => {
-                if let Some(current) = self.cached(&repository)?
+                let cached = self.cached(&repository)?;
+                if let Some(current) = &cached
                     && current.remote_fingerprint.is_none()
                     && current.snapshot.status == RepositoryAccessStatus::Local
                 {
-                    return Ok(current.snapshot.clone());
+                    return Ok((current.snapshot.clone(), false));
                 }
-                Ok(self.publish(
+                let snapshot = self.publish(
                     &repository,
                     None,
                     RepositoryAccessSnapshot {
@@ -239,18 +274,20 @@ impl RepositoryAccessState {
                         expires_at: None,
                         last_known_status: None,
                     },
-                )?)
+                )?;
+                Ok((snapshot, cached.is_some()))
             }
             RemoteInspection::Unsupported => {
-                if let Some(current) = self.cached(&repository)?
+                let cached = self.cached(&repository)?;
+                if let Some(current) = &cached
                     && current.remote_fingerprint.is_none()
                     && current.snapshot.status == RepositoryAccessStatus::Unknown
                     && current.snapshot.reason
                         == Some(RepositoryAccessReason::UnsupportedRemoteConfiguration)
                 {
-                    return Ok(current.snapshot.clone());
+                    return Ok((current.snapshot.clone(), false));
                 }
-                Ok(self.publish(
+                let snapshot = self.publish(
                     &repository,
                     None,
                     RepositoryAccessSnapshot {
@@ -262,7 +299,8 @@ impl RepositoryAccessState {
                         expires_at: None,
                         last_known_status: None,
                     },
-                )?)
+                )?;
+                Ok((snapshot, cached.is_some()))
             }
             RemoteInspection::Remote(remote) => {
                 let now = self.clock.now_unix();
@@ -270,7 +308,7 @@ impl RepositoryAccessState {
                 if let Some(observed) = &observed
                     && observed.snapshot.status == RepositoryAccessStatus::Checking
                 {
-                    return Ok(observed.snapshot.clone());
+                    return Ok((observed.snapshot.clone(), false));
                 }
                 let current = observed.as_ref().filter(|current| {
                     current.remote_fingerprint.as_deref() == Some(remote.fingerprint.as_str())
@@ -307,7 +345,7 @@ impl RepositoryAccessState {
                 if let Some(current) = current {
                     selected.generation = current.snapshot.generation;
                     if selected == current.snapshot {
-                        return Ok(selected);
+                        return Ok((selected, false));
                     }
                 }
                 let mut snapshots = self.snapshots.lock().map_err(|_| {
@@ -320,17 +358,28 @@ impl RepositoryAccessState {
                         observed.snapshot.generation != latest.snapshot.generation
                     })
                 {
-                    return Ok(latest.snapshot.clone());
+                    return Ok((latest.snapshot.clone(), false));
                 }
-                Ok(self.publish_locked(
+                let snapshot = self.publish_locked(
                     &mut snapshots,
                     &repository,
                     Some(remote.fingerprint),
                     selected,
                     None,
-                ))
+                );
+                Ok((snapshot, observed.is_some()))
             }
         }
+    }
+
+    /// Read for verification paths: their hosts deliver the returned result.
+    async fn read_current(
+        &self,
+        cli: &GitCli,
+        repository: &Path,
+        store_path: &Path,
+    ) -> Result<RepositoryAccessSnapshot, GitError> {
+        Ok(self.read_snapshot(cli, repository, store_path).await?.0)
     }
 
     #[cfg(test)]
@@ -358,7 +407,7 @@ impl RepositoryAccessState {
             if let Some(snapshot) = self.cached(&repository)? {
                 return Ok(snapshot.snapshot.clone());
             }
-            return self.snapshot(cli, &repository, store_path).await;
+            return self.read_current(cli, &repository, store_path).await;
         }
         let mut guard = match permit {
             ProbePermit::Owner(guard) => guard,
@@ -463,7 +512,7 @@ impl RepositoryAccessState {
             }
         };
         let Some(verification) = checking else {
-            return self.snapshot(cli, &repository, store_path).await;
+            return self.read_current(cli, &repository, store_path).await;
         };
         guard.attempted = true;
         on_checking(&repository_id);
@@ -521,7 +570,7 @@ impl RepositoryAccessState {
                     snapshots.remove(&repository);
                 }
             }
-            return self.snapshot(cli, &repository, store_path).await;
+            return self.read_current(cli, &repository, store_path).await;
         }
         let snapshot = RepositoryAccessSnapshot {
             repository_id,
