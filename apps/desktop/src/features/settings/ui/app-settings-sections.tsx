@@ -1,4 +1,9 @@
-import { ExternalLink, RefreshCw } from "lucide-react";
+import {
+  ArrowUpRight,
+  ExternalLink,
+  LoaderCircle,
+  RefreshCw,
+} from "lucide-react";
 import * as m from "@/paraglide/messages.js";
 import {
   Alert,
@@ -7,29 +12,23 @@ import {
 } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-  Field,
-  FieldError,
-  FieldGroup,
-  FieldLabel,
-} from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
-import { DogfoodUpdateSettingsControls } from "@/features/updates";
 import {
-  Select,
-  SelectContent,
-  SelectGroup,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+  DogfoodUpdateSettingsControls,
+  DogfoodUpdateSettingsStatus,
+} from "@/features/updates";
 import { cn } from "@/shared/lib/utils";
 import type { useAppSettingsAbout } from "../hooks/use-app-settings-about";
 import type { useAppSettingsAppearance } from "../hooks/use-app-settings-appearance";
 import type { useGlobalIdentitySettings } from "../hooks/use-global-identity-settings";
 import type { AvailableAgent } from "../model";
+import {
+  SettingsActions,
+  SettingsGroup,
+  SettingsItem,
+  SettingsRow,
+} from "./settings-layout";
+import { SettingsSelect } from "./settings-select";
 
 const CLI_AUTH_COMMANDS: Record<string, string> = {
   claude: "claude login",
@@ -46,99 +45,89 @@ interface AppGitIdentitySectionProps {
 export function AppGitIdentitySection({
   settings,
 }: AppGitIdentitySectionProps) {
+  const nameInvalid = Boolean(
+    settings.identityName && !settings.identityNameValid,
+  );
+  const emailInvalid = Boolean(
+    settings.identityEmail && !settings.identityEmailValid,
+  );
   return (
-    <div className="flex max-w-sm flex-col gap-4">
-      <div className="flex flex-col gap-1">
-        <h2 className="text-sm font-medium">
-          {m.settings_profile_git_identity_title()}
-        </h2>
-        <p className="text-sm text-muted-foreground">
-          {m.settings_git_identity_scope()}
-        </p>
-      </div>
-      <FieldGroup>
-        <Field
-          data-invalid={Boolean(
-            settings.identityName && !settings.identityNameValid,
-          )}
-        >
-          <FieldLabel htmlFor="settings-identity-name">
-            {m.identity_name_label()}
-          </FieldLabel>
-          <Input
-            id="settings-identity-name"
-            value={settings.identityName}
-            disabled={settings.savingIdentity}
-            aria-invalid={Boolean(
-              settings.identityName && !settings.identityNameValid,
-            )}
-            onChange={(event) => settings.setIdentityName(event.target.value)}
-          />
-          {settings.identityName && !settings.identityNameValid && (
-            <FieldError>{m.identity_name_empty()}</FieldError>
-          )}
-        </Field>
-        <Field
-          data-invalid={Boolean(
-            settings.identityEmail && !settings.identityEmailValid,
-          )}
-        >
-          <FieldLabel htmlFor="settings-identity-email">
-            {m.identity_email_label()}
-          </FieldLabel>
-          <Input
-            id="settings-identity-email"
-            type="email"
-            value={settings.identityEmail}
-            disabled={settings.savingIdentity}
-            aria-invalid={Boolean(
-              settings.identityEmail && !settings.identityEmailValid,
-            )}
-            onChange={(event) => settings.setIdentityEmail(event.target.value)}
-          />
-          {settings.identityEmail && !settings.identityEmailValid && (
-            <FieldError>{m.identity_email_invalid()}</FieldError>
-          )}
-        </Field>
-      </FieldGroup>
-      {settings.identityStale && (
-        <Alert>
-          <AlertTitle>{m.settings_git_identity_stale_title()}</AlertTitle>
-          <AlertDescription>
-            <p>{m.settings_git_identity_stale_description()}</p>
-            <div className="flex flex-wrap gap-2 pt-2">
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                disabled={settings.savingIdentity}
-                onClick={settings.handleUseLatestIdentity}
-              >
-                {m.settings_git_identity_use_latest()}
-              </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                disabled={settings.savingIdentity}
-                onClick={settings.handleKeepIdentityDraft}
-              >
-                {m.settings_git_identity_keep_draft()}
-              </Button>
-            </div>
-          </AlertDescription>
-        </Alert>
-      )}
-      <div className="pt-1">
+    <SettingsGroup
+      title={m.settings_profile_git_identity_title()}
+      description={m.settings_git_identity_scope()}
+      callout={
+        settings.identityStale ? (
+          <Alert>
+            <AlertTitle>{m.settings_git_identity_stale_title()}</AlertTitle>
+            <AlertDescription>
+              <p>{m.settings_git_identity_stale_description()}</p>
+              <div className="flex flex-wrap gap-2 pt-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={settings.savingIdentity}
+                  onClick={settings.handleUseLatestIdentity}
+                >
+                  {m.settings_git_identity_use_latest()}
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  disabled={settings.savingIdentity}
+                  onClick={settings.handleKeepIdentityDraft}
+                >
+                  {m.settings_git_identity_keep_draft()}
+                </Button>
+              </div>
+            </AlertDescription>
+          </Alert>
+        ) : null
+      }
+    >
+      <SettingsRow
+        label={m.identity_name_label()}
+        htmlFor="settings-identity-name"
+        error={nameInvalid ? m.identity_name_empty() : null}
+      >
+        <Input
+          id="settings-identity-name"
+          className="w-64 max-w-full"
+          value={settings.identityName}
+          disabled={settings.savingIdentity}
+          aria-invalid={nameInvalid}
+          onChange={(event) => settings.setIdentityName(event.target.value)}
+        />
+      </SettingsRow>
+      <SettingsRow
+        label={m.identity_email_label()}
+        htmlFor="settings-identity-email"
+        error={emailInvalid ? m.identity_email_invalid() : null}
+      >
+        <Input
+          id="settings-identity-email"
+          type="email"
+          className="w-64 max-w-full"
+          value={settings.identityEmail}
+          disabled={settings.savingIdentity}
+          aria-invalid={emailInvalid}
+          onChange={(event) => settings.setIdentityEmail(event.target.value)}
+        />
+      </SettingsRow>
+      <SettingsActions>
         <Button
           type="button"
           onClick={settings.handleSaveIdentity}
           disabled={!settings.canSaveIdentity}
         >
+          {settings.savingIdentity ? (
+            <LoaderCircle data-icon="inline-start" className="animate-spin" />
+          ) : null}
           {m.identity_save()}
         </Button>
-      </div>
-    </div>
+      </SettingsActions>
+    </SettingsGroup>
   );
 }
 
@@ -148,56 +137,43 @@ interface AppAppearanceSectionProps {
 
 export function AppAppearanceSection({ settings }: AppAppearanceSectionProps) {
   return (
-    <div className="flex max-w-sm flex-col gap-4">
-      <p className="text-sm text-muted-foreground">
-        {m.settings_appearance_device_scope()}
-      </p>
-      <div className="flex flex-col gap-2">
-        <Label id="app-settings-theme-label">
-          {m.settings_theme_label()}
-        </Label>
-        <RadioGroup
+    <SettingsGroup description={m.settings_appearance_device_scope()}>
+      <SettingsRow
+        label={m.settings_theme_label()}
+        htmlFor="app-settings-theme"
+      >
+        <SettingsSelect
+          id="app-settings-theme"
           value={settings.theme}
+          pending={settings.themePending}
           onValueChange={settings.handleThemeChange}
-          disabled={settings.themePending}
-          aria-labelledby="app-settings-theme-label"
-          className="flex gap-4"
-        >
-          <label className="flex cursor-pointer items-center gap-2">
-            <RadioGroupItem value="system" />
-            <span className="text-sm">{m.common_theme_system()}</span>
-          </label>
-          <label className="flex cursor-pointer items-center gap-2">
-            <RadioGroupItem value="light" />
-            <span className="text-sm">{m.common_theme_light()}</span>
-          </label>
-          <label className="flex cursor-pointer items-center gap-2">
-            <RadioGroupItem value="dark" />
-            <span className="text-sm">{m.common_theme_dark()}</span>
-          </label>
-        </RadioGroup>
-      </div>
-      <div className="flex flex-col gap-2">
-        <Label htmlFor="app-settings-language">
-          {m.settings_language_label()}
-        </Label>
-        <Select
+          options={[
+            {
+              value: "system",
+              label: m.common_theme_system(),
+              description: m.settings_theme_system_description(),
+            },
+            { value: "light", label: m.common_theme_light() },
+            { value: "dark", label: m.common_theme_dark() },
+          ]}
+        />
+      </SettingsRow>
+      <SettingsRow
+        label={m.settings_language_label()}
+        htmlFor="app-settings-language"
+      >
+        <SettingsSelect
+          id="app-settings-language"
           value={settings.locale}
+          pending={settings.localePending}
           onValueChange={settings.handleLanguageChange}
-          disabled={settings.localePending}
-        >
-          <SelectTrigger id="app-settings-language" className="w-[200px]">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectGroup>
-              <SelectItem value="en">{m.settings_language_en()}</SelectItem>
-              <SelectItem value="ru">{m.settings_language_ru()}</SelectItem>
-            </SelectGroup>
-          </SelectContent>
-        </Select>
-      </div>
-    </div>
+          options={[
+            { value: "en", label: m.settings_language_en() },
+            { value: "ru", label: m.settings_language_ru() },
+          ]}
+        />
+      </SettingsRow>
+    </SettingsGroup>
   );
 }
 
@@ -246,28 +222,45 @@ export function AppAboutSection({
   releaseUrl,
 }: AppSettingsAbout) {
   return (
-    <div className="flex max-w-md flex-col gap-4">
-      <div className="flex flex-col gap-1">
-        <Label>{m.settings_about_version()}</Label>
-        <p className="text-sm text-muted-foreground">{version || "—"}</p>
-      </div>
-      <div className="flex flex-col gap-1">
-        <Label>{m.settings_about_build_commit()}</Label>
-        <p className="text-sm text-muted-foreground">
-          {buildCommit || m.settings_about_build_commit_unavailable()}
-        </p>
-      </div>
-      <DogfoodUpdateSettingsControls />
-      <a
-        href={releaseUrl}
-        target="_blank"
-        rel="noopener noreferrer"
-        className="inline-flex w-fit items-center gap-1 text-sm text-primary hover:underline"
-      >
-        {m.settings_about_releases_link()}
-        <ExternalLink className="size-3" />
-      </a>
-    </div>
+    <SettingsGroup>
+      <SettingsItem
+        title={m.settings_about_version()}
+        actions={
+          <span className="text-sm text-muted-foreground">
+            {version || "—"}
+          </span>
+        }
+      />
+      <SettingsItem
+        title={m.settings_about_build_commit()}
+        actions={
+          <span
+            className={cn(
+              "text-sm text-muted-foreground break-all",
+              buildCommit && "font-mono",
+            )}
+          >
+            {buildCommit || m.settings_about_build_commit_unavailable()}
+          </span>
+        }
+      />
+      <SettingsItem
+        title={m.updates_status_label()}
+        description={<DogfoodUpdateSettingsStatus />}
+        actions={<DogfoodUpdateSettingsControls />}
+      />
+      <SettingsItem
+        title={m.settings_about_releases()}
+        actions={
+          <Button asChild variant="link" size="sm">
+            <a href={releaseUrl} target="_blank" rel="noopener noreferrer">
+              {m.settings_about_releases_link()}
+              <ArrowUpRight data-icon="inline-end" />
+            </a>
+          </Button>
+        }
+      />
+    </SettingsGroup>
   );
 }
 

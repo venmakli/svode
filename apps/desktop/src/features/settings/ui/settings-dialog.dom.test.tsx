@@ -301,6 +301,12 @@ if (process.env.SVODE_UNIFIED_SETTINGS_DOM !== "1") {
         dom.window.document.querySelector('[data-slot="sidebar-group-label"]')
           ?.textContent,
       ).toBe("Svode");
+      expect(
+        dom.window.document.querySelector("main > header h2")?.textContent,
+      ).toBe("Profile");
+      expect(
+        dom.window.document.querySelector('[data-slot="breadcrumb"]'),
+      ).toBeNull();
       const text = dom.window.document.body.textContent ?? "";
       for (const section of [
         "Profile",
@@ -357,6 +363,9 @@ if (process.env.SVODE_UNIFIED_SETTINGS_DOM !== "1") {
         dom.window.document.querySelector('[data-app-section="appearance"]') !==
           null,
       ).toBe(true);
+      expect(
+        dom.window.document.querySelector("main > header h2")?.textContent,
+      ).toBe("Appearance");
       await click("Storage");
       expect(dom.window.document.querySelector("[data-storage]") !== null).toBe(
         true,

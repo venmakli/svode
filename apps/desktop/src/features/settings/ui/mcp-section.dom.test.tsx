@@ -44,13 +44,17 @@ if (!isolatedProcess) {
     });
     try {
       const row = clientRow(harness.dom, "codex");
-      expect(row.textContent?.includes("connected")).toBe(true);
+      expect(row.textContent?.includes("Connected")).toBe(true);
       expect(row.textContent?.includes("/Applications/Svode Dev")).toBe(false);
       expect(
         /version|session|update|restart/i.test(row.textContent ?? ""),
       ).toBe(false);
       expect(row.className.includes("min-w-0")).toBe(true);
-      expect(row.className.includes("overflow-hidden")).toBe(true);
+      expect(
+        row
+          .closest<HTMLElement>('[data-slot="card"]')
+          ?.className.includes("overflow-hidden"),
+      ).toBe(true);
 
       const toggle = row.querySelector<HTMLButtonElement>(
         'button[role="switch"]',
@@ -62,15 +66,21 @@ if (!isolatedProcess) {
         await settle();
       });
 
-      expect(clientRow(harness.dom, "codex").textContent?.includes("not connected")).toBe(
+      expect(clientRow(harness.dom, "codex").textContent?.includes("Not connected")).toBe(
         true,
       );
       expect(harness.dom.window.document.activeElement).toBe(toggle);
+      expect(harness.dom.window.document.querySelector("textarea")).toBeNull();
+      await act(async () => {
+        findButton(harness.dom, "Show JSON").click();
+        await settle();
+      });
       expect(
         harness.dom.window.document
           .querySelector("textarea")
           ?.textContent?.includes("SVODE_MCP_MANAGED"),
       ).toBe(true);
+      expect(findButton(harness.dom, "Hide JSON") !== undefined).toBe(true);
     } finally {
       await harness.cleanup();
       await setLocale(originalLocale, { reload: false });
@@ -94,7 +104,7 @@ if (!isolatedProcess) {
     try {
       const row = clientRow(harness.dom, "codex");
       const text = row.textContent ?? "";
-      expect(text.includes("требует внимания")).toBe(true);
+      expect(text.includes("Требует внимания")).toBe(true);
       expect(text.includes("настроена вручную")).toBe(true);
       expect(text.includes("/Applications/Svode Dev")).toBe(false);
       expect(/connected|needs attention|custom conflict/i.test(text)).toBe(
@@ -233,6 +243,8 @@ function installDomGlobals(dom: JSDOM) {
     document: dom.window.document,
     getComputedStyle: dom.window.getComputedStyle,
     navigator: dom.window.navigator,
+    requestAnimationFrame: dom.window.requestAnimationFrame.bind(dom.window),
+    cancelAnimationFrame: dom.window.cancelAnimationFrame.bind(dom.window),
     window: dom.window,
   };
   const previous = new Map<string, PropertyDescriptor | undefined>();

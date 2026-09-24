@@ -7,13 +7,6 @@ import {
   DialogDescription,
   DialogTitle,
 } from "@/components/ui/dialog";
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from "@/components/ui/breadcrumb";
 import { SidebarProvider } from "@/components/ui/sidebar";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { useSpace } from "@/features/space";
@@ -23,6 +16,7 @@ import { AppSettingsContent } from "./app-settings-content";
 import { APP_SETTINGS_NAV_ITEMS } from "./app-settings-navigation";
 import { ProjectSettingsContent } from "./project-settings-content";
 import { getProjectSettingsNavItems } from "./project-settings-navigation";
+import { SettingsPage } from "./settings-layout";
 import {
   SettingsNavigation,
   type SettingsNavigationGroup,
@@ -123,29 +117,18 @@ export function SettingsDialog({
             onNavigate={navigate}
           />
           {destination.scope === "app" ? (
-            <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-              <header className="flex min-h-12 shrink-0 items-center border-b px-4 py-2 pr-12">
-                <Breadcrumb className="min-w-0">
-                  <BreadcrumbList className="flex-nowrap">
-                    <BreadcrumbItem>Svode</BreadcrumbItem>
-                    <BreadcrumbSeparator />
-                    <BreadcrumbItem className="min-w-0">
-                      <BreadcrumbPage className="truncate">
-                        {appItems
-                          .find((item) => item.key === appSection)
-                          ?.label()}
-                      </BreadcrumbPage>
-                    </BreadcrumbItem>
-                  </BreadcrumbList>
-                </Breadcrumb>
-              </header>
+            <SettingsPage
+              title={
+                appItems.find((item) => item.key === appSection)?.label() ?? ""
+              }
+            >
               <AppSettingsContent
                 shortcutGroups={shortcutGroups}
                 registerLeaveGuard={registerLeaveGuard}
                 section={appSection}
                 enableLegacyAgentIntegration={enableLegacyAgentIntegration}
               />
-            </main>
+            </SettingsPage>
           ) : validProjectTarget ? (
             <ProjectSettingsContent
               key={`${activeRootPath}:${destination.spacePath}`}

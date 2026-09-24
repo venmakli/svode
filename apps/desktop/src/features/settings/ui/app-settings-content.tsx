@@ -33,7 +33,7 @@ export function AppSettingsContent({
     enabled: enableLegacyAgentIntegration,
   });
   return (
-    <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-4 overflow-x-hidden overflow-y-auto p-4">
+    <>
       {section === "git-identity" && <GlobalIdentitySettingsContent />}
       {section === "appearance" && (
         <AppAppearanceSection settings={appearanceSettings} />
@@ -53,7 +53,7 @@ export function AppSettingsContent({
         <AppShortcutsSection groups={shortcutGroups} />
       )}
       {section === "about" && <AppAboutSection {...aboutSettings} />}
-    </div>
+    </>
   );
 }
 

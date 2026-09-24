@@ -59,20 +59,25 @@ test("shortcut rows render locale/platform names and contexts without interactiv
         );
         const document = dom.window.document;
         expect(document.querySelectorAll("section").length).toBe(3);
-        expect(document.querySelectorAll("dl > div").length).toBe(
+        expect(document.querySelectorAll("[data-shortcut]").length).toBe(
           commands.length,
         );
+        expect(
+          document.querySelectorAll('section [data-slot="card"]').length,
+        ).toBe(3);
         expect(
           document.querySelectorAll("button, input, select, a, [tabindex]")
             .length,
         ).toBe(0);
-        expect(document.querySelector("h2")?.textContent).toBe(
+        expect(document.querySelector("section h3")?.textContent).toBe(
           locale === "en" ? "General" : "Общие",
         );
         for (const item of commands) {
           const row = document.querySelector(`[data-shortcut="${item.id}"]`)!;
           expect(
-            row.querySelector("dt")?.textContent?.includes(item.label()),
+            row
+              .querySelector('[data-slot="item-title"]')
+              ?.textContent?.includes(item.label()),
           ).toBe(true);
           expect(row.querySelectorAll('[data-slot="kbd-group"]').length).toBe(
             shortcutKeys(item, mac).length,
