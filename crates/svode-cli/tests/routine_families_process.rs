@@ -82,6 +82,7 @@ fn commit(root: &Path) -> Option<String> {
     git(&["init", "-q"])?;
     git(&["config", "user.email", "agent@example.com"])?;
     git(&["config", "user.name", "Agent"])?;
+    git(&["config", "maintenance.auto", "false"])?;
     git(&["add", "-A"])?;
     git(&["commit", "-q", "-m", "fixture"])?;
     git(&["rev-parse", "HEAD"])

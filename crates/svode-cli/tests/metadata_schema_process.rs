@@ -35,6 +35,7 @@ fn commit(root: &Path) {
     git(root, &["init", "-q"]);
     git(root, &["config", "user.email", "agent@example.com"]);
     git(root, &["config", "user.name", "Agent"]);
+    git(root, &["config", "maintenance.auto", "false"]);
     git(root, &["add", "-A"]);
     git(root, &["commit", "-q", "-m", "fixture"]);
 }

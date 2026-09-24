@@ -394,6 +394,7 @@ fn read_creates_no_stores_files_or_git_changes() {
     fixture(root);
     git(root, &["init"], None);
     git(root, &["config", "user.name", "Test"], None);
+    git(root, &["config", "maintenance.auto", "false"], None);
     git(
         root,
         &["config", "user.email", "test@example.invalid"],

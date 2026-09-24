@@ -161,6 +161,7 @@ fn committed(assets: Value) -> Option<(tempfile::TempDir, PathBuf, PathBuf)> {
         git(&dir, &["init", "-q"]);
         git(&dir, &["config", "user.email", "agent@example.com"]);
         git(&dir, &["config", "user.name", "Agent"]);
+        git(&dir, &["config", "maintenance.auto", "false"]);
         git(&dir, &["add", "-A"]);
         git(&dir, &["commit", "-q", "-m", "fixture"]);
     }

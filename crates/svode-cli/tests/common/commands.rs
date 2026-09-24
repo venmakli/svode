@@ -598,6 +598,7 @@ pub fn fixture() -> Fixture {
         &["init", "-q"][..],
         &["config", "user.email", "agent@example.com"],
         &["config", "user.name", "Agent"],
+        &["config", "maintenance.auto", "false"],
         &["add", "-A"],
         &["commit", "-q", "-m", "fixture"],
     ] {

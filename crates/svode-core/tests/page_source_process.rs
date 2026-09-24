@@ -212,6 +212,7 @@ async fn git_history_dates_and_dirty_fallback_are_read_only() {
     project(root);
     git(root, &["init"], None);
     git(root, &["config", "user.name", "Test"], None);
+    git(root, &["config", "maintenance.auto", "false"], None);
     git(
         root,
         &["config", "user.email", "test@example.invalid"],
@@ -261,6 +262,7 @@ async fn inline_independent_and_submodule_use_their_effective_git_history() {
     project(&root);
     git(&root, &["init"], None);
     git(&root, &["config", "user.name", "Test"], None);
+    git(&root, &["config", "maintenance.auto", "false"], None);
     git(
         &root,
         &["config", "user.email", "test@example.invalid"],
@@ -279,6 +281,7 @@ async fn inline_independent_and_submodule_use_their_effective_git_history() {
     let independent = root.join("independent");
     git(&independent, &["init"], None);
     git(&independent, &["config", "user.name", "Test"], None);
+    git(&independent, &["config", "maintenance.auto", "false"], None);
     git(
         &independent,
         &["config", "user.email", "test@example.invalid"],
@@ -298,6 +301,7 @@ async fn inline_independent_and_submodule_use_their_effective_git_history() {
     fs::create_dir(&source).unwrap();
     git(&source, &["init"], None);
     git(&source, &["config", "user.name", "Test"], None);
+    git(&source, &["config", "maintenance.auto", "false"], None);
     git(
         &source,
         &["config", "user.email", "test@example.invalid"],
@@ -342,6 +346,7 @@ async fn shallow_history_uses_filesystem_dates() {
     project(&source);
     git(&source, &["init"], None);
     git(&source, &["config", "user.name", "Test"], None);
+    git(&source, &["config", "maintenance.auto", "false"], None);
     git(
         &source,
         &["config", "user.email", "test@example.invalid"],

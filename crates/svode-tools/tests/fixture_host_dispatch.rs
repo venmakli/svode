@@ -1253,6 +1253,7 @@ fn index_fixture() -> Fixture {
     git(&project, &["init", "-q"]);
     git(&project, &["config", "user.email", "agent@example.com"]);
     git(&project, &["config", "user.name", "Agent"]);
+    git(&project, &["config", "maintenance.auto", "false"]);
     git(&project, &["add", "-A"]);
     git(&project, &["commit", "-q", "-m", "fixture"]);
     Fixture {
@@ -1820,6 +1821,7 @@ fn structure_fixture() -> Fixture {
     git(&project, &["init", "-q"]);
     git(&project, &["config", "user.email", "agent@example.com"]);
     git(&project, &["config", "user.name", "Agent"]);
+    git(&project, &["config", "maintenance.auto", "false"]);
     git(&project, &["add", "-A"]);
     git(&project, &["commit", "-q", "-m", "fixture"]);
     Fixture {
