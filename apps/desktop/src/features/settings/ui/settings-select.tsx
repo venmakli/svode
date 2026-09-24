@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { LoaderCircle } from "lucide-react";
 import {
   Select,
@@ -33,18 +34,28 @@ export function SettingsSelect({
   pending?: boolean;
   className?: string;
 }) {
+  const [open, setOpen] = useState(false);
   const selected = options.find((option) => option.value === value);
   const described = options.some((option) => option.description);
+  // A pending trigger stays focusable: a disabled one would drop keyboard focus.
   return (
     <Select
       value={value}
-      onValueChange={onValueChange}
-      disabled={disabled || pending}
+      onValueChange={(next) => {
+        if (!pending) onValueChange(next);
+      }}
+      disabled={disabled}
+      open={open}
+      onOpenChange={(next) => setOpen(next && !pending)}
     >
       <SelectTrigger
         id={id}
         aria-busy={pending || undefined}
-        className={cn("w-44 max-w-full", className)}
+        aria-disabled={pending || undefined}
+        className={cn(
+          "w-44 max-w-full aria-disabled:cursor-not-allowed aria-disabled:opacity-50",
+          className,
+        )}
       >
         <SelectValue>{selected?.label}</SelectValue>
         {pending ? (

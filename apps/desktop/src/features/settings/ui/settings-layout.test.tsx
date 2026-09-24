@@ -1,4 +1,6 @@
 import { expect, test } from "bun:test";
+import { act } from "react";
+import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import { JSDOM } from "jsdom";
 import {
@@ -93,4 +95,51 @@ test("page title, group anatomy and row grammar", () => {
     true,
   );
   expect(card.lastElementChild?.textContent).toBe("Save");
+});
+
+test("a new page title resets the scroll offset of the page", async () => {
+  const dom = new JSDOM(
+    "<!doctype html><html><body><div id=app></div></body></html>",
+  );
+  const values: Record<string, unknown> = {
+    window: dom.window,
+    document: dom.window.document,
+    HTMLElement: dom.window.HTMLElement,
+    IS_REACT_ACT_ENVIRONMENT: true,
+  };
+  const previous = new Map<string, PropertyDescriptor | undefined>();
+  for (const [key, value] of Object.entries(values)) {
+    previous.set(key, Object.getOwnPropertyDescriptor(globalThis, key));
+    Object.defineProperty(globalThis, key, {
+      configurable: true,
+      writable: true,
+      value,
+    });
+  }
+  const root = createRoot(dom.window.document.getElementById("app")!);
+  const draw = (title: string) =>
+    act(async () =>
+      root.render(
+        <SettingsPage title={title}>
+          <div>{title}</div>
+        </SettingsPage>,
+      ),
+    );
+  try {
+    await draw("MCP");
+    const scroller = dom.window.document.querySelector("main > header")!
+      .nextElementSibling as HTMLElement;
+    scroller.scrollTop = 120;
+    await draw("MCP");
+    expect(scroller.scrollTop).toBe(120);
+    await draw("Shortcuts");
+    expect(scroller.scrollTop).toBe(0);
+  } finally {
+    await act(async () => root.unmount());
+    for (const [key, descriptor] of previous) {
+      if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+      else Reflect.deleteProperty(globalThis, key);
+    }
+    dom.window.close();
+  }
 });

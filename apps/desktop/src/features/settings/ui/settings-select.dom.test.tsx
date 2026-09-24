@@ -106,9 +106,19 @@ if (process.env.SVODE_SETTINGS_SELECT_DOM !== "1") {
       await draw(true);
       const pendingTrigger =
         document.querySelector<HTMLButtonElement>('[role="combobox"]')!;
-      expect(pendingTrigger.disabled).toBe(true);
+      expect(pendingTrigger.disabled).toBe(false);
+      expect(pendingTrigger.getAttribute("aria-disabled")).toBe("true");
       expect(pendingTrigger.getAttribute("aria-busy")).toBe("true");
       expect(Boolean(pendingTrigger.querySelector(".animate-spin"))).toBe(true);
+      await act(async () => {
+        pendingTrigger.focus();
+        await tick();
+      });
+      await key(pendingTrigger, "ArrowDown");
+      expect(document.querySelectorAll('[role="option"]').length).toBe(0);
+      await key(pendingTrigger, "l");
+      expect(changes).toEqual(["sepia"]);
+      expect(document.activeElement).toBe(pendingTrigger);
     } finally {
       await act(async () => root.unmount());
       restore();

@@ -179,15 +179,17 @@ export function McpIntegrationsSection() {
                       disabled={
                         !client.found ||
                         blocksManagedToggle(client) ||
-                        pendingClients.has(client.id) ||
                         status.server.status !== "installed"
                       }
+                      aria-disabled={pendingClients.has(client.id) || undefined}
                       aria-label={m.settings_mcp_client_toggle({
                         client: client.name,
                       })}
-                      onCheckedChange={(checked) =>
-                        handleToggle(client, checked)
-                      }
+                      className="aria-disabled:cursor-not-allowed aria-disabled:opacity-50"
+                      onCheckedChange={(checked) => {
+                        if (!pendingClients.has(client.id))
+                          void handleToggle(client, checked);
+                      }}
                     />
                   </>
                 }

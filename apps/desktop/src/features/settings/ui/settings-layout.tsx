@@ -3,6 +3,8 @@ import {
   Fragment,
   isValidElement,
   useId,
+  useLayoutEffect,
+  useRef,
   type ComponentProps,
   type ReactNode,
 } from "react";
@@ -33,6 +35,11 @@ export function SettingsPage({
   title: string;
   children: ReactNode;
 }) {
+  const scrollRef = useRef<HTMLDivElement>(null);
+  // Each section opens at its top instead of the previous section's offset.
+  useLayoutEffect(() => {
+    if (scrollRef.current) scrollRef.current.scrollTop = 0;
+  }, [title]);
   return (
     <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
       <header className="flex min-h-12 shrink-0 items-center border-b px-6 py-2 pr-12">
@@ -40,7 +47,10 @@ export function SettingsPage({
           {title}
         </h2>
       </header>
-      <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto">
+      <div
+        ref={scrollRef}
+        className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto"
+      >
         <div className="flex w-full max-w-3xl min-w-0 flex-col gap-8 p-6">
           {children}
         </div>

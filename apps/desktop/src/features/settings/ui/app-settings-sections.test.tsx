@@ -105,7 +105,8 @@ test("appearance rows use labelled selects that show only the selected label", (
     ).toBe("Тема");
     expect(theme.getAttribute("role")).toBe("combobox");
     expect(theme.textContent).toBe("Системная");
-    expect(theme.hasAttribute("disabled")).toBe(true);
+    expect(theme.hasAttribute("disabled")).toBe(false);
+    expect(theme.getAttribute("aria-disabled")).toBe("true");
     expect(theme.getAttribute("aria-busy")).toBe("true");
     const language = document.querySelector("#app-settings-language")!;
     expect(language.textContent).toBe("Русский");
