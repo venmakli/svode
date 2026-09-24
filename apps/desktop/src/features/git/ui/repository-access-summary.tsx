@@ -3,6 +3,7 @@ import { getLocale } from "@/paraglide/runtime.js";
 import * as m from "@/paraglide/messages.js";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/shared/lib/utils";
 import { GitRemoteAuthDialog } from "./git-remote-auth-dialog";
 
 import { useRepositoryAccessActivation } from "../hooks/use-repository-access-activation";
@@ -11,28 +12,20 @@ import { useRepositoryAccessRecovery } from "../hooks/use-repository-access-reco
 import { repositoryAccessPresentation } from "./repository-access-copy";
 import { RepositoryAccessStatusIcon } from "./repository-access-status-icon";
 
-export type RepositoryAccessOwnerKind =
-  | "project"
-  | "inline"
-  | "independent"
-  | "submodule";
-
 export interface RepositoryAccessSummaryProps {
-  displayPath: string;
-  ownerKind: RepositoryAccessOwnerKind;
-  ownerName: string;
   remoteUrl: string;
   repositoryPath: string;
   onEditRemote(): void;
+  className?: string;
 }
 
+// Repository access as the content of a settings card: the host supplies the
+// heading, the owner and the container.
 export function RepositoryAccessSummary({
-  displayPath,
-  ownerKind,
-  ownerName,
   remoteUrl,
   repositoryPath,
   onEditRemote,
+  className,
 }: RepositoryAccessSummaryProps) {
   useRepositoryAccessActivation(repositoryPath);
   const access = useRepositoryAccess(repositoryPath);
@@ -46,61 +39,51 @@ export function RepositoryAccessSummary({
 
   return (
     <>
-      <section
-        className="flex min-w-0 flex-col gap-3 rounded-md border p-3"
+      <div
+        className={cn("flex min-w-0 flex-col gap-3", className)}
         aria-busy={busy}
         data-repository-access-summary
         data-repository-access-status={presentation.status}
       >
-        <div className="flex min-w-0 items-start justify-between gap-3">
-          <div className="flex min-w-0 flex-col gap-1">
-            <h2 className="text-sm font-medium">{m.git_access_title()}</h2>
-            <p className="text-xs text-muted-foreground">
-              {repositoryOwnerLabel(ownerKind, ownerName)}
-            </p>
-            <p
-              className="break-all text-xs text-muted-foreground"
-              title={displayPath}
-            >
-              {displayPath}
-            </p>
-          </div>
-          <Badge
-            variant={
-              presentation.status === "error" ? "destructive" : "secondary"
-            }
-          >
-            <RepositoryAccessStatusIcon
-              status={presentation.status}
-              busy={busy}
-            />
-            {presentation.statusLabel}
-          </Badge>
-        </div>
-
-        <div className="flex min-w-0 items-start gap-2" aria-live="polite">
-          <div className="flex min-w-0 flex-1 flex-col gap-1">
+        <div
+          className="flex min-w-0 flex-wrap items-center gap-x-6 gap-y-2"
+          aria-live="polite"
+        >
+          <div className="flex min-w-0 flex-[1_1_12rem] flex-col gap-1">
             <p className="text-sm font-medium">{presentation.title}</p>
-            <p className="text-xs text-muted-foreground">
+            <p className="text-sm text-muted-foreground">
               {presentation.description}
             </p>
           </div>
-          {presentation.action !== "none" && presentation.actionLabel && (
-            <Button
-              type="button"
-              size="sm"
-              disabled={busy}
-              onClick={() => recovery.runPrimaryAction(presentation.action)}
+          <div className="flex max-w-full min-w-0 flex-wrap items-center gap-2">
+            <Badge
+              variant={
+                presentation.status === "error" ? "destructive" : "secondary"
+              }
             >
-              {busy && (
-                <LoaderCircle
-                  data-icon="inline-start"
-                  className="animate-spin"
-                />
-              )}
-              {presentation.actionLabel}
-            </Button>
-          )}
+              <RepositoryAccessStatusIcon
+                status={presentation.status}
+                busy={busy}
+              />
+              {presentation.statusLabel}
+            </Badge>
+            {presentation.action !== "none" && presentation.actionLabel && (
+              <Button
+                type="button"
+                size="sm"
+                disabled={busy}
+                onClick={() => recovery.runPrimaryAction(presentation.action)}
+              >
+                {busy && (
+                  <LoaderCircle
+                    data-icon="inline-start"
+                    className="animate-spin"
+                  />
+                )}
+                {presentation.actionLabel}
+              </Button>
+            )}
+          </div>
         </div>
 
         {recovery.recommendationsOpen && (
@@ -146,22 +129,20 @@ export function RepositoryAccessSummary({
                   {m.git_access_action_check_again()}
                 </Button>
               )}
-              {ownerKind !== "inline" && (
-                <Button
-                  type="button"
-                  size="xs"
-                  variant="ghost"
-                  onClick={onEditRemote}
-                >
-                  {remoteUrl.trim()
-                    ? m.git_access_action_open_origin()
-                    : m.git_access_action_setup_origin()}
-                </Button>
-              )}
+              <Button
+                type="button"
+                size="xs"
+                variant="ghost"
+                onClick={onEditRemote}
+              >
+                {remoteUrl.trim()
+                  ? m.git_access_action_open_origin()
+                  : m.git_access_action_setup_origin()}
+              </Button>
             </div>
           </div>
         </details>
-      </section>
+      </div>
 
       <GitRemoteAuthDialog
         open={recovery.authOpen}
@@ -175,45 +156,23 @@ export function RepositoryAccessSummary({
   );
 }
 
+// A passive status for a collapsed owner: reading it never starts a check.
 export function RepositoryAccessBadge({
-  ownerKind,
   repositoryPath,
 }: {
-  ownerKind: RepositoryAccessOwnerKind;
   repositoryPath: string;
 }) {
   const access = useRepositoryAccess(repositoryPath);
   const presentation = repositoryAccessPresentation(access);
-  const label =
-    ownerKind === "inline"
-      ? m.git_access_inline_badge({ status: presentation.statusLabel })
-      : presentation.statusLabel;
   return (
     <Badge
       className="max-w-full"
       variant={presentation.status === "error" ? "destructive" : "outline"}
-      aria-label={label}
       data-repository-access-row-status={presentation.status}
     >
-      {label}
+      {presentation.statusLabel}
     </Badge>
   );
-}
-
-function repositoryOwnerLabel(
-  ownerKind: RepositoryAccessOwnerKind,
-  ownerName: string,
-) {
-  switch (ownerKind) {
-    case "project":
-      return m.git_access_owner_project({ name: ownerName });
-    case "inline":
-      return m.git_access_owner_inline({ name: ownerName });
-    case "independent":
-      return m.git_access_owner_independent({ name: ownerName });
-    case "submodule":
-      return m.git_access_owner_submodule({ name: ownerName });
-  }
 }
 
 function formatTimestamp(timestamp: number) {

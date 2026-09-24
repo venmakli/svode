@@ -37,32 +37,34 @@ if (process.env.SVODE_AVATAR_DOM_PROCESS !== "3") {
               <ActorSingleValue value={identity.email} actors={[identity]} />
             )}
             <IdentitySection
-              mode="summary"
               isRoot={false}
-              scopeName="Repo"
-              repoIdentity={{
-                effective: identity,
-                local: null,
-                source: identity ? "partial" : "missing",
+              identity={{
+                repoIdentity: {
+                  effective: identity,
+                  local: null,
+                  source: identity ? "partial" : "missing",
+                },
+                identityLoaded: true,
+                identityName: "Unrelated draft",
+                identityEmail: "draft@example.test",
+                identityFormError: null,
+                savingIdentity: false,
+                identityEditing: false,
+                canResetIdentity: false,
+                fanoutEnabled: false,
+                fanoutPreview: [],
+                fanoutSelected: {},
+                setIdentityName: noop,
+                setIdentityEmail: noop,
+                handleStartIdentityEdit: () => {
+                  edits++;
+                },
+                handleCancelIdentityEdit: noop,
+                setFanoutEnabled: noop,
+                setFanoutSelected: noop,
+                handleSaveIdentity: async () => {},
+                handleResetIdentity: async () => {},
               }}
-              identityName="Unrelated draft"
-              identityEmail="draft@example.test"
-              setIdentityName={noop}
-              setIdentityEmail={noop}
-              identityFormError={null}
-              savingIdentity={false}
-              canResetIdentity={false}
-              onEdit={() => {
-                edits++;
-              }}
-              onCancelEdit={noop}
-              onSave={noop}
-              onReset={noop}
-              fanoutEnabled={false}
-              setFanoutEnabled={noop}
-              fanoutPreview={[]}
-              fanoutSelected={{}}
-              setFanoutSelected={noop}
             />
           </>,
         );

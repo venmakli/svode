@@ -230,9 +230,6 @@ if (!isolatedProcess) {
             onOpenRepositorySettings={() => undefined}
           />
           <RepositoryAccessSummary
-            ownerKind="independent"
-            ownerName="Long repository name"
-            displayPath={path}
             repositoryPath={path}
             remoteUrl="https://example.test/repo.git"
             onEditRemote={() => undefined}
@@ -449,17 +446,11 @@ if (!isolatedProcess) {
               repositoryPath="/automatic"
             />
             <RepositoryAccessSummary
-              ownerKind="independent"
-              ownerName="Auto"
-              displayPath="/automatic"
               repositoryPath="/automatic"
               remoteUrl="https://example.test/remote.git"
               onEditRemote={() => undefined}
             />
-            <RepositoryAccessBadge
-              ownerKind="independent"
-              repositoryPath="/sibling"
-            />
+            <RepositoryAccessBadge repositoryPath="/sibling" />
           </>,
         );
         await nextFrame(dom);

@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { act } from "react";
+import { act, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { JSDOM } from "jsdom";
 
@@ -9,9 +9,69 @@ import * as m from "@/paraglide/messages.js";
 import { getLocale, setLocale } from "@/paraglide/runtime.js";
 import { clearNativeMocks, mockNativeIpc } from "@/platform/native/testing";
 
+import type {
+  GitPolicyField,
+  SpaceSettingsGit,
+} from "../hooks/use-space-settings-git";
+import type { SpaceSettingsIdentity } from "../hooks/use-space-settings-identity";
 import { SpaceGitSection } from "./space-git-section";
 
 const isolatedProcess = process.env.SVODE_REPOSITORY_ACCESS_DOM_PROCESS === "1";
+
+const noop = () => undefined;
+
+function gitFixture(
+  overrides: Partial<SpaceSettingsGit> = {},
+): SpaceSettingsGit {
+  return {
+    loaded: true,
+    gitType: "submodule",
+    submoduleUrl: "https://example.test/archive.git",
+    remoteUrl: "https://example.test/archive.git",
+    savedRemoteUrl: "https://example.test/archive.git",
+    branch: "main",
+    autoSync: false,
+    autoCommitStructural: true,
+    autoCommitSystem: false,
+    policyPending: new Set<GitPolicyField>(),
+    pendingRemote: null,
+    applyingRemote: false,
+    remoteUpdateResult: null,
+    setRemoteUrl: noop,
+    handleRemoteBlur: noop,
+    handlePolicyChange: async () => undefined,
+    cancelPendingRemote: noop,
+    confirmPendingRemote: async () => undefined,
+    ...overrides,
+  };
+}
+
+function identityFixture(
+  overrides: Partial<SpaceSettingsIdentity> = {},
+): SpaceSettingsIdentity {
+  return {
+    repoIdentity: null,
+    identityLoaded: true,
+    identityName: "",
+    identityEmail: "",
+    identityFormError: null,
+    savingIdentity: false,
+    identityEditing: false,
+    canResetIdentity: false,
+    fanoutEnabled: false,
+    fanoutPreview: [],
+    fanoutSelected: {},
+    setIdentityName: noop,
+    setIdentityEmail: noop,
+    handleStartIdentityEdit: noop,
+    handleCancelIdentityEdit: noop,
+    setFanoutEnabled: noop,
+    setFanoutSelected: noop,
+    handleSaveIdentity: async () => undefined,
+    handleResetIdentity: async () => undefined,
+    ...overrides,
+  };
+}
 
 if (!isolatedProcess) {
   test("repository access Settings DOM scenarios", () => {
@@ -32,7 +92,7 @@ if (!isolatedProcess) {
     expect(child.status).toBe(0);
   });
 } else {
-  test("exact submodule capability leads Settings without probing and preserves partial recovery", async () => {
+  test("owner Git groups keep access, connection, automation and author in rows of one owner", async () => {
     const originalLocale = getLocale();
     await setLocale("en", { reload: false });
     const dom = createDom();
@@ -60,145 +120,387 @@ if (!isolatedProcess) {
       { shouldMockEvents: true },
     );
     const root = createRoot(dom.window.document.getElementById("app")!);
+    const document = dom.window.document;
     const longPath =
       "/Users/test/Projects/a-very-long-project-name/spaces/a-very-long-submodule-name";
-    const props = {
-      gitType: "submodule" as const,
-      repositoryAccessOwnerKind: "submodule" as const,
-      repositoryPath: longPath,
-      repositoryDisplayPath: longPath,
-      repositoryOwnerName: "Long-lived research archive",
-      activeRootName: "Knowledge Base",
-      scopeName: "Long-lived research archive",
-      isRoot: false,
-      submoduleUrl: "https://example.test/archive.git",
-      remoteUrl: "https://example.test/archive.git",
-      branch: "main",
-      autoSync: false,
-      autoCommitStructural: false,
-      autoCommitSystem: false,
-      repoIdentity: null,
-      identityName: "",
-      identityEmail: "",
-      identityFormError: null,
-      savingIdentity: false,
-      canResetIdentity: false,
-      identityEditing: false,
-      remoteUpdateResult: {
-        localRemoteUpdated: true,
-        trackedReconciliation: {
-          status: "pending_repository_access" as const,
-          repositoryId: "repo-parent",
-          accessStatus: "unknown" as const,
-          accessReason: "not_checked" as const,
-        },
-      },
-      fanoutEnabled: false,
-      fanoutPreview: [],
-      fanoutSelected: {},
-      onRemoteChange: () => undefined,
-      onRemoteBlur: () => undefined,
-      onAutoSyncChange: () => undefined,
-      onAutoCommitStructuralChange: () => undefined,
-      onAutoCommitSystemChange: () => undefined,
-      onIdentityNameChange: () => undefined,
-      onIdentityEmailChange: () => undefined,
-      onStartIdentityEdit: () => undefined,
-      onCancelIdentityEdit: () => undefined,
-      onSaveIdentity: () => undefined,
-      onResetIdentity: () => undefined,
-      onFanoutEnabledChange: () => undefined,
-      onFanoutSelectedChange: () => undefined,
-      onEditProjectRemote: () => undefined,
-    };
-    const remoteInputs = () =>
-      Array.from(dom.window.document.querySelectorAll("label"))
-        .filter(
-          (label) =>
-            label.htmlFor !== "" && label.textContent === m.git_remote_label(),
-        )
-        .map((label) =>
-          dom.window.document.getElementById(label.htmlFor),
-        ) as HTMLInputElement[];
+    const groups = () =>
+      Array.from(document.querySelectorAll<HTMLElement>("#app > section")).map(
+        (group) => group.querySelector("h3")?.textContent,
+      );
+    const group = (title: string) =>
+      Array.from(document.querySelectorAll<HTMLElement>("section")).find(
+        (section) => section.querySelector("h3")?.textContent === title,
+      )!;
+    const inputFor = (label: string) =>
+      Array.from(document.querySelectorAll("label"))
+        .filter((node) => node.htmlFor !== "" && node.textContent === label)
+        .map((node) => document.getElementById(node.htmlFor)) as HTMLElement[];
 
     try {
+      const policyChanges: [GitPolicyField, boolean][] = [];
       await act(async () => {
-        root.render(<SpaceGitSection {...props} />);
+        root.render(
+          <SpaceGitSection
+            spacePath={longPath}
+            isRoot={false}
+            projectName="Knowledge Base"
+            git={gitFixture({
+              remoteUpdateResult: {
+                localRemoteUpdated: true,
+                trackedReconciliation: {
+                  status: "pending_repository_access",
+                  repositoryId: "repo-parent",
+                  accessStatus: "unknown",
+                  accessReason: "not_checked",
+                },
+              },
+              policyPending: new Set<GitPolicyField>(["autoCommitSystem"]),
+              handlePolicyChange: async (field, value) => {
+                policyChanges.push([field, value]);
+              },
+            })}
+            identity={identityFixture()}
+          />,
+        );
         await settle();
       });
 
-      const section = dom.window.document.querySelector<HTMLElement>(
+      expect(groups()).toEqual([
+        "Repository access",
+        "Connection",
+        "Automation on this device",
+        "Commit author",
+      ]);
+
+      // Access is the content of its group's card: no heading, owner or path
+      // of its own; exact settings activate once and never probe.
+      const access = document.querySelector<HTMLElement>(
         "[data-repository-access-summary]",
-      );
-      expect(section).toBe(
-        (dom.window.document.querySelector("#app > div")?.firstElementChild ??
-          null) as HTMLElement | null,
-      );
-      expect(section?.dataset.repositoryAccessStatus).toBe("local");
+      )!;
+      expect(access.closest("section")).toBe(group("Repository access"));
+      expect(access.closest("[data-slot=card]") === null).toBe(false);
+      expect(access.dataset.repositoryAccessStatus).toBe("local");
+      expect(access.querySelector("h2, h3")).toBeNull();
+      expect(access.textContent?.includes(longPath)).toBe(false);
       expect(
-        section?.textContent?.includes("Long-lived research archive"),
-      ).toBe(true);
-      expect(section?.querySelector(`[title="${longPath}"]`) === null).toBe(
-        false,
-      );
-      expect(
-        Array.from(section?.querySelectorAll("button") ?? []).some(
+        Array.from(access.querySelectorAll("button")).some(
           (button) =>
             button.textContent?.trim() === m.git_access_action_check_again(),
         ),
       ).toBe(false);
-      expect(remoteInputs().map((input) => input?.tagName)).toEqual(["INPUT"]);
-      expect(
-        dom.window.document.body.textContent?.includes(
-          m.git_remote_reconciliation_pending_title(),
-        ),
-      ).toBe(true);
       expect(calls.includes("repository_access_get")).toBe(true);
       expect(
         calls.filter((command) => command === "repository_access_activate"),
       ).toEqual(["repository_access_activate"]);
       expect(calls.includes("repository_access_verify")).toBe(false);
 
-      // Two owners on one page keep their own fields, and the identity editor
-      // opens in place of its summary.
+      // Remote URL is a full-width field; the submodule address and the
+      // branch are read-only rows; the reconciliation notice sits above the
+      // card.
+      const [remote] = inputFor("Remote URL");
+      expect(remote?.tagName).toBe("INPUT");
+      expect(
+        remote?.closest("[data-slot=field]")?.getAttribute("data-orientation"),
+      ).toBe("vertical");
+      const connection = group("Connection");
+      expect(connection.textContent?.includes("Submodule URL")).toBe(true);
+      expect(
+        connection.textContent?.includes(
+          "The address the “Knowledge Base” project uses to include this space.",
+        ),
+      ).toBe(true);
+      expect(connection.textContent?.includes("Branch")).toBe(true);
+      expect(
+        connection
+          .querySelector("[data-slot=alert]")
+          ?.textContent?.includes(m.git_remote_reconciliation_pending_title()),
+      ).toBe(true);
+      expect(
+        connection
+          .querySelector("[data-slot=card]")
+          ?.querySelector("[data-slot=alert]") ?? null,
+      ).toBeNull();
+
+      // Switches apply at once; a pending one keeps focus, shows progress and
+      // ignores a second change.
+      const [autoSync] = inputFor("Sync after commit");
+      const [structural] = inputFor("Commit structural changes");
+      const [system] = inputFor("Commit system settings");
+      expect(autoSync?.getAttribute("role")).toBe("switch");
+      expect(autoSync?.hasAttribute("disabled")).toBe(false);
+      await act(async () => {
+        structural!.click();
+        await settle();
+      });
+      expect(policyChanges).toEqual([["autoCommitStructural", false]]);
+      expect(system?.getAttribute("aria-disabled")).toBe("true");
+      expect(system?.hasAttribute("disabled")).toBe(false);
+      await act(async () => {
+        system!.click();
+        await settle();
+      });
+      expect(policyChanges.length).toBe(1);
+
+      // Without a saved remote, sync is unavailable and the row says why.
+      await act(async () => {
+        root.render(
+          <SpaceGitSection
+            spacePath={longPath}
+            isRoot={false}
+            projectName="Knowledge Base"
+            git={gitFixture({ remoteUrl: "", savedRemoteUrl: "" })}
+            identity={identityFixture()}
+          />,
+        );
+        await settle();
+      });
+      expect(inputFor("Sync after commit")[0]?.hasAttribute("disabled")).toBe(
+        true,
+      );
+      expect(
+        group("Automation on this device").textContent?.includes(
+          m.settings_git_auto_sync_no_remote(),
+        ),
+      ).toBe(true);
+
+      // Loading keeps skeleton rows in each card instead of empty values.
+      await act(async () => {
+        root.render(
+          <SpaceGitSection
+            spacePath={longPath}
+            isRoot={false}
+            projectName="Knowledge Base"
+            git={gitFixture({ loaded: false })}
+            identity={identityFixture({ identityLoaded: false })}
+          />,
+        );
+        await settle();
+      });
+      expect(inputFor("Remote URL")).toEqual([]);
+      expect(inputFor("Sync after commit")).toEqual([]);
+      expect(
+        group("Commit author").querySelector("[data-slot=skeleton]") === null,
+      ).toBe(false);
+      expect(
+        group("Commit author").querySelector("[data-slot=alert]"),
+      ).toBeNull();
+
+      // Two owners on one page keep their own fields.
       await act(async () => {
         root.render(
           <>
             <SpaceGitSection
-              {...props}
-              gitType={null}
-              repositoryAccessOwnerKind="project"
+              spacePath="/project"
               isRoot
+              projectName="Knowledge Base"
+              git={gitFixture({ gitType: null, submoduleUrl: null })}
+              identity={identityFixture()}
             />
-            <SpaceGitSection {...props} identityEditing />
+            <SpaceGitSection
+              spacePath={longPath}
+              isRoot={false}
+              projectName="Knowledge Base"
+              git={gitFixture()}
+              identity={identityFixture()}
+            />
           </>,
         );
         await settle();
       });
-      const [projectRemote, spaceRemote] = remoteInputs();
+      const [projectRemote, spaceRemote] = inputFor("Remote URL");
       expect(projectRemote?.tagName).toBe("INPUT");
       expect(spaceRemote?.tagName).toBe("INPUT");
       expect(projectRemote === spaceRemote).toBe(false);
-      const nameLabels = Array.from(
-        dom.window.document.querySelectorAll("label"),
-      ).filter(
-        (label) =>
-          label.textContent === m.settings_git_identity_name_override_label(),
-      );
-      expect(nameLabels.length).toBe(1);
       expect(
-        dom.window.document.getElementById(nameLabels[0]!.htmlFor)?.tagName,
-      ).toBe("INPUT");
-      expect(
-        dom.window.document.querySelectorAll(
+        document.querySelectorAll(
           `button[aria-label$="${m.settings_git_identity_set_project()}"]`,
         ).length,
       ).toBe(1);
       expect(
-        dom.window.document.querySelector(
+        document.querySelectorAll(
           `button[aria-label$="${m.settings_git_identity_set_repository()}"]`,
+        ).length,
+      ).toBe(1);
+      // Without an author the callout above the card explains it once and
+      // the row names the state without a second badge.
+      const missingAuthor = group("Commit author");
+      expect(
+        missingAuthor
+          .querySelector("[data-slot=alert]")
+          ?.textContent?.includes(m.settings_git_identity_missing_title()),
+      ).toBe(true);
+      const authorCard = missingAuthor.querySelector("[data-slot=card]")!;
+      expect(authorCard.textContent?.includes("Not configured")).toBe(true);
+      expect(authorCard.querySelector("[data-slot=badge]")).toBeNull();
+    } finally {
+      await act(async () => root.unmount());
+      clearNativeMocks();
+      restoreGlobals();
+      dom.window.close();
+      await setLocale(originalLocale, { reload: false });
+    }
+  });
+
+  test("commit author row opens its editor in place and returns focus to the row", async () => {
+    const originalLocale = getLocale();
+    await setLocale("en", { reload: false });
+    const dom = createDom();
+    const restoreGlobals = installDomGlobals(dom);
+    mockNativeIpc(
+      () => ({
+        checkedAt: null,
+        expiresAt: null,
+        generation: 1,
+        lastKnownStatus: null,
+        reason: null,
+        repositoryId: "repo",
+        status: "local",
+      }),
+      { shouldMockEvents: true },
+    );
+    const root = createRoot(dom.window.document.getElementById("app")!);
+    const document = dom.window.document;
+    let resets = 0;
+    let fanout: Record<string, boolean> = {};
+
+    function Author() {
+      const [editing, setEditing] = useState(false);
+      const [fanoutEnabled, setFanoutEnabled] = useState(false);
+      return (
+        <SpaceGitSection
+          spacePath="/project"
+          isRoot
+          projectName="Knowledge Base"
+          git={gitFixture({ gitType: null, submoduleUrl: null })}
+          identity={identityFixture({
+            repoIdentity: {
+              effective: { name: "Ada Lovelace", email: "ada@example.test" },
+              local: { name: "Ada Lovelace", email: "ada@example.test" },
+              source: "local",
+            },
+            identityName: "Ada Lovelace",
+            identityEmail: "ada@example.test",
+            identityEditing: editing,
+            canResetIdentity: true,
+            fanoutEnabled,
+            fanoutPreview: [
+              {
+                spacePath: "/project/docs",
+                spaceName: "Docs",
+                currentLocal: null,
+                currentEffective: {
+                  name: "Global Author",
+                  email: "global@example.test",
+                },
+                willReplace: false,
+              },
+            ],
+            fanoutSelected: { "/project/docs": true },
+            handleStartIdentityEdit: () => setEditing(true),
+            handleCancelIdentityEdit: () => setEditing(false),
+            setFanoutEnabled: (value) => setFanoutEnabled(value),
+            setFanoutSelected: (next) => {
+              fanout = next as Record<string, boolean>;
+            },
+            handleResetIdentity: async () => {
+              resets++;
+              setEditing(false);
+            },
+          })}
+        />
+      );
+    }
+    const button = (label: string) =>
+      Array.from(document.querySelectorAll<HTMLButtonElement>("button")).find(
+        (node) => node.textContent === label,
+      )!;
+
+    try {
+      await act(async () => {
+        root.render(<Author />);
+        await settle();
+      });
+      const author = Array.from(document.querySelectorAll("section")).find(
+        (section) =>
+          section.querySelector("h3")?.textContent === "Commit author",
+      )!;
+      expect(author.textContent?.includes("Ada Lovelace")).toBe(true);
+      expect(author.textContent?.includes("ada@example.test")).toBe(true);
+      expect(
+        author.querySelector('[data-slot="avatar-fallback"]') === null,
+      ).toBe(false);
+      const edit = author.querySelector<HTMLButtonElement>(
+        'button[aria-label="Ada Lovelace: Edit"]',
+      )!;
+      await act(async () => {
+        edit.click();
+        await settle();
+      });
+
+      const form = author.querySelector("form")!;
+      expect(form.getAttribute("aria-label")).toBe("Commit author");
+      expect(document.activeElement?.id.endsWith("-name")).toBe(true);
+      expect(
+        form.querySelectorAll('input:not([aria-hidden="true"])').length,
+      ).toBe(2);
+      const actions = Array.from(
+        form.querySelectorAll<HTMLButtonElement>("button:not([role])"),
+      ).map((node) => node.textContent);
+      expect(actions).toEqual(["Reset to global", "Cancel", "Save"]);
+      expect(button("Reset to global").dataset.variant).toBe("destructive");
+
+      // The nested repositories list appears with the switch.
+      const fanoutSwitch = Array.from(form.querySelectorAll("label"))
+        .filter(
+          (label) =>
+            label.textContent === m.settings_git_identity_nested_checkbox(),
+        )
+        .map((label) => document.getElementById(label.htmlFor))[0]!;
+      await act(async () => {
+        fanoutSwitch.click();
+        await settle();
+      });
+      const repositories = form.querySelector('[role="group"][aria-label]')!;
+      expect(repositories.textContent?.includes("Docs")).toBe(true);
+      expect(
+        repositories.textContent?.includes(
+          "Current: Global Author <global@example.test>",
         ),
-      ).toBe(null);
+      ).toBe(true);
+      expect(repositories.querySelector("[data-slot=card]")).toBeNull();
+      await act(async () => {
+        repositories
+          .querySelector<HTMLButtonElement>('[role="checkbox"]')!
+          .click();
+        await settle();
+      });
+      expect(fanout).toEqual({ "/project/docs": false });
+
+      await act(async () => {
+        button("Cancel").click();
+        await settle();
+      });
+      expect(author.querySelector("form")).toBeNull();
+      expect(document.activeElement).toBe(
+        author.querySelector('button[aria-label="Ada Lovelace: Edit"]'),
+      );
+
+      await act(async () => {
+        author
+          .querySelector<HTMLButtonElement>(
+            'button[aria-label="Ada Lovelace: Edit"]',
+          )!
+          .click();
+        await settle();
+      });
+      await act(async () => {
+        button("Reset to global").click();
+        await settle();
+      });
+      expect(resets).toBe(1);
+      expect(document.activeElement).toBe(
+        author.querySelector('button[aria-label="Ada Lovelace: Edit"]'),
+      );
     } finally {
       await act(async () => root.unmount());
       clearNativeMocks();
@@ -210,10 +512,26 @@ if (!isolatedProcess) {
 }
 
 function createDom() {
-  return new JSDOM(
+  const dom = new JSDOM(
     "<!doctype html><html lang=en><body><div id=app></div></body></html>",
     { pretendToBeVisual: true, url: "http://localhost/" },
   );
+  // React's input event fallback in jsdom listens through attachEvent.
+  Object.defineProperties(dom.window.HTMLElement.prototype, {
+    attachEvent: {
+      configurable: true,
+      value(this: HTMLElement, name: string, listener: EventListener) {
+        this.addEventListener(name.replace(/^on/, ""), listener);
+      },
+    },
+    detachEvent: {
+      configurable: true,
+      value(this: HTMLElement, name: string, listener: EventListener) {
+        this.removeEventListener(name.replace(/^on/, ""), listener);
+      },
+    },
+  });
+  return dom;
 }
 
 function installDomGlobals(dom: JSDOM) {

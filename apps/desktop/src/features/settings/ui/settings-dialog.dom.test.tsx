@@ -91,9 +91,16 @@ if (process.env.SVODE_UNIFIED_SETTINGS_DOM !== "1") {
     ["use-space-settings-agent", "useSpaceSettingsAgent"],
     ["use-space-settings-defaults", "useSpaceSettingsDefaults"],
     ["use-space-settings-health", "useSpaceSettingsHealth"],
-    ["use-project-space-git-types", "useProjectSpaceGitTypes"],
   ])
     mock.module(`../hooks/${file}`, () => ({ [name]: () => ({}) }));
+  // Repository types by space id; an empty map is a type still loading.
+  let gitTypes: Record<string, string> = {
+    docs: "independent",
+    other: "submodule",
+  };
+  mock.module("../hooks/use-project-space-git-types", () => ({
+    useProjectSpaceGitTypes: () => gitTypes,
+  }));
   mock.module("../hooks/use-space-settings-git", () => ({
     useSpaceSettingsGit: () => ({
       gitType: "independent",
@@ -148,8 +155,11 @@ if (process.env.SVODE_UNIFIED_SETTINGS_DOM !== "1") {
     ),
   }));
   mock.module("./space-git-section", () => ({
-    SpaceGitSection: ({ repositoryPath }: { repositoryPath: string }) => (
-      <div data-repository={repositoryPath} />
+    SpaceGitSection: ({ spacePath }: { spacePath: string }) => (
+      <div data-repository={spacePath} />
+    ),
+    SpaceGitSummary: ({ repositoryPath }: { repositoryPath: string }) => (
+      <span data-git-summary={repositoryPath} />
     ),
   }));
   mock.module("./storage-section", () => ({
@@ -437,6 +447,50 @@ if (process.env.SVODE_UNIFIED_SETTINGS_DOM !== "1") {
         "/project/docs",
         "/project/other",
       ]);
+      // A repository block summarizes its access and remote in the heading;
+      // the project block has no summary.
+      expect(attributes("[data-git-summary]", "data-git-summary")).toEqual([
+        "/project/docs",
+        "/project/other",
+      ]);
+      expect(
+        ownerTrigger("Docs").querySelector("[data-git-summary]") === null,
+      ).toBe(false);
+
+      // An inline space only points to the project repository: its heading
+      // takes the request, and its link shows the project block.
+      gitTypes = { docs: "independent", other: "inline" };
+      await draw(project("git", "/project/other"));
+      expect(ownerHeading("Other").querySelector("button")).toBeNull();
+      expect(document.activeElement).toBe(ownerHeading("Other"));
+      expect(attributes("[data-repository]", "data-repository")).toEqual([
+        "/project",
+        "/project/docs",
+      ]);
+      expect(
+        ownerHeading("Other")
+          .closest("section")
+          ?.textContent?.includes(
+            `Part of the “${"Long project ".repeat(15)}” project repository`,
+          ),
+      ).toBe(true);
+      await click("Project Git");
+      expect(document.activeElement).toBe(
+        ownerHeading("Long project ".repeat(15)),
+      );
+      expect(scrolled.at(-1)).toBe(ownerHeading("Long project ".repeat(15)));
+
+      // A request for a space waits for its repository type, then reveals
+      // the block in its final shape.
+      gitTypes = {};
+      await draw(project("git", "/project/docs"));
+      expect(document.querySelector("[data-git-summary]")).toBeNull();
+      expect(ownerHeading("Docs").querySelector("button")).toBeNull();
+      expect(document.activeElement === ownerHeading("Docs")).toBe(false);
+      gitTypes = { docs: "independent", other: "submodule" };
+      await draw();
+      expect(ownerTrigger("Docs").getAttribute("aria-expanded")).toBe("true");
+      expect(document.activeElement).toBe(ownerTrigger("Docs"));
 
       // Every owner's details load on their own; a late answer for one
       // owner never lands in another owner's form.

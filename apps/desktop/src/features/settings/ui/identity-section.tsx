@@ -1,18 +1,24 @@
-import { useId } from "react";
+import { useId, useLayoutEffect, useRef } from "react";
+import { AlertTriangle, LoaderCircle, RotateCcw } from "lucide-react";
 import * as m from "@/paraglide/messages.js";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import {
-  humanAvatar,
-  type FanoutPreviewEntry,
-  type RepoIdentityResult,
-} from "@/features/identity";
-import { AlertTriangle, ChevronRight, RotateCcw, X } from "lucide-react";
+  Field,
+  FieldContent,
+  FieldDescription,
+  FieldError,
+  FieldGroup,
+  FieldLabel,
+} from "@/components/ui/field";
+import { Input } from "@/components/ui/input";
+import { Separator } from "@/components/ui/separator";
+import { Switch } from "@/components/ui/switch";
+import { humanAvatar, type FanoutPreviewEntry } from "@/features/identity";
+import type { SpaceSettingsIdentity } from "../hooks/use-space-settings-identity";
 import {
   fanoutEntryHasOverride,
   fanoutEntrySummarySource,
@@ -20,29 +26,14 @@ import {
   identityText,
   type IdentitySummarySource,
 } from "../model";
-
-interface Props {
-  mode: "summary" | "detail";
-  isRoot: boolean;
-  scopeName: string;
-  repoIdentity: RepoIdentityResult | null;
-  identityName: string;
-  identityEmail: string;
-  setIdentityName: (v: string) => void;
-  setIdentityEmail: (v: string) => void;
-  identityFormError: string | null;
-  savingIdentity: boolean;
-  canResetIdentity: boolean;
-  onEdit: () => void;
-  onCancelEdit: () => void;
-  onSave: () => void;
-  onReset: () => void;
-  fanoutEnabled: boolean;
-  setFanoutEnabled: (v: boolean) => void;
-  fanoutPreview: FanoutPreviewEntry[];
-  fanoutSelected: Record<string, boolean>;
-  setFanoutSelected: (next: Record<string, boolean>) => void;
-}
+import {
+  SettingsActions,
+  SettingsGroup,
+  SettingsItem,
+  SettingsRow,
+  SettingsRows,
+  SettingsRowSkeleton,
+} from "./settings-layout";
 
 function sourceLabel(source: IdentitySummarySource): string {
   switch (source) {
@@ -65,18 +56,6 @@ function sourceBadgeVariant(source: IdentitySummarySource) {
   return "outline";
 }
 
-function scopeDescription(isRoot: boolean, scopeName: string): string {
-  return isRoot
-    ? m.settings_git_identity_project_scope({ name: scopeName })
-    : m.settings_git_identity_repository_scope({ name: scopeName });
-}
-
-function editDescription(isRoot: boolean): string {
-  return isRoot
-    ? m.settings_git_identity_project_edit_hint()
-    : m.settings_git_identity_repository_edit_hint();
-}
-
 function editActionLabel(
   isRoot: boolean,
   source: IdentitySummarySource,
@@ -87,334 +66,326 @@ function editActionLabel(
     : m.settings_git_identity_set_repository();
 }
 
-function selectedFanoutCount(
-  entries: FanoutPreviewEntry[],
-  selected: Record<string, boolean>,
-): number {
-  return entries.filter((entry) => selected[entry.spacePath]).length;
-}
-
+// The commit author of one repository: a summary row that expands in place
+// into its editor. Closing the editor returns focus to the row.
 export function IdentitySection({
-  mode,
   isRoot,
-  scopeName,
-  repoIdentity,
-  identityName,
-  identityEmail,
-  setIdentityName,
-  setIdentityEmail,
-  identityFormError,
-  savingIdentity,
-  canResetIdentity,
-  onEdit,
-  onCancelEdit,
-  onSave,
-  onReset,
-  fanoutEnabled,
-  setFanoutEnabled,
-  fanoutPreview,
-  fanoutSelected,
-  setFanoutSelected,
-}: Props) {
+  identity,
+}: {
+  isRoot: boolean;
+  identity: SpaceSettingsIdentity;
+}) {
   const id = useId();
-  const summary = identitySummary(repoIdentity, isRoot);
-  const avatar = humanAvatar(summary.identity);
-  const showFanout = isRoot && fanoutPreview.length > 0;
-  const fanoutCount = selectedFanoutCount(fanoutPreview, fanoutSelected);
-  const identityTitle =
-    summary.identity?.name ||
-    summary.identity?.email ||
-    m.settings_git_identity_missing_title();
-  const summaryEmail = summary.identity?.email ?? null;
-  const identityActionLabel = editActionLabel(isRoot, summary.source);
+  const editButton = useRef<HTMLButtonElement>(null);
+  const restoreFocus = useRef(false);
+  const editing = identity.identityEditing;
+  const saving = identity.savingIdentity;
+  const summary = identitySummary(identity.repoIdentity, isRoot);
+  const missing = identity.identityLoaded && summary.source === "missing";
+  const showFanout = isRoot && identity.fanoutPreview.length > 0;
 
-  function setAllFanoutSelected(checked: boolean) {
-    const next: Record<string, boolean> = {};
-    for (const entry of fanoutPreview) {
-      next[entry.spacePath] = checked;
-    }
-    setFanoutSelected(next);
+  useLayoutEffect(() => {
+    if (editing || !restoreFocus.current) return;
+    restoreFocus.current = false;
+    editButton.current?.focus();
+  }, [editing]);
+
+  function closing(action: () => unknown) {
+    return () => {
+      restoreFocus.current = true;
+      void action();
+    };
   }
 
-  const sectionHeader = (
-    <div className="flex flex-col gap-1">
-      <Label className="text-sm font-medium">
-        {m.settings_git_identity_title()}
-      </Label>
-      <p className="text-xs text-muted-foreground">
-        {scopeDescription(isRoot, scopeName)}
-      </p>
-    </div>
-  );
-
-  if (mode === "summary") {
-    return (
-      <section className="flex min-w-0 flex-col gap-3">
-        {sectionHeader}
-
-        <button
-          type="button"
-          className="flex w-full min-w-0 flex-col gap-3 rounded-md border p-3 text-left transition-colors hover:bg-muted sm:flex-row sm:items-start sm:justify-between"
-          aria-label={`${identityTitle}: ${identityActionLabel}`}
-          onClick={onEdit}
-        >
-          <div className="flex min-w-0 flex-1 items-start gap-3">
-            <Avatar size="sm" className="mt-0.5">
-              <AvatarFallback
-                style={avatar.style}
-                className="text-xs font-medium"
-              >
-                {avatar.initials}
-              </AvatarFallback>
-            </Avatar>
-            <div className="flex min-w-0 flex-col gap-1">
-              <div className="flex min-w-0 items-center gap-2">
-                <span className="truncate text-sm font-medium">
-                  {identityTitle}
-                </span>
-                <Badge
-                  variant={sourceBadgeVariant(summary.source)}
-                  className="shrink-0 text-xs font-normal"
-                >
-                  {sourceLabel(summary.source)}
-                </Badge>
-              </div>
-              {summaryEmail && (
-                <p className="truncate text-xs text-muted-foreground">
-                  {summaryEmail}
-                </p>
-              )}
-            </div>
-          </div>
-          <span className="flex items-center gap-1 whitespace-nowrap text-xs font-medium text-muted-foreground">
-            {identityActionLabel}
-            <ChevronRight className="size-3" />
-          </span>
-        </button>
-
-        {summary.source === "missing" && (
-          <Alert variant="destructive">
-            <AlertTriangle />
-            <AlertTitle>{m.settings_git_identity_missing_title()}</AlertTitle>
-            <AlertDescription>
-              {m.settings_git_identity_missing_description()}
-            </AlertDescription>
-          </Alert>
-        )}
-      </section>
-    );
-  }
-
-  return (
-    <section className="flex min-w-0 flex-col gap-3">
-      {sectionHeader}
-
-      <div className="flex flex-col gap-3 rounded-md border bg-muted/20 p-3">
-        <p className="text-xs text-muted-foreground">
-          {editDescription(isRoot)}
-        </p>
-        <div className="grid gap-3 sm:grid-cols-2">
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor={`${id}-name`} className="text-xs">
-              {m.settings_git_identity_name_override_label()}
-            </Label>
+  let row;
+  if (!identity.identityLoaded) {
+    row = <SettingsRowSkeleton />;
+  } else if (editing) {
+    row = (
+      <form
+        aria-label={m.settings_git_identity_title()}
+        className="flex min-w-0 flex-col bg-muted/40"
+        onSubmit={(event) => {
+          event.preventDefault();
+          closing(identity.handleSaveIdentity)();
+        }}
+      >
+        <SettingsRows>
+          <SettingsRow
+            key="name"
+            label={m.identity_name_label()}
+            htmlFor={`${id}-name`}
+            data-disabled={saving || undefined}
+          >
             <Input
               id={`${id}-name`}
-              value={identityName}
-              onChange={(e) => setIdentityName(e.target.value)}
+              className="w-72 max-w-full"
+              autoFocus
+              value={identity.identityName}
+              disabled={saving}
               placeholder={m.settings_git_identity_name_placeholder()}
-              className="h-8 text-sm"
+              autoComplete="off"
+              autoCorrect="off"
+              autoCapitalize="off"
+              spellCheck={false}
+              onChange={(event) => identity.setIdentityName(event.target.value)}
             />
-          </div>
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor={`${id}-email`} className="text-xs">
-              {m.settings_git_identity_email_override_label()}
-            </Label>
+          </SettingsRow>
+          <SettingsRow
+            key="email"
+            label={m.identity_email_label()}
+            htmlFor={`${id}-email`}
+            data-disabled={saving || undefined}
+          >
             <Input
               id={`${id}-email`}
               type="email"
-              value={identityEmail}
-              onChange={(e) => setIdentityEmail(e.target.value)}
+              className="w-72 max-w-full"
+              value={identity.identityEmail}
+              disabled={saving}
               placeholder={m.settings_git_identity_email_placeholder()}
-              className="h-8 text-sm"
+              autoComplete="off"
+              onChange={(event) =>
+                identity.setIdentityEmail(event.target.value)
+              }
             />
-          </div>
-        </div>
-        <p className="text-xs text-muted-foreground">
-          {m.settings_git_identity_override_helper()}
-        </p>
-        {summary.source === "missing" && (
-          <Alert variant="destructive">
-            <AlertTriangle />
-            <AlertTitle>{m.settings_git_identity_missing_title()}</AlertTitle>
-            <AlertDescription>
-              {m.settings_git_identity_missing_edit_description()}
-            </AlertDescription>
-          </Alert>
-        )}
-        {identityFormError && (
-          <p className="text-xs text-destructive">{identityFormError}</p>
-        )}
-
-        {showFanout && (
-          <NestedRepositoriesSection
-            enabled={fanoutEnabled}
-            entries={fanoutPreview}
-            selected={fanoutSelected}
-            selectedCount={fanoutCount}
-            setEnabled={setFanoutEnabled}
-            setSelected={setFanoutSelected}
-            setAllSelected={setAllFanoutSelected}
-          />
-        )}
-
-        <div className="flex flex-wrap items-center gap-2">
-          <Button onClick={onSave} disabled={savingIdentity}>
-            {m.identity_save()}
-          </Button>
-          <Button
-            type="button"
-            variant="outline"
-            onClick={onCancelEdit}
-            disabled={savingIdentity}
-          >
-            <X data-icon="inline-start" />
-            {m.settings_cancel()}
-          </Button>
-          {canResetIdentity && (
+          </SettingsRow>
+          {showFanout ? (
+            <SettingsRow
+              key="fanout"
+              label={m.settings_git_identity_nested_checkbox()}
+              description={m.settings_git_identity_nested_description()}
+              htmlFor={`${id}-fanout`}
+              data-disabled={saving || undefined}
+            >
+              <Switch
+                id={`${id}-fanout`}
+                checked={identity.fanoutEnabled}
+                disabled={saving}
+                onCheckedChange={identity.setFanoutEnabled}
+              />
+            </SettingsRow>
+          ) : null}
+          {showFanout && identity.fanoutEnabled ? (
+            <NestedRepositories
+              key="repositories"
+              id={id}
+              entries={identity.fanoutPreview}
+              selected={identity.fanoutSelected}
+              disabled={saving}
+              onSelectedChange={identity.setFanoutSelected}
+            />
+          ) : null}
+        </SettingsRows>
+        <Separator />
+        {identity.identityFormError ? (
+          <FieldError className="px-4 pt-3">
+            {identity.identityFormError}
+          </FieldError>
+        ) : null}
+        <SettingsActions>
+          {identity.canResetIdentity ? (
             <Button
               type="button"
-              variant="outline"
-              onClick={onReset}
-              disabled={savingIdentity}
+              variant="destructive"
+              className="mr-auto"
+              disabled={saving}
+              onClick={closing(identity.handleResetIdentity)}
             >
               <RotateCcw data-icon="inline-start" />
               {m.settings_git_identity_reset_global()}
             </Button>
-          )}
-        </div>
-      </div>
-    </section>
+          ) : null}
+          <Button
+            type="button"
+            variant="outline"
+            disabled={saving}
+            onClick={closing(identity.handleCancelIdentityEdit)}
+          >
+            {m.settings_cancel()}
+          </Button>
+          <Button type="submit" disabled={saving}>
+            {saving ? (
+              <LoaderCircle data-icon="inline-start" className="animate-spin" />
+            ) : null}
+            {m.identity_save()}
+          </Button>
+        </SettingsActions>
+      </form>
+    );
+  } else {
+    const avatar = humanAvatar(summary.identity);
+    const name = summary.identity?.name?.trim();
+    const email = summary.identity?.email?.trim();
+    // Without an author the source is the row's title; the callout above
+    // explains the consequence.
+    const title = name || email || sourceLabel(summary.source);
+    const actionLabel = editActionLabel(isRoot, summary.source);
+    row = (
+      <SettingsItem
+        media={
+          <Avatar size="sm">
+            <AvatarFallback
+              style={avatar.style}
+              className="text-xs font-medium"
+            >
+              {avatar.initials}
+            </AvatarFallback>
+          </Avatar>
+        }
+        title={title}
+        description={name && email ? email : undefined}
+        actions={
+          <>
+            {name || email ? (
+              <Badge variant={sourceBadgeVariant(summary.source)}>
+                {sourceLabel(summary.source)}
+              </Badge>
+            ) : null}
+            <Button
+              ref={editButton}
+              type="button"
+              variant="ghost"
+              size="sm"
+              aria-label={`${title}: ${actionLabel}`}
+              onClick={identity.handleStartIdentityEdit}
+            >
+              {actionLabel}
+            </Button>
+          </>
+        }
+      />
+    );
+  }
+
+  return (
+    <SettingsGroup
+      title={m.settings_git_identity_title()}
+      description={
+        isRoot
+          ? m.settings_git_identity_project_scope()
+          : m.settings_git_identity_repository_scope()
+      }
+      aria-busy={!identity.identityLoaded || saving}
+      callout={
+        missing ? (
+          <Alert variant="destructive">
+            <AlertTriangle />
+            <AlertTitle>{m.settings_git_identity_missing_title()}</AlertTitle>
+            <AlertDescription>
+              {editing
+                ? m.settings_git_identity_missing_edit_description()
+                : m.settings_git_identity_missing_description()}
+            </AlertDescription>
+          </Alert>
+        ) : null
+      }
+    >
+      {row}
+    </SettingsGroup>
   );
 }
 
-function NestedRepositoriesSection({
-  enabled,
+// Nested repositories the project author is also written to on save.
+function NestedRepositories({
+  id,
   entries,
   selected,
-  selectedCount,
-  setEnabled,
-  setSelected,
-  setAllSelected,
+  disabled,
+  onSelectedChange,
 }: {
-  enabled: boolean;
+  id: string;
   entries: FanoutPreviewEntry[];
   selected: Record<string, boolean>;
-  selectedCount: number;
-  setEnabled: (value: boolean) => void;
-  setSelected: (next: Record<string, boolean>) => void;
-  setAllSelected: (checked: boolean) => void;
+  disabled: boolean;
+  onSelectedChange: (next: Record<string, boolean>) => void;
 }) {
+  const count = entries.filter((entry) => selected[entry.spacePath]).length;
+  function setAll(checked: boolean) {
+    const next: Record<string, boolean> = {};
+    for (const entry of entries) next[entry.spacePath] = checked;
+    onSelectedChange(next);
+  }
   return (
-    <div className="flex flex-col gap-2 rounded-md border p-3">
-      <label className="flex cursor-pointer items-start gap-2">
-        <Checkbox
-          checked={enabled}
-          onCheckedChange={(checked) => setEnabled(checked === true)}
-          className="mt-0.5"
-        />
-        <span className="flex flex-col gap-1 text-sm">
-          <span>{m.settings_git_identity_nested_checkbox()}</span>
-          <span className="text-xs text-muted-foreground">
-            {m.settings_git_identity_nested_description()}
-          </span>
-        </span>
-      </label>
-
-      {enabled && (
-        <div className="flex flex-col gap-2 pl-6">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <p className="text-xs font-medium text-muted-foreground">
-              {m.settings_git_identity_nested_count({
-                selected: selectedCount,
-                total: entries.length,
-              })}
-            </p>
-            <div className="flex items-center gap-1">
-              <Button
-                type="button"
-                variant="ghost"
-                size="xs"
-                onClick={() => setAllSelected(true)}
-              >
-                {m.settings_git_identity_nested_select_all()}
-              </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                size="xs"
-                onClick={() => setAllSelected(false)}
-              >
-                {m.settings_git_identity_nested_clear()}
-              </Button>
-            </div>
-          </div>
-          <div className="flex flex-col gap-2">
-            {entries.map((entry) => {
-              const checked = selected[entry.spacePath] ?? true;
-              const source = fanoutEntrySummarySource(entry);
-              const currentIdentity = identityText(
-                entry.currentEffective ?? entry.currentLocal ?? null,
-              );
-              return (
-                <label
-                  key={entry.spacePath}
-                  className="flex cursor-pointer items-start gap-2 rounded-md border p-2 text-sm"
-                >
-                  <Checkbox
-                    checked={checked}
-                    onCheckedChange={(c) =>
-                      setSelected({
-                        ...selected,
-                        [entry.spacePath]: c === true,
-                      })
-                    }
-                    className="mt-0.5"
-                  />
-                  <span className="flex min-w-0 flex-1 flex-col gap-1">
-                    <span className="flex min-w-0 flex-wrap items-center gap-2">
-                      <span className="truncate font-medium">
-                        {entry.spaceName}
-                      </span>
-                      <Badge
-                        variant="secondary"
-                        className="text-xs font-normal"
-                      >
-                        {sourceLabel(source)}
-                      </Badge>
-                      {fanoutEntryHasOverride(entry) && (
-                        <Badge
-                          variant="outline"
-                          className="text-xs font-normal"
-                        >
-                          {m.settings_git_identity_fanout_will_replace()}
-                        </Badge>
-                      )}
-                    </span>
-                    <span className="truncate text-xs text-muted-foreground">
-                      {currentIdentity
-                        ? m.settings_git_identity_nested_current({
-                            identity: currentIdentity,
-                          })
-                        : m.settings_git_identity_nested_current_missing()}
-                    </span>
-                  </span>
-                </label>
-              );
-            })}
-          </div>
+    <div
+      role="group"
+      aria-label={m.settings_git_identity_nested_checkbox()}
+      className="flex min-w-0 flex-col gap-3 px-4 py-3"
+    >
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-sm text-muted-foreground">
+          {m.settings_git_identity_nested_count({
+            selected: count,
+            total: entries.length,
+          })}
+        </p>
+        <div className="flex items-center gap-1">
+          <Button
+            type="button"
+            variant="ghost"
+            size="xs"
+            disabled={disabled}
+            onClick={() => setAll(true)}
+          >
+            {m.settings_git_identity_nested_select_all()}
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="xs"
+            disabled={disabled}
+            onClick={() => setAll(false)}
+          >
+            {m.settings_git_identity_nested_clear()}
+          </Button>
         </div>
-      )}
+      </div>
+      <FieldGroup className="gap-3">
+        {entries.map((entry, index) => {
+          const checkboxId = `${id}-repository-${index}`;
+          const current = identityText(
+            entry.currentEffective ?? entry.currentLocal ?? null,
+          );
+          return (
+            <Field key={entry.spacePath} orientation="horizontal">
+              <Checkbox
+                id={checkboxId}
+                checked={selected[entry.spacePath] ?? true}
+                disabled={disabled}
+                onCheckedChange={(checked) =>
+                  onSelectedChange({
+                    ...selected,
+                    [entry.spacePath]: checked === true,
+                  })
+                }
+              />
+              <FieldContent>
+                <FieldLabel
+                  htmlFor={checkboxId}
+                  className="flex-wrap font-normal"
+                >
+                  <span className="wrap-break-word">{entry.spaceName}</span>
+                  <Badge variant="secondary">
+                    {sourceLabel(fanoutEntrySummarySource(entry))}
+                  </Badge>
+                  {fanoutEntryHasOverride(entry) ? (
+                    <Badge variant="outline">
+                      {m.settings_git_identity_fanout_will_replace()}
+                    </Badge>
+                  ) : null}
+                </FieldLabel>
+                <FieldDescription className="wrap-anywhere">
+                  {current
+                    ? m.settings_git_identity_nested_current({
+                        identity: current,
+                      })
+                    : m.settings_git_identity_nested_current_missing()}
+                </FieldDescription>
+              </FieldContent>
+            </Field>
+          );
+        })}
+      </FieldGroup>
     </div>
   );
 }

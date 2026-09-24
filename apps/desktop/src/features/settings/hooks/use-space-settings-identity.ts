@@ -34,6 +34,7 @@ export function useSpaceSettingsIdentity({
   const [repoIdentity, setRepoIdentity] = useState<RepoIdentityResult | null>(
     null,
   );
+  const [identityLoaded, setIdentityLoaded] = useState(false);
   const [identityName, setIdentityName] = useState("");
   const [identityEmail, setIdentityEmail] = useState("");
   const [savingIdentity, setSavingIdentity] = useState(false);
@@ -59,6 +60,8 @@ export function useSpaceSettingsIdentity({
     } catch (err) {
       console.warn("get_repo_identity failed:", err);
       setRepoIdentity(null);
+    } finally {
+      setIdentityLoaded(true);
     }
   }, [spacePath]);
 
@@ -192,6 +195,7 @@ export function useSpaceSettingsIdentity({
 
   return {
     repoIdentity,
+    identityLoaded,
     identityName,
     identityEmail,
     identityFormError,
@@ -211,3 +215,5 @@ export function useSpaceSettingsIdentity({
     handleResetIdentity,
   };
 }
+
+export type SpaceSettingsIdentity = ReturnType<typeof useSpaceSettingsIdentity>;

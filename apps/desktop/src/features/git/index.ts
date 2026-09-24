@@ -65,5 +65,4 @@ export {
 export {
   RepositoryAccessBadge,
   RepositoryAccessSummary,
-  type RepositoryAccessOwnerKind,
 } from "./ui/repository-access-summary";

@@ -30,6 +30,7 @@ import {
   ItemActions,
   ItemContent,
   ItemDescription,
+  ItemMedia,
   ItemTitle,
 } from "@/components/ui/item";
 import { Separator } from "@/components/ui/separator";
@@ -301,6 +302,7 @@ export function SettingsRow({
 }
 
 export function SettingsItem({
+  media,
   title,
   description,
   actions,
@@ -308,6 +310,7 @@ export function SettingsItem({
   className,
   ...props
 }: {
+  media?: ReactNode;
   title: ReactNode;
   description?: ReactNode;
   actions?: ReactNode;
@@ -321,6 +324,7 @@ export function SettingsItem({
       )}
       {...props}
     >
+      {media ? <ItemMedia className="-mr-3">{media}</ItemMedia> : null}
       <ItemContent className="min-w-0 flex-[1_1_12rem]">
         <ItemTitle className="wrap-break-word">{title}</ItemTitle>
         {description ? (

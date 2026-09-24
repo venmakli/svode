@@ -23,6 +23,8 @@ interface UseSpaceSettingsGitOptions {
   spaces: Pick<SpaceInfo, "id" | "path">[];
 }
 
+export type GitPolicyField = keyof GitUserPolicy;
+
 export function useSpaceSettingsGit({
   open,
   spacePath,
@@ -30,6 +32,7 @@ export function useSpaceSettingsGit({
   isRoot,
   spaces,
 }: UseSpaceSettingsGitOptions) {
+  const [loaded, setLoaded] = useState(false);
   const [gitType, setGitType] = useState<SpaceGitType | null>(null);
   const [submoduleUrl, setSubmoduleUrl] = useState<string | null>(null);
   const [remoteUrl, setRemoteUrl] = useState("");
@@ -38,7 +41,11 @@ export function useSpaceSettingsGit({
   const [autoSync, setAutoSync] = useState(false);
   const [autoCommitStructural, setAutoCommitStructural] = useState(false);
   const [autoCommitSystem, setAutoCommitSystem] = useState(false);
+  const [policyPending, setPolicyPending] = useState<
+    ReadonlySet<GitPolicyField>
+  >(() => new Set());
   const [pendingRemote, setPendingRemote] = useState<string | null>(null);
+  const [applyingRemote, setApplyingRemote] = useState(false);
   const [remoteUpdateResult, setRemoteUpdateResult] =
     useState<GitSetRemoteResult | null>(null);
   const gitPolicyRef = useRef<GitUserPolicy>({
@@ -68,14 +75,11 @@ export function useSpaceSettingsGit({
     }
   }, [activeRootPath, applyGitPolicyState, spacePath]);
 
+  // A reload after a commit keeps the shown values until the new ones arrive,
+  // so the owner's summary and fields do not flash empty.
   const loadGitInfo = useCallback(async () => {
     if (!spacePath) return;
     const generation = ++gitInfoGenerationRef.current;
-    setGitType(null);
-    setRemoteUrl("");
-    setSavedRemoteUrl("");
-    setBranch(null);
-    setSubmoduleUrl(null);
     setRemoteUpdateResult(null);
 
     const remotePromise = getSettingsGitRemote(spacePath).catch(() => null);
@@ -115,11 +119,14 @@ export function useSpaceSettingsGit({
 
   useEffect(() => {
     if (!open || !spacePath) return;
+    let cancelled = false;
     const preload = window.setTimeout(() => {
-      void loadGitConfig();
-      void loadGitInfo();
+      void Promise.all([loadGitConfig(), loadGitInfo()]).then(() => {
+        if (!cancelled) setLoaded(true);
+      });
     }, 0);
     return () => {
+      cancelled = true;
       window.clearTimeout(preload);
       gitInfoGenerationRef.current += 1;
     };
@@ -144,6 +151,7 @@ export function useSpaceSettingsGit({
   }, [open, spacePath, loadGitInfo]);
 
   async function applyRemote(newUrl: string) {
+    setApplyingRemote(true);
     try {
       const space = spaces.find((candidate) => candidate.path === spacePath);
       const result = await setGitRemote({
@@ -160,10 +168,13 @@ export function useSpaceSettingsGit({
       console.error("Failed to set remote:", err);
       toast.error(m.toast_error());
       setRemoteUrl(savedRemoteUrl);
+    } finally {
+      setApplyingRemote(false);
     }
   }
 
   function handleRemoteBlur() {
+    if (applyingRemote) return;
     const next = remoteUrl.trim();
     if (next === savedRemoteUrl) return;
     if (next === "") {
@@ -178,11 +189,12 @@ export function useSpaceSettingsGit({
     setRemoteUrl(value);
   }
 
-  async function handleAutoSyncChange(value: boolean) {
+  // Each switch applies at once; the field stays pending until its write ends.
+  async function handlePolicyChange(field: GitPolicyField, value: boolean) {
     const previous = gitPolicyRef.current;
-    const next = { ...previous, autoSync: value };
-    gitPolicyRef.current = next;
-    setAutoSync(next.autoSync);
+    const next: GitUserPolicy = { ...previous, [field]: value };
+    applyGitPolicyState(next);
+    setPolicyPending((current) => new Set(current).add(field));
     try {
       await setSettingsGitUserPolicy({
         spacePath,
@@ -190,51 +202,17 @@ export function useSpaceSettingsGit({
         policy: next,
       });
     } catch (err) {
-      console.error("Failed to save git auto-sync policy:", err);
+      console.error(`Failed to save git ${field} policy:`, err);
       if (gitPolicyRef.current === next) {
         applyGitPolicyState(previous);
       }
       toast.error(m.toast_error());
-    }
-  }
-
-  async function handleAutoCommitStructuralChange(value: boolean) {
-    const previous = gitPolicyRef.current;
-    const next = { ...previous, autoCommitStructural: value };
-    gitPolicyRef.current = next;
-    setAutoCommitStructural(next.autoCommitStructural);
-    try {
-      await setSettingsGitUserPolicy({
-        spacePath,
-        projectPath: activeRootPath,
-        policy: next,
+    } finally {
+      setPolicyPending((current) => {
+        const rest = new Set(current);
+        rest.delete(field);
+        return rest;
       });
-    } catch (err) {
-      console.error("Failed to save git structural autocommit policy:", err);
-      if (gitPolicyRef.current === next) {
-        applyGitPolicyState(previous);
-      }
-      toast.error(m.toast_error());
-    }
-  }
-
-  async function handleAutoCommitSystemChange(value: boolean) {
-    const previous = gitPolicyRef.current;
-    const next = { ...previous, autoCommitSystem: value };
-    gitPolicyRef.current = next;
-    setAutoCommitSystem(next.autoCommitSystem);
-    try {
-      await setSettingsGitUserPolicy({
-        spacePath,
-        projectPath: activeRootPath,
-        policy: next,
-      });
-    } catch (err) {
-      console.error("Failed to save git system autocommit policy:", err);
-      if (gitPolicyRef.current === next) {
-        applyGitPolicyState(previous);
-      }
-      toast.error(m.toast_error());
     }
   }
 
@@ -250,21 +228,25 @@ export function useSpaceSettingsGit({
   }
 
   return {
+    loaded,
     gitType,
     submoduleUrl,
     remoteUrl,
+    savedRemoteUrl,
     branch,
     autoSync,
     autoCommitStructural,
     autoCommitSystem,
+    policyPending,
     pendingRemote,
+    applyingRemote,
     remoteUpdateResult,
     setRemoteUrl: handleRemoteChange,
     handleRemoteBlur,
-    handleAutoSyncChange,
-    handleAutoCommitStructuralChange,
-    handleAutoCommitSystemChange,
+    handlePolicyChange,
     cancelPendingRemote,
     confirmPendingRemote,
   };
 }
+
+export type SpaceSettingsGit = ReturnType<typeof useSpaceSettingsGit>;

@@ -35,12 +35,14 @@ export function ProjectOwnerBlock({
 export function SpaceOwnerBlock({
   space,
   gitType,
+  summary,
   collapsible,
   headingRef,
   children,
 }: {
   space: SpaceInfo;
   gitType: SpaceGitType | null | undefined;
+  summary?: ReactNode;
   collapsible?: { open: boolean; onOpenChange(open: boolean): void };
   headingRef?: HeadingRef;
   children?: ReactNode;
@@ -59,6 +61,7 @@ export function SpaceOwnerBlock({
           {status ? <Badge variant="outline">{status}</Badge> : null}
         </>
       }
+      summary={summary}
       collapsible={collapsible}
       headingRef={headingRef}
     >
