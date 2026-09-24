@@ -649,7 +649,7 @@ pub fn definitions() -> Vec<ToolDefinition> {
         ),
         def(
             "validate_collection_integrity",
-            "Read-only check for Collection relation targets, stored Collection item references, and stale sidebar order refs after deliberate raw filesystem structural edits. Omit collectionPath to validate every Collection in the selected space.",
+            "Read-only check for Collection relation targets, stored Collection item references, and stale sidebar order refs after structural files changed outside Svode. Omit collectionPath to validate every Collection in the selected space.",
             schema(&[space_id(), collection_path_opt("collectionPath")], &[]),
             read_only_ann(),
             None,
@@ -831,7 +831,7 @@ Routine workflow:
 - Call list_spaces, then list_collections when needed, before working with Routines. Every Routine tool requires a non-null explicit spaceId: use "root" for the project owner or a child id from list_spaces; add collectionPath only for an existing Collection owner.
 - Use list_routines for bounded body-less discovery and get_routine for the normalized definition, Markdown body, and fingerprint. Definitions with missing, malformed, or duplicate portable id remain visible with routineId null and an exact recovery path, but fail closed for addressed tools. Device-local automatic authority and last/next run fields are evidence, not a promise that a Routine can run now.
 - Use create_routine, update_routine, and delete_routine for managed source changes. Update/delete require the last-read fingerprint; a conflict returns the current fingerprint without writing. Create/update validate the complete candidate and return canonical changedPaths. These tools never autocommit.
-- Use run_routine only for an explicit one-time launch of a manual or schedule Routine, with the last-read fingerprint. It returns started or already_running launch/session identity immediately; blocked and failed outcomes keep stable recovery evidence. It never runs event Routines, waits for completion, changes automatic authority/checkpoints, or autocommits. A Routine-launched agent cannot use run_routine or save enabled automation, preventing hidden recursive agent execution.
+- run_routine is served only through the running Svode desktop app; `svode-mcp --project` and the `svode` CLI do not launch Routines. Use run_routine only for an explicit one-time launch of a manual or schedule Routine, with the last-read fingerprint. It returns started or already_running launch/session identity immediately; blocked and failed outcomes keep stable recovery evidence. It never runs event Routines, waits for completion, changes automatic authority/checkpoints, or autocommits. A Routine-launched agent cannot use run_routine or save enabled automation, preventing hidden recursive agent execution.
 - Saving an enabled schedule/event requires confirmAutomaticExecution=true, but that acknowledgement never enables owner-local device authority. Never address or edit raw .routines paths through MCP; Routine definitions belong to the Routine domain tools and owner resolver.
 
 Metadata and fields:
@@ -849,10 +849,10 @@ Body saves:
 - A rejected combined body/title save restores the complete affected source set. PAGE_WRITE_RECOVERY_FAILED reports failed restoration and affected paths; inspect them before retrying. Filename warnings and projection_update_failed are applied outcomes: do not repeat the write as though it failed. Git commit remains separate.
 
 Structural work and integrity:
-- Files-first work is supported: ordinary Markdown body edits and deliberate, predictable bulk file edits can be made directly in the repository.
+- Files-first work covers the body text described under Body saves and new plain Markdown Pages in an existing folder without a schema; create them directly and Svode picks them up. Everything that changes frontmatter, names, structure, schema, attachments or system folders goes through Svode tools.
 - Do not construct `.svode/order`, relation migrations, managed `.assets/` paths, structural Page moves/renames, or Collections manually. Use rename_content, move_content, reorder_content, reorder_spaces, convert_page_to_leaf, or convert_to_collection so Svode preserves relations, backlinks, sidebar order, and indexes. Discover spaces with list_spaces; root is `spaceId: "root"`, while reorder_spaces accepts child ids only.
 - Structural tools do not autocommit and return changed/touched paths. convert_to_collection is in-place and manages Page/Collection identity; convert_page_to_leaf applies only to a supported directory-backed Page and does not demote a Collection or remove schema.yaml.
-- After an intentional raw structural edit, run validate_collection_integrity for the Collection or selected Space and repair every reported relation target, missing Collection item, or stale order reference before continuing.
+- When structural files changed outside Svode (by hand, Git or another program), run validate_collection_integrity for the Collection or selected Space and repair every reported relation target, missing Collection item, or stale order reference before continuing.
 
 Managed colocated attachments:
 - To use a new local image, media file, or attachment, call import_asset with the existing Page, Collection item, or owner README contentPath and an absolute local sourcePath. The source is copied, never moved. A leaf Page may become `<name>/README.md`; always use the returned canonical contentPath for the next content or metadata tool call.
@@ -1763,6 +1763,7 @@ mod tests {
         assert!(guide_text().contains("Never address or edit raw .routines"));
         assert!(guide_text().contains("confirmAutomaticExecution=true"));
         assert!(guide_text().contains("Use run_routine only"));
+        assert!(guide_text().contains("served only through the running Svode desktop app"));
     }
 
     #[test]

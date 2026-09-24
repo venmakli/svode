@@ -112,7 +112,7 @@ Collection create/delete, schema columns and views, content rename/move/reorder/
 - Ordered lists are repeated flags in their order: `content reorder --child a.md --child b.md` is the complete order of the direct children as `page list` shows them (directory-backed Pages and Collections use their `README.md` path); `space reorder --id a --id b` is the complete order of the child Spaces without `root`.
 - `column delete` keeps stored values unless `--delete-values` is set. `view add --position` counts from 0; the end by default.
 - Destructive targets are exact selectors; there is no confirmation and no `--force`. A rejected command is exit 1 with the code of the shared operation (for example `NOT_A_STANDALONE_PAGE`, `INVALID_COLLECTION_CONVERSION`, `INVALID_SPACE_ORDER`, `REPOSITORY_ACCESS_DENIED`). Reread the structure before trying again.
-- `collection check` is read-only: it reports `errorCount`, `warningCount` and `issuesBySeverity` for relation targets, stored item references and stale order entries of one Collection or of every Collection in the Space. Issues are a result, not a failure (exit 0). Run it after a deliberate raw structural edit.
+- `collection check` is read-only: it reports `errorCount`, `warningCount` and `issuesBySeverity` for relation targets, stored item references and stale order entries of one Collection or of every Collection in the Space. Issues are a result, not a failure (exit 0). Run it after structural files changed outside Svode (by hand, Git or another program).
 - Human output: the summary line, then each changed path; `collection check` prints the counts, then one line per issue.
 
 The JSON result is the MCP `structuredContent` of the capability, for example `page write` returns `path`, `newPath` (only after a performed rename), `sourceVersion`, `changedPaths` and `warnings`, plus `schemaVersion`, `ok` and `target` (with `path`, `collection`, `parent` or `name` selectors).
@@ -181,4 +181,4 @@ Context and input codes are owned by the CLI; every other code comes unchanged f
 
 ## Installation
 
-The desktop app bundle ships the `svode` binary of the same version as a sidecar next to its own executable (Linux packages place sidecars in `/usr/bin`). Managed `PATH` setup, installation without the desktop app and updates are not part of this build.
+The desktop app bundle ships `svode` and `svode-mcp` of the same version as sidecars next to its own executable (Linux packages place sidecars in `/usr/bin`). For scripts and CI both build without the desktop app: `cargo build --release -p svode-cli -p svode-mcp` in the Svode repository gives standalone binaries that need neither the desktop app nor its GUI libraries, and `node scripts/smoke-standalone.mjs <dir>` checks such binaries against a fresh Project. Managed installation, `PATH` setup and updates are not part of this build.

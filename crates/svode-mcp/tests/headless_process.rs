@@ -3,8 +3,8 @@
 //! target, source reads that open no store and leave every byte of the
 //! project unchanged, index-backed reads that reconcile the index with the
 //! files first and again after the recheck window, writes of every family,
-//! Routine definitions from the owner store without execution, and
-//! shutdown on EOF and SIGTERM.
+//! Routine definitions from the owner store without execution, every served
+//! tool in one session, and shutdown on EOF and SIGTERM.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -1492,4 +1492,301 @@ fn a_corrupt_store_is_quarantined_and_an_unsupported_one_is_left_untouched() {
         (tables, version)
     });
     assert_eq!((tables, version), (1, 99));
+}
+
+/// The whole served catalog in one session: every one of the 53 tools
+/// answers from the standalone host with a result, reads first, then each
+/// family of changes on the sources the reads returned.
+#[test]
+fn every_served_tool_answers_with_a_result_in_one_session() {
+    let Some(fixture) = routine_fixture() else {
+        return;
+    };
+    let project = &fixture.project;
+    let head_before = head(project);
+    let photo = fixture.temp.path().join("photo.png");
+    fs::write(&photo, "image").unwrap();
+    let mut live = Live::start(
+        fixture.temp.path(),
+        &["--project", project.to_str().unwrap()],
+    );
+    writeln!(
+        live.stdin,
+        "{}",
+        json!({ "jsonrpc": "2.0", "id": 0, "method": "tools/list" })
+    )
+    .unwrap();
+    let mut line = String::new();
+    live.stdout.read_line(&mut line).unwrap();
+    let mut listed = serde_json::from_str::<Value>(&line).unwrap()["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|tool| tool["name"].as_str().unwrap().to_string())
+        .collect::<Vec<_>>();
+    listed.sort();
+    assert_eq!(listed, SERVED);
+
+    let mut answered = std::collections::BTreeSet::new();
+    let mut ok = |live: &mut Live, name: &'static str, arguments: Value| {
+        answered.insert(name);
+        live.ok(name, arguments)
+    };
+
+    // Reads and guidance.
+    ok(&mut live, "get_svode_guide", json!({}));
+    ok(&mut live, "get_project_info", json!({}));
+    ok(&mut live, "list_spaces", json!({}));
+    ok(&mut live, "list_pages", json!({}));
+    ok(&mut live, "list_collections", json!({}));
+    ok(
+        &mut live,
+        "get_collection_schema",
+        json!({ "collectionPath": "tasks" }),
+    );
+    ok(
+        &mut live,
+        "query_collection_items",
+        json!({ "collectionPath": "tasks" }),
+    );
+    let notes = ok(&mut live, "read_page", json!({ "path": "notes.md" }))["sourceVersion"].clone();
+    let alpha = ok(
+        &mut live,
+        "read_collection_item",
+        json!({ "path": "tasks/alpha.md" }),
+    )["sourceVersion"]
+        .clone();
+    let readme = ok(&mut live, "read_space_readme", json!({}))["sourceVersion"].clone();
+    let tasks_readme = ok(
+        &mut live,
+        "read_collection_readme",
+        json!({ "collectionPath": "tasks" }),
+    )["sourceVersion"]
+        .clone();
+    ok(&mut live, "search_pages", json!({ "query": "Notes body" }));
+    ok(&mut live, "search_knowledge", json!({ "query": "Notes" }));
+    ok(
+        &mut live,
+        "get_knowledge_node",
+        json!({ "nodeId": "page:root:notes.md" }),
+    );
+    ok(
+        &mut live,
+        "get_knowledge_neighbors",
+        json!({ "nodeId": "page:root:notes.md" }),
+    );
+    ok(
+        &mut live,
+        "get_related_context",
+        json!({ "query": "Notes" }),
+    );
+    ok(
+        &mut live,
+        "get_knowledge_status",
+        json!({ "scope": "project" }),
+    );
+    ok(&mut live, "get_git_status", json!({}));
+    ok(&mut live, "list_actors", json!({}));
+    let integrity = ok(
+        &mut live,
+        "validate_collection_integrity",
+        json!({ "collectionPath": "tasks" }),
+    );
+    assert_eq!(integrity["errorCount"], 0, "{integrity}");
+    let manifest = ok(
+        &mut live,
+        "validate_app_manifest",
+        json!({ "yaml": "runtime:\n  type: url\n  url: https://example.com\n" }),
+    );
+    assert_eq!(manifest["valid"], true, "{manifest}");
+
+    // Body writes from the versions of the reads.
+    ok(
+        &mut live,
+        "write_page",
+        write_args("notes.md", "Rewritten notes\n", &notes),
+    );
+    ok(
+        &mut live,
+        "update_collection_item_body",
+        json!({ "path": "tasks/alpha.md", "body": "Rewritten alpha\n", "sourceVersion": alpha }),
+    );
+    ok(
+        &mut live,
+        "write_space_readme",
+        json!({ "content": "Rewritten owner\n", "sourceVersion": readme }),
+    );
+    ok(
+        &mut live,
+        "write_collection_readme",
+        json!({ "collectionPath": "tasks", "content": "Rewritten tasks\n", "sourceVersion": tasks_readme }),
+    );
+
+    // Metadata, fields, schema columns and views.
+    ok(
+        &mut live,
+        "update_page_metadata",
+        json!({ "path": "notes.md", "icon": "📝" }),
+    );
+    ok(
+        &mut live,
+        "update_space_metadata",
+        json!({ "spaceId": "child", "description": "Child" }),
+    );
+    ok(
+        &mut live,
+        "update_collection_metadata",
+        json!({ "collectionPath": "tasks", "icon": "✅" }),
+    );
+    ok(
+        &mut live,
+        "update_collection_item_fields",
+        json!({ "path": "tasks/alpha.md", "fields": { "Status": "Done" } }),
+    );
+    ok(
+        &mut live,
+        "update_collection_item_metadata",
+        json!({ "path": "tasks/alpha.md", "description": "First task" }),
+    );
+    ok(
+        &mut live,
+        "add_collection_column",
+        json!({ "collectionPath": "tasks", "column": { "name": "Stage", "type": "text" } }),
+    );
+    ok(
+        &mut live,
+        "update_collection_column",
+        json!({ "collectionPath": "tasks", "columnName": "Stage", "patch": { "color": "blue" } }),
+    );
+    ok(
+        &mut live,
+        "delete_collection_column",
+        json!({ "collectionPath": "tasks", "columnName": "Stage" }),
+    );
+    ok(
+        &mut live,
+        "add_collection_view",
+        json!({ "collectionPath": "tasks", "view": { "type": "table", "name": "Board" } }),
+    );
+    ok(
+        &mut live,
+        "update_collection_view",
+        json!({ "collectionPath": "tasks", "viewName": "Board", "patch": { "name": "All" } }),
+    );
+    ok(
+        &mut live,
+        "delete_collection_view",
+        json!({ "collectionPath": "tasks", "viewName": "Table" }),
+    );
+
+    // Creation, structure, order, import and deletion.
+    ok(
+        &mut live,
+        "create_page",
+        json!({ "parentPath": "", "title": "Weekly", "content": "Weekly body\n" }),
+    );
+    ok(
+        &mut live,
+        "create_page",
+        json!({ "parentPath": "Weekly", "title": "Sub" }),
+    );
+    ok(
+        &mut live,
+        "create_collection",
+        json!({ "parentPath": "", "title": "Backlog", "columns": [{ "name": "Owner", "type": "text" }] }),
+    );
+    ok(
+        &mut live,
+        "rename_content",
+        json!({ "from": "notes.md", "to": "Journal.md" }),
+    );
+    ok(
+        &mut live,
+        "move_content",
+        json!({ "from": "Journal.md", "toParent": "Weekly" }),
+    );
+    ok(
+        &mut live,
+        "reorder_content",
+        json!({ "parentPath": "Weekly", "orderedChildren": ["Weekly/Journal.md", "Weekly/Sub.md"] }),
+    );
+    ok(
+        &mut live,
+        "import_asset",
+        json!({ "spaceId": "child", "contentPath": "brief.md", "sourcePath": photo }),
+    );
+    ok(&mut live, "delete_page", json!({ "path": "Weekly/Sub.md" }));
+    ok(
+        &mut live,
+        "delete_page",
+        json!({ "path": "Weekly/Journal.md" }),
+    );
+    ok(
+        &mut live,
+        "convert_page_to_leaf",
+        json!({ "path": "Weekly/README.md" }),
+    );
+    ok(
+        &mut live,
+        "convert_to_collection",
+        json!({ "path": "Weekly.md" }),
+    );
+    ok(
+        &mut live,
+        "delete_collection_item",
+        json!({ "path": "tasks/alpha.md" }),
+    );
+    ok(
+        &mut live,
+        "delete_collection",
+        json!({ "collectionPath": "Weekly" }),
+    );
+    ok(
+        &mut live,
+        "reorder_spaces",
+        json!({ "orderedSpaceIds": ["child"] }),
+    );
+
+    // Routine definitions, without execution.
+    let tasks = json!({ "spaceId": "root", "collectionPath": "tasks" });
+    let with = |extra: Value| {
+        let mut value = tasks.clone();
+        value
+            .as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        value
+    };
+    ok(&mut live, "list_routines", tasks.clone());
+    let created = ok(
+        &mut live,
+        "create_routine",
+        with(json!({ "definition": manual("Review") })),
+    );
+    let id = created["routineId"].clone();
+    ok(&mut live, "get_routine", with(json!({ "routineId": id })));
+    let updated = ok(
+        &mut live,
+        "update_routine",
+        with(json!({
+            "routineId": id,
+            "expectedFingerprint": created["fingerprint"],
+            "definition": manual("Weekly review"),
+        })),
+    );
+    ok(
+        &mut live,
+        "delete_routine",
+        with(json!({ "routineId": id, "expectedFingerprint": updated["fingerprint"] })),
+    );
+    live.finish();
+
+    assert_eq!(
+        answered.into_iter().collect::<Vec<_>>(),
+        SERVED,
+        "every served tool answered"
+    );
+    assert_closed(project);
+    assert_eq!(head(project), head_before, "no commit");
+    assert_eq!(run_rows(&project.join(".svode/routines.db")), 0);
 }

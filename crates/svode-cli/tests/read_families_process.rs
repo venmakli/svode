@@ -466,7 +466,18 @@ fn guide_prints_the_shared_guide_and_files_first_rules_without_a_project() {
     let (exit, value) = json(&fixture.elsewhere, &["guide"]);
     assert_eq!(exit, 0);
     assert!(value["guide"].as_str().unwrap().contains("Space targeting"));
-    assert!(value["filesFirst"].as_str().unwrap().contains(".svode"));
+    let files_first = value["filesFirst"].as_str().unwrap();
+    assert!(files_first.contains(".svode"));
+    // Bodies by the agent's own tools, frontmatter and fields through Svode.
+    assert!(files_first.contains("frontmatter byte for byte"));
+    assert!(files_first.contains("records no Routine event"));
+    // The CLI launches no Routine: the guide says where run_routine lives.
+    assert!(
+        value["guide"]
+            .as_str()
+            .unwrap()
+            .contains("run_routine is served only through the running Svode desktop app")
+    );
     let human = svode(&fixture.elsewhere, &["guide"]);
     let text = String::from_utf8(human.stdout).unwrap();
     assert!(text.starts_with("Files-first rules"));

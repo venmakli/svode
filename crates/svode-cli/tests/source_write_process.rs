@@ -2,7 +2,8 @@
 //! desktop app closed: the read → edit → write cycle with `sourceVersion`,
 //! stale and busy refusals without effects, atomic publication of the new
 //! bytes, a killed writer that leaves neither a truncated source nor a
-//! stale lock, index publication and the repository access gate.
+//! stale lock, index publication, the repository access gate and direct
+//! body edits of an agent between Svode commands.
 
 mod common;
 
@@ -264,6 +265,109 @@ fn a_write_after_another_process_changed_the_source_is_stale_without_effects() {
     let stderr = String::from_utf8(output.stderr).unwrap();
     assert!(stderr.starts_with("error[SOURCE_STALE]"), "{stderr}");
     assert!(stderr.contains("read it again"), "{stderr}");
+}
+
+/// Paths of the items of a search result.
+fn found(root: &Path, query: &str) -> Vec<String> {
+    let (exit, value) = json(root, &["search", query], None);
+    assert_eq!(exit, 0, "{value}");
+    assert_eq!(value["index"]["status"], "fresh", "{value}");
+    value["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|item| item["path"].as_str().unwrap().to_string())
+        .collect()
+}
+
+/// The files-first rule of an agent with file access: bodies and new plain
+/// Pages by its own tools, everything else through Svode. Each side sees
+/// the current source of the other.
+#[test]
+fn direct_body_edits_and_svode_commands_see_each_other() {
+    let Some(fixture) = fixture() else { return };
+    let root = &fixture.root;
+    let head = String::from_utf8(
+        Command::new("git")
+            .args(["rev-parse", "HEAD"])
+            .current_dir(root)
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .unwrap();
+    let read = page_version(root);
+    assert_eq!(found(root, "First draft"), ["notes/today.md"]);
+
+    // The agent edits the body below the frontmatter with its own tools and
+    // adds a plain Page to an existing folder.
+    let edited = source(root).replace("First draft\n", "Edited by the agent\n");
+    std::fs::write(root.join("notes/today.md"), &edited).unwrap();
+    write(
+        &root.join("notes/idea.md"),
+        "---\ntitle: Idea\n---\nA fresh idea\n",
+    );
+    assert_eq!(found(root, "Edited by the agent"), ["notes/today.md"]);
+    assert!(found(root, "First draft").is_empty());
+    assert_eq!(found(root, "fresh idea"), ["notes/idea.md"]);
+    let (exit, listed) = json(root, &["page", "list", "--path", "notes"], None);
+    assert_eq!(exit, 0, "{listed}");
+    assert!(
+        listed["items"][0]["children"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|page| page["path"] == "notes/idea.md" && page["kind"] == "page"),
+        "{listed}"
+    );
+
+    // A body write from the version before the direct edit would lose it.
+    let (exit, stale) = write_page(root, "Svode draft\n", &read);
+    assert_eq!((exit, code(&stale)), (1, "SOURCE_STALE"), "{stale}");
+    assert_eq!(source(root), edited);
+
+    // A metadata change reads the current source and keeps the edited body.
+    let (exit, meta) = json(
+        root,
+        &[
+            "page",
+            "meta",
+            "set",
+            "--path",
+            "notes/today.md",
+            "--icon",
+            "📝",
+        ],
+        None,
+    );
+    assert_eq!(exit, 0, "{meta}");
+    let current = source(root);
+    assert!(current.ends_with("Edited by the agent\n"), "{current}");
+    assert!(
+        current.contains("custom: kept") && current.contains("📝"),
+        "{current}"
+    );
+    let version = meta["sourceVersion"].as_str().unwrap();
+    assert_eq!(version, page_version(root));
+
+    // The chain continues from the returned version.
+    let (exit, written) = write_page(root, "Svode draft\n", version);
+    assert_eq!(exit, 0, "{written}");
+    assert!(source(root).ends_with("Svode draft\n"));
+    assert_eq!(found(root, "Svode draft"), ["notes/today.md"]);
+    assert_eq!(
+        String::from_utf8(
+            Command::new("git")
+                .args(["rev-parse", "HEAD"])
+                .current_dir(root)
+                .output()
+                .unwrap()
+                .stdout,
+        )
+        .unwrap(),
+        head,
+        "no commit"
+    );
 }
 
 #[test]

@@ -439,7 +439,7 @@ pub enum CollectionVerb {
     Delete(CollectionSelector),
     /// Read-only check of relation targets, item references and order.
     #[command(
-        after_help = "Without --collection every Collection of the selected Space is checked. Run it after a deliberate raw structural edit and fix every reported issue.\n\nExample:\n  svode --project ~/Notes collection check --collection tasks --json"
+        after_help = "Without --collection every Collection of the selected Space is checked. Run it after structural files changed outside Svode (by hand, Git or another program) and fix every reported issue.\n\nExample:\n  svode --project ~/Notes collection check --collection tasks --json"
     )]
     Check(CollectionCheckArgs),
     /// Schema columns of one Collection.

@@ -75,6 +75,35 @@ jobs:
             -A clippy::needless_borrow \
             -A clippy::needless_borrows_for_generic_args
 
+  standalone-linux:
+    # svode and svode-mcp as scripts and CI use them on Linux x86_64: built,
+    # tested through real processes and smoke-checked without the desktop
+    # app or its GUI libraries.
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@1.97.0
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: . -> target
+          key: standalone
+      - name: Install the build dependency of the OS keychain client
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libdbus-1-dev pkg-config
+      - name: Build the standalone binaries
+        run: cargo build -p svode-cli -p svode-mcp
+      - name: The binaries link no desktop GUI library
+        run: |
+          ldd target/debug/svode target/debug/svode-mcp
+          if ldd target/debug/svode target/debug/svode-mcp | grep -Ei 'gtk|webkit|appindicator|rsvg'; then
+            exit 1
+          fi
+      - name: Every command and tool through real processes
+        run: cargo test -p svode-cli -p svode-mcp
+      - name: Packaging smoke
+        run: node scripts/smoke-standalone.mjs target/debug
+
   audit:
     runs-on: ubuntu-22.04
     steps:
