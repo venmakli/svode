@@ -120,7 +120,7 @@ async fn handle_connection(
 }
 
 async fn dispatch(app: AppHandle, request: IpcRequest) -> IpcResponse {
-    let host = super::service::DesktopMcpHost { app: app.clone() };
+    let host = super::service::DesktopMcpHost::new(app.clone());
     match bridge_request(&host, &request.method, &request.params) {
         BridgeCall::Respond(response) => response,
         BridgeCall::CallTool { name, args } => IpcResponse {

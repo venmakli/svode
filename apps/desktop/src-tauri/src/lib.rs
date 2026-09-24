@@ -71,6 +71,7 @@ pub fn run() {
         .manage(app_windows::AppWindowState::new())
         .manage(space::settings::AppSettingsState::new())
         .manage(mcp::active::ActiveProjectState::new())
+        .manage(mcp::project_sessions::ProjectSessions::new())
         .manage(mcp::commands::McpConfigState::new())
         .manage(actors::ActorCatalogState::new())
         .manage(terminal::TerminalManager::new())
@@ -387,8 +388,10 @@ pub fn run() {
 
                 let autocommit =
                     app_handle.state::<Arc<svode_core::git::autocommit::AutocommitService>>();
+                let project_sessions = app_handle.state::<mcp::project_sessions::ProjectSessions>();
                 tauri::async_runtime::block_on(async {
                     autocommit.flush_all().await;
+                    project_sessions.close_all().await;
                 });
             }
         });

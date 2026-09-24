@@ -24,12 +24,11 @@ use svode_core::index::IndexKey;
 use svode_core::index::freshness::IndexFreshness;
 use svode_core::index::knowledge::KnowledgeScope;
 use svode_core::routines::model::ResolvedRoutineOwner;
-use svode_core::runtime::session::{ProjectSession, SessionError};
+use svode_core::runtime::session::ProjectSession;
 
 use crate::catalog;
 use crate::error::ToolError;
 use crate::host::{MutationRuntime, ReadRuntime, RoutineRunner, RoutineRuntime, ToolHost};
-use crate::target::context_error;
 
 /// Catalog tools a standalone process serves: reads answered from project
 /// sources, the index reconciled with them, Git or the Actor catalog, tools
@@ -141,15 +140,6 @@ impl StandaloneHost {
     }
 }
 
-fn session_error(error: SessionError) -> ToolError {
-    match error {
-        SessionError::Project(error) => context_error(error, "PROJECT_UNAVAILABLE"),
-        error @ SessionError::OtherProject { .. } => {
-            ToolError::new("PROJECT_UNAVAILABLE", error.to_string())
-        }
-    }
-}
-
 impl ToolHost for StandaloneHost {
     fn version(&self) -> &str {
         self.version
@@ -166,7 +156,7 @@ impl ToolHost for StandaloneHost {
             .open_project(project)
             .await
             .map(|_| ())
-            .map_err(session_error)
+            .map_err(ToolError::from)
     }
 
     async fn prepare_mutation(&self, paths: &[PathBuf]) {
@@ -191,7 +181,7 @@ impl ToolHost for StandaloneHost {
             .session
             .open_project(project)
             .await
-            .map_err(session_error)?;
+            .map_err(ToolError::from)?;
         let keys = self.session.index().keys_for_scope(project, scope).await?;
         Ok(self.session.prepare_index(&keys).await?)
     }

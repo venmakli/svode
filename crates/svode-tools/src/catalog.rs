@@ -825,7 +825,7 @@ Space targeting:
 
 Index-backed reads:
 - search_pages, query_collection_items and the Knowledge tools answer from the Svode index and return `index`: status fresh, or partial when some sources could not be read and their earlier rows are kept, plus verifiedAt and diagnostics.
-- INDEX_UNAVAILABLE means the index of a Space could not be prepared, for example because the project is not open in the Svode app. It is not an empty result: do not conclude that nothing matches.
+- INDEX_UNAVAILABLE means the index of a Space could not be prepared, for example because its index file cannot be opened or rebuilt; the diagnostics name the Space and the reason. It is not an empty result: do not conclude that nothing matches.
 
 Routine workflow:
 - Call list_spaces, then list_collections when needed, before working with Routines. Every Routine tool requires a non-null explicit spaceId: use "root" for the project owner or a child id from list_spaces; add collectionPath only for an existing Collection owner.

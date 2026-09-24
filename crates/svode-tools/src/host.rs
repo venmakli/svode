@@ -15,7 +15,7 @@ use svode_core::attachments::import::{LfsReadiness, ManagedImportDelivery};
 use svode_core::git::access::RepositoryAccessSnapshot;
 use svode_core::git::state::GitRuntime;
 use svode_core::index::IndexKey;
-use svode_core::index::freshness::{IndexFreshness, IndexUnavailable};
+use svode_core::index::freshness::IndexFreshness;
 use svode_core::index::knowledge::KnowledgeScope;
 use svode_core::index::state::IndexRuntimeState;
 use svode_core::index::update::IndexUpdateState;
@@ -143,21 +143,13 @@ pub trait ToolHost: Sync {
     /// Prepares the index pools of an index-backed read in `scope` and
     /// reports their freshness; an index that cannot answer fails with
     /// `INDEX_UNAVAILABLE`, never as an empty result. By default the host
-    /// reports the index its runtime keeps open without preparing it, so a
-    /// project it has not opened is unavailable.
+    /// reports the pools its runtime keeps open without preparing them.
     fn prepare_index(
         &self,
         project: &Path,
         scope: &KnowledgeScope,
     ) -> impl Future<Output = Result<IndexFreshness, ToolError>> + Send {
-        async move {
-            let index = self.read_runtime().index;
-            if !index.is_project_open(project).await {
-                return Err(IndexUnavailable::project_not_open(project).into());
-            }
-            let keys = index.keys_for_scope(project, scope).await?;
-            Ok(index.freshness(&keys).await?)
-        }
+        open_index_freshness(self.read_runtime().index, project, scope)
     }
 
     /// Existing index pool for a read target. `None` leaves filesystem
@@ -206,4 +198,16 @@ pub trait ToolHost: Sync {
     /// Explicit Routine launch of the host. `None` means the host cannot run
     /// Routines, so `run_routine` is neither published nor dispatched.
     fn routine_runner(&self) -> Option<&dyn RoutineRunner>;
+}
+
+/// Freshness of the pools `index` already holds open for a read in `scope`,
+/// without opening or checking them: a pool that is not open makes the read
+/// unavailable.
+pub async fn open_index_freshness(
+    index: &IndexRuntimeState,
+    project: &Path,
+    scope: &KnowledgeScope,
+) -> Result<IndexFreshness, ToolError> {
+    let keys = index.keys_for_scope(project, scope).await?;
+    Ok(index.freshness(&keys).await?)
 }

@@ -7,6 +7,8 @@ use svode_core::attachments::import::{LfsReadiness, ManagedImportDelivery};
 use svode_core::routines::model::{ResolvedRoutineOwner, RoutineDispatchResult};
 use svode_tools::host::{RoutineCaller, RoutineRunner, RoutineRuntime};
 
+use crate::mcp::project_sessions::{ProjectSessions, RequestSession};
+
 pub async fn call_tool_with_context(
     app: AppHandle,
     name: &str,
@@ -33,14 +35,38 @@ pub async fn call_tool_with_context(
     let target = request_context
         .as_ref()
         .map(|context| request_target(context, routine_caller));
-    let host = DesktopMcpHost { app };
+    let host = DesktopMcpHost::new(app);
+    if let Some(target) = &target {
+        host.session
+            .attach_existing(
+                &host.app.state::<ProjectSessions>(),
+                host.desktop_index(),
+                Path::new(&target.project_path),
+            )
+            .await;
+    }
     svode_tools::dispatch::call_tool(&host, target.as_ref(), name, args).await
 }
 
 /// Desktop host of the shared MCP mapping: active-context resolution happens
-/// before dispatch, runtime handles come from managed state.
+/// before dispatch, runtime handles come from managed state. The index of a
+/// target project no window has open comes from its on-demand session.
 pub(crate) struct DesktopMcpHost {
     pub(crate) app: AppHandle,
+    session: RequestSession,
+}
+
+impl DesktopMcpHost {
+    pub(crate) fn new(app: AppHandle) -> Self {
+        Self {
+            app,
+            session: RequestSession::default(),
+        }
+    }
+
+    fn desktop_index(&self) -> &svode_core::index::state::IndexRuntimeState {
+        &self.app.state::<IndexState>().inner().core
+    }
 }
 
 impl svode_tools::host::ToolHost for DesktopMcpHost {
@@ -52,19 +78,35 @@ impl svode_tools::host::ToolHost for DesktopMcpHost {
         true
     }
 
-    /// Only a pool the project runtime opened: a request never creates an
-    /// empty index for a project that is not open.
+    async fn prepare_mutation(&self, paths: &[PathBuf]) {
+        self.session.prepare_mutation(paths).await;
+    }
+
+    async fn prepare_index(
+        &self,
+        project: &Path,
+        scope: &svode_core::index::knowledge::KnowledgeScope,
+    ) -> Result<svode_core::index::freshness::IndexFreshness, ToolError> {
+        self.session
+            .prepare_index(
+                &self.app.state::<ProjectSessions>(),
+                self.desktop_index(),
+                project,
+                scope,
+            )
+            .await
+    }
+
+    /// Only a pool the project runtime or the request session opened: a
+    /// request never creates an empty index here.
     async fn index_pool(
         &self,
         key: &svode_core::index::IndexKey,
         space_path: &Path,
     ) -> Option<sqlx::SqlitePool> {
-        let state = &self.app.state::<IndexState>().inner().core;
-        if let Some(pool) = state.existing_pool(key).await {
-            return Some(pool);
-        }
-        let fallback = state.key_for_space_dir(space_path).await?;
-        state.existing_pool(&fallback).await
+        self.session
+            .index_pool(self.desktop_index(), key, space_path)
+            .await
     }
 
     async fn repository_access(
@@ -85,21 +127,22 @@ impl svode_tools::host::ToolHost for DesktopMcpHost {
 
     fn read_runtime(&self) -> svode_tools::host::ReadRuntime<'_> {
         svode_tools::host::ReadRuntime {
-            index: &self.app.state::<IndexState>().inner().core,
+            index: self.session.index(self.desktop_index()),
             actors: self.app.state::<crate::actors::ActorCatalogState>().inner(),
             git: self.app.state::<GitState>().inner().runtime(),
         }
     }
 
     fn mutation_runtime(&self) -> svode_tools::host::MutationRuntime<'_> {
-        svode_tools::host::MutationRuntime {
-            index: &self.app.state::<IndexState>().inner().core,
-            updates: self.app.state::<IndexUpdateState>().inner().core(),
-            nonces: self
-                .app
-                .state::<std::sync::Arc<svode_core::page::nonce::WriteNonceRegistry>>()
-                .inner(),
-        }
+        self.session
+            .mutation_runtime(svode_tools::host::MutationRuntime {
+                index: self.desktop_index(),
+                updates: self.app.state::<IndexUpdateState>().inner().core(),
+                nonces: self
+                    .app
+                    .state::<std::sync::Arc<svode_core::page::nonce::WriteNonceRegistry>>()
+                    .inner(),
+            })
     }
 
     fn lfs_readiness(&self) -> Option<&dyn LfsReadiness> {

@@ -60,21 +60,6 @@ impl IndexUnavailable {
     pub fn failed(key: &IndexKey, error: impl std::fmt::Display) -> KnowledgeDiagnostic {
         diagnostic(key, "index_unavailable", error.to_string())
     }
-
-    /// The process has not opened `project`, so it holds no prepared index.
-    pub fn project_not_open(project: &Path) -> Self {
-        Self {
-            message: format!(
-                "The Svode index of {} is not prepared: the project is not open in this Svode process",
-                project.display()
-            ),
-            diagnostics: vec![KnowledgeDiagnostic {
-                space_id: None,
-                code: "project_not_open".to_string(),
-                message: "Open this project in Svode to prepare its index".to_string(),
-            }],
-        }
-    }
 }
 
 /// Last completed check of one pool against its sources.
@@ -310,8 +295,6 @@ mod tests {
         assert_eq!(freshness.status, IndexFreshnessStatus::Fresh);
         assert_eq!(freshness.verified_at, None);
         assert!(!state.is_project_open(&root).await);
-        let unopened = IndexUnavailable::project_not_open(&root);
-        assert_eq!(unopened.diagnostics[0].code, "project_not_open");
         state.close_key(&key).await;
     }
 }

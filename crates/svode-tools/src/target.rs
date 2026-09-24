@@ -7,6 +7,7 @@ use svode_core::index::IndexKey;
 use svode_core::page::{
     PageSourceError, ResolvedSpaceTarget, ready_child_space_for_directory, resolve_space_target,
 };
+use svode_core::runtime::session::SessionError;
 
 use crate::error::ToolError;
 use crate::host::RequestTarget;
@@ -98,6 +99,18 @@ pub(crate) fn context_error(error: PageSourceError, fallback: &str) -> ToolError
         _ => fallback,
     };
     ToolError::new(code, error.to_string())
+}
+
+/// A runtime session that cannot bind the target Project.
+impl From<SessionError> for ToolError {
+    fn from(error: SessionError) -> Self {
+        match error {
+            SessionError::Project(error) => context_error(error, "PROJECT_UNAVAILABLE"),
+            error @ SessionError::OtherProject { .. } => {
+                ToolError::new("PROJECT_UNAVAILABLE", error.to_string())
+            }
+        }
+    }
 }
 
 /// Index key of the Space selected by a public `spaceId`.

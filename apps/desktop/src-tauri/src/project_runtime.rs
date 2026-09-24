@@ -8,6 +8,7 @@ use tokio::sync::Semaphore;
 use crate::AppError;
 use crate::index::update::IndexUpdateState;
 use crate::index::{IndexKey, IndexState};
+use crate::mcp::project_sessions::ProjectSessions;
 use crate::routines::{RoutineSchedulerState, RoutineStoreState};
 use crate::space::types::SpaceStatus;
 
@@ -88,6 +89,9 @@ impl ProjectRuntimeState {
         crate::git::delivery::repair_project(app, &project_path).await;
         let index_state = app.state::<IndexState>();
         let prepared = index_state.open_project(&project_path).await;
+        // The window runtime serves the project from now on; its bridge
+        // session, if any, hands over after the requests still using it.
+        app.state::<ProjectSessions>().close(&project_path).await;
         if prepared.is_ok() {
             let routine_stores = app.state::<Arc<RoutineStoreState>>();
             for key in index_state.keys_for_project(&project_path).await {
@@ -112,6 +116,7 @@ impl ProjectRuntimeState {
             .close_project(project_path)
             .await;
         app.state::<IndexState>().close_project(project_path).await;
+        app.state::<ProjectSessions>().close(project_path).await;
     }
 
     pub async fn on_space_added(

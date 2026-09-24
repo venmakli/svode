@@ -2618,12 +2618,11 @@ async fn every_catalog_tool_is_dispatched_by_the_library() {
     }
 }
 
-/// A host that does not prepare indexes on demand (the desktop bridge)
-/// reports the index its runtime keeps open: a project it has not opened is
-/// `INDEX_UNAVAILABLE` for every index-backed read, never an empty result,
-/// and no index is created for it.
+/// A host that reports only the pools its runtime keeps open (the default
+/// seam) answers an index-backed read without an open pool with
+/// `INDEX_UNAVAILABLE`, never an empty result, and creates no index.
 #[tokio::test]
-async fn index_backed_reads_of_a_project_the_host_has_not_opened_are_unavailable() {
+async fn index_backed_reads_without_an_open_index_are_unavailable() {
     let fixture = index_fixture();
     let host = FixtureHost::new(None);
     let target = root_target(&fixture);
@@ -2638,16 +2637,13 @@ async fn index_backed_reads_of_a_project_the_host_has_not_opened_are_unavailable
             "search_knowledge",
             json!({ "query": "Needle", "scope": "project" }),
         ),
-        (
-            "get_related_context",
-            json!({ "query": "Needle", "spaceId": "child" }),
-        ),
+        ("get_related_context", json!({ "query": "Needle" })),
     ] {
         let result = call_tool(&host, Some(&target), name, arguments).await;
         assert_eq!(error_code(&result), "INDEX_UNAVAILABLE", "{name}");
         let error = &result.structured_content.as_ref().unwrap()["error"];
         assert_eq!(
-            error["diagnostics"][0]["code"], "project_not_open",
+            error["diagnostics"][0]["code"], "pool_unavailable",
             "{name}"
         );
     }
