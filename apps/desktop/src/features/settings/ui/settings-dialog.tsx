@@ -130,15 +130,20 @@ export function SettingsDialog({
               />
             </SettingsPage>
           ) : validProjectTarget ? (
-            <ProjectSettingsContent
-              key={`${activeRootPath}:${destination.spacePath}`}
-              spacePath={destination.spacePath}
-              section={destination.section}
-              enableLegacyAgentIntegration={enableLegacyAgentIntegration}
-              onNavigate={navigate}
-              onClose={close}
-              registerLeaveGuard={registerLeaveGuard}
-            />
+            <SettingsPage
+              title={
+                projectItems.find((item) => item.key === destination.section)
+                  ?.label ?? ""
+              }
+            >
+              <ProjectSettingsContent
+                key={activeRootPath}
+                destination={destination}
+                enableLegacyAgentIntegration={enableLegacyAgentIntegration}
+                onClose={close}
+                registerLeaveGuard={registerLeaveGuard}
+              />
+            </SettingsPage>
           ) : (
             <div className="min-w-0 flex-1 p-4 pr-12">
               <Alert>

@@ -10,7 +10,6 @@ import { getLocale, setLocale } from "@/paraglide/runtime.js";
 import { clearNativeMocks, mockNativeIpc } from "@/platform/native/testing";
 
 import { SpaceGitSection } from "./space-git-section";
-import { ProjectSpacePolicyList } from "./space-settings-spaces-section";
 
 const isolatedProcess = process.env.SVODE_REPOSITORY_ACCESS_DOM_PROCESS === "1";
 
@@ -63,59 +62,68 @@ if (!isolatedProcess) {
     const root = createRoot(dom.window.document.getElementById("app")!);
     const longPath =
       "/Users/test/Projects/a-very-long-project-name/spaces/a-very-long-submodule-name";
+    const props = {
+      gitType: "submodule" as const,
+      repositoryAccessOwnerKind: "submodule" as const,
+      repositoryPath: longPath,
+      repositoryDisplayPath: longPath,
+      repositoryOwnerName: "Long-lived research archive",
+      activeRootName: "Knowledge Base",
+      scopeName: "Long-lived research archive",
+      isRoot: false,
+      submoduleUrl: "https://example.test/archive.git",
+      remoteUrl: "https://example.test/archive.git",
+      branch: "main",
+      autoSync: false,
+      autoCommitStructural: false,
+      autoCommitSystem: false,
+      repoIdentity: null,
+      identityName: "",
+      identityEmail: "",
+      identityFormError: null,
+      savingIdentity: false,
+      canResetIdentity: false,
+      identityEditing: false,
+      remoteUpdateResult: {
+        localRemoteUpdated: true,
+        trackedReconciliation: {
+          status: "pending_repository_access" as const,
+          repositoryId: "repo-parent",
+          accessStatus: "unknown" as const,
+          accessReason: "not_checked" as const,
+        },
+      },
+      fanoutEnabled: false,
+      fanoutPreview: [],
+      fanoutSelected: {},
+      onRemoteChange: () => undefined,
+      onRemoteBlur: () => undefined,
+      onAutoSyncChange: () => undefined,
+      onAutoCommitStructuralChange: () => undefined,
+      onAutoCommitSystemChange: () => undefined,
+      onIdentityNameChange: () => undefined,
+      onIdentityEmailChange: () => undefined,
+      onStartIdentityEdit: () => undefined,
+      onCancelIdentityEdit: () => undefined,
+      onSaveIdentity: () => undefined,
+      onResetIdentity: () => undefined,
+      onFanoutEnabledChange: () => undefined,
+      onFanoutSelectedChange: () => undefined,
+      onEditProjectRemote: () => undefined,
+    };
+    const remoteInputs = () =>
+      Array.from(dom.window.document.querySelectorAll("label"))
+        .filter(
+          (label) =>
+            label.htmlFor !== "" && label.textContent === m.git_remote_label(),
+        )
+        .map((label) =>
+          dom.window.document.getElementById(label.htmlFor),
+        ) as HTMLInputElement[];
 
     try {
       await act(async () => {
-        root.render(
-          <SpaceGitSection
-            gitType="submodule"
-            repositoryAccessOwnerKind="submodule"
-            repositoryPath={longPath}
-            repositoryDisplayPath={longPath}
-            repositoryOwnerName="Long-lived research archive"
-            activeRootName="Knowledge Base"
-            scopeName="Long-lived research archive"
-            isRoot={false}
-            submoduleUrl="https://example.test/archive.git"
-            remoteUrl="https://example.test/archive.git"
-            branch="main"
-            autoSync={false}
-            autoCommitStructural={false}
-            autoCommitSystem={false}
-            repoIdentity={null}
-            identityName=""
-            identityEmail=""
-            identityFormError={null}
-            savingIdentity={false}
-            canResetIdentity={false}
-            remoteUpdateResult={{
-              localRemoteUpdated: true,
-              trackedReconciliation: {
-                status: "pending_repository_access",
-                repositoryId: "repo-parent",
-                accessStatus: "unknown",
-                accessReason: "not_checked",
-              },
-            }}
-            fanoutEnabled={false}
-            fanoutPreview={[]}
-            fanoutSelected={{}}
-            onRemoteChange={() => undefined}
-            onRemoteBlur={() => undefined}
-            onAutoSyncChange={() => undefined}
-            onAutoCommitStructuralChange={() => undefined}
-            onAutoCommitSystemChange={() => undefined}
-            onIdentityNameChange={() => undefined}
-            onIdentityEmailChange={() => undefined}
-            onStartIdentityEdit={() => undefined}
-            onCancelIdentityEdit={() => undefined}
-            onSaveIdentity={() => undefined}
-            onResetIdentity={() => undefined}
-            onFanoutEnabledChange={() => undefined}
-            onFanoutSelectedChange={() => undefined}
-            onEditRemote={() => undefined}
-          />,
-        );
+        root.render(<SpaceGitSection {...props} />);
         await settle();
       });
 
@@ -139,9 +147,7 @@ if (!isolatedProcess) {
             button.textContent?.trim() === m.git_access_action_check_again(),
         ),
       ).toBe(false);
-      expect(dom.window.document.getElementById("ws-git-remote") === null).toBe(
-        false,
-      );
+      expect(remoteInputs().map((input) => input?.tagName)).toEqual(["INPUT"]);
       expect(
         dom.window.document.body.textContent?.includes(
           m.git_remote_reconciliation_pending_title(),
@@ -153,68 +159,46 @@ if (!isolatedProcess) {
       ).toEqual(["repository_access_activate"]);
       expect(calls.includes("repository_access_verify")).toBe(false);
 
-      await setLocale("ru", { reload: false });
-      const rowPath =
-        "/Users/test/Projects/knowledge-base/spaces/очень-длинное-название-пространства";
+      // Two owners on one page keep their own fields, and the identity editor
+      // opens in place of its summary.
       await act(async () => {
         root.render(
-          <ProjectSpacePolicyList
-            projectPath="/Users/test/Projects/knowledge-base"
-            spaces={[
-              {
-                id: "long-space",
-                name: "Очень длинное название пространства разработки",
-                icon: "👍",
-                description: "",
-                path: rowPath,
-                hasSpaces: false,
-                hasSchema: false,
-                lastOpened: null,
-                status: "ready",
-                lfsState: "n/a",
-              },
-            ]}
-            gitTypes={{ "long-space": "independent" }}
-            section="git"
-            onOpenSpaceDetail={() => undefined}
-          />,
+          <>
+            <SpaceGitSection
+              {...props}
+              gitType={null}
+              repositoryAccessOwnerKind="project"
+              isRoot
+            />
+            <SpaceGitSection {...props} identityEditing />
+          </>,
         );
         await settle();
       });
-
-      const row = dom.window.document.querySelector<HTMLElement>(
-        "[data-space-summary-row]",
+      const [projectRemote, spaceRemote] = remoteInputs();
+      expect(projectRemote?.tagName).toBe("INPUT");
+      expect(spaceRemote?.tagName).toBe("INPUT");
+      expect(projectRemote === spaceRemote).toBe(false);
+      const nameLabels = Array.from(
+        dom.window.document.querySelectorAll("label"),
+      ).filter(
+        (label) =>
+          label.textContent === m.settings_git_identity_name_override_label(),
       );
-      const identity = row?.querySelector<HTMLElement>(
-        "[data-space-row-identity]",
-      );
-      const access = row?.querySelector<HTMLElement>(
-        "[data-space-row-repository-access]",
-      );
-      const metadata = row?.querySelector<HTMLElement>(
-        "[data-space-row-metadata]",
-      );
-      const action = row?.querySelector<HTMLElement>("[data-space-row-action]");
-      expect(row?.className.includes("grid-cols-[minmax(0,1fr)_auto]")).toBe(
-        true,
-      );
-      expect(identity?.contains(access ?? null)).toBe(false);
-      expect(metadata?.contains(access ?? null)).toBe(true);
-      expect(access === null || action === null).toBe(false);
-      expect(action?.textContent?.trim()).toBe("");
-      expect(row?.getAttribute("aria-label")?.includes(rowPath)).toBe(true);
+      expect(nameLabels.length).toBe(1);
       expect(
-        identity
-          ?.querySelector<HTMLElement>(
-            `[title="Очень длинное название пространства разработки"]`,
-          )
-          ?.className.includes("break-words"),
-      ).toBe(true);
+        dom.window.document.getElementById(nameLabels[0]!.htmlFor)?.tagName,
+      ).toBe("INPUT");
       expect(
-        access
-          ?.querySelector<HTMLElement>("[data-repository-access-row-status]")
-          ?.className.includes("max-w-full"),
-      ).toBe(true);
+        dom.window.document.querySelectorAll(
+          `button[aria-label$="${m.settings_git_identity_set_project()}"]`,
+        ).length,
+      ).toBe(1);
+      expect(
+        dom.window.document.querySelector(
+          `button[aria-label$="${m.settings_git_identity_set_repository()}"]`,
+        ),
+      ).toBe(null);
     } finally {
       await act(async () => root.unmount());
       clearNativeMocks();

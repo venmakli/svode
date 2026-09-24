@@ -2,11 +2,9 @@ import type { AppSettingsSection } from "./app-settings-sections";
 
 export type ProjectSettingsSection =
   | "general"
-  | "spaces"
   | "variables"
   | "git"
   | "storage"
-  | "health"
   | "ai-agent"
   | "defaults"
   | "instructions";

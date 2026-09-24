@@ -1,3 +1,4 @@
+import { useId, useRef, type RefObject } from "react";
 import { TriangleAlert } from "lucide-react";
 import * as m from "@/paraglide/messages.js";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -38,6 +39,7 @@ interface SpaceGitSectionProps {
   identityFormError: string | null;
   savingIdentity: boolean;
   canResetIdentity: boolean;
+  identityEditing: boolean;
   remoteUpdateResult: GitSetRemoteResult | null;
   fanoutEnabled: boolean;
   fanoutPreview: FanoutPreviewEntry[];
@@ -55,7 +57,9 @@ interface SpaceGitSectionProps {
   onResetIdentity: () => void;
   onFanoutEnabledChange: (value: boolean) => void;
   onFanoutSelectedChange: (value: Record<string, boolean>) => void;
-  onEditRemote: () => void;
+  // The project's Remote URL field, which inline spaces edit through.
+  remoteRef?: RefObject<HTMLInputElement | null>;
+  onEditProjectRemote: () => void;
 }
 
 export function SpaceGitSection({
@@ -79,6 +83,7 @@ export function SpaceGitSection({
   identityFormError,
   savingIdentity,
   canResetIdentity,
+  identityEditing,
   remoteUpdateResult,
   fanoutEnabled,
   fanoutPreview,
@@ -96,8 +101,17 @@ export function SpaceGitSection({
   onResetIdentity,
   onFanoutEnabledChange,
   onFanoutSelectedChange,
-  onEditRemote,
+  remoteRef,
+  onEditProjectRemote,
 }: SpaceGitSectionProps) {
+  const remoteId = useId();
+  const ownRemote = useRef<HTMLInputElement>(null);
+  const remoteInput = remoteRef ?? ownRemote;
+  const hasRemote = isRoot || gitType !== "inline";
+  function editRemote() {
+    if (hasRemote) remoteInput.current?.focus();
+    else onEditProjectRemote();
+  }
   return (
     <div className="flex w-full min-w-0 max-w-2xl flex-col gap-6">
       <RepositoryAccessSummary
@@ -106,7 +120,7 @@ export function SpaceGitSection({
         ownerName={repositoryOwnerName}
         remoteUrl={remoteUrl}
         repositoryPath={repositoryPath}
-        onEditRemote={onEditRemote}
+        onEditRemote={editRemote}
       />
       {gitType === "inline" && (
         <p className="text-sm text-muted-foreground">
@@ -128,12 +142,13 @@ export function SpaceGitSection({
           )}
         </>
       )}
-      {(isRoot || gitType !== "inline") && (
+      {hasRemote && (
         <>
           <div className="flex flex-col gap-2">
-            <Label htmlFor="ws-git-remote">{m.git_remote_label()}</Label>
+            <Label htmlFor={remoteId}>{m.git_remote_label()}</Label>
             <Input
-              id="ws-git-remote"
+              ref={remoteInput}
+              id={remoteId}
               value={remoteUrl}
               onChange={(event) => onRemoteChange(event.target.value)}
               onBlur={onRemoteBlur}
@@ -245,7 +260,7 @@ export function SpaceGitSection({
         <>
           <Separator />
           <IdentitySection
-            mode="summary"
+            mode={identityEditing ? "detail" : "summary"}
             isRoot={isRoot}
             scopeName={scopeName}
             repoIdentity={repoIdentity}

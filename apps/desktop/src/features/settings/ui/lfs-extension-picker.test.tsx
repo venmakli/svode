@@ -18,7 +18,7 @@ test("LFS extension picker exposes selection at group and total levels", () => {
   expect(markup.includes("1 of 9")).toBe(true);
   expect(markup.includes("1 of 6")).toBe(true);
   expect(markup.includes("1 of 3")).toBe(true);
-  expect(markup.includes('id="storage-lfs-group-images"')).toBe(true);
+  expect(/id="[^"]*-group-images"/.test(markup)).toBe(true);
   expect(markup.includes('data-slot="combobox"')).toBe(false);
 });
 
@@ -35,5 +35,5 @@ test("LFS extension picker keeps custom selections visible and removable", () =>
   expect(markup.includes("Selected: 1")).toBe(true);
   expect(markup.includes(".blend")).toBe(true);
   expect(markup.includes('aria-label="Remove .blend"')).toBe(true);
-  expect(markup.includes('id="storage-lfs-custom-extension"')).toBe(true);
+  expect(/id="[^"]*-custom-extension"/.test(markup)).toBe(true);
 });

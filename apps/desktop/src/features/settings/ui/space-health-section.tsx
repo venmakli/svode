@@ -1,7 +1,7 @@
 import * as m from "@/paraglide/messages.js";
 import { Button } from "@/components/ui/button";
-import { Label } from "@/components/ui/label";
 import { Loader2 } from "lucide-react";
+import { SettingsGroup, SettingsRow } from "./settings-layout";
 
 interface SpaceHealthSectionProps {
   brokenLinksCount: number | null;
@@ -15,15 +15,12 @@ export function SpaceHealthSection({
   onRefresh,
 }: SpaceHealthSectionProps) {
   return (
-    <div className="flex max-w-md flex-col gap-4">
-      <div className="flex flex-col gap-1">
-        <Label>{m.settings_health_broken_links()}</Label>
-        <p className="text-sm text-muted-foreground">
-          {m.settings_health_broken_links_desc()}
-        </p>
-      </div>
-      <div className="flex items-center justify-between rounded-md border p-3">
-        <span className="text-sm">
+    <SettingsGroup title={m.settings_health()}>
+      <SettingsRow
+        label={m.settings_health_broken_links()}
+        description={m.settings_health_broken_links_desc()}
+      >
+        <span className="text-sm text-muted-foreground">
           {brokenLinksCount === null
             ? m.common_loading()
             : m.settings_health_broken_links_count({
@@ -41,7 +38,7 @@ export function SpaceHealthSection({
           )}
           {m.settings_space_cli_refresh()}
         </Button>
-      </div>
-    </div>
+      </SettingsRow>
+    </SettingsGroup>
   );
 }

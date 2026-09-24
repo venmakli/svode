@@ -53,7 +53,7 @@ if (!isolatedDomProcess) {
         await nextTurn();
       });
 
-      const imageGroup = getButton(dom, "storage-lfs-group-images");
+      const imageGroup = getButton(dom, "group-images");
       expect(imageGroup.dataset.state).toBe("indeterminate");
 
       await click(dom, imageGroup);
@@ -71,19 +71,19 @@ if (!isolatedDomProcess) {
       ]);
       expect(imageGroup.dataset.state).toBe("checked");
 
-      await click(dom, getButton(dom, "storage-lfs-group-images-toggle"));
-      const png = getButton(dom, "storage-lfs-extension-png");
+      await click(dom, getButton(dom, "group-images-toggle"));
+      const png = getButton(dom, "extension-png");
       expect(png.dataset.state).toBe("checked");
 
       await click(dom, png);
       expect(selectedValues(dom).includes("png")).toBe(false);
       expect(imageGroup.dataset.state).toBe("indeterminate");
 
-      await click(dom, getButton(dom, "storage-lfs-custom-blend"));
+      await click(dom, getButton(dom, "custom-blend"));
       expect(selectedValues(dom).includes("blend")).toBe(false);
-      expect(
-        dom.window.document.querySelector("#storage-lfs-custom-blend"),
-      ).toBe(null);
+      expect(dom.window.document.querySelector('[id$="-custom-blend"]')).toBe(
+        null,
+      );
     } finally {
       await act(async () => {
         root.unmount();
@@ -96,8 +96,10 @@ if (!isolatedDomProcess) {
 }
 
 function getButton(dom: JSDOM, id: string): HTMLButtonElement {
-  const button = dom.window.document.querySelector<HTMLButtonElement>(`#${id}`);
-  if (!button) throw new Error(`Button #${id} was not rendered`);
+  const button = dom.window.document.querySelector<HTMLButtonElement>(
+    `[id$="-${id}"]`,
+  );
+  if (!button) throw new Error(`Button *-${id} was not rendered`);
   return button;
 }
 

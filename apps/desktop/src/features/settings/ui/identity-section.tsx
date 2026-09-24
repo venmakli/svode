@@ -1,3 +1,4 @@
+import { useId } from "react";
 import * as m from "@/paraglide/messages.js";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -115,6 +116,7 @@ export function IdentitySection({
   fanoutSelected,
   setFanoutSelected,
 }: Props) {
+  const id = useId();
   const summary = identitySummary(repoIdentity, isRoot);
   const avatar = humanAvatar(summary.identity);
   const showFanout = isRoot && fanoutPreview.length > 0;
@@ -213,11 +215,11 @@ export function IdentitySection({
         </p>
         <div className="grid gap-3 sm:grid-cols-2">
           <div className="flex flex-col gap-1.5">
-            <Label htmlFor="ws-identity-name" className="text-xs">
+            <Label htmlFor={`${id}-name`} className="text-xs">
               {m.settings_git_identity_name_override_label()}
             </Label>
             <Input
-              id="ws-identity-name"
+              id={`${id}-name`}
               value={identityName}
               onChange={(e) => setIdentityName(e.target.value)}
               placeholder={m.settings_git_identity_name_placeholder()}
@@ -225,11 +227,11 @@ export function IdentitySection({
             />
           </div>
           <div className="flex flex-col gap-1.5">
-            <Label htmlFor="ws-identity-email" className="text-xs">
+            <Label htmlFor={`${id}-email`} className="text-xs">
               {m.settings_git_identity_email_override_label()}
             </Label>
             <Input
-              id="ws-identity-email"
+              id={`${id}-email`}
               type="email"
               value={identityEmail}
               onChange={(e) => setIdentityEmail(e.target.value)}

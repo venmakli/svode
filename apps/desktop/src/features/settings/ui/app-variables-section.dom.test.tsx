@@ -236,6 +236,7 @@ test("project page gives every owner a block with one editor on the page", async
           projectIcon=""
           spaces={[space("docs", "Сопровождение"), space("dev", "Разработки")]}
           gitTypes={{ docs: "inline", dev: "independent" }}
+          reveal={{ owner: null, request: {} }}
           registerLeaveGuard={register}
         />,
       );

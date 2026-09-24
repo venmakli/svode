@@ -179,6 +179,9 @@ test("owner block names the owner and nests its groups one level below", () => {
     block.querySelector(":scope > h3")?.textContent?.includes("Remote not set"),
   ).toBe(true);
   expect(block.querySelector("section h4")?.textContent).toBe("Variables");
+  expect(block.querySelector(":scope > h3")?.hasAttribute("tabindex")).toBe(
+    false,
+  );
   expect(
     block.querySelector("section h3")?.textContent?.includes("Testov"),
   ).toBe(true);
@@ -207,16 +210,24 @@ test("a collapsible owner block opens from its header", async () => {
       value,
     });
   }
+  const headings = new Map<string, HTMLElement | null>();
   function Harness() {
     const [open, setOpen] = useState(false);
     return (
-      <SettingsOwnerBlock
-        title="Разработки"
-        summary="Stored in Git"
-        collapsible={{ open, onOpenChange: setOpen }}
-      >
-        <div data-body />
-      </SettingsOwnerBlock>
+      <>
+        <SettingsOwnerBlock
+          title="Testov"
+          headingRef={(node) => headings.set("project", node)}
+        />
+        <SettingsOwnerBlock
+          title="Разработки"
+          summary="Stored in Git"
+          collapsible={{ open, onOpenChange: setOpen }}
+          headingRef={(node) => headings.set("space", node)}
+        >
+          <div data-body />
+        </SettingsOwnerBlock>
+      </>
     );
   }
   const root = createRoot(dom.window.document.getElementById("app")!);
@@ -225,6 +236,11 @@ test("a collapsible owner block opens from its header", async () => {
     const trigger = dom.window.document.querySelector<HTMLButtonElement>(
       "section > h3 > button",
     )!;
+    // A revealed owner focuses its heading: the static heading itself, or
+    // the trigger of a collapsible block.
+    expect(headings.get("project")?.tagName).toBe("H3");
+    expect(headings.get("project")?.tabIndex).toBe(-1);
+    expect(headings.get("space")).toBe(trigger);
     expect(trigger.getAttribute("aria-expanded")).toBe("false");
     expect(trigger.textContent?.includes("Stored in Git")).toBe(true);
     expect(dom.window.document.querySelector("[data-body]")).toBeNull();

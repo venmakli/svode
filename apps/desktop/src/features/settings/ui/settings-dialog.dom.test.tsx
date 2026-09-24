@@ -31,10 +31,10 @@ if (process.env.SVODE_UNIFIED_SETTINGS_DOM !== "1") {
     { id: "docs", name: "Docs", path: "/project/docs", status: "ready" },
     { id: "other", name: "Other", path: "/project/other", status: "ready" },
   ];
-  let pending = false;
-  let applying = false;
-  let cancellations = 0;
-  let identityCancellations = 0;
+  // Storage writes in flight per owner path.
+  const pendingOwners = new Set<string>();
+  const applyingOwners = new Set<string>();
+  const storageOpen = new Map<string, boolean>();
   const loads = new Map<string, (value: unknown) => void>();
   const noop = () => {};
   mock.module("@/features/space", () => ({
@@ -102,22 +102,25 @@ if (process.env.SVODE_UNIFIED_SETTINGS_DOM !== "1") {
   }));
   mock.module("../hooks/use-space-settings-identity", () => ({
     useSpaceSettingsIdentity: () => ({
-      handleCancelIdentityEdit: () => {
-        identityCancellations++;
-      },
+      handleCancelIdentityEdit: noop,
       handleStartIdentityEdit: noop,
     }),
   }));
   mock.module("../hooks/use-space-storage-settings", () => ({
-    useSpaceStorageSettings: () => ({
-      applyingStrategy: applying,
-      s3: {
-        pending,
-        cancel: () => {
-          cancellations++;
-        },
-      },
-    }),
+    useSpaceStorageSettings: ({
+      open,
+      spacePath,
+    }: {
+      open: boolean;
+      spacePath: string;
+    }) => {
+      storageOpen.set(spacePath, open);
+      return {
+        currentSpacePath: spacePath,
+        applyingStrategy: applyingOwners.has(spacePath),
+        s3: { pending: pendingOwners.has(spacePath), cancel: noop },
+      };
+    },
   }));
   mock.module("./app-settings-content", () => ({
     AppSettingsContent: ({ section }: { section: string }) => {
@@ -134,55 +137,27 @@ if (process.env.SVODE_UNIFIED_SETTINGS_DOM !== "1") {
     },
   }));
   mock.module("./space-general-section", () => ({
-    SpaceGeneralSection: ({ name }: { name: string }) => (
-      <div data-general-name={name}>{name}</div>
-    ),
-  }));
-  mock.module("./space-settings-spaces-section", () => ({
-    ProjectSpacesSection: ({
-      onAddSpace,
-      onOpenSpaceDetail,
+    SpaceGeneralSection: ({
+      path,
+      editor,
     }: {
-      onAddSpace(): void;
-      onOpenSpaceDetail(id: string, section: string): void;
+      path: string;
+      editor?: { name: string };
     }) => (
-      <>
-        <button onClick={onAddSpace}>Create space</button>
-        <button onClick={() => onOpenSpaceDetail("docs", "general")}>
-          Docs general
-        </button>
-      </>
-    ),
-    ProjectSpacePolicyList: ({
-      section,
-      onOpenSpaceDetail,
-    }: {
-      section: string;
-      onOpenSpaceDetail(id: string, section: string): void;
-    }) => (
-      <button onClick={() => onOpenSpaceDetail("docs", section)}>
-        Docs policy
-      </button>
+      <div data-general-path={path} data-general-name={editor?.name ?? ""} />
     ),
   }));
   mock.module("./space-git-section", () => ({
-    SpaceGitSection: ({
-      repositoryPath,
-      onStartIdentityEdit,
-    }: {
-      repositoryPath: string;
-      onStartIdentityEdit(): void;
-    }) => (
-      <div data-repository={repositoryPath}>
-        <button onClick={onStartIdentityEdit}>Edit identity</button>
-      </div>
+    SpaceGitSection: ({ repositoryPath }: { repositoryPath: string }) => (
+      <div data-repository={repositoryPath} />
     ),
   }));
-  mock.module("./identity-section", () => ({
-    IdentitySection: () => <div data-identity-detail />,
-  }));
   mock.module("./storage-section", () => ({
-    StorageSettingsSection: () => <div data-storage />,
+    StorageSettingsSection: ({
+      settings,
+    }: {
+      settings: { currentSpacePath: string };
+    }) => <div data-storage={settings.currentSpacePath} />,
     StorageStrategyConfirmDialog: () => null,
   }));
   for (const [file, name] of [
@@ -195,7 +170,7 @@ if (process.env.SVODE_UNIFIED_SETTINGS_DOM !== "1") {
       [name]: () => <div data-section={name} />,
     }));
 
-  test("one real Dialog preserves navigation, pending guards, owner targets, focus and no-project scope", async () => {
+  test("one real Dialog preserves navigation, pending guards, owner blocks, focus and no-project scope", async () => {
     const dom = new JSDOM(
       "<!doctype html><html><body><button id=trigger data-settings-return-focus>Settings</button><div id=app></div></body></html>",
       { pretendToBeVisual: true, url: "http://localhost" },
@@ -251,12 +226,18 @@ if (process.env.SVODE_UNIFIED_SETTINGS_DOM !== "1") {
       addEventListener() {},
       removeEventListener() {},
     })) as unknown as typeof window.matchMedia;
-    dom.window.HTMLElement.prototype.scrollIntoView = () => {};
+    const scrolled: Element[] = [];
+    dom.window.HTMLElement.prototype.scrollIntoView = function (
+      this: HTMLElement,
+    ) {
+      scrolled.push(this);
+    };
     const { SettingsDialog } = await import("./settings-dialog");
     const { setLocale } = await import("@/paraglide/runtime");
     setLocale("en", { reload: false });
-    const root = createRoot(dom.window.document.getElementById("app")!);
-    const trigger = dom.window.document.getElementById("trigger")!;
+    const document = dom.window.document;
+    const root = createRoot(document.getElementById("app")!);
+    const trigger = document.getElementById("trigger")!;
     trigger.focus();
     let closed = false;
     let request: SettingsDestination = {
@@ -281,20 +262,23 @@ if (process.env.SVODE_UNIFIED_SETTINGS_DOM !== "1") {
       });
       await act(tick);
     };
-    const click = async (label: string) => {
-      const button = Array.from(
-        dom.window.document.querySelectorAll<HTMLButtonElement>("button"),
-      ).find((item) => item.textContent === label);
-      if (!button) throw new Error(`Missing button ${label}`);
+    const press = async (button: HTMLElement) => {
       await act(async () => {
         button.click();
         await tick();
       });
       await act(tick);
     };
+    const click = async (label: string) => {
+      const button = Array.from(
+        document.querySelectorAll<HTMLButtonElement>("button"),
+      ).find((item) => item.textContent === label);
+      if (!button) throw new Error(`Missing button ${label}`);
+      await press(button);
+    };
     const escape = async () => {
       await act(async () => {
-        dom.window.document.activeElement?.dispatchEvent(
+        document.activeElement?.dispatchEvent(
           new dom.window.KeyboardEvent("keydown", {
             key: "Escape",
             bubbles: true,
@@ -304,60 +288,51 @@ if (process.env.SVODE_UNIFIED_SETTINGS_DOM !== "1") {
       });
     };
     const project = (
-      section: "general" | "git" | "storage" | "spaces" | "variables",
+      section: "general" | "git" | "storage" | "variables",
       spacePath = "/project",
     ): SettingsDestination => ({ scope: "project", section, spacePath });
+    const pageTitle = () =>
+      document.querySelector("main > header h2")?.textContent;
+    const ownerHeading = (name: string) =>
+      Array.from(document.querySelectorAll<HTMLElement>("section > h3")).find(
+        (heading) => heading.querySelector("span[id]")?.textContent === name,
+      )!;
+    const ownerTrigger = (name: string) =>
+      ownerHeading(name).querySelector<HTMLButtonElement>("button")!;
+    const attributes = (selector: string, name: string) =>
+      Array.from(document.querySelectorAll(selector)).map((node) =>
+        node.getAttribute(name),
+      );
     try {
       await draw();
+      expect(document.querySelectorAll('[role="dialog"]').length).toBe(1);
       expect(
-        dom.window.document.querySelectorAll('[role="dialog"]').length,
-      ).toBe(1);
-      expect(
-        dom.window.document.querySelector(
-          '[data-app-section="git-identity"]',
-        ) !== null,
+        document.querySelector('[data-app-section="git-identity"]') !== null,
       ).toBe(true);
+      expect(document.querySelector('[role="combobox"]') !== null).toBe(true);
       expect(
-        dom.window.document.querySelector('[role="combobox"]') !== null,
-      ).toBe(true);
-      expect(
-        dom.window.document.querySelector('[data-slot="sidebar-group-label"]')
+        document.querySelector('[data-slot="sidebar-group-label"]')
           ?.textContent,
       ).toBe("Svode");
-      expect(
-        dom.window.document.querySelector("main > header h2")?.textContent,
-      ).toBe("Profile");
-      expect(
-        dom.window.document.querySelector('[data-slot="breadcrumb"]'),
-      ).toBeNull();
-      const text = dom.window.document.body.textContent ?? "";
-      for (const section of [
+      expect(pageTitle()).toBe("Profile");
+      expect(document.querySelector('[data-slot="breadcrumb"]')).toBeNull();
+      const navLabels = Array.from(
+        document.querySelectorAll('[data-slot="sidebar-menu-button"]'),
+      ).map((node) => node.textContent);
+      expect(navLabels).toEqual([
         "Profile",
         "Appearance",
-        "Variables",
+        "Global variables",
         "MCP Integrations",
         "Shortcuts",
         "About",
         "General",
-        "Spaces",
+        "Variables",
         "Git",
         "Storage",
-        "Health",
-      ])
-        expect(text.includes(section)).toBe(true);
-      expect(text.includes("AI Agent")).toBe(false);
-      const navLabels = Array.from(
-        dom.window.document.querySelectorAll(
-          '[data-slot="sidebar-menu-button"]',
-        ),
-      ).map((node) => node.textContent);
-      expect(navLabels.slice(0, 3)).toEqual([
-        "Profile",
-        "Appearance",
-        "Global variables",
       ]);
       const compactSelect =
-        dom.window.document.querySelector<HTMLElement>('[role="combobox"]')!;
+        document.querySelector<HTMLElement>('[role="combobox"]')!;
       await act(async () => {
         compactSelect.focus();
         compactSelect.dispatchEvent(
@@ -369,8 +344,13 @@ if (process.env.SVODE_UNIFIED_SETTINGS_DOM !== "1") {
         await tick();
       });
       await act(tick);
+      expect(
+        Array.from(document.querySelectorAll('[role="option"]')).map(
+          (node) => node.textContent,
+        ),
+      ).toEqual(navLabels);
       const appearanceOption = Array.from(
-        dom.window.document.querySelectorAll<HTMLElement>('[role="option"]'),
+        document.querySelectorAll<HTMLElement>('[role="option"]'),
       ).find((node) => node.textContent === "Appearance")!;
       await act(async () => {
         appearanceOption.focus();
@@ -383,50 +363,92 @@ if (process.env.SVODE_UNIFIED_SETTINGS_DOM !== "1") {
         await tick();
       });
       expect(
-        dom.window.document.querySelector('[data-app-section="appearance"]') !==
-          null,
+        document.querySelector('[data-app-section="appearance"]') !== null,
       ).toBe(true);
-      expect(
-        dom.window.document.querySelector("main > header h2")?.textContent,
-      ).toBe("Appearance");
+      expect(pageTitle()).toBe("Appearance");
+
+      // Storage: the project block is open, space blocks load nothing until
+      // opened.
       await click("Storage");
-      expect(dom.window.document.querySelector("[data-storage]") !== null).toBe(
-        true,
-      );
-      pending = true;
+      expect(pageTitle()).toBe("Storage");
+      expect(document.querySelector('[data-slot="breadcrumb"]')).toBeNull();
+      expect(attributes("[data-storage]", "data-storage")).toEqual([
+        "/project",
+      ]);
+      expect(storageOpen.get("/project")).toBe(true);
+      expect(storageOpen.get("/project/docs")).toBe(false);
+      expect(ownerTrigger("Docs").getAttribute("aria-expanded")).toBe("false");
+      pendingOwners.add("/project");
       await draw();
       await click("Profile");
       await escape();
       await draw({ scope: "app", section: "appearance" });
       expect(closed).toBe(false);
-      expect(dom.window.document.querySelector("[data-storage]") !== null).toBe(
-        true,
-      );
-      expect(cancellations).toBe(0);
-      pending = false;
-      applying = true;
+      expect(pageTitle()).toBe("Storage");
+      pendingOwners.clear();
+      applyingOwners.add("/project");
       await draw();
       await click("Profile");
-      expect(dom.window.document.querySelector("[data-storage]") !== null).toBe(
-        true,
-      );
-      applying = false;
+      expect(pageTitle()).toBe("Storage");
+      applyingOwners.clear();
+
+      // A space's write keeps blocking while its block is collapsed.
+      await press(ownerTrigger("Docs"));
+      expect(ownerTrigger("Docs").getAttribute("aria-expanded")).toBe("true");
+      expect(storageOpen.get("/project/docs")).toBe(true);
+      expect(attributes("[data-storage]", "data-storage")).toEqual([
+        "/project",
+        "/project/docs",
+      ]);
+      applyingOwners.add("/project/docs");
+      await draw();
+      await press(ownerTrigger("Docs"));
+      expect(attributes("[data-storage]", "data-storage")).toEqual([
+        "/project",
+      ]);
+      expect(storageOpen.get("/project/docs")).toBe(true);
+      await click("Profile");
+      expect(pageTitle()).toBe("Storage");
+      applyingOwners.clear();
       await draw();
       await click("Profile");
-      expect(cancellations).toBe(1);
-      await draw(project("git", "/project/docs"));
       expect(
-        dom.window.document
-          .querySelector("[data-repository]")
-          ?.getAttribute("data-repository"),
-      ).toBe("/project/docs");
-      await click("Edit identity");
-      await click("Appearance");
-      expect(identityCancellations).toBe(1);
+        document.querySelector('[data-app-section="git-identity"]') !== null,
+      ).toBe(true);
+      expect(document.querySelector("[data-storage]")).toBeNull();
+
+      // A contextual Git entry opens the page with the owner's block open,
+      // scrolled into view and focused.
+      await draw(project("git", "/project/docs"));
+      expect(pageTitle()).toBe("Git");
+      expect(attributes("[data-repository]", "data-repository")).toEqual([
+        "/project",
+        "/project/docs",
+      ]);
+      expect(ownerTrigger("Docs").getAttribute("aria-expanded")).toBe("true");
+      expect(ownerTrigger("Other").getAttribute("aria-expanded")).toBe("false");
+      expect(document.activeElement).toBe(ownerTrigger("Docs"));
+      expect(scrolled.at(-1)).toBe(ownerTrigger("Docs"));
+      await draw(project("git", "/project/other"));
+      expect(ownerTrigger("Other").getAttribute("aria-expanded")).toBe("true");
+      expect(document.activeElement).toBe(ownerTrigger("Other"));
+      expect(attributes("[data-repository]", "data-repository")).toEqual([
+        "/project",
+        "/project/docs",
+        "/project/other",
+      ]);
+
+      // Every owner's details load on their own; a late answer for one
+      // owner never lands in another owner's form.
       await draw(project("general", "/project/docs"));
-      await act(tick);
-      const oldLoad = loads.get("/project/docs")!;
-      await draw(project("general", "/project/other"));
+      expect(pageTitle()).toBe("General");
+      expect(attributes("[data-general-path]", "data-general-path")).toEqual([
+        "/project",
+        "/project/docs",
+        "/project/other",
+      ]);
+      expect(document.activeElement).toBe(ownerHeading("Docs"));
+      expect(scrolled.at(-1)).toBe(ownerHeading("Docs"));
       await act(tick);
       await act(async () => {
         loads.get("/project/other")!({
@@ -434,22 +456,36 @@ if (process.env.SVODE_UNIFIED_SETTINGS_DOM !== "1") {
           description: "",
           icon: "",
         });
+        loads.get("/project")!({
+          name: "Project canonical",
+          description: "",
+          icon: "",
+        });
         await tick();
       });
       await act(async () => {
-        oldLoad({ name: "Stale docs", description: "", icon: "" });
+        loads.get("/project/docs")!({
+          name: "Docs canonical",
+          description: "",
+          icon: "",
+        });
         await tick();
       });
-      expect(
-        dom.window.document
-          .querySelector("[data-general-name]")
-          ?.getAttribute("data-general-name"),
-      ).toBe("Other canonical");
+      expect(attributes("[data-general-path]", "data-general-name")).toEqual([
+        "Project canonical",
+        "Docs canonical",
+        "Other canonical",
+      ]);
+      await click("Add space");
+      expect(document.querySelector("[data-create-space]") !== null).toBe(true);
+
       await draw(project("git", "/missing"));
-      expect(dom.window.document.querySelector("[data-repository]")).toBeNull();
-      expect(
-        dom.window.document.body.textContent?.includes("no longer available"),
-      ).toBe(true);
+      expect(document.querySelector("[data-repository]")).toBeNull();
+      expect(document.querySelector("[data-create-space]")).toBeNull();
+      expect(document.body.textContent?.includes("no longer available")).toBe(
+        true,
+      );
+
       const scopesReadSince = (start: number) =>
         [
           ...new Set(
@@ -463,21 +499,21 @@ if (process.env.SVODE_UNIFIED_SETTINGS_DOM !== "1") {
       await draw(project("variables"));
       expect(scopesReadSince(reads)).toEqual(everyOwner);
       expect(
-        Array.from(
-          dom.window.document.querySelectorAll("section > h3 span[id]"),
-        ).map((node) => node.textContent?.trim()),
+        Array.from(document.querySelectorAll("section > h3 span[id]")).map(
+          (node) => node.textContent?.trim(),
+        ),
       ).toEqual(["Long project ".repeat(15).trim(), "Docs", "Other"]);
       reads = variableReads.length;
-      await draw(project("variables", "/project/docs"));
-      expect(scopesReadSince(reads)).toEqual(everyOwner);
-      // A pending Variables write blocks leaving even though the project
-      // content registers its own Storage/identity guard.
+      await draw(project("variables", "/project/other"));
+      expect(scopesReadSince(reads)).toEqual([]);
+      expect(document.activeElement).toBe(ownerHeading("Other"));
+      // A pending Variables write blocks leaving the section.
       let finishWrite!: () => void;
       variableWrite = new Promise<void>((resolve) => {
         finishWrite = resolve;
       });
       await click("Add variable");
-      const nameInput = dom.window.document.querySelector<HTMLInputElement>(
+      const nameInput = document.querySelector<HTMLInputElement>(
         'form input[id$="-name"]',
       )!;
       await act(async () => {
@@ -499,56 +535,48 @@ if (process.env.SVODE_UNIFIED_SETTINGS_DOM !== "1") {
       });
       await click("Save");
       await click("Profile");
+      expect(document.querySelector("[data-app-section]")).toBeNull();
       expect(
-        dom.window.document.querySelector("[data-app-section]"),
-      ).toBeNull();
-      expect(
-        dom.window.document.querySelector('form[aria-label="Add variable"]') !==
-          null,
+        document.querySelector('form[aria-label="Add variable"]') !== null,
       ).toBe(true);
       await act(async () => {
         finishWrite();
         await tick();
       });
       await act(tick);
-      expect(
-        dom.window.document.querySelector('form[aria-label="Add variable"]'),
-      ).toBeNull();
+      expect(document.querySelector('form[aria-label="Add variable"]')).toBe(
+        null,
+      );
       await click("Profile");
       expect(
-        dom.window.document.querySelector(
-          '[data-app-section="git-identity"]',
-        ) !== null,
+        document.querySelector('[data-app-section="git-identity"]') !== null,
       ).toBe(true);
-      await draw(project("spaces"));
-      await click("Create space");
-      expect(
-        dom.window.document.querySelector("[data-create-space]") !== null,
-      ).toBe(true);
-      await click("Docs general");
-      expect(
-        dom.window.document.querySelector("[data-create-space]"),
-      ).toBeNull();
+
+      // Opening Settings straight from a Git entry keeps focus on the
+      // owner's heading instead of the dialog's first control.
+      await act(async () => {
+        root.render(null);
+        await tick();
+      });
+      await draw(project("git", "/project/other"));
+      expect(ownerTrigger("Other").getAttribute("aria-expanded")).toBe("true");
+      expect(ownerTrigger("Docs").getAttribute("aria-expanded")).toBe("false");
+      expect(document.activeElement).toBe(ownerTrigger("Other"));
+
       await draw({ scope: "app", section: "git-identity" }, true);
-      expect(dom.window.document.body.textContent?.includes("CLI Agents")).toBe(
-        true,
-      );
-      expect(dom.window.document.body.textContent?.includes("AI Agent")).toBe(
-        true,
-      );
+      expect(document.body.textContent?.includes("CLI Agents")).toBe(true);
+      expect(document.body.textContent?.includes("AI Agent")).toBe(true);
       activeRootPath = null;
       await draw(project("git", "/project/docs"));
       expect(
-        dom.window.document.querySelectorAll(
-          '[data-slot="sidebar-group-label"]',
-        ).length,
+        document.querySelectorAll('[data-slot="sidebar-group-label"]').length,
       ).toBe(1);
-      expect(dom.window.document.querySelector("[data-repository]")).toBeNull();
+      expect(document.querySelector("[data-repository]")).toBeNull();
       await click("Profile");
       await escape();
       await act(tick);
       expect(closed).toBe(true);
-      expect(dom.window.document.activeElement).toBe(trigger);
+      expect(document.activeElement).toBe(trigger);
     } finally {
       await act(async () => {
         root.unmount();

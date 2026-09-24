@@ -1,57 +1,146 @@
+import { useId, useState } from "react";
+import { Loader2 } from "lucide-react";
 import * as m from "@/paraglide/messages.js";
 import { EmojiPicker } from "@/components/ui/emoji-picker";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import type { SpaceGitType } from "@/features/space";
+import { spaceGitTypeLabel } from "./owner-labels";
+import { SettingsGroup, SettingsRow } from "./settings-layout";
 
-interface SpaceGeneralSectionProps {
+export interface SpaceGeneralEditor {
   icon: string;
   name: string;
   description: string;
-  onIconChange: (value: string) => void;
+  onIconChange: (value: string) => Promise<void>;
   onNameChange: (value: string) => void;
-  onNameBlur: () => void;
+  onNameBlur: () => Promise<void>;
   onDescriptionChange: (value: string) => void;
-  onDescriptionBlur: () => void;
+  onDescriptionBlur: () => Promise<void>;
 }
 
+type Field = "icon" | "name" | "description";
+
+// "Details" of the project or of one space. A space that is missing or broken
+// has no editor and shows only its read-only facts.
 export function SpaceGeneralSection({
-  icon,
-  name,
-  description,
-  onIconChange,
-  onNameChange,
-  onNameBlur,
-  onDescriptionChange,
-  onDescriptionBlur,
-}: SpaceGeneralSectionProps) {
+  path,
+  space,
+  editor,
+}: {
+  path: string;
+  space?: { gitType: SpaceGitType | null | undefined };
+  editor?: SpaceGeneralEditor;
+}) {
+  const id = useId();
+  const [pending, setPending] = useState<ReadonlySet<Field>>(() => new Set());
+  // Each field writes on its own; a field stays read-only until its write ends.
+  function write(field: Field, action: () => Promise<void>) {
+    if (pending.has(field)) return;
+    setPending((current) => new Set(current).add(field));
+    void action().finally(() =>
+      setPending((current) => {
+        const next = new Set(current);
+        next.delete(field);
+        return next;
+      }),
+    );
+  }
+  const busy = (field: Field) => pending.has(field) || undefined;
+  const pendingClassName =
+    "aria-disabled:cursor-not-allowed aria-disabled:opacity-50";
   return (
-    <div className="flex max-w-sm flex-col gap-4">
-      <div className="flex flex-col gap-2">
-        <Label htmlFor="ws-settings-name">{m.space_name_label()}</Label>
-        <div className="flex gap-2">
-          <EmojiPicker value={icon} onChange={onIconChange} size="sm" />
-          <Input
-            id="ws-settings-name"
-            value={name}
-            onChange={(event) => onNameChange(event.target.value)}
-            onBlur={onNameBlur}
-            placeholder={m.space_name_placeholder()}
-            className="flex-1"
+    <SettingsGroup title={m.settings_general_details()}>
+      {editor ? (
+        <SettingsRow
+          key="name"
+          label={m.settings_general_icon_name()}
+          htmlFor={`${id}-name`}
+        >
+          <EmojiPicker
+            value={editor.icon}
+            onChange={(icon) => write("icon", () => editor.onIconChange(icon))}
+            size="sm"
           />
-        </div>
-      </div>
-      <div className="flex flex-col gap-2">
-        <Label htmlFor="ws-settings-desc">{m.space_description_label()}</Label>
-        <Textarea
-          id="ws-settings-desc"
-          value={description}
-          onChange={(event) => onDescriptionChange(event.target.value)}
-          onBlur={onDescriptionBlur}
-          placeholder={m.space_description_placeholder()}
-          rows={3}
-        />
-      </div>
-    </div>
+          <Input
+            id={`${id}-name`}
+            value={editor.name}
+            readOnly={pending.has("name")}
+            aria-disabled={busy("name")}
+            aria-busy={busy("name")}
+            onChange={(event) => editor.onNameChange(event.target.value)}
+            onBlur={() => write("name", editor.onNameBlur)}
+            placeholder={m.space_name_placeholder()}
+            className={`w-64 max-w-full ${pendingClassName}`}
+          />
+          {pending.has("icon") || pending.has("name") ? (
+            <Loader2
+              aria-hidden
+              className="size-4 animate-spin text-muted-foreground"
+            />
+          ) : null}
+        </SettingsRow>
+      ) : null}
+      {editor ? (
+        <SettingsRow
+          key="description"
+          label={m.space_description_label()}
+          htmlFor={`${id}-description`}
+          layout="stacked"
+        >
+          <div className="relative">
+            <Textarea
+              id={`${id}-description`}
+              value={editor.description}
+              readOnly={pending.has("description")}
+              aria-disabled={busy("description")}
+              aria-busy={busy("description")}
+              onChange={(event) =>
+                editor.onDescriptionChange(event.target.value)
+              }
+              onBlur={() => write("description", editor.onDescriptionBlur)}
+              placeholder={m.space_description_placeholder()}
+              rows={3}
+              className={pendingClassName}
+            />
+            {pending.has("description") ? (
+              <Loader2
+                aria-hidden
+                className="absolute top-2 right-2 size-4 animate-spin text-muted-foreground"
+              />
+            ) : null}
+          </div>
+        </SettingsRow>
+      ) : null}
+      {space ? (
+        <SettingsRow
+          key="type"
+          label={m.space_type_label()}
+          description={spaceGitTypeDescription(space.gitType)}
+        >
+          <span className="text-sm">
+            {spaceGitTypeLabel(space.gitType) ?? m.common_loading()}
+          </span>
+        </SettingsRow>
+      ) : null}
+      <SettingsRow key="path" label={m.space_path_label()} layout="stacked">
+        <p className="font-mono text-sm break-all text-muted-foreground">
+          {path}
+        </p>
+      </SettingsRow>
+    </SettingsGroup>
   );
+}
+
+function spaceGitTypeDescription(gitType: SpaceGitType | null | undefined) {
+  switch (gitType) {
+    case "inline":
+      return m.space_type_inline_desc();
+    case "independent":
+      return m.space_type_independent_desc();
+    case "submodule":
+      return m.space_type_submodule_desc();
+    default:
+      return undefined;
+  }
 }

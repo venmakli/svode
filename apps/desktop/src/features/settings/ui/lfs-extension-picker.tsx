@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useId, useState } from "react";
 import { ChevronDown, Plus, X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -66,6 +66,7 @@ export function LfsExtensionPicker({
   onChange,
   value,
 }: LfsExtensionPickerProps) {
+  const id = useId();
   const [customExtension, setCustomExtension] = useState("");
   const [customIssue, setCustomIssue] = useState<LfsExtensionDraftIssue | null>(
     null,
@@ -122,7 +123,7 @@ export function LfsExtensionPicker({
     <div className="space-y-4">
       <Field data-invalid={invalid || undefined}>
         <div className="flex items-center justify-between gap-3">
-          <FieldLabel id="storage-lfs-extensions-label">
+          <FieldLabel id={`${id}-extensions-label`}>
             {m.storage_lfs_extensions_label()}
           </FieldLabel>
           <span className="shrink-0 text-xs text-muted-foreground">
@@ -131,18 +132,18 @@ export function LfsExtensionPicker({
             })}
           </span>
         </div>
-        <FieldDescription id="storage-lfs-extensions-hint" className="text-xs">
+        <FieldDescription id={`${id}-extensions-hint`} className="text-xs">
           {m.storage_lfs_extensions_hint()}
         </FieldDescription>
 
         <div
           className="space-y-2"
           role="group"
-          aria-labelledby="storage-lfs-extensions-label"
+          aria-labelledby={`${id}-extensions-label`}
           aria-describedby={
             describedBy
-              ? `storage-lfs-extensions-hint ${describedBy}`
-              : "storage-lfs-extensions-hint"
+              ? `${id}-extensions-hint ${describedBy}`
+              : `${id}-extensions-hint`
           }
           aria-invalid={invalid || undefined}
         >
@@ -166,7 +167,7 @@ export function LfsExtensionPicker({
               >
                 <div className="flex min-h-11 items-center gap-3 px-3">
                   <Checkbox
-                    id={`storage-lfs-group-${group.value}`}
+                    id={`${id}-group-${group.value}`}
                     checked={groupChecked}
                     onCheckedChange={(checked) =>
                       toggleGroup(group, checked === true)
@@ -175,7 +176,7 @@ export function LfsExtensionPicker({
                     aria-label={m.storage_lfs_group_toggle({ group: label })}
                   />
                   <CollapsibleTrigger
-                    id={`storage-lfs-group-${group.value}-toggle`}
+                    id={`${id}-group-${group.value}-toggle`}
                     className="group flex min-w-0 flex-1 items-center gap-3 py-2 text-left outline-none focus-visible:rounded-md focus-visible:ring-3 focus-visible:ring-ring/50"
                     disabled={disabled}
                     aria-label={
@@ -201,11 +202,11 @@ export function LfsExtensionPicker({
                     {group.items.map((extension) => (
                       <label
                         key={extension}
-                        htmlFor={`storage-lfs-extension-${extension}`}
+                        htmlFor={`${id}-extension-${extension}`}
                         className="flex min-h-9 cursor-pointer items-center gap-2 rounded-md px-2 text-sm hover:bg-muted has-disabled:cursor-not-allowed has-disabled:opacity-50"
                       >
                         <Checkbox
-                          id={`storage-lfs-extension-${extension}`}
+                          id={`${id}-extension-${extension}`}
                           checked={selectedExtensionSet.has(extension)}
                           onCheckedChange={(checked) =>
                             toggleExtension(extension, checked === true)
@@ -224,13 +225,13 @@ export function LfsExtensionPicker({
       </Field>
 
       <Field data-invalid={customIssueMessage ? true : undefined}>
-        <FieldLabel htmlFor="storage-lfs-custom-extension">
+        <FieldLabel htmlFor={`${id}-custom-extension`}>
           {m.storage_lfs_custom_extension_label()}
         </FieldLabel>
         <InputGroup className="max-w-64">
           <InputGroupAddon>.</InputGroupAddon>
           <InputGroupInput
-            id="storage-lfs-custom-extension"
+            id={`${id}-custom-extension`}
             value={customExtension}
             onChange={(event) => {
               setCustomExtension(event.target.value);
@@ -247,7 +248,7 @@ export function LfsExtensionPicker({
             disabled={disabled}
             aria-invalid={customIssueMessage ? true : undefined}
             aria-describedby={
-              customIssueMessage ? "storage-lfs-custom-error" : undefined
+              customIssueMessage ? `${id}-custom-error` : undefined
             }
           />
           <InputGroupAddon align="inline-end">
@@ -266,7 +267,7 @@ export function LfsExtensionPicker({
             {customExtensions.map((extension) => (
               <Button
                 key={extension}
-                id={`storage-lfs-custom-${extension}`}
+                id={`${id}-custom-${extension}`}
                 type="button"
                 variant="secondary"
                 size="xs"
@@ -283,7 +284,7 @@ export function LfsExtensionPicker({
           </div>
         ) : null}
         {customIssueMessage ? (
-          <FieldError id="storage-lfs-custom-error" className="text-xs">
+          <FieldError id={`${id}-custom-error`} className="text-xs">
             {customIssueMessage}
           </FieldError>
         ) : (

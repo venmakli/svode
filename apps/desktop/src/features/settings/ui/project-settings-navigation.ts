@@ -1,8 +1,6 @@
 import {
-  Activity,
   Bot,
   FileText,
-  Folder,
   GitBranch,
   HardDrive,
   KeyRound,
@@ -23,7 +21,6 @@ export function getProjectSettingsNavItems(
       icon: KeyRound,
       show: true,
     },
-    { key: "spaces", label: m.settings_spaces(), icon: Folder, show: true },
     {
       key: "ai-agent",
       label: m.settings_ai_agent(),
@@ -32,7 +29,6 @@ export function getProjectSettingsNavItems(
     },
     { key: "git", label: m.git_section(), icon: GitBranch, show: true },
     { key: "storage", label: m.storage_section(), icon: HardDrive, show: true },
-    { key: "health", label: m.settings_health(), icon: Activity, show: true },
     {
       key: "defaults",
       label: m.settings_defaults(),

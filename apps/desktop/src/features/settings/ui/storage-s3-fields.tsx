@@ -1,4 +1,4 @@
-import { useRef } from "react";
+import { useId, useRef } from "react";
 import * as m from "@/paraglide/messages.js";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -31,6 +31,7 @@ export function StorageS3Fields({
   canSave: boolean;
 }) {
   const { s3 } = settings;
+  const id = useId();
   const returnTarget = useRef<HTMLButtonElement | null>(null);
   const disabled = settings.applyingStrategy || s3.pending;
   function returnFocus() {
@@ -44,38 +45,44 @@ export function StorageS3Fields({
     <fieldset disabled={disabled} className="min-w-0">
       <FieldGroup>
         <Field className="max-w-md">
-          <FieldLabel htmlFor="s3-endpoint">
+          <FieldLabel htmlFor={`${id}-endpoint`}>
             {m.storage_s3_endpoint()}
           </FieldLabel>
           <Input
-            id="s3-endpoint"
+            id={`${id}-endpoint`}
             value={settings.s3Endpoint}
             onChange={(e) => settings.setS3Endpoint(e.target.value)}
             placeholder="https://s3.amazonaws.com"
           />
         </Field>
         <Field className="max-w-md">
-          <FieldLabel htmlFor="s3-bucket">{m.storage_s3_bucket()}</FieldLabel>
+          <FieldLabel htmlFor={`${id}-bucket`}>
+            {m.storage_s3_bucket()}
+          </FieldLabel>
           <Input
-            id="s3-bucket"
+            id={`${id}-bucket`}
             value={settings.s3Bucket}
             onChange={(e) => settings.setS3Bucket(e.target.value)}
             placeholder="my-assets"
           />
         </Field>
         <Field className="max-w-md">
-          <FieldLabel htmlFor="s3-region">{m.storage_s3_region()}</FieldLabel>
+          <FieldLabel htmlFor={`${id}-region`}>
+            {m.storage_s3_region()}
+          </FieldLabel>
           <Input
-            id="s3-region"
+            id={`${id}-region`}
             value={settings.s3Region}
             onChange={(e) => settings.setS3Region(e.target.value)}
             placeholder="us-east-1"
           />
         </Field>
         <Field className="max-w-md">
-          <FieldLabel htmlFor="s3-prefix">{m.storage_s3_prefix()}</FieldLabel>
+          <FieldLabel htmlFor={`${id}-prefix`}>
+            {m.storage_s3_prefix()}
+          </FieldLabel>
           <Input
-            id="s3-prefix"
+            id={`${id}-prefix`}
             value={settings.s3Prefix}
             onChange={(e) => settings.setS3Prefix(e.target.value)}
             autoComplete="off"
@@ -173,7 +180,9 @@ export function StorageS3Fields({
               const active = s3.editor?.role === key;
               return (
                 <Field key={key} data-invalid={missing}>
-                  <FieldLabel htmlFor={`s3-${key}-source`}>{label}</FieldLabel>
+                  <FieldLabel htmlFor={`${id}-${key}-source`}>
+                    {label}
+                  </FieldLabel>
                   <Select
                     value={selectedKey}
                     onValueChange={(value) => {
@@ -185,9 +194,11 @@ export function StorageS3Fields({
                     disabled={disabled || !!s3.editor}
                   >
                     <SelectTrigger
-                      id={`s3-${key}-source`}
+                      id={`${id}-${key}-source`}
                       aria-invalid={missing}
-                      aria-describedby={missing ? `s3-${key}-error` : undefined}
+                      aria-describedby={
+                        missing ? `${id}-${key}-error` : undefined
+                      }
                       className="w-full min-w-0 max-w-md"
                     >
                       <SelectValue
@@ -242,7 +253,7 @@ export function StorageS3Fields({
                     </SelectContent>
                   </Select>
                   {missing ? (
-                    <FieldError id={`s3-${key}-error`}>
+                    <FieldError id={`${id}-${key}-error`}>
                       {m.storage_s3_secret_missing({ role: label, name })}
                     </FieldError>
                   ) : (

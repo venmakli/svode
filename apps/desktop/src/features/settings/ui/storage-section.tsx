@@ -1,3 +1,4 @@
+import { useId } from "react";
 import * as m from "@/paraglide/messages.js";
 import {
   AlertDialog,
@@ -52,6 +53,7 @@ export function StorageSettingsSection({
   settings,
   onOpenRoot,
 }: StorageSettingsSectionProps) {
+  const id = useId();
   const isRepoSpace =
     !settings.isRoot && (gitType === "independent" || gitType === "submodule");
 
@@ -204,7 +206,7 @@ export function StorageSettingsSection({
               ) : (
                 <RadioGroupItem
                   value={option.value}
-                  id={`storage-${option.value}`}
+                  id={`${id}-${option.value}`}
                   disabled={disabled}
                   className="mt-0.5"
                 />
@@ -327,6 +329,8 @@ function LfsRoutingFields({
 }: {
   settings: UseSpaceStorageSettingsResult;
 }) {
+  const id = useId();
+  const rulesErrorId = `${id}-rules-error`;
   if (settings.binaryRoutingStatus === "unsupported") {
     return (
       <div className="rounded-md border border-destructive/40 bg-destructive/5 p-3 space-y-1">
@@ -364,11 +368,11 @@ function LfsRoutingFields({
         onChange={settings.setLfsExtensions}
         disabled={settings.applyingStrategy}
         invalid={extensionIssue}
-        describedBy={extensionIssue ? "storage-lfs-rules-error" : undefined}
+        describedBy={extensionIssue ? rulesErrorId : undefined}
       />
       <Field orientation="horizontal" className="items-start">
         <FieldContent>
-          <FieldLabel htmlFor="storage-lfs-threshold-enabled">
+          <FieldLabel htmlFor={`${id}-threshold-enabled`}>
             {m.storage_lfs_threshold_label()}
           </FieldLabel>
           <FieldDescription className="text-xs">
@@ -376,7 +380,7 @@ function LfsRoutingFields({
           </FieldDescription>
         </FieldContent>
         <Switch
-          id="storage-lfs-threshold-enabled"
+          id={`${id}-threshold-enabled`}
           checked={settings.lfsThresholdEnabled}
           onCheckedChange={(checked) =>
             settings.setLfsThresholdEnabled(checked === true)
@@ -386,12 +390,12 @@ function LfsRoutingFields({
       </Field>
       {settings.lfsThresholdEnabled && (
         <Field className="max-w-40">
-          <FieldLabel htmlFor="storage-lfs-threshold-size">
+          <FieldLabel htmlFor={`${id}-threshold-size`}>
             {m.storage_lfs_threshold_input_label()}
           </FieldLabel>
           <InputGroup>
             <InputGroupInput
-              id="storage-lfs-threshold-size"
+              id={`${id}-threshold-size`}
               inputMode="decimal"
               value={settings.lfsThresholdMegabytes}
               onChange={(event) =>
@@ -399,9 +403,7 @@ function LfsRoutingFields({
               }
               disabled={settings.applyingStrategy}
               aria-invalid={thresholdIssue || undefined}
-              aria-describedby={
-                thresholdIssue ? "storage-lfs-rules-error" : undefined
-              }
+              aria-describedby={thresholdIssue ? rulesErrorId : undefined}
             />
             <InputGroupAddon align="inline-end">
               {m.storage_lfs_threshold_unit()}
@@ -410,7 +412,7 @@ function LfsRoutingFields({
         </Field>
       )}
       {issue && (
-        <FieldError id="storage-lfs-rules-error" className="text-xs">
+        <FieldError id={rulesErrorId} className="text-xs">
           {issue}
         </FieldError>
       )}

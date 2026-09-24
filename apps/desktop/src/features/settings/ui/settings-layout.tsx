@@ -76,6 +76,7 @@ export function SettingsOwnerBlock({
   badges,
   summary,
   collapsible,
+  headingRef,
   children,
   className,
   ...props
@@ -85,6 +86,8 @@ export function SettingsOwnerBlock({
   badges?: ReactNode;
   summary?: ReactNode;
   collapsible?: { open: boolean; onOpenChange(open: boolean): void };
+  // Receives the focusable heading: the collapse trigger or the heading.
+  headingRef?: (node: HTMLElement | null) => void;
   children?: ReactNode;
 } & Omit<ComponentProps<"section">, "title" | "children">) {
   const titleId = useId();
@@ -123,7 +126,13 @@ export function SettingsOwnerBlock({
   if (!collapsible)
     return (
       <section aria-labelledby={titleId} className={blockClassName} {...props}>
-        <h3 className="flex min-w-0 items-start gap-3">{header}</h3>
+        <h3
+          ref={headingRef}
+          tabIndex={headingRef ? -1 : undefined}
+          className="flex min-w-0 scroll-mt-6 items-start gap-3 rounded-md outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
+        >
+          {header}
+        </h3>
         {body}
       </section>
     );
@@ -135,7 +144,10 @@ export function SettingsOwnerBlock({
     >
       <section aria-labelledby={titleId} className={blockClassName} {...props}>
         <h3 className="min-w-0">
-          <CollapsibleTrigger className="group/owner flex w-full min-w-0 items-start gap-3 rounded-md text-left outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50">
+          <CollapsibleTrigger
+            ref={headingRef}
+            className="group/owner flex w-full min-w-0 scroll-mt-6 items-start gap-3 rounded-md text-left outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
+          >
             {header}
             <ChevronDown
               aria-hidden
