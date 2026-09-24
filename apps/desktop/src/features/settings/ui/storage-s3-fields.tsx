@@ -311,6 +311,7 @@ export function StorageS3Fields({
                         </FieldDescription>
                       )}
                       <AppVariableFields
+                        layout="grid"
                         draft={s3.editor.draft}
                         disabled={disabled}
                         onChange={s3.updateDraft}

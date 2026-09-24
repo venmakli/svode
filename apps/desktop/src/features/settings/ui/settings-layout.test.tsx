@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { act } from "react";
+import { act, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import { JSDOM } from "jsdom";
@@ -7,6 +7,7 @@ import {
   SettingsActions,
   SettingsGroup,
   SettingsItem,
+  SettingsOwnerBlock,
   SettingsPage,
   SettingsRow,
 } from "./settings-layout";
@@ -134,6 +135,104 @@ test("a new page title resets the scroll offset of the page", async () => {
     expect(scroller.scrollTop).toBe(120);
     await draw("Shortcuts");
     expect(scroller.scrollTop).toBe(0);
+  } finally {
+    await act(async () => root.unmount());
+    for (const [key, descriptor] of previous) {
+      if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+      else Reflect.deleteProperty(globalThis, key);
+    }
+    dom.window.close();
+  }
+});
+
+test("group action sits by the title and a group without rows has no card", () => {
+  const document = render(
+    <SettingsGroup title="Variables" action={<button>Add</button>}>
+      {null}
+    </SettingsGroup>,
+  );
+  const section = document.querySelector("section")!;
+  expect(section.querySelector("h3")?.textContent).toBe("Variables");
+  expect(section.querySelector("button")?.textContent).toBe("Add");
+  expect(section.querySelector('[data-slot="card"]')).toBeNull();
+});
+
+test("owner block names the owner and nests its groups one level below", () => {
+  const document = render(
+    <SettingsOwnerBlock
+      icon="P"
+      title="Testov"
+      badges={<span data-badge>Project</span>}
+      summary="Remote not set"
+    >
+      <SettingsGroup title="Variables">
+        <SettingsItem title="API_URL" />
+      </SettingsGroup>
+    </SettingsOwnerBlock>,
+  );
+  const block = document.querySelector("section")!;
+  const title = block.querySelector(":scope > h3 span[id]")!;
+  expect(title.textContent).toBe("Testov");
+  expect(block.getAttribute("aria-labelledby")).toBe(title.id);
+  expect(block.querySelector(":scope > h3 [data-badge]") !== null).toBe(true);
+  expect(
+    block.querySelector(":scope > h3")?.textContent?.includes("Remote not set"),
+  ).toBe(true);
+  expect(block.querySelector("section h4")?.textContent).toBe("Variables");
+  expect(
+    block.querySelector("section h3")?.textContent?.includes("Testov"),
+  ).toBe(true);
+});
+
+test("a collapsible owner block opens from its header", async () => {
+  const dom = new JSDOM(
+    "<!doctype html><html><body><div id=app></div></body></html>",
+    { pretendToBeVisual: true },
+  );
+  const values: Record<string, unknown> = {
+    window: dom.window,
+    document: dom.window.document,
+    HTMLElement: dom.window.HTMLElement,
+    getComputedStyle: dom.window.getComputedStyle.bind(dom.window),
+    requestAnimationFrame: dom.window.requestAnimationFrame.bind(dom.window),
+    cancelAnimationFrame: dom.window.cancelAnimationFrame.bind(dom.window),
+    IS_REACT_ACT_ENVIRONMENT: true,
+  };
+  const previous = new Map<string, PropertyDescriptor | undefined>();
+  for (const [key, value] of Object.entries(values)) {
+    previous.set(key, Object.getOwnPropertyDescriptor(globalThis, key));
+    Object.defineProperty(globalThis, key, {
+      configurable: true,
+      writable: true,
+      value,
+    });
+  }
+  function Harness() {
+    const [open, setOpen] = useState(false);
+    return (
+      <SettingsOwnerBlock
+        title="Разработки"
+        summary="Stored in Git"
+        collapsible={{ open, onOpenChange: setOpen }}
+      >
+        <div data-body />
+      </SettingsOwnerBlock>
+    );
+  }
+  const root = createRoot(dom.window.document.getElementById("app")!);
+  try {
+    await act(async () => root.render(<Harness />));
+    const trigger = dom.window.document.querySelector<HTMLButtonElement>(
+      "section > h3 > button",
+    )!;
+    expect(trigger.getAttribute("aria-expanded")).toBe("false");
+    expect(trigger.textContent?.includes("Stored in Git")).toBe(true);
+    expect(dom.window.document.querySelector("[data-body]")).toBeNull();
+    await act(async () => trigger.click());
+    expect(trigger.getAttribute("aria-expanded")).toBe("true");
+    expect(dom.window.document.querySelector("[data-body]") !== null).toBe(
+      true,
+    );
   } finally {
     await act(async () => root.unmount());
     for (const [key, descriptor] of previous) {

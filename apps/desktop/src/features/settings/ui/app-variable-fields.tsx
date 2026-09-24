@@ -1,4 +1,4 @@
-import { useId } from "react";
+import { useId, type ReactNode } from "react";
 import * as m from "@/paraglide/messages.js";
 import { cn } from "@/shared/lib/utils";
 import {
@@ -18,26 +18,298 @@ import {
   editVariableDraft,
   type VariableDraft,
 } from "../model/app-variable-draft";
+import { SettingsRow, SettingsRows } from "./settings-layout";
 
-export function AppVariableFields({
+interface AppVariableFieldsProps {
+  // rows: Settings catalog editor; grid: S3 Secret editor; compact: App modal.
+  layout: "rows" | "grid" | "compact";
+  draft: VariableDraft;
+  disabled: boolean;
+  onChange(draft: VariableDraft): void;
+  showOwner?: boolean;
+  fixedKind?: "secret";
+  collisionAlternatives?: AppVariableEntry[];
+  nameError?: string | null;
+  usage?: ReactNode;
+}
+
+export function AppVariableFields(props: AppVariableFieldsProps) {
+  return props.layout === "rows" ? (
+    <VariableFieldRows {...props} />
+  ) : (
+    <VariableFieldGrid {...props} compact={props.layout === "compact"} />
+  );
+}
+
+function withSecret(draft: VariableDraft, secret: boolean): VariableDraft {
+  return {
+    ...draft,
+    kind: secret ? "secret" : "variable",
+    value: !secret && draft.originalKind === "secret" ? "" : draft.value,
+    explicitOrdinary: secret
+      ? draft.explicitOrdinary
+      : draft.originalKind !== "secret",
+  };
+}
+
+function withValue(draft: VariableDraft, value: string): VariableDraft {
+  return {
+    ...draft,
+    value,
+    explicitOrdinary: draft.kind === "variable" || draft.explicitOrdinary,
+  };
+}
+
+function transitions(draft: VariableDraft) {
+  return {
+    gitToLocal:
+      draft.editing &&
+      draft.originalStorage === "git" &&
+      draft.storage === "local",
+    gitHistory:
+      draft.editing &&
+      draft.originalStorage === "git" &&
+      draft.originalKind === "variable" &&
+      (draft.storage === "local" || draft.kind === "secret"),
+    explicitValue:
+      draft.editing &&
+      draft.originalKind === "secret" &&
+      draft.kind === "variable",
+  };
+}
+
+function CollisionChoice({
   draft,
   disabled,
   onChange,
-  compact = false,
-  showOwner = true,
-  fixedKind,
-  collisionAlternatives,
+  alternatives,
+  labelledBy,
 }: {
   draft: VariableDraft;
   disabled: boolean;
   onChange(draft: VariableDraft): void;
-  compact?: boolean;
-  showOwner?: boolean;
-  fixedKind?: "secret";
-  collisionAlternatives?: AppVariableEntry[];
+  alternatives: AppVariableEntry[];
+  labelledBy?: string;
 }) {
+  return (
+    <ToggleGroup
+      type="single"
+      size="sm"
+      variant="outline"
+      value={draft.keep}
+      disabled={disabled}
+      aria-labelledby={labelledBy}
+      aria-label={labelledBy ? undefined : m.variables_conflict()}
+      onValueChange={(mode) => {
+        const selected = alternatives.find((entry) => entry.mode === mode);
+        if (selected) onChange(editVariableDraft(selected));
+      }}
+    >
+      <ToggleGroupItem value="local">{m.variables_local()}</ToggleGroupItem>
+      <ToggleGroupItem value="git">Git</ToggleGroupItem>
+    </ToggleGroup>
+  );
+}
+
+function lines(...items: Array<string | false | null | undefined>) {
+  const visible = items.filter(Boolean);
+  return visible.length
+    ? visible.map((item) => (
+        <span key={item as string} className="block">
+          {item}
+        </span>
+      ))
+    : null;
+}
+
+// One Settings editor row expands into field rows: each control sits right
+// of its label and the consequence of a change is the description of the
+// changed row.
+function VariableFieldRows({
+  draft,
+  disabled,
+  onChange,
+  fixedKind,
+  collisionAlternatives,
+  nameError,
+  usage,
+}: AppVariableFieldsProps) {
+  const id = useId();
+  const scoped = draft.owner.scope !== "global";
+  const invalid = draft.name.length > 0 && !validVariableName(draft.name);
+  const nameProblem = invalid ? m.settings_variables_name_hint() : nameError;
+  const change = transitions(draft);
+  const valueRow = (
+    <SettingsRow
+      label={m.settings_variables_value()}
+      htmlFor={`${id}-value`}
+      description={lines(
+        draft.kind === "secret" &&
+          draft.preservesSecret &&
+          m.app_variables_keep_secret(),
+        draft.editing &&
+          draft.owner.scope === "global" &&
+          m.variables_global_edit_hint(),
+      )}
+      data-disabled={disabled}
+    >
+      <Input
+        id={`${id}-value`}
+        className="w-80 max-w-full"
+        autoFocus={draft.editing}
+        type={draft.kind === "secret" ? "password" : "text"}
+        value={draft.value}
+        disabled={disabled}
+        autoComplete="off"
+        onChange={(event) => onChange(withValue(draft, event.target.value))}
+      />
+      {draft.kind === "variable" && !draft.explicitOrdinary ? (
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          disabled={disabled}
+          onClick={() =>
+            onChange({ ...draft, value: "", explicitOrdinary: true })
+          }
+        >
+          {m.variables_empty_value()}
+        </Button>
+      ) : null}
+    </SettingsRow>
+  );
+  const rows = (
+    <SettingsRows>
+      {draft.keep && collisionAlternatives ? (
+        <SettingsRow
+          key="conflict"
+          label={m.variables_conflict()}
+          description={
+            <span role="status">
+              {m.variables_collision_keep({
+                keep: draft.keep === "git" ? "Git" : m.variables_local(),
+                remove: draft.keep === "git" ? m.variables_local() : "Git",
+              })}
+            </span>
+          }
+        >
+          <CollisionChoice
+            draft={draft}
+            disabled={disabled}
+            onChange={onChange}
+            alternatives={collisionAlternatives}
+          />
+        </SettingsRow>
+      ) : null}
+      <SettingsRow
+        key="name"
+        label={m.settings_variables_name()}
+        htmlFor={`${id}-name`}
+        description={usage}
+        error={nameProblem}
+        errorId={`${id}-name-hint`}
+        data-disabled={disabled}
+      >
+        <Input
+          id={`${id}-name`}
+          className="w-64 max-w-full font-mono"
+          value={draft.name}
+          autoFocus={!draft.editing}
+          placeholder="API_TOKEN"
+          aria-describedby={nameProblem ? `${id}-name-hint` : undefined}
+          disabled={disabled || draft.editing}
+          aria-invalid={Boolean(nameProblem)}
+          spellCheck={false}
+          onChange={(event) =>
+            onChange({ ...draft, name: event.target.value.toUpperCase() })
+          }
+        />
+      </SettingsRow>
+      {scoped ? (
+        <TabsContent key="value" value={draft.storage} className="contents">
+          {valueRow}
+        </TabsContent>
+      ) : (
+        valueRow
+      )}
+      {scoped ? (
+        <SettingsRow
+          key="storage"
+          label={m.variables_storage()}
+          description={
+            change.gitToLocal
+              ? lines(
+                  m.variables_git_to_local(),
+                  change.gitHistory && m.variables_git_history(),
+                )
+              : draft.storage === "local"
+                ? m.variables_scoped_local_hint()
+                : draft.kind === "secret"
+                  ? m.variables_git_secret_hint()
+                  : m.variables_git_hint()
+          }
+          data-disabled={disabled}
+        >
+          <TabsList aria-label={m.variables_storage()}>
+            <TabsTrigger value="local" disabled={disabled}>
+              {m.variables_local()}
+            </TabsTrigger>
+            <TabsTrigger value="git" disabled={disabled}>
+              Git
+            </TabsTrigger>
+          </TabsList>
+        </SettingsRow>
+      ) : null}
+      <SettingsRow
+        key="secret"
+        label={m.variables_secret()}
+        htmlFor={`${id}-secret`}
+        description={
+          change.explicitValue
+            ? m.variables_explicit_value()
+            : change.gitHistory && !change.gitToLocal
+              ? m.variables_git_history()
+              : m.variables_secret_description()
+        }
+        data-disabled={disabled || Boolean(fixedKind)}
+      >
+        <Switch
+          id={`${id}-secret`}
+          checked={draft.kind === "secret"}
+          disabled={disabled || Boolean(fixedKind)}
+          onCheckedChange={(secret) => onChange(withSecret(draft, secret))}
+        />
+      </SettingsRow>
+    </SettingsRows>
+  );
+  return scoped ? (
+    <Tabs
+      className="gap-0"
+      value={draft.storage}
+      onValueChange={(storage) => {
+        if (!disabled && (storage === "local" || storage === "git"))
+          onChange({ ...draft, storage });
+      }}
+    >
+      {rows}
+    </Tabs>
+  ) : (
+    rows
+  );
+}
+
+function VariableFieldGrid({
+  draft,
+  disabled,
+  onChange,
+  compact,
+  showOwner = true,
+  fixedKind,
+  collisionAlternatives,
+}: AppVariableFieldsProps & { compact: boolean }) {
   const id = useId();
   const invalid = draft.name.length > 0 && !validVariableName(draft.name);
+  const change = transitions(draft);
   const secretControl = (
     <Field className="w-auto" data-disabled={disabled || Boolean(fixedKind)}>
       <FieldLabel htmlFor={`${id}-secret`}>{m.variables_secret()}</FieldLabel>
@@ -46,17 +318,7 @@ export function AppVariableFields({
           id={`${id}-secret`}
           checked={draft.kind === "secret"}
           disabled={disabled || Boolean(fixedKind)}
-          onCheckedChange={(secret) =>
-            onChange({
-              ...draft,
-              kind: secret ? "secret" : "variable",
-              value:
-                !secret && draft.originalKind === "secret" ? "" : draft.value,
-              explicitOrdinary: secret
-                ? draft.explicitOrdinary
-                : draft.originalKind !== "secret",
-            })
-          }
+          onCheckedChange={(secret) => onChange(withSecret(draft, secret))}
         />
       </div>
     </Field>
@@ -117,14 +379,7 @@ export function AppVariableFields({
               ? m.settings_variables_secret_unchanged()
               : undefined
           }
-          onChange={(event) =>
-            onChange({
-              ...draft,
-              value: event.target.value,
-              explicitOrdinary:
-                draft.kind === "variable" || draft.explicitOrdinary,
-            })
-          }
+          onChange={(event) => onChange(withValue(draft, event.target.value))}
         />
         {draft.kind === "secret" && draft.preservesSecret ? (
           <FieldDescription>{m.app_variables_keep_secret()}</FieldDescription>
@@ -194,24 +449,17 @@ export function AppVariableFields({
           })}
         </p>
       ) : null}
-      {draft.editing &&
-      draft.originalStorage === "git" &&
-      draft.storage === "local" ? (
+      {change.gitToLocal ? (
         <p className="text-xs text-muted-foreground">
           {m.variables_git_to_local()}
         </p>
       ) : null}
-      {draft.editing &&
-      draft.originalStorage === "git" &&
-      draft.originalKind === "variable" &&
-      (draft.storage === "local" || draft.kind === "secret") ? (
+      {change.gitHistory ? (
         <p className="text-xs text-muted-foreground">
           {m.variables_git_history()}
         </p>
       ) : null}
-      {draft.editing &&
-      draft.originalKind === "secret" &&
-      draft.kind === "variable" ? (
+      {change.explicitValue ? (
         <p className="text-xs text-muted-foreground">
           {m.variables_explicit_value()}
         </p>
@@ -234,25 +482,13 @@ export function AppVariableFields({
           <FieldLabel id={`${id}-conflict`}>
             {m.variables_conflict()}
           </FieldLabel>
-          <ToggleGroup
-            type="single"
-            size="sm"
-            variant="outline"
-            value={draft.keep}
+          <CollisionChoice
+            draft={draft}
             disabled={disabled}
-            aria-labelledby={`${id}-conflict`}
-            onValueChange={(mode) => {
-              const selected = collisionAlternatives.find(
-                (entry) => entry.mode === mode,
-              );
-              if (selected) onChange(editVariableDraft(selected));
-            }}
-          >
-            <ToggleGroupItem value="local">
-              {m.variables_local()}
-            </ToggleGroupItem>
-            <ToggleGroupItem value="git">Git</ToggleGroupItem>
-          </ToggleGroup>
+            onChange={onChange}
+            alternatives={collisionAlternatives}
+            labelledBy={`${id}-conflict`}
+          />
         </Field>
       ) : null}
       {draft.owner.scope === "global" ? (

@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import * as m from "@/paraglide/messages.js";
+import { useSpace } from "@/features/space";
 import {
   getAppVariables,
   listenAppVariablesChanged,
@@ -14,12 +15,13 @@ import type {
   AppVariablesCatalog,
   AppVariablesContext,
 } from "../model";
-import type {
-  SaveVariableInput,
-  VariableSource,
-  VariableScope,
-  VariableOwner,
-  VariableMutationResult,
+import {
+  withOwnerNames,
+  type SaveVariableInput,
+  type VariableSource,
+  type VariableScope,
+  type VariableOwner,
+  type VariableMutationResult,
 } from "../model/app-variables";
 
 export function useAppVariables(
@@ -30,6 +32,16 @@ export function useAppVariables(
   includeGlobal = false,
 ) {
   const [catalog, setCatalog] = useState<AppVariablesCatalog | null>(null);
+  const ownerNames = useSpace((state) => ({
+    rootPath: state.activeRootPath,
+    rootName: state.activeRootName,
+    spaces: state.spaces,
+  }));
+  const projectPath = (context ?? scope)?.projectPath;
+  const namedCatalog = useMemo(
+    () => catalog && withOwnerNames(catalog, projectPath, ownerNames),
+    [catalog, projectPath, ownerNames],
+  );
   const [loadError, setLoadError] = useState(false);
   const [pending, setPending] = useState(false);
   const generationRef = useRef(0);
@@ -138,7 +150,7 @@ export function useAppVariables(
   );
 
   return {
-    catalog,
+    catalog: namedCatalog,
     loadError,
     refresh,
     pending,

@@ -1,6 +1,12 @@
 import { Button } from "@/components/ui/button";
-import { AppVariablesSection } from "./app-variables-section";
-import { useLayoutEffect, useState, type MouseEvent } from "react";
+import { ProjectVariablesSection } from "./app-variables-section";
+import {
+  useCallback,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type MouseEvent,
+} from "react";
 import * as m from "@/paraglide/messages.js";
 import {
   Breadcrumb,
@@ -72,7 +78,13 @@ export function ProjectSettingsContent({
 }) {
   const open = true;
   const openPage = useOpenPage();
-  const { activeRootId, activeRootPath, activeRootName, spaces } = useSpace();
+  const {
+    activeRootId,
+    activeRootPath,
+    activeRootName,
+    activeRootIcon,
+    spaces,
+  } = useSpace();
   const projectPath = activeRootPath!;
   const detailSpace = spaces.find((space) => space.path === spacePath) ?? null;
   const isRoot = spacePath === projectPath;
@@ -133,14 +145,24 @@ export function ProjectSettingsContent({
   });
   const projectSpaceGitTypes = useProjectSpaceGitTypes({
     open,
-    active: isRoot,
+    active: isRoot || section === "variables",
     projectPath,
     spaces,
   });
+  // Section parts with their own pending writes (Variables of every owner)
+  // are checked before this content cancels its own drafts on leave.
+  const sectionGuards = useRef(new Set<SettingsLeaveGuard>());
+  const registerSectionGuard = useCallback((guard: SettingsLeaveGuard) => {
+    sectionGuards.current.add(guard);
+    return () => {
+      sectionGuards.current.delete(guard);
+    };
+  }, []);
 
   useLayoutEffect(
     () =>
       registerLeaveGuard(() => {
+        for (const guard of sectionGuards.current) if (!guard()) return false;
         if (storageSettings.applyingStrategy || storageSettings.s3.pending)
           return false;
         if (section === "storage") storageSettings.s3.cancel();
@@ -318,10 +340,13 @@ export function ProjectSettingsContent({
           )}
 
           {section === "variables" && (
-            <AppVariablesSection
+            <ProjectVariablesSection
               projectPath={projectPath}
-              spaceId={currentSpaceId}
-              registerLeaveGuard={registerLeaveGuard}
+              projectName={projectName}
+              projectIcon={activeRootIcon}
+              spaces={spaces}
+              gitTypes={projectSpaceGitTypes}
+              registerLeaveGuard={registerSectionGuard}
             />
           )}
 

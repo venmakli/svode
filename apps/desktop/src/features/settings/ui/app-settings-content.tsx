@@ -13,7 +13,7 @@ import {
 } from "./app-settings-sections";
 import { AppShortcutsSection } from "./app-shortcuts-section";
 import { McpIntegrationsSection } from "./mcp-section";
-import { AppVariablesSection } from "./app-variables-section";
+import { GlobalVariablesSection } from "./app-variables-section";
 
 export function AppSettingsContent({
   section,
@@ -39,7 +39,7 @@ export function AppSettingsContent({
         <AppAppearanceSection settings={appearanceSettings} />
       )}
       {section === "variables" && (
-        <AppVariablesSection registerLeaveGuard={registerLeaveGuard} />
+        <GlobalVariablesSection registerLeaveGuard={registerLeaveGuard} />
       )}
       {enableLegacyAgentIntegration && section === "cli-agents" && (
         <AppCliAgentsSection

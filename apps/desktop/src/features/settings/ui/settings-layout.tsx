@@ -1,14 +1,22 @@
 import {
   Children,
   Fragment,
+  createContext,
   isValidElement,
+  useContext,
   useId,
   useLayoutEffect,
   useRef,
   type ComponentProps,
   type ReactNode,
 } from "react";
+import { ChevronDown } from "lucide-react";
 import { Card } from "@/components/ui/card";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
 import {
   Field,
   FieldContent,
@@ -59,9 +67,94 @@ export function SettingsPage({
   );
 }
 
+// Groups inside an owner block sit one heading level below the owner.
+const SettingsHeadingLevel = createContext<3 | 4>(3);
+
+export function SettingsOwnerBlock({
+  icon,
+  title,
+  badges,
+  summary,
+  collapsible,
+  children,
+  className,
+  ...props
+}: {
+  icon?: ReactNode;
+  title: ReactNode;
+  badges?: ReactNode;
+  summary?: ReactNode;
+  collapsible?: { open: boolean; onOpenChange(open: boolean): void };
+  children?: ReactNode;
+} & Omit<ComponentProps<"section">, "title" | "children">) {
+  const titleId = useId();
+  const header = (
+    <>
+      {icon ? (
+        <span
+          aria-hidden
+          className="flex size-6 shrink-0 items-center justify-center text-base leading-none"
+        >
+          {icon}
+        </span>
+      ) : null}
+      <span className="flex min-w-0 flex-1 flex-col gap-1">
+        <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+          <span
+            id={titleId}
+            className="min-w-0 text-base font-semibold wrap-break-word"
+          >
+            {title}
+          </span>
+          {badges}
+        </span>
+        {summary ? (
+          <span className="text-sm font-normal text-muted-foreground wrap-break-word">
+            {summary}
+          </span>
+        ) : null}
+      </span>
+    </>
+  );
+  const body = (
+    <SettingsHeadingLevel value={4}>{children}</SettingsHeadingLevel>
+  );
+  const blockClassName = cn("flex min-w-0 flex-col gap-4", className);
+  if (!collapsible)
+    return (
+      <section aria-labelledby={titleId} className={blockClassName} {...props}>
+        <h3 className="flex min-w-0 items-start gap-3">{header}</h3>
+        {body}
+      </section>
+    );
+  return (
+    <Collapsible
+      asChild
+      open={collapsible.open}
+      onOpenChange={collapsible.onOpenChange}
+    >
+      <section aria-labelledby={titleId} className={blockClassName} {...props}>
+        <h3 className="min-w-0">
+          <CollapsibleTrigger className="group/owner flex w-full min-w-0 items-start gap-3 rounded-md text-left outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50">
+            {header}
+            <ChevronDown
+              aria-hidden
+              className="mt-1 size-4 shrink-0 text-muted-foreground transition-transform group-data-[state=open]/owner:rotate-180"
+            />
+          </CollapsibleTrigger>
+        </h3>
+        <CollapsibleContent className="flex min-w-0 flex-col gap-4">
+          {body}
+        </CollapsibleContent>
+      </section>
+    </Collapsible>
+  );
+}
+
 export function SettingsGroup({
   title,
   description,
+  action,
   callout,
   children,
   className,
@@ -69,10 +162,13 @@ export function SettingsGroup({
 }: {
   title?: ReactNode;
   description?: ReactNode;
+  action?: ReactNode;
   callout?: ReactNode;
-  children: ReactNode;
+  children?: ReactNode;
 } & Omit<ComponentProps<"section">, "title" | "children">) {
   const titleId = useId();
+  const level = useContext(SettingsHeadingLevel);
+  const Heading = level === 4 ? "h4" : "h3";
   const rows = Children.toArray(children);
   return (
     <section
@@ -80,31 +176,53 @@ export function SettingsGroup({
       className={cn("flex min-w-0 flex-col gap-3", className)}
       {...props}
     >
-      {title || description ? (
-        <div className="flex min-w-0 flex-col gap-1">
-          {title ? (
-            <h3 id={titleId} className="text-base font-medium wrap-break-word">
-              {title}
-            </h3>
+      {title || description || action ? (
+        <div className="flex min-w-0 flex-wrap items-start gap-x-4 gap-y-2">
+          {title || description ? (
+            <div className="flex min-w-0 flex-[1_1_12rem] flex-col gap-1">
+              {title ? (
+                <Heading
+                  id={titleId}
+                  className={cn(
+                    "font-medium wrap-break-word",
+                    level === 4 ? "text-sm" : "text-base",
+                  )}
+                >
+                  {title}
+                </Heading>
+              ) : null}
+              {description ? (
+                <p className="text-sm text-muted-foreground wrap-break-word">
+                  {description}
+                </p>
+              ) : null}
+            </div>
           ) : null}
-          {description ? (
-            <p className="text-sm text-muted-foreground wrap-break-word">
-              {description}
-            </p>
+          {action ? (
+            <div className="ml-auto flex max-w-full flex-wrap items-center gap-2">
+              {action}
+            </div>
           ) : null}
         </div>
       ) : null}
       {callout}
-      <Card className="gap-0 py-0">
-        {rows.map((row, index) => (
-          <Fragment key={isValidElement(row) ? (row.key ?? index) : index}>
-            {index > 0 ? <Separator /> : null}
-            {row}
-          </Fragment>
-        ))}
-      </Card>
+      {rows.length ? (
+        <Card className="gap-0 py-0">
+          <SettingsRows>{rows}</SettingsRows>
+        </Card>
+      ) : null}
     </section>
   );
+}
+
+// Rows of one card, or of one expanded row, separated by lines.
+export function SettingsRows({ children }: { children: ReactNode }) {
+  return Children.toArray(children).map((row, index) => (
+    <Fragment key={isValidElement(row) ? (row.key ?? index) : index}>
+      {index > 0 ? <Separator /> : null}
+      {row}
+    </Fragment>
+  ));
 }
 
 export function SettingsRow({
@@ -112,6 +230,7 @@ export function SettingsRow({
   description,
   htmlFor,
   error,
+  errorId,
   layout = "inline",
   children,
   className,
@@ -121,6 +240,7 @@ export function SettingsRow({
   description?: ReactNode;
   htmlFor?: string;
   error?: ReactNode;
+  errorId?: string;
   layout?: "inline" | "stacked";
   children: ReactNode;
 } & Omit<ComponentProps<typeof Field>, "orientation" | "children">) {
@@ -155,7 +275,7 @@ export function SettingsRow({
         </div>
       )}
       {error ? (
-        <FieldError className={cn(!stacked && "basis-full")}>
+        <FieldError id={errorId} className={cn(!stacked && "basis-full")}>
           {error}
         </FieldError>
       ) : null}

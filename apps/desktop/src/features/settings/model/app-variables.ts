@@ -65,6 +65,37 @@ export interface SaveVariableInput {
   revision: string;
   keep?: VariableMode;
 }
+export interface VariableOwnerNames {
+  rootPath: string | null;
+  rootName: string | null;
+  spaces: readonly { id: string; name: string }[];
+}
+// Owners of the open project are named by their display names; the catalog
+// label (a folder path or name) remains only for other owners.
+export function withOwnerNames(
+  catalog: AppVariablesCatalog,
+  projectPath: string | undefined,
+  names: VariableOwnerNames,
+): AppVariablesCatalog {
+  if (!projectPath || projectPath !== names.rootPath) return catalog;
+  const name = (owner: VariableOwner, label: string) =>
+    (owner.scope === "project"
+      ? names.rootName
+      : owner.scope === "space"
+        ? names.spaces.find((space) => space.id === owner.id)?.name
+        : null) || label;
+  return {
+    ...catalog,
+    owners: catalog.owners.map((item) => ({
+      ...item,
+      label: name(item.owner, item.label),
+    })),
+    entries: catalog.entries.map((entry) => ({
+      ...entry,
+      ownerLabel: name(entry.source.owner, entry.ownerLabel),
+    })),
+  };
+}
 export const ownerKey = (owner: VariableOwner) =>
   owner.scope === "space" ? `space:${owner.id}` : owner.scope;
 export const sourceKey = (source: VariableSource) =>

@@ -4,8 +4,9 @@ import * as m from "@/paraglide/messages.js";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { RepositoryAccessBadge } from "@/features/git";
-import type { SpaceGitType, SpaceInfo, SpaceStatus } from "@/features/space";
+import type { SpaceGitType, SpaceInfo } from "@/features/space";
 import type { ProjectSpaceGitTypeMap } from "../hooks/use-project-space-git-types";
+import { spaceGitTypeLabel, spaceStatusLabel } from "./owner-labels";
 
 export type ProjectSpaceDetailSection = "general" | "git" | "storage";
 
@@ -217,29 +218,4 @@ function SpaceSummaryRow({
       {content}
     </div>
   );
-}
-
-function spaceGitTypeLabel(gitType: SpaceGitType | null | undefined) {
-  if (gitType === undefined) return null;
-  if (gitType === null) return m.settings_space_git_type_unknown();
-
-  switch (gitType) {
-    case "inline":
-      return m.space_type_inline();
-    case "independent":
-      return m.space_type_independent();
-    case "submodule":
-      return m.space_type_submodule();
-  }
-}
-
-function spaceStatusLabel(status: SpaceStatus) {
-  switch (status) {
-    case "ready":
-      return null;
-    case "missing":
-      return m.settings_space_status_missing();
-    case "broken":
-      return m.settings_space_status_broken();
-  }
 }

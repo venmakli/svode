@@ -540,7 +540,12 @@ if (process.env.SVODE_CONTEXTUAL_VARIABLES_TEST !== "1") {
         draft = value;
       });
       return (
-        <AppVariableFields draft={value} disabled={false} onChange={setValue} />
+        <AppVariableFields
+          layout="rows"
+          draft={value}
+          disabled={false}
+          onChange={setValue}
+        />
       );
     }
     const click = async (text: string) =>

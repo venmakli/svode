@@ -28,8 +28,8 @@ if (process.env.SVODE_UNIFIED_SETTINGS_DOM !== "1") {
   ).mock;
   let activeRootPath: string | null = "/project";
   const spaces = [
-    { id: "docs", name: "Docs", path: "/project/docs" },
-    { id: "other", name: "Other", path: "/project/other" },
+    { id: "docs", name: "Docs", path: "/project/docs", status: "ready" },
+    { id: "other", name: "Other", path: "/project/other", status: "ready" },
   ];
   let pending = false;
   let applying = false;
@@ -55,6 +55,7 @@ if (process.env.SVODE_UNIFIED_SETTINGS_DOM !== "1") {
     useOpenPage: () => noop,
   }));
   const variableReads: unknown[] = [];
+  let variableWrite: Promise<void> = Promise.resolve();
   mock.module("../api", () => ({
     getAppVariables: async (_context: unknown, scope: unknown) => {
       variableReads.push(scope);
@@ -73,7 +74,10 @@ if (process.env.SVODE_UNIFIED_SETTINGS_DOM !== "1") {
       };
     },
     listenAppVariablesChanged: async () => noop,
-    upsertAppVariable: async () => {},
+    upsertAppVariable: async () => {
+      await variableWrite;
+      return { effects: [], recoveryError: null };
+    },
     removeAppVariable: async () => {},
     setAppVariableBinding: async () => {},
     recoverAppVariables: async () => {},
@@ -196,8 +200,27 @@ if (process.env.SVODE_UNIFIED_SETTINGS_DOM !== "1") {
       "<!doctype html><html><body><button id=trigger data-settings-return-focus>Settings</button><div id=app></div></body></html>",
       { pretendToBeVisual: true, url: "http://localhost" },
     );
+    Object.defineProperties(dom.window.HTMLElement.prototype, {
+      attachEvent: {
+        configurable: true,
+        value(this: HTMLElement, name: string, listener: EventListener) {
+          this.addEventListener(name.replace(/^on/, ""), listener);
+        },
+      },
+      detachEvent: {
+        configurable: true,
+        value(this: HTMLElement, name: string, listener: EventListener) {
+          this.removeEventListener(name.replace(/^on/, ""), listener);
+        },
+      },
+    });
     const previous = new Map<string, PropertyDescriptor | undefined>();
     const values: Record<string, unknown> = {
+      ResizeObserver: class {
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+      },
       window: dom.window,
       document: dom.window.document,
       navigator: dom.window.navigator,
@@ -427,16 +450,76 @@ if (process.env.SVODE_UNIFIED_SETTINGS_DOM !== "1") {
       expect(
         dom.window.document.body.textContent?.includes("no longer available"),
       ).toBe(true);
+      const scopesReadSince = (start: number) =>
+        [
+          ...new Set(
+            variableReads.slice(start).map((scope) => JSON.stringify(scope)),
+          ),
+        ].sort();
+      const everyOwner = [null, "docs", "other"]
+        .map((spaceId) => JSON.stringify({ projectPath: "/project", spaceId }))
+        .sort();
+      let reads = variableReads.length;
       await draw(project("variables"));
-      expect(variableReads.at(-1)).toEqual({
-        projectPath: "/project",
-        spaceId: null,
-      });
+      expect(scopesReadSince(reads)).toEqual(everyOwner);
+      expect(
+        Array.from(
+          dom.window.document.querySelectorAll("section > h3 span[id]"),
+        ).map((node) => node.textContent?.trim()),
+      ).toEqual(["Long project ".repeat(15).trim(), "Docs", "Other"]);
+      reads = variableReads.length;
       await draw(project("variables", "/project/docs"));
-      expect(variableReads.at(-1)).toEqual({
-        projectPath: "/project",
-        spaceId: "docs",
+      expect(scopesReadSince(reads)).toEqual(everyOwner);
+      // A pending Variables write blocks leaving even though the project
+      // content registers its own Storage/identity guard.
+      let finishWrite!: () => void;
+      variableWrite = new Promise<void>((resolve) => {
+        finishWrite = resolve;
       });
+      await click("Add variable");
+      const nameInput = dom.window.document.querySelector<HTMLInputElement>(
+        'form input[id$="-name"]',
+      )!;
+      await act(async () => {
+        nameInput.focus();
+        Object.getOwnPropertyDescriptor(
+          dom.window.HTMLInputElement.prototype,
+          "value",
+        )!.set!.call(nameInput, "PENDING");
+        nameInput.dispatchEvent(
+          new dom.window.Event("input", { bubbles: true }),
+        );
+        const propertyChange = new dom.window.Event("propertychange", {
+          bubbles: true,
+        });
+        Object.defineProperty(propertyChange, "propertyName", {
+          value: "value",
+        });
+        nameInput.dispatchEvent(propertyChange);
+      });
+      await click("Save");
+      await click("Profile");
+      expect(
+        dom.window.document.querySelector("[data-app-section]"),
+      ).toBeNull();
+      expect(
+        dom.window.document.querySelector('form[aria-label="Add variable"]') !==
+          null,
+      ).toBe(true);
+      await act(async () => {
+        finishWrite();
+        await tick();
+      });
+      await act(tick);
+      expect(
+        dom.window.document.querySelector('form[aria-label="Add variable"]'),
+      ).toBeNull();
+      await click("Profile");
+      expect(
+        dom.window.document.querySelector(
+          '[data-app-section="git-identity"]',
+        ) !== null,
+      ).toBe(true);
       await draw(project("spaces"));
       await click("Create space");
       expect(

@@ -303,7 +303,7 @@ function ContextualVariables({
                       {editor.mode === "value" ? (
                         <>
                           <AppVariableFields
-                            compact
+                            layout="compact"
                             draft={editor.draft}
                             collisionAlternatives={variables.catalog?.entries.filter(
                               (e) =>
