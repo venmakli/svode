@@ -1,9 +1,8 @@
 //! Routine definition commands of the `svode` frame on a harness host with
-//! the Routine stores of an open Project, as the headless runtime will
-//! provide them. It proves the command mapping, owner resolution, strict
-//! candidate, fingerprint CAS and acknowledgement of the shared operation
-//! before that runtime is connected; the standalone process answers these
-//! commands with `MODE_UNAVAILABLE`.
+//! the Routine stores of an open Project. It proves the command mapping,
+//! owner resolution, strict candidate, fingerprint CAS and acknowledgement
+//! of the shared operation; `routine_families_process` runs the same
+//! commands on the standalone host of the real binary.
 
 mod common;
 

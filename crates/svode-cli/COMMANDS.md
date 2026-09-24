@@ -13,12 +13,12 @@ Global selectors may appear before or after the command. The target is resolved 
 - stdout carries only the result; warnings, diagnostics and usage go to stderr.
 - With `--json`, stdout holds exactly one JSON object. Success: `{"schemaVersion":1,"ok":true,"target":{…},…result}`, where `…result` is the structured result of the shared operation in the same shape as the MCP `structuredContent` of that capability. Failure: `{"schemaVersion":1,"ok":false,"error":{"code":"…","message":"…","target":{…},…evidence}}`; `target` holds only the selectors known at the moment of failure.
 - `target` holds the resolved `projectPath`, `spaceId`, `spacePath` plus command selectors such as `path`, `collection` or `id`.
-- Exit `0` — success (including warnings); `1` — operation failure, including `SOURCE_BUSY`, `SOURCE_STALE` and `MODE_UNAVAILABLE`; `2` — grammar or input failure (`INVALID_ARGUMENT`, `INPUT_UNREADABLE`).
+- Exit `0` — success (including warnings); `1` — operation failure, including `SOURCE_BUSY` and `SOURCE_STALE`; `2` — grammar or input failure (`INVALID_ARGUMENT`, `INPUT_UNREADABLE`).
 - Lists keep the bounds of the shared operation: `--limit` default 50, max 200, `--offset` from 0; Knowledge commands have their own limits.
 
 ## Runtime modes
 
-Each command runs on the Svode headless runtime shared with `svode-mcp --project`: it opens only what its capability needs and closes it before exit, also on SIGINT/SIGTERM (exit 130/143); a write already inside its source phase completes or rolls back before the command stops. This build serves every read — from project sources, including `collection check`, from the index, from Git and from the Actor catalog — the body writes (`page write`, `item write`, `space readme write`, `collection readme write`), the metadata, field, schema column and view changes (`… meta set`, `item fields set`, `collection column …`, `collection view …`), creation (`page create`, `collection create`), deletion, structural changes and reordering (`content …`, `page delete`, `item delete`, `collection delete`, `space reorder`), `asset import`, `git access verify` and `app validate`, which needs no Project. The Routine stores (`routine …`) are not served yet: those commands answer `MODE_UNAVAILABLE` (exit 1) and run nothing; `svode doctor` lists the served capabilities. Writes read and validate their input first, so grammar and input failures still exit 2.
+Each command runs on the Svode headless runtime shared with `svode-mcp --project`: it opens only what its capability needs and closes it before exit, also on SIGINT/SIGTERM (exit 130/143); a write already inside its source phase completes or rolls back before the command stops. This build serves every command: reads from project sources, including `collection check`, from the index, from Git and from the Actor catalog; body writes; metadata, field, schema column and view changes; creation, deletion, structural changes and reordering; `asset import`; Routine definitions (`routine …`), whose operational store of the owner is opened only by a Routine command; `git access verify`; and `app validate`, which needs no Project. `svode doctor` lists the served capabilities. Writes read and validate their input first, so grammar and input failures still exit 2.
 
 Index-backed commands (`collection query`, `search`, `knowledge …`) check the index of their Spaces against the files before answering, with no watcher: a missing index is built, an incompatible or corrupt one is moved aside and rebuilt, and each command runs one check. Their result carries `index`: `{"status":"fresh"|"partial","verifiedAt":"<time of the check>","diagnostics":[…]}`, where `partial` means some sources could not be read and their earlier rows are kept. An index that cannot be prepared fails with `INDEX_UNAVAILABLE` and its diagnostics, never with an empty list. `space list`, `project info` and `doctor` report repository access from the evidence store shared with the desktop app, without contacting the remote; a repository never checked is `unknown` with reason `not_checked`. A write to a repository with a remote is allowed only while it is `local` or freshly `writable`: otherwise it fails before any effect with `REPOSITORY_ACCESS_DENIED`, its `status`, `reason` and a `hint`, and `git access verify` records new evidence.
 
@@ -76,11 +76,11 @@ Device-local settings, such as that evidence store, are found in the OS config d
 | `space reorder --id …` | `reorder_spaces` (Project level; `--space` is not used) | yes |
 | `asset import --path <content.md> --file <local> [--name]` | `import_asset` | yes |
 | `app validate --file <app.yaml\|->` | `validate_app_manifest` | yes, without a Project |
-| `routine list [--collection] [--limit --offset]` | `list_routines` | no |
-| `routine get [--collection] --id` | `get_routine` | no |
-| `routine create [--collection] --definition-file [--confirm-automatic-execution]` | `create_routine` | no |
-| `routine update [--collection] --id --fingerprint --definition-file [--confirm-automatic-execution]` | `update_routine` | no |
-| `routine delete [--collection] --id --fingerprint` | `delete_routine` | no |
+| `routine list [--collection] [--limit --offset]` | `list_routines` | yes |
+| `routine get [--collection] --id` | `get_routine` | yes |
+| `routine create [--collection] --definition-file [--confirm-automatic-execution]` | `create_routine` | yes |
+| `routine update [--collection] --id --fingerprint --definition-file [--confirm-automatic-execution]` | `update_routine` | yes |
+| `routine delete [--collection] --id --fingerprint` | `delete_routine` | yes |
 | `guide` | `get_svode_guide` plus files-first rules | yes, without a Project |
 | `doctor` | CLI diagnostics | yes, target failures are part of the result |
 
@@ -129,13 +129,15 @@ The JSON result is the MCP `structuredContent` of the capability, for example `p
 
 ## Routines
 
-Routine commands read and change Routine definitions through the shared Routine service. The owner is always explicit: the selected Space (`--space`, or the Space containing the current directory) is passed to the operation, and `--collection <dir>` selects one of its Collections instead. `.routines` is not an owner address. `routine run` is not part of this build.
+Routine commands read and change Routine definitions through the shared Routine service. The owner is always explicit: the selected Space (`--space`, or the Space containing the current directory) is passed to the operation, and `--collection <dir>` selects one of its Collections instead. `.routines` is not an owner address. `routine run` is not part of this build: `svode` never starts a Routine, a scheduler or an agent.
 
 - `routine list` returns bounded summaries of the owner, including invalid definitions and their diagnostics, with `total`/`limit`/`offset`, `catalogFingerprint` and the exact-owner device authority evidence (`automaticAuthorityEnabled`, `authorityDiagnostics`); it never returns the Markdown body. `routine get --id` returns the normalized `definition`, `diagnostics`, `valid` and the `fingerprint` of the definition.
 - `routine create` and `routine update` take a complete definition as a JSON object (`name`, `description`, `enabled`, `trigger`, `action`, `body`) from `--definition-file <path|->`. Unknown fields are rejected by the shared decode (`SERIALIZATION_ERROR`) and an invalid definition by the service (`ROUTINE_INVALID` with `diagnostics`), before any write. The file name follows the Routine name; a taken name is `ROUTINE_NAME_CONFLICT`.
 - An enabled schedule or event Routine needs `--confirm-automatic-execution`, otherwise `ROUTINE_AUTOMATIC_CONFIRMATION_REQUIRED`. Saving never starts the Routine and never changes the automatic authority of this device.
 - `routine update` and `routine delete` are compare-and-set: pass `--id` and the `--fingerprint` of your last read. A changed definition fails with `ROUTINE_FINGERPRINT_CONFLICT` and `currentFingerprint`; a missing one with `ROUTINE_NOT_FOUND`. Read it again and reapply the intent. Delete keeps run history and does not cancel an active run.
 - The owner repository is authorized before the first write, and nothing is committed to Git.
+- `lastRunAt` and `lastRunOrigin` come from the run history the store keeps; `svode` has no evidence of a live run and never reports one as running or finished.
+- A process started from a Routine launch of the desktop app inherits its caller token (`SVODE_MCP_ROUTINE_CALLER_TOKEN`) and keeps the Routine origin: saving an enabled schedule or event Routine fails with `ROUTINE_RECURSION_GUARD`, even with `--confirm-automatic-execution`.
 - JSON result: the `structuredContent` of the capability, for mutations `owner`, `routineId`, `path`, `fingerprint` (create/update), `catalogFingerprint`, `changedPaths`, `detail` (create/update) and `warnings`. Human output: `routine list` prints `routineId name trigger enabled|disabled|invalid fingerprint` per Routine, `routine get` the detail as JSON, mutations the summary line, `routineId`, `fingerprint` and each changed path.
 
 ## page read
@@ -172,11 +174,10 @@ Context and input codes are owned by the CLI; every other code comes unchanged f
 | `PROJECT_UNAVAILABLE` | The Project directory or `.svode/config.json` is missing or unreadable, or no Project contains the current directory |
 | `INVALID_PROJECT_CONFIG` | `.svode/config.json` is not a valid Project config |
 | `SPACE_UNAVAILABLE` | Unknown, missing or broken child Space |
-| `MODE_UNAVAILABLE` | The headless runtime of this build does not serve the command's capability yet |
 
 ## Help and version
 
-`svode --help`, `svode <noun> --help`, `svode <noun> <verb> --help` and `svode --version` work without a Project, and every help page names a working example. Mutating commands describe the safe read → edit → write cycle and recovery, body writes with `--source-version` and the direct-edit alternative; commands the headless runtime of this build does not serve yet say so.
+`svode --help`, `svode <noun> --help`, `svode <noun> <verb> --help` and `svode --version` work without a Project, and every help page names a working example. Mutating commands describe the safe read → edit → write cycle and recovery, body writes with `--source-version` and the direct-edit alternative.
 
 ## Installation
 

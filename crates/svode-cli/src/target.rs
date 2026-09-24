@@ -8,6 +8,7 @@ use serde_json::{Map, Value, json};
 use svode_core::page::{ResolvedSpaceTarget, project_for_directory};
 use svode_tools::error::ToolError;
 use svode_tools::host::{RequestTarget, ToolHost};
+use svode_tools::standalone::request_target;
 use svode_tools::target::{ROOT_SPACE_ID, resolve_default_space, resolve_project};
 
 use crate::error::CliError;
@@ -121,6 +122,6 @@ impl Target {
     /// Request target of the shared tool surface: the resolved Space is the
     /// frozen default of the call.
     pub fn request(&self) -> RequestTarget {
-        RequestTarget::for_space(&self.space)
+        request_target(&self.space)
     }
 }

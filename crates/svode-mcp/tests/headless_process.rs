@@ -2,8 +2,9 @@
 //! stdio session served in-process on the standalone host, the frozen
 //! target, source reads that open no store and leave every byte of the
 //! project unchanged, index-backed reads that reconcile the index with the
-//! files first and again after the recheck window, and shutdown on EOF and
-//! SIGTERM.
+//! files first and again after the recheck window, writes of every family,
+//! Routine definitions from the owner store without execution, and
+//! shutdown on EOF and SIGTERM.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -16,20 +17,24 @@ use serde_json::{Value, json};
 
 const BIN: &str = env!("CARGO_BIN_EXE_svode-mcp");
 const COMMIT_DATE: &str = "2020-01-02T03:04:05Z";
+/// Caller token a Routine launch of the desktop app passes to its processes.
+const ROUTINE_CALLER_TOKEN: &str = "SVODE_MCP_ROUTINE_CALLER_TOKEN";
 
 /// Tools a standalone process serves in this build.
-const SERVED: [&str; 48] = [
+const SERVED: [&str; 53] = [
     "add_collection_column",
     "add_collection_view",
     "convert_page_to_leaf",
     "convert_to_collection",
     "create_collection",
     "create_page",
+    "create_routine",
     "delete_collection",
     "delete_collection_column",
     "delete_collection_item",
     "delete_collection_view",
     "delete_page",
+    "delete_routine",
     "get_collection_schema",
     "get_git_status",
     "get_knowledge_neighbors",
@@ -37,11 +42,13 @@ const SERVED: [&str; 48] = [
     "get_knowledge_status",
     "get_project_info",
     "get_related_context",
+    "get_routine",
     "get_svode_guide",
     "import_asset",
     "list_actors",
     "list_collections",
     "list_pages",
+    "list_routines",
     "list_spaces",
     "move_content",
     "query_collection_items",
@@ -61,6 +68,7 @@ const SERVED: [&str; 48] = [
     "update_collection_metadata",
     "update_collection_view",
     "update_page_metadata",
+    "update_routine",
     "update_space_metadata",
     "validate_app_manifest",
     "validate_collection_integrity",
@@ -161,6 +169,10 @@ fn snapshot(root: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
 }
 
 fn spawn(cwd: &Path, args: &[&str]) -> Child {
+    spawn_with(cwd, args, &[])
+}
+
+fn spawn_with(cwd: &Path, args: &[&str], env: &[(&str, &str)]) -> Child {
     Command::new(BIN)
         .args(args)
         .current_dir(cwd)
@@ -169,6 +181,8 @@ fn spawn(cwd: &Path, args: &[&str]) -> Child {
         .env("SVODE_MCP_DISCOVERY", cwd.join("no-desktop.json"))
         .env("SVODE_PRODUCT_IDENTIFIER", "app.svode.desktop.test")
         .env("GIT_TERMINAL_PROMPT", "0")
+        .env_remove(ROUTINE_CALLER_TOKEN)
+        .envs(env.iter().copied())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -263,7 +277,6 @@ fn headless_session_serves_source_reads_without_desktop_and_changes_nothing() {
                 json!({ "path": "tasks/alpha.md" }),
             ),
             call(10, "get_project_info", json!({})),
-            call(11, "list_routines", json!({ "spaceId": "root" })),
             call(
                 12,
                 "write_page",
@@ -273,15 +286,10 @@ fn headless_session_serves_source_reads_without_desktop_and_changes_nothing() {
             call(14, "no_such_tool", json!({})),
             json!({ "jsonrpc": "2.0", "id": 15, "method": "ping" }),
             json!({ "jsonrpc": "2.0", "id": 16, "method": "resources/list" }),
-            call(
-                17,
-                "create_routine",
-                json!({ "spaceId": "root", "definition": {} }),
-            ),
         ],
     );
 
-    assert_eq!(responses.len(), 17, "{responses:?}");
+    assert_eq!(responses.len(), 15, "{responses:?}");
     let info = &responses[&1]["result"];
     assert_eq!(info["serverInfo"]["version"], env!("CARGO_PKG_VERSION"));
     let mut tools = responses[&2]["result"]["tools"]
@@ -337,8 +345,6 @@ fn headless_session_serves_source_reads_without_desktop_and_changes_nothing() {
         );
     }
 
-    assert_eq!(business_code(&responses[&11]), "MODE_UNAVAILABLE");
-    assert_eq!(business_code(&responses[&17]), "MODE_UNAVAILABLE");
     // A body write of a client with the schema before `sourceVersion` is an
     // argument error before any effect, never a versionless overwrite.
     assert_eq!(business_code(&responses[&12]), "SERIALIZATION_ERROR");
@@ -374,7 +380,11 @@ struct Live {
 
 impl Live {
     fn start(cwd: &Path, args: &[&str]) -> Self {
-        let mut child = spawn(cwd, args);
+        Self::start_with(cwd, args, &[])
+    }
+
+    fn start_with(cwd: &Path, args: &[&str], env: &[(&str, &str)]) -> Self {
+        let mut child = spawn_with(cwd, args, env);
         let stdin = child.stdin.take().unwrap();
         let stdout = BufReader::new(child.stdout.take().unwrap());
         Self {
@@ -1084,4 +1094,402 @@ fn create_structural_reorder_and_import_changes_are_served_in_one_session() {
     )
     .unwrap();
     assert_eq!(after, head, "no commit");
+}
+
+const ACTOR: &str = "01arz3ndektsv4rrffq69g5fav";
+
+/// Fixture whose Agent Actors catalog has the executor of the Routines the
+/// tests save.
+fn routine_fixture() -> Option<Fixture> {
+    let fixture = fixture();
+    write(
+        &fixture.project.join(".svode/agent-actors.json"),
+        &json!({
+            "schemaVersion": 1,
+            "actors": [{ "id": ACTOR, "name": "Reviewer", "adapters": [{ "adapter": "codex" }] }]
+        })
+        .to_string(),
+    );
+    // The catalog is committed so HEAD and the working tree start clean.
+    (fixture.git
+        && git(&fixture.project, &["add", "-A"])
+        && git(&fixture.project, &["commit", "-q", "-m", "actors"]))
+    .then_some(fixture)
+}
+
+fn manual(name: &str) -> Value {
+    json!({
+        "name": name,
+        "trigger": { "type": "manual" },
+        "action": { "type": "run_agent", "executor": format!("agent:{ACTOR}") },
+        "body": "Review the tasks."
+    })
+}
+
+fn on_created(name: &str) -> Value {
+    json!({
+        "name": name,
+        "enabled": true,
+        "trigger": { "type": "event", "event": "collection.entry_created" },
+        "action": { "type": "update_properties", "target": "trigger.entry", "set": { "Status": "New" } },
+        "body": "Managed by Svode."
+    })
+}
+
+fn head(project: &Path) -> String {
+    String::from_utf8(
+        Command::new("git")
+            .args(["rev-parse", "HEAD"])
+            .current_dir(project)
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .unwrap()
+}
+
+fn routine_files(dir: &Path) -> Vec<String> {
+    let Ok(entries) = fs::read_dir(dir.join(".routines")) else {
+        return Vec::new();
+    };
+    let mut names = entries
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().to_string())
+        .collect::<Vec<_>>();
+    names.sort();
+    names
+}
+
+fn sqlite<T>(db: &Path, query: impl AsyncFnOnce(&sqlx::SqlitePool) -> T) -> T {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            let pool = sqlx::SqlitePool::connect(&format!("sqlite:{}?mode=rwc", db.display()))
+                .await
+                .unwrap();
+            let value = query(&pool).await;
+            pool.close().await;
+            value
+        })
+}
+
+fn run_rows(db: &Path) -> i64 {
+    sqlite(db, async |pool| {
+        sqlx::query_scalar("SELECT COUNT(*) FROM routine_runs")
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    })
+}
+
+#[test]
+fn routine_definitions_are_served_from_the_owner_store_of_two_sessions_without_execution() {
+    let Some(fixture) = routine_fixture() else {
+        return;
+    };
+    let project = &fixture.project;
+    let head_before = head(project);
+    let args = ["--project", project.to_str().unwrap()];
+    let tasks = json!({ "spaceId": "root", "collectionPath": "tasks" });
+    let owner = |extra: Value| {
+        let mut value = tasks.clone();
+        value
+            .as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        value
+    };
+
+    let mut first = Live::start(fixture.temp.path(), &args);
+    // Reads of Pages open no Routine store; the first Routine operation does.
+    first.ok("read_page", json!({ "path": "notes.md" }));
+    assert!(!project.join(".svode/routines.db").exists());
+    let empty = first.ok("list_routines", tasks.clone());
+    assert_eq!(empty["total"], 0, "{empty}");
+    assert_eq!(empty["owner"]["ownerPath"], "tasks", "{empty}");
+    assert_eq!(empty["automaticAuthorityEnabled"], false, "{empty}");
+    assert!(project.join(".svode/routines.db").is_file());
+
+    let created = first.ok(
+        "create_routine",
+        owner(json!({ "definition": manual("Review") })),
+    );
+    let id = created["routineId"].as_str().unwrap().to_string();
+    let fingerprint = created["fingerprint"].as_str().unwrap().to_string();
+    assert_eq!(created["path"], "tasks/.routines/Review.md", "{created}");
+    assert_eq!(routine_files(&project.join("tasks")), ["Review.md"]);
+    let read = first.ok("get_routine", owner(json!({ "routineId": id })));
+    assert_eq!(read["definition"]["body"], "Review the tasks.", "{read}");
+    assert_eq!(read["fingerprint"], fingerprint.as_str());
+
+    // A second process opens the same store while the first holds it.
+    let mut second = Live::start(fixture.temp.path(), &args);
+    let seen = second.ok("list_routines", tasks.clone());
+    assert_eq!(seen["routines"][0]["routineId"], id.as_str(), "{seen}");
+    let updated = second.ok(
+        "update_routine",
+        owner(json!({
+            "routineId": id,
+            "expectedFingerprint": fingerprint,
+            "definition": manual("Weekly review"),
+        })),
+    );
+    let current = updated["fingerprint"].as_str().unwrap().to_string();
+    assert_ne!(current, fingerprint);
+    assert_eq!(routine_files(&project.join("tasks")), ["Weekly review.md"]);
+
+    // The first session holds the old fingerprint: compare-and-set refuses.
+    let stale = first.call(
+        "update_routine",
+        owner(json!({
+            "routineId": id,
+            "expectedFingerprint": fingerprint,
+            "definition": manual("Lost update"),
+        })),
+    );
+    assert_eq!(business_code(&stale), "ROUTINE_FINGERPRINT_CONFLICT");
+    assert_eq!(
+        stale["result"]["structuredContent"]["error"]["currentFingerprint"],
+        current.as_str()
+    );
+    assert_eq!(routine_files(&project.join("tasks")), ["Weekly review.md"]);
+
+    // Enabled automation needs acknowledgement; saving it grants no device
+    // authority and starts nothing.
+    let unconfirmed = second.call(
+        "create_routine",
+        owner(json!({ "definition": on_created("On created") })),
+    );
+    assert_eq!(
+        business_code(&unconfirmed),
+        "ROUTINE_AUTOMATIC_CONFIRMATION_REQUIRED"
+    );
+    let automatic = second.ok(
+        "create_routine",
+        owner(json!({
+            "definition": on_created("On created"),
+            "confirmAutomaticExecution": true,
+        })),
+    );
+    assert_eq!(
+        automatic["detail"]["definition"]["enabled"], true,
+        "{automatic}"
+    );
+    assert_eq!(
+        automatic["detail"]["automaticAuthorityEnabled"], false,
+        "{automatic}"
+    );
+    let invalid = second.call(
+        "create_routine",
+        owner(json!({ "definition": { "name": "Nobody", "trigger": { "type": "manual" }, "action": { "type": "run_agent", "executor": "agent:01bx5zzkbkactav9wevgemmvrz" }, "body": "x" } })),
+    );
+    assert_eq!(business_code(&invalid), "ROUTINE_INVALID");
+    assert_eq!(
+        routine_files(&project.join("tasks")),
+        ["On created.md", "Weekly review.md"]
+    );
+
+    let listed = first.ok("list_routines", tasks.clone());
+    assert_eq!(listed["total"], 2, "{listed}");
+    let deleted = first.ok(
+        "delete_routine",
+        owner(json!({ "routineId": id, "expectedFingerprint": current })),
+    );
+    assert_eq!(deleted["routineId"], id.as_str(), "{deleted}");
+    let missing = second.call("get_routine", owner(json!({ "routineId": id })));
+    assert_eq!(business_code(&missing), "ROUTINE_NOT_FOUND");
+
+    // A child Space owner keeps its own Routine files and store.
+    let child = first.ok(
+        "create_routine",
+        json!({ "spaceId": "child", "definition": manual("Child review") }),
+    );
+    assert_eq!(child["owner"]["spaceId"], "child", "{child}");
+    assert_eq!(routine_files(&project.join("child")), ["Child review.md"]);
+    assert!(project.join("child/.svode/routines.db").is_file());
+
+    first.finish();
+    second.finish();
+    assert_closed(project);
+    assert_closed(&project.join("child"));
+    assert_eq!(head(project), head_before, "no commit");
+    assert_eq!(run_rows(&project.join(".svode/routines.db")), 0, "no run");
+    let local: Value =
+        serde_json::from_str(&fs::read_to_string(project.join(".svode/local.json")).unwrap())
+            .unwrap();
+    assert!(
+        local["routines"]["automaticAuthority"]
+            .as_object()
+            .is_none_or(serde_json::Map::is_empty),
+        "{local}"
+    );
+}
+
+#[test]
+fn a_process_started_from_a_routine_launch_keeps_the_routine_origin() {
+    let Some(fixture) = routine_fixture() else {
+        return;
+    };
+    let project = &fixture.project;
+    let args = ["--project", project.to_str().unwrap()];
+    let tasks = json!({ "spaceId": "root", "collectionPath": "tasks" });
+    let mut live = Live::start_with(
+        fixture.temp.path(),
+        &args,
+        &[(ROUTINE_CALLER_TOKEN, "opaque-token")],
+    );
+    let listed = live.ok("list_routines", tasks.clone());
+    assert_eq!(listed["total"], 0, "{listed}");
+    let mut enabled = tasks.clone();
+    enabled["definition"] = on_created("Nested automation");
+    enabled["confirmAutomaticExecution"] = json!(true);
+    let refused = live.call("create_routine", enabled);
+    assert_eq!(business_code(&refused), "ROUTINE_RECURSION_GUARD");
+    assert!(routine_files(&project.join("tasks")).is_empty());
+    let mut manual_args = tasks.clone();
+    manual_args["definition"] = manual("Manual from a Routine");
+    live.ok("create_routine", manual_args);
+    assert_eq!(
+        routine_files(&project.join("tasks")),
+        ["Manual from a Routine.md"]
+    );
+    live.finish();
+
+    // An empty token claims nothing.
+    let mut live = Live::start_with(fixture.temp.path(), &args, &[(ROUTINE_CALLER_TOKEN, " ")]);
+    let mut enabled = tasks.clone();
+    enabled["definition"] = on_created("External automation");
+    enabled["confirmAutomaticExecution"] = json!(true);
+    live.ok("create_routine", enabled);
+    live.finish();
+}
+
+#[test]
+fn the_last_run_is_projected_from_the_store_without_a_live_status() {
+    let Some(fixture) = routine_fixture() else {
+        return;
+    };
+    let project = &fixture.project;
+    let args = ["--project", project.to_str().unwrap()];
+    let root = json!({ "spaceId": "root" });
+    let mut live = Live::start(fixture.temp.path(), &args);
+    let mut create = root.clone();
+    create["definition"] = manual("Review");
+    let created = live.ok("create_routine", create);
+    live.finish();
+    let id = created["routineId"].as_str().unwrap().to_string();
+
+    // A run of the desktop app that never recorded a terminal outcome.
+    let db = project.join(".svode/routines.db");
+    sqlite(&db, async |pool| {
+        sqlx::query(
+            "INSERT INTO routine_runs (routine_run_id, routine_id, owner_path, trigger_type, \
+             definition_fingerprint, definition_json, launch_id, pty_id, source, \
+             agent_session_id, created_at, updated_at) \
+             VALUES ('run-1', ?, '.', 'manual', 'f', '{}', 'launch-1', 'pty-1', 'codex', \
+             'codex:pending', '2026-09-24T10:00:00Z', '2026-09-24T10:00:00Z')",
+        )
+        .bind(&id)
+        .execute(pool)
+        .await
+        .unwrap();
+    });
+
+    let mut live = Live::start(fixture.temp.path(), &args);
+    let listed = live.ok("list_routines", root.clone());
+    let row = &listed["routines"][0];
+    assert_eq!(row["lastRunAt"], "2026-09-24T10:00:00Z", "{row}");
+    assert_eq!(row["lastRunOrigin"], "local", "{row}");
+    let mut get = root.clone();
+    get["routineId"] = json!(id);
+    let detail = live.ok("get_routine", get);
+    assert_eq!(detail["lastRunAt"], "2026-09-24T10:00:00Z", "{detail}");
+    for value in [&listed, &detail] {
+        let text = value.to_string();
+        assert!(
+            !text.contains("running") && !text.contains("\"active\""),
+            "{text}"
+        );
+    }
+    live.finish();
+    assert_eq!(run_rows(&db), 1);
+}
+
+#[test]
+fn a_corrupt_store_is_quarantined_and_an_unsupported_one_is_left_untouched() {
+    let Some(fixture) = routine_fixture() else {
+        return;
+    };
+    let project = &fixture.project;
+    let args = ["--project", project.to_str().unwrap()];
+    let root = json!({ "spaceId": "root" });
+    let mut create = root.clone();
+    create["definition"] = manual("Review");
+    let mut live = Live::start(fixture.temp.path(), &args);
+    live.ok("create_routine", create);
+    live.finish();
+
+    // A store this install created before, now unreadable.
+    let db = project.join(".svode/routines.db");
+    fs::write(&db, "not a database").unwrap();
+    let mut live = Live::start(fixture.temp.path(), &args);
+    let listed = live.ok("list_routines", root.clone());
+    assert_eq!(listed["total"], 1, "{listed}");
+    assert_eq!(listed["diagnostics"], json!([]), "{listed}");
+    live.finish();
+    let quarantined = fs::read_dir(project.join(".svode"))
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().to_string())
+        .filter(|name| name.starts_with("routines.db.corrupt-"))
+        .collect::<Vec<_>>();
+    assert_eq!(quarantined.len(), 1, "{quarantined:?}");
+    assert_eq!(
+        fs::read(project.join(".svode").join(&quarantined[0])).unwrap(),
+        b"not a database"
+    );
+    let local: Value =
+        serde_json::from_str(&fs::read_to_string(project.join(".svode/local.json")).unwrap())
+            .unwrap();
+    assert_eq!(
+        local["routines"]["recovery"]["reason"], "corrupt",
+        "{local}"
+    );
+
+    // A store of a newer schema is never migrated or replaced.
+    fs::remove_file(&db).unwrap();
+    sqlite(&db, async |pool| {
+        sqlx::query("CREATE TABLE schema_version (version INTEGER NOT NULL)")
+            .execute(pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO schema_version VALUES (99)")
+            .execute(pool)
+            .await
+            .unwrap();
+    });
+    let mut live = Live::start(fixture.temp.path(), &args);
+    let listed = live.ok("list_routines", root.clone());
+    assert_eq!(listed["total"], 1, "{listed}");
+    assert_eq!(
+        listed["diagnostics"][0]["code"], "routine_cache_unavailable",
+        "{listed}"
+    );
+    assert_eq!(listed["automaticAuthorityEnabled"], Value::Null, "{listed}");
+    live.finish();
+    // Only the journal mode of the connection changed: no table was added
+    // and the version is the one the store had.
+    let (tables, version) = sqlite(&db, async |pool| {
+        let tables: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table'")
+                .fetch_one(pool)
+                .await
+                .unwrap();
+        let version: i64 = sqlx::query_scalar("SELECT version FROM schema_version")
+            .fetch_one(pool)
+            .await
+            .unwrap();
+        (tables, version)
+    });
+    assert_eq!((tables, version), (1, 99));
 }

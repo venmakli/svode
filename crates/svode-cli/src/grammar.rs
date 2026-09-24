@@ -2,7 +2,6 @@
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
 
-const HEADLESS: &str = "Mode: not served yet by the Svode headless runtime of this build; it answers MODE_UNAVAILABLE and runs nothing.";
 const INDEXED: &str = "Index: the index of the Space is checked against the files before the answer (built on first use). The result carries `index` (status fresh or partial); INDEX_UNAVAILABLE means no answer could be prepared from it.";
 
 const WRITE: &str = "Safe cycle: read the current source, edit it, then write the whole result. Bodies come from --body-file <path> or --body-file - (stdin); --body <text> is for short inline text. A command reads stdin at most once. The write does not commit to Git. If it fails, the code and target say why: reread the source and apply the intent again; never delete or hand-repair .svode metadata.";
@@ -35,7 +34,7 @@ fn routine_help(parts: &[&str], example: &str) -> String {
         help.push_str("\n\n");
         help.push_str(part);
     }
-    format!("{help}\n\n{HEADLESS}\n\nExample:\n  {example}")
+    format!("{help}\n\nExample:\n  {example}")
 }
 
 #[derive(Debug, Parser)]

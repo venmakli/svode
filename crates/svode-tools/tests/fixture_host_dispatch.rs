@@ -2282,7 +2282,7 @@ fn review_routine(name: &str, enabled: bool) -> Value {
 }
 
 fn routine_caller() -> RoutineCaller {
-    RoutineCaller {
+    RoutineCaller::Launch {
         routine_run_id: "run-one".to_string(),
         launch_id: "launch-one".to_string(),
         pty_id: "pty-one".to_string(),

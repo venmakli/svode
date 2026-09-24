@@ -1,7 +1,6 @@
 //! The `svode` frame on a harness host whose runtime holds a real reindexed
-//! Project, as the headless runtime will provide it. It proves the command
-//! mapping of index-backed reads before that runtime is connected to the
-//! binary; the standalone process answers them with `MODE_UNAVAILABLE`.
+//! Project. It proves the command mapping of index-backed reads;
+//! `index_process` runs them on the standalone host of the real binary.
 
 use std::collections::BTreeSet;
 use std::ffi::OsString;

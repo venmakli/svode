@@ -606,7 +606,7 @@ impl TerminalManager {
         if canonical_cwd(project_path)? != frozen_project_path {
             return Ok(None);
         }
-        Ok(Some(svode_tools::host::RoutineCaller {
+        Ok(Some(svode_tools::host::RoutineCaller::Launch {
             routine_run_id: surface
                 .routine_run_id
                 .clone()
@@ -1961,9 +1961,14 @@ mod tests {
             .resolve_routine_mcp_caller("opaque-token", &project)
             .unwrap()
             .expect("live Routine provenance");
-        assert_eq!(provenance.routine_run_id, "run-one");
-        assert_eq!(provenance.launch_id, "launch-one");
-        assert_eq!(provenance.pty_id, "pty-agent");
+        assert_eq!(
+            provenance,
+            svode_tools::host::RoutineCaller::Launch {
+                routine_run_id: "run-one".into(),
+                launch_id: "launch-one".into(),
+                pty_id: "pty-agent".into(),
+            }
+        );
         assert!(
             manager
                 .resolve_routine_mcp_caller("opaque-token", &other)

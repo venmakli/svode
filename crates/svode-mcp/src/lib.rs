@@ -12,4 +12,4 @@ pub const MCP_MANAGED_MARKER_ENV: &str = "SVODE_MCP_MANAGED";
 pub const MCP_MANAGED_MARKER_VALUE: &str = "svode-desktop-bridge-v1";
 pub const MCP_DISCOVERY_ENV: &str = "SVODE_MCP_DISCOVERY";
 pub const MCP_PROJECT_PATH_ENV: &str = "SVODE_MCP_PROJECT_PATH";
-pub const MCP_ROUTINE_CALLER_TOKEN_ENV: &str = "SVODE_MCP_ROUTINE_CALLER_TOKEN";
+pub const MCP_ROUTINE_CALLER_TOKEN_ENV: &str = svode_tools::host::ROUTINE_CALLER_TOKEN_ENV;

@@ -10,9 +10,9 @@
 //! describe only its own change. A mutation is authorized from the access
 //! evidence the install shares and publishes into the index and Routine
 //! stores of this process; a managed import proves Git LFS readiness with
-//! the core probe of the process Git runtime. Capabilities of the headless
-//! catalog that this build does not serve yet answer `MODE_UNAVAILABLE`
-//! before any effect.
+//! the core probe of the process Git runtime. Routine definitions use the
+//! operational store of their owner, opened on the first Routine operation;
+//! the process has no execution evidence and never runs a Routine.
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -23,19 +23,20 @@ use svode_core::git::access::RepositoryAccessSnapshot;
 use svode_core::index::IndexKey;
 use svode_core::index::freshness::IndexFreshness;
 use svode_core::index::knowledge::KnowledgeScope;
-use svode_core::routines::model::ResolvedRoutineOwner;
+use svode_core::page::ResolvedSpaceTarget;
+use svode_core::routines::model::{ResolvedRoutineOwner, RoutineLiveEvidence};
 use svode_core::runtime::session::ProjectSession;
 
-use crate::catalog;
 use crate::error::ToolError;
-use crate::host::{MutationRuntime, ReadRuntime, RoutineRunner, RoutineRuntime, ToolHost};
+use crate::host::{
+    MutationRuntime, ROUTINE_CALLER_TOKEN_ENV, ReadRuntime, RequestTarget, RoutineCaller,
+    RoutineRunner, RoutineRuntime, ToolHost,
+};
 
-/// Catalog tools a standalone process serves: reads answered from project
-/// sources, the index reconciled with them, Git or the Actor catalog, tools
-/// answered from their input, body writes from a read source version,
-/// metadata, field, schema column and view changes of the current source,
-/// and create, delete, structural, reorder and managed import changes.
-const SERVED_TOOLS: [&str; 48] = [
+/// Catalog tools a standalone process serves: every data and guidance
+/// capability. An explicit Routine launch needs the Desktop execution owner
+/// and is never served.
+const SERVED_TOOLS: [&str; 53] = [
     "get_svode_guide",
     "validate_app_manifest",
     "get_project_info",
@@ -84,21 +85,29 @@ const SERVED_TOOLS: [&str; 48] = [
     "convert_to_collection",
     "convert_page_to_leaf",
     "import_asset",
+    "list_routines",
+    "get_routine",
+    "create_routine",
+    "update_routine",
+    "delete_routine",
 ];
-
-/// Capability that is never headless: an explicit Routine launch needs the
-/// Desktop execution owner.
-const DESKTOP_ONLY_TOOL: &str = "run_routine";
 
 /// Upper bound of closing session-owned resources at process exit.
 const CLOSE_TIMEOUT: Duration = Duration::from_secs(5);
 
-/// A capability of the headless catalog this build does not serve yet.
-pub fn mode_unavailable(what: &str) -> ToolError {
-    ToolError::new(
-        "MODE_UNAVAILABLE",
-        format!("{what} is not available in the Svode headless runtime of this build yet"),
-    )
+/// Request target of a standalone process whose default Space is `space`.
+/// A process started from a managed Routine launch inherits its caller
+/// token; nothing here can verify it against the launch, so the caller only
+/// keeps the Routine origin restrictions.
+pub fn request_target(space: &ResolvedSpaceTarget) -> RequestTarget {
+    let claimed =
+        std::env::var(ROUTINE_CALLER_TOKEN_ENV).is_ok_and(|token| !token.trim().is_empty());
+    RequestTarget {
+        project_path: space.project_path.to_string_lossy().to_string(),
+        default_space_id: space.space_id.clone(),
+        default_space_path: space.space_path.to_string_lossy().to_string(),
+        routine_caller: claimed.then_some(RoutineCaller::Claimed),
+    }
 }
 
 pub struct StandaloneHost {
@@ -114,19 +123,6 @@ impl StandaloneHost {
             version,
             session: ProjectSession::new(),
         }
-    }
-
-    /// Rejects a call of a headless capability that this build does not
-    /// serve yet. Tools outside the headless catalog pass through to the
-    /// shared `UNKNOWN_TOOL` check.
-    pub fn check_call(&self, name: &str) -> Result<(), ToolError> {
-        if !self.serves_tool(name)
-            && name != DESKTOP_ONLY_TOOL
-            && catalog::is_mutating_tool(name).is_some()
-        {
-            return Err(mode_unavailable(&format!("`{name}`")));
-        }
-        Ok(())
     }
 
     /// Closes every session-owned resource within a bounded wait.
@@ -225,8 +221,13 @@ impl ToolHost for StandaloneHost {
     /// A headless process has no invalidation consumers.
     fn deliver_managed_import(&self, _delivery: &ManagedImportDelivery) {}
 
+    /// Operational stores of the session. Without execution evidence the
+    /// last run of a Routine is projected only from its persisted facts.
     fn routine_runtime(&self) -> Result<RoutineRuntime<'_>, ToolError> {
-        Err(mode_unavailable("Routine definitions"))
+        Ok(RoutineRuntime {
+            stores: self.session.routine_stores(),
+            live_evidence: RoutineLiveEvidence::default(),
+        })
     }
 
     /// A headless process has no invalidation consumers.
@@ -240,25 +241,22 @@ impl ToolHost for StandaloneHost {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::catalog;
     use crate::dispatch::{check_tool, served_definitions};
 
     #[test]
-    fn unserved_headless_capabilities_are_mode_unavailable_and_others_unknown() {
+    fn every_data_capability_is_served_and_the_explicit_run_is_unknown() {
         let host = StandaloneHost::new("test");
         let served = served_definitions(&host)
             .into_iter()
             .map(|definition| definition.name)
             .collect::<Vec<_>>();
         assert_eq!(served.len(), SERVED_TOOLS.len());
+        assert_eq!(served.len() + 1, catalog::definitions().len());
         for name in served {
-            assert!(host.check_call(name).is_ok());
             assert!(check_tool(&host, name).is_ok());
         }
-
-        let pending = host.check_call("create_routine").unwrap_err();
-        assert_eq!(pending.code, "MODE_UNAVAILABLE");
-        for name in [DESKTOP_ONLY_TOOL, "no_such_tool"] {
-            assert!(host.check_call(name).is_ok());
+        for name in ["run_routine", "no_such_tool"] {
             assert_eq!(check_tool(&host, name).unwrap_err().code, "UNKNOWN_TOOL");
         }
     }

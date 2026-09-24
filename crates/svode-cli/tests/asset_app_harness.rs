@@ -1,8 +1,7 @@
 //! Managed asset import and App manifest validation of the `svode` frame on
-//! a harness host with the runtime of an open Project, as the headless
-//! runtime will provide it. It proves the command mapping and the shared
-//! import effects before that runtime is connected to the binary; the
-//! standalone process answers the import with `MODE_UNAVAILABLE`.
+//! a harness host with the runtime of an open Project. It proves the command
+//! mapping and the shared import effects; `asset_app_process` runs them on
+//! the standalone host of the real binary.
 
 mod common;
 

@@ -497,10 +497,11 @@ pub const CASES: &[Case] = &[
     case("doctor", &["doctor"], &[]),
 ];
 
-const ROUTINE_ID: &str = "routine:01arz3ndektsv4rrffq69g5fav";
+/// Id of a Routine the fixture does not have.
+pub const ROUTINE_ID: &str = "routine:01arz3ndektsv4rrffq69g5fav";
 
 /// Project with a root Space, a registered child Space, a Page, a
-/// directory-backed Page and a Collection with one item, plus an input
+/// directory-backed Page, a Collection with one item and a Routine, plus an input
 /// directory outside the Project with every file the cases read.
 pub struct Fixture {
     pub temp: tempfile::TempDir,
@@ -524,6 +525,15 @@ pub fn fixture() -> Fixture {
     write(
         &project.join("wiki/.svode/config.json"),
         r#"{"name":"Wiki"}"#,
+    );
+    write(
+        &project.join(".routines/Existing.md"),
+        "---\nid: 01bx5zzkbkactav9wevgemmvrz\nname: Existing\ntrigger:\n  type: manual\naction:\n  type: run_agent\n  executor: agent:01arz3ndektsv4rrffq69g5fav\n---\nExisting routine.\n",
+    );
+    // Agent Actors catalog with the executor of `routine.json`.
+    write(
+        &project.join(".svode/agent-actors.json"),
+        r#"{"schemaVersion":1,"actors":[{"id":"01arz3ndektsv4rrffq69g5fav","name":"Reviewer","adapters":[{"adapter":"codex"}]}]}"#,
     );
     write(
         &project.join("README.md"),

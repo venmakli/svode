@@ -19,7 +19,6 @@ use svode_core::index::freshness::IndexFreshness;
 use svode_core::index::knowledge::KnowledgeScope;
 use svode_core::index::state::IndexRuntimeState;
 use svode_core::index::update::IndexUpdateState;
-use svode_core::page::ResolvedSpaceTarget;
 use svode_core::page::nonce::WriteNonceRegistry;
 use svode_core::routines::model::{
     ResolvedRoutineOwner, RoutineDispatchResult, RoutineLiveEvidence,
@@ -55,14 +54,25 @@ pub struct RoutineRuntime<'a> {
     pub live_evidence: RoutineLiveEvidence,
 }
 
-/// Routine-launched caller of a request. The host verifies it against a live
-/// managed launch before dispatch; the library only distinguishes Routine
-/// origin and never takes caller identity from public arguments.
+/// Environment variable that carries the opaque caller token of a managed
+/// Routine launch into the processes it starts.
+pub const ROUTINE_CALLER_TOKEN_ENV: &str = "SVODE_MCP_ROUTINE_CALLER_TOKEN";
+
+/// Routine-launched caller of a request. The library only distinguishes
+/// Routine origin and never takes caller identity from public arguments.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RoutineCaller {
-    pub routine_run_id: String,
-    pub launch_id: String,
-    pub pty_id: String,
+pub enum RoutineCaller {
+    /// Provenance the host verified against a live managed launch before
+    /// dispatch.
+    Launch {
+        routine_run_id: String,
+        launch_id: String,
+        pty_id: String,
+    },
+    /// Routine origin claimed by the environment of a standalone process
+    /// started from a Routine launch. No host there can verify it, so it
+    /// only restricts the caller.
+    Claimed,
 }
 
 /// Explicit launch of a manual or schedule Routine by the host execution
@@ -84,20 +94,8 @@ pub struct RequestTarget {
     /// Registered child Space id of the default Space; `None` means the root.
     pub default_space_id: Option<String>,
     pub default_space_path: String,
-    /// Verified Routine provenance; `None` for an ordinary external caller.
+    /// Routine origin of the caller; `None` for an ordinary external caller.
     pub routine_caller: Option<RoutineCaller>,
-}
-
-impl RequestTarget {
-    /// Target of an ordinary caller whose default Space is `space`.
-    pub fn for_space(space: &ResolvedSpaceTarget) -> Self {
-        Self {
-            project_path: space.project_path.to_string_lossy().to_string(),
-            default_space_id: space.space_id.clone(),
-            default_space_path: space.space_path.to_string_lossy().to_string(),
-            routine_caller: None,
-        }
-    }
 }
 
 pub trait ToolHost: Sync {

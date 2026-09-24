@@ -1,9 +1,8 @@
 //! Collection schema/views/integrity and structural commands of the `svode`
-//! frame on a harness host with the mutation runtime of an open Project, as
-//! the headless runtime will provide it. It proves the command mapping and
-//! the shared structural effects before that runtime is connected to the
-//! binary; the standalone process answers these mutations with
-//! `MODE_UNAVAILABLE`.
+//! frame on a harness host with the mutation runtime of an open Project. It
+//! proves the command mapping and the shared structural effects;
+//! `structural_families_process` runs the commands on the standalone host
+//! of the real binary.
 
 mod common;
 

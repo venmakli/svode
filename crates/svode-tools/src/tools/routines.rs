@@ -987,18 +987,21 @@ mod tests {
                 automatic_execution_acknowledged: true,
             }
         );
-        let caller = RoutineCaller {
+        let launch = RoutineCaller::Launch {
             routine_run_id: "run-one".into(),
             launch_id: "launch-one".into(),
             pty_id: "pty-one".into(),
         };
-        assert_eq!(
-            mutation_policy(&target(Some(caller)), true),
-            RoutineMutationPolicyContext {
-                origin: RoutineMutationOrigin::RoutineAgent,
-                automatic_execution_acknowledged: true,
-            }
-        );
+        // An origin claimed without verification restricts like a verified one.
+        for caller in [launch, RoutineCaller::Claimed] {
+            assert_eq!(
+                mutation_policy(&target(Some(caller)), true),
+                RoutineMutationPolicyContext {
+                    origin: RoutineMutationOrigin::RoutineAgent,
+                    automatic_execution_acknowledged: true,
+                }
+            );
+        }
     }
 
     #[test]

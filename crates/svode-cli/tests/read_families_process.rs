@@ -431,7 +431,9 @@ fn doctor_reports_project_spaces_git_and_runtime_without_opening_stores() {
     assert!(served.contains(&Value::from("update_page_metadata")));
     assert!(served.contains(&Value::from("create_page")));
     assert!(served.contains(&Value::from("import_asset")));
-    assert!(!served.contains(&Value::from("create_routine")));
+    assert!(served.contains(&Value::from("create_routine")));
+    assert!(!served.contains(&Value::from("run_routine")));
+    assert_eq!(served.len(), 53);
     let human = svode(&root.join("child/deep"), &["doctor"]);
     let human = String::from_utf8(human.stdout).unwrap();
     assert!(human.contains("space child: ready"), "{human}");
@@ -474,7 +476,6 @@ fn guide_prints_the_shared_guide_and_files_first_rules_without_a_project() {
 #[test]
 fn help_of_every_command_works_without_a_project_or_runtime() {
     let temp = tempfile::tempdir().unwrap();
-    let headless = [vec!["routine", "list"], vec!["routine", "create"]];
     let indexed = [
         vec!["collection", "query"],
         vec!["search"],
@@ -501,15 +502,12 @@ fn help_of_every_command_works_without_a_project_or_runtime() {
         vec!["item", "fields", "set"],
         vec!["collection", "column", "add"],
         vec!["git", "access", "verify"],
+        vec!["routine", "list"],
+        vec!["routine", "create"],
         vec!["guide"],
         vec!["doctor"],
     ];
-    for (command, needs_runtime) in headless
-        .iter()
-        .map(|command| (command, true))
-        .chain(indexed.iter().map(|command| (command, false)))
-        .chain(source.iter().map(|command| (command, false)))
-    {
+    for command in indexed.iter().chain(source.iter()) {
         let mut args = vec!["--project", "/definitely/missing"];
         args.extend(command.iter().copied());
         args.push("--help");
@@ -517,11 +515,7 @@ fn help_of_every_command_works_without_a_project_or_runtime() {
         assert_eq!(output.status.code(), Some(0), "{command:?}");
         let help = String::from_utf8(output.stdout).unwrap();
         assert!(help.contains("Example"), "{command:?}: {help}");
-        assert_eq!(
-            help.contains("MODE_UNAVAILABLE"),
-            needs_runtime,
-            "{command:?}"
-        );
+        assert!(!help.contains("MODE_UNAVAILABLE"), "{command:?}");
         assert_eq!(
             help.contains("INDEX_UNAVAILABLE"),
             indexed.contains(command),

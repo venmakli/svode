@@ -1,8 +1,8 @@
 //! JSON, exit and output contract of every public command through the real
-//! `svode` binary with the desktop app closed. Served commands succeed, and
-//! served body writes from a version of no read are refused as stale; the
-//! Routine store commands answer `MODE_UNAVAILABLE` until the headless
-//! runtime serves them.
+//! `svode` binary with the desktop app closed. Every command is served:
+//! body writes from a version of no read are refused as stale, and
+//! commands addressing a Routine the fixture does not have as not found;
+//! the others succeed.
 //! A served mutation runs on a fresh fixture in each output mode; no other
 //! command changes a source file: index-backed reads only add the derived
 //! index and the device-local stores it keeps in `.svode/`.
@@ -11,7 +11,7 @@ mod common;
 
 use std::process::{Command, Stdio};
 
-use common::commands::{CASES, Case, STALE, argv, command_paths, fixture};
+use common::commands::{CASES, Case, ROUTINE_ID, STALE, argv, command_paths, fixture};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -46,10 +46,21 @@ fn served(tools: &[&str]) -> bool {
         .all(|tool| StandaloneHost::new("test").serves_tool(tool))
 }
 
+/// Code of a served command that the fixture refuses before any effect.
+fn refusal(case: &Case) -> Option<&'static str> {
+    if case.argv.contains(&STALE) {
+        Some("SOURCE_STALE")
+    } else if case.argv.contains(&ROUTINE_ID) {
+        Some("ROUTINE_NOT_FOUND")
+    } else {
+        None
+    }
+}
+
 /// A served mutation that applies, so each run needs its own fixture.
 fn applies(case: &Case) -> bool {
     served(case.tools)
-        && !case.argv.contains(&STALE)
+        && refusal(case).is_none()
         && case
             .tools
             .iter()
@@ -70,13 +81,8 @@ fn every_command_keeps_the_json_envelope_exit_codes_and_output_streams() {
         let args = argv(fixture, case);
         let (exit, value) = json(&fixture.input, &args, None);
         assert_eq!(value["schemaVersion"], 1, "{}: {value}", case.name);
-        let refused = if !served(case.tools) {
-            Some("MODE_UNAVAILABLE")
-        } else if args.contains(&STALE) {
-            Some("SOURCE_STALE")
-        } else {
-            None
-        };
+        assert!(served(case.tools), "{}", case.name);
+        let refused = refusal(case);
         if let Some(code) = refused {
             assert_eq!(exit, 1, "{}: {value}", case.name);
             assert_eq!(value["ok"], false, "{}", case.name);

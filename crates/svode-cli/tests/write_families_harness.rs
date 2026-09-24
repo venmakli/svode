@@ -1,8 +1,8 @@
 //! Page, owner and item writes of the `svode` frame on a harness host with
 //! the mutation runtime of an open Project. It proves the command mapping
 //! and the shared write outcomes; body writes read their source first, like
-//! a caller of the safe cycle. The standalone process serves body writes
-//! (`source_write_process`) and answers the others with `MODE_UNAVAILABLE`.
+//! a caller of the safe cycle. The standalone host of the real binary runs
+//! them in `source_write_process` and `write_families_process`.
 
 mod common;
 
