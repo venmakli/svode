@@ -246,7 +246,7 @@ fn process_published_events(
     let space_root = Path::new(space);
     let policy = TreeIgnorePolicy::from_space_root(space_root);
     let skip_dirs = child_folder_names(space_root);
-    for event in events {
+    for event in events.iter().filter(|event| changes_files(event)) {
         for (path_index, path) in event.paths.iter().enumerate() {
             let event_kind = event_kind_for_path(event, path_index);
             if let Some(source) = svode_core::page::entry::replaced_by_staged_copy(path) {
@@ -973,6 +973,13 @@ fn repo_relative_from_path_or_root(path: &Path) -> Option<String> {
 /// A source replaced in place from a staged copy existed before and still
 /// exists: backends that report the rename as a creation of the source get
 /// a change, so the editor filters its own write or reloads another one.
+/// Whether an event can change files. Opening and closing a file (inotify
+/// reports both, closing after every write) changes nothing by itself, and a
+/// close after a write must not replace the change already recorded for it.
+fn changes_files(event: &Event) -> bool {
+    !matches!(event.kind, EventKind::Access(_))
+}
+
 fn report_replacements_as_changes(
     seen: &mut HashMap<PathBuf, EventKind>,
     replaced_in_place: &BTreeSet<PathBuf>,
@@ -1288,6 +1295,57 @@ mod tests {
         }
     }
 
+    /// inotify reports opening and closing the file around every write; the
+    /// close after the rename of a managed write must not hide the change.
+    #[test]
+    fn opening_and_closing_a_written_file_keeps_its_change() {
+        use notify::event::{AccessKind, AccessMode, DataChange};
+        let page = PathBuf::from("/space/note.md");
+        let staged = PathBuf::from("/space/.note.md.01m38ypdj92hj3n7y8x71fwq89.tmp");
+        let event = |kind, paths: &[&PathBuf]| {
+            paths.iter().fold(Event::new(kind), |event, path| {
+                event.add_path((*path).clone())
+            })
+        };
+        let events = [
+            event(
+                EventKind::Access(AccessKind::Open(AccessMode::Any)),
+                &[&page],
+            ),
+            event(
+                EventKind::Access(AccessKind::Close(AccessMode::Write)),
+                &[&page],
+            ),
+            event(EventKind::Create(CreateKind::File), &[&staged]),
+            event(
+                EventKind::Modify(ModifyKind::Data(DataChange::Any)),
+                &[&staged],
+            ),
+            event(
+                EventKind::Modify(ModifyKind::Name(RenameMode::To)),
+                &[&page],
+            ),
+            event(
+                EventKind::Modify(ModifyKind::Name(RenameMode::Both)),
+                &[&staged, &page],
+            ),
+            event(
+                EventKind::Access(AccessKind::Close(AccessMode::Write)),
+                &[&page],
+            ),
+        ];
+        let mut seen: HashMap<PathBuf, EventKind> = HashMap::new();
+        for event in events.iter().filter(|event| changes_files(event)) {
+            for (index, path) in event.paths.iter().enumerate() {
+                let kind = event_kind_for_path(event, index);
+                seen.entry(path.clone())
+                    .and_modify(|current| *current = merge_event_kind(*current, kind))
+                    .or_insert(kind);
+            }
+        }
+        assert!(matches!(seen[&page], EventKind::Modify(_)), "{seen:?}");
+    }
+
     /// A managed write replaces the source from a staged sibling copy. The
     /// OS events of that replacement must still reach the editor as one
     /// `file:changed` of the Page, which carries the write nonce, and the
@@ -1339,7 +1397,7 @@ mod tests {
         let skip_dirs = child_folder_names(&space);
         let mut seen: HashMap<PathBuf, EventKind> = HashMap::new();
         let mut replaced = BTreeSet::new();
-        for event in &events {
+        for event in events.iter().filter(|event| changes_files(event)) {
             for (index, path) in event.paths.iter().enumerate() {
                 let kind = event_kind_for_path(event, index);
                 replaced.extend(svode_core::page::entry::replaced_by_staged_copy(path));
