@@ -37,8 +37,11 @@ mod tests {
 
     fn pending_task() -> (tauri::async_runtime::JoinHandle<()>, oneshot::Receiver<()>) {
         let (sender, receiver) = oneshot::channel();
+        // Created before spawning so an abort before the first poll still
+        // signals: the task runs on the Tauri runtime, not the test's.
+        let signal = DropSignal(Some(sender));
         let task = tauri::async_runtime::spawn(async move {
-            let _signal = DropSignal(Some(sender));
+            let _signal = signal;
             pending::<()>().await;
         });
         (task, receiver)
