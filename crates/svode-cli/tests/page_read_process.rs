@@ -419,7 +419,13 @@ fn read_creates_no_stores_files_or_git_changes() {
     let (code, _) = read(root, "root", "notes/missing.md");
     assert_eq!(code, 1);
 
-    assert_eq!(snapshot(root), before);
+    let after = snapshot(root);
+    let changed = before
+        .keys()
+        .chain(after.keys())
+        .filter(|path| before.get(*path) != after.get(*path))
+        .collect::<std::collections::BTreeSet<_>>();
+    assert!(changed.is_empty(), "reads changed {changed:?}");
     assert!(!root.join(".svode/index.db").exists());
     assert!(!root.join(".svode/routines.db").exists());
 }
