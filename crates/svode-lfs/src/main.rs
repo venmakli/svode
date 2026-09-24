@@ -241,7 +241,7 @@ impl AgentState {
             .access_key_id(&secrets.access_key)
             .secret_access_key(&secrets.secret_key);
 
-        let op = Operator::new(builder)?.finish();
+        let op = Operator::new(builder)?;
 
         let prefix = cfg
             .prefix
