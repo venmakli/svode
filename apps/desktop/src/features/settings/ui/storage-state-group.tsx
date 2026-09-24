@@ -36,7 +36,7 @@ export function StorageStateGroup({
 
   return (
     <>
-      <SettingsGroup title={m.settings_health()}>
+      <SettingsGroup title={m.storage_state_group()}>
         {state === "n/a" ? null : (
           <SettingsItem
             key="objects"

@@ -1,14 +1,23 @@
 import { useId, useState } from "react";
 import { Loader2 } from "lucide-react";
 import * as m from "@/paraglide/messages.js";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
 import { EmojiPicker } from "@/components/ui/emoji-picker";
 import { Input } from "@/components/ui/input";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import type { SpaceGitType } from "@/features/space";
 import { spaceGitTypeLabel } from "./owner-labels";
-import { SettingsGroup, SettingsRow } from "./settings-layout";
+import {
+  SettingsGroup,
+  SettingsRow,
+  SettingsRowSkeleton,
+} from "./settings-layout";
 
 export interface SpaceGeneralEditor {
+  status: "loading" | "ready" | "error";
+  onRetry: () => void;
   icon: string;
   name: string;
   description: string;
@@ -22,7 +31,8 @@ export interface SpaceGeneralEditor {
 type Field = "icon" | "name" | "description";
 
 // "Details" of the project or of one space. A space that is missing or broken
-// has no editor and shows only its read-only facts.
+// has no editor and shows only its read-only facts; the editable rows wait for
+// the owner's settings to load.
 export function SpaceGeneralSection({
   path,
   space,
@@ -49,27 +59,56 @@ export function SpaceGeneralSection({
   const busy = (field: Field) => pending.has(field) || undefined;
   const pendingClassName =
     "aria-disabled:cursor-not-allowed aria-disabled:opacity-50";
+  const ready = editor?.status === "ready" ? editor : undefined;
   return (
-    <SettingsGroup title={m.settings_general_details()}>
-      {editor ? (
+    <SettingsGroup
+      title={m.settings_general_details()}
+      callout={
+        editor?.status === "error" ? (
+          <Alert>
+            <AlertTitle>{m.settings_general_load_error_title()}</AlertTitle>
+            <AlertDescription>
+              <p>{m.settings_general_load_error()}</p>
+              <div className="flex flex-wrap gap-2 pt-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={editor.onRetry}
+                >
+                  {m.app_retry()}
+                </Button>
+              </div>
+            </AlertDescription>
+          </Alert>
+        ) : null
+      }
+    >
+      {editor?.status === "loading" ? (
+        <SettingsRowSkeleton key="name-loading" />
+      ) : null}
+      {editor?.status === "loading" ? (
+        <SettingsRowSkeleton key="description-loading" />
+      ) : null}
+      {ready ? (
         <SettingsRow
           key="name"
           label={m.settings_general_icon_name()}
           htmlFor={`${id}-name`}
         >
           <EmojiPicker
-            value={editor.icon}
-            onChange={(icon) => write("icon", () => editor.onIconChange(icon))}
+            value={ready.icon}
+            onChange={(icon) => write("icon", () => ready.onIconChange(icon))}
             size="sm"
           />
           <Input
             id={`${id}-name`}
-            value={editor.name}
+            value={ready.name}
             readOnly={pending.has("name")}
             aria-disabled={busy("name")}
             aria-busy={busy("name")}
-            onChange={(event) => editor.onNameChange(event.target.value)}
-            onBlur={() => write("name", editor.onNameBlur)}
+            onChange={(event) => ready.onNameChange(event.target.value)}
+            onBlur={() => write("name", ready.onNameBlur)}
             placeholder={m.space_name_placeholder()}
             className={`w-64 max-w-full ${pendingClassName}`}
           />
@@ -81,7 +120,7 @@ export function SpaceGeneralSection({
           ) : null}
         </SettingsRow>
       ) : null}
-      {editor ? (
+      {ready ? (
         <SettingsRow
           key="description"
           label={m.space_description_label()}
@@ -91,14 +130,14 @@ export function SpaceGeneralSection({
           <div className="relative">
             <Textarea
               id={`${id}-description`}
-              value={editor.description}
+              value={ready.description}
               readOnly={pending.has("description")}
               aria-disabled={busy("description")}
               aria-busy={busy("description")}
               onChange={(event) =>
-                editor.onDescriptionChange(event.target.value)
+                ready.onDescriptionChange(event.target.value)
               }
-              onBlur={() => write("description", editor.onDescriptionBlur)}
+              onBlur={() => write("description", ready.onDescriptionBlur)}
               placeholder={m.space_description_placeholder()}
               rows={3}
               className={pendingClassName}
@@ -118,9 +157,11 @@ export function SpaceGeneralSection({
           label={m.space_type_label()}
           description={spaceGitTypeDescription(space.gitType)}
         >
-          <span className="text-sm">
-            {spaceGitTypeLabel(space.gitType) ?? m.common_loading()}
-          </span>
+          {spaceGitTypeLabel(space.gitType) ? (
+            <span className="text-sm">{spaceGitTypeLabel(space.gitType)}</span>
+          ) : (
+            <Skeleton aria-hidden className="h-4 w-28" />
+          )}
         </SettingsRow>
       ) : null}
       <SettingsRow key="path" label={m.space_path_label()} layout="stacked">

@@ -20,6 +20,9 @@ export function useSpaceSettingsGeneral({
   const [icon, setIcon] = useState("");
   const [savedName, setSavedName] = useState("");
   const [savedDescription, setSavedDescription] = useState("");
+  const [status, setStatus] = useState<"loading" | "ready" | "error">(
+    "loading",
+  );
 
   const loadGeneralConfig = useCallback(async () => {
     if (!spacePath) return;
@@ -30,10 +33,17 @@ export function useSpaceSettingsGeneral({
       setIcon(cfg.icon);
       setSavedName(cfg.name);
       setSavedDescription(cfg.description);
+      setStatus("ready");
     } catch (err) {
       console.error("Failed to load workspace config:", err);
+      setStatus("error");
     }
   }, [spacePath]);
+
+  function retryGeneralConfig() {
+    setStatus("loading");
+    void loadGeneralConfig();
+  }
 
   useEffect(() => {
     if (!open || !spacePath) return;
@@ -81,6 +91,8 @@ export function useSpaceSettingsGeneral({
   }
 
   return {
+    status,
+    retryGeneralConfig,
     name,
     description,
     icon,

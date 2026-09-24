@@ -375,7 +375,7 @@ if (process.env.SVODE_STORAGE_SECTION_DOM !== "1") {
       "Strategy",
       "Files in Git LFS",
       "S3 storage",
-      "Health",
+      "Status",
     ]);
     const trigger = control("Storage strategy") as HTMLButtonElement;
     expect(trigger.disabled).toBe(true);
@@ -528,7 +528,7 @@ if (process.env.SVODE_STORAGE_SECTION_DOM !== "1") {
     expect(calls).toEqual(["cancel"]);
   });
 
-  test("Health: LFS objects, the repository policy and the provider remote with its output", async () => {
+  test("Status: LFS objects, the repository policy and the provider remote with its output", async () => {
     await render(
       storageFixture({
         assetsStrategy: "lfs-remote",
@@ -544,7 +544,7 @@ if (process.env.SVODE_STORAGE_SECTION_DOM !== "1") {
         },
       }),
     );
-    const health = group("Health");
+    const health = group("Status");
     expect(
       health.textContent?.includes(
         "No access to the Git LFS remote — check it below.",
@@ -577,7 +577,7 @@ if (process.env.SVODE_STORAGE_SECTION_DOM !== "1") {
         lfsState: "ready",
       }),
     );
-    const ready = group("Health");
+    const ready = group("Status");
     expect(ready.textContent?.includes("Git LFS remote")).toBe(false);
     await press(buttons("Download binaries", ready)[0]);
     expect(calls).toEqual(["repairLfs"]);

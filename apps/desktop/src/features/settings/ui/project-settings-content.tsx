@@ -12,6 +12,7 @@ import type {
 import { ProjectVariablesSection } from "./app-variables-section";
 import { ProjectGeneralSection } from "./project-general-section";
 import { ProjectGitSection } from "./project-git-section";
+import { ProjectOwnerBlock } from "./project-owner-block";
 import { ProjectStorageSection } from "./project-storage-section";
 import { SpaceAgentSection } from "./space-agent-section";
 import { SpaceDefaultsSection } from "./space-defaults-section";
@@ -117,20 +118,22 @@ export function ProjectSettingsContent({
       )}
 
       {enableLegacyAgentIntegration && section === "ai-agent" && (
-        <SpaceAgentSection
-          agents={agentSettings.agents}
-          enabledClis={agentSettings.enabledClis}
-          defaultModel={agentSettings.defaultModel}
-          systemPrompt={agentSettings.systemPrompt}
-          availableModels={agentSettings.availableModels}
-          healthReport={agentSettings.healthReport}
-          refreshing={agentSettings.refreshing}
-          onDefaultModelChange={agentSettings.handleDefaultModelChange}
-          onSystemPromptChange={agentSettings.setSystemPrompt}
-          onSystemPromptBlur={agentSettings.handleSystemPromptBlur}
-          onCliToggle={agentSettings.handleCliToggle}
-          onRefresh={agentSettings.handleRefresh}
-        />
+        <ProjectOwnerBlock name={projectName} icon={activeRootIcon}>
+          <SpaceAgentSection
+            agents={agentSettings.agents}
+            enabledClis={agentSettings.enabledClis}
+            defaultModel={agentSettings.defaultModel}
+            systemPrompt={agentSettings.systemPrompt}
+            availableModels={agentSettings.availableModels}
+            healthReport={agentSettings.healthReport}
+            refreshing={agentSettings.refreshing}
+            onDefaultModelChange={agentSettings.handleDefaultModelChange}
+            onSystemPromptChange={agentSettings.setSystemPrompt}
+            onSystemPromptBlur={agentSettings.handleSystemPromptBlur}
+            onCliToggle={agentSettings.handleCliToggle}
+            onRefresh={agentSettings.handleRefresh}
+          />
+        </ProjectOwnerBlock>
       )}
 
       {section === "git" && <ProjectGitSection {...owners} />}
@@ -143,22 +146,26 @@ export function ProjectSettingsContent({
       )}
 
       {enableLegacyAgentIntegration && section === "defaults" && hasSpaces && (
-        <SpaceDefaultsSection
-          model={defaultsSettings.defaultsModel}
-          prompt={defaultsSettings.defaultsPrompt}
-          availableModels={agentSettings.availableModels}
-          onModelChange={defaultsSettings.handleDefaultsModelChange}
-          onPromptChange={defaultsSettings.setDefaultsPrompt}
-          onPromptBlur={defaultsSettings.handleDefaultsPromptBlur}
-        />
+        <ProjectOwnerBlock name={projectName} icon={activeRootIcon}>
+          <SpaceDefaultsSection
+            model={defaultsSettings.defaultsModel}
+            prompt={defaultsSettings.defaultsPrompt}
+            availableModels={agentSettings.availableModels}
+            onModelChange={defaultsSettings.handleDefaultsModelChange}
+            onPromptChange={defaultsSettings.setDefaultsPrompt}
+            onPromptBlur={defaultsSettings.handleDefaultsPromptBlur}
+          />
+        </ProjectOwnerBlock>
       )}
 
       {enableLegacyAgentIntegration && section === "instructions" && (
-        <SpaceInstructionsSection
-          agentsMdContent={agentSettings.agentsMdContent}
-          enabledClis={agentSettings.enabledClis}
-          onOpenAgentsMd={handleOpenAgentsMd}
-        />
+        <ProjectOwnerBlock name={projectName} icon={activeRootIcon}>
+          <SpaceInstructionsSection
+            agentsMdContent={agentSettings.agentsMdContent}
+            enabledClis={agentSettings.enabledClis}
+            onOpenAgentsMd={handleOpenAgentsMd}
+          />
+        </ProjectOwnerBlock>
       )}
     </>
   );

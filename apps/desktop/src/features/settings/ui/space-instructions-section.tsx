@@ -1,7 +1,19 @@
+import { useState } from "react";
 import * as m from "@/paraglide/messages.js";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
+import { Collapsible, CollapsibleContent } from "@/components/ui/collapsible";
+import {
+  Empty,
+  EmptyContent,
+  EmptyHeader,
+  EmptyTitle,
+} from "@/components/ui/empty";
 import { Pencil } from "lucide-react";
+import {
+  SettingsDisclosureTrigger,
+  SettingsGroup,
+  SettingsItem,
+} from "./settings-layout";
 
 interface SpaceInstructionsSectionProps {
   agentsMdContent: string | null;
@@ -14,43 +26,58 @@ export function SpaceInstructionsSection({
   enabledClis,
   onOpenAgentsMd,
 }: SpaceInstructionsSectionProps) {
-  const agentsMdLines = agentsMdContent?.split("\n").length ?? 0;
-
+  const [open, setOpen] = useState(false);
+  if (agentsMdContent === null)
+    return (
+      <SettingsGroup>
+        <Empty className="p-6">
+          <EmptyHeader>
+            <EmptyTitle>{m.settings_space_agents_md_empty()}</EmptyTitle>
+          </EmptyHeader>
+          <EmptyContent>
+            <Button variant="outline" size="sm" onClick={onOpenAgentsMd}>
+              {m.settings_space_agents_md_create()}
+            </Button>
+          </EmptyContent>
+        </Empty>
+      </SettingsGroup>
+    );
   return (
-    <div className="flex flex-col gap-4">
-      {agentsMdContent !== null ? (
-        <Card>
-          <CardContent className="p-3">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-xs text-muted-foreground">
-                {enabledClis.includes("claude")
-                  ? m.settings_space_agents_md_symlink({
-                      target: "CLAUDE.md",
-                    })
-                  : "AGENTS.md"}
-              </span>
-              <div className="flex items-center gap-2">
-                <span className="text-xs text-muted-foreground">
-                  {m.settings_space_agents_md_lines({
-                    count: String(agentsMdLines),
-                  })}
-                </span>
-                <Button variant="ghost" size="sm" onClick={onOpenAgentsMd}>
-                  <Pencil data-icon="inline-start" />
-                  {m.settings_space_agents_md_open()}
-                </Button>
-              </div>
-            </div>
-            <pre className="text-xs font-mono bg-muted/50 rounded p-2 max-h-[200px] overflow-y-auto whitespace-pre-wrap">
+    <SettingsGroup>
+      <Collapsible open={open} onOpenChange={setOpen}>
+        <SettingsItem
+          title={
+            enabledClis.includes("claude")
+              ? m.settings_space_agents_md_symlink({ target: "CLAUDE.md" })
+              : "AGENTS.md"
+          }
+          description={m.settings_space_agents_md_lines({
+            count: String(agentsMdContent.split("\n").length),
+          })}
+          actions={
+            <>
+              <SettingsDisclosureTrigger
+                open={open}
+                label={
+                  open
+                    ? m.settings_space_agents_md_hide()
+                    : m.settings_space_agents_md_show()
+                }
+              />
+              <Button variant="outline" size="sm" onClick={onOpenAgentsMd}>
+                <Pencil data-icon="inline-start" />
+                {m.settings_space_agents_md_open()}
+              </Button>
+            </>
+          }
+        >
+          <CollapsibleContent className="basis-full">
+            <pre className="rounded-md bg-muted/50 p-2 font-mono text-xs whitespace-pre-wrap wrap-break-word">
               {agentsMdContent}
             </pre>
-          </CardContent>
-        </Card>
-      ) : (
-        <Button variant="outline" onClick={onOpenAgentsMd}>
-          {m.settings_space_agents_md_create()}
-        </Button>
-      )}
-    </div>
+          </CollapsibleContent>
+        </SettingsItem>
+      </Collapsible>
+    </SettingsGroup>
   );
 }

@@ -16,6 +16,7 @@ export function useSpaceSettingsHealth({
 }: UseSpaceSettingsHealthOptions) {
   const [brokenLinksCount, setBrokenLinksCount] = useState<number | null>(null);
   const [linkHealthLoading, setLinkHealthLoading] = useState(false);
+  const [linkHealthFailed, setLinkHealthFailed] = useState(false);
 
   const loadLinkHealth = useCallback(async () => {
     if (!activeRootPath || !isRoot) return;
@@ -23,9 +24,11 @@ export function useSpaceSettingsHealth({
     try {
       const count = await countBrokenLinks(activeRootPath);
       setBrokenLinksCount(count);
+      setLinkHealthFailed(false);
     } catch (err) {
       console.warn("count_broken_links failed:", err);
       setBrokenLinksCount(null);
+      setLinkHealthFailed(true);
     } finally {
       setLinkHealthLoading(false);
     }
@@ -38,6 +41,7 @@ export function useSpaceSettingsHealth({
   return {
     brokenLinksCount,
     linkHealthLoading,
+    linkHealthFailed,
     loadLinkHealth,
   };
 }

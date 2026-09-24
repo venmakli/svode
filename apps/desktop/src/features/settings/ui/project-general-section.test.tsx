@@ -76,16 +76,14 @@ test("general shows the project block, then every space block after the spaces h
   expect(
     projectGroups.map((group) => group.querySelector("h4")?.textContent),
   ).toEqual(["Details", "Health"]);
-  expect(rowLabels(projectGroups[0])).toEqual([
-    "Icon and name",
-    "Description",
-    "Location",
-  ]);
+  // The editable rows wait for the owner's settings; loading shows skeletons.
+  expect(rowLabels(projectGroups[0])).toEqual(["Location"]);
+  expect(
+    projectGroups[0].querySelectorAll('[data-slot="skeleton"]').length > 0,
+  ).toBe(true);
   expect(projectGroups[0].textContent?.includes("/repo")).toBe(true);
   expect(rowLabels(projectGroups[1])).toEqual(["Broken cross-space links"]);
-  expect(projectGroups[1].querySelector("button")?.textContent).toBe(
-    "Refresh status",
-  );
+  expect(projectGroups[1].querySelector("button")?.textContent).toBe("Refresh");
 
   expect(spaces.querySelector(":scope > div:first-child h3")?.textContent).toBe(
     "Spaces",
@@ -100,12 +98,7 @@ test("general shows the project block, then every space block after the spaces h
     "\u{1F4C1}СопровождениеIn project",
   );
   const docsDetails = docs.querySelector(":scope > section")!;
-  expect(rowLabels(docsDetails)).toEqual([
-    "Icon and name",
-    "Description",
-    "Type",
-    "Location",
-  ]);
+  expect(rowLabels(docsDetails)).toEqual(["Type", "Location"]);
   expect(
     docsDetails.textContent?.includes("Part of the project repository"),
   ).toBe(true);
@@ -180,6 +173,8 @@ test("a field that saves on blur stays focusable and read-only until its write e
   let blurs = 0;
   let finish!: () => void;
   const editor = {
+    status: "ready" as const,
+    onRetry: () => {},
     icon: "",
     name: "Docs",
     description: "",
@@ -235,4 +230,87 @@ test("a field that saves on blur stays focusable and read-only until its write e
     }
     dom.window.close();
   }
+});
+
+const readyEditor = {
+  status: "ready" as const,
+  onRetry: () => {},
+  icon: "",
+  name: "Docs",
+  description: "",
+  onIconChange: async () => {},
+  onNameChange: () => {},
+  onNameBlur: async () => {},
+  onDescriptionChange: () => {},
+  onDescriptionBlur: async () => {},
+};
+
+test("details show skeleton rows while loading and a retry callout without fields after a failed load", () => {
+  setLocale("en", { reload: false });
+  const loading = render(
+    <SpaceGeneralSection
+      path="/repo/docs"
+      space={{ gitType: undefined }}
+      editor={{ ...readyEditor, status: "loading" }}
+    />,
+  );
+  expect(rowLabels(loading.body)).toEqual(["Type", "Location"]);
+  expect(
+    loading.querySelectorAll('[data-slot="card"] [data-slot="skeleton"]')
+      .length,
+  ).toBe(7);
+  expect(loading.querySelector("input, textarea")).toBeNull();
+
+  const failed = render(
+    <SpaceGeneralSection
+      path="/repo/docs"
+      editor={{ ...readyEditor, status: "error" }}
+    />,
+  );
+  const callout = failed.querySelector('[data-slot="alert"]')!;
+  expect(callout.closest('[data-slot="card"]')).toBeNull();
+  expect(callout.textContent).toBe(
+    "Couldn't load the detailsRetry before you change anything.Retry",
+  );
+  expect(rowLabels(failed.body)).toEqual(["Location"]);
+  expect(failed.querySelector("input, textarea")).toBeNull();
+});
+
+test("health shows a skeleton until the first count and a callout after a failed check", async () => {
+  setLocale("en", { reload: false });
+  const { SpaceHealthSection } = await import("./space-health-section");
+  const loading = render(
+    <SpaceHealthSection
+      brokenLinksCount={null}
+      loading
+      failed={false}
+      onRefresh={() => {}}
+    />,
+  );
+  expect(loading.querySelector('[data-slot="skeleton"]') !== null).toBe(true);
+  expect(loading.querySelector('[data-slot="alert"]')).toBeNull();
+
+  const failed = render(
+    <SpaceHealthSection
+      brokenLinksCount={null}
+      loading={false}
+      failed
+      onRefresh={() => {}}
+    />,
+  );
+  expect(failed.querySelector('[data-slot="alert"]')?.textContent).toBe(
+    "Couldn't check the linksSelect Refresh to check again.",
+  );
+  expect(failed.querySelector('[data-slot="skeleton"]')).toBeNull();
+  expect(failed.querySelector("button")?.textContent).toBe("Refresh");
+
+  const counted = render(
+    <SpaceHealthSection
+      brokenLinksCount={2}
+      loading={false}
+      failed={false}
+      onRefresh={() => {}}
+    />,
+  );
+  expect(counted.body.textContent?.includes("2 broken")).toBe(true);
 });

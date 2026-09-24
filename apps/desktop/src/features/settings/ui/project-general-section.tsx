@@ -74,6 +74,7 @@ export function ProjectGeneralSection({
         <SpaceHealthSection
           brokenLinksCount={health.brokenLinksCount}
           loading={health.linkHealthLoading}
+          failed={health.linkHealthFailed}
           onRefresh={health.loadLinkHealth}
         />
       </ProjectOwnerBlock>
@@ -154,6 +155,8 @@ function OwnerDetails({
       path={spacePath}
       space={space}
       editor={{
+        status: general.status,
+        onRetry: general.retryGeneralConfig,
         icon: general.icon,
         name: general.name,
         description: general.description,
