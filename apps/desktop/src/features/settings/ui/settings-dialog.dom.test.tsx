@@ -34,6 +34,7 @@ if (process.env.SVODE_UNIFIED_SETTINGS_DOM !== "1") {
   // Storage writes in flight per owner path.
   const pendingOwners = new Set<string>();
   const applyingOwners = new Set<string>();
+  // Whether each storage owner's details (S3, LFS, diagnostics) are loading.
   const storageOpen = new Map<string, boolean>();
   const loads = new Map<string, (value: unknown) => void>();
   const noop = () => {};
@@ -116,14 +117,18 @@ if (process.env.SVODE_UNIFIED_SETTINGS_DOM !== "1") {
   mock.module("../hooks/use-space-storage-settings", () => ({
     useSpaceStorageSettings: ({
       open,
+      detailsActive = open,
       spacePath,
     }: {
       open: boolean;
+      detailsActive?: boolean;
       spacePath: string;
     }) => {
-      storageOpen.set(spacePath, open);
+      storageOpen.set(spacePath, open && detailsActive);
       return {
         currentSpacePath: spacePath,
+        storageConfigLoaded: true,
+        savedAssetsStrategy: "in-git",
         applyingStrategy: applyingOwners.has(spacePath),
         s3: { pending: pendingOwners.has(spacePath), cancel: noop },
       };
@@ -169,6 +174,19 @@ if (process.env.SVODE_UNIFIED_SETTINGS_DOM !== "1") {
       settings: { currentSpacePath: string };
     }) => <div data-storage={settings.currentSpacePath} />,
     StorageStrategyConfirmDialog: () => null,
+    StorageInheritedGroup: ({
+      strategy,
+      onOpenProject,
+    }: {
+      strategy: string | null;
+      onOpenProject: () => void;
+    }) => (
+      <button data-storage-inherited={strategy ?? ""} onClick={onOpenProject}>
+        Project storage
+      </button>
+    ),
+    storageSummary: (settings: { currentSpacePath: string }) =>
+      `Storage of ${settings.currentSpacePath}`,
   }));
   for (const [file, name] of [
     ["space-agent-section", "SpaceAgentSection"],
@@ -377,8 +395,8 @@ if (process.env.SVODE_UNIFIED_SETTINGS_DOM !== "1") {
       ).toBe(true);
       expect(pageTitle()).toBe("Appearance");
 
-      // Storage: the project block is open, space blocks load nothing until
-      // opened.
+      // Storage: the project block is open; a repository block summarizes
+      // its strategy in the heading and loads its details only once opened.
       await click("Storage");
       expect(pageTitle()).toBe("Storage");
       expect(document.querySelector('[data-slot="breadcrumb"]')).toBeNull();
@@ -388,6 +406,14 @@ if (process.env.SVODE_UNIFIED_SETTINGS_DOM !== "1") {
       expect(storageOpen.get("/project")).toBe(true);
       expect(storageOpen.get("/project/docs")).toBe(false);
       expect(ownerTrigger("Docs").getAttribute("aria-expanded")).toBe("false");
+      expect(
+        ownerTrigger("Docs").textContent?.includes("Storage of /project/docs"),
+      ).toBe(true);
+      expect(
+        ownerTrigger("Other").textContent?.includes(
+          "Storage of /project/other",
+        ),
+      ).toBe(true);
       pendingOwners.add("/project");
       await draw();
       await click("Profile");
@@ -479,6 +505,24 @@ if (process.env.SVODE_UNIFIED_SETTINGS_DOM !== "1") {
         ownerHeading("Long project ".repeat(15)),
       );
       expect(scrolled.at(-1)).toBe(ownerHeading("Long project ".repeat(15)));
+
+      // On Storage an inline space only names the project strategy: it runs
+      // no storage lifecycle of its own and its link shows the project.
+      storageOpen.clear();
+      await draw(project("storage", "/project/other"));
+      expect(ownerHeading("Other").querySelector("[aria-expanded]")).toBeNull();
+      expect(document.activeElement).toBe(ownerHeading("Other"));
+      expect(
+        attributes("[data-storage-inherited]", "data-storage-inherited"),
+      ).toEqual(["in-git"]);
+      expect(storageOpen.has("/project/other")).toBe(false);
+      expect(attributes("[data-storage]", "data-storage")).toEqual([
+        "/project",
+      ]);
+      await click("Project storage");
+      expect(document.activeElement).toBe(
+        ownerHeading("Long project ".repeat(15)),
+      );
 
       // A request for a space waits for its repository type, then reveals
       // the block in its final shape.

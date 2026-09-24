@@ -1,5 +1,7 @@
 import { useId } from "react";
+import { CheckCircle2, LoaderCircle, TriangleAlert } from "lucide-react";
 import * as m from "@/paraglide/messages.js";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -13,496 +15,504 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
-  Field,
-  FieldContent,
-  FieldDescription,
-  FieldError,
-  FieldLabel,
-  FieldLegend,
-  FieldSet,
-} from "@/components/ui/field";
-import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Skeleton } from "@/components/ui/skeleton";
-import { StorageS3Fields } from "./storage-s3-fields";
-import {
   InputGroup,
   InputGroupAddon,
   InputGroupInput,
+  InputGroupText,
 } from "@/components/ui/input-group";
-import { Label } from "@/components/ui/label";
-import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Switch } from "@/components/ui/switch";
-import { CheckCircle2, Loader2 } from "lucide-react";
-import { GitRemoteAuthDialog } from "@/features/git";
-import type { AssetsStrategy, LfsState, SpaceGitType } from "@/features/space";
-import { isLfsStorageStrategy } from "../model/storage-strategy";
+import type { AssetsStrategy } from "@/features/space";
 import type { UseSpaceStorageSettingsResult } from "../hooks/use-space-storage-settings";
-import { LfsExtensionPicker } from "./lfs-extension-picker";
-import { StorageLfsPolicyWarning } from "./storage-lfs-policy-warning";
+import { isLfsStorageStrategy } from "../model/storage-strategy";
+import {
+  LfsExtensionPicker,
+  selectedLfsExtensionCount,
+} from "./lfs-extension-picker";
+import {
+  SettingsActions,
+  SettingsGroup,
+  SettingsItem,
+  SettingsRow,
+  SettingsRowSkeleton,
+} from "./settings-layout";
+import { SettingsSelect } from "./settings-select";
+import { StorageApplyActions, useStorageAction } from "./storage-actions";
+import { StorageS3Group } from "./storage-s3-group";
+import { StorageStateGroup } from "./storage-state-group";
 
-interface StorageSettingsSectionProps {
-  gitType: SpaceGitType | null;
-  activeRootName: string | null;
-  settings: UseSpaceStorageSettingsResult;
-  onOpenRoot: () => void;
+type StorageSettings = UseSpaceStorageSettingsResult;
+
+const STRATEGIES: readonly AssetsStrategy[] = [
+  "local",
+  "in-git",
+  "lfs-remote",
+  "lfs-s3",
+];
+
+export function storageStrategyTitle(strategy: AssetsStrategy | null) {
+  switch (strategy) {
+    case "in-git":
+      return m.storage_strategy_in_git_title();
+    case "lfs-remote":
+      return m.storage_strategy_lfs_remote_title();
+    case "lfs-s3":
+      return m.storage_strategy_lfs_s3_title();
+    case "local":
+      return m.storage_strategy_local_title();
+    default:
+      return "";
+  }
 }
 
-export function StorageSettingsSection({
-  gitType,
-  activeRootName,
-  settings,
-  onOpenRoot,
-}: StorageSettingsSectionProps) {
-  const id = useId();
-  const isRepoSpace =
-    !settings.isRoot && (gitType === "independent" || gitType === "submodule");
-
-  if (settings.inheritedFromProject || gitType === "inline") {
-    return (
-      <div className="space-y-3 max-w-md">
-        <div>
-          <Label className="text-sm font-medium">{m.storage_title()}</Label>
-        </div>
-        <div className="rounded-md border p-3 space-y-1">
-          <p className="text-sm">
-            {m.storage_inherited_from_project({
-              name: activeRootName ?? "",
-              strategy: settings.savedAssetsStrategy,
-            })}
-          </p>
-          <p className="text-xs text-muted-foreground">
-            {m.storage_inherited_hint()}
-          </p>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={onOpenRoot}
-          >
-            {m.storage_open_project()}
-          </Button>
-        </div>
-      </div>
-    );
+function storageStrategyDescription(strategy: AssetsStrategy) {
+  switch (strategy) {
+    case "in-git":
+      return m.storage_strategy_in_git_desc();
+    case "lfs-remote":
+      return m.storage_strategy_lfs_remote_desc();
+    case "lfs-s3":
+      return m.storage_strategy_lfs_s3_desc();
+    case "local":
+      return m.storage_strategy_local_desc();
   }
+}
 
-  if (settings.storageConfigError) {
-    return (
-      <Alert variant="destructive">
-        <AlertDescription>
-          {m.storage_config_error()}
-          <Button variant="outline" onClick={settings.retryStorageConfig}>
-            {m.storage_lfs_retry()}
-          </Button>
-        </AlertDescription>
-      </Alert>
-    );
-  }
-  if (!settings.storageConfigLoaded)
-    return <Skeleton className="h-32 w-full" />;
+// The summary of a collapsed repository block: its strategy and whether it
+// follows the project setting.
+export function storageSummary(settings: StorageSettings): string | null {
+  if (!settings.storageConfigLoaded || settings.inheritedFromProject)
+    return null;
+  const strategy = m.storage_summary_strategy({
+    strategy: storageStrategyTitle(settings.savedAssetsStrategy),
+  });
+  if (settings.projectConfigStatus !== "loaded") return strategy;
+  return `${strategy} · ${
+    settings.projectDefaultApplied
+      ? m.storage_summary_project_applied()
+      : m.storage_summary_project_differs()
+  }`;
+}
 
-  const storageOptions: {
-    value: AssetsStrategy;
-    title: string;
-    desc: string;
-    needsLfs: boolean;
-  }[] = [
-    {
-      value: "local",
-      title: m.storage_strategy_local_title(),
-      desc: m.storage_strategy_local_desc(),
-      needsLfs: false,
-    },
-    {
-      value: "in-git",
-      title: m.storage_strategy_in_git_title(),
-      desc: m.storage_strategy_in_git_desc(),
-      needsLfs: false,
-    },
-    {
-      value: "lfs-remote",
-      title: m.storage_strategy_lfs_remote_title(),
-      desc: m.storage_strategy_lfs_remote_desc(),
-      needsLfs: true,
-    },
-    {
-      value: "lfs-s3",
-      title: m.storage_strategy_lfs_s3_title(),
-      desc: m.storage_strategy_lfs_s3_desc(),
-      needsLfs: true,
-    },
-  ];
-  const canSaveVisibleS3 =
-    settings.savedAssetsStrategy === "lfs-s3"
-      ? !settings.applyingStrategy &&
-        settings.canSaveS3 &&
-        settings.binaryRoutingStatus !== "unsupported" &&
-        settings.binaryRoutingIssue === null
-      : settings.canApplyStrategy;
-  const lfsStatePanelStrategy =
-    settings.storageConfigLoaded &&
-    isLfsStorageStrategy(settings.savedAssetsStrategy)
-      ? settings.savedAssetsStrategy
-      : null;
-
-  const storageControls = (
-    <div className="flex w-full min-w-0 flex-col gap-4 [&>*:not(fieldset)]:max-w-md">
-      <div>
-        <Label className="text-sm font-medium">{m.storage_title()}</Label>
-        <p className="mt-1 text-xs text-muted-foreground">
-          {m.storage_scope_hint()}
-        </p>
-      </div>
-      {lfsStatePanelStrategy && (
-        <StorageLfsPolicyWarning
-          diagnostic={settings.lfsPolicyDiagnostic}
-          loading={settings.lfsPolicyDiagnosticLoading}
-          error={settings.lfsPolicyDiagnosticError}
-          updating={
-            settings.applyingStrategy &&
-            settings.strategyInFlight === settings.savedAssetsStrategy
+// A space without its own repository uses the project strategy; its block
+// only names it and points to the project.
+export function StorageInheritedGroup({
+  projectName,
+  strategy,
+  loading = false,
+  onOpenProject,
+}: {
+  projectName: string;
+  strategy: AssetsStrategy | null;
+  loading?: boolean;
+  onOpenProject: () => void;
+}) {
+  return (
+    <SettingsGroup aria-busy={loading || undefined}>
+      {loading ? (
+        <SettingsRowSkeleton />
+      ) : (
+        <SettingsItem
+          title={
+            strategy
+              ? m.storage_inline_title({
+                  name: projectName,
+                  strategy: storageStrategyTitle(strategy),
+                })
+              : m.storage_inline_title_unknown({ name: projectName })
           }
-          canUpdate={settings.canUpdateLfsPolicy}
-          onUpdate={() => void settings.updateLfsPolicy()}
-          onRefresh={() => void settings.refreshLfsPolicyDiagnostic()}
-        />
-      )}
-      <RadioGroup
-        value={settings.assetsStrategy}
-        onValueChange={(value) =>
-          void settings.selectStrategy(value as AssetsStrategy)
-        }
-        className="gap-3"
-      >
-        {storageOptions.map((option) => {
-          const migrationDisabled =
-            settings.savedAssetsStrategy !== "local" &&
-            option.value !== settings.savedAssetsStrategy;
-          const disabled =
-            settings.applyingStrategy ||
-            settings.s3.pending ||
-            !!settings.s3.editor ||
-            settings.binaryRoutingStatus === "unsupported" ||
-            migrationDisabled ||
-            (option.needsLfs && !settings.lfsAvailable);
-          return (
-            <label
-              key={option.value}
-              title={
-                migrationDisabled
-                  ? m.storage_migration_unsupported_hint()
-                  : undefined
-              }
-              className={`flex items-start gap-3 rounded-md border p-3 ${
-                disabled
-                  ? "opacity-60 cursor-not-allowed"
-                  : "cursor-pointer hover:bg-accent/50"
-              } ${
-                settings.assetsStrategy === option.value ? "border-primary" : ""
-              }`}
-            >
-              {settings.strategyInFlight === option.value ? (
-                <Loader2 className="mt-0.5 size-4 animate-spin text-muted-foreground" />
-              ) : (
-                <RadioGroupItem
-                  value={option.value}
-                  id={`${id}-${option.value}`}
-                  disabled={disabled}
-                  className="mt-0.5"
-                />
-              )}
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2">
-                  <span className="text-sm font-medium">{option.title}</span>
-                  {option.needsLfs &&
-                    (settings.lfsAvailable ? (
-                      <Badge
-                        variant="secondary"
-                        className="text-xs font-normal"
-                      >
-                        <span className="text-green-600 mr-1">&#10003;</span>
-                        {settings.lfsVersion
-                          ? `${m.storage_lfs_available()} (${settings.lfsVersion})`
-                          : m.storage_lfs_available()}
-                      </Badge>
-                    ) : (
-                      <Badge
-                        variant="destructive"
-                        className="text-xs font-normal"
-                      >
-                        <span className="mr-1">&#10005;</span>
-                        {m.storage_lfs_missing()}
-                      </Badge>
-                    ))}
-                </div>
-                <p className="mt-0.5 text-xs text-muted-foreground">
-                  {option.desc}
-                </p>
-              </div>
-            </label>
-          );
-        })}
-      </RadioGroup>
-      {!settings.lfsAvailable && (
-        <p className="text-xs text-muted-foreground">
-          {m.storage_lfs_install_hint()}
-        </p>
-      )}
-      {settings.savedAssetsStrategy !== "local" && (
-        <p className="text-xs text-muted-foreground">
-          {m.storage_migration_unsupported_hint()}
-        </p>
-      )}
-      {(isLfsStorageStrategy(settings.assetsStrategy) ||
-        settings.binaryRoutingStatus === "unsupported") && (
-        <LfsRoutingFields settings={settings} />
-      )}
-      {settings.assetsStrategy !== settings.savedAssetsStrategy &&
-        settings.assetsStrategy !== "lfs-s3" && (
-          <div>
+          description={m.storage_inline_description()}
+          actions={
             <Button
               type="button"
+              variant="outline"
               size="sm"
-              onClick={() => void settings.applySelectedStrategy()}
-              disabled={!settings.canApplyStrategy}
+              onClick={onOpenProject}
             >
-              {settings.applyingStrategy && (
-                <Loader2 className="mr-1 size-3 animate-spin" />
-              )}
-              {m.storage_apply_action()}
+              {m.storage_open_project()}
             </Button>
-          </div>
-        )}
-      {settings.assetsStrategy === "lfs-s3" && (
-        <StorageS3Fields settings={settings} canSave={canSaveVisibleS3} />
-      )}
-
-      {lfsStatePanelStrategy && (
-        <>
-          <LfsStatePanel
-            state={settings.lfsState}
-            strategy={lfsStatePanelStrategy}
-            repairing={settings.lfsRepairInFlight}
-            remoteDiagnostic={settings.lfsRemoteDiagnostic}
-            remoteChecking={settings.lfsRemoteDiagnosticInFlight}
-            onDiagnoseRemote={settings.diagnoseLfsRemote}
-            onRepair={settings.repairLfs}
-          />
-          <GitRemoteAuthDialog
-            open={settings.lfsRemoteAuthOpen}
-            challenge={settings.lfsRemoteAuthChallenge}
-            saving={settings.lfsRemoteAuthSaving}
-            error={settings.lfsRemoteAuthError}
-            onOpenChange={settings.setLfsRemoteAuthDialogOpen}
-            onSaveAndRetry={settings.saveLfsRemoteAuthAndRetry}
-          />
-        </>
-      )}
-
-      {settings.inlineSpaceNames.length > 0 && (
-        <p className="text-xs text-muted-foreground">
-          {m.storage_used_by_inline_spaces({
-            names: settings.inlineSpaceNames.join(", "),
-          })}
-        </p>
-      )}
-    </div>
-  );
-
-  if (isRepoSpace) {
-    return (
-      <div className="flex w-full min-w-0 flex-col gap-4 [&>:first-child]:max-w-md">
-        <RepositoryProjectSetting
-          activeRootName={activeRootName}
-          settings={settings}
+          }
         />
-        {storageControls}
-      </div>
-    );
-  }
-
-  return storageControls;
+      )}
+    </SettingsGroup>
+  );
 }
 
-function LfsRoutingFields({
+// The storage groups of the project or of one space repository.
+export function StorageSettingsSection({
   settings,
+  projectName,
+  onOpenProject,
 }: {
-  settings: UseSpaceStorageSettingsResult;
+  settings: StorageSettings;
+  projectName: string;
+  onOpenProject: () => void;
 }) {
-  const id = useId();
-  const rulesErrorId = `${id}-rules-error`;
-  if (settings.binaryRoutingStatus === "unsupported") {
+  if (settings.storageConfigError)
     return (
-      <div className="rounded-md border border-destructive/40 bg-destructive/5 p-3 space-y-1">
-        <p className="text-sm font-medium">
-          {m.storage_lfs_rules_unsupported()}
-        </p>
-        <p className="text-xs text-muted-foreground">
-          {m.storage_lfs_rules_unsupported_hint({
-            version: String(settings.binaryRoutingVersion ?? "?"),
-          })}
-        </p>
-      </div>
-    );
-  }
-
-  const issue = settings.binaryRoutingIssue
-    ? {
-        "invalid-extension": m.storage_lfs_extensions_invalid(),
-        "protected-extension": m.storage_lfs_extensions_protected(),
-        "invalid-threshold": m.storage_lfs_threshold_invalid(),
-      }[settings.binaryRoutingIssue]
-    : null;
-  const activeStrategy =
-    settings.assetsStrategy === settings.savedAssetsStrategy;
-  const extensionIssue =
-    settings.binaryRoutingIssue === "invalid-extension" ||
-    settings.binaryRoutingIssue === "protected-extension";
-  const thresholdIssue = settings.binaryRoutingIssue === "invalid-threshold";
-
-  return (
-    <FieldSet className="gap-4 border-t pt-4">
-      <FieldLegend variant="label">{m.storage_lfs_rules_title()}</FieldLegend>
-      <LfsExtensionPicker
-        value={settings.lfsExtensions}
-        onChange={settings.setLfsExtensions}
-        disabled={settings.applyingStrategy}
-        invalid={extensionIssue}
-        describedBy={extensionIssue ? rulesErrorId : undefined}
+      <SettingsGroup
+        title={m.storage_strategy_group()}
+        callout={
+          <Alert>
+            <AlertTitle>{m.storage_config_error_title()}</AlertTitle>
+            <AlertDescription>
+              <p>{m.storage_config_error()}</p>
+              <div className="flex flex-wrap gap-2 pt-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={settings.retryStorageConfig}
+                >
+                  {m.app_retry()}
+                </Button>
+              </div>
+            </AlertDescription>
+          </Alert>
+        }
       />
-      <Field orientation="horizontal" className="items-start">
-        <FieldContent>
-          <FieldLabel htmlFor={`${id}-threshold-enabled`}>
-            {m.storage_lfs_threshold_label()}
-          </FieldLabel>
-          <FieldDescription className="text-xs">
-            {m.storage_lfs_threshold_hint()}
-          </FieldDescription>
-        </FieldContent>
+    );
+  if (settings.storageConfigLoaded && settings.inheritedFromProject)
+    return (
+      <StorageInheritedGroup
+        projectName={projectName}
+        strategy={settings.savedAssetsStrategy}
+        onOpenProject={onOpenProject}
+      />
+    );
+  if (!settings.storageConfigLoaded || !settings.lfsAvailabilityLoaded)
+    return (
+      <SettingsGroup title={m.storage_strategy_group()} aria-busy>
+        <SettingsRowSkeleton key="strategy" />
+        <SettingsRowSkeleton key="lfs" />
+      </SettingsGroup>
+    );
+  return (
+    <>
+      {settings.isRoot ? null : (
+        <StorageProjectSettingGroup
+          settings={settings}
+          projectName={projectName}
+        />
+      )}
+      <StorageStrategyGroup settings={settings} />
+      {isLfsStorageStrategy(settings.assetsStrategy) ||
+      settings.binaryRoutingStatus === "unsupported" ? (
+        <StorageLfsRulesGroup settings={settings} />
+      ) : null}
+      {settings.assetsStrategy === "lfs-s3" ? (
+        <StorageS3Group settings={settings} />
+      ) : null}
+      {isLfsStorageStrategy(settings.savedAssetsStrategy) ? (
+        <StorageStateGroup settings={settings} />
+      ) : null}
+    </>
+  );
+}
+
+// Why the project setting cannot be taken over, if it cannot.
+function projectSettingBlock(settings: StorageSettings): string | null {
+  const saved = settings.savedAssetsStrategy;
+  const project = settings.projectAssetsStrategy;
+  if (settings.binaryRoutingStatus === "unsupported")
+    return m.storage_lfs_rules_unsupported();
+  if (saved !== "local" && !(saved === "lfs-s3" && project === "lfs-s3"))
+    return m.storage_strategy_locked();
+  if (isLfsStorageStrategy(project) && !settings.lfsAvailable)
+    return m.storage_strategy_needs_lfs();
+  return null;
+}
+
+// A space repository keeps its own strategy until it takes over the
+// project's one.
+function StorageProjectSettingGroup({
+  settings,
+  projectName,
+}: {
+  settings: StorageSettings;
+  projectName: string;
+}) {
+  const status = settings.projectConfigStatus;
+  const applied = settings.projectDefaultApplied;
+  const block = projectSettingBlock(settings);
+  return (
+    <SettingsGroup
+      title={m.storage_project_setting_title()}
+      aria-busy={status === "loading" || undefined}
+    >
+      {status === "loading" ? (
+        <SettingsRowSkeleton />
+      ) : status === "failed" ? (
+        <SettingsItem
+          title={m.storage_project_setting_owner({ name: projectName })}
+          description={m.storage_project_setting_failed()}
+        />
+      ) : (
+        <SettingsItem
+          title={m.storage_project_setting_summary({
+            name: projectName,
+            strategy: storageStrategyTitle(settings.projectAssetsStrategy),
+          })}
+          description={
+            applied
+              ? undefined
+              : (block ??
+                (settings.projectAssetsStrategy === "lfs-s3"
+                  ? m.storage_project_setting_s3_hint()
+                  : m.storage_project_setting_differs_hint()))
+          }
+          actions={
+            applied ? (
+              <Badge variant="secondary">
+                <CheckCircle2 data-icon="inline-start" />
+                {m.storage_project_setting_applied()}
+              </Badge>
+            ) : (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={
+                  Boolean(block) ||
+                  settings.applyingStrategy ||
+                  settings.s3.pending ||
+                  Boolean(settings.s3.editor)
+                }
+                onClick={() => void settings.useProjectStorageSetting()}
+              >
+                {m.storage_use_project_setting()}
+              </Button>
+            )
+          }
+        />
+      )}
+    </SettingsGroup>
+  );
+}
+
+// The strategy draft applies in the last group it needs: here for In Git,
+// in the LFS rules for Git LFS (Remote) and in S3 for Git LFS + S3.
+function StorageStrategyGroup({ settings }: { settings: StorageSettings }) {
+  const id = useId();
+  const saved = settings.savedAssetsStrategy;
+  const draft = settings.assetsStrategy;
+  // Once a synced strategy is on, no other one is available yet.
+  const locked = saved !== "local";
+  const unsupported = settings.binaryRoutingStatus === "unsupported";
+  const options = STRATEGIES.map((value) => {
+    const unavailable = isLfsStorageStrategy(value) && !settings.lfsAvailable;
+    return {
+      value,
+      label: storageStrategyTitle(value),
+      description: unavailable
+        ? m.storage_strategy_needs_lfs()
+        : storageStrategyDescription(value),
+      disabled: unavailable,
+    };
+  });
+  return (
+    <SettingsGroup
+      title={m.storage_strategy_group()}
+      description={m.storage_strategy_group_description()}
+      aria-busy={settings.applyingStrategy || undefined}
+    >
+      <SettingsRow
+        key="strategy"
+        label={m.storage_strategy_label()}
+        htmlFor={`${id}-strategy`}
+        description={
+          locked
+            ? m.storage_strategy_locked()
+            : unsupported
+              ? m.storage_lfs_rules_unsupported()
+              : draft !== saved
+                ? m.storage_strategy_not_applied()
+                : undefined
+        }
+      >
+        <SettingsSelect
+          id={`${id}-strategy`}
+          className="w-48"
+          value={draft}
+          options={options}
+          pending={
+            settings.applyingStrategy && settings.strategyInFlight !== saved
+          }
+          disabled={
+            locked ||
+            unsupported ||
+            settings.s3.pending ||
+            Boolean(settings.s3.editor)
+          }
+          onValueChange={(value) =>
+            void settings.selectStrategy(value as AssetsStrategy)
+          }
+        />
+      </SettingsRow>
+      <SettingsItem
+        key="lfs"
+        title="git-lfs"
+        description={
+          settings.lfsAvailable ? (
+            settings.lfsVersion ? (
+              m.storage_lfs_version({ version: settings.lfsVersion })
+            ) : undefined
+          ) : (
+            <span className="wrap-anywhere">
+              {m.storage_lfs_install_hint()}
+            </span>
+          )
+        }
+        actions={
+          <Badge variant={settings.lfsAvailable ? "secondary" : "outline"}>
+            {settings.lfsAvailable
+              ? m.storage_lfs_available()
+              : m.storage_lfs_missing()}
+          </Badge>
+        }
+      />
+      {draft !== saved && draft === "in-git" ? (
+        <StorageApplyActions key="apply" settings={settings} />
+      ) : null}
+    </SettingsGroup>
+  );
+}
+
+// Formats and size that route new files to Git LFS. Once the strategy is
+// on, they are saved on their own.
+function StorageLfsRulesGroup({ settings }: { settings: StorageSettings }) {
+  const id = useId();
+  const [saving, runSave] = useStorageAction();
+  if (settings.binaryRoutingStatus === "unsupported")
+    return (
+      <SettingsGroup
+        title={m.storage_lfs_rules_title()}
+        callout={
+          <Alert>
+            <TriangleAlert />
+            <AlertTitle>{m.storage_lfs_rules_unsupported()}</AlertTitle>
+            <AlertDescription>
+              {m.storage_lfs_rules_unsupported_hint({
+                version: String(settings.binaryRoutingVersion ?? "?"),
+              })}
+            </AlertDescription>
+          </Alert>
+        }
+      />
+    );
+
+  const issue = settings.binaryRoutingIssue;
+  const formatsError =
+    issue === "invalid-extension"
+      ? m.storage_lfs_extensions_invalid()
+      : issue === "protected-extension"
+        ? m.storage_lfs_extensions_protected()
+        : null;
+  const sizeError =
+    issue === "invalid-threshold" ? m.storage_lfs_threshold_invalid() : null;
+  const disabled = settings.applyingStrategy;
+  const enabled = settings.assetsStrategy === settings.savedAssetsStrategy;
+  return (
+    <SettingsGroup
+      title={m.storage_lfs_rules_title()}
+      description={m.storage_lfs_existing_unchanged()}
+    >
+      <SettingsRow
+        key="formats"
+        layout="stacked"
+        label={
+          <span id={`${id}-formats`}>{m.storage_lfs_extensions_label()}</span>
+        }
+        description={
+          <span id={`${id}-formats-hint`}>
+            {m.storage_lfs_extensions_hint()}{" "}
+            {m.storage_lfs_extensions_selected({
+              count: String(selectedLfsExtensionCount(settings.lfsExtensions)),
+            })}
+          </span>
+        }
+        error={formatsError}
+        errorId={`${id}-formats-error`}
+      >
+        <LfsExtensionPicker
+          value={settings.lfsExtensions}
+          onChange={settings.setLfsExtensions}
+          disabled={disabled}
+          invalid={Boolean(formatsError)}
+          labelledBy={`${id}-formats`}
+          describedBy={
+            formatsError
+              ? `${id}-formats-hint ${id}-formats-error`
+              : `${id}-formats-hint`
+          }
+        />
+      </SettingsRow>
+      <SettingsRow
+        key="threshold"
+        label={m.storage_lfs_threshold_label()}
+        description={m.storage_lfs_threshold_hint()}
+        htmlFor={`${id}-threshold-enabled`}
+      >
         <Switch
           id={`${id}-threshold-enabled`}
           checked={settings.lfsThresholdEnabled}
+          disabled={disabled}
           onCheckedChange={(checked) =>
             settings.setLfsThresholdEnabled(checked === true)
           }
-          disabled={settings.applyingStrategy}
         />
-      </Field>
-      {settings.lfsThresholdEnabled && (
-        <Field className="max-w-40">
-          <FieldLabel htmlFor={`${id}-threshold-size`}>
-            {m.storage_lfs_threshold_input_label()}
-          </FieldLabel>
-          <InputGroup>
+      </SettingsRow>
+      {settings.lfsThresholdEnabled ? (
+        <SettingsRow
+          key="size"
+          label={m.storage_lfs_threshold_input_label()}
+          htmlFor={`${id}-threshold-size`}
+          error={sizeError}
+          errorId={`${id}-threshold-error`}
+        >
+          <InputGroup className="w-32">
             <InputGroupInput
               id={`${id}-threshold-size`}
               inputMode="decimal"
               value={settings.lfsThresholdMegabytes}
+              disabled={disabled}
+              aria-invalid={sizeError ? true : undefined}
+              aria-describedby={sizeError ? `${id}-threshold-error` : undefined}
               onChange={(event) =>
                 settings.setLfsThresholdMegabytes(event.target.value)
               }
-              disabled={settings.applyingStrategy}
-              aria-invalid={thresholdIssue || undefined}
-              aria-describedby={thresholdIssue ? rulesErrorId : undefined}
             />
             <InputGroupAddon align="inline-end">
-              {m.storage_lfs_threshold_unit()}
+              <InputGroupText>{m.storage_lfs_threshold_unit()}</InputGroupText>
             </InputGroupAddon>
           </InputGroup>
-        </Field>
-      )}
-      {issue && (
-        <FieldError id={rulesErrorId} className="text-xs">
-          {issue}
-        </FieldError>
-      )}
-      <FieldDescription className="text-xs">
-        {m.storage_lfs_existing_unchanged()}
-      </FieldDescription>
-      {activeStrategy && (
-        <Button
-          type="button"
-          size="sm"
-          className="w-fit"
-          onClick={() => void settings.updateLfsPolicy()}
-          disabled={!settings.canUpdateLfsPolicy}
-        >
-          {settings.applyingStrategy && (
-            <Loader2 className="mr-1 size-3 animate-spin" />
-          )}
-          {m.storage_lfs_rules_save()}
-        </Button>
-      )}
-    </FieldSet>
-  );
-}
-
-function RepositoryProjectSetting({
-  activeRootName,
-  settings,
-}: {
-  activeRootName: string | null;
-  settings: UseSpaceStorageSettingsResult;
-}) {
-  const projectName = activeRootName ?? "";
-  const isS3ProjectDefault = settings.projectAssetsStrategy === "lfs-s3";
-  const showS3Hint = isS3ProjectDefault && !settings.projectDefaultApplied;
-  const projectSettingDisabled =
-    settings.applyingStrategy || (isS3ProjectDefault && !settings.lfsAvailable);
-
-  return (
-    <div className="flex flex-col gap-3 rounded-md border p-3">
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0 space-y-1">
-          <Label className="text-sm font-medium">
-            {m.storage_project_setting_title()}
-          </Label>
-          <p className="text-xs text-muted-foreground">
-            {m.storage_project_setting_summary({
-              name: projectName,
-              strategy: settings.projectAssetsStrategy,
-            })}
-          </p>
-        </div>
-        {settings.projectDefaultApplied ? (
-          <Badge variant="secondary" className="shrink-0 gap-1">
-            <CheckCircle2 className="size-3" />
-            {m.storage_project_setting_applied()}
-          </Badge>
-        ) : (
+        </SettingsRow>
+      ) : null}
+      {enabled ? (
+        <SettingsActions key="save">
           <Button
             type="button"
-            variant="outline"
-            size="sm"
-            className="shrink-0"
-            onClick={() => void settings.useProjectStorageSetting()}
-            disabled={projectSettingDisabled}
+            disabled={
+              !settings.canUpdateLfsPolicy || !settings.binaryRoutingChanged
+            }
+            onClick={() => runSave(settings.updateLfsPolicy)}
           >
-            {settings.applyingStrategy && (
-              <Loader2 className="mr-1 size-3 animate-spin" />
-            )}
-            {m.storage_use_project_setting()}
+            {saving ? (
+              <LoaderCircle data-icon="inline-start" className="animate-spin" />
+            ) : null}
+            {m.storage_lfs_rules_save()}
           </Button>
-        )}
-      </div>
-      {!settings.projectDefaultApplied && (
-        <p className="text-xs text-muted-foreground">
-          {m.storage_project_setting_differs_hint()}
-        </p>
-      )}
-      {showS3Hint && (
-        <p className="text-xs text-muted-foreground">
-          {m.storage_project_setting_s3_hint()}
-        </p>
-      )}
-    </div>
+        </SettingsActions>
+      ) : settings.assetsStrategy === "lfs-remote" ? (
+        <StorageApplyActions key="apply" settings={settings} />
+      ) : null}
+    </SettingsGroup>
   );
 }
 
 export function StorageStrategyConfirmDialog({
   settings,
 }: {
-  settings: UseSpaceStorageSettingsResult;
+  settings: StorageSettings;
 }) {
   return (
     <AlertDialog
@@ -550,301 +560,4 @@ export function StorageStrategyConfirmDialog({
       </AlertDialogContent>
     </AlertDialog>
   );
-}
-
-function storageStrategyTitle(strategy: AssetsStrategy | null) {
-  switch (strategy) {
-    case "in-git":
-      return m.storage_strategy_in_git_title();
-    case "lfs-remote":
-      return m.storage_strategy_lfs_remote_title();
-    case "lfs-s3":
-      return m.storage_strategy_lfs_s3_title();
-    case "local":
-      return m.storage_strategy_local_title();
-    default:
-      return "";
-  }
-}
-
-function LfsStatePanel({
-  state,
-  strategy,
-  repairing,
-  remoteDiagnostic,
-  remoteChecking,
-  onDiagnoseRemote,
-  onRepair,
-}: {
-  state: LfsState;
-  strategy: "lfs-remote" | "lfs-s3";
-  repairing: boolean;
-  remoteDiagnostic: UseSpaceStorageSettingsResult["lfsRemoteDiagnostic"];
-  remoteChecking: boolean;
-  onDiagnoseRemote: () => void;
-  onRepair: () => void;
-}) {
-  if (state === "n/a") return null;
-  if (strategy === "lfs-remote") {
-    return (
-      <RemoteLfsStatePanel
-        state={state}
-        diagnostic={remoteDiagnostic}
-        checking={remoteChecking}
-        repairing={repairing}
-        onDiagnose={onDiagnoseRemote}
-        onRepair={onRepair}
-      />
-    );
-  }
-  const missingTitle = m.storage_lfs_banner_missing_s3_title();
-  const missingDesc = m.storage_lfs_banner_missing_s3_desc();
-
-  if (state === "pulling") {
-    return (
-      <div className="rounded-md border border-primary/40 bg-primary/5 p-3 text-sm flex items-center gap-2">
-        <Loader2 className="size-4 animate-spin text-primary" />
-        <span>{m.storage_repair_lfs_pulling()}</span>
-      </div>
-    );
-  }
-  if (state === "missing-creds") {
-    return (
-      <div className="rounded-md border border-destructive/40 bg-destructive/5 p-3 space-y-2">
-        <p className="text-sm font-medium">{missingTitle}</p>
-        <p className="text-xs text-muted-foreground">{missingDesc}</p>
-        <Button
-          type="button"
-          size="sm"
-          variant="outline"
-          onClick={onRepair}
-          disabled={repairing}
-        >
-          {repairing && <Loader2 className="mr-1 size-3 animate-spin" />}
-          {m.storage_lfs_retry()}
-        </Button>
-      </div>
-    );
-  }
-  return (
-    <div className="rounded-md border p-3 flex items-center justify-between gap-2">
-      <p className="text-xs text-muted-foreground">
-        {m.storage_lfs_banner_ready()}
-      </p>
-      <Button
-        type="button"
-        size="sm"
-        variant="outline"
-        onClick={onRepair}
-        disabled={repairing}
-      >
-        {repairing && <Loader2 className="mr-1 size-3 animate-spin" />}
-        {m.storage_repair_lfs()}
-      </Button>
-    </div>
-  );
-}
-
-function RemoteLfsStatePanel({
-  state,
-  diagnostic,
-  checking,
-  repairing,
-  onDiagnose,
-  onRepair,
-}: {
-  state: LfsState;
-  diagnostic: UseSpaceStorageSettingsResult["lfsRemoteDiagnostic"];
-  checking: boolean;
-  repairing: boolean;
-  onDiagnose: () => void;
-  onRepair: () => void;
-}) {
-  if (state === "pulling") {
-    return (
-      <div className="rounded-md border border-primary/40 bg-primary/5 p-3 text-sm flex items-center gap-2">
-        <Loader2 className="size-4 animate-spin text-primary" />
-        <span>{m.storage_repair_lfs_pulling()}</span>
-      </div>
-    );
-  }
-
-  const ready = state === "ready";
-  const message =
-    ready && !diagnostic
-      ? m.storage_lfs_remote_ready_desc()
-      : remoteDiagnosticMessage(diagnostic);
-  const borderClass = ready
-    ? "border-primary/40 bg-primary/5"
-    : "border-destructive/40 bg-destructive/5";
-
-  return (
-    <div className={`rounded-md border p-3 space-y-3 ${borderClass}`}>
-      <div className="space-y-1">
-        <p className="text-sm font-medium">
-          {ready
-            ? m.storage_lfs_remote_ready_title()
-            : m.storage_lfs_remote_setup_title()}
-        </p>
-        <p className="text-xs text-muted-foreground">{message}</p>
-      </div>
-
-      <div className="space-y-1 text-xs">
-        <RemoteRequirement
-          checked={
-            ready && !diagnostic
-              ? true
-              : remoteRequirementState(diagnostic, "remote")
-          }
-          label={m.storage_lfs_remote_req_remote()}
-        />
-        <RemoteRequirement
-          checked={
-            ready && !diagnostic
-              ? true
-              : remoteRequirementState(diagnostic, "provider")
-          }
-          label={m.storage_lfs_remote_req_provider()}
-        />
-        <RemoteRequirement
-          checked={
-            ready && !diagnostic
-              ? true
-              : remoteRequirementState(diagnostic, "auth")
-          }
-          label={m.storage_lfs_remote_req_auth()}
-        />
-      </div>
-
-      {diagnostic?.remoteUrl && (
-        <p className="text-xs text-muted-foreground break-all">
-          {diagnostic.remoteUrl}
-        </p>
-      )}
-
-      {checking && (
-        <div className="flex items-center gap-2 text-xs text-muted-foreground">
-          <Loader2 className="size-3 animate-spin" />
-          <span>{m.storage_lfs_remote_checking()}</span>
-        </div>
-      )}
-
-      {diagnostic?.terminalCommand && (
-        <div className="space-y-1">
-          <p className="text-xs font-medium">
-            {m.storage_lfs_remote_command_label()}
-          </p>
-          <code className="block rounded border bg-background px-2 py-1 text-xs break-all">
-            {diagnostic.terminalCommand}
-          </code>
-        </div>
-      )}
-
-      {diagnostic?.detail && (
-        <div className="space-y-1">
-          <p className="text-xs font-medium">
-            {m.storage_lfs_remote_error_label()}
-          </p>
-          <pre className="max-h-28 overflow-auto whitespace-pre-wrap break-words rounded border bg-background px-2 py-1 text-xs">
-            {diagnostic.detail}
-          </pre>
-        </div>
-      )}
-
-      <div>
-        <Button
-          type="button"
-          size="sm"
-          variant="outline"
-          onClick={ready ? onRepair : onDiagnose}
-          disabled={ready ? repairing : checking}
-        >
-          {(ready ? repairing : checking) && (
-            <Loader2 className="mr-1 size-3 animate-spin" />
-          )}
-          {remoteActionLabel({ ready, diagnostic })}
-        </Button>
-      </div>
-    </div>
-  );
-}
-
-function remoteActionLabel({
-  ready,
-  diagnostic,
-}: {
-  ready: boolean;
-  diagnostic: UseSpaceStorageSettingsResult["lfsRemoteDiagnostic"];
-}): string {
-  if (ready) return m.storage_repair_lfs();
-  if (
-    diagnostic?.reason === "auth-required" &&
-    diagnostic.authMethod === "https"
-  ) {
-    return m.storage_lfs_remote_sign_in();
-  }
-  return m.storage_lfs_retry();
-}
-
-function RemoteRequirement({
-  checked,
-  label,
-}: {
-  checked: boolean | null;
-  label: string;
-}) {
-  return (
-    <div className="flex items-center gap-2 text-muted-foreground">
-      {checked === true ? (
-        <CheckCircle2 className="size-3 text-green-600" />
-      ) : checked === false ? (
-        <span className="flex size-3 items-center justify-center text-destructive">
-          x
-        </span>
-      ) : (
-        <span className="size-3 rounded-full border" />
-      )}
-      <span>{label}</span>
-    </div>
-  );
-}
-
-function remoteRequirementState(
-  diagnostic: UseSpaceStorageSettingsResult["lfsRemoteDiagnostic"],
-  requirement: "remote" | "provider" | "auth",
-): boolean | null {
-  if (!diagnostic) return null;
-  if (diagnostic.reason === "ready") return true;
-  if (requirement === "remote") {
-    if (diagnostic.reason === "remote-missing") return false;
-    return diagnostic.remoteUrl ? true : null;
-  }
-  if (requirement === "provider") {
-    if (diagnostic.reason === "lfs-unavailable") return false;
-    return null;
-  }
-  if (diagnostic.reason === "auth-required") return false;
-  return null;
-}
-
-function remoteDiagnosticMessage(
-  diagnostic: UseSpaceStorageSettingsResult["lfsRemoteDiagnostic"],
-): string {
-  if (!diagnostic) return m.storage_lfs_remote_setup_desc();
-  switch (diagnostic.reason) {
-    case "ready":
-      return m.storage_lfs_remote_ready_desc();
-    case "git-lfs-missing":
-      return m.storage_lfs_remote_git_lfs_missing();
-    case "remote-missing":
-      return m.storage_lfs_remote_missing_remote();
-    case "auth-required":
-      return diagnostic.authMethod === "ssh"
-        ? m.storage_lfs_remote_auth_required_ssh()
-        : m.storage_lfs_remote_auth_required_https();
-    case "lfs-unavailable":
-      return m.storage_lfs_remote_lfs_unavailable();
-    case "probe-failed":
-      return m.storage_lfs_remote_probe_failed();
-  }
 }

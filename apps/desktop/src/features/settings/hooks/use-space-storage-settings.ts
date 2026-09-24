@@ -8,11 +8,9 @@ import type {
   AssetsS3Config,
   AssetsStrategy,
   LfsState,
-  SpaceInfo,
 } from "@/features/space";
 import { useSpaceStorageConfig } from "./use-space-storage-config";
 import type { useStorageS3 } from "./use-storage-s3";
-import { useSpaceStorageInlineSpaces } from "./use-space-storage-inline-spaces";
 import { useSpaceStorageLfs } from "./use-space-storage-lfs";
 import { useSpaceStoragePolicyDiagnostics } from "./use-space-storage-policy-diagnostics";
 import {
@@ -25,14 +23,19 @@ import {
 } from "../model/storage-strategy";
 
 interface UseSpaceStorageSettingsOptions {
+  // The owner's strategy and the project setting: what a collapsed owner
+  // block summarizes.
   open: boolean;
+  // Its S3 pair, LFS state and diagnostics; defaults to `open`.
+  detailsActive?: boolean;
   diagnosticsActive: boolean;
   spacePath: string;
   projectPath: string;
   currentSpaceId: string | null;
   isRoot: boolean;
-  spaces: Pick<SpaceInfo, "name" | "path">[];
 }
+
+export type StorageProjectConfigStatus = "loading" | "loaded" | "failed";
 
 export interface UseSpaceStorageSettingsResult {
   assetsStrategy: AssetsStrategy;
@@ -47,6 +50,7 @@ export interface UseSpaceStorageSettingsResult {
   savedS3Config: AssetsS3Config | null;
   projectAssetsStrategy: AssetsStrategy;
   projectS3Config: AssetsS3Config | null;
+  projectConfigStatus: StorageProjectConfigStatus;
   projectDefaultApplied: boolean;
   inheritedFromProject: boolean;
   ownerSpaceId: string | null;
@@ -63,6 +67,7 @@ export interface UseSpaceStorageSettingsResult {
   pendingStrategy: AssetsStrategy | null;
   pendingAssetCount: number;
   lfsAvailable: boolean;
+  lfsAvailabilityLoaded: boolean;
   lfsVersion: string | null;
   applyingStrategy: boolean;
   strategyInFlight: AssetsStrategy | null;
@@ -83,7 +88,6 @@ export interface UseSpaceStorageSettingsResult {
   lfsPolicyDiagnosticLoading: boolean;
   lfsPolicyDiagnosticError: boolean;
   canUpdateLfsPolicy: boolean;
-  inlineSpaceNames: string[];
   setS3Endpoint: (value: string) => void;
   setS3Bucket: (value: string) => void;
   setS3Region: (value: string) => void;
@@ -110,18 +114,20 @@ export interface UseSpaceStorageSettingsResult {
 
 export function useSpaceStorageSettings({
   open,
+  detailsActive = open,
   diagnosticsActive,
   spacePath,
   projectPath,
   currentSpaceId,
   isRoot,
-  spaces,
 }: UseSpaceStorageSettingsOptions): UseSpaceStorageSettingsResult {
+  const details = open && detailsActive;
   const currentTargetKey = storageTargetKey(projectPath, currentSpaceId);
   const currentTargetKeyRef = useRef(currentTargetKey);
   currentTargetKeyRef.current = currentTargetKey;
   const storageConfig = useSpaceStorageConfig({
     open,
+    detailsOpen: details,
     spacePath,
     projectPath,
     currentSpaceId,
@@ -137,13 +143,13 @@ export function useSpaceStorageSettings({
     strategy: storageConfig.savedAssetsStrategy,
   });
   const lfs = useSpaceStorageLfs({
-    open,
+    open: details,
     projectPath,
     currentSpaceId,
     lfsRemoteEnabled,
   });
   const lfsPolicy = useSpaceStoragePolicyDiagnostics({
-    open,
+    open: details,
     projectPath,
     currentSpaceId,
     enabled: lfsPolicyEnabled,
@@ -185,8 +191,11 @@ export function useSpaceStorageSettings({
   const [projectS3Config, setProjectS3Config] = useState<AssetsS3Config | null>(
     null,
   );
+  const [projectConfigStatus, setProjectConfigStatus] =
+    useState<StorageProjectConfigStatus>("loading");
   const {
     lfsAvailable,
+    lfsAvailabilityLoaded,
     lfsVersion,
     lfsState,
     lfsRepairInFlight,
@@ -203,20 +212,14 @@ export function useSpaceStorageSettings({
     saveLfsRemoteAuthAndRetry,
   } = lfs;
   useEffect(() => {
-    if (open && s3.variables.catalog) void loadLfsState();
-  }, [open, s3.variables.catalog, loadLfsState]);
+    if (details && s3.variables.catalog) void loadLfsState();
+  }, [details, s3.variables.catalog, loadLfsState]);
   const {
     lfsPolicyDiagnostic,
     lfsPolicyDiagnosticLoading,
     lfsPolicyDiagnosticError,
     reloadLfsPolicyDiagnostic,
   } = lfsPolicy;
-  const { inlineSpaceNames } = useSpaceStorageInlineSpaces({
-    open,
-    isRoot,
-    projectPath,
-    spaces,
-  });
   const [pendingStrategy, setPendingStrategy] = useState<AssetsStrategy | null>(
     null,
   );
@@ -231,16 +234,19 @@ export function useSpaceStorageSettings({
   useEffect(() => {
     if (!open || !projectPath) return;
     let cancelled = false;
+    setProjectConfigStatus("loading");
 
     void getAssetsConfig({ projectPath, spaceId: null })
       .then((config) => {
         if (!cancelled) {
           setProjectAssetsStrategy(config.strategy);
           setProjectS3Config(config.s3 ?? null);
+          setProjectConfigStatus("loaded");
         }
       })
       .catch((err) => {
         console.error("Failed to load project storage settings:", err);
+        if (!cancelled) setProjectConfigStatus("failed");
       });
 
     return () => {
@@ -576,6 +582,7 @@ export function useSpaceStorageSettings({
     savedS3Config,
     projectAssetsStrategy,
     projectS3Config,
+    projectConfigStatus,
     projectDefaultApplied,
     inheritedFromProject,
     ownerSpaceId,
@@ -592,6 +599,7 @@ export function useSpaceStorageSettings({
     pendingStrategy,
     pendingAssetCount,
     lfsAvailable,
+    lfsAvailabilityLoaded,
     lfsVersion,
     applyingStrategy,
     strategyInFlight,
@@ -612,7 +620,6 @@ export function useSpaceStorageSettings({
     lfsPolicyDiagnosticLoading,
     lfsPolicyDiagnosticError,
     canUpdateLfsPolicy,
-    inlineSpaceNames,
     setS3Endpoint,
     setS3Bucket,
     setS3Region,

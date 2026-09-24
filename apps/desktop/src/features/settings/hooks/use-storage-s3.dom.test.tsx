@@ -43,8 +43,7 @@ if (process.env.SVODE_S3_TEST !== "1") {
   const { createRoot } = await import("react-dom/client");
   const { useSpaceStorageSettings } =
     await import("./use-space-storage-settings");
-  const { StorageS3Fields } = await import("../ui/storage-s3-fields");
-  const spaces: [] = [];
+  const { StorageS3Group } = await import("../ui/storage-s3-group");
   const target = {
     endpoint: "https://s3.test",
     bucket: "existing",
@@ -235,12 +234,11 @@ if (process.env.SVODE_S3_TEST !== "1") {
         projectPath: "/repo",
         currentSpaceId: spaceId,
         isRoot: !spaceId,
-        spaces,
       });
       useLayoutEffect(() => {
         state = value;
       });
-      return <StorageS3Fields settings={value} canSave={value.canSaveS3} />;
+      return <StorageS3Group settings={value} />;
     }
     async function render(spaceId: string | null = null, open = true) {
       await act(async () => {

@@ -1,6 +1,5 @@
 import { useId, type ReactNode } from "react";
 import * as m from "@/paraglide/messages.js";
-import { cn } from "@/shared/lib/utils";
 import {
   Field,
   FieldDescription,
@@ -21,8 +20,8 @@ import {
 import { SettingsRow, SettingsRows } from "./settings-layout";
 
 interface AppVariableFieldsProps {
-  // rows: Settings catalog editor; grid: S3 Secret editor; compact: App modal.
-  layout: "rows" | "grid" | "compact";
+  // rows: Settings catalog and S3 Secret editors; compact: App modal.
+  layout: "rows" | "compact";
   draft: VariableDraft;
   disabled: boolean;
   onChange(draft: VariableDraft): void;
@@ -38,7 +37,7 @@ export function AppVariableFields(props: AppVariableFieldsProps) {
   return props.layout === "rows" ? (
     <VariableFieldRows {...props} />
   ) : (
-    <VariableFieldGrid {...props} compact={props.layout === "compact"} />
+    <VariableFieldCompact {...props} />
   );
 }
 
@@ -307,15 +306,14 @@ function VariableFieldRows({
   );
 }
 
-function VariableFieldGrid({
+function VariableFieldCompact({
   draft,
   disabled,
   onChange,
-  compact,
   showOwner = true,
   fixedKind,
   collisionAlternatives,
-}: AppVariableFieldsProps & { compact: boolean }) {
+}: AppVariableFieldsProps) {
   const id = useId();
   const invalid = draft.name.length > 0 && !validVariableName(draft.name);
   const change = transitions(draft);
@@ -334,12 +332,9 @@ function VariableFieldGrid({
   );
   const valueFields = (
     <>
-      {!compact || !draft.editing ? (
+      {!draft.editing ? (
         <Field
-          className={cn(
-            "col-span-2 min-w-0",
-            !compact && "@min-[40rem]/variable-form:col-span-1",
-          )}
+          className="col-span-2 min-w-0"
           data-invalid={invalid}
           data-disabled={disabled || draft.editing}
         >
@@ -349,7 +344,6 @@ function VariableFieldGrid({
           <Input
             id={`${id}-name`}
             value={draft.name}
-            autoFocus={!compact}
             placeholder="API_TOKEN"
             aria-describedby={invalid ? `${id}-name-hint` : undefined}
             disabled={disabled || draft.editing}
@@ -368,19 +362,13 @@ function VariableFieldGrid({
           ) : null}
         </Field>
       ) : null}
-      <Field
-        className={cn(
-          "col-span-2 min-w-0",
-          !compact && "@min-[40rem]/variable-form:col-span-1",
-        )}
-        data-disabled={disabled}
-      >
+      <Field className="col-span-2 min-w-0" data-disabled={disabled}>
         <FieldLabel htmlFor={`${id}-value`}>
           {m.settings_variables_value()}
         </FieldLabel>
         <Input
           id={`${id}-value`}
-          autoFocus={compact || draft.editing}
+          autoFocus
           type={draft.kind === "secret" ? "password" : "text"}
           value={draft.value}
           disabled={disabled}
@@ -388,11 +376,6 @@ function VariableFieldGrid({
           autoCorrect="off"
           autoCapitalize="off"
           spellCheck={false}
-          placeholder={
-            !compact && draft.kind === "secret" && draft.preservesSecret
-              ? m.settings_variables_secret_unchanged()
-              : undefined
-          }
           onChange={(event) => onChange(withValue(draft, event.target.value))}
         />
         {draft.kind === "secret" && draft.preservesSecret ? (
@@ -416,13 +399,7 @@ function VariableFieldGrid({
   );
   const fields = (
     <FieldGroup className="gap-4">
-      <FieldGroup
-        className={cn(
-          "grid grid-cols-2 items-start gap-4",
-          !compact &&
-            "@min-[40rem]/variable-form:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto_auto]",
-        )}
-      >
+      <FieldGroup className="grid grid-cols-2 items-start gap-4">
         {draft.owner.scope === "global" ? (
           valueFields
         ) : (
@@ -481,9 +458,7 @@ function VariableFieldGrid({
     </FieldGroup>
   );
   return (
-    <FieldGroup
-      className={cn("@container/variable-form gap-4", compact && "gap-3")}
-    >
+    <FieldGroup className="gap-3">
       {showOwner ? (
         <p className="text-xs text-muted-foreground wrap-anywhere">
           {draft.owner.scope === "global"

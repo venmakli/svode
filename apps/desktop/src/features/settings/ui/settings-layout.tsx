@@ -11,6 +11,7 @@ import {
   type ReactNode,
 } from "react";
 import { ChevronDown } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import {
   Collapsible,
@@ -340,6 +341,27 @@ export function SettingsItem({
       ) : null}
       {children}
     </Item>
+  );
+}
+
+// Shows or hides the stacked output of a row wrapped in a Collapsible.
+export function SettingsDisclosureTrigger({
+  open,
+  label,
+}: {
+  open: boolean;
+  label: string;
+}) {
+  return (
+    <CollapsibleTrigger asChild>
+      <Button variant="ghost" size="sm">
+        {label}
+        <ChevronDown
+          data-icon="inline-end"
+          className={cn("transition-transform", open && "rotate-180")}
+        />
+      </Button>
+    </CollapsibleTrigger>
   );
 }
 

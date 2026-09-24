@@ -1,6 +1,5 @@
 import { useState } from "react";
 import {
-  ChevronDown,
   Copy,
   LoaderCircle,
   RefreshCw,
@@ -17,15 +16,11 @@ import {
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "@/components/ui/collapsible";
+import { Collapsible, CollapsibleContent } from "@/components/ui/collapsible";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
-import { cn } from "@/shared/lib/utils";
 import {
+  SettingsDisclosureTrigger,
   SettingsGroup,
   SettingsItem,
   SettingsRowSkeleton,
@@ -72,20 +67,6 @@ function blocksManagedToggle(client: McpClientStatus) {
 function reportLines(report: McpDoctorReport | null) {
   if (!report) return [];
   return [...report.messages, ...report.errors];
-}
-
-function DisclosureTrigger({ open, label }: { open: boolean; label: string }) {
-  return (
-    <CollapsibleTrigger asChild>
-      <Button variant="ghost" size="sm">
-        {label}
-        <ChevronDown
-          data-icon="inline-end"
-          className={cn("transition-transform", open && "rotate-180")}
-        />
-      </Button>
-    </CollapsibleTrigger>
-  );
 }
 
 export function McpIntegrationsSection() {
@@ -210,7 +191,7 @@ export function McpIntegrationsSection() {
             title={m.settings_mcp_manual_config_json()}
             actions={
               <>
-                <DisclosureTrigger
+                <SettingsDisclosureTrigger
                   open={configOpen}
                   label={
                     configOpen
@@ -256,7 +237,7 @@ export function McpIntegrationsSection() {
             actions={
               <>
                 {lines.length > 0 ? (
-                  <DisclosureTrigger
+                  <SettingsDisclosureTrigger
                     open={reportOpen}
                     label={
                       reportOpen

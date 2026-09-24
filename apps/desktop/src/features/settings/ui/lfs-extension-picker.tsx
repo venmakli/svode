@@ -52,6 +52,8 @@ type ExtensionGroup = (typeof EXTENSION_GROUPS)[number];
 type ExtensionGroupValue = ExtensionGroup["value"];
 
 interface LfsExtensionPickerProps {
+  // The row that holds the picker names and describes its formats.
+  labelledBy?: string;
   describedBy?: string;
   disabled: boolean;
   invalid: boolean;
@@ -59,7 +61,14 @@ interface LfsExtensionPickerProps {
   value: string;
 }
 
+export function selectedLfsExtensionCount(value: string): number {
+  return extensionValuesFromDraft(value).length;
+}
+
+// The formats of the LFS rules: format groups that expand into single
+// formats, then a field for a format that is not listed.
 export function LfsExtensionPicker({
+  labelledBy,
   describedBy,
   disabled,
   invalid,
@@ -120,109 +129,88 @@ export function LfsExtensionPicker({
     : null;
 
   return (
-    <div className="space-y-4">
-      <Field data-invalid={invalid || undefined}>
-        <div className="flex items-center justify-between gap-3">
-          <FieldLabel id={`${id}-extensions-label`}>
-            {m.storage_lfs_extensions_label()}
-          </FieldLabel>
-          <span className="shrink-0 text-xs text-muted-foreground">
-            {m.storage_lfs_extensions_selected({
-              count: String(selectedExtensions.length),
-            })}
-          </span>
-        </div>
-        <FieldDescription id={`${id}-extensions-hint`} className="text-xs">
-          {m.storage_lfs_extensions_hint()}
-        </FieldDescription>
+    <div className="flex min-w-0 flex-col gap-4">
+      <div
+        className="flex min-w-0 flex-col"
+        role="group"
+        aria-labelledby={labelledBy}
+        aria-describedby={describedBy}
+        aria-invalid={invalid || undefined}
+      >
+        {EXTENSION_GROUPS.map((group) => {
+          const label = extensionGroupLabel(group.value);
+          const selectedCount = group.items.filter((extension) =>
+            selectedExtensionSet.has(extension),
+          ).length;
+          const groupChecked = selectionState(
+            selectedCount,
+            group.items.length,
+          );
+          const isOpen = openGroup === group.value;
 
-        <div
-          className="space-y-2"
-          role="group"
-          aria-labelledby={`${id}-extensions-label`}
-          aria-describedby={
-            describedBy
-              ? `${id}-extensions-hint ${describedBy}`
-              : `${id}-extensions-hint`
-          }
-          aria-invalid={invalid || undefined}
-        >
-          {EXTENSION_GROUPS.map((group) => {
-            const label = extensionGroupLabel(group.value);
-            const selectedCount = group.items.filter((extension) =>
-              selectedExtensionSet.has(extension),
-            ).length;
-            const groupChecked = selectionState(
-              selectedCount,
-              group.items.length,
-            );
-            const isOpen = openGroup === group.value;
-
-            return (
-              <Collapsible
-                key={group.value}
-                open={isOpen}
-                onOpenChange={(open) => setOpenGroup(open ? group.value : null)}
-                className="rounded-lg border border-border bg-muted/15"
-              >
-                <div className="flex min-h-11 items-center gap-3 px-3">
-                  <Checkbox
-                    id={`${id}-group-${group.value}`}
-                    checked={groupChecked}
-                    onCheckedChange={(checked) =>
-                      toggleGroup(group, checked === true)
-                    }
-                    disabled={disabled}
-                    aria-label={m.storage_lfs_group_toggle({ group: label })}
-                  />
-                  <CollapsibleTrigger
-                    id={`${id}-group-${group.value}-toggle`}
-                    className="group flex min-w-0 flex-1 items-center gap-3 py-2 text-left outline-none focus-visible:rounded-md focus-visible:ring-3 focus-visible:ring-ring/50"
-                    disabled={disabled}
-                    aria-label={
-                      isOpen
-                        ? m.storage_lfs_group_collapse({ group: label })
-                        : m.storage_lfs_group_expand({ group: label })
-                    }
-                  >
-                    <span className="min-w-0 flex-1 text-sm font-medium">
-                      {label}
-                    </span>
-                    <span className="shrink-0 text-xs text-muted-foreground">
-                      {m.storage_lfs_group_selected({
-                        selected: String(selectedCount),
-                        total: String(group.items.length),
-                      })}
-                    </span>
-                    <ChevronDown className="size-4 shrink-0 text-muted-foreground transition-transform group-data-[state=open]:rotate-180" />
-                  </CollapsibleTrigger>
+          return (
+            <Collapsible
+              key={group.value}
+              open={isOpen}
+              onOpenChange={(open) => setOpenGroup(open ? group.value : null)}
+            >
+              <div className="flex min-h-9 items-center gap-3 rounded-md px-2 hover:bg-muted/50">
+                <Checkbox
+                  id={`${id}-group-${group.value}`}
+                  checked={groupChecked}
+                  onCheckedChange={(checked) =>
+                    toggleGroup(group, checked === true)
+                  }
+                  disabled={disabled}
+                  aria-label={m.storage_lfs_group_toggle({ group: label })}
+                />
+                <CollapsibleTrigger
+                  id={`${id}-group-${group.value}-toggle`}
+                  className="group flex min-w-0 flex-1 items-center gap-3 py-2 text-left outline-none focus-visible:rounded-md focus-visible:ring-3 focus-visible:ring-ring/50"
+                  disabled={disabled}
+                  aria-label={
+                    isOpen
+                      ? m.storage_lfs_group_collapse({ group: label })
+                      : m.storage_lfs_group_expand({ group: label })
+                  }
+                >
+                  <span className="min-w-0 flex-1 text-sm font-medium">
+                    {label}
+                  </span>
+                  <span className="shrink-0 text-xs text-muted-foreground">
+                    {m.storage_lfs_group_selected({
+                      selected: String(selectedCount),
+                      total: String(group.items.length),
+                    })}
+                  </span>
+                  <ChevronDown className="size-4 shrink-0 text-muted-foreground transition-transform group-data-[state=open]:rotate-180" />
+                </CollapsibleTrigger>
+              </div>
+              <CollapsibleContent>
+                <div className="grid grid-cols-2 gap-1 pt-1 pb-2 pl-7 sm:grid-cols-3 lg:grid-cols-4">
+                  {group.items.map((extension) => (
+                    <label
+                      key={extension}
+                      htmlFor={`${id}-extension-${extension}`}
+                      className="flex min-h-9 cursor-pointer items-center gap-2 rounded-md px-2 text-sm hover:bg-muted has-disabled:cursor-not-allowed has-disabled:opacity-50"
+                    >
+                      <Checkbox
+                        id={`${id}-extension-${extension}`}
+                        checked={selectedExtensionSet.has(extension)}
+                        onCheckedChange={(checked) =>
+                          toggleExtension(extension, checked === true)
+                        }
+                        disabled={disabled}
+                      />
+                      <span className="font-mono">.{extension}</span>
+                    </label>
+                  ))}
                 </div>
-                <CollapsibleContent>
-                  <div className="grid grid-cols-2 gap-1 border-t border-border p-2 sm:grid-cols-3 lg:grid-cols-4">
-                    {group.items.map((extension) => (
-                      <label
-                        key={extension}
-                        htmlFor={`${id}-extension-${extension}`}
-                        className="flex min-h-9 cursor-pointer items-center gap-2 rounded-md px-2 text-sm hover:bg-muted has-disabled:cursor-not-allowed has-disabled:opacity-50"
-                      >
-                        <Checkbox
-                          id={`${id}-extension-${extension}`}
-                          checked={selectedExtensionSet.has(extension)}
-                          onCheckedChange={(checked) =>
-                            toggleExtension(extension, checked === true)
-                          }
-                          disabled={disabled}
-                        />
-                        <span className="font-mono">.{extension}</span>
-                      </label>
-                    ))}
-                  </div>
-                </CollapsibleContent>
-              </Collapsible>
-            );
-          })}
-        </div>
-      </Field>
+              </CollapsibleContent>
+            </Collapsible>
+          );
+        })}
+      </div>
 
       <Field data-invalid={customIssueMessage ? true : undefined}>
         <FieldLabel htmlFor={`${id}-custom-extension`}>

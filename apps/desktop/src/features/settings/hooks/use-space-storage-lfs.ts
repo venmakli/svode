@@ -30,6 +30,7 @@ export function useSpaceStorageLfs({
   lfsRemoteEnabled,
 }: UseSpaceStorageLfsOptions) {
   const [lfsAvailable, setLfsAvailable] = useState<boolean>(false);
+  const [lfsAvailabilityLoaded, setLfsAvailabilityLoaded] = useState(false);
   const [lfsVersion, setLfsVersion] = useState<string | null>(null);
   const [lfsState, setLfsState] = useState<LfsState>("n/a");
   const [lfsRepairInFlight, setLfsRepairInFlight] = useState(false);
@@ -75,6 +76,8 @@ export function useSpaceStorageLfs({
     } catch {
       setLfsAvailable(false);
       setLfsVersion(null);
+    } finally {
+      setLfsAvailabilityLoaded(true);
     }
   }, []);
 
@@ -224,6 +227,7 @@ export function useSpaceStorageLfs({
 
   return {
     lfsAvailable,
+    lfsAvailabilityLoaded,
     lfsVersion,
     lfsState,
     lfsRepairInFlight,

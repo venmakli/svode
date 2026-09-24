@@ -15,6 +15,8 @@ import {
 
 interface UseSpaceStorageConfigOptions {
   open: boolean;
+  // The S3 pair loads only while the owner's details are open.
+  detailsOpen: boolean;
   spacePath: string;
   projectPath: string;
   currentSpaceId: string | null;
@@ -22,6 +24,7 @@ interface UseSpaceStorageConfigOptions {
 
 export function useSpaceStorageConfig({
   open,
+  detailsOpen,
   spacePath,
   projectPath,
   currentSpaceId,
@@ -55,7 +58,7 @@ export function useSpaceStorageConfig({
   const [loadError, setLoadError] = useState(false);
   const [reload, setReload] = useState(0);
   const s3 = useStorageS3({
-    open,
+    open: detailsOpen,
     projectPath,
     spaceId: currentSpaceId,
     target: {

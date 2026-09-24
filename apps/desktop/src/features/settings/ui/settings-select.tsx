@@ -22,16 +22,22 @@ export function SettingsSelect({
   value,
   options,
   onValueChange,
+  placeholder,
   disabled = false,
   pending = false,
+  invalid = false,
+  describedBy,
   className,
 }: {
   id?: string;
   value: string;
   options: readonly SettingsSelectOption[];
   onValueChange: (value: string) => void;
+  placeholder?: string;
   disabled?: boolean;
   pending?: boolean;
+  invalid?: boolean;
+  describedBy?: string;
   className?: string;
 }) {
   const [open, setOpen] = useState(false);
@@ -52,12 +58,14 @@ export function SettingsSelect({
         id={id}
         aria-busy={pending || undefined}
         aria-disabled={pending || undefined}
+        aria-invalid={invalid || undefined}
+        aria-describedby={describedBy}
         className={cn(
           "w-44 max-w-full aria-disabled:cursor-not-allowed aria-disabled:opacity-50",
           className,
         )}
       >
-        <SelectValue>{selected?.label}</SelectValue>
+        <SelectValue placeholder={placeholder}>{selected?.label}</SelectValue>
         {pending ? (
           <LoaderCircle
             aria-hidden
