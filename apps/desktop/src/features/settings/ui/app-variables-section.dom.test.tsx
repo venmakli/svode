@@ -134,6 +134,7 @@ test("project page gives every owner a block with one editor on the page", async
     }),
     variableFixture({ name: "TOKEN", kind: "secret" }),
   ];
+  let projectRevision = "r1";
   const writes: unknown[] = [];
   let finishWrite: (() => void) | null = null;
   mockNativeIpc(
@@ -141,7 +142,11 @@ test("project page gives every owner a block with one editor on the page", async
       if (command === "get_app_variables") {
         const spaceId = (args as { scope?: { spaceId: string | null } }).scope
           ?.spaceId;
-        if (!spaceId) return catalogFixture(structuredClone(projectEntries));
+        if (!spaceId) {
+          const catalog = catalogFixture(structuredClone(projectEntries));
+          catalog.owners[0]!.revision = projectRevision;
+          return catalog;
+        }
         const owner = { scope: "space", id: spaceId } as const;
         const catalog = catalogFixture(
           [
@@ -171,7 +176,12 @@ test("project page gives every owner a block with one editor on the page", async
           finishWrite = resolve;
         });
         projectEntries.push(
-          variableFixture({ name: "NEW_VAR", kind: "variable", value: "v" }),
+          variableFixture({
+            name: "NEW_VAR",
+            kind: "variable",
+            value: "v",
+            revision: projectRevision,
+          }),
         );
         return { effects: [], recoveryError: null };
       }
@@ -280,6 +290,10 @@ test("project page gives every owner a block with one editor on the page", async
     expect(button(dev, "Override API_URL in this space").disabled).toBe(true);
     expect(button(project, "Edit TOKEN").disabled).toBe(true);
     expect(document.querySelectorAll("form").length).toBe(1);
+    const valueInput = document.activeElement!;
+    expect(valueInput.getAttribute("autocorrect")).toBe("off");
+    expect(valueInput.getAttribute("autocapitalize")).toBe("off");
+    expect(valueInput.getAttribute("spellcheck")).toBe("false");
 
     await act(async () => {
       button(projectEditor, "Local").dispatchEvent(
@@ -297,6 +311,36 @@ test("project page gives every owner a block with one editor on the page", async
         "Previously committed values can remain in Git history.",
       ),
     ).toBe(true);
+
+    projectRevision = "r2";
+    projectEntries[0] = {
+      ...projectEntries[0]!,
+      value: "https://changed.test",
+      revision: projectRevision,
+    };
+    await act(async () => {
+      dom.window.dispatchEvent(new dom.window.Event("focus"));
+      await nextTurn();
+      await nextTurn();
+    });
+    expect(
+      projectEditor.textContent?.includes(
+        "This variable changed outside this form.",
+      ),
+    ).toBe(true);
+    await press(button(projectEditor, "Review latest and keep draft"));
+    expect(
+      projectEditor.textContent?.includes(
+        "Currently saved: https://changed.test",
+      ),
+    ).toBe(true);
+    expect(
+      projectEditor.textContent?.includes("The source was reloaded."),
+    ).toBe(true);
+    expect(
+      projectEditor.querySelector<HTMLInputElement>('input[id$="-value"]')
+        ?.value,
+    ).toBe("https://example.test");
 
     await press(button(projectEditor, "Cancel"));
     expect(document.querySelector("form")).toBeNull();
@@ -329,6 +373,15 @@ test("project page gives every owner a block with one editor on the page", async
     await act(async () =>
       setInputValue(
         create.querySelector<HTMLInputElement>('input[id$="-name"]')!,
+        "api_url",
+      ),
+    );
+    expect(create.querySelector('[data-slot="field-error"]')?.textContent).toBe(
+      "A variable with this name already exists here. Edit it or choose another name.",
+    );
+    await act(async () =>
+      setInputValue(
+        create.querySelector<HTMLInputElement>('input[id$="-name"]')!,
         "new_var",
       ),
     );
@@ -347,7 +400,7 @@ test("project page gives every owner a block with one editor on the page", async
           mode: "local",
           kind: "variable",
           operation: "create",
-          revision: "r1",
+          revision: "r2",
           value: "v",
           scope: { projectPath: "/repo", spaceId: null },
         },

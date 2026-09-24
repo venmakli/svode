@@ -31,6 +31,7 @@ interface AppVariableFieldsProps {
   collisionAlternatives?: AppVariableEntry[];
   nameError?: string | null;
   usage?: ReactNode;
+  currentValue?: string | null;
 }
 
 export function AppVariableFields(props: AppVariableFieldsProps) {
@@ -133,6 +134,7 @@ function VariableFieldRows({
   collisionAlternatives,
   nameError,
   usage,
+  currentValue,
 }: AppVariableFieldsProps) {
   const id = useId();
   const scoped = draft.owner.scope !== "global";
@@ -144,6 +146,8 @@ function VariableFieldRows({
       label={m.settings_variables_value()}
       htmlFor={`${id}-value`}
       description={lines(
+        currentValue != null &&
+          m.variables_current_value({ value: currentValue }),
         draft.kind === "secret" &&
           draft.preservesSecret &&
           m.app_variables_keep_secret(),
@@ -155,12 +159,15 @@ function VariableFieldRows({
     >
       <Input
         id={`${id}-value`}
-        className="w-80 max-w-full"
+        className="w-72 max-w-full"
         autoFocus={draft.editing}
         type={draft.kind === "secret" ? "password" : "text"}
         value={draft.value}
         disabled={disabled}
         autoComplete="off"
+        autoCorrect="off"
+        autoCapitalize="off"
+        spellCheck={false}
         onChange={(event) => onChange(withValue(draft, event.target.value))}
       />
       {draft.kind === "variable" && !draft.explicitOrdinary ? (
@@ -212,13 +219,15 @@ function VariableFieldRows({
       >
         <Input
           id={`${id}-name`}
-          className="w-64 max-w-full font-mono"
+          className="w-72 max-w-full font-mono"
           value={draft.name}
           autoFocus={!draft.editing}
           placeholder="API_TOKEN"
           aria-describedby={nameProblem ? `${id}-name-hint` : undefined}
           disabled={disabled || draft.editing}
           aria-invalid={Boolean(nameProblem)}
+          autoCorrect="off"
+          autoCapitalize="off"
           spellCheck={false}
           onChange={(event) =>
             onChange({ ...draft, name: event.target.value.toUpperCase() })
@@ -345,6 +354,8 @@ function VariableFieldGrid({
             aria-describedby={invalid ? `${id}-name-hint` : undefined}
             disabled={disabled || draft.editing}
             aria-invalid={invalid}
+            autoCorrect="off"
+            autoCapitalize="off"
             spellCheck={false}
             onChange={(event) =>
               onChange({ ...draft, name: event.target.value.toUpperCase() })
@@ -374,6 +385,9 @@ function VariableFieldGrid({
           value={draft.value}
           disabled={disabled}
           autoComplete="off"
+          autoCorrect="off"
+          autoCapitalize="off"
+          spellCheck={false}
           placeholder={
             !compact && draft.kind === "secret" && draft.preservesSecret
               ? m.settings_variables_secret_unchanged()

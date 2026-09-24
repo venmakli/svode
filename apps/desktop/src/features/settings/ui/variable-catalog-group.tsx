@@ -77,6 +77,13 @@ function usageText(
     .join(", ");
 }
 
+const valueText = (entry: AppVariableEntry) =>
+  entry.kind === "secret"
+    ? entry.hasValue
+      ? "••••••••"
+      : m.variables_unset_here()
+    : (entry.value ?? "");
+
 // The Variables group of one owner. Each owner keeps its own catalog
 // lifecycle; the page only coordinates the single open editor.
 export function VariableCatalogGroup({
@@ -235,10 +242,15 @@ export function VariableCatalogGroup({
         collisionAlternatives={catalog?.entries.filter((entry) =>
           sameSource(entry.source, { owner: draft.owner, name: draft.name }),
         )}
-        nameError={variables.collision ? m.app_variables_collision() : null}
+        nameError={variables.collision ? m.variables_name_taken() : null}
         usage={
           variables.currentEntry?.usedIn.length
             ? `${m.variables_known_usage()}: ${usageText(variables.currentEntry.usedIn, projectPath, projectName)}`
+            : null
+        }
+        currentValue={
+          variables.reviewed && variables.currentEntry
+            ? valueText(variables.currentEntry)
             : null
         }
       />
@@ -249,7 +261,7 @@ export function VariableCatalogGroup({
             <AlertDescription>
               <p>
                 {variables.stale
-                  ? m.app_variables_stale()
+                  ? m.variables_changed_outside()
                   : m.app_variables_save_error()}
               </p>
               {variables.stale ? (
@@ -307,11 +319,7 @@ export function VariableCatalogGroup({
         description={
           <>
             <span className="block whitespace-pre-wrap wrap-anywhere">
-              {secret
-                ? entry.hasValue
-                  ? "••••••••"
-                  : m.variables_unset_here()
-                : entry.value}
+              {valueText(entry)}
             </span>
             {entry.inherited ? (
               <span className="block">

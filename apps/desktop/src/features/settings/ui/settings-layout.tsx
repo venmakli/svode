@@ -177,7 +177,12 @@ export function SettingsGroup({
       {...props}
     >
       {title || description || action ? (
-        <div className="flex min-w-0 flex-wrap items-start gap-x-4 gap-y-2">
+        <div
+          className={cn(
+            "flex min-w-0 flex-wrap gap-x-4 gap-y-2",
+            description ? "items-start" : "items-center",
+          )}
+        >
           {title || description ? (
             <div className="flex min-w-0 flex-[1_1_12rem] flex-col gap-1">
               {title ? (
