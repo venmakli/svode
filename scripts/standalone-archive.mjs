@@ -4,12 +4,13 @@
 // same product version.
 //
 //   svode-<version>-<target triple>/
-//     bin/svode, bin/svode-mcp, bin/svode-lfs
+//     bin/svode, bin/svode-mcp, bin/svode-lfs, bin/svode-launcher
 //     plugins/svode/
 //
 // usage: node scripts/standalone-archive.mjs <bin dir> <out dir>
 // Writes <out dir>/svode-<version>-<target triple>.tar.gz and prints its
-// path. Needs tar and rustc (for the host target triple).
+// path. Needs tar and rustc (for the host target triple). `scripts/install.sh`
+// installs the archive.
 
 import { execFileSync } from "node:child_process";
 import {
@@ -26,7 +27,7 @@ import {
   productVersion,
 } from "./plugin-payload.mjs";
 
-const RUNTIME = ["svode", "svode-mcp", "svode-lfs"];
+const RUNTIME = ["svode", "svode-mcp", "svode-lfs", "svode-launcher"];
 const [binDir, outDir] = process.argv.slice(2).map((arg) => resolve(arg));
 if (!binDir || !outDir) {
   console.error(
@@ -36,7 +37,7 @@ if (!binDir || !outDir) {
 }
 
 const version = productVersion();
-for (const bin of ["svode", "svode-mcp"]) {
+for (const bin of ["svode", "svode-mcp", "svode-launcher"]) {
   const reported = execFileSync(join(binDir, bin), ["--version"], {
     encoding: "utf8",
   })

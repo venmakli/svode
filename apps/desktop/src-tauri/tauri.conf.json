@@ -35,7 +35,12 @@
   "bundle": {
     "active": true,
     "targets": "all",
-    "externalBin": ["binaries/svode-lfs", "binaries/svode-mcp", "binaries/svode"],
+    "externalBin": [
+      "binaries/svode-lfs",
+      "binaries/svode-mcp",
+      "binaries/svode",
+      "binaries/svode-launcher"
+    ],
     "resources": { "payload/svode/": "plugins/svode/" },
     "linux": {
       "deb": {

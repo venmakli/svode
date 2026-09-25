@@ -6,10 +6,11 @@
   "scripts": {
     "dev": "vite",
     "build": "NODE_OPTIONS='--max-old-space-size=8192' vite build",
-    "build:sidecars": "node scripts/build-svode-lfs.mjs && node scripts/build-svode-mcp.mjs && node scripts/build-svode-cli.mjs",
+    "build:sidecars": "node scripts/build-svode-lfs.mjs && node scripts/build-svode-mcp.mjs && node scripts/build-svode-cli.mjs && node scripts/build-svode-launcher.mjs",
     "build:svode-lfs": "node scripts/build-svode-lfs.mjs",
     "build:svode-mcp": "node scripts/build-svode-mcp.mjs",
     "build:svode-cli": "node scripts/build-svode-cli.mjs",
+    "build:svode-launcher": "node scripts/build-svode-launcher.mjs",
     "build:plugin": "node ../../scripts/plugin-payload.mjs build src-tauri/payload/svode",
     "check:sidecars": "node scripts/prepare-sidecar-placeholders.mjs && bun run build:plugin",
     "paraglide": "paraglide-js compile --project ./project.inlang --outdir ./src/paraglide --silent",

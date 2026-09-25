@@ -14,6 +14,7 @@ mod files;
 mod git;
 mod identity;
 mod index;
+mod installation;
 #[cfg(target_os = "macos")]
 mod macos_fullscreen;
 pub mod mcp;
@@ -117,6 +118,7 @@ pub fn run() {
             }
             #[cfg(target_os = "macos")]
             macos_fullscreen::install(app.handle());
+            installation::take_ownership(app.handle());
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 if let Err(error) = mcp::ipc::start_desktop_ipc(handle.clone()).await {

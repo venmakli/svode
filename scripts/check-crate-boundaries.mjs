@@ -5,16 +5,26 @@
 // run with the Desktop closed, so neither they nor anything they depend on may
 // reach `svode-desktop` or any `tauri*` package. The CLI and MCP entrypoints
 // share the svode-tools surface and are independent of each other, so neither
-// reaches the other and svode-tools reaches neither.
+// reaches the other and svode-tools reaches neither. svode-install ships the
+// launchers that stay in ~/.svode after a runtime is gone, so it reaches no
+// other Svode package.
 
 import { execFileSync } from "node:child_process";
 
-const packages = ["svode-core", "svode-tools", "svode-mcp", "svode-cli", "svode-lfs"];
+const packages = [
+  "svode-core",
+  "svode-tools",
+  "svode-mcp",
+  "svode-cli",
+  "svode-lfs",
+  "svode-install",
+];
 const hostBound = (name) => name === "svode-desktop" || /^tauri(-|$)/.test(name);
 const extraForbidden = {
   "svode-tools": ["svode-mcp", "svode-cli"],
   "svode-mcp": ["svode-cli"],
   "svode-cli": ["svode-mcp"],
+  "svode-install": ["svode-core", "svode-tools", "svode-mcp", "svode-cli", "svode-lfs"],
 };
 const forbidden = (pkg, name) => hostBound(name) || (extraForbidden[pkg] ?? []).includes(name);
 
@@ -55,5 +65,5 @@ if (failed) {
   process.exit(1);
 }
 console.log(
-  `[crate-boundaries] ok: ${packages.join(", ")} are host-free; svode-cli and svode-mcp are independent over svode-tools`,
+  `[crate-boundaries] ok: ${packages.join(", ")} are host-free; svode-cli and svode-mcp are independent over svode-tools; svode-install is self-contained`,
 );

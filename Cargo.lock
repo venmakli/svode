@@ -5334,6 +5334,7 @@ dependencies = [
  "sha2 0.10.9",
  "sqlx",
  "svode-core",
+ "svode-install",
  "svode-mcp",
  "svode-tools",
  "tauri",
@@ -5353,6 +5354,15 @@ dependencies = [
  "unicode-segmentation",
  "url",
  "which",
+]
+
+[[package]]
+name = "svode-install"
+version = "0.0.8"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tempfile",
 ]
 
 [[package]]
