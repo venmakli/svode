@@ -61,7 +61,7 @@ export function SettingsPage({
         ref={scrollRef}
         className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto"
       >
-        <div className="flex w-full max-w-3xl min-w-0 flex-col gap-8 p-6">
+        <div className="mx-auto flex w-full max-w-3xl min-w-0 flex-col gap-8 p-6">
           {children}
         </div>
       </div>

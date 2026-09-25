@@ -36,6 +36,8 @@ if (process.env.SVODE_UNIFIED_SETTINGS_DOM !== "1") {
   const applyingOwners = new Set<string>();
   // Whether each storage owner's details (S3, LFS, diagnostics) are loading.
   const storageOpen = new Map<string, boolean>();
+  // The project setting each storage owner compares itself with.
+  const projectSettingKeys = new Map<string, string | null | undefined>();
   const loads = new Map<string, (value: unknown) => void>();
   const noop = () => {};
   mock.module("@/features/space", () => ({
@@ -119,12 +121,15 @@ if (process.env.SVODE_UNIFIED_SETTINGS_DOM !== "1") {
       open,
       detailsActive = open,
       spacePath,
+      projectSettingKey,
     }: {
       open: boolean;
       detailsActive?: boolean;
       spacePath: string;
+      projectSettingKey?: string | null;
     }) => {
       storageOpen.set(spacePath, open && detailsActive);
+      projectSettingKeys.set(spacePath, projectSettingKey);
       return {
         currentSpacePath: spacePath,
         storageConfigLoaded: true,
@@ -405,6 +410,11 @@ if (process.env.SVODE_UNIFIED_SETTINGS_DOM !== "1") {
       ]);
       expect(storageOpen.get("/project")).toBe(true);
       expect(storageOpen.get("/project/docs")).toBe(false);
+      // Space blocks follow the project's saved setting on the same page.
+      expect(projectSettingKeys.get("/project")).toBe(undefined);
+      expect(projectSettingKeys.get("/project/docs")).toBe(
+        JSON.stringify(["in-git", null]),
+      );
       expect(ownerTrigger("Docs").getAttribute("aria-expanded")).toBe("false");
       expect(
         ownerTrigger("Docs").textContent?.includes("Storage of /project/docs"),

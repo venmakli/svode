@@ -102,13 +102,20 @@ if (process.env.SVODE_S3_TEST !== "1") {
       mutationGate: null as Promise<void> | null,
       bindingGate: null as Promise<void> | null,
       lfsDeclaration: "published" as string,
+      projectStrategy: null as "local" | "in-git" | null,
+      projectReads: 0,
     };
     mockNativeIpc(
       async (command, rawArgs = {}) => {
         const args = rawArgs as Record<string, unknown>;
+        if (command === "get_assets_config" && args.spaceId == null)
+          fixture.projectReads += 1;
         if (command === "get_assets_config")
           return {
-            strategy,
+            strategy:
+              args.spaceId == null
+                ? (fixture.projectStrategy ?? strategy)
+                : strategy,
             s3: target,
             defaultS3Prefix: "default",
             inheritedFromProject: args.spaceId === "inline",
@@ -223,9 +230,11 @@ if (process.env.SVODE_S3_TEST !== "1") {
     function Harness({
       spaceId = null,
       open = true,
+      projectSettingKey,
     }: {
       spaceId?: string | null;
       open?: boolean;
+      projectSettingKey?: string;
     }) {
       const value = useSpaceStorageSettings({
         open,
@@ -234,15 +243,26 @@ if (process.env.SVODE_S3_TEST !== "1") {
         projectPath: "/repo",
         currentSpaceId: spaceId,
         isRoot: !spaceId,
+        projectSettingKey,
       });
       useLayoutEffect(() => {
         state = value;
       });
       return <StorageS3Group settings={value} />;
     }
-    async function render(spaceId: string | null = null, open = true) {
+    async function render(
+      spaceId: string | null = null,
+      open = true,
+      projectSettingKey?: string,
+    ) {
       await act(async () => {
-        root.render(<Harness spaceId={spaceId} open={open} />);
+        root.render(
+          <Harness
+            spaceId={spaceId}
+            open={open}
+            projectSettingKey={projectSettingKey}
+          />,
+        );
         await tick();
         await tick();
       });
@@ -673,6 +693,24 @@ if (process.env.SVODE_S3_TEST !== "1") {
       expect(save.args.strategy).toBe("lfs-s3");
       expect(save.args.s3Config).toEqual(target);
       expect(save.args.s3Bindings).toBe(null);
+    } finally {
+      await h.cleanup();
+    }
+  });
+
+  test("a space block rereads the project setting after the project applies a strategy", async () => {
+    const h = await setup(false, "local");
+    try {
+      await h.render("repo-space", true, "local");
+      expect(h.state.projectConfigStatus).toBe("loaded");
+      expect(h.state.projectDefaultApplied).toBe(true);
+      const reads = h.fixture.projectReads;
+
+      h.fixture.projectStrategy = "in-git";
+      await h.render("repo-space", true, "in-git");
+      expect(h.fixture.projectReads).toBe(reads + 1);
+      expect(h.state.projectConfigStatus).toBe("loaded");
+      expect(h.state.projectDefaultApplied).toBe(false);
     } finally {
       await h.cleanup();
     }

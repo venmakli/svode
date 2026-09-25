@@ -48,6 +48,10 @@ export function ProjectStorageSection({
     registerLeaveGuard,
   });
   const showProject = () => blocks.reveal(projectPath);
+  // Space blocks compare themselves with the project's saved setting.
+  const projectSettingKey = project.storageConfigLoaded
+    ? JSON.stringify([project.savedAssetsStrategy, project.savedS3Config])
+    : null;
   return (
     <>
       <ProjectOwnerBlock
@@ -115,6 +119,7 @@ export function ProjectStorageSection({
             headingRef={headingRef}
             registerLeaveGuard={registerLeaveGuard}
             onOpenProject={showProject}
+            projectSettingKey={projectSettingKey}
           />
         );
       })}
@@ -136,6 +141,7 @@ function SpaceStorageOwner({
   headingRef,
   registerLeaveGuard,
   onOpenProject,
+  projectSettingKey,
 }: {
   projectPath: string;
   projectName: string;
@@ -147,6 +153,7 @@ function SpaceStorageOwner({
   headingRef: (node: HTMLElement | null) => void;
   registerLeaveGuard: RegisterLeaveGuard;
   onOpenProject: () => void;
+  projectSettingKey: string | null;
 }) {
   const settings = useStorageOwner({
     projectPath,
@@ -154,6 +161,7 @@ function SpaceStorageOwner({
     spaceId: space.id,
     detailsActive: opened,
     registerLeaveGuard,
+    projectSettingKey,
   });
   return (
     <>
@@ -183,12 +191,14 @@ function useStorageOwner({
   spaceId,
   detailsActive,
   registerLeaveGuard,
+  projectSettingKey,
 }: {
   projectPath: string;
   spacePath: string;
   spaceId: string | null;
   detailsActive: boolean;
   registerLeaveGuard: RegisterLeaveGuard;
+  projectSettingKey?: string | null;
 }) {
   const settings = useSpaceStorageSettings({
     open: true,
@@ -198,6 +208,7 @@ function useStorageOwner({
     projectPath,
     currentSpaceId: spaceId,
     isRoot: spaceId === null,
+    projectSettingKey,
   });
   const busy = settings.applyingStrategy || settings.s3.pending;
   useLayoutEffect(

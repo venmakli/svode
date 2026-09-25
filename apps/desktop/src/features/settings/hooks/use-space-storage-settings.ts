@@ -33,6 +33,9 @@ interface UseSpaceStorageSettingsOptions {
   projectPath: string;
   currentSpaceId: string | null;
   isRoot: boolean;
+  // Changes when the project's saved storage setting changes on the same
+  // page, so a space block compares itself with the current one.
+  projectSettingKey?: string | null;
 }
 
 export type StorageProjectConfigStatus = "loading" | "loaded" | "failed";
@@ -120,6 +123,7 @@ export function useSpaceStorageSettings({
   projectPath,
   currentSpaceId,
   isRoot,
+  projectSettingKey,
 }: UseSpaceStorageSettingsOptions): UseSpaceStorageSettingsResult {
   const details = open && detailsActive;
   const currentTargetKey = storageTargetKey(projectPath, currentSpaceId);
@@ -231,10 +235,14 @@ export function useSpaceStorageSettings({
   const confirmingPendingStrategyRef = useRef(false);
   const applyingRef = useRef(false);
 
+  const projectConfigLoadedForRef = useRef<string | null>(null);
   useEffect(() => {
     if (!open || !projectPath) return;
     let cancelled = false;
-    setProjectConfigStatus("loading");
+    // A reload after the project setting changed keeps the current comparison
+    // until the new one arrives.
+    if (projectConfigLoadedForRef.current !== projectPath)
+      setProjectConfigStatus("loading");
 
     void getAssetsConfig({ projectPath, spaceId: null })
       .then((config) => {
@@ -242,6 +250,7 @@ export function useSpaceStorageSettings({
           setProjectAssetsStrategy(config.strategy);
           setProjectS3Config(config.s3 ?? null);
           setProjectConfigStatus("loaded");
+          projectConfigLoadedForRef.current = projectPath;
         }
       })
       .catch((err) => {
@@ -252,7 +261,7 @@ export function useSpaceStorageSettings({
     return () => {
       cancelled = true;
     };
-  }, [open, projectPath]);
+  }, [open, projectPath, projectSettingKey]);
 
   const countCurrentAssets = useCallback(async (): Promise<number | null> => {
     if (!spacePath) return 0;
