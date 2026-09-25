@@ -3,14 +3,15 @@
 // app closed: the binaries in <dir> report the product version, the CLI
 // creates and finds a Page in a fresh Project, and `svode-mcp --project`
 // serves the headless catalog (53 tools, no run_routine) over one stdio
-// session that ends on EOF.
+// session that ends on EOF, as does `svode-mcp` without arguments started
+// inside the Project.
 //
 // usage: node scripts/smoke-standalone.mjs <dir with svode and svode-mcp>
 // Run it on a build directory, a desktop app bundle (Contents/MacOS) or an
 // installed location. Needs git.
 
 import { execFileSync, spawn } from "node:child_process";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -27,11 +28,18 @@ const app = join(dirname(fileURLToPath(import.meta.url)), "..");
 const version = JSON.parse(readFileSync(join(app, "apps/desktop/package.json"), "utf8")).version;
 
 const temp = mkdtempSync(join(tmpdir(), "svode-smoke-"));
+// A discovery file of another bridge protocol: no desktop bridge, not even
+// the user's own desktop app.
+const discovery = join(temp, "incompatible-desktop.json");
+writeFileSync(
+  discovery,
+  JSON.stringify({ host: "127.0.0.1", port: 1, token: "smoke", pid: 0, version: "other", bridgeProtocol: "none" }),
+);
 const env = {
   ...process.env,
-  // Device-local settings apart from the user's own; no desktop bridge.
+  // Device-local settings apart from the user's own.
   SVODE_PRODUCT_IDENTIFIER: "app.svode.desktop.smoke",
-  SVODE_MCP_DISCOVERY: join(temp, "no-desktop.json"),
+  SVODE_MCP_DISCOVERY: discovery,
   GIT_TERMINAL_PROMPT: "0",
 };
 delete env.SVODE_MCP_ROUTINE_CALLER_TOKEN;
@@ -77,9 +85,9 @@ function cli(root, args) {
   return JSON.parse(run(svode, ["--project", root, "--json", ...args]));
 }
 
-function mcpSession(root, requests) {
+function mcpSession(args, cwd, requests) {
   return new Promise((resolveSession, reject) => {
-    const child = spawn(svodeMcp, ["--project", root], { cwd: temp, env });
+    const child = spawn(svodeMcp, args, { cwd, env });
     let stdout = "";
     let stderr = "";
     const timer = setTimeout(() => {
@@ -119,7 +127,7 @@ try {
   const doctor = cli(root, ["doctor"]);
   check(doctor.doctor.runtime.servedTools.length === HEADLESS_TOOLS, `svode doctor serves ${HEADLESS_TOOLS} tools`);
 
-  const responses = await mcpSession(root, [
+  const responses = await mcpSession(["--project", root], temp, [
     { jsonrpc: "2.0", id: 1, method: "initialize", params: {} },
     { jsonrpc: "2.0", method: "notifications/initialized" },
     { jsonrpc: "2.0", id: 2, method: "tools/list" },
@@ -140,6 +148,15 @@ try {
   check(
     search?.isError !== true && search?.structuredContent?.items?.some((item) => item.path === "Smoke page.md"),
     "svode-mcp --project answers search_pages and exits on EOF",
+  );
+  const automatic = await mcpSession([], root, [
+    { jsonrpc: "2.0", id: 1, method: "tools/list" },
+    { jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "get_project_info", arguments: {} } },
+  ]);
+  check(
+    automatic.get(1)?.result?.tools?.length === HEADLESS_TOOLS &&
+      automatic.get(2)?.result?.structuredContent?.projectPath === realpathSync(root),
+    "svode-mcp without arguments serves the Project of its directory without the desktop app",
   );
   const head = execFileSync("git", ["rev-list", "--count", "HEAD"], { cwd: root, encoding: "utf8" }).trim();
   check(head === "1", "no commit was made");

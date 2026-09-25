@@ -5,7 +5,8 @@ use std::path::{Path, PathBuf};
 
 use svode_core::index::IndexKey;
 use svode_core::page::{
-    PageSourceError, ResolvedSpaceTarget, ready_child_space_for_directory, resolve_space_target,
+    PageSourceError, ResolvedSpaceTarget, project_for_directory, ready_child_space_for_directory,
+    resolve_space_target,
 };
 use svode_core::runtime::session::SessionError;
 
@@ -64,6 +65,18 @@ pub fn resolve_space(
 /// directory; its root Space is the returned target.
 pub fn resolve_project(project: &Path) -> Result<ResolvedSpaceTarget, ToolError> {
     resolve_space_target(project, None).map_err(|error| context_error(error, "PROJECT_UNAVAILABLE"))
+}
+
+/// Project directory a standalone process discovers from `cwd` when no
+/// Project is given: the nearest one containing it.
+pub fn project_for_cwd(cwd: &Path) -> Result<PathBuf, ToolError> {
+    let cwd = cwd.canonicalize().unwrap_or_else(|_| cwd.to_path_buf());
+    project_for_directory(&cwd).ok_or_else(|| {
+        ToolError::new(
+            "PROJECT_UNAVAILABLE",
+            format!("no Svode project contains {}", cwd.display()),
+        )
+    })
 }
 
 /// Default Space of a standalone process: an explicit selector wins (`root`

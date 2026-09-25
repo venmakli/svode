@@ -16,6 +16,7 @@ pub async fn run() -> i32 {
 
 async fn run_args(args: &[String]) -> Result<(), ToolError> {
     match args.first().map(String::as_str) {
+        None => automatic().await,
         Some("--app") if args.get(1).map(String::as_str) == Some("desktop") => {
             stdio::run_stdio().await
         }
@@ -57,10 +58,26 @@ async fn run_args(args: &[String]) -> Result<(), ToolError> {
             println!("{MCP_VERSION}");
             Ok(())
         }
+        Some("--help") | Some("-h") => {
+            println!("{}", usage());
+            Ok(())
+        }
         _ => {
             eprintln!("{}", usage());
             Ok(())
         }
+    }
+}
+
+/// Mode of a session started without arguments, fixed for its lifetime:
+/// the desktop bridge when a compatible desktop app answers at session
+/// start, otherwise headless for the Project containing the launch
+/// directory.
+async fn automatic() -> Result<(), ToolError> {
+    if bridge::desktop_reachable().await {
+        stdio::run_stdio().await
+    } else {
+        headless::run_in_cwd().await
     }
 }
 
@@ -99,6 +116,12 @@ fn parse_client_arg(args: &[String]) -> Result<McpClient, ToolError> {
 
 fn usage() -> &'static str {
     "Usage:
+  svode-mcp
+      Automatic mode, chosen once at session start. With the Svode desktop
+      app running: its bridge, targeting SVODE_MCP_PROJECT_PATH, else the
+      project of the current directory, else the active window. Without it:
+      the Svode project containing the current directory, served headless;
+      outside a project, tool calls answer PROJECT_UNAVAILABLE.
   svode-mcp --app desktop
   svode-mcp --project <path> [--space <root|space-id>]
   svode-mcp install --client <claude-code|codex>
@@ -106,7 +129,8 @@ fn usage() -> &'static str {
   svode-mcp print-config --client <claude-code|codex>
   svode-mcp doctor
   svode-mcp --bridge-protocol
-  svode-mcp --version"
+  svode-mcp --version
+  svode-mcp --help"
 }
 
 #[cfg(test)]

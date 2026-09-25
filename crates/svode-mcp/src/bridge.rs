@@ -1,5 +1,6 @@
 use std::fs;
 use std::path::PathBuf;
+use std::time::Duration;
 
 use serde_json::{Value, json};
 use svode_tools::error::ToolError;
@@ -124,11 +125,14 @@ pub fn discovery_exists() -> bool {
     read_discovery_path().is_some_and(|path| path.exists())
 }
 
+/// Upper bound of probing the desktop app; a live one answers at once.
+const PROBE_TIMEOUT: Duration = Duration::from_secs(2);
+
+/// Whether a compatible desktop app answers the bridge `ping`.
 pub async fn desktop_reachable() -> bool {
-    desktop_request("ping", json!({}))
+    tokio::time::timeout(PROBE_TIMEOUT, desktop_request("ping", json!({})))
         .await
-        .map(|response| response.error.is_none())
-        .unwrap_or(false)
+        .is_ok_and(|response| response.is_ok_and(|response| response.error.is_none()))
 }
 
 fn read_discovery() -> Result<DiscoveryFile, ToolError> {

@@ -642,8 +642,8 @@ fn an_unusable_target_fails_before_the_session_starts() {
 
 #[test]
 fn usage_names_the_project_mode() {
-    let output = Command::new(BIN).output().unwrap();
-    let usage = String::from_utf8(output.stderr).unwrap();
+    let output = Command::new(BIN).arg("--help").output().unwrap();
+    let usage = String::from_utf8(output.stdout).unwrap();
     assert!(
         usage.contains("svode-mcp --project <path> [--space <root|space-id>]"),
         "{usage}"

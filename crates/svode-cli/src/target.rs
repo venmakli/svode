@@ -5,11 +5,11 @@
 use std::path::{Path, PathBuf};
 
 use serde_json::{Map, Value, json};
-use svode_core::page::{ResolvedSpaceTarget, project_for_directory};
+use svode_core::page::ResolvedSpaceTarget;
 use svode_tools::error::ToolError;
 use svode_tools::host::{RequestTarget, ToolHost};
 use svode_tools::standalone::request_target;
-use svode_tools::target::{ROOT_SPACE_ID, resolve_default_space, resolve_project};
+use svode_tools::target::{ROOT_SPACE_ID, project_for_cwd, resolve_default_space, resolve_project};
 
 use crate::error::CliError;
 
@@ -57,20 +57,7 @@ impl Selectors<'_> {
         };
         let project_dir = match self.project_dir() {
             Some(project) => project,
-            None => {
-                let cwd = self
-                    .cwd
-                    .canonicalize()
-                    .unwrap_or_else(|_| self.cwd.to_path_buf());
-                project_for_directory(&cwd).ok_or_else(|| {
-                    CliError::operation(
-                        "PROJECT_UNAVAILABLE",
-                        format!("no Svode project contains {}", cwd.display()),
-                    )
-                    .with_target(self.known())
-                    .with_hint(SELECTOR_HINT)
-                })?
-            }
+            None => project_for_cwd(self.cwd).map_err(context_error)?,
         };
         let project = resolve_project(&project_dir).map_err(context_error)?;
         let project_path = project.project_path.display().to_string();
