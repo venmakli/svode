@@ -8,13 +8,43 @@ use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output, Stdio};
+use std::process::{Child, Command, Output, Stdio};
 
 use serde_json::Value;
 use svode_install::{DesktopRuntime, Layout, Ownership, RuntimeKind, take_desktop_ownership};
 use tempfile::TempDir;
 
 const LAUNCHER: &str = env!("CARGO_BIN_EXE_svode-launcher");
+
+/// Starts a binary the test has just written. On Linux a parallel test
+/// that forks meanwhile keeps the file open for writing until its child
+/// execs, and exec fails with ETXTBSY; the next attempt succeeds.
+trait Run {
+    fn run(&mut self) -> Output;
+    fn start(&mut self) -> Child;
+}
+
+impl Run for Command {
+    fn run(&mut self) -> Output {
+        retry_busy(|| self.output())
+    }
+
+    fn start(&mut self) -> Child {
+        retry_busy(|| self.spawn())
+    }
+}
+
+fn retry_busy<T>(mut start: impl FnMut() -> std::io::Result<T>) -> T {
+    for _ in 0..50 {
+        match start() {
+            Err(error) if error.kind() == std::io::ErrorKind::ExecutableFileBusy => {
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            result => return result.unwrap(),
+        }
+    }
+    start().unwrap()
+}
 
 struct Machine {
     _dir: TempDir,
@@ -64,15 +94,13 @@ impl Machine {
     fn install(&self, archive: &Path) -> Output {
         self.command(&archive.join("bin/svode-launcher"))
             .arg("install")
-            .output()
-            .unwrap()
+            .run()
     }
 
     fn uninstall(&self) -> Output {
         self.command(&self.layout().active_binary("svode-launcher"))
             .arg("uninstall")
-            .output()
-            .unwrap()
+            .run()
     }
 
     /// Runs the `svode` launcher and returns its stdout.
@@ -80,8 +108,7 @@ impl Machine {
         let output = self
             .command(&self.layout().launcher("svode"))
             .arg("--version")
-            .output()
-            .unwrap();
+            .run();
         assert!(output.status.success(), "{}", stderr(&output));
         stdout(&output)
     }
@@ -194,8 +221,7 @@ fn an_update_switches_the_version_without_breaking_a_running_process() {
         .command(&machine.layout().launcher("svode-mcp"))
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .spawn()
-        .unwrap();
+        .start();
     let mut lines = BufReader::new(running.stdout.take().unwrap()).lines();
     assert_eq!(lines.next().unwrap().unwrap(), "started");
 
@@ -241,7 +267,7 @@ fn desktop_then_standalone_keeps_the_desktop_runtime_and_only_adds_missing_launc
 
     // Removing the desktop app leaves no standalone runtime to fall back to.
     fs::remove_dir_all(machine.home.join("Applications")).unwrap();
-    let output = machine.command(&layout.launcher("svode")).output().unwrap();
+    let output = machine.command(&layout.launcher("svode")).run();
     assert_eq!(output.status.code(), Some(69));
     assert!(
         stderr(&output).contains("Svode Desktop is no longer at"),
@@ -317,8 +343,7 @@ fn the_mcp_launcher_without_a_runtime_serves_the_reason_over_mcp() {
         .command(&layout.launcher("svode-mcp"))
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .spawn()
-        .unwrap();
+        .start();
     server
         .stdin
         .take()
@@ -359,7 +384,7 @@ fn launchers_without_any_installation_report_it() {
     let bin = machine.home.join(".svode/bin");
     fs::create_dir_all(&bin).unwrap();
     fs::copy(LAUNCHER, bin.join("svode")).unwrap();
-    let output = machine.command(&bin.join("svode")).output().unwrap();
+    let output = machine.command(&bin.join("svode")).run();
     assert_eq!(output.status.code(), Some(69));
     assert!(
         stderr(&output).contains("the Svode runtime is not installed"),
