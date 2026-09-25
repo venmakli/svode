@@ -1,4 +1,5 @@
 import type { AssetsStrategy, BinaryRoutingConfig } from "@/features/space";
+import * as m from "@/paraglide/messages.js";
 
 export const BINARY_ROUTING_VERSION = 1;
 const BYTES_PER_MEGABYTE = 1_000_000;
@@ -234,4 +235,45 @@ export function sameBinaryRouting(
       (extension, index) => extension === right.lfsExtensions[index],
     )
   );
+}
+
+export type StorageStrategyWarningCode =
+  | "foreign-lfs-config"
+  | "lfs-policy-mismatch"
+  | "lfs-policy-check-failed"
+  | "lfs-install-failed"
+  | "lfs-agent-setup-failed"
+  | "lfs-agent-teardown-failed"
+  | "lfs-agent-config-cleanup-failed"
+  | "commit-skipped-changed-files"
+  | "commit-skipped-staged-changes";
+
+// A non-fatal warning of a strategy apply; `detail` is the technical cause.
+export interface StorageStrategyWarning {
+  code: StorageStrategyWarningCode;
+  detail?: string;
+}
+
+const STRATEGY_WARNING_TEXT: Record<StorageStrategyWarningCode, () => string> =
+  {
+    "foreign-lfs-config": m.storage_warning_foreign_lfs_config,
+    "lfs-policy-mismatch": m.storage_warning_lfs_policy_mismatch,
+    "lfs-policy-check-failed": m.storage_warning_lfs_policy_check_failed,
+    "lfs-install-failed": m.storage_warning_lfs_install_failed,
+    "lfs-agent-setup-failed": m.storage_warning_lfs_agent_setup_failed,
+    "lfs-agent-teardown-failed": m.storage_warning_lfs_agent_teardown_failed,
+    "lfs-agent-config-cleanup-failed":
+      m.storage_warning_lfs_agent_config_cleanup_failed,
+    "commit-skipped-changed-files":
+      m.storage_warning_commit_skipped_changed_files,
+    "commit-skipped-staged-changes":
+      m.storage_warning_commit_skipped_staged_changes,
+  };
+
+export function storageStrategyWarningText({
+  code,
+  detail,
+}: StorageStrategyWarning): string {
+  const text = STRATEGY_WARNING_TEXT[code]();
+  return detail ? `${text} ${m.storage_warning_detail({ detail })}` : text;
 }

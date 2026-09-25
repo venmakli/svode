@@ -11,7 +11,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use super::assets::{self, Asset};
 use super::s3;
 use super::scope::{resolve_effective_storage_scope, resolve_effective_storage_scope_for_key};
-use super::strategy::ApplyStrategyResult;
+use super::strategy::{ApplyStrategyResult, StrategyWarning, StrategyWarningCode};
 use crate::error::AppError;
 use crate::git::GitState;
 use crate::git::access::require_repository_mutation;
@@ -242,16 +242,12 @@ async fn strategy_autocommit_blocker(
     cli: &GitCli,
     repo: &Path,
     paths: &[&str],
-) -> Result<Option<&'static str>, AppError> {
+) -> Result<Option<StrategyWarningCode>, AppError> {
     if system_paths_dirty_before_strategy_apply(cli, repo, paths).await? {
-        return Ok(Some(
-            "Storage strategy files were already dirty, so Svode left the strategy changes pending instead of creating a background commit.",
-        ));
+        return Ok(Some(StrategyWarningCode::CommitSkippedChangedFiles));
     }
     if has_staged_changes(cli, repo).await? {
-        return Ok(Some(
-            "The repository already had staged changes, so Svode left the strategy changes pending instead of creating a background commit.",
-        ));
+        return Ok(Some(StrategyWarningCode::CommitSkippedStagedChanges));
     }
     Ok(None)
 }
@@ -394,12 +390,12 @@ pub async fn set_assets_strategy(
     // commit. This replaces the bare `git add` that previously lived inside
     // `apply_strategy`.
     if should_autocommit_strategy {
-        if let Some(message) = autocommit_blocker {
-            result.warnings.push(message.to_string());
+        if let Some(code) = autocommit_blocker {
+            result.warnings.push(StrategyWarning::new(code));
         } else if has_staged_changes(&cli, &scope.repo_dir).await? {
-            result.warnings.push(
-                "The repository gained staged changes during storage strategy apply, so Svode left the strategy changes pending instead of creating a background commit.".to_string(),
-            );
+            result.warnings.push(StrategyWarning::new(
+                StrategyWarningCode::CommitSkippedStagedChanges,
+            ));
         } else if let Err(e) = autocommit
             .commit_system_now(
                 project.clone(),
@@ -560,7 +556,8 @@ mod tests {
     use std::path::Path;
 
     use super::{
-        document_id_for_scope, ensure_supported_strategy_transition, strategy_autocommit_blocker,
+        StrategyWarningCode, document_id_for_scope, ensure_supported_strategy_transition,
+        strategy_autocommit_blocker,
     };
     use crate::AppError;
     use crate::space::types::AssetsStrategy;
@@ -629,7 +626,10 @@ mod tests {
         let blocker =
             strategy_autocommit_blocker(&cli, &repo, SystemCommitKind::AssetsStrategy.paths())
                 .await?;
-        assert!(blocker.is_some_and(|message| message.contains("already dirty")));
+        assert_eq!(
+            blocker,
+            Some(StrategyWarningCode::CommitSkippedChangedFiles)
+        );
         Ok(())
     }
 
@@ -647,7 +647,10 @@ mod tests {
         let blocker =
             strategy_autocommit_blocker(&cli, &repo, SystemCommitKind::AssetsStrategy.paths())
                 .await?;
-        assert!(blocker.is_some_and(|message| message.contains("already dirty")));
+        assert_eq!(
+            blocker,
+            Some(StrategyWarningCode::CommitSkippedChangedFiles)
+        );
         Ok(())
     }
 
@@ -664,7 +667,10 @@ mod tests {
         let blocker =
             strategy_autocommit_blocker(&cli, &repo, SystemCommitKind::AssetsStrategy.paths())
                 .await?;
-        assert!(blocker.is_some_and(|message| message.contains("staged changes")));
+        assert_eq!(
+            blocker,
+            Some(StrategyWarningCode::CommitSkippedStagedChanges)
+        );
         Ok(())
     }
 

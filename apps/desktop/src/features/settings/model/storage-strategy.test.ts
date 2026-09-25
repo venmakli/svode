@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 
+import { setLocale } from "@/paraglide/runtime";
 import {
   canApplyStorageStrategyDraft,
   canReapplyLfsPolicy,
@@ -10,6 +11,7 @@ import {
   normalizeLfsExtension,
   normalizeLfsRoutingDraft,
   sameBinaryRouting,
+  storageStrategyWarningText,
 } from "./storage-strategy";
 
 test("storage strategy draft is not applyable when selection is unchanged", () => {
@@ -274,4 +276,20 @@ test("LFS routing draft round-trips a disabled threshold", () => {
     lfsThresholdBytes: null,
   });
   expect(sameBinaryRouting(result.config, result.config)).toBe(true);
+});
+
+test("strategy warnings are worded by code in the interface language", () => {
+  setLocale("ru", { reload: false });
+  const commit = storageStrategyWarningText({
+    code: "commit-skipped-changed-files",
+  });
+  expect(commit.startsWith("В файлах хранения")).toBe(true);
+  expect(commit.includes("dirty")).toBe(false);
+  setLocale("en", { reload: false });
+  expect(
+    storageStrategyWarningText({
+      code: "lfs-install-failed",
+      detail: "hooks locked",
+    }),
+  ).toBe("Couldn't turn on Git LFS in this repository. Details: hooks locked");
 });

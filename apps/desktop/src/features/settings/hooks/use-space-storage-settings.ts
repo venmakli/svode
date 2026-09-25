@@ -18,6 +18,7 @@ import {
   canReapplyLfsPolicy,
   canRunLfsPolicyDiagnostic,
   canRunLfsRemoteDiagnostic,
+  storageStrategyWarningText,
   storageTargetKey,
   type LfsRoutingDraftIssue,
 } from "../model/storage-strategy";
@@ -319,7 +320,9 @@ export function useSpaceStorageSettings({
               count: String(result.warnings.length),
             }),
             {
-              description: result.warnings.join("\n"),
+              description: result.warnings
+                .map(storageStrategyWarningText)
+                .join("\n"),
             },
           );
         } else {

@@ -1,4 +1,5 @@
 import type { VariableSource } from "../model/app-variables";
+import type { StorageStrategyWarning } from "../model/storage-strategy";
 import {
   applyAssetsStrategy as applyPlatformAssetsStrategy,
   checkS3Bindings as checkPlatformS3Bindings,
@@ -49,7 +50,7 @@ export interface SetAssetsStrategyInput extends SpacePoolInput {
 }
 
 export interface SetAssetsStrategyResult {
-  warnings: string[];
+  warnings: StorageStrategyWarning[];
 }
 
 export interface EffectiveAssetsConfig {

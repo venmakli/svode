@@ -50,8 +50,24 @@ export interface SetAssetsStrategyInputDto extends SpacePoolInputDto {
   s3Bindings: S3SecretBindingsDto | null;
 }
 
+export type StrategyWarningCodeDto =
+  | "foreign-lfs-config"
+  | "lfs-policy-mismatch"
+  | "lfs-policy-check-failed"
+  | "lfs-install-failed"
+  | "lfs-agent-setup-failed"
+  | "lfs-agent-teardown-failed"
+  | "lfs-agent-config-cleanup-failed"
+  | "commit-skipped-changed-files"
+  | "commit-skipped-staged-changes";
+
+export interface StrategyWarningDto {
+  code: StrategyWarningCodeDto;
+  detail?: string;
+}
+
 export interface SetAssetsStrategyResultDto {
-  warnings: string[];
+  warnings: StrategyWarningDto[];
 }
 
 export interface LfsStateChangedEventDto {

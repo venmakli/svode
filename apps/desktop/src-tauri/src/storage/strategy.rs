@@ -21,7 +21,45 @@ use svode_core::storage::routes::{
 #[derive(Debug, Clone, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ApplyStrategyResult {
-    pub warnings: Vec<String>,
+    pub warnings: Vec<StrategyWarning>,
+}
+
+/// One strategy warning. The UI words it by `code`; `detail` carries the
+/// technical cause when there is one.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StrategyWarning {
+    pub code: StrategyWarningCode,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum StrategyWarningCode {
+    ForeignLfsConfig,
+    LfsPolicyMismatch,
+    LfsPolicyCheckFailed,
+    LfsInstallFailed,
+    LfsAgentSetupFailed,
+    LfsAgentTeardownFailed,
+    LfsAgentConfigCleanupFailed,
+    CommitSkippedChangedFiles,
+    CommitSkippedStagedChanges,
+}
+
+impl StrategyWarning {
+    pub fn new(code: StrategyWarningCode) -> Self {
+        Self { code, detail: None }
+    }
+
+    fn with_detail(code: StrategyWarningCode, detail: String) -> Self {
+        tracing::warn!("assets strategy apply: {code:?}: {detail}");
+        Self {
+            code,
+            detail: Some(detail),
+        }
+    }
 }
 
 const IGNORE_START: &str = "# svode:assets-ignore:start";
@@ -171,9 +209,9 @@ pub async fn apply_strategy(
 
     // --- .lfsconfig: portable lfs-s3 declaration, committed with the strategy. ---
     if lfs_declaration::apply_lfs_declaration(space_dir, new)? == LfsDeclarationWrite::Foreign {
-        result.warnings.push(
-            ".lfsconfig already sets lfs.url to another value, so Svode left it unchanged; clients without the Svode LFS agent may upload objects to the Git provider.".into(),
-        );
+        result
+            .warnings
+            .push(StrategyWarning::new(StrategyWarningCode::ForeignLfsConfig));
     }
 
     // Verify positive representative paths against Git's effective attribute
@@ -184,15 +222,16 @@ pub async fn apply_strategy(
         match policy::check_lfs_filters(&cli, space_dir, &paths).await {
             Ok(checks) => {
                 for check in checks.into_iter().filter(|check| check.value != "lfs") {
-                    result.warnings.push(format!(
-                        "Git LFS policy verification failed for `{}`: expected filter=lfs, got {}",
-                        check.path, check.value
+                    result.warnings.push(StrategyWarning::with_detail(
+                        StrategyWarningCode::LfsPolicyMismatch,
+                        format!("{}: filter={}", check.path, check.value),
                     ));
                 }
             }
-            Err(error) => result
-                .warnings
-                .push(format!("Git LFS policy verification errored: {error}")),
+            Err(error) => result.warnings.push(StrategyWarning::with_detail(
+                StrategyWarningCode::LfsPolicyCheckFailed,
+                error.to_string(),
+            )),
         }
     }
 
@@ -200,16 +239,14 @@ pub async fn apply_strategy(
     if matches!(new, AssetsStrategy::LfsRemote | AssetsStrategy::LfsS3) {
         // Install LFS hooks in this repo.
         match exec_storage_strategy_git(&cli, space_dir, &["lfs", "install", "--local"]).await {
-            Ok(o) if o.exit_code != 0 => {
-                let msg = format!("git lfs install --local failed: {}", o.stderr.trim());
-                tracing::warn!("{msg}");
-                result.warnings.push(msg);
-            }
-            Err(e) => {
-                let msg = format!("git lfs install --local errored: {e}");
-                tracing::warn!("{msg}");
-                result.warnings.push(msg);
-            }
+            Ok(o) if o.exit_code != 0 => result.warnings.push(StrategyWarning::with_detail(
+                StrategyWarningCode::LfsInstallFailed,
+                o.stderr.trim().to_string(),
+            )),
+            Err(e) => result.warnings.push(StrategyWarning::with_detail(
+                StrategyWarningCode::LfsInstallFailed,
+                e.to_string(),
+            )),
             _ => {}
         }
     }
@@ -225,20 +262,23 @@ pub async fn apply_strategy(
         let bin = svode_lfs_path.expect("checked above");
         svode_core::storage::s3::ensure_agent_gitignore(space_dir)?;
         if let Err(e) = write_managed_registration(&cli, space_dir, bin).await {
-            let msg = format!("configuring the svode-lfs transfer agent failed: {e}");
-            tracing::warn!("{msg}");
-            result.warnings.push(msg);
+            result.warnings.push(StrategyWarning::with_detail(
+                StrategyWarningCode::LfsAgentSetupFailed,
+                e.to_string(),
+            ));
         }
     } else {
         if let Err(e) = teardown_managed_registration(&cli, space_dir).await {
-            let msg = format!("removing the svode-lfs transfer agent failed: {e}");
-            tracing::warn!("{msg}");
-            result.warnings.push(msg);
+            result.warnings.push(StrategyWarning::with_detail(
+                StrategyWarningCode::LfsAgentTeardownFailed,
+                e.to_string(),
+            ));
         }
         if let Err(e) = s3::delete_agent_config(space_dir) {
-            let msg = format!("delete lfs-s3-agent.json failed: {e}");
-            tracing::warn!("{msg}");
-            result.warnings.push(msg);
+            result.warnings.push(StrategyWarning::with_detail(
+                StrategyWarningCode::LfsAgentConfigCleanupFailed,
+                e.to_string(),
+            ));
         }
     }
 
@@ -254,7 +294,8 @@ mod tests {
     use std::path::{Path, PathBuf};
 
     use super::{
-        apply_strategy, ensure_storage_strategy_git_args_safe, rewrite_managed_lfs_attributes,
+        StrategyWarning, StrategyWarningCode, apply_strategy,
+        ensure_storage_strategy_git_args_safe, rewrite_managed_lfs_attributes,
     };
     use crate::AppError;
     use crate::git::GitState;
@@ -491,7 +532,12 @@ mod tests {
                 Some(&bin),
             )
             .await?;
-            assert!(result.warnings.iter().all(|w| !w.contains(".lfsconfig")));
+            assert!(
+                result
+                    .warnings
+                    .iter()
+                    .all(|w| w.code != StrategyWarningCode::ForeignLfsConfig)
+            );
             assert_eq!(std::fs::read_to_string(repo.join(".lfsconfig"))?, declared);
         }
 
@@ -519,7 +565,11 @@ mod tests {
             Some(&bin),
         )
         .await?;
-        assert!(result.warnings.iter().any(|w| w.contains(".lfsconfig")));
+        assert!(
+            result
+                .warnings
+                .contains(&StrategyWarning::new(StrategyWarningCode::ForeignLfsConfig))
+        );
         assert_eq!(
             std::fs::read_to_string(repo.join(".lfsconfig"))?,
             "[lfs]\n\turl = https://lfs.example.test/\n"
