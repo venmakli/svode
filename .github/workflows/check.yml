@@ -78,7 +78,8 @@ jobs:
   standalone-linux:
     # svode and svode-mcp as scripts and CI use them on Linux x86_64: built,
     # tested through real processes and smoke-checked without the desktop
-    # app or its GUI libraries.
+    # app or its GUI libraries, then packed with svode-lfs and the plugin
+    # payload into the standalone archive.
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v6
@@ -92,7 +93,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libdbus-1-dev pkg-config
       - name: Build the standalone binaries
-        run: cargo build -p svode-cli -p svode-mcp
+        run: cargo build -p svode-cli -p svode-mcp -p svode-lfs
       - name: The binaries link no desktop GUI library
         run: |
           ldd target/debug/svode target/debug/svode-mcp
@@ -103,6 +104,13 @@ jobs:
         run: cargo test -p svode-cli -p svode-mcp
       - name: Packaging smoke
         run: node scripts/smoke-standalone.mjs target/debug
+      - name: Standalone archive with the plugin payload of the same version
+        run: |
+          archive="$(node scripts/standalone-archive.mjs target/debug target/standalone)"
+          mkdir -p target/standalone/unpacked
+          tar -xzf "$archive" -C target/standalone/unpacked
+          root="$(find target/standalone/unpacked -mindepth 1 -maxdepth 1 -type d)"
+          node scripts/plugin-payload.mjs check "$root/plugins/svode" "$root/bin/svode"
 
   audit:
     runs-on: ubuntu-22.04

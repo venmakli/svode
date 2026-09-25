@@ -6,8 +6,8 @@
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:1420",
-    "beforeDevCommand": "bun run build:sidecars && bun run dev",
-    "beforeBuildCommand": "bun run build:sidecars && bun run build"
+    "beforeDevCommand": "bun run build:sidecars && bun run build:plugin && bun run dev",
+    "beforeBuildCommand": "bun run build:sidecars && bun run build:plugin && bun run build"
   },
   "app": {
     "windows": [
@@ -36,6 +36,7 @@
     "active": true,
     "targets": "all",
     "externalBin": ["binaries/svode-lfs", "binaries/svode-mcp", "binaries/svode"],
+    "resources": { "payload/svode/": "plugins/svode/" },
     "linux": {
       "deb": {
         "depends": ["git"]

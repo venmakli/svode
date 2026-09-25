@@ -1,0 +1,10 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "svode",
+  "description": "Read and change Svode projects: Pages, Collections, fields, structure and Routine definitions through the svode CLI and the Svode MCP server.",
+  "author": {
+    "name": "Kamnev Ilya"
+  },
+  "repository": "https://github.com/venmakli/svode",
+  "keywords": ["svode", "markdown", "git", "collections", "knowledge"]
+}

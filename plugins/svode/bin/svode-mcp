@@ -1,0 +1,12 @@
+#!/bin/sh
+# Runs `svode-mcp` of the active Svode installation through its launcher at
+# the stable location, which keeps its address across versions. Without
+# arguments the server picks the desktop bridge or the project of the
+# launch directory.
+launcher="$HOME/.svode/bin/svode-mcp"
+if [ -x "$launcher" ]; then
+  exec "$launcher" "$@"
+fi
+echo "svode-mcp: the Svode runtime is not installed: $launcher is missing." >&2
+echo "  hint: install Svode Desktop or the standalone Svode runtime, then retry." >&2
+exit 69

@@ -1,0 +1,10 @@
+#!/bin/sh
+# Runs `svode` of the active Svode installation through its launcher at the
+# stable location, which keeps its address across versions.
+launcher="$HOME/.svode/bin/svode"
+if [ -x "$launcher" ]; then
+  exec "$launcher" "$@"
+fi
+echo "svode: the Svode runtime is not installed: $launcher is missing." >&2
+echo "  hint: install Svode Desktop or the standalone Svode runtime, then retry." >&2
+exit 69
