@@ -65,6 +65,9 @@ export function GitSyncStatusWidget({
     sync.parent.publication.parent.pointer !== "published";
   const error = sync.syncError ?? sync.remoteError;
   const hasSyncError = !!error;
+  // An unreachable remote also leaves access unconfirmed; the sync warning covers both.
+  const showAccessIndicator =
+    !!accessLabel && !(hasSyncError && presentation.status === "unknown");
   const synced =
     sync.remoteChecked && sync.incoming === 0 && sync.outgoing === 0;
   const syncLabel = sync.visible
@@ -115,7 +118,6 @@ export function GitSyncStatusWidget({
                 className={cn(
                   "max-w-[260px]",
                   sync.autoSync && "text-muted-foreground",
-                  hasSyncError && "text-destructive hover:text-destructive",
                 )}
                 aria-label={label}
                 aria-busy={busy || presentation.status === "checking"}
@@ -132,11 +134,16 @@ export function GitSyncStatusWidget({
                     {busy ? (
                       <RefreshCw className="animate-spin" />
                     ) : hasSyncError || pendingParent ? (
-                      <AlertTriangle />
+                      <AlertTriangle
+                        className={
+                          hasSyncError ? "text-destructive" : undefined
+                        }
+                        data-git-sync-error={hasSyncError || undefined}
+                      />
                     ) : synced ? (
                       <Check data-git-sync-synced />
                     ) : null}
-                    {synced ? null : (
+                    {synced || hasSyncError ? null : (
                       <>
                         <span>{counterLabel(sync.incoming)}↓</span>
                         <span>{counterLabel(sync.outgoing)}↑</span>
@@ -144,7 +151,7 @@ export function GitSyncStatusWidget({
                     )}
                   </span>
                 ) : null}
-                {accessLabel ? (
+                {showAccessIndicator ? (
                   <>
                     <Separator
                       orientation="vertical"

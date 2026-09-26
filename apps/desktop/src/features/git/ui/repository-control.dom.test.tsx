@@ -88,13 +88,23 @@ if (!isolatedProcess) {
         label: ["1↓ incoming", "2↑ outgoing"],
       },
       {
-        name: "unchecked",
+        name: "sync-error",
         repo: { fetchFails: true },
         access: "writable",
         visible: true,
         synced: false,
-        counters: "?↓?↑",
+        counters: "",
         indicator: null,
+      },
+      {
+        name: "sync-error-hides-unknown-access",
+        repo: { fetchFails: true },
+        access: "unknown",
+        visible: true,
+        synced: false,
+        counters: "",
+        indicator: null,
+        label: ["Access not confirmed"],
       },
       {
         name: "read-only-with-counters",
@@ -153,8 +163,10 @@ if (!isolatedProcess) {
         if (!control) continue;
         expect(control.dataset.variant).toBe("outline");
         expect(control.dataset.size).toBe("sm");
-        if (scenario.name === "normal")
-          expect(control.className.includes("text-destructive")).toBe(false);
+        expect(control.className.includes("text-destructive")).toBe(false);
+        expect(Boolean(control.querySelector("[data-git-sync-error]"))).toBe(
+          scenario.name.startsWith("sync-error"),
+        );
         expect(control.textContent.includes("main")).toBe(true);
         expect(control.textContent.includes("Editing")).toBe(false);
         expect(control.getAttribute("aria-label")?.includes("Write")).toBe(
