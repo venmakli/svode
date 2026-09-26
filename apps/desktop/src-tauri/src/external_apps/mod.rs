@@ -32,6 +32,15 @@ mod windows_shell;
 #[cfg(target_os = "windows")]
 pub(crate) use windows_shell::app_presentation as windows_app_presentation;
 
+#[cfg(target_os = "linux")]
+mod linux;
+
+#[cfg(target_os = "linux")]
+pub(crate) use linux::{
+    command_presentation as linux_command_presentation,
+    directory_app_presentation as linux_directory_app_presentation,
+};
+
 /// Symbolic fallback class shown when the OS returns no icon.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -62,8 +71,11 @@ pub(crate) struct AppPresentation {
 }
 
 /// An application the OS offers for a file, with where it is launched from.
-// Constructed by the native lookups; Linux lands in DF-098E.
-#[cfg_attr(not(any(target_os = "macos", target_os = "windows")), allow(dead_code))]
+// Constructed by the native lookups.
+#[cfg_attr(
+    not(any(target_os = "macos", target_os = "windows", target_os = "linux")),
+    allow(dead_code)
+)]
 #[derive(Debug, Clone)]
 pub(crate) struct OfferedApp {
     pub id: String,
@@ -137,8 +149,13 @@ pub(crate) fn reveal_file(file: &Path) -> std::io::Result<()> {
 
     #[cfg(all(unix, not(target_os = "macos")))]
     {
-        // Freedesktop has no portable select-file CLI; opening the canonical parent
-        // is the safe fallback on platforms where file selection is unsupported.
+        // The file manager selects the file through `org.freedesktop.FileManager1`;
+        // without one, the plugin asks the desktop portal to open the folder.
+        #[cfg(target_os = "linux")]
+        if tauri_plugin_opener::reveal_item_in_dir(file).is_ok() {
+            return Ok(());
+        }
+        // Without a session bus, opening the canonical parent is the fallback.
         let parent = file.parent().ok_or_else(|| {
             std::io::Error::other(format!("file has no parent: {}", file.display()))
         })?;
@@ -174,8 +191,13 @@ fn offered_apps(file: &Path) -> Vec<OfferedApp> {
     windows_shell::offered_apps(file)
 }
 
-/// Linux offers the generic OS choice until its native lookups land.
-#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+#[cfg(target_os = "linux")]
+fn offered_apps(file: &Path) -> Vec<OfferedApp> {
+    linux::offered_apps(file)
+}
+
+/// Other platforms offer the generic OS choice.
+#[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
 fn offered_apps(_file: &Path) -> Vec<OfferedApp> {
     Vec::new()
 }
@@ -196,9 +218,28 @@ fn launch_offered_app(app: &OfferedApp, file: &Path) -> Result<(), ExternalOpenE
     windows_shell::launch(app, file)
 }
 
-#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+#[cfg(target_os = "linux")]
+fn launch_offered_app(app: &OfferedApp, file: &Path) -> Result<(), ExternalOpenError> {
+    linux::launch(app, file)
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
 fn launch_offered_app(_app: &OfferedApp, _file: &Path) -> Result<(), ExternalOpenError> {
     Err(ExternalOpenError::Launch)
+}
+
+/// Whether a `.desktop` entry whose `Exec` runs `executable` is the
+/// application `command` launches (resolved to `launched`): the same program
+/// name, or the same file once resolved through `PATH` and links.
+#[cfg(any(target_os = "linux", test))]
+fn runs_command(
+    executable: &Path,
+    command: &str,
+    launched: &Path,
+    resolve: impl FnOnce(&Path) -> Option<PathBuf>,
+) -> bool {
+    executable.file_name().is_some_and(|name| name == command)
+        || resolve(executable).is_some_and(|resolved| resolved == launched)
 }
 
 /// Opaque id of a Windows association handler: a digest of its registered
@@ -398,6 +439,44 @@ mod tests {
         assert_eq!(expand_env_vars("100%", lookup), "100%");
         assert_eq!(expand_env_vars("%%", lookup), "%%");
         assert_eq!(expand_env_vars(r"C:\plain.ico", lookup), r"C:\plain.ico");
+    }
+
+    #[test]
+    fn desktop_entries_match_the_launched_program_by_name_or_resolved_file() {
+        let launched = Path::new("/usr/share/code/bin/code");
+        let unresolved = |_: &Path| None;
+
+        assert!(runs_command(
+            Path::new("/usr/share/code/code"),
+            "code",
+            launched,
+            unresolved
+        ));
+        assert!(runs_command(
+            Path::new("code"),
+            "code",
+            launched,
+            unresolved
+        ));
+        // An AppImage entry behind a `cursor` symlink on PATH.
+        assert!(runs_command(
+            Path::new("/home/me/Applications/Cursor.AppImage"),
+            "cursor",
+            Path::new("/home/me/Applications/Cursor.AppImage"),
+            |executable| Some(executable.to_path_buf()),
+        ));
+        assert!(!runs_command(
+            Path::new("/usr/bin/code-oss"),
+            "code",
+            launched,
+            |_| Some(PathBuf::from("/usr/lib/code-oss/code-oss")),
+        ));
+        assert!(!runs_command(
+            Path::new("/usr/bin/flatpak"),
+            "code",
+            launched,
+            |_| Some(PathBuf::from("/usr/bin/flatpak")),
+        ));
     }
 
     #[cfg(target_os = "macos")]

@@ -5334,6 +5334,7 @@ dependencies = [
  "chrono",
  "chrono-tz",
  "croner",
+ "gtk",
  "iana-time-zone",
  "keyring",
  "notify",

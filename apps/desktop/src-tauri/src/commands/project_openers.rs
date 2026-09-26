@@ -30,6 +30,17 @@ enum ProjectOpenerId {
 /// The OS default application for a directory target.
 const DEFAULT_DIRECTORY_OPENER: ProjectOpenerId = ProjectOpenerId::FileManager;
 
+/// Terminal emulators `open_terminal` tries in order, with the flag that sets
+/// their working directory (otherwise they start in the current directory).
+#[cfg(any(all(unix, not(target_os = "macos")), test))]
+const LINUX_TERMINALS: [(&str, Option<&str>); 5] = [
+    ("gnome-terminal", Some("--working-directory")),
+    ("konsole", Some("--workdir")),
+    ("xfce4-terminal", Some("--working-directory")),
+    ("x-terminal-emulator", None),
+    ("xterm", None),
+];
+
 /// Windows Terminal is a packaged application behind the `wt` alias.
 #[cfg(target_os = "windows")]
 const WINDOWS_TERMINAL_APP: &str = r"shell:AppsFolder\Microsoft.WindowsTerminal_8wekyb3d8bbwe!App";
@@ -265,10 +276,33 @@ fn app_presentation(id: ProjectOpenerId) -> AppPresentation {
     external_apps::windows_app_presentation(id.windows_launch_targets())
 }
 
-/// Linux keeps the symbolic fallback until its native lookups land.
-#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+#[cfg(target_os = "linux")]
+fn app_presentation(id: ProjectOpenerId) -> AppPresentation {
+    match id {
+        ProjectOpenerId::Vscode => external_apps::linux_command_presentation("code"),
+        ProjectOpenerId::Cursor => external_apps::linux_command_presentation("cursor"),
+        ProjectOpenerId::FileManager => external_apps::linux_directory_app_presentation(),
+        ProjectOpenerId::Terminal => linux_terminal(command_available)
+            .map(|(command, _)| external_apps::linux_command_presentation(command))
+            .unwrap_or_default(),
+        ProjectOpenerId::Iterm2 => AppPresentation::default(),
+    }
+}
+
+/// Other platforms keep the symbolic fallback.
+#[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
 fn app_presentation(_id: ProjectOpenerId) -> AppPresentation {
     AppPresentation::default()
+}
+
+/// The first installed terminal of `LINUX_TERMINALS`.
+#[cfg(any(all(unix, not(target_os = "macos")), test))]
+fn linux_terminal(
+    installed: impl Fn(&str) -> bool,
+) -> Option<(&'static str, Option<&'static str>)> {
+    LINUX_TERMINALS
+        .into_iter()
+        .find(|(command, _)| installed(command))
 }
 
 /// The terminal `open_terminal` launches: Windows Terminal, otherwise PowerShell.
@@ -551,11 +585,7 @@ fn is_terminal_available() -> bool {
 
     #[cfg(all(unix, not(target_os = "macos")))]
     {
-        return command_available("gnome-terminal")
-            || command_available("konsole")
-            || command_available("xfce4-terminal")
-            || command_available("x-terminal-emulator")
-            || command_available("xterm");
+        return linux_terminal(command_available).is_some();
     }
 
     #[allow(unreachable_code)]
@@ -782,33 +812,12 @@ fn open_terminal(path: &Path) -> Result<(), AppError> {
 
     #[cfg(all(unix, not(target_os = "macos")))]
     {
-        if command_available("gnome-terminal") {
-            let mut command = Command::new("gnome-terminal");
-            command.arg("--working-directory").arg(path);
-            return spawn(command, "Terminal");
-        }
-
-        if command_available("konsole") {
-            let mut command = Command::new("konsole");
-            command.arg("--workdir").arg(path);
-            return spawn(command, "Terminal");
-        }
-
-        if command_available("xfce4-terminal") {
-            let mut command = Command::new("xfce4-terminal");
-            command.arg("--working-directory").arg(path);
-            return spawn(command, "Terminal");
-        }
-
-        if command_available("x-terminal-emulator") {
-            let mut command = Command::new("x-terminal-emulator");
-            command.current_dir(path);
-            return spawn(command, "Terminal");
-        }
-
-        if command_available("xterm") {
-            let mut command = Command::new("xterm");
-            command.current_dir(path);
+        if let Some((terminal, workdir_flag)) = linux_terminal(command_available) {
+            let mut command = Command::new(terminal);
+            match workdir_flag {
+                Some(flag) => command.arg(flag).arg(path),
+                None => command.current_dir(path),
+            };
             return spawn(command, "Terminal");
         }
     }
@@ -1037,6 +1046,23 @@ mod tests {
                 "icon": "data:image/png;base64,AA==",
                 "capabilities": ["open_workspace_file"],
             })
+        );
+    }
+
+    #[test]
+    fn linux_terminal_is_the_first_installed_in_launch_order() {
+        assert_eq!(
+            linux_terminal(|command| ["konsole", "xterm"].contains(&command)),
+            Some(("konsole", Some("--workdir")))
+        );
+        assert_eq!(
+            linux_terminal(|command| command == "x-terminal-emulator"),
+            Some(("x-terminal-emulator", None))
+        );
+        assert_eq!(linux_terminal(|_| false), None);
+        assert_eq!(
+            linux_terminal(|_| true).map(|(command, _)| command),
+            Some("gnome-terminal")
         );
     }
 
