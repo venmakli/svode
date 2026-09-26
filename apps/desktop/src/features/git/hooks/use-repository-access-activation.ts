@@ -3,8 +3,12 @@ import { useEffect } from "react";
 import { repositoryAccessOwner } from "../model/repository-access-owner";
 
 // Only content and exact settings hosts activate; passive readers do not.
-export function useRepositoryAccessActivation(spacePath: string) {
+export function useRepositoryAccessActivation(
+  spacePath: string,
+  enabled = true,
+) {
   useEffect(() => {
+    if (!enabled) return;
     let release: (() => void) | undefined;
     const updateVisibility = () => {
       if (document.visibilityState === "hidden") {
@@ -26,5 +30,5 @@ export function useRepositoryAccessActivation(spacePath: string) {
       window.removeEventListener("focus", onFocus);
       document.removeEventListener("visibilitychange", updateVisibility);
     };
-  }, [spacePath]);
+  }, [enabled, spacePath]);
 }

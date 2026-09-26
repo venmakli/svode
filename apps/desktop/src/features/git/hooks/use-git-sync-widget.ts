@@ -26,6 +26,7 @@ import * as m from "@/paraglide/messages.js";
 
 export interface GitSyncWidget {
   parent: ReturnType<typeof useParentPublication>;
+  spacePath: string;
   visible: boolean;
   open: boolean;
   setOpen: (open: boolean) => void;
@@ -342,6 +343,7 @@ export function useGitSyncWidget(): GitSyncWidget {
 
   return {
     parent,
+    spacePath,
     visible:
       !!spacePath &&
       (hasRemote || !!syncError || !!remoteError || !!parent.publication),

@@ -20,10 +20,7 @@ import { selectActiveSpacePath, useSpace } from "@/features/space";
 import { useTrafficLightInset } from "./hooks/use-fullscreen";
 import { useShellStore } from "./model";
 import { cn } from "@/shared/lib/utils";
-import {
-  GitSyncStatusWidget,
-  RepositoryWorkStatus,
-} from "@/features/git/app-shell";
+import { GitSyncStatusWidget } from "@/features/git/app-shell";
 import { MainBreadcrumbs } from "@/features/space/app-shell";
 import { ProjectExternalOpenButton } from "@/features/external-open";
 import { ProjectSwitcher } from "./project-switcher";
@@ -104,16 +101,10 @@ export function WindowHeader() {
   const toggleChatPanel = useShellStore((state) => state.toggleChatPanel);
   const mainSurface = useShellStore((state) => state.mainSurface);
   const openSpaceSettings = useShellStore((state) => state.openSpaceSettings);
-  const { activeRootName, activeRootPath, activeSpaceId, spaces } =
-    useSpace();
+  const activeRootPath = useSpace((state) => state.activeRootPath);
   const activeSpacePath = useSpace(selectActiveSpacePath);
   const { state } = useSidebar();
   const matches = useMatches();
-  const activeSpace = activeSpaceId
-    ? spaces.find((space) => space.id === activeSpaceId)
-    : null;
-  const repositoryContextName =
-    activeSpace?.name ?? activeRootName ?? activeSpacePath;
 
   const chatToggleDisabled = !activeContentPath;
 
@@ -144,7 +135,14 @@ export function WindowHeader() {
       </div>
 
       <div className="flex shrink-0 items-center gap-1">
-        {isSpaceRoute && <GitSyncStatusWidget />}
+        {isSpaceRoute && (
+          <GitSyncStatusWidget
+            activateAccess={mainSurface === "content"}
+            onOpenRepositorySettings={(repositoryPath) =>
+              openSpaceSettings(repositoryPath, "git")
+            }
+          />
+        )}
         {isSpaceRoute &&
         mainSurface === "content" &&
         changesTarget &&
@@ -161,17 +159,6 @@ export function WindowHeader() {
                 : selection.request.key
             }
             target={changesTarget}
-          />
-        ) : null}
-        {isSpaceRoute && mainSurface === "content" && activeSpacePath ? (
-          <RepositoryWorkStatus
-            key={activeSpacePath}
-            contextName={repositoryContextName}
-            displayPath={activeSpacePath}
-            repositoryPath={activeSpacePath}
-            onOpenRepositorySettings={(repositoryPath) =>
-              openSpaceSettings(repositoryPath, "git")
-            }
           />
         ) : null}
         {isSpaceRoute && activeRootPath ? (
