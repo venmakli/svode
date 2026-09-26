@@ -61,6 +61,29 @@ async fn scoped_save_commits_only_its_paths_and_keeps_unrelated_staged_bytes() {
 }
 
 #[tokio::test]
+async fn save_without_changes_publishes_no_commit() {
+    let cli = cli();
+    let tmp = repo(&cli, true).await;
+    let space = tmp.path();
+    let before = head(space).await;
+
+    let runtime = runtime();
+    let host = TestHost::default();
+    save(
+        &runtime,
+        &host,
+        None,
+        space,
+        Some(vec!["baseline.md".to_string()]),
+    )
+    .await
+    .expect("no-op save");
+
+    assert_eq!(head(space).await, before);
+    assert!(host.commits.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
 async fn save_drains_the_related_pending_batch_and_keeps_the_rest() {
     let cli = cli();
     let tmp = repo(&cli, true).await;
