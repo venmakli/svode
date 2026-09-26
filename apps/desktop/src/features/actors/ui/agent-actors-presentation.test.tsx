@@ -88,6 +88,23 @@ test("Agent Actors rows lead with the shared rounded agent avatar", () => {
   expect(String(leading).includes("rounded-lg")).toBe(true);
 });
 
+test("Agent Actors rows never describe an agent by its raw reference", () => {
+  const undescribed = { ...own, description: null };
+  const descriptor = createAgentActorsPresentationDescriptor({
+    actions: disabledActions(),
+    inheritedVisible: false,
+    rows: [undescribed],
+  });
+  const description =
+    descriptor.layout.kind === "list"
+      ? renderToStaticMarkup(
+          <>{descriptor.layout.getDescription?.(undescribed)}</>,
+        )
+      : "";
+  expect(description.includes(own.actorRef)).toBe(false);
+  expect(description.includes(own.id)).toBe(false);
+});
+
 test("Agent Actors default order and search preserve owner provenance", () => {
   const presentation = createAgentActorsPresentation({
     actions: disabledActions(),

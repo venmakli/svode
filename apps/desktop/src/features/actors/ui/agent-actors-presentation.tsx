@@ -169,7 +169,7 @@ export function createAgentActorsPresentationDescriptor({
         row.description ||
         (row.inherited
           ? m.agent_actors_inherited({ owner: row.ownerLabel })
-          : row.actorRef),
+          : null),
       getTitle: (row) => row.name,
       kind: "list",
       renderLeading: () => <AgentAvatar shape="square" size="sm" />,
