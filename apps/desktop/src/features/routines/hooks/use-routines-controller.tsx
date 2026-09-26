@@ -72,8 +72,7 @@ export function useRoutinesController(
     applyUpdate: mutations.applyUpdate,
     detailController,
     editSession: mutations.editSession,
-    executorError: executors.error,
-    executors: executors.options,
+    executors: executors.state,
     instanceKey,
     mutationError: mutations.error,
     nameError: mutations.nameError,
@@ -224,7 +223,7 @@ export function useRoutinesController(
   };
   const presentation = createRoutinesPresentation({
     actions,
-    getExecutorLabel: (row) => executorLabel(row, executors.options),
+    executors: executors.state,
     onActivate: createCollectionDetailActivation({
       controller: detailController,
       createContent: createReadOnlyDetail,
@@ -250,9 +249,7 @@ export function useRoutinesController(
           }
           definition={create.session.draft}
           error={create.error}
-          executorError={createExecutors.error}
-          executorLoading={createExecutors.loading}
-          executors={createExecutors.options}
+          executors={createExecutors.state}
           initialDefinition={create.session.initialDraft}
           nameError={create.nameError}
           ownerLabel={create.session.ownerLabel}
@@ -303,15 +300,4 @@ function routineOwnerLabel(owner: ScopeOwnerRef) {
     return m.routines_create_owner_project();
   }
   return m.routines_create_owner_space();
-}
-
-function executorLabel(
-  row: RoutineRow,
-  options: readonly { label: string; value: string }[],
-) {
-  const executor =
-    row.definition?.action.type === "run_agent"
-      ? row.definition.action.executor
-      : null;
-  return options.find((option) => option.value === executor)?.label ?? executor;
 }

@@ -1,9 +1,9 @@
-import { useCallback, useEffect } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import { AlertTriangle, LoaderCircle } from "lucide-react";
 
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import type { AgentActorOption } from "@/features/actors";
+import type { AgentActorOptionsState } from "@/features/actors/agent-reference";
 import type {
   CollectionDetailController,
   CollectionDetailRequest,
@@ -23,7 +23,6 @@ export function useRoutineDetail({
   applyUpdate,
   detailController,
   editSession,
-  executorError,
   executors,
   instanceKey,
   mutationError,
@@ -43,8 +42,7 @@ export function useRoutineDetail({
   ): Promise<RoutineRow | null>;
   detailController: CollectionDetailController | null;
   editSession: RoutineEditSession | null;
-  executorError: string | null;
-  executors: readonly AgentActorOption[];
+  executors: AgentActorOptionsState;
   instanceKey: string;
   mutationError: string | null;
   nameError: string | null;
@@ -62,27 +60,45 @@ export function useRoutineDetail({
       | ((current: RoutineEditSession | null) => RoutineEditSession | null),
   ): void;
 }) {
+  const readOnlyRowRef = useRef<RoutineRow | null>(null);
   const createReadOnlyDetail = useCallback(
-    (row: RoutineRow): Omit<CollectionDetailRequest, "selection"> => ({
-      content: <RoutineDetailView row={row} />,
-      description: (
-        <span className="sr-only">{m.routines_detail_description()}</span>
-      ),
-      footerActions: (
-        <RoutineDetailActions
-          row={row}
-          runState={getRunState(row)}
-          onOpenSession={onOpenSession}
-          onRun={onRun}
-        />
-      ),
-      title: routineDetailTitle(row),
-    }),
-    [getRunState, onOpenSession, onRun],
+    (row: RoutineRow): Omit<CollectionDetailRequest, "selection"> => {
+      readOnlyRowRef.current = row;
+      return {
+        canClose: () => {
+          if (readOnlyRowRef.current === row) readOnlyRowRef.current = null;
+          return true;
+        },
+        content: <RoutineDetailView executors={executors} row={row} />,
+        description: (
+          <span className="sr-only">{m.routines_detail_description()}</span>
+        ),
+        footerActions: (
+          <RoutineDetailActions
+            row={row}
+            runState={getRunState(row)}
+            onOpenSession={onOpenSession}
+            onRun={onRun}
+          />
+        ),
+        title: routineDetailTitle(row),
+      };
+    },
+    [executors, getRunState, onOpenSession, onRun],
   );
 
   useEffect(() => {
+    const row = readOnlyRowRef.current;
+    if (!row || editSession || !detailController) return;
+    void detailController.open({
+      ...createReadOnlyDetail(row),
+      selection: { instanceKey, presentationId: "all", rowId: row.id },
+    });
+  }, [createReadOnlyDetail, detailController, editSession, instanceKey]);
+
+  useEffect(() => {
     if (!editSession || !detailController) return;
+    readOnlyRowRef.current = null;
     const session = editSession;
     const formId = `routine-detail-${session.row.id}`;
     const selection = {
@@ -115,7 +131,6 @@ export function useRoutineDetail({
               <RoutineDefinitionForm
                 collectionOwner={owner.ownerKind === "collection_directory"}
                 definition={session.draft}
-                executorError={executorError}
                 executors={executors}
                 formId={formId}
                 nameError={nameError}
@@ -188,7 +203,6 @@ export function useRoutineDetail({
     createReadOnlyDetail,
     detailController,
     editSession,
-    executorError,
     executors,
     instanceKey,
     mutationError,

@@ -5,7 +5,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
-import type { AgentActorOption } from "@/features/actors";
+import type { AgentActorOptionsState } from "@/features/actors/agent-reference";
 import {
   CollectionCreateFlow,
   type CollectionCreateFlowFocusRequest,
@@ -38,8 +38,6 @@ export function RoutineCreateDialog({
   initialDefinition,
   nameError = null,
   automaticAuthority,
-  executorError,
-  executorLoading,
   executors,
   ownerLabel,
   pending,
@@ -54,9 +52,7 @@ export function RoutineCreateDialog({
   collectionOwner: boolean;
   definition: RoutineDefinition;
   error: string | null;
-  executorError: string | null;
-  executorLoading: boolean;
-  executors: readonly AgentActorOption[];
+  executors: AgentActorOptionsState;
   initialDefinition: RoutineDefinition;
   nameError?: string | null;
   ownerLabel: string;
@@ -81,12 +77,10 @@ export function RoutineCreateDialog({
   const validationContext = useMemo(
     () => ({
       collectionOwner,
-      executorError,
-      executorLoading,
       executors,
       nameAvailable: !nameError,
     }),
-    [collectionOwner, executorError, executorLoading, executors, nameError],
+    [collectionOwner, executors, nameError],
   );
   const issues = validateRoutineDraft(definition);
   const stepIndex = ROUTINE_CREATE_STEPS.indexOf(step);
@@ -268,7 +262,7 @@ export function RoutineCreateDialog({
             ) : null}
             {step === "action" ? (
               <>
-                {executorLoading && definition.action.type === "run_agent" ? (
+                {executors.loading && definition.action.type === "run_agent" ? (
                   <Alert>
                     <LoaderCircle className="animate-spin" />
                     <AlertDescription>
@@ -276,10 +270,10 @@ export function RoutineCreateDialog({
                     </AlertDescription>
                   </Alert>
                 ) : null}
-                {executorError && definition.action.type === "run_agent" ? (
+                {executors.error && definition.action.type === "run_agent" ? (
                   <Alert variant="destructive">
                     <AlertDescription className="flex flex-col items-start gap-2">
-                      <span>{executorError}</span>
+                      <span>{executors.error}</span>
                       <Button
                         type="button"
                         size="sm"
@@ -293,11 +287,9 @@ export function RoutineCreateDialog({
                 ) : null}
                 <RoutineActionFields
                   definition={definition}
-                  executorError={executorError}
                   executors={executors}
                   idPrefix="routine-create"
                   issues={visibleIssues}
-                  loading={executorLoading}
                   onChange={onChange}
                 />
                 <RoutineContentField

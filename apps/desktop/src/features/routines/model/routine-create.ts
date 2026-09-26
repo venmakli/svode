@@ -1,4 +1,7 @@
-import type { AgentActorOption } from "@/features/actors";
+import {
+  resolveAgentActorReference,
+  type AgentActorOptionsState,
+} from "@/features/actors/agent-reference";
 
 import { validateRoutineDraft } from "./routine-draft";
 import type { RoutineDefinition } from "./types";
@@ -14,9 +17,7 @@ export const ROUTINE_CREATE_STEPS: readonly RoutineCreateStep[] = [
 
 export interface RoutineCreateValidationContext {
   collectionOwner: boolean;
-  executorError: string | null;
-  executorLoading: boolean;
-  executors: readonly AgentActorOption[];
+  executors: AgentActorOptionsState;
   nameAvailable?: boolean;
 }
 
@@ -81,11 +82,12 @@ export function isRoutineCreateStepValid(
   if (step === "action") {
     if (issues.has("executor") || issues.has("set")) return false;
     if (definition.action.type !== "run_agent") return true;
-    const executor = definition.action.executor;
+    const { executors } = context;
     return (
-      !context.executorLoading &&
-      !context.executorError &&
-      context.executors.some((option) => option.value === executor)
+      !executors.loading &&
+      !executors.error &&
+      resolveAgentActorReference(executors, definition.action.executor)
+        .status === "resolved"
     );
   }
   return ROUTINE_CREATE_STEPS.slice(0, -1).every((candidate) =>

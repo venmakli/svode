@@ -4,6 +4,11 @@ import { AlertTriangle } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
+import {
+  AgentActorReferenceValue,
+  resolveAgentActorReference,
+  type AgentActorOptionsState,
+} from "@/features/actors/agent-reference";
 import { ControlledMarkdownEditor } from "@/features/editor";
 import * as m from "@/paraglide/messages.js";
 import { getLocale } from "@/paraglide/runtime.js";
@@ -19,7 +24,13 @@ import {
   routineScheduleSummary,
 } from "./routine-schedule-copy";
 
-export function RoutineDetailView({ row }: { row: RoutineRow }) {
+export function RoutineDetailView({
+  executors,
+  row,
+}: {
+  executors: AgentActorOptionsState;
+  row: RoutineRow;
+}) {
   if (!row.valid || !row.definition) {
     return (
       <div className="flex flex-col gap-4">
@@ -59,9 +70,14 @@ export function RoutineDetailView({ row }: { row: RoutineRow }) {
               : m.routines_enabled_no()}
         </DetailValue>
         <DetailValue label={m.routines_field_executor()}>
-          {row.definition.action.type === "run_agent"
-            ? row.definition.action.executor
-            : m.routines_not_applicable()}
+          {row.definition.action.type === "run_agent" ? (
+            <RoutineExecutorValue
+              executors={executors}
+              reference={row.definition.action.executor}
+            />
+          ) : (
+            m.routines_not_applicable()
+          )}
         </DetailValue>
         {row.lastRunAt ? (
           <DetailValue label={m.routines_field_last_run()}>
@@ -98,6 +114,28 @@ export function RoutineDetailView({ row }: { row: RoutineRow }) {
         />
       </DetailValue>
     </div>
+  );
+}
+
+function RoutineExecutorValue({
+  executors,
+  reference,
+}: {
+  executors: AgentActorOptionsState;
+  reference: string;
+}) {
+  const resolved = resolveAgentActorReference(executors, reference);
+  const recovery =
+    resolved.status === "missing" || resolved.status === "ambiguous";
+  return (
+    <span className="flex min-w-0 flex-col gap-1">
+      <AgentActorReferenceValue reference={resolved} />
+      {recovery ? (
+        <span className="break-all text-xs text-muted-foreground">
+          {reference}
+        </span>
+      ) : null}
+    </span>
   );
 }
 

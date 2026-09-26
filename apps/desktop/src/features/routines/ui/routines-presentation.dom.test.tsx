@@ -3,6 +3,7 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { JSDOM } from "jsdom";
 
+import type { AgentActorOptionsState } from "@/features/actors/agent-reference";
 import {
   EMPTY_COLLECTION_QUERY,
   CollectionPresentationShell,
@@ -14,6 +15,20 @@ import {
   type RoutinePresentationActions,
 } from "./routines-presentation";
 
+const executors: AgentActorOptionsState = {
+  ambiguous: [],
+  error: null,
+  incomplete: false,
+  loading: false,
+  options: [
+    {
+      description: null,
+      label: "Documentation Agent",
+      ownerLabel: "Project",
+      value: "agent:01arz3ndektsv4rrffq69g5fav",
+    },
+  ],
+};
 const scheduled: RoutineRow = {
   definition: {
     action: {
@@ -75,6 +90,7 @@ test("routine enabled Switch is single-flight and does not open the row", async 
     onRun: async () => undefined,
   };
   const presentation = createRoutinesPresentation({
+    executors,
     actions,
     onActivate: (row) => {
       activations.push(row.id);

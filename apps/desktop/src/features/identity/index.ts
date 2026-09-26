@@ -1,4 +1,5 @@
 export { humanAvatar } from "./lib/avatar-presentation";
+export { AgentAvatar } from "./ui/agent-avatar";
 export { IdentityDialog } from "./ui/identity-dialog";
 export type {
   FanoutPreviewEntry,

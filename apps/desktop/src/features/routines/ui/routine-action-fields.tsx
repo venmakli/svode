@@ -1,4 +1,9 @@
-import type { AgentActorOption } from "@/features/actors";
+import {
+  AgentActorReferenceValue,
+  agentActorReferenceLabel,
+  resolveAgentActorReference,
+  type AgentActorOptionsState,
+} from "@/features/actors/agent-reference";
 import {
   Field,
   FieldDescription,
@@ -25,29 +30,32 @@ import { RoutinePropertySetEditor } from "./routine-property-set-editor";
 
 export function RoutineActionFields({
   definition,
-  executorError,
   executors,
   idPrefix,
   issues,
-  loading = false,
   onChange,
 }: {
   definition: RoutineDefinition;
-  executorError: string | null;
-  executors: readonly AgentActorOption[];
+  executors: AgentActorOptionsState;
   idPrefix: string;
   issues: ReadonlySet<RoutineDraftIssue>;
-  loading?: boolean;
   onChange(definition: RoutineDefinition): void;
 }) {
   const allowUpdateProperties =
     definition.trigger.type === "event" &&
     definition.trigger.event !== "collection.entry_deleted";
   const action = definition.action;
-  const missingExecutor =
-    action.type === "run_agent" &&
-    Boolean(action.executor) &&
-    !executors.some((option) => option.value === action.executor);
+  const executorReference =
+    action.type === "run_agent" && action.executor
+      ? resolveAgentActorReference(executors, action.executor)
+      : null;
+  const unresolvedExecutor =
+    executorReference?.status === "resolved" ? null : executorReference;
+  const executorInvalid =
+    issues.has("executor") ||
+    unresolvedExecutor?.status === "missing" ||
+    unresolvedExecutor?.status === "ambiguous" ||
+    unresolvedExecutor?.status === "error";
 
   return (
     <FieldGroup>
@@ -88,10 +96,10 @@ export function RoutineActionFields({
       ) : null}
 
       {definition.action.type === "run_agent" ? (
-        <Field data-invalid={issues.has("executor") || missingExecutor}>
+        <Field data-invalid={executorInvalid}>
           <FieldLabel>{m.routines_executor_label()}</FieldLabel>
           <Select
-            disabled={loading || Boolean(executorError)}
+            disabled={executors.loading || Boolean(executors.error)}
             value={definition.action.executor}
             onValueChange={(executor) =>
               onChange({
@@ -103,29 +111,41 @@ export function RoutineActionFields({
             <SelectTrigger
               className="w-full"
               data-routine-create-focus="action"
-              aria-invalid={issues.has("executor") || missingExecutor}
+              aria-invalid={executorInvalid}
             >
               <SelectValue placeholder={m.routines_executor_placeholder()} />
             </SelectTrigger>
             <SelectContent>
               <SelectGroup>
-                {missingExecutor ? (
-                  <SelectItem value={definition.action.executor} disabled>
-                    {definition.action.executor}
+                {unresolvedExecutor ? (
+                  <SelectItem value={unresolvedExecutor.reference} disabled>
+                    <AgentActorReferenceValue reference={unresolvedExecutor} />
                   </SelectItem>
                 ) : null}
-                {executors.map((option) => (
+                {executors.options.map((option) => (
                   <SelectItem key={option.value} value={option.value}>
-                    {option.label} · {option.ownerLabel}
+                    <AgentActorReferenceValue
+                      reference={resolveAgentActorReference(
+                        executors,
+                        option.value,
+                      )}
+                      showOwner
+                    />
                   </SelectItem>
                 ))}
               </SelectGroup>
             </SelectContent>
           </Select>
-          {executorError ? (
-            <FieldError>{executorError}</FieldError>
-          ) : missingExecutor ? (
+          {executors.error ? (
+            <FieldError>{executors.error}</FieldError>
+          ) : unresolvedExecutor?.status === "missing" ? (
             <FieldError>{m.routines_executor_missing()}</FieldError>
+          ) : unresolvedExecutor?.status === "ambiguous" ? (
+            <FieldError>{m.routines_executor_ambiguous()}</FieldError>
+          ) : unresolvedExecutor?.status === "error" ? (
+            <FieldError>
+              {agentActorReferenceLabel(unresolvedExecutor)}
+            </FieldError>
           ) : issues.has("executor") ? (
             <FieldError>{m.routines_executor_required()}</FieldError>
           ) : (

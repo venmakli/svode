@@ -2,6 +2,11 @@ import type { ReactNode } from "react";
 
 import { Button } from "@/components/ui/button";
 import {
+  agentActorReferenceLabel,
+  resolveAgentActorReference,
+  type AgentActorOptionsState,
+} from "@/features/actors/agent-reference";
+import {
   defineCollectionPresentation,
   type CollectionActionState,
   type CollectionPresentationDescriptor,
@@ -36,20 +41,20 @@ export interface RoutinePresentationActions {
 
 export function createRoutinesPresentation({
   actions,
+  executors,
   onActivate,
-  getExecutorLabel,
   state,
 }: {
   actions: RoutinePresentationActions;
+  executors: AgentActorOptionsState;
   onActivate?: CollectionPresentationDescriptor<RoutineRow>["onActivate"];
-  getExecutorLabel?(row: RoutineRow): string | null;
   state: CollectionPresentationState<RoutineRow>;
 }) {
   return defineCollectionPresentation({
     descriptor: createRoutinesPresentationDescriptor({
       actions,
+      executors,
       onActivate,
-      getExecutorLabel,
     }),
     state,
   });
@@ -57,16 +62,19 @@ export function createRoutinesPresentation({
 
 export function createRoutinesPresentationDescriptor({
   actions,
+  executors,
   onActivate,
-  getExecutorLabel = (row) =>
-    row.definition?.action.type === "run_agent"
-      ? row.definition.action.executor
-      : null,
 }: {
   actions: RoutinePresentationActions;
+  executors: AgentActorOptionsState;
   onActivate?: CollectionPresentationDescriptor<RoutineRow>["onActivate"];
-  getExecutorLabel?(row: RoutineRow): string | null;
 }): CollectionPresentationDescriptor<RoutineRow> {
+  const getExecutorLabel = (row: RoutineRow) =>
+    row.definition?.action.type === "run_agent"
+      ? agentActorReferenceLabel(
+          resolveAgentActorReference(executors, row.definition.action.executor),
+        )
+      : null;
   const properties: readonly CollectionPropertyDefinition<RoutineRow>[] = [
     defineOwnerDefinedCollectionProperty({
       capabilities: {

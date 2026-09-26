@@ -1,6 +1,9 @@
 import { useEffect } from "react";
 
-import type { AgentActorOption } from "@/features/actors";
+import {
+  resolveAgentActorReference,
+  type AgentActorOptionsState,
+} from "@/features/actors/agent-reference";
 import { Switch } from "@/components/ui/switch";
 import {
   Field,
@@ -22,7 +25,6 @@ import { RoutineTriggerFields } from "./routine-trigger-fields";
 export function RoutineDefinitionForm({
   collectionOwner,
   definition,
-  executorError,
   executors,
   formId,
   nameError,
@@ -31,8 +33,7 @@ export function RoutineDefinitionForm({
 }: {
   collectionOwner: boolean;
   definition: RoutineDefinition;
-  executorError: string | null;
-  executors: readonly AgentActorOption[];
+  executors: AgentActorOptionsState;
   formId: string;
   nameError: string | null;
   onChange(definition: RoutineDefinition): void;
@@ -43,7 +44,8 @@ export function RoutineDefinitionForm({
   const executorUnavailable =
     action.type === "run_agent" &&
     (!action.executor ||
-      !executors.some((option) => option.value === action.executor));
+      resolveAgentActorReference(executors, action.executor).status !==
+        "resolved");
   useEffect(() => {
     if (!nameError) return;
     window.requestAnimationFrame(() => {
@@ -61,7 +63,7 @@ export function RoutineDefinitionForm({
           definition.name.trim() &&
           !nameError &&
           !executorUnavailable &&
-          !executorError
+          !executors.error
         ) {
           onSubmit();
         }
@@ -109,7 +111,6 @@ export function RoutineDefinitionForm({
         <FieldLegend>{m.routines_action_section()}</FieldLegend>
         <RoutineActionFields
           definition={definition}
-          executorError={executorError}
           executors={executors}
           idPrefix={formId}
           issues={issues}

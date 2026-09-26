@@ -1,11 +1,10 @@
-import { Bot } from "lucide-react";
-
 import {
   defineCollectionPresentation,
   type CollectionActionState,
   type CollectionPresentationDescriptor,
   type CollectionPresentationState,
 } from "@/features/collection";
+import { AgentAvatar } from "@/features/identity";
 import {
   defineComputedCollectionProperty,
   defineOwnerDefinedCollectionProperty,
@@ -173,7 +172,7 @@ export function createAgentActorsPresentationDescriptor({
           : row.actorRef),
       getTitle: (row) => row.name,
       kind: "list",
-      renderLeading: () => <Bot className="size-5 text-muted-foreground" />,
+      renderLeading: () => <AgentAvatar shape="square" size="sm" />,
       visibleProperties: inheritedVisible
         ? ["primary", "status", "space"]
         : ["primary", "status"],

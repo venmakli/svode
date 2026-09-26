@@ -67,6 +67,27 @@ test("Agent Actors uses the fixed schema and one shared edit/delete descriptor s
   expect(calls).toEqual(["add", "edit:/repo", "delete:/repo"]);
 });
 
+test("Agent Actors rows lead with the shared rounded agent avatar", () => {
+  const descriptor = createAgentActorsPresentationDescriptor({
+    actions: {
+      createState: { status: "idle" },
+      getDeleteState: () => ({ status: "idle" }),
+      getEditState: () => ({ status: "idle" }),
+      onAdd: () => undefined,
+      onDelete: () => undefined,
+      onEdit: () => undefined,
+    },
+    inheritedVisible: false,
+    rows: [own],
+  });
+  const leading =
+    descriptor.layout.kind === "list"
+      ? renderToStaticMarkup(<>{descriptor.layout.renderLeading?.(own)}</>)
+      : "";
+  expect(String(leading).includes('data-agent-avatar="neutral"')).toBe(true);
+  expect(String(leading).includes("rounded-lg")).toBe(true);
+});
+
 test("Agent Actors default order and search preserve owner provenance", () => {
   const presentation = createAgentActorsPresentation({
     actions: disabledActions(),

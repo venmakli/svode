@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import { TooltipProvider } from "@/components/ui/tooltip";
+import type { AgentActorOptionsState } from "@/features/actors/agent-reference";
 import {
   applyCollectionQuery,
   EMPTY_COLLECTION_QUERY,
@@ -12,6 +13,7 @@ import {
 
 import type { RoutineRow } from "../model/types";
 import { RoutineAutomaticConsent } from "./routine-automatic-consent";
+import { RoutineCreateReview } from "./routine-create-review";
 import { RoutineDetailView } from "./routine-detail-view";
 import {
   routineScheduleSummary,
@@ -24,6 +26,20 @@ import {
   type RoutinePresentationActions,
 } from "./routines-presentation";
 
+const executors: AgentActorOptionsState = {
+  ambiguous: [],
+  error: null,
+  incomplete: false,
+  loading: false,
+  options: [
+    {
+      description: null,
+      label: "Documentation Agent",
+      ownerLabel: "Project",
+      value: "agent:01arz3ndektsv4rrffq69g5fav",
+    },
+  ],
+};
 const review: RoutineRow = {
   definition: {
     action: {
@@ -130,6 +146,7 @@ function actions(calls: string[]): RoutinePresentationActions {
 
 test("routines expose one fixed All list with the complete fixed schema", () => {
   const descriptor = createRoutinesPresentationDescriptor({
+    executors,
     actions: actions([]),
     onActivate: () => undefined,
   });
@@ -204,12 +221,15 @@ test("routines expose one fixed All list with the complete fixed schema", () => 
 });
 
 test("routine detail hides technical paths when valid and preserves exact recovery paths when invalid", () => {
-  const valid = renderToStaticMarkup(<RoutineDetailView row={review} />);
+  const valid = renderToStaticMarkup(
+    <RoutineDetailView executors={executors} row={review} />,
+  );
   expect(valid.includes(review.definitionPath)).toBe(false);
 
   const invalidPath = ".routines/broken.md";
   const invalid = renderToStaticMarkup(
     <RoutineDetailView
+      executors={executors}
       row={{
         ...review,
         definitionPath: invalidPath,
@@ -243,6 +263,7 @@ test("schedule properties and detail stay compact without time-basis annotations
 
   const fixed = renderToStaticMarkup(
     <RoutineDetailView
+      executors={executors}
       row={{ ...scheduled, nextRunAt: "2026-08-27T02:00:00Z" }}
     />,
   );
@@ -251,6 +272,7 @@ test("schedule properties and detail stay compact without time-basis annotations
 
   const local = renderToStaticMarkup(
     <RoutineDetailView
+      executors={executors}
       row={{
         ...scheduled,
         definition: {
@@ -279,6 +301,7 @@ test("duplicate-name rows conditionally expose their current path and remain usa
     },
   };
   const descriptor = createRoutinesPresentationDescriptor({
+    executors,
     actions: actions([]),
     onActivate: () => undefined,
   });
@@ -293,7 +316,7 @@ test("duplicate-name rows conditionally expose their current path and remain usa
   const normalMarkup = renderToStaticMarkup(<>{normalDescription}</>);
   const conflictMarkup = renderToStaticMarkup(<>{conflictDescription}</>);
   const detailMarkup = renderToStaticMarkup(
-    <RoutineDetailView row={conflictRow} />,
+    <RoutineDetailView executors={executors} row={conflictRow} />,
   );
 
   expect(normalMarkup.includes(review.definitionPath)).toBe(false);
@@ -305,6 +328,7 @@ test("duplicate-name rows conditionally expose their current path and remain usa
 
 test("routines query searches definitions and defaults to name ordering", () => {
   const descriptor = createRoutinesPresentationDescriptor({
+    executors,
     actions: actions([]),
     onActivate: () => undefined,
   });
@@ -349,6 +373,7 @@ test("routines query searches definitions and defaults to name ordering", () => 
 test("routines delegate create, row actions, and inline enabled edits", async () => {
   const calls: string[] = [];
   const descriptor = createRoutinesPresentationDescriptor({
+    executors,
     actions: actions(calls),
     onActivate: () => undefined,
   });
@@ -373,6 +398,7 @@ test("routines delegate create, row actions, and inline enabled edits", async ()
 
 test("routines render the common toolbar and a single fixed All list", () => {
   const presentation = createRoutinesPresentation({
+    executors,
     actions: actions([]),
     onActivate: () => undefined,
     state: { phase: "ready", rows: [scheduled] },
@@ -448,6 +474,7 @@ test("manual routines omit enabled while invalid routines render a passive marke
     return { status: "idle" };
   };
   const presentation = createRoutinesPresentation({
+    executors,
     actions: routineActions,
     onActivate: () => undefined,
     state: {
@@ -554,3 +581,79 @@ function readySnapshotState() {
     },
   };
 }
+
+test("executor surfaces show the agent name and never a raw id while resolved or loading", () => {
+  const ref = "agent:01arz3ndektsv4rrffq69g5fav";
+  const descriptor = (state: AgentActorOptionsState) =>
+    createRoutinesPresentationDescriptor({
+      actions: actions([]),
+      executors: state,
+    });
+  const executorValue = (state: AgentActorOptionsState) =>
+    descriptor(state)
+      .properties.find((property) => property.key === "executor")
+      ?.getValue(review);
+  const detail = (state: AgentActorOptionsState) =>
+    renderToStaticMarkup(<RoutineDetailView executors={state} row={review} />);
+  const empty: AgentActorOptionsState = { ...executors, options: [] };
+
+  expect(executorValue(executors)).toBe("Documentation Agent");
+  const resolved = detail(executors);
+  expect(String(resolved).includes("Documentation Agent")).toBe(true);
+  expect(String(resolved).includes('data-agent-avatar="neutral"')).toBe(true);
+  expect(String(resolved).includes(ref)).toBe(false);
+  const review_ = renderToStaticMarkup(
+    <RoutineCreateReview
+      automaticAuthority={null}
+      definition={review.definition!}
+      executors={executors}
+      ownerLabel="Project"
+      onEdit={() => undefined}
+    />,
+  );
+  expect(String(review_).includes("Documentation Agent")).toBe(true);
+  expect(String(review_).includes(ref)).toBe(false);
+
+  const renamed: AgentActorOptionsState = {
+    ...executors,
+    options: [{ ...executors.options[0]!, label: "Docs Writer" }],
+  };
+  expect(executorValue(renamed)).toBe("Docs Writer");
+  expect(String(detail(renamed)).includes("Docs Writer")).toBe(true);
+
+  const loading: AgentActorOptionsState = { ...empty, loading: true };
+  expect(executorValue(loading)).toBe("Loading agent…");
+  expect(
+    String(detail(loading)).includes('data-agent-actor-reference="loading"'),
+  ).toBe(true);
+  expect(String(detail(loading)).includes(ref)).toBe(false);
+
+  expect(executorValue(empty)).toBe("Agent not found");
+  const missing = detail(empty);
+  expect(String(missing).includes('data-agent-actor-reference="missing"')).toBe(
+    true,
+  );
+  expect(String(missing).includes(ref)).toBe(true);
+
+  const ambiguousState: AgentActorOptionsState = { ...empty, ambiguous: [ref] };
+  const ambiguous = detail(ambiguousState);
+  expect(executorValue(ambiguousState)).toBe(
+    "Agent is defined in both this space and the project",
+  );
+  expect(
+    String(ambiguous).includes('data-agent-actor-reference="ambiguous"'),
+  ).toBe(true);
+  expect(String(ambiguous).includes('data-agent-avatar="destructive"')).toBe(
+    true,
+  );
+  expect(String(ambiguous).includes(ref)).toBe(true);
+
+  const failed = detail({ ...empty, error: "catalog failed" });
+  expect(String(failed).includes("Couldn’t load agent")).toBe(true);
+  expect(String(failed).includes(ref)).toBe(false);
+  expect(
+    String(descriptor(renamed).query?.getSearchText?.(review)).includes(
+      "Docs Writer",
+    ),
+  ).toBe(true);
+});

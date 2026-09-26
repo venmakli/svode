@@ -5,7 +5,7 @@ import {
   type Dispatch,
   type SetStateAction,
 } from "react";
-import { Bot, LoaderCircle } from "lucide-react";
+import { LoaderCircle } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import type {
@@ -17,6 +17,7 @@ import {
   RepositoryAccessPrimaryButton,
   type RepositoryAccessPreflightController,
 } from "@/features/git";
+import { AgentAvatar } from "@/features/identity";
 import * as m from "@/paraglide/messages.js";
 
 import { createAgentActorDraft } from "../model/agent-actor-draft";
@@ -259,7 +260,7 @@ function detailSelection(instanceKey: string, row: AgentActorRow) {
 function detailTitle(row: AgentActorRow) {
   return (
     <span className="flex min-w-0 items-center gap-3">
-      <Bot className="size-6 text-muted-foreground" />
+      <AgentAvatar shape="square" size="lg" />
       <span className="flex min-w-0 flex-col text-left">
         <span className="truncate">{row.name}</span>
         {row.description ? (

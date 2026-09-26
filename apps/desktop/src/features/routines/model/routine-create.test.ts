@@ -21,11 +21,17 @@ const actor = {
   value: "agent:01arz3ndektsv4rrffq69g5fav" as const,
 };
 
+const executors = {
+  ambiguous: [],
+  error: null,
+  incomplete: false,
+  loading: false,
+  options: [actor],
+};
+
 const ready: RoutineCreateValidationContext = {
   collectionOwner: true,
-  executorError: null,
-  executorLoading: false,
-  executors: [actor],
+  executors,
 };
 
 test("create draft remains runtime-only until all four step gates are valid", () => {
@@ -85,17 +91,26 @@ test("actor loading, failure and stale selection block the action gate", () => {
   expect(
     isRoutineCreateStepValid("action", draft, {
       ...ready,
-      executorLoading: true,
+      executors: { ...executors, loading: true },
     }),
   ).toBe(false);
   expect(
     isRoutineCreateStepValid("action", draft, {
       ...ready,
-      executorError: "catalog failed",
+      executors: { ...executors, error: "catalog failed" },
     }),
   ).toBe(false);
   expect(
-    isRoutineCreateStepValid("action", draft, { ...ready, executors: [] }),
+    isRoutineCreateStepValid("action", draft, {
+      ...ready,
+      executors: { ...executors, options: [] },
+    }),
+  ).toBe(false);
+  expect(
+    isRoutineCreateStepValid("action", draft, {
+      ...ready,
+      executors: { ...executors, ambiguous: [actor.value], options: [] },
+    }),
   ).toBe(false);
 });
 

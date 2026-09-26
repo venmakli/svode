@@ -14,6 +14,10 @@ import {
 } from "@/platform/agent-actors/agent-actors-api";
 
 import { actorOwnerLabel } from "../model/agent-actor-draft";
+import {
+  agentActorOptionCatalogDiagnostics,
+  type AgentActorOptionCatalog,
+} from "../model/agent-actor-reference";
 import type {
   AgentActorAdapterDiagnostic,
   AgentActorBinding,
@@ -21,13 +25,6 @@ import type {
   AgentActorCatalogSnapshot,
   AgentActorMutationApplied,
 } from "../model/agent-actor-types";
-
-export interface AgentActorOption {
-  description: string | null;
-  label: string;
-  ownerLabel: string;
-  value: `agent:${string}`;
-}
 
 export async function loadAgentActors(
   projectPath: string,
@@ -110,21 +107,24 @@ export function listenAgentActorCatalogInvalidated(
   );
 }
 
-export async function listAgentActorOptions(
+export async function loadAgentActorOptions(
   projectPath: string,
   launchSpacePath: string,
-): Promise<readonly AgentActorOption[]> {
+): Promise<AgentActorOptionCatalog> {
   const snapshot = await loadAgentActors(projectPath, launchSpacePath);
-  return Object.freeze(
-    snapshot.rows.map((row) =>
-      Object.freeze({
-        description: row.description,
-        label: row.name,
-        ownerLabel: row.ownerLabel,
-        value: row.actorRef,
-      }),
+  return Object.freeze({
+    ...agentActorOptionCatalogDiagnostics(snapshot.diagnostics),
+    options: Object.freeze(
+      snapshot.rows.map((row) =>
+        Object.freeze({
+          description: row.description,
+          label: row.name,
+          ownerLabel: row.ownerLabel,
+          value: row.actorRef,
+        }),
+      ),
     ),
-  );
+  });
 }
 
 export function diagnoseAgentActorAdapter(

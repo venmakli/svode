@@ -4,7 +4,11 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
-import type { AgentActorOption } from "@/features/actors";
+import {
+  AgentActorReferenceValue,
+  resolveAgentActorReference,
+  type AgentActorOptionsState,
+} from "@/features/actors/agent-reference";
 import * as m from "@/paraglide/messages.js";
 
 import type { RoutineCreateStep } from "../model/routine-create";
@@ -23,7 +27,7 @@ export function RoutineCreateReview({
 }: {
   automaticAuthority: boolean | null;
   definition: RoutineDefinition;
-  executors: readonly AgentActorOption[];
+  executors: AgentActorOptionsState;
   ownerLabel: string;
   onEdit(step: Exclude<RoutineCreateStep, "review">): void;
 }) {
@@ -71,7 +75,12 @@ export function RoutineCreateReview({
         </ReviewValue>
         {definition.action.type === "run_agent" ? (
           <ReviewValue label={m.routines_field_executor()}>
-            {executorLabel(definition, executors)}
+            <AgentActorReferenceValue
+              reference={resolveAgentActorReference(
+                executors,
+                definition.action.executor,
+              )}
+            />
           </ReviewValue>
         ) : (
           <ReviewValue label={m.routines_properties_set_label()}>
@@ -113,17 +122,6 @@ export function RoutineCreateReview({
         </Alert>
       ) : null}
     </div>
-  );
-}
-
-function executorLabel(
-  definition: RoutineDefinition,
-  executors: readonly AgentActorOption[],
-) {
-  if (definition.action.type !== "run_agent") return "";
-  const executor = definition.action.executor;
-  return (
-    executors.find((option) => option.value === executor)?.label ?? executor
   );
 }
 

@@ -285,9 +285,13 @@ function JourneyHarness({
           collectionOwner
           definition={definition}
           error={null}
-          executorError={null}
-          executorLoading={false}
-          executors={[actor]}
+          executors={{
+            ambiguous: [],
+            error: null,
+            incomplete: false,
+            loading: false,
+            options: [actor],
+          }}
           initialDefinition={initial}
           nameError={nameError}
           ownerLabel="Collection · Tasks"
