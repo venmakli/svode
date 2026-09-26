@@ -1142,7 +1142,7 @@ if (process.env.SVODE_CHANGES_DOM !== "1") {
       await refresh();
       expect(trigger().dataset.changesDirty).toBe("false");
       expect(trigger().dataset.size).toBe("icon-sm");
-      expect(trigger().dataset.variant).toBe("ghost");
+      expect(trigger().dataset.variant).toBe("outline");
       expect(trigger().className.includes("text-muted-foreground")).toBe(true);
       expect(trigger().getAttribute("aria-label")).toBe("No changes in Plan");
       expect(trigger().textContent).toBe("");
@@ -1159,13 +1159,35 @@ if (process.env.SVODE_CHANGES_DOM !== "1") {
       await refresh();
       expect(trigger().dataset.changesDirty).toBe("true");
       expect(trigger().dataset.size).toBe("sm");
-      expect(trigger().dataset.variant).toBe("ghost");
+      expect(trigger().dataset.variant).toBe("outline");
       expect(trigger().className.includes("text-muted-foreground")).toBe(false);
       expect(trigger().getAttribute("aria-label")).toBe("Changes in Plan: 1");
-      expect(trigger().textContent).toBe("Changes1");
+      expect(trigger().textContent).toBe("1");
       expect(trigger().querySelector('[data-slot="badge"]')?.textContent).toBe(
         "1",
       );
+
+      await act(async () => {
+        root.render(
+          <TooltipProvider>
+            <ChangesControl
+              origin="peek"
+              target={{
+                kind: "page",
+                sourceShape: "file",
+                spacePath: "/df103-quiet",
+                path: "notes/plan.md",
+                name: "Plan",
+              }}
+            />
+          </TooltipProvider>,
+        );
+        await nextFrame(dom);
+      });
+      await refresh();
+      expect(trigger().dataset.variant).toBe("ghost");
+      expect(trigger().getAttribute("aria-label")).toBe("Changes in Plan: 1");
+      expect(trigger().textContent).toBe("1");
 
       await setLocale("ru", { reload: false });
       files = [];

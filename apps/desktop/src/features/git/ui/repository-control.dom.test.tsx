@@ -151,7 +151,7 @@ if (!isolatedProcess) {
           `${scenario.name}:${scenario.visible}`,
         );
         if (!control) continue;
-        expect(control.dataset.variant).toBe("ghost");
+        expect(control.dataset.variant).toBe("outline");
         expect(control.dataset.size).toBe("sm");
         if (scenario.name === "normal")
           expect(control.className.includes("text-destructive")).toBe(false);

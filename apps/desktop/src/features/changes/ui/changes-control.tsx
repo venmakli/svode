@@ -81,7 +81,7 @@ function ScopeChangesControl({
         <TooltipTrigger asChild>
           <SheetTrigger asChild>
             <Button
-              variant="ghost"
+              variant={origin === "peek" ? "ghost" : "outline"}
               size={dirty ? "sm" : "icon-sm"}
               className={dirty ? undefined : "text-muted-foreground"}
               data-changes-trigger
@@ -89,12 +89,7 @@ function ScopeChangesControl({
               aria-label={label}
             >
               <FileDiff data-icon={dirty ? "inline-start" : undefined} />
-              {dirty ? (
-                <>
-                  <span className="hidden lg:inline">{m.changes_title()}</span>
-                  <Badge variant="secondary">{paths.length}</Badge>
-                </>
-              ) : null}
+              {dirty ? <Badge variant="secondary">{paths.length}</Badge> : null}
             </Button>
           </SheetTrigger>
         </TooltipTrigger>

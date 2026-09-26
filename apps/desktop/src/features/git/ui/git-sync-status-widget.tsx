@@ -110,7 +110,7 @@ export function GitSyncStatusWidget({
             <DialogTrigger asChild>
               <Button
                 type="button"
-                variant="ghost"
+                variant="outline"
                 size="sm"
                 className={cn(
                   "max-w-[260px]",
