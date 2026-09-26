@@ -3157,6 +3157,7 @@ dependencies = [
  "block2",
  "objc2",
  "objc2-core-foundation",
+ "objc2-core-graphics",
  "objc2-foundation",
 ]
 
@@ -5328,6 +5329,7 @@ dependencies = [
 name = "svode-desktop"
 version = "0.0.8"
 dependencies = [
+ "base64 0.22.1",
  "block2",
  "chrono",
  "chrono-tz",

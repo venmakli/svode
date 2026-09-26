@@ -1,4 +1,4 @@
-import { Copy, ExternalLink, SquareTerminal } from "lucide-react";
+import { Copy, SquareTerminal } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Empty,
@@ -14,6 +14,7 @@ import { scopeLabel, sourceLabel, tooltipDateTime } from "../lib";
 import type { AgentSession, AgentSessionScopeGroup } from "../model";
 import { statusLabel } from "./session-status";
 import * as m from "@/paraglide/messages.js";
+import { ExternalTerminalIcon } from "./external-terminal-icon";
 
 type AgentSessionsController = ReturnType<typeof useAgentSessions>;
 
@@ -271,7 +272,7 @@ function ReentryErrorState({
               {m.sessions_action_copy_resume_command()}
             </Button>
             <Button variant="ghost" size="sm" onClick={onOpenExternalTerminal}>
-              <ExternalLink data-icon="inline-start" />
+              <ExternalTerminalIcon data-icon="inline-start" />
               {m.sessions_action_open_external_terminal()}
             </Button>
           </div>

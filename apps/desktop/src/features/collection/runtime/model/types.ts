@@ -191,6 +191,8 @@ export interface CollectionCreateCapability {
 export interface CollectionRowActionDescriptor<Row> {
   id: string;
   label: string;
+  /** Leading icon shown while the action is not pending. */
+  icon?: ReactNode;
   getLabel?(row: Row): string;
   isVisible?(row: Row): boolean;
   getState(row: Row): CollectionActionState;

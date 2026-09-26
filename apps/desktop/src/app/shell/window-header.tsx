@@ -25,7 +25,7 @@ import {
   RepositoryWorkStatus,
 } from "@/features/git/app-shell";
 import { MainBreadcrumbs } from "@/features/space/app-shell";
-import { ProjectOpenersMenu } from "./project-openers-menu";
+import { ProjectExternalOpenButton } from "@/features/external-open";
 import { ProjectSwitcher } from "./project-switcher";
 import { useCollectionDetailController } from "@/features/collection/app-shell";
 
@@ -174,9 +174,9 @@ export function WindowHeader() {
             }
           />
         ) : null}
-        {isSpaceRoute && (
-          <ProjectOpenersMenu projectPath={activeRootPath} />
-        )}
+        {isSpaceRoute && activeRootPath ? (
+          <ProjectExternalOpenButton projectPath={activeRootPath} />
+        ) : null}
         {ENABLE_IN_APP_CHAT && (
           <Tooltip>
             <TooltipTrigger asChild>

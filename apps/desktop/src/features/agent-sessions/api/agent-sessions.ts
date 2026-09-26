@@ -5,7 +5,11 @@ import {
   refreshAgentSessions as refreshAgentSessionsCommand,
   setAgentSessionPinned as setAgentSessionPinnedCommand,
 } from "@/platform/agent-sessions/agent-sessions-api";
-import { openProjectInTool } from "@/platform/project-openers";
+import {
+  listProjectOpeners,
+  openProjectInApp,
+  type ExternalAppDto,
+} from "@/platform/project-openers";
 import { openPath } from "@/platform/native/shell";
 
 export type {
@@ -55,8 +59,16 @@ export function reenterAgentSession(projectPath: string, sessionId: string) {
   return reenterAgentSessionCommand(projectPath, sessionId);
 }
 
+const EXTERNAL_TERMINAL_APP_ID = "terminal";
+
 export function openSessionCwdInExternalTerminal(cwd: string) {
-  return openProjectInTool(cwd, "terminal");
+  return openProjectInApp(cwd, EXTERNAL_TERMINAL_APP_ID);
+}
+
+/** The installed terminal that opens a session cwd, when available. */
+export async function loadExternalTerminalApp(): Promise<ExternalAppDto | null> {
+  const apps = await listProjectOpeners();
+  return apps.find((app) => app.id === EXTERNAL_TERMINAL_APP_ID) ?? null;
 }
 
 export function revealSessionFile(path: string) {

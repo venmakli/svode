@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import type { ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -204,6 +205,8 @@ test("instruction external action keeps the canonical artifact and owner togethe
       {
         capabilities: ["open_workspace_file"],
         id: "vscode",
+        icon: null,
+        isDefault: false,
         kind: "editor",
         label: "VS Code",
       },
@@ -216,6 +219,7 @@ test("instruction external action keeps the canonical artifact and owner togethe
     instance: {
       descriptor: {
         rowActions: Array<{
+          icon: ReactNode;
           id: string;
           run(row: AgentContextInstructionRow): void;
         }>;
@@ -226,6 +230,11 @@ test("instruction external action keeps the canonical artifact and owner togethe
   const action = presentation.instance.descriptor.rowActions[0]!;
   await action.run(selected);
   expect(action.id).toBe("open-in-vscode");
+  expect(
+    renderToStaticMarkup(action.icon).includes(
+      'data-external-app-icon="fallback"',
+    ),
+  ).toBe(true);
   expect(opened).toEqual([
     {
       canonicalArtifactPath: "/workspace/AGENTS.md",

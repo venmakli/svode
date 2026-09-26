@@ -8,7 +8,7 @@ import {
 import {
   listArtifactOpeners,
   openArtifactInTool,
-  type ArtifactOpener,
+  type ArtifactOpenerDto as ArtifactOpener,
   type ArtifactOpenTarget,
 } from "@/platform/project-openers";
 

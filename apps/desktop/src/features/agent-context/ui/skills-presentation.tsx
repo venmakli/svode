@@ -33,6 +33,7 @@ import {
   type CollectionPropertyDefinition,
   type CollectionPropertyFilterEditorInput,
 } from "@/features/properties";
+import { ExternalAppIcon } from "@/features/external-open";
 import * as m from "@/paraglide/messages.js";
 
 import { skillSourceFamilies, skillSourceLocations } from "../model/provenance";
@@ -115,6 +116,7 @@ export function createAgentContextSkillsPresentation({
       rowActions: artifactOpeners.map((opener) => ({
         getState: () => ({ status: "idle" as const }),
         id: `open-in-${opener.id}`,
+        icon: <ExternalAppIcon app={opener} data-icon="inline-start" />,
         label: m.agent_context_open_in({ name: opener.label }),
         run: (row) =>
           onOpenArtifact?.({

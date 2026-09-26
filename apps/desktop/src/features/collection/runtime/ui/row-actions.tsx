@@ -137,7 +137,9 @@ export function CollectionRowActionButton(props: CollectionRowActionProps) {
     >
       {state.pending ? (
         <LoaderCircle data-icon="inline-start" className="animate-spin" />
-      ) : null}
+      ) : (
+        action.icon
+      )}
       {label}
     </Button>
   );
@@ -186,7 +188,9 @@ function CollectionRowActionDropdownItem(
     >
       {state.pending ? (
         <LoaderCircle data-icon="inline-start" className="animate-spin" />
-      ) : null}
+      ) : (
+        action.icon
+      )}
       <span>{label}</span>
       {state.message ? (
         <span className="sr-only"> — {state.message}</span>
@@ -214,7 +218,9 @@ function CollectionRowActionContextItem(props: CollectionRowActionProps) {
     >
       {state.pending ? (
         <LoaderCircle data-icon="inline-start" className="animate-spin" />
-      ) : null}
+      ) : (
+        action.icon
+      )}
       <span>{label}</span>
       {state.message ? (
         <span className="sr-only"> — {state.message}</span>

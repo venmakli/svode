@@ -10,6 +10,7 @@ mod attachments;
 mod commands;
 mod document;
 mod error;
+mod external_apps;
 mod files;
 mod git;
 mod identity;

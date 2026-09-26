@@ -1,12 +1,5 @@
 import { useMemo, useState } from "react";
-import {
-  Copy,
-  ExternalLink,
-  Info,
-  MoreVertical,
-  PanelRight,
-  X,
-} from "lucide-react";
+import { Copy, Info, MoreVertical, PanelRight, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
@@ -38,6 +31,10 @@ import {
   sessionTimeLabel,
   sourceLabel,
 } from "../lib";
+import {
+  ExternalTerminalAppProvider,
+  ExternalTerminalIcon,
+} from "./external-terminal-icon";
 import { SessionsList } from "./sessions-list";
 import { SessionTerminalPane } from "./session-terminal-pane";
 import { statusLabel } from "./session-status";
@@ -128,48 +125,52 @@ export function AgentSessionsScreen({
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-background">
-      <AgentSessionsHeader
-        session={sessions.selectedSession}
-        ptyId={sessions.selectedPtyId}
-        rootName={activeRootName}
-        spaceNames={spaceNames}
-        metadataOpen={metadataOpen}
-        sessionsSidebarOpen={sessionsSidebarOpen}
-        onToggleMetadata={() => setMetadataOpen((open) => !open)}
-        onToggleSessionsSidebar={() => setSessionsSidebarOpen((open) => !open)}
-        onCopyCommand={copySelectedCommand}
-        onCloseTerminal={() =>
-          void runAction(
-            sessions.closeSelectedTerminal,
-            m.sessions_toast_close_terminal_failed(),
-          )
-        }
-        onOpenExternalTerminal={openSelectedExternalTerminal}
-      />
-      <div className="flex min-h-0 flex-1 pb-2">
-        <SessionTerminalPane
-          controller={sessions}
+    <ExternalTerminalAppProvider>
+      <div className="flex h-full min-h-0 flex-col bg-background">
+        <AgentSessionsHeader
+          session={sessions.selectedSession}
+          ptyId={sessions.selectedPtyId}
           rootName={activeRootName}
           spaceNames={spaceNames}
           metadataOpen={metadataOpen}
+          sessionsSidebarOpen={sessionsSidebarOpen}
+          onToggleMetadata={() => setMetadataOpen((open) => !open)}
+          onToggleSessionsSidebar={() =>
+            setSessionsSidebarOpen((open) => !open)
+          }
           onCopyCommand={copySelectedCommand}
+          onCloseTerminal={() =>
+            void runAction(
+              sessions.closeSelectedTerminal,
+              m.sessions_toast_close_terminal_failed(),
+            )
+          }
           onOpenExternalTerminal={openSelectedExternalTerminal}
-          rootScope={rootScope}
-          onOpenScopeTerminal={sessions.openNewSessionTerminal}
         />
-        {sessionsSidebarOpen && (
-          <SessionsList
+        <div className="flex min-h-0 flex-1 pb-2">
+          <SessionTerminalPane
             controller={sessions}
-            rootIcon={activeRootIcon}
             rootName={activeRootName}
-            spaceIcons={spaceIcons}
             spaceNames={spaceNames}
-            onOpenAppSettings={onOpenAppSettings}
+            metadataOpen={metadataOpen}
+            onCopyCommand={copySelectedCommand}
+            onOpenExternalTerminal={openSelectedExternalTerminal}
+            rootScope={rootScope}
+            onOpenScopeTerminal={sessions.openNewSessionTerminal}
           />
-        )}
+          {sessionsSidebarOpen && (
+            <SessionsList
+              controller={sessions}
+              rootIcon={activeRootIcon}
+              rootName={activeRootName}
+              spaceIcons={spaceIcons}
+              spaceNames={spaceNames}
+              onOpenAppSettings={onOpenAppSettings}
+            />
+          )}
+        </div>
       </div>
-    </div>
+    </ExternalTerminalAppProvider>
   );
 }
 
@@ -351,7 +352,7 @@ function SessionActionsMenu({
             disabled={!session?.resumeCommand?.cwd && !session?.cwd}
             onSelect={onOpenExternalTerminal}
           >
-            <ExternalLink />
+            <ExternalTerminalIcon />
             {m.sessions_action_open_external_terminal()}
           </DropdownMenuItem>
           <DropdownMenuItem disabled={!session} onSelect={onToggleMetadata}>

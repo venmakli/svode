@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import type { ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -395,6 +396,8 @@ test("skill external action opens its canonical manifest in the owning root", as
       {
         capabilities: ["reveal_file"],
         id: "file_manager",
+        icon: "data:image/png;base64,RklOREVS",
+        isDefault: false,
         kind: "file_manager",
         label: "Finder",
       },
@@ -406,7 +409,11 @@ test("skill external action opens its canonical manifest in the owning root", as
   }) as unknown as {
     instance: {
       descriptor: {
-        rowActions: Array<{ id: string; run(row: AgentContextSkillRow): void }>;
+        rowActions: Array<{
+          icon: ReactNode;
+          id: string;
+          run(row: AgentContextSkillRow): void;
+        }>;
       };
     };
   };
@@ -414,6 +421,11 @@ test("skill external action opens its canonical manifest in the owning root", as
   const action = runtime.instance.descriptor.rowActions[0]!;
   await action.run(reviewSkill);
   expect(action.id).toBe("open-in-file_manager");
+  expect(
+    renderToStaticMarkup(action.icon).includes(
+      'src="data:image/png;base64,RklOREVS"',
+    ),
+  ).toBe(true);
   expect(opened).toEqual([
     {
       canonicalArtifactPath: "/workspace/.agents/skills/review/SKILL.md",
@@ -445,6 +457,8 @@ test("skill external action uses canonical owner instead of discovery alias owne
       {
         capabilities: ["reveal_file"],
         id: "file_manager",
+        icon: null,
+        isDefault: false,
         kind: "file_manager",
         label: "Finder",
       },

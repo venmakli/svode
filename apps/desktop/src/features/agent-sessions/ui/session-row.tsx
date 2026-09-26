@@ -1,12 +1,5 @@
 import { useState } from "react";
-import {
-  Copy,
-  ExternalLink,
-  MoreHorizontal,
-  Pin,
-  PinOff,
-  X,
-} from "lucide-react";
+import { Copy, MoreHorizontal, Pin, PinOff, X } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -39,6 +32,7 @@ import {
 } from "../model";
 import { SessionStatusMarker, statusLabel } from "./session-status";
 import * as m from "@/paraglide/messages.js";
+import { ExternalTerminalIcon } from "./external-terminal-icon";
 
 const sessionRowActionVisibility =
   "opacity-0 transition-opacity disabled:opacity-0 focus-visible:opacity-100 data-[state=open]:opacity-100 group-hover/session-row:opacity-100 group-has-[[data-sidebar=menu-action]:focus-visible]/session-row:opacity-100 group-data-[actions-open=true]/session-row:opacity-100 group-hover/session-row:disabled:opacity-50 group-has-[[data-sidebar=menu-action]:focus-visible]/session-row:disabled:opacity-50 group-data-[actions-open=true]/session-row:disabled:opacity-50";
@@ -200,7 +194,7 @@ export function SessionRow({
               disabled={!session.resumeCommand?.cwd && !session.cwd}
               onSelect={() => onOpenExternalTerminal(session)}
             >
-              <ExternalLink />
+              <ExternalTerminalIcon />
               {m.sessions_action_open_external_terminal()}
             </DropdownMenuItem>
           </DropdownMenuGroup>

@@ -2,7 +2,13 @@ use std::{path::Path, path::PathBuf, process::Command};
 
 use serde::{Deserialize, Serialize};
 
-use crate::{AppError, system_path};
+#[cfg(target_os = "macos")]
+use crate::external_apps;
+use crate::{
+    AppError,
+    external_apps::{AppPresentation, ExternalAppDto, ExternalAppKind},
+    system_path,
+};
 
 #[cfg(any(target_os = "windows", test))]
 const VSCODE_PATH_ENV: &str = "SVODE_VSCODE_PATH";
@@ -14,9 +20,8 @@ struct WindowsProgramCandidate {
     source: &'static str,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ProjectOpenerId {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ProjectOpenerId {
     Vscode,
     Cursor,
     FileManager,
@@ -24,12 +29,66 @@ pub enum ProjectOpenerId {
     Iterm2,
 }
 
-#[derive(Debug, Clone, Copy, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ProjectOpenerKind {
-    Editor,
-    FileManager,
-    Terminal,
+/// The OS default application for a directory target.
+const DEFAULT_DIRECTORY_OPENER: ProjectOpenerId = ProjectOpenerId::FileManager;
+
+impl ProjectOpenerId {
+    const ALL: [Self; 5] = [
+        Self::Vscode,
+        Self::Cursor,
+        Self::FileManager,
+        Self::Terminal,
+        Self::Iterm2,
+    ];
+
+    /// Opaque id delivered to the frontend and re-resolved before every launch.
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Vscode => "vscode",
+            Self::Cursor => "cursor",
+            Self::FileManager => "file_manager",
+            Self::Terminal => "terminal",
+            Self::Iterm2 => "iterm2",
+        }
+    }
+
+    fn kind(self) -> ExternalAppKind {
+        match self {
+            Self::Vscode | Self::Cursor => ExternalAppKind::Editor,
+            Self::FileManager => ExternalAppKind::FileManager,
+            Self::Terminal | Self::Iterm2 => ExternalAppKind::Terminal,
+        }
+    }
+
+    fn fallback_label(self) -> &'static str {
+        match self {
+            Self::Vscode => "VS Code",
+            Self::Cursor => "Cursor",
+            Self::FileManager => file_manager_label(),
+            Self::Terminal => terminal_label(),
+            Self::Iterm2 => "iTerm2",
+        }
+    }
+
+    fn artifact_capability(self) -> ArtifactOpenerCapability {
+        match self {
+            Self::Vscode | Self::Cursor => ArtifactOpenerCapability::OpenWorkspaceFile,
+            Self::FileManager => ArtifactOpenerCapability::RevealFile,
+            Self::Terminal | Self::Iterm2 => ArtifactOpenerCapability::OpenDirectory,
+        }
+    }
+
+    /// Bundle names in the launch order of `open -a`, then the bundle identifier.
+    #[cfg(target_os = "macos")]
+    fn macos_bundle(self) -> (&'static [&'static str], &'static str) {
+        match self {
+            Self::Vscode => (&["Visual Studio Code"], "com.microsoft.VSCode"),
+            Self::Cursor => (&["Cursor"], "com.todesktop.230313mzl4w4u92"),
+            Self::FileManager => (&[], "com.apple.finder"),
+            Self::Terminal => (&["Terminal"], "com.apple.Terminal"),
+            Self::Iterm2 => (&["iTerm", "iTerm2"], "com.googlecode.iterm2"),
+        }
+    }
 }
 
 /// A filesystem target whose owning workspace must be retained by an external app.
@@ -50,69 +109,29 @@ pub enum ArtifactOpenerCapability {
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct ProjectOpenerInfo {
-    id: ProjectOpenerId,
-    label: &'static str,
-    kind: ProjectOpenerKind,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
 pub struct ArtifactOpenerInfo {
-    id: ProjectOpenerId,
-    label: &'static str,
-    kind: ProjectOpenerKind,
+    #[serde(flatten)]
+    app: ExternalAppDto,
     capabilities: Vec<ArtifactOpenerCapability>,
 }
 
+/// Installed applications for the project directory, in catalog order.
 #[tauri::command]
-pub fn list_project_openers() -> Vec<ProjectOpenerInfo> {
-    let mut openers = Vec::new();
-
-    if is_vscode_available() {
-        openers.push(ProjectOpenerInfo {
-            id: ProjectOpenerId::Vscode,
-            label: "VS Code",
-            kind: ProjectOpenerKind::Editor,
-        });
-    }
-
-    if is_cursor_available() {
-        openers.push(ProjectOpenerInfo {
-            id: ProjectOpenerId::Cursor,
-            label: "Cursor",
-            kind: ProjectOpenerKind::Editor,
-        });
-    }
-
-    openers.push(ProjectOpenerInfo {
-        id: ProjectOpenerId::FileManager,
-        label: file_manager_label(),
-        kind: ProjectOpenerKind::FileManager,
-    });
-
-    if is_terminal_available() {
-        openers.push(ProjectOpenerInfo {
-            id: ProjectOpenerId::Terminal,
-            label: terminal_label(),
-            kind: ProjectOpenerKind::Terminal,
-        });
-    }
-
-    if is_iterm2_available() {
-        openers.push(ProjectOpenerInfo {
-            id: ProjectOpenerId::Iterm2,
-            label: "iTerm2",
-            kind: ProjectOpenerKind::Terminal,
-        });
-    }
-
-    openers
+pub fn list_project_openers() -> Vec<ExternalAppDto> {
+    available_openers()
+        .into_iter()
+        .map(|id| external_app(id, id == DEFAULT_DIRECTORY_OPENER))
+        .collect()
 }
 
+/// Opens the project directory in `app`, or in the OS default application when absent.
 #[tauri::command]
-pub fn open_project_in_tool(project_path: String, tool: ProjectOpenerId) -> Result<(), AppError> {
+pub fn open_project_in_tool(project_path: String, app: Option<String>) -> Result<(), AppError> {
     let project_dir = resolve_project_dir(&project_path)?;
+    let tool = match app {
+        Some(app) => resolve_available_opener(&app, &available_openers())?,
+        None => DEFAULT_DIRECTORY_OPENER,
+    };
 
     match tool {
         ProjectOpenerId::Vscode => open_vscode(&project_dir),
@@ -126,73 +145,18 @@ pub fn open_project_in_tool(project_path: String, tool: ProjectOpenerId) -> Resu
 /// Lists only tools whose capability contract is safe for opening an artifact.
 #[tauri::command]
 pub fn list_artifact_openers() -> Vec<ArtifactOpenerInfo> {
-    artifact_openers_with_availability(
-        is_vscode_available(),
-        is_cursor_available(),
-        is_terminal_available(),
-        is_iterm2_available(),
-    )
-}
-
-fn artifact_openers_with_availability(
-    vscode_available: bool,
-    cursor_available: bool,
-    terminal_available: bool,
-    iterm2_available: bool,
-) -> Vec<ArtifactOpenerInfo> {
-    let mut openers = Vec::new();
-
-    if vscode_available {
-        openers.push(ArtifactOpenerInfo {
-            id: ProjectOpenerId::Vscode,
-            label: "VS Code",
-            kind: ProjectOpenerKind::Editor,
-            capabilities: vec![ArtifactOpenerCapability::OpenWorkspaceFile],
-        });
-    }
-
-    if cursor_available {
-        openers.push(ArtifactOpenerInfo {
-            id: ProjectOpenerId::Cursor,
-            label: "Cursor",
-            kind: ProjectOpenerKind::Editor,
-            capabilities: vec![ArtifactOpenerCapability::OpenWorkspaceFile],
-        });
-    }
-
-    openers.push(ArtifactOpenerInfo {
-        id: ProjectOpenerId::FileManager,
-        label: file_manager_label(),
-        kind: ProjectOpenerKind::FileManager,
-        capabilities: vec![ArtifactOpenerCapability::RevealFile],
-    });
-
-    if terminal_available {
-        openers.push(ArtifactOpenerInfo {
-            id: ProjectOpenerId::Terminal,
-            label: terminal_label(),
-            kind: ProjectOpenerKind::Terminal,
-            capabilities: vec![ArtifactOpenerCapability::OpenDirectory],
-        });
-    }
-
-    if iterm2_available {
-        openers.push(ArtifactOpenerInfo {
-            id: ProjectOpenerId::Iterm2,
-            label: "iTerm2",
-            kind: ProjectOpenerKind::Terminal,
-            capabilities: vec![ArtifactOpenerCapability::OpenDirectory],
-        });
-    }
-
-    openers
+    available_openers()
+        .into_iter()
+        .map(|id| ArtifactOpenerInfo {
+            app: external_app(id, false),
+            capabilities: vec![id.artifact_capability()],
+        })
+        .collect()
 }
 
 #[tauri::command]
-pub fn open_artifact_in_tool(
-    target: ArtifactOpenerTarget,
-    tool: ProjectOpenerId,
-) -> Result<(), AppError> {
+pub fn open_artifact_in_tool(target: ArtifactOpenerTarget, tool: String) -> Result<(), AppError> {
+    let tool = resolve_available_opener(&tool, &available_openers())?;
     // Re-resolve immediately before spawning: a discovered alias may have gone stale
     // or changed its canonical target since the Agent Context snapshot was produced.
     let (owner_root, artifact_path) = resolve_artifact_target(&target)?;
@@ -204,6 +168,70 @@ pub fn open_artifact_in_tool(
         ProjectOpenerId::Iterm2 => open_iterm2(&owner_root),
         ProjectOpenerId::Cursor => open_cursor_workspace_file(&owner_root, &artifact_path),
     }
+}
+
+fn available_openers() -> Vec<ProjectOpenerId> {
+    openers_with_availability(
+        is_vscode_available(),
+        is_cursor_available(),
+        is_terminal_available(),
+        is_iterm2_available(),
+    )
+}
+
+fn openers_with_availability(
+    vscode_available: bool,
+    cursor_available: bool,
+    terminal_available: bool,
+    iterm2_available: bool,
+) -> Vec<ProjectOpenerId> {
+    ProjectOpenerId::ALL
+        .into_iter()
+        .filter(|id| match id {
+            ProjectOpenerId::Vscode => vscode_available,
+            ProjectOpenerId::Cursor => cursor_available,
+            ProjectOpenerId::FileManager => true,
+            ProjectOpenerId::Terminal => terminal_available,
+            ProjectOpenerId::Iterm2 => iterm2_available,
+        })
+        .collect()
+}
+
+/// Accepts only an id that is still installed for this target; unknown ids never spawn.
+fn resolve_available_opener(
+    requested: &str,
+    available: &[ProjectOpenerId],
+) -> Result<ProjectOpenerId, AppError> {
+    available
+        .iter()
+        .copied()
+        .find(|id| id.as_str() == requested)
+        .ok_or_else(|| AppError::General(format!("External app is not available: {requested}")))
+}
+
+fn external_app(id: ProjectOpenerId, is_default: bool) -> ExternalAppDto {
+    let presentation = app_presentation(id);
+    ExternalAppDto {
+        id: id.as_str().to_string(),
+        label: presentation
+            .label
+            .unwrap_or_else(|| id.fallback_label().to_string()),
+        kind: id.kind(),
+        is_default,
+        icon: presentation.icon,
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn app_presentation(id: ProjectOpenerId) -> AppPresentation {
+    let (bundle_names, bundle_id) = id.macos_bundle();
+    external_apps::macos_app_presentation(bundle_names, bundle_id)
+}
+
+/// Windows and Linux keep the symbolic fallback until their native lookups land.
+#[cfg(not(target_os = "macos"))]
+fn app_presentation(_id: ProjectOpenerId) -> AppPresentation {
+    AppPresentation::default()
 }
 
 fn resolve_project_dir(project_path: &str) -> Result<PathBuf, AppError> {
@@ -402,19 +430,7 @@ fn windows_vscode_not_found_error(candidates: &[WindowsProgramCandidate]) -> App
 
 #[cfg(target_os = "macos")]
 fn macos_app_exists(app_name: &str) -> bool {
-    let app_bundle = format!("{app_name}.app");
-    let mut candidates = vec![
-        PathBuf::from("/Applications").join(&app_bundle),
-        PathBuf::from("/Applications/Utilities").join(&app_bundle),
-        PathBuf::from("/System/Applications").join(&app_bundle),
-        PathBuf::from("/System/Applications/Utilities").join(&app_bundle),
-    ];
-
-    if let Some(home) = std::env::var_os("HOME") {
-        candidates.push(PathBuf::from(home).join("Applications").join(&app_bundle));
-    }
-
-    candidates.iter().any(|path| path.exists())
+    external_apps::find_macos_app_bundle(app_name).is_some()
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -894,23 +910,98 @@ mod tests {
     }
 
     #[test]
-    fn artifact_openers_include_cursor_only_when_available() {
-        let unavailable = artifact_openers_with_availability(false, false, false, false);
-        assert!(
-            unavailable
-                .iter()
-                .all(|opener| opener.id != ProjectOpenerId::Cursor)
-        );
-
-        let available = artifact_openers_with_availability(false, true, false, false);
-        let cursor = available
-            .iter()
-            .find(|opener| opener.id == ProjectOpenerId::Cursor)
-            .expect("Cursor should be listed when available");
+    fn catalog_keeps_order_and_lists_only_installed_apps() {
         assert_eq!(
-            cursor.capabilities,
-            vec![ArtifactOpenerCapability::OpenWorkspaceFile]
+            openers_with_availability(false, false, false, false),
+            vec![ProjectOpenerId::FileManager]
         );
+        assert_eq!(
+            openers_with_availability(true, true, true, true),
+            ProjectOpenerId::ALL.to_vec()
+        );
+        assert_eq!(
+            openers_with_availability(false, true, true, false),
+            vec![
+                ProjectOpenerId::Cursor,
+                ProjectOpenerId::FileManager,
+                ProjectOpenerId::Terminal,
+            ]
+        );
+    }
+
+    #[test]
+    fn launch_accepts_only_an_installed_catalog_id() {
+        let available = openers_with_availability(false, true, true, false);
+
+        assert_eq!(
+            resolve_available_opener("cursor", &available).expect("installed app"),
+            ProjectOpenerId::Cursor
+        );
+        for rejected in ["vscode", "iterm2", "/Applications/Cursor.app", "", "Cursor"] {
+            let error = resolve_available_opener(rejected, &available)
+                .expect_err("unknown or uninstalled app must be rejected");
+            assert!(error.to_string().contains("not available"));
+        }
+    }
+
+    #[test]
+    fn external_app_dto_carries_opaque_id_default_flag_and_fallback_without_icon() {
+        let dto = ExternalAppDto {
+            id: ProjectOpenerId::FileManager.as_str().to_string(),
+            label: ProjectOpenerId::FileManager.fallback_label().to_string(),
+            kind: ProjectOpenerId::FileManager.kind(),
+            is_default: true,
+            icon: None,
+        };
+
+        assert_eq!(
+            serde_json::to_value(&dto).expect("dto"),
+            serde_json::json!({
+                "id": "file_manager",
+                "label": file_manager_label(),
+                "kind": "file_manager",
+                "isDefault": true,
+                "icon": null,
+            })
+        );
+    }
+
+    #[test]
+    fn artifact_openers_share_the_app_dto_with_capabilities() {
+        let info = ArtifactOpenerInfo {
+            app: ExternalAppDto {
+                id: ProjectOpenerId::Cursor.as_str().to_string(),
+                label: "Cursor".into(),
+                kind: ProjectOpenerId::Cursor.kind(),
+                is_default: false,
+                icon: Some("data:image/png;base64,AA==".into()),
+            },
+            capabilities: vec![ProjectOpenerId::Cursor.artifact_capability()],
+        };
+
+        assert_eq!(
+            serde_json::to_value(&info).expect("dto"),
+            serde_json::json!({
+                "id": "cursor",
+                "label": "Cursor",
+                "kind": "editor",
+                "isDefault": false,
+                "icon": "data:image/png;base64,AA==",
+                "capabilities": ["open_workspace_file"],
+            })
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn finder_presentation_comes_from_its_installed_bundle() {
+        let presentation = app_presentation(ProjectOpenerId::FileManager);
+
+        assert!(presentation.label.is_some_and(|label| !label.is_empty()));
+        let icon = presentation.icon.expect("Finder icon");
+        assert!(icon.starts_with("data:image/png;base64,"));
+        // A menu-sized raster, not the full-resolution bundle artwork.
+        assert!(icon.len() < 64 * 1024, "icon is {} bytes", icon.len());
     }
 
     fn user_code_exe(local_app_data: &str) -> PathBuf {
