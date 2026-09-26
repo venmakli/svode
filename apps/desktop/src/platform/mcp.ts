@@ -36,14 +36,6 @@ export interface McpActiveContext {
   activeSpacePath: string;
 }
 
-export interface McpManualConfig {
-  name: string;
-  transport: "stdio";
-  command: string;
-  args: string[];
-  env: Record<string, string>;
-}
-
 export interface McpDoctorReport {
   ok: boolean;
   command?: string | null;
@@ -51,6 +43,12 @@ export interface McpDoctorReport {
   messages: string[];
   errors: string[];
   bridgeProtocol?: string;
+  bridgeCompatible?: boolean | null;
+}
+
+export interface McpActiveRuntime {
+  kind: "desktop" | "standalone";
+  version: string;
 }
 
 export interface McpServerInfo {
@@ -58,6 +56,21 @@ export interface McpServerInfo {
   command?: string | null;
   version?: string | null;
   message?: string | null;
+  runtime?: McpActiveRuntime | null;
+}
+
+export type McpArtifactState =
+  | "absent"
+  | "managed"
+  | "previous"
+  | "foreign"
+  | "custom"
+  | "unreadable";
+
+export interface McpArtifactStatus {
+  kind: "skill" | "mcp-entry";
+  path: string;
+  state: McpArtifactState;
 }
 
 export interface McpClientStatus {
@@ -71,13 +84,18 @@ export interface McpClientStatus {
   path?: string | null;
   configPath?: string | null;
   message?: string | null;
+  complete?: boolean;
+  version?: string | null;
+  artifacts?: McpArtifactStatus[];
 }
 
 export interface McpStatus {
   server: McpServerInfo;
   clients: McpClientStatus[];
-  manualConfig: McpManualConfig;
   doctor: McpDoctorReport;
+  // Version the active runtime had before this start of the app switched
+  // the connected clients to its own.
+  runtimeUpdatedFrom?: string | null;
 }
 
 export function setMcpActiveContext(
@@ -116,10 +134,8 @@ export function removeMcpClient(client: McpClientId): Promise<McpStatus> {
   return invoke<McpStatus>("mcp_remove_client", { client });
 }
 
-export function printMcpConfig(
-  client?: McpClientId | null,
-): Promise<McpManualConfig> {
-  return invoke<McpManualConfig>("mcp_print_config", { client });
+export function printMcpConfig(client: McpClientId): Promise<string> {
+  return invoke<string>("mcp_print_config", { client });
 }
 
 export function runMcpDoctor(): Promise<McpDoctorReport> {

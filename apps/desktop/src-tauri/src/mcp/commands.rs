@@ -1,6 +1,7 @@
 use std::path::Path;
 
-use svode_connect::{Client, ConnectError, DoctorReport, Machine, ManualConfig, Status};
+use serde::Serialize;
+use svode_connect::{Client, ConnectError, DoctorReport, Machine, Status};
 use tauri::{AppHandle, Emitter, Manager, State, Window};
 use tokio::sync::Mutex;
 
@@ -13,6 +14,9 @@ const MCP_STATUS_CHANGED_EVENT: &str = "mcp:status-changed";
 #[derive(Default)]
 pub struct McpConfigState {
     operation_lock: Mutex<()>,
+    /// Version of the active runtime that this start of the app replaced
+    /// with its own.
+    runtime_updated_from: std::sync::Mutex<Option<String>>,
 }
 
 impl McpConfigState {
@@ -46,27 +50,37 @@ pub fn mcp_set_active_context(
     Ok(context)
 }
 
+/// Status of the connections as Settings show them.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectionsStatus {
+    #[serde(flatten)]
+    status: Status,
+    /// Set when this start of the app switched the connected clients to its
+    /// version: open agent sessions get it after a restart.
+    runtime_updated_from: Option<String>,
+}
+
 /// Status of the connections after a reconcile, as Settings show it: a
 /// connected client that lost part of its set is completed first.
 #[tauri::command]
 pub async fn mcp_get_status(
     app: AppHandle,
     state: State<'_, McpConfigState>,
-) -> Result<Status, AppError> {
+) -> Result<ConnectionsStatus, AppError> {
     let _guard = state.operation_lock.lock().await;
     let machine = machine(&app)?;
     let (changed, errors) = svode_connect::reconcile(&machine);
     emit_if_changed(&app, changed);
-    Ok(status(&machine, &errors).await)
+    Ok(status(&state, &machine, &errors).await)
 }
 
+/// MCP config of the client for a user who configures it by hand.
 #[tauri::command]
-pub fn mcp_print_config(client: Option<String>) -> Result<ManualConfig, AppError> {
-    if let Some(client) = client {
-        Client::parse(&client).map_err(app_error)?;
-    }
+pub fn mcp_print_config(client: String) -> Result<String, AppError> {
+    let client = Client::parse(&client).map_err(app_error)?;
     let machine = Machine::user().map_err(app_error)?;
-    Ok(svode_connect::manual_config(&machine))
+    Ok(svode_connect::manual_config_text(&machine, client))
 }
 
 /// Connects the client completely: skill, `svode` and MCP.
@@ -75,7 +89,7 @@ pub async fn mcp_install_client(
     app: AppHandle,
     state: State<'_, McpConfigState>,
     client: String,
-) -> Result<Status, AppError> {
+) -> Result<ConnectionsStatus, AppError> {
     change_client(&app, &state, &client, svode_connect::connect).await
 }
 
@@ -84,7 +98,7 @@ pub async fn mcp_remove_client(
     app: AppHandle,
     state: State<'_, McpConfigState>,
     client: String,
-) -> Result<Status, AppError> {
+) -> Result<ConnectionsStatus, AppError> {
     change_client(&app, &state, &client, svode_connect::disconnect).await
 }
 
@@ -102,17 +116,28 @@ async fn change_client(
     state: &McpConfigState,
     client: &str,
     step: fn(&Machine, Client) -> Result<bool, ConnectError>,
-) -> Result<Status, AppError> {
+) -> Result<ConnectionsStatus, AppError> {
     let client = Client::parse(client).map_err(app_error)?;
     let _guard = state.operation_lock.lock().await;
     let machine = machine(app)?;
     let changed = step(&machine, client).map_err(app_error)?;
     emit_if_changed(app, changed);
-    Ok(status(&machine, &[]).await)
+    Ok(status(state, &machine, &[]).await)
 }
 
-async fn status(machine: &Machine, failed: &[(Client, ConnectError)]) -> Status {
-    svode_connect::status(machine, failed, Some(&bridge::probe().await))
+async fn status(
+    state: &McpConfigState,
+    machine: &Machine,
+    failed: &[(Client, ConnectError)],
+) -> ConnectionsStatus {
+    ConnectionsStatus {
+        status: svode_connect::status(machine, failed, Some(&bridge::probe().await)),
+        runtime_updated_from: state
+            .runtime_updated_from
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone(),
+    }
 }
 
 /// The user of the app, checking the project and local entries of the
@@ -139,10 +164,15 @@ fn emit_if_changed(app: &AppHandle, changed: bool) {
 
 /// Reconcile at every start, after the app took over the stable location:
 /// connected clients follow the version of this app, and a managed MCP
-/// entry of a previous desktop app becomes a full connection.
-pub async fn reconcile_clients(app: &AppHandle) {
+/// entry of a previous desktop app becomes a full connection. `updated_from`
+/// is the version of the runtime the app replaced with its own.
+pub async fn reconcile_clients(app: &AppHandle, updated_from: Option<String>) {
     let state = app.state::<McpConfigState>();
     let _guard = state.operation_lock.lock().await;
+    *state
+        .runtime_updated_from
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) = updated_from;
     let machine = match machine(app) {
         Ok(machine) => machine,
         Err(error) => {

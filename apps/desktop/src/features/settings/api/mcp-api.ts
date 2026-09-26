@@ -10,7 +10,7 @@ export type {
   McpClientId,
   McpClientAttentionCode,
   McpClientStatus,
+  McpArtifactStatus,
   McpDoctorReport,
-  McpManualConfig,
   McpStatus,
 } from "@/platform/mcp";

@@ -215,10 +215,10 @@ async fn get_cli_version(cli_path: &str) -> Option<String> {
     }
 }
 
-async fn get_cli_auth_status(cli_path: &str) -> String {
+async fn get_cli_auth_status(cli_path: &str, args: &[&str]) -> String {
     let mut cmd = tokio::process::Command::new(cli_path);
     process::hide_tokio_window(&mut cmd);
-    match cmd.args(["auth", "status"]).output().await {
+    match cmd.args(args).output().await {
         Ok(output) if output.status.success() => "authorized".to_string(),
         Ok(_) => "unauthorized".to_string(),
         Err(_) => "unknown".to_string(),
@@ -233,7 +233,7 @@ pub async fn agent_list_available() -> Result<Vec<AvailableAgent>, AppError> {
     let executor = ClaudeCodeExecutor;
     if let Some(path) = executor.detect() {
         let version = get_cli_version(&path).await;
-        let auth_status = get_cli_auth_status(&path).await;
+        let auth_status = get_cli_auth_status(&path, &["auth", "status"]).await;
         agents.push(AvailableAgent {
             name: executor.name().to_string(),
             path,
@@ -255,16 +255,19 @@ pub async fn agent_list_available() -> Result<Vec<AvailableAgent>, AppError> {
     let codex_path = which::which("codex")
         .map(|p| p.to_string_lossy().to_string())
         .unwrap_or_default();
-    let codex_status = if codex_path.is_empty() {
-        "not_found"
+    let (version, auth_status) = if codex_path.is_empty() {
+        (None, "not_found".to_string())
     } else {
-        "authorized"
+        (
+            get_cli_version(&codex_path).await,
+            get_cli_auth_status(&codex_path, &["login", "status"]).await,
+        )
     };
     agents.push(AvailableAgent {
         name: "codex".to_string(),
         path: codex_path,
-        version: None,
-        auth_status: codex_status.to_string(),
+        version,
+        auth_status,
         docs_url: "https://github.com/openai/codex".to_string(),
     });
 

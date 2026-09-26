@@ -6,6 +6,7 @@ import type { AvailableAgent } from "../model";
 
 const CLI_AUTH_COMMANDS: Record<string, string> = {
   claude: "claude login",
+  codex: "codex login",
 };
 
 export type CliAgentStatus = "authorized" | "unauthorized" | "not_found";

@@ -120,8 +120,8 @@ pub fn run() {
             macos_fullscreen::install(app.handle());
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
-                installation::take_ownership(&handle).await;
-                mcp::commands::reconcile_clients(&handle).await;
+                let updated_from = installation::take_ownership(&handle).await;
+                mcp::commands::reconcile_clients(&handle, updated_from).await;
             });
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {

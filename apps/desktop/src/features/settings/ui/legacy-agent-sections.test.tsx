@@ -3,7 +3,6 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { JSDOM } from "jsdom";
 import { setLocale } from "@/paraglide/runtime";
 import type { AvailableAgent } from "../model";
-import { AppCliAgentsSection } from "./app-settings-sections";
 import { SpaceAgentSection } from "./space-agent-section";
 import { SpaceDefaultsSection } from "./space-defaults-section";
 import { SpaceInstructionsSection } from "./space-instructions-section";
@@ -143,21 +142,4 @@ test("Instructions: AGENTS.md row with open and preview, or an empty card that c
     missing.querySelector('[data-slot="card"] [data-slot="empty"]')
       ?.textContent,
   ).toBe("No agent instructions yetCreate AGENTS.md");
-});
-
-test("Svode CLI agents: one group with refresh and a row per agent", () => {
-  setLocale("en", { reload: false });
-  const document = render(
-    <AppCliAgentsSection agents={agents} refreshing={false} onRefresh={noop} />,
-  );
-  expectOneCardPerGroup(document);
-  const rows = Array.from(document.querySelectorAll('[data-slot="item"]'));
-  expect(
-    rows.map(
-      (row) => row.querySelector('[data-slot="item-title"]')?.textContent,
-    ),
-  ).toEqual(["Claude Code", "Codex"]);
-  expect(rows[0].textContent?.includes("/usr/local/bin/claude")).toBe(true);
-  expect(rows[0].textContent?.includes("2.1.0 · authorized")).toBe(true);
-  expect(rows[1].textContent?.includes("How to install")).toBe(true);
 });

@@ -112,6 +112,9 @@ pub struct DoctorReport {
     /// Version of the active runtime.
     pub version: String,
     pub bridge_protocol: String,
+    /// `svode-mcp` of the runtime speaks the bridge protocol of the host that
+    /// asked; unknown without a bridge probe or a runtime.
+    pub bridge_compatible: Option<bool>,
     pub discovery_present: bool,
     pub desktop_reachable: bool,
     pub issues: Vec<String>,
@@ -375,6 +378,7 @@ pub(crate) fn doctor_with(
     let runtime = runtime_info(machine);
     let mut messages = Vec::new();
     let mut issues = Vec::new();
+    let mut bridge_compatible = None;
     let binary = runtime
         .runtime
         .as_ref()
@@ -393,7 +397,9 @@ pub(crate) fn doctor_with(
     if let Some(bridge) = bridge {
         messages.push(format!("Bridge protocol: {}", bridge.protocol));
         if let Some(binary) = &binary {
-            match bridge_protocol_of(binary) {
+            let protocol = bridge_protocol_of(binary);
+            bridge_compatible = Some(protocol.as_deref() == Some(bridge.protocol.as_str()));
+            match protocol {
                 Some(protocol) if protocol == bridge.protocol => {
                     messages.push("svode-mcp of the runtime speaks this bridge protocol".into())
                 }
@@ -452,6 +458,7 @@ pub(crate) fn doctor_with(
         bridge_protocol: bridge
             .map(|bridge| bridge.protocol.clone())
             .unwrap_or_default(),
+        bridge_compatible,
         discovery_present: bridge.is_some_and(|bridge| bridge.discovery_present),
         desktop_reachable: bridge.is_some_and(|bridge| bridge.desktop_reachable),
         issues,

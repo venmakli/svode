@@ -4,30 +4,44 @@
 
 use tauri::AppHandle;
 
-pub async fn take_ownership(app: &AppHandle) {
+/// Returns the version of the runtime that this start replaced with the
+/// app's own, when it differs.
+pub async fn take_ownership(app: &AppHandle) -> Option<String> {
     // A development build runs from the Cargo target directory and never
     // replaces the installation the user's agents run.
     if tauri::is_dev() {
-        return;
+        return None;
     }
     #[cfg(unix)]
     {
+        let version = app.package_info().version.to_string();
         let app = app.clone();
         match tauri::async_runtime::spawn_blocking(move || take(&app)).await {
             Ok(Ok(Some(ownership))) => {
                 tracing::info!("stable location ~/.svode: {ownership:?}");
+                match ownership {
+                    svode_install::Ownership::Taken {
+                        previous: Some(previous),
+                    } if previous.version != version => Some(previous.version),
+                    _ => None,
+                }
             }
-            Ok(Ok(None)) => {}
+            Ok(Ok(None)) => None,
             Ok(Err(error)) => {
                 tracing::warn!("failed to take over the stable location ~/.svode: {error}");
+                None
             }
             Err(error) => {
                 tracing::warn!("taking over the stable location ~/.svode stopped: {error}");
+                None
             }
         }
     }
     #[cfg(not(unix))]
-    let _ = app;
+    {
+        let _ = app;
+        None
+    }
 }
 
 #[cfg(unix)]

@@ -41,9 +41,6 @@ export function SettingsDialog({
       ? document.activeElement
       : null,
   );
-  const appItems = APP_SETTINGS_NAV_ITEMS.filter((item) =>
-    item.show({ enableLegacyAgentIntegration }),
-  );
   const projectItems = getProjectSettingsNavItems(
     enableLegacyAgentIntegration,
     spaces.length > 0,
@@ -51,7 +48,7 @@ export function SettingsDialog({
   const groups: SettingsNavigationGroup[] = [
     {
       label: "Svode",
-      items: appItems.map((item) => ({
+      items: APP_SETTINGS_NAV_ITEMS.map((item) => ({
         label: item.label(),
         icon: item.icon,
         destination: { scope: "app", section: item.key },
@@ -79,7 +76,7 @@ export function SettingsDialog({
     projectItems.some((item) => item.key === destination.section);
   const appSection =
     destination.scope === "app" &&
-    appItems.some((item) => item.key === destination.section)
+    APP_SETTINGS_NAV_ITEMS.some((item) => item.key === destination.section)
       ? destination.section
       : "git-identity";
 
@@ -119,14 +116,15 @@ export function SettingsDialog({
           {destination.scope === "app" ? (
             <SettingsPage
               title={
-                appItems.find((item) => item.key === appSection)?.label() ?? ""
+                APP_SETTINGS_NAV_ITEMS.find(
+                  (item) => item.key === appSection,
+                )?.label() ?? ""
               }
             >
               <AppSettingsContent
                 shortcutGroups={shortcutGroups}
                 registerLeaveGuard={registerLeaveGuard}
                 section={appSection}
-                enableLegacyAgentIntegration={enableLegacyAgentIntegration}
               />
             </SettingsPage>
           ) : validProjectTarget ? (

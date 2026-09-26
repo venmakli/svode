@@ -263,18 +263,14 @@ function mcpStatus(
   doctorMessage = "ready",
 ): McpStatus {
   return {
-    server: { status: "installed", command: "/Applications/Svode/svode-mcp" },
+    server: {
+      status: "installed",
+      command: "/Users/test/.svode/bin/svode-mcp",
+    },
     clients: [
       client("claude-code", "Claude Code", claude),
       client("codex", "Codex", codex),
     ],
-    manualConfig: {
-      name: "svode",
-      transport: "stdio",
-      command: "/Applications/Svode/svode-mcp",
-      args: ["--app", "desktop"],
-      env: {},
-    },
     doctor: { ok: true, messages: [doctorMessage], errors: [] },
   };
 }

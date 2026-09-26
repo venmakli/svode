@@ -7,8 +7,7 @@ test("classifies App Settings surfaces without promoting derived state to prefer
     "git-identity": "owner-setting",
     appearance: "app-preference",
     variables: "owner-setting",
-    "mcp-integrations": "owner-integration",
-    "cli-agents": "command-derived",
+    providers: "owner-integration",
     shortcuts: "read-only",
     about: "command-derived",
   });

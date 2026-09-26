@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import * as m from "@/paraglide/messages.js";
 import {
@@ -11,11 +11,15 @@ import {
   type McpClientId,
   type McpClientStatus,
   type McpDoctorReport,
-  type McpManualConfig,
   type McpStatus,
 } from "../api";
 
-export type { McpClientStatus, McpDoctorReport, McpStatus } from "../api";
+export type {
+  McpArtifactStatus,
+  McpClientStatus,
+  McpDoctorReport,
+  McpStatus,
+} from "../api";
 
 export function useMcpIntegrations() {
   const [status, setStatus] = useState<McpStatus | null>(null);
@@ -25,6 +29,9 @@ export function useMcpIntegrations() {
   const [pendingClients, setPendingClients] = useState<
     ReadonlySet<McpClientId>
   >(() => new Set());
+  const [manualConfigs, setManualConfigs] = useState<
+    Partial<Record<McpClientId, string>>
+  >({});
   const mountedRef = useRef(false);
   const requestGenerationRef = useRef(0);
   const doctorRequestGenerationRef = useRef(0);
@@ -130,11 +137,27 @@ export function useMcpIntegrations() {
     };
   }, [reconcileStatus]);
 
-  const manualConfigText = useMemo(() => {
-    const config = status?.manualConfig;
-    if (!config) return "";
-    return JSON.stringify(config, null, 2);
-  }, [status]);
+  const loadManualConfig = useCallback(
+    async (client: McpClientId) => {
+      const loaded = manualConfigs[client];
+      if (loaded !== undefined) return loaded;
+      const text = await printMcpConfig(client);
+      if (mountedRef.current)
+        setManualConfigs((current) => ({ ...current, [client]: text }));
+      return text;
+    },
+    [manualConfigs],
+  );
+
+  const showManualConfig = useCallback(
+    (client: McpClientId) => {
+      void loadManualConfig(client).catch((err) => {
+        console.error("mcp_print_config failed:", err);
+        toast.error(m.toast_error());
+      });
+    },
+    [loadManualConfig],
+  );
 
   const handleToggle = useCallback(
     async (client: McpClientStatus, checked: boolean) => {
@@ -145,7 +168,11 @@ export function useMcpIntegrations() {
           ? await installMcpClient(client.id)
           : await removeMcpClient(client.id);
         applyStatus(next, generation, null);
-        toast.success(m.toast_settings_saved());
+        toast.success(
+          checked
+            ? m.settings_providers_connected_toast()
+            : m.toast_settings_saved(),
+        );
       } catch (err) {
         console.error("MCP client toggle failed:", err);
         try {
@@ -164,17 +191,18 @@ export function useMcpIntegrations() {
     [applyStatus, reconcileStatus],
   );
 
-  const handleCopyConfig = useCallback(async () => {
-    try {
-      const config: McpManualConfig =
-        status?.manualConfig ?? (await printMcpConfig(null));
-      await navigator.clipboard.writeText(JSON.stringify(config, null, 2));
-      toast.success(m.settings_mcp_config_copied());
-    } catch (err) {
-      console.error("MCP config copy failed:", err);
-      toast.error(m.toast_error());
-    }
-  }, [status]);
+  const handleCopyConfig = useCallback(
+    async (client: McpClientId) => {
+      try {
+        await navigator.clipboard.writeText(await loadManualConfig(client));
+        toast.success(m.settings_mcp_config_copied());
+      } catch (err) {
+        console.error("MCP config copy failed:", err);
+        toast.error(m.toast_error());
+      }
+    },
+    [loadManualConfig],
+  );
 
   const handleDoctor = useCallback(async () => {
     const generation = ++doctorRequestGenerationRef.current;
@@ -207,8 +235,9 @@ export function useMcpIntegrations() {
     refreshing,
     doctorPending,
     pendingClients,
-    manualConfigText,
+    manualConfigs,
     loadStatus,
+    showManualConfig,
     handleToggle,
     handleCopyConfig,
     handleDoctor,
@@ -219,7 +248,7 @@ function mcpOwnerStatusFingerprint(status: McpStatus): string {
   return JSON.stringify({
     server: status.server,
     clients: status.clients,
-    manualConfig: status.manualConfig,
+    runtimeUpdatedFrom: status.runtimeUpdatedFrom,
   });
 }
 

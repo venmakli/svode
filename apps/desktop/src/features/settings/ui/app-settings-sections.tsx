@@ -1,4 +1,4 @@
-import { ArrowUpRight, LoaderCircle, RefreshCw } from "lucide-react";
+import { ArrowUpRight, LoaderCircle } from "lucide-react";
 import * as m from "@/paraglide/messages.js";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -11,7 +11,6 @@ import { cn } from "@/shared/lib/utils";
 import type { useAppSettingsAbout } from "../hooks/use-app-settings-about";
 import type { useAppSettingsAppearance } from "../hooks/use-app-settings-appearance";
 import type { useGlobalIdentitySettings } from "../hooks/use-global-identity-settings";
-import type { AvailableAgent } from "../model";
 import {
   SettingsActions,
   SettingsGroup,
@@ -19,11 +18,6 @@ import {
   SettingsRow,
 } from "./settings-layout";
 import { SettingsSelect } from "./settings-select";
-import {
-  CliAgentStatusBadge,
-  cliAgentName,
-  cliAgentNextStep,
-} from "./cli-agent-status";
 
 type AppSettingsAbout = ReturnType<typeof useAppSettingsAbout>;
 type AppSettingsAppearance = ReturnType<typeof useAppSettingsAppearance>;
@@ -164,54 +158,6 @@ export function AppAppearanceSection({ settings }: AppAppearanceSectionProps) {
           ]}
         />
       </SettingsRow>
-    </SettingsGroup>
-  );
-}
-
-interface AppCliAgentsSectionProps {
-  agents: AvailableAgent[];
-  refreshing: boolean;
-  onRefresh: () => void;
-}
-
-export function AppCliAgentsSection({
-  agents,
-  refreshing,
-  onRefresh,
-}: AppCliAgentsSectionProps) {
-  return (
-    <SettingsGroup
-      description={m.settings_cli_agents_description()}
-      action={
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={onRefresh}
-          disabled={refreshing}
-        >
-          <RefreshCw
-            data-icon="inline-start"
-            className={refreshing ? "animate-spin" : undefined}
-          />
-          {m.settings_cli_refresh()}
-        </Button>
-      }
-    >
-      {agents.map((agent) => (
-        <SettingsItem
-          key={agent.name}
-          title={cliAgentName(agent)}
-          description={
-            <>
-              {agent.path ? (
-                <span className="block font-mono break-all">{agent.path}</span>
-              ) : null}
-              {cliAgentNextStep(agent)}
-            </>
-          }
-          actions={<CliAgentStatusBadge agent={agent} />}
-        />
-      ))}
     </SettingsGroup>
   );
 }

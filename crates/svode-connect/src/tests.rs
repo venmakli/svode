@@ -419,3 +419,29 @@ fn the_manual_config_starts_the_stable_launcher_and_carries_no_marker() {
     let claude = crate::manual_config_text(&home.machine(), Client::ClaudeCode);
     assert!(claude.ends_with(&format!("-- '{}'", home.launcher().display())));
 }
+
+#[test]
+fn the_doctor_reports_whether_the_runtime_speaks_the_bridge_protocol() {
+    let home = Home::with_desktop();
+    let probe = |protocol: &str| crate::BridgeProbe {
+        protocol: protocol.into(),
+        discovery_file: None,
+        discovery_present: false,
+        desktop_reachable: false,
+    };
+    // The script binaries of the runtime answer `--bridge-protocol` with this line.
+    let spoken = "svode-mcp 0.0.9 --bridge-protocol";
+    let machine = home.machine();
+
+    assert_eq!(crate::doctor(&machine, None).bridge_compatible, None);
+    let same = crate::doctor(&machine, Some(&probe(spoken)));
+    assert_eq!(same.bridge_compatible, Some(true));
+    assert!(same.ok);
+    let other = crate::doctor(&machine, Some(&probe("svode-desktop-bridge-v2")));
+    assert_eq!(other.bridge_compatible, Some(false));
+    assert!(!other.ok);
+    assert_eq!(
+        crate::doctor(&Home::new().machine(), Some(&probe(spoken))).bridge_compatible,
+        None
+    );
+}

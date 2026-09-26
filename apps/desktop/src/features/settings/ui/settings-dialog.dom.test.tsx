@@ -356,7 +356,7 @@ if (process.env.SVODE_UNIFIED_SETTINGS_DOM !== "1") {
         "Profile",
         "Appearance",
         "Global variables",
-        "MCP Integrations",
+        "Providers",
         "Shortcuts",
         "About",
         "General",
@@ -672,7 +672,8 @@ if (process.env.SVODE_UNIFIED_SETTINGS_DOM !== "1") {
       expect(document.activeElement).toBe(ownerTrigger("Other"));
 
       await draw({ scope: "app", section: "git-identity" }, true);
-      expect(document.body.textContent?.includes("CLI Agents")).toBe(true);
+      // The legacy flag keeps the project agent section; the app one is gone.
+      expect(document.body.textContent?.includes("CLI Agents")).toBe(false);
       expect(document.body.textContent?.includes("AI Agent")).toBe(true);
       activeRootPath = null;
       await draw(project("git", "/project/docs"));
