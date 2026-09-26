@@ -89,7 +89,11 @@ function ScopeChangesControl({
               aria-label={label}
             >
               <FileDiff data-icon={dirty ? "inline-start" : undefined} />
-              {dirty ? <Badge variant="secondary">{paths.length}</Badge> : null}
+              {dirty ? (
+                <Badge variant="secondary" data-icon="inline-end">
+                  {paths.length}
+                </Badge>
+              ) : null}
             </Button>
           </SheetTrigger>
         </TooltipTrigger>

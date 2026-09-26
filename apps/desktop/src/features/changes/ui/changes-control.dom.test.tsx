@@ -1166,6 +1166,11 @@ if (process.env.SVODE_CHANGES_DOM !== "1") {
       expect(trigger().querySelector('[data-slot="badge"]')?.textContent).toBe(
         "1",
       );
+      expect(
+        trigger()
+          .querySelector('[data-slot="badge"]')
+          ?.getAttribute("data-icon"),
+      ).toBe("inline-end");
 
       await act(async () => {
         root.render(
