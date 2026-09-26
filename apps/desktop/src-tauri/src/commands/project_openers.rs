@@ -30,6 +30,10 @@ enum ProjectOpenerId {
 /// The OS default application for a directory target.
 const DEFAULT_DIRECTORY_OPENER: ProjectOpenerId = ProjectOpenerId::FileManager;
 
+/// Windows Terminal is a packaged application behind the `wt` alias.
+#[cfg(target_os = "windows")]
+const WINDOWS_TERMINAL_APP: &str = r"shell:AppsFolder\Microsoft.WindowsTerminal_8wekyb3d8bbwe!App";
+
 impl ProjectOpenerId {
     const ALL: [Self; 5] = [
         Self::Vscode,
@@ -86,6 +90,34 @@ impl ProjectOpenerId {
             Self::Terminal => (&["Terminal"], "com.apple.Terminal"),
             Self::Iterm2 => (&["iTerm", "iTerm2"], "com.googlecode.iterm2"),
         }
+    }
+
+    /// Shell parsing names of what is launched for this id, most specific
+    /// first: an executable path or a packaged application.
+    #[cfg(target_os = "windows")]
+    fn windows_launch_targets(self) -> Vec<String> {
+        let executable = match self {
+            Self::Vscode => {
+                select_existing_windows_candidate(&windows_vscode_candidates(), |path| {
+                    path.is_file()
+                })
+                .and_then(|candidate| {
+                    windows_gui_executable(&candidate.path, "Code.exe", |path| path.is_file())
+                })
+            }
+            Self::Cursor => which::which("cursor").ok().and_then(|launched| {
+                windows_gui_executable(&launched, "Cursor.exe", |path| path.is_file())
+            }),
+            Self::FileManager => {
+                std::env::var_os("WINDIR").map(|windir| PathBuf::from(windir).join("explorer.exe"))
+            }
+            Self::Terminal => return windows_terminal_targets(),
+            Self::Iterm2 => None,
+        };
+        executable
+            .map(|path| path.to_string_lossy().into_owned())
+            .into_iter()
+            .collect()
     }
 }
 
@@ -228,10 +260,35 @@ fn app_presentation(id: ProjectOpenerId) -> AppPresentation {
     external_apps::macos_app_presentation(bundle_names, bundle_id)
 }
 
-/// Windows and Linux keep the symbolic fallback until their native lookups land.
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "windows")]
+fn app_presentation(id: ProjectOpenerId) -> AppPresentation {
+    external_apps::windows_app_presentation(id.windows_launch_targets())
+}
+
+/// Linux keeps the symbolic fallback until its native lookups land.
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 fn app_presentation(_id: ProjectOpenerId) -> AppPresentation {
     AppPresentation::default()
+}
+
+/// The terminal `open_terminal` launches: Windows Terminal, otherwise PowerShell.
+#[cfg(target_os = "windows")]
+fn windows_terminal_targets() -> Vec<String> {
+    let path = |command: &str| {
+        which::which(command)
+            .ok()
+            .map(|path| path.to_string_lossy().into_owned())
+    };
+    if command_available("wt") {
+        return std::iter::once(WINDOWS_TERMINAL_APP.to_string())
+            .chain(path("wt"))
+            .collect();
+    }
+    ["pwsh", "powershell"]
+        .into_iter()
+        .find_map(path)
+        .into_iter()
+        .collect()
 }
 
 fn resolve_project_dir(project_path: &str) -> Result<PathBuf, AppError> {
@@ -386,6 +443,28 @@ fn windows_vscode_candidates() -> Vec<WindowsProgramCandidate> {
         |command| which::which(command).ok(),
         |key| std::env::var_os(key),
     )
+}
+
+/// The application executable behind a launched command: the command itself,
+/// or the executable its `bin` script shim is installed under.
+#[cfg(any(target_os = "windows", test))]
+fn windows_gui_executable(
+    launched: &Path,
+    executable: &str,
+    mut is_file: impl FnMut(&Path) -> bool,
+) -> Option<PathBuf> {
+    if launched
+        .file_name()
+        .is_some_and(|name| name.eq_ignore_ascii_case(executable))
+    {
+        return Some(launched.to_path_buf());
+    }
+    launched
+        .ancestors()
+        .skip(1)
+        .take(4)
+        .map(|dir| dir.join(executable))
+        .find(|candidate| is_file(candidate))
 }
 
 #[cfg(any(target_os = "windows", test))]
@@ -1068,6 +1147,47 @@ mod tests {
                 .expect("expected a VS Code candidate");
 
         assert_eq!(selected.path, user_install);
+    }
+
+    #[test]
+    fn windows_icons_come_from_the_app_executable_behind_a_script_shim() {
+        let programs = Path::new("C:/Users/me/AppData/Local/Programs");
+        let cursor_exe = programs.join("cursor/Cursor.exe");
+        let code_exe = programs.join("Microsoft VS Code/Code.exe");
+        let installed = |path: &Path| path == cursor_exe || path == code_exe;
+
+        assert_eq!(
+            windows_gui_executable(
+                &programs.join("cursor/resources/app/bin/cursor.cmd"),
+                "Cursor.exe",
+                installed,
+            ),
+            Some(cursor_exe.clone())
+        );
+        assert_eq!(
+            windows_gui_executable(
+                &programs.join("Microsoft VS Code/bin/code.cmd"),
+                "Code.exe",
+                installed,
+            ),
+            Some(code_exe.clone())
+        );
+        assert_eq!(
+            windows_gui_executable(
+                &programs.join("Microsoft VS Code/code.exe"),
+                "Code.exe",
+                |_| { false }
+            ),
+            Some(programs.join("Microsoft VS Code/code.exe"))
+        );
+        assert_eq!(
+            windows_gui_executable(
+                &programs.join("tools/bin/cursor.cmd"),
+                "Cursor.exe",
+                installed
+            ),
+            None
+        );
     }
 
     #[test]

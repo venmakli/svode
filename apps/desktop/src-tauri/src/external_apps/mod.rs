@@ -5,10 +5,11 @@
 //! never exposed through MCP/CLI. The frontend receives an opaque application
 //! id and a ready image, never an executable path.
 
+#[cfg(not(target_os = "windows"))]
+use std::process::Command;
 use std::{
     collections::HashSet,
     path::{Path, PathBuf},
-    process::Command,
 };
 
 use serde::Serialize;
@@ -24,6 +25,12 @@ mod macos;
 pub(crate) use macos::{
     app_presentation as macos_app_presentation, find_app_bundle as find_macos_app_bundle,
 };
+
+#[cfg(target_os = "windows")]
+mod windows_shell;
+
+#[cfg(target_os = "windows")]
+pub(crate) use windows_shell::app_presentation as windows_app_presentation;
 
 /// Symbolic fallback class shown when the OS returns no icon.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -55,8 +62,8 @@ pub(crate) struct AppPresentation {
 }
 
 /// An application the OS offers for a file, with where it is launched from.
-// Constructed by the native lookups; Windows and Linux land in DF-098D/E.
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+// Constructed by the native lookups; Linux lands in DF-098E.
+#[cfg_attr(not(any(target_os = "macos", target_os = "windows")), allow(dead_code))]
 #[derive(Debug, Clone)]
 pub(crate) struct OfferedApp {
     pub id: String,
@@ -124,9 +131,8 @@ pub(crate) fn reveal_file(file: &Path) -> std::io::Result<()> {
 
     #[cfg(target_os = "windows")]
     {
-        let mut command = Command::new("explorer");
-        command.arg(format!("/select,{}", file.display()));
-        return command.spawn().map(|_| ());
+        return tauri_plugin_opener::reveal_item_in_dir(system_path::user_facing_path(file))
+            .map_err(std::io::Error::other);
     }
 
     #[cfg(all(unix, not(target_os = "macos")))]
@@ -163,8 +169,13 @@ fn offered_apps(file: &Path) -> Vec<OfferedApp> {
     macos::offered_apps(file)
 }
 
-/// Windows and Linux offer the generic OS choice until their native lookups land.
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "windows")]
+fn offered_apps(file: &Path) -> Vec<OfferedApp> {
+    windows_shell::offered_apps(file)
+}
+
+/// Linux offers the generic OS choice until its native lookups land.
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 fn offered_apps(_file: &Path) -> Vec<OfferedApp> {
     Vec::new()
 }
@@ -180,9 +191,88 @@ fn launch_offered_app(app: &OfferedApp, file: &Path) -> Result<(), ExternalOpenE
         .map_err(|_| ExternalOpenError::Launch)
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "windows")]
+fn launch_offered_app(app: &OfferedApp, file: &Path) -> Result<(), ExternalOpenError> {
+    windows_shell::launch(app, file)
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 fn launch_offered_app(_app: &OfferedApp, _file: &Path) -> Result<(), ExternalOpenError> {
     Err(ExternalOpenError::Launch)
+}
+
+/// Opaque id of a Windows association handler: a digest of its registered
+/// name, which is an executable path that must not reach the frontend.
+#[cfg(any(target_os = "windows", test))]
+fn handler_app_id(handler_name: &str) -> String {
+    use sha2::{Digest, Sha256};
+
+    let digest = Sha256::digest(normalize_windows_path(handler_name).as_bytes());
+    let hex: String = digest[..8]
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    format!("win-{hex}")
+}
+
+/// Which of the `(name, label)` handlers is the one Windows opens the file type
+/// with: the same executable, otherwise the same display name (packaged apps
+/// may report a different executable path than the association).
+#[cfg(any(target_os = "windows", test))]
+fn default_handler_index(
+    handlers: impl IntoIterator<Item = (impl AsRef<str>, impl AsRef<str>)>,
+    default_executable: Option<&str>,
+    default_label: Option<&str>,
+) -> Option<usize> {
+    let handlers: Vec<_> = handlers.into_iter().collect();
+    default_executable
+        .map(normalize_windows_path)
+        .and_then(|executable| {
+            handlers
+                .iter()
+                .position(|(name, _)| normalize_windows_path(name.as_ref()) == executable)
+        })
+        .or_else(|| {
+            let label = default_label?.trim().to_lowercase();
+            handlers
+                .iter()
+                .position(|(_, candidate)| candidate.as_ref().trim().to_lowercase() == label)
+        })
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn normalize_windows_path(path: &str) -> String {
+    system_path::user_facing_path_str(path.trim())
+        .replace('/', "\\")
+        .to_lowercase()
+}
+
+/// Expands `%NAME%` references the way Shell icon locations use them;
+/// unknown names stay as written.
+#[cfg(any(target_os = "windows", test))]
+fn expand_env_vars(text: &str, lookup: impl Fn(&str) -> Option<String>) -> String {
+    let mut expanded = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(start) = rest.find('%') {
+        expanded.push_str(&rest[..start]);
+        let after = &rest[start + 1..];
+        let Some(end) = after.find('%') else {
+            expanded.push_str(&rest[start..]);
+            return expanded;
+        };
+        match lookup(&after[..end]).filter(|_| end > 0) {
+            Some(value) => {
+                expanded.push_str(&value);
+                rest = &after[end + 1..];
+            }
+            None => {
+                expanded.push('%');
+                rest = after;
+            }
+        }
+    }
+    expanded.push_str(rest);
+    expanded
 }
 
 #[cfg(test)]
@@ -241,6 +331,73 @@ mod tests {
             open_file_in_app(&file, "com.example.not-offered"),
             Err(ExternalOpenError::UnknownApp)
         );
+    }
+
+    #[test]
+    fn windows_handler_ids_are_stable_opaque_digests_of_the_handler_name() {
+        let acrobat = r"C:\Program Files\Adobe\Acrobat DC\Acrobat\Acrobat.exe";
+        let id = handler_app_id(acrobat);
+
+        assert_eq!(id, handler_app_id(acrobat));
+        assert_eq!(id, handler_app_id(&acrobat.to_uppercase()));
+        assert_eq!(
+            id,
+            handler_app_id(r"\\?\C:/Program Files/Adobe/Acrobat DC/Acrobat/Acrobat.exe")
+        );
+        assert_ne!(id, handler_app_id(r"C:\Windows\System32\mspaint.exe"));
+        assert!(id.starts_with("win-"));
+        assert_eq!(id.len(), "win-".len() + 16);
+        assert!(!id.contains(['\\', '/', ':']));
+        assert!(!id.to_lowercase().contains("acrobat"));
+    }
+
+    #[test]
+    fn windows_default_handler_matches_the_executable_before_the_display_name() {
+        let handlers = [
+            (r"C:\Program Files\Mozilla Firefox\firefox.exe", "Firefox"),
+            (
+                r"C:\Program Files\Microsoft\Edge\msedge.exe",
+                "Microsoft Edge",
+            ),
+            (r"C:\Program Files\Other\edge.exe", "Microsoft Edge"),
+        ];
+
+        assert_eq!(
+            default_handler_index(
+                handlers,
+                Some(r"\\?\c:/program files/microsoft/edge/MSEDGE.EXE"),
+                Some("Firefox"),
+            ),
+            Some(1)
+        );
+        // Packaged apps may report another executable: the display name decides.
+        assert_eq!(
+            default_handler_index(
+                handlers,
+                Some(r"C:\Program Files\WindowsApps\Viewer\viewer.exe"),
+                Some(" microsoft edge "),
+            ),
+            Some(1)
+        );
+        assert_eq!(default_handler_index(handlers, None, Some("Paint")), None);
+        assert_eq!(default_handler_index(handlers, None, None), None);
+    }
+
+    #[test]
+    fn icon_locations_expand_known_environment_variables_only() {
+        let lookup = |name: &str| (name == "SystemRoot").then(|| r"C:\Windows".to_string());
+
+        assert_eq!(
+            expand_env_vars(r"%SystemRoot%\system32\imageres.dll", lookup),
+            r"C:\Windows\system32\imageres.dll"
+        );
+        assert_eq!(
+            expand_env_vars(r"%Missing%\app.exe", lookup),
+            r"%Missing%\app.exe"
+        );
+        assert_eq!(expand_env_vars("100%", lookup), "100%");
+        assert_eq!(expand_env_vars("%%", lookup), "%%");
+        assert_eq!(expand_env_vars(r"C:\plain.ico", lookup), r"C:\plain.ico");
     }
 
     #[cfg(target_os = "macos")]

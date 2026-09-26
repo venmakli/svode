@@ -5371,6 +5371,7 @@ dependencies = [
  "unicode-segmentation",
  "url",
  "which",
+ "windows",
 ]
 
 [[package]]
