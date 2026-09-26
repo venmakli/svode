@@ -4,7 +4,6 @@ import { ChevronDown, Code2, FolderOpen, SquareTerminal } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
-import { ButtonGroup } from "@/components/ui/button-group";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -13,10 +12,6 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import * as m from "@/paraglide/messages.js";
-import {
-  TerminalPrimaryAction,
-  type TerminalTarget,
-} from "@/features/terminal";
 import { getNativeErrorMessage } from "@/platform/native/errors";
 import {
   listProjectOpeners,
@@ -26,13 +21,9 @@ import {
 
 interface ProjectOpenersMenuProps {
   projectPath: string | null;
-  terminalTarget: TerminalTarget | null;
 }
 
-export function ProjectOpenersMenu({
-  projectPath,
-  terminalTarget,
-}: ProjectOpenersMenuProps) {
+export function ProjectOpenersMenu({ projectPath }: ProjectOpenersMenuProps) {
   const [openers, setOpeners] = useState<ProjectOpener[]>([]);
   const [openingId, setOpeningId] = useState<string | null>(null);
 
@@ -81,19 +72,16 @@ export function ProjectOpenersMenu({
 
   return (
     <DropdownMenu>
-      <ButtonGroup>
-        <TerminalPrimaryAction target={terminalTarget} />
-        <DropdownMenuTrigger asChild>
-          <Button
-            variant="outline"
-            size="icon-sm"
-            aria-label={m.project_openers_tooltip()}
-            disabled={dropdownDisabled}
-          >
-            <ChevronDown />
-          </Button>
-        </DropdownMenuTrigger>
-      </ButtonGroup>
+      <DropdownMenuTrigger asChild>
+        <Button
+          variant="outline"
+          size="icon-sm"
+          aria-label={m.project_openers_tooltip()}
+          disabled={dropdownDisabled}
+        >
+          <ChevronDown />
+        </Button>
+      </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="min-w-44">
         <DropdownMenuGroup>
           {openers.map((opener) => {

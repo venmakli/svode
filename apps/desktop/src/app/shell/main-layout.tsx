@@ -26,7 +26,7 @@ import {
   CommandPalette,
   useOpenCommandPalette,
 } from "@/features/search/app-shell";
-import { TerminalPanelHost } from "@/features/terminal";
+import { TerminalPanelHost, TerminalSidebarAction } from "@/features/terminal";
 import {
   CollectionDetailDrawerProvider,
   runCollectionNavigation,
@@ -219,6 +219,7 @@ function ShellLayoutContent({
       onBeforeNavigation={onBeforeNavigation}
       onOpenSessions={onOpenSessions}
       onOpenSearch={onOpenSearch}
+      sessionsAction={<TerminalSidebarAction />}
     />
   );
 

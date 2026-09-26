@@ -24,7 +24,6 @@ import {
   GitSyncStatusWidget,
   RepositoryWorkStatus,
 } from "@/features/git/app-shell";
-import { buildProjectTerminalTarget } from "@/features/terminal";
 import { MainBreadcrumbs } from "@/features/space/app-shell";
 import { ProjectOpenersMenu } from "./project-openers-menu";
 import { ProjectSwitcher } from "./project-switcher";
@@ -105,13 +104,8 @@ export function WindowHeader() {
   const toggleChatPanel = useShellStore((state) => state.toggleChatPanel);
   const mainSurface = useShellStore((state) => state.mainSurface);
   const openSpaceSettings = useShellStore((state) => state.openSpaceSettings);
-  const {
-    activeRootId,
-    activeRootName,
-    activeRootPath,
-    activeSpaceId,
-    spaces,
-  } = useSpace();
+  const { activeRootName, activeRootPath, activeSpaceId, spaces } =
+    useSpace();
   const activeSpacePath = useSpace(selectActiveSpacePath);
   const { state } = useSidebar();
   const matches = useMatches();
@@ -122,11 +116,6 @@ export function WindowHeader() {
     activeSpace?.name ?? activeRootName ?? activeSpacePath;
 
   const chatToggleDisabled = !activeContentPath;
-  const terminalTarget = buildProjectTerminalTarget({
-    id: activeRootId,
-    name: activeRootName,
-    path: activeRootPath,
-  });
 
   // Check if we're on the /space route
   const isSpaceRoute = matches.some((match) => match.fullPath === "/space");
@@ -186,10 +175,7 @@ export function WindowHeader() {
           />
         ) : null}
         {isSpaceRoute && (
-          <ProjectOpenersMenu
-            projectPath={activeRootPath}
-            terminalTarget={terminalTarget}
-          />
+          <ProjectOpenersMenu projectPath={activeRootPath} />
         )}
         {ENABLE_IN_APP_CHAT && (
           <Tooltip>

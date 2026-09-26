@@ -5,6 +5,7 @@ import {
   resizeTerminal,
   writeTerminal,
 } from "@/features/terminal/api/terminal";
+import { isTerminalToggleShortcut } from "@/features/terminal/lib/is-terminal-toggle-shortcut";
 import { subscribeTerminalOutput } from "@/features/terminal/lib/output-bus";
 import type { TerminalTab } from "@/features/terminal/model/types";
 import { useTerminalDrop } from "@/features/terminal/hooks/use-terminal-drop";
@@ -169,6 +170,8 @@ export function useTerminalPaneRuntime({
     };
 
     terminal.attachCustomKeyEventHandler((event) => {
+      // Leave the terminal toggle to the shell shortcut handler.
+      if (isTerminalToggleShortcut(event)) return false;
       if (
         event.type === "keydown" &&
         event.key === "Enter" &&

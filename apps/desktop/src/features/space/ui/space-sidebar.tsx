@@ -23,6 +23,7 @@ interface SpaceSidebarProps {
   onBeforeNavigation: () => Promise<boolean>;
   onOpenSessions: () => void;
   onOpenSearch: () => void;
+  sessionsAction?: ReactNode;
 }
 
 export function SpaceSidebar({
@@ -32,6 +33,7 @@ export function SpaceSidebar({
   onBeforeNavigation,
   onOpenSessions,
   onOpenSearch,
+  sessionsAction,
 }: SpaceSidebarProps) {
   return (
     <Sidebar variant="sidebar" collapsible="offcanvas" className="!border-r-0">
@@ -42,6 +44,7 @@ export function SpaceSidebar({
           mainSurface={mainSurface}
           onOpenSessions={onOpenSessions}
           onOpenSearch={onOpenSearch}
+          sessionsAction={sessionsAction}
         />
         <NavSpaces
           onActivateContent={onActivateContent}
@@ -58,10 +61,12 @@ function TopLevelSidebarActions({
   mainSurface,
   onOpenSessions,
   onOpenSearch,
+  sessionsAction,
 }: {
   mainSurface: MainSurface;
   onOpenSessions: () => void;
   onOpenSearch: () => void;
+  sessionsAction?: ReactNode;
 }) {
   return (
     <SidebarMenu className="px-2 py-2">
@@ -73,6 +78,7 @@ function TopLevelSidebarActions({
           <BotMessageSquare />
           <span>{m.sidebar_sessions()}</span>
         </SidebarMenuButton>
+        {sessionsAction}
       </SidebarMenuItem>
       <SidebarMenuItem>
         <SidebarMenuButton onClick={onOpenSearch}>

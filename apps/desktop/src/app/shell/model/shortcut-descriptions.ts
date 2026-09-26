@@ -1,4 +1,5 @@
 import type { ShortcutDescription } from "@/shared/lib/shortcut-description";
+import { terminalToggleShortcut } from "@/features/terminal";
 import * as m from "@/paraglide/messages.js";
 
 export const sidebarShortcut: ShortcutDescription = {
@@ -28,6 +29,7 @@ export const shellShortcuts = [
     context: m.shortcuts_outside_terminal,
   },
   sidebarShortcut,
+  terminalToggleShortcut,
   { id: "open-folder", label: m.shortcuts_open_folder, keys: [["Mod", "O"]] },
   {
     id: "close-window",

@@ -2,7 +2,7 @@ import * as bunTest from "bun:test";
 import { expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { act } from "react";
+import { act, useEffect } from "react";
 import { createRoot } from "react-dom/client";
 import { JSDOM } from "jsdom";
 
@@ -40,6 +40,19 @@ if (process.env.SVODE_LETTER_DOM !== "1") {
     });
   }
   const calls = { palette: 0, home: 0, navigate: 0, guard: 0, create: 0 };
+  const commands: string[] = [];
+  Object.defineProperty(dom.window, "__TAURI_INTERNALS__", {
+    value: {
+      invoke: async (command: string) => {
+        commands.push(command);
+        if (command === "terminal_list_agent_surfaces") return [];
+        if (command === "agent_sessions_list") return { sessions: [] };
+        if (command === "terminal_spawn")
+          return { ptyId: "pty", cwd: "/project", shell: "sh", cols: 80 };
+        throw new Error(`unexpected command ${command}`);
+      },
+    },
+  });
   let allowNavigation = true;
   let activeRootPath: string | null = "/project";
   mock.module("@tanstack/react-router", () => ({
@@ -71,7 +84,10 @@ if (process.env.SVODE_LETTER_DOM !== "1") {
     useSpace: (selector: (state: unknown) => unknown) =>
       selector({
         activeRootPath,
-        activeRootId: null,
+        activeRootId: activeRootPath ? "root" : null,
+        activeRootName: "Project",
+        rootSpaces: [],
+        spaces: [],
         goHome: () => calls.home++,
       }),
   }));
@@ -118,8 +134,14 @@ if (process.env.SVODE_LETTER_DOM !== "1") {
   }));
   const { useKeyboardShortcuts } = await import("./use-keyboard-shortcuts");
   const { HomePage } = await import("@/features/home");
+  const { useTerminalPanelToggle } = await import("@/features/terminal");
+  let terminalOpen = false;
   function Shell() {
     useKeyboardShortcuts();
+    const { panelOpen } = useTerminalPanelToggle();
+    useEffect(() => {
+      terminalOpen = panelOpen;
+    }, [panelOpen]);
     return null;
   }
   const root = createRoot(document.getElementById("app")!);
@@ -202,6 +224,54 @@ if (process.env.SVODE_LETTER_DOM !== "1") {
     }
     expect(calls.guard).toBe(4);
     expect(calls.navigate).toBe(2);
+  });
+  test("Ctrl+` toggles the terminal from any focus without taking other keys", async () => {
+    const toggle = (extra: KeyboardEventInit = {}, target?: Element) =>
+      fire("Backquote", "`", false, { ctrlKey: true, ...extra }, target);
+    for (const mac of [true, false]) {
+      Object.defineProperty(navigator, "platform", {
+        configurable: true,
+        value: mac ? "MacIntel" : "Win32",
+      });
+      await act(async () => {
+        root.render(<Shell />);
+      });
+      for (const target of [
+        undefined,
+        document.getElementById("input")!,
+        document.querySelector(".xterm textarea")!,
+      ]) {
+        const before = terminalOpen;
+        await act(async () => {
+          expect(toggle({}, target).defaultPrevented).toBe(true);
+        });
+        expect(terminalOpen).toBe(!before);
+      }
+      const before = terminalOpen;
+      for (const patch of [
+        { shiftKey: true },
+        { altKey: true },
+        { metaKey: true },
+        { ctrlKey: false, metaKey: true },
+        { isComposing: true },
+        { code: "KeyC", key: "c" },
+      ]) {
+        await act(async () => {
+          toggle(patch, document.querySelector(".xterm textarea")!);
+        });
+        expect(terminalOpen).toBe(before);
+      }
+      activeRootPath = null;
+      await act(async () => {
+        root.render(<Shell />);
+      });
+      await act(async () => {
+        expect(toggle().defaultPrevented).toBe(false);
+      });
+      expect(terminalOpen).toBe(before);
+      activeRootPath = "/project";
+    }
+    expect(commands.includes("terminal_kill")).toBe(false);
     await act(async () => root.unmount());
     dom.window.close();
   });

@@ -24,6 +24,7 @@ export function shortcutKeys(
 
 export function shortcutKeyName(key: string, mac: boolean): string {
   if (key === "Mod") return mac ? "Command" : "Ctrl";
+  if (key === "Ctrl" && mac) return "Control";
   if (key === "Alt" && mac) return "Option";
   return key;
 }
@@ -32,6 +33,7 @@ export function shortcutKeyGlyph(key: string, mac: boolean): string {
   const name = shortcutKeyName(key, mac);
   const glyphs: Record<string, string> = {
     Command: "⌘",
+    Control: "⌃",
     Option: "⌥",
     Shift: "⇧",
     Enter: "↵",

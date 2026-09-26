@@ -30,7 +30,11 @@ import {
   useScopeSurfaceStore,
   type ScopeSurfaceId,
 } from "@/features/scope-surfaces";
-import { isTerminalKeyboardEvent } from "@/features/terminal";
+import {
+  isTerminalKeyboardEvent,
+  isTerminalToggleShortcut,
+  useTerminalPanelToggle,
+} from "@/features/terminal";
 import { useShellStore } from "../model";
 import * as m from "@/paraglide/messages.js";
 import {
@@ -68,9 +72,19 @@ export function useKeyboardShortcuts() {
     activeScopeSpace ? `actors:space:${activeScopeSpace.id}` : null,
   );
   const navigate = useNavigate();
+  const terminalPanel = useTerminalPanelToggle();
+  const terminalAvailable = terminalPanel.available;
+  const toggleTerminal = terminalPanel.toggle;
 
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
+      // Ctrl+` toggles the terminal from any focus, including the terminal itself.
+      if (isTerminalToggleShortcut(e)) {
+        if (!terminalAvailable) return;
+        e.preventDefault();
+        toggleTerminal();
+        return;
+      }
       if (isTerminalKeyboardEvent(e)) return;
       const isMeta = e.metaKey || e.ctrlKey;
       const isSaveKey = isMeta && !e.altKey && e.key.toLowerCase() === "s";
@@ -157,6 +171,8 @@ export function useKeyboardShortcuts() {
     goHome,
     navigate,
     detailController,
+    terminalAvailable,
+    toggleTerminal,
   ]);
 }
 
