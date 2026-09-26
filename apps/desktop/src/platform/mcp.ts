@@ -8,12 +8,15 @@ export type McpClientId = "claude-code" | "codex";
 export type McpServerStatus = "installed" | "not_found";
 
 export type McpClientAttentionCode =
-  | "bridge_incompatible"
-  | "bridge_missing"
+  | "client_policy_blocked"
   | "config_unreadable"
   | "custom_conflict"
   | "higher_precedence_conflict"
-  | "repair_failed";
+  | "incomplete"
+  | "mcp_start_failed"
+  | "repair_failed"
+  | "runtime_unavailable"
+  | "skill_conflict";
 
 export type McpClientConfigStatus =
   | "not_found"

@@ -1,12 +1,12 @@
 use std::path::Path;
 
+use svode_connect::{Client, ConnectError, DoctorReport, Machine, ManualConfig, Status};
 use tauri::{AppHandle, Emitter, Manager, State, Window};
 use tokio::sync::Mutex;
 
 use super::active::{self, ActiveProjectContext, ActiveProjectState};
 use crate::AppError;
 use svode_mcp::bridge;
-use svode_mcp::config::{self, DoctorReport, ManualConfig, McpClient, McpStatus};
 
 const MCP_STATUS_CHANGED_EVENT: &str = "mcp:status-changed";
 
@@ -46,32 +46,37 @@ pub fn mcp_set_active_context(
     Ok(context)
 }
 
+/// Status of the connections after a reconcile, as Settings show it: a
+/// connected client that lost part of its set is completed first.
 #[tauri::command]
 pub async fn mcp_get_status(
     app: AppHandle,
     state: State<'_, McpConfigState>,
-) -> Result<McpStatus, AppError> {
+) -> Result<Status, AppError> {
     let _guard = state.operation_lock.lock().await;
-    let canonical = canonical_status(&app).await;
-    emit_if_changed(&app, canonical.changed);
-    Ok(canonical.status)
+    let machine = machine(&app)?;
+    let (changed, errors) = svode_connect::reconcile(&machine);
+    emit_if_changed(&app, changed);
+    Ok(status(&machine, &errors).await)
 }
 
 #[tauri::command]
 pub fn mcp_print_config(client: Option<String>) -> Result<ManualConfig, AppError> {
     if let Some(client) = client {
-        McpClient::parse(&client).map_err(|e| AppError::General(e.message))?;
+        Client::parse(&client).map_err(app_error)?;
     }
-    Ok(config::manual_config_object())
+    let machine = Machine::user().map_err(app_error)?;
+    Ok(svode_connect::manual_config(&machine))
 }
 
+/// Connects the client completely: skill, `svode` and MCP.
 #[tauri::command]
 pub async fn mcp_install_client(
     app: AppHandle,
     state: State<'_, McpConfigState>,
     client: String,
-) -> Result<McpStatus, AppError> {
-    mutate_client_config(&app, &state, &client, true).await
+) -> Result<Status, AppError> {
+    change_client(&app, &state, &client, svode_connect::connect).await
 }
 
 #[tauri::command]
@@ -79,65 +84,51 @@ pub async fn mcp_remove_client(
     app: AppHandle,
     state: State<'_, McpConfigState>,
     client: String,
-) -> Result<McpStatus, AppError> {
-    mutate_client_config(&app, &state, &client, false).await
+) -> Result<Status, AppError> {
+    change_client(&app, &state, &client, svode_connect::disconnect).await
 }
 
 #[tauri::command]
-pub async fn mcp_run_doctor(_app: AppHandle) -> Result<DoctorReport, AppError> {
-    Ok(config::doctor(
-        bridge::discovery_exists(),
-        bridge::desktop_reachable().await,
+pub async fn mcp_run_doctor(app: AppHandle) -> Result<DoctorReport, AppError> {
+    let machine = machine(&app)?;
+    Ok(svode_connect::doctor(
+        &machine,
+        Some(&bridge::probe().await),
     ))
 }
 
-async fn mutate_client_config(
+async fn change_client(
     app: &AppHandle,
     state: &McpConfigState,
     client: &str,
-    installed: bool,
-) -> Result<McpStatus, AppError> {
-    let client = McpClient::parse(client).map_err(|error| AppError::General(error.message))?;
+    step: fn(&Machine, Client) -> Result<bool, ConnectError>,
+) -> Result<Status, AppError> {
+    let client = Client::parse(client).map_err(app_error)?;
     let _guard = state.operation_lock.lock().await;
-    let before = canonical_status(app).await;
-    if !client_mutation_needed(&before.status, client, installed)? {
-        emit_if_changed(app, before.changed);
-        return Ok(before.status);
-    }
-
-    if installed {
-        let project_path = active_project_path(app);
-        config::install_client_for_project(client, project_path.as_deref())
-            .map_err(|error| AppError::General(error.message))?;
-    } else {
-        config::remove_client(client).map_err(|error| AppError::General(error.message))?;
-    }
-
-    let canonical = canonical_status(app).await;
-    if client_installed(&canonical.status, client) != Some(installed) {
-        return Err(AppError::General(format!(
-            "MCP client {} did not reach the requested canonical state",
-            client.as_str()
-        )));
-    }
-
-    emit_if_changed(app, true);
-    Ok(canonical.status)
+    let machine = machine(app)?;
+    let changed = step(&machine, client).map_err(app_error)?;
+    emit_if_changed(app, changed);
+    Ok(status(&machine, &[]).await)
 }
 
-async fn canonical_status(app: &AppHandle) -> config::ConfigMaintenanceResult {
-    let project_path = active_project_path(app);
-    config::maintain_and_status(
-        bridge::discovery_exists(),
-        bridge::desktop_reachable().await,
-        project_path.as_deref(),
-    )
+async fn status(machine: &Machine, failed: &[(Client, ConnectError)]) -> Status {
+    svode_connect::status(machine, failed, Some(&bridge::probe().await))
 }
 
-fn active_project_path(app: &AppHandle) -> Option<std::path::PathBuf> {
-    app.state::<ActiveProjectState>()
+/// The user of the app, checking the project and local entries of the
+/// Project of the active window.
+fn machine(app: &AppHandle) -> Result<Machine, AppError> {
+    let project = app
+        .state::<ActiveProjectState>()
         .get()
-        .map(|context| Path::new(&context.project_path).to_path_buf())
+        .map(|context| Path::new(&context.project_path).to_path_buf());
+    Ok(Machine::user()
+        .map_err(app_error)?
+        .with_project(project.as_deref()))
+}
+
+fn app_error(error: ConnectError) -> AppError {
+    AppError::General(error.message)
 }
 
 fn emit_if_changed(app: &AppHandle, changed: bool) {
@@ -146,101 +137,22 @@ fn emit_if_changed(app: &AppHandle, changed: bool) {
     }
 }
 
-pub async fn maintain_clients(app: &AppHandle) {
+/// Reconcile at every start, after the app took over the stable location:
+/// connected clients follow the version of this app, and a managed MCP
+/// entry of a previous desktop app becomes a full connection.
+pub async fn reconcile_clients(app: &AppHandle) {
     let state = app.state::<McpConfigState>();
     let _guard = state.operation_lock.lock().await;
-    let canonical = canonical_status(app).await;
-    emit_if_changed(app, canonical.changed);
-}
-
-fn client_installed(status: &McpStatus, client: McpClient) -> Option<bool> {
-    status
-        .clients
-        .iter()
-        .find(|candidate| candidate.id == client.as_str())
-        .map(|candidate| candidate.installed)
-}
-
-fn client_mutation_needed(
-    status: &McpStatus,
-    client: McpClient,
-    requested: bool,
-) -> Result<bool, AppError> {
-    client_installed(status, client)
-        .map(|installed| installed != requested)
-        .ok_or_else(|| {
-            AppError::General(format!(
-                "canonical MCP status did not include client {}",
-                client.as_str()
-            ))
-        })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn plans_same_value_as_no_op_and_opposite_state_as_mutation() {
-        let status = status_with_clients(false);
-
-        for client in [McpClient::ClaudeCode, McpClient::Codex] {
-            let installed = client_installed(&status, client).expect("canonical client status");
-            assert!(!client_mutation_needed(&status, client, installed).expect("same state"));
-            assert!(client_mutation_needed(&status, client, !installed).expect("opposite state"));
+    let machine = match machine(app) {
+        Ok(machine) => machine,
+        Err(error) => {
+            tracing::warn!("agent client connections were not reconciled: {error}");
+            return;
         }
+    };
+    let (changed, errors) = svode_connect::reconcile(&machine);
+    for (client, error) in errors {
+        tracing::warn!("{} connection was not completed: {error}", client.name());
     }
-
-    fn status_with_clients(installed: bool) -> McpStatus {
-        let clients = [McpClient::ClaudeCode, McpClient::Codex]
-            .into_iter()
-            .map(|client| config::McpClientStatus {
-                id: client.as_str().to_string(),
-                name: client.as_str().to_string(),
-                found: true,
-                installed,
-                managed: installed,
-                status: if installed {
-                    "installed".to_string()
-                } else {
-                    "mcp_not_installed".to_string()
-                },
-                attention_code: None,
-                path: None,
-                config_path: None,
-                message: None,
-            })
-            .collect();
-        McpStatus {
-            server: config::McpServerInfo {
-                status: "installed".to_string(),
-                command: None,
-                version: None,
-                message: None,
-            },
-            clients,
-            manual_config: config::ManualConfig {
-                name: "svode".to_string(),
-                transport: "stdio".to_string(),
-                command: "svode-mcp".to_string(),
-                args: vec!["--app".to_string(), "desktop".to_string()],
-                env: std::collections::HashMap::new(),
-            },
-            doctor: config::DoctorReport {
-                ok: true,
-                command: None,
-                discovery_file: None,
-                messages: Vec::new(),
-                errors: Vec::new(),
-                binary_path: "svode-mcp".to_string(),
-                binary_exists: true,
-                binary_executable: true,
-                version: "test".to_string(),
-                bridge_protocol: svode_mcp::MCP_BRIDGE_PROTOCOL.to_string(),
-                discovery_present: true,
-                desktop_reachable: true,
-                issues: Vec::new(),
-            },
-        }
-    }
+    emit_if_changed(app, changed);
 }

@@ -5275,10 +5275,24 @@ dependencies = [
  "clap",
  "serde_json",
  "sqlx",
+ "svode-connect",
  "svode-core",
+ "svode-install",
  "svode-tools",
  "tempfile",
  "tokio",
+]
+
+[[package]]
+name = "svode-connect"
+version = "0.0.1"
+dependencies = [
+ "serde",
+ "serde_json",
+ "svode-install",
+ "tempfile",
+ "toml 0.9.12+spec-1.1.0",
+ "which",
 ]
 
 [[package]]
@@ -5333,6 +5347,7 @@ dependencies = [
  "serde_yml",
  "sha2 0.10.9",
  "sqlx",
+ "svode-connect",
  "svode-core",
  "svode-install",
  "svode-mcp",
@@ -5385,13 +5400,12 @@ dependencies = [
  "serde",
  "serde_json",
  "sqlx",
+ "svode-connect",
  "svode-core",
+ "svode-install",
  "svode-tools",
  "tempfile",
  "tokio",
- "toml 0.9.12+spec-1.1.0",
- "ulid",
- "which",
 ]
 
 [[package]]

@@ -118,14 +118,16 @@ pub fn run() {
             }
             #[cfg(target_os = "macos")]
             macos_fullscreen::install(app.handle());
-            installation::take_ownership(app.handle());
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
-                if let Err(error) = mcp::ipc::start_desktop_ipc(handle.clone()).await {
+                installation::take_ownership(&handle).await;
+                mcp::commands::reconcile_clients(&handle).await;
+            });
+            let handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                if let Err(error) = mcp::ipc::start_desktop_ipc(handle).await {
                     tracing::warn!("failed to start MCP desktop IPC: {}", error.message);
-                    return;
                 }
-                mcp::commands::maintain_clients(&handle).await;
             });
             Ok(())
         })

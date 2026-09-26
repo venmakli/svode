@@ -53,6 +53,8 @@ jobs:
         run: cargo test -p svode-mcp
       - name: CLI package tests without the desktop crate
         run: cargo test -p svode-cli
+      - name: Connection manager tests without the desktop crate
+        run: cargo test -p svode-connect
       - name: Workspace tests
         run: cargo test --workspace
       - name: Clippy
@@ -102,7 +104,7 @@ jobs:
             exit 1
           fi
       - name: Every command and tool through real processes
-        run: cargo test -p svode-cli -p svode-mcp -p svode-install
+        run: cargo test -p svode-cli -p svode-mcp -p svode-install -p svode-connect
       - name: Packaging smoke
         run: node scripts/smoke-standalone.mjs target/debug
       - name: Standalone archive with the plugin payload of the same version, installed for a user without Svode

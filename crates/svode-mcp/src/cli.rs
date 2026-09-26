@@ -1,6 +1,7 @@
+use serde_json::json;
+use svode_connect::{Client, ConnectError, Machine};
 use svode_tools::error::ToolError;
 
-use crate::config::{self, McpClient};
 use crate::{MCP_BRIDGE_PROTOCOL, MCP_VERSION, bridge, headless, stdio};
 
 pub async fn run() -> i32 {
@@ -24,29 +25,21 @@ async fn run_args(args: &[String]) -> Result<(), ToolError> {
             let (project, space) = parse_project_args(args)?;
             headless::run(project, space).await
         }
-        Some("install") => {
-            let client = parse_client_arg(args)?;
-            let result = config::install_client(client)?;
-            println!("{}", serde_json::to_string_pretty(&result)?);
-            Ok(())
-        }
-        Some("remove") => {
-            let client = parse_client_arg(args)?;
-            let result = config::remove_client(client)?;
-            println!("{}", serde_json::to_string_pretty(&result)?);
-            Ok(())
-        }
+        // The connection manager shared with the desktop app and `svode
+        // integration`: install and remove connect or disconnect the whole
+        // integration of the client, not only its MCP entry.
+        Some("install") => change(args, svode_connect::connect),
+        Some("remove") => change(args, svode_connect::disconnect),
         Some("print-config") => {
             let client = parse_client_arg(args)?;
-            let result = config::print_config(client);
-            println!("{}", result.manual_config);
+            println!(
+                "{}",
+                svode_connect::manual_config_text(&machine()?, client).trim_end()
+            );
             Ok(())
         }
         Some("doctor") => {
-            let report = config::doctor(
-                bridge::discovery_exists(),
-                bridge::desktop_reachable().await,
-            );
+            let report = svode_connect::doctor(&machine()?, Some(&bridge::probe().await));
             println!("{}", serde_json::to_string_pretty(&report)?);
             Ok(())
         }
@@ -106,12 +99,40 @@ fn parse_project_args(args: &[String]) -> Result<(&str, Option<&str>), ToolError
     Ok((project.ok_or_else(invalid)?, space))
 }
 
-fn parse_client_arg(args: &[String]) -> Result<McpClient, ToolError> {
+fn change(
+    args: &[String],
+    step: fn(&Machine, Client) -> Result<bool, ConnectError>,
+) -> Result<(), ToolError> {
+    let client = parse_client_arg(args)?;
+    let machine = machine()?;
+    let changed = step(&machine, client).map_err(connect_error)?;
+    let status = svode_connect::client_statuses(&machine, &[])
+        .into_iter()
+        .find(|status| status.id == client.as_str());
+    let result = json!({
+        "client": client.as_str(),
+        "changed": changed,
+        "message": svode_connect::RESTART_NOTICE,
+        "status": status,
+    });
+    println!("{}", serde_json::to_string_pretty(&result)?);
+    Ok(())
+}
+
+fn machine() -> Result<Machine, ToolError> {
+    Machine::user().map_err(connect_error)
+}
+
+fn connect_error(error: ConnectError) -> ToolError {
+    ToolError::new(error.code, error.message)
+}
+
+fn parse_client_arg(args: &[String]) -> Result<Client, ToolError> {
     let client = args
         .windows(2)
         .find_map(|pair| (pair[0] == "--client").then(|| pair[1].as_str()))
         .ok_or_else(|| ToolError::new("INVALID_ARGS", "expected --client <claude-code|codex>"))?;
-    McpClient::parse(client)
+    Client::parse(client).map_err(connect_error)
 }
 
 fn usage() -> &'static str {
@@ -125,8 +146,12 @@ fn usage() -> &'static str {
   svode-mcp --app desktop
   svode-mcp --project <path> [--space <root|space-id>]
   svode-mcp install --client <claude-code|codex>
+      Connect the client to Svode: skill, svode and this server (same as
+      `svode integration connect`).
   svode-mcp remove --client <claude-code|codex>
+      Disconnect it; only what Svode added is removed.
   svode-mcp print-config --client <claude-code|codex>
+      MCP config for a client you configure by hand.
   svode-mcp doctor
   svode-mcp --bridge-protocol
   svode-mcp --version

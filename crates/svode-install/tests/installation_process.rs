@@ -456,3 +456,67 @@ fn a_home_that_is_a_svode_project_is_refused() {
     assert_eq!(error.code, "STABLE_LOCATION_IS_PROJECT");
     assert!(!machine.home.join(".svode/bin").exists());
 }
+
+/// Replaces `svode` of an unpacked archive with a script that logs its
+/// arguments to `log` and answers like `svode integration --json`.
+fn log_integration(archive: &Path, log: &Path, changed: bool) {
+    let path = archive.join("bin/svode");
+    fs::write(
+        &path,
+        format!(
+            "#!/bin/sh\necho \"$*\" >> '{}'\necho '{{\"schemaVersion\":1,\"ok\":true,\"changed\":{changed}}}'\n",
+            log.display()
+        ),
+    )
+    .unwrap();
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+}
+
+#[test]
+fn the_active_standalone_runtime_syncs_connections_after_install_and_disconnects_them_before_removal()
+ {
+    let machine = Machine::new();
+    let log = machine.home.join("integration.log");
+    let archive = machine.archive("A");
+    log_integration(&archive, &log, true);
+
+    let output = machine.install(&archive);
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert!(
+        stdout(&output).contains("Updated the connected agent clients"),
+        "{}",
+        stdout(&output)
+    );
+    assert_eq!(
+        fs::read_to_string(&log).unwrap(),
+        "integration sync --json\n"
+    );
+
+    // Updating with nothing to change reports nothing about clients.
+    let update = machine.archive("B");
+    log_integration(&update, &log, false);
+    let output = machine.install(&update);
+    assert!(
+        !stdout(&output).contains("agent clients"),
+        "{}",
+        stdout(&output)
+    );
+
+    let output = machine.uninstall();
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert_eq!(
+        fs::read_to_string(&log).unwrap(),
+        "integration sync --json\nintegration sync --json\nintegration disconnect --json --all\n"
+    );
+    assert!(!machine.layout().root().exists());
+
+    // With the desktop app active the standalone runtime touches no client.
+    let machine = Machine::new();
+    let log = machine.home.join("integration.log");
+    let (binaries, payload) = machine.desktop("D");
+    take_desktop(&machine, &binaries, &payload);
+    let archive = machine.archive("A");
+    log_integration(&archive, &log, true);
+    assert!(machine.install(&archive).status.success());
+    assert!(!log.exists());
+}

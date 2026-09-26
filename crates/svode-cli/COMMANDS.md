@@ -163,6 +163,17 @@ Reads one standalone Page from its Markdown source through the shared `read_page
 
 `svode doctor [--project <path>]` reports, without opening an index or store: `version`; `project` (`ok`, or the target error code and message); `spaces` from `space list`, each with `index.present` checked by file presence; `git` availability and versions; `runtime.servedTools`. It exits 0 whenever the command itself runs.
 
+## integration
+
+`svode [--project <path>] integration <connect|disconnect|status|sync> [--json]` manages the connection of agent clients (`claude-code`, `codex`) to the Svode runtime in `~/.svode`, with the same connection manager as the desktop app Settings and `svode-mcp install | remove`. It changes user-level client configs, not Project data, and opens no Project; `--project` (or the Project around the current directory) only selects whose project and local client entries are checked for conflicts.
+
+- `connect <client>` connects the whole integration: Claude Code gets the plugin `~/.claude/skills/svode` → `~/.svode/current/plugins/svode` (skill, `svode` through the plugin `bin/`, MCP server), Codex gets the skill `~/.agents/skills/svode` and a managed `[mcp_servers.svode]` entry in `~/.codex/config.toml` that starts `~/.svode/bin/svode-mcp` in automatic mode. Every conflict is checked before the first write: a custom `svode` entry (`CUSTOM_CONFIG_CONFLICT`), another skill at the same path (`SKILL_CONFLICT`), a project or local entry that overrides the user one (`HIGHER_PRECEDENCE_CONFLICT`); without a runtime in `~/.svode` it fails with `RUNTIME_UNAVAILABLE`. No approval setting or `allowed-tools` is written, and every other part of a config stays as it was.
+- `disconnect <client>` or `disconnect --all` removes only what Svode added; the shared skill goes with the last client that reads it.
+- `status` reports the runtime (`runtime`) and every client (`clients`: `installed` for connected, `complete`, `version`, `issues` with codes such as `custom_conflict`, `skill_conflict`, `client_policy_blocked`, `runtime_unavailable`, `incomplete`, `mcp_start_failed`, and `artifacts`).
+- `sync` completes every connected client, as the desktop app does at start: a managed MCP entry of a previous desktop app becomes a full connection and a missing artifact is restored. It fails with `RECONCILE_FAILED` when a client cannot be completed. The standalone installer runs it after installing the active runtime and runs `disconnect --all` before removing it.
+
+Agent sessions that are already open get a new skill and MCP server after a restart; `svode` itself runs the active version at once.
+
 ## Codes
 
 Context and input codes are owned by the CLI; every other code comes unchanged from the shared operation (`INVALID_PATH`, `PATH_FORBIDDEN`, `PATH_NOT_ACCESSIBLE`, `FILE_NOT_FOUND`, `INVALID_SOURCE_ENCODING`, `NOT_A_STANDALONE_PAGE`, `NOT_A_COLLECTION_ITEM`, `CONTENT_OWNER_MISMATCH`, `SPACE_NOT_FOUND`, `SOURCE_BUSY` and `SOURCE_STALE` with the target `path`, `INDEX_UNAVAILABLE` with `diagnostics` naming each Space and cause, `INDEX_ERROR` for a failed index query, `IO_ERROR`, Knowledge codes and others).
@@ -181,4 +192,4 @@ Context and input codes are owned by the CLI; every other code comes unchanged f
 
 ## Installation
 
-The desktop app bundle ships `svode` and `svode-mcp` of the same version as sidecars next to its own executable (Linux packages place sidecars in `/usr/bin`). For scripts and CI both build without the desktop app: `cargo build --release -p svode-cli -p svode-mcp` in the Svode repository gives standalone binaries that need neither the desktop app nor its GUI libraries, and `node scripts/smoke-standalone.mjs <dir>` checks such binaries against a fresh Project. Managed installation, `PATH` setup and updates are not part of this build.
+The desktop app bundle ships `svode` and `svode-mcp` of the same version as sidecars next to its own executable (Linux packages place sidecars in `/usr/bin`). For scripts and CI both build without the desktop app: `cargo build --release -p svode-cli -p svode-mcp` in the Svode repository gives standalone binaries that need neither the desktop app nor its GUI libraries, and `node scripts/smoke-standalone.mjs <dir>` checks such binaries against a fresh Project. The standalone installer (`scripts/install.sh <archive>`) installs both into `~/.svode` with `PATH` setup, updates and removal; `svode integration` connects agent clients to it.

@@ -163,6 +163,42 @@ pub enum Noun {
         after_help = "Opens no index or store. Target problems are reported in the result.\n\nExample:\n  svode doctor --project ~/Notes --json"
     )]
     Doctor,
+    /// Connection of Claude Code and Codex to Svode: skill, `svode` and MCP.
+    #[command(
+        after_help = "A connection refers to the Svode runtime in ~/.svode, so it follows the version of the active runtime. Only what Svode added is ever changed or removed; custom entries are reported as conflicts. --project selects the Project whose project and local client entries are checked.\n\nExamples:\n  svode integration connect codex\n  svode integration status --json"
+    )]
+    Integration {
+        #[command(subcommand)]
+        verb: IntegrationVerb,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum IntegrationVerb {
+    /// Connect a client: the Svode skill, `svode` for its agent and the MCP server.
+    #[command(after_help = "Example:\n  svode integration connect claude-code")]
+    Connect { client: ClientName },
+    /// Disconnect a client, or every client with --all.
+    #[command(after_help = "Example:\n  svode integration disconnect codex")]
+    Disconnect {
+        #[arg(required_unless_present = "all", conflicts_with = "all")]
+        client: Option<ClientName>,
+        #[arg(long)]
+        all: bool,
+    },
+    /// Status of every client and of the runtime they use.
+    #[command(after_help = "Example:\n  svode integration status --json")]
+    Status,
+    /// Complete every connected client for the active runtime, as the
+    /// desktop app does at start.
+    #[command(after_help = "Example:\n  svode integration sync")]
+    Sync,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum ClientName {
+    ClaudeCode,
+    Codex,
 }
 
 #[derive(Debug, Subcommand)]

@@ -30,7 +30,7 @@ mod unix {
     use std::ffi::OsString;
     use std::os::unix::process::CommandExt;
     use std::path::Path;
-    use std::process::Command;
+    use std::process::{Command, Stdio};
 
     use svode_install::shell_path::{self, PathEntry, Shell};
     use svode_install::{
@@ -112,8 +112,13 @@ mod unix {
         let launchers = launchers(&layout);
         let mut report = match install_standalone(&layout, source, VERSION)? {
             StandaloneInstall::Active { previous } => format!(
-                "Installed the standalone Svode runtime {VERSION}{}; it is the active runtime.\n{launchers}",
-                replaced(previous.as_ref())
+                "Installed the standalone Svode runtime {VERSION}{}; it is the active runtime.\n{launchers}{}",
+                replaced(previous.as_ref()),
+                integration(
+                    &layout,
+                    "sync",
+                    "Updated the connected agent clients to this version; open agent sessions get it after a restart."
+                )
             ),
             StandaloneInstall::UpdatedInactive { desktop } => format!(
                 "Updated the standalone Svode runtime to {VERSION}. Svode Desktop {desktop} is installed and stays the active runtime; the standalone runtime takes over when Svode Desktop is removed.\n{launchers}"
@@ -134,9 +139,17 @@ mod unix {
 
     fn uninstall() -> Result<String, InstallError> {
         let layout = Layout::user()?;
-        let mut report = match uninstall_standalone(&layout)? {
+        let mut disconnected = String::new();
+        let removal = uninstall_standalone(&layout, |layout| {
+            disconnected = integration(
+                layout,
+                "disconnect",
+                "Disconnected the agent clients from Svode.",
+            );
+        })?;
+        let mut report = match removal {
             StandaloneRemoval::Active => format!(
-                "Removed the standalone Svode runtime and its launchers ({}).",
+                "Removed the standalone Svode runtime and its launchers ({}).{disconnected}",
                 layout.root().display()
             ),
             StandaloneRemoval::Inactive { desktop } => format!(
@@ -155,6 +168,39 @@ mod unix {
             ));
         }
         Ok(report)
+    }
+
+    /// Runs `svode integration sync` or `disconnect --all` of the runtime
+    /// the launchers start: the connection manager is part of the runtime,
+    /// not of the launchers. Returns a report line when something changed
+    /// or failed.
+    fn integration(layout: &Layout, verb: &str, changed: &str) -> String {
+        let failed =
+            |reason: String| format!("\nThe agent client connections were not updated: {reason}");
+        let binary = match resolve_launch(layout, "svode") {
+            Ok(binary) => binary,
+            Err(unavailable) => return failed(unavailable.message),
+        };
+        let mut command = Command::new(&binary);
+        command.args(["integration", verb, "--json"]);
+        if verb == "disconnect" {
+            command.arg("--all");
+        }
+        let output = match command.stdin(Stdio::null()).stderr(Stdio::null()).output() {
+            Ok(output) => output,
+            Err(error) => return failed(format!("could not start {}: {error}", binary.display())),
+        };
+        let result =
+            serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap_or_default();
+        match (result["ok"].as_bool(), result["changed"].as_bool()) {
+            (Some(true), Some(true)) => format!("\n{changed}"),
+            (Some(true), _) => String::new(),
+            _ => failed(
+                result["error"]["message"]
+                    .as_str()
+                    .map_or_else(|| format!("{} failed", binary.display()), str::to_string),
+            ),
+        }
     }
 
     fn home(layout: &Layout) -> &Path {

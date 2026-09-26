@@ -1,0 +1,21 @@
+[package]
+name = "svode-connect"
+version = "0.0.1"
+edition = "2024"
+authors = ["Kamnev Ilya"]
+repository = "https://github.com/venmakli/svode"
+description = "Svode connection manager: connects the plugin payload of the stable location ~/.svode to Claude Code and Codex, reconciles, disconnects and reports status."
+
+[lib]
+name = "svode_connect"
+path = "src/lib.rs"
+
+[dependencies]
+svode-install = { path = "../svode-install" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.9"
+which = "7"
+
+[dev-dependencies]
+tempfile = "3"

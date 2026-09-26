@@ -7,6 +7,7 @@ mod doctor;
 mod error;
 pub mod grammar;
 mod input;
+mod integration;
 mod output;
 mod render;
 mod target;
@@ -64,6 +65,7 @@ async fn execute(host: &impl ToolHost, cli: Cli, cwd: &Path) -> Result<Outcome, 
     match cli.command {
         Noun::Guide => guide(host).await,
         Noun::Doctor => Ok(doctor::run(host, selectors).await),
+        Noun::Integration { verb } => integration::run(verb, &selectors),
         Noun::Git {
             verb: GitVerb::Access {
                 verb: AccessVerb::Verify,

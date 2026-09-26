@@ -127,8 +127,13 @@ pub enum StandaloneRemoval {
 
 /// Removes the standalone runtime. With an active desktop app its
 /// launchers, payload and links stay; otherwise the whole stable location
-/// goes. Projects and client configs are never touched here.
-pub fn uninstall_standalone(layout: &Layout) -> Result<StandaloneRemoval, InstallError> {
+/// goes, and `before_removal` runs first while its runtime still starts, so
+/// the caller can disconnect the agent clients that refer to it. Projects
+/// and client configs are never touched here.
+pub fn uninstall_standalone(
+    layout: &Layout,
+    before_removal: impl FnOnce(&Layout),
+) -> Result<StandaloneRemoval, InstallError> {
     if let Some(desktop) = active_desktop(layout) {
         let desktop = desktop.record.version;
         if layout.standalone().is_none() {
@@ -139,6 +144,9 @@ pub fn uninstall_standalone(layout: &Layout) -> Result<StandaloneRemoval, Instal
         return Ok(StandaloneRemoval::Inactive { desktop });
     }
     let existed = layout.root().exists();
+    if existed {
+        before_removal(layout);
+    }
     layout.remove_all()?;
     Ok(if existed {
         StandaloneRemoval::Active

@@ -37,18 +37,24 @@ function serverBadge(status: McpStatus["server"]["status"]) {
 
 function clientDescription(client: McpClientStatus) {
   switch (client.attentionCode) {
-    case "bridge_incompatible":
-      return m.settings_mcp_client_bridge_incompatible();
-    case "bridge_missing":
-      return m.settings_mcp_client_bridge_missing();
+    case "client_policy_blocked":
+      return m.settings_mcp_client_policy_blocked();
     case "config_unreadable":
       return m.settings_mcp_client_config_unreadable();
     case "custom_conflict":
       return m.settings_mcp_client_custom_conflict();
     case "higher_precedence_conflict":
       return m.settings_mcp_client_higher_precedence_conflict();
+    case "incomplete":
+      return m.settings_mcp_client_incomplete();
+    case "mcp_start_failed":
+      return m.settings_mcp_client_mcp_start_failed();
     case "repair_failed":
       return m.settings_mcp_client_repair_failed();
+    case "runtime_unavailable":
+      return m.settings_mcp_client_runtime_unavailable();
+    case "skill_conflict":
+      return m.settings_mcp_client_skill_conflict();
   }
   if (client.status === "not_found") return m.settings_mcp_client_unavailable();
   return client.installed
@@ -56,11 +62,15 @@ function clientDescription(client: McpClientStatus) {
     : m.settings_mcp_client_not_installed();
 }
 
+// A conflict refuses connecting; a connected client can always disconnect,
+// which removes only what Svode added.
 function blocksManagedToggle(client: McpClientStatus) {
+  if (client.attentionCode === "config_unreadable") return true;
   return (
-    client.attentionCode === "config_unreadable" ||
-    client.attentionCode === "custom_conflict" ||
-    client.attentionCode === "higher_precedence_conflict"
+    !client.installed &&
+    (client.attentionCode === "custom_conflict" ||
+      client.attentionCode === "higher_precedence_conflict" ||
+      client.attentionCode === "skill_conflict")
   );
 }
 

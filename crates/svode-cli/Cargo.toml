@@ -15,6 +15,7 @@ name = "svode"
 path = "src/main.rs"
 
 [dependencies]
+svode-connect = { path = "../svode-connect" }
 svode-core = { path = "../svode-core" }
 svode-tools = { path = "../svode-tools" }
 clap = { version = "4", features = ["derive"] }
@@ -23,4 +24,5 @@ sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio",
 tokio = { version = "1", features = ["rt", "macros", "signal"] }
 
 [dev-dependencies]
+svode-install = { path = "../svode-install" }
 tempfile = "3"

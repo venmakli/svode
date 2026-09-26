@@ -4,7 +4,7 @@
 
 use tauri::AppHandle;
 
-pub fn take_ownership(app: &AppHandle) {
+pub async fn take_ownership(app: &AppHandle) {
     // A development build runs from the Cargo target directory and never
     // replaces the installation the user's agents run.
     if tauri::is_dev() {
@@ -13,15 +13,18 @@ pub fn take_ownership(app: &AppHandle) {
     #[cfg(unix)]
     {
         let app = app.clone();
-        tauri::async_runtime::spawn_blocking(move || match take(&app) {
-            Ok(Some(ownership)) => {
+        match tauri::async_runtime::spawn_blocking(move || take(&app)).await {
+            Ok(Ok(Some(ownership))) => {
                 tracing::info!("stable location ~/.svode: {ownership:?}");
             }
-            Ok(None) => {}
-            Err(error) => {
+            Ok(Ok(None)) => {}
+            Ok(Err(error)) => {
                 tracing::warn!("failed to take over the stable location ~/.svode: {error}");
             }
-        });
+            Err(error) => {
+                tracing::warn!("taking over the stable location ~/.svode stopped: {error}");
+            }
+        }
     }
     #[cfg(not(unix))]
     let _ = app;

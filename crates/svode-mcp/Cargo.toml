@@ -4,7 +4,7 @@ version = "0.0.8"
 edition = "2024"
 authors = ["Kamnev Ilya"]
 repository = "https://github.com/venmakli/svode"
-description = "Svode MCP server: MCP control plane over the svode-tools surface, stdio transport, desktop bridge client and client config management."
+description = "Svode MCP server: MCP control plane over the svode-tools surface, stdio transport, desktop bridge client and the client connection subcommands."
 
 [lib]
 name = "svode_mcp"
@@ -15,15 +15,14 @@ name = "svode-mcp"
 path = "src/main.rs"
 
 [dependencies]
+svode-connect = { path = "../svode-connect" }
 svode-tools = { path = "../svode-tools" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "io-std", "signal", "time"] }
-toml = "0.9"
-ulid = "1"
-which = "7"
 
 [dev-dependencies]
+svode-install = { path = "../svode-install" }
 svode-core = { path = "../svode-core" }
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite"] }
 tempfile = "3"

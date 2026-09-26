@@ -3,8 +3,7 @@ use serde::de::DeserializeOwned;
 use serde_json::Value;
 use svode_mcp::protocol::{DiscoveryFile, IpcRequest, IpcResponse};
 use svode_mcp::{
-    MCP_BRIDGE_PROTOCOL, MCP_DISCOVERY_ENV, MCP_MANAGED_MARKER_ENV, MCP_MANAGED_MARKER_VALUE,
-    MCP_PROJECT_PATH_ENV, MCP_ROUTINE_CALLER_TOKEN_ENV,
+    MCP_BRIDGE_PROTOCOL, MCP_DISCOVERY_ENV, MCP_PROJECT_PATH_ENV, MCP_ROUTINE_CALLER_TOKEN_ENV,
 };
 use svode_tools::error::ToolError;
 use svode_tools::result::ToolCallResult;
@@ -33,8 +32,7 @@ fn assert_round_trip<T: DeserializeOwned + Serialize>(name: &str) -> T {
 #[test]
 fn bridge_identity_env_names_and_managed_marker_are_unchanged() {
     assert_eq!(MCP_BRIDGE_PROTOCOL, "svode-desktop-bridge-v1");
-    assert_eq!(MCP_MANAGED_MARKER_ENV, "SVODE_MCP_MANAGED");
-    assert_eq!(MCP_MANAGED_MARKER_VALUE, "svode-desktop-bridge-v1");
+    assert_eq!(svode_connect::MARKER_ENV, "SVODE_MCP_MANAGED");
     assert_eq!(MCP_DISCOVERY_ENV, "SVODE_MCP_DISCOVERY");
     assert_eq!(MCP_PROJECT_PATH_ENV, "SVODE_MCP_PROJECT_PATH");
     assert_eq!(

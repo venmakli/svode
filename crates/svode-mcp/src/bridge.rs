@@ -7,7 +7,6 @@ use svode_tools::error::ToolError;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
 
-use crate::config::home_path;
 use crate::protocol::{DiscoveryFile, IpcContextOverride, IpcRequest, IpcResponse};
 use crate::{
     MCP_BRIDGE_PROTOCOL, MCP_DISCOVERY_ENV, MCP_PROJECT_PATH_ENV, MCP_ROUTINE_CALLER_TOKEN_ENV,
@@ -28,6 +27,13 @@ pub fn default_discovery_path() -> Result<PathBuf, ToolError> {
         None,
         std::env::var_os("XDG_DATA_HOME").map(PathBuf::from),
     )
+}
+
+fn home_path() -> Result<PathBuf, ToolError> {
+    std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(PathBuf::from)
+        .ok_or_else(|| ToolError::new("HOME_NOT_FOUND", "could not resolve home directory"))
 }
 
 fn discovery_path_for_platform(
@@ -123,6 +129,18 @@ fn context_override(
 
 pub fn discovery_exists() -> bool {
     read_discovery_path().is_some_and(|path| path.exists())
+}
+
+/// The desktop bridge as a doctor report of the connection manager shows it.
+pub async fn probe() -> svode_connect::BridgeProbe {
+    svode_connect::BridgeProbe {
+        protocol: MCP_BRIDGE_PROTOCOL.to_string(),
+        discovery_file: read_discovery_path()
+            .or_else(|| default_discovery_path().ok())
+            .map(|path| path.to_string_lossy().to_string()),
+        discovery_present: discovery_exists(),
+        desktop_reachable: desktop_reachable().await,
+    }
 }
 
 /// Upper bound of probing the desktop app; a live one answers at once.

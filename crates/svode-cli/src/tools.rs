@@ -529,7 +529,8 @@ pub fn command(noun: Noun, cwd: &Path) -> Result<Option<ToolCommand>, CliError> 
             verb: GitVerb::Access { .. },
         }
         | Noun::Guide
-        | Noun::Doctor => return Ok(None),
+        | Noun::Doctor
+        | Noun::Integration { .. } => return Ok(None),
     }))
 }
 
