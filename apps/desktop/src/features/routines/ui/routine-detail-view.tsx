@@ -15,6 +15,7 @@ import { getLocale } from "@/paraglide/runtime.js";
 
 import {
   routineActionSummary,
+  routineDefinitionDiagnostics,
   routineTriggerSummary,
 } from "../model/routine-values";
 import type { RoutineRow } from "../model/types";
@@ -31,7 +32,11 @@ export function RoutineDetailView({
   executors: AgentActorOptionsState;
   row: RoutineRow;
 }) {
-  if (!row.valid || !row.definition) {
+  if (
+    !row.definition ||
+    row.routineId === null ||
+    routineDefinitionDiagnostics(row).length > 0
+  ) {
     return (
       <div className="flex flex-col gap-4">
         <RoutineNameConflictNotice row={row} />
@@ -48,9 +53,6 @@ export function RoutineDetailView({
   return (
     <div className="flex flex-col gap-5">
       <RoutineNameConflictNotice row={row} />
-      {row.diagnostics.length > 0 ? (
-        <RoutineDiagnostics diagnostics={row.diagnostics} />
-      ) : null}
       <div className="grid gap-4 sm:grid-cols-2">
         <DetailValue label={m.routines_field_trigger()}>
           <Badge variant="secondary">

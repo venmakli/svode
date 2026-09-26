@@ -692,6 +692,63 @@ test("executor surfaces show the agent name and never a raw id while resolved or
   ).toBe(true);
 });
 
+test("routine detail presents an unavailable executor in its value instead of a definition alert", () => {
+  const ref = "agent:01arz3ndektsv4rrffq69g5fav";
+  const message = `executor ${ref} is not available in the effective Agent Actors catalog`;
+  const unavailable: RoutineRow = {
+    ...review,
+    diagnostics: [
+      {
+        code: "routine_executor_unavailable",
+        field: "action.executor",
+        message,
+        path: review.definitionPath,
+      },
+    ],
+    valid: false,
+  };
+  const empty: AgentActorOptionsState = { ...executors, options: [] };
+
+  const missing = renderToStaticMarkup(
+    <RoutineDetailView executors={empty} row={unavailable} />,
+  );
+  expect(missing.includes('data-agent-actor-reference="missing"')).toBe(true);
+  expect(missing.includes(ref)).toBe(true);
+  expect(missing.includes(message)).toBe(false);
+  expect(missing.includes("This definition needs attention")).toBe(false);
+
+  const ambiguous = renderToStaticMarkup(
+    <RoutineDetailView
+      executors={{ ...empty, ambiguous: [ref] }}
+      row={unavailable}
+    />,
+  );
+  expect(ambiguous.includes('data-agent-actor-reference="ambiguous"')).toBe(
+    true,
+  );
+  expect(ambiguous.includes(message)).toBe(false);
+
+  const broken = renderToStaticMarkup(
+    <RoutineDetailView
+      executors={empty}
+      row={{
+        ...unavailable,
+        diagnostics: [
+          ...unavailable.diagnostics,
+          {
+            code: "routine_trigger_invalid",
+            field: "trigger",
+            message: "trigger is invalid",
+            path: review.definitionPath,
+          },
+        ],
+      }}
+    />,
+  );
+  expect(broken.includes("This definition needs attention")).toBe(true);
+  expect(broken.includes("trigger is invalid")).toBe(true);
+});
+
 test("executor column is an agent actor filtered by reference and sorted by name", () => {
   const writerRef = "agent:01arz3ndektsv4rrffq69g5fav";
   const analystRef = "agent:01bx5zzkbkactav9wevgemmvrz";

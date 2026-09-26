@@ -1,5 +1,13 @@
 import type { RoutineRow } from "./types";
 
+const EXECUTOR_UNAVAILABLE_CODE = "routine_executor_unavailable";
+
+export function routineDefinitionDiagnostics(row: RoutineRow) {
+  return row.diagnostics.filter(
+    (diagnostic) => diagnostic.code !== EXECUTOR_UNAVAILABLE_CODE,
+  );
+}
+
 export function compareRoutinesByName(left: RoutineRow, right: RoutineRow) {
   return (
     left.name.localeCompare(right.name, undefined, { sensitivity: "base" }) ||
