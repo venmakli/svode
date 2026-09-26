@@ -2,11 +2,9 @@ use std::{path::Path, path::PathBuf, process::Command};
 
 use serde::{Deserialize, Serialize};
 
-#[cfg(target_os = "macos")]
-use crate::external_apps;
 use crate::{
     AppError,
-    external_apps::{AppPresentation, ExternalAppDto, ExternalAppKind},
+    external_apps::{self, AppPresentation, ExternalAppDto, ExternalAppKind},
     system_path,
 };
 
@@ -163,7 +161,9 @@ pub fn open_artifact_in_tool(target: ArtifactOpenerTarget, tool: String) -> Resu
 
     match tool {
         ProjectOpenerId::Vscode => open_vscode_workspace_file(&owner_root, &artifact_path),
-        ProjectOpenerId::FileManager => reveal_file(&artifact_path),
+        ProjectOpenerId::FileManager => external_apps::reveal_file(&artifact_path).map_err(|err| {
+            AppError::General(format!("Failed to open {}: {err}", file_manager_label()))
+        }),
         ProjectOpenerId::Terminal => open_terminal(&owner_root),
         ProjectOpenerId::Iterm2 => open_iterm2(&owner_root),
         ProjectOpenerId::Cursor => open_cursor_workspace_file(&owner_root, &artifact_path),
@@ -666,37 +666,6 @@ fn open_file_manager(path: &Path) -> Result<(), AppError> {
     {
         let mut command = Command::new("xdg-open");
         command.arg(path);
-        return spawn(command, "Files");
-    }
-
-    #[allow(unreachable_code)]
-    Err(AppError::General("No supported file manager found".into()))
-}
-
-fn reveal_file(path: &Path) -> Result<(), AppError> {
-    #[cfg(target_os = "macos")]
-    {
-        let mut command = Command::new("open");
-        command.arg("-R").arg(path);
-        return spawn(command, "Finder");
-    }
-
-    #[cfg(target_os = "windows")]
-    {
-        let mut command = Command::new("explorer");
-        command.arg(format!("/select,{}", path.display()));
-        return spawn(command, "Explorer");
-    }
-
-    #[cfg(all(unix, not(target_os = "macos")))]
-    {
-        // Freedesktop has no portable select-file CLI; opening the canonical parent
-        // is the safe fallback on platforms where file selection is unsupported.
-        let parent = path.parent().ok_or_else(|| {
-            AppError::PathNotAccessible(format!("file has no parent: {}", path.display()))
-        })?;
-        let mut command = Command::new("xdg-open");
-        command.arg(parent);
         return spawn(command, "Files");
     }
 

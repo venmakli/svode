@@ -2,14 +2,16 @@ use std::path::Path;
 
 use serde::Serialize;
 use tauri::{AppHandle, State};
-use tauri_plugin_opener::OpenerExt;
 
 use super::MediaSourceState;
 use super::source::{
     MediaSourceDescriptor, MediaSourceError, inspect_media_source,
     resolve_media_source_for_external, validate_media_source_generation,
 };
-use crate::system_path;
+use crate::{
+    external_apps::{self, ExternalAppDto},
+    system_path,
+};
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -55,8 +57,39 @@ pub(crate) fn media_revoke_source(state: State<'_, MediaSourceState>, capability
 }
 
 #[tauri::command]
+pub(crate) fn media_list_external_apps(
+    project_path: String,
+    space_id: Option<String>,
+    target_path: String,
+) -> Result<Vec<ExternalAppDto>, MediaSourceError> {
+    let path = resolve_media_source_for_external(
+        Path::new(&project_path),
+        space_id.as_deref(),
+        &target_path,
+    )?;
+    Ok(external_apps::file_apps(&path))
+}
+
+/// Opens the Media in `app_id`, or in the OS default application when absent.
+#[tauri::command]
 pub(crate) fn media_open_external(
     app: AppHandle,
+    project_path: String,
+    space_id: Option<String>,
+    target_path: String,
+    app_id: Option<String>,
+) -> Result<(), MediaSourceError> {
+    let path = resolve_media_source_for_external(
+        Path::new(&project_path),
+        space_id.as_deref(),
+        &target_path,
+    )?;
+    external_apps::open_file(&app, &path, app_id.as_deref())
+        .map_err(|_| MediaSourceError::ExternalOpenFailed)
+}
+
+#[tauri::command]
+pub(crate) fn media_reveal_external(
     project_path: String,
     space_id: Option<String>,
     target_path: String,
@@ -66,7 +99,6 @@ pub(crate) fn media_open_external(
         space_id.as_deref(),
         &target_path,
     )?;
-    app.opener()
-        .open_path(system_path::user_facing_path(&path), None::<&str>)
+    external_apps::reveal_file(Path::new(&system_path::user_facing_path(&path)))
         .map_err(|_| MediaSourceError::ExternalOpenFailed)
 }

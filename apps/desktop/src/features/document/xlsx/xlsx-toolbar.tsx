@@ -2,7 +2,6 @@ import type { ReactNode } from "react";
 import {
   ChevronLeft,
   ChevronRight,
-  FolderOpen,
   MoveHorizontal,
   Search,
   ZoomIn,
@@ -22,6 +21,10 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import {
+  ExternalOpenButton,
+  type ExternalOpenBinding,
+} from "@/features/external-open";
 import * as m from "@/paraglide/messages.js";
 
 import type { DocumentViewState } from "../model/types";
@@ -30,7 +33,7 @@ export function XlsxToolbar({
   findMatches,
   fitWidth,
   navigateFind,
-  onOpenExternal,
+  externalOpen,
   onViewStateChange,
   setZoom,
   title,
@@ -40,7 +43,7 @@ export function XlsxToolbar({
   findMatches: number;
   fitWidth(): void;
   navigateFind(direction: 1 | -1): void;
-  onOpenExternal(): void;
+  externalOpen: ExternalOpenBinding;
   onViewStateChange(
     update:
       | DocumentViewState
@@ -87,12 +90,7 @@ export function XlsxToolbar({
         onViewStateChange={onViewStateChange}
         viewState={viewState}
       />
-      <TooltipButton
-        label={m.document_open_externally()}
-        onClick={onOpenExternal}
-      >
-        <FolderOpen />
-      </TooltipButton>
+      <ExternalOpenButton {...externalOpen} />
       {toolbarActions}
     </div>
   );

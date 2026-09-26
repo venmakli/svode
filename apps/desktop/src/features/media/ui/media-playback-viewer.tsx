@@ -7,6 +7,7 @@ import {
 } from "react";
 
 import { Skeleton } from "@/components/ui/skeleton";
+import type { ExternalOpenBinding } from "@/features/external-open";
 import * as m from "@/paraglide/messages.js";
 import { cn } from "@/shared/lib/utils";
 
@@ -24,7 +25,7 @@ const VIDEO_PIXEL_LIMIT = 40_000_000;
 export function MediaPlaybackViewer({
   externalOpenError,
   loading,
-  onOpenExternal,
+  externalOpen,
   onPlaybackError,
   onReady,
   onRegisterExternalSuspender,
@@ -37,7 +38,7 @@ export function MediaPlaybackViewer({
 }: {
   externalOpenError: boolean;
   loading: boolean;
-  onOpenExternal(): void;
+  externalOpen: ExternalOpenBinding;
   onPlaybackError(source: MediaSourceDescriptor, failure: MediaFailure): void;
   onReady(source: MediaSourceDescriptor, metadata: MediaRuntimeMetadata): void;
   onRegisterExternalSuspender(
@@ -182,7 +183,7 @@ export function MediaPlaybackViewer({
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
       <MediaToolbar
-        onOpenExternal={onOpenExternal}
+        externalOpen={externalOpen}
         source={source}
         title={title}
         toolbarActions={toolbarActions}

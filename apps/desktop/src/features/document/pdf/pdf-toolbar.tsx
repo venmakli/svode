@@ -2,7 +2,6 @@ import { useState, type ReactNode } from "react";
 import {
   ChevronLeft,
   ChevronRight,
-  FolderOpen,
   MoveHorizontal,
   MoveVertical,
   PanelLeftClose,
@@ -26,6 +25,10 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import {
+  ExternalOpenButton,
+  type ExternalOpenBinding,
+} from "@/features/external-open";
 import * as m from "@/paraglide/messages.js";
 
 import type { DocumentViewState, PdfZoomMode } from "../model/types";
@@ -34,7 +37,7 @@ export function PdfToolbar({
   activeFindIndex,
   findMatches,
   onFindNavigate,
-  onOpenExternal,
+  externalOpen,
   onPageChange,
   onViewStateChange,
   pageCount,
@@ -45,7 +48,7 @@ export function PdfToolbar({
   activeFindIndex: number;
   findMatches: number;
   onFindNavigate(direction: 1 | -1): void;
-  onOpenExternal(): void;
+  externalOpen: ExternalOpenBinding;
   onPageChange(page: number): void;
   onViewStateChange(
     update:
@@ -173,12 +176,7 @@ export function PdfToolbar({
         onViewStateChange={onViewStateChange}
         viewState={viewState}
       />
-      <TooltipButton
-        label={m.document_open_externally()}
-        onClick={onOpenExternal}
-      >
-        <FolderOpen />
-      </TooltipButton>
+      <ExternalOpenButton {...externalOpen} />
       {toolbarActions}
     </div>
   );

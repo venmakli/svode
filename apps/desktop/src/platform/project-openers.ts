@@ -1,6 +1,10 @@
 import { invokeCommand as invoke } from "@/platform/native/invoke";
 
-export type ExternalAppKind = "editor" | "file_manager" | "terminal";
+export type ExternalAppKind =
+  | "editor"
+  | "file_manager"
+  | "terminal"
+  | "application";
 
 /** An installed external application as reported by the OS for a target. */
 export interface ExternalAppDto {

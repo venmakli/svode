@@ -1007,4 +1007,31 @@ mod tests {
             Err(MediaSourceError::ResourceLimit { .. })
         ));
     }
+
+    #[test]
+    fn external_apps_are_listed_only_for_resolved_local_media() {
+        use crate::media::commands::media_list_external_apps;
+        let temp = tempfile::tempdir().unwrap();
+        write_project(temp.path());
+        fs::write(temp.path().join("photo.png"), b"\x89PNG fixture").unwrap();
+        fs::write(
+            temp.path().join("pointer.png"),
+            b"version https://git-lfs.github.com/spec/v1\noid sha256:abc\n",
+        )
+        .unwrap();
+        let project = temp.path().to_string_lossy().into_owned();
+
+        assert!(matches!(
+            media_list_external_apps(project.clone(), None, "../outside.png".into()),
+            Err(MediaSourceError::SourceUnavailable)
+        ));
+        assert!(matches!(
+            media_list_external_apps(project.clone(), None, "pointer.png".into()),
+            Err(MediaSourceError::SourceUnavailable)
+        ));
+        let apps = media_list_external_apps(project, None, "photo.png".into()).unwrap();
+        assert!(apps.iter().filter(|app| app.is_default).count() <= 1);
+        #[cfg(target_os = "macos")]
+        assert!(apps.first().is_some_and(|app| app.is_default));
+    }
 }

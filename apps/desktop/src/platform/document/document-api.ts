@@ -1,5 +1,6 @@
 import { invokeCommand } from "@/platform/native/invoke";
 import { listen, type UnlistenFn } from "@/platform/native/events";
+import type { ExternalAppDto } from "@/platform/project-openers";
 
 export type DocumentFormatDto =
   | "pdf"
@@ -51,10 +52,26 @@ export async function readDocumentSource(
   return response instanceof Uint8Array ? response : new Uint8Array(response);
 }
 
+export function listDocumentExternalApps(
+  input: DocumentSourceInputDto,
+): Promise<ExternalAppDto[]> {
+  return invokeCommand<ExternalAppDto[]>("document_list_external_apps", {
+    ...input,
+  });
+}
+
+/** Opens the file in `appId`, or in the OS default application for `null`. */
 export function openDocumentExternal(
   input: DocumentSourceInputDto,
+  appId: string | null,
 ): Promise<void> {
-  return invokeCommand("document_open_external", { ...input });
+  return invokeCommand("document_open_external", { ...input, appId });
+}
+
+export function revealDocumentExternal(
+  input: DocumentSourceInputDto,
+): Promise<void> {
+  return invokeCommand("document_reveal_external", { ...input });
 }
 
 export function listenDocumentSourceInvalidated(

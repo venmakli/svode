@@ -1,5 +1,6 @@
 import { listen, type UnlistenFn } from "@/platform/native/events";
 import { convertFileSrc, invokeCommand } from "@/platform/native/invoke";
+import type { ExternalAppDto } from "@/platform/project-openers";
 
 export type MediaFormatDto =
   | "png"
@@ -78,8 +79,24 @@ export function revokeMediaSource(capabilityToken: string): Promise<void> {
   return invokeCommand("media_revoke_source", { capabilityToken });
 }
 
-export function openMediaExternal(input: MediaSourceInputDto): Promise<void> {
-  return invokeCommand("media_open_external", { ...input });
+export function listMediaExternalApps(
+  input: MediaSourceInputDto,
+): Promise<ExternalAppDto[]> {
+  return invokeCommand<ExternalAppDto[]>("media_list_external_apps", {
+    ...input,
+  });
+}
+
+/** Opens the file in `appId`, or in the OS default application for `null`. */
+export function openMediaExternal(
+  input: MediaSourceInputDto,
+  appId: string | null,
+): Promise<void> {
+  return invokeCommand("media_open_external", { ...input, appId });
+}
+
+export function revealMediaExternal(input: MediaSourceInputDto): Promise<void> {
+  return invokeCommand("media_reveal_external", { ...input });
 }
 
 export function listenMediaSourceInvalidated(

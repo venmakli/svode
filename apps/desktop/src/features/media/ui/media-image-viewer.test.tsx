@@ -5,6 +5,17 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 
 import { MediaImageViewer, maxSafeZoom } from "./media-image-viewer";
 import { formatMediaBytes } from "./media-toolbar";
+import type { ExternalOpenBinding } from "@/features/external-open";
+
+const externalOpen: ExternalOpenBinding = {
+  target: {
+    preferenceKey: "file:fixture",
+    listApps: () => Promise.resolve([]),
+    open: () => Promise.resolve(),
+    reveal: () => Promise.resolve(),
+  },
+  onError: () => undefined,
+};
 
 const svgSource = {
   animated: false,
@@ -28,7 +39,7 @@ test("SVG is composed only as an image resource", () => {
       <MediaImageViewer
         externalOpenError={false}
         loading={false}
-        onOpenExternal={() => undefined}
+        externalOpen={externalOpen}
         onReady={() => undefined}
         onRegisterExternalSuspender={() => () => undefined}
         onRegisterRendererDisposer={() => () => undefined}
@@ -52,6 +63,8 @@ test("SVG is composed only as an image resource", () => {
     </TooltipProvider>,
   );
   expect(markup.includes("<img")).toBe(true);
+  expect(markup.includes("data-external-open-primary")).toBe(true);
+  expect(markup.includes('aria-label="Open with"')).toBe(true);
   expect(markup.includes("<iframe")).toBe(false);
   expect(markup.includes("<object")).toBe(false);
   expect(markup.includes("<embed")).toBe(false);

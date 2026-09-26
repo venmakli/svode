@@ -9,4 +9,12 @@ export interface ExternalOpenTarget {
   listApps(): Promise<readonly ExternalApp[]>;
   /** `null` hands the choice to the OS default application. */
   open(appId: string | null): Promise<void>;
+  /** Shows the target selected in the file manager; offered for files only. */
+  reveal?(): Promise<void>;
+}
+
+/** A target together with the surface that reports its failures. */
+export interface ExternalOpenBinding {
+  target: ExternalOpenTarget;
+  onError(error: unknown, app: ExternalApp | null): void;
 }

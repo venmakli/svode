@@ -6,13 +6,24 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 
 import { DEFAULT_DOCUMENT_VIEW_STATE } from "../model/types";
 import { XlsxCellInspector, XlsxViewer } from "./xlsx-viewer";
+import type { ExternalOpenBinding } from "@/features/external-open";
+
+const externalOpen: ExternalOpenBinding = {
+  target: {
+    preferenceKey: "file:fixture",
+    listApps: () => Promise.resolve([]),
+    open: () => Promise.resolve(),
+    reveal: () => Promise.resolve(),
+  },
+  onError: () => undefined,
+};
 
 test("XLSX surface exposes compact controls, inspector, and bounded sheet tabs", () => {
   const html = renderToStaticMarkup(
     <TooltipProvider>
       <XlsxViewer
         externalOpenError={null}
-        onOpenExternal={() => undefined}
+        externalOpen={externalOpen}
         onRegisterRendererDisposer={() => () => undefined}
         onRenderError={() => undefined}
         onViewStateChange={() => undefined}
@@ -29,6 +40,8 @@ test("XLSX surface exposes compact controls, inspector, and bounded sheet tabs",
   );
 
   expect(html.includes('data-document-viewer="xlsx"')).toBe(true);
+  expect(html.includes("data-external-open-primary")).toBe(true);
+  expect(html.includes('aria-label="Open with"')).toBe(true);
   expect(html.includes("Read-only preview")).toBe(true);
   expect(html.includes("Select a cell to inspect")).toBe(true);
   expect(html.includes("Forecast")).toBe(true);
@@ -38,7 +51,7 @@ test("XLSX surface exposes compact controls, inspector, and bounded sheet tabs",
     "Zoom in",
     "Fit to width",
     "Find in document",
-    "Open externally",
+    "Open with",
     "Workbook sheets",
   ]) {
     expect(html.includes(label)).toBe(true);

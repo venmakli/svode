@@ -2,7 +2,6 @@ import { useState, type ReactNode } from "react";
 import {
   ChevronLeft,
   ChevronRight,
-  FolderOpen,
   MoveHorizontal,
   MoveVertical,
   Search,
@@ -23,6 +22,10 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import {
+  ExternalOpenButton,
+  type ExternalOpenBinding,
+} from "@/features/external-open";
 import * as m from "@/paraglide/messages.js";
 
 import type { DocumentViewState, DocumentZoomMode } from "../model/types";
@@ -32,7 +35,7 @@ export function DocxToolbar({
   fit,
   goToPage,
   navigateFind,
-  onOpenExternal,
+  externalOpen,
   onViewStateChange,
   pageCount,
   setZoom,
@@ -44,7 +47,7 @@ export function DocxToolbar({
   fit(mode: Extract<DocumentZoomMode, "page" | "width">): void;
   goToPage(page: number): void;
   navigateFind(direction: 1 | -1): void;
-  onOpenExternal(): void;
+  externalOpen: ExternalOpenBinding;
   onViewStateChange(
     update:
       | DocumentViewState
@@ -128,12 +131,7 @@ export function DocxToolbar({
         onViewStateChange={onViewStateChange}
         viewState={viewState}
       />
-      <TooltipButton
-        label={m.document_open_externally()}
-        onClick={onOpenExternal}
-      >
-        <FolderOpen />
-      </TooltipButton>
+      <ExternalOpenButton {...externalOpen} />
       {toolbarActions}
     </div>
   );
@@ -188,7 +186,9 @@ function DocxFindPopover({
           <span className="min-w-12 text-center text-xs tabular-nums text-muted-foreground">
             {viewState.findQuery.trim()
               ? m.document_find_count({
-                  current: String(findMatches ? viewState.activeFindIndex + 1 : 0),
+                  current: String(
+                    findMatches ? viewState.activeFindIndex + 1 : 0,
+                  ),
                   total: String(findMatches),
                 })
               : null}

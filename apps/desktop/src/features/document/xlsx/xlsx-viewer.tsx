@@ -3,6 +3,7 @@ import type { XlsxWorkbook } from "@silurus/ooxml/xlsx";
 
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import type { ExternalOpenBinding } from "@/features/external-open";
 import * as m from "@/paraglide/messages.js";
 
 import type { DocumentViewState } from "../model/types";
@@ -24,7 +25,7 @@ const XLSX_THEME_STYLE = {
 
 export function XlsxViewer({
   externalOpenError,
-  onOpenExternal,
+  externalOpen,
   onRegisterRendererDisposer,
   onRenderError,
   onViewStateChange,
@@ -34,7 +35,7 @@ export function XlsxViewer({
   workbook,
 }: {
   externalOpenError: string | null;
-  onOpenExternal(): void;
+  externalOpen: ExternalOpenBinding;
   onRegisterRendererDisposer(disposer: () => void): () => void;
   onRenderError(error: unknown): void;
   onViewStateChange(
@@ -75,7 +76,7 @@ export function XlsxViewer({
         findMatches={findMatches}
         fitWidth={fitWidth}
         navigateFind={navigateFind}
-        onOpenExternal={onOpenExternal}
+        externalOpen={externalOpen}
         onViewStateChange={onViewStateChange}
         setZoom={setZoom}
         title={title}

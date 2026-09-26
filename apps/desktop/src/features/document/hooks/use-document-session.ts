@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import type { ExternalOpenBinding } from "@/features/external-open";
+
 import {
+  documentExternalOpenTarget,
   loadDocumentBytes,
   loadDocumentDescriptor,
-  openDocumentInSystem,
   subscribeDocumentInvalidated,
 } from "../api/document-api";
 import {
@@ -337,14 +339,18 @@ export function useDocumentSession(target: DocumentTarget) {
     [],
   );
 
-  const openExternal = useCallback(async () => {
-    setExternalOpenError(null);
-    try {
-      await openDocumentInSystem(stableTarget);
-    } catch {
-      setExternalOpenError("external_open_failed");
-    }
-  }, [stableTarget]);
+  const externalOpen = useMemo<ExternalOpenBinding>(
+    () => ({
+      target: documentExternalOpenTarget(stableTarget, () =>
+        setExternalOpenError(null),
+      ),
+      onError: (error) => {
+        console.error("Failed to open document externally:", error);
+        setExternalOpenError("external_open_failed");
+      },
+    }),
+    [stableTarget],
+  );
 
   const prepareFullPageHandoff = useCallback(async () => {
     const session = sessionRef.current;
@@ -374,7 +380,7 @@ export function useDocumentSession(target: DocumentTarget) {
 
   return {
     externalOpenError,
-    openExternal,
+    externalOpen,
     prepareFullPageHandoff,
     registerRendererDisposer,
     reportRendererError,

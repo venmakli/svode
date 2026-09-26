@@ -398,4 +398,26 @@ mod tests {
             Err(DocumentSourceError::SourceInaccessible)
         ));
     }
+
+    #[test]
+    fn external_apps_are_listed_only_for_a_resolved_document() {
+        use crate::document::commands::document_list_external_apps;
+        let temp = tempfile::tempdir().unwrap();
+        write_project(temp.path());
+        fs::write(temp.path().join("guide.pdf"), b"%PDF fixture").unwrap();
+        let project = temp.path().to_string_lossy().into_owned();
+
+        assert!(matches!(
+            document_list_external_apps(project.clone(), None, "../outside.pdf".into()),
+            Err(DocumentSourceError::SourceInaccessible)
+        ));
+        assert!(matches!(
+            document_list_external_apps(project.clone(), None, "missing.pdf".into()),
+            Err(DocumentSourceError::SourceMissing)
+        ));
+        let apps = document_list_external_apps(project, None, "guide.pdf".into()).unwrap();
+        assert!(apps.iter().filter(|app| app.is_default).count() <= 1);
+        #[cfg(target_os = "macos")]
+        assert!(apps.first().is_some_and(|app| app.is_default));
+    }
 }

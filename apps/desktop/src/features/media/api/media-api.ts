@@ -1,7 +1,13 @@
 import {
+  filePreferenceKey,
+  type ExternalOpenTarget,
+} from "@/features/external-open";
+import {
   createMediaSource,
+  listMediaExternalApps,
   listenMediaSourceInvalidated,
   openMediaExternal,
+  revealMediaExternal,
   revokeMediaSource,
   validateMediaSource,
 } from "@/platform/media/media-api";
@@ -41,12 +47,28 @@ export async function releaseMediaSource(capabilityToken: string) {
   await revokeMediaSource(capabilityToken).catch(() => undefined);
 }
 
-export async function openMediaInSystem(target: MediaTarget) {
-  try {
-    await openMediaExternal(toSourceInput(target));
-  } catch (error) {
-    throw mediaFailureFromNative(error);
-  }
+/**
+ * External open of the Media file. `beforeOpen` runs before every launch in an
+ * application (playback pauses there); `onAttempt` before every action.
+ */
+export function mediaExternalOpenTarget(
+  target: MediaTarget,
+  { beforeOpen, onAttempt }: { beforeOpen(): Promise<void>; onAttempt(): void },
+): ExternalOpenTarget {
+  const input = toSourceInput(target);
+  return {
+    preferenceKey: filePreferenceKey(target.path),
+    listApps: () => listMediaExternalApps(input),
+    open: async (appId) => {
+      onAttempt();
+      await beforeOpen();
+      await openMediaExternal(input, appId);
+    },
+    reveal: () => {
+      onAttempt();
+      return revealMediaExternal(input);
+    },
+  };
 }
 
 export function subscribeMediaInvalidated(

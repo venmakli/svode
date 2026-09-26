@@ -1,5 +1,5 @@
 import { useMemo, type ReactNode } from "react";
-import { FileWarning, FolderOpen, RefreshCw } from "lucide-react";
+import { FileWarning, RefreshCw } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -12,6 +12,10 @@ import {
 } from "@/components/ui/empty";
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
+import {
+  ExternalOpenButton,
+  type ExternalOpenBinding,
+} from "@/features/external-open";
 import * as m from "@/paraglide/messages.js";
 
 import { useMediaSession } from "../hooks/use-media-session";
@@ -80,7 +84,7 @@ export function MediaSurface({
           key={source.capabilityToken}
           externalOpenError={session.externalOpenError}
           loading={session.state.phase === "loading"}
-          onOpenExternal={session.openExternal}
+          externalOpen={session.externalOpen}
           onPlaybackError={session.reportPlaybackError}
           onReady={session.markReady}
           onRegisterExternalSuspender={session.registerExternalSuspender}
@@ -97,7 +101,7 @@ export function MediaSurface({
       <MediaImageViewer
         externalOpenError={session.externalOpenError}
         loading={session.state.phase === "loading"}
-        onOpenExternal={session.openExternal}
+        externalOpen={session.externalOpen}
         onReady={(dimensions) => session.markReady(source, dimensions)}
         onRegisterExternalSuspender={session.registerExternalSuspender}
         onRegisterRendererDisposer={session.registerRendererDisposer}
@@ -115,7 +119,7 @@ export function MediaSurface({
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
       <MediaFrameToolbar
         family={mediaFamilyFromPath(path)}
-        onOpenExternal={session.openExternal}
+        externalOpen={session.externalOpen}
         title={title}
         toolbarActions={toolbarActions}
       />
@@ -124,7 +128,7 @@ export function MediaSurface({
       ) : (
         <MediaFailureState
           failure={session.state.failure}
-          onOpenExternal={session.openExternal}
+          externalOpen={session.externalOpen}
           onRetry={session.retry}
         />
       )}
@@ -142,12 +146,12 @@ export function MediaSurface({
 
 function MediaFrameToolbar({
   family,
-  onOpenExternal,
+  externalOpen,
   title,
   toolbarActions,
 }: {
   family: "image" | "audio" | "video";
-  onOpenExternal(): void;
+  externalOpen: ExternalOpenBinding;
   title: string;
   toolbarActions?: ReactNode;
 }) {
@@ -160,16 +164,7 @@ function MediaFrameToolbar({
       >
         {title}
       </div>
-      <Button
-        type="button"
-        size="icon-sm"
-        variant="ghost"
-        onClick={onOpenExternal}
-        aria-label={m.media_open_externally()}
-        title={m.media_open_externally()}
-      >
-        <FolderOpen />
-      </Button>
+      <ExternalOpenButton {...externalOpen} />
       {toolbarActions}
     </div>
   );
@@ -197,11 +192,11 @@ function MediaLoadingState() {
 
 function MediaFailureState({
   failure,
-  onOpenExternal,
+  externalOpen,
   onRetry,
 }: {
   failure: MediaFailure;
-  onOpenExternal(): void;
+  externalOpen: ExternalOpenBinding;
   onRetry(): void;
 }) {
   const externalOnly =
@@ -219,10 +214,11 @@ function MediaFailureState({
       </EmptyHeader>
       <EmptyContent className="flex-row justify-center">
         {externalOnly ? (
-          <Button type="button" onClick={onOpenExternal}>
-            <FolderOpen data-icon="inline-start" />
-            {m.media_open_externally()}
-          </Button>
+          <ExternalOpenButton
+            {...externalOpen}
+            presentation="text"
+            variant="default"
+          />
         ) : (
           <Button type="button" onClick={onRetry}>
             <RefreshCw data-icon="inline-start" />
@@ -230,9 +226,7 @@ function MediaFailureState({
           </Button>
         )}
         {!externalOnly ? (
-          <Button type="button" variant="outline" onClick={onOpenExternal}>
-            {m.media_open_externally()}
-          </Button>
+          <ExternalOpenButton {...externalOpen} presentation="text" />
         ) : null}
       </EmptyContent>
     </Empty>

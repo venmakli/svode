@@ -1,11 +1,5 @@
 import { useMemo, useState, type FormEvent, type ReactNode } from "react";
-import {
-  FileText,
-  FileWarning,
-  FolderOpen,
-  KeyRound,
-  RefreshCw,
-} from "lucide-react";
+import { FileText, FileWarning, KeyRound, RefreshCw } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -20,6 +14,10 @@ import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
+import {
+  ExternalOpenButton,
+  type ExternalOpenBinding,
+} from "@/features/external-open";
 import * as m from "@/paraglide/messages.js";
 
 import { useDocumentSession } from "../hooks/use-document-session";
@@ -83,7 +81,7 @@ export function DocumentSurface({
       return (
         <PptxViewer
           externalOpenError={session.externalOpenError}
-          onOpenExternal={session.openExternal}
+          externalOpen={session.externalOpen}
           onRegisterRendererDisposer={session.registerRendererDisposer}
           onRenderError={session.reportRendererError}
           onViewStateChange={session.updateViewState}
@@ -98,7 +96,7 @@ export function DocumentSurface({
       return (
         <XlsxViewer
           externalOpenError={session.externalOpenError}
-          onOpenExternal={session.openExternal}
+          externalOpen={session.externalOpen}
           onRegisterRendererDisposer={session.registerRendererDisposer}
           onRenderError={session.reportRendererError}
           onViewStateChange={session.updateViewState}
@@ -114,7 +112,7 @@ export function DocumentSurface({
         <DocxViewer
           docx={session.state.docx}
           externalOpenError={session.externalOpenError}
-          onOpenExternal={session.openExternal}
+          externalOpen={session.externalOpen}
           onRegisterRendererDisposer={session.registerRendererDisposer}
           onRenderError={session.reportRendererError}
           onViewStateChange={session.updateViewState}
@@ -127,7 +125,7 @@ export function DocumentSurface({
     return (
       <PdfViewer
         externalOpenError={session.externalOpenError}
-        onOpenExternal={session.openExternal}
+        externalOpen={session.externalOpen}
         onRenderError={session.reportRendererError}
         onViewStateChange={session.updateViewState}
         pdf={session.state.pdf}
@@ -141,7 +139,7 @@ export function DocumentSurface({
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
       <DocumentFrameToolbar
-        onOpenExternal={session.openExternal}
+        externalOpen={session.externalOpen}
         title={title}
         toolbarActions={toolbarActions}
       />
@@ -150,13 +148,13 @@ export function DocumentSurface({
       ) : session.state.phase === "password" ? (
         <DocumentPasswordState
           incorrect={session.state.incorrect}
-          onOpenExternal={session.openExternal}
+          externalOpen={session.externalOpen}
           onSubmit={session.submitPassword}
         />
       ) : (
         <DocumentFailureState
           failure={session.state.failure}
-          onOpenExternal={session.openExternal}
+          externalOpen={session.externalOpen}
           onRetry={session.retry}
         />
       )}
@@ -173,11 +171,11 @@ export function DocumentSurface({
 }
 
 function DocumentFrameToolbar({
-  onOpenExternal,
+  externalOpen,
   title,
   toolbarActions,
 }: {
-  onOpenExternal(): void;
+  externalOpen: ExternalOpenBinding;
   title: string;
   toolbarActions?: ReactNode;
 }) {
@@ -193,16 +191,7 @@ function DocumentFrameToolbar({
       >
         {title}
       </div>
-      <Button
-        type="button"
-        size="icon-sm"
-        variant="ghost"
-        onClick={onOpenExternal}
-        aria-label={m.document_open_externally()}
-        title={m.document_open_externally()}
-      >
-        <FolderOpen />
-      </Button>
+      <ExternalOpenButton {...externalOpen} />
       {toolbarActions}
     </div>
   );
@@ -228,11 +217,11 @@ function DocumentLoadingState({ progress }: { progress: number }) {
 
 function DocumentPasswordState({
   incorrect,
-  onOpenExternal,
+  externalOpen,
   onSubmit,
 }: {
   incorrect: boolean;
-  onOpenExternal(): void;
+  externalOpen: ExternalOpenBinding;
   onSubmit(password: string): void;
 }) {
   const [password, setPassword] = useState("");
@@ -275,9 +264,7 @@ function DocumentPasswordState({
             <Button type="submit" disabled={!password}>
               {m.document_password_submit()}
             </Button>
-            <Button type="button" variant="outline" onClick={onOpenExternal}>
-              {m.document_open_externally()}
-            </Button>
+            <ExternalOpenButton {...externalOpen} presentation="text" />
           </div>
         </form>
       </EmptyContent>
@@ -287,11 +274,11 @@ function DocumentPasswordState({
 
 function DocumentFailureState({
   failure,
-  onOpenExternal,
+  externalOpen,
   onRetry,
 }: {
   failure: DocumentFailure;
-  onOpenExternal(): void;
+  externalOpen: ExternalOpenBinding;
   onRetry(): void;
 }) {
   const externalOnly = failure.kind === "external_only";
@@ -306,10 +293,11 @@ function DocumentFailureState({
       </EmptyHeader>
       <EmptyContent className="flex-row justify-center">
         {externalOnly ? (
-          <Button type="button" onClick={onOpenExternal}>
-            <FolderOpen data-icon="inline-start" />
-            {m.document_open_externally()}
-          </Button>
+          <ExternalOpenButton
+            {...externalOpen}
+            presentation="text"
+            variant="default"
+          />
         ) : (
           <Button type="button" onClick={onRetry}>
             <RefreshCw data-icon="inline-start" />
@@ -317,9 +305,7 @@ function DocumentFailureState({
           </Button>
         )}
         {!externalOnly ? (
-          <Button type="button" variant="outline" onClick={onOpenExternal}>
-            {m.document_open_externally()}
-          </Button>
+          <ExternalOpenButton {...externalOpen} presentation="text" />
         ) : null}
       </EmptyContent>
     </Empty>

@@ -3,13 +3,14 @@ import {
   openProjectInApp,
 } from "@/platform/project-openers";
 
+import { DIRECTORY_PREFERENCE_KEY } from "../model/preference-key";
 import type { ExternalOpenTarget } from "../model/types";
 
 export function projectExternalOpenTarget(
   projectPath: string,
 ): ExternalOpenTarget {
   return {
-    preferenceKey: "directory",
+    preferenceKey: DIRECTORY_PREFERENCE_KEY,
     listApps: listProjectOpeners,
     open: (appId) => openProjectInApp(projectPath, appId),
   };

@@ -2,6 +2,7 @@ import { useCallback, useEffect, type ReactNode } from "react";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import type { ExternalOpenBinding } from "@/features/external-open";
 import * as m from "@/paraglide/messages.js";
 
 import type { DocumentViewState } from "../model/types";
@@ -12,7 +13,7 @@ import "./pdf-viewer.css";
 
 export function PdfViewer({
   externalOpenError,
-  onOpenExternal,
+  externalOpen,
   onRenderError,
   onViewStateChange,
   pdf,
@@ -21,7 +22,7 @@ export function PdfViewer({
   viewState,
 }: {
   externalOpenError: string | null;
-  onOpenExternal(): void;
+  externalOpen: ExternalOpenBinding;
   onRenderError(error: unknown): void;
   onViewStateChange(
     update:
@@ -76,7 +77,7 @@ export function PdfViewer({
         activeFindIndex={activeFindIndex}
         findMatches={findMatches}
         onFindNavigate={navigateFind}
-        onOpenExternal={onOpenExternal}
+        externalOpen={externalOpen}
         onPageChange={setPage}
         onViewStateChange={onViewStateChange}
         pageCount={pdf.numPages}

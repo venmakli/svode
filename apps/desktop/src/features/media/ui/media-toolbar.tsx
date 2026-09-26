@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { FileImage, FolderOpen, Info, Music, Video } from "lucide-react";
+import { FileImage, Info, Music, Video } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -14,19 +14,23 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import {
+  ExternalOpenButton,
+  type ExternalOpenBinding,
+} from "@/features/external-open";
 import * as m from "@/paraglide/messages.js";
 
 import type { MediaSourceDescriptor } from "../model/types";
 
 export function MediaToolbar({
   children,
-  onOpenExternal,
+  externalOpen,
   source,
   title,
   toolbarActions,
 }: {
   children?: ReactNode;
-  onOpenExternal(): void;
+  externalOpen: ExternalOpenBinding;
   source: MediaSourceDescriptor;
   title: string;
   toolbarActions?: ReactNode;
@@ -42,20 +46,7 @@ export function MediaToolbar({
       </div>
       {children}
       <MediaMetadataPopover source={source} />
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <Button
-            type="button"
-            size="icon-sm"
-            variant="ghost"
-            aria-label={m.media_open_externally()}
-            onClick={onOpenExternal}
-          >
-            <FolderOpen />
-          </Button>
-        </TooltipTrigger>
-        <TooltipContent>{m.media_open_externally()}</TooltipContent>
-      </Tooltip>
+      <ExternalOpenButton {...externalOpen} />
       {toolbarActions}
     </div>
   );

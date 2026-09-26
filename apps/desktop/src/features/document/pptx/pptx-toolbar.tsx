@@ -2,7 +2,6 @@ import { useState, type ReactNode } from "react";
 import {
   ChevronLeft,
   ChevronRight,
-  FolderOpen,
   MoveHorizontal,
   MoveVertical,
   PanelLeftClose,
@@ -25,6 +24,10 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import {
+  ExternalOpenButton,
+  type ExternalOpenBinding,
+} from "@/features/external-open";
 import * as m from "@/paraglide/messages.js";
 
 import type { DocumentViewState, DocumentZoomMode } from "../model/types";
@@ -34,7 +37,7 @@ export function PptxToolbar({
   fit,
   goToSlide,
   navigateFind,
-  onOpenExternal,
+  externalOpen,
   onViewStateChange,
   setZoom,
   slideCount,
@@ -46,7 +49,7 @@ export function PptxToolbar({
   fit(mode: Extract<DocumentZoomMode, "page" | "width">): void;
   goToSlide(slideNumber: number): void;
   navigateFind(direction: 1 | -1): void;
-  onOpenExternal(): void;
+  externalOpen: ExternalOpenBinding;
   onViewStateChange(
     update:
       | DocumentViewState
@@ -145,12 +148,7 @@ export function PptxToolbar({
         onViewStateChange={onViewStateChange}
         viewState={viewState}
       />
-      <TooltipButton
-        label={m.document_open_externally()}
-        onClick={onOpenExternal}
-      >
-        <FolderOpen />
-      </TooltipButton>
+      <ExternalOpenButton {...externalOpen} />
       {toolbarActions}
     </div>
   );

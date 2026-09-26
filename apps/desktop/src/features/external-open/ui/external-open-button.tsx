@@ -1,12 +1,16 @@
-import { ChevronDown } from "lucide-react";
+import { ChevronDown, FolderOpen } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import { ButtonGroup } from "@/components/ui/button-group";
+import {
+  ButtonGroup,
+  ButtonGroupSeparator,
+} from "@/components/ui/button-group";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuGroup,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
@@ -17,24 +21,57 @@ import {
 import * as m from "@/paraglide/messages.js";
 
 import { useExternalOpen } from "../hooks/use-external-open";
-import type { ExternalApp, ExternalOpenTarget } from "../model/types";
+import type { ExternalOpenBinding } from "../model/types";
 import { ExternalAppIcon } from "./external-app-icon";
 
-interface ExternalOpenButtonProps {
-  target: ExternalOpenTarget;
-  onError(error: unknown, app: ExternalApp | null): void;
+interface ExternalOpenButtonProps extends ExternalOpenBinding {
+  /**
+   * `icon` for toolbars; `text` for viewer states, where the button keeps the
+   * visual role of the action it replaces.
+   */
+  presentation?: "icon" | "text";
+  variant?: "default" | "outline";
 }
 
 /** Split control: open in the primary application, or choose another one. */
 export function ExternalOpenButton({
   target,
   onError,
+  presentation = "icon",
+  variant = "outline",
 }: ExternalOpenButtonProps) {
-  const { apps, primary, pending, refresh, openPrimary, openApp } =
-    useExternalOpen(target, onError);
+  const {
+    apps,
+    withoutDefault,
+    primary,
+    pending,
+    refresh,
+    openPrimary,
+    choose,
+    reveal,
+  } = useExternalOpen(target, onError);
   const primaryLabel = primary
     ? m.external_open_in({ name: primary.label })
     : m.external_open_default();
+  const text = presentation === "text";
+
+  const primaryButton = (
+    <Button
+      type="button"
+      variant={variant}
+      size={text ? "default" : "icon-sm"}
+      aria-label={text ? undefined : primaryLabel}
+      disabled={pending}
+      data-external-open-primary
+      onClick={() => void openPrimary()}
+    >
+      <ExternalAppIcon
+        app={primary}
+        data-icon={text ? "inline-start" : undefined}
+      />
+      {text ? <span className="truncate">{primaryLabel}</span> : null}
+    </Button>
+  );
 
   return (
     <DropdownMenu
@@ -42,28 +79,23 @@ export function ExternalOpenButton({
         if (open) refresh();
       }}
     >
-      <ButtonGroup>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              variant="outline"
-              size="icon-sm"
-              aria-label={primaryLabel}
-              disabled={pending}
-              data-external-open-primary
-              onClick={() => void openPrimary()}
-            >
-              <ExternalAppIcon app={primary} />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent side="bottom">{primaryLabel}</TooltipContent>
-        </Tooltip>
+      <ButtonGroup className={text ? "max-w-full min-w-0" : "shrink-0"}>
+        {text ? (
+          primaryButton
+        ) : (
+          <Tooltip>
+            <TooltipTrigger asChild>{primaryButton}</TooltipTrigger>
+            <TooltipContent side="bottom">{primaryLabel}</TooltipContent>
+          </Tooltip>
+        )}
+        {variant === "outline" ? null : <ButtonGroupSeparator />}
         <Tooltip>
           <TooltipTrigger asChild>
             <DropdownMenuTrigger asChild>
               <Button
-                variant="outline"
-                size="icon-sm"
+                type="button"
+                variant={variant}
+                size={text ? "icon" : "icon-sm"}
                 aria-label={m.external_open_with()}
                 disabled={pending}
               >
@@ -78,12 +110,24 @@ export function ExternalOpenButton({
       </ButtonGroup>
       <DropdownMenuContent align="end" className="max-w-72 min-w-44">
         <DropdownMenuGroup>
+          {withoutDefault ? (
+            <DropdownMenuItem
+              disabled={pending}
+              data-external-app-system
+              onSelect={() => void choose(null)}
+            >
+              <ExternalAppIcon app={null} className="size-5" />
+              <span className="min-w-0 truncate">
+                {m.external_open_default()}
+              </span>
+            </DropdownMenuItem>
+          ) : null}
           {apps.map((app) => (
             <DropdownMenuItem
               key={app.id}
               disabled={pending}
               data-external-app={app.id}
-              onSelect={() => void openApp(app)}
+              onSelect={() => void choose(app)}
             >
               <ExternalAppIcon app={app} className="size-5" />
               <span className="min-w-0 truncate">{app.label}</span>
@@ -95,7 +139,30 @@ export function ExternalOpenButton({
             </DropdownMenuItem>
           ))}
         </DropdownMenuGroup>
+        {reveal ? (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuGroup>
+              <DropdownMenuItem
+                disabled={pending}
+                data-external-open-reveal
+                onSelect={() => void reveal()}
+              >
+                <FolderOpen aria-hidden className="size-5 shrink-0" />
+                <span className="min-w-0 truncate">{revealLabel()}</span>
+              </DropdownMenuItem>
+            </DropdownMenuGroup>
+          </>
+        ) : null}
       </DropdownMenuContent>
     </DropdownMenu>
   );
+}
+
+function revealLabel() {
+  const platform =
+    typeof navigator === "undefined" ? "" : navigator.platform.toLowerCase();
+  if (platform.includes("mac")) return m.external_open_reveal_finder();
+  if (platform.includes("win")) return m.external_open_reveal_explorer();
+  return m.external_open_reveal_file_manager();
 }

@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import type { DocxDocument } from "@silurus/ooxml/docx";
 
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import type { ExternalOpenBinding } from "@/features/external-open";
 import * as m from "@/paraglide/messages.js";
 
 import type { DocumentViewState } from "../model/types";
@@ -11,7 +12,7 @@ import { useDocxScrollViewer } from "./use-docx-scroll-viewer";
 export function DocxViewer({
   docx,
   externalOpenError,
-  onOpenExternal,
+  externalOpen,
   onRegisterRendererDisposer,
   onRenderError,
   onViewStateChange,
@@ -21,7 +22,7 @@ export function DocxViewer({
 }: {
   docx: DocxDocument;
   externalOpenError: string | null;
-  onOpenExternal(): void;
+  externalOpen: ExternalOpenBinding;
   onRegisterRendererDisposer(disposer: () => void): () => void;
   onRenderError(error: unknown): void;
   onViewStateChange(
@@ -59,7 +60,7 @@ export function DocxViewer({
         fit={fit}
         goToPage={goToPage}
         navigateFind={navigateFind}
-        onOpenExternal={onOpenExternal}
+        externalOpen={externalOpen}
         onViewStateChange={onViewStateChange}
         pageCount={pageCount}
         setZoom={setZoom}

@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import type { ExternalOpenBinding } from "@/features/external-open";
+
 import {
   checkMediaSource,
   loadMediaSource,
-  openMediaInSystem,
+  mediaExternalOpenTarget,
   releaseMediaSource,
   subscribeMediaInvalidated,
 } from "../api/media-api";
@@ -202,15 +204,21 @@ export function useMediaSession(target: MediaTarget) {
     [reportSourceFailure],
   );
 
-  const openExternal = useCallback(async () => {
-    setExternalOpenError(false);
-    try {
-      await sessionRef.current?.suspendForExternalOpen();
-      await openMediaInSystem(stableTarget);
-    } catch {
-      setExternalOpenError(true);
-    }
-  }, [stableTarget]);
+  const externalOpen = useMemo<ExternalOpenBinding>(
+    () => ({
+      target: mediaExternalOpenTarget(stableTarget, {
+        beforeOpen: async () => {
+          await sessionRef.current?.suspendForExternalOpen();
+        },
+        onAttempt: () => setExternalOpenError(false),
+      }),
+      onError: (error) => {
+        console.error("Failed to open media externally:", error);
+        setExternalOpenError(true);
+      },
+    }),
+    [stableTarget],
+  );
 
   const prepareFullPageHandoff = useCallback(async () => {
     const session = sessionRef.current;
@@ -243,7 +251,7 @@ export function useMediaSession(target: MediaTarget) {
   return {
     externalOpenError,
     markReady,
-    openExternal,
+    externalOpen,
     prepareFullPageHandoff,
     registerExternalSuspender,
     registerRendererDisposer,

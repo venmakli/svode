@@ -19,6 +19,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import type { ExternalOpenBinding } from "@/features/external-open";
 import * as m from "@/paraglide/messages.js";
 import { cn } from "@/shared/lib/utils";
 
@@ -40,7 +41,7 @@ const transparencyBackground: CSSProperties = {
 export function MediaImageViewer({
   externalOpenError,
   loading,
-  onOpenExternal,
+  externalOpen,
   onReady,
   onRegisterExternalSuspender,
   onRegisterRendererDisposer,
@@ -53,7 +54,7 @@ export function MediaImageViewer({
 }: {
   externalOpenError: boolean;
   loading: boolean;
-  onOpenExternal(): void;
+  externalOpen: ExternalOpenBinding;
   onReady(dimensions: { width: number; height: number }): void;
   onRegisterExternalSuspender(suspender: () => void): () => void;
   onRegisterRendererDisposer(disposer: () => void): () => void;
@@ -312,7 +313,7 @@ export function MediaImageViewer({
         onGifPause={freezeGif}
         onGifPlay={playGif}
         onGifReplay={replayGif}
-        onOpenExternal={onOpenExternal}
+        externalOpen={externalOpen}
         onZoomIn={() => setZoom(scale * 1.25)}
         onZoomOut={() => setZoom(scale / 1.25)}
         onZoomOne={() => setZoom(1)}
@@ -408,7 +409,7 @@ function MediaImageToolbar({
   onGifPause,
   onGifPlay,
   onGifReplay,
-  onOpenExternal,
+  externalOpen,
   onZoomIn,
   onZoomOne,
   onZoomOut,
@@ -423,7 +424,7 @@ function MediaImageToolbar({
   onGifPause(): void;
   onGifPlay(): void;
   onGifReplay(): void;
-  onOpenExternal(): void;
+  externalOpen: ExternalOpenBinding;
   onZoomIn(): void;
   onZoomOne(): void;
   onZoomOut(): void;
@@ -434,7 +435,7 @@ function MediaImageToolbar({
 }) {
   return (
     <MediaToolbar
-      onOpenExternal={onOpenExternal}
+      externalOpen={externalOpen}
       source={source}
       title={title}
       toolbarActions={toolbarActions}

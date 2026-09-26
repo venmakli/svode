@@ -1,20 +1,35 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 
-import { readPreferredApp, writePreferredApp } from "../api/preferences";
+import {
+  readPreferredApp,
+  subscribePreferredApps,
+  writePreferredApp,
+} from "../api/preferences";
 import { resolvePrimaryApp } from "../model/primary-app";
 import type { ExternalApp, ExternalOpenTarget } from "../model/types";
 
-/**
- * Applications, remembered choice and launch state for one target. Mount a
- * fresh instance (e.g. with `key`) when the target changes.
- */
+interface AppListing {
+  target: ExternalOpenTarget;
+  apps: readonly ExternalApp[];
+}
+
+/** Applications, remembered choice and launch state for one target. */
 export function useExternalOpen(
   target: ExternalOpenTarget,
   onError: (error: unknown, app: ExternalApp | null) => void,
 ) {
-  const [apps, setApps] = useState<readonly ExternalApp[]>([]);
-  const [preferredId, setPreferredId] = useState(() =>
-    readPreferredApp(target.preferenceKey),
+  const [listing, setListing] = useState<AppListing | null>(null);
+  const readPreferred = () => readPreferredApp(target.preferenceKey);
+  const preferredId = useSyncExternalStore(
+    subscribePreferredApps,
+    readPreferred,
+    readPreferred,
   );
   const [pending, setPending] = useState(false);
   const pendingRef = useRef(false);
@@ -23,8 +38,8 @@ export function useExternalOpen(
   const refresh = useCallback(() => {
     const request = ++latestRequest.current;
     target.listApps().then(
-      (next) => {
-        if (request === latestRequest.current) setApps(next);
+      (apps) => {
+        if (request === latestRequest.current) setListing({ target, apps });
       },
       (error: unknown) => {
         console.error("Failed to list external applications:", error);
@@ -39,15 +54,17 @@ export function useExternalOpen(
     };
   }, [refresh]);
 
-  const primary = resolvePrimaryApp(apps, preferredId);
+  // A listing of a previous target is never shown for the current one.
+  const apps = listing?.target === target ? listing.apps : null;
+  const primary = resolvePrimaryApp(apps ?? [], preferredId);
 
-  const open = useCallback(
-    async (app: ExternalApp | null) => {
+  const run = useCallback(
+    async (action: () => Promise<void>, app: ExternalApp | null) => {
       if (pendingRef.current) return;
       pendingRef.current = true;
       setPending(true);
       try {
-        await target.open(app?.id ?? null);
+        await action();
       } catch (error) {
         onError(error, app);
       } finally {
@@ -55,27 +72,34 @@ export function useExternalOpen(
         setPending(false);
       }
     },
-    [onError, target],
+    [onError],
   );
 
-  const openApp = useCallback(
-    (app: ExternalApp) => {
+  const choose = useCallback(
+    (app: ExternalApp | null) => {
       if (pendingRef.current) return Promise.resolve();
-      writePreferredApp(target.preferenceKey, app.id);
-      setPreferredId(app.id);
-      return open(app);
+      writePreferredApp(target.preferenceKey, app?.id ?? null);
+      return run(() => target.open(app?.id ?? null), app);
     },
-    [open, target.preferenceKey],
+    [run, target],
   );
+
+  const reveal = target.reveal;
 
   return {
-    apps,
+    apps: apps ?? [],
+    /** The OS offered no default application, so the generic OS choice stands in for it. */
+    withoutDefault: apps !== null && !apps.some((app) => app.isDefault),
     primary,
     pending,
     refresh,
     /** Opens in the primary application without changing the remembered choice. */
-    openPrimary: () => open(primary),
-    /** Opens in an explicitly chosen application and remembers it for this kind of target. */
-    openApp,
+    openPrimary: () => run(() => target.open(primary?.id ?? null), primary),
+    /**
+     * Opens in an explicitly chosen application — `null` for the generic OS
+     * choice — and remembers it for this kind of target.
+     */
+    choose,
+    reveal: reveal ? () => run(() => reveal.call(target), null) : undefined,
   };
 }

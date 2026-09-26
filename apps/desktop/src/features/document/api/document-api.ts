@@ -1,8 +1,14 @@
 import {
+  filePreferenceKey,
+  type ExternalOpenTarget,
+} from "@/features/external-open";
+import {
   inspectDocumentSource,
+  listDocumentExternalApps,
   listenDocumentSourceInvalidated,
   openDocumentExternal,
   readDocumentSource,
+  revealDocumentExternal,
 } from "@/platform/document/document-api";
 
 import type {
@@ -36,12 +42,24 @@ export async function loadDocumentBytes(
   }
 }
 
-export async function openDocumentInSystem(target: DocumentTarget) {
-  try {
-    await openDocumentExternal(toSourceInput(target));
-  } catch (error) {
-    throw documentFailureFromNative(error);
-  }
+/** External open of the Document file; `onAttempt` runs before every launch. */
+export function documentExternalOpenTarget(
+  target: DocumentTarget,
+  onAttempt: () => void,
+): ExternalOpenTarget {
+  const input = toSourceInput(target);
+  return {
+    preferenceKey: filePreferenceKey(target.path),
+    listApps: () => listDocumentExternalApps(input),
+    open: (appId) => {
+      onAttempt();
+      return openDocumentExternal(input, appId);
+    },
+    reveal: () => {
+      onAttempt();
+      return revealDocumentExternal(input);
+    },
+  };
 }
 
 export function subscribeDocumentInvalidated(
