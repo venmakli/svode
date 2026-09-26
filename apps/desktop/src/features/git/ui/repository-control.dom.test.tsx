@@ -178,9 +178,15 @@ if (!isolatedProcess) {
         expect(
           `${scenario.name}:${indicator?.dataset.repositoryAccessIndicator ?? null}`,
         ).toBe(`${scenario.name}:${scenario.indicator ?? null}`);
-        expect(control.textContent.includes("View only")).toBe(
-          scenario.access === "read_only",
-        );
+        expect(control.textContent.includes("View only")).toBe(false);
+        expect(
+          Boolean(control.querySelector("[data-repository-access-separator]")),
+        ).toBe(Boolean(indicator));
+        if (indicator && syncIndicator)
+          expect(
+            syncIndicator.compareDocumentPosition(indicator) &
+              dom.window.Node.DOCUMENT_POSITION_FOLLOWING,
+          ).toBe(dom.window.Node.DOCUMENT_POSITION_FOLLOWING);
         for (const part of scenario.label ?? [])
           expect(
             `${scenario.name}:${control.getAttribute("aria-label")?.includes(part)}`,

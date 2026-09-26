@@ -124,19 +124,6 @@ export function GitSyncStatusWidget({
               >
                 <GitBranch data-icon="inline-start" />
                 <span className="min-w-0 truncate">{sync.branch}</span>
-                {accessLabel ? (
-                  <span
-                    className="flex shrink-0 items-center gap-1"
-                    data-repository-access-indicator={presentation.status}
-                  >
-                    <AccessIndicatorIcon status={presentation.status} />
-                    {presentation.status === "read_only" ? (
-                      <span className="hidden lg:inline">
-                        {m.repository_work_status_read_only()}
-                      </span>
-                    ) : null}
-                  </span>
-                ) : null}
                 {sync.visible ? (
                   <span
                     className="flex shrink-0 items-center gap-1 font-mono text-xs"
@@ -156,6 +143,21 @@ export function GitSyncStatusWidget({
                       </>
                     )}
                   </span>
+                ) : null}
+                {accessLabel ? (
+                  <>
+                    <Separator
+                      orientation="vertical"
+                      className="mx-0.5 data-vertical:h-3.5 data-vertical:self-center"
+                      data-repository-access-separator
+                    />
+                    <span
+                      className="flex shrink-0 items-center"
+                      data-repository-access-indicator={presentation.status}
+                    >
+                      <AccessIndicatorIcon status={presentation.status} />
+                    </span>
+                  </>
                 ) : null}
               </Button>
             </DialogTrigger>
