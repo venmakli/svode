@@ -59,8 +59,10 @@ function connectionDescription(
   if (attention) return attention;
   if (!client.found) return m.settings_mcp_client_unavailable();
   if (!client.installed) return m.settings_mcp_client_not_installed();
-  const version = client.version ?? "—";
-  return runtimeUpdatedFrom && runtimeUpdatedFrom !== client.version
+  // Without a runtime the integration version is unknown.
+  const version = client.version;
+  if (!version) return m.settings_providers_connected_unversioned();
+  return runtimeUpdatedFrom && runtimeUpdatedFrom !== version
     ? m.settings_providers_updated({ version })
     : m.settings_providers_connected({ version });
 }

@@ -470,6 +470,7 @@
   "settings_providers_description": "«Доступ к Svode» подключает к агенту skill Svode, команду svode и MCP-сервер Svode. Включайте его только агентам, которым готовы открыть данные проектов: доступ действует во всех окнах Svode на этом устройстве.",
   "settings_providers_access_toggle": "Доступ к Svode для {client}",
   "settings_providers_connected": "Подключён · Svode {version}",
+  "settings_providers_connected_unversioned": "Подключён",
   "settings_providers_updated": "Обновлено до Svode {version}. Уже открытые сессии агента получат её после перезапуска.",
   "settings_providers_connected_toast": "Доступ к Svode открыт. Уже открытые сессии агента получат его после перезапуска.",
   "settings_providers_details_show": "Подробнее",

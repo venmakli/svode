@@ -470,6 +470,7 @@
   "settings_providers_description": "Svode access connects the Svode skill, the svode command and the Svode MCP server to the agent. Turn it on only for agents you are ready to share project data with: it applies in every Svode window on this device.",
   "settings_providers_access_toggle": "Svode access for {client}",
   "settings_providers_connected": "Connected · Svode {version}",
+  "settings_providers_connected_unversioned": "Connected",
   "settings_providers_updated": "Updated to Svode {version}. Agent sessions that are already open get it after a restart.",
   "settings_providers_connected_toast": "Svode access is on. Agent sessions that are already open get it after a restart.",
   "settings_providers_details_show": "Details",

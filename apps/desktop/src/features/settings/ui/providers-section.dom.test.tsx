@@ -198,11 +198,13 @@ if (!isolatedProcess) {
         ...client("claude-code", "Claude Code", true),
         attentionCode: "runtime_unavailable",
         status: "attention",
+        version: null,
       },
       client("codex", "Codex", false),
     ]);
     let canonical: McpStatus = {
       ...status,
+      runtimeUpdatedFrom: "0.0.8",
       server: {
         status: "not_found",
         command: "/Users/test/.svode/bin/svode-mcp",
@@ -224,7 +226,9 @@ if (!isolatedProcess) {
       ).toBe(true);
       const claude = clientRow(harness.dom, "claude-code");
       expect(summary(claude).includes("does not start")).toBe(false);
-      expect(summary(claude).includes("Connected · Svode 0.0.9")).toBe(true);
+      expect(summary(claude).includes("Connected")).toBe(true);
+      expect(summary(claude).includes("Updated to")).toBe(false);
+      expect(summary(claude).includes("—")).toBe(false);
       expect(
         claude.querySelector<HTMLButtonElement>('button[role="switch"]')
           ?.disabled,
