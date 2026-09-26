@@ -72,6 +72,7 @@ pub async fn save(
     host.authorize_paths(affected).await?;
     ops::commit_paths(&cli, &repo, &paths).await?;
     pending.complete();
+    host.publish_commit(space, &repo);
     let parent = if let Some(project) = project.filter(|_| kind == SpaceGitType::Submodule) {
         let expected = ops::repository_head_oid(&cli, &repo).await?;
         Some(

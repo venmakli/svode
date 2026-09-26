@@ -54,6 +54,10 @@ async fn scoped_save_commits_only_its_paths_and_keeps_unrelated_staged_bytes() {
         std::fs::read_to_string(space.join("unrelated.md")).unwrap(),
         "working\n"
     );
+    assert_eq!(
+        *host.commits.lock().unwrap(),
+        vec![(space.to_path_buf(), space.to_path_buf())]
+    );
 }
 
 #[tokio::test]
