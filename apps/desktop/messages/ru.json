@@ -1915,6 +1915,8 @@
   "document_pptx_slide_limited": "Часть содержимого этого слайда не удалось показать. Остальные слайды остаются доступны, а исходник можно открыть снаружи.",
   "changes_title": "Изменения",
   "changes_scope_label": "Изменения в «{name}»: {count}",
+  "changes_scope_clean_label": "Нет изменений в «{name}»",
+  "changes_scope_title": "Изменения в «{name}»",
   "changes_clean": "Нет изменений",
   "changes_save": "Сохранить",
   "changes_save_all": "Сохранить всё",

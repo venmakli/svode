@@ -152,6 +152,9 @@ if (!isolatedProcess) {
         );
         if (!control) continue;
         expect(control.dataset.variant).toBe("ghost");
+        expect(control.dataset.size).toBe("sm");
+        if (scenario.name === "normal")
+          expect(control.className.includes("text-destructive")).toBe(false);
         expect(control.textContent.includes("main")).toBe(true);
         expect(control.textContent.includes("Editing")).toBe(false);
         expect(control.getAttribute("aria-label")?.includes("Write")).toBe(

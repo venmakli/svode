@@ -65,10 +65,12 @@ function ScopeChangesControl({
   );
   const reader = useMemo(() => createItemReader(), []);
   const save = useChangesSave(target, open);
-  const label = m.changes_scope_label({
-    name: target.name,
-    count: String(paths.length),
-  });
+  // Quiet control: "no changes" is claimed only for a readable status.
+  const label = dirty
+    ? m.changes_scope_label({ name: target.name, count: String(paths.length) })
+    : status && !statusError
+      ? m.changes_scope_clean_label({ name: target.name })
+      : m.changes_scope_title({ name: target.name });
   useEffect(() => {
     void refreshGitStatus(target.spacePath);
   }, [target.spacePath]);
@@ -80,13 +82,19 @@ function ScopeChangesControl({
           <SheetTrigger asChild>
             <Button
               variant="ghost"
-              size="sm"
+              size={dirty ? "sm" : "icon-sm"}
+              className={dirty ? undefined : "text-muted-foreground"}
               data-changes-trigger
+              data-changes-dirty={dirty}
               aria-label={label}
             >
-              <FileDiff data-icon="inline-start" />
-              <span className="hidden lg:inline">{m.changes_title()}</span>
-              {dirty ? <Badge variant="secondary">{paths.length}</Badge> : null}
+              <FileDiff data-icon={dirty ? "inline-start" : undefined} />
+              {dirty ? (
+                <>
+                  <span className="hidden lg:inline">{m.changes_title()}</span>
+                  <Badge variant="secondary">{paths.length}</Badge>
+                </>
+              ) : null}
             </Button>
           </SheetTrigger>
         </TooltipTrigger>

@@ -1915,6 +1915,8 @@
   "document_pptx_slide_limited": "Some content on this slide could not be displayed. Other slides remain available, and you can open the original externally.",
   "changes_title": "Changes",
   "changes_scope_label": "Changes in {name}: {count}",
+  "changes_scope_clean_label": "No changes in {name}",
+  "changes_scope_title": "Changes in {name}",
   "changes_clean": "No changes",
   "changes_save": "Save",
   "changes_save_all": "Save all",

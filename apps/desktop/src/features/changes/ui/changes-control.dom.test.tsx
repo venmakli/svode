@@ -1070,6 +1070,127 @@ if (process.env.SVODE_CHANGES_DOM !== "1") {
     }
   });
 
+  test("the control stays a quiet icon until its scope has changes", async () => {
+    const dom = createDom();
+    const restore = installDomGlobals(dom);
+    let files: { path: string; state: string }[] = [];
+    let failStatus = false;
+    mockNativeIpc(
+      (command) => {
+        if (command === "git_status") {
+          if (failStatus) throw new Error("Synthetic status failure");
+          return {
+            branch: "main",
+            ahead: 0,
+            behind: 0,
+            hasStaged: false,
+            hasUnstaged: files.length > 0,
+            hasConflicts: false,
+            tracking: null,
+            files,
+          };
+        }
+        if (command === "repository_access_get")
+          return {
+            status: "local",
+            repositoryId: "df103-quiet",
+            generation: 1,
+            checkedAt: null,
+            expiresAt: null,
+            lastKnownStatus: null,
+            reason: null,
+          };
+        throw new Error(`Unexpected ${command}`);
+      },
+      { shouldMockEvents: true },
+    );
+    const { ChangesControl } = await import("./changes-control");
+    const { TooltipProvider } = await import("@/components/ui/tooltip");
+    const { refreshGitStatus } = await import("@/features/git");
+    const { getLocale, setLocale } = await import("@/paraglide/runtime.js");
+    const originalLocale = getLocale();
+    const originalError = console.error;
+    console.error = () => undefined;
+    const root = createRoot(dom.window.document.getElementById("app")!);
+    const doc = dom.window.document;
+    const trigger = () =>
+      doc.querySelector<HTMLButtonElement>("[data-changes-trigger]")!;
+    const refresh = async () => {
+      await act(async () => {
+        await refreshGitStatus("/df103-quiet");
+        await nextFrame(dom);
+      });
+    };
+    try {
+      await setLocale("en", { reload: false });
+      await act(async () => {
+        root.render(
+          <TooltipProvider>
+            <ChangesControl
+              target={{
+                kind: "page",
+                sourceShape: "file",
+                spacePath: "/df103-quiet",
+                path: "notes/plan.md",
+                name: "Plan",
+              }}
+            />
+          </TooltipProvider>,
+        );
+        await nextFrame(dom);
+      });
+      await refresh();
+      expect(trigger().dataset.changesDirty).toBe("false");
+      expect(trigger().dataset.size).toBe("icon-sm");
+      expect(trigger().dataset.variant).toBe("ghost");
+      expect(trigger().className.includes("text-muted-foreground")).toBe(true);
+      expect(trigger().getAttribute("aria-label")).toBe("No changes in Plan");
+      expect(trigger().textContent).toBe("");
+      expect(trigger().querySelector('[data-slot="badge"]')).toBeNull();
+
+      files = [{ path: "other/readme.md", state: "modified" }];
+      await refresh();
+      expect(trigger().dataset.changesDirty).toBe("false");
+
+      files = [
+        { path: "notes/plan.md", state: "modified" },
+        { path: "other/readme.md", state: "modified" },
+      ];
+      await refresh();
+      expect(trigger().dataset.changesDirty).toBe("true");
+      expect(trigger().dataset.size).toBe("sm");
+      expect(trigger().dataset.variant).toBe("ghost");
+      expect(trigger().className.includes("text-muted-foreground")).toBe(false);
+      expect(trigger().getAttribute("aria-label")).toBe("Changes in Plan: 1");
+      expect(trigger().textContent).toBe("Changes1");
+      expect(trigger().querySelector('[data-slot="badge"]')?.textContent).toBe(
+        "1",
+      );
+
+      await setLocale("ru", { reload: false });
+      files = [];
+      await refresh();
+      expect(trigger().getAttribute("aria-label")).toBe(
+        "Нет изменений в «Plan»",
+      );
+
+      failStatus = true;
+      await refresh();
+      expect(trigger().dataset.changesDirty).toBe("false");
+      expect(trigger().getAttribute("aria-label")).toBe("Изменения в «Plan»");
+    } finally {
+      await act(async () => {
+        root.unmount();
+        await nextFrame(dom);
+      });
+      await setLocale(originalLocale, { reload: false });
+      console.error = originalError;
+      clearNativeMocks();
+      restore();
+      dom.window.close();
+    }
+  });
+
   test("switching Changes targets and sessions discards prior errors and late recovery", async () => {
     const dom = createDom();
     const restore = installDomGlobals(dom);
