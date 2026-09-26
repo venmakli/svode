@@ -7,9 +7,13 @@ import {
   applyCollectionQuery,
   EMPTY_COLLECTION_QUERY,
   CollectionHost,
+  validateCollectionQuery,
   type CollectionInstance,
   type CollectionStateController,
 } from "@/features/collection";
+
+import { resolveStandardPropertyColumn } from "@/features/properties";
+import { PropertyValue } from "@/features/properties/display";
 
 import type { RoutineRow } from "../model/types";
 import { RoutineAutomaticConsent } from "./routine-automatic-consent";
@@ -149,6 +153,7 @@ test("routines expose one fixed All list with the complete fixed schema", () => 
     executors,
     actions: actions([]),
     onActivate: () => undefined,
+    rows: [],
   });
 
   expect(descriptor.id).toBe("all");
@@ -304,6 +309,7 @@ test("duplicate-name rows conditionally expose their current path and remain usa
     executors,
     actions: actions([]),
     onActivate: () => undefined,
+    rows: [],
   });
   const normalDescription =
     descriptor.layout.kind === "list"
@@ -331,6 +337,7 @@ test("routines query searches definitions and defaults to name ordering", () => 
     executors,
     actions: actions([]),
     onActivate: () => undefined,
+    rows: [],
   });
   const ordered = applyCollectionQuery({
     descriptor,
@@ -376,6 +383,7 @@ test("routines delegate create, row actions, and inline enabled edits", async ()
     executors,
     actions: actions(calls),
     onActivate: () => undefined,
+    rows: [],
   });
 
   await descriptor.create?.intents[0]?.run();
@@ -588,16 +596,28 @@ test("executor surfaces show the agent name and never a raw id while resolved or
     createRoutinesPresentationDescriptor({
       actions: actions([]),
       executors: state,
+      rows: [review],
     });
-  const executorValue = (state: AgentActorOptionsState) =>
-    descriptor(state)
-      .properties.find((property) => property.key === "executor")
-      ?.getValue(review);
+  const executorCell = (state: AgentActorOptionsState) => {
+    const property = descriptor(state).properties.find(
+      (candidate) => candidate.key === "executor",
+    )!;
+    return renderToStaticMarkup(
+      <PropertyValue
+        actors={property.actorCandidates}
+        column={resolveStandardPropertyColumn(property)!}
+        value={property.getValue(review)}
+      />,
+    );
+  };
   const detail = (state: AgentActorOptionsState) =>
     renderToStaticMarkup(<RoutineDetailView executors={state} row={review} />);
   const empty: AgentActorOptionsState = { ...executors, options: [] };
 
-  expect(executorValue(executors)).toBe("Documentation Agent");
+  const resolvedCell = executorCell(executors);
+  expect(resolvedCell.includes("Documentation Agent")).toBe(true);
+  expect(resolvedCell.includes('data-agent-avatar="neutral"')).toBe(true);
+  expect(resolvedCell.includes(ref)).toBe(false);
   const resolved = detail(executors);
   expect(String(resolved).includes("Documentation Agent")).toBe(true);
   expect(String(resolved).includes('data-agent-avatar="neutral"')).toBe(true);
@@ -618,17 +638,22 @@ test("executor surfaces show the agent name and never a raw id while resolved or
     ...executors,
     options: [{ ...executors.options[0]!, label: "Docs Writer" }],
   };
-  expect(executorValue(renamed)).toBe("Docs Writer");
+  expect(executorCell(renamed).includes("Docs Writer")).toBe(true);
   expect(String(detail(renamed)).includes("Docs Writer")).toBe(true);
 
   const loading: AgentActorOptionsState = { ...empty, loading: true };
-  expect(executorValue(loading)).toBe("Loading agent…");
+  const loadingCell = executorCell(loading);
+  expect(loadingCell.includes("Loading agent…")).toBe(true);
+  expect(loadingCell.includes('data-slot="skeleton"')).toBe(true);
+  expect(loadingCell.includes(ref)).toBe(false);
   expect(
     String(detail(loading)).includes('data-agent-actor-reference="loading"'),
   ).toBe(true);
   expect(String(detail(loading)).includes(ref)).toBe(false);
 
-  expect(executorValue(empty)).toBe("Agent not found");
+  const missingCell = executorCell(empty);
+  expect(missingCell.includes("Agent not found")).toBe(true);
+  expect(missingCell.includes(ref)).toBe(false);
   const missing = detail(empty);
   expect(String(missing).includes('data-agent-actor-reference="missing"')).toBe(
     true,
@@ -636,10 +661,14 @@ test("executor surfaces show the agent name and never a raw id while resolved or
   expect(String(missing).includes(ref)).toBe(true);
 
   const ambiguousState: AgentActorOptionsState = { ...empty, ambiguous: [ref] };
+  const ambiguousCell = executorCell(ambiguousState);
+  expect(
+    ambiguousCell.includes(
+      "Agent is defined in both this space and the project",
+    ),
+  ).toBe(true);
+  expect(ambiguousCell.includes('data-agent-avatar="destructive"')).toBe(true);
   const ambiguous = detail(ambiguousState);
-  expect(executorValue(ambiguousState)).toBe(
-    "Agent is defined in both this space and the project",
-  );
   expect(
     String(ambiguous).includes('data-agent-actor-reference="ambiguous"'),
   ).toBe(true);
@@ -652,8 +681,129 @@ test("executor surfaces show the agent name and never a raw id while resolved or
   expect(String(failed).includes("Couldn’t load agent")).toBe(true);
   expect(String(failed).includes(ref)).toBe(false);
   expect(
+    executorCell({ ...empty, error: "catalog failed" }).includes(
+      "Couldn’t load agent",
+    ),
+  ).toBe(true);
+  expect(
     String(descriptor(renamed).query?.getSearchText?.(review)).includes(
       "Docs Writer",
     ),
   ).toBe(true);
+});
+
+test("executor column is an agent actor filtered by reference and sorted by name", () => {
+  const writerRef = "agent:01arz3ndektsv4rrffq69g5fav";
+  const analystRef = "agent:01bx5zzkbkactav9wevgemmvrz";
+  const analysis: RoutineRow = {
+    ...review,
+    definition: {
+      ...review.definition!,
+      action: { executor: analystRef, type: "run_agent" },
+    },
+    id: "routine:analysis",
+    name: "Analysis",
+  };
+  const rows = [review, analysis];
+  const withAgents = (writer: string): AgentActorOptionsState => ({
+    ...executors,
+    options: [
+      { ...executors.options[0]!, label: writer },
+      {
+        description: null,
+        label: "Analyst",
+        ownerLabel: "Space",
+        value: analystRef,
+      },
+    ],
+  });
+  const descriptor = (state: AgentActorOptionsState) =>
+    createRoutinesPresentationDescriptor({
+      actions: actions([]),
+      executors: state,
+      rows,
+    });
+  const executor = descriptor(withAgents("Writer")).properties.find(
+    (property) => property.key === "executor",
+  )!;
+
+  expect(resolveStandardPropertyColumn(executor)?.type).toBe("actor");
+  expect(executor.getValue(review)).toBe(writerRef);
+  expect(
+    executor.actorCandidates?.map((candidate) => [
+      candidate.kind,
+      candidate.kind === "agent" ? candidate.reference : null,
+      candidate.name,
+    ]),
+  ).toEqual([
+    ["agent", writerRef, "Writer"],
+    ["agent", analystRef, "Analyst"],
+  ]);
+
+  const byWriter = {
+    filters: [{ operator: "eq", propertyKey: "executor", value: writerRef }],
+    search: "",
+    sort: [],
+  };
+  for (const name of ["Writer", "Zeta Writer"]) {
+    const result = applyCollectionQuery({
+      descriptor: descriptor(withAgents(name)),
+      query: byWriter,
+      rows,
+    });
+    expect(result.rows.map((row) => row.id)).toEqual(["routine:review"]);
+  }
+
+  const byName = (writer: string) =>
+    applyCollectionQuery({
+      descriptor: descriptor(withAgents(writer)),
+      query: {
+        filters: [],
+        search: "",
+        sort: [{ direction: "asc", propertyKey: "executor" }],
+      },
+      rows,
+    }).rows.map((row) => row.id);
+  expect(byName("Writer")).toEqual(["routine:analysis", "routine:review"]);
+  expect(byName("Aardvark")).toEqual(["routine:review", "routine:analysis"]);
+
+  const searched = applyCollectionQuery({
+    descriptor: descriptor(withAgents("Writer")),
+    query: { filters: [], search: "analyst", sort: [] },
+    rows,
+  });
+  expect(searched.rows.map((row) => row.id)).toEqual(["routine:analysis"]);
+});
+
+test("a text query saved for the executor column resets instead of filtering wrongly", () => {
+  const descriptor = createRoutinesPresentationDescriptor({
+    actions: actions([]),
+    executors,
+    rows: [review],
+  });
+  for (const rule of [
+    { operator: "contains", value: "Documentation" },
+    { operator: "eq", value: "Documentation Agent" },
+  ]) {
+    const result = validateCollectionQuery(descriptor, {
+      filters: [{ propertyKey: "executor", ...rule }],
+      search: "",
+      sort: [],
+    });
+    expect(result.reset).toBe(true);
+    expect(result.query.filters).toEqual([]);
+  }
+  const kept = validateCollectionQuery(descriptor, {
+    filters: [
+      {
+        operator: "in",
+        propertyKey: "executor",
+        values: ["agent:01arz3ndektsv4rrffq69g5fav"],
+      },
+    ],
+    search: "",
+    sort: [],
+  });
+  expect(kept.reset).toBe(false);
+  expect(kept.query.filters.length).toBe(1);
 });

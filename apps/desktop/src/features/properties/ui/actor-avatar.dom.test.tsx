@@ -98,4 +98,70 @@ if (process.env.SVODE_AVATAR_DOM_PROCESS !== "0") {
       await dom.dispose();
     }
   });
+  test("agent candidates render the agent avatar while people properties keep agent references unknown", async () => {
+    const dom = await createTestDom();
+    const { ActorSingleValue, ActorValue } = await import("./property-value");
+    const { ActorControl } = await import("./property-controls/actor-control");
+    const ref = "agent:01arz3ndektsv4rrffq69g5fav";
+    const missingRef = "agent:01bx5zzkbkactav9wevgemmvrz";
+    const agents = [
+      { kind: "agent" as const, name: "Writer", reference: ref },
+      {
+        kind: "agent" as const,
+        name: "Agent not found",
+        reference: missingRef,
+        state: "missing" as const,
+      },
+    ];
+    const people = [{ name: "Ada Lovelace", email: "ada@example.test" }];
+    const column = { name: "Agents", type: "actor" as const, multiple: true };
+    try {
+      await dom.render(
+        <>
+          <ActorSingleValue value={ref} actors={agents} />
+          <ActorSingleValue value={missingRef} actors={agents} />
+          <ActorValue column={column} value={[ref]} actors={agents} />
+          <ActorControl
+            column={column}
+            value={[ref]}
+            actors={agents}
+            onChange={() => undefined}
+          />
+          <span data-testid="page-collection">
+            <ActorSingleValue value={ref} actors={people} />
+          </span>
+        </>,
+      );
+      expect(dom.document.body.textContent?.includes("Writer")).toBe(true);
+      expect(
+        dom.document.body.textContent?.includes("Agent not found"),
+      ).toBe(true);
+      expect(
+        dom.document.querySelectorAll('[data-agent-avatar="neutral"]').length,
+      ).toBe(4);
+      const pageValue = dom.document.querySelector(
+        '[data-testid="page-collection"]',
+      )!;
+      expect(pageValue.querySelector("[data-agent-avatar]")).toBeNull();
+      expect(pageValue.textContent).toBe(`A${ref}`);
+
+      await act(async () => {
+        dom.document
+          .querySelector<HTMLButtonElement>('[data-slot="popover-trigger"]')!
+          .click();
+      });
+      const options = [
+        ...dom.document.querySelectorAll<HTMLElement>("[cmdk-item]"),
+      ];
+      expect(options.map((option) => option.textContent)).toEqual(["Writer"]);
+      expect(
+        dom.document.querySelectorAll("[cmdk-group-heading]").length,
+      ).toBe(1);
+      expect(
+        dom.document.querySelector("[cmdk-group-heading]")?.textContent,
+      ).toBe("All");
+    } finally {
+      await dom.dispose();
+    }
+  });
 }

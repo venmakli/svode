@@ -2,13 +2,13 @@ import {
   listActors,
   type ActorCandidateDto,
 } from "@/platform/properties/properties-api";
-import type { ActorCandidate } from "@/features/properties";
+import type { HumanActorCandidate } from "@/features/properties";
 
 export async function listCollectionActors(spacePath: string, allTime = false) {
   return (await listActors(spacePath, allTime)).map(toActorCandidate);
 }
 
-function toActorCandidate(actor: ActorCandidateDto): ActorCandidate {
+function toActorCandidate(actor: ActorCandidateDto): HumanActorCandidate {
   return {
     email: actor.email,
     name: actor.name,

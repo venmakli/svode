@@ -1,4 +1,9 @@
-import { isDateRangeValue, isEmptyValue } from "../lib/utils";
+import {
+  actorDisplayName,
+  isDateRangeValue,
+  isEmptyValue,
+  resolveActorCandidate,
+} from "../lib/utils";
 import { effectiveBooleanValue } from "./boolean";
 import {
   resolveStandardPropertyColumn,
@@ -119,7 +124,7 @@ export function validateStandardPropertyFilterRule<Row>(
     );
   }
   if (column.type === "actor") {
-    return values.every((value) => typeof value === "string");
+    return values.every(isActorValue);
   }
   if (column.type === "number") {
     return typeof raw === "number" && Number.isFinite(raw);
@@ -294,11 +299,16 @@ export function compareStandardPropertyValues<Row>(
     }
     return multiplier * compareCodeUnits(arrayLexKey(left), arrayLexKey(right));
   }
-  if (column.type === "actor" && column.multiple) {
-    return (
-      multiplier *
-      compareText(propertyArray(left)[0] ?? "", propertyArray(right)[0] ?? "")
-    );
+  if (column.type === "actor") {
+    const name = (value: unknown) => {
+      const first = column.multiple ? propertyArray(value)[0] : value;
+      return typeof first === "string"
+        ? actorDisplayName(
+            resolveActorCandidate(first, property.actorCandidates ?? []),
+          )
+        : "";
+    };
+    return multiplier * compareText(name(left), name(right));
   }
   return multiplier * comparePropertyScalar(column, left, right);
 }
@@ -330,6 +340,13 @@ function filterPayloadValues(
   if (rule.values) return rule.values.length === 1 ? rule.values : null;
   if (rule.value === undefined || Array.isArray(rule.value)) return null;
   return [rule.value];
+}
+
+const ACTOR_VALUE = /^(?:agent:[0-9a-hjkmnp-tv-z]{26}|[^\s@:]+@[^\s@]+)$/;
+
+/** A person's email or an `agent:<ulid>` reference; anything else is a stale query value. */
+function isActorValue(value: unknown): boolean {
+  return typeof value === "string" && ACTOR_VALUE.test(value);
 }
 
 function isValidUniqueIdFilterValue(column: Column, value: unknown): boolean {

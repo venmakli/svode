@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 
 import { Button } from "@/components/ui/button";
 import {
+  agentActorCandidates,
   agentActorReferenceLabel,
   resolveAgentActorReference,
   type AgentActorOptionsState,
@@ -55,6 +56,7 @@ export function createRoutinesPresentation({
       actions,
       executors,
       onActivate,
+      rows: state.phase === "ready" ? state.rows : [],
     }),
     state,
   });
@@ -64,17 +66,23 @@ export function createRoutinesPresentationDescriptor({
   actions,
   executors,
   onActivate,
+  rows,
 }: {
   actions: RoutinePresentationActions;
   executors: AgentActorOptionsState;
   onActivate?: CollectionPresentationDescriptor<RoutineRow>["onActivate"];
+  rows: readonly RoutineRow[];
 }): CollectionPresentationDescriptor<RoutineRow> {
-  const getExecutorLabel = (row: RoutineRow) =>
+  const getExecutor = (row: RoutineRow) =>
     row.definition?.action.type === "run_agent"
-      ? agentActorReferenceLabel(
-          resolveAgentActorReference(executors, row.definition.action.executor),
-        )
+      ? row.definition.action.executor
       : null;
+  const getExecutorLabel = (row: RoutineRow) => {
+    const executor = getExecutor(row);
+    return executor
+      ? agentActorReferenceLabel(resolveAgentActorReference(executors, executor))
+      : null;
+  };
   const properties: readonly CollectionPropertyDefinition<RoutineRow>[] = [
     defineOwnerDefinedCollectionProperty({
       capabilities: {
@@ -114,17 +122,23 @@ export function createRoutinesPresentationDescriptor({
         type: "select",
       },
     }),
-    defineOwnerDefinedCollectionProperty({
-      capabilities: {
-        filter: { kind: "standard" },
-        sort: { kind: "standard" },
-      },
-      featureId: "routines",
-      getValue: getExecutorLabel,
-      key: "executor",
-      label: m.routines_field_executor(),
-      standard: { type: "text" },
-    }),
+    {
+      ...defineOwnerDefinedCollectionProperty({
+        capabilities: {
+          filter: { kind: "standard" },
+          sort: { kind: "standard" },
+        },
+        featureId: "routines",
+        getValue: getExecutor,
+        key: "executor",
+        label: m.routines_field_executor(),
+        standard: { type: "actor" },
+      }),
+      actorCandidates: agentActorCandidates(
+        executors,
+        rows.flatMap((row) => getExecutor(row) ?? []),
+      ),
+    },
     defineComputedCollectionProperty({
       capabilities: {
         filter: { kind: "standard" },

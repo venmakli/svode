@@ -10,7 +10,7 @@ export interface PropertyControlProps {
   invalid?: boolean;
   disabled?: boolean;
   autoOpen?: boolean;
-  actors?: ActorCandidate[];
+  actors?: readonly ActorCandidate[];
   relationContext?: RelationContext;
   relationPresentation?: "default" | "table";
   accessibilityLabel?: string;

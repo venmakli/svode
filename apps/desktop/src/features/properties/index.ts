@@ -1,5 +1,7 @@
 export type {
   ActorCandidate,
+  AgentActorCandidate,
+  AgentActorCandidateState,
   BooleanDisplay,
   ChangeSchemaTypeResult,
   CollectionSchema,
@@ -8,6 +10,7 @@ export type {
   ColumnPatch,
   DateDisplay,
   DateRangeValue,
+  HumanActorCandidate,
   PageSchemaResult,
   NumberDisplay,
   PropertyOption,
@@ -69,9 +72,11 @@ export {
 } from "./model/boolean";
 export {
   PROPERTY_TYPES,
+  actorCandidateKey,
   actorDisplayName,
   isDateRangeValue,
   isEmptyValue,
+  isSelectableActorCandidate,
   isSensitiveColumn,
   isSensitivePropertyType,
   normalizeSchema,

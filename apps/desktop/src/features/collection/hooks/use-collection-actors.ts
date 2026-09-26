@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { ActorCandidate } from "@/features/properties";
+import type { HumanActorCandidate } from "@/features/properties";
 import { listCollectionActors } from "../api";
 
 export function useCollectionActors(spacePath: string) {
-  const [actors, setActors] = useState<ActorCandidate[]>([]);
+  const [actors, setActors] = useState<HumanActorCandidate[]>([]);
   const cacheRef = useRef<{
     allTime: boolean | null;
-    actors: ActorCandidate[];
+    actors: HumanActorCandidate[];
   }>({
     allTime: null,
     actors: [],
@@ -39,7 +39,7 @@ export function useCollectionActors(spacePath: string) {
   return { actors, loadActors };
 }
 
-function sameActors(current: ActorCandidate[], next: ActorCandidate[]) {
+function sameActors(current: HumanActorCandidate[], next: HumanActorCandidate[]) {
   if (current.length !== next.length) return false;
   return current.every((actor, index) => {
     const other = next[index];

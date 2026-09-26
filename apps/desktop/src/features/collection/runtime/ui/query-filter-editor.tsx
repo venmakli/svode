@@ -8,7 +8,6 @@ import {
 } from "@/components/ui/select";
 import {
   resolveStandardPropertyColumn,
-  type ActorCandidate,
   type CollectionPropertyDefinition,
   type CollectionSchema,
 } from "@/features/properties";
@@ -19,18 +18,14 @@ import { collectionFilterOperators } from "../model/query";
 import type { CollectionFilterRule } from "../model/types";
 
 interface CollectionQueryFilterEditorProps<Row> {
-  actors: ActorCandidate[];
   property: CollectionPropertyDefinition<Row>;
   onChange(rule: CollectionFilterRule): void;
-  onRequestActors?: (allTime?: boolean) => Promise<ActorCandidate[]>;
   rule: CollectionFilterRule;
 }
 
 export function CollectionQueryFilterEditor<Row>({
-  actors,
   property,
   onChange,
-  onRequestActors,
   rule,
 }: CollectionQueryFilterEditorProps<Row>) {
   const filterSemantics = property.capabilities?.filter;
@@ -46,7 +41,7 @@ export function CollectionQueryFilterEditor<Row>({
     };
     return (
       <FilterEditor
-        actors={actors}
+        actors={property.actorCandidates ?? []}
         draft={filter}
         onChange={(next) =>
           onChange({
@@ -56,7 +51,6 @@ export function CollectionQueryFilterEditor<Row>({
             values: next.values,
           })
         }
-        onRequestActors={onRequestActors}
         schema={schema}
       />
     );

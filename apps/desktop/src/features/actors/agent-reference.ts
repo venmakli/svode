@@ -8,6 +8,7 @@ export {
   type AgentActorReference,
 } from "./model/agent-actor-reference";
 export {
-  AgentActorReferenceValue,
+  agentActorCandidates,
   agentActorReferenceLabel,
-} from "./ui/agent-actor-reference-value";
+} from "./lib/agent-actor-candidates";
+export { AgentActorReferenceValue } from "./ui/agent-actor-reference-value";

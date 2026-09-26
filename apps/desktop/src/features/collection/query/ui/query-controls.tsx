@@ -1,4 +1,3 @@
-import { humanAvatar } from "@/features/identity";
 import { useState } from "react";
 import {
   AlertTriangle,
@@ -21,7 +20,6 @@ import {
   User,
   type LucideIcon,
 } from "lucide-react";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
@@ -41,8 +39,16 @@ import type {
   PropertyOption,
   PropertyType,
 } from "@/features/properties";
-import { PropertyBadge } from "@/features/properties/display";
-import { actorDisplayName, resolveActorCandidate } from "@/features/properties";
+import {
+  ActorCandidateAvatar,
+  PropertyBadge,
+} from "@/features/properties/display";
+import {
+  actorCandidateKey,
+  actorDisplayName,
+  isSelectableActorCandidate,
+  resolveActorCandidate,
+} from "@/features/properties";
 import * as m from "@/paraglide/messages.js";
 import {
   filterOpsForField,
@@ -129,7 +135,7 @@ export function FilterEditor({
 }: {
   schema: Parameters<typeof queryField>[0];
   draft: QueryFilter;
-  actors: ActorCandidate[];
+  actors: readonly ActorCandidate[];
   onRequestActors?: (allTime?: boolean) => Promise<ActorCandidate[]>;
   onChange: (filter: QueryFilter) => void;
 }) {
@@ -188,7 +194,7 @@ function FilterValueControl({
 }: {
   field: QueryField;
   filter: QueryFilter;
-  actors: ActorCandidate[];
+  actors: readonly ActorCandidate[];
   onRequestActors?: (allTime?: boolean) => Promise<ActorCandidate[]>;
   onChange: (filter: QueryFilter) => void;
 }) {
@@ -370,7 +376,7 @@ function ActorChecklist({
   onRequestActors,
   onChange,
 }: {
-  actors: ActorCandidate[];
+  actors: readonly ActorCandidate[];
   values: string[];
   onRequestActors?: (allTime?: boolean) => Promise<ActorCandidate[]>;
   onChange: (values: string[]) => void;
@@ -378,17 +384,18 @@ function ActorChecklist({
   const [search, setSearch] = useState("");
   const selected = new Set(
     values.map((value) =>
-      resolveActorCandidate(value, actors).email.trim().toLowerCase(),
+      actorCandidateKey(resolveActorCandidate(value, actors)),
     ),
   );
-  const visible = actors.filter((actor) => {
-    const needle = search.trim().toLowerCase();
-    return (
-      !needle ||
-      actor.email.toLowerCase().includes(needle) ||
-      actorDisplayName(actor).toLowerCase().includes(needle)
-    );
-  });
+  const needle = search.trim().toLowerCase();
+  const visible = actors.filter(
+    (actor) =>
+      isSelectableActorCandidate(actor) &&
+      (!needle ||
+        (actor.kind !== "agent" &&
+          actor.email.toLowerCase().includes(needle)) ||
+        actorDisplayName(actor).toLowerCase().includes(needle)),
+  );
   return (
     <div className="flex flex-col gap-2">
       <div className="relative">
@@ -403,35 +410,33 @@ function ActorChecklist({
       </div>
       <div className="flex max-h-44 flex-col overflow-auto">
         {visible.map((actor) => {
-          const avatar = humanAvatar(actor);
+          const key = actorCandidateKey(actor);
           return (
             <label
-              key={actor.email}
+              key={key}
               className="flex cursor-default items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-muted"
             >
               <Checkbox
-                checked={selected.has(actor.email.trim().toLowerCase())}
+                checked={selected.has(key)}
                 onCheckedChange={(checked) => {
                   if (checked) {
-                    onChange([...values, actor.email]);
+                    onChange([
+                      ...values,
+                      actor.kind === "agent" ? actor.reference : actor.email,
+                    ]);
                     return;
                   }
-                  const canonical = actor.email.trim().toLowerCase();
                   onChange(
                     values.filter(
                       (value) =>
-                        resolveActorCandidate(value, actors)
-                          .email.trim()
-                          .toLowerCase() !== canonical,
+                        actorCandidateKey(
+                          resolveActorCandidate(value, actors),
+                        ) !== key,
                     ),
                   );
                 }}
               />
-              <Avatar className="size-6">
-                <AvatarFallback style={avatar.style}>
-                  {avatar.initials}
-                </AvatarFallback>
-              </Avatar>
+              <ActorCandidateAvatar actor={actor} />
               <span className="min-w-0 truncate">
                 {actorDisplayName(actor)}
               </span>

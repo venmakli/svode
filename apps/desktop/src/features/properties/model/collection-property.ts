@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 
-import type { Column } from "./types";
+import type { ActorCandidate, Column } from "./types";
 
 export type CollectionPropertyOrigin =
   | "schema_backed"
@@ -91,6 +91,8 @@ export interface CollectionPropertyDefinition<Row> {
   owner: CollectionPropertyOwner;
   semantics: CollectionPropertyValueSemantics<Row>;
   capabilities?: CollectionPropertyCapabilities<Row>;
+  /** Candidates of a standard `actor` property for its values, picker and filter. */
+  actorCandidates?: readonly ActorCandidate[];
   getValue(row: Row): unknown;
   getAccessibilityLabel?(row: Row): string;
   getApplicability?(row: Row): CollectionPropertyApplicability;

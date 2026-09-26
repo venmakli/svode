@@ -9,10 +9,7 @@ import {
 } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { PaneRow, QueryList, SortEditor } from "@/features/collection/query/ui";
-import type {
-  ActorCandidate,
-  CollectionPropertyDefinition,
-} from "@/features/properties";
+import type { CollectionPropertyDefinition } from "@/features/properties";
 import { MultiPanePopover } from "@/shared/ui/multi-pane-popover";
 import * as m from "@/paraglide/messages.js";
 
@@ -50,20 +47,16 @@ type CollectionQueryPane =
   | "sortEditor";
 
 export interface CollectionQueryEditorProps {
-  actors?: ActorCandidate[];
   onChange(query: CollectionQueryState): void;
   onDismissResetWarning?(): void;
-  onRequestActors?: (allTime?: boolean) => Promise<ActorCandidate[]>;
   presentation: CollectionPresentationRuntime;
   resetWarning?: boolean;
   value: CollectionQueryState;
 }
 
 export interface CollectionPropertyQueryMenuProps {
-  actors?: ActorCandidate[];
   onChange(query: CollectionQueryState): void;
   onOpenChange(open: boolean): void;
-  onRequestActors?: (allTime?: boolean) => Promise<ActorCandidate[]>;
   open: boolean;
   presentation: CollectionPresentationRuntime;
   propertyKey: string;
@@ -74,10 +67,8 @@ export interface CollectionPropertyQueryMenuProps {
 type CollectionPropertyQueryPane = "main" | "filterEditor" | "sortEditor";
 
 export function CollectionPropertyQueryMenu({
-  actors = [],
   onChange,
   onOpenChange,
-  onRequestActors,
   open,
   presentation,
   propertyKey,
@@ -203,14 +194,12 @@ export function CollectionPropertyQueryMenu({
         {
           content: filterDraft ? (
             <CollectionQueryFilterEditor
-              actors={actors}
               property={property}
               onChange={(item) =>
                 editor.setFilterDraft((current) =>
                   current ? { ...current, item } : current,
                 )
               }
-              onRequestActors={onRequestActors}
               rule={filterDraft.item}
             />
           ) : null,
@@ -285,10 +274,8 @@ export function CollectionPropertyQueryMenu({
 }
 
 export function CollectionQueryEditor({
-  actors = [],
   onChange,
   onDismissResetWarning,
-  onRequestActors,
   presentation,
   resetWarning = false,
   value,
@@ -443,14 +430,12 @@ export function CollectionQueryEditor({
       content:
         filterDraft && filterDraftField ? (
           <CollectionQueryFilterEditor
-            actors={actors}
             property={filterDraftField}
             onChange={(item) =>
               editor.setFilterDraft((current) =>
                 current ? { ...current, item } : current,
               )
             }
-            onRequestActors={onRequestActors}
             rule={filterDraft.item}
           />
         ) : null,

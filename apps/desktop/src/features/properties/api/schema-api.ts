@@ -6,11 +6,11 @@ import type {
 } from "@/platform/properties/properties-api";
 import { normalizeSchema } from "../lib/utils";
 import type {
-  ActorCandidate,
   ChangeSchemaTypeResult,
   CollectionSchema,
   Column,
   ColumnPatch,
+  HumanActorCandidate,
   PageSchemaResult,
   PropertyOption,
   PropertyType,
@@ -205,7 +205,7 @@ export async function deleteOption(
   return normalizeSchema(await propertiesPlatform.deleteOption(input));
 }
 
-function toActorCandidate(actor: ActorCandidateDto): ActorCandidate {
+function toActorCandidate(actor: ActorCandidateDto): HumanActorCandidate {
   return {
     email: actor.email,
     name: actor.name,

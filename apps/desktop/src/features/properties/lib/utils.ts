@@ -205,24 +205,35 @@ export function normalizeActorValues(value: unknown): string[] {
   return values;
 }
 
+export function actorCandidateKey(actor: ActorCandidate): string {
+  return (actor.kind === "agent" ? actor.reference : actor.email)
+    .trim()
+    .toLowerCase();
+}
+
+/** Candidates a picker may offer: unresolved agent references only render values. */
+export function isSelectableActorCandidate(actor: ActorCandidate): boolean {
+  return actor.kind !== "agent" || !actor.state;
+}
+
 export function resolveActorCandidate(
-  email: string,
-  actors: ActorCandidate[],
+  value: string,
+  actors: readonly ActorCandidate[],
 ): ActorCandidate {
-  const normalized = email.trim().toLowerCase();
-  const exact = actors.find(
-    (actor) => actor.email.trim().toLowerCase() === normalized,
-  );
+  const normalized = value.trim().toLowerCase();
+  const exact = actors.find((actor) => actorCandidateKey(actor) === normalized);
   if (exact) return exact;
-  const aliases = actors.filter((actor) =>
-    actor.aliasEmails?.some(
-      (alias) => alias.trim().toLowerCase() === normalized,
-    ),
+  const aliases = actors.filter(
+    (actor) =>
+      actor.kind !== "agent" &&
+      actor.aliasEmails?.some(
+        (alias) => alias.trim().toLowerCase() === normalized,
+      ),
   );
   return (
     (aliases.length === 1 ? aliases[0] : null) ?? {
-      email,
-      name: email,
+      email: value,
+      name: value,
       commitCount: 0,
       isMe: false,
     }
@@ -230,13 +241,13 @@ export function resolveActorCandidate(
 }
 
 export function resolveActorCandidates(
-  emails: string[],
-  actors: ActorCandidate[],
+  values: string[],
+  actors: readonly ActorCandidate[],
 ): ActorCandidate[] {
   const resolved = new Map<string, ActorCandidate>();
-  for (const email of emails) {
-    const actor = resolveActorCandidate(email, actors);
-    const key = actor.email.trim().toLowerCase();
+  for (const value of values) {
+    const actor = resolveActorCandidate(value, actors);
+    const key = actorCandidateKey(actor);
     if (!resolved.has(key)) resolved.set(key, actor);
   }
   return [...resolved.values()];
@@ -263,19 +274,19 @@ export function isValidUrl(value: string): boolean {
 }
 
 export function actorDisplayName(actor: ActorCandidate): string {
-  return actor.name || actor.email;
+  return actor.kind === "agent" ? actor.name : actor.name || actor.email;
 }
 
 export function actorCommitCount(actor: ActorCandidate): number {
-  return actor.commitCount ?? 0;
+  return actor.kind === "agent" ? 0 : (actor.commitCount ?? 0);
 }
 
 export function actorLastCommitAt(actor: ActorCandidate): number | null {
-  return actor.lastCommitAt ?? null;
+  return actor.kind === "agent" ? null : (actor.lastCommitAt ?? null);
 }
 
 export function actorIsMe(actor: ActorCandidate): boolean {
-  return actor.isMe ?? false;
+  return actor.kind !== "agent" && (actor.isMe ?? false);
 }
 
 export function normalizeDateInput(value: unknown): {

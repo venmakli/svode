@@ -1,7 +1,5 @@
-import { humanAvatar } from "@/features/identity";
 import type { CSSProperties, ReactNode } from "react";
 import { Copy, ExternalLink, Mail, PhoneCall } from "lucide-react";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { cn } from "@/shared/lib/utils";
@@ -14,6 +12,7 @@ import {
 import { PropertyBadge } from "./property-badge";
 import type { Column, ActorCandidate, RelationContext } from "../model/types";
 import {
+  actorCandidateKey,
   resolveActorCandidate,
   resolveActorCandidates,
   colorStyle,
@@ -34,6 +33,7 @@ import {
 } from "../api/property-actions";
 import { effectiveBooleanValue } from "../model/boolean";
 import { BooleanPropertyValue } from "./boolean-property";
+import { ActorCandidateAvatar, ActorCandidateValue } from "./actor-candidate";
 
 export function PropertyValueActions({
   column,
@@ -97,7 +97,7 @@ export function PropertyValue({
 }: {
   column: Column;
   value: unknown;
-  actors?: ActorCandidate[];
+  actors?: readonly ActorCandidate[];
   relationContext?: RelationContext;
   relationPresentation?: "default" | "table";
 }) {
@@ -211,17 +211,12 @@ export function ActorSingleValue({
   actors = [],
 }: {
   value: unknown;
-  actors?: ActorCandidate[];
+  actors?: readonly ActorCandidate[];
 }) {
-  const email = typeof value === "string" ? value : "";
-  if (!email) return <span className="text-muted-foreground">-</span>;
-  const actor = resolveActorCandidate(email, actors);
-
+  const reference = typeof value === "string" ? value : "";
+  if (!reference) return <span className="text-muted-foreground">-</span>;
   return (
-    <span className="inline-flex min-w-0 max-w-full items-center gap-1.5">
-      <ActorAvatar actor={actor} />
-      <span className="min-w-0 truncate">{actorDisplayName(actor)}</span>
-    </span>
+    <ActorCandidateValue actor={resolveActorCandidate(reference, actors)} />
   );
 }
 
@@ -232,29 +227,32 @@ export function ActorValue({
 }: {
   column: Column;
   value: unknown;
-  actors?: ActorCandidate[];
+  actors?: readonly ActorCandidate[];
 }) {
-  const emails = column.multiple
+  const references = column.multiple
     ? normalizeActorValues(value)
     : typeof value === "string" && value
       ? [value]
       : [];
-  if (emails.length === 0)
+  if (references.length === 0)
     return <span className="text-muted-foreground">-</span>;
 
   if (!column.multiple) {
-    return <ActorSingleValue value={emails[0]} actors={actors} />;
+    return <ActorSingleValue value={references[0]} actors={actors} />;
   }
 
-  const resolved = resolveActorCandidates(emails, actors);
+  const resolved = resolveActorCandidates(references, actors);
   return (
     <TooltipProvider>
       <Tooltip>
         <TooltipTrigger asChild>
           <span className="inline-flex min-w-0 items-center">
             {resolved.slice(0, 3).map((actor, index) => (
-              <span key={actor.email} className={cn(index > 0 && "-ml-1.5")}>
-                <ActorAvatar actor={actor} />
+              <span
+                key={actorCandidateKey(actor)}
+                className={cn(index > 0 && "-ml-1.5")}
+              >
+                <ActorCandidateAvatar actor={actor} />
               </span>
             ))}
             {resolved.length > 3 ? (
@@ -269,17 +267,6 @@ export function ActorValue({
         </TooltipContent>
       </Tooltip>
     </TooltipProvider>
-  );
-}
-
-function ActorAvatar({ actor }: { actor: ActorCandidate }) {
-  const avatar = humanAvatar(actor);
-  return (
-    <Avatar size="sm" className="shrink-0">
-      <AvatarFallback className="text-[10px] font-medium" style={avatar.style}>
-        {avatar.initials}
-      </AvatarFallback>
-    </Avatar>
   );
 }
 

@@ -1,7 +1,5 @@
-import { humanAvatar } from "@/features/identity";
 import { useEffect, useMemo, useState } from "react";
 import { X } from "lucide-react";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -20,10 +18,12 @@ import {
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/shared/lib/utils";
 import {
+  actorCandidateKey,
   actorCommitCount,
   actorDisplayName,
   actorIsMe,
   actorLastCommitAt,
+  isSelectableActorCandidate,
   isValidEmail,
   normalizeActorValues,
   resolveActorCandidate,
@@ -31,6 +31,7 @@ import {
 } from "../../lib/utils";
 import type { ActorCandidate, Column } from "../../model/types";
 import * as m from "@/paraglide/messages.js";
+import { ActorCandidateAvatar, ActorCandidateValue } from "../actor-candidate";
 import { deferStateUpdate, useAutoOpen } from "./common";
 import type { PropertyControlProps } from "./types";
 
@@ -63,9 +64,7 @@ export function ActorControl({
       ? [value.trim().toLowerCase()]
       : [];
   const selected = resolveActorCandidates(emails, actors);
-  const selectedSet = new Set(
-    selected.map((actor) => actor.email.trim().toLowerCase()),
-  );
+  const selectedSet = new Set(selected.map(actorCandidateKey));
   const [allTime, setAllTime] = useState(column.display === "all_time");
   const [freeform, setFreeform] = useState("");
 
@@ -78,24 +77,25 @@ export function ActorControl({
   }, [column.display, onRequestActors]);
 
   const sortedActors = useMemo(() => {
-    const me = actors.filter(actorIsMe);
-    const recent = actors
-      .filter((actor) => !actorIsMe(actor))
+    const selectable = actors.filter(isSelectableActorCandidate);
+    const me = selectable.filter(actorIsMe);
+    const recent = selectable
+      .filter((actor) => actor.kind !== "agent" && !actorIsMe(actor))
       .sort((a, b) => (actorLastCommitAt(b) ?? 0) - (actorLastCommitAt(a) ?? 0))
       .slice(0, 5);
-    const recentSet = new Set(recent.map((actor) => actor.email));
-    const all = actors
-      .filter((actor) => !actorIsMe(actor) && !recentSet.has(actor.email))
+    const grouped = new Set([...me, ...recent]);
+    const all = selectable
+      .filter((actor) => !grouped.has(actor))
       .sort((a, b) => actorDisplayName(a).localeCompare(actorDisplayName(b)));
     return { me, recent, all };
   }, [actors]);
 
-  const setActor = (email: string) => {
-    const normalized = email.trim().toLowerCase();
+  const setActor = (value: string) => {
+    const normalized = value.trim().toLowerCase();
     if (!normalized) return;
-    const canonical = resolveActorCandidate(normalized, actors)
-      .email.trim()
-      .toLowerCase();
+    const canonical = actorCandidateKey(
+      resolveActorCandidate(normalized, actors),
+    );
     if (!multiple) {
       void onChange(canonical);
       setOpen(false);
@@ -105,7 +105,7 @@ export function ActorControl({
       void onChange(
         emails.filter(
           (item) =>
-            resolveActorCandidate(item, actors).email.trim().toLowerCase() !==
+            actorCandidateKey(resolveActorCandidate(item, actors)) !==
             canonical,
         ),
       );
@@ -138,7 +138,7 @@ export function ActorControl({
             multiple ? (
               <ActorStack actors={selected} />
             ) : (
-              <ActorInline actor={selected[0]} />
+              <ActorCandidateValue actor={selected[0]} />
             )
           ) : (
             <span className="text-muted-foreground">{m.property_empty()}</span>
@@ -165,28 +165,28 @@ export function ActorControl({
               actors={sortedActors.me}
               selectedEmails={selectedSet}
               multiple={multiple}
-              onSelect={(actor) => setActor(actor.email)}
+              onSelect={(actor) => setActor(actorCandidateKey(actor))}
             />
             <ActorGroup
               heading="Recent"
               actors={sortedActors.recent}
               selectedEmails={selectedSet}
               multiple={multiple}
-              onSelect={(actor) => setActor(actor.email)}
+              onSelect={(actor) => setActor(actorCandidateKey(actor))}
             />
             <ActorGroup
               heading="All"
               actors={sortedActors.all}
               selectedEmails={selectedSet}
               multiple={multiple}
-              onSelect={(actor) => setActor(actor.email)}
+              onSelect={(actor) => setActor(actorCandidateKey(actor))}
             />
           </CommandList>
           {multiple && selected.length > 0 ? (
             <div className="flex flex-wrap gap-1 border-t p-2">
               {selected.map((actor) => (
                 <Button
-                  key={actor.email}
+                  key={actorCandidateKey(actor)}
                   type="button"
                   variant="secondary"
                   size="xs"
@@ -195,9 +195,9 @@ export function ActorControl({
                     void onChange(
                       emails.filter(
                         (email) =>
-                          resolveActorCandidate(email, actors)
-                            .email.trim()
-                            .toLowerCase() !== actor.email.trim().toLowerCase(),
+                          actorCandidateKey(
+                            resolveActorCandidate(email, actors),
+                          ) !== actorCandidateKey(actor),
                       ),
                     )
                   }
@@ -267,22 +267,26 @@ function ActorGroup({
     <CommandGroup heading={heading}>
       {actors.map((actor) => (
         <CommandItem
-          key={actor.email}
-          data-checked={selectedEmails.has(actor.email.toLowerCase())}
-          value={`${actor.name} ${actor.email}`}
+          key={actorCandidateKey(actor)}
+          data-checked={selectedEmails.has(actorCandidateKey(actor))}
+          value={
+            actor.kind === "agent"
+              ? `${actor.name} ${actor.reference}`
+              : `${actor.name} ${actor.email}`
+          }
           onSelect={() => onSelect(actor)}
         >
           {multiple ? (
             <Checkbox
-              checked={selectedEmails.has(actor.email.toLowerCase())}
+              checked={selectedEmails.has(actorCandidateKey(actor))}
               className="pointer-events-none"
             />
           ) : null}
-          <ActorAvatar actor={actor} />
+          <ActorCandidateAvatar actor={actor} />
           <span className="min-w-0 flex-1 truncate">
             {actorDisplayName(actor)}
           </span>
-          {actorCommitCount(actor) === 0 ? (
+          {actor.kind !== "agent" && actorCommitCount(actor) === 0 ? (
             <span className="text-xs text-muted-foreground">new</span>
           ) : null}
         </CommandItem>
@@ -295,8 +299,11 @@ function ActorStack({ actors }: { actors: ActorCandidate[] }) {
   return (
     <span className="inline-flex min-w-0 items-center">
       {actors.slice(0, 3).map((actor, index) => (
-        <span key={actor.email} className={cn(index > 0 && "-ml-1.5")}>
-          <ActorAvatar actor={actor} />
+        <span
+          key={actorCandidateKey(actor)}
+          className={cn(index > 0 && "-ml-1.5")}
+        >
+          <ActorCandidateAvatar actor={actor} />
         </span>
       ))}
       {actors.length > 3 ? (
@@ -305,25 +312,5 @@ function ActorStack({ actors }: { actors: ActorCandidate[] }) {
         </span>
       ) : null}
     </span>
-  );
-}
-
-function ActorInline({ actor }: { actor: ActorCandidate }) {
-  return (
-    <span className="flex min-w-0 items-center gap-2">
-      <ActorAvatar actor={actor} />
-      <span className="min-w-0 truncate">{actorDisplayName(actor)}</span>
-    </span>
-  );
-}
-
-function ActorAvatar({ actor }: { actor: ActorCandidate }) {
-  const avatar = humanAvatar(actor);
-  return (
-    <Avatar size="sm" className="shrink-0">
-      <AvatarFallback className="text-[10px] font-medium" style={avatar.style}>
-        {avatar.initials}
-      </AvatarFallback>
-    </Avatar>
   );
 }

@@ -8,6 +8,7 @@ import type {
   CollectionQueryState,
 } from "../model/types";
 import { CollectionPresentationShell } from "./presentation-shell";
+import { CollectionQueryFilterEditor } from "./query-filter-editor";
 
 interface TestRow {
   enabled: boolean;
@@ -423,4 +424,57 @@ test("read-only presentation omits create and blocking errors stay presentation-
   expect(readyMarkup.includes("Ilya")).toBe(true);
   expect(readyMarkup.includes("Descriptor failed")).toBe(false);
   expect(readyMarkup.includes("data-collection-create")).toBe(false);
+});
+
+test("fixed actor properties render and filter with their own candidates", () => {
+  const ref = "agent:01arz3ndektsv4rrffq69g5fav";
+  const executor = {
+    actorCandidates: [{ kind: "agent" as const, name: "Writer", reference: ref }],
+    capabilities: { filter: { kind: "standard" as const } },
+    getValue: () => ref,
+    key: "executor",
+    label: "Agent",
+    origin: "owner_defined" as const,
+    owner: { featureId: "presentation-shell-test", kind: "feature" as const },
+    semantics: {
+      kind: "standard" as const,
+      standard: { type: "actor" as const },
+    },
+  };
+  const presentation = defineCollectionPresentation<TestRow>({
+    descriptor: descriptor({
+      layout: {
+        getTitle: (row) => row.id,
+        kind: "list",
+        visibleProperties: ["executor"],
+      },
+      properties: [executor],
+      rowActions: [],
+    }),
+    state: {
+      phase: "ready",
+      rows: [{ enabled: true, id: "routine:one", name: "Review" }],
+    },
+  });
+  const cell = renderToStaticMarkup(
+    <CollectionPresentationShell
+      instanceKey="space:root:routines"
+      presentation={presentation}
+      query={EMPTY_COLLECTION_QUERY}
+      onQueryChange={onQueryChange}
+    />,
+  );
+  const filter = renderToStaticMarkup(
+    <CollectionQueryFilterEditor
+      property={executor}
+      rule={{ operator: "in", propertyKey: "executor", values: [ref] }}
+      onChange={() => undefined}
+    />,
+  );
+
+  for (const markup of [cell, filter]) {
+    expect(markup.includes("Writer")).toBe(true);
+    expect(markup.includes('data-agent-avatar="neutral"')).toBe(true);
+    expect(markup.includes(ref)).toBe(false);
+  }
 });

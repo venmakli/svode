@@ -110,13 +110,28 @@ export interface PageSchemaResult {
   collectionRootPath?: string;
 }
 
-export interface ActorCandidate {
+/** An actor value is a person's canonical email or an `agent:<ulid>` reference. */
+export type ActorCandidate = HumanActorCandidate | AgentActorCandidate;
+
+export interface HumanActorCandidate {
+  kind?: "human";
   email: string;
   name: string;
   aliasEmails?: string[];
   lastCommitAt?: number | null;
   commitCount?: number;
   isMe?: boolean;
+}
+
+/** State of an agent reference the host could not resolve to a selectable agent. */
+export type AgentActorCandidateState = "loading" | "missing" | "ambiguous" | "error";
+
+export interface AgentActorCandidate {
+  kind: "agent";
+  reference: string;
+  /** Agent name, or the host's label for `state` when the reference is unresolved. */
+  name: string;
+  state?: AgentActorCandidateState;
 }
 
 export interface DateRangeValue {

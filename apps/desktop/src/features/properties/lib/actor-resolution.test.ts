@@ -1,6 +1,10 @@
 import { expect, test } from "bun:test";
 import type { ActorCandidate } from "../model/types";
-import { resolveActorCandidate, resolveActorCandidates } from "./utils";
+import {
+  actorCandidateKey,
+  resolveActorCandidate,
+  resolveActorCandidates,
+} from "./utils";
 
 const canonical: ActorCandidate = {
   email: "new@example.test",
@@ -41,16 +45,16 @@ test("actor resolution leaves an ambiguous email-only alias unresolved", () => {
     other,
   ]);
 
-  expect({ email: resolved.email, name: resolved.name }).toEqual({
-    email: "old@example.test",
+  expect({ key: actorCandidateKey(resolved), name: resolved.name }).toEqual({
+    key: "old@example.test",
     name: "old@example.test",
   });
 });
 
 test("actor resolution keeps an unknown email as a local fallback", () => {
   const unknown = resolveActorCandidate("unknown@example.test", [canonical]);
-  expect({ email: unknown.email, name: unknown.name }).toEqual({
-    email: "unknown@example.test",
+  expect({ key: actorCandidateKey(unknown), name: unknown.name }).toEqual({
+    key: "unknown@example.test",
     name: "unknown@example.test",
   });
 });

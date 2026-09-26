@@ -52,7 +52,13 @@ export function CollectionPropertyValue({
 
   const column = resolveStandardPropertyColumn(property);
   if (column) {
-    return <PropertyValue column={column} value={value} />;
+    return (
+      <PropertyValue
+        actors={property.actorCandidates}
+        column={column}
+        value={value}
+      />
+    );
   }
 
   if (property.semantics.kind === "custom") {
@@ -183,6 +189,7 @@ export function CollectionPropertyControl({
     >
       <div className="flex min-w-0 items-center gap-1.5">
         <PropertyControl
+          actors={property.actorCandidates}
           column={column}
           value={value}
           invalid={validation.invalid}
