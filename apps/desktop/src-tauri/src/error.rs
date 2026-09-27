@@ -60,6 +60,14 @@ impl From<svode_core::agent_context::AgentContextError> for AppError {
     }
 }
 
+/// Mutation paths keep the plain Variables message; catalog reads build a
+/// structured `VariablesProblem` where the affected owner is known.
+impl From<svode_core::variables::Failure> for AppError {
+    fn from(failure: svode_core::variables::Failure) -> Self {
+        Self::Storage(failure.to_string())
+    }
+}
+
 impl From<svode_core::routines::local::LocalConfigError> for AppError {
     fn from(error: svode_core::routines::local::LocalConfigError) -> Self {
         match error {
@@ -443,6 +451,9 @@ pub enum AppError {
     #[error("Storage: {0}")]
     Storage(String),
 
+    #[error("{0}")]
+    VariablesProblem(crate::space::app_variables::VariablesProblem),
+
     #[error("strategy is inherited from project")]
     StrategyInherited,
 
@@ -497,6 +508,7 @@ impl AppError {
             AppError::Index(_) => "index",
             AppError::Db(_) => "db",
             AppError::Storage(_) => "storage",
+            AppError::VariablesProblem(_) => "variables_problem",
             AppError::StrategyInherited => "strategy_inherited",
             AppError::IdentityMissing => "identity_missing",
             AppError::IdentityInvalid(_) => "identity_invalid",
@@ -517,6 +529,9 @@ impl Serialize for AppError {
         match self {
             AppError::PageWriteRecovery { cause, paths } => {
                 serde_json::json!({ "kind": self.kind(), "message": self.to_string(), "cause": cause, "paths": paths }).serialize(serializer)
+            }
+            AppError::VariablesProblem(problem) => {
+                serde_json::json!({ "kind": self.kind(), "message": self.to_string(), "problem": problem }).serialize(serializer)
             }
             AppError::SourceBusy { path } | AppError::SourceStale { path } => {
                 serde_json::json!({ "kind": self.kind(), "message": self.to_string(), "path": path }).serialize(serializer)

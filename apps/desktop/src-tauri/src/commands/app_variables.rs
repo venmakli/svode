@@ -1,4 +1,6 @@
-use crate::space::app_variables::mutations::{self, Mutation, VariableMutationResult};
+use crate::space::app_variables::mutations::{
+    self, Mutation, VariableMutationResult, VariableRecoveryResult,
+};
 use crate::space::app_variables::{
     self, AppVariableContextInput, AppVariableOwnerContext, AppVariablesCatalog,
     KeyringSecretStore, VariableScope, storage_error,
@@ -93,7 +95,6 @@ pub(crate) async fn upsert_app_variable(
     .await?;
     Ok(VariableMutationResult {
         effects: mutation.effect.into_iter().collect(),
-        recovery_error: None,
     })
 }
 #[tauri::command]
@@ -117,34 +118,27 @@ pub(crate) async fn remove_app_variable(
     .await?;
     Ok(VariableMutationResult {
         effects: mutation.effect.into_iter().collect(),
-        recovery_error: None,
     })
 }
+/// Finishes the pending change of exactly one owner. `completed` is false when
+/// no journal remained, so a no-op is never reported as a finished save.
 #[tauri::command]
 pub(crate) async fn recover_app_variables(
     app: AppHandle,
     state: State<'_, AppSettingsState>,
     scope: Option<VariableScope>,
-    source: Option<SourceOwner>,
-) -> Result<VariableMutationResult, AppError> {
-    let sources = source.map(|s| vec![s]).unwrap_or_else(|| {
-        let mut sources = vec![SourceOwner::Global];
-        if let Some(scope) = &scope {
-            sources.push(SourceOwner::Project);
-            if scope.space_id.is_some() {
-                sources.push(scope.owner());
-            }
-        }
-        sources
-    });
-    Ok(mutations::recover_in_order(sources, |source| {
-        run_mutation(&app, &state, scope.clone(), source, |owner| {
-            Service::new(&KeyringSecretStore)
-                .recover(owner)
-                .map_err(storage_error)
-        })
+    source: SourceOwner,
+) -> Result<VariableRecoveryResult, AppError> {
+    let mutation = run_mutation(&app, &state, scope, source, |owner| {
+        Service::new(&KeyringSecretStore)
+            .recover(owner)
+            .map_err(storage_error)
     })
-    .await)
+    .await?;
+    Ok(VariableRecoveryResult {
+        completed: mutation.change.is_some(),
+        effects: mutation.effect.into_iter().collect(),
+    })
 }
 
 async fn run_mutation(
@@ -160,7 +154,7 @@ async fn run_mutation(
         .map(|s| std::path::PathBuf::from(&s.project_path));
     let result = async {
         let owner = run_locked(state, move || {
-            app_variables::owner(&config, scope.as_ref(), &source)
+            Ok(app_variables::owner(&config, scope.as_ref(), &source)?)
         })
         .await?;
         if let (Some(project), Ok(path)) = (project.as_deref(), owner.scope_path()) {

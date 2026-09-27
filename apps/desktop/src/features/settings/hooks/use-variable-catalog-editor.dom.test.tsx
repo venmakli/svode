@@ -31,7 +31,7 @@ if (process.env.SVODE_CATALOG_GIT_TEST !== "1") {
     120000,
   );
 } else {
-  test("published mutations close drafts for commit, skip and failure; partial recovery stays an error", async () => {
+  test("published mutations close drafts for commit, skip and failure; recovery reports its own attempt", async () => {
     const dom = new JSDOM(
       '<!doctype html><html><body><div id="app"></div></body></html>',
       { pretendToBeVisual: true, url: "http://localhost/" },
@@ -42,8 +42,11 @@ if (process.env.SVODE_CATALOG_GIT_TEST !== "1") {
       await import("./use-variable-catalog-editor");
     const scope: VariableScope = { projectPath: "/repo", spaceId: null };
     let state!: ReturnType<typeof useVariableCatalogEditor>;
-    let result: VariableMutationResult = { effects: [], recoveryError: null };
+    let result: VariableMutationResult & { completed?: boolean } = {
+      effects: [],
+    };
     let failWrite = false;
+    let failRecovery = false;
     const entries: AppVariableEntry[] = [];
     const calls: string[] = [];
     mockNativeIpc(
@@ -66,8 +69,9 @@ if (process.env.SVODE_CATALOG_GIT_TEST !== "1") {
             }),
           );
         } else if (command === "remove_app_variable") entries.length = 0;
-        else if (command !== "recover_app_variables")
-          throw new Error(`Unexpected ${command}`);
+        else if (command === "recover_app_variables") {
+          if (failRecovery) throw new Error("raw recovery detail");
+        } else throw new Error(`Unexpected ${command}`);
         return result;
       },
       { shouldMockEvents: true },
@@ -99,7 +103,6 @@ if (process.env.SVODE_CATALOG_GIT_TEST !== "1") {
         const previousToasts = toast.getToasts().length;
         result = {
           effects: [{ ownerPath: "/repo", config: outcome, rootPointer: null }],
-          recoveryError: null,
         };
         await act(async () => state.begin());
         await act(async () =>
@@ -151,6 +154,7 @@ if (process.env.SVODE_CATALOG_GIT_TEST !== "1") {
       expect(state.draft?.value).toBe("draft");
       await act(async () => state.cancel());
       result = {
+        completed: true,
         effects: [
           {
             ownerPath: "/repo",
@@ -158,38 +162,33 @@ if (process.env.SVODE_CATALOG_GIT_TEST !== "1") {
             rootPointer: { status: "failed", message: "sanitized" },
           },
         ],
-        recoveryError: "Pending child recovery",
       };
       const count = calls.length;
       await act(async () => {
-        await state.recover(undefined);
-      });
-      expect(state.error).toBe(true);
-      expect(state.pending).toBe(false);
-      expect(calls.slice(count)).toEqual(["recover_app_variables"]);
-      expect(
-        toast
-          .getToasts()
-          .some(
-            (item) =>
-              "title" in item &&
-              item.title === m.app_variables_git_pointer_failed(),
-          ),
-      ).toBe(true);
-      expect(
-        toast
-          .getToasts()
-          .some(
-            (item) =>
-              "title" in item &&
-              item.title === m.app_variables_recovery_failed(),
-          ),
-      ).toBe(true);
-      result = { effects: [], recoveryError: null };
-      await act(async () => {
-        await state.recover(undefined);
+        await state.recover({ scope: "project" });
       });
       expect(state.error).toBe(false);
+      expect(state.pending).toBe(false);
+      expect(state.attempt).toBe(null);
+      expect(calls.slice(count)).toEqual(["recover_app_variables"]);
+      const titles = toast
+        .getToasts()
+        .map((item) => ("title" in item ? item.title : null));
+      expect(titles.includes(m.app_variables_git_pointer_failed())).toBe(true);
+      expect(titles.includes(m.variables_recovery_done())).toBe(true);
+      failRecovery = true;
+      await act(async () => {
+        await state.recover({ scope: "project" });
+      });
+      expect(state.attempt).toEqual({
+        target: "project",
+        action: "recover",
+        state: "failed",
+      });
+      expect(state.error).toBe(false);
+      expect(
+        dom.window.document.body.textContent?.includes("raw recovery detail"),
+      ).toBe(false);
     } finally {
       await act(async () => root.unmount());
       toast.dismiss();

@@ -6,6 +6,7 @@ import type {
   VariableSource,
   VariableScope,
   VariableOwner,
+  VariablesProblem,
 } from "../model/app-variables";
 export function getAppVariables(
   context?: AppVariablesContext,
@@ -27,10 +28,13 @@ export function removeAppVariable(input: {
   return transport.removeAppVariable(input);
 }
 export function recoverAppVariables(
-  source?: VariableOwner,
+  source: VariableOwner,
   scope?: VariableScope,
 ) {
   return transport.recoverAppVariables(source, scope);
+}
+export function readVariablesProblem(error: unknown): VariablesProblem {
+  return transport.toVariablesProblemDto(error);
 }
 export function setAppVariableBinding(input: {
   context: AppVariablesContext;

@@ -592,3 +592,134 @@ fn app_owner_keys_follow_registered_child_path_and_distinguish_root() {
     assert!(!root.join("renamed-space/.svode/local.json").exists());
     assert!(!config.join("settings.json").exists());
 }
+
+fn load_problem(result: Result<AppVariablesCatalog, AppError>) -> VariablesProblem {
+    match result {
+        Err(AppError::VariablesProblem(problem)) => problem,
+        other => panic!("expected a Variables problem, got {:?}", other.map(|_| ())),
+    }
+}
+
+#[test]
+fn shared_registry_problem_blocks_every_catalog_and_names_application_settings() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = dir.path().join("library");
+    let root = dir.path().join("project");
+    project(&root);
+    let secrets = Secrets::default();
+    let settings = config.join("settings.json");
+    let project_scope = VariableScope {
+        project_path: root.to_str().unwrap().into(),
+        space_id: None,
+    };
+    let space_scope = VariableScope {
+        space_id: Some("child".into()),
+        ..project_scope.clone()
+    };
+    let old = json!({"appVariableRegistry":{"bindings":{"version":1,"legacyNormalized":true,"owners":{}},"usage":{}}});
+    fs::write(&settings, old.to_string()).unwrap();
+    for scope in [None, Some(&project_scope), Some(&space_scope)] {
+        let problem = load_problem(get_catalog(&config, scope, None, &secrets));
+        assert_eq!(problem.category, core::Category::LegacyFormat);
+        assert_eq!(problem.owner, SourceOwner::Global);
+        assert_eq!(problem.section, Some("appVariableRegistry"));
+        assert_eq!(
+            problem.file.as_deref(),
+            Some(crate::system_path::user_facing_path(&settings).as_str())
+        );
+        assert!(!problem.recoverable);
+    }
+    assert_eq!(fs::read_to_string(&settings).unwrap(), old.to_string());
+
+    fs::write(&settings, "{not json").unwrap();
+    let problem = load_problem(get_catalog(&config, Some(&project_scope), None, &secrets));
+    assert_eq!(problem.category, core::Category::InvalidConfig);
+    assert_eq!(problem.section, None);
+
+    fs::write(
+        &settings,
+        json!({"appVariableRegistry":{"bindings":{"version":2,"owners":{}},"extra":1}}).to_string(),
+    )
+    .unwrap();
+    let problem = load_problem(get_catalog(&config, None, None, &secrets));
+    assert_eq!(problem.category, core::Category::InvalidConfig);
+    assert_eq!(problem.section, Some("appVariableRegistry"));
+
+    // A pending global save blocks the registry and is the only recoverable cause.
+    fs::remove_file(&settings).unwrap();
+    let journal = json!({"version":2,"beforePortable":core::files::digest(&json!({})),"beforeLocal":core::files::digest(&json!({})),"portable":{"variables":{"KEY":{"kind":"variable","value":"v"}}},"local":{},"names":["KEY"],"cleanup":[]});
+    core::files::atomic_write(&config.join(core::files::PENDING_FILE), &journal).unwrap();
+    let problem = load_problem(get_catalog(&config, Some(&space_scope), None, &secrets));
+    assert_eq!(problem.category, core::Category::PendingSave);
+    assert_eq!(problem.owner, SourceOwner::Global);
+    assert!(problem.recoverable);
+    fs::write(config.join(core::files::PENDING_FILE), "{broken").unwrap();
+    let problem = load_problem(get_catalog(&config, None, None, &secrets));
+    assert_eq!(problem.category, core::Category::BlockedJournal);
+    assert!(!problem.recoverable);
+}
+
+#[test]
+fn owner_problems_stay_with_their_owner_and_keep_readable_owners() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = dir.path().join("library");
+    let root = dir.path().join("project");
+    project(&root);
+    let secrets = Secrets::default();
+    let scope = VariableScope {
+        project_path: root.to_str().unwrap().into(),
+        space_id: Some("child".into()),
+    };
+    put(
+        &config,
+        Some(&scope),
+        SourceOwner::Project,
+        "SHARED",
+        Mode::Git,
+        Kind::Variable,
+        Some("root"),
+        &secrets,
+    );
+    let local = root.join("child/.svode/local.json");
+    fs::write(
+        &local,
+        json!({"variables":{"version":1,"copyId":"old","entries":{},"secrets":{}}}).to_string(),
+    )
+    .unwrap();
+    let catalog = get_catalog(&config, Some(&scope), None, &secrets).unwrap();
+    let space = &catalog.owners[0];
+    assert_eq!(space.owner, scope.owner());
+    let problem = space.problem.as_ref().unwrap();
+    assert_eq!(problem.category, core::Category::LegacyFormat);
+    assert_eq!(problem.owner, scope.owner());
+    assert_eq!(problem.section, Some("variables"));
+    assert!(problem.file.as_deref().unwrap().ends_with("local.json"));
+    assert!(catalog.owners[1].problem.is_none());
+    assert!(catalog.entries.iter().any(|e| e.entry.name == "SHARED"));
+}
+
+#[test]
+fn variables_problem_serializes_as_a_structured_safe_error() {
+    let value = serde_json::to_value(problem_error(
+        core::Failure::at(
+            core::Error::PendingRecovery,
+            Path::new("/tmp/.svode/variables.pending.json"),
+            None,
+        ),
+        SourceOwner::Space { id: "child".into() },
+    ))
+    .unwrap();
+    assert_eq!(value["kind"], "variables_problem");
+    assert_eq!(value["problem"]["category"], "pending_save");
+    assert_eq!(value["problem"]["code"], "pending_recovery");
+    assert_eq!(
+        value["problem"]["owner"],
+        json!({"scope":"space","id":"child"})
+    );
+    assert_eq!(value["problem"]["recoverable"], true);
+    assert_eq!(
+        value["problem"]["file"],
+        "/tmp/.svode/variables.pending.json"
+    );
+    assert!(value["message"].is_string());
+}

@@ -49,6 +49,10 @@ export function ProjectVariablesSection({
 }) {
   const blocks = useSettingsOwnerBlocks(reveal);
   const project = useRef<VariableCatalogGroupHandle>(null);
+  const spaceGroups = useRef(new Map<string, VariableCatalogGroupHandle>());
+  const sharedCallout = useRef<HTMLDivElement>(null);
+  // A cause in shared settings blocks every owner; the project block shows it.
+  const [sharedShown, setSharedShown] = useState(false);
   const [editorOwner, setEditorOwner] = useState<string | null>(null);
   const handleEditorChange = useCallback(
     (owner: string, open: boolean) =>
@@ -59,6 +63,13 @@ export function ProjectVariablesSection({
   );
   const locked = (owner: string) =>
     editorOwner !== null && editorOwner !== owner;
+  const retrySpaces = useCallback(() => {
+    for (const group of spaceGroups.current.values()) group.retry();
+  }, []);
+  const showSharedCause = useCallback(() => {
+    sharedCallout.current?.scrollIntoView({ block: "nearest" });
+    sharedCallout.current?.focus();
+  }, []);
   return (
     <>
       <p className="text-sm text-muted-foreground">
@@ -76,6 +87,9 @@ export function ProjectVariablesSection({
           registerLeaveGuard={registerLeaveGuard}
           locked={locked("project")}
           onEditorChange={handleEditorChange}
+          sharedCalloutRef={sharedCallout}
+          onSharedProblem={setSharedShown}
+          onSharedRetry={retrySpaces}
         />
       </ProjectOwnerBlock>
       {spaces.map((space) => (
@@ -87,6 +101,10 @@ export function ProjectVariablesSection({
         >
           {space.status === "ready" ? (
             <VariableCatalogGroup
+              ref={(group) => {
+                if (group) spaceGroups.current.set(space.id, group);
+                else spaceGroups.current.delete(space.id);
+              }}
               projectPath={projectPath}
               spaceId={space.id}
               projectName={projectName}
@@ -96,6 +114,8 @@ export function ProjectVariablesSection({
               onEditInProject={(entry) =>
                 project.current?.edit(entry.name, entry.mode)
               }
+              sharedCauseAbove={sharedShown}
+              onShowSharedCause={showSharedCause}
             />
           ) : null}
         </SpaceOwnerBlock>

@@ -702,7 +702,10 @@ fn failed_cleanup_and_external_change_during_recovery_stay_explicit() {
         .unwrap_err(),
         Error::SecretStore
     );
-    assert_eq!(service.catalog(&owner).unwrap_err(), Error::PendingRecovery);
+    assert_eq!(
+        service.catalog(&owner).unwrap_err().error,
+        Error::PendingRecovery
+    );
     secrets.fail_remove.set(false);
     service.recover(&owner).unwrap();
     service.interrupt.set(1);
@@ -824,7 +827,7 @@ fn filesystem_publication_failure_retains_recovery_and_can_be_retried() {
     let reopened = Service::new(&secrets);
     assert_eq!(reopened.recover(&owner).unwrap_err(), Error::Unavailable);
     assert_eq!(
-        reopened.catalog(&owner).unwrap_err(),
+        reopened.catalog(&owner).unwrap_err().error,
         Error::PendingRecovery
     );
     std::fs::remove_dir(&local_path).unwrap();
@@ -1430,4 +1433,204 @@ fn collision_choice_removes_the_discarded_secret_ref() {
             keep == Mode::Local
         );
     }
+}
+
+#[test]
+fn read_failures_name_the_cause_file_and_section_without_contents() {
+    let root = fixture();
+    let secrets = Secrets::default();
+    let service = Service::new(&secrets);
+    let project = owner(root.path(), None);
+    let global = Owner::global(&root.path().join("library")).unwrap();
+    let base = root.path().canonicalize().unwrap();
+    let config = base.join(".svode/config.json");
+    let local = base.join(".svode/local.json");
+    let settings = root.path().join("library/settings.json");
+    let original = raw(root.path(), "config.json");
+    let cases = [
+        (
+            &project,
+            &config,
+            json!({"version":1,"entries":{}}),
+            Error::LegacyFormat,
+        ),
+        (
+            &project,
+            &local,
+            json!({"copyId":"old","secrets":{},"entries":{},"version":1}),
+            Error::LegacyFormat,
+        ),
+        (
+            &global,
+            &settings,
+            json!({"entries":{"KEY":{"kind":"variable","value":"old"}},"apps":{}}),
+            Error::LegacyFormat,
+        ),
+        (
+            &project,
+            &config,
+            json!({"KEY":{"kind":"variable"}}),
+            Error::InvalidConfig,
+        ),
+        (
+            &project,
+            &config,
+            json!({"entries":{"kind":"variable","value":null}}),
+            Error::InvalidConfig,
+        ),
+        (
+            &project,
+            &config,
+            json!({"version":"1","entries":{}}),
+            Error::InvalidConfig,
+        ),
+        (
+            &global,
+            &settings,
+            json!({"secrets":{"kind":"secret","secretRef":"must-not-leak"}}),
+            Error::InvalidConfig,
+        ),
+    ];
+    for (target, path, variables, expected) in cases {
+        let mut document = if *path == config {
+            original.clone()
+        } else {
+            json!({})
+        };
+        document["variables"] = variables;
+        files::atomic_write(path, &document).unwrap();
+        let failure = service.catalog(target).unwrap_err();
+        assert_eq!(failure.error, expected, "{document}");
+        assert_eq!(failure.file.as_deref(), Some(path.as_path()));
+        assert_eq!(failure.section, Some(SECTION));
+        assert!(!failure.to_string().contains("must-not-leak"));
+        assert_eq!(files::read(path, true).unwrap(), document);
+        if *path == config {
+            files::atomic_write(path, &original).unwrap();
+        } else {
+            std::fs::remove_file(path).unwrap();
+        }
+    }
+    std::fs::write(&local, b"{not json").unwrap();
+    let failure = service.catalog(&project).unwrap_err();
+    assert_eq!(failure.error, Error::InvalidConfig);
+    assert_eq!(failure.error.category(), Category::InvalidConfig);
+    assert_eq!(failure.file.as_deref(), Some(local.as_path()));
+    assert_eq!(failure.section, None);
+    std::fs::remove_file(&local).unwrap();
+    std::fs::create_dir(&local).unwrap();
+    let failure = service.catalog(&project).unwrap_err();
+    assert_eq!(failure.error.category(), Category::Unavailable);
+    assert_eq!(failure.file.as_deref(), Some(local.as_path()));
+    std::fs::remove_dir(&local).unwrap();
+    secrets.denied.set(true);
+    save(
+        &service,
+        &project,
+        "OPEN",
+        Mode::Local,
+        Kind::Variable,
+        Some("v"),
+    )
+    .unwrap();
+    files::atomic_write(
+        &local,
+        &json!({"variables":{"TOKEN":{"kind":"secret","secretRef":"secret:01ARZ3NDEKTSV4RRFFQ69G5FAV"}}}),
+    )
+    .unwrap();
+    let failure = service.catalog(&project).unwrap_err();
+    assert_eq!(failure.error, Error::SecretStore);
+    assert_eq!(failure.error.category(), Category::Unavailable);
+    assert_eq!(failure.file, None);
+}
+
+#[test]
+fn new_format_keeps_names_of_the_legacy_members() {
+    let root = fixture();
+    let secrets = Secrets::default();
+    let service = Service::new(&secrets);
+    let project = owner(root.path(), None);
+    let global = Owner::global(&root.path().join("library")).unwrap();
+    for target in [&project, &global] {
+        for name in ["entries", "version", "secrets", "copyId", "apps"] {
+            save(
+                &service,
+                target,
+                name,
+                Mode::Local,
+                Kind::Variable,
+                Some("v"),
+            )
+            .unwrap();
+        }
+        let catalog = service.catalog(target).unwrap();
+        assert_eq!(catalog.entries.len(), 5);
+    }
+    let mut config = raw(root.path(), "config.json");
+    config["variables"] = json!({"entries":{"kind":"variable","value":"a"},"version":{"kind":"variable","value":"b"}});
+    files::atomic_write(&root.path().join(".svode/config.json"), &config).unwrap();
+    assert_eq!(service.catalog(&project).unwrap().entries.len(), 7);
+}
+
+#[test]
+fn only_a_finishable_journal_is_reported_as_a_pending_save() {
+    let root = fixture();
+    let secrets = Secrets::default();
+    let service = Service::new(&secrets);
+    let project = owner(root.path(), None);
+    let journal = root
+        .path()
+        .canonicalize()
+        .unwrap()
+        .join(".svode")
+        .join(files::PENDING_FILE);
+    service.interrupt.set(1);
+    assert!(
+        save(
+            &service,
+            &project,
+            "KEY",
+            Mode::Git,
+            Kind::Variable,
+            Some("v")
+        )
+        .is_err()
+    );
+    service.interrupt.set(0);
+    let failure = service.catalog(&project).unwrap_err();
+    assert_eq!(failure.error, Error::PendingRecovery);
+    assert_eq!(failure.error.category(), Category::PendingSave);
+    assert_eq!(failure.file.as_deref(), Some(journal.as_path()));
+    assert!(check_journal(&project).is_err());
+    let supported = files::read(&journal, true).unwrap();
+    let blocked = |content: &[u8]| {
+        std::fs::write(&journal, content).unwrap();
+        let failure = service.catalog(&project).unwrap_err();
+        assert_eq!(failure.error, Error::InvalidJournal);
+        assert_eq!(failure.error.category(), Category::BlockedJournal);
+        assert_eq!(failure.file.as_deref(), Some(journal.as_path()));
+        assert_eq!(std::fs::read(&journal).unwrap(), content);
+    };
+    blocked(b"{not json");
+    let mut old = supported.clone();
+    old["version"] = json!(1);
+    blocked(&serde_json::to_vec(&old).unwrap());
+    let mut invalid = supported.clone();
+    invalid["names"] = json!(["not a name"]);
+    blocked(&serde_json::to_vec(&invalid).unwrap());
+    files::atomic_write(&journal, &supported).unwrap();
+    let before = raw(root.path(), "config.json");
+    let mut external = before.clone();
+    external["name"] = json!("external");
+    files::atomic_write(&root.path().join(".svode/config.json"), &external).unwrap();
+    blocked(&serde_json::to_vec_pretty(&supported).unwrap());
+    files::atomic_write(&root.path().join(".svode/config.json"), &before).unwrap();
+    assert_eq!(
+        service.catalog(&project).unwrap_err().error,
+        Error::PendingRecovery
+    );
+    assert!(service.recover(&project).unwrap().is_some());
+    assert!(check_journal(&project).is_ok());
+    assert_eq!(service.catalog(&project).unwrap().entries.len(), 1);
+    assert!(service.recover(&project).unwrap().is_none());
 }

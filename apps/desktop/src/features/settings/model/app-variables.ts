@@ -1,4 +1,11 @@
-export type { VariableMutationResultDto as VariableMutationResult } from "@/platform/settings/app-variables-api";
+import type { VariablesProblemDto as VariablesProblem } from "@/platform/settings/app-variables-api";
+
+export type {
+  VariableMutationResultDto as VariableMutationResult,
+  VariableRecoveryResultDto as VariableRecoveryResult,
+  VariablesProblemCategoryDto as VariablesProblemCategory,
+} from "@/platform/settings/app-variables-api";
+export type { VariablesProblem };
 
 export type AppVariableKind = "variable" | "secret";
 export type VariableMode = "local" | "git";
@@ -47,7 +54,7 @@ export interface VariableCatalogOwner {
   owner: VariableOwner;
   label: string;
   revision: string | null;
-  error: string | null;
+  problem: VariablesProblem | null;
 }
 export interface AppVariablesCatalog {
   entries: AppVariableEntry[];
@@ -102,3 +109,7 @@ export const sourceKey = (source: VariableSource) =>
   `${ownerKey(source.owner)}:${source.name}`;
 export const sameSource = (a: VariableSource, b: VariableSource) =>
   sourceKey(a) === sourceKey(b);
+// Application settings (the App registry and Global variables) are shared by
+// every project, so one such cause blocks every owner on a page.
+export const isSharedProblem = (problem: VariablesProblem) =>
+  problem.owner?.scope === "global";

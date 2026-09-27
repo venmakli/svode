@@ -10,6 +10,12 @@ use std::{
     path::{Path, PathBuf},
 };
 
+type Located<T> = std::result::Result<T, Failure>;
+
+fn read_at(path: &Path, required: bool, section: Option<&'static str>) -> Located<Value> {
+    files::read(path, required).map_err(|error| Failure::at(error, path, section))
+}
+
 /// Validated hierarchy; source paths are resolved again for each operation.
 pub struct Context {
     project: PathBuf,
@@ -18,9 +24,9 @@ pub struct Context {
 }
 
 impl Context {
-    pub fn new(project: &Path, space_id: Option<&str>, global: &Path) -> Result<Self> {
+    pub fn new(project: &Path, space_id: Option<&str>, global: &Path) -> Located<Self> {
         if !project.is_absolute() || !global.is_absolute() {
-            return Err(Error::InvalidOwner);
+            return Err(Error::InvalidOwner.into());
         }
         let context = Self {
             project: project.canonicalize().map_err(|_| Error::InvalidOwner)?,
@@ -34,16 +40,16 @@ impl Context {
         Ok(context)
     }
 
-    fn owner(&self, owner: &SourceOwner) -> Result<Owner> {
+    fn owner(&self, owner: &SourceOwner) -> Located<Owner> {
         match owner {
-            SourceOwner::Global => Owner::global(&self.global),
+            SourceOwner::Global => Ok(Owner::global(&self.global)?),
             SourceOwner::Project => Owner::scoped(&self.project),
             SourceOwner::Space { id } => {
                 if self.space_id.as_ref() != Some(id) {
-                    return Err(Error::InvalidOwner);
+                    return Err(Error::InvalidOwner.into());
                 }
                 let project = &self.project;
-                let config = files::read(&project.join(".svode/config.json"), true)?;
+                let config = read_at(&project.join(".svode/config.json"), true, None)?;
                 let spaces = config
                     .get("spaces")
                     .and_then(Value::as_array)
@@ -53,7 +59,7 @@ impl Context {
                     .filter(|space| space.get("id").and_then(Value::as_str) == Some(id))
                     .collect();
                 if matching.len() != 1 {
-                    return Err(Error::InvalidOwner);
+                    return Err(Error::InvalidOwner.into());
                 }
                 let relative = matching[0]
                     .get("path")
@@ -65,14 +71,14 @@ impl Context {
                         .components()
                         .any(|c| !matches!(c, std::path::Component::Normal(_)))
                 {
-                    return Err(Error::InvalidOwner);
+                    return Err(Error::InvalidOwner.into());
                 }
                 let path = project
                     .join(relative)
                     .canonicalize()
                     .map_err(|_| Error::InvalidOwner)?;
                 if path == *project || !path.starts_with(project) {
-                    return Err(Error::InvalidOwner);
+                    return Err(Error::InvalidOwner.into());
                 }
                 Owner::scoped(&path)
             }
@@ -96,15 +102,15 @@ impl Owner {
             global: true,
         })
     }
-    fn scoped(path: &Path) -> Result<Self> {
+    fn scoped(path: &Path) -> Located<Self> {
         let directory = path.join(".svode");
-        files::read(&directory.join("config.json"), true)?;
+        read_at(&directory.join("config.json"), true, None)?;
         Ok(Self {
             directory,
             global: false,
         })
     }
-    pub fn in_context(context: &Context, source: &SourceOwner) -> Result<Self> {
+    pub fn in_context(context: &Context, source: &SourceOwner) -> Located<Self> {
         context.owner(source)
     }
     pub fn scope_path(&self) -> Result<&Path> {
@@ -123,6 +129,9 @@ impl Owner {
     fn local_path(&self) -> PathBuf {
         self.directory.join("local.json")
     }
+    fn journal_path(&self) -> PathBuf {
+        self.directory.join(files::PENDING_FILE)
+    }
 }
 
 struct Snapshot {
@@ -139,15 +148,47 @@ fn valid_ref(reference: &str) -> bool {
         .is_some_and(|token| ulid::Ulid::from_string(token).is_ok())
 }
 
+/// The removed pre-DF-110 layout: a versioned document with `entries`, `copyId`,
+/// `secrets` and `apps` members. New sections may use these names as variable
+/// names, so only a complete old structure is recognized.
+fn legacy_section(value: &Value) -> bool {
+    let Some(section) = value.as_object() else {
+        return false;
+    };
+    let entries = section.get("entries").map(|entries| {
+        entries.as_object().is_some_and(|entries| {
+            entries
+                .values()
+                .all(|entry| entry.get("kind").is_some_and(Value::is_string))
+        })
+    });
+    let versioned = section.get("version").is_some_and(Value::is_u64);
+    section
+        .keys()
+        .all(|key| ["version", "entries", "copyId", "secrets", "apps"].contains(&key.as_str()))
+        && section.get("version").is_none_or(Value::is_u64)
+        && entries != Some(false)
+        && section.get("copyId").is_none_or(Value::is_string)
+        && section.get("secrets").is_none_or(Value::is_object)
+        && section.get("apps").is_none_or(Value::is_object)
+        && (versioned || entries == Some(true))
+}
+
 fn decode(value: Option<&Value>, portable: bool, global: bool) -> Result<Section> {
     let Some(value) = value else {
         return Ok(Section::default());
     };
-    let entries: Section =
-        serde_json::from_value(value.clone()).map_err(|_| Error::InvalidConfig)?;
+    let invalid = || {
+        if legacy_section(value) {
+            Error::LegacyFormat
+        } else {
+            Error::InvalidConfig
+        }
+    };
+    let entries: Section = serde_json::from_value(value.clone()).map_err(|_| invalid())?;
     // Reject null option fields as well as unknown/legacy shapes without reserving names.
     if serde_json::to_value(&entries).map_err(|_| Error::InvalidConfig)? != *value {
-        return Err(Error::InvalidConfig);
+        return Err(invalid());
     }
     for (name, entry) in &entries {
         let valid = match entry.kind {
@@ -164,7 +205,7 @@ fn decode(value: Option<&Value>, portable: bool, global: bool) -> Result<Section
         };
         if !valid_name(name) || !valid || entry.secret_ref.as_deref().is_some_and(|r| !valid_ref(r))
         {
-            return Err(Error::InvalidConfig);
+            return Err(invalid());
         }
     }
     Ok(entries)
@@ -182,36 +223,35 @@ fn write_section(root: &mut Value, entries: &Section) -> Result<()> {
 }
 
 impl Snapshot {
-    fn read(owner: &Owner) -> Result<Self> {
-        files::check_pending(&owner.directory)?;
-        let portable = files::read(&owner.portable_path(), !owner.global)?;
+    fn read(owner: &Owner) -> Located<Self> {
+        check_journal(owner)?;
+        let portable = read_at(&owner.portable_path(), !owner.global, None)?;
         let local = if owner.global {
             json!({})
         } else {
-            files::read(&owner.local_path(), false)?
+            read_at(&owner.local_path(), false, None)?
         };
         Self::parse(owner, portable, local)
     }
 
-    fn parse(owner: &Owner, portable: Value, local: Value) -> Result<Self> {
+    /// Failures are attributed to the owner's files, including for journal images.
+    fn parse(owner: &Owner, portable: Value, local: Value) -> Located<Self> {
         if !portable.is_object() || !local.is_object() {
-            return Err(Error::InvalidConfig);
+            return Err(Error::InvalidConfig.into());
         }
         let revision = Revision(files::digest(&json!([portable, local])));
+        let in_portable = |error| Failure::at(error, &owner.portable_path(), Some(SECTION));
         let git = if owner.global {
             Section::default()
         } else {
-            decode(portable.get("variables"), true, false)?
+            decode(portable.get("variables"), true, false).map_err(in_portable)?
         };
-        let device = decode(
-            if owner.global {
-                portable.get("variables")
-            } else {
-                local.get("variables")
-            },
-            false,
-            owner.global,
-        )?;
+        let device = if owner.global {
+            decode(portable.get("variables"), false, true).map_err(in_portable)?
+        } else {
+            decode(local.get("variables"), false, false)
+                .map_err(|error| Failure::at(error, &owner.local_path(), Some(SECTION)))?
+        };
         Ok(Self {
             portable,
             local,
@@ -283,8 +323,9 @@ impl<'a> Service<'a> {
         }
     }
 
-    pub fn catalog(&self, owner: &Owner) -> Result<Catalog> {
-        let _guard = files::lock(&owner.directory)?;
+    pub fn catalog(&self, owner: &Owner) -> Located<Catalog> {
+        let _guard = files::lock(&owner.directory)
+            .map_err(|error| Failure::at(error, &owner.directory, None))?;
         let snapshot = Snapshot::read(owner)?;
         let collisions = snapshot
             .git
@@ -708,41 +749,13 @@ impl Service<'_> {
         if files::check_pending(&owner.directory).is_ok() {
             return Ok(None);
         }
-        let value = files::read(&owner.directory.join(files::PENDING_FILE), true)?;
-        let journal: Journal = serde_json::from_value(value).map_err(|_| Error::InvalidConfig)?;
-        if journal.version != 2 {
-            return Err(Error::UnsupportedVersion);
-        }
-        self.finish(owner, &journal).map(Some)
+        self.finish(owner, &read_journal(owner)?).map(Some)
     }
 
     fn finish(&self, owner: &Owner, journal: &Journal) -> Result<Change> {
-        let candidate = Snapshot::parse(owner, journal.portable.clone(), journal.local.clone())?;
-        if journal.names.iter().any(|name| !valid_name(name))
-            || (owner.global && journal.local != json!({}))
-            || journal.cleanup.iter().any(|account| {
-                !valid_ref(account)
-                    || candidate
-                        .device
-                        .values()
-                        .any(|e| e.secret_ref.as_ref() == Some(account))
-            })
-        {
-            return Err(Error::InvalidConfig);
-        }
-        let portable = files::read(&owner.portable_path(), !owner.global)?;
-        let local = if owner.global {
-            json!({})
-        } else {
-            files::read(&owner.local_path(), false)?
-        };
+        let (portable, local) = validate_journal(owner, journal)?;
         let next_portable = files::digest(&journal.portable);
         let next_local = files::digest(&journal.local);
-        if ![&journal.before_portable, &next_portable].contains(&&files::digest(&portable))
-            || ![&journal.before_local, &next_local].contains(&&files::digest(&local))
-        {
-            return Err(Error::StaleRevision);
-        }
         if files::digest(&portable) != next_portable {
             files::atomic_write(&owner.portable_path(), &journal.portable)?;
         }
@@ -777,4 +790,67 @@ impl Service<'_> {
             }),
         })
     }
+}
+
+fn read_journal(owner: &Owner) -> Result<Journal> {
+    let value = files::read(&owner.journal_path(), true)?;
+    let journal: Journal = serde_json::from_value(value).map_err(|_| Error::InvalidConfig)?;
+    if journal.version != 2 {
+        return Err(Error::UnsupportedVersion);
+    }
+    Ok(journal)
+}
+
+/// Checks everything `finish` requires before its first write; returns the
+/// current portable and local images.
+fn validate_journal(owner: &Owner, journal: &Journal) -> Result<(Value, Value)> {
+    let candidate = Snapshot::parse(owner, journal.portable.clone(), journal.local.clone())?;
+    if journal.names.iter().any(|name| !valid_name(name))
+        || (owner.global && journal.local != json!({}))
+        || journal.cleanup.iter().any(|account| {
+            !valid_ref(account)
+                || candidate
+                    .device
+                    .values()
+                    .any(|e| e.secret_ref.as_ref() == Some(account))
+        })
+    {
+        return Err(Error::InvalidConfig);
+    }
+    let portable = files::read(&owner.portable_path(), !owner.global)?;
+    let local = if owner.global {
+        json!({})
+    } else {
+        files::read(&owner.local_path(), false)?
+    };
+    let next_portable = files::digest(&journal.portable);
+    let next_local = files::digest(&journal.local);
+    if ![&journal.before_portable, &next_portable].contains(&&files::digest(&portable))
+        || ![&journal.before_local, &next_local].contains(&&files::digest(&local))
+    {
+        return Err(Error::StaleRevision);
+    }
+    Ok((portable, local))
+}
+
+/// Blocks reads while a journal is pending. Only a journal the recovery
+/// protocol can finish is reported as `PendingRecovery`; an inaccessible
+/// target file does not change that, since a later attempt may succeed.
+pub fn check_journal(owner: &Owner) -> std::result::Result<(), Failure> {
+    let path = owner.journal_path();
+    let failure = |error| Failure::at(error, &path, None);
+    match files::check_pending(&owner.directory) {
+        Ok(()) => return Ok(()),
+        Err(Error::PendingRecovery) => {}
+        Err(error) => return Err(failure(error)),
+    }
+    let error = match read_journal(owner) {
+        Err(Error::Unavailable) => Error::Unavailable,
+        Err(_) => Error::InvalidJournal,
+        Ok(journal) => match validate_journal(owner, &journal) {
+            Ok(_) | Err(Error::Unavailable) => Error::PendingRecovery,
+            Err(_) => Error::InvalidJournal,
+        },
+    };
+    Err(failure(error))
 }

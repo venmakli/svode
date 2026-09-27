@@ -15,7 +15,7 @@ import type {
   AppVariablesContext,
 } from "../model";
 import { variableFixture, catalogFixture } from "../model/testing/variables";
-import type { VariableSource } from "../model/app-variables";
+import type { VariableSource, VariablesProblem } from "../model/app-variables";
 import type { useContextualAppVariables } from "./use-contextual-app-variables";
 
 if (process.env.SVODE_CONTEXTUAL_VARIABLES_TEST !== "1") {
@@ -93,10 +93,12 @@ if (process.env.SVODE_CONTEXTUAL_VARIABLES_TEST !== "1") {
       entries,
       bindings,
       failLoad: false,
+      loadFailure: undefined as unknown,
+      ownerProblem: null as VariablesProblem | null,
+      recoveries: [] as unknown[],
       failSave: false,
       mutationResult: {
         effects: [],
-        recoveryError: null,
       } as VariableMutationResult,
       failBind: false,
       beforeGet: undefined as (() => Promise<unknown>) | undefined,
@@ -104,8 +106,10 @@ if (process.env.SVODE_CONTEXTUAL_VARIABLES_TEST !== "1") {
       calls: [] as Array<{ command: string; args: Record<string, unknown> }>,
     };
     function catalog(): AppVariablesCatalog {
+      const base = catalogFixture(structuredClone(entries));
+      base.owners[0]!.problem = fixture.ownerProblem;
       return {
-        ...catalogFixture(structuredClone(entries)),
+        ...base,
         context: fixture.references.map((referenceName) => {
           const entryName = bindings[referenceName] ?? referenceName;
           const entry = entries.find((item) => item.name === entryName);
@@ -129,7 +133,12 @@ if (process.env.SVODE_CONTEXTUAL_VARIABLES_TEST !== "1") {
           const snapshot = catalog();
           await fixture.beforeGet?.();
           if (fixture.failLoad) throw new Error("load failed");
+          if (fixture.loadFailure) throw fixture.loadFailure;
           return snapshot;
+        }
+        if (command === "recover_app_variables") {
+          fixture.recoveries.push(args);
+          return { completed: true, effects: [] };
         }
         const input = (args as { input: Record<string, unknown> }).input;
         fixture.calls.push({ command, args: input });
@@ -269,7 +278,6 @@ if (process.env.SVODE_CONTEXTUAL_VARIABLES_TEST !== "1") {
             rootPointer: null,
           },
         ],
-        recoveryError: null,
       };
 
       await h.begin("URL");
@@ -449,12 +457,12 @@ if (process.env.SVODE_CONTEXTUAL_VARIABLES_TEST !== "1") {
       await act(async () => {
         await h.state.refresh().catch(() => undefined);
       });
-      expect(h.state.loadError).toBe(true);
+      expect(h.state.problem?.category).toBe("unknown");
       h.fixture.failLoad = false;
       await act(async () => {
         await h.state.refresh();
       });
-      expect(h.state.loadError).toBe(false);
+      expect(h.state.problem).toBeNull();
       const deferred = deferredVoid();
       h.fixture.beforeGet = () => deferred.promise;
       let refresh!: Promise<unknown>;
@@ -632,7 +640,7 @@ if (process.env.SVODE_CONTEXTUAL_VARIABLES_TEST !== "1") {
       owner: { scope: "project" },
       label: "Project",
       revision: "r1",
-      error: null,
+      problem: null,
     });
     let guard!: () => boolean | Promise<boolean>;
     const register = (next: typeof guard) => {
@@ -712,6 +720,79 @@ if (process.env.SVODE_CONTEXTUAL_VARIABLES_TEST !== "1") {
       deferred.resolve();
       await act(async () => root.unmount());
       clearNativeMocks();
+    }
+  });
+
+  test("dialog shows the Variables cause with only its applicable actions", async () => {
+    const h = await setup();
+    const { AppVariablesDialog } = await import("../ui/app-variables-dialog");
+    const document = dom.window.document;
+    const button = (label: string) =>
+      Array.from(document.querySelectorAll<HTMLButtonElement>("button")).find(
+        (item) => item.textContent === label,
+      );
+    try {
+      h.fixture.loadFailure = {
+        kind: "variables_problem",
+        message: "raw message",
+        problem: {
+          category: "legacy_format",
+          code: "legacy_format",
+          owner: { scope: "global" },
+          file: "/Library/Svode/settings.json",
+          section: "appVariableRegistry",
+          recoverable: false,
+        },
+      };
+      await act(async () => {
+        h.root.render(
+          <AppVariablesDialog
+            context={context}
+            onClose={() => undefined}
+            returnFocus={() => undefined}
+          />,
+        );
+        await tick();
+        await tick();
+      });
+      const dialog = document.querySelector('[role="dialog"]')!;
+      expect(dialog.querySelectorAll("[data-problem]").length).toBe(1);
+      expect(button("Finish saving")).toBe(undefined);
+      expect(button("Recover change")).toBe(undefined);
+      expect(dialog.textContent?.includes("raw message")).toBe(false);
+
+      h.fixture.loadFailure = undefined;
+      h.fixture.ownerProblem = {
+        category: "pending_save",
+        code: "pending_recovery",
+        owner: { scope: "project" },
+        file: "/repo/.svode/variables.pending.json",
+        section: null,
+        recoverable: true,
+      };
+      await act(async () => {
+        button("Check again")!.click();
+        await tick();
+        await tick();
+      });
+      const owner = dialog.querySelector("[data-problem]")!;
+      expect(owner.getAttribute("data-problem")).toBe("pending_save");
+      expect(owner.textContent?.includes("Project: ")).toBe(true);
+      h.fixture.ownerProblem = null;
+      await act(async () => {
+        button("Finish saving")!.click();
+        await tick();
+        await tick();
+      });
+      expect(h.fixture.recoveries).toEqual([
+        {
+          source: { scope: "project" },
+          scope: context,
+        },
+      ]);
+      expect(dialog.querySelector("[data-problem]")).toBeNull();
+    } finally {
+      await h.cleanup();
     }
   });
 

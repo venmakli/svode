@@ -10,7 +10,7 @@ import {
 } from "react";
 import { LoaderCircle, Plus, Trash2 } from "lucide-react";
 import * as m from "@/paraglide/messages.js";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import {
   AlertDialog,
   AlertDialogCancel,
@@ -29,8 +29,10 @@ import {
   EmptyTitle,
 } from "@/components/ui/empty";
 import { Separator } from "@/components/ui/separator";
+import { CATALOG_TARGET } from "../hooks/use-app-variables";
 import { useVariableCatalogEditor } from "../hooks/use-variable-catalog-editor";
 import {
+  isSharedProblem,
   ownerKey,
   sameSource,
   sourceKey,
@@ -47,9 +49,11 @@ import {
   SettingsItem,
   SettingsRowSkeleton,
 } from "./settings-layout";
+import { VariablesProblemCallout } from "./variables-problem-callout";
 
 export interface VariableCatalogGroupHandle {
   edit(name: string, mode: VariableMode): void;
+  retry(): void;
 }
 
 const rowKey = (source: VariableSource, mode: VariableMode) =>
@@ -96,6 +100,11 @@ export function VariableCatalogGroup({
   locked = false,
   onEditorChange,
   onEditInProject,
+  sharedCalloutRef,
+  onSharedProblem,
+  onSharedRetry,
+  sharedCauseAbove = false,
+  onShowSharedCause,
 }: {
   ref?: Ref<VariableCatalogGroupHandle>;
   projectPath?: string;
@@ -106,6 +115,13 @@ export function VariableCatalogGroup({
   locked?: boolean;
   onEditorChange?(owner: string, open: boolean): void;
   onEditInProject?(entry: AppVariableEntry): void;
+  // The page shows a cause in shared settings once: the block that hosts it
+  // reports it and re-reads the other blocks; the others only refer to it.
+  sharedCalloutRef?: Ref<HTMLDivElement>;
+  onSharedProblem?(shown: boolean): void;
+  onSharedRetry?(): void;
+  sharedCauseAbove?: boolean;
+  onShowSharedCause?(): void;
 }) {
   const scope = useMemo(
     () => (projectPath ? { projectPath, spaceId } : undefined),
@@ -159,19 +175,26 @@ export function VariableCatalogGroup({
   const ownerState = catalog?.owners.find(
     (item) => ownerKey(item.owner) === ownerKey(catalog.defaultOwner),
   );
-  const ownerError = ownerState?.error ?? null;
+  const loadProblem = variables.problem;
+  const ownerProblem = catalog ? (ownerState?.problem ?? null) : null;
+  const sharedProblem = Boolean(loadProblem && isSharedProblem(loadProblem));
+  const referToShared = sharedProblem && sharedCauseAbove;
   const blocked = pending || locked || editing;
-  const canAdd = Boolean(
-    catalog && !variables.loadError && ownerState?.revision,
-  );
+  const canAdd = Boolean(catalog && !loadProblem && ownerState?.revision);
   const empty = Boolean(
     catalog &&
-    !variables.loadError &&
-    !catalog.owners.some((item) => item.error) &&
+    !loadProblem &&
+    !catalog.owners.some((item) => item.problem) &&
     !own.length &&
     !inherited.length &&
     editorAnchor !== "new",
   );
+
+  useEffect(() => {
+    if (!sharedProblem || !onSharedProblem) return;
+    onSharedProblem(true);
+    return () => onSharedProblem(false);
+  }, [sharedProblem, onSharedProblem]);
 
   function begin(key: string, entry?: AppVariableEntry, override = false) {
     setAnchor(key);
@@ -185,7 +208,11 @@ export function VariableCatalogGroup({
         own.find((item) => item.name === name);
       if (entry && !blocked) begin(rowKey(entry.source, entry.mode), entry);
     },
+    retry() {
+      void variables.retry();
+    },
   }));
+  const focusFallback = () => triggers.current.get("add");
 
   function trigger(key: string) {
     return (node: HTMLElement | null) => {
@@ -421,69 +448,72 @@ export function VariableCatalogGroup({
         title={m.settings_variables_title()}
         description={description}
         action={empty ? null : addButton}
-        aria-busy={pending || (!catalog && !variables.loadError)}
+        aria-busy={pending || (!catalog && !loadProblem)}
         callout={
-          variables.loadError || ownerError ? (
-            <>
-              {variables.loadError ? (
-                <Alert>
-                  <AlertTitle>{m.variables_load_error_title()}</AlertTitle>
-                  <AlertDescription>
-                    <p>{m.variables_load_error_retry()}</p>
-                    <div className="flex flex-wrap gap-2 pt-2">
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        disabled={pending}
-                        onClick={() =>
-                          void variables.refresh().catch(() => undefined)
-                        }
-                      >
-                        {m.app_retry()}
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        disabled={pending}
-                        onClick={() => void variables.recover(undefined)}
-                      >
-                        {m.variables_recovery()}
-                      </Button>
-                    </div>
-                  </AlertDescription>
-                </Alert>
-              ) : null}
-              {ownerError && catalog ? (
-                <Alert>
-                  <AlertTitle>{m.variables_owner_error_title()}</AlertTitle>
-                  <AlertDescription>
-                    <p className="wrap-anywhere">{ownerError}</p>
-                    <div className="flex flex-wrap gap-2 pt-2">
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        disabled={pending}
-                        onClick={() =>
-                          void variables.recover(catalog.defaultOwner)
-                        }
-                      >
-                        {m.variables_recovery()}
-                      </Button>
-                    </div>
-                  </AlertDescription>
-                </Alert>
-              ) : null}
-            </>
+          loadProblem ? (
+            referToShared ? null : (
+              <VariablesProblemCallout
+                ref={sharedProblem ? sharedCalloutRef : undefined}
+                problem={loadProblem}
+                attempt={
+                  variables.attempt?.target === CATALOG_TARGET
+                    ? variables.attempt
+                    : null
+                }
+                disabled={pending}
+                onRetry={() => {
+                  void variables.retry();
+                  if (sharedProblem) onSharedRetry?.();
+                }}
+                onRecover={() => {
+                  if (loadProblem.owner)
+                    void variables.recover(loadProblem.owner, CATALOG_TARGET);
+                }}
+                focusFallback={focusFallback}
+              />
+            )
+          ) : ownerProblem && catalog ? (
+            <VariablesProblemCallout
+              problem={ownerProblem}
+              attempt={
+                variables.attempt?.target === ownerKey(catalog.defaultOwner)
+                  ? variables.attempt
+                  : null
+              }
+              disabled={pending}
+              onRetry={() =>
+                void variables.retry(ownerKey(catalog.defaultOwner))
+              }
+              onRecover={() => void variables.recover(catalog.defaultOwner)}
+              focusFallback={focusFallback}
+            />
           ) : null
         }
       >
         {editorAnchor === "new" ? editor : null}
         {own.map(entryRow)}
         {inherited.map(entryRow)}
-        {!catalog && !variables.loadError
+        {referToShared ? (
+          <SettingsItem
+            key="shared-problem"
+            role="status"
+            className="text-muted-foreground"
+            title={m.variables_problem_blocked_by_shared()}
+            actions={
+              onShowSharedCause ? (
+                <Button
+                  type="button"
+                  variant="link"
+                  size="sm"
+                  onClick={onShowSharedCause}
+                >
+                  {m.variables_problem_show_cause()}
+                </Button>
+              ) : null
+            }
+          />
+        ) : null}
+        {!catalog && !loadProblem
           ? [
               <SettingsRowSkeleton key="loading-first" />,
               <SettingsRowSkeleton key="loading-second" />,

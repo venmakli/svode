@@ -27,33 +27,18 @@ pub(crate) struct VariableGitOutcome {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct VariableMutationResult {
     pub effects: Vec<VariableGitOutcome>,
-    pub recovery_error: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct VariableRecoveryResult {
+    pub completed: bool,
+    pub effects: Vec<VariableGitOutcome>,
 }
 
 pub(crate) struct Mutation {
     pub change: Option<Change>,
     pub effect: Option<VariableGitOutcome>,
-}
-
-pub(crate) async fn recover_in_order<F, Fut>(
-    sources: Vec<svode_core::variables::SourceOwner>,
-    mut recover: F,
-) -> VariableMutationResult
-where
-    F: FnMut(svode_core::variables::SourceOwner) -> Fut,
-    Fut: Future<Output = Result<Mutation, AppError>>,
-{
-    let mut result = VariableMutationResult::default();
-    for source in sources {
-        match recover(source).await {
-            Ok(mutation) => result.effects.extend(mutation.effect),
-            Err(error) => {
-                result.recovery_error = Some(error.to_string());
-                break;
-            }
-        }
-    }
-    result
 }
 
 struct Target {

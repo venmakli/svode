@@ -13,6 +13,43 @@ pub(crate) fn storage_error(error: core::Error) -> AppError {
     AppError::Storage(error.to_string())
 }
 
+/// Why a catalog or one of its owners cannot be read. `owner` holds the
+/// affected files; the Global owner means application settings shared by
+/// every project. Recovery is offered only for a finishable journal.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VariablesProblem {
+    pub category: core::Category,
+    pub code: core::Error,
+    pub owner: SourceOwner,
+    pub file: Option<String>,
+    pub section: Option<&'static str>,
+    pub recoverable: bool,
+}
+impl VariablesProblem {
+    pub fn new(failure: core::Failure, owner: SourceOwner) -> Self {
+        Self {
+            category: failure.error.category(),
+            recoverable: failure.error == core::Error::PendingRecovery,
+            code: failure.error,
+            owner,
+            file: failure
+                .file
+                .as_deref()
+                .map(crate::system_path::user_facing_path),
+            section: failure.section,
+        }
+    }
+}
+impl std::fmt::Display for VariablesProblem {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.code.fmt(f)
+    }
+}
+pub(crate) fn problem_error(failure: impl Into<core::Failure>, owner: SourceOwner) -> AppError {
+    AppError::VariablesProblem(VariablesProblem::new(failure.into(), owner))
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct VariableScope {
@@ -20,13 +57,12 @@ pub(crate) struct VariableScope {
     pub space_id: Option<String>,
 }
 impl VariableScope {
-    pub fn context(&self, config: &Path) -> Result<Context, AppError> {
+    pub fn context(&self, config: &Path) -> Result<Context, core::Failure> {
         Context::new(
             Path::new(&self.project_path),
             self.space_id.as_deref(),
             config,
         )
-        .map_err(storage_error)
     }
     pub fn owner(&self) -> SourceOwner {
         self.space_id
@@ -85,7 +121,7 @@ pub(crate) struct CatalogOwner {
     pub owner: SourceOwner,
     pub label: String,
     pub revision: Option<core::Revision>,
-    pub error: Option<String>,
+    pub problem: Option<VariablesProblem>,
 }
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -113,11 +149,11 @@ pub(crate) fn owner(
     config: &Path,
     scope: Option<&VariableScope>,
     source: &SourceOwner,
-) -> Result<Owner, AppError> {
+) -> Result<Owner, core::Failure> {
     match scope {
-        Some(scope) => Owner::in_context(&scope.context(config)?, source).map_err(storage_error),
-        None if *source == SourceOwner::Global => Owner::global(config).map_err(storage_error),
-        None => Err(storage_error(core::Error::InvalidOwner)),
+        Some(scope) => Owner::in_context(&scope.context(config)?, source),
+        None if *source == SourceOwner::Global => Ok(Owner::global(config)?),
+        None => Err(core::Error::InvalidOwner.into()),
     }
 }
 
@@ -175,7 +211,9 @@ fn read_catalog(
     let context = prepared.as_ref();
     let registry = registry::read(config)?;
     if let Some(scope) = scope {
-        scope.context(config)?;
+        scope
+            .context(config)
+            .map_err(|failure| problem_error(failure, scope.owner()))?;
     }
     let default_owner = scope
         .map(VariableScope::owner)
@@ -192,14 +230,13 @@ fn read_catalog(
     let mut owners = Vec::new();
     for source in sources {
         let label = owner_label(scope, &source);
-        match owner(config, scope, &source).and_then(|o| service.catalog(&o).map_err(storage_error))
-        {
+        match owner(config, scope, &source).and_then(|o| service.catalog(&o)) {
             Ok(catalog) => {
                 owners.push(CatalogOwner {
                     owner: source.clone(),
                     label: label.clone(),
                     revision: Some(catalog.revision.clone()),
-                    error: None,
+                    problem: None,
                 });
                 for entry in catalog.entries {
                     let reference = SourceReference {
@@ -240,11 +277,11 @@ fn read_catalog(
                     });
                 }
             }
-            Err(error) => owners.push(CatalogOwner {
+            Err(failure) => owners.push(CatalogOwner {
+                problem: Some(VariablesProblem::new(failure, source.clone())),
                 owner: source,
                 label,
                 revision: None,
-                error: Some(error.to_string()),
             }),
         }
     }
@@ -274,7 +311,7 @@ fn read_catalog(
                         catalog
                             .owners
                             .iter()
-                            .find(|o| o.owner == context.scope.owner() && o.error.is_some())
+                            .find(|o| o.owner == context.scope.owner() && o.problem.is_some())
                             .map(|o| SourceReference {
                                 owner: o.owner.clone(),
                                 name: name.clone(),
@@ -318,11 +355,10 @@ fn read_catalog(
             && catalog
                 .owners
                 .iter()
-                .any(|o| o.owner == SourceOwner::Global && o.error.is_none())
+                .any(|o| o.owner == SourceOwner::Global && o.problem.is_none())
         {
             let revision = service
-                .catalog(&Owner::global(config).map_err(storage_error)?)
-                .map_err(storage_error)?
+                .catalog(&Owner::global(config).map_err(storage_error)?)?
                 .revision;
             for entry in &mut catalog.entries {
                 if entry.source.owner == SourceOwner::Global {
@@ -374,9 +410,8 @@ pub(crate) fn bind(
         return Err(storage_error(core::Error::InvalidName));
     }
     if let Some(source) = &source {
-        let catalog = Service::new(secrets)
-            .catalog(&owner(config, Some(&context.scope), &source.owner)?)
-            .map_err(storage_error)?;
+        let catalog =
+            Service::new(secrets).catalog(&owner(config, Some(&context.scope), &source.owner)?)?;
         if !catalog.entries.iter().any(|e| e.name == source.name)
             || catalog.collisions.contains(&source.name)
         {

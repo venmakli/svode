@@ -5,6 +5,7 @@ import { useSpace } from "@/features/space";
 import {
   getAppVariables,
   listenAppVariablesChanged,
+  readVariablesProblem,
   removeAppVariable,
   recoverAppVariables,
   setAppVariableBinding,
@@ -16,13 +17,31 @@ import type {
   AppVariablesContext,
 } from "../model";
 import {
+  ownerKey,
   withOwnerNames,
   type SaveVariableInput,
   type VariableSource,
   type VariableScope,
   type VariableOwner,
   type VariableMutationResult,
+  type VariablesProblem,
 } from "../model/app-variables";
+
+// The whole catalog, or one owner by `ownerKey`.
+export const CATALOG_TARGET = "catalog";
+// Result of the last manual reload/recovery of one target. Automatic
+// focus/event refreshes never create one.
+export type VariablesAttempt = {
+  target: string;
+  action: "reload" | "recover";
+  state: "pending" | "failed" | "finished_unreadable" | "nothing_pending";
+};
+
+function readable(catalog: AppVariablesCatalog, target: string) {
+  return !catalog.owners.some(
+    (item) => item.problem && ownerKey(item.owner) === target,
+  );
+}
 
 export function useAppVariables(
   context?: AppVariablesContext,
@@ -42,7 +61,8 @@ export function useAppVariables(
     () => catalog && withOwnerNames(catalog, projectPath, ownerNames),
     [catalog, projectPath, ownerNames],
   );
-  const [loadError, setLoadError] = useState(false);
+  const [problem, setProblem] = useState<VariablesProblem | null>(null);
+  const [attempt, setAttempt] = useState<VariablesAttempt | null>(null);
   const [pending, setPending] = useState(false);
   const generationRef = useRef(0);
   const lifecycleRef = useRef(0);
@@ -54,11 +74,19 @@ export function useAppVariables(
       const next = await getAppVariables(context, scope, includeGlobal);
       if (generation === generationRef.current) {
         setCatalog(next);
-        setLoadError(false);
+        setProblem(null);
+        setAttempt((current) =>
+          current?.state !== "pending" &&
+          (current?.target === CATALOG_TARGET ||
+            (current && readable(next, current.target)))
+            ? null
+            : current,
+        );
       }
       return next;
     } catch (error) {
-      if (generation === generationRef.current) setLoadError(true);
+      if (generation === generationRef.current)
+        setProblem(readVariablesProblem(error));
       throw error;
     }
   }, [context, scope, includeGlobal]);
@@ -71,7 +99,8 @@ export function useAppVariables(
       return;
     }
     setCatalog(null);
-    setLoadError(false);
+    setProblem(null);
+    setAttempt(null);
     let disposed = false;
     let unlisten: (() => void) | undefined;
     void refresh().catch((error) => {
@@ -126,10 +155,6 @@ export function useAppVariables(
         );
         if (configFailed) toast.warning(m.app_variables_git_commit_failed());
         if (pointerFailed) toast.warning(m.app_variables_git_pointer_failed());
-        if (result?.recoveryError) {
-          if (!notify) toast.error(m.app_variables_recovery_failed());
-          throw new Error(result.recoveryError);
-        }
         if (notify && !configFailed && !pointerFailed)
           toast.success(m.toast_settings_saved());
         return result;
@@ -149,10 +174,67 @@ export function useAppVariables(
     [refresh, notify],
   );
 
+  // A manual reload or recovery of one target: pending blocks a second run,
+  // the result stays next to its cause, and recovery always ends by reading.
+  const settle = useCallback(
+    async (
+      target: string,
+      action: VariablesAttempt["action"],
+      run: () => Promise<VariableMutationResult & { completed?: boolean }>,
+    ) => {
+      if (busyRef.current) return;
+      const lifecycle = lifecycleRef.current;
+      busyRef.current = true;
+      setPending(true);
+      setAttempt({ target, action, state: "pending" });
+      try {
+        let completed: boolean | null = null;
+        try {
+          const result = await run();
+          completed = result.completed ?? true;
+          if (result.effects.some((e) => e.config.status === "failed"))
+            toast.warning(m.app_variables_git_commit_failed());
+          if (result.effects.some((e) => e.rootPointer?.status === "failed"))
+            toast.warning(m.app_variables_git_pointer_failed());
+        } catch {
+          completed = null;
+        }
+        if (lifecycle !== lifecycleRef.current) return;
+        const next = await refresh().catch(() => null);
+        if (lifecycle !== lifecycleRef.current) return;
+        const ok = Boolean(next && readable(next, target));
+        const state: VariablesAttempt["state"] | null =
+          action === "reload"
+            ? ok
+              ? null
+              : "failed"
+            : completed === null
+              ? "failed"
+              : ok
+                ? null
+                : completed
+                  ? "finished_unreadable"
+                  : "nothing_pending";
+        setAttempt(state ? { target, action, state } : null);
+        if (action === "recover" && completed && ok)
+          toast.success(m.variables_recovery_done());
+      } finally {
+        if (lifecycle === lifecycleRef.current) {
+          busyRef.current = false;
+          setPending(false);
+        }
+      }
+    },
+    [refresh],
+  );
+  const isBusy = useCallback(() => busyRef.current, []);
+
   return {
     catalog: namedCatalog,
-    loadError,
+    problem,
+    attempt,
     refresh,
+    isBusy,
     pending,
     bind: (
       referenceName: string,
@@ -172,8 +254,12 @@ export function useAppVariables(
           revision: entry.revision,
         }),
       ),
-    recover: (source?: VariableOwner) =>
-      mutate(() => recoverAppVariables(source, context ?? scope)),
+    retry: (target = CATALOG_TARGET) =>
+      settle(target, "reload", async () => ({ effects: [] })),
+    recover: (source: VariableOwner, target = ownerKey(source)) =>
+      settle(target, "recover", () =>
+        recoverAppVariables(source, context ?? scope),
+      ),
     save: (input: SaveVariableInput) =>
       mutate(() => upsertAppVariable({ ...input, scope: context ?? scope })),
   };

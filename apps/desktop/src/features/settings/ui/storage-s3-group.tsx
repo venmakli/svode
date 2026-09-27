@@ -13,6 +13,7 @@ import {
   sourceKey,
   type AppVariableEntry,
 } from "../model/app-variables";
+import { CATALOG_TARGET } from "../hooks/use-app-variables";
 import { AppVariableFields } from "./app-variable-fields";
 import {
   SettingsActions,
@@ -22,6 +23,7 @@ import {
 } from "./settings-layout";
 import { SettingsSelect, type SettingsSelectOption } from "./settings-select";
 import { StorageApplyActions, useStorageAction } from "./storage-actions";
+import { VariablesProblemCallout } from "./variables-problem-callout";
 
 type Role = "accessKey" | "secretKey";
 
@@ -55,6 +57,7 @@ export function StorageS3Group({
   const { s3 } = settings;
   const id = useId();
   const returnTarget = useRef<HTMLButtonElement | null>(null);
+  const group = useRef<HTMLElement>(null);
   const [saving, runSave] = useStorageAction();
   const busy = settings.applyingStrategy || s3.pending;
   const locked = busy || Boolean(s3.editor);
@@ -77,6 +80,8 @@ export function StorageS3Group({
   function returnFocus() {
     returnTarget.current?.focus();
   }
+  const focusFallback = () =>
+    group.current?.querySelector<HTMLElement>("button:not(:disabled)");
   function cancel() {
     if (s3.cancel()) requestAnimationFrame(returnFocus);
   }
@@ -300,18 +305,17 @@ export function StorageS3Group({
   const secretKey = m.storage_s3_secret_key();
   return (
     <SettingsGroup
+      ref={group}
       title={m.storage_s3_group()}
       description={m.storage_s3_group_description()}
       aria-busy={!s3.loaded || busy || undefined}
       callout={
         <>
-          {s3.loadError || s3.variables.loadError ? (
+          {s3.loadError ? (
             <Alert>
               <AlertTitle>{m.storage_s3_load_error_title()}</AlertTitle>
               <AlertDescription>
-                <p className="wrap-anywhere">
-                  {s3.loadError || m.storage_s3_catalog_error()}
-                </p>
+                <p className="wrap-anywhere">{s3.loadError}</p>
                 {s3.saved?.error ? (
                   <p className="wrap-anywhere">{s3.saved.error}</p>
                 ) : null}
@@ -328,43 +332,48 @@ export function StorageS3Group({
               </AlertDescription>
             </Alert>
           ) : null}
-          {s3.variables.catalog?.owners
-            .filter((owner) => owner.error)
-            .map((owner) => (
-              <Alert key={ownerKey(owner.owner)}>
-                <AlertTitle>{m.variables_owner_error_title()}</AlertTitle>
-                <AlertDescription>
-                  <p className="wrap-anywhere">
-                    {owner.owner.scope === "global"
-                      ? m.variables_global()
-                      : owner.label}
-                    : {owner.error}
-                  </p>
-                  <div className="flex flex-wrap gap-2 pt-2">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      disabled={busy}
-                      onClick={() =>
-                        void s3.variables.recover(owner.owner).catch(s3.retry)
-                      }
-                    >
-                      {m.variables_recovery()}
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      disabled={busy}
-                      onClick={s3.retry}
-                    >
-                      {m.app_retry()}
-                    </Button>
-                  </div>
-                </AlertDescription>
-              </Alert>
-            ))}
+          {s3.variables.problem ? (
+            <VariablesProblemCallout
+              problem={s3.variables.problem}
+              attempt={
+                s3.variables.attempt?.target === CATALOG_TARGET
+                  ? s3.variables.attempt
+                  : null
+              }
+              disabled={busy}
+              onRetry={() => s3.retryVariables()}
+              onRecover={() => {
+                if (s3.variables.problem?.owner)
+                  void s3.variables.recover(
+                    s3.variables.problem.owner,
+                    CATALOG_TARGET,
+                  );
+              }}
+              focusFallback={focusFallback}
+            />
+          ) : null}
+          {s3.variables.catalog?.owners.map((owner) =>
+            owner.problem ? (
+              <VariablesProblemCallout
+                key={ownerKey(owner.owner)}
+                problem={owner.problem}
+                label={
+                  owner.owner.scope === "global"
+                    ? m.variables_global()
+                    : owner.label
+                }
+                attempt={
+                  s3.variables.attempt?.target === ownerKey(owner.owner)
+                    ? s3.variables.attempt
+                    : null
+                }
+                disabled={busy}
+                onRetry={() => s3.retryVariables(ownerKey(owner.owner))}
+                onRecover={() => void s3.variables.recover(owner.owner)}
+                focusFallback={focusFallback}
+              />
+            ) : null,
+          )}
           {enabled && s3.loaded && !s3.saved?.ready ? (
             <Alert>
               <TriangleAlert />

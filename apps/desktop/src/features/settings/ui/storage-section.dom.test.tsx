@@ -78,8 +78,10 @@ if (process.env.SVODE_STORAGE_SECTION_DOM !== "1") {
       loadError: null,
       variables: {
         catalog: catalogFixture(entries),
-        loadError: false,
+        problem: null,
+        attempt: null,
         recover: async () => {},
+        retry: async () => {},
         refresh: async () => catalogFixture(entries),
       },
       entries,
@@ -669,6 +671,74 @@ if (process.env.SVODE_STORAGE_SECTION_DOM !== "1") {
       document.body.textContent?.includes("Uses the “Testov” project strategy"),
     ).toBe(true);
     expect(document.body.textContent?.includes("strategy:")).toBe(false);
+  });
+
+  test("S3: a Variables cause offers only its applicable actions", async () => {
+    const recovered: unknown[] = [];
+    const retried: unknown[] = [];
+    const variables = (overrides: Record<string, unknown>) => ({
+      catalog: null,
+      problem: null,
+      attempt: null,
+      recover: async (owner: unknown) => {
+        recovered.push(owner);
+      },
+      retry: async () => {},
+      refresh: async () => catalogFixture(entries),
+      ...overrides,
+    });
+    const retryVariables = (target?: string) =>
+      retried.push(target ?? "catalog");
+    await render(
+      storageFixture({
+        assetsStrategy: "lfs-s3",
+        s3: s3Fixture({
+          loaded: false,
+          retryVariables,
+          variables: variables({
+            problem: {
+              category: "legacy_format",
+              code: "legacy_format",
+              owner: { scope: "global" },
+              file: "/Library/Svode/settings.json",
+              section: "appVariableRegistry",
+              recoverable: false,
+            },
+          }),
+        }),
+      }),
+    );
+    const s3 = group("S3 storage");
+    expect(s3.querySelectorAll("[data-problem]").length).toBe(1);
+    expect(buttons("Finish saving", s3).length).toBe(0);
+    expect(buttons("Recover change", s3).length).toBe(0);
+    await press(buttons("Check again", s3)[0]!);
+    expect(retried).toEqual(["catalog"]);
+    await press(buttons("How to fix", s3)[0]!);
+    expect(s3.textContent?.includes("File: /Library/Svode/settings.json")).toBe(
+      true,
+    );
+    expect(recovered).toEqual([]);
+
+    const catalog = catalogFixture(entries);
+    catalog.owners[1]!.problem = {
+      category: "pending_save",
+      code: "pending_recovery",
+      owner: { scope: "global" },
+      file: "/Library/Svode/variables.pending.json",
+      section: null,
+      recoverable: true,
+    };
+    await render(
+      storageFixture({
+        assetsStrategy: "lfs-s3",
+        s3: s3Fixture({ retryVariables, variables: variables({ catalog }) }),
+      }),
+    );
+    const owner = group("S3 storage").querySelector("[data-problem]")!;
+    expect(owner.textContent?.includes("Global: ")).toBe(true);
+    await press(buttons("Finish saving", owner)[0]!);
+    expect(recovered).toEqual([{ scope: "global" }]);
   });
 
   test("a collapsed repository block summarizes its strategy and the project setting", () => {

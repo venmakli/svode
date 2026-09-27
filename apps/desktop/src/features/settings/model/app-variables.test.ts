@@ -21,14 +21,19 @@ function catalog() {
     space,
   );
   result.owners = [
-    { owner: space, label: "docs", revision: "r1", error: null },
+    { owner: space, label: "docs", revision: "r1", problem: null },
     {
       owner: { scope: "project" },
       label: "/Users/me/Testov",
       revision: "r1",
-      error: null,
+      problem: null,
     },
-    { owner: { scope: "global" }, label: "Svode", revision: "r1", error: null },
+    {
+      owner: { scope: "global" },
+      label: "Svode",
+      revision: "r1",
+      problem: null,
+    },
   ];
   return result;
 }

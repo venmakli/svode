@@ -69,7 +69,7 @@ if (process.env.SVODE_UNIFIED_SETTINGS_DOM !== "1") {
             owner: { scope: "project" },
             label: "Project",
             revision: "r1",
-            error: null,
+            problem: null,
           },
         ],
         defaultOwner: { scope: "project" },
@@ -79,11 +79,19 @@ if (process.env.SVODE_UNIFIED_SETTINGS_DOM !== "1") {
     listenAppVariablesChanged: async () => noop,
     upsertAppVariable: async () => {
       await variableWrite;
-      return { effects: [], recoveryError: null };
+      return { effects: [] };
     },
     removeAppVariable: async () => {},
     setAppVariableBinding: async () => {},
     recoverAppVariables: async () => {},
+    readVariablesProblem: () => ({
+      category: "unknown",
+      code: null,
+      owner: null,
+      file: null,
+      section: null,
+      recoverable: false,
+    }),
     getSettingsSpaceConfig: (path: string) =>
       new Promise((resolve) => loads.set(path, resolve)),
   }));

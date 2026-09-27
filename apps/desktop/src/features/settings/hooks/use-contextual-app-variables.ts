@@ -103,7 +103,7 @@ export function useContextualAppVariables(context: AppVariablesContext) {
     }
   }
   async function submit() {
-    if (!editor || busyRef.current || stale || variables.loadError) return;
+    if (!editor || busyRef.current || stale || variables.problem) return;
     if (
       editor.mode === "value" &&
       !editor.savedEntry &&

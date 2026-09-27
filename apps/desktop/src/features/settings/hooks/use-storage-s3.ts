@@ -180,7 +180,7 @@ export function useStorageS3({
     enabled &&
     loaded &&
     !loadError &&
-    !variables.loadError &&
+    !variables.problem &&
     !editor &&
     !pending &&
     !variables.pending &&
@@ -194,7 +194,7 @@ export function useStorageS3({
       variables.pending ||
       !loaded ||
       !enabled ||
-      variables.loadError ||
+      variables.problem ||
       loadError
     )
       return;
@@ -229,7 +229,7 @@ export function useStorageS3({
       variables.pending ||
       collision ||
       stale ||
-      variables.loadError ||
+      variables.problem ||
       !canSaveVariableDraft(editor.draft)
     )
       return false;
@@ -355,7 +355,7 @@ export function useStorageS3({
       !variables.pending &&
       !collision &&
       !stale &&
-      !variables.loadError &&
+      !variables.problem &&
       canSaveVariableDraft(editor.draft),
     ),
     select(role: Role, source: VariableSource) {
@@ -371,6 +371,11 @@ export function useStorageS3({
     retry() {
       void refreshSavedRef.current();
       void variables.refresh().catch(() => undefined);
+    },
+    // A manual Variables retry with its own pending/result state.
+    retryVariables(target?: string) {
+      void refreshSavedRef.current();
+      void variables.retry(target);
     },
   };
 }

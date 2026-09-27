@@ -166,7 +166,7 @@ test("project page gives every owner a block with one editor on the page", async
           owner: { scope: "project" },
           label: "/repo",
           revision: "r1",
-          error: null,
+          problem: null,
         });
         return catalog;
       }
@@ -183,7 +183,7 @@ test("project page gives every owner a block with one editor on the page", async
             revision: projectRevision,
           }),
         );
-        return { effects: [], recoveryError: null };
+        return { effects: [] };
       }
       throw new Error(`Unexpected command: ${command}`);
     },

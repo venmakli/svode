@@ -36,7 +36,7 @@ export function catalogFixture(
       owner,
       label: owner.scope === "global" ? "Svode" : "Project",
       revision: "r1",
-      error: null,
+      problem: null,
     })),
   };
 }

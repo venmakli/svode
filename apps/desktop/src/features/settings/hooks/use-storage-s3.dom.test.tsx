@@ -95,7 +95,6 @@ if (process.env.SVODE_S3_TEST !== "1") {
       failSave: false,
       mutationResult: {
         effects: [],
-        recoveryError: null,
       } as VariableMutationResult,
       failCatalog: false,
       checkGate: null as Promise<void> | null,
@@ -295,7 +294,6 @@ if (process.env.SVODE_S3_TEST !== "1") {
             rootPointer: null,
           },
         ],
-        recoveryError: null,
       };
 
       expect(h.state.s3Prefix).toBe("same/objects");
@@ -551,7 +549,7 @@ if (process.env.SVODE_S3_TEST !== "1") {
         await emit(event);
         await tick();
       });
-      expect(h.state.s3.variables.loadError).toBe(true);
+      expect(h.state.s3.variables.problem?.category).toBe("unknown");
       expect(h.state.canSaveS3).toBe(false);
       expect(h.container.querySelector('input[type="password"]') !== null).toBe(
         true,

@@ -36,7 +36,9 @@ pub struct SourceReference {
 #[serde(rename_all = "camelCase")]
 pub struct Revision(pub String);
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// Serializes as a safe snake_case code for diagnostics.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Error {
     Unavailable,
     InvalidConfig,
@@ -47,6 +49,10 @@ pub enum Error {
     StaleRevision,
     Collision,
     PendingRecovery,
+    /// A pending journal exists but the recovery protocol cannot finish it.
+    InvalidJournal,
+    /// A Variables section still uses the removed pre-DF-110 layout.
+    LegacyFormat,
     Missing,
     WrongKind,
     SecretStore,
@@ -65,6 +71,8 @@ impl std::fmt::Display for Error {
             Self::StaleRevision => "Variables changed; reload before saving",
             Self::Collision => "Local and Git declarations conflict; select which to keep",
             Self::PendingRecovery => "A Variables change needs recovery before reading or saving",
+            Self::InvalidJournal => "An unfinished Variables change cannot be completed",
+            Self::LegacyFormat => "Variables are stored in an unsupported earlier format",
             Self::Missing => "Variable value is missing",
             Self::WrongKind => "This source is not a Secret",
             Self::SecretStore => "Cannot access the Variables secret store",
@@ -73,6 +81,71 @@ impl std::fmt::Display for Error {
 }
 impl std::error::Error for Error {}
 pub type Result<T> = std::result::Result<T, Error>;
+
+/// User-facing cause of a failed Variables read; never derived from messages.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Category {
+    Unavailable,
+    LegacyFormat,
+    InvalidConfig,
+    BlockedJournal,
+    PendingSave,
+    Unknown,
+}
+
+impl Error {
+    pub fn category(&self) -> Category {
+        match self {
+            Self::Unavailable | Self::SecretStore => Category::Unavailable,
+            Self::LegacyFormat => Category::LegacyFormat,
+            Self::InvalidConfig | Self::UnsupportedVersion => Category::InvalidConfig,
+            Self::InvalidJournal => Category::BlockedJournal,
+            Self::PendingRecovery => Category::PendingSave,
+            _ => Category::Unknown,
+        }
+    }
+}
+
+/// A read error with the file and section to fix; contents are never included.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Failure {
+    pub error: Error,
+    pub file: Option<PathBuf>,
+    pub section: Option<&'static str>,
+}
+
+impl Failure {
+    pub fn at(error: Error, file: &std::path::Path, section: Option<&'static str>) -> Self {
+        Self {
+            error,
+            file: Some(file.to_path_buf()),
+            section,
+        }
+    }
+}
+impl From<Error> for Failure {
+    fn from(error: Error) -> Self {
+        Self {
+            error,
+            file: None,
+            section: None,
+        }
+    }
+}
+impl From<Failure> for Error {
+    fn from(failure: Failure) -> Self {
+        failure.error
+    }
+}
+impl std::fmt::Display for Failure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.error.fmt(f)
+    }
+}
+impl std::error::Error for Failure {}
+
+pub const SECTION: &str = "variables";
 
 pub fn valid_name(name: &str) -> bool {
     let mut chars = name.chars();

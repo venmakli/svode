@@ -178,7 +178,7 @@ impl Fixture {
         value: Option<&str>,
     ) -> Result<Option<Change>, AppError> {
         let service = Service::new(&self.secrets);
-        let catalog = service.catalog(&self.owner).map_err(storage_error)?;
+        let catalog = service.catalog(&self.owner)?;
         let operation = if catalog.entries.iter().any(|e| e.name == name) {
             SaveOperation::Edit
         } else {
@@ -814,7 +814,7 @@ async fn every_mode_kind_transition_obeys_portable_change_not_create_intent() {
 }
 
 #[tokio::test]
-async fn partial_multi_owner_recovery_preserves_completed_effects_and_stops() {
+async fn owner_recovery_finishes_only_its_journal_and_keeps_its_effects() {
     let f = Fixture::new("inline", true, true, false, false).await;
     let root_owner = Owner::in_context(
         &Context::new(&f.root, None, &f.root.join("global")).unwrap(),
@@ -835,53 +835,40 @@ async fn partial_multi_owner_recovery_preserves_completed_effects_and_stops() {
         &json!({"name":"External"}),
     )
     .unwrap();
-    let calls = RefCell::new(vec![]);
-    let result = recover_in_order(
-        vec![
-            SourceOwner::Project,
-            SourceOwner::Space { id: "child".into() },
-            SourceOwner::Global,
-        ],
-        |source| {
-            let calls = &calls;
-            let f = &f;
-            let root_owner = &root_owner;
-            async move {
-                calls.borrow_mut().push(source.clone());
-                let owner = if source == SourceOwner::Project {
-                    root_owner
-                } else {
-                    &f.owner
-                };
-                apply(
-                    owner,
-                    Some(&f.root),
-                    &f.git,
-                    async {
-                        Service::new(&f.secrets)
-                            .recover(owner)
-                            .map_err(storage_error)
-                    },
-                    |_, _, _| {},
-                )
-                .await
-            }
-        },
-    )
-    .await;
-    assert!(result.recovery_error.is_some());
-    assert_eq!(result.effects.len(), 1);
     assert_eq!(
-        result.effects[0].config,
+        Service::new(&f.secrets)
+            .catalog(&f.owner)
+            .unwrap_err()
+            .error,
+        core::Error::InvalidJournal
+    );
+    let recover = |owner: &Owner| {
+        let owner = owner.clone();
+        let f = &f;
+        async move {
+            apply(
+                &owner,
+                Some(&f.root),
+                &f.git,
+                async {
+                    Service::new(&f.secrets)
+                        .recover(&owner)
+                        .map_err(storage_error)
+                },
+                |_, _, _| {},
+            )
+            .await
+        }
+    };
+    let root = recover(&root_owner).await.unwrap();
+    assert!(root.change.is_some());
+    assert_eq!(
+        root.effect.unwrap().config,
         ExactPathPersistenceOutcome::Committed
     );
-    assert_eq!(calls.borrow().len(), 2);
-    assert!(
-        Service::new(&f.secrets)
-            .recover(&root_owner)
-            .unwrap()
-            .is_none()
-    );
+    assert!(recover(&f.owner).await.is_err());
+    assert!(recover(&root_owner).await.unwrap().change.is_none());
+    assert!(Service::new(&f.secrets).catalog(&root_owner).is_ok());
     assert!(Service::new(&f.secrets).catalog(&f.owner).is_err());
 }
 

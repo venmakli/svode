@@ -33,9 +33,10 @@ export function useVariableCatalogEditor(
     },
     [],
   );
+  const { isBusy } = variables;
   useLayoutEffect(
-    () => registerLeaveGuard?.(() => !busy.current),
-    [registerLeaveGuard],
+    () => registerLeaveGuard?.(() => !busy.current && !isBusy()),
+    [registerLeaveGuard, isBusy],
   );
   const catalog = variables.catalog;
   const currentEntry = draft
@@ -88,7 +89,7 @@ export function useVariableCatalogEditor(
       canSaveVariableDraft(draft) &&
       !collision &&
       !stale &&
-      !variables.loadError,
+      !variables.problem,
     ),
     begin(entry?: AppVariableEntry, override = false) {
       if (busy.current || !catalog) return;
@@ -152,9 +153,6 @@ export function useVariableCatalogEditor(
         setDraft({ ...draft, revision: target.revision });
         setReviewed(true);
       });
-    },
-    async recover(owner: Parameters<typeof variables.recover>[0]) {
-      await perform(() => variables.recover(owner));
     },
   };
 }

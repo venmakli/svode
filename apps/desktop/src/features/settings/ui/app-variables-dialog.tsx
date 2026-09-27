@@ -23,11 +23,13 @@ import {
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Separator } from "@/components/ui/separator";
+import { CATALOG_TARGET } from "../hooks/use-app-variables";
 import { useContextualAppVariables } from "../hooks/use-contextual-app-variables";
 import type { AppVariablesContext } from "../model";
 import { sourceKey, sameSource, ownerKey } from "../model/app-variables";
 import { canSaveVariableDraft } from "../model/app-variable-draft";
 import { AppVariableFields } from "./app-variable-fields";
+import { VariablesProblemCallout } from "./variables-problem-callout";
 
 interface AppVariablesDialogProps {
   context: AppVariablesContext;
@@ -49,6 +51,7 @@ function ContextualVariables({
   const variables = useContextualAppVariables(context);
   const { editor, pending } = variables;
   const triggers = useRef(new Map<string, HTMLButtonElement>());
+  const closeButton = useRef<HTMLButtonElement>(null);
   const restoreRowFocus = useRef<string | null>(null);
   useLayoutEffect(() => {
     if (!editor && restoreRowFocus.current) {
@@ -104,6 +107,7 @@ function ContextualVariables({
           </DialogDescription>
         </DialogHeader>
         <Button
+          ref={closeButton}
           variant="ghost"
           size="icon-sm"
           className="absolute right-2 top-2"
@@ -117,53 +121,49 @@ function ContextualVariables({
           className="flex min-h-0 min-w-0 flex-col gap-4 overflow-y-auto"
           aria-busy={pending}
         >
-          {variables.loadError ? (
-            <Alert variant="destructive">
-              <AlertDescription>
-                {m.app_variables_load_error()}
-                <Button
-                  variant="outline"
-                  disabled={pending}
-                  onClick={() =>
-                    void variables.recover().catch(() => undefined)
-                  }
-                >
-                  {m.variables_recovery()}
-                </Button>
-                <Button
-                  variant="outline"
-                  disabled={pending}
-                  onClick={() =>
-                    void variables.refresh().catch(() => undefined)
-                  }
-                >
-                  {m.app_retry()}
-                </Button>
-              </AlertDescription>
-            </Alert>
+          {variables.problem ? (
+            <VariablesProblemCallout
+              problem={variables.problem}
+              attempt={
+                variables.attempt?.target === CATALOG_TARGET
+                  ? variables.attempt
+                  : null
+              }
+              disabled={pending}
+              onRetry={() => void variables.retry()}
+              onRecover={() => {
+                if (variables.problem?.owner)
+                  void variables.recover(
+                    variables.problem.owner,
+                    CATALOG_TARGET,
+                  );
+              }}
+              focusFallback={() => closeButton.current}
+            />
           ) : null}
-          {variables.catalog?.owners
-            .filter((owner) => owner.error)
-            .map((owner) => (
-              <Alert key={owner.label} variant="destructive">
-                <AlertDescription>
-                  {owner.owner.scope === "global"
+          {variables.catalog?.owners.map((owner) =>
+            owner.problem ? (
+              <VariablesProblemCallout
+                key={ownerKey(owner.owner)}
+                problem={owner.problem}
+                label={
+                  owner.owner.scope === "global"
                     ? m.variables_global()
-                    : owner.label}
-                  : {owner.error}
-                  <Button
-                    variant="outline"
-                    disabled={pending}
-                    onClick={() =>
-                      void variables.recover(owner.owner).catch(() => undefined)
-                    }
-                  >
-                    {m.variables_recovery()}
-                  </Button>
-                </AlertDescription>
-              </Alert>
-            ))}
-          {!variables.catalog && !variables.loadError ? (
+                    : owner.label
+                }
+                attempt={
+                  variables.attempt?.target === ownerKey(owner.owner)
+                    ? variables.attempt
+                    : null
+                }
+                disabled={pending}
+                onRetry={() => void variables.retry(ownerKey(owner.owner))}
+                onRecover={() => void variables.recover(owner.owner)}
+                focusFallback={() => closeButton.current}
+              />
+            ) : null,
+          )}
+          {!variables.catalog && !variables.problem ? (
             <div
               role="status"
               aria-label={m.app_variables_loading()}
@@ -175,7 +175,7 @@ function ContextualVariables({
           ) : null}
           {variables.catalog &&
           variables.references.length === 0 &&
-          !variables.loadError ? (
+          !variables.problem ? (
             <Empty>
               <EmptyHeader>
                 <EmptyTitle>{m.app_variables_empty()}</EmptyTitle>
@@ -238,7 +238,9 @@ function ContextualVariables({
                       <Button
                         size="sm"
                         variant="ghost"
-                        disabled={pending || variables.loadError || active}
+                        disabled={
+                          pending || Boolean(variables.problem) || active
+                        }
                         ref={(node) => {
                           if (node)
                             triggers.current.set(reference.referenceName, node);
@@ -264,7 +266,9 @@ function ContextualVariables({
                         <Button
                           size="sm"
                           variant="ghost"
-                          disabled={pending || active || variables.loadError}
+                          disabled={
+                            pending || active || Boolean(variables.problem)
+                          }
                           onClick={() =>
                             variables.begin(reference, "value", true)
                           }
@@ -277,7 +281,7 @@ function ContextualVariables({
                         variant="ghost"
                         disabled={
                           pending ||
-                          variables.loadError ||
+                          Boolean(variables.problem) ||
                           active ||
                           (!variables.catalog?.entries.length &&
                             !reference.explicit)
@@ -439,7 +443,7 @@ function ContextualVariables({
                           size="sm"
                           disabled={
                             pending ||
-                            variables.loadError ||
+                            Boolean(variables.problem) ||
                             variables.stale ||
                             (editor.mode === "value" &&
                               !editor.savedEntry &&
