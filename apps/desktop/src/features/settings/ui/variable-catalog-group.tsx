@@ -100,11 +100,11 @@ export function VariableCatalogGroup({
   locked = false,
   onEditorChange,
   onEditInProject,
-  sharedCalloutRef,
+  causeCalloutRef,
   onSharedProblem,
-  onSharedRetry,
+  onCauseRetry,
   sharedCauseAbove = false,
-  onShowSharedCause,
+  onShowCause,
 }: {
   ref?: Ref<VariableCatalogGroupHandle>;
   projectPath?: string;
@@ -115,13 +115,14 @@ export function VariableCatalogGroup({
   locked?: boolean;
   onEditorChange?(owner: string, open: boolean): void;
   onEditInProject?(entry: AppVariableEntry): void;
-  // The page shows a cause in shared settings once: the block that hosts it
-  // reports it and re-reads the other blocks; the others only refer to it.
-  sharedCalloutRef?: Ref<HTMLDivElement>;
+  // The project block shows a cause the space blocks depend on (shared
+  // settings or the project's own files) once and re-reads them on retry;
+  // the space blocks only refer to it.
+  causeCalloutRef?: Ref<HTMLDivElement>;
   onSharedProblem?(shown: boolean): void;
-  onSharedRetry?(): void;
+  onCauseRetry?(): void;
   sharedCauseAbove?: boolean;
-  onShowSharedCause?(): void;
+  onShowCause?(): void;
 }) {
   const scope = useMemo(
     () => (projectPath ? { projectPath, spaceId } : undefined),
@@ -179,6 +180,17 @@ export function VariableCatalogGroup({
   const ownerProblem = catalog ? (ownerState?.problem ?? null) : null;
   const sharedProblem = Boolean(loadProblem && isSharedProblem(loadProblem));
   const referToShared = sharedProblem && sharedCauseAbove;
+  // Inherited project variables are missing when the project cannot be read.
+  const projectUnreadable = Boolean(
+    catalog &&
+    !loadProblem &&
+    catalog.owners.some(
+      (item) =>
+        item.problem &&
+        item.owner.scope === "project" &&
+        ownerKey(item.owner) !== ownerKey(catalog.defaultOwner),
+    ),
+  );
   const blocked = pending || locked || editing;
   const canAdd = Boolean(catalog && !loadProblem && ownerState?.revision);
   const empty = Boolean(
@@ -453,7 +465,7 @@ export function VariableCatalogGroup({
           loadProblem ? (
             referToShared ? null : (
               <VariablesProblemCallout
-                ref={sharedProblem ? sharedCalloutRef : undefined}
+                ref={causeCalloutRef}
                 problem={loadProblem}
                 attempt={
                   variables.attempt?.target === CATALOG_TARGET
@@ -463,7 +475,7 @@ export function VariableCatalogGroup({
                 disabled={pending}
                 onRetry={() => {
                   void variables.retry();
-                  if (sharedProblem) onSharedRetry?.();
+                  if (sharedProblem) onCauseRetry?.();
                 }}
                 onRecover={() => {
                   if (loadProblem.owner)
@@ -474,6 +486,7 @@ export function VariableCatalogGroup({
             )
           ) : ownerProblem && catalog ? (
             <VariablesProblemCallout
+              ref={causeCalloutRef}
               problem={ownerProblem}
               attempt={
                 variables.attempt?.target === ownerKey(catalog.defaultOwner)
@@ -481,9 +494,10 @@ export function VariableCatalogGroup({
                   : null
               }
               disabled={pending}
-              onRetry={() =>
-                void variables.retry(ownerKey(catalog.defaultOwner))
-              }
+              onRetry={() => {
+                void variables.retry(ownerKey(catalog.defaultOwner));
+                onCauseRetry?.();
+              }}
               onRecover={() => void variables.recover(catalog.defaultOwner)}
               focusFallback={focusFallback}
             />
@@ -493,19 +507,23 @@ export function VariableCatalogGroup({
         {editorAnchor === "new" ? editor : null}
         {own.map(entryRow)}
         {inherited.map(entryRow)}
-        {referToShared ? (
+        {referToShared || projectUnreadable ? (
           <SettingsItem
-            key="shared-problem"
+            key="cause-above"
             role="status"
             className="text-muted-foreground"
-            title={m.variables_problem_blocked_by_shared()}
+            title={
+              referToShared
+                ? m.variables_problem_blocked_by_shared()
+                : m.variables_problem_blocked_by_project()
+            }
             actions={
-              onShowSharedCause ? (
+              onShowCause ? (
                 <Button
                   type="button"
                   variant="link"
                   size="sm"
-                  onClick={onShowSharedCause}
+                  onClick={onShowCause}
                 >
                   {m.variables_problem_show_cause()}
                 </Button>

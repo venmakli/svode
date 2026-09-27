@@ -50,8 +50,9 @@ export function ProjectVariablesSection({
   const blocks = useSettingsOwnerBlocks(reveal);
   const project = useRef<VariableCatalogGroupHandle>(null);
   const spaceGroups = useRef(new Map<string, VariableCatalogGroupHandle>());
-  const sharedCallout = useRef<HTMLDivElement>(null);
-  // A cause in shared settings blocks every owner; the project block shows it.
+  const causeCallout = useRef<HTMLDivElement>(null);
+  // A cause in shared settings blocks every owner and an unreadable project
+  // hides what the spaces inherit; the project block shows either cause.
   const [sharedShown, setSharedShown] = useState(false);
   const [editorOwner, setEditorOwner] = useState<string | null>(null);
   const handleEditorChange = useCallback(
@@ -66,9 +67,9 @@ export function ProjectVariablesSection({
   const retrySpaces = useCallback(() => {
     for (const group of spaceGroups.current.values()) group.retry();
   }, []);
-  const showSharedCause = useCallback(() => {
-    sharedCallout.current?.scrollIntoView({ block: "nearest" });
-    sharedCallout.current?.focus();
+  const showCause = useCallback(() => {
+    causeCallout.current?.scrollIntoView({ block: "nearest" });
+    causeCallout.current?.focus();
   }, []);
   return (
     <>
@@ -87,9 +88,9 @@ export function ProjectVariablesSection({
           registerLeaveGuard={registerLeaveGuard}
           locked={locked("project")}
           onEditorChange={handleEditorChange}
-          sharedCalloutRef={sharedCallout}
+          causeCalloutRef={causeCallout}
           onSharedProblem={setSharedShown}
-          onSharedRetry={retrySpaces}
+          onCauseRetry={retrySpaces}
         />
       </ProjectOwnerBlock>
       {spaces.map((space) => (
@@ -115,7 +116,7 @@ export function ProjectVariablesSection({
                 project.current?.edit(entry.name, entry.mode)
               }
               sharedCauseAbove={sharedShown}
-              onShowSharedCause={showSharedCause}
+              onShowCause={showCause}
             />
           ) : null}
         </SpaceOwnerBlock>

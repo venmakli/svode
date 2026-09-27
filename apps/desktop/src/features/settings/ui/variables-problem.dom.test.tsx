@@ -207,6 +207,115 @@ if (process.env.SVODE_VARIABLES_PROBLEM_DOM !== "1") {
     }
   });
 
+  test("an unreadable project is explained in the space blocks that inherit from it", async () => {
+    const document = reset();
+    const reads: Array<string | null> = [];
+    let problem: VariablesProblem | null = {
+      category: "blocked_journal",
+      code: "invalid_journal",
+      owner: { scope: "project" },
+      file: "/repo/.svode/variables.pending.json",
+      section: null,
+      recoverable: false,
+    };
+    mockNativeIpc(
+      (command, args) => {
+        if (command !== "get_app_variables")
+          throw new Error(`Unexpected ${command}`);
+        const spaceId =
+          (args as { scope?: { spaceId: string | null } }).scope?.spaceId ??
+          null;
+        reads.push(spaceId);
+        const project = catalogFixture(
+          problem
+            ? []
+            : [
+                variableFixture({
+                  name: "ROOT",
+                  kind: "variable",
+                  value: "root",
+                  inherited: Boolean(spaceId),
+                }),
+              ],
+        );
+        project.owners[0]!.problem = problem;
+        if (problem) project.owners[0]!.revision = null;
+        if (!spaceId) return project;
+        const owner = { scope: "space", id: spaceId } as const;
+        const own =
+          spaceId === "dev"
+            ? [
+                variableFixture(
+                  { name: "LOCAL_ONLY", kind: "variable", value: "dev" },
+                  owner,
+                ),
+              ]
+            : [];
+        return {
+          ...project,
+          defaultOwner: owner,
+          entries: [...own, ...project.entries],
+          owners: [
+            { owner, label: "Space", revision: "r1", problem: null },
+            project.owners[0]!,
+          ],
+        };
+      },
+      { shouldMockEvents: true },
+    );
+    const { block, button, press } = helpers(document);
+    const root = await mount(
+      <ProjectVariablesSection
+        projectPath="/repo"
+        projectName="Testov"
+        projectIcon=""
+        spaces={[space("docs", "Сопровождение"), space("dev", "Разработки")]}
+        gitTypes={{ docs: "inline", dev: "independent" }}
+        reveal={{ owner: null, request: {} }}
+        registerLeaveGuard={() => () => {}}
+      />,
+    );
+    try {
+      const project = block("Testov");
+      const callouts = document.querySelectorAll("[data-problem]");
+      expect(callouts.length).toBe(1);
+      expect(project.contains(callouts[0]!)).toBe(true);
+      expect(button(project, "Add variable")?.disabled).toBe(true);
+      for (const name of ["Сопровождение", "Разработки"]) {
+        const owner = block(name);
+        expect(owner.querySelector("[data-problem]")).toBeNull();
+        expect(
+          owner.textContent?.includes(
+            "Project variables are unavailable; the cause is shown above.",
+          ),
+        ).toBe(true);
+        expect(owner.textContent?.includes("No variables yet")).toBe(false);
+        expect(button(owner, "Add variable")?.disabled).toBe(false);
+      }
+      expect(block("Разработки").textContent?.includes("LOCAL_ONLY")).toBe(
+        true,
+      );
+
+      await press(button(block("Разработки"), "Show the cause")!);
+      expect(document.activeElement).toBe(callouts[0]!);
+
+      problem = null;
+      const before = reads.length;
+      await press(button(project, "Check again")!);
+      expect(new Set(reads.slice(before))).toEqual(
+        new Set([null, "docs", "dev"]),
+      );
+      expect(document.querySelectorAll("[data-problem]").length).toBe(0);
+      expect(
+        document.body.textContent?.includes("Project variables are unavailable"),
+      ).toBe(false);
+      expect(block("Сопровождение").textContent?.includes("ROOT")).toBe(true);
+    } finally {
+      await act(async () => root.unmount());
+      clearNativeMocks();
+    }
+  });
+
   test("an owner's pending save is finished only for that owner and reports each result", async () => {
     const document = reset();
     let problem: VariablesProblem | null = {

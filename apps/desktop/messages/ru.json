@@ -2163,6 +2163,7 @@
   "variables_problem_area_shared": "общие настройки Svode",
   "variables_problem_code": "Код: {code}",
   "variables_problem_blocked_by_shared": "Недоступно из-за общих настроек Svode.",
+  "variables_problem_blocked_by_project": "Переменные проекта недоступны, причина указана выше.",
   "variables_problem_show_cause": "К причине",
   "variables_recovery_done": "Сохранение завершено"
 }
