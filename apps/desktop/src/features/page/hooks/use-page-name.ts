@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import * as m from "@/paraglide/messages.js";
 import { useSpaceTreeSync } from "@/features/space";
 import {
@@ -32,8 +32,7 @@ export function usePageName({
     return state.childrenByParentPath[spaceId]?.[parts.join("/")] ?? [];
   });
 
-  const projectedConflictPath =
-    page?.name_conflict?.conflicts[0]?.path ?? null;
+  const projectedConflictPath = page?.name_conflict?.conflicts[0]?.path ?? null;
   const effectiveConflictPath =
     localConflictPath === undefined ? projectedConflictPath : localConflictPath;
   const titleError = effectiveConflictPath
@@ -42,34 +41,45 @@ export function usePageName({
       : m.page_name_conflict({ path: effectiveConflictPath })
     : null;
 
-  function acceptTitle(title: string) {
-    if (!page) return false;
-    const conflictPath = findPageNameConflictPath(
-      title,
-      siblingRows,
-      page.path,
-    );
-    if (conflictPath) {
-      setLocalConflict({ path: conflictPath, targetKey });
-      return false;
-    }
-    setLocalConflict({ path: null, targetKey });
-    return true;
-  }
+  const acceptTitle = useCallback(
+    (title: string) => {
+      if (!page) return false;
+      const conflictPath = findPageNameConflictPath(
+        title,
+        siblingRows,
+        page.path,
+      );
+      if (conflictPath) {
+        setLocalConflict({ path: conflictPath, targetKey });
+        return false;
+      }
+      setLocalConflict({ path: null, targetKey });
+      return true;
+    },
+    [page, siblingRows, targetKey],
+  );
 
-  function handleSaveError(error: unknown) {
-    const conflict = pageNameConflictFromError(error);
-    if (!conflict) return false;
-    setLocalConflict({
-      path: conflict.conflicts[0]?.path ?? null,
-      targetKey,
-    });
-    return true;
-  }
+  const handleSaveError = useCallback(
+    (error: unknown) => {
+      const conflict = pageNameConflictFromError(error);
+      if (!conflict) return false;
+      setLocalConflict({
+        path: conflict.conflicts[0]?.path ?? null,
+        targetKey,
+      });
+      return true;
+    },
+    [targetKey],
+  );
+
+  const clearSavedConflict = useCallback(
+    () => setLocalConflict({ path: null, targetKey }),
+    [targetKey],
+  );
 
   return {
     acceptTitle,
-    clearSavedConflict: () => setLocalConflict({ path: null, targetKey }),
+    clearSavedConflict,
     handleSaveError,
     titleError,
   };

@@ -24,6 +24,7 @@ import type {
   CollectionRouteState,
 } from "@/features/collection/app-shell";
 import {
+  PageDetailHeader,
   PageDetailProvider,
   PageSurfaceSessionProvider,
   ReadmeSurface,
@@ -32,7 +33,6 @@ import {
 } from "@/features/page/scope-surface";
 import { useOpenPage } from "@/features/page/navigation";
 import {
-  ScopeOwnerHeader,
   ScopeSurfaceHost,
   type ScopeOpenIntent,
   type ScopeOwnerRef,
@@ -177,6 +177,12 @@ export function ScopeSurfacePage({
         spaceId={owner.spaceId}
         readmePath={owner.readmePath}
         ownerPath={owner.ownerPath}
+        target={
+          owner.identityKind === "page-file" ||
+          owner.identityKind === "page-directory"
+            ? "page"
+            : "readme"
+        }
         fallbackTitle={fallbackTitle}
         fallbackIcon={fallbackIcon}
         onOpenPath={openPath}
@@ -266,7 +272,7 @@ function ScopePageSurfaceHost({
       {...props}
       contributions={contributions}
       header={(activeSurfaceId) => (
-        <ScopeOwnerHeader
+        <PageDetailHeader
           readOnly={pageSurface.readOnly}
           metadataBefore={metadataBefore}
           presentation={props.presentation}

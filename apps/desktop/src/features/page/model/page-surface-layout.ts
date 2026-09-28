@@ -3,6 +3,6 @@ import type { ReactNode } from "react";
 export interface PageSurfaceLayout {
   contentPath: string;
   directoryPath: string | null;
-  header: ReactNode;
+  header: (activeSurfaceId: string) => ReactNode;
   children: ReactNode;
 }

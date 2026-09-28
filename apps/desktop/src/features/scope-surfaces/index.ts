@@ -19,7 +19,6 @@ export { ScopeSurfaceHost } from "./ui/scope-surface-host";
 export { ScopeSurfaceErrorBoundary } from "./ui/scope-surface-error-boundary";
 export { ScopeSurfaceTabs } from "./ui/scope-surface-tabs";
 export { ScopeSurfaceUnavailable } from "./ui/scope-surface-unavailable";
-export { ScopeOwnerHeader } from "./ui/scope-owner-header";
 export type {
   ScopeCapability,
   ScopeOpenIntent,

@@ -20,6 +20,7 @@ import {
 } from "../field-save";
 import { humanizeOwnerPath, isReadmeMissingError } from "../lib/readme-state";
 import { applyPageTitleOutcome, type Page, type PageCover } from "../model";
+import { pageNameConflictFromError } from "../model/page-name";
 import { propertyFieldSavePolicy } from "../property-field-save";
 import {
   usePageTitleOutcomeEffect,
@@ -29,8 +30,15 @@ import { handleError } from "../lib/errors";
 import { useReadmeWrites } from "./use-readme-writes";
 import { useOptionalPageSurfaceSession } from "./page-surface-context";
 import { usePageDetailRefresh } from "./use-page-detail-refresh";
+import { usePageName } from "./use-page-name";
 
 export type ReadmeStatus = "loading" | "ready" | "missing" | "error";
+
+/**
+ * What the detail file is to its owner: the README of a directory owner, which
+ * can be created when it is missing, or the Page itself, which cannot.
+ */
+export type PageDetailTarget = "readme" | "page";
 
 export interface PagePathHandoff {
   previousPath: string;
@@ -43,6 +51,8 @@ export interface PageDetailContextValue {
   adoptPath: (path: string) => void;
   setPage: React.Dispatch<React.SetStateAction<Page | null>>;
   schemaResult: PageSchemaResult | null;
+  applySchema: (schemaResult: PageSchemaResult | null) => void;
+  target: PageDetailTarget;
   status: ReadmeStatus;
   error: string | null;
   writeError: string | null;
@@ -57,6 +67,8 @@ export interface PageDetailContextValue {
     value: unknown,
     options?: SavePageFieldOptions,
   ) => Promise<void>;
+  updateTitle: (title: string) => Promise<void>;
+  titleError: string | null;
   updateCover: (cover: PageCover | null) => Promise<void>;
   spacePath: string;
   projectPath: string | null;
@@ -75,6 +87,7 @@ export interface PageDetailProviderProps {
   spaceId: string;
   readmePath: string;
   ownerPath: string;
+  target?: PageDetailTarget;
   fallbackTitle?: string;
   fallbackIcon?: string | null;
   onOpenPath: (path: string, spaceId?: string | null) => void;
@@ -87,6 +100,7 @@ export function PageDetailProvider({
   spaceId,
   readmePath,
   ownerPath,
+  target = "readme",
   fallbackTitle,
   fallbackIcon = null,
   onOpenPath,
@@ -104,6 +118,7 @@ export function PageDetailProvider({
   const adoptedReadmePathRef = useRef<string | null>(null);
   const retargetPage = useRetargetPage();
   const pageSurface = useOptionalPageSurfaceSession();
+  const pageName = usePageName({ pagePath: readmePath, page, spaceId });
   const {
     patchPageTreeMeta,
     reloadTreeParent,
@@ -133,7 +148,6 @@ export function PageDetailProvider({
     applyPageUpdate,
     deferTitlePathAdoption: true,
     onSaved: (updated, context) => {
-      const pathChanged = updated.path !== context.previousPage.path;
       if (isPageTreeMetaField(context.field)) {
         patchPageTreeMeta(
           spaceId,
@@ -142,13 +156,16 @@ export function PageDetailProvider({
           updated.meta.icon,
           updated.meta.description ?? null,
         );
+        const reload =
+          updated.path !== context.previousPage.path
+            ? reloadTreePathParents(spaceId, [
+                context.previousPage.path,
+                updated.path,
+              ])
+            : reloadTreePathParent(spaceId, updated.path);
+        void reload.catch(handleError);
       }
-      if (context.field === "title" && pathChanged) {
-        void reloadTreePathParents(spaceId, [
-          context.previousPage.path,
-          updated.path,
-        ]).catch(handleError);
-      }
+      if (context.field === "title") pageName.clearSavedConflict();
     },
   });
 
@@ -183,11 +200,13 @@ export function PageDetailProvider({
   );
   const adoptPath = useCallback(
     (path: string) => {
+      const previousPath = page?.path ?? readmePath;
       adoptedReadmePathRef.current = path;
-      setPathHandoff({ previousPath: page?.path ?? readmePath, path });
+      setPathHandoff({ previousPath, path });
       setPage((current) => (current ? { ...current, path } : current));
+      retargetPage(previousPath, path, spaceId);
     },
-    [page?.path, readmePath],
+    [page?.path, readmePath, retargetPage, spaceId],
   );
 
   const loadSchema = useCallback(async () => {
@@ -216,14 +235,14 @@ export function PageDetailProvider({
       setStatus("ready");
     } catch (nextError) {
       if (sequence !== reloadSequenceRef.current) return;
-      if (isReadmeMissingError(nextError, readmePath)) {
+      if (target === "readme" && isReadmeMissingError(nextError, readmePath)) {
         setStatus("missing");
       } else {
         setError(String(nextError));
         setStatus("error");
       }
     }
-  }, [loadSchema, readmePath, spacePath]);
+  }, [loadSchema, readmePath, spacePath, target]);
 
   useEffect(() => {
     if (adoptedReadmePathRef.current === readmePath) {
@@ -312,6 +331,8 @@ export function PageDetailProvider({
     create,
     save,
     flushFields: flushMetadata,
+    rejects: (_field, writeError) =>
+      pageNameConflictFromError(writeError) !== null,
   });
   const {
     createReadme: ensureReadme,
@@ -372,6 +393,18 @@ export function PageDetailProvider({
     },
     [markLocalWrite, pageSurface, retry, writeField],
   );
+  const { acceptTitle, handleSaveError } = pageName;
+  const updateTitle = useCallback(
+    async (title: string) => {
+      if (!acceptTitle(title)) return;
+      try {
+        await updateField("title", title, { flush: true });
+      } catch (titleError) {
+        if (!handleSaveError(titleError)) throw titleError;
+      }
+    },
+    [acceptTitle, handleSaveError, updateField],
+  );
   const currentPath = page?.path ?? readmePath;
   const discard = useCallback(async () => {
     discardWrites();
@@ -381,12 +414,13 @@ export function PageDetailProvider({
     try {
       nextPage = await readPage({ spacePath, path: currentPath });
     } catch (readError) {
-      if (!isReadmeMissingError(readError, currentPath)) throw readError;
+      if (target === "page" || !isReadmeMissingError(readError, currentPath))
+        throw readError;
     }
     if (sequence !== reloadSequenceRef.current) return;
     setPage(nextPage);
     setStatus(nextPage ? "ready" : "missing");
-  }, [currentPath, discardFields, discardWrites, spacePath]);
+  }, [currentPath, discardFields, discardWrites, spacePath, target]);
   useEffect(
     () =>
       pageSurface?.registerPersistence("metadata", { flush, retry, discard }),
@@ -403,6 +437,8 @@ export function PageDetailProvider({
       retryWrites,
       metadataDrafts: drafts,
       schemaResult,
+      applySchema: setSchemaResult,
+      target,
       status,
       error,
       fallbackTitle: resolvedFallbackTitle,
@@ -410,6 +446,8 @@ export function PageDetailProvider({
       reload,
       createReadme,
       updateField,
+      updateTitle,
+      titleError: pageName.titleError,
       updateCover: (cover) => updateField("cover", cover),
       spacePath,
       projectPath,
@@ -438,7 +476,10 @@ export function PageDetailProvider({
       spaceId,
       spacePath,
       status,
+      target,
+      pageName.titleError,
       updateField,
+      updateTitle,
     ],
   );
 

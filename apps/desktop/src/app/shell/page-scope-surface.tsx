@@ -1,10 +1,7 @@
 import { useActiveContentSelection } from "@/features/artifact";
 import { useState } from "react";
 import type { PageSurfaceLayout } from "@/features/page/app-shell";
-import {
-  PageAccessRecovery,
-  usePageSurfaceSession,
-} from "@/features/page/scope-surface";
+import { usePageSurfaceSession } from "@/features/page/scope-surface";
 import { useCollectionDetailController } from "@/features/collection/app-shell";
 import { createPageOwner, ScopeSurfaceHost } from "@/features/scope-surfaces";
 import { createScopeSurfaceContributions } from "./scope-surface-contributions";
@@ -51,12 +48,7 @@ export function PageScopeSurface({
   }
 
   const contributions = createScopeSurfaceContributions({
-    ...createScopeContentRenderers({
-      readOnly: pageSurface.readOnly,
-      recovery: (
-        <PageAccessRecovery className="mx-auto w-full max-w-5xl px-6 pb-4" />
-      ),
-    }),
+    ...createScopeContentRenderers({ readOnly: pageSurface.readOnly }),
     readme: () => children,
   });
 

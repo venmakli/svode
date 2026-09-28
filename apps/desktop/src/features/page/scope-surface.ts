@@ -5,6 +5,7 @@ export {
 } from "./hooks/page-detail-context";
 export type { PageDetailProviderProps } from "./hooks/page-detail-context";
 export { ReadmeSurface } from "./ui/readme-surface";
+export { PageDetailHeader } from "./ui/page-detail-header";
 export { PageAccessRecovery } from "./ui/page-access-recovery";
 export {
   PageSurfaceSessionProvider,

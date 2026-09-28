@@ -1,11 +1,11 @@
 import { expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import {
+  PageDetailHeader,
   PageDetailProvider,
   PageSurfaceSessionProvider,
   ReadmeSurface,
 } from "@/features/page/scope-surface";
-import { ScopeOwnerHeader } from "@/features/scope-surfaces";
 
 test("keeps fallback identity hidden while the owner README is loading", () => {
   const markup = renderToStaticMarkup(
@@ -25,7 +25,7 @@ test("keeps fallback identity hidden while the owner README is loading", () => {
         fallbackIcon="🚀"
         onOpenPath={() => undefined}
       >
-        <ScopeOwnerHeader />
+        <PageDetailHeader />
         <ReadmeSurface />
       </PageDetailProvider>
     </PageSurfaceSessionProvider>,

@@ -190,3 +190,27 @@ test("a new successful field must not hide another field's failed draft", async 
   await session.retry();
   expect(session.getSnapshot().writeError).toBeNull();
 });
+
+test("a value the file rejects is dropped instead of blocking the session", async () => {
+  const conflict = new Error("page_name_conflict");
+  const session = new ReadmeWriteSession();
+  session.configure({
+    page,
+    canWrite: true,
+    create: async () => page,
+    save: async (_, field) => {
+      if (field === "title") throw conflict;
+      throw new Error("disk full");
+    },
+    flushFields: async () => {},
+    rejects: (_, error) => error === conflict,
+  });
+  await assert.rejects(session.updateField("title", "Taken"), conflict);
+  expect(session.getSnapshot().drafts.size).toBe(0);
+  expect(session.getSnapshot().writeError).toBeNull();
+  await session.flush();
+
+  await assert.rejects(session.updateField("icon", "x"), /disk full/);
+  expect(session.getSnapshot().drafts.has("icon")).toBe(true);
+  assert.match(session.getSnapshot().writeError ?? "", /disk full/);
+});

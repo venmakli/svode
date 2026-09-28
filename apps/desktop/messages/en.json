@@ -1251,6 +1251,7 @@
   "scope_readme_missing_description": "Create the description without leaving the current section.",
   "scope_readme_create": "Create README.md",
   "scope_readme_error_title": "Could not read README.md",
+  "page_detail_read_error_title": "Could not read this page",
   "scope_readme_open_file": "Open file",
   "collection_view": "View",
   "collection_views_section": "Views",

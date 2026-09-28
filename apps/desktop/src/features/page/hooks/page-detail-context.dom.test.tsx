@@ -123,7 +123,7 @@ async function harness(
     await import("./page-detail-context");
   const { PageSurfaceSessionProvider, usePageSurfaceSession } =
     await import("./page-surface-context");
-  const { ScopeOwnerHeader } = await import("@/features/scope-surfaces");
+  const { PageDetailHeader } = await import("../ui/page-detail-header");
   const { TooltipProvider } = await import("@/components/ui/tooltip");
   const { ThemeProvider } = await import("@/components/ui/theme-provider");
   const root = createRoot(dom.window.document.getElementById("app")!);
@@ -135,7 +135,7 @@ async function harness(
       session = surfaceSession;
     }, [detailContext, surfaceSession]);
     return (
-      <ScopeOwnerHeader
+      <PageDetailHeader
         readOnly={options.blocked}
         presentation={options.presentation}
       />
@@ -791,3 +791,43 @@ function installDomGlobals(dom: JSDOM) {
     }
   };
 }
+
+test("a compact Page detail keeps a title name conflict inline without blocking the session", async () => {
+  const view = await harness({
+    presentation: "compact",
+    fieldError: {
+      kind: "page_name_conflict",
+      conflict: {
+        parentPath: "",
+        conflicts: [{ path: "Taken/README.md", title: "Taken" }],
+      },
+    },
+  });
+  try {
+    view.pages.set("peek/README.md", {
+      path: "peek/README.md",
+      body: "",
+      meta: { title: "Peek", icon: null, created: "", updated: "", extra: {} },
+    });
+    await view.render("peek");
+    expect(view.context().status).toBe("ready");
+    view.failField(true);
+    await act(async () => {
+      await view.context().updateTitle("Taken");
+      await turn();
+    });
+    const text = view.dom.window.document.body.textContent ?? "";
+    expect(text.includes("A Page with this name already exists")).toBe(true);
+    expect(text.includes("Taken/README.md")).toBe(true);
+    expect(view.context().writeError).toBeNull();
+    expect(view.context().metadataDrafts.size).toBe(0);
+    expect(view.context().page?.meta.title).toBe("Peek");
+    let ready = false;
+    await act(async () => {
+      ready = await view.session().prepareForNavigation();
+    });
+    expect(ready).toBe(true);
+  } finally {
+    await view.cleanup();
+  }
+});

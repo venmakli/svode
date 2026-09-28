@@ -16,6 +16,8 @@ export interface ReadmeWriteOptions {
     options: SavePageFieldOptions,
   ) => Promise<unknown>;
   flushFields: () => Promise<void>;
+  /** A value the file rejects is not kept as a draft to retry. */
+  rejects?: (field: string, error: unknown) => boolean;
 }
 
 export class ReadmeWriteSession {
@@ -105,7 +107,10 @@ export class ReadmeWriteSession {
       if (!this.drafts.size) this.error = null;
     })()
       .catch((error: unknown) => {
-        if (this.drafts.get(field) === draft) this.error = error;
+        if (this.drafts.get(field) === draft) {
+          if (this.options?.rejects?.(field, error)) this.drafts.delete(field);
+          else this.error = error;
+        }
         throw error;
       })
       .finally(() => {

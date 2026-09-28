@@ -52,7 +52,7 @@ type ArtifactSurfaceComponent = ComponentType<ArtifactSurfaceRenderProps>;
 async function loadPageSurface(): Promise<{
   default: ArtifactSurfaceComponent;
 }> {
-  const { PageScreen, PageSurfaceSessionProvider } =
+  const { PageArtifact, PageSurfaceSessionProvider } =
     await import("@/features/page/app-shell");
   return {
     default: function PageArtifactSurface({
@@ -64,20 +64,22 @@ async function loadPageSurface(): Promise<{
       pageSessionKey,
       renderPageSurface,
     }: ArtifactSurfaceRenderProps) {
+      const displayName = artifactDisplayName(target.path);
       return (
         <PageSurfaceSessionProvider
-          displayName={artifactDisplayName(target.path)}
+          displayName={displayName}
           displayPath={target.path}
           onOpenRepositorySettings={onOpenRepositorySettings}
           registerGlobalDeactivation
           spacePath={spacePath}
           targetKey={pageSessionKey ?? `${spaceId}:${target.path}`}
         >
-          <PageScreen
+          <PageArtifact
             spacePath={spacePath}
             projectPath={projectPath}
             pagePath={target.path}
             spaceId={spaceId}
+            fallbackTitle={displayName}
             renderSurface={renderPageSurface}
           />
         </PageSurfaceSessionProvider>

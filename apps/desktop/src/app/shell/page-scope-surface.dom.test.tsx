@@ -32,6 +32,11 @@ if (process.env.SVODE_PAGE_SCOPE_TEST !== "1") {
   let allowCollectionNavigation = true;
   let appBroken = false;
   const lifecycle: string[] = [];
+  type Props = Record<string, unknown>;
+  let headerProps: Props = {};
+  let panelProps: Props = {};
+  let actionsProps: Props = {};
+  let deleteDialogProps: Props = {};
   mock.module("@/features/editor", () => ({
     PlateDocumentEditor: function Editor(props: {
       documentPath: string;
@@ -75,33 +80,47 @@ if (process.env.SVODE_PAGE_SCOPE_TEST !== "1") {
     probeMediaTarget: () => ({ status: "no_match" }),
   }));
   mock.module("@/features/properties/panel", () => ({
-    PropertyPanel: () => null,
+    PropertyPanel: (props: Props) => {
+      panelProps = props;
+      const result = props.schemaResult as {
+        schema: { columns: unknown[] };
+      };
+      return <div data-columns={result.schema.columns.length} />;
+    },
   }));
   mock.module("@/features/page/ui/page-identity-header", () => ({
-    PageIdentityHeader: ({
-      title,
-      actions,
-      readOnly,
-    }: {
+    PageIdentityHeader: (props: {
       title: string;
+      titleError?: string | null;
       actions: ReactNode;
       readOnly: boolean;
-    }) => (
-      <header data-read-only={readOnly}>
-        {title}
-        {actions}
-      </header>
-    ),
+    }) => {
+      headerProps = props as unknown as Props;
+      return (
+        <header data-read-only={props.readOnly}>
+          {props.title}
+          {props.titleError ? <p data-title-error>{props.titleError}</p> : null}
+          {props.actions}
+        </header>
+      );
+    },
     PageIdentityHeaderSkeleton: () => <header>Loading</header>,
   }));
   mock.module("@/features/page/ui/page-detail-actions", () => ({
-    PageDetailActions: () => null,
+    PageDetailActions: (props: Props) => {
+      actionsProps = props;
+      return null;
+    },
   }));
   mock.module("@/features/page/ui/page-system-fields", () => ({
     PageSystemFields: () => null,
   }));
   mock.module("@/features/page/ui/page-delete-dialog", () => ({
-    PageDeleteDialog: () => null,
+    PageDeleteDialog: (props: Props) => {
+      deleteDialogProps = props;
+      const page = props.page as Page | null;
+      return page ? <div data-delete={page.path} /> : null;
+    },
   }));
   // Radix portals need DOM globals before import; the real dialog has its
   // own DOM test, this one follows the leave flow through the shell.
@@ -172,6 +191,8 @@ if (process.env.SVODE_PAGE_SCOPE_TEST !== "1") {
     await import("@/features/page/navigation");
   const { useMainChangesTarget } = await import("@/features/changes");
   const { PageScopeSurface } = await import("./page-scope-surface");
+  const { getSpaceTreeSyncSnapshot, registerRootSpace } =
+    await import("@/features/space");
   function page(path: string): Page {
     return {
       path,
@@ -179,7 +200,16 @@ if (process.env.SVODE_PAGE_SCOPE_TEST !== "1") {
       meta: { title: path, icon: null, created: "", updated: "", extra: {} },
     };
   }
-  async function fixture(initialPath: string, folder = false) {
+  async function fixture(
+    initialPath: string,
+    folder = false,
+    options: {
+      readFailures?: number;
+      missing?: boolean;
+      schemaColumns?: number;
+      fieldError?: unknown;
+    } = {},
+  ) {
     const dom = new JSDOM("<!doctype html><div id=app></div>", {
       pretendToBeVisual: true,
       url: "http://localhost/",
@@ -194,9 +224,58 @@ if (process.env.SVODE_PAGE_SCOPE_TEST !== "1") {
     let hasApp = folder;
     let status = "local";
     let reads = 0;
+    let readFailures = options.readFailures ?? 0;
+    let externalTitle: string | null = null;
+    const calls: { command: string; args: Record<string, unknown> }[] = [];
+    headerProps = {};
+    panelProps = {};
+    actionsProps = {};
+    deleteDialogProps = {};
     const spacePath = `/df104-${Date.now()}-${Math.random()}`;
+    registerRootSpace({
+      id: "root",
+      name: "Root",
+      icon: "",
+      description: "",
+      path: spacePath,
+      hasSpaces: false,
+      hasSchema: false,
+      lastOpened: null,
+      status: "ready",
+      lfsState: "n/a",
+    });
     mockNativeIpc(
       (command, args) => {
+        calls.push({
+          command,
+          args: (args ?? {}) as Record<string, unknown>,
+        });
+        const input = (args ?? {}) as Record<string, unknown>;
+        if (command === "get_expanded_paths") return [];
+        if (command === "save_expanded_paths") return null;
+        if (command === "list_tree_children")
+          return input.parentPath === null
+            ? [
+                {
+                  name: "Taken.md",
+                  path: "Taken.md",
+                  title: "Taken",
+                  icon: null,
+                  has_changes: false,
+                  has_schema: false,
+                },
+              ]
+            : [];
+        if (command === "update_entry_field") {
+          if (options.fieldError) throw options.fieldError;
+          const updated = page(String(input.filePath));
+          return input.field === "icon"
+            ? { ...updated, meta: { ...updated.meta, icon: input.value } }
+            : updated;
+        }
+        if (command === "delete_entry") return null;
+        if (command === "duplicate_entry")
+          return { ...page("Note copy.md"), warnings: [] };
         if (command === "repository_access_get")
           return {
             status,
@@ -209,12 +288,36 @@ if (process.env.SVODE_PAGE_SCOPE_TEST !== "1") {
           };
         if (command === "read_entry") {
           reads += 1;
-          return page(String(args && "path" in args ? args.path : ""));
+          if (options.missing)
+            throw new Error(`File not found: ${String(input.path)}`);
+          if (readFailures > 0) {
+            readFailures -= 1;
+            throw new Error("Invalid frontmatter");
+          }
+          const read = page(String(args && "path" in args ? args.path : ""));
+          return externalTitle
+            ? { ...read, meta: { ...read.meta, title: externalTitle } }
+            : read;
         }
-        if (command === "get_entry_schema") return null;
+        if (command === "get_entry_schema")
+          return options.schemaColumns
+            ? {
+                schema: {
+                  columns: Array.from(
+                    { length: options.schemaColumns },
+                    (_, index) => ({ name: `Field ${index}`, type: "text" }),
+                  ),
+                  views: [],
+                },
+              }
+            : null;
         if (command === "get_entry_detail_state")
           return {
-            form: folder ? "folder" : "leaf",
+            form: /\/readme\.md$/i.test(
+              String(args && "path" in args ? args.path : ""),
+            )
+              ? "folder"
+              : "leaf",
             subpageCount: 0,
             otherFileCount: 0,
           };
@@ -227,13 +330,25 @@ if (process.env.SVODE_PAGE_SCOPE_TEST !== "1") {
     function Harness() {
       const { selection, activePathRetarget } = useActiveContentSelection();
       const changes = useMainChangesTarget();
-      if (selection?.kind !== "artifact") return null;
+      if (selection?.kind !== "artifact")
+        return (
+          <output
+            data-selection={
+              selection
+                ? `${selection.kind}:${selection.request.owner.kind}`
+                : ""
+            }
+          />
+        );
       const request = selection.request;
       return (
         <div data-scroll style={{ overflowY: "auto", height: 400 }}>
           <output
             data-changes={changes?.path}
             data-changes-kind={changes?.kind}
+            data-changes-shape={
+              changes && "sourceShape" in changes ? changes.sourceShape : ""
+            }
           />
           <ArtifactSurface
             request={request}
@@ -271,7 +386,22 @@ if (process.env.SVODE_PAGE_SCOPE_TEST !== "1") {
       dom,
       spacePath,
       render,
+      calls,
+      /** Parents the Page asked the sidebar tree to reload since `from`. */
+      treeReloads: (from: number) =>
+        calls
+          .slice(from)
+          .filter(({ command }) => command === "list_tree_children")
+          .map(({ args }) => args.parentPath),
       reads: () => reads,
+      writeExternally: async (path: string, title: string) => {
+        externalTitle = title;
+        const { emit } = await import("@/platform/native/events");
+        await act(async () => {
+          await emit("file:changed", { space: spacePath, path });
+          await settle();
+        });
+      },
       marker: async (value: boolean) => {
         hasApp = value;
         await render();
@@ -344,6 +474,11 @@ if (process.env.SVODE_PAGE_SCOPE_TEST !== "1") {
           .querySelector("[data-changes]")
           ?.getAttribute("data-changes-kind"),
       ).toBe("page");
+      expect(
+        f.dom.window.document
+          .querySelector("[data-changes]")
+          ?.getAttribute("data-changes-shape"),
+      ).toBe("directory");
       await clickTab(f.dom, 2);
       expect(
         f.dom.window.document
@@ -567,6 +702,205 @@ if (process.env.SVODE_PAGE_SCOPE_TEST !== "1") {
       expect(mounts).toBe(1);
     } finally {
       console.error = previousError;
+      await f.cleanup();
+    }
+  });
+
+  test("a full Page shows another writer's metadata in place without re-creating its editor", async () => {
+    const f = await fixture("Note.md");
+    const doc = f.dom.window.document;
+    try {
+      expect(
+        doc.querySelector("[data-changes]")?.getAttribute("data-changes-shape"),
+      ).toBe("file");
+      const editor = doc.querySelector("textarea")!;
+      editor.value = "local body draft";
+      await f.writeExternally("Note.md", "Renamed by Routine");
+      expect(
+        doc
+          .querySelector("header")
+          ?.textContent?.includes("Renamed by Routine"),
+      ).toBe(true);
+      expect(doc.querySelector("textarea")).toBe(editor);
+      expect(editor.value).toBe("local body draft");
+      expect(mounts).toBe(1);
+      expect(f.reads()).toBe(2);
+    } finally {
+      await f.cleanup();
+    }
+  });
+
+  test("a full Page that cannot be read shows the error with Retry and loads on retry", async () => {
+    const f = await fixture("Broken.md", false, { readFailures: 1 });
+    const doc = f.dom.window.document;
+    try {
+      expect(doc.querySelector("textarea")).toBeNull();
+      expect(doc.body.textContent?.includes("Could not read this page")).toBe(
+        true,
+      );
+      expect(doc.body.textContent?.includes("Invalid frontmatter")).toBe(true);
+      expect(doc.body.textContent?.includes("Create README.md")).toBe(false);
+      const retry = [...doc.querySelectorAll("button")].find(
+        (button) => button.textContent?.trim() === "Retry",
+      )!;
+      await act(async () => {
+        retry.click();
+        await settle();
+      });
+      expect(doc.querySelector("textarea")?.dataset.editor).toBe("Broken.md");
+      expect(f.reads()).toBe(2);
+    } finally {
+      await f.cleanup();
+    }
+  });
+
+  test("a missing root readme.md hands over to the Space owner", async () => {
+    const f = await fixture("readme.md", false, { missing: true });
+    try {
+      await act(settle);
+      expect(
+        f.dom.window.document
+          .querySelector("[data-selection]")
+          ?.getAttribute("data-selection"),
+      ).toBe("scope-owner:space");
+    } finally {
+      await f.cleanup();
+    }
+  });
+
+  test("a full Page title name conflict stays inline and does not block leaving", async () => {
+    const f = await fixture("Note.md", false, {
+      fieldError: {
+        kind: "page_name_conflict",
+        conflict: {
+          parentPath: "",
+          conflicts: [{ path: "Other.md", title: "Other" }],
+        },
+      },
+    });
+    const doc = f.dom.window.document;
+    const titleError = () =>
+      doc.querySelector("[data-title-error]")?.textContent ?? "";
+    try {
+      await act(async () => {
+        await getSpaceTreeSyncSnapshot().loadTreeChildren("root", "");
+      });
+      await act(async () => {
+        (headerProps.onTitleChange as (value: string) => void)("taken");
+        await settle();
+      });
+      expect(titleError().includes("Taken.md")).toBe(true);
+      expect(
+        f.calls.some(({ command }) => command === "update_entry_field"),
+      ).toBe(false);
+      await act(async () => {
+        (headerProps.onTitleChange as (value: string) => void)("Other");
+        await settle();
+      });
+      expect(titleError().includes("Other.md")).toBe(true);
+      expect(doc.querySelector('[role="alert"]')).toBeNull();
+      await act(async () => {
+        openPage("Next.md", "root");
+        await settle();
+      });
+      expect(doc.querySelector("[data-page-discard-confirmation]")).toBeNull();
+      expect(doc.querySelector("textarea")?.dataset.editor).toBe("Next.md");
+    } finally {
+      await f.cleanup();
+    }
+  });
+
+  test("full Page metadata save syncs the tree and a schema change from the panel is shown", async () => {
+    const f = await fixture("Folder/Note.md", false, { schemaColumns: 1 });
+    const doc = f.dom.window.document;
+    try {
+      expect(
+        doc.querySelector("[data-columns]")?.getAttribute("data-columns"),
+      ).toBe("1");
+      const before = f.calls.length;
+      await act(async () => {
+        (headerProps.onIconChange as (value: string) => void)("🚀");
+        await settle();
+      });
+      expect(
+        f.calls.find(({ command }) => command === "update_entry_field")?.args
+          .field,
+      ).toBe("icon");
+      expect(f.treeReloads(before)).toEqual(["Folder"]);
+      await act(async () => {
+        (panelProps.onSchemaChange as (value: unknown) => void)({
+          schema: {
+            columns: [
+              { name: "Field 0", type: "text" },
+              { name: "Field 1", type: "text" },
+            ],
+            views: [],
+          },
+        });
+        await settle();
+      });
+      expect(
+        doc.querySelector("[data-columns]")?.getAttribute("data-columns"),
+      ).toBe("2");
+    } finally {
+      await f.cleanup();
+    }
+  });
+
+  test("full Page delete, duplicate and conversions keep their tree and navigation effects", async () => {
+    const f = await fixture("Note.md");
+    const doc = f.dom.window.document;
+    const editor = () =>
+      doc.querySelector("[data-editor]")?.getAttribute("data-editor");
+    try {
+      await act(async () => {
+        (actionsProps.onDeletePage as (page: Page) => void)(page("Note.md"));
+        await settle();
+      });
+      expect(
+        doc.querySelector("[data-delete]")?.getAttribute("data-delete"),
+      ).toBe("Note.md");
+      const before = f.calls.length;
+      await act(async () => {
+        (deleteDialogProps.onDeletePage as (page: Page) => void)(
+          page("Note.md"),
+        );
+        await settle();
+      });
+      expect(
+        f.calls.find(({ command }) => command === "delete_entry")?.args.path,
+      ).toBe("Note.md");
+      expect(f.treeReloads(before)).toEqual([null]);
+      expect(doc.querySelector("[data-delete]")).toBeNull();
+
+      await act(async () => {
+        await (actionsProps.onDuplicatePage as (page: Page) => Promise<void>)(
+          page("Note.md"),
+        );
+        await settle();
+      });
+      expect(editor()).toBe("Note copy.md");
+
+      await act(async () => {
+        (actionsProps.onConverted as (page: Page, nested: boolean) => void)(
+          page("Leaf.md"),
+          false,
+        );
+        await settle();
+      });
+      expect(editor()).toBe("Leaf.md");
+
+      await act(async () => {
+        (actionsProps.onConverted as (page: Page, nested: boolean) => void)(
+          page("Col/README.md"),
+          true,
+        );
+        await settle();
+      });
+      expect(
+        doc.querySelector("[data-selection]")?.getAttribute("data-selection"),
+      ).toBe("scope-owner:collection");
+    } finally {
       await f.cleanup();
     }
   });

@@ -1251,6 +1251,7 @@
   "scope_readme_missing_description": "Создайте описание, не покидая текущий раздел.",
   "scope_readme_create": "Создать README.md",
   "scope_readme_error_title": "Не удалось прочитать README.md",
+  "page_detail_read_error_title": "Не удалось прочитать страницу",
   "scope_readme_open_file": "Открыть файл",
   "collection_view": "Вид",
   "collection_views_section": "Виды",

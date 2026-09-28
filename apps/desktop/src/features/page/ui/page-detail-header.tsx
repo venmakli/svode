@@ -4,18 +4,16 @@ import { Button } from "@/components/ui/button";
 import * as m from "@/paraglide/messages.js";
 import { PropertyPanel } from "@/features/properties/panel";
 import { detailPageHeaderClassName } from "@/shared/ui/page-layout";
+import { usePageDetailContext } from "../hooks/page-detail-context";
+import { handleError } from "../lib/errors";
+import { PageAccessRecovery } from "./page-access-recovery";
 import {
-  PageAccessRecovery,
-  usePageDetailContext,
-} from "@/features/page/scope-surface";
-import {
-  handleError,
   PageIdentityHeader,
   PageIdentityHeaderSkeleton,
-  PageSystemFields,
-} from "@/features/page/detail";
+} from "./page-identity-header";
+import { PageSystemFields } from "./page-system-fields";
 
-export function ScopeOwnerHeader({
+export function PageDetailHeader({
   actions,
   readOnly = false,
   showReadError = true,
@@ -32,7 +30,7 @@ export function ScopeOwnerHeader({
   const { page, schemaResult } = context;
 
   if (context.status === "loading") {
-    return <ScopeOwnerHeaderSkeleton actions={actions} />;
+    return <PageDetailHeaderSkeleton actions={actions} />;
   }
 
   const metadataReadOnly =
@@ -61,12 +59,11 @@ export function ScopeOwnerHeader({
         cover={page?.meta.cover ?? null}
         projectPath={context.projectPath}
         spacePath={context.spacePath}
-        pagePath={context.readmePath}
+        pagePath={page?.path ?? context.readmePath}
         onTitleChange={(value) =>
-          void context
-            .updateField("title", value, { flush: true })
-            .catch(handleError)
+          void context.updateTitle(value).catch(handleError)
         }
+        titleError={context.titleError}
         onIconChange={(value) =>
           void context.updateField("icon", value).catch(handleError)
         }
@@ -117,7 +114,7 @@ export function ScopeOwnerHeader({
             spacePath={context.spacePath}
             projectPath={context.projectPath}
             spaceId={context.spaceId}
-            filePath={context.readmePath}
+            filePath={page.path}
             pageLabel={page.meta.title}
             schemaResult={schemaResult}
             values={propertyValues(
@@ -128,6 +125,7 @@ export function ScopeOwnerHeader({
             mode={presentation === "compact" ? "peek" : "full"}
             readOnly={readOnly}
             onOpenPath={context.onOpenPath}
+            onSchemaChange={context.applySchema}
             onValueChange={context.updateField}
           />
         </div>
@@ -150,7 +148,7 @@ function propertyValues(
   return values;
 }
 
-function ScopeOwnerHeaderSkeleton({ actions }: { actions?: ReactNode }) {
+function PageDetailHeaderSkeleton({ actions }: { actions?: ReactNode }) {
   return (
     <div
       className={detailPageHeaderClassName}
