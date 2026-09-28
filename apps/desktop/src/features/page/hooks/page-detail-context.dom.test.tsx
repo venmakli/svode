@@ -17,7 +17,12 @@ function deferred<T>() {
 const turn = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 async function harness(
-  options: { readError?: boolean; blocked?: boolean } = {},
+  options: {
+    readError?: boolean;
+    blocked?: boolean;
+    fieldError?: unknown;
+    schema?: { name: string; type: string }[];
+  } = {},
 ) {
   const dom = new JSDOM(
     "<!doctype html><html><body><div id=app></div></body></html>",
@@ -77,7 +82,7 @@ async function harness(
         return structuredClone(page);
       }
       if (command === "update_entry_field") {
-        if (fieldFailure) throw new Error("Save failed");
+        if (fieldFailure) throw options.fieldError ?? new Error("Save failed");
         const page = pages.get(String(input.filePath))!;
         const updated = {
           ...page,
@@ -86,7 +91,10 @@ async function harness(
         pages.set(page.path, updated);
         return structuredClone(updated);
       }
-      if (command === "get_entry_schema") return null;
+      if (command === "get_entry_schema")
+        return options.schema
+          ? { schema: { columns: options.schema, views: [] } }
+          : null;
       if (command === "list_content_tree_children") return [];
       return null;
     },
@@ -328,6 +336,45 @@ test("create and field failures retain drafts and session retry recovers partial
     await act(async () => {
       expect(await view.session().prepareForNavigation()).toBe(true);
     });
+  } finally {
+    await view.cleanup();
+  }
+});
+
+test("a property draft whose save failed stays visible with a user-facing error", async () => {
+  const view = await harness({
+    fieldError: { kind: "unexpected", detail: "not a string" },
+    schema: [{ name: "Status", type: "text" }],
+  });
+  try {
+    view.pages.set("app-only/README.md", {
+      path: "app-only/README.md",
+      body: "",
+      meta: {
+        title: "App only",
+        icon: null,
+        created: "",
+        updated: "",
+        extra: { Status: "Todo" },
+      },
+    });
+    await view.render();
+    await act(async () => {
+      await turn();
+      await turn();
+    });
+    view.failField(true);
+    await act(async () => {
+      await view
+        .context()
+        .updateField("Status", "Done")
+        .catch(() => undefined);
+      await turn();
+    });
+    const text = view.dom.window.document.body.textContent ?? "";
+    expect(text.includes("Done")).toBe(true);
+    expect(text.includes("[object Object]")).toBe(false);
+    expect(text.includes("Retry saving before leaving this Page")).toBe(true);
   } finally {
     await view.cleanup();
   }

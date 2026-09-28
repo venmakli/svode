@@ -120,7 +120,11 @@ export function ScopeOwnerHeader({
             filePath={context.readmePath}
             pageLabel={page.meta.title}
             schemaResult={schemaResult}
-            values={page.meta.extra ?? {}}
+            values={propertyValues(
+              page.meta.extra ?? {},
+              schemaResult.schema.columns,
+              context.metadataDrafts,
+            )}
             mode={presentation === "compact" ? "peek" : "full"}
             readOnly={readOnly}
             onOpenPath={context.onOpenPath}
@@ -130,6 +134,20 @@ export function ScopeOwnerHeader({
       ) : null}
     </div>
   );
+}
+
+/** Unsaved field drafts stay visible until they are saved or discarded. */
+function propertyValues(
+  saved: Record<string, unknown>,
+  columns: readonly { name: string }[],
+  drafts: ReadonlyMap<string, { value: unknown }>,
+) {
+  const values = { ...saved };
+  for (const { name } of columns) {
+    const draft = drafts.get(name);
+    if (draft) values[name] = draft.value;
+  }
+  return values;
 }
 
 function ScopeOwnerHeaderSkeleton({ actions }: { actions?: ReactNode }) {
