@@ -1,4 +1,4 @@
-import { Component, type ReactNode } from "react";
+import { Component, type ErrorInfo, type ReactNode } from "react";
 import * as m from "@/paraglide/messages.js";
 
 interface ScopeSurfaceErrorBoundaryProps {
@@ -17,6 +17,10 @@ export class ScopeSurfaceErrorBoundary extends Component<
 
   static getDerivedStateFromError(): ScopeSurfaceErrorBoundaryState {
     return { hasError: true };
+  }
+
+  componentDidCatch(error: unknown, info: ErrorInfo) {
+    console.error("Scope surface render failed", error, info.componentStack);
   }
 
   render() {

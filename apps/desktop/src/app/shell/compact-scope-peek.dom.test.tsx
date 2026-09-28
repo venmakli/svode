@@ -31,6 +31,7 @@ if (process.env.SVODE_COMPACT_SCOPE_TEST !== "1") {
   let _convert: (path: string) => void = () => {};
   const allowCollectionNavigation = true;
   const appBroken = false;
+  let headerBroken = false;
   const lifecycle: string[] = [];
   mock.module("@/features/editor", () => ({
     PlateDocumentEditor: function Editor(props: {
@@ -86,12 +87,15 @@ if (process.env.SVODE_COMPACT_SCOPE_TEST !== "1") {
       title: string;
       actions: ReactNode;
       readOnly: boolean;
-    }) => (
-      <header data-read-only={readOnly}>
-        {title}
-        {actions}
-      </header>
-    ),
+    }) => {
+      if (headerBroken) throw new Error("Peek header failed");
+      return (
+        <header data-read-only={readOnly}>
+          {title}
+          {actions}
+        </header>
+      );
+    },
     PageIdentityHeaderSkeleton: () => <header>Loading</header>,
   }));
   mock.module("@/features/page/ui/page-detail-actions", () => ({
@@ -164,6 +168,9 @@ if (process.env.SVODE_COMPACT_SCOPE_TEST !== "1") {
   const { TooltipProvider } = await import("@/components/ui/tooltip");
   const { getActiveContentSelection, closeActiveContent } =
     await import("@/features/artifact");
+  const { ScopeSurfaceErrorBoundary } =
+    await import("@/features/scope-surfaces");
+  const m = await import("@/paraglide/messages.js");
   test("Page+App+Attachments keeps one writer and selected Full page through Collection/relation/template and Attachments", async () => {
     for (const family of ["collection", "attachments"] as const) {
       const dom = new JSDOM("<!doctype html><div id=app></div>", {
@@ -360,6 +367,110 @@ if (process.env.SVODE_COMPACT_SCOPE_TEST !== "1") {
       }
     }
   }, 30000);
+  test("render error inside Peek stays in its Sheet, is reported and the Peek can be closed", async () => {
+    const dom = new JSDOM("<!doctype html><div id=app></div>", {
+      pretendToBeVisual: true,
+      url: "http://localhost/",
+    });
+    const restore = installDomGlobals(dom);
+    const page: Page = {
+      path: "Tasks/Item2.md",
+      body: "",
+      meta: { title: "Item2", icon: null, created: "", updated: "", extra: {} },
+    };
+    mockNativeIpc(
+      (command) => {
+        if (command === "repository_access_get")
+          return {
+            status: "local",
+            repositoryId: "/space",
+            generation: 1,
+            checkedAt: null,
+            expiresAt: null,
+            reason: null,
+            lastKnownStatus: null,
+          };
+        if (command === "read_entry") return page;
+        if (command === "get_entry_schema") return null;
+        if (command === "get_entry_detail_state")
+          return { form: "leaf", subpageCount: 0, otherFileCount: 0 };
+        if (command === "path_exists") return false;
+        throw new Error(`Unexpected IPC: ${command}`);
+      },
+      { shouldMockEvents: true },
+    );
+    const root = createRoot(dom.window.document.getElementById("app")!);
+    function Harness() {
+      const [open, setOpen] = useState(true);
+      return (
+        <TooltipProvider>
+          <ScopeSurfaceErrorBoundary>
+            <div data-parent-collection />
+            <PagePeekSheet
+              target={open ? { page, nested: false } : null}
+              readOnly={false}
+              spacePath="/space"
+              spaceId="space"
+              projectPath="/space"
+              onOpenChange={setOpen}
+              onOpenPath={() => {}}
+              onDuplicatePage={() => {}}
+              onDeletePage={() => {}}
+              onConvertedPage={() => {}}
+              renderPeek={(context) => (
+                <CompactScopePeek key={context.sessionKey} {...context} />
+              )}
+            />
+          </ScopeSurfaceErrorBoundary>
+        </TooltipProvider>
+      );
+    }
+    const previousError = console.error;
+    const reported: unknown[][] = [];
+    console.error = (...args: unknown[]) => {
+      reported.push(args);
+    };
+    headerBroken = true;
+    try {
+      await act(async () => {
+        root.render(<Harness />);
+        await settle();
+      });
+      const document = dom.window.document;
+      expect(Boolean(document.querySelector("[data-parent-collection]"))).toBe(
+        true,
+      );
+      const sheet = document.querySelector('[data-slot="sheet-content"]');
+      expect(sheet?.textContent?.includes(m.scope_surface_render_error())).toBe(
+        true,
+      );
+      const report = reported.find(
+        ([message]) => message === "Scope surface render failed",
+      );
+      expect((report?.[1] as Error | undefined)?.message).toBe(
+        "Peek header failed",
+      );
+      expect(String(report?.[2]).includes("PageIdentityHeader")).toBe(true);
+      const close = [...sheet!.querySelectorAll("button")].find(
+        (button) => button.textContent === m.settings_cancel(),
+      )!;
+      await act(async () => {
+        close.click();
+        await settle();
+      });
+      expect(document.querySelector('[data-slot="sheet-content"]')).toBeNull();
+      expect(Boolean(document.querySelector("[data-parent-collection]"))).toBe(
+        true,
+      );
+    } finally {
+      headerBroken = false;
+      await act(async () => root.unmount());
+      clearNativeMocks();
+      console.error = previousError;
+      restore();
+      dom.window.close();
+    }
+  });
   test("peek replacement is guarded, ignores late targets and keeps canonical handoff in one session", async () => {
     const dom = new JSDOM("<!doctype html><div id=app></div>", {
       pretendToBeVisual: true,

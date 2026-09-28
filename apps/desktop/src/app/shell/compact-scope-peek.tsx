@@ -12,6 +12,7 @@ import type {
   CollectionRouteState,
 } from "@/features/collection/app-shell";
 import {
+  ScopeSurfaceErrorBoundary,
   usePeekOwner,
   type ScopePeekContext,
   type ScopeSurfaceId,
@@ -113,31 +114,33 @@ export function CompactScopePeek(props: ScopePeekContext) {
         </Alert>
       ) : null}
       <div className="scrollbar-hide min-h-0 flex-1 overflow-y-auto overflow-x-hidden">
-        <ScopeSurfacePage
-          owner={owner}
-          presentation="compact"
-          sessionKey={props.sessionKey}
-          routeState={routeState}
-          compactSurfaceState={{
-            surfaceId: selectedSurfaceId,
-            onSurfaceIdChange: setSurfaceId,
-          }}
-          fallbackTitle={props.fallbackTitle}
-          fallbackIcon={props.fallbackIcon}
-          metadataBefore={props.metadataBefore}
-          headerActions={
-            owner.identityKind === "page-file" ||
-            owner.identityKind === "page-directory"
-              ? null
-              : undefined
-          }
-          renderHeaderActions={props.renderHeaderActions}
-          registerNavigationGuard={props.registerNavigationGuard}
-          onContentPathChange={(nextPath) => {
-            setPathState({ input: props.path, current: nextPath });
-            props.onContentPathChange?.(nextPath);
-          }}
-        />
+        <ScopeSurfaceErrorBoundary>
+          <ScopeSurfacePage
+            owner={owner}
+            presentation="compact"
+            sessionKey={props.sessionKey}
+            routeState={routeState}
+            compactSurfaceState={{
+              surfaceId: selectedSurfaceId,
+              onSurfaceIdChange: setSurfaceId,
+            }}
+            fallbackTitle={props.fallbackTitle}
+            fallbackIcon={props.fallbackIcon}
+            metadataBefore={props.metadataBefore}
+            headerActions={
+              owner.identityKind === "page-file" ||
+              owner.identityKind === "page-directory"
+                ? null
+                : undefined
+            }
+            renderHeaderActions={props.renderHeaderActions}
+            registerNavigationGuard={props.registerNavigationGuard}
+            onContentPathChange={(nextPath) => {
+              setPathState({ input: props.path, current: nextPath });
+              props.onContentPathChange?.(nextPath);
+            }}
+          />
+        </ScopeSurfaceErrorBoundary>
       </div>
     </div>
   );
