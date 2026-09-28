@@ -16,12 +16,19 @@ function deferred<T>() {
 }
 const turn = () => new Promise((resolve) => setTimeout(resolve, 0));
 
+interface SchemaColumn {
+  name: string;
+  type: string;
+  options?: { name: string; color: string }[];
+}
+
 async function harness(
   options: {
     readError?: boolean;
     blocked?: boolean;
     fieldError?: unknown;
-    schema?: { name: string; type: string }[];
+    schema?: SchemaColumn[];
+    presentation?: "full" | "compact";
   } = {},
 ) {
   const dom = new JSDOM(
@@ -35,6 +42,9 @@ async function harness(
   let createFailure = false;
   let fieldFailure = false;
   let partial = false;
+  let fieldDelay: Promise<void> | null = null;
+  let readDelay: Promise<void> | null = null;
+  let schema = options.schema;
   let context!: PageDetailContextValue;
   let session!: {
     prepareForNavigation(): Promise<boolean>;
@@ -59,7 +69,9 @@ async function harness(
         if (options.readError) throw new Error("Invalid frontmatter");
         const page = pages.get(String(input.path));
         if (!page) throw new Error(`File not found: ${input.path}`);
-        return structuredClone(page);
+        const snapshot = structuredClone(page);
+        if (readDelay) await readDelay;
+        return snapshot;
       }
       if (command === "create_entry") {
         if (createDelay) await createDelay;
@@ -82,19 +94,26 @@ async function harness(
         return structuredClone(page);
       }
       if (command === "update_entry_field") {
+        if (fieldDelay) await fieldDelay;
         if (fieldFailure) throw options.fieldError ?? new Error("Save failed");
         const page = pages.get(String(input.filePath))!;
-        const updated = {
-          ...page,
-          meta: { ...page.meta, [String(input.field)]: input.value },
-        };
+        const field = String(input.field);
+        const updated = ["title", "icon", "description", "cover"].includes(
+          field,
+        )
+          ? { ...page, meta: { ...page.meta, [field]: input.value } }
+          : {
+              ...page,
+              meta: {
+                ...page.meta,
+                extra: { ...page.meta.extra, [field]: input.value },
+              },
+            };
         pages.set(page.path, updated);
         return structuredClone(updated);
       }
       if (command === "get_entry_schema")
-        return options.schema
-          ? { schema: { columns: options.schema, views: [] } }
-          : null;
+        return schema ? { schema: { columns: schema, views: [] } } : null;
       if (command === "list_content_tree_children") return [];
       return null;
     },
@@ -115,7 +134,12 @@ async function harness(
       context = detailContext;
       session = surfaceSession;
     }, [detailContext, surfaceSession]);
-    return <ScopeOwnerHeader readOnly={options.blocked} />;
+    return (
+      <ScopeOwnerHeader
+        readOnly={options.blocked}
+        presentation={options.presentation}
+      />
+    );
   }
   async function render(ownerPath = "app-only") {
     await act(async () => {
@@ -166,8 +190,31 @@ async function harness(
     partial: () => {
       partial = true;
     },
+    delayFields: (value: Promise<void> | null) => {
+      fieldDelay = value;
+    },
+    delayReads: (value: Promise<void> | null) => {
+      readDelay = value;
+    },
+    setSchema: (value: SchemaColumn[]) => {
+      schema = value;
+    },
+    fileEvent: async (
+      path: string,
+      event = "file:changed",
+      space: string = spacePath,
+    ) => {
+      const { emit } = await import("@/platform/native/events");
+      await act(async () => {
+        await emit(event, { space, path });
+        await turn();
+        await turn();
+      });
+    },
     cleanup: async () => {
       await act(async () => root.unmount());
+      // Radix focus scopes dispatch their unmount event on the next turn.
+      await turn();
       clearNativeMocks();
       restore();
       dom.window.close();
@@ -420,7 +467,268 @@ test("read errors and blocked access cannot create; stale creation cannot adopt 
   }
 });
 
+const README = "app-only/README.md";
+
+function readmePage(
+  meta: Partial<Page["meta"]> = {},
+  body = "Local body",
+): Page {
+  return {
+    path: README,
+    body,
+    source_version: "v1",
+    meta: {
+      title: "App only",
+      icon: null,
+      description: "Before",
+      created: "2026-09-20T10:00:00Z",
+      updated: "2026-09-20T10:00:00Z",
+      extra: { Status: "Todo" },
+      ...meta,
+    },
+  };
+}
+
+async function readyHarness(
+  options: Parameters<typeof harness>[0] = {},
+  page = readmePage(),
+) {
+  const view = await harness({
+    schema: [{ name: "Status", type: "text" }],
+    ...options,
+  });
+  view.pages.set(README, page);
+  await act(async () => {
+    await view.context().reload();
+    await turn();
+  });
+  expect(view.context().status).toBe("ready");
+  return view;
+}
+
+function propertyButton(dom: JSDOM, text: string) {
+  return [...dom.window.document.querySelectorAll('[role="button"]')].find(
+    (node) => node.textContent === text,
+  ) as HTMLElement | undefined;
+}
+
+function inputWithValue(dom: JSDOM, value: string) {
+  return [...dom.window.document.querySelectorAll("input, textarea")].find(
+    (node) => (node as HTMLInputElement).value === value,
+  ) as HTMLInputElement | undefined;
+}
+
+for (const presentation of ["full", "compact"] as const) {
+  test(`${presentation} Page detail shows another writer's metadata and schema in place`, async () => {
+    const view = await readyHarness({ presentation });
+    try {
+      const reads = () =>
+        view.calls.filter((call) => call === "read_entry").length;
+      const readsBefore = reads();
+      view.pages.set(
+        README,
+        readmePage(
+          {
+            title: "External title",
+            icon: "🌿",
+            description: "External description",
+            updated: "2026-09-28T10:00:00Z",
+            extra: { Status: "Done" },
+          },
+          "External body",
+        ),
+      );
+      await view.fileEvent("app-only/Other.md");
+      await view.fileEvent(README, "file:changed", "/another-space");
+      expect(reads()).toBe(readsBefore);
+
+      await view.fileEvent(README);
+      expect(reads()).toBe(readsBefore + 1);
+      expect(view.context().status).toBe("ready");
+      const shown = view.context().page!;
+      expect(shown.meta.title).toBe("External title");
+      expect(shown.meta.icon).toBe("🌿");
+      expect(shown.meta.updated).toBe("2026-09-28T10:00:00Z");
+      expect(shown.body).toBe("Local body");
+      expect(Boolean(inputWithValue(view.dom, "External title"))).toBe(true);
+      expect(Boolean(inputWithValue(view.dom, "External description"))).toBe(
+        true,
+      );
+      expect(Boolean(propertyButton(view.dom, "Done"))).toBe(true);
+      expect(propertyButton(view.dom, "Todo")).toBe(undefined);
+
+      view.setSchema([
+        { name: "Status", type: "text" },
+        { name: "Priority", type: "text" },
+      ]);
+      await view.fileEvent("app-only/schema.yaml");
+      expect(
+        view
+          .context()
+          .schemaResult?.schema.columns.map((column) => column.name),
+      ).toEqual(["Status", "Priority"]);
+      expect(
+        view.dom.window.document.body.textContent?.includes("Priority"),
+      ).toBe(true);
+      expect(view.context().status).toBe("ready");
+    } finally {
+      await view.cleanup();
+    }
+  });
+}
+
+test("a field saved during a refresh keeps its value and its echo changes nothing", async () => {
+  const view = await readyHarness();
+  try {
+    const save = deferred<void>();
+    view.delayFields(save.promise);
+    let write!: Promise<void>;
+    await act(async () => {
+      write = view.context().updateField("Status", "Mine", { flush: true });
+      await turn();
+    });
+    view.pages.set(
+      README,
+      readmePage({ description: "External", extra: { Status: "Theirs" } }),
+    );
+    const read = deferred<void>();
+    view.delayReads(read.promise);
+    await view.fileEvent(README);
+    view.delayFields(null);
+    await act(async () => {
+      save.resolve();
+      await write;
+    });
+    expect(view.context().metadataDrafts.size).toBe(0);
+    await act(async () => {
+      read.resolve();
+      await turn();
+      await turn();
+    });
+    view.delayReads(null);
+    expect(view.context().page?.meta.extra.Status).toBe("Mine");
+    expect(view.context().page?.meta.description).toBe("External");
+    expect(Boolean(propertyButton(view.dom, "Mine"))).toBe(true);
+
+    const shown = view.context().page;
+    await view.fileEvent(README);
+    expect(view.context().page).toBe(shown);
+    expect(view.pages.get(README)?.meta.extra.Status).toBe("Mine");
+  } finally {
+    await view.cleanup();
+  }
+});
+
+test("a refresh keeps focus, the typed value and an open property popover", async () => {
+  const view = await readyHarness({
+    schema: [
+      { name: "Status", type: "text" },
+      {
+        name: "Tags",
+        type: "multi_select",
+        options: [
+          { name: "red", color: "red" },
+          { name: "blue", color: "blue" },
+        ],
+      },
+    ],
+  });
+  try {
+    await act(async () => {
+      propertyButton(view.dom, "Todo")!.click();
+      await turn();
+    });
+    const input = inputWithValue(view.dom, "Todo")!;
+    await act(async () => {
+      input.focus();
+      const setValue = Object.getOwnPropertyDescriptor(
+        view.dom.window.HTMLInputElement.prototype,
+        "value",
+      )!.set!;
+      setValue.call(input, "Typing");
+      input.dispatchEvent(
+        new view.dom.window.Event("input", { bubbles: true }),
+      );
+      const propertyChange = new view.dom.window.Event("propertychange", {
+        bubbles: true,
+      });
+      Object.defineProperty(propertyChange, "propertyName", { value: "value" });
+      input.dispatchEvent(propertyChange);
+      await turn();
+    });
+    view.pages.set(
+      README,
+      readmePage({ description: "External", extra: { Status: "Todo" } }),
+    );
+    await view.fileEvent(README);
+    expect(Boolean(inputWithValue(view.dom, "External"))).toBe(true);
+    expect(view.dom.window.document.activeElement).toBe(input);
+    expect(input.value).toBe("Typing");
+
+    await act(async () => {
+      input.blur();
+      await turn();
+      await turn();
+    });
+    await act(async () => {
+      propertyButton(view.dom, "-")!.click();
+      await turn();
+    });
+    // The trigger state does not depend on the portal, which a Radix module
+    // loaded before these DOM globals never mounts.
+    const popover = () =>
+      view.dom.window.document.querySelector(
+        '[data-slot="popover-trigger"][data-state="open"]',
+      );
+    expect(popover() === null).toBe(false);
+    view.pages.set(
+      README,
+      readmePage({ description: "Again", extra: { Status: "Typing" } }),
+    );
+    await view.fileEvent(README);
+    expect(Boolean(inputWithValue(view.dom, "Again"))).toBe(true);
+    expect(popover() === null).toBe(false);
+  } finally {
+    await view.cleanup();
+  }
+});
+
+test("a late refresh of the previous target is ignored", async () => {
+  const view = await readyHarness();
+  try {
+    view.pages.set("other/README.md", {
+      ...readmePage({ title: "Other" }),
+      path: "other/README.md",
+    });
+    view.pages.set(README, readmePage({ title: "Stale" }));
+    const read = deferred<void>();
+    view.delayReads(read.promise);
+    await view.fileEvent(README);
+    view.delayReads(null);
+    await view.render("other");
+    await act(async () => {
+      read.resolve();
+      await turn();
+      await turn();
+    });
+    expect(view.context().page?.path).toBe("other/README.md");
+    expect(view.context().page?.meta.title).toBe("Other");
+
+    const reads = view.calls.filter((call) => call === "read_entry").length;
+    await view.fileEvent(README);
+    expect(view.calls.filter((call) => call === "read_entry").length).toBe(
+      reads,
+    );
+  } finally {
+    await view.cleanup();
+  }
+});
+
 function installDomGlobals(dom: JSDOM) {
+  Object.defineProperty(dom.window.HTMLElement.prototype, "scrollIntoView", {
+    configurable: true,
+    value: () => undefined,
+  });
   Object.defineProperties(dom.window.HTMLElement.prototype, {
     attachEvent: {
       configurable: true,
@@ -444,8 +752,23 @@ function installDomGlobals(dom: JSDOM) {
     HTMLElement: dom.window.HTMLElement,
     HTMLInputElement: dom.window.HTMLInputElement,
     IS_REACT_ACT_ENVIRONMENT: true,
+    CSS: dom.window.CSS ?? { escape: (value: string) => value },
+    DOMRect: dom.window.DOMRect,
+    DocumentFragment: dom.window.DocumentFragment,
+    KeyboardEvent: dom.window.KeyboardEvent,
+    MouseEvent: dom.window.MouseEvent,
+    PointerEvent: dom.window.MouseEvent,
+    MutationObserver: dom.window.MutationObserver,
     Node: dom.window.Node,
+    NodeFilter: dom.window.NodeFilter,
+    cancelAnimationFrame: dom.window.cancelAnimationFrame.bind(dom.window),
+    ResizeObserver: class {
+      disconnect() {}
+      observe() {}
+      unobserve() {}
+    },
     document: dom.window.document,
+    getComputedStyle: dom.window.getComputedStyle.bind(dom.window),
     navigator: dom.window.navigator,
     requestAnimationFrame: dom.window.requestAnimationFrame.bind(dom.window),
     window: dom.window,

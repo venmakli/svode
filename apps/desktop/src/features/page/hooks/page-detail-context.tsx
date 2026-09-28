@@ -28,6 +28,7 @@ import {
 import { handleError } from "../lib/errors";
 import { useReadmeWrites } from "./use-readme-writes";
 import { useOptionalPageSurfaceSession } from "./page-surface-context";
+import { usePageDetailRefresh } from "./use-page-detail-refresh";
 
 export type ReadmeStatus = "loading" | "ready" | "missing" | "error";
 
@@ -321,6 +322,15 @@ export function PageDetailProvider({
     drafts,
     writeError: failedWrite,
   } = writes;
+  const { markLocalWrite } = usePageDetailRefresh({
+    spacePath,
+    path: status === "ready" ? (page?.path ?? null) : null,
+    readSource: (path) => readPage({ spacePath, path }),
+    readSchema: (path) => getPageSchema({ spacePath, filePath: path }),
+    localFields: () => drafts.keys(),
+    applyPage: applyPageUpdate,
+    applySchema: setSchemaResult,
+  });
   // The failure detail stays in the write session; the surface names it in
   // user terms like the rest of the Page save feedback.
   const writeError = failedWrite ? m.page_surface_save_error() : null;
@@ -346,6 +356,7 @@ export function PageDetailProvider({
       fieldValue: unknown,
       options: SavePageFieldOptions = {},
     ) => {
+      markLocalWrite(field);
       if (field === "title" && options.flush && pageSurface) {
         await pageSurface.runMutation(() =>
           writeField(field, fieldValue, options),
@@ -359,7 +370,7 @@ export function PageDetailProvider({
         }
       }
     },
-    [pageSurface, retry, writeField],
+    [markLocalWrite, pageSurface, retry, writeField],
   );
   const currentPath = page?.path ?? readmePath;
   const discard = useCallback(async () => {

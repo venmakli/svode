@@ -471,6 +471,104 @@ if (process.env.SVODE_COMPACT_SCOPE_TEST !== "1") {
       dom.window.close();
     }
   });
+  test("another writer's metadata reaches an open Peek without re-creating its editor", async () => {
+    const dom = new JSDOM("<!doctype html><div id=app></div>", {
+      pretendToBeVisual: true,
+      url: "http://localhost/",
+    });
+    const restore = installDomGlobals(dom);
+    mounts = 0;
+    let source: Page = {
+      path: "Tasks/Item2.md",
+      body: "saved body",
+      meta: {
+        title: "Item2",
+        icon: null,
+        created: "",
+        updated: "",
+        extra: {},
+      },
+    };
+    mockNativeIpc(
+      (command) => {
+        if (command === "repository_access_get")
+          return {
+            status: "local",
+            repositoryId: "/target",
+            generation: 1,
+            checkedAt: null,
+            expiresAt: null,
+            reason: null,
+            lastKnownStatus: null,
+          };
+        if (command === "read_entry") return structuredClone(source);
+        if (command === "get_entry_schema") return null;
+        if (command === "get_entry_detail_state")
+          return { form: "leaf", subpageCount: 0, otherFileCount: 0 };
+        if (command === "path_exists") return false;
+        throw new Error(`Unexpected IPC: ${command}`);
+      },
+      { shouldMockEvents: true },
+    );
+    const root = createRoot(dom.window.document.getElementById("app")!);
+    const page = source;
+    try {
+      await act(async () => {
+        root.render(
+          <TooltipProvider>
+            <PagePeekSheet
+              target={{
+                page,
+                nested: false,
+                spaceId: "target",
+                spacePath: "/target",
+              }}
+              readOnly={false}
+              spacePath="/target"
+              spaceId="target"
+              projectPath="/target"
+              onOpenChange={() => {}}
+              onOpenPath={() => {}}
+              onDuplicatePage={() => {}}
+              onDeletePage={() => {}}
+              onConvertedPage={() => {}}
+              renderPeek={(context) => (
+                <CompactScopePeek key={context.sessionKey} {...context} />
+              )}
+            />
+          </TooltipProvider>,
+        );
+        await settle();
+      });
+      const editor = dom.window.document.querySelector("textarea")!;
+      editor.value = "unsaved draft";
+      expect(mounts).toBe(1);
+
+      source = {
+        ...source,
+        body: "external body",
+        meta: { ...source.meta, title: "Renamed by a Routine" },
+      };
+      const { emit } = await import("@/platform/native/events");
+      await act(async () => {
+        await emit("file:changed", { space: "/target", path: source.path });
+        await settle();
+      });
+      expect(
+        [...dom.window.document.querySelectorAll("header")].some((header) =>
+          header.textContent?.includes("Renamed by a Routine"),
+        ),
+      ).toBe(true);
+      expect(dom.window.document.querySelector("textarea")).toBe(editor);
+      expect(editor.value).toBe("unsaved draft");
+      expect(mounts).toBe(1);
+    } finally {
+      await act(async () => root.unmount());
+      clearNativeMocks();
+      restore();
+      dom.window.close();
+    }
+  });
   test("peek replacement is guarded, ignores late targets and keeps canonical handoff in one session", async () => {
     const dom = new JSDOM("<!doctype html><div id=app></div>", {
       pretendToBeVisual: true,
