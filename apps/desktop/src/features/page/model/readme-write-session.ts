@@ -138,6 +138,13 @@ export class ReadmeWriteSession {
     await Promise.all([...this.writes]);
     if (this.error) throw this.error;
   };
+  /** Forgets unsaved drafts and their error; the saved README stays as is. */
+  discard = () => {
+    this.drafts.clear();
+    this.creationRequested = false;
+    this.error = null;
+    this.notify();
+  };
   retry = async () => {
     this.writable();
     if (this.creationRequested) await this.createReadme();

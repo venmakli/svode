@@ -27,5 +27,6 @@ export function useReadmeWrites({
     updateField: session.updateField,
     flush: session.flush,
     retry: session.retry,
+    discard: session.discard,
   };
 }

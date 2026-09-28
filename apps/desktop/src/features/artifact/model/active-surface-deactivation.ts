@@ -16,6 +16,8 @@ class ActiveSurfaceDeactivationOwner {
   }
   private handler: ActiveSurfaceDeactivationHandler | null = null;
   private inFlight: Promise<ActiveSurfaceDeactivationResult> | null = null;
+  private awaitingDecision = false;
+  private decisionListeners = new Set<() => void>();
 
   register(handler: ActiveSurfaceDeactivationHandler) {
     const registration = ++this.registration;
@@ -24,6 +26,25 @@ class ActiveSurfaceDeactivationOwner {
       if (registration !== this.registration) return;
       this.handler = null;
       this.inFlight = null;
+      this.awaitingDecision = false;
+    };
+  }
+
+  /** A handler of the current flight now waits for the user, not for work. */
+  markAwaitingDecision() {
+    if (!this.inFlight || this.awaitingDecision) return;
+    this.awaitingDecision = true;
+    for (const listener of this.decisionListeners) listener();
+  }
+
+  isAwaitingDecision() {
+    return this.awaitingDecision;
+  }
+
+  subscribeDecision(listener: () => void) {
+    this.decisionListeners.add(listener);
+    return () => {
+      this.decisionListeners.delete(listener);
     };
   }
 
@@ -40,7 +61,9 @@ class ActiveSurfaceDeactivationOwner {
       })
       .catch(() => "blocked" as const)
       .finally(() => {
-        if (this.inFlight === promise) this.inFlight = null;
+        if (this.inFlight !== promise) return;
+        this.inFlight = null;
+        this.awaitingDecision = false;
       });
     this.inFlight = promise;
     return promise;
@@ -57,6 +80,22 @@ export function registerActiveContentDeactivation(
 
 export function prepareActiveContentDeactivation() {
   return activeSurfaceDeactivationOwner.prepare();
+}
+
+/**
+ * Called by a deactivation handler that asks the user before it resolves, so
+ * the pending transition stops presenting itself as loading meanwhile.
+ */
+export function markActiveContentAwaitingDecision() {
+  activeSurfaceDeactivationOwner.markAwaitingDecision();
+}
+
+export function isActiveContentAwaitingDecision() {
+  return activeSurfaceDeactivationOwner.isAwaitingDecision();
+}
+
+export function subscribeActiveContentDecision(listener: () => void) {
+  return activeSurfaceDeactivationOwner.subscribeDecision(listener);
 }
 
 export function registerSupplementalContentDeactivation(

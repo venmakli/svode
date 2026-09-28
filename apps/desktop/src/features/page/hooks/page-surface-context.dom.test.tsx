@@ -1,11 +1,32 @@
 import { expect, test } from "bun:test";
+import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { act, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { JSDOM } from "jsdom";
 
 import { clearNativeMocks, mockNativeIpc } from "@/platform/native/testing";
 
-test("Page derives editability from local repository access without a mode control", async () => {
+// Radix portals pick their layout effect when first imported, so the
+// confirmation dialog needs a process that loads it after the DOM exists.
+const isolated = process.env.SVODE_PAGE_SESSION_DOM === "1";
+const domTest: typeof test = isolated ? test : () => undefined;
+if (!isolated) {
+  test("Page session DOM scenarios", () => {
+    const result = spawnSync(
+      process.execPath,
+      ["test", fileURLToPath(import.meta.url)],
+      {
+        env: { ...process.env, SVODE_PAGE_SESSION_DOM: "1" },
+        encoding: "utf8",
+      },
+    );
+    if (result.status !== 0) throw new Error(result.stdout + result.stderr);
+    expect(result.status).toBe(0);
+  }, 30000);
+}
+
+domTest("Page derives editability from local repository access without a mode control", async () => {
   const page = await renderPage("local");
   try {
     expect(textOf(page.dom, "[data-read-only]")).toBe("editable");
@@ -27,7 +48,7 @@ test("Page derives editability from local repository access without a mode contr
   }
 });
 
-test("Page starts fail-closed for blocked repository access without probing", async () => {
+domTest("Page starts fail-closed for blocked repository access without probing", async () => {
   const page = await renderPage("read_only");
   try {
     expect(textOf(page.dom, "[data-read-only]")).toBe("read-only");
@@ -40,7 +61,7 @@ test("Page starts fail-closed for blocked repository access without probing", as
   }
 });
 
-test("access degradation commits a focused title draft before becoming read-only", async () => {
+domTest("access degradation commits a focused title draft before becoming read-only", async () => {
   const page = await renderPage("local", { renderTitle: true });
   try {
     const input = page.dom.window.document.querySelector<HTMLInputElement>(
@@ -68,7 +89,7 @@ test("access degradation commits a focused title draft before becoming read-only
   }
 });
 
-test("a positive canonical reread restores editable presentation automatically", async () => {
+domTest("a positive canonical reread restores editable presentation automatically", async () => {
   const page = await renderPage("read_only");
   try {
     page.setAccessStatus("local");
@@ -86,7 +107,7 @@ test("a positive canonical reread restores editable presentation automatically",
   }
 });
 
-test("a busy source after its retries is a save error with an explicit retry", async () => {
+domTest("a busy source after its retries is a save error with an explicit retry", async () => {
   let busy = true;
   const page = await renderPage("local", {
     renderRecovery: true,
@@ -123,7 +144,7 @@ test("a busy source after its retries is a save error with an explicit retry", a
   }
 });
 
-test("a source conflict holds navigation and offers both explicit choices", async () => {
+domTest("a source conflict holds navigation and offers both explicit choices", async () => {
   const page = await renderPage("local", { renderRecovery: true });
   try {
     const choices: string[] = [];
@@ -182,7 +203,7 @@ test("a source conflict holds navigation and offers both explicit choices", asyn
   }
 });
 
-test("a failed fresh read offers only reading again", async () => {
+domTest("a failed fresh read offers only reading again", async () => {
   const page = await renderPage("local", { renderRecovery: true });
   try {
     const choices: string[] = [];
@@ -213,12 +234,224 @@ test("a failed fresh read offers only reading again", async () => {
   }
 });
 
+const OTHER = "/other-repo";
+const otherRepositoryDenial = {
+  kind: "repository_access_denied",
+  reason: "auth_required",
+  repositoryId: "repo-other",
+  status: "read_only",
+  blockers: [
+    {
+      reason: "auth_required",
+      repositoryId: "repo-other",
+      repositoryPath: OTHER,
+      status: "read_only",
+    },
+  ],
+};
+
+domTest("a blocked leave names its cause, and staying keeps the draft at the recovery", async () => {
+  const page = await renderPage("local", {
+    renderRecovery: true,
+    bodyFlush: async () => {
+      throw otherRepositoryDenial;
+    },
+  });
+  try {
+    let leave!: Promise<boolean>;
+    await act(async () => {
+      leave = page.session().prepareToLeave();
+      await settle();
+    });
+    const question = page.dom.window.document.querySelector(
+      "[data-page-discard-confirmation=leave]",
+    )!;
+    expect(question.textContent?.includes("Page changes are not saved")).toBe(
+      true,
+    );
+    expect(
+      question.textContent?.includes(
+        "Saving is blocked: other-repo — read only.",
+      ),
+    ).toBe(true);
+    expect(page.dom.window.document.activeElement?.textContent).toBe("Stay");
+    // The recovery offers no action that hides it while the block remains.
+    expect(buttonsWithText(page.dom, "Cancel").length).toBe(0);
+    expect(buttonsWithText(page.dom, "Discard changes").length).toBe(1);
+
+    await act(async () => {
+      buttonWithText(page.dom, "Stay").click();
+      await settle();
+    });
+    expect(await leave).toBe(false);
+    expect(page.events.some((event) => event.startsWith("discard:"))).toBe(
+      false,
+    );
+    const recovery = page.dom.window.document.querySelector(
+      "[data-repository-access-inline-recovery]",
+    )!;
+    expect(recovery !== null).toBe(true);
+    expect(
+      page.dom.window.document.activeElement?.contains(recovery) ?? false,
+    ).toBe(true);
+  } finally {
+    await page.cleanup();
+  }
+});
+
+domTest("discarding on leave drops the drafts without saving and lets the navigation continue", async () => {
+  let blocked = true;
+  const page = await renderPage("local", {
+    renderRecovery: true,
+    bodyFlush: async () => {
+      if (blocked) throw otherRepositoryDenial;
+    },
+    bodyDiscard: async () => {
+      blocked = false;
+    },
+  });
+  try {
+    let first!: Promise<boolean>;
+    let second!: Promise<boolean>;
+    await act(async () => {
+      first = page.session().prepareToLeave();
+      await settle();
+      second = page.session().prepareToLeave();
+      await settle();
+    });
+    expect(
+      page.dom.window.document.querySelectorAll(
+        "[data-page-discard-confirmation]",
+      ).length,
+    ).toBe(1);
+    page.events.length = 0;
+
+    await act(async () => {
+      buttonWithText(page.dom, "Discard changes and leave").click();
+      await settle();
+    });
+    expect(await first).toBe(true);
+    expect(await second).toBe(true);
+    expect(page.events).toEqual(["discard:body", "discard:metadata"]);
+    expect(
+      page.dom.window.document.querySelector(
+        "[data-repository-access-inline-recovery]",
+      ),
+    ).toBeNull();
+    let ready = false;
+    await act(async () => {
+      ready = await page.session().prepareToLeave();
+    });
+    expect(ready).toBe(true);
+  } finally {
+    await page.cleanup();
+  }
+});
+
+domTest("discard from the recovery asks first and keeps the draft when refused", async () => {
+  let busy = true;
+  const page = await renderPage("local", {
+    renderRecovery: true,
+    bodyFlush: async () => {
+      if (busy) throw { kind: "source_busy", path: "page.md" };
+    },
+    bodyDiscard: async () => {
+      busy = false;
+    },
+  });
+  try {
+    await act(async () => {
+      await page.session().prepareForNavigation();
+    });
+    // A non-leaving step stays a plain refusal without a question.
+    expect(
+      page.dom.window.document.querySelector(
+        "[data-page-discard-confirmation]",
+      ),
+    ).toBeNull();
+    page.events.length = 0;
+
+    await act(async () => {
+      buttonWithText(page.dom, "Discard changes").click();
+      await settle();
+    });
+    const question = page.dom.window.document.querySelector(
+      "[data-page-discard-confirmation=discard]",
+    )!;
+    expect(question.textContent?.includes("Discard Page changes?")).toBe(true);
+    expect(page.dom.window.document.activeElement?.textContent).toBe(
+      "Keep changes",
+    );
+    await act(async () => {
+      buttonWithText(page.dom, "Keep changes").click();
+      await settle();
+    });
+    expect(page.events).toEqual([]);
+    expect(
+      page.dom.window.document.querySelector("[data-slot=alert]") !== null,
+    ).toBe(true);
+
+    await act(async () => {
+      buttonWithText(page.dom, "Discard changes").click();
+      await settle();
+    });
+    await act(async () => {
+      buttonsWithText(page.dom, "Discard changes")
+        .find((button) => button.closest("[data-page-discard-confirmation]"))!
+        .click();
+      await settle();
+    });
+    expect(page.events).toEqual(["discard:body", "discard:metadata"]);
+    expect(page.dom.window.document.querySelector("[data-slot=alert]")).toBe(
+      null,
+    );
+    let ready = false;
+    await act(async () => {
+      ready = await page.session().prepareForNavigation();
+    });
+    expect(ready).toBe(true);
+  } finally {
+    await page.cleanup();
+  }
+});
+
+domTest("a failed discard keeps the block and the draft", async () => {
+  const page = await renderPage("local", {
+    renderRecovery: true,
+    bodyFlush: async () => {
+      throw { kind: "source_busy", path: "page.md" };
+    },
+    bodyDiscard: async () => {
+      throw new Error("File not found");
+    },
+  });
+  try {
+    let leave!: Promise<boolean>;
+    await act(async () => {
+      leave = page.session().prepareToLeave();
+      await settle();
+    });
+    await act(async () => {
+      buttonWithText(page.dom, "Discard changes and leave").click();
+      await settle();
+    });
+    expect(await leave).toBe(false);
+    expect(page.events.includes("discard:metadata")).toBe(false);
+    expect(
+      page.dom.window.document.querySelector("[data-slot=alert]") !== null,
+    ).toBe(true);
+  } finally {
+    await page.cleanup();
+  }
+});
+
 async function renderPage(
   initialStatus: AccessStatus,
   options: {
     renderTitle?: boolean;
     renderRecovery?: boolean;
     bodyFlush?: () => Promise<void>;
+    bodyDiscard?: () => Promise<void>;
   } = {},
 ) {
   const dom = new JSDOM(
@@ -233,10 +466,12 @@ async function renderPage(
   let generation = 0;
   let mounted = 0;
   mockNativeIpc(
-    (command) => {
+    (command, args) => {
       calls.push(command);
       if (command === "repository_access_get") {
         generation += 1;
+        if ((args as { spacePath?: string } | undefined)?.spacePath === OTHER)
+          return snapshot("repo-other", "read_only", generation);
         return snapshot("repo-page-work-mode", accessStatus, generation);
       }
       if (command === "repository_access_verify") {
@@ -261,12 +496,23 @@ async function renderPage(
     const registerPersistence = session.registerPersistence;
     useEffect(() => {
       mounted += 1;
-      const unregisterBody = registerPersistence("body", async () => {
-        events.push("body");
-        await options.bodyFlush?.();
+      const unregisterBody = registerPersistence("body", {
+        flush: async () => {
+          events.push("body");
+          await options.bodyFlush?.();
+        },
+        discard: async () => {
+          events.push("discard:body");
+          await options.bodyDiscard?.();
+        },
       });
-      const unregisterMetadata = registerPersistence("metadata", async () => {
-        events.push("metadata");
+      const unregisterMetadata = registerPersistence("metadata", {
+        flush: async () => {
+          events.push("metadata");
+        },
+        discard: async () => {
+          events.push("discard:metadata");
+        },
       });
       return () => {
         unregisterBody();
@@ -376,6 +622,16 @@ function buttonWithText(dom: JSDOM, text: string) {
   ].find((candidate) => candidate.textContent?.trim() === text);
   if (!button) throw new Error(`No button "${text}"`);
   return button;
+}
+
+function buttonsWithText(dom: JSDOM, text: string) {
+  return [
+    ...dom.window.document.querySelectorAll<HTMLButtonElement>("button"),
+  ].filter((candidate) => candidate.textContent?.trim() === text);
+}
+
+async function settle() {
+  for (let turn = 0; turn < 5; turn += 1) await nextTurn();
 }
 
 function nextTurn() {

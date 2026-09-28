@@ -1,5 +1,9 @@
 import { create } from "zustand";
-import { prepareActiveContentDeactivation } from "./active-surface-deactivation";
+import {
+  isActiveContentAwaitingDecision,
+  prepareActiveContentDeactivation,
+  subscribeActiveContentDecision,
+} from "./active-surface-deactivation";
 import type {
   ActiveContentSelection,
   ArtifactOpenTarget,
@@ -125,7 +129,8 @@ function applySelectionTransition(
     return;
   }
 
-  set({ transitionPending: true });
+  // Content that asks the user is not loading while the question is open.
+  set({ transitionPending: !isActiveContentAwaitingDecision() });
   void deactivation.then((result) => {
     if (requestKey !== latestTransitionRequestKey) return;
     if (result === "ready") {
@@ -280,4 +285,8 @@ export const useArtifactSelectionStore = create<ArtifactSelectionState>(
         activePathRetarget: null,
       }),
   }),
+);
+
+subscribeActiveContentDecision(() =>
+  useArtifactSelectionStore.setState({ transitionPending: false }),
 );

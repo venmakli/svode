@@ -134,7 +134,11 @@ export function PageScreen({
     page: currentPage,
     spaceId,
   });
-  const { flush: flushMetadata, save: updateField } = usePageFieldSave({
+  const {
+    discard: discardMetadata,
+    flush: flushMetadata,
+    save: updateField,
+  } = usePageFieldSave({
     spacePath,
     projectPath,
     applyPageUpdate,
@@ -167,9 +171,24 @@ export function PageScreen({
       pageSurface.recoverWriteError(saveError, retry),
   });
 
+  const loadedPagePath = page?.path ?? pagePath;
+  const discardMetadataDrafts = useCallback(async () => {
+    await discardMetadata();
+    const sequence = reloadSeqRef.current;
+    const savedPage = await readPage({ spacePath, path: loadedPagePath });
+    if (sequence !== reloadSeqRef.current) return;
+    setPage((current) =>
+      current?.path === savedPage.path ? savedPage : current,
+    );
+  }, [discardMetadata, loadedPagePath, spacePath]);
+
   useEffect(
-    () => pageSurface.registerPersistence("metadata", flushMetadata),
-    [flushMetadata, pageSurface],
+    () =>
+      pageSurface.registerPersistence("metadata", {
+        flush: flushMetadata,
+        discard: discardMetadataDrafts,
+      }),
+    [discardMetadataDrafts, flushMetadata, pageSurface],
   );
 
   useEffect(() => {

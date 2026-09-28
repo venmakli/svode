@@ -235,7 +235,7 @@ function ScopePageSurfaceHost({
     () =>
       registerNavigationGuard?.(async () => {
         if (!(await detailController.prepareForNavigation())) return false;
-        return pageSurface.prepareForNavigation();
+        return pageSurface.prepareToLeave();
       }),
     [detailController, pageSurface, registerNavigationGuard],
   );

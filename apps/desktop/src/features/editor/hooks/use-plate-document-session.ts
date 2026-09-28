@@ -52,6 +52,7 @@ interface UsePlateDocumentSessionResult {
   projectPath: string | null;
   spacePath: string;
   flushPendingSource: () => Promise<void>;
+  discardPendingSource: () => Promise<void>;
 }
 
 export function usePlateDocumentSession({
@@ -194,6 +195,7 @@ export function usePlateDocumentSession({
   );
 
   const {
+    discardPendingSource,
     flushPendingSource,
     handleSave,
     handleSaveAll,
@@ -284,5 +286,6 @@ export function usePlateDocumentSession({
     projectPath,
     spacePath,
     flushPendingSource,
+    discardPendingSource,
   };
 }

@@ -37,14 +37,23 @@ if (process.env.SVODE_COMPACT_SCOPE_TEST !== "1") {
       documentPath: string;
       initialPage: Page;
       readOnly: boolean;
-      registerPersistence(kind: "body", flush: () => Promise<void>): () => void;
+      registerPersistence(
+        kind: "body",
+        participant: {
+          flush: () => Promise<void>;
+          discard: () => Promise<void>;
+        },
+      ): () => void;
       onDocumentPathChange(path: string): void;
     }) {
       _convert = props.onDocumentPathChange;
       const { registerPersistence } = props;
       useEffect(() => {
         mounts += 1;
-        const unregister = registerPersistence("body", () => flushBody());
+        const unregister = registerPersistence("body", {
+          flush: () => flushBody(),
+          discard: async () => {},
+        });
         return () => {
           _unmounts += 1;
           unregister();

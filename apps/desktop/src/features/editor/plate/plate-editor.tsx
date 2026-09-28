@@ -33,7 +33,10 @@ interface PlateDocumentEditorProps {
   readOnly?: boolean;
   registerPersistence?: (
     kind: "body",
-    flush: () => Promise<void>,
+    participant: {
+      flush: () => Promise<void>;
+      discard: () => Promise<void>;
+    },
   ) => () => void;
   onWriteAccessError?: (
     error: unknown,
@@ -74,6 +77,7 @@ export function PlateDocumentEditor({
     projectPath,
     spacePath,
     flushPendingSource,
+    discardPendingSource,
   } = usePlateDocumentSession({
     bodyOnly,
     bodyOnlyMeta,
@@ -93,8 +97,11 @@ export function PlateDocumentEditor({
 
   useEffect(() => {
     if (!registerPersistence) return;
-    return registerPersistence("body", flushPendingSource);
-  }, [flushPendingSource, registerPersistence]);
+    return registerPersistence("body", {
+      flush: flushPendingSource,
+      discard: discardPendingSource,
+    });
+  }, [discardPendingSource, flushPendingSource, registerPersistence]);
 
   return (
     <EditorMediaAdapterProvider

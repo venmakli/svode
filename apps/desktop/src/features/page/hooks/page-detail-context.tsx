@@ -121,7 +121,11 @@ export function PageDetailProvider({
     },
     [spacePath],
   );
-  const { flush: flushMetadata, save: saveField } = usePageFieldSave({
+  const {
+    discard: discardFields,
+    flush: flushMetadata,
+    save: saveField,
+  } = usePageFieldSave({
     spacePath,
     projectPath,
     applyPageUpdate,
@@ -312,6 +316,7 @@ export function PageDetailProvider({
     updateField: writeField,
     flush,
     retry,
+    discard: discardWrites,
     drafts,
     writeError,
   } = writes;
@@ -352,9 +357,25 @@ export function PageDetailProvider({
     },
     [pageSurface, retry, writeField],
   );
+  const currentPath = page?.path ?? readmePath;
+  const discard = useCallback(async () => {
+    discardWrites();
+    await discardFields();
+    const sequence = reloadSequenceRef.current;
+    let nextPage: Page | null = null;
+    try {
+      nextPage = await readPage({ spacePath, path: currentPath });
+    } catch (readError) {
+      if (!isReadmeMissingError(readError, currentPath)) throw readError;
+    }
+    if (sequence !== reloadSequenceRef.current) return;
+    setPage(nextPage);
+    setStatus(nextPage ? "ready" : "missing");
+  }, [currentPath, discardFields, discardWrites, spacePath]);
   useEffect(
-    () => pageSurface?.registerPersistence("metadata", flush, retry),
-    [flush, pageSurface, retry],
+    () =>
+      pageSurface?.registerPersistence("metadata", { flush, retry, discard }),
+    [discard, flush, pageSurface, retry],
   );
 
   const value = useMemo<PageDetailContextValue>(

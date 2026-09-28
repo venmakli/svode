@@ -23,7 +23,10 @@ export {
   selectedContentPath,
   selectedContentSpaceId,
 } from "./model/selection-store";
-export { registerActiveContentDeactivation } from "./model/active-surface-deactivation";
+export {
+  markActiveContentAwaitingDecision,
+  registerActiveContentDeactivation,
+} from "./model/active-surface-deactivation";
 export {
   ArtifactSurfaceTransitionSession,
   resolveArtifactSurfaceHost,

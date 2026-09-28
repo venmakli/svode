@@ -1,6 +1,9 @@
 import { expect, test } from "bun:test";
 import { useArtifactSelectionStore } from "./selection-store";
-import { registerActiveContentDeactivation } from "./active-surface-deactivation";
+import {
+  markActiveContentAwaitingDecision,
+  registerActiveContentDeactivation,
+} from "./active-surface-deactivation";
 
 function resetSelection() {
   useArtifactSelectionStore.setState({
@@ -238,5 +241,43 @@ test("rejects absolute and traversal targets before they reach an adapter", () =
       rejected = true;
     }
     expect(rejected).toBe(true);
+  }
+});
+
+test("a transition waiting for the user's decision is not presented as loading", async () => {
+  resetSelection();
+  useArtifactSelectionStore.getState().openArtifact({
+    spaceId: "root",
+    path: "current.md",
+    sourceShape: "file",
+    semanticHint: { kind: "page" },
+  });
+  let decide!: (result: "ready" | "blocked") => void;
+  const unregister = registerActiveContentDeactivation(
+    () =>
+      new Promise((resolve) => {
+        markActiveContentAwaitingDecision();
+        decide = resolve;
+      }),
+  );
+
+  try {
+    useArtifactSelectionStore.getState().openArtifact({
+      spaceId: "root",
+      path: "next.md",
+      sourceShape: "file",
+      semanticHint: { kind: "page" },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(useArtifactSelectionStore.getState().transitionPending).toBe(false);
+    useArtifactSelectionStore.getState().close();
+    expect(useArtifactSelectionStore.getState().transitionPending).toBe(false);
+    decide("ready");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const state = useArtifactSelectionStore.getState();
+    expect(state.selection).toBeNull();
+    expect(state.transitionPending).toBe(false);
+  } finally {
+    unregister();
   }
 });

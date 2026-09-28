@@ -13,6 +13,13 @@ import {
 
 export type PagePersistenceKind = "body" | "metadata";
 export type PagePersistenceFlush = () => Promise<void>;
+export interface PagePersistenceParticipant {
+  flush: PagePersistenceFlush;
+  /** Repeats a failed save; defaults to `flush`. */
+  retry?: PagePersistenceFlush;
+  /** Drops unsaved drafts and shows the last saved source again, writing nothing. */
+  discard: PagePersistenceFlush;
+}
 export type MakePageAccessRequest = (
   continuation: RepositoryAccessRequest["continuation"],
   intentKey: string,
@@ -32,11 +39,7 @@ export function usePagePersistence({
   const persistenceRef = useRef(
     new Map<
       symbol,
-      {
-        kind: PagePersistenceKind;
-        flush: PagePersistenceFlush;
-        retry?: PagePersistenceFlush;
-      }
+      PagePersistenceParticipant & { kind: PagePersistenceKind }
     >(),
   );
   const writeBlockedRef = useRef(false);
@@ -59,23 +62,25 @@ export function usePagePersistence({
   );
 
   const registerPersistence = useCallback(
-    (
-      kind: PagePersistenceKind,
-      flush: PagePersistenceFlush,
-      retry?: PagePersistenceFlush,
-    ) => {
+    (kind: PagePersistenceKind, participant: PagePersistenceParticipant) => {
       const key = Symbol(kind);
-      persistenceRef.current.set(key, { kind, flush, retry });
+      persistenceRef.current.set(key, { kind, ...participant });
       return () => persistenceRef.current.delete(key);
     },
     [],
   );
 
+  const orderedParticipants = useCallback(
+    () =>
+      [...persistenceRef.current.values()].sort(
+        (left, right) =>
+          persistencePriority(left.kind) - persistencePriority(right.kind),
+      ),
+    [],
+  );
+
   const flushPersistenceNow = useCallback(async (): Promise<boolean> => {
-    const participants = [...persistenceRef.current.values()].sort(
-      (left, right) =>
-        persistencePriority(left.kind) - persistencePriority(right.kind),
-    );
+    const participants = orderedParticipants();
     try {
       for (const participant of participants) await participant.flush();
       if (writeBlockedRef.current || sourceConflictRef.current) return false;
@@ -95,7 +100,7 @@ export function usePagePersistence({
       setPersistenceError(m.page_surface_save_error());
       return false;
     }
-  }, []);
+  }, [orderedParticipants]);
 
   const enqueuePersistenceTask = useCallback(
     <Result>(task: () => Promise<Result>) => {
@@ -160,12 +165,18 @@ export function usePagePersistence({
     recoverWriteErrorRef.current = recoverWriteError;
   }, [recoverWriteError]);
 
-  const dismissRecovery = useCallback(() => {
-    recovery.close();
-    if (writeBlockedRef.current && retryPersistenceRef.current) {
-      setPersistenceError(m.page_surface_save_error());
-    }
-  }, [recovery]);
+  const discardChanges = useCallback(
+    () =>
+      enqueuePersistenceTask(async () => {
+        for (const participant of orderedParticipants())
+          await participant.discard();
+        writeBlockedRef.current = false;
+        retryPersistenceRef.current = null;
+        setPersistenceError(null);
+        recovery.close();
+      }),
+    [enqueuePersistenceTask, orderedParticipants, recovery],
+  );
 
   const runMutation = useCallback(
     (operation: () => Promise<void>) =>
@@ -194,7 +205,7 @@ export function usePagePersistence({
   }, [recoverWriteError]);
 
   return {
-    dismissRecovery,
+    discardChanges,
     flushPersistence,
     persistenceError,
     recoverWriteError,

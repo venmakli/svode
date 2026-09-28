@@ -100,6 +100,8 @@ interface UseEditorDocumentWriterResult {
   handleSaveAll: () => Promise<void>;
   scheduleAutoSave: () => void;
   flushPendingSource: () => Promise<void>;
+  /** Drops the unsaved body and loads the saved source, writing nothing. */
+  discardPendingSource: () => Promise<void>;
   /** Brings the editor in line with a source another writer changed. */
   reconcileExternalChange: (path: string) => Promise<void>;
 }
@@ -237,16 +239,8 @@ export function useEditorDocumentWriter({
     [cancelDebounce],
   );
 
-  const sourceSync = useEditorSourceSync({
-    baseline: (path) => getDocumentBaseline(baselineKey(path)),
-    setBaseline: (path, baseline) =>
-      setDocumentBaseline(baselineKey(path), baseline),
-    hasDraft: (path) =>
-      debounceTimerRef.current !== null ||
-      useEditorStore.getState().hasUnsaved(spacePath, path),
-    whenWritesSettled: () => sourceWriteChainRef.current,
-    readSource: (path) => readPage({ spacePath, path }),
-    loadSource: (path, page) => {
+  const loadSource = useCallback(
+    (path: string, page: Page) => {
       if (!editor) return;
       isLoadingRef.current = true;
       try {
@@ -266,6 +260,27 @@ export function useEditorDocumentWriter({
         isLoadingRef.current = false;
       }
     },
+    [
+      baselineKey,
+      clearUnsaved,
+      editor,
+      isLoadingRef,
+      loadEditorValue,
+      onSourcePageLoaded,
+      spacePath,
+    ],
+  );
+
+  const sourceSync = useEditorSourceSync({
+    baseline: (path) => getDocumentBaseline(baselineKey(path)),
+    setBaseline: (path, baseline) =>
+      setDocumentBaseline(baselineKey(path), baseline),
+    hasDraft: (path) =>
+      debounceTimerRef.current !== null ||
+      useEditorStore.getState().hasUnsaved(spacePath, path),
+    whenWritesSettled: () => sourceWriteChainRef.current,
+    readSource: (path) => readPage({ spacePath, path }),
+    loadSource,
     adoptMetadata: onSourceMetadata,
     writeDraft: async (path, sourceVersion) => {
       const cacheKey = currentCacheKeyRef.current;
@@ -422,6 +437,24 @@ export function useEditorDocumentWriter({
     spacePath,
   ]);
 
+  const discardPendingSource = useCallback(async () => {
+    cancelDebounce();
+    await sourceWriteChainRef.current;
+    const path = currentPathRef.current;
+    if (path && editor && spacePath)
+      loadSource(path, await readPage({ spacePath, path }));
+    // Closes an open source conflict: its draft is what is discarded.
+    sourceSync.dispose();
+    autoSavePausedRef.current = false;
+  }, [
+    cancelDebounce,
+    currentPathRef,
+    editor,
+    loadSource,
+    sourceSync,
+    spacePath,
+  ]);
+
   const saveCurrentSurface = useCallback(async () => {
     if (!currentDocument) return;
     const result = await performWrite(false);
@@ -572,6 +605,7 @@ export function useEditorDocumentWriter({
   );
 
   return {
+    discardPendingSource,
     flushPendingSource,
     handleSave,
     handleSaveAll,

@@ -43,6 +43,8 @@ export interface PageFieldSaveController {
     options?: SavePageFieldOptions,
   ) => Promise<Page | null>;
   flush: () => Promise<void>;
+  /** Drops pending saves and ignores results of saves still in flight. */
+  discard: () => Promise<void>;
 }
 
 export function usePageFieldSave({
@@ -113,6 +115,17 @@ export function usePageFieldSave({
       }),
     );
     await Promise.all([...inFlightRef.current]);
+  }, []);
+
+  const discard = useCallback(async () => {
+    for (const item of pendingRef.current.values()) {
+      clearTimeout(item.timer);
+      item.resolve(null);
+    }
+    pendingRef.current.clear();
+    for (const [key, version] of versionsRef.current)
+      versionsRef.current.set(key, version + 1);
+    await Promise.allSettled([...inFlightRef.current]);
   }, []);
 
   const saveField = useCallback(
@@ -332,5 +345,8 @@ export function usePageFieldSave({
     ],
   );
 
-  return useMemo(() => ({ flush, save: saveField }), [flush, saveField]);
+  return useMemo(
+    () => ({ discard, flush, save: saveField }),
+    [discard, flush, saveField],
+  );
 }

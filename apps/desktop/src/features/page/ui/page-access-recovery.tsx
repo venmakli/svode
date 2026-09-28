@@ -21,7 +21,8 @@ export function PageAccessRecovery({
   onRetry?: () => Promise<void>;
 }) {
   const session = usePageSurfaceSession();
-  const statusRef = useRef<HTMLDivElement>(null);
+  const { registerRecoveryElement } = session;
+  const statusRef = useRef<HTMLDivElement | null>(null);
   const returnFocusRef = useRef<HTMLElement | null>(null);
   const wasVisibleRef = useRef(false);
   const conflict = session.sourceConflict;
@@ -47,9 +48,22 @@ export function PageAccessRecovery({
   }, [visible]);
 
   if (!visible) return null;
+  const discardButton = (size: "default" | "sm") => (
+    <Button
+      type="button"
+      variant="destructive"
+      size={size}
+      onClick={session.requestDiscard}
+    >
+      {m.page_discard_changes()}
+    </Button>
+  );
   return (
     <div
-      ref={statusRef}
+      ref={(element) => {
+        statusRef.current = element;
+        registerRecoveryElement(element);
+      }}
       className={cn("flex flex-col gap-2 outline-none", className)}
       tabIndex={-1}
     >
@@ -57,13 +71,7 @@ export function PageAccessRecovery({
       <RepositoryAccessInlineRecovery recovery={session.recovery} />
       {session.recovery.open ? (
         <div className="flex flex-wrap justify-end gap-2">
-          <Button
-            type="button"
-            variant="outline"
-            onClick={session.dismissRecovery}
-          >
-            {m.git_access_preflight_cancel()}
-          </Button>
+          {discardButton("default")}
           <RepositoryAccessPrimaryButton recovery={session.recovery} />
         </div>
       ) : null}
@@ -72,21 +80,24 @@ export function PageAccessRecovery({
           <AlertTitle>{m.page_surface_save_error_title()}</AlertTitle>
           <AlertDescription className="flex flex-col items-start gap-2">
             <span>{session.persistenceError ?? error}</span>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              disabled={Boolean(onRetry) && session.readOnly}
-              onClick={() =>
-                void (onRetry && !session.persistenceError
-                  ? onRetry()
-                      .then(() => session.prepareForNavigation())
-                      .catch(() => undefined)
-                  : session.retryPersistence())
-              }
-            >
-              {m.page_surface_save_retry()}
-            </Button>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={Boolean(onRetry) && session.readOnly}
+                onClick={() =>
+                  void (onRetry && !session.persistenceError
+                    ? onRetry()
+                        .then(() => session.prepareForNavigation())
+                        .catch(() => undefined)
+                    : session.retryPersistence())
+                }
+              >
+                {m.page_surface_save_retry()}
+              </Button>
+              {discardButton("sm")}
+            </div>
           </AlertDescription>
         </Alert>
       ) : null}

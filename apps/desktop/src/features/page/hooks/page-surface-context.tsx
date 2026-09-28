@@ -4,40 +4,54 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
+import { toast } from "sonner";
 
-import { registerActiveContentDeactivation } from "@/features/artifact";
+import {
+  markActiveContentAwaitingDecision,
+  registerActiveContentDeactivation,
+} from "@/features/artifact";
 import {
   repositoryAccessIsEditable,
   useRepositoryAccess,
   useRepositoryAccessPreflight,
   type RepositoryAccessRequest,
 } from "@/features/git";
+import * as m from "@/paraglide/messages.js";
 import type { PageSourceConflict } from "../model/source-conflict";
 import {
+  PageDiscardDialog,
+  type PageDiscardConfirmation,
+} from "../ui/page-discard-dialog";
+import {
   usePagePersistence,
-  type PagePersistenceFlush,
   type PagePersistenceKind,
+  type PagePersistenceParticipant,
 } from "./use-page-persistence";
 
 interface PageSurfaceSessionContextValue {
-  dismissRecovery: () => void;
   persistenceError: string | null;
   readOnly: boolean;
   recovery: ReturnType<typeof useRepositoryAccessPreflight>;
+  /** Saves pending work before a non-leaving step; false while it is blocked. */
   prepareForNavigation: () => Promise<boolean>;
+  /** Saves pending work before leaving the Page, asking the user when blocked. */
+  prepareToLeave: () => Promise<boolean>;
   recoverWriteError: (
     error: unknown,
     retry: () => Promise<void>,
   ) => Promise<boolean>;
   registerPersistence: (
     kind: PagePersistenceKind,
-    flush: PagePersistenceFlush,
-    retry?: PagePersistenceFlush,
+    participant: PagePersistenceParticipant,
   ) => () => void;
+  /** The inline recovery the user returns to after keeping a blocked draft. */
+  registerRecoveryElement: (element: HTMLElement | null) => void;
   reportSourceConflict: (conflict: PageSourceConflict | null) => void;
+  requestDiscard: () => void;
   retryPersistence: () => Promise<void>;
   runMutation: (operation: () => Promise<void>) => Promise<void>;
   sourceConflict: PageSourceConflict | null;
@@ -102,7 +116,7 @@ function PageSurfaceSession({
     [displayName, displayPath, onOpenRepositorySettings, spacePath],
   );
   const {
-    dismissRecovery,
+    discardChanges,
     flushPersistence,
     persistenceError,
     recoverWriteError,
@@ -137,36 +151,98 @@ function PageSurfaceSession({
     [flushPersistence],
   );
 
+  const [confirmation, setConfirmationState] =
+    useState<PageDiscardConfirmation | null>(null);
+  const confirmationRef = useRef<PageDiscardConfirmation | null>(null);
+  const setConfirmation = useCallback(
+    (next: PageDiscardConfirmation | null) => {
+      confirmationRef.current = next;
+      setConfirmationState(next);
+    },
+    [],
+  );
+  const leaveRef = useRef<Promise<boolean> | null>(null);
+  const recoveryElementRef = useRef<HTMLElement | null>(null);
+  const registerRecoveryElement = useCallback((element: HTMLElement | null) => {
+    recoveryElementRef.current = element;
+  }, []);
+
+  const prepareToLeave = useCallback(async () => {
+    if (leaveRef.current) return leaveRef.current;
+    if (await flushPersistence()) return true;
+    // A blocked save never cancels the navigation silently: the user keeps
+    // the draft or discards it and continues to the requested target.
+    leaveRef.current ??= new Promise<boolean>((resolve) => {
+      markActiveContentAwaitingDecision();
+      // A leave supersedes an open discard question from the recovery.
+      confirmationRef.current?.resolve(false);
+      setConfirmation({ kind: "leave", resolve });
+    }).finally(() => {
+      leaveRef.current = null;
+    });
+    return leaveRef.current;
+  }, [flushPersistence, setConfirmation]);
+
+  const requestDiscard = useCallback(() => {
+    if (confirmationRef.current) return;
+    setConfirmation({ kind: "discard", resolve: () => undefined });
+  }, [setConfirmation]);
+
+  const resolveConfirmation = useCallback(
+    async (discard: boolean) => {
+      const current = confirmationRef.current;
+      if (!current) return;
+      setConfirmation(null);
+      if (!discard) {
+        current.resolve(false);
+        return;
+      }
+      try {
+        await discardChanges();
+        current.resolve(true);
+      } catch (error) {
+        console.error("Failed to discard Page changes:", error);
+        toast.error(m.page_discard_error());
+        current.resolve(false);
+      }
+    },
+    [discardChanges, setConfirmation],
+  );
+
   useEffect(() => {
     if (!registerGlobalDeactivation) return;
     return registerActiveContentDeactivation(async () =>
-      (await prepareForNavigation()) ? "ready" : "blocked",
+      (await prepareToLeave()) ? "ready" : "blocked",
     );
-  }, [prepareForNavigation, registerGlobalDeactivation]);
+  }, [prepareToLeave, registerGlobalDeactivation]);
 
   const value = useMemo<PageSurfaceSessionContextValue>(
     () => ({
-      dismissRecovery,
       persistenceError,
       prepareForNavigation,
+      prepareToLeave,
       readOnly,
       recoverWriteError,
       recovery,
       registerPersistence,
+      registerRecoveryElement,
       reportSourceConflict,
+      requestDiscard,
       retryPersistence,
       runMutation,
       sourceConflict,
     }),
     [
-      dismissRecovery,
       persistenceError,
       prepareForNavigation,
+      prepareToLeave,
       readOnly,
       recoverWriteError,
       recovery,
       registerPersistence,
+      registerRecoveryElement,
       reportSourceConflict,
+      requestDiscard,
       retryPersistence,
       runMutation,
       sourceConflict,
@@ -176,6 +252,14 @@ function PageSurfaceSession({
   return (
     <PageSurfaceSessionContext.Provider value={value}>
       {children}
+      <PageDiscardDialog
+        confirmation={confirmation}
+        persistenceError={persistenceError}
+        recovery={recovery}
+        sourceConflict={sourceConflict}
+        onResolve={(discard) => void resolveConfirmation(discard)}
+        onKeepFocus={() => recoveryElementRef.current?.focus()}
+      />
     </PageSurfaceSessionContext.Provider>
   );
 }

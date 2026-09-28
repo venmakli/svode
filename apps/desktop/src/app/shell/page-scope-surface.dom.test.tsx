@@ -37,14 +37,23 @@ if (process.env.SVODE_PAGE_SCOPE_TEST !== "1") {
       documentPath: string;
       initialPage: Page;
       readOnly: boolean;
-      registerPersistence(kind: "body", flush: () => Promise<void>): () => void;
+      registerPersistence(
+        kind: "body",
+        participant: {
+          flush: () => Promise<void>;
+          discard: () => Promise<void>;
+        },
+      ): () => void;
       onDocumentPathChange(path: string): void;
     }) {
       convert = props.onDocumentPathChange;
       const { registerPersistence } = props;
       useEffect(() => {
         mounts += 1;
-        const unregister = registerPersistence("body", () => flushBody());
+        const unregister = registerPersistence("body", {
+          flush: () => flushBody(),
+          discard: async () => {},
+        });
         return () => {
           unmounts += 1;
           unregister();
@@ -93,6 +102,25 @@ if (process.env.SVODE_PAGE_SCOPE_TEST !== "1") {
   }));
   mock.module("@/features/page/ui/page-delete-dialog", () => ({
     PageDeleteDialog: () => null,
+  }));
+  // Radix portals need DOM globals before import; the real dialog has its
+  // own DOM test, this one follows the leave flow through the shell.
+  mock.module("@/features/page/ui/page-discard-dialog", () => ({
+    PageDiscardDialog: ({
+      confirmation,
+      onResolve,
+    }: {
+      confirmation: { kind: string } | null;
+      onResolve: (discard: boolean) => void;
+    }) =>
+      confirmation ? (
+        <div data-page-discard-confirmation={confirmation.kind}>
+          <button onClick={() => onResolve(false)}>Stay</button>
+          <button onClick={() => onResolve(true)}>
+            Discard changes and leave
+          </button>
+        </div>
+      ) : null,
   }));
   mock.module(
     "@/features/collection/app-shell/detail-controller-context",
@@ -380,6 +408,60 @@ if (process.env.SVODE_PAGE_SCOPE_TEST !== "1") {
       await clickTab(f.dom, 1);
       expect(tabs(f.dom)[1]?.getAttribute("aria-selected")).toBe("true");
       expect(mounts).toBe(1);
+    } finally {
+      await f.cleanup();
+    }
+  });
+  test("a blocked Page asks before leaving: staying keeps its session, discarding opens the latest target", async () => {
+    const f = await fixture("Blocked.md");
+    const doc = f.dom.window.document;
+    const editor = () =>
+      doc.querySelector("[data-editor]")?.getAttribute("data-editor");
+    const button = (text: string) =>
+      [...doc.querySelectorAll<HTMLButtonElement>("button")].find(
+        (candidate) => candidate.textContent?.trim() === text,
+      )!;
+    try {
+      flushBody = async () => {
+        throw { kind: "source_busy", path: "Blocked.md" };
+      };
+      await act(async () => {
+        openPage("Other.md", "root");
+        await settle();
+      });
+      expect(
+        doc.querySelector("[data-page-discard-confirmation=leave]") !== null,
+      ).toBe(true);
+      expect(editor()).toBe("Blocked.md");
+      await act(async () => {
+        button("Stay").click();
+        await settle();
+      });
+      expect(doc.querySelector("[data-page-discard-confirmation]")).toBeNull();
+      expect(editor()).toBe("Blocked.md");
+      expect(doc.querySelector('[role="alert"]') !== null).toBe(true);
+
+      await act(async () => {
+        closeActiveContent();
+        await settle();
+      });
+      expect(
+        doc.querySelector("[data-page-discard-confirmation=leave]") !== null,
+      ).toBe(true);
+      await act(async () => {
+        openPage("Latest.md", "root");
+        await settle();
+      });
+      const readsBefore = f.reads();
+      await act(async () => {
+        button("Discard changes and leave").click();
+        await settle();
+      });
+      await f.render();
+      expect(editor()).toBe("Latest.md");
+      // The metadata draft was dropped by reading the saved Page again.
+      expect(f.reads() > readsBefore).toBe(true);
+      expect(mounts).toBe(2);
     } finally {
       await f.cleanup();
     }
