@@ -25,6 +25,7 @@ import {
 } from "../model/repository-access-consumer";
 import { repositoryAccessOwner } from "../model/repository-access-owner";
 import {
+  ownedRepositoryAccessTarget,
   repositoryOwner,
   repositorySettingsOpener,
   type RepositoryOwnerContext,
@@ -73,11 +74,13 @@ export function useRepositoryAccessPreflight() {
     void ownerVersion;
     return pending
       ? dedupeRepositoryAccessTargets(
-          pending.targets,
+          pending.targets.map((target) =>
+            ownedRepositoryAccessTarget(target, ownerContext),
+          ),
           repositoryAccessOwner.getSnapshot,
         )
       : [];
-  }, [ownerVersion, pending]);
+  }, [ownerContext, ownerVersion, pending]);
   const projectPath = ownerContext.projectPath;
   const blockers = useMemo(() => {
     const blocking = blockingRepositoryAccessTargets(targetViews);
@@ -252,7 +255,9 @@ export function useRepositoryAccessPreflight() {
         continuation: "explicit",
         denial,
         phase: "loading",
-        targets: Object.freeze([...nextRequest.targets, ...blockerTargets]),
+        // The refusing repository's own location names it before a target
+        // that only resolves to the same repository.
+        targets: Object.freeze([...blockerTargets, ...nextRequest.targets]),
       };
       setRecommendationsOpen(false);
       setPending(recoveryRequest);

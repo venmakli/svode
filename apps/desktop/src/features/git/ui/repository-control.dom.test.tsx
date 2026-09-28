@@ -30,7 +30,9 @@ if (!isolatedProcess) {
     get path() {
       return activePath;
     },
+    activeRootName: "Project",
     activeRootPath: "/project",
+    spaces: [] as { name: string; path: string }[],
   };
   mock.module("@/features/space", () => ({
     selectActiveSpacePath: (state: typeof space) => state.path,

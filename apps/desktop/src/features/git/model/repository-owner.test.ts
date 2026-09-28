@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 
 import {
+  ownedRepositoryAccessTarget,
   registerRepositorySettingsOpener,
   repositoryOwner,
   repositorySettingsOpener,
@@ -53,6 +54,32 @@ test("a repository outside the project is named by its path and opens the projec
     displayPath: "/elsewhere/repo",
     settingsPath: null,
   });
+});
+
+test("a consumer target at a Project or Space location is named by that owner, not by the consumer's label", () => {
+  const openSettings = () => undefined;
+  expect(
+    ownedRepositoryAccessTarget(
+      {
+        displayName: "plan",
+        displayPath: "plan.md",
+        repositoryPath: "/work/bigquest/docs",
+        openSettings,
+      },
+      context,
+    ),
+  ).toEqual({
+    displayName: "Docs",
+    displayPath: "/work/bigquest/docs",
+    repositoryPath: "/work/bigquest/docs",
+    openSettings,
+  });
+  const elsewhere = {
+    displayName: "Vendor",
+    displayPath: "vendor",
+    repositoryPath: "/work/bigquest/vendor/lib",
+  };
+  expect(ownedRepositoryAccessTarget(elsewhere, context)).toBe(elsewhere);
 });
 
 test("Git settings open through the app shell opener that is registered at click time", () => {

@@ -11,6 +11,7 @@ import {
 import { normalizeSchema, type PageSchemaResult } from "@/features/properties";
 import { getPageSchema } from "@/features/properties/api";
 import { useSpaceTreeSync } from "@/features/space";
+import * as m from "@/paraglide/messages.js";
 import { createPage, readPage } from "../page-api";
 import {
   isPageTreeMetaField,
@@ -318,8 +319,11 @@ export function PageDetailProvider({
     retry,
     discard: discardWrites,
     drafts,
-    writeError,
+    writeError: failedWrite,
   } = writes;
+  // The failure detail stays in the write session; the surface names it in
+  // user terms like the rest of the Page save feedback.
+  const writeError = failedWrite ? m.page_surface_save_error() : null;
   const createReadme = useCallback(async () => {
     try {
       return await ensureReadme();

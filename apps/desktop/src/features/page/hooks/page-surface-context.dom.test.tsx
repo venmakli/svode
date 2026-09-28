@@ -107,6 +107,42 @@ domTest("a positive canonical reread restores editable presentation automaticall
   }
 });
 
+domTest("an owner write error the recovery already presents is not repeated beside it", async () => {
+  const page = await renderPage("local", {
+    renderRecovery: true,
+    recoveryError: "Page could not be saved yet",
+    bodyFlush: async () => {
+      throw otherRepositoryDenial;
+    },
+  });
+  try {
+    expect(
+      textOf(page.dom, "[data-slot=alert]").includes(
+        "Page could not be saved yet",
+      ),
+    ).toBe(true);
+
+    await act(async () => {
+      await page.session().prepareForNavigation();
+      await settle();
+    });
+    expect(
+      page.dom.window.document.querySelector(
+        "[data-repository-access-inline-recovery]",
+      ) !== null,
+    ).toBe(true);
+    expect(
+      textOf(page.dom, "[data-slot=alert]").includes(
+        "Page could not be saved yet",
+      ),
+    ).toBe(false);
+    expect(buttonsWithText(page.dom, "Retry save").length).toBe(0);
+    expect(buttonsWithText(page.dom, "Discard changes").length).toBe(1);
+  } finally {
+    await page.cleanup();
+  }
+});
+
 domTest("a busy source after its retries is a save error with an explicit retry", async () => {
   let busy = true;
   const page = await renderPage("local", {
@@ -450,6 +486,7 @@ async function renderPage(
   options: {
     renderTitle?: boolean;
     renderRecovery?: boolean;
+    recoveryError?: string;
     bodyFlush?: () => Promise<void>;
     bodyDiscard?: () => Promise<void>;
   } = {},
@@ -524,7 +561,12 @@ async function renderPage(
         <span data-read-only>
           {session.readOnly ? "read-only" : "editable"}
         </span>
-        {options.renderRecovery ? <PageAccessRecovery /> : null}
+        {options.renderRecovery ? (
+          <PageAccessRecovery
+            error={options.recoveryError}
+            onRetry={options.recoveryError ? async () => undefined : undefined}
+          />
+        ) : null}
         {options.renderTitle ? (
           <>
             <div data-page-title>

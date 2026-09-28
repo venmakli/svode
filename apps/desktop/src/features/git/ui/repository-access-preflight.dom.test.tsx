@@ -282,6 +282,27 @@ test("a denial outside the consumer targets names every blocker and is never rea
   }
 });
 
+test("a denial of the consumer's own repository names it by the repository location, not the consumer label", async () => {
+  const harness = await renderHarness({
+    paths: new Map([["/page", snapshot("page", "unknown", "not_checked")]]),
+    verify: () => snapshot("page", "unknown", "not_checked"),
+  });
+
+  try {
+    await click(harness.dom, "[data-recover-own]");
+    expect(textOf(harness.dom, "[data-blocker-count]")).toBe("1");
+    const document = harness.dom.window.document;
+    const blocker = document.querySelector("[data-repository-access-blocker]");
+    expect(blocker?.getAttribute("data-repository-access-blocker")).toBe(
+      "page",
+    );
+    expect(blocker?.textContent?.includes("Page")).toBe(false);
+    expect(blocker?.textContent?.includes("/page")).toBe(true);
+  } finally {
+    await harness.cleanup();
+  }
+});
+
 test("a denial of an unknown repository without location never reports ready", async () => {
   const harness = await renderHarness({
     paths: new Map([["/page", snapshot("page", "local")]]),
@@ -477,6 +498,15 @@ function RecoveryHarness() {
               ["archive", "/work/archive", "not_checked"],
             ]),
             pageRequest("foreign"),
+          )
+        }
+      />
+      <button
+        data-recover-own
+        onClick={() =>
+          void recovery.recoverFromError(
+            locatedDenial([["page", "/page", "not_checked"]]),
+            pageRequest("own"),
           )
         }
       />

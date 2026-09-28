@@ -26,12 +26,16 @@ export function PageAccessRecovery({
   const returnFocusRef = useRef<HTMLElement | null>(null);
   const wasVisibleRef = useRef(false);
   const conflict = session.sourceConflict;
+  // A failure the Page session already presents (access recovery, busy
+  // source, failed flush) is not repeated as the owner's own write error.
+  const ownerError =
+    session.recovery.open || session.persistenceError ? null : error;
   // The editor keeps Tab for indentation, so a recovery that appears takes
   // focus to stay reachable from the keyboard and returns it when resolved.
   const visible =
     (session.recovery.open &&
       session.recovery.pending?.placement === "inline") ||
-    Boolean(session.persistenceError || error || conflict);
+    Boolean(session.persistenceError || ownerError || conflict);
 
   useEffect(() => {
     if (visible && !wasVisibleRef.current) {
@@ -75,11 +79,11 @@ export function PageAccessRecovery({
           <RepositoryAccessPrimaryButton recovery={session.recovery} />
         </div>
       ) : null}
-      {session.persistenceError || error ? (
+      {session.persistenceError || ownerError ? (
         <Alert variant="destructive">
           <AlertTitle>{m.page_surface_save_error_title()}</AlertTitle>
           <AlertDescription className="flex flex-col items-start gap-2">
-            <span>{session.persistenceError ?? error}</span>
+            <span>{session.persistenceError ?? ownerError}</span>
             <div className="flex flex-wrap gap-2">
               <Button
                 type="button"

@@ -1,3 +1,5 @@
+import type { RepositoryAccessTarget } from "./repository-access-consumer";
+
 export interface RepositoryOwnerContext {
   projectName: string | null;
   projectPath: string | null;
@@ -19,6 +21,20 @@ export function repositoryOwner(
   repositoryPath: string,
   context: RepositoryOwnerContext,
 ): RepositoryOwner {
+  return (
+    knownRepositoryOwner(repositoryPath, context) ?? {
+      displayName: basename(repositoryPath),
+      displayPath: repositoryPath,
+      settingsPath: context.projectPath,
+    }
+  );
+}
+
+/** The Project or Space at exactly this location, if there is one. */
+function knownRepositoryOwner(
+  repositoryPath: string,
+  context: RepositoryOwnerContext,
+): RepositoryOwner | null {
   const key = pathKey(repositoryPath);
   if (context.projectPath && pathKey(context.projectPath) === key) {
     return {
@@ -35,10 +51,25 @@ export function repositoryOwner(
       settingsPath: space.path,
     };
   }
+  return null;
+}
+
+/**
+ * A target at a Project or Space location is named by that owner, whatever
+ * label its consumer gave it; other targets keep the consumer's identity.
+ */
+export function ownedRepositoryAccessTarget(
+  target: RepositoryAccessTarget,
+  context: RepositoryOwnerContext,
+): RepositoryAccessTarget {
+  const owner = knownRepositoryOwner(target.repositoryPath, context);
+  if (!owner) return target;
   return {
-    displayName: basename(repositoryPath),
-    displayPath: repositoryPath,
-    settingsPath: context.projectPath,
+    ...target,
+    displayName: owner.displayName,
+    displayPath: owner.displayPath,
+    openSettings:
+      target.openSettings ?? repositorySettingsOpener(owner.settingsPath),
   };
 }
 
