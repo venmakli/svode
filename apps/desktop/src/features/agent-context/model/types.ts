@@ -67,7 +67,8 @@ export type AgentContextSkillDiscoveryKind =
   | "codex_project"
   | "codex_standard_personal"
   | "claude_project"
-  | "claude_personal";
+  | "claude_personal"
+  | "claude_personal_plugin";
 
 export interface AgentContextSkillAlias {
   sourceFamily: AgentContextSourceFamily;

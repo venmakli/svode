@@ -58,6 +58,9 @@ test("source facts come from declarative discovery enums, not adapter ids or pat
   );
   expect(sourceFamilyFromSkillDiscovery("claude_project")).toBe("claude");
   expect(sourceFamilyFromSkillDiscovery("claude_personal")).toBe("claude");
+  expect(sourceFamilyFromSkillDiscovery("claude_personal_plugin")).toBe(
+    "claude",
+  );
   expect(sourceLocationFromScope("project")).toBe("space");
   expect(sourceLocationFromScope("personal")).toBe("global");
 });

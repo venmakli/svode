@@ -130,6 +130,8 @@ pub enum SkillDiscoveryKind {
     CodexStandardPersonal,
     ClaudeProject,
     ClaudePersonal,
+    /// Skill inside a skills-dir plugin in the Claude personal skills root.
+    ClaudePersonalPlugin,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

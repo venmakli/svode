@@ -15,6 +15,10 @@ use super::io::{diagnostic, path_string};
 
 const MAX_ROOT_ENTRIES: usize = 512;
 const MAX_SKILL_BYTES: usize = 256 * 1024;
+/// Claude Code keeps claude.ai synced skills here and never reads it as a
+/// skills-dir entry.
+const CLAUDE_SYNCED_SKILLS_DIR: &str = "synced";
+const CLAUDE_PLUGIN_MANIFEST: &str = ".claude-plugin/plugin.json";
 
 #[derive(Debug, Clone)]
 struct ParsedSkill {
@@ -54,6 +58,7 @@ pub(super) fn discover(
     repository_root: &Path,
     directory_chain: &[PathBuf],
     adapters: &[AgentSourcePolicy],
+    svode_home: &Path,
 ) -> DiscoveryResult {
     let mut result = DiscoveryResult::default();
     let roots = roots(directory_chain, adapters);
@@ -70,6 +75,16 @@ pub(super) fn discover(
                 owner: root.owner.clone(),
             });
         }
+    }
+    if let Ok(canonical) = svode_home.canonicalize() {
+        allowed_boundaries.push(canonical.clone());
+        personal_owner_boundaries.push(CanonicalOwnerBoundary {
+            root: canonical,
+            owner: InstructionOwner {
+                kind: InstructionOwnerKind::ClientConfiguration,
+                root: path_string(svode_home),
+            },
+        });
     }
     allowed_boundaries.sort();
     allowed_boundaries.dedup();
@@ -372,7 +387,10 @@ fn scan_entry(
         );
         return;
     };
-    if entry_name.starts_with('.') {
+    if entry_name.starts_with('.')
+        || (root.discovery_kind == SkillDiscoveryKind::ClaudePersonal
+            && entry_name == CLAUDE_SYNCED_SKILLS_DIR)
+    {
         return;
     }
     let metadata = match fs::symlink_metadata(entry) {
@@ -443,13 +461,33 @@ fn scan_entry(
         );
         return;
     }
+    let entry_is_alias = root_is_alias || canonical_entry != canonical_root.join(entry_name);
     let link_kind = if metadata.file_type().is_symlink() {
         SkillLinkKind::SymbolicLink
-    } else if root_is_alias || canonical_entry != canonical_root.join(entry_name) {
+    } else if entry_is_alias {
         SkillLinkKind::DirectoryAlias
     } else {
         SkillLinkKind::Direct
     };
+    if root.discovery_kind == SkillDiscoveryKind::ClaudePersonal
+        && !canonical_entry.join("SKILL.md").exists()
+        && canonical_entry.join(CLAUDE_PLUGIN_MANIFEST).is_file()
+    {
+        scan_claude_plugin(
+            root,
+            entry,
+            &canonical_entry,
+            entry_is_alias || metadata.file_type().is_symlink(),
+            allowed_boundaries,
+            repository_root,
+            directory_chain,
+            personal_owner_boundaries,
+            parsed_cache,
+            rows,
+            result,
+        );
+        return;
+    }
 
     let parsed = parsed_cache
         .entry(canonical_entry.clone())
@@ -531,6 +569,115 @@ fn scan_entry(
             aliases: vec![alias],
         },
     );
+}
+
+/// Scans `skills/*` of a Claude Code skills-dir plugin. The plugin's skills
+/// resolve through the plugin address, and plugins do not nest.
+#[allow(clippy::too_many_arguments)]
+fn scan_claude_plugin(
+    root: &RootSpec<'_>,
+    plugin: &Path,
+    canonical_plugin: &Path,
+    plugin_is_alias: bool,
+    allowed_boundaries: &[PathBuf],
+    repository_root: &Path,
+    directory_chain: &[PathBuf],
+    personal_owner_boundaries: &[CanonicalOwnerBoundary],
+    parsed_cache: &mut BTreeMap<PathBuf, Result<ParsedSkill, SkillFailure>>,
+    rows: &mut BTreeMap<PathBuf, SkillRow>,
+    result: &mut DiscoveryResult,
+) {
+    let plugin_root = RootSpec {
+        adapter: root.adapter,
+        scope: root.scope,
+        discovery_kind: SkillDiscoveryKind::ClaudePersonalPlugin,
+        root: plugin.join("skills"),
+        owner: root.owner.clone(),
+    };
+    let canonical_skills = match plugin_root.root.canonicalize() {
+        Ok(path) if path.is_dir() => path,
+        Ok(_) => {
+            push_failure(
+                result,
+                root.adapter.id,
+                &plugin_root.root,
+                "skill_root_not_directory",
+                format!(
+                    "Skill root is not a directory: {}",
+                    plugin_root.root.display()
+                ),
+            );
+            return;
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
+        Err(error) => {
+            push_failure(
+                result,
+                root.adapter.id,
+                &plugin_root.root,
+                "skill_root_alias_unresolved",
+                format!(
+                    "Could not resolve skill root {}: {error}",
+                    plugin_root.root.display()
+                ),
+            );
+            return;
+        }
+    };
+    if !canonical_skills.starts_with(canonical_plugin) {
+        push_failure(
+            result,
+            root.adapter.id,
+            &plugin_root.root,
+            "skill_root_outside_boundary",
+            format!(
+                "Skill root {} resolves outside its plugin and was not scanned",
+                plugin_root.root.display()
+            ),
+        );
+        return;
+    }
+    let entries = match bounded_entries(&plugin_root.root) {
+        Ok(entries) => entries,
+        Err(failure) => {
+            push_failure(
+                result,
+                root.adapter.id,
+                &plugin_root.root,
+                failure.code,
+                failure.message,
+            );
+            return;
+        }
+    };
+    if entries.truncated {
+        push_failure(
+            result,
+            root.adapter.id,
+            &plugin_root.root,
+            "skill_root_entry_limit",
+            format!(
+                "Skill root {} exceeded the {MAX_ROOT_ENTRIES} direct-entry scan limit",
+                plugin_root.root.display()
+            ),
+        );
+    }
+    let skills_is_alias = plugin_is_alias || canonical_skills != canonical_plugin.join("skills");
+    for entry in entries.paths {
+        scan_entry(
+            &plugin_root,
+            &entry,
+            &canonical_skills,
+            skills_is_alias,
+            allowed_boundaries,
+            repository_root,
+            directory_chain,
+            personal_owner_boundaries,
+            parsed_cache,
+            rows,
+            result,
+        );
+    }
 }
 
 fn canonical_skill_owner(
@@ -878,8 +1025,12 @@ fn apply_personal_shadowing(
         .flat_map(|row| {
             row.aliases
                 .iter()
+                // Claude namespaces plugin skills as `plugin:skill`, so they
+                // never take a project skill's name.
                 .filter(|alias| {
-                    adapters.contains(&alias.adapter_id) && alias.scope == SkillScope::Personal
+                    adapters.contains(&alias.adapter_id)
+                        && alias.scope == SkillScope::Personal
+                        && alias.discovery_kind != SkillDiscoveryKind::ClaudePersonalPlugin
                 })
                 .map(|alias| (alias.adapter_id, row.name.clone()))
         })
@@ -919,7 +1070,8 @@ fn discovery_kind_order(kind: SkillDiscoveryKind) -> u8 {
         SkillDiscoveryKind::CodexStandardPersonal => 0,
         SkillDiscoveryKind::CodexProject => 1,
         SkillDiscoveryKind::ClaudePersonal => 2,
-        SkillDiscoveryKind::ClaudeProject => 3,
+        SkillDiscoveryKind::ClaudePersonalPlugin => 3,
+        SkillDiscoveryKind::ClaudeProject => 4,
     }
 }
 
@@ -1313,6 +1465,95 @@ mod tests {
             names(&independent_snapshot),
             vec!["independent-skill".to_string()]
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn connected_svode_payload_is_read_through_claude_plugin_and_shared_skill_links() {
+        use std::os::unix::fs::symlink;
+
+        let (project, home, environment) = setup();
+        let runtime = home.path().join(".svode/runtimes/desktop-1");
+        let plugin = runtime.join("plugins/svode");
+        fs::create_dir_all(plugin.join(".claude-plugin")).unwrap();
+        fs::write(
+            plugin.join(".claude-plugin/plugin.json"),
+            "{\"name\":\"svode\"}",
+        )
+        .unwrap();
+        write_skill(
+            &plugin.join("skills"),
+            "svode",
+            "svode",
+            Some("Svode payload"),
+        );
+        symlink("runtimes/desktop-1", home.path().join(".svode/current")).unwrap();
+        let stable_plugin = home.path().join(".svode/current/plugins/svode");
+        fs::create_dir_all(home.path().join(".claude/skills")).unwrap();
+        fs::create_dir_all(home.path().join(".agents/skills")).unwrap();
+        symlink(&stable_plugin, home.path().join(".claude/skills/svode")).unwrap();
+        symlink(
+            stable_plugin.join("skills/svode"),
+            home.path().join(".agents/skills/svode"),
+        )
+        .unwrap();
+        write_skill(
+            &home.path().join(".claude/skills/synced/bucket"),
+            "synced-skill",
+            "synced-skill",
+            Some("Synced"),
+        );
+        write_skill(
+            &project.path().join(".claude/skills"),
+            "svode",
+            "svode",
+            Some("Project"),
+        );
+
+        let snapshot = scan(project.path(), project.path(), &environment).unwrap();
+
+        assert!(
+            snapshot.diagnostics.is_empty(),
+            "unexpected diagnostics: {:?}",
+            snapshot.diagnostics
+        );
+        let payload = snapshot
+            .skills
+            .iter()
+            .find(|row| row.description == "Svode payload")
+            .expect("payload skill row");
+        assert!(payload.canonical_path.contains("runtimes/desktop-1"));
+        assert_eq!(
+            payload.owner.kind,
+            InstructionOwnerKind::ClientConfiguration
+        );
+        assert_eq!(payload.owner.root, path_string(&home.path().join(".svode")));
+        assert_eq!(payload.aliases.len(), 2);
+        assert!(payload.aliases.iter().any(|alias| {
+            alias.adapter_id == AgentAdapterKind::Codex
+                && alias.discovery_kind == SkillDiscoveryKind::CodexStandardPersonal
+                && alias.link_kind == SkillLinkKind::SymbolicLink
+                && alias.resolution == SourceResolution::Included
+        }));
+        assert!(payload.aliases.iter().any(|alias| {
+            alias.adapter_id == AgentAdapterKind::ClaudeCode
+                && alias.discovery_kind == SkillDiscoveryKind::ClaudePersonalPlugin
+                && alias.link_kind == SkillLinkKind::DirectoryAlias
+                && alias.path == path_string(&home.path().join(".claude/skills/svode/skills/svode"))
+                && alias.resolution == SourceResolution::Included
+        }));
+        let project_svode = snapshot
+            .skills
+            .iter()
+            .find(|row| row.description == "Project")
+            .expect("project skill row");
+        assert!(
+            project_svode
+                .aliases
+                .iter()
+                .all(|alias| alias.resolution == SourceResolution::Included)
+        );
+        assert!(snapshot.skills.iter().all(|row| row.name != "synced-skill"));
     }
 
     #[cfg(unix)]

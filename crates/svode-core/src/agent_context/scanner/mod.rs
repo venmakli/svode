@@ -67,6 +67,7 @@ pub fn scan(
         &repository_root,
         &directory_chain,
         &adapters,
+        &environment.svode_home,
     ));
 
     result.rows.sort_by(|left, right| {

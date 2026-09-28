@@ -97,6 +97,9 @@ pub struct SourceRegistryEnvironment {
     pub codex_home: PathBuf,
     pub codex_standard_skills_dir: PathBuf,
     pub claude_config_dir: PathBuf,
+    /// Stable Svode install root. Client skill links point into its payload,
+    /// so discovery reads it like a personal root.
+    pub svode_home: PathBuf,
 }
 
 impl SourceRegistryEnvironment {
@@ -105,6 +108,7 @@ impl SourceRegistryEnvironment {
             codex_home: home_dir.join(".codex"),
             codex_standard_skills_dir: home_dir.join(".agents/skills"),
             claude_config_dir: home_dir.join(".claude"),
+            svode_home: home_dir.join(".svode"),
         }
     }
 }
@@ -184,6 +188,7 @@ pub fn system_source_registry_environment() -> Result<SourceRegistryEnvironment,
         codex_home,
         codex_standard_skills_dir: home_dir.join(".agents/skills"),
         claude_config_dir,
+        svode_home: home_dir.join(".svode"),
     })
 }
 

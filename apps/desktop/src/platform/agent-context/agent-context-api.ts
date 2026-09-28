@@ -97,7 +97,8 @@ export interface AgentContextSkillAliasDto {
     | "codex_project"
     | "codex_standard_personal"
     | "claude_project"
-    | "claude_personal";
+    | "claude_personal"
+    | "claude_personal_plugin";
   path: string;
   root: string;
   owner: {
