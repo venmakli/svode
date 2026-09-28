@@ -1,6 +1,9 @@
 use std::ffi::{OsStr, OsString};
+use std::sync::{Arc, LazyLock};
 
 use tokio::sync::OnceCell;
+
+static SESSION: LazyLock<Arc<ProcessPath>> = LazyLock::new(Arc::default);
 
 /// A session snapshot for direct child processes; never mutates the host environment.
 #[derive(Default)]
@@ -9,6 +12,12 @@ pub(crate) struct ProcessPath {
 }
 
 impl ProcessPath {
+    /// The snapshot shared by every child process of this app session, so the
+    /// login shell is read once. A GUI launch inherits only the launchd PATH.
+    pub(crate) fn session() -> Arc<Self> {
+        Arc::clone(&SESSION)
+    }
+
     pub(crate) async fn get(&self) -> Option<&OsStr> {
         self.path.get_or_init(discover).await.as_deref()
     }

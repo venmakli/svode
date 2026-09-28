@@ -9,7 +9,11 @@ use crate::agent::executor::AgentExecutor;
 use crate::agent::types::{
     AgentConfig, AgentEvent, AvailableAgent, ModelOption, load_space_agent_config,
 };
-use crate::{error::AppError, process};
+use crate::agent_adapters::runtime::{
+    AdapterDiagnostic, AdapterDiagnosticStatus, AdapterTarget, SystemRuntimeCommandRunner,
+};
+use crate::agent_adapters::{AgentAdapterKind, AgentAdapterRegistry, system_home_dir};
+use crate::error::AppError;
 
 /// Default timeout for agent execution: 10 minutes.
 const DEFAULT_TIMEOUT_SECS: u64 = 600;
@@ -204,74 +208,45 @@ pub async fn agent_respond_permission(
     result
 }
 
-async fn get_cli_version(cli_path: &str) -> Option<String> {
-    let mut cmd = tokio::process::Command::new(cli_path);
-    process::hide_tokio_window(&mut cmd);
-    let output = cmd.arg("--version").output().await.ok()?;
-    if output.status.success() {
-        Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
-    } else {
-        None
-    }
-}
-
-async fn get_cli_auth_status(cli_path: &str, args: &[&str]) -> String {
-    let mut cmd = tokio::process::Command::new(cli_path);
-    process::hide_tokio_window(&mut cmd);
-    match cmd.args(args).output().await {
-        Ok(output) if output.status.success() => "authorized".to_string(),
-        Ok(_) => "unauthorized".to_string(),
-        Err(_) => "unknown".to_string(),
-    }
-}
-
-/// List available agent CLI tools detected on the system.
+/// List the agent CLIs detected on this device for Settings.
 #[tauri::command]
 pub async fn agent_list_available() -> Result<Vec<AvailableAgent>, AppError> {
-    let mut agents = Vec::new();
+    let home_dir = system_home_dir()
+        .ok_or_else(|| AppError::PathNotAccessible("home directory is unavailable".into()))?;
+    let registry = AgentAdapterRegistry;
+    let target = AdapterTarget { cwd: home_dir };
+    let (claude, codex) = tokio::join!(
+        registry.diagnose(
+            AgentAdapterKind::ClaudeCode,
+            &target,
+            &SystemRuntimeCommandRunner
+        ),
+        registry.diagnose(
+            AgentAdapterKind::Codex,
+            &target,
+            &SystemRuntimeCommandRunner
+        ),
+    );
+    Ok(vec![
+        available_agent(claude, "https://docs.anthropic.com/claude-code"),
+        available_agent(codex, "https://github.com/openai/codex"),
+    ])
+}
 
-    let executor = ClaudeCodeExecutor;
-    if let Some(path) = executor.detect() {
-        let version = get_cli_version(&path).await;
-        let auth_status = get_cli_auth_status(&path, &["auth", "status"]).await;
-        agents.push(AvailableAgent {
-            name: executor.name().to_string(),
-            path,
-            version,
-            auth_status,
-            docs_url: "https://docs.anthropic.com/claude-code".to_string(),
-        });
-    } else {
-        agents.push(AvailableAgent {
-            name: "claude".to_string(),
-            path: String::new(),
-            version: None,
-            auth_status: "not_found".to_string(),
-            docs_url: "https://docs.anthropic.com/claude-code".to_string(),
-        });
-    }
-
-    // Codex
-    let codex_path = which::which("codex")
-        .map(|p| p.to_string_lossy().to_string())
-        .unwrap_or_default();
-    let (version, auth_status) = if codex_path.is_empty() {
-        (None, "not_found".to_string())
-    } else {
-        (
-            get_cli_version(&codex_path).await,
-            get_cli_auth_status(&codex_path, &["login", "status"]).await,
-        )
+fn available_agent(diagnostic: AdapterDiagnostic, docs_url: &str) -> AvailableAgent {
+    let auth_status = match diagnostic.status {
+        AdapterDiagnosticStatus::Ready => "authorized",
+        AdapterDiagnosticStatus::Unauthenticated => "unauthorized",
+        AdapterDiagnosticStatus::Missing => "not_found",
+        AdapterDiagnosticStatus::Unknown => "unknown",
     };
-    agents.push(AvailableAgent {
-        name: "codex".to_string(),
-        path: codex_path,
-        version,
-        auth_status,
-        docs_url: "https://github.com/openai/codex".to_string(),
-    });
-
-    Ok(agents)
+    AvailableAgent {
+        name: diagnostic.adapter.executable().to_string(),
+        path: diagnostic.executable_path.unwrap_or_default(),
+        version: diagnostic.version,
+        auth_status: auth_status.to_string(),
+        docs_url: docs_url.to_string(),
+    }
 }
 
 /// List available models for the active agent CLI in a space.

@@ -7,6 +7,7 @@ use tokio::process::Command;
 use crate::agent::AgentProcess;
 use crate::agent::executor::AgentExecutor;
 use crate::agent::types::{AgentConfig, AgentEvent, ModelOption};
+use crate::agent_adapters::{AgentAdapterKind, resolve_executable_path, system_home_dir};
 use crate::{error::AppError, process};
 
 /// Claude Code CLI executor.
@@ -73,36 +74,16 @@ impl AgentExecutor for ClaudeCodeExecutor {
         "claude"
     }
 
-    fn detect(&self) -> Option<String> {
-        detect_cli()
-    }
-
     fn available_models(&self) -> Vec<ModelOption> {
         claude_models()
     }
 }
 
-/// Detect the `claude` CLI binary. Checks PATH first, then common install locations.
+/// Detect the `claude` CLI binary through the shared adapter resolution.
 fn detect_cli() -> Option<String> {
-    if let Ok(p) = which::which("claude") {
-        return Some(p.to_string_lossy().to_string());
-    }
-
-    let home = std::env::var("HOME").ok()?;
-    let candidates = [
-        format!("{home}/.local/bin/claude"),
-        format!("{home}/.npm/bin/claude"),
-        format!("{home}/.bun/bin/claude"),
-        "/usr/local/bin/claude".to_string(),
-    ];
-
-    for path in &candidates {
-        if std::path::Path::new(path).exists() {
-            return Some(path.clone());
-        }
-    }
-
-    None
+    let home_dir = system_home_dir()?;
+    resolve_executable_path(AgentAdapterKind::ClaudeCode, None, &home_dir, None)
+        .map(|path| path.to_string_lossy().into_owned())
 }
 
 /// Build the CLI command with appropriate flags.

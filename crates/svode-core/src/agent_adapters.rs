@@ -1,3 +1,4 @@
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -192,12 +193,19 @@ pub fn system_home_dir() -> Option<PathBuf> {
         .map(PathBuf::from)
 }
 
+/// Resolves the adapter executable. `search_path` replaces the process PATH
+/// when the host knows a better one, e.g. the login shell PATH of a GUI app
+/// that launchd started with only the system directories.
 pub fn resolve_executable_path(
     id: AgentAdapterKind,
     local_override: Option<&Path>,
     home_dir: &Path,
+    search_path: Option<&OsStr>,
 ) -> Option<PathBuf> {
-    resolve_executable_path_with(id, local_override, home_dir, |name| which::which(name).ok())
+    resolve_executable_path_with(id, local_override, home_dir, |name| match search_path {
+        Some(paths) => which::which_in(name, Some(paths), home_dir).ok(),
+        None => which::which(name).ok(),
+    })
 }
 
 fn resolve_executable_path_with(
@@ -330,6 +338,25 @@ mod tests {
                 None
             },),
             Some(common)
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn executable_resolution_searches_the_host_path_instead_of_the_process_path() {
+        let home = tempfile::tempdir().unwrap();
+        let login_bin = tempfile::tempdir().unwrap();
+        let codex = login_bin.path().join("codex");
+        make_executable(&codex);
+
+        assert_eq!(
+            resolve_executable_path(
+                AgentAdapterKind::Codex,
+                None,
+                home.path(),
+                Some(login_bin.path().as_os_str()),
+            ),
+            Some(codex)
         );
     }
 }

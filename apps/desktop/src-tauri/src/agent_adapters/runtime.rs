@@ -11,6 +11,7 @@ use tokio::io::AsyncReadExt;
 use super::{AgentAdapterKind, AgentAdapterRegistry, resolve_executable_path, system_home_dir};
 use crate::agent::types::load_space_agent_config;
 use crate::process;
+use crate::process::path_env::ProcessPath;
 use svode_core::agent_actors::{AgentAdapter, ApprovalMode};
 
 const DIAGNOSTIC_TIMEOUT: Duration = Duration::from_secs(5);
@@ -90,6 +91,10 @@ impl RuntimeCommandRunner for SystemRuntimeCommandRunner {
     ) -> Pin<Box<dyn Future<Output = Result<RuntimeCommandOutput, String>> + Send + 'a>> {
         Box::pin(async move {
             let mut command = tokio::process::Command::new(&request.program);
+            // npm/bun/volta installs are `#!/usr/bin/env node` scripts.
+            if let Some(path) = ProcessPath::session().get().await {
+                command.env("PATH", path);
+            }
             command
                 .args(&request.arguments)
                 .current_dir(&request.cwd)
@@ -426,9 +431,13 @@ impl AgentAdapterRegistry {
             );
         };
         let executable_override = target_executable_override(adapter, &target.cwd);
-        let Some(path) =
-            resolve_executable_path(adapter, executable_override.as_deref(), &home_dir)
-        else {
+        let search_path = ProcessPath::session();
+        let Some(path) = resolve_executable_path(
+            adapter,
+            executable_override.as_deref(),
+            &home_dir,
+            search_path.get().await,
+        ) else {
             return AdapterDiagnostic {
                 adapter,
                 status: AdapterDiagnosticStatus::Missing,

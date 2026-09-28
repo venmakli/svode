@@ -190,14 +190,14 @@ impl AppProcessState {
         Self::with_probe(
             config,
             Arc::new(HttpUrlReadinessProbe { client }),
-            ProcessPath::default(),
+            ProcessPath::session(),
         )
     }
 
     fn with_probe(
         config: ProcessRuntimeConfig,
         readiness_probe: Arc<dyn UrlReadinessProbe>,
-        search_path: ProcessPath,
+        search_path: Arc<ProcessPath>,
     ) -> Self {
         Self {
             inner: Arc::new(Mutex::new(ProcessStateInner {
@@ -207,7 +207,7 @@ impl AppProcessState {
             })),
             readiness_probe,
             config,
-            search_path: Arc::new(search_path),
+            search_path,
         }
     }
 
@@ -1116,7 +1116,7 @@ mod tests {
         let state = AppProcessState::with_probe(
             test_config(),
             Arc::new(AlwaysReady),
-            ProcessPath::fixed(None),
+            Arc::new(ProcessPath::fixed(None)),
         );
         let mut setup = shell("printf 'run\\n' >> setup.log");
         setup.inputs.push("input.lock".to_string());
@@ -1205,7 +1205,7 @@ mod tests {
         let state = AppProcessState::with_probe(
             test_config(),
             Arc::new(AlwaysReady),
-            ProcessPath::fixed(None),
+            Arc::new(ProcessPath::fixed(None)),
         );
         let mut runtime = runtime(
             "http://127.0.0.1:3210/".to_string(),
@@ -1336,7 +1336,7 @@ mod tests {
             let state = AppProcessState::with_probe(
                 test_config(),
                 Arc::new(AlwaysReady),
-                ProcessPath::fixed(Some(recovered_path.clone())),
+                Arc::new(ProcessPath::fixed(Some(recovered_path.clone()))),
             );
             wait_for_snapshot(&state, temp.path(), &owner, &runtime, |snapshot| {
                 matches!(snapshot, AppProcessSnapshot::Ready { managed: true, .. })
@@ -1374,7 +1374,7 @@ mod tests {
         let state = AppProcessState::with_probe(
             test_config(),
             Arc::new(NeverReady),
-            ProcessPath::fixed(None),
+            Arc::new(ProcessPath::fixed(None)),
         );
         let failed = wait_for_snapshot(&state, temp.path(), temp.path(), &runtime, |snapshot| {
             matches!(snapshot, AppProcessSnapshot::Failed { .. })
@@ -1404,7 +1404,7 @@ mod tests {
         let state = AppProcessState::with_probe(
             test_config(),
             Arc::new(NeverReady),
-            ProcessPath::fixed(None),
+            Arc::new(ProcessPath::fixed(None)),
         );
 
         let failed = wait_for_snapshot(&state, &project, &owner, &runtime, |snapshot| {
@@ -1444,8 +1444,11 @@ mod tests {
                 inputs: Vec::new(),
             },
         );
-        let state =
-            AppProcessState::with_probe(config, Arc::new(NeverReady), ProcessPath::fixed(None));
+        let state = AppProcessState::with_probe(
+            config,
+            Arc::new(NeverReady),
+            Arc::new(ProcessPath::fixed(None)),
+        );
         let failed = wait_for_snapshot(&state, &project, &owner, &missing, |snapshot| {
             matches!(snapshot, AppProcessSnapshot::Failed { .. })
         })
@@ -1495,7 +1498,7 @@ mod tests {
             let state = AppProcessState::with_probe(
                 test_config(),
                 Arc::new(AlwaysReady),
-                ProcessPath::fixed(None),
+                Arc::new(ProcessPath::fixed(None)),
             );
             let key = AppProcessKey::new(&project, &owner);
             let generation = 1;
@@ -1574,7 +1577,7 @@ mod tests {
         let state = AppProcessState::with_probe(
             test_config(),
             Arc::new(AlwaysReady),
-            ProcessPath::fixed(None),
+            Arc::new(ProcessPath::fixed(None)),
         );
 
         let ready = wait_for_snapshot(&state, &project, &owner, &runtime, |snapshot| {
@@ -1624,7 +1627,7 @@ mod tests {
         let state = AppProcessState::with_probe(
             test_config(),
             Arc::new(AlwaysReady),
-            ProcessPath::fixed(None),
+            Arc::new(ProcessPath::fixed(None)),
         );
         wait_for_snapshot(&state, &project, &owner, &runtime, |snapshot| {
             matches!(snapshot, AppProcessSnapshot::Ready { managed: true, .. })

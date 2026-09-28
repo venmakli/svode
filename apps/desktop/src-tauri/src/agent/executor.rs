@@ -39,9 +39,6 @@ pub trait AgentExecutor: Send + Sync {
     /// CLI name identifier.
     fn name(&self) -> &str;
 
-    /// Detect if CLI is available on the system. Returns the path if found.
-    fn detect(&self) -> Option<String>;
-
     /// Return the list of models supported by this CLI.
     fn available_models(&self) -> Vec<ModelOption>;
 }
