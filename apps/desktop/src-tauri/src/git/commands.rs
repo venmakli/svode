@@ -11,7 +11,6 @@ use crate::index::update::IndexUpdateState;
 use crate::index::{IndexKey, IndexState};
 use crate::space::project;
 use crate::space::types::{GitUserPolicy, SpaceGitType};
-use crate::system_path;
 use svode_core::git::autocommit::{AutocommitService, SystemCommitKind};
 use svode_core::git::cli::{GitAvailability, GitCli};
 use svode_core::git::operations::SharedError;
@@ -19,6 +18,7 @@ use svode_core::git::ops::{GitStatus, UnpushedCommit};
 use svode_core::git::path::{RootMode, normalize_repo_relative, repo_relative_from_base};
 use svode_core::git::save::save;
 use svode_core::git::{flow, ops, sync};
+use svode_core::system_path;
 
 /// Emit `space:synced` after a successful `git_sync(space)` finishes (and any
 /// reindex/post-sync work is done). Consumers — file watcher reindex,

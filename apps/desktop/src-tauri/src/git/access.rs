@@ -310,7 +310,7 @@ where
 fn repository_location(path: &Path) -> String {
     let repository =
         svode_core::git::access::local_repository_root(path).unwrap_or_else(|_| path.to_path_buf());
-    crate::system_path::user_facing_path(&repository)
+    svode_core::system_path::user_facing_path(&repository)
 }
 
 pub(crate) fn access_store_path(app: &AppHandle) -> Result<PathBuf, AppError> {
@@ -431,8 +431,8 @@ mod tests {
                 .map(|blocker| blocker.repository_path.clone())
                 .collect::<Vec<_>>(),
             vec![
-                crate::system_path::user_facing_path(&second),
-                crate::system_path::user_facing_path(&first),
+                svode_core::system_path::user_facing_path(&second),
+                svode_core::system_path::user_facing_path(&first),
             ]
         );
         assert_eq!(repository_id, blockers[0].repository_id);

@@ -2,8 +2,8 @@ use std::path::Path;
 
 use crate::error::AppError;
 use crate::repo_path::{RootMode, normalize_repo_relative};
-use crate::system_path;
 use svode_core::git::ops::SubmoduleConfig;
+use svode_core::system_path;
 
 use super::config;
 use super::registry;

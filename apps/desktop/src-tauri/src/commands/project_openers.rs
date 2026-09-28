@@ -5,8 +5,8 @@ use serde::{Deserialize, Serialize};
 use crate::{
     AppError,
     external_apps::{self, AppPresentation, ExternalAppDto, ExternalAppKind},
-    system_path,
 };
+use svode_core::system_path;
 
 #[cfg(any(target_os = "windows", test))]
 const VSCODE_PATH_ENV: &str = "SVODE_VSCODE_PATH";

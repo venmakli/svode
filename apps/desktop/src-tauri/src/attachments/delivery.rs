@@ -22,7 +22,7 @@ pub(crate) fn emit_managed_import_invalidations(app: &AppHandle, delivery: &Mana
         if let Err(error) = app.emit(
             "attachments:invalidated",
             serde_json::json!({
-                "spacePath": crate::system_path::user_facing_path(&delivery.space_path),
+                "spacePath": svode_core::system_path::user_facing_path(&delivery.space_path),
                 "ownerPath": owner_path,
                 "generation": generation,
                 "changes": changes,

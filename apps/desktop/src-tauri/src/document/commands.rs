@@ -6,10 +6,8 @@ use super::source::{
     DocumentSourceDescriptor, DocumentSourceError, inspect_document_source, read_document_source,
     resolve_document_source_for_external,
 };
-use crate::{
-    external_apps::{self, ExternalAppDto},
-    system_path,
-};
+use crate::external_apps::{self, ExternalAppDto};
+use svode_core::system_path;
 
 #[tauri::command]
 pub(crate) fn document_inspect_source(

@@ -36,7 +36,7 @@ impl VariablesProblem {
             file: failure
                 .file
                 .as_deref()
-                .map(crate::system_path::user_facing_path),
+                .map(svode_core::system_path::user_facing_path),
             section: failure.section,
         }
     }
@@ -563,7 +563,7 @@ fn s3_usage(
                 });
                 if entry == reference && (reference.owner == SourceOwner::Global || same_project) {
                     usage.push(AppVariableUsage {
-                        owner_directory: crate::system_path::user_facing_path(&owner),
+                        owner_directory: svode_core::system_path::user_facing_path(&owner),
                         reference_name: format!("S3 {role}"),
                     });
                 }

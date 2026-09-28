@@ -8,10 +8,8 @@ use super::source::{
     MediaSourceDescriptor, MediaSourceError, inspect_media_source,
     resolve_media_source_for_external, validate_media_source_generation,
 };
-use crate::{
-    external_apps::{self, ExternalAppDto},
-    system_path,
-};
+use crate::external_apps::{self, ExternalAppDto};
+use svode_core::system_path;
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]

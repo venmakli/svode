@@ -16,7 +16,7 @@ use crate::agent_sessions::types::{
     AgentSessionStatus,
 };
 use crate::error::AppError;
-use crate::system_path;
+use svode_core::system_path;
 
 const OUTPUT_EVENT: &str = "terminal:output";
 const EXIT_EVENT: &str = "terminal:exit";

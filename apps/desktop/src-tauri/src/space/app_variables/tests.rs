@@ -625,7 +625,7 @@ fn shared_registry_problem_blocks_every_catalog_and_names_application_settings()
         assert_eq!(problem.section, Some("appVariableRegistry"));
         assert_eq!(
             problem.file.as_deref(),
-            Some(crate::system_path::user_facing_path(&settings).as_str())
+            Some(svode_core::system_path::user_facing_path(&settings).as_str())
         );
         assert!(!problem.recoverable);
     }

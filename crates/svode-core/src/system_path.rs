@@ -1,5 +1,8 @@
+//! Presentation of local filesystem paths to people and agents.
+
 use std::path::Path;
 
+/// `path` without the Windows verbatim prefix a canonical path carries.
 pub fn user_facing_path(path: &Path) -> String {
     user_facing_path_str(&path.to_string_lossy())
 }

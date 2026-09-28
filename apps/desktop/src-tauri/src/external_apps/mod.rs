@@ -16,7 +16,7 @@ use serde::Serialize;
 use tauri::AppHandle;
 use tauri_plugin_opener::OpenerExt;
 
-use crate::system_path;
+use svode_core::system_path;
 
 #[cfg(target_os = "macos")]
 mod macos;

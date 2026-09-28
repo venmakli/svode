@@ -150,7 +150,7 @@ fn access_blocker(error: &ToolError, repository: &Path) -> Option<RepositoryAcce
     };
     Some(RepositoryAccessBlocker {
         repository_id: evidence("repositoryId")?,
-        repository_path: repository.display().to_string(),
+        repository_path: svode_core::system_path::user_facing_path(repository),
         status: evidence("status")?,
         reason: evidence("reason")?,
     })
@@ -220,6 +220,31 @@ impl<'a> PageHandles<'a> {
 mod tests {
     use super::*;
     use svode_core::page::naming::DocumentNameConflictEvidence;
+
+    #[test]
+    fn an_access_blocker_names_its_repository_by_the_user_facing_path() {
+        let denied = ToolError::from(svode_core::git::GitError::RepositoryAccessDenied {
+            repository_id: "repo-opaque".to_string(),
+            status: "read_only".to_string(),
+            reason: "none".to_string(),
+        });
+
+        let blocker = access_blocker(&denied, Path::new(r"\\?\C:\work\compliance")).unwrap();
+
+        assert_eq!(blocker.repository_path, r"C:\work\compliance");
+        assert_eq!(blocker.repository_id, "repo-opaque");
+        assert_eq!(
+            (blocker.status.as_str(), blocker.reason.as_str()),
+            ("read_only", "none")
+        );
+        assert!(
+            access_blocker(
+                &ToolError::new("GIT_NOT_FOUND", "Git not found"),
+                Path::new("/work/compliance")
+            )
+            .is_none()
+        );
+    }
 
     #[test]
     fn name_conflict_result_preserves_container_and_conflicting_page_evidence() {

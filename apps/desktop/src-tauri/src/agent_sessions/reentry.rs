@@ -11,8 +11,8 @@ use super::types::{
 };
 use crate::agent_adapters::runtime::resolve_scoped_executable;
 use crate::error::AppError;
-use crate::system_path;
 use crate::terminal::{AgentTerminalSpawn, AgentTerminalSurface, quote_agent_shell_command};
+use svode_core::system_path;
 
 pub(crate) fn reenter_session<ResolveCli, SpawnShell>(
     state: &AgentSessionsState,

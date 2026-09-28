@@ -13,11 +13,11 @@ use crate::files::tree::{
 use crate::git::dates::derive_date_overrides;
 use crate::repo_path::{RootMode, normalize_repo_relative};
 use crate::space::read::resolve_space_target;
-use crate::system_path;
 use svode_core::content_tree::children::{DirectoryFacts, DirectoryKind, is_regular_source};
 use svode_core::page::identity::{
     ArtifactKind, MarkdownIdentityFacts, SourceShape, resolve_markdown_identity,
 };
+use svode_core::system_path;
 
 pub(crate) use svode_core::attachments::format::AttachmentAvailability;
 

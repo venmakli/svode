@@ -1,3 +1,4 @@
+use crate::AppError;
 use crate::space::app_variables::mutations::{
     self, Mutation, VariableMutationResult, VariableRecoveryResult,
 };
@@ -6,10 +7,10 @@ use crate::space::app_variables::{
     KeyringSecretStore, VariableScope, storage_error,
 };
 use crate::space::settings::AppSettingsState;
-use crate::{AppError, system_path};
 use serde::Deserialize;
 use std::path::Path;
 use svode_core::apps::manifest::{read_and_validate_manifest, resolve_app_owner};
+use svode_core::system_path;
 use svode_core::variables::{self as core, Service, SourceOwner, SourceReference};
 use tauri::{AppHandle, Emitter, Manager, State};
 

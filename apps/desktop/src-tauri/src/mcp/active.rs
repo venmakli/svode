@@ -4,8 +4,9 @@ use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
 
+use crate::AppError;
 use crate::space::read::resolve_space_target;
-use crate::{AppError, system_path};
+use svode_core::system_path;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use crate::error::AppError;
-use crate::system_path;
+use svode_core::system_path;
 
 use super::types::{RegistryEntry, SpaceRegistry};
 
