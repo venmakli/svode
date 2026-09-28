@@ -58,11 +58,7 @@ export interface PageDetailState {
 }
 
 export interface WritePageResult {
-  newPath: string | null;
-  modifiedFiles: string[];
-  modifiedSources?: { spaceId: string | null; path: string }[];
   writeNonce: string;
-  warnings: PageWarning[];
   sourceVersion: string | null;
 }
 

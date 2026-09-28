@@ -58,17 +58,12 @@ export interface WritePageInputDto extends Record<string, unknown> {
   space: string;
   path: string;
   content: string;
-  skipRename: boolean;
   projectPath: string | null;
   sourceVersion: string;
 }
 
 export interface WritePageResultDto {
-  new_path: string | null;
-  modified_files: string[];
-  modified_sources?: { spaceId: string | null; path: string }[];
   write_nonce: string;
-  warnings?: PageWarningDto[];
   source_version?: string | null;
 }
 
@@ -82,15 +77,6 @@ export function createPage(input: {
   projectPath: string | null;
 }): Promise<PageDto> {
   return invokeCommand<PageDto>("create_entry", { ...input });
-}
-
-export function renamePage(input: {
-  space: string;
-  from: string;
-  to: string;
-  projectPath: string | null;
-}): Promise<string[]> {
-  return invokeCommand<string[]>("rename_entry", { ...input });
 }
 
 export function readPage(space: string, path: string): Promise<PageDto> {

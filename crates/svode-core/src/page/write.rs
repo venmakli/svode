@@ -260,8 +260,6 @@ fn apply_sources(request: PageWrite<'_>, plan: WritePlan) -> Result<PageWriteOut
             .as_ref()
             .map(|rename| rename_roots(&request, rename));
         let snapshot = SourceSnapshot::capture(&plan.paths, roots.clone())?;
-        let had_naming_intent =
-            crate::page::filename::has_managed_naming_intent(request.space, request.path);
         let operation = (|| {
             if let Some(batch) = request.field_batch.as_ref() {
                 collections::apply_prepared_entry_field_relations(batch)?;
@@ -394,12 +392,7 @@ fn apply_sources(request: PageWrite<'_>, plan: WritePlan) -> Result<PageWriteOut
                 changed_paths,
             })
         })();
-        let mut outcome = operation.map_err(|error| {
-            if had_naming_intent {
-                crate::page::filename::mark_managed_naming_intent(request.space, request.path);
-            }
-            snapshot.rollback(error)
-        })?;
+        let mut outcome = operation.map_err(|error| snapshot.rollback(error))?;
         let current = outcome.result.new_path.as_deref().unwrap_or(request.path);
         outcome.result.source_version = current_source_version(Path::new(request.space), current)
             .ok()

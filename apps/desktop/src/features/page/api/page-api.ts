@@ -7,7 +7,6 @@ import {
   getPageDetailState as getPageDetailStateDto,
   type PageLinkValidationResultDto,
   readPage as readPageDto,
-  renamePage as renamePageDto,
   updatePageField as updatePageFieldDto,
   validatePageLinks as validatePageLinksDto,
   writePage as writePageDto,
@@ -43,13 +42,6 @@ export interface CreatePageInput {
   projectPath?: string | null;
 }
 
-export interface RenamePageInput {
-  spacePath: string;
-  from: string;
-  to: string;
-  projectPath?: string | null;
-}
-
 export interface UpdatePageFieldInput {
   spacePath: string;
   filePath: string;
@@ -62,7 +54,6 @@ export interface WritePageInput {
   spacePath: string;
   path: string;
   content: string;
-  skipRename: boolean;
   projectPath: string | null;
   /** Version of the source this body was edited from. */
   sourceVersion: string;
@@ -150,15 +141,6 @@ export async function createPage(input: CreatePageInput): Promise<Page> {
   return pageFromDto(page);
 }
 
-export function renamePage(input: RenamePageInput): Promise<string[]> {
-  return renamePageDto({
-    space: input.spacePath,
-    from: input.from,
-    to: input.to,
-    projectPath: input.projectPath ?? null,
-  });
-}
-
 export async function updatePageField(
   input: UpdatePageFieldInput,
 ): Promise<Page> {
@@ -179,7 +161,6 @@ export async function writePage(
     space: input.spacePath,
     path: input.path,
     content: input.content,
-    skipRename: input.skipRename,
     projectPath: input.projectPath,
     sourceVersion: input.sourceVersion,
   });
@@ -294,11 +275,7 @@ function orderNameForPage(page: Page) {
 
 function writeResultFromDto(result: WritePageResultDto): WritePageResult {
   return {
-    newPath: result.new_path,
-    modifiedFiles: result.modified_files,
-    modifiedSources: result.modified_sources,
     writeNonce: result.write_nonce,
-    warnings: result.warnings ?? [],
     sourceVersion: result.source_version ?? null,
   };
 }

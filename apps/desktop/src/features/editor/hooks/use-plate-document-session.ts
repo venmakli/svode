@@ -81,8 +81,7 @@ export function usePlateDocumentSession({
     activeRootPath,
     activeRootId,
   } = useSpace();
-  const { patchPageTreeMeta, reloadTreePathParents, removeTreePath } =
-    useSpaceTreeSync();
+  const { patchPageTreeMeta } = useSpaceTreeSync();
   const { markUnsaved, clearUnsaved, setBrokenLinks } = useEditorStore();
 
   const currentDocument = documentPath ?? activeDocument;
@@ -202,7 +201,6 @@ export function usePlateDocumentSession({
     reconcileExternalChange,
     scheduleAutoSave,
   } = useEditorDocumentWriter({
-    activeRootId,
     activeWsId,
     bufferTimerRef,
     cancelDebounce,
@@ -223,10 +221,7 @@ export function usePlateDocumentSession({
     ownNoncesRef,
     patchPageTreeMeta,
     projectPath,
-    reloadTreePathParents,
-    removeTreePath,
     saveScopeTree,
-    setCurrentDocument,
     spacePath,
     titleRef,
     readOnly,

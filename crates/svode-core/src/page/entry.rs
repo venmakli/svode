@@ -587,26 +587,12 @@ pub fn planned_write_rename(
     title: Option<&str>,
     skip_rename: bool,
 ) -> Result<Option<PlannedWriteRename>, PageError> {
-    let has_naming_intent = title.is_some() || filename::has_managed_naming_intent(space, path);
-    if skip_rename || !has_naming_intent {
+    let Some(title) = title.filter(|_| !skip_rename) else {
         return Ok(None);
-    }
-    let abs_path = resolve(space, path);
-    if !abs_path.exists() {
+    };
+    if !resolve(space, path).exists() {
         return Err(PageError::FileNotFound(path.to_string()));
     }
-    let (_, parsed_existing) = persistence::read_existing(&abs_path)?;
-    let materialized_title = match &parsed_existing {
-        frontmatter::ParseStatus::Valid { meta, .. } => {
-            title.or_else(|| meta.frontmatter_keys.title.then_some(meta.title.as_str()))
-        }
-        frontmatter::ParseStatus::Missing { .. } | frontmatter::ParseStatus::Malformed { .. } => {
-            title
-        }
-    };
-    let Some(title) = materialized_title else {
-        return Ok(None);
-    };
     match entry_filename_plan(space, path, title)? {
         EntryFilenamePlan::Rename { rename, .. } => Ok(Some(rename)),
         EntryFilenamePlan::Unchanged(_) | EntryFilenamePlan::Collision(_) => Ok(None),
@@ -718,32 +704,16 @@ pub fn write_under_name_lock(
     let fallback_meta = || meta_for_file_without_frontmatter(&abs_path, path);
     let title_changes_fallback = |t: &str| t != fallback_title_for_path(path);
     let extra_changes_empty = |incoming: &HashMap<String, serde_yml::Value>| !incoming.is_empty();
-    let materialized_title = match &parsed_existing {
-        frontmatter::ParseStatus::Valid { meta, .. } => {
-            title.or_else(|| meta.frontmatter_keys.title.then_some(meta.title.as_str()))
-        }
-        frontmatter::ParseStatus::Missing { .. } | frontmatter::ParseStatus::Malformed { .. } => {
-            title
-        }
+    // Only a title in the request names the file; a body or metadata write
+    // never renames it.
+    let naming_title = title.filter(|_| !skip_rename);
+    let has_naming_intent = naming_title.is_some();
+    if let Some(naming_title) = naming_title {
+        crate::page::naming::ensure_document_name_available(Path::new(space), path, naming_title)?;
     }
-    .map(str::to_string);
-    let has_naming_intent =
-        !skip_rename && (title.is_some() || filename::has_managed_naming_intent(space, path));
-    if has_naming_intent && let Some(materialized_title) = materialized_title.as_deref() {
-        crate::page::naming::ensure_document_name_available(
-            Path::new(space),
-            path,
-            materialized_title,
-        )?;
-    }
-    let filename_plan = if has_naming_intent {
-        materialized_title
-            .as_deref()
-            .map(|materialized_title| entry_filename_plan(space, path, materialized_title))
-            .transpose()?
-    } else {
-        None
-    };
+    let filename_plan = naming_title
+        .map(|naming_title| entry_filename_plan(space, path, naming_title))
+        .transpose()?;
     let metadata_requested = metadata.is_some()
         || match &parsed_existing {
             frontmatter::ParseStatus::Valid { meta, .. } => {
@@ -861,8 +831,7 @@ pub fn write_under_name_lock(
 
     // Materialize a filename projection only for an explicit naming intent.
     // This preserves legacy and externally-created filenames during ordinary
-    // body or metadata saves while still completing a title edit after the
-    // debounced field write has already persisted the new title.
+    // body or metadata saves.
     let mut new_path: Option<String> = None;
     let mut warnings = Vec::new();
     match filename_plan {
@@ -870,7 +839,6 @@ pub fn write_under_name_lock(
             if let Some(warning) = filename_projection_warning(&projection, path) {
                 warnings.push(warning);
             }
-            filename::clear_managed_naming_intent(space, path);
         }
         Some(EntryFilenamePlan::Collision(projection)) => {
             if let Some(warning) = filename_projection_warning(&projection, path) {
@@ -913,7 +881,6 @@ pub fn write_under_name_lock(
             if let Some(warning) = filename_projection_warning(&projection, &rename.new_path) {
                 warnings.push(warning);
             }
-            filename::clear_managed_naming_intent(space, path);
             new_path = Some(rename.new_path);
         }
         None => {}
@@ -1145,8 +1112,6 @@ fn update_field_inner(
             )));
         }
     };
-    let previous_title = (field == "title").then(|| meta.title.clone());
-
     if is_custom && !value.is_null() {
         let yaml_value = serde_yml::to_value(value.clone()).map_err(|e| {
             PageError::from(crate::page::frontmatter::FrontmatterError::InvalidField(
@@ -1167,13 +1132,6 @@ fn update_field_inner(
         crate::page::naming::ensure_document_name_available(Path::new(space), path, &meta.title)?;
     }
     persistence::write_serialized(&abs_path, &meta, &body)?;
-    if previous_title
-        .as_deref()
-        .is_some_and(|previous_title| previous_title != meta.title)
-        && crate::page::naming::is_user_document(path)
-    {
-        filename::mark_managed_naming_intent(space, path);
-    }
     apply_runtime_metadata(&mut meta, &abs_path, path)?;
     let name_conflict =
         crate::page::naming::document_name_conflict(Path::new(space), path, &meta.title)?;
@@ -2688,7 +2646,7 @@ mod tests {
     }
 
     #[test]
-    fn test_write_materializes_rename_from_persisted_title_without_metadata_args() {
+    fn test_body_write_after_title_update_keeps_the_path() {
         let tmp = TempDir::new().unwrap();
         let ws = tmp.path().to_str().unwrap();
         fs::write(
@@ -2718,9 +2676,9 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(result.new_path.as_deref(), Some("New title.md"));
-        assert!(resolve(ws, "New title.md").is_file());
-        assert!(!resolve(ws, "old-title.md").exists());
+        assert_eq!(result.new_path, None);
+        assert!(resolve(ws, "old-title.md").is_file());
+        assert!(!resolve(ws, "New title.md").exists());
     }
 
     #[test]

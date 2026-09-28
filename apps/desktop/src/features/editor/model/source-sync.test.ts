@@ -22,10 +22,7 @@ function page(body: string, version: string, title = "Today"): Page {
 
 function written(version: string): WritePageResult {
   return {
-    newPath: null,
-    modifiedFiles: [],
     writeNonce: "nonce",
-    warnings: [],
     sourceVersion: version,
   };
 }

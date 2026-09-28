@@ -13,6 +13,40 @@ fn updates() -> &'static IndexUpdateState {
     crate::index::update::test_update_state()
 }
 
+/// Changes a Page title through the production field update path.
+async fn update_title(
+    space: &Path,
+    path: &str,
+    title: &str,
+    project: Option<&Path>,
+    index_state: &IndexState,
+    nonces: &WriteNonceRegistry,
+) -> Result<Entry, AppError> {
+    let values =
+        std::collections::BTreeMap::from([("title".to_string(), serde_json::json!(title))]);
+    let space_str = space.to_string_lossy().into_owned();
+    let project = project.map(|project| project.to_string_lossy().into_owned());
+    crate::page::update_fields(
+        PageFieldUpdate {
+            space: &space_str,
+            path,
+            project: project.as_deref(),
+            values: &values,
+            intent: EntryFieldBatchIntent::Literal,
+        },
+        index_state,
+        updates(),
+        nonces,
+        None,
+        |mut paths| {
+            paths.push(space.to_path_buf());
+            async move { Ok(paths) }
+        },
+    )
+    .await
+    .map(|outcome| outcome.page)
+}
+
 #[tokio::test]
 async fn collection_create_is_one_structural_action_under_a_leaf_parent() {
     let tmp = TempDir::new().unwrap();
@@ -549,16 +583,13 @@ async fn title_update_renames_collection_tree_and_rebases_indexes_and_backlinks(
         .unwrap();
     let nonces = WriteNonceRegistry::new();
 
-    let updated = update_entry_title_shared(
-        WriteEntryAuthorization::Preauthorized,
-        space.to_string_lossy().into_owned(),
-        "Old collection/README.md".to_string(),
-        "Renamed collection".to_string(),
-        Some(space.to_string_lossy().into_owned()),
+    let updated = update_title(
+        space,
+        "Old collection/README.md",
+        "Renamed collection",
+        Some(space),
         &index_state,
-        updates(),
         &nonces,
-        None,
     )
     .await
     .expect("update collection title");
@@ -695,16 +726,13 @@ async fn title_update_ignores_unrelated_broken_schemas_for_standalone_pages() {
                 }
                 let nonces = WriteNonceRegistry::new();
                 let before = entry::read(root.to_str().unwrap(), path).unwrap();
-                let updated = update_entry_title_shared(
-                    WriteEntryAuthorization::Preauthorized,
-                    root.to_string_lossy().into_owned(),
-                    path.into(),
-                    "Партнёрства".into(),
-                    project_aware.then(|| root.to_string_lossy().into_owned()),
+                let updated = update_title(
+                    root,
+                    path,
+                    "Партнёрства",
+                    project_aware.then_some(root),
                     &index_state,
-                    updates(),
                     &nonces,
-                    None,
                 )
                 .await
                 .unwrap();
@@ -771,19 +799,9 @@ async fn title_update_defers_relation_domain_rename_and_retries_the_same_title()
         std::fs::write(root.join("Source.md"), format!("[Page]({path})")).unwrap();
         let index_state = IndexState::new();
         let nonces = WriteNonceRegistry::new();
-        let updated = update_entry_title_shared(
-            WriteEntryAuthorization::Preauthorized,
-            root.to_string_lossy().into_owned(),
-            path.into(),
-            "Renamed Page".into(),
-            None,
-            &index_state,
-            updates(),
-            &nonces,
-            None,
-        )
-        .await
-        .unwrap();
+        let updated = update_title(root, path, "Renamed Page", None, &index_state, &nonces)
+            .await
+            .unwrap();
         assert_eq!(updated.meta.title, "Renamed Page");
         assert_eq!(updated.path, path);
         assert!(!root.join(expected).exists());
@@ -800,19 +818,9 @@ async fn title_update_defers_relation_domain_rename_and_retries_the_same_title()
         assert!(warning.message.contains(broken.to_str().unwrap()));
         assert!(warning.message.contains("checkbox"));
         std::fs::write(&broken, "columns: []\n").unwrap();
-        let retried = update_entry_title_shared(
-            WriteEntryAuthorization::Preauthorized,
-            root.to_string_lossy().into_owned(),
-            path.into(),
-            "Renamed Page".into(),
-            None,
-            &index_state,
-            updates(),
-            &nonces,
-            None,
-        )
-        .await
-        .unwrap();
+        let retried = update_title(root, path, "Renamed Page", None, &index_state, &nonces)
+            .await
+            .unwrap();
         assert_eq!(retried.path, expected);
         assert_eq!(retried.meta.extra.get("id"), updated.meta.extra.get("id"));
         assert_eq!(retried.body, updated.body);
@@ -1256,16 +1264,13 @@ async fn title_update_isolates_other_spaces_and_preserves_scoped_relation_rewrit
         )
         .unwrap();
         let index_state = IndexState::new();
-        let updated = update_entry_title_shared(
-            WriteEntryAuthorization::Preauthorized,
-            root.to_string_lossy().into_owned(),
-            "Tasks/Page.md".into(),
-            "Новое имя".into(),
-            Some(root.to_string_lossy().into_owned()),
+        let updated = update_title(
+            root,
+            "Tasks/Page.md",
+            "Новое имя",
+            Some(root),
             &index_state,
-            updates(),
             &WriteNonceRegistry::new(),
-            None,
         )
         .await
         .unwrap();
@@ -1286,6 +1291,63 @@ async fn title_update_isolates_other_spaces_and_preserves_scoped_relation_rewrit
 }
 
 #[tokio::test]
+async fn write_entry_keeps_the_path_of_a_page_with_a_deferred_filename() {
+    let tmp = TempDir::new().unwrap();
+    let space = tmp.path();
+    write_tree_config(&tmp, vec![], vec![]);
+    std::fs::create_dir_all(space.join(".git")).unwrap();
+    std::fs::write(
+        space.join("Old name.md"),
+        "---\ntitle: Old name\n---\nBody\n",
+    )
+    .unwrap();
+    // The title is saved while its filename cannot follow: the name is taken.
+    std::fs::write(space.join("New name.md"), "---\ntitle: Taken\n---\n").unwrap();
+    let space_str = space.to_string_lossy().into_owned();
+    let (index_state, nonces) = (IndexState::new(), WriteNonceRegistry::new());
+    let renamed = update_title(
+        space,
+        "Old name.md",
+        "New name",
+        None,
+        &index_state,
+        &nonces,
+    )
+    .await
+    .unwrap();
+    assert_eq!(renamed.path, "Old name.md");
+    assert_eq!(renamed.meta.title, "New name");
+    std::fs::remove_file(space.join("New name.md")).unwrap();
+
+    let version = entry::read(&space_str, "Old name.md")
+        .unwrap()
+        .source_version
+        .unwrap()
+        .as_str()
+        .to_string();
+    let saved = write_entry_shared(
+        WriteEntryAuthorization::Preauthorized,
+        space_str.clone(),
+        "Old name.md".into(),
+        "Edited\n".into(),
+        None,
+        Some(version),
+        &index_state,
+        updates(),
+        &nonces,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(saved.new_path, None);
+    assert!(saved.warnings.is_empty());
+    assert!(!space.join("New name.md").exists());
+    let page = entry::read(&space_str, "Old name.md").unwrap();
+    assert_eq!(page.meta.title, "New name");
+    assert_eq!(page.body, "Edited\n");
+}
+
+#[tokio::test]
 async fn write_entry_passes_the_source_version_and_returns_the_version_of_its_result() {
     let tmp = TempDir::new().unwrap();
     let space = tmp.path();
@@ -1303,16 +1365,10 @@ async fn write_entry_passes_the_source_version_and_returns_the_version_of_its_re
             "Page.md".into(),
             content.into(),
             None,
-            None,
-            None,
-            None,
-            Some(true),
-            None,
             version,
             &index_state,
             updates(),
             &nonces,
-            None,
         )
     };
 

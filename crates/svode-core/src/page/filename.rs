@@ -1,7 +1,5 @@
-use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, OnceLock};
 
 use sha2::{Digest, Sha256};
 use unicode_casefold::UnicodeCaseFold;
@@ -9,8 +7,6 @@ use unicode_normalization::UnicodeNormalization;
 use unicode_segmentation::UnicodeSegmentation;
 
 use super::error::PageError;
-
-static MANAGED_NAMING_INTENTS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
 
 pub const MAX_FILENAME_STEM_BYTES: usize = 60;
 
@@ -237,39 +233,6 @@ pub fn component_name(stem: &str, extension: Option<&str>) -> String {
 
 pub fn portable_component_key(value: &str) -> String {
     value.nfc().case_fold().nfc().collect()
-}
-
-pub fn mark_managed_naming_intent(space: &str, path: &str) {
-    if let Ok(mut intents) = MANAGED_NAMING_INTENTS
-        .get_or_init(|| Mutex::new(HashSet::new()))
-        .lock()
-    {
-        intents.insert(naming_intent_key(space, path));
-    }
-}
-
-pub fn has_managed_naming_intent(space: &str, path: &str) -> bool {
-    MANAGED_NAMING_INTENTS
-        .get_or_init(|| Mutex::new(HashSet::new()))
-        .lock()
-        .is_ok_and(|intents| intents.contains(&naming_intent_key(space, path)))
-}
-
-pub fn clear_managed_naming_intent(space: &str, path: &str) {
-    if let Ok(mut intents) = MANAGED_NAMING_INTENTS
-        .get_or_init(|| Mutex::new(HashSet::new()))
-        .lock()
-    {
-        intents.remove(&naming_intent_key(space, path));
-    }
-}
-
-fn naming_intent_key(space: &str, path: &str) -> String {
-    format!(
-        "{}\0{}",
-        space.trim_end_matches(['/', '\\']),
-        path.trim_matches(['/', '\\']).replace('\\', "/")
-    )
 }
 
 #[cfg(test)]

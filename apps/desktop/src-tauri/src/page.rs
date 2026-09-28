@@ -35,35 +35,19 @@ pub(crate) async fn write<F, Fut>(
     state: &IndexState,
     updates: &IndexUpdateState,
     nonces: &WriteNonceRegistry,
-    autocommit: Option<&AutocommitService>,
     authorize: F,
 ) -> Result<PageWriteOutcome, AppError>
 where
     F: Fn(Vec<PathBuf>) -> Fut,
     Fut: Future<Output = Result<Vec<PathBuf>, AppError>>,
 {
-    let space = request.space.to_string();
-    let path = request.path.to_string();
-    let project = request.project.map(str::to_string);
     let cli = crate::git::dates::detected_cli();
-    let outcome = svode_core::page::write::write(
+    svode_core::page::write::write(
         request,
         runtime(state, updates, nonces, cli.as_ref()),
         authorize,
     )
-    .await?;
-    if let Some(new_path) = outcome.result.new_path.as_deref() {
-        let sink = sink(autocommit);
-        schedule_rename(
-            sink.as_ref().map(|sink| sink as &dyn StructuralCommitSink),
-            project.as_deref(),
-            &space,
-            &path,
-            new_path,
-            &outcome.changed_paths,
-        );
-    }
-    Ok(outcome)
+    .await
 }
 
 pub(crate) async fn update_fields<F, Fut>(

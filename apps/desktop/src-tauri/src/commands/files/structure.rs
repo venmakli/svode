@@ -170,39 +170,6 @@ pub async fn convert_entry_to_leaf(
 }
 
 #[tauri::command]
-pub async fn convert_entry_to_nested_collection(
-    app: AppHandle,
-    space: String,
-    file_path: String,
-    project_path: Option<String>,
-    index_state: State<'_, IndexState>,
-    index_updates: State<'_, IndexUpdateState>,
-    autocommit: State<'_, Arc<AutocommitService>>,
-) -> Result<(), AppError> {
-    let authorized_paths = require_convert_to_collection_mutation_plan(
-        &app,
-        &index_state,
-        &space,
-        project_path.as_deref(),
-        &file_path,
-    )
-    .await?;
-    scope_authorized_mutation_paths(authorized_paths, async {
-        crate::structure::convert_to_collection(
-            &space,
-            &file_path,
-            project_path.as_deref(),
-            &index_state,
-            &index_updates,
-            Some(&autocommit),
-        )
-        .await
-    })
-    .await?;
-    Ok(())
-}
-
-#[tauri::command]
 pub async fn convert_bare_folder_to_collection(
     app: AppHandle,
     space: String,

@@ -1,4 +1,3 @@
-import { getSpaceTreeSyncSnapshot } from "@/features/space";
 import { useCallback, useEffect, useRef } from "react";
 import { MarkdownPlugin } from "@platejs/markdown";
 import type { Descendant } from "platejs";
@@ -7,7 +6,6 @@ import { toast } from "sonner";
 
 import {
   pageSourceErrorKind,
-  publishPageFilenameWarnings,
   type Page,
   type PageSourceConflict,
   type WritePageResult,
@@ -35,7 +33,6 @@ import {
 } from "../conflict/parse-conflicts";
 import { useEditorStore } from "../model";
 import {
-  deleteDocumentBaseline,
   getDocumentBaseline,
   getDocumentCacheKey,
   setCachedDocumentValue,
@@ -55,7 +52,6 @@ interface MutableRef<T> {
 }
 
 interface UseEditorDocumentWriterInput {
-  activeRootId: string | null;
   activeWsId: string | null;
   bufferTimerRef: MutableRef<ReturnType<typeof setTimeout> | null>;
   cancelDebounce: () => void;
@@ -82,10 +78,7 @@ interface UseEditorDocumentWriterInput {
     description: string | null,
   ) => void;
   projectPath: string | null;
-  reloadTreePathParents: (spaceId: string, paths: string[]) => Promise<void>;
-  removeTreePath: (spaceId: string, path: string) => void;
   saveScopeTree: readonly GitSaveScopeTreeNode[];
-  setCurrentDocument: (path: string) => void;
   spacePath: string;
   titleRef: MutableRef<string>;
   readOnly: boolean;
@@ -107,7 +100,6 @@ interface UseEditorDocumentWriterResult {
 }
 
 export function useEditorDocumentWriter({
-  activeRootId,
   activeWsId,
   bufferTimerRef,
   cancelDebounce,
@@ -128,10 +120,7 @@ export function useEditorDocumentWriter({
   ownNoncesRef,
   patchPageTreeMeta,
   projectPath,
-  reloadTreePathParents,
-  removeTreePath,
   saveScopeTree,
-  setCurrentDocument,
   spacePath,
   titleRef,
   readOnly,
@@ -144,16 +133,12 @@ export function useEditorDocumentWriter({
     applySavedDocumentResult,
     clearCommittedMarkers,
   } = useEditorSaveResultHandler({
-    activeRootId,
     activeWsId,
     clearUnsaved,
     descriptionRef,
     editor,
     iconRef,
     patchPageTreeMeta,
-    reloadTreePathParents,
-    removeTreePath,
-    setCurrentDocument,
     spacePath,
     titleRef,
   });
@@ -163,10 +148,13 @@ export function useEditorDocumentWriter({
     [spacePath],
   );
 
-  /** Writes the editor text as the body of `path` edited from `sourceVersion`. */
+  /**
+   * Writes the editor text as the body of `path` edited from `sourceVersion`.
+   * A body write never renames the Page; its title changes as a Page field.
+   */
   const writeSource = useCallback(
     async (
-      skipRename: boolean,
+      explicitSave: boolean,
       path: string,
       sourceVersion: string,
     ): Promise<WritePageResult | null> => {
@@ -174,49 +162,31 @@ export function useEditorDocumentWriter({
         if (!editor || !spacePath) return null;
 
         if (hasUnresolvedConflicts(editor.children)) {
-          if (!skipRename) {
+          if (explicitSave) {
             toast.error(m.git_sync_conflict({ count: "1" }));
           }
           return null;
         }
 
         const markdown = editor.getApi(MarkdownPlugin).markdown.serialize();
-        const tree = getSpaceTreeSyncSnapshot();
-        const finishTreeMutation = skipRename
-          ? undefined
-          : tree.beginTreePathMutation(spacePath);
-        let result: WritePageResult;
-        try {
-          result = await retryWhileSourceBusy(() =>
-            writePage({
-              spacePath,
-              path,
-              content: markdown,
-              skipRename,
-              projectPath: projectPath ?? null,
-              sourceVersion,
-            }),
-          );
-
-          if (result.newPath)
-            tree.handoffTreePath(spacePath, path, result.newPath);
-        } finally {
-          finishTreeMutation?.();
-        }
+        const result = await retryWhileSourceBusy(() =>
+          writePage({
+            spacePath,
+            path,
+            content: markdown,
+            projectPath: projectPath ?? null,
+            sourceVersion,
+          }),
+        );
 
         if (result.writeNonce) {
           ownNoncesRef.current.add(result.writeNonce);
         }
         if (result.sourceVersion) {
-          setDocumentBaseline(baselineKey(result.newPath ?? path), {
+          setDocumentBaseline(baselineKey(path), {
             version: result.sourceVersion,
             body: markdown,
           });
-          // The path handoff of this rename must not carry the old baseline.
-          if (result.newPath) deleteDocumentBaseline(baselineKey(path));
-        }
-        if (!skipRename) {
-          publishPageFilenameWarnings(result.warnings);
         }
 
         return result;
@@ -284,7 +254,7 @@ export function useEditorDocumentWriter({
     adoptMetadata: onSourceMetadata,
     writeDraft: async (path, sourceVersion) => {
       const cacheKey = currentCacheKeyRef.current;
-      const result = await writeSource(true, path, sourceVersion);
+      const result = await writeSource(false, path, sourceVersion);
       applyAutoSaveResult(result, path, cacheKey);
       if (result) void refreshGitSpaceStatus(spacePath);
       return result;
@@ -301,7 +271,7 @@ export function useEditorDocumentWriter({
 
   const performWrite = useCallback(
     async (
-      skipRename: boolean,
+      explicitSave: boolean,
       targetPath?: string,
     ): Promise<WritePageResult | null> => {
       const path = targetPath ?? currentPathRef.current;
@@ -311,7 +281,7 @@ export function useEditorDocumentWriter({
         const baseline = getDocumentBaseline(baselineKey(path));
         if (baseline) {
           try {
-            return await writeSource(skipRename, path, baseline.version);
+            return await writeSource(explicitSave, path, baseline.version);
           } catch (error) {
             if (pageSourceErrorKind(error) !== "source_stale") throw error;
           }
@@ -340,7 +310,7 @@ export function useEditorDocumentWriter({
     const path = currentPathRef.current;
     const cacheKey = currentCacheKeyRef.current;
     const write = async () => {
-      const result = await performWrite(true);
+      const result = await performWrite(false);
       applyAutoSaveResult(result, path, cacheKey);
       if (result) void refreshGitSpaceStatus(spacePath);
     };
@@ -457,10 +427,10 @@ export function useEditorDocumentWriter({
 
   const saveCurrentSurface = useCallback(async () => {
     if (!currentDocument) return;
-    const result = await performWrite(false);
+    const result = await performWrite(true);
     if (!result) return;
 
-    const committedPath = applySavedDocumentResult(result, currentDocument);
+    applySavedDocumentResult(currentDocument);
     const status = getGitSpaceStatus(spacePath);
     if (status?.hasConflicts) {
       try {
@@ -474,7 +444,7 @@ export function useEditorDocumentWriter({
     clearCommittedMarkers(
       await commitFileAndMaybeSync(
         spacePath,
-        committedPath,
+        currentDocument,
         projectPath ?? undefined,
       ),
     );
@@ -565,16 +535,16 @@ export function useEditorDocumentWriter({
       }
 
       const saveAll = async () => {
-        const result = await performWrite(false);
+        const result = await performWrite(true);
         if (!result) return;
-        applySavedDocumentResult(result, currentDocument, {
+        applySavedDocumentResult(currentDocument, {
           cacheCurrentDocument: false,
         });
         clearCommittedMarkers(
           await commitSaveScopeAndMaybeSync(
             spacePath,
             saveAllScope,
-            [result.newPath ?? currentDocument],
+            [currentDocument],
             projectPath ?? undefined,
           ),
         );

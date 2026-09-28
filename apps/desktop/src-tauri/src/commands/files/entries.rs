@@ -288,34 +288,22 @@ pub async fn write_entry(
     space: String,
     path: String,
     content: String,
-    title: Option<String>,
-    icon: Option<String>,
-    extra: Option<HashMap<String, serde_yml::Value>>,
-    existing_id: Option<String>,
-    skip_rename: Option<bool>,
     project_path: Option<String>,
     source_version: Option<String>,
     index_state: State<'_, IndexState>,
     index_updates: State<'_, IndexUpdateState>,
     nonces: State<'_, Arc<WriteNonceRegistry>>,
-    autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<WriteResult, AppError> {
     write_entry_shared(
         WriteEntryAuthorization::App(&app),
         space,
         path,
         content,
-        title,
-        icon,
-        extra,
-        existing_id,
-        skip_rename,
         project_path,
         source_version,
         &index_state,
         &index_updates,
         &nonces,
-        Some(&autocommit),
     )
     .await
 }
@@ -327,87 +315,39 @@ pub(super) enum WriteEntryAuthorization<'a> {
     Preauthorized,
 }
 
-#[cfg(test)]
-pub(super) async fn update_entry_title_shared(
-    authorization: WriteEntryAuthorization<'_>,
-    space: String,
-    file_path: String,
-    title: String,
-    project_path: Option<String>,
-    index_state: &IndexState,
-    index_updates: &IndexUpdateState,
-    nonces: &WriteNonceRegistry,
-    autocommit: Option<&AutocommitService>,
-) -> Result<Entry, AppError> {
-    let current = entry::read(&space, &file_path)?;
-    if current.meta.title == title
-        && entry::planned_write_rename(&space, &file_path, Some(&title), false)?.is_none()
-    {
-        return Ok(current);
-    }
-    let result = write_entry_shared(
-        authorization,
-        space.clone(),
-        file_path.clone(),
-        current.body,
-        Some(title),
-        None,
-        None,
-        None,
-        Some(false),
-        project_path,
-        None,
-        index_state,
-        index_updates,
-        nonces,
-        autocommit,
-    )
-    .await?;
-    let current_path = result.new_path.as_deref().unwrap_or(&file_path);
-    let mut updated = entry::read(&space, current_path)?;
-    updated.warnings = result.warnings;
-    Ok(updated)
-}
-
+/// Writes the body of a Page. The title, metadata and filename are not part
+/// of a body write; they change through the Page field update.
 pub(super) async fn write_entry_shared(
     authorization: WriteEntryAuthorization<'_>,
     space: String,
     path: String,
     content: String,
-    title: Option<String>,
-    icon: Option<String>,
-    extra: Option<HashMap<String, serde_yml::Value>>,
-    existing_id: Option<String>,
-    skip_rename: Option<bool>,
     project_path: Option<String>,
     source_version: Option<String>,
     index_state: &IndexState,
     index_updates: &IndexUpdateState,
     nonces: &WriteNonceRegistry,
-    autocommit: Option<&AutocommitService>,
 ) -> Result<WriteResult, AppError> {
     let source_version = source_version.map(svode_core::page::SourceVersion::from_token);
     let request = svode_core::page::write::PageWrite {
         space: &space,
         path: &path,
         content: &content,
-        title: title.as_deref(),
-        icon: icon.as_deref(),
-        extra,
+        title: None,
+        icon: None,
+        extra: None,
         metadata: None,
         field_batch: None,
-        skip_rename: skip_rename.unwrap_or(false),
+        skip_rename: true,
         project: project_path.as_deref().filter(|path| !path.is_empty()),
         source_version: source_version.as_ref(),
     };
-    let _ = existing_id;
     let authorization_space = &space;
     crate::page::write(
         request,
         index_state,
         index_updates,
         nonces,
-        autocommit,
         |paths| async move {
             match authorization {
                 WriteEntryAuthorization::App(app) => {
