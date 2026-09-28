@@ -1,3 +1,4 @@
+use std::ffi::OsStr;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -8,7 +9,7 @@ use super::types::{
     AgentSessionReentryResult, AgentSessionResumeCommand, AgentSessionScopeKind,
     AgentSessionScopeStatus, AgentSessionSource,
 };
-use crate::agent::types::load_space_agent_config;
+use crate::agent_adapters::runtime::resolve_scoped_executable;
 use crate::error::AppError;
 use crate::system_path;
 use crate::terminal::{AgentTerminalSpawn, AgentTerminalSurface, quote_agent_shell_command};
@@ -78,8 +79,11 @@ pub(crate) fn resolve_agent_cli_binary(
     source: AgentSessionSource,
     scope_dir: &Path,
     home_dir: &Path,
+    search_path: Option<&OsStr>,
 ) -> Option<String> {
-    resolve_agent_cli_binary_with(source, scope_dir, home_dir, |name| which::which(name).ok())
+    let path = resolve_scoped_executable(source.adapter(), scope_dir, home_dir, search_path)?;
+    let canonical = fs::canonicalize(&path).unwrap_or(path);
+    Some(system_path::user_facing_path(&canonical))
 }
 
 fn reenter_scoped_session<ResolveCli, SpawnShell>(
@@ -294,70 +298,25 @@ fn scope_config_dir(session: &AgentSession, project: &Path) -> PathBuf {
     project.to_path_buf()
 }
 
-fn resolve_agent_cli_binary_with(
-    source: AgentSessionSource,
-    scope_dir: &Path,
-    home_dir: &Path,
-    mut find_in_path: impl FnMut(&str) -> Option<PathBuf>,
-) -> Option<String> {
-    let config = load_space_agent_config(scope_dir);
-    for key in cli_path_keys(source) {
-        if let Some(path) = config.cli_paths.get(*key)
-            && let Some(resolved) = existing_custom_binary(path, scope_dir)
-        {
-            return Some(resolved);
-        }
-    }
-
-    let binary_name = source.resume_program();
-    if let Some(path) = find_in_path(binary_name) {
-        return Some(system_path::user_facing_path(&path));
-    }
-
-    common_cli_paths(source, home_dir)
-        .into_iter()
-        .find_map(|path| existing_file_path(&path))
-}
-
-fn cli_path_keys(source: AgentSessionSource) -> &'static [&'static str] {
-    match source {
-        AgentSessionSource::Codex => &["codex"],
-        AgentSessionSource::ClaudeCode => &["claude-code", "claude"],
-    }
-}
-
-fn existing_custom_binary(raw: &Path, scope_dir: &Path) -> Option<String> {
-    let path = if raw.is_absolute() {
-        raw.to_path_buf()
-    } else {
-        scope_dir.join(raw)
-    };
-    existing_file_path(&path)
-}
-
-fn existing_file_path(path: &Path) -> Option<String> {
-    if !path.is_file() {
-        return None;
-    }
-    let canonical = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
-    Some(system_path::user_facing_path(&canonical))
-}
-
-fn common_cli_paths(source: AgentSessionSource, home_dir: &Path) -> Vec<PathBuf> {
-    let binary = source.resume_program();
-    vec![
-        home_dir.join(".local/bin").join(binary),
-        home_dir.join(".npm/bin").join(binary),
-        home_dir.join(".bun/bin").join(binary),
-        PathBuf::from("/usr/local/bin").join(binary),
-    ]
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::agent_sessions::AgentSessionsState;
     use crate::terminal::AgentTerminalSurface;
+
+    // An empty search PATH keeps the developer's own CLIs out of the tests.
+    fn no_search_path() -> Option<&'static OsStr> {
+        Some(OsStr::new(""))
+    }
+
+    fn write_executable(path: &Path) {
+        write(path, "");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(path, fs::Permissions::from_mode(0o755)).expect("chmod");
+        }
+    }
 
     fn write(path: &Path, data: &str) {
         if let Some(parent) = path.parent() {
@@ -454,7 +413,7 @@ mod tests {
         let project = temp.path().join("project");
         let bin = project.join("bin/codex");
         fs::create_dir_all(&project).expect("project");
-        write(&bin, "");
+        write_executable(&bin);
         write(
             &project.join(".svode/local.json"),
             &serde_json::json!({
@@ -474,7 +433,9 @@ mod tests {
             project.to_string_lossy().into_owned(),
             "codex:done".to_string(),
             Vec::new(),
-            move |session, scope_dir| resolve_agent_cli_binary(session.source, scope_dir, &home),
+            move |session, scope_dir| {
+                resolve_agent_cli_binary(session.source, scope_dir, &home, no_search_path())
+            },
             |spawn| {
                 assert_eq!(spawn.agent_session_id, "codex:done");
                 assert_eq!(spawn.command.program, canonical_display(&bin));
@@ -565,10 +526,10 @@ mod tests {
         let home = temp.path().join("home");
         let codex = home.join(".local/bin/codex");
         fs::create_dir_all(&project).expect("project");
-        write(&codex, "");
+        write_executable(&codex);
 
         let resolved =
-            resolve_agent_cli_binary_with(AgentSessionSource::Codex, &project, &home, |_| None)
+            resolve_agent_cli_binary(AgentSessionSource::Codex, &project, &home, no_search_path())
                 .expect("codex path");
 
         assert_eq!(resolved, canonical_display(&codex));
@@ -580,7 +541,7 @@ mod tests {
         let project = temp.path().join("project");
         let claude = project.join("bin/claude");
         fs::create_dir_all(&project).expect("project");
-        write(&claude, "");
+        write_executable(&claude);
         write(
             &project.join(".svode/local.json"),
             &serde_json::json!({
@@ -593,11 +554,11 @@ mod tests {
             .to_string(),
         );
 
-        let resolved = resolve_agent_cli_binary_with(
+        let resolved = resolve_agent_cli_binary(
             AgentSessionSource::ClaudeCode,
             &project,
             temp.path(),
-            |_| None,
+            no_search_path(),
         )
         .expect("claude path");
 

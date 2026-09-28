@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::ffi::OsStr;
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
@@ -430,14 +431,10 @@ impl AgentAdapterRegistry {
                 "home directory is unavailable",
             );
         };
-        let executable_override = target_executable_override(adapter, &target.cwd);
         let search_path = ProcessPath::session();
-        let Some(path) = resolve_executable_path(
-            adapter,
-            executable_override.as_deref(),
-            &home_dir,
-            search_path.get().await,
-        ) else {
+        let Some(path) =
+            resolve_scoped_executable(adapter, &target.cwd, &home_dir, search_path.get().await)
+        else {
             return AdapterDiagnostic {
                 adapter,
                 status: AdapterDiagnosticStatus::Missing,
@@ -522,6 +519,23 @@ impl AgentAdapterRegistry {
             },
         }
     }
+}
+
+/// Resolves the adapter executable for a scope: its `cliPaths` override first,
+/// then the shared resolution of `svode_core::agent_adapters`.
+pub(crate) fn resolve_scoped_executable(
+    adapter: AgentAdapterKind,
+    scope_dir: &Path,
+    home_dir: &Path,
+    search_path: Option<&OsStr>,
+) -> Option<PathBuf> {
+    let executable_override = target_executable_override(adapter, scope_dir);
+    resolve_executable_path(
+        adapter,
+        executable_override.as_deref(),
+        home_dir,
+        search_path,
+    )
 }
 
 fn target_executable_override(adapter: AgentAdapterKind, target_space: &Path) -> Option<PathBuf> {

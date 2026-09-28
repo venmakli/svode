@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use crate::agent_adapters::AgentAdapterKind;
+
 pub(crate) const MAX_SOURCE_DIAGNOSTICS: usize = 50;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -17,11 +19,15 @@ impl AgentSessionSource {
         }
     }
 
-    pub(crate) fn resume_program(self) -> &'static str {
+    pub(crate) fn adapter(self) -> AgentAdapterKind {
         match self {
-            Self::Codex => "codex",
-            Self::ClaudeCode => "claude",
+            Self::Codex => AgentAdapterKind::Codex,
+            Self::ClaudeCode => AgentAdapterKind::ClaudeCode,
         }
+    }
+
+    pub(crate) fn resume_program(self) -> &'static str {
+        self.adapter().executable()
     }
 
     pub(crate) fn resume_args(self, source_session_id: &str) -> Vec<String> {

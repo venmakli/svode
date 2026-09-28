@@ -1,3 +1,5 @@
+use std::ffi::OsStr;
+
 use tauri::{AppHandle, State};
 
 use super::AgentSessionsState;
@@ -9,6 +11,7 @@ use super::types::{
     AgentSessionsPinResult,
 };
 use crate::error::AppError;
+use crate::process::path_env::ProcessPath;
 use crate::terminal::TerminalManager;
 
 #[tauri::command]
@@ -137,6 +140,7 @@ pub async fn agent_sessions_reenter(
     crate::git::delivery::repair_scope_best_effort(&app, &root, &root).await;
     let state = state.inner().clone();
     let terminal_manager = terminal_manager.inner().clone();
+    let search_path = ProcessPath::session().get().await.map(OsStr::to_os_string);
     run_blocking(move || {
         let terminal_surfaces = match terminal_manager.list_agent_surfaces() {
             Ok(surfaces) => surfaces,
@@ -155,7 +159,12 @@ pub async fn agent_sessions_reenter(
             session_id,
             terminal_surfaces,
             move |session, scope_dir| {
-                reentry::resolve_agent_cli_binary(session.source, scope_dir, &home_dir)
+                reentry::resolve_agent_cli_binary(
+                    session.source,
+                    scope_dir,
+                    &home_dir,
+                    search_path.as_deref(),
+                )
             },
             move |spawn| {
                 terminal_manager
