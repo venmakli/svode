@@ -10,6 +10,7 @@ impl From<AppError> for ToolError {
             repository_id,
             status,
             reason,
+            ..
         } = error
         {
             return svode_core::git::GitError::RepositoryAccessDenied {
@@ -50,6 +51,7 @@ mod tests {
             repository_id: "repo".to_string(),
             status: "read_only".to_string(),
             reason: "none".to_string(),
+            blockers: Vec::new(),
         });
 
         assert_eq!(error.code, "REPOSITORY_ACCESS_DENIED");

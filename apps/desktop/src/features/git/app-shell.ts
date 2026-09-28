@@ -15,3 +15,4 @@ export {
   type GitSaveScopeLabel,
   type GitSaveScopeTreeNode,
 } from "./editor";
+export { registerRepositorySettingsOpener } from "./model/repository-owner";

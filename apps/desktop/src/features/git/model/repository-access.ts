@@ -33,9 +33,23 @@ export interface RepositoryAccessSnapshot {
   lastKnownStatus: RepositoryAccessStatus | null;
 }
 
+export type RepositoryAccessDenialReason =
+  | RepositoryAccessReason
+  | "mutation_plan_changed"
+  | "none";
+
+/** A repository that refused the write, located for identity and settings. */
+export interface RepositoryAccessBlocker {
+  repositoryId: string;
+  repositoryPath: string;
+  status: RepositoryAccessStatus;
+  reason: RepositoryAccessDenialReason;
+}
+
 export interface RepositoryAccessDenial {
   kind: "repository_access_denied";
   repositoryId: string;
   status: RepositoryAccessStatus;
-  reason: RepositoryAccessReason | "mutation_plan_changed" | "none";
+  reason: RepositoryAccessDenialReason;
+  blockers: readonly RepositoryAccessBlocker[];
 }

@@ -117,7 +117,7 @@ export function repositoryAccessPrimaryActionLabel(
   recovery: RepositoryAccessPreflightController,
 ) {
   if (!recovery.open || !recovery.pending) return null;
-  if (recovery.readyToRetry) {
+  if (recovery.readyToRetry || recovery.planChanged) {
     return m.git_access_preflight_retry({
       action: recovery.pending.intentLabel,
     });
@@ -132,6 +132,17 @@ function RepositoryAccessRecoveryBody({
 }: {
   recovery: RepositoryAccessPreflightController;
 }) {
+  if (recovery.planChanged) {
+    return (
+      <Alert data-repository-access-plan-changed>
+        <AlertTriangle />
+        <AlertTitle>{m.git_access_preflight_plan_changed_title()}</AlertTitle>
+        <AlertDescription>
+          {m.git_access_preflight_plan_changed_description()}
+        </AlertDescription>
+      </Alert>
+    );
+  }
   if (recovery.readyToRetry) {
     return (
       <Alert data-repository-access-ready>
@@ -154,6 +165,12 @@ function RepositoryAccessRecoveryBody({
           key={
             target.access.snapshot?.repositoryId ?? target.target.repositoryPath
           }
+          showSettings={
+            !(
+              recovery.primaryOpensSettings &&
+              target === recovery.primaryBlocker
+            )
+          }
           target={target}
         />
       ))}
@@ -162,26 +179,18 @@ function RepositoryAccessRecoveryBody({
           {m.git_access_unsupported_ref_recommendations()}
         </p>
       ) : null}
-      {recovery.primaryHasSettings ? (
-        <Button
-          className="self-start"
-          type="button"
-          size="sm"
-          variant="ghost"
-          onClick={recovery.openPrimarySettings}
-        >
-          {m.git_access_preflight_open_settings()}
-        </Button>
-      ) : null}
     </div>
   );
 }
 
 function RepositoryAccessTargetAlert({
+  showSettings,
   target,
 }: {
+  showSettings: boolean;
   target: RepositoryAccessTargetView;
 }) {
+  const openSettings = showSettings ? target.target.openSettings : undefined;
   const presentation = repositoryAccessPresentation(target.access);
   const destructive =
     presentation.status === "read_only" || presentation.status === "error";
@@ -200,13 +209,26 @@ function RepositoryAccessTargetAlert({
         </span>
       </AlertTitle>
       <AlertDescription className="min-w-0">
-        <span className="block break-all" title={target.target.displayPath}>
-          {target.target.displayPath}
-        </span>
+        {target.target.displayPath ? (
+          <span className="block break-all" title={target.target.displayPath}>
+            {target.target.displayPath}
+          </span>
+        ) : null}
         <span className="mt-1 block font-medium text-foreground">
           {presentation.title}
         </span>
         <span className="mt-1 block">{presentation.description}</span>
+        {openSettings ? (
+          <Button
+            className="mt-1 -ml-2"
+            type="button"
+            size="sm"
+            variant="ghost"
+            onClick={openSettings}
+          >
+            {m.git_access_preflight_open_settings()}
+          </Button>
+        ) : null}
       </AlertDescription>
     </Alert>
   );

@@ -7,19 +7,36 @@ import {
   useSyncExternalStore,
 } from "react";
 
+import { useSpace } from "@/features/space";
+import * as m from "@/paraglide/messages.js";
+
 import { repositoryAccessDenialFromError } from "../api/repository-access-api";
+import type {
+  RepositoryAccessBlocker,
+  RepositoryAccessDenial,
+} from "../model/repository-access";
 import {
   allowsRepositoryMutation,
   blockingRepositoryAccessTargets,
   dedupeRepositoryAccessTargets,
   type RepositoryAccessRequest,
+  type RepositoryAccessTarget,
+  type RepositoryAccessTargetView,
 } from "../model/repository-access-consumer";
 import { repositoryAccessOwner } from "../model/repository-access-owner";
+import {
+  repositoryOwner,
+  repositorySettingsOpener,
+  type RepositoryOwnerContext,
+} from "../model/repository-owner";
 import { repositoryAccessPresentation } from "../ui/repository-access-copy";
 
 interface PendingRepositoryAccessRequest extends RepositoryAccessRequest {
   attemptId: number;
+  /** A late denial the recovery set answers; readiness never outruns it. */
+  denial?: RepositoryAccessDenial;
   phase: "loading" | "ready";
+  planChanged?: boolean;
 }
 
 export function useRepositoryAccessPreflight() {
@@ -28,6 +45,14 @@ export function useRepositoryAccessPreflight() {
     repositoryAccessOwner.getVersion,
     repositoryAccessOwner.getVersion,
   );
+  const ownerContext = useSpace(
+    (state): RepositoryOwnerContext => ({
+      projectName: state.activeRootName,
+      projectPath: state.activeRootPath,
+      spaces: state.spaces,
+    }),
+  );
+  const ownerContextRef = useRef(ownerContext);
   const [pending, setPending] = useState<PendingRepositoryAccessRequest | null>(
     null,
   );
@@ -53,11 +78,16 @@ export function useRepositoryAccessPreflight() {
         )
       : [];
   }, [ownerVersion, pending]);
-  const blockers = useMemo(
-    () => blockingRepositoryAccessTargets(targetViews),
-    [targetViews],
-  );
-  const primaryBlocker = blockers[0] ?? null;
+  const projectPath = ownerContext.projectPath;
+  const blockers = useMemo(() => {
+    const blocking = blockingRepositoryAccessTargets(targetViews);
+    const unresolved = pending?.denial
+      ? unresolvedDenialView(pending.denial, targetViews, projectPath)
+      : null;
+    return unresolved ? [...blocking, unresolved] : blocking;
+  }, [pending, projectPath, targetViews]);
+  const primaryBlocker =
+    blockers.find(({ target }) => target.repositoryPath) ?? null;
   const primaryPresentation = useMemo(
     () =>
       primaryBlocker
@@ -65,9 +95,11 @@ export function useRepositoryAccessPreflight() {
         : null,
     [primaryBlocker],
   );
+  const planChanged = Boolean(pending?.planChanged);
   const readyToRetry =
     Boolean(pending) &&
     pending?.phase === "ready" &&
+    !planChanged &&
     blockers.length === 0 &&
     pending.continuation === "explicit";
   const checking = blockers.some(
@@ -77,6 +109,10 @@ export function useRepositoryAccessPreflight() {
   );
   const busy = acting || pending?.phase === "loading" || checking;
   const open = pending?.phase === "ready";
+
+  useEffect(() => {
+    ownerContextRef.current = ownerContext;
+  }, [ownerContext]);
 
   useEffect(() => {
     if (retainedPaths.length === 0) return;
@@ -186,34 +222,68 @@ export function useRepositoryAccessPreflight() {
       const denial = repositoryAccessDenialFromError(error);
       if (!denial) return false;
       if (denial.reason === "mutation_plan_changed") {
-        close();
-        await nextRequest.onPlanChanged?.();
+        if (nextRequest.onPlanChanged) {
+          close();
+          await nextRequest.onPlanChanged();
+          return true;
+        }
+        // Without a domain review to return to, the consumer stays blocked
+        // in a visible state whose retry plans the action again.
+        attemptIdRef.current += 1;
+        setRecommendationsOpen(false);
+        setPending({
+          ...nextRequest,
+          attemptId: attemptIdRef.current,
+          continuation: "explicit",
+          phase: "ready",
+          planChanged: true,
+          targets: Object.freeze([...nextRequest.targets]),
+        });
         return true;
       }
 
+      const blockerTargets = denial.blockers.map((blocker) =>
+        blockerTarget(blocker, ownerContextRef.current),
+      );
       const attemptId = ++attemptIdRef.current;
       const recoveryRequest: PendingRepositoryAccessRequest = {
         ...nextRequest,
         attemptId,
         continuation: "explicit",
+        denial,
         phase: "loading",
-        targets: Object.freeze([...nextRequest.targets]),
+        targets: Object.freeze([...nextRequest.targets, ...blockerTargets]),
       };
       setRecommendationsOpen(false);
       setPending(recoveryRequest);
 
+      const deniedIds = new Set([
+        denial.repositoryId,
+        ...denial.blockers.map(({ repositoryId }) => repositoryId),
+      ]);
       const knownTargets = dedupeRepositoryAccessTargets(
-        recoveryRequest.targets,
+        nextRequest.targets,
         repositoryAccessOwner.getSnapshot,
       );
-      const exactTargets = knownTargets.filter(
-        ({ access }) => access.snapshot?.repositoryId === denial.repositoryId,
+      const exactTargets = knownTargets.filter(({ access }) =>
+        deniedIds.has(access.snapshot?.repositoryId ?? ""),
+      );
+      const unreadTargets = knownTargets.filter(
+        ({ access }) => !access.snapshot,
       );
       const targetsToRefresh =
-        exactTargets.length > 0 ? exactTargets : knownTargets;
+        exactTargets.length > 0 || blockerTargets.length > 0
+          ? [
+              ...exactTargets.map(({ target }) => target),
+              ...unreadTargets.map(({ target }) => target),
+              ...blockerTargets,
+            ]
+          : knownTargets.map(({ target }) => target);
       await Promise.all(
-        targetsToRefresh.map(({ target }) =>
-          repositoryAccessOwner.refresh(target.repositoryPath),
+        [
+          ...new Set(targetsToRefresh.map((target) => target.repositoryPath)),
+        ].map((repositoryPath) =>
+          repositoryAccessOwner.refresh(repositoryPath),
         ),
       );
       if (attemptId === attemptIdRef.current) {
@@ -239,7 +309,7 @@ export function useRepositoryAccessPreflight() {
 
   const runPrimaryAction = useCallback(() => {
     if (!pending || busy) return;
-    if (readyToRetry) {
+    if (readyToRetry || planChanged) {
       void runAction(async () => continueRequest(pending));
       return;
     }
@@ -247,12 +317,13 @@ export function useRepositoryAccessPreflight() {
 
     if (primaryPresentation.action === "verify") {
       void runAction(async () => {
-        const verifyTargets = blockers.filter(({ access }) => {
+        const verifyTargets = blockers.filter(({ access, target }) => {
           const presentation = repositoryAccessPresentation(access);
           return (
-            presentation.action === "verify" ||
-            access.verifying ||
-            access.snapshot?.status === "checking"
+            Boolean(target.repositoryPath) &&
+            (presentation.action === "verify" ||
+              access.verifying ||
+              access.snapshot?.status === "checking")
           );
         });
         await Promise.all(
@@ -280,15 +351,12 @@ export function useRepositoryAccessPreflight() {
     continueRequest,
     maybeContinueAutomatically,
     pending,
+    planChanged,
     primaryBlocker,
     primaryPresentation,
     readyToRetry,
     runAction,
   ]);
-
-  const openPrimarySettings = useCallback(() => {
-    primaryBlocker?.target.openSettings?.();
-  }, [primaryBlocker]);
 
   return useMemo(
     () => ({
@@ -296,15 +364,17 @@ export function useRepositoryAccessPreflight() {
       busy,
       close,
       open,
-      openPrimarySettings,
       pending,
-      primaryActionLabel: readyToRetry
-        ? null
-        : (primaryPresentation?.actionLabel ?? null),
-      primaryHasSettings:
-        Boolean(primaryBlocker?.target.openSettings) &&
-        primaryPresentation?.action !== "authenticate" &&
-        primaryPresentation?.action !== "edit_remote",
+      planChanged,
+      primaryActionLabel:
+        readyToRetry || planChanged
+          ? null
+          : (primaryPresentation?.actionLabel ?? null),
+      primaryBlocker,
+      /** The primary action itself opens the primary blocker's settings. */
+      primaryOpensSettings:
+        primaryPresentation?.action === "authenticate" ||
+        primaryPresentation?.action === "edit_remote",
       readyToRetry,
       recommendationsOpen,
       recoverFromError,
@@ -317,8 +387,8 @@ export function useRepositoryAccessPreflight() {
       busy,
       close,
       open,
-      openPrimarySettings,
       pending,
+      planChanged,
       primaryBlocker,
       primaryPresentation,
       readyToRetry,
@@ -334,3 +404,63 @@ export function useRepositoryAccessPreflight() {
 export type RepositoryAccessPreflightController = ReturnType<
   typeof useRepositoryAccessPreflight
 >;
+
+function blockerTarget(
+  blocker: RepositoryAccessBlocker,
+  context: RepositoryOwnerContext,
+): RepositoryAccessTarget {
+  const owner = repositoryOwner(blocker.repositoryPath, context);
+  return {
+    displayName: owner.displayName,
+    displayPath: owner.displayPath,
+    repositoryPath: blocker.repositoryPath,
+    openSettings: repositorySettingsOpener(owner.settingsPath),
+  };
+}
+
+/**
+ * A denial without a repository location that no target resolves to stays a
+ * blocker: an unknown repository never lets the recovery report readiness.
+ */
+function unresolvedDenialView(
+  denial: RepositoryAccessDenial,
+  targetViews: readonly RepositoryAccessTargetView[],
+  projectPath: string | null,
+): RepositoryAccessTargetView | null {
+  if (denial.blockers.length > 0) return null;
+  if (
+    targetViews.some(
+      ({ access }) => access.snapshot?.repositoryId === denial.repositoryId,
+    )
+  )
+    return null;
+  return {
+    access: {
+      error: null,
+      loading: false,
+      snapshot: {
+        checkedAt: null,
+        expiresAt: null,
+        generation: 0,
+        lastKnownStatus: null,
+        reason:
+          denial.reason === "none" || denial.reason === "mutation_plan_changed"
+            ? null
+            : denial.reason,
+        repositoryId: denial.repositoryId,
+        status:
+          denial.status === "local" || denial.status === "writable"
+            ? "unknown"
+            : denial.status,
+      },
+      spacePath: "",
+      verifying: false,
+    },
+    target: {
+      displayName: m.git_access_blocker_unknown_repository(),
+      displayPath: "",
+      repositoryPath: "",
+      openSettings: repositorySettingsOpener(projectPath),
+    },
+  };
+}

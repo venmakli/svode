@@ -21,16 +21,17 @@ test("manual save rejections reach every caller without raw output and retain ac
     status: "read_only",
     reason: "auth_required",
   };
+  const deniedDto = { ...denial, blockers: [] };
   for (const [raw, expected] of [
     [{ ...failure, stderr: "SECRET" }, failure],
-    [{ ...denial, message: "SECRET" }, denial],
+    [{ ...denial, message: "SECRET" }, deniedDto],
     [
       { kind: "git_save_partial", cause: { ...denial, stderr: "SECRET" } },
       {
         kind: "git_save_partial",
         childCommitted: true,
         parentPointer: "pending",
-        cause: denial,
+        cause: deniedDto,
       },
     ],
     [new Error("SECRET"), { kind: "git_save_unknown" }],

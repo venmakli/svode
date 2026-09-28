@@ -8,6 +8,7 @@ import { clearNativeMocks, mockNativeIpc } from "@/platform/native/testing";
 
 let useRepositoryAccessPreflight: typeof import("../hooks/use-repository-access-preflight").useRepositoryAccessPreflight;
 let RepositoryAccessInlineRecovery: typeof import("./repository-access-preflight").RepositoryAccessInlineRecovery;
+let repositoryAccessPrimaryActionLabel: typeof import("./repository-access-preflight").repositoryAccessPrimaryActionLabel;
 
 test("automatic local reread stays hidden until a blocker is confirmed", async () => {
   let finishLoad: ((value: ReturnType<typeof snapshot>) => void) | undefined;
@@ -224,11 +225,169 @@ test("plan drift returns to domain review and cancel invalidates a pending singl
   }
 });
 
+test("a denial outside the consumer targets names every blocker and is never ready while one still blocks", async () => {
+  const paths = new Map([
+    ["/page", snapshot("page", "local")],
+    ["/work/compliance", snapshot("compliance", "unknown", "not_checked")],
+    ["/work/archive", snapshot("archive", "unknown", "not_checked")],
+  ]);
+  const verified: Record<string, ReturnType<typeof snapshot>> = {
+    "/work/compliance": snapshot("compliance", "writable"),
+    "/work/archive": snapshot("archive", "unknown", "offline_or_timeout"),
+  };
+  const harness = await renderHarness({
+    paths,
+    verify: (path) => {
+      const next = verified[path];
+      paths.set(path, next);
+      return next;
+    },
+  });
+
+  try {
+    await click(harness.dom, "[data-recover-foreign]");
+    expect(textOf(harness.dom, "[data-open]")).toBe("open");
+    expect(textOf(harness.dom, "[data-blocker-count]")).toBe("2");
+    expect(textOf(harness.dom, "[data-ready-retry]")).toBe("blocked");
+    const document = harness.dom.window.document;
+    expect(
+      [...document.querySelectorAll("[data-repository-access-blocker]")].map(
+        (node) => node.getAttribute("data-repository-access-blocker"),
+      ),
+    ).toEqual(["compliance", "archive"]);
+    expect(document.body.textContent?.includes("compliance")).toBe(true);
+    expect(document.body.textContent?.includes("/work/archive")).toBe(true);
+    expect(document.querySelector("[data-repository-access-ready]")).toBeNull();
+
+    await click(harness.dom, "[data-run-primary]");
+    expect(
+      harness.calls.filter((command) => command === "repository_access_verify")
+        .length,
+    ).toBe(2);
+    expect(textOf(harness.dom, "[data-blocker-count]")).toBe("1");
+    expect(textOf(harness.dom, "[data-ready-retry]")).toBe("blocked");
+    expect(document.querySelector("[data-repository-access-ready]")).toBeNull();
+
+    verified["/work/archive"] = snapshot("archive", "writable");
+    await click(harness.dom, "[data-run-primary]");
+    expect(textOf(harness.dom, "[data-blocker-count]")).toBe("0");
+    expect(textOf(harness.dom, "[data-ready-retry]")).toBe("ready");
+    expect(textOf(harness.dom, "[data-continued]")).toBe("0");
+
+    await click(harness.dom, "[data-run-primary]");
+    expect(textOf(harness.dom, "[data-continued]")).toBe("1");
+    expect(textOf(harness.dom, "[data-open]")).toBe("closed");
+  } finally {
+    await harness.cleanup();
+  }
+});
+
+test("a denial of an unknown repository without location never reports ready", async () => {
+  const harness = await renderHarness({
+    paths: new Map([["/page", snapshot("page", "local")]]),
+    verify: () => snapshot("page", "local"),
+  });
+
+  try {
+    await click(harness.dom, "[data-recover-unlocated]");
+    expect(textOf(harness.dom, "[data-open]")).toBe("open");
+    expect(textOf(harness.dom, "[data-blocker-count]")).toBe("1");
+    expect(textOf(harness.dom, "[data-ready-retry]")).toBe("blocked");
+    const document = harness.dom.window.document;
+    expect(
+      document
+        .querySelector("[data-repository-access-blocker]")
+        ?.getAttribute("data-repository-access-blocker"),
+    ).toBe("elsewhere");
+    expect(document.body.textContent?.includes("elsewhere")).toBe(false);
+    expect(document.querySelector("[data-repository-access-ready]")).toBeNull();
+  } finally {
+    await harness.cleanup();
+  }
+});
+
+test("plan drift without a domain review stays visible and retries the original action", async () => {
+  const harness = await renderHarness({
+    paths: new Map([["/page", snapshot("page", "local")]]),
+    verify: () => snapshot("page", "local"),
+  });
+
+  try {
+    await click(harness.dom, "[data-plan-changed-no-review]");
+    expect(textOf(harness.dom, "[data-open]")).toBe("open");
+    expect(textOf(harness.dom, "[data-ready-retry]")).toBe("blocked");
+    expect(textOf(harness.dom, "[data-primary-label]")).toBe(
+      "Retry “Save changes”",
+    );
+    const document = harness.dom.window.document;
+    expect(
+      Boolean(document.querySelector("[data-repository-access-plan-changed]")),
+    ).toBe(true);
+    expect(document.querySelector("[data-repository-access-ready]")).toBeNull();
+
+    await click(harness.dom, "[data-run-primary]");
+    expect(textOf(harness.dom, "[data-continued]")).toBe("1");
+    expect(textOf(harness.dom, "[data-open]")).toBe("closed");
+  } finally {
+    await harness.cleanup();
+  }
+});
+
+test("every blocker offers its own Git settings unless the primary action already opens them", async () => {
+  const harness = await renderHarness({
+    paths: new Map([
+      ["/read-only", snapshot("read-only", "read_only")],
+      ["/unchecked", snapshot("unchecked", "unknown", "not_checked")],
+    ]),
+    verify: (path) => snapshot(path.slice(1), "writable"),
+  });
+
+  try {
+    await click(harness.dom, "[data-request-settings]");
+    expect(textOf(harness.dom, "[data-blocker-count]")).toBe("2");
+    const document = harness.dom.window.document;
+    const settingsButtons = [
+      ...document.querySelectorAll<HTMLButtonElement>(
+        "[data-repository-access-blocker] button",
+      ),
+    ];
+    expect(settingsButtons.length).toBe(1);
+    expect(
+      settingsButtons[0]
+        .closest("[data-repository-access-blocker]")
+        ?.getAttribute("data-repository-access-blocker"),
+    ).toBe("unchecked");
+
+    await act(async () => settingsButtons[0].click());
+    expect(textOf(harness.dom, "[data-opened-settings]")).toBe("/unchecked");
+    await click(harness.dom, "[data-run-primary]");
+    expect(textOf(harness.dom, "[data-opened-settings]")).toBe(
+      "/unchecked,/read-only",
+    );
+  } finally {
+    await harness.cleanup();
+  }
+});
+
 function RecoveryHarness() {
   const recovery = useRepositoryAccessPreflight();
   const [continued, setContinued] = useState(0);
   const [planChanged, setPlanChanged] = useState(0);
+  const [openedSettings, setOpenedSettings] = useState<string[]>([]);
   const continueIntent = () => setContinued((current) => current + 1);
+  const settingsTarget = (repositoryPath: string): RepositoryAccessTarget => ({
+    ...target(repositoryPath, repositoryPath.slice(1)),
+    openSettings: () =>
+      setOpenedSettings((current) => [...current, repositoryPath]),
+  });
+  const pageRequest = (intentKey: string) => ({
+    continuation: "explicit" as const,
+    continue: continueIntent,
+    intentKey,
+    intentLabel: "Save changes",
+    placement: "inline" as const,
+    targets: [target("/page", "Page")],
+  });
   const request = (
     intentKey: string,
     targets: readonly RepositoryAccessTarget[],
@@ -309,6 +468,45 @@ function RecoveryHarness() {
           )
         }
       />
+      <button
+        data-recover-foreign
+        onClick={() =>
+          void recovery.recoverFromError(
+            locatedDenial([
+              ["compliance", "/work/compliance", "not_checked"],
+              ["archive", "/work/archive", "not_checked"],
+            ]),
+            pageRequest("foreign"),
+          )
+        }
+      />
+      <button
+        data-recover-unlocated
+        onClick={() =>
+          void recovery.recoverFromError(
+            denial("elsewhere", "unknown", "expired"),
+            pageRequest("unlocated"),
+          )
+        }
+      />
+      <button
+        data-plan-changed-no-review
+        onClick={() =>
+          void recovery.recoverFromError(
+            denial("page", "unknown", "mutation_plan_changed"),
+            pageRequest("plan-changed-no-review"),
+          )
+        }
+      />
+      <button
+        data-request-settings
+        onClick={() =>
+          void request("settings", [
+            settingsTarget("/read-only"),
+            settingsTarget("/unchecked"),
+          ])
+        }
+      />
       <button data-run-primary onClick={recovery.runPrimaryAction} />
       <button data-close onClick={recovery.close} />
       <span data-open>{recovery.open ? "open" : "closed"}</span>
@@ -319,6 +517,10 @@ function RecoveryHarness() {
       </span>
       <span data-continued>{continued}</span>
       <span data-plan-changed-count>{planChanged}</span>
+      <span data-opened-settings>{openedSettings.join(",")}</span>
+      <span data-primary-label>
+        {repositoryAccessPrimaryActionLabel(recovery) ?? ""}
+      </span>
       <RepositoryAccessInlineRecovery recovery={recovery} />
     </>
   );
@@ -362,7 +564,7 @@ async function renderHarness({
   );
   ({ useRepositoryAccessPreflight } =
     await import("../hooks/use-repository-access-preflight"));
-  ({ RepositoryAccessInlineRecovery } =
+  ({ RepositoryAccessInlineRecovery, repositoryAccessPrimaryActionLabel } =
     await import("./repository-access-preflight"));
   const root = createRoot(dom.window.document.getElementById("app")!);
   await act(async () => {
@@ -417,6 +619,28 @@ function denial(
       repositoryId,
       status,
     },
+  };
+}
+
+function locatedDenial(
+  blockers: readonly [
+    repositoryId: string,
+    repositoryPath: string,
+    reason: "not_checked",
+  ][],
+) {
+  const [first] = blockers;
+  return {
+    kind: "repository_access_denied",
+    reason: first[2],
+    repositoryId: first[0],
+    status: "unknown",
+    blockers: blockers.map(([repositoryId, repositoryPath, reason]) => ({
+      reason,
+      repositoryId,
+      repositoryPath,
+      status: "unknown",
+    })),
   };
 }
 

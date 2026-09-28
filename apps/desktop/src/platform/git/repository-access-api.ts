@@ -44,11 +44,19 @@ export type RepositoryAccessDeniedReasonDto =
   | "mutation_plan_changed"
   | "none";
 
+export interface RepositoryAccessBlockerDto {
+  repositoryId: string;
+  repositoryPath: string;
+  status: RepositoryAccessStatusDto;
+  reason: RepositoryAccessDeniedReasonDto;
+}
+
 export interface RepositoryAccessDeniedDto {
   kind: "repository_access_denied";
   repositoryId: string;
   status: RepositoryAccessStatusDto;
   reason: RepositoryAccessDeniedReasonDto;
+  blockers: RepositoryAccessBlockerDto[];
 }
 
 export function activateRepositoryAccess(
@@ -100,6 +108,29 @@ export function toRepositoryAccessDeniedDto(
     repositoryId: candidate.repositoryId,
     status: candidate.status,
     reason: candidate.reason,
+    blockers: Array.isArray(candidate.blockers)
+      ? candidate.blockers.flatMap((blocker) => {
+          const dto = toRepositoryAccessBlockerDto(blocker);
+          return dto ? [dto] : [];
+        })
+      : [],
+  };
+}
+
+function toRepositoryAccessBlockerDto(
+  value: unknown,
+): RepositoryAccessBlockerDto | null {
+  if (!isRecord(value)) return null;
+  if (typeof value.repositoryId !== "string") return null;
+  if (typeof value.repositoryPath !== "string" || !value.repositoryPath)
+    return null;
+  if (!isRepositoryAccessStatus(value.status)) return null;
+  if (!isRepositoryAccessDeniedReason(value.reason)) return null;
+  return {
+    repositoryId: value.repositoryId,
+    repositoryPath: value.repositoryPath,
+    status: value.status,
+    reason: value.reason,
   };
 }
 

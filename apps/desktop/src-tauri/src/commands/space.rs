@@ -1290,6 +1290,7 @@ mod tests {
                 repository_id: "repo".to_string(),
                 status: "read_only".to_string(),
                 reason: "auth_required".to_string(),
+                blockers: Vec::new(),
             }),
             repository,
         ));

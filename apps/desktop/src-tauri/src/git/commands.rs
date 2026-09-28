@@ -107,6 +107,7 @@ impl GitTrackedRemoteReconciliation {
                 repository_id,
                 status,
                 reason,
+                ..
             } => Self {
                 status: GitTrackedRemoteReconciliationStatus::PendingRepositoryAccess,
                 repository_id: Some(repository_id),
@@ -810,6 +811,7 @@ mod tests {
             repository_id: "repo-parent".to_string(),
             status: "unknown".to_string(),
             reason: "mutation_plan_changed".to_string(),
+            blockers: Vec::new(),
         });
         let value = serde_json::to_value(result).unwrap();
 

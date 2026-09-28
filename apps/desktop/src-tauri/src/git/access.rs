@@ -6,6 +6,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 
 use super::{GitState, require_cli};
 use crate::AppError;
+use crate::error::RepositoryAccessBlocker;
 use svode_core::git::access::RepositoryAccessObserver;
 use svode_core::git::cli::GitCli;
 
@@ -77,7 +78,24 @@ impl RepositoryAccessState {
         space: &Path,
         store: &Path,
     ) -> Result<RepositoryAccessSnapshot, AppError> {
-        Ok(self.0.require_mutation(cli, space, store).await?)
+        match self.0.require_mutation(cli, space, store).await {
+            Err(svode_core::git::GitError::RepositoryAccessDenied {
+                repository_id,
+                status,
+                reason,
+            }) => Err(AppError::RepositoryAccessDenied {
+                blockers: vec![RepositoryAccessBlocker {
+                    repository_id: repository_id.clone(),
+                    repository_path: repository_location(space),
+                    status: status.clone(),
+                    reason: reason.clone(),
+                }],
+                repository_id,
+                status,
+                reason,
+            }),
+            result => Ok(result?),
+        }
     }
 
     pub async fn claim_routine(
@@ -245,15 +263,54 @@ pub async fn require_repository_mutation_paths(
     app: &AppHandle,
     paths: impl IntoIterator<Item = PathBuf>,
 ) -> Result<Vec<RepositoryAccessSnapshot>, AppError> {
+    require_each_repository(paths, |repository| async move {
+        require_repository_mutation(app, &repository).await
+    })
+    .await
+}
+
+/// Checks every repository of the touched-set against its local snapshot
+/// before any side effect and refuses once with all blocking repositories,
+/// in the order the plan names them. Any other failure stops the check.
+async fn require_each_repository<F, Fut>(
+    paths: impl IntoIterator<Item = PathBuf>,
+    mut require: F,
+) -> Result<Vec<RepositoryAccessSnapshot>, AppError>
+where
+    F: FnMut(PathBuf) -> Fut,
+    Fut: std::future::Future<Output = Result<RepositoryAccessSnapshot, AppError>>,
+{
     let mut authorized = Vec::new();
+    let mut blockers = Vec::new();
     let mut repositories = std::collections::HashSet::new();
     for path in paths {
         let repository = svode_core::git::access::local_repository_root(&path)?;
-        if repositories.insert(repository.clone()) {
-            authorized.push(require_repository_mutation(app, &repository).await?);
+        if !repositories.insert(repository.clone()) {
+            continue;
+        }
+        match require(repository).await {
+            Ok(snapshot) => authorized.push(snapshot),
+            Err(AppError::RepositoryAccessDenied {
+                blockers: denied, ..
+            }) if !denied.is_empty() => blockers.extend(denied),
+            Err(error) => return Err(error),
         }
     }
-    Ok(authorized)
+    let Some(first) = blockers.first().cloned() else {
+        return Ok(authorized);
+    };
+    Err(AppError::RepositoryAccessDenied {
+        repository_id: first.repository_id,
+        status: first.status,
+        reason: first.reason,
+        blockers,
+    })
+}
+
+fn repository_location(path: &Path) -> String {
+    let repository =
+        svode_core::git::access::local_repository_root(path).unwrap_or_else(|_| path.to_path_buf());
+    crate::system_path::user_facing_path(&repository)
 }
 
 pub(crate) fn access_store_path(app: &AppHandle) -> Result<PathBuf, AppError> {
@@ -283,4 +340,179 @@ where
 
 pub fn ensure_mutation_paths_were_authorized(paths: &[PathBuf]) -> Result<(), AppError> {
     Ok(svode_core::git::access::ensure_mutation_paths_were_authorized(paths)?)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn repository(root: &Path, name: &str) -> PathBuf {
+        let path = root.join(name);
+        std::fs::create_dir_all(path.join(".git")).unwrap();
+        path.canonicalize().unwrap()
+    }
+
+    fn snapshot(id: &str) -> RepositoryAccessSnapshot {
+        RepositoryAccessSnapshot {
+            repository_id: id.to_string(),
+            generation: 1,
+            status: RepositoryAccessStatus::Local,
+            reason: None,
+            checked_at: None,
+            expires_at: None,
+            last_known_status: None,
+        }
+    }
+
+    fn denied(repository: &Path, status: &str, reason: &str) -> AppError {
+        let repository_id = format!("id:{}", repository.display());
+        AppError::RepositoryAccessDenied {
+            repository_id: repository_id.clone(),
+            status: status.to_string(),
+            reason: reason.to_string(),
+            blockers: vec![RepositoryAccessBlocker {
+                repository_id,
+                repository_path: repository_location(repository),
+                status: status.to_string(),
+                reason: reason.to_string(),
+            }],
+        }
+    }
+
+    #[tokio::test]
+    async fn gate_refuses_once_with_every_blocker_in_plan_order() {
+        let dir = tempfile::tempdir().unwrap();
+        let page = repository(dir.path(), "page");
+        let first = repository(dir.path(), "first");
+        let second = repository(dir.path(), "second");
+        let checked = std::sync::Mutex::new(Vec::new());
+
+        let error = require_each_repository(
+            [
+                second.join("README.md"),
+                page.join("doc.md"),
+                first.join("links.md"),
+                second.join("other.md"),
+            ],
+            |repository| {
+                checked.lock().unwrap().push(repository.clone());
+                let (page, first) = (page.clone(), first.clone());
+                async move {
+                    if repository == page {
+                        Ok(snapshot("page"))
+                    } else if repository == first {
+                        Err(denied(&repository, "unknown", "not_checked"))
+                    } else {
+                        Err(denied(&repository, "read_only", "none"))
+                    }
+                }
+            },
+        )
+        .await
+        .unwrap_err();
+
+        assert_eq!(
+            *checked.lock().unwrap(),
+            vec![second.clone(), page.clone(), first.clone()],
+            "every repository is checked once"
+        );
+        let AppError::RepositoryAccessDenied {
+            repository_id,
+            status,
+            reason,
+            blockers,
+        } = error
+        else {
+            panic!("expected a typed access denial");
+        };
+        assert_eq!(
+            blockers
+                .iter()
+                .map(|blocker| blocker.repository_path.clone())
+                .collect::<Vec<_>>(),
+            vec![
+                crate::system_path::user_facing_path(&second),
+                crate::system_path::user_facing_path(&first),
+            ]
+        );
+        assert_eq!(repository_id, blockers[0].repository_id);
+        assert_eq!(status, "read_only");
+        assert_eq!(reason, "none");
+        assert_eq!(blockers[1].status, "unknown");
+        assert_eq!(blockers[1].reason, "not_checked");
+    }
+
+    #[tokio::test]
+    async fn gate_authorizes_when_every_repository_allows_writes() {
+        let dir = tempfile::tempdir().unwrap();
+        let page = repository(dir.path(), "page");
+        let other = repository(dir.path(), "other");
+
+        let authorized =
+            require_each_repository(
+                [page.join("a.md"), other.join("b.md"), page.join("c.md")],
+                |repository| async move {
+                    Ok(snapshot(&repository.file_name().unwrap().to_string_lossy()))
+                },
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            authorized
+                .iter()
+                .map(|snapshot| snapshot.repository_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["page", "other"]
+        );
+    }
+
+    #[tokio::test]
+    async fn gate_stops_on_a_failure_that_is_not_an_access_refusal() {
+        let dir = tempfile::tempdir().unwrap();
+        let first = repository(dir.path(), "first");
+        let second = repository(dir.path(), "second");
+        let checked = std::sync::Mutex::new(0);
+
+        let error = require_each_repository([first.join("a.md"), second.join("b.md")], |_| {
+            *checked.lock().unwrap() += 1;
+            async { Err(AppError::GitNotFound) }
+        })
+        .await
+        .unwrap_err();
+
+        assert!(matches!(error, AppError::GitNotFound));
+        assert_eq!(*checked.lock().unwrap(), 1);
+    }
+
+    #[tokio::test]
+    async fn gate_keeps_a_refusal_without_location_closed() {
+        let dir = tempfile::tempdir().unwrap();
+        let first = repository(dir.path(), "first");
+        let second = repository(dir.path(), "second");
+
+        let error =
+            require_each_repository([first.join("a.md"), second.join("b.md")], |repository| {
+                let first = first.clone();
+                async move {
+                    if repository == first {
+                        Err(AppError::RepositoryAccessDenied {
+                            repository_id: "first".to_string(),
+                            status: "unknown".to_string(),
+                            reason: "mutation_plan_changed".to_string(),
+                            blockers: Vec::new(),
+                        })
+                    } else {
+                        Ok(snapshot("second"))
+                    }
+                }
+            })
+            .await
+            .unwrap_err();
+
+        assert!(matches!(
+            error,
+            AppError::RepositoryAccessDenied { ref reason, .. } if reason == "mutation_plan_changed"
+        ));
+    }
 }

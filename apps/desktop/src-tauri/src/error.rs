@@ -171,6 +171,7 @@ impl From<svode_core::git::GitError> for AppError {
                 repository_id,
                 status,
                 reason,
+                blockers: Vec::new(),
             },
             GitError::SourceBusy { path } => Self::SourceBusy { path },
             GitError::PublicationBlocked {
@@ -348,6 +349,18 @@ impl From<svode_core::storage::routes::ManagedRouteError> for AppError {
     }
 }
 
+/// One repository that refuses a managed write, with the user-facing
+/// repository location the windows use to name its owner and open its Git
+/// settings.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RepositoryAccessBlocker {
+    pub repository_id: String,
+    pub repository_path: String,
+    pub status: String,
+    pub reason: String,
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum AppError {
     #[error("IO error: {0}")]
@@ -431,6 +444,9 @@ pub enum AppError {
         repository_id: String,
         status: String,
         reason: String,
+        /// Every blocking repository of the gated operation; the top-level
+        /// fields describe the first of them.
+        blockers: Vec<RepositoryAccessBlocker>,
     },
 
     #[error("Git no remote configured")]
@@ -552,6 +568,7 @@ impl Serialize for AppError {
                 repository_id,
                 status,
                 reason,
+                blockers,
             } => {
                 #[derive(Serialize)]
                 #[serde(rename_all = "camelCase")]
@@ -560,12 +577,14 @@ impl Serialize for AppError {
                     repository_id: &'a str,
                     status: &'a str,
                     reason: &'a str,
+                    blockers: &'a [RepositoryAccessBlocker],
                 }
                 StructuredError {
                     kind: self.kind(),
                     repository_id,
                     status,
                     reason,
+                    blockers,
                 }
                 .serialize(serializer)
             }
@@ -618,6 +637,7 @@ mod tests {
             repository_id: "repo-opaque".to_string(),
             status: "unknown".to_string(),
             reason: "mutation_plan_changed".to_string(),
+            blockers: Vec::new(),
         })
         .unwrap();
 
@@ -625,6 +645,46 @@ mod tests {
         assert_eq!(value["repositoryId"], "repo-opaque");
         assert_eq!(value["status"], "unknown");
         assert_eq!(value["reason"], "mutation_plan_changed");
+        assert_eq!(value["blockers"], serde_json::json!([]));
+    }
+
+    #[test]
+    fn repository_access_denial_serializes_every_blocker_with_its_location() {
+        let blocker = |id: &str, path: &str, status: &str, reason: &str| RepositoryAccessBlocker {
+            repository_id: id.to_string(),
+            repository_path: path.to_string(),
+            status: status.to_string(),
+            reason: reason.to_string(),
+        };
+        let value = serde_json::to_value(AppError::RepositoryAccessDenied {
+            repository_id: "repo-b".to_string(),
+            status: "read_only".to_string(),
+            reason: "none".to_string(),
+            blockers: vec![
+                blocker("repo-b", "/project/b", "read_only", "none"),
+                blocker("repo-c", "/project/c", "unknown", "not_checked"),
+            ],
+        })
+        .unwrap();
+
+        assert_eq!(value["repositoryId"], "repo-b");
+        assert_eq!(
+            value["blockers"],
+            serde_json::json!([
+                {
+                    "repositoryId": "repo-b",
+                    "repositoryPath": "/project/b",
+                    "status": "read_only",
+                    "reason": "none",
+                },
+                {
+                    "repositoryId": "repo-c",
+                    "repositoryPath": "/project/c",
+                    "status": "unknown",
+                    "reason": "not_checked",
+                },
+            ])
+        );
     }
 
     #[test]
