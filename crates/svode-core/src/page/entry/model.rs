@@ -1,7 +1,11 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+use crate::git::access::RepositoryAccessBlocker;
 use crate::index::backlinks::ModifiedLinkSource;
+
+/// `reason` of a filename deferred because rename repositories refuse writes.
+pub const REPOSITORY_ACCESS_DENIED_REASON: &str = "repository_access_denied";
 
 pub use crate::page::Cover;
 pub use crate::page::frontmatter::EntryMeta;
@@ -32,13 +36,20 @@ pub struct DeleteResult {
     pub cascade_touched: Vec<PathBuf>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EntryWarning {
     pub kind: String,
     pub message: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub path: Option<String>,
+    /// Machine-readable cause of a deferred filename, when it is not the
+    /// technical detail of `message`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    /// Repositories of the rename that refused the write.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub blockers: Vec<RepositoryAccessBlocker>,
 }
 
 impl EntryWarning {
@@ -47,6 +58,7 @@ impl EntryWarning {
             kind: "filename_projection".to_string(),
             message: format!("filename was safely projected ({reasons})"),
             path: Some(path.to_string()),
+            ..Self::default()
         }
     }
 
@@ -55,6 +67,7 @@ impl EntryWarning {
             kind: "filename_rename_collision".to_string(),
             message: "display name was saved, but the current filename was kept because the target is occupied".to_string(),
             path: Some(current_path.to_string()),
+            ..Self::default()
         }
     }
 
@@ -65,6 +78,34 @@ impl EntryWarning {
                 "display name was saved, but the current filename was kept because dependent metadata could not be updated safely: {reason}"
             ),
             path: Some(current_path.to_string()),
+            ..Self::default()
+        }
+    }
+
+    /// The Page repository accepted the title, but other repositories of
+    /// the rename refuse writes; the same title renames once they accept.
+    pub fn filename_rename_access_deferred(
+        current_path: &str,
+        blockers: &[RepositoryAccessBlocker],
+    ) -> Self {
+        let repositories = blockers
+            .iter()
+            .map(|blocker| {
+                format!(
+                    "{} ({}, {})",
+                    blocker.repository_path, blocker.status, blocker.reason
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        Self {
+            kind: "filename_rename_deferred".to_string(),
+            message: format!(
+                "display name was saved, but the current filename was kept because repositories referenced by the rename refuse writes: {repositories}; verify their access, then save the same title again"
+            ),
+            path: Some(current_path.to_string()),
+            reason: Some(REPOSITORY_ACCESS_DENIED_REASON.to_string()),
+            blockers: blockers.to_vec(),
         }
     }
 
@@ -75,6 +116,7 @@ impl EntryWarning {
                 "the desired filename was occupied, so the first available numeric suffix was used"
                     .to_string(),
             path: Some(actual_path.to_string()),
+            ..Self::default()
         }
     }
 }

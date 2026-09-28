@@ -38,7 +38,7 @@ pub(crate) async fn write<F, Fut>(
     authorize: F,
 ) -> Result<PageWriteOutcome, AppError>
 where
-    F: FnOnce(Vec<PathBuf>) -> Fut,
+    F: Fn(Vec<PathBuf>) -> Fut,
     Fut: Future<Output = Result<Vec<PathBuf>, AppError>>,
 {
     let space = request.space.to_string();

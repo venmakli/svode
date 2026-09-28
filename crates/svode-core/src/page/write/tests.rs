@@ -605,3 +605,317 @@ async fn a_reader_sees_the_old_or_the_new_bytes_of_a_write() {
         "{observed:?}"
     );
 }
+
+/// Access refusal of the rename-deferral tests: it locates every denied
+/// repository like the hosts do. These writes never fail otherwise.
+#[derive(Debug)]
+struct Refused(Vec<RepositoryAccessBlocker>);
+
+impl From<PageError> for Refused {
+    fn from(error: PageError) -> Self {
+        panic!("unexpected Page error: {error}")
+    }
+}
+
+impl RepositoryAccessRefusal for Refused {
+    fn access_blockers(&self) -> Option<&[RepositoryAccessBlocker]> {
+        Some(&self.0)
+    }
+}
+
+/// Project with a root Space and independent child Spaces `spaces/<id>`,
+/// each linking to `target` of the root Space from `Link.md`.
+async fn linked_project(root: &Path, target: &str, spaces: &[&str]) -> IndexState {
+    fs::create_dir_all(root.join(".git")).unwrap();
+    let references = spaces
+        .iter()
+        .map(|id| format!("{{\"id\":\"{id}\",\"path\":\"spaces/{id}\"}}"))
+        .collect::<Vec<_>>()
+        .join(",");
+    fs::create_dir_all(root.join(".svode")).unwrap();
+    fs::write(
+        root.join(".svode/config.json"),
+        format!("{{\"name\":\"Root\",\"spaces\":[{references}]}}"),
+    )
+    .unwrap();
+    fs::create_dir_all(root.join(target).parent().unwrap()).unwrap();
+    fs::write(root.join(target), "---\ntitle: Old\n---\nBody\n").unwrap();
+    let state = IndexState::default();
+    for id in spaces {
+        let space = root.join("spaces").join(id);
+        scaffold_space(&space, id);
+        fs::create_dir_all(space.join(".git")).unwrap();
+        fs::write(space.join("Link.md"), format!("[Old](../../{target})\n")).unwrap();
+        state
+            .upsert_space(
+                root,
+                id,
+                &format!("spaces/{id}"),
+                crate::index::resolver::SpaceStatus::Ready,
+                None,
+            )
+            .await;
+    }
+    state
+}
+
+/// Title write of `path` in `space` that refuses every repository of
+/// `denied` and records each authorized touched-set.
+async fn save_denied(
+    space: &Path,
+    project: &Path,
+    path: &str,
+    title: &str,
+    state: &IndexState,
+    denied: &[PathBuf],
+    requests: &std::sync::Mutex<Vec<Vec<PathBuf>>>,
+) -> Result<PageWriteOutcome, Refused> {
+    let content = entry::read(space.to_str().unwrap(), path).unwrap().body;
+    write(
+        PageWrite {
+            space: space.to_str().unwrap(),
+            path,
+            content: &content,
+            title: Some(title),
+            icon: None,
+            extra: None,
+            metadata: None,
+            field_batch: None,
+            skip_rename: false,
+            project: Some(project.to_str().unwrap()),
+            source_version: None,
+        },
+        runtime(state, &WriteNonceRegistry::new()),
+        |mut paths| {
+            requests.lock().unwrap().push(paths.clone());
+            let mut blockers: Vec<RepositoryAccessBlocker> = Vec::new();
+            for path in &paths {
+                let repository = crate::git::access::local_repository_root(path).unwrap();
+                if denied.contains(&repository)
+                    && !blockers
+                        .iter()
+                        .any(|blocker| blocker.repository_path == repository.display().to_string())
+                {
+                    blockers.push(RepositoryAccessBlocker {
+                        repository_id: format!("id-{}", blockers.len()),
+                        repository_path: repository.display().to_string(),
+                        status: "read_only".into(),
+                        reason: "none".into(),
+                    });
+                }
+            }
+            paths.push(space.to_path_buf());
+            async move {
+                if blockers.is_empty() {
+                    Ok(paths)
+                } else {
+                    Err(Refused(blockers))
+                }
+            }
+        },
+    )
+    .await
+}
+
+fn repository(path: &Path) -> PathBuf {
+    crate::git::access::local_repository_root(path).unwrap()
+}
+
+#[tokio::test]
+async fn a_refusing_linking_repository_defers_the_filename_and_the_same_title_renames_later() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    let state = linked_project(root, "Tasks/Page.md", &["a"]).await;
+    let link = root.join("spaces/a/Link.md");
+    let link_before = fs::read(&link).unwrap();
+    let requests = std::sync::Mutex::new(Vec::new());
+
+    let deferred = save_denied(
+        root,
+        root,
+        "Tasks/Page.md",
+        "Новое имя",
+        &state,
+        &[repository(&root.join("spaces/a"))],
+        &requests,
+    )
+    .await
+    .unwrap();
+
+    assert!(deferred.result.new_path.is_none());
+    let page = entry::read(root.to_str().unwrap(), "Tasks/Page.md").unwrap();
+    assert_eq!(page.meta.title, "Новое имя");
+    assert_eq!(page.body, "Body\n");
+    assert!(!root.join("Tasks/Новое имя.md").exists());
+    assert_eq!(fs::read(&link).unwrap(), link_before);
+    let warning = &deferred.result.warnings[0];
+    assert_eq!(warning.kind, "filename_rename_deferred");
+    assert_eq!(warning.path.as_deref(), Some("Tasks/Page.md"));
+    assert_eq!(
+        warning.reason.as_deref(),
+        Some(entry::REPOSITORY_ACCESS_DENIED_REASON)
+    );
+    assert_eq!(
+        warning
+            .blockers
+            .iter()
+            .map(|blocker| blocker.repository_path.clone())
+            .collect::<Vec<_>>(),
+        [repository(&root.join("spaces/a")).display().to_string()]
+    );
+    let requests_made = requests.lock().unwrap().clone();
+    assert_eq!(requests_made.len(), 2, "rename plan, then the title alone");
+    assert!(requests_made[0].contains(&link));
+    assert!(
+        requests_made[1]
+            .iter()
+            .all(|path| repository(path) == repository(root)),
+        "the title needs only the Page repository"
+    );
+
+    let renamed = save_denied(
+        root,
+        root,
+        "Tasks/Page.md",
+        "Новое имя",
+        &state,
+        &[],
+        &requests,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        renamed.result.new_path.as_deref(),
+        Some("Tasks/Новое имя.md")
+    );
+    assert!(renamed.result.warnings.is_empty());
+    assert!(!root.join("Tasks/Page.md").exists());
+    let rewritten = fs::read_to_string(&link).unwrap();
+    assert!(
+        rewritten.contains("Новое") && !rewritten.contains("Tasks/Page.md"),
+        "{rewritten}"
+    );
+}
+
+#[tokio::test]
+async fn two_refusing_repositories_are_named_and_a_folder_page_keeps_its_directory() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    let state = linked_project(root, "protsessy/README.md", &["a", "b"]).await;
+    fs::write(root.join("protsessy/Child.md"), "---\ntitle: Child\n---\n").unwrap();
+    let links = ["a", "b"].map(|id| {
+        let path = root.join("spaces").join(id).join("Link.md");
+        let bytes = fs::read(&path).unwrap();
+        (path, bytes)
+    });
+    let denied = [
+        repository(&root.join("spaces/a")),
+        repository(&root.join("spaces/b")),
+    ];
+
+    let deferred = save_denied(
+        root,
+        root,
+        "protsessy/README.md",
+        "Процессы",
+        &state,
+        &denied,
+        &std::sync::Mutex::new(Vec::new()),
+    )
+    .await
+    .unwrap();
+
+    assert!(deferred.result.new_path.is_none());
+    assert_eq!(
+        entry::read(root.to_str().unwrap(), "protsessy/README.md")
+            .unwrap()
+            .meta
+            .title,
+        "Процессы"
+    );
+    assert!(root.join("protsessy/Child.md").is_file());
+    assert!(!root.join("Процессы").exists());
+    for (path, bytes) in &links {
+        assert_eq!(&fs::read(path).unwrap(), bytes);
+    }
+    let mut named = deferred.result.warnings[0]
+        .blockers
+        .iter()
+        .map(|blocker| PathBuf::from(&blocker.repository_path))
+        .collect::<Vec<_>>();
+    named.sort();
+    assert_eq!(named, denied.to_vec());
+}
+
+#[tokio::test]
+async fn a_refusing_page_repository_writes_nothing_and_names_every_blocker() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    let state = linked_project(root, "Tasks/Page.md", &["a"]).await;
+    let page_before = fs::read(root.join("Tasks/Page.md")).unwrap();
+    let link_before = fs::read(root.join("spaces/a/Link.md")).unwrap();
+
+    let error = save_denied(
+        root,
+        root,
+        "Tasks/Page.md",
+        "Новое имя",
+        &state,
+        &[repository(root), repository(&root.join("spaces/a"))],
+        &std::sync::Mutex::new(Vec::new()),
+    )
+    .await
+    .err()
+    .expect("the Page repository refuses");
+
+    assert_eq!(error.0.len(), 2, "the refusal of the full rename plan");
+    assert_eq!(fs::read(root.join("Tasks/Page.md")).unwrap(), page_before);
+    assert_eq!(
+        fs::read(root.join("spaces/a/Link.md")).unwrap(),
+        link_before
+    );
+}
+
+#[tokio::test]
+async fn a_submodule_rename_needs_the_parent_gitlink_repository() {
+    let Some(cli) = crate::git::state::detected_cli() else {
+        return;
+    };
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    cli.exec(root, &["init", "-q"]).await.unwrap();
+    fs::write(
+        root.join(".gitmodules"),
+        "[submodule \"spaces/a\"]\n\tpath = spaces/a\n\turl = https://example.invalid/a.git\n",
+    )
+    .unwrap();
+    let state = linked_project(root, "Root.md", &["a"]).await;
+    let space = root.join("spaces/a");
+    fs::write(space.join("Page.md"), "---\ntitle: Old\n---\nBody\n").unwrap();
+    let requests = std::sync::Mutex::new(Vec::new());
+
+    let deferred = save_denied(
+        &space,
+        root,
+        "Page.md",
+        "New",
+        &state,
+        &[repository(root)],
+        &requests,
+    )
+    .await
+    .unwrap();
+
+    assert!(requests.lock().unwrap()[0].contains(&root.to_path_buf()));
+    assert!(deferred.result.new_path.is_none());
+    assert_eq!(
+        deferred.result.warnings[0].blockers[0].repository_path,
+        repository(root).display().to_string()
+    );
+    assert!(space.join("Page.md").is_file());
+
+    let renamed = save_denied(&space, root, "Page.md", "New", &state, &[], &requests)
+        .await
+        .unwrap();
+    assert_eq!(renamed.result.new_path.as_deref(), Some("New.md"));
+}

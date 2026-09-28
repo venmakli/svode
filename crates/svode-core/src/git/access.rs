@@ -1078,6 +1078,26 @@ fn existing_git_context(path: &Path) -> Result<PathBuf, GitError> {
     Ok(candidate)
 }
 
+/// One repository that refuses a managed write, with the location of its
+/// local repository root a host uses to name its owner.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RepositoryAccessBlocker {
+    pub repository_id: String,
+    pub repository_path: String,
+    pub status: String,
+    pub reason: String,
+}
+
+/// Authorization failure of a planned touched-set. A repository access
+/// denial names every refusing repository, so an operation can keep the
+/// part of its intent those repositories do not own.
+pub trait RepositoryAccessRefusal {
+    /// Every refusing repository of an access denial; `None` for any other
+    /// failure and for a denial that does not locate its repositories.
+    fn access_blockers(&self) -> Option<&[RepositoryAccessBlocker]>;
+}
+
 pub fn local_repository_root(path: &Path) -> Result<PathBuf, GitError> {
     let mut candidate = existing_git_context(path)?;
     loop {

@@ -286,17 +286,6 @@ pub async fn write_entry(
     nonces: State<'_, Arc<WriteNonceRegistry>>,
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<WriteResult, AppError> {
-    if skip_rename != Some(true)
-        && let Some(project) = project_path.as_deref().filter(|path| !path.is_empty())
-    {
-        let cli = crate::git::require_cli(&app.state::<crate::git::GitState>())?;
-        if svode_core::git::ops::detect_space_git_type(&cli, Path::new(project), Path::new(&space))
-            .await?
-            == crate::space::types::SpaceGitType::Submodule
-        {
-            require_repository_mutation(&app, Path::new(project)).await?;
-        }
-    }
     write_entry_shared(
         WriteEntryAuthorization::App(&app),
         space,
@@ -317,6 +306,7 @@ pub async fn write_entry(
     .await
 }
 
+#[derive(Clone, Copy)]
 pub(super) enum WriteEntryAuthorization<'a> {
     App(&'a AppHandle),
     #[cfg(test)]

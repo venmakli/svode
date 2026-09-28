@@ -1,4 +1,5 @@
 use serde::Serialize;
+use svode_core::git::access::{RepositoryAccessBlocker, RepositoryAccessRefusal};
 
 impl From<svode_core::actors::ActorError> for AppError {
     fn from(error: svode_core::actors::ActorError) -> Self {
@@ -339,6 +340,17 @@ impl From<svode_core::storage::lfs::LfsError> for AppError {
     }
 }
 
+/// A denial names its repositories by the user-facing location the windows
+/// use to name their owners and open their Git settings.
+impl RepositoryAccessRefusal for AppError {
+    fn access_blockers(&self) -> Option<&[RepositoryAccessBlocker]> {
+        match self {
+            Self::RepositoryAccessDenied { blockers, .. } if !blockers.is_empty() => Some(blockers),
+            _ => None,
+        }
+    }
+}
+
 impl From<svode_core::storage::routes::ManagedRouteError> for AppError {
     fn from(error: svode_core::storage::routes::ManagedRouteError) -> Self {
         use svode_core::storage::routes::ManagedRouteError;
@@ -347,18 +359,6 @@ impl From<svode_core::storage::routes::ManagedRouteError> for AppError {
             ManagedRouteError::Malformed(message) => Self::Storage(message),
         }
     }
-}
-
-/// One repository that refuses a managed write, with the user-facing
-/// repository location the windows use to name its owner and open its Git
-/// settings.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RepositoryAccessBlocker {
-    pub repository_id: String,
-    pub repository_path: String,
-    pub status: String,
-    pub reason: String,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -685,6 +685,29 @@ mod tests {
                 },
             ])
         );
+    }
+
+    #[test]
+    fn only_a_located_access_denial_names_its_refusing_repositories() {
+        let blocker = RepositoryAccessBlocker {
+            repository_id: "repo-b".to_string(),
+            repository_path: "/project/b".to_string(),
+            status: "read_only".to_string(),
+            reason: "none".to_string(),
+        };
+        let denied = |blockers: Vec<RepositoryAccessBlocker>| AppError::RepositoryAccessDenied {
+            repository_id: "repo-b".to_string(),
+            status: "read_only".to_string(),
+            reason: "none".to_string(),
+            blockers,
+        };
+
+        assert_eq!(
+            denied(vec![blocker.clone()]).access_blockers(),
+            Some(&[blocker][..])
+        );
+        assert_eq!(denied(Vec::new()).access_blockers(), None);
+        assert_eq!(AppError::General("x".into()).access_blockers(), None);
     }
 
     #[test]

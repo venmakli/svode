@@ -35,6 +35,7 @@ export {
 } from "./hooks/use-repository-access-preflight";
 export { repositoryAccessDenialFromError } from "./api/repository-access-api";
 export type {
+  RepositoryAccessBlocker,
   RepositoryAccessDenial,
   RepositoryAccessPrimaryAction,
   RepositoryAccessReason,
@@ -51,6 +52,10 @@ export type {
 } from "./model/repository-access-consumer";
 export { repositoryAccessIsEditable } from "./model/repository-access-consumer";
 export { repositoryAccessPresentation } from "./ui/repository-access-copy";
+export {
+  repositoryBlockersNotice,
+  type RepositoryBlockersNotice,
+} from "./ui/repository-blockers-notice";
 export {
   gitAuthChallengeFromRemoteUrl,
   isGitAuthRequiredError,

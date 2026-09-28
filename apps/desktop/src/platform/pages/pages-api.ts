@@ -1,3 +1,4 @@
+import type { RepositoryAccessBlockerDto } from "@/platform/git/repository-access-api";
 import { invokeCommand } from "@/platform/native/invoke";
 
 export type PageCoverDto =
@@ -18,6 +19,8 @@ export interface PageWarningDto {
   kind: string;
   message: string;
   path?: string | null;
+  reason?: string | null;
+  blockers?: RepositoryAccessBlockerDto[];
 }
 
 export interface PageNameConflictDto {

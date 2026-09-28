@@ -3,6 +3,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::collections::engine::{self as collections, PreparedEntryFieldBatch};
+use crate::git::access::{RepositoryAccessBlocker, RepositoryAccessRefusal};
 use crate::index::backlinks::ModifiedLinkSource;
 use crate::index::backlinks::{
     link_stem, rebase_source_links_between_moved_tree, replace_link_urls_between,
@@ -41,6 +42,15 @@ const CURRENT_SOURCE_ATTEMPTS: usize = 3;
 pub(crate) enum Attempt<E> {
     Changed,
     Failed(E),
+}
+
+impl<E: RepositoryAccessRefusal> RepositoryAccessRefusal for Attempt<E> {
+    fn access_blockers(&self) -> Option<&[RepositoryAccessBlocker]> {
+        match self {
+            Self::Changed => None,
+            Self::Failed(error) => error.access_blockers(),
+        }
+    }
 }
 
 impl<E: From<PageError>> From<PageError> for Attempt<E> {
@@ -98,6 +108,17 @@ struct WritePlan {
     link_targets: Vec<PathBuf>,
     warning: Option<EntryWarning>,
     paths: Vec<PathBuf>,
+    /// Parent repository whose gitlink records a rename inside a submodule
+    /// Space; it is authorized with the rename but holds no Page source.
+    parent_gitlink: Option<PathBuf>,
+}
+
+impl WritePlan {
+    fn authorization_paths(&self) -> Vec<PathBuf> {
+        let mut paths = self.paths.clone();
+        paths.extend(self.parent_gitlink.clone());
+        paths
+    }
 }
 
 fn rename_roots(request: &PageWrite<'_>, rename: &entry::PlannedWriteRename) -> (PathBuf, PathBuf) {

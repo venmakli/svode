@@ -39,7 +39,7 @@ where
     E: GitDateExecutor,
     F: Fn(Vec<PathBuf>) -> Fut,
     Fut: std::future::Future<Output = Result<Vec<PathBuf>, Err>>,
-    Err: From<PageError>,
+    Err: From<PageError> + crate::git::access::RepositoryAccessRefusal,
 {
     let PageFieldUpdate {
         space,

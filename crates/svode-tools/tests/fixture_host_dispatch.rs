@@ -54,6 +54,7 @@ struct FixtureHost {
     pool: Option<SqlitePool>,
     pool_keys: Mutex<Vec<IndexKey>>,
     deny_mutations: bool,
+    denied_repositories: Mutex<Vec<PathBuf>>,
     authorized: Mutex<Vec<PathBuf>>,
     lfs_ready: Option<bool>,
     lfs_probes: Mutex<Vec<PathBuf>>,
@@ -76,6 +77,7 @@ impl FixtureHost {
             pool,
             pool_keys: Mutex::new(Vec::new()),
             deny_mutations: false,
+            denied_repositories: Mutex::new(Vec::new()),
             authorized: Mutex::new(Vec::new()),
             lfs_ready: None,
             lfs_probes: Mutex::new(Vec::new()),
@@ -204,6 +206,20 @@ impl ToolHost for FixtureHost {
                 "REPOSITORY_ACCESS_DENIED",
                 "Repository access denied: status=read_only",
             ));
+        }
+        if self
+            .denied_repositories
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|denied| denied == repository)
+        {
+            return Err(svode_core::git::GitError::RepositoryAccessDenied {
+                repository_id: format!("id-{}", repository.display()),
+                status: "read_only".to_string(),
+                reason: "none".to_string(),
+            }
+            .into());
         }
         Ok(())
     }
@@ -1130,6 +1146,99 @@ async fn mutations_authorize_every_repository_before_the_first_write() {
             .iter()
             .all(|repository| repository == &fixture.project)
     );
+}
+
+#[tokio::test]
+async fn a_title_whose_rename_repositories_refuse_keeps_the_filename_with_a_warning() {
+    let fixture = write_fixture();
+    let project = &fixture.project;
+    write(
+        &project.join(".svode/config.json"),
+        &json!({ "name": "Project", "spaces": [
+            { "id": "child", "path": "child", "repo": null },
+            { "id": "other", "path": "other", "repo": null }
+        ] })
+        .to_string(),
+    );
+    write(
+        &project.join("other/.svode/config.json"),
+        &json!({ "name": "Other" }).to_string(),
+    );
+    write(&project.join("other/README.md"), "---\ntitle: Other\n---\n");
+    for space in ["child", "other"] {
+        fs::create_dir_all(project.join(space).join(".git")).unwrap();
+        write(
+            &project.join(space).join("links.md"),
+            "[Leaf](../leaf.md)\n",
+        );
+    }
+    let host = indexed_host(&fixture, FixtureHost::new(None)).await;
+    host.index
+        .upsert_space(project, "other", "other", SpaceStatus::Ready, None)
+        .await;
+    let denied = [project.join("child"), project.join("other")];
+    *host.denied_repositories.lock().unwrap() = denied.to_vec();
+    let target = root_target(&fixture);
+    let links = ["child/links.md", "other/links.md"].map(|path| read(&fixture, path));
+
+    let result = call_tool(
+        &host,
+        Some(&target),
+        "update_page_metadata",
+        json!({ "path": "leaf.md", "title": "Moved" }),
+    )
+    .await;
+
+    assert!(!result.is_error, "{:?}", result.structured_content);
+    let value = structured(&result);
+    assert_eq!(value["page"]["path"], "leaf.md");
+    assert_eq!(value["page"]["meta"]["title"], "Moved");
+    let warning = &value["warnings"][0];
+    assert_eq!(warning["kind"], "filename_rename_deferred");
+    assert_eq!(warning["reason"], "repository_access_denied");
+    let mut named = warning["blockers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|blocker| PathBuf::from(blocker["repositoryPath"].as_str().unwrap()))
+        .collect::<Vec<_>>();
+    named.sort();
+    assert_eq!(named, denied.to_vec());
+    assert!(!project.join("Moved.md").exists());
+    for (path, source) in ["child/links.md", "other/links.md"].iter().zip(&links) {
+        assert_eq!(&read(&fixture, path), source, "{path}");
+    }
+
+    // A refusal of the Page repository writes nothing; the aggregated
+    // refusal keeps the public error of its first repository.
+    host.denied_repositories
+        .lock()
+        .unwrap()
+        .push(project.clone());
+    let refused = call_tool(
+        &host,
+        Some(&target),
+        "update_page_metadata",
+        json!({ "path": "leaf.md", "title": "Refused" }),
+    )
+    .await;
+    assert_eq!(error_code(&refused), "REPOSITORY_ACCESS_DENIED");
+    let error = &refused.structured_content.as_ref().unwrap()["error"];
+    assert_eq!(error["repositoryId"], format!("id-{}", project.display()));
+    assert!(error.get("blockers").is_none());
+    assert!(read(&fixture, "leaf.md").contains("title: Moved"));
+
+    host.denied_repositories.lock().unwrap().clear();
+    let renamed = call_tool(
+        &host,
+        Some(&target),
+        "update_page_metadata",
+        json!({ "path": "leaf.md", "title": "Moved" }),
+    )
+    .await;
+    assert!(!renamed.is_error, "{:?}", renamed.structured_content);
+    assert_eq!(structured(&renamed)["page"]["path"], "Moved.md");
+    assert!(read(&fixture, "child/links.md").contains("Moved.md"));
 }
 
 #[tokio::test]

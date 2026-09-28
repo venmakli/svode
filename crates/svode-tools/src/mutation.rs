@@ -11,7 +11,8 @@ use std::path::{Path, PathBuf};
 
 use serde_json::{Value, json};
 use svode_core::git::access::{
-    local_repository_root, scope_authorized_mutation_paths, scope_authorized_paths,
+    RepositoryAccessBlocker, RepositoryAccessRefusal, local_repository_root,
+    scope_authorized_mutation_paths, scope_authorized_paths,
 };
 use svode_core::git::cli::GitCli;
 use svode_core::git::state::detected_cli;
@@ -28,6 +29,21 @@ use crate::result::{ContentBlock, ToolCallResult};
 pub(crate) enum MutationError {
     Page(PageError),
     Business(ToolError),
+    /// Every repository of the touched-set that refused the write; the
+    /// public error is the refusal of the first of them.
+    AccessDenied {
+        first: ToolError,
+        blockers: Vec<RepositoryAccessBlocker>,
+    },
+}
+
+impl RepositoryAccessRefusal for MutationError {
+    fn access_blockers(&self) -> Option<&[RepositoryAccessBlocker]> {
+        match self {
+            Self::AccessDenied { blockers, .. } => Some(blockers),
+            _ => None,
+        }
+    }
 }
 
 impl From<PageError> for MutationError {
@@ -47,6 +63,7 @@ impl From<MutationError> for ToolError {
         match error {
             MutationError::Page(error) => error.into(),
             MutationError::Business(error) => error,
+            MutationError::AccessDenied { first, .. } => first,
         }
     }
 }
@@ -90,20 +107,53 @@ pub(crate) async fn authorize(
 }
 
 /// Authorizes exactly the planned touched-set, without adding its Space,
-/// then lets the host prepare what the mutation publishes into.
+/// then lets the host prepare what the mutation publishes into. Every
+/// repository is checked before the refusal, which names all refusing
+/// repositories; any other failure stops the check.
 pub(crate) async fn authorize_paths(
     host: &impl ToolHost,
     paths: Vec<PathBuf>,
 ) -> Result<Vec<PathBuf>, MutationError> {
     let mut repositories = HashSet::new();
+    let mut first = None;
+    let mut blockers = Vec::new();
     for path in &paths {
         let repository = local_repository_root(path).map_err(ToolError::from)?;
-        if repositories.insert(repository.clone()) {
-            host.require_mutation_access(&repository).await?;
+        if !repositories.insert(repository.clone()) {
+            continue;
         }
+        if let Err(error) = host.require_mutation_access(&repository).await {
+            let Some(blocker) = access_blocker(&error, &repository) else {
+                return Err(error.into());
+            };
+            blockers.push(blocker);
+            first.get_or_insert(error);
+        }
+    }
+    if let Some(first) = first {
+        return Err(MutationError::AccessDenied { first, blockers });
     }
     host.prepare_mutation(&paths).await;
     Ok(paths)
+}
+
+fn access_blocker(error: &ToolError, repository: &Path) -> Option<RepositoryAccessBlocker> {
+    if error.code != "REPOSITORY_ACCESS_DENIED" {
+        return None;
+    }
+    let evidence = |key: &str| {
+        error
+            .evidence
+            .get(key)
+            .and_then(Value::as_str)
+            .map(str::to_string)
+    };
+    Some(RepositoryAccessBlocker {
+        repository_id: evidence("repositoryId")?,
+        repository_path: repository.display().to_string(),
+        status: evidence("status")?,
+        reason: evidence("reason")?,
+    })
 }
 
 /// Runs the source phase of a mutation under the write guard of its

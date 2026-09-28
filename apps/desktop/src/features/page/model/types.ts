@@ -1,3 +1,5 @@
+import type { RepositoryAccessBlocker } from "@/features/git";
+
 export type CoverColorName =
   | "neutral"
   | "gray"
@@ -28,6 +30,10 @@ export interface PageWarning {
   kind: string;
   message: string;
   path?: string | null;
+  /** Machine-readable cause of a deferred filename. */
+  reason?: string | null;
+  /** Repositories of the rename that refused the write. */
+  blockers?: readonly RepositoryAccessBlocker[];
 }
 
 export interface PageNameConflict {

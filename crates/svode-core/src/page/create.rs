@@ -449,6 +449,7 @@ where
                 projection_errors.join("; ")
             ),
             path: Some(page.path.clone()),
+            ..EntryWarning::default()
         });
     }
     let warnings = page.warnings;

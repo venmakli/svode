@@ -56,6 +56,14 @@ pub enum PageError {
     Observation(#[from] crate::routines::observation::ObservationError),
 }
 
+/// A Page error never locates the repositories of an access denial; hosts
+/// authorize with their own error.
+impl crate::git::access::RepositoryAccessRefusal for PageError {
+    fn access_blockers(&self) -> Option<&[crate::git::access::RepositoryAccessBlocker]> {
+        None
+    }
+}
+
 impl From<CollectionError> for PageError {
     fn from(error: CollectionError) -> Self {
         match error {

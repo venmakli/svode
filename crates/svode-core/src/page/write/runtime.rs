@@ -35,6 +35,11 @@ async fn space_path_of(
 /// Validate, plan, authorize and apply one Page write, then publish its
 /// derived projection. Authorization receives the full planned touched-set;
 /// a projection failure after the source write is an applied warning.
+///
+/// The title and metadata need only the Page repository, the filename needs
+/// every repository of the rename. When only rename repositories refuse,
+/// the write keeps the current filename and reports them in a deferred
+/// warning; a refusal of the Page repository writes nothing.
 pub async fn write<E, F, Fut, Err>(
     request: PageWrite<'_>,
     runtime: PageRuntime<'_, E>,
@@ -42,17 +47,36 @@ pub async fn write<E, F, Fut, Err>(
 ) -> Result<PageWriteOutcome, Err>
 where
     E: GitDateExecutor,
-    F: FnOnce(Vec<PathBuf>) -> Fut,
+    F: Fn(Vec<PathBuf>) -> Fut,
     Fut: std::future::Future<Output = Result<Vec<PathBuf>, Err>>,
-    Err: From<PageError>,
+    Err: From<PageError> + RepositoryAccessRefusal,
 {
     let state = runtime.index;
     let nonces = runtime.nonces;
     let backlink_index = state
         .backlinks_for_space_dir(Path::new(request.space))
         .await;
-    let plan = prepare(&request, state, &backlink_index).await?;
-    let authorized = authorize(plan.paths.clone()).await?;
+    let mut plan = prepare(&request, state, &backlink_index, None).await?;
+    let authorized = match authorize(plan.authorization_paths()).await {
+        Ok(authorized) => authorized,
+        Err(refusal) => {
+            let Some(blockers) = plan
+                .rename
+                .as_ref()
+                .and(refusal.access_blockers())
+                .map(<[_]>::to_vec)
+            else {
+                return Err(refusal);
+            };
+            let deferred = EntryWarning::filename_rename_access_deferred(request.path, &blockers);
+            plan = prepare(&request, state, &backlink_index, Some(deferred)).await?;
+            match authorize(plan.authorization_paths()).await {
+                Ok(authorized) => authorized,
+                Err(own) if own.access_blockers().is_some() => return Err(refusal),
+                Err(own) => return Err(own),
+            }
+        }
+    };
     let space = request.space.to_string();
     let path = request.path.to_string();
     let project = request.project.map(str::to_string);
@@ -129,24 +153,31 @@ where
             kind: "projection_update_failed".into(),
             message: format!("Page was saved, but derived projection needs refresh: {error}"),
             path: Some(current.to_string()),
+            ..EntryWarning::default()
         });
     }
     Ok(outcome)
 }
 
+/// Plans the write. A `deferred` warning plans the title without the
+/// rename, as a schema that cannot prove the relation plan does.
 async fn prepare(
     request: &PageWrite<'_>,
     state: &IndexRuntimeState,
     backlinks: &BacklinkIndex,
+    deferred: Option<EntryWarning>,
 ) -> Result<WritePlan, PageError> {
-    let mut rename = entry::planned_write_rename(
-        request.space,
-        request.path,
-        requested_title(request),
-        request.skip_rename,
-    )?;
+    let mut rename = match deferred {
+        Some(_) => None,
+        None => entry::planned_write_rename(
+            request.space,
+            request.path,
+            requested_title(request),
+            request.skip_rename,
+        )?,
+    };
     let mut relation_paths = Vec::new();
-    let mut warning = None;
+    let mut warning = deferred;
     if let Some(planned) = &rename {
         let (old, new) = rename_roots(request, planned);
         let old = old.strip_prefix(request.space).unwrap().to_string_lossy();
@@ -175,7 +206,9 @@ async fn prepare(
     let mut links = Vec::new();
     let mut moved_sources = Vec::new();
     let mut link_targets = Vec::new();
+    let mut parent_gitlink = None;
     if let Some(planned) = &rename {
+        parent_gitlink = submodule_parent(request).await?;
         let (old_root, new_root) = rename_roots(request, planned);
         paths.extend(
             relation_paths
@@ -271,7 +304,20 @@ async fn prepare(
         link_targets,
         warning,
         paths,
+        parent_gitlink,
     })
+}
+
+/// The Project repository of a submodule Space records a rename of its
+/// sources through the gitlink the structural commit updates.
+async fn submodule_parent(request: &PageWrite<'_>) -> Result<Option<PathBuf>, PageError> {
+    let (Some(project), Some(cli)) = (request.project, crate::git::state::detected_cli()) else {
+        return Ok(None);
+    };
+    let kind =
+        crate::git::ops::detect_space_git_type(&cli, Path::new(project), Path::new(request.space))
+            .await?;
+    Ok((kind == crate::storage::config::SpaceGitType::Submodule).then(|| PathBuf::from(project)))
 }
 
 async fn publish<E: GitDateExecutor>(

@@ -6,7 +6,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 
 use super::{GitState, require_cli};
 use crate::AppError;
-use crate::error::RepositoryAccessBlocker;
+use svode_core::git::access::RepositoryAccessBlocker;
 use svode_core::git::access::RepositoryAccessObserver;
 use svode_core::git::cli::GitCli;
 

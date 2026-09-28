@@ -1,8 +1,11 @@
 import { toast } from "sonner";
 
+import { repositoryBlockersNotice } from "@/features/git";
 import * as m from "@/paraglide/messages.js";
 
 import type { PageWarning } from "../model/types";
+
+const REPOSITORY_ACCESS_DENIED_REASON = "repository_access_denied";
 
 const FILENAME_WARNING_KINDS = new Set([
   "filename_projection",
@@ -28,14 +31,23 @@ export function publishPageFilenameWarnings(
   for (const warning of warnings ?? []) {
     const feedback = pageFilenameWarningFeedback(warning);
     if (feedback) {
-      toast.warning(feedback.title, { description: feedback.description });
+      toast.warning(feedback.title, {
+        description: feedback.description,
+        action: feedback.action,
+      });
     }
   }
 }
 
+export interface PageFilenameWarningFeedback {
+  title: string;
+  description: string;
+  action?: { label: string; onClick: () => void };
+}
+
 export function pageFilenameWarningFeedback(
   warning: PageWarning,
-): { title: string; description: string } | null {
+): PageFilenameWarningFeedback | null {
   if (warning.kind === "filename_projection") {
     return {
       title: m.page_filename_adjusted(),
@@ -56,6 +68,21 @@ export function pageFilenameWarningFeedback(
       description: warning.path
         ? m.page_filename_collision_description({ path: warning.path })
         : warning.message,
+    };
+  } else if (
+    warning.kind === "filename_rename_deferred" &&
+    warning.reason === REPOSITORY_ACCESS_DENIED_REASON &&
+    warning.path &&
+    warning.blockers?.length
+  ) {
+    const notice = repositoryBlockersNotice(warning.blockers);
+    return {
+      title: m.page_filename_rename_deferred(),
+      description: m.page_filename_rename_access_deferred_description({
+        path: warning.path,
+        repositories: notice.repositories,
+      }),
+      action: notice.settingsAction,
     };
   } else if (warning.kind === "filename_rename_deferred") {
     return {

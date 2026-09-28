@@ -3,7 +3,7 @@ mod persistence;
 
 pub use model::{
     Cover, DeleteResult, Entry, EntryDetailForm, EntryDetailState, EntryMeta, EntryWarning,
-    WriteResult,
+    REPOSITORY_ACCESS_DENIED_REASON, WriteResult,
 };
 pub use persistence::{entry_from_source, read, read_with_git_dates, replaced_by_staged_copy};
 

@@ -63,6 +63,46 @@ test("page filename feedback keeps schema diagnostics and retry guidance in EN/R
   }
 });
 
+test("page filename feedback names the refusing repositories instead of the technical message", async () => {
+  const originalLocale = getLocale();
+  try {
+    for (const locale of ["en", "ru"] as const) {
+      await setLocale(locale, { reload: false });
+      const feedback = pageFilenameWarningFeedback({
+        kind: "filename_rename_deferred",
+        message: "technical: repo-opaque read_only none",
+        path: "protsessy/README.md",
+        reason: "repository_access_denied",
+        blockers: [
+          {
+            repositoryId: "repo-opaque",
+            repositoryPath: "/work/bigquest/compliance",
+            status: "read_only",
+            reason: "none",
+          },
+        ],
+      });
+
+      expect(feedback?.title).toBe(
+        locale === "en" ? "Filename kept" : "Имя файла не изменено",
+      );
+      expect(feedback?.description.includes("protsessy/README.md")).toBe(true);
+      expect(feedback?.description.includes("compliance")).toBe(true);
+      expect(
+        feedback?.description.includes(
+          locale === "en" ? "Read only" : "Только чтение",
+        ),
+      ).toBe(true);
+      expect(feedback?.description.includes("Enter")).toBe(true);
+      expect(feedback?.description.includes("repo-opaque")).toBe(false);
+      expect(feedback?.description.includes("read_only")).toBe(false);
+      expect(feedback?.description.includes("technical")).toBe(false);
+    }
+  } finally {
+    await setLocale(originalLocale, { reload: false });
+  }
+});
+
 test("page filename feedback ignores unrelated diagnostics", () => {
   expect(
     pageFilenameWarningFeedback({

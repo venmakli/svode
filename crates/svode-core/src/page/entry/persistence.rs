@@ -72,7 +72,7 @@ pub fn entry_from_source(source: crate::page::PageSource) -> Result<Entry, PageE
             .map(|warning| EntryWarning {
                 kind: warning.kind,
                 message: warning.message,
-                path: None,
+                ..EntryWarning::default()
             })
             .collect(),
         name_conflict: source.name_conflict,

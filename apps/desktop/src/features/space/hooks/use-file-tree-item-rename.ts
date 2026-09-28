@@ -14,7 +14,7 @@ import {
   suppressEditorFileEvents,
 } from "@/features/editor/file-tree-sync";
 import { publishPageTitleOutcome } from "@/features/page/navigation";
-import { normalizePage } from "@/features/page";
+import { normalizePage, publishPageFilenameWarnings } from "@/features/page";
 import {
   renameTreeItemPath,
   updateTreePageTitle,
@@ -141,6 +141,7 @@ export function useFileTreeItemRename({
           suppressEditorFileEvents(space.path, [node.path, page.path]);
         }
         publishPageTitleOutcome(space.path, node.path, page);
+        publishPageFilenameWarnings(page.warnings);
         finishTreeMutation();
         patchPageTreeMeta(
           spaceId,
