@@ -185,8 +185,12 @@ if (process.env.SVODE_PAGE_SCOPE_TEST !== "1") {
     ),
   }));
   const { ArtifactSurface } = await import("@/features/artifact/app-shell");
-  const { useActiveContentSelection, closeActiveContent } =
-    await import("@/features/artifact");
+  const {
+    useActiveContentSelection,
+    closeActiveContent,
+    getActiveContentPath,
+  } = await import("@/features/artifact");
+  const { useScopeOwner } = await import("@/features/scope-surfaces");
   const { openPage, publishPageTitleOutcome } =
     await import("@/features/page/navigation");
   const { useMainChangesTarget } = await import("@/features/changes");
@@ -222,6 +226,7 @@ if (process.env.SVODE_PAGE_SCOPE_TEST !== "1") {
     allowCollectionNavigation = true;
     flushBody = async () => {};
     let hasApp = folder;
+    let ownerFactReads = 0;
     let status = "local";
     let reads = 0;
     let readFailures = options.readFailures ?? 0;
@@ -311,16 +316,17 @@ if (process.env.SVODE_PAGE_SCOPE_TEST !== "1") {
                 },
               }
             : null;
-        if (command === "get_entry_detail_state")
+        if (command === "get_scope_owner_facts") {
+          ownerFactReads += 1;
+          const path = String(input.path);
+          const folder = /.\/readme\.md$/i.test(path);
           return {
-            form: /\/readme\.md$/i.test(
-              String(args && "path" in args ? args.path : ""),
-            )
-              ? "folder"
-              : "leaf",
-            subpageCount: 0,
-            otherFileCount: 0,
+            identity: folder ? "pageDirectory" : "pageFile",
+            ownerPath: folder ? path.replace(/\/readme\.md$/i, "") : path,
+            contentPath: path,
+            hasApp: folder && hasApp,
           };
+        }
         throw new Error(`Unexpected IPC: ${command}`);
       },
       { shouldMockEvents: true },
@@ -330,6 +336,23 @@ if (process.env.SVODE_PAGE_SCOPE_TEST !== "1") {
     function Harness() {
       const { selection, activePathRetarget } = useActiveContentSelection();
       const changes = useMainChangesTarget();
+      const targetPath =
+        selection?.kind === "artifact"
+          ? selection.request.intent.target.path
+          : null;
+      const { owner } = useScopeOwner({
+        target: targetPath
+          ? {
+              spaceId: "root",
+              spacePath,
+              projectPath: spacePath,
+              path: targetPath,
+            }
+          : null,
+        retainPrevious: activePathRetarget?.path === targetPath,
+      });
+      if (selection?.kind === "artifact" && !owner)
+        return <output data-owner-loading />;
       if (selection?.kind !== "artifact")
         return (
           <output
@@ -359,16 +382,15 @@ if (process.env.SVODE_PAGE_SCOPE_TEST !== "1") {
             retainSurfaceDuringRetarget={
               activePathRetarget?.path === request.intent.target.path
             }
-            renderPageSurface={(layout) => (
-              <PageScopeSurface
-                {...layout}
-                spacePath={spacePath}
-                projectPath={spacePath}
-                spaceId="root"
-                sessionKey={request.sessionKey}
-                hasApp={hasApp}
-              />
-            )}
+            renderPageSurface={(layout) =>
+              owner ? (
+                <PageScopeSurface
+                  {...layout}
+                  owner={owner}
+                  sessionKey={request.sessionKey}
+                />
+              ) : null
+            }
           />
         </div>
       );
@@ -404,8 +426,17 @@ if (process.env.SVODE_PAGE_SCOPE_TEST !== "1") {
       },
       marker: async (value: boolean) => {
         hasApp = value;
-        await render();
+        const path = getActiveContentPath() ?? "";
+        const { emit } = await import("@/platform/native/events");
+        await act(async () => {
+          await emit(value ? "file:created" : "file:deleted", {
+            space: spacePath,
+            path: `${path.replace(/\/readme\.md$/i, "")}/app.yaml`,
+          });
+          await settle();
+        });
       },
+      ownerFactReads: () => ownerFactReads,
       access: async (value: string) => {
         status = value;
         await act(async () => {

@@ -189,6 +189,7 @@ pub fn run() {
             commands::files::list_entries,
             commands::files::list_tree_children,
             commands::files::get_entry_detail_state,
+            commands::files::get_scope_owner_facts,
             commands::files::create_entry,
             commands::files::create_collection,
             commands::files::create_folder,

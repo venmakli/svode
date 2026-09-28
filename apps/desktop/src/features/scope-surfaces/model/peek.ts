@@ -4,7 +4,6 @@ import type { ScopeOwnerRef } from "./types";
 
 export interface ScopePeekContext {
   path: string;
-  directory?: boolean;
   spaceId: string;
   spacePath: string;
   projectPath: string;

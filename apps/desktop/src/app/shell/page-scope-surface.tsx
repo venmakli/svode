@@ -1,44 +1,34 @@
 import { useActiveContentSelection } from "@/features/artifact";
 import { useState } from "react";
+import { usePublishMainChangesTarget } from "@/features/changes";
 import type { PageSurfaceLayout } from "@/features/page/app-shell";
-import { usePageSurfaceSession } from "@/features/page/scope-surface";
+import {
+  usePageDetailContext,
+  usePageSurfaceSession,
+} from "@/features/page/scope-surface";
 import { useCollectionDetailController } from "@/features/collection/app-shell";
-import { createPageOwner, ScopeSurfaceHost } from "@/features/scope-surfaces";
+import {
+  ScopeSurfaceHost,
+  type ScopeOwnerRef,
+} from "@/features/scope-surfaces";
 import { createScopeSurfaceContributions } from "./scope-surface-contributions";
 import { createScopeContentRenderers } from "./scope-content-renderers";
 
 interface PageScopeSurfaceProps extends PageSurfaceLayout {
-  spaceId: string;
-  spacePath: string;
-  projectPath: string;
-  hasApp: boolean;
+  owner: ScopeOwnerRef;
   sessionKey: number;
 }
 
 export function PageScopeSurface({
-  contentPath,
-  directoryPath,
+  owner,
   header,
   children,
-  spaceId,
-  spacePath,
-  projectPath,
-  hasApp,
   sessionKey,
 }: PageScopeSurfaceProps) {
   const { selection } = useActiveContentSelection();
   const pageSurface = usePageSurfaceSession();
+  const detail = usePageDetailContext();
   const detailController = useCollectionDetailController();
-  const owner = createPageOwner({
-    contentPath,
-    spaceId,
-    spacePath,
-    projectPath,
-    status: "ready",
-    ...(directoryPath
-      ? { form: "folder", ownerPath: directoryPath, hasApp }
-      : { form: "leaf" }),
-  });
   const [ownerKeys, setOwnerKeys] = useState({
     current: owner.ownerKey,
     previous: owner.ownerKey,
@@ -46,6 +36,21 @@ export function PageScopeSurface({
   if (ownerKeys.current !== owner.ownerKey) {
     setOwnerKeys({ current: owner.ownerKey, previous: ownerKeys.current });
   }
+
+  usePublishMainChangesTarget(
+    detail.page
+      ? {
+          kind: "page",
+          projectPath: owner.projectPath,
+          sessionKey,
+          sourceShape:
+            owner.identityKind === "page-file" ? "file" : "directory",
+          spacePath: owner.spacePath,
+          path: detail.page.path,
+          name: detail.page.meta.title,
+        }
+      : null,
+  );
 
   const contributions = createScopeSurfaceContributions({
     ...createScopeContentRenderers({ readOnly: pageSurface.readOnly }),

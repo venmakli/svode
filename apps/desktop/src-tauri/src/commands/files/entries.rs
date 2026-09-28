@@ -76,6 +76,17 @@ pub fn list_tree_children(
 }
 
 #[tauri::command]
+pub fn get_scope_owner_facts(
+    space: String,
+    path: String,
+) -> Result<svode_core::content_tree::owner::ScopeOwnerFacts, AppError> {
+    Ok(svode_core::content_tree::owner::scope_owner_facts(
+        Path::new(&space),
+        &path,
+    )?)
+}
+
+#[tauri::command]
 pub fn get_entry_detail_state(
     space: String,
     path: String,

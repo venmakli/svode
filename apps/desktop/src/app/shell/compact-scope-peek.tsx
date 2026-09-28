@@ -1,6 +1,4 @@
 import { useMemo, useState } from "react";
-import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   useOpenScopeOwner,
@@ -12,12 +10,12 @@ import type {
   CollectionRouteState,
 } from "@/features/collection/app-shell";
 import {
+  ScopeOwnerFactsError,
   ScopeSurfaceErrorBoundary,
-  usePeekOwner,
+  useScopeOwner,
   type ScopePeekContext,
   type ScopeSurfaceId,
 } from "@/features/scope-surfaces";
-import * as m from "@/paraglide/messages.js";
 import { useCollectionRouteState } from "./hooks/use-collection-route-state";
 import { ScopeSurfacePage } from "./scope-surface-page";
 
@@ -29,10 +27,15 @@ export function CompactScopePeek(props: ScopePeekContext) {
   if (pathState.input !== props.path)
     setPathState({ input: props.path, current: props.path });
   const path = pathState.input === props.path ? pathState.current : props.path;
-  const { owner, error, retry } = usePeekOwner({
-    ...props,
-    path,
-    directory: props.directory && path === props.path,
+  const { owner, error, retry } = useScopeOwner({
+    target: {
+      spaceId: props.spaceId,
+      spacePath: props.spacePath,
+      projectPath: props.projectPath,
+      path,
+    },
+    // One Peek session keeps its owner while a new path of it resolves.
+    retainPrevious: true,
   });
   const [surfaceId, setSurfaceId] = useState<ScopeSurfaceId | null>(null);
   const [viewName, setViewName] = useState<string | null>(null);
@@ -60,12 +63,7 @@ export function CompactScopePeek(props: ScopePeekContext) {
           {props.renderActions(async () => false, null)}
         </div>
         {error ? (
-          <Alert variant="destructive">
-            <AlertDescription>
-              {error}
-              <Button onClick={retry}>{m.attachments_retry()}</Button>
-            </AlertDescription>
-          </Alert>
+          <ScopeOwnerFactsError error={error} onRetry={retry} />
         ) : (
           <Skeleton className="m-6 h-48" />
         )}
@@ -105,14 +103,7 @@ export function CompactScopePeek(props: ScopePeekContext) {
       <div className="flex shrink-0 items-center justify-end px-2 pb-2">
         {props.renderActions(openFull, owner)}
       </div>
-      {error ? (
-        <Alert variant="destructive">
-          <AlertDescription>
-            {error}
-            <Button onClick={retry}>{m.attachments_retry()}</Button>
-          </AlertDescription>
-        </Alert>
-      ) : null}
+      {error ? <ScopeOwnerFactsError error={error} onRetry={retry} /> : null}
       <div className="scrollbar-hide min-h-0 flex-1 overflow-y-auto overflow-x-hidden">
         <ScopeSurfaceErrorBoundary>
           <ScopeSurfacePage

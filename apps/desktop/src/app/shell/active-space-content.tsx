@@ -7,9 +7,10 @@ import type { TreeNode } from "@/features/space";
 import { useSpace } from "@/features/space";
 import { EmptyProjectState } from "@/features/space/app-shell";
 import {
-  createCollectionDirectoryOwner,
-  createAppDirectoryOwner,
   createRegisteredSpaceOwner,
+  knownScopeOwnerFacts,
+  ScopeOwnerFactsError,
+  useScopeOwner,
   type ScopeOwnerKey,
 } from "@/features/scope-surfaces";
 import {
@@ -85,22 +86,22 @@ export function ActiveSpaceContent() {
   const rootTree = activeRootId ? (fileTrees[activeRootId] ?? []) : [];
   const hasContentItems = rootTree.length > 0;
   const isEmpty = !hasChildren && !hasContentItems;
-  const isCollectionOwner = Boolean(
-    selectedPath &&
-    activeSpace &&
-    selectionSpaceId &&
-    (scopeOwnerRequest?.owner.kind === "collection" ||
-      activeNodeSnapshot?.has_schema),
-  );
-  const isAppOnlyOwner = Boolean(
-    selectedPath &&
-    activeSpace &&
-    selectionSpaceId &&
-    !isCollectionOwner &&
-    activeNodeSnapshot?.has_app === true &&
-    (scopeOwnerRequest?.owner.kind === "app-directory" ||
-      activeNodeSnapshot?.kind === "app"),
-  );
+  const ownerTargetPath =
+    scopeOwnerRequest?.owner.kind === "collection" ||
+    scopeOwnerRequest?.owner.kind === "app-directory"
+      ? scopeOwnerRequest.owner.path
+      : artifactRequest?.intent.target.semanticHint?.kind === "page"
+        ? artifactRequest.intent.target.path
+        : null;
+  const ownerTarget =
+    ownerTargetPath && selectionSpaceId && activeSpace?.status === "ready"
+      ? {
+          spaceId: selectionSpaceId,
+          spacePath: activeSpace.path,
+          projectPath: activeRootPath ?? activeSpace.path,
+          path: ownerTargetPath,
+        }
+      : null;
   const collectionSessionKey =
     scopeOwnerRequest?.key ?? selectedPath ?? "collection";
   const previousCollectionOwnerKey =
@@ -116,24 +117,24 @@ export function ActiveSpaceContent() {
     activePathRetarget.spaceId === selectionSpaceId,
   );
   const appSessionKey = scopeOwnerRequest?.key ?? selectedPath ?? "app";
+  const {
+    owner,
+    error: ownerError,
+    retry: retryOwner,
+  } = useScopeOwner({
+    target: ownerTarget,
+    known:
+      ownerTargetPath && activeNodeSnapshot
+        ? knownScopeOwnerFacts(ownerTargetPath, activeNodeSnapshot)
+        : null,
+    retainPrevious: isArtifactPathRetarget,
+  });
 
   const activeContent =
-    isCollectionOwner &&
-    activeSpace &&
-    selectionSpaceId &&
-    activeRootPath &&
-    selectedPath ? (
+    owner?.identityKind === "collection-directory" && selectionSpaceId ? (
       <ScopeSurfacePage
         key={`collection-session:${selectionSpaceId}:${collectionSessionKey}`}
-        owner={createCollectionDirectoryOwner({
-          spaceId: selectionSpaceId,
-          spacePath: activeSpace.path,
-          projectPath: activeRootPath,
-          ownerPath: collectionOwnerPath(selectedPath),
-          status: activeSpace.status,
-          hasSchema: true,
-          hasApp: activeNodeSnapshot?.has_app === true,
-        })}
+        owner={owner}
         presentation="full"
         routeState={collectionRouteState}
         openIntent={scopeOwnerRequest?.intent}
@@ -141,39 +142,43 @@ export function ActiveSpaceContent() {
         previousOwnerKey={previousCollectionOwnerKey}
         sessionKey={collectionSessionKey}
       />
-    ) : isAppOnlyOwner &&
-      activeSpace &&
-      selectionSpaceId &&
-      activeRootPath &&
-      selectedPath ? (
+    ) : owner?.identityKind === "app-directory" && selectionSpaceId ? (
       <ScopeSurfacePage
         key={`app-session:${selectionSpaceId}:${appSessionKey}`}
-        owner={createAppDirectoryOwner({
-          spaceId: selectionSpaceId,
-          spacePath: activeSpace.path,
-          projectPath: activeRootPath,
-          ownerPath: collectionOwnerPath(selectedPath),
-          status: activeSpace.status,
-          hasApp: true,
-        })}
+        owner={owner}
         presentation="full"
         openIntent={scopeOwnerRequest?.intent}
         openRequestKey={scopeOwnerRequest?.key}
         sessionKey={appSessionKey}
       />
+    ) : owner && scopeOwnerRequest && selectionSpaceId ? (
+      // A Collection or App target whose marker is gone keeps its owner session.
+      <ScopeSurfacePage
+        key={`owner-session:${selectionSpaceId}:${scopeOwnerRequest.key}`}
+        owner={owner}
+        presentation="full"
+        sessionKey={scopeOwnerRequest.key}
+      />
+    ) : ownerTarget && !owner ? (
+      ownerError ? (
+        <div className="px-8 py-12">
+          <ScopeOwnerFactsError error={ownerError} onRetry={retryOwner} />
+        </div>
+      ) : (
+        <ContentLoadingState />
+      )
     ) : artifactRequest && activeSpace && selectionSpaceId ? (
       <ArtifactSurface
         request={artifactRequest}
-        renderPageSurface={(layout) => (
-          <PageScopeSurface
-            {...layout}
-            spaceId={selectionSpaceId}
-            spacePath={activeSpace.path}
-            projectPath={activeRootPath ?? activeSpace.path}
-            hasApp={activeNodeSnapshot?.has_app === true}
-            sessionKey={artifactRequest.sessionKey}
-          />
-        )}
+        renderPageSurface={(layout) =>
+          owner ? (
+            <PageScopeSurface
+              {...layout}
+              owner={owner}
+              sessionKey={artifactRequest.sessionKey}
+            />
+          ) : null
+        }
         spacePath={activeSpace.path}
         projectPath={activeRootPath}
         spaceId={selectionSpaceId}
@@ -187,7 +192,7 @@ export function ActiveSpaceContent() {
 
   if (scopeOwnerRequest?.owner.kind === "space" || !selection || isEmpty) {
     if (selectedScopeHome?.status === "ready" && activeRootPath) {
-      const owner = createRegisteredSpaceOwner({
+      const spaceOwner = createRegisteredSpaceOwner({
         spaceId: selectedScopeHome.id,
         spacePath: selectedScopeHome.path,
         projectPath: activeRootPath,
@@ -199,8 +204,8 @@ export function ActiveSpaceContent() {
         <div className="relative flex h-full flex-col overflow-hidden">
           <div className="scrollbar-hide min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden">
             <ScopeSurfacePage
-              key={owner.ownerKey}
-              owner={owner}
+              key={spaceOwner.ownerKey}
+              owner={spaceOwner}
               presentation="full"
               routeState={collectionRouteState}
               fallbackTitle={selectedScopeHome.name}
@@ -246,6 +251,19 @@ function ContentTransitionOverlay() {
       className="absolute inset-0 flex flex-col gap-4 bg-background/90 px-8 py-12"
       aria-label={m.artifact_open_loading()}
       aria-live="polite"
+    >
+      <Skeleton className="h-8 w-1/3" />
+      <Skeleton className="h-4 w-2/3" />
+      <Skeleton className="mt-4 h-64 w-full" />
+    </div>
+  );
+}
+
+function ContentLoadingState() {
+  return (
+    <div
+      className="flex min-h-full flex-col gap-4 px-8 py-12"
+      aria-label={m.artifact_open_loading()}
     >
       <Skeleton className="h-8 w-1/3" />
       <Skeleton className="h-4 w-2/3" />

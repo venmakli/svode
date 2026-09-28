@@ -181,6 +181,8 @@ if (process.env.SVODE_COMPACT_SCOPE_TEST !== "1") {
       mounts = 0;
       _unmounts = 0;
       let blocked = true;
+      let hasApp = true;
+      let ownerFactReads = 0;
       flushBody = async () => {
         if (blocked) throw new Error("save blocked");
       };
@@ -209,12 +211,15 @@ if (process.env.SVODE_COMPACT_SCOPE_TEST !== "1") {
             };
           if (command === "read_entry") return page;
           if (command === "get_entry_schema") return null;
-          if (command === "get_entry_detail_state")
-            return { form: "folder", subpageCount: 0, otherFileCount: 0 };
-          if (command === "path_exists")
-            return String(args && "path" in args ? args.path : "").endsWith(
-              "app.yaml",
-            );
+          if (command === "get_scope_owner_facts") {
+            ownerFactReads += 1;
+            return {
+              identity: "pageDirectory",
+              ownerPath: "Notes",
+              contentPath: String(args && "path" in args ? args.path : ""),
+              hasApp,
+            };
+          }
           throw new Error(`Unexpected IPC: ${command}`);
         },
         { shouldMockEvents: true },
@@ -322,6 +327,30 @@ if (process.env.SVODE_COMPACT_SCOPE_TEST !== "1") {
           "App",
           "Attachments",
         ]);
+        const { emit } = await import("@/platform/native/events");
+        const fileEvent = async (name: string, path: string) =>
+          act(async () => {
+            await emit(name, { space: "/target", path });
+            await settle();
+          });
+        const reads = ownerFactReads;
+        await fileEvent("file:changed", "Notes/Other.md");
+        await fileEvent("file:created", "Notes/Sub/app.yaml");
+        expect(ownerFactReads).toBe(reads);
+        hasApp = false;
+        await fileEvent("file:deleted", "Notes/app.yaml");
+        expect(tabs(dom).map((tab) => tab.textContent)).toEqual([
+          "Readme",
+          "Attachments",
+        ]);
+        hasApp = true;
+        await fileEvent("file:created", "Notes/app.yaml");
+        expect(tabs(dom).map((tab) => tab.textContent)).toEqual([
+          "Readme",
+          "App",
+          "Attachments",
+        ]);
+        expect(mounts).toBe(1);
         const editor = dom.window.document.querySelector("textarea")!;
         expect(editor.readOnly).toBe(false);
         editor.value = "unsaved draft";
@@ -379,7 +408,7 @@ if (process.env.SVODE_COMPACT_SCOPE_TEST !== "1") {
       meta: { title: "Item2", icon: null, created: "", updated: "", extra: {} },
     };
     mockNativeIpc(
-      (command) => {
+      (command, args) => {
         if (command === "repository_access_get")
           return {
             status: "local",
@@ -392,9 +421,15 @@ if (process.env.SVODE_COMPACT_SCOPE_TEST !== "1") {
           };
         if (command === "read_entry") return page;
         if (command === "get_entry_schema") return null;
-        if (command === "get_entry_detail_state")
-          return { form: "leaf", subpageCount: 0, otherFileCount: 0 };
-        if (command === "path_exists") return false;
+        if (command === "get_scope_owner_facts") {
+          const path = String(args && "path" in args ? args.path : "");
+          return {
+            identity: "pageFile",
+            ownerPath: path,
+            contentPath: path,
+            hasApp: false,
+          };
+        }
         throw new Error(`Unexpected IPC: ${command}`);
       },
       { shouldMockEvents: true },
@@ -490,7 +525,7 @@ if (process.env.SVODE_COMPACT_SCOPE_TEST !== "1") {
       },
     };
     mockNativeIpc(
-      (command) => {
+      (command, args) => {
         if (command === "repository_access_get")
           return {
             status: "local",
@@ -503,9 +538,15 @@ if (process.env.SVODE_COMPACT_SCOPE_TEST !== "1") {
           };
         if (command === "read_entry") return structuredClone(source);
         if (command === "get_entry_schema") return null;
-        if (command === "get_entry_detail_state")
-          return { form: "leaf", subpageCount: 0, otherFileCount: 0 };
-        if (command === "path_exists") return false;
+        if (command === "get_scope_owner_facts") {
+          const path = String(args && "path" in args ? args.path : "");
+          return {
+            identity: "pageFile",
+            ownerPath: path,
+            contentPath: path,
+            hasApp: false,
+          };
+        }
         throw new Error(`Unexpected IPC: ${command}`);
       },
       { shouldMockEvents: true },

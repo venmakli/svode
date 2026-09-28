@@ -1,19 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { usePublishMainChangesTarget } from "@/features/changes";
-import { Separator } from "@/components/ui/separator";
-import { Skeleton } from "@/components/ui/skeleton";
-import {
-  useOpenScopeOwner,
-  useActiveContentSelection,
-} from "@/features/artifact";
+import { useOpenScopeOwner } from "@/features/artifact";
 import {
   deletePage as deletePageApi,
   duplicatePage as duplicatePageApi,
-  getPageDetailState,
 } from "../page-api";
 import { useOpenPage } from "../navigation";
-import type { Page, PageDetailState } from "../model";
-import { detailPageHeaderClassName } from "@/shared/ui/page-layout";
+import type { Page } from "../model";
 import { useSpaceTreeSync } from "@/features/space";
 import { logTiming, nowMs } from "@/shared/lib/performance";
 import {
@@ -25,12 +17,10 @@ import { usePageSurfaceSession } from "../hooks/page-surface-context";
 import { handleError } from "../lib/errors";
 import { publishPageFilenameWarnings } from "../lib/filename-warning";
 import { isReadmeMissingError } from "../lib/readme-state";
-import { pageAttachmentOwnerPath } from "../model/page-attachments";
 import type { PageSurfaceLayout } from "../model/page-surface-layout";
 import { PageDeleteDialog } from "./page-delete-dialog";
 import { PageDetailActions } from "./page-detail-actions";
 import { PageDetailHeader } from "./page-detail-header";
-import { PageIdentityHeaderSkeleton } from "./page-identity-header";
 import { ReadmeSurface } from "./readme-surface";
 
 interface PageArtifactProps {
@@ -88,7 +78,6 @@ function PageArtifactContent({
 }: Omit<PageArtifactProps, "fallbackTitle">) {
   const detail = usePageDetailContext();
   const pageSurface = usePageSurfaceSession();
-  const { selection } = useActiveContentSelection();
   const openPage = useOpenPage();
   const openScopeOwner = useOpenScopeOwner();
   const reloadTreePathParent = useSpaceTreeSync(
@@ -100,26 +89,7 @@ function PageArtifactContent({
   const removeTreePath = useSpaceTreeSync((state) => state.removeTreePath);
   const [deletePage, setDeletePage] = useState<Page | null>(null);
   const page = detail.page;
-  const path = page?.path ?? pagePath;
-  const detailState = usePageDetailState(spacePath, path);
   usePageOpenTiming(detail.status, spaceId);
-
-  usePublishMainChangesTarget(
-    page && detailState
-      ? {
-          kind: "page",
-          projectPath,
-          sessionKey:
-            selection?.kind === "artifact"
-              ? selection.request.sessionKey
-              : undefined,
-          sourceShape: detailState.form === "leaf" ? "file" : "directory",
-          spacePath,
-          path: page.path,
-          name: page.meta.title,
-        }
-      : null,
-  );
 
   const rootReadmeMissing =
     detail.status === "error" &&
@@ -139,8 +109,6 @@ function PageArtifactContent({
       cancelled = true;
     };
   }, [deletePage, pageSurface.readOnly]);
-
-  if (detailState === undefined) return <PageLoadingState />;
 
   async function deleteCurrentPage(pageToDelete: Page) {
     await deletePageApi({
@@ -192,8 +160,6 @@ function PageArtifactContent({
   return (
     <>
       {renderSurface({
-        contentPath: path,
-        directoryPath: pageAttachmentOwnerPath(path, detailState),
         header: (activeSurfaceId) => (
           <PageDetailHeader
             readOnly={pageSurface.readOnly}
@@ -218,28 +184,6 @@ function PageArtifactContent({
   );
 }
 
-/**
- * Leaf/folder form of the open Page; `undefined` until the first answer.
- * The previous answer stays while the Page path changes.
- */
-function usePageDetailState(spacePath: string, path: string) {
-  const [state, setState] = useState<{
-    detail: PageDetailState | null;
-  }>();
-  useEffect(() => {
-    let cancelled = false;
-    void getPageDetailState({ spacePath, path })
-      .catch(() => null)
-      .then((detail) => {
-        if (!cancelled) setState({ detail });
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [path, spacePath]);
-  return state === undefined ? undefined : state.detail;
-}
-
 function usePageOpenTiming(status: ReadmeStatus, spaceId: string) {
   const startedAtRef = useRef<number | null>(null);
   useEffect(() => {
@@ -254,26 +198,4 @@ function usePageOpenTiming(status: ReadmeStatus, spaceId: string) {
     });
     startedAtRef.current = null;
   }, [spaceId, status]);
-}
-
-function PageLoadingState() {
-  return (
-    <div className="flex min-h-full flex-col">
-      <div className={detailPageHeaderClassName}>
-        <PageIdentityHeaderSkeleton />
-        <div className="flex max-w-5xl flex-col gap-4">
-          <div className="flex gap-2">
-            <Skeleton className="h-6 w-20" />
-            <Skeleton className="h-6 w-24" />
-          </div>
-        </div>
-      </div>
-      <Separator />
-      <div className="mx-auto flex w-full max-w-5xl flex-col gap-3 px-6 py-8">
-        <Skeleton className="h-4 w-full" />
-        <Skeleton className="h-4 w-11/12" />
-        <Skeleton className="h-4 w-4/5" />
-      </div>
-    </div>
-  );
 }

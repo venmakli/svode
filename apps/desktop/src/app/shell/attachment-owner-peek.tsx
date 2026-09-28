@@ -12,7 +12,6 @@ export function AttachmentOwnerPeek({
   return (
     <CompactScopePeek
       path={row.contentPath ?? row.path}
-      directory={!row.contentPath && row.kind !== "page"}
       spaceId={spaceId}
       spacePath={target.owner.spacePath}
       projectPath={target.owner.projectPath}

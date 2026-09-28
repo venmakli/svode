@@ -48,6 +48,27 @@ export async function listContentTreeChildren(
   return nodes.map(normalizeTreeNode);
 }
 
+export interface ScopeOwnerFactsDto {
+  identity:
+    | "pageFile"
+    | "pageDirectory"
+    | "collectionDirectory"
+    | "appDirectory";
+  ownerPath: string;
+  contentPath: string;
+  hasApp: boolean;
+}
+
+export function getScopeOwnerFacts(
+  space: string,
+  path: string,
+): Promise<ScopeOwnerFactsDto> {
+  return invokeCommand<ScopeOwnerFactsDto>("get_scope_owner_facts", {
+    space,
+    path,
+  });
+}
+
 export function getContentTreeExpandedPaths(space: string): Promise<string[]> {
   return invokeCommand<string[]>("get_expanded_paths", { space });
 }

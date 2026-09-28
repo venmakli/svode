@@ -86,40 +86,47 @@ if (process.env.SVODE_ATTACHMENT_OWNER_PEEK_TEST !== "1") {
       await import("@/platform/native/testing");
     let snapshotTarget: AttachmentActivationRequest;
     let directoryChild = false;
+    const ownerFacts = (path: string) => {
+      const ownerPath = path.replace(/\/readme\.md$/i, "");
+      const kind = snapshotTarget.row.kind;
+      return {
+        identity:
+          kind === "collection"
+            ? "collectionDirectory"
+            : kind === "page"
+              ? "pageDirectory"
+              : "appDirectory",
+        ownerPath,
+        contentPath: ownerPath === path ? `${ownerPath}/README.md` : path,
+        hasApp: true,
+      };
+    };
     mockNativeIpc((command, args) =>
-      command === "get_entry_detail_state"
-        ? { form: "nestedCollection", subpageCount: 0, otherFileCount: 0 }
-        : command === "path_exists"
-          ? String(args && "path" in args ? args.path : "").endsWith(
-              "app.yaml",
-            ) ||
-            (String(args && "path" in args ? args.path : "").endsWith(
-              "schema.yaml",
-            ) &&
-              snapshotTarget.row.kind === "collection")
-          : command === "attachments_list"
-            ? {
-                owner: snapshotTarget.owner,
-                generation: snapshotTarget.sourceGeneration,
-                items:
-                  args && "branchPath" in args
-                    ? directoryChild
-                      ? [
-                          {
-                            ...snapshotTarget.row,
-                            key: "app:child/tool",
-                            path: "child/tool",
-                            ownerPath: "child/tool",
-                            kind: "app",
-                            hasApp: true,
-                            displayName: "Tool",
-                          },
-                        ]
-                      : []
-                    : [snapshotTarget.row],
-                diagnostics: [],
-              }
-            : 1,
+      command === "get_scope_owner_facts"
+        ? ownerFacts(String(args && "path" in args ? args.path : ""))
+        : command === "attachments_list"
+          ? {
+              owner: snapshotTarget.owner,
+              generation: snapshotTarget.sourceGeneration,
+              items:
+                args && "branchPath" in args
+                  ? directoryChild
+                    ? [
+                        {
+                          ...snapshotTarget.row,
+                          key: "app:child/tool",
+                          path: "child/tool",
+                          ownerPath: "child/tool",
+                          kind: "app",
+                          hasApp: true,
+                          displayName: "Tool",
+                        },
+                      ]
+                    : []
+                  : [snapshotTarget.row],
+              diagnostics: [],
+            }
+          : 1,
     );
     const { AttachmentOwnerPeek } = await import("./attachment-owner-peek");
     const { useCollectionRouteState } =

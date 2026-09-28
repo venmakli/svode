@@ -19,6 +19,7 @@ export { ScopeSurfaceHost } from "./ui/scope-surface-host";
 export { ScopeSurfaceErrorBoundary } from "./ui/scope-surface-error-boundary";
 export { ScopeSurfaceTabs } from "./ui/scope-surface-tabs";
 export { ScopeSurfaceUnavailable } from "./ui/scope-surface-unavailable";
+export { ScopeOwnerFactsError } from "./ui/scope-owner-facts-error";
 export type {
   ScopeCapability,
   ScopeOpenIntent,
@@ -30,5 +31,7 @@ export type {
   ScopeSurfaceRenderContext,
 } from "./model/types";
 export type { ScopePeekContext, ScopePeekRenderer } from "./model/peek";
-export { usePeekOwner } from "./hooks/use-peek-owner";
+export { knownScopeOwnerFacts } from "./model/owner-facts";
+export type { ScopeOwnerFacts, ScopeOwnerTarget } from "./model/owner-facts";
+export { useScopeOwner } from "./hooks/use-scope-owner";
 export { usePeekNavigation } from "./hooks/use-peek-navigation";

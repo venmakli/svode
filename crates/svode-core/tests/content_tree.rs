@@ -83,3 +83,134 @@ fn core_lists_the_same_visible_children_without_desktop_runtime() {
     assert_eq!(children[2].name, "remote");
     assert!(!root.join(".svode/index.db").exists());
 }
+
+#[test]
+fn scope_owner_facts_follow_the_tree_marker_rule_for_every_owner_form() {
+    use svode_core::content_tree::ContentTreeError;
+    use svode_core::content_tree::owner::{ScopeOwnerIdentity, scope_owner_facts};
+
+    let space = tempfile::tempdir().unwrap();
+    let root = space.path();
+    fs::create_dir_all(root.join(".svode")).unwrap();
+    fs::write(
+        root.join(".svode/config.json"),
+        r#"{"name":"Root","tree":{"exclude":["hidden"]}}"#,
+    )
+    .unwrap();
+    fs::write(root.join("README.md"), "root").unwrap();
+    fs::write(root.join("leaf.md"), "leaf").unwrap();
+    fs::write(root.join("file.pdf"), "pdf").unwrap();
+    for dir in [
+        "folder",
+        "folder-app",
+        "tasks",
+        "tasks-app",
+        "app-only",
+        "plain",
+    ] {
+        fs::create_dir(root.join(dir)).unwrap();
+    }
+    fs::write(root.join("folder/readme.md"), "folder").unwrap();
+    fs::write(root.join("folder-app/README.md"), "folder").unwrap();
+    fs::write(root.join("folder-app/app.yaml"), "name: App\n").unwrap();
+    fs::write(root.join("tasks/schema.yaml"), "properties: {}\n").unwrap();
+    fs::write(root.join("tasks/item.md"), "item").unwrap();
+    fs::write(root.join("tasks-app/schema.yaml"), "properties: {}\n").unwrap();
+    fs::write(root.join("tasks-app/README.md"), "tasks").unwrap();
+    fs::write(root.join("tasks-app/app.yaml"), "name: App\n").unwrap();
+    fs::write(root.join("app-only/app.yaml"), "name: App\n").unwrap();
+    fs::write(root.join("plain/note.txt"), "note").unwrap();
+
+    let facts = |path: &str| scope_owner_facts(root, path).unwrap();
+    let leaf = facts("leaf.md");
+    assert_eq!(leaf.identity, ScopeOwnerIdentity::PageFile);
+    assert_eq!(
+        (leaf.owner_path.as_str(), leaf.content_path.as_str()),
+        ("leaf.md", "leaf.md")
+    );
+    assert!(!leaf.has_app);
+    let item = facts("tasks/item.md");
+    assert_eq!(item.identity, ScopeOwnerIdentity::PageFile);
+
+    for path in ["folder", "folder/README.md", "folder/readme.md"] {
+        let folder = facts(path);
+        assert_eq!(folder.identity, ScopeOwnerIdentity::PageDirectory, "{path}");
+        assert_eq!(folder.owner_path, "folder");
+        assert_eq!(folder.content_path, "folder/readme.md");
+        assert!(!folder.has_app);
+    }
+    let folder_app = facts("folder-app/README.md");
+    assert_eq!(folder_app.identity, ScopeOwnerIdentity::PageDirectory);
+    assert!(folder_app.has_app);
+
+    for path in ["tasks", "tasks/README.md"] {
+        let tasks = facts(path);
+        assert_eq!(
+            tasks.identity,
+            ScopeOwnerIdentity::CollectionDirectory,
+            "{path}"
+        );
+        assert_eq!(tasks.content_path, "tasks/README.md");
+        assert!(!tasks.has_app);
+    }
+    let tasks_app = facts("tasks-app");
+    assert_eq!(tasks_app.identity, ScopeOwnerIdentity::CollectionDirectory);
+    assert!(tasks_app.has_app);
+
+    let app = facts("app-only");
+    assert_eq!(app.identity, ScopeOwnerIdentity::AppDirectory);
+    assert_eq!(app.content_path, "app-only/README.md");
+    assert!(app.has_app);
+
+    // Adding and removing a marker changes the facts of the same target.
+    fs::write(root.join("folder/app.yaml"), "name: App\n").unwrap();
+    assert!(facts("folder/readme.md").has_app);
+    fs::write(root.join("folder/schema.yaml"), "properties: {}\n").unwrap();
+    assert_eq!(
+        facts("folder/readme.md").identity,
+        ScopeOwnerIdentity::CollectionDirectory
+    );
+    fs::remove_file(root.join("folder/schema.yaml")).unwrap();
+    fs::remove_file(root.join("folder/app.yaml")).unwrap();
+    assert_eq!(
+        facts("folder/readme.md").identity,
+        ScopeOwnerIdentity::PageDirectory
+    );
+    assert!(!facts("folder/readme.md").has_app);
+
+    // A marker the tree hides does not make an owner either.
+    fs::create_dir(root.join("hidden")).unwrap();
+    fs::write(root.join("hidden/app.yaml"), "name: App\n").unwrap();
+    assert!(matches!(
+        scope_owner_facts(root, "hidden"),
+        Err(ContentTreeError::Invalid(_))
+    ));
+
+    assert!(matches!(
+        scope_owner_facts(root, "missing.md"),
+        Err(ContentTreeError::FileNotFound(path)) if path == "missing.md"
+    ));
+    assert!(matches!(
+        scope_owner_facts(root, "gone/README.md"),
+        Err(ContentTreeError::FileNotFound(_))
+    ));
+    // The root README is a Page of its own, even before it exists.
+    for path in ["README.md", "readme.md"] {
+        let root_readme = facts(path);
+        assert_eq!(root_readme.identity, ScopeOwnerIdentity::PageFile);
+        assert_eq!(root_readme.content_path, path);
+    }
+    fs::remove_file(root.join("README.md")).unwrap();
+    assert_eq!(facts("README.md").identity, ScopeOwnerIdentity::PageFile);
+
+    for path in [".", "plain", "file.pdf"] {
+        assert!(
+            matches!(
+                scope_owner_facts(root, path),
+                Err(ContentTreeError::Invalid(_))
+            ),
+            "{path}"
+        );
+    }
+    assert!(scope_owner_facts(root, "../outside.md").is_err());
+}
