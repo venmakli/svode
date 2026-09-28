@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import {
+  isPageAncestorEvent,
   isPageSchemaEvent,
   isPageSourceEvent,
   mergeExternalPageMeta,
@@ -116,4 +117,15 @@ test("only the Page file and its owning schemas are refresh events", () => {
     false,
   );
   expect(isPageSchemaEvent("tasks/Item3.md", "tasks/Item2.md")).toBe(false);
+});
+
+test("a directory that contains the Page can take it away", () => {
+  expect(isPageAncestorEvent("tasks", "tasks/Item2.md")).toBe(true);
+  expect(isPageAncestorEvent("tasks/Item2", "tasks/Item2/README.md")).toBe(
+    true,
+  );
+  expect(isPageAncestorEvent("tasks\\", "tasks/Item2.md")).toBe(true);
+  expect(isPageAncestorEvent("task", "tasks/Item2.md")).toBe(false);
+  expect(isPageAncestorEvent("tasks/Item2.md", "tasks/Item2.md")).toBe(false);
+  expect(isPageAncestorEvent("tasks/Item3", "tasks/Item2.md")).toBe(false);
 });

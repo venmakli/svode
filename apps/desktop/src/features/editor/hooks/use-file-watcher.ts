@@ -1,9 +1,6 @@
 import { useEffect, useRef } from "react";
-import { toast } from "sonner";
-import { useCloseActiveContent } from "@/features/artifact";
 import { getSpaceSnapshot } from "@/features/space";
 import { useEditorStore } from "../model";
-import * as m from "@/paraglide/messages.js";
 import {
   listenToEditorFileChanged,
   listenToEditorFileCreated,
@@ -38,7 +35,6 @@ export function useFileWatcher({
   ownNoncesRef,
   onActiveDocumentChanged,
 }: UseFileWatcherOptions) {
-  const closeDocument = useCloseActiveContent();
   const { markAiModified, clearAiModified } = useEditorStore();
 
   const activeDocRef = useRef(activeDocument);
@@ -94,20 +90,12 @@ export function useFileWatcher({
       }
     }).then(trackUnlisten);
 
-    // file:deleted
+    // file:deleted — a gone document is closed by the Page detail that shows it.
     listenToEditorFileDeleted((event) => {
       if (event.space && event.space !== spacePath) return;
 
-      const deletedPath = event.path;
-
-      if (isSchemaPath(deletedPath)) {
+      if (isSchemaPath(event.path)) {
         reindexProjectForSchemaChange();
-        return;
-      }
-
-      if (deletedPath === activeDocRef.current) {
-        closeDocument();
-        toast.error(m.editor_file_deleted());
       }
     }).then(trackUnlisten);
 
@@ -124,13 +112,7 @@ export function useFileWatcher({
       disposed = true;
       unlisteners.forEach((fn) => fn());
     };
-  }, [
-    spacePath,
-    markAiModified,
-    closeDocument,
-    ownNoncesRef,
-    onActiveDocumentChanged,
-  ]);
+  }, [spacePath, markAiModified, ownNoncesRef, onActiveDocumentChanged]);
 
   // Clear external-edit reload flag when opening a document.
   useEffect(() => {

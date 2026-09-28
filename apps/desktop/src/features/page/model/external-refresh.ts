@@ -16,6 +16,15 @@ export function isPageSourceEvent(eventPath: string, pagePath: string) {
   return normalizeEventPath(eventPath) === normalizeEventPath(pagePath);
 }
 
+/**
+ * The event names a directory that contains this Page: a rename or removal of
+ * it can take the Page away without an event for the Page file itself.
+ */
+export function isPageAncestorEvent(eventPath: string, pagePath: string) {
+  const path = normalizeEventPath(eventPath);
+  return path !== "" && normalizeEventPath(pagePath).startsWith(`${path}/`);
+}
+
 /** The event names a `schema.yaml` that can own this Page's properties. */
 export function isPageSchemaEvent(eventPath: string, pagePath: string) {
   const path = normalizeEventPath(eventPath);

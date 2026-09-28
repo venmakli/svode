@@ -18,6 +18,8 @@ export interface ScopePeekContext {
   ) => ReactNode;
   registerNavigationGuard: (guard: () => Promise<boolean>) => () => void;
   onContentPathChange?: (path: string) => void;
+  /** Closes the Peek at once, without its leave guard: the target is gone. */
+  dismiss: () => void;
 }
 
 export type ScopePeekRenderer = (context: ScopePeekContext) => ReactNode;

@@ -29,6 +29,9 @@ async function harness(
     fieldError?: unknown;
     schema?: SchemaColumn[];
     presentation?: "full" | "compact";
+    target?: "page" | "readme";
+    onPageGone?: () => void;
+    renameOnTitle?: boolean;
   } = {},
 ) {
   const dom = new JSDOM(
@@ -44,6 +47,7 @@ async function harness(
   let partial = false;
   let fieldDelay: Promise<void> | null = null;
   let readDelay: Promise<void> | null = null;
+  let readFailure = false;
   let schema = options.schema;
   let context!: PageDetailContextValue;
   let session!: {
@@ -66,7 +70,8 @@ async function harness(
           status: options.blocked ? "read_only" : "local",
         };
       if (command === "read_entry") {
-        if (options.readError) throw new Error("Invalid frontmatter");
+        if (options.readError || readFailure)
+          throw new Error("Invalid frontmatter");
         const page = pages.get(String(input.path));
         if (!page) throw new Error(`File not found: ${input.path}`);
         const snapshot = structuredClone(page);
@@ -96,8 +101,20 @@ async function harness(
       if (command === "update_entry_field") {
         if (fieldDelay) await fieldDelay;
         if (fieldFailure) throw options.fieldError ?? new Error("Save failed");
-        const page = pages.get(String(input.filePath))!;
         const field = String(input.field);
+        if (options.renameOnTitle && field === "title") {
+          const path = `${String(input.value)}/README.md`;
+          const page = pages.get(String(input.filePath)) ?? pages.get(path)!;
+          const renamed = {
+            ...page,
+            path,
+            meta: { ...page.meta, title: String(input.value) },
+          };
+          pages.delete(String(input.filePath));
+          pages.set(path, renamed);
+          return structuredClone(renamed);
+        }
+        const page = pages.get(String(input.filePath))!;
         const updated = ["title", "icon", "description", "cover"].includes(
           field,
         )
@@ -115,6 +132,7 @@ async function harness(
       if (command === "get_entry_schema")
         return schema ? { schema: { columns: schema, views: [] } } : null;
       if (command === "list_content_tree_children") return [];
+      if (command === "get_expanded_paths") return [];
       return null;
     },
     { shouldMockEvents: true },
@@ -158,7 +176,9 @@ async function harness(
                 spaceId="root"
                 readmePath={`${ownerPath}/README.md`}
                 ownerPath={ownerPath}
+                target={options.target}
                 onOpenPath={() => {}}
+                onPageGone={options.onPageGone}
               >
                 <Probe />
               </PageDetailProvider>
@@ -195,6 +215,9 @@ async function harness(
     },
     delayReads: (value: Promise<void> | null) => {
       readDelay = value;
+    },
+    failReads: (value: boolean) => {
+      readFailure = value;
     },
     setSchema: (value: SchemaColumn[]) => {
       schema = value;
@@ -719,6 +742,100 @@ test("a late refresh of the previous target is ignored", async () => {
     expect(view.calls.filter((call) => call === "read_entry").length).toBe(
       reads,
     );
+  } finally {
+    await view.cleanup();
+  }
+});
+
+for (const [path, event] of [
+  [README, "file:changed"],
+  [README, "file:deleted"],
+  ["app-only", "file:changed"],
+] as const) {
+  test(`an open Page whose file is gone closes through its host (${event} ${path})`, async () => {
+    let gone = 0;
+    const view = await readyHarness({
+      target: "page",
+      onPageGone: () => (gone += 1),
+    });
+    try {
+      view.pages.delete(README);
+      await view.fileEvent(path, event);
+      expect(gone).toBe(1);
+      await view.fileEvent(README, "file:deleted");
+      expect(gone).toBe(1);
+    } finally {
+      await view.cleanup();
+    }
+  });
+}
+
+test("a transient read error of an existing Page is not a disappearance", async () => {
+  let gone = 0;
+  const view = await readyHarness({
+    target: "page",
+    onPageGone: () => (gone += 1),
+  });
+  const warn = console.warn;
+  console.warn = () => {};
+  try {
+    view.failReads(true);
+    await view.fileEvent(README);
+    expect(gone).toBe(0);
+    expect(view.context().status).toBe("ready");
+    expect(view.context().page?.path).toBe(README);
+  } finally {
+    console.warn = warn;
+    await view.cleanup();
+  }
+});
+
+test("an own title rename is not a disappearance of the Page", async () => {
+  let gone = 0;
+  const view = await readyHarness({
+    target: "page",
+    renameOnTitle: true,
+    onPageGone: () => (gone += 1),
+  });
+  try {
+    const save = deferred<void>();
+    view.delayFields(save.promise);
+    let rename!: Promise<void>;
+    await act(async () => {
+      rename = view.context().updateTitle("Renamed");
+      await turn();
+    });
+    // The watcher reports the old path while the rename is still in flight.
+    view.pages.set("Renamed/README.md", {
+      ...view.pages.get(README)!,
+      path: "Renamed/README.md",
+    });
+    view.pages.delete(README);
+    await view.fileEvent(README);
+    view.delayFields(null);
+    await act(async () => {
+      save.resolve();
+      await rename;
+      await turn();
+      await turn();
+    });
+    expect(gone).toBe(0);
+    expect(view.context().page?.path).toBe("Renamed/README.md");
+    expect(view.context().page?.meta.title).toBe("Renamed");
+  } finally {
+    await view.cleanup();
+  }
+});
+
+test("a directory owner whose README is gone shows the missing README state", async () => {
+  let gone = 0;
+  const view = await readyHarness({ onPageGone: () => (gone += 1) });
+  try {
+    view.pages.delete(README);
+    await view.fileEvent(README, "file:deleted");
+    expect(view.context().status).toBe("missing");
+    expect(view.context().page).toBe(null);
+    expect(gone).toBe(0);
   } finally {
     await view.cleanup();
   }

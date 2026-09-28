@@ -7,6 +7,7 @@ export function AttachmentOwnerPeek({
   renderActions,
   registerCloseGuard,
   onContentPathChange,
+  dismiss,
 }: AttachmentOwnerPeekContext) {
   const { row } = target;
   return (
@@ -21,6 +22,7 @@ export function AttachmentOwnerPeek({
       renderActions={renderActions}
       registerNavigationGuard={registerCloseGuard}
       onContentPathChange={onContentPathChange}
+      dismiss={dismiss}
     />
   );
 }

@@ -61,6 +61,7 @@ interface ScopeSurfacePageProps {
   fallbackTitle?: string;
   fallbackIcon?: string | null;
   registerNavigationGuard?: (guard: () => Promise<boolean>) => () => void;
+  onPageGone?: () => void;
 }
 
 export function ScopeSurfacePage({
@@ -79,6 +80,7 @@ export function ScopeSurfacePage({
   fallbackTitle,
   fallbackIcon,
   registerNavigationGuard,
+  onPageGone,
 }: ScopeSurfacePageProps) {
   const [compactViewName, setCompactViewName] = useState<string | null>(null);
   const [compactCalendarScope, setCompactCalendarScope] =
@@ -186,6 +188,7 @@ export function ScopeSurfacePage({
         fallbackTitle={fallbackTitle}
         fallbackIcon={fallbackIcon}
         onOpenPath={openPath}
+        onPageGone={onPageGone}
       >
         <ScopePageSurfaceHost
           owner={owner}

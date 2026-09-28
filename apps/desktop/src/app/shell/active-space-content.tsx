@@ -2,7 +2,10 @@ import { FileText } from "lucide-react";
 import { useCallback } from "react";
 import { ArtifactSurface } from "@/features/artifact/app-shell";
 import { PageScopeSurface } from "./page-scope-surface";
-import { useActiveContentSelection } from "@/features/artifact";
+import {
+  useActiveContentSelection,
+  useCloseActiveContent,
+} from "@/features/artifact";
 import type { TreeNode } from "@/features/space";
 import { useSpace } from "@/features/space";
 import { EmptyProjectState } from "@/features/space/app-shell";
@@ -43,6 +46,7 @@ export function ActiveSpaceContent() {
   const { selection, activePathRetarget, transitionPending } =
     useActiveContentSelection();
   const collectionRouteState = useCollectionRouteState();
+  const closeActiveContent = useCloseActiveContent();
   const { fileTrees, rootSpaces, spaces, activeRootId, activeRootPath } =
     useSpace();
   const openSpaceSettings = useShellStore((state) => state.openSpaceSettings);
@@ -158,6 +162,7 @@ export function ActiveSpaceContent() {
         owner={owner}
         presentation="full"
         sessionKey={scopeOwnerRequest.key}
+        onPageGone={closeActiveContent}
       />
     ) : ownerTarget && !owner ? (
       ownerError ? (

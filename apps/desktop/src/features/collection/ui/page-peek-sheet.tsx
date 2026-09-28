@@ -75,6 +75,7 @@ export function PagePeekSheet(props: PagePeekSheetProps) {
                 navigation.adoptIdentity(`${spacePath}:${path}`),
               fallbackTitle: target.page.meta.title,
               registerNavigationGuard,
+              dismiss: close,
               metadataBefore: target.template ? (
                 <Badge variant="secondary">
                   {m.collection_template_badge()}

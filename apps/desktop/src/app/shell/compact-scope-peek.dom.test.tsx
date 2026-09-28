@@ -33,6 +33,21 @@ if (process.env.SVODE_COMPACT_SCOPE_TEST !== "1") {
   const appBroken = false;
   let headerBroken = false;
   const lifecycle: string[] = [];
+  const toasts: string[] = [];
+  const record = (message: unknown) => {
+    toasts.push(String(message));
+  };
+  mock.module("sonner", () => ({
+    toast: Object.assign(record, {
+      error: record,
+      info: record,
+      success: record,
+      warning: record,
+      dismiss: () => {},
+      get: () => undefined,
+    }),
+    Toaster: () => null,
+  }));
   mock.module("@/features/editor", () => ({
     PlateDocumentEditor: function Editor(props: {
       documentPath: string;
@@ -168,6 +183,7 @@ if (process.env.SVODE_COMPACT_SCOPE_TEST !== "1") {
   const { TooltipProvider } = await import("@/components/ui/tooltip");
   const { getActiveContentSelection, closeActiveContent } =
     await import("@/features/artifact");
+  const { openPage } = await import("@/features/page/navigation");
   const { ScopeSurfaceErrorBoundary } =
     await import("@/features/scope-surfaces");
   const m = await import("@/paraglide/messages.js");
@@ -608,6 +624,170 @@ if (process.env.SVODE_COMPACT_SCOPE_TEST !== "1") {
       clearNativeMocks();
       restore();
       dom.window.close();
+    }
+  });
+  test("a Peek whose Page is gone closes only its own Sheet with a toast", async () => {
+    for (const family of ["collection", "attachments"] as const) {
+      const dom = new JSDOM("<!doctype html><div id=app></div>", {
+        pretendToBeVisual: true,
+        url: "http://localhost/",
+      });
+      const restore = installDomGlobals(dom);
+      toasts.length = 0;
+      let exists = true;
+      const page: Page = {
+        path: "Tasks/Item2.md",
+        body: "",
+        meta: {
+          title: "Item2",
+          icon: null,
+          created: "",
+          updated: "",
+          extra: {},
+        },
+      };
+      mockNativeIpc(
+        (command, args) => {
+          const path = String(args && "path" in args ? args.path : "");
+          if (command === "repository_access_get")
+            return {
+              status: "local",
+              repositoryId: "/space",
+              generation: 1,
+              checkedAt: null,
+              expiresAt: null,
+              reason: null,
+              lastKnownStatus: null,
+            };
+          if (
+            !exists &&
+            (command === "read_entry" || command.endsWith("facts"))
+          )
+            throw `File not found: ${path}`;
+          if (command === "read_entry") return page;
+          if (command === "get_entry_schema") return null;
+          if (command === "get_scope_owner_facts")
+            return {
+              identity: "pageFile",
+              ownerPath: path,
+              contentPath: path,
+              hasApp: false,
+            };
+          throw new Error(`Unexpected IPC: ${command}`);
+        },
+        { shouldMockEvents: true },
+      );
+      closeActiveContent();
+      openPage("Tasks/README.md", "space");
+      const mainSelection = getActiveContentSelection().selection;
+      const root = createRoot(dom.window.document.getElementById("app")!);
+      function Harness() {
+        const [open, setOpen] = useState(true);
+        return (
+          <TooltipProvider>
+            <div data-parent-collection />
+            {family === "collection" ? (
+              <PagePeekSheet
+                target={open ? { page, nested: false } : null}
+                readOnly={false}
+                spacePath="/space"
+                spaceId="space"
+                projectPath="/space"
+                onOpenChange={setOpen}
+                onOpenPath={() => {}}
+                onDuplicatePage={() => {}}
+                onDeletePage={() => {}}
+                onConvertedPage={() => {}}
+                renderPeek={(context) => (
+                  <CompactScopePeek key={context.sessionKey} {...context} />
+                )}
+              />
+            ) : (
+              <AttachmentsPeek
+                owner={{
+                  ownerKey: "page:Tasks",
+                  identityKind: "page-directory",
+                  projectPath: "/space",
+                  spacePath: "/space",
+                  spaceId: "space",
+                  ownerPath: "Tasks",
+                  contentPath: "Tasks/README.md",
+                  hasDirectCollection: true,
+                }}
+                readOnly={false}
+                target={
+                  open
+                    ? {
+                        row: {
+                          key: "page:Tasks/Item2.md",
+                          path: page.path,
+                          contentPath: page.path,
+                          ownerPath: page.path,
+                          sourcePath: page.path,
+                          sourceShape: "file",
+                          kind: "page",
+                          hasApp: false,
+                          icon: null,
+                          displayName: "Item2",
+                          modified: "",
+                          sizeBytes: null,
+                          format: "",
+                          availability: "available",
+                        },
+                        owner: {
+                          projectPath: "/space",
+                          spacePath: "/space",
+                          spaceId: "space",
+                          ownerPath: "Tasks",
+                          repositoryPath: "/space",
+                        },
+                        mode: "peek",
+                        sourceGeneration: "one",
+                        activation: { rowId: "page:Tasks/Item2.md" },
+                      }
+                    : null
+                }
+                onOpenChange={setOpen}
+                renderOwnerPeek={(context) => (
+                  <AttachmentOwnerPeek {...context} />
+                )}
+              />
+            )}
+          </TooltipProvider>
+        );
+      }
+      try {
+        await act(async () => {
+          root.render(<Harness />);
+          await settle();
+        });
+        const document = dom.window.document;
+        expect(Boolean(document.querySelector("textarea"))).toBe(true);
+        exists = false;
+        const { emit } = await import("@/platform/native/events");
+        await act(async () => {
+          // A rename on macOS arrives as a change of the old path.
+          await emit(
+            family === "collection" ? "file:changed" : "file:deleted",
+            { space: "/space", path: page.path },
+          );
+          await settle();
+        });
+        expect(
+          document.querySelector('[data-slot="sheet-content"]'),
+        ).toBeNull();
+        expect(
+          Boolean(document.querySelector("[data-parent-collection]")),
+        ).toBe(true);
+        expect(toasts).toEqual([m.editor_file_deleted()]);
+        expect(getActiveContentSelection().selection).toBe(mainSelection);
+      } finally {
+        await act(async () => root.unmount());
+        closeActiveContent();
+        clearNativeMocks();
+        restore();
+        dom.window.close();
+      }
     }
   });
   test("peek replacement is guarded, ignores late targets and keeps canonical handoff in one session", async () => {

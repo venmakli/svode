@@ -126,6 +126,7 @@ export function CompactScopePeek(props: ScopePeekContext) {
             }
             renderHeaderActions={props.renderHeaderActions}
             registerNavigationGuard={props.registerNavigationGuard}
+            onPageGone={props.dismiss}
             onContentPathChange={(nextPath) => {
               setPathState({ input: props.path, current: nextPath });
               props.onContentPathChange?.(nextPath);

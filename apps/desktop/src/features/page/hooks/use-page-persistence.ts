@@ -192,6 +192,8 @@ export function usePagePersistence({
     [enqueuePersistenceTask, flushPersistenceNow],
   );
 
+  const settled = useCallback(() => persistenceQueueRef.current, []);
+
   const retryPersistence = useCallback(async () => {
     const retry = retryPersistenceRef.current;
     if (!retry) return;
@@ -213,6 +215,7 @@ export function usePagePersistence({
     reportSourceConflict,
     retryPersistence,
     runMutation,
+    settled,
     sourceConflict,
   };
 }

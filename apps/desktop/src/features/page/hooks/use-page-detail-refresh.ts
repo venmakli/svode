@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useLayoutEffect, useRef } from "react";
 import type { PageSchemaResult } from "@/features/properties";
 import { listenPageSourceEvents } from "../api/page-source-events-api";
+import { isReadmeMissingError } from "../lib/readme-state";
 import {
+  isPageAncestorEvent,
   isPageSchemaEvent,
   isPageSourceEvent,
   mergeExternalPageMeta,
@@ -20,11 +22,16 @@ interface PageDetailRefreshOptions {
   applySchema: (
     update: (current: PageSchemaResult | null) => PageSchemaResult | null,
   ) => void;
+  /** Resolves once this session's own saves and path changes have finished. */
+  settled: () => Promise<void>;
+  /** The Page file stopped existing outside this session. */
+  onGone: () => void;
 }
 
 /**
  * Keeps the shown Page metadata and schema in line with the files when
- * another writer changes them. The editor reconciles the body on its own.
+ * another writer changes them, and reports the Page when its file is gone.
+ * The editor reconciles the body on its own.
  */
 export function usePageDetailRefresh(options: PageDetailRefreshOptions) {
   const { spacePath, path } = options;
@@ -49,11 +56,28 @@ export function usePageDetailRefresh(options: PageDetailRefreshOptions) {
     let lastSchemaRead = 0;
     let appliedSchemaRead = 0;
 
-    const refreshPage = async () => {
+    const refreshPage = async (confirmingGone = false): Promise<void> => {
       const read = ++lastPageRead;
       const since = writesRef.current.clock;
       const local = new Set(optionsRef.current.localFields());
-      const source = await optionsRef.current.readSource(path);
+      let source: Page;
+      try {
+        source = await optionsRef.current.readSource(path);
+      } catch (error) {
+        if (!isReadmeMissingError(error, path)) throw error;
+        if (!active || read < appliedPageRead) return;
+        if (confirmingGone) {
+          appliedPageRead = read;
+          active = false;
+          optionsRef.current.onGone();
+          return;
+        }
+        // An own rename, move or conversion leaves this path too; once it
+        // has finished, the handoff has retired this subscription.
+        await optionsRef.current.settled();
+        if (active) return refreshPage(true);
+        return;
+      }
       if (!active || read < appliedPageRead) return;
       appliedPageRead = read;
       for (const field of optionsRef.current.localFields()) local.add(field);
@@ -77,8 +101,11 @@ export function usePageDetailRefresh(options: PageDetailRefreshOptions) {
 
     const unlisten = listenPageSourceEvents({
       spacePath,
-      onEvent: (eventPath, kind) => {
-        if (kind !== "deleted" && isPageSourceEvent(eventPath, path))
+      onEvent: (eventPath) => {
+        if (
+          isPageSourceEvent(eventPath, path) ||
+          isPageAncestorEvent(eventPath, path)
+        )
           void refreshPage().catch(warn);
         else if (isPageSchemaEvent(eventPath, path))
           void refreshSchema().catch(warn);

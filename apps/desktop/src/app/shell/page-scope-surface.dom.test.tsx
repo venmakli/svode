@@ -37,6 +37,21 @@ if (process.env.SVODE_PAGE_SCOPE_TEST !== "1") {
   let panelProps: Props = {};
   let actionsProps: Props = {};
   let deleteDialogProps: Props = {};
+  const toasts: string[] = [];
+  const record = (message: unknown) => {
+    toasts.push(String(message));
+  };
+  mock.module("sonner", () => ({
+    toast: Object.assign(record, {
+      error: record,
+      info: record,
+      success: record,
+      warning: record,
+      dismiss: () => {},
+      get: () => undefined,
+    }),
+    Toaster: () => null,
+  }));
   mock.module("@/features/editor", () => ({
     PlateDocumentEditor: function Editor(props: {
       documentPath: string;
@@ -197,6 +212,7 @@ if (process.env.SVODE_PAGE_SCOPE_TEST !== "1") {
   const { PageScopeSurface } = await import("./page-scope-surface");
   const { getSpaceTreeSyncSnapshot, registerRootSpace } =
     await import("@/features/space");
+  const m = await import("@/paraglide/messages.js");
   function page(path: string): Page {
     return {
       path,
@@ -230,6 +246,7 @@ if (process.env.SVODE_PAGE_SCOPE_TEST !== "1") {
     let status = "local";
     let reads = 0;
     let readFailures = options.readFailures ?? 0;
+    let missing = options.missing ?? false;
     let externalTitle: string | null = null;
     const calls: { command: string; args: Record<string, unknown> }[] = [];
     headerProps = {};
@@ -293,8 +310,7 @@ if (process.env.SVODE_PAGE_SCOPE_TEST !== "1") {
           };
         if (command === "read_entry") {
           reads += 1;
-          if (options.missing)
-            throw new Error(`File not found: ${String(input.path)}`);
+          if (missing) throw `File not found: ${String(input.path)}`;
           if (readFailures > 0) {
             readFailures -= 1;
             throw new Error("Invalid frontmatter");
@@ -421,6 +437,14 @@ if (process.env.SVODE_PAGE_SCOPE_TEST !== "1") {
         const { emit } = await import("@/platform/native/events");
         await act(async () => {
           await emit("file:changed", { space: spacePath, path });
+          await settle();
+        });
+      },
+      disappear: async (path: string, event: string) => {
+        missing = true;
+        const { emit } = await import("@/platform/native/events");
+        await act(async () => {
+          await emit(event, { space: spacePath, path });
           await settle();
         });
       },
@@ -796,6 +820,28 @@ if (process.env.SVODE_PAGE_SCOPE_TEST !== "1") {
       ).toBe("scope-owner:space");
     } finally {
       await f.cleanup();
+    }
+  });
+
+  test("a full Page whose file is gone closes with a toast; a gone root readme.md opens the Space owner", async () => {
+    for (const [path, event] of [
+      ["Note.md", "file:changed"],
+      ["Folder/README.md", "file:deleted"],
+      ["readme.md", "file:deleted"],
+    ] as const) {
+      toasts.length = 0;
+      const f = await fixture(path, path.includes("/"));
+      const doc = f.dom.window.document;
+      try {
+        expect(doc.querySelector("textarea")?.dataset.editor).toBe(path);
+        await f.disappear(path, event);
+        expect(
+          doc.querySelector("[data-selection]")?.getAttribute("data-selection"),
+        ).toBe(path === "readme.md" ? "scope-owner:space" : "");
+        expect(toasts).toEqual([m.editor_file_deleted()]);
+      } finally {
+        await f.cleanup();
+      }
     }
   });
 

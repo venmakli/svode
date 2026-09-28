@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useOpenScopeOwner } from "@/features/artifact";
+import { useCloseActiveContent, useOpenScopeOwner } from "@/features/artifact";
 import {
   deletePage as deletePageApi,
   duplicatePage as duplicatePageApi,
@@ -42,11 +42,18 @@ export function PageArtifact({
   renderSurface,
 }: PageArtifactProps) {
   const openPage = useOpenPage();
+  const openScopeOwner = useOpenScopeOwner();
+  const closeActiveContent = useCloseActiveContent();
   const openPath = useCallback(
     (path: string, targetSpaceId?: string | null) =>
       openPage(path, targetSpaceId ?? spaceId),
     [openPage, spaceId],
   );
+  const closeGonePage = useCallback(() => {
+    if (pagePath.toLowerCase() === "readme.md")
+      openScopeOwner({ kind: "space", spaceId });
+    else closeActiveContent();
+  }, [closeActiveContent, openScopeOwner, pagePath, spaceId]);
   return (
     <PageDetailProvider
       spacePath={spacePath}
@@ -57,6 +64,7 @@ export function PageArtifact({
       target="page"
       fallbackTitle={fallbackTitle}
       onOpenPath={openPath}
+      onPageGone={closeGonePage}
     >
       <PageArtifactContent
         spacePath={spacePath}

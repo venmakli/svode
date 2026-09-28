@@ -8,6 +8,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { toast } from "sonner";
 import { normalizeSchema, type PageSchemaResult } from "@/features/properties";
 import { getPageSchema } from "@/features/properties/api";
 import { useSpaceTreeSync } from "@/features/space";
@@ -91,6 +92,8 @@ export interface PageDetailProviderProps {
   fallbackTitle?: string;
   fallbackIcon?: string | null;
   onOpenPath: (path: string, spaceId?: string | null) => void;
+  /** Closes the presentation whose Page file stopped existing. */
+  onPageGone?: () => void;
 }
 
 export function PageDetailProvider({
@@ -104,6 +107,7 @@ export function PageDetailProvider({
   fallbackTitle,
   fallbackIcon = null,
   onOpenPath,
+  onPageGone,
 }: PageDetailProviderProps) {
   const resolvedFallbackTitle =
     fallbackTitle?.trim() || humanizeOwnerPath(ownerPath);
@@ -351,6 +355,19 @@ export function PageDetailProvider({
     localFields: () => drafts.keys(),
     applyPage: applyPageUpdate,
     applySchema: setSchemaResult,
+    settled: () => pageSurface?.settled() ?? Promise.resolve(),
+    onGone: () => {
+      if (target === "page") {
+        toast.error(m.editor_file_deleted());
+        onPageGone?.();
+        return;
+      }
+      // The directory owner stays; its README can be created again.
+      reloadSequenceRef.current += 1;
+      setPage(null);
+      setSchemaResult(null);
+      setStatus("missing");
+    },
   });
   // The failure detail stays in the write session; the surface names it in
   // user terms like the rest of the Page save feedback.

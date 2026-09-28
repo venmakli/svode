@@ -54,6 +54,8 @@ interface PageSurfaceSessionContextValue {
   requestDiscard: () => void;
   retryPersistence: () => Promise<void>;
   runMutation: (operation: () => Promise<void>) => Promise<void>;
+  /** Resolves once the saves and mutations queued so far have finished. */
+  settled: () => Promise<void>;
   sourceConflict: PageSourceConflict | null;
 }
 
@@ -124,6 +126,7 @@ function PageSurfaceSession({
     reportSourceConflict,
     retryPersistence,
     runMutation,
+    settled,
     sourceConflict,
   } = usePagePersistence({
     makeAccessRequest,
@@ -230,6 +233,7 @@ function PageSurfaceSession({
       requestDiscard,
       retryPersistence,
       runMutation,
+      settled,
       sourceConflict,
     }),
     [
@@ -245,6 +249,7 @@ function PageSurfaceSession({
       requestDiscard,
       retryPersistence,
       runMutation,
+      settled,
       sourceConflict,
     ],
   );

@@ -58,10 +58,13 @@ export function AttachmentsPeek({
   );
   const target = navigation.target;
   const registerCloseGuard = navigation.registerNavigationGuard;
+  const dismiss = () => {
+    navigation.dismiss();
+    onOpenChange(false);
+  };
   const close = (afterClose?: () => void) =>
     navigation.leave(() => {
-      navigation.dismiss();
-      onOpenChange(false);
+      dismiss();
       afterClose?.();
     });
   const activationRef = useRef(target?.activation);
@@ -128,15 +131,13 @@ export function AttachmentsPeek({
               spaceId={target.owner.spaceId ?? owner.spaceId}
               registerCloseGuard={registerCloseGuard}
               onContentPathChange={onContentPathChange}
+              dismiss={dismiss}
               renderActions={(onOpenFullPage) => (
                 <PeekActions
                   onClose={() => void close()}
                   onExpand={() =>
                     void navigation.leave(async () => {
-                      if (await onOpenFullPage()) {
-                        navigation.dismiss();
-                        onOpenChange(false);
-                      }
+                      if (await onOpenFullPage()) dismiss();
                     })
                   }
                 />

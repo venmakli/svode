@@ -140,6 +140,8 @@ export interface AttachmentOwnerPeekContext {
   renderActions(onOpenFullPage: () => Promise<boolean>): ReactNode;
   onContentPathChange?: (path: string) => void;
   registerCloseGuard(guard: () => Promise<boolean>): () => void;
+  /** Closes the Peek at once, without its close guard: the owner is gone. */
+  dismiss(): void;
 }
 
 export type AttachmentOwnerPeekRenderer = (
