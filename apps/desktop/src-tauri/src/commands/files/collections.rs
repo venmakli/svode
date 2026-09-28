@@ -27,7 +27,11 @@ pub async fn create_template(
         &autocommit,
         project_path.as_deref(),
         &space,
-        StructuralOp::CreateTemplate(template_name_for_commit(&space, &collection_path, title)),
+        StructuralChange::new(StructuralOp::CreateTemplate(template_name_for_commit(
+            &space,
+            &collection_path,
+            title,
+        ))),
         vec![abs_entry_path(&space, root)],
     );
     Ok(path)
@@ -48,11 +52,11 @@ pub async fn delete_template(
         &autocommit,
         project_path.as_deref(),
         &space,
-        StructuralOp::DeleteTemplate(template_name_for_commit(
+        StructuralChange::new(StructuralOp::DeleteTemplate(template_name_for_commit(
             &space,
             &collection_path,
             deleted.title,
-        )),
+        ))),
         vec![abs_entry_path(&space, &deleted.root_path)],
     );
     Ok(())
@@ -74,10 +78,10 @@ pub async fn duplicate_template(
         &autocommit,
         project_path.as_deref(),
         &space,
-        StructuralOp::DuplicateTemplate {
+        StructuralChange::new(StructuralOp::DuplicateTemplate {
             old: template_name_for_commit(&space, &collection_path, duplicated.old_title),
             new: template_name_for_commit(&space, &collection_path, duplicated.new_title),
-        },
+        }),
         vec![abs_entry_path(&space, root)],
     );
     Ok(duplicated.head_path)
@@ -132,14 +136,14 @@ pub async fn instantiate_template(
         &autocommit,
         project_path.as_deref(),
         &space,
-        StructuralOp::InstantiateTemplate {
+        StructuralChange::new(StructuralOp::InstantiateTemplate {
             title: template_name_for_commit(&space, &collection_path, instantiated.template_title),
             parent: if collection_has_sensitive_columns(&space, &collection_path) {
                 "collection".to_string()
             } else {
                 parent_dir
             },
-        },
+        }),
         entry_paths_with_order(&space, [abs_entry_path(&space, root)]),
     );
     Ok(instantiated.entry)

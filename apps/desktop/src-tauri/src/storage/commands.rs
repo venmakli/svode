@@ -20,7 +20,9 @@ use crate::index::IndexState;
 use crate::repo_path::{RootMode, repo_relative_from_base};
 use crate::space::config::{read_space_config, write_space_config};
 use crate::space::types::{AssetsS3Config, AssetsSpaceConfig, AssetsStrategy, BinaryRoutingConfig};
-use svode_core::git::autocommit::{AutocommitService, StructuralOp, SystemCommitKind};
+use svode_core::git::autocommit::{
+    AutocommitService, StructuralChange, StructuralOp, SystemCommitKind,
+};
 use svode_core::git::cli::GitCli;
 
 /// File data returned to the frontend after reading a user-selected path.
@@ -118,7 +120,7 @@ pub async fn upload_asset(
         autocommit.schedule_structural_paths(
             project.clone(),
             scope.repo_dir.clone(),
-            StructuralOp::Create(result.rel_path.clone()),
+            StructuralChange::new(StructuralOp::Create(result.rel_path.clone())),
             vec![scope.pool_dir.join(&result.rel_path)],
         );
     }

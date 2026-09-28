@@ -134,7 +134,10 @@ pub async fn create_entry(
             &autocommit,
             project_path.as_deref(),
             &space,
-            StructuralOp::Create(entry_commit_name(&space, &created.path)),
+            StructuralChange::new(StructuralOp::Create(entry_commit_name(
+                &space,
+                &created.path,
+            ))),
             entry_paths_with_order(&space, [abs_entry_path(&space, &created.path)]),
         );
     }

@@ -20,7 +20,7 @@ use crate::collections::engine::relation_move_mutation_paths_with_project;
 use crate::git::access::ensure_mutation_paths_were_authorized;
 use crate::git::cli::GitCli;
 use crate::git::path::{RootMode, normalize_repo_relative, repo_relative_from_base};
-use crate::git::pending::StructuralOp;
+use crate::git::pending::{StructuralChange, StructuralOp};
 use crate::git::state::GitRepositoryState;
 use crate::index::backlinks;
 use crate::index::state::IndexRuntimeState;
@@ -437,7 +437,7 @@ pub async fn execute_managed_import(
                 commits.schedule(
                     &revalidated.project_path,
                     &revalidated.repository_path,
-                    StructuralOp::Create(file_name.clone()),
+                    StructuralChange::new(StructuralOp::Create(file_name.clone())),
                     commit_paths,
                 );
             }

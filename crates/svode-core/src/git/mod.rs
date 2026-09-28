@@ -20,6 +20,8 @@ pub mod push_rejection;
 pub mod readers;
 pub mod save;
 #[cfg(test)]
+mod save_chain_tests;
+#[cfg(test)]
 mod save_tests;
 pub mod staging;
 #[cfg(test)]

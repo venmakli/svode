@@ -16,7 +16,7 @@ use crate::collections::engine::{self, CollectionSchema};
 use crate::content_tree::policy::TreeIgnorePolicy;
 use crate::git::access::ensure_mutation_paths_were_authorized;
 use crate::git::path::{RootMode, normalize_repo_relative};
-use crate::git::pending::StructuralOp;
+use crate::git::pending::{OperationId, StructuralChange, StructuralOp};
 use crate::index::backlinks::{BacklinkIndex, ModifiedLinkSource, dedupe_modified_sources};
 use crate::index::state::IndexRuntimeState;
 use crate::index::update::{self, IndexUpdateState};
@@ -28,8 +28,8 @@ use super::commit::{StructuralCommitSink, schedule_structural_paths};
 use super::naming::{
     abs_entry_path, basename, collection_schema_path, collection_schema_path_rel,
     entry_commit_name, entry_history_commit_name, entry_history_name,
-    entry_in_sensitive_collection, entry_paths_with_order, entry_rename_op, normalize_rel_lossy,
-    order_path, rel_changed_path, root_path_for_head, same_parent,
+    entry_in_sensitive_collection, entry_paths_with_order, entry_relocation, entry_rename_op,
+    normalize_rel_lossy, order_path, rel_changed_path, root_path_for_head, same_parent,
 };
 use super::plan::{delete_mutation_paths, revalidate_backlink_plan};
 
@@ -101,7 +101,7 @@ async fn schedule_modified_source_spaces<E: GitDateExecutor>(
     runtime: StructureRuntime<'_, E>,
     project_path: Option<&str>,
     modified: &[ModifiedLinkSource],
-    op: StructuralOp,
+    change: &StructuralChange,
 ) {
     let (Some(commits), Some(project)) = (
         runtime.commits,
@@ -125,7 +125,7 @@ async fn schedule_modified_source_spaces<E: GitDateExecutor>(
         }
     }
     for (space_path, paths) in by_space {
-        commits.schedule(project, &space_path, op.clone(), paths);
+        commits.schedule(project, &space_path, change.companion(), paths);
     }
 }
 
@@ -423,13 +423,13 @@ pub async fn delete<E: GitDateExecutor>(
                 space,
                 [abs_entry_path(space, &deleted.deleted_root)],
             ));
-        let op = StructuralOp::Delete(entry_commit_name(space, path));
+        let change = StructuralChange::new(StructuralOp::Delete(entry_commit_name(space, path)));
         for (owner_space, paths) in paths_by_space {
             schedule_structural_paths(
                 runtime.commits,
                 project_path,
                 &owner_space.to_string_lossy(),
-                op.clone(),
+                change.clone(),
                 paths,
             );
         }
@@ -455,7 +455,7 @@ pub fn create_folder(
         commits,
         project_path,
         space,
-        StructuralOp::Create(entry_commit_name(space, &folder_path)),
+        StructuralChange::new(StructuralOp::Create(entry_commit_name(space, &folder_path))),
         entry_paths_with_order(space, [abs_entry_path(space, &folder_path)]),
     );
     Ok(folder_path)
@@ -701,10 +701,10 @@ where
         runtime.commits,
         request.project.as_deref(),
         &request.space,
-        StructuralOp::Create(entry_history_commit_name(
+        StructuralChange::new(StructuralOp::Create(entry_history_commit_name(
             &request.space,
             &conversion.readme_path,
-        )),
+        ))),
         changed_paths.clone(),
     );
     Ok(CollectionCreateOutcome {
@@ -721,7 +721,15 @@ pub async fn convert_to_folder<E: GitDateExecutor>(
     project_path: Option<&str>,
     runtime: StructureRuntime<'_, E>,
 ) -> Result<Entry, PageError> {
-    convert_to_folder_with_publication(space, file_path, project_path, runtime, true).await
+    convert_to_folder_with_publication(
+        space,
+        file_path,
+        project_path,
+        runtime,
+        true,
+        OperationId::next(),
+    )
+    .await
 }
 
 async fn convert_to_folder_with_publication<E: GitDateExecutor>(
@@ -730,6 +738,7 @@ async fn convert_to_folder_with_publication<E: GitDateExecutor>(
     project_path: Option<&str>,
     runtime: StructureRuntime<'_, E>,
     publish_projection: bool,
+    operation: OperationId,
 ) -> Result<Entry, PageError> {
     let state = runtime.index;
     let backlinks = state.backlinks_for_space_dir(Path::new(space)).await;
@@ -747,6 +756,11 @@ async fn convert_to_folder_with_publication<E: GitDateExecutor>(
     )?;
     let folder_root = root_path_for_head(&converted.path);
     let old_leaf = format!("{folder_root}.md");
+    let change = StructuralChange::of(
+        operation,
+        StructuralOp::ConvertToFolder(entry_history_commit_name(space, &converted.path)),
+    )
+    .relocating(entry_relocation(space, &old_leaf, &converted.path));
     if let Some(project) = project_path.filter(|path| !path.is_empty()) {
         let project = Path::new(project);
         let target_space_id = state.space_id_for_dir(Path::new(space)).await;
@@ -779,13 +793,7 @@ async fn convert_to_folder_with_publication<E: GitDateExecutor>(
             .await,
         );
         let modified = dedupe_modified_sources(modified);
-        schedule_modified_source_spaces(
-            runtime,
-            project_path,
-            &modified,
-            StructuralOp::ConvertToFolder(entry_history_commit_name(space, &converted.path)),
-        )
-        .await;
+        schedule_modified_source_spaces(runtime, project_path, &modified, &change).await;
         let _ = state
             .remove_file_backlinks(project, target_space_id.as_deref(), &old_leaf)
             .await;
@@ -815,7 +823,7 @@ async fn convert_to_folder_with_publication<E: GitDateExecutor>(
         runtime.commits,
         project_path,
         space,
-        StructuralOp::ConvertToFolder(entry_history_commit_name(space, &converted.path)),
+        change,
         entry_paths_with_order(
             space,
             [
@@ -852,6 +860,11 @@ pub async fn convert_to_leaf<E: GitDateExecutor>(
         .strip_suffix(".md")
         .map(|root| format!("{root}/README.md"))
         .unwrap_or_else(|| converted.path.clone());
+    let change = StructuralChange::new(StructuralOp::ConvertToLeaf(entry_history_commit_name(
+        space,
+        &converted.path,
+    )))
+    .relocating(entry_relocation(space, &old_readme, &converted.path));
     if let Some(project) = project_path.filter(|path| !path.is_empty()) {
         let project = Path::new(project);
         let target_space_id = state.space_id_for_dir(Path::new(space)).await;
@@ -884,13 +897,7 @@ pub async fn convert_to_leaf<E: GitDateExecutor>(
             .await,
         );
         let modified = dedupe_modified_sources(modified);
-        schedule_modified_source_spaces(
-            runtime,
-            project_path,
-            &modified,
-            StructuralOp::ConvertToLeaf(entry_history_commit_name(space, &converted.path)),
-        )
-        .await;
+        schedule_modified_source_spaces(runtime, project_path, &modified, &change).await;
         let _ = state
             .remove_file_backlinks(project, target_space_id.as_deref(), &old_readme)
             .await;
@@ -918,7 +925,7 @@ pub async fn convert_to_leaf<E: GitDateExecutor>(
         runtime.commits,
         project_path,
         space,
-        StructuralOp::ConvertToLeaf(entry_history_commit_name(space, &converted.path)),
+        change,
         entry_paths_with_order(
             space,
             [
@@ -947,6 +954,7 @@ async fn convert_to_collection_with_publication<E: GitDateExecutor>(
     publish_projection: bool,
 ) -> Result<ConvertToCollectionOutcome, PageError> {
     let old_path = normalize_repo_relative(path, RootMode::Reject)?;
+    let operation = OperationId::next();
     let source_abs = Path::new(space).join(&old_path);
     let metadata = fs::metadata(&source_abs).map_err(|error| match error.kind() {
         std::io::ErrorKind::NotFound => PageError::FileNotFound(old_path.clone()),
@@ -997,6 +1005,7 @@ async fn convert_to_collection_with_publication<E: GitDateExecutor>(
                 project_path,
                 runtime,
                 publish_projection,
+                operation,
             )
             .await?;
             let readme_path = converted.path.clone();
@@ -1041,7 +1050,10 @@ async fn convert_to_collection_with_publication<E: GitDateExecutor>(
             runtime.commits,
             project_path,
             space,
-            StructuralOp::MakeCollection(entry_history_commit_name(space, &readme_path)),
+            StructuralChange::of(
+                operation,
+                StructuralOp::MakeCollection(entry_history_commit_name(space, &readme_path)),
+            ),
             paths,
         );
     }
@@ -1124,6 +1136,12 @@ async fn apply_move<E: GitDateExecutor>(
         &new_path,
         was_dir,
     )?;
+    let change = StructuralChange::new(if rename_to.is_some() {
+        entry_rename_op(space, from, &new_path)
+    } else {
+        StructuralOp::Move(entry_commit_name(space, &new_path))
+    })
+    .relocating(entry_relocation(space, from, &new_path));
     let mut modified_paths = Vec::new();
     if let Some(project) = project_path.filter(|path| !path.is_empty()) {
         let project = Path::new(project);
@@ -1190,17 +1208,7 @@ async fn apply_move<E: GitDateExecutor>(
         });
         let modified = dedupe_modified_sources(modified);
         modified_paths = modified.iter().map(|source| source.path.clone()).collect();
-        schedule_modified_source_spaces(
-            runtime,
-            project_path,
-            &modified,
-            if rename_to.is_some() {
-                entry_rename_op(space, from, &new_path)
-            } else {
-                StructuralOp::Move(entry_commit_name(space, &new_path))
-            },
-        )
-        .await;
+        schedule_modified_source_spaces(runtime, project_path, &modified, &change).await;
         if !was_dir {
             let _ = state
                 .remove_file_backlinks(project, space_id.as_deref(), from)
@@ -1232,24 +1240,12 @@ async fn apply_move<E: GitDateExecutor>(
             entry_paths_with_order(space, [old_abs.clone(), abs_entry_path(space, &new_path)]);
         paths.extend(policy_paths);
         if rename_to.is_some() {
-            schedule_structural_paths(
-                Some(commits),
-                project_path,
-                space,
-                entry_rename_op(space, from, &new_path),
-                paths,
-            );
+            schedule_structural_paths(Some(commits), project_path, space, change, paths);
         } else {
             let unique_id_paths =
                 engine::unique_id_mutation_paths_for_entry_tree(Path::new(space), &new_path)?;
             if unique_id_paths.is_empty() {
-                schedule_structural_paths(
-                    Some(commits),
-                    project_path,
-                    space,
-                    StructuralOp::Move(entry_commit_name(space, &new_path)),
-                    paths,
-                );
+                schedule_structural_paths(Some(commits), project_path, space, change, paths);
             } else {
                 paths.extend(unique_id_paths);
                 commit_schema_now(
@@ -1311,6 +1307,8 @@ async fn reshape<E: GitDateExecutor>(
     } else {
         entry::unnest_entry(Path::new(space), path, local_backlinks)?
     };
+    let change = StructuralChange::new(StructuralOp::Move(entry_commit_name(space, &new_path)))
+        .relocating(entry_relocation(space, path, &new_path));
     if let Some(project) = project_path.filter(|path| !path.is_empty()) {
         let project = Path::new(project);
         let space_id = state.space_id_for_dir(Path::new(space)).await;
@@ -1347,13 +1345,7 @@ async fn reshape<E: GitDateExecutor>(
             .await,
         );
         let modified = dedupe_modified_sources(modified);
-        schedule_modified_source_spaces(
-            runtime,
-            project_path,
-            &modified,
-            StructuralOp::Move(entry_commit_name(space, &new_path)),
-        )
-        .await;
+        schedule_modified_source_spaces(runtime, project_path, &modified, &change).await;
         let _ = state
             .remove_file_backlinks(project, space_id.as_deref(), path)
             .await;
@@ -1367,7 +1359,7 @@ async fn reshape<E: GitDateExecutor>(
         runtime.commits,
         project_path,
         space,
-        StructuralOp::Move(entry_commit_name(space, &new_path)),
+        change,
         entry_paths_with_order(
             space,
             [
@@ -1412,10 +1404,10 @@ pub async fn duplicate<E: GitDateExecutor>(
                 Some(commits),
                 project_path,
                 space,
-                StructuralOp::Duplicate {
+                StructuralChange::new(StructuralOp::Duplicate {
                     old: old_name,
                     new: entry_history_commit_name(space, &duplicated.path),
-                },
+                }),
                 paths,
             );
         } else {

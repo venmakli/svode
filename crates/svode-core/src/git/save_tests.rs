@@ -5,7 +5,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use super::GitError;
-use super::pending::StructuralOp;
+use super::pending::{StructuralChange, StructuralOp};
 use super::save::save;
 use super::staging_tests::{TestHost, cli, git, repo, submodule_project, write};
 use super::state::GitRuntime;
@@ -97,10 +97,10 @@ async fn save_drains_the_related_pending_batch_and_keeps_the_rest() {
     let pending = runtime.pending();
     pending.record(
         space,
-        Some(StructuralOp::Rename {
+        Some(StructuralChange::new(StructuralOp::Rename {
             old: "old.md".to_string(),
             new: "renamed.md".to_string(),
-        }),
+        })),
         vec![space.join("renamed.md"), space.join("backlink.md")],
     );
     pending.record(space, None, vec![space.join("other.md")]);

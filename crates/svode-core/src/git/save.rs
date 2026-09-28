@@ -59,12 +59,16 @@ pub async fn save(
         .iter()
         .map(|path| repo_relative_from_base(&repo, &space.join(path), RootMode::Reject))
         .collect::<Result<Vec<_>, _>>()?;
+    // Only a requested target keeps the unavailable-target refusal; a pending
+    // path may be an intermediate location of a relocation chain.
+    let mut derived = Vec::new();
     for path in pending.paths() {
         let path = repo_relative_from_base(&repo, &path, RootMode::Reject)?;
-        if !paths.contains(&path) {
-            paths.push(path);
+        if !paths.contains(&path) && !derived.contains(&path) {
+            derived.push(path);
         }
     }
+    paths.extend(super::staging::recorded(&cli, &repo, derived).await?);
     for path in &paths {
         contained_file(&repo, path)?;
     }

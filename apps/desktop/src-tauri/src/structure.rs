@@ -6,7 +6,7 @@ use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 
-use svode_core::git::pending::StructuralOp;
+use svode_core::git::pending::StructuralChange;
 use svode_core::page::entry::Entry;
 use svode_core::structure::{StructuralCommitSink, StructureRuntime};
 
@@ -19,8 +19,7 @@ pub use svode_core::structure::delete_mutation_paths;
 pub use svode_core::structure::{
     CollectionCreate, CollectionCreateOutcome, ConvertToCollectionOutcome, DeleteOutcome,
     abs_entry_path, basename, entry_commit_name, entry_history_name, entry_in_sensitive_collection,
-    entry_paths_with_order, entry_rename_op, grouped_abs_paths_by_space, order_path,
-    root_path_for_head,
+    entry_paths_with_order, order_path, root_path_for_head,
 };
 use svode_core::structure::{
     backlink_mutation_paths as core_backlink_mutation_paths,
@@ -33,7 +32,7 @@ pub(crate) fn maybe_autocommit_structural_paths(
     autocommit: &AutocommitService,
     project_path: Option<&str>,
     space_path: &str,
-    op: StructuralOp,
+    change: StructuralChange,
     paths: Vec<PathBuf>,
 ) {
     let Some(project) = project_path.filter(|path| !path.is_empty()) else {
@@ -42,7 +41,7 @@ pub(crate) fn maybe_autocommit_structural_paths(
     autocommit.schedule_structural_paths(
         PathBuf::from(project),
         PathBuf::from(space_path),
-        op,
+        change,
         paths,
     );
 }
@@ -51,9 +50,15 @@ pub(crate) fn maybe_autocommit_structural_paths(
 pub(crate) struct AutocommitSink<'a>(pub(crate) &'a AutocommitService);
 
 impl StructuralCommitSink for AutocommitSink<'_> {
-    fn schedule(&self, project: &Path, space: &Path, op: StructuralOp, paths: Vec<PathBuf>) {
+    fn schedule(
+        &self,
+        project: &Path,
+        space: &Path,
+        change: StructuralChange,
+        paths: Vec<PathBuf>,
+    ) {
         self.0
-            .schedule_structural_paths(project.to_path_buf(), space.to_path_buf(), op, paths);
+            .schedule_structural_paths(project.to_path_buf(), space.to_path_buf(), change, paths);
     }
 
     fn commit_now<'a>(
@@ -324,29 +329,4 @@ pub async fn duplicate(
         runtime(state, updates, cli.as_ref(), sink.as_ref()),
     )
     .await?)
-}
-
-/// Schedule the structural history of a Page rename, split across the Spaces
-/// that own the changed paths.
-pub(crate) fn schedule_rename(
-    autocommit: Option<&AutocommitService>,
-    project: Option<&str>,
-    space: &str,
-    from: &str,
-    to: &str,
-    changed_paths: &[PathBuf],
-) {
-    let Some(service) = autocommit.filter(|_| !changed_paths.is_empty()) else {
-        return;
-    };
-    let operation = entry_rename_op(space, from, to);
-    for (owner, paths) in grouped_abs_paths_by_space(project, space, changed_paths) {
-        maybe_autocommit_structural_paths(
-            service,
-            project,
-            &owner.to_string_lossy(),
-            operation.clone(),
-            paths,
-        );
-    }
 }

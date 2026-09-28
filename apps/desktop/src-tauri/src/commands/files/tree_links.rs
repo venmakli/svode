@@ -25,7 +25,7 @@ pub async fn save_tree_order(
             &autocommit,
             project_path.as_deref(),
             &space,
-            StructuralOp::Reorder,
+            StructuralChange::new(StructuralOp::Reorder),
             vec![order_path(&space)],
         );
     }

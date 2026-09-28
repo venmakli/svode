@@ -11,9 +11,10 @@ use svode_core::page::write::{PageRuntime, PageWrite, PageWriteOutcome};
 
 use crate::error::AppError;
 use crate::index::{IndexState, update::IndexUpdateState};
-use crate::structure::schedule_rename;
+use crate::structure::sink;
 use svode_core::git::autocommit::AutocommitService;
 use svode_core::git::cli::GitCli;
+use svode_core::structure::{StructuralCommitSink, schedule_rename};
 
 fn runtime<'a>(
     state: &'a IndexState,
@@ -52,8 +53,9 @@ where
     )
     .await?;
     if let Some(new_path) = outcome.result.new_path.as_deref() {
+        let sink = sink(autocommit);
         schedule_rename(
-            autocommit,
+            sink.as_ref().map(|sink| sink as &dyn StructuralCommitSink),
             project.as_deref(),
             &space,
             &path,
@@ -87,8 +89,9 @@ where
     )
     .await?;
     if outcome.page.path != path {
+        let sink = sink(autocommit);
         schedule_rename(
-            autocommit,
+            sink.as_ref().map(|sink| sink as &dyn StructuralCommitSink),
             project.as_deref(),
             &space,
             &path,

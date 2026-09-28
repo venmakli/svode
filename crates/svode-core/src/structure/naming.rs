@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use crate::collections::engine;
-use crate::git::pending::StructuralOp;
+use crate::git::pending::{Relocation, StructuralOp};
 use crate::page::registered_space_dirs;
 
 pub fn abs_entry_path(space: &str, rel_path: &str) -> PathBuf {
@@ -124,6 +124,15 @@ pub fn entry_history_commit_name(space: &str, path: &str) -> String {
         "collection entry".to_string()
     } else {
         entry_history_name(path)
+    }
+}
+
+/// The relocation of an entry from `from` to `to`; a folder entry is
+/// represented by its directory.
+pub fn entry_relocation(space: &str, from: &str, to: &str) -> Relocation {
+    Relocation {
+        source: abs_entry_path(space, root_path_for_head(from)),
+        target: abs_entry_path(space, root_path_for_head(to)),
     }
 }
 

@@ -23,7 +23,7 @@ use svode_core::collections::engine::{
     EntrySchemaResponse, Filter, PropertyOption, PropertyType, RelationBacklink,
     RelationTwoWayDiagnostics, ResolvedRelation, SchemaMutationWarning, Sort, View,
 };
-use svode_core::git::autocommit::{AutocommitService, StructuralOp};
+use svode_core::git::autocommit::{AutocommitService, StructuralChange, StructuralOp};
 use svode_core::index::backlinks::{BacklinkInfo, LinkValidation};
 use svode_core::page::entry::{self, Entry, WriteResult};
 use svode_core::page::fields::PageFieldUpdate;

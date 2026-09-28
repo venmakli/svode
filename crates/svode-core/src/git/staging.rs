@@ -133,6 +133,42 @@ pub async fn resolve(
     Ok(selected.into_iter().collect())
 }
 
+/// Keep the paths that still carry a change: present on disk, or with an index
+/// or HEAD entry at or under them. A path a later managed relocation moved
+/// away before it was ever recorded by Git has nothing to commit.
+pub async fn recorded(
+    cli: &GitCli,
+    repo: &Path,
+    paths: Vec<String>,
+) -> Result<Vec<String>, GitError> {
+    if paths
+        .iter()
+        .all(|path| repo.join(path).symlink_metadata().is_ok())
+    {
+        return Ok(paths);
+    }
+    let mut entries = read_paths(cli, repo, &["ls-files", "--cached", "-z"]).await?;
+    let head = exec(
+        cli,
+        repo,
+        &["rev-parse", "--verify", "HEAD"],
+        "prepare",
+        &[],
+    )
+    .await?;
+    if head.exit_code == 0 {
+        entries
+            .extend(read_paths(cli, repo, &["ls-tree", "-r", "--name-only", "-z", "HEAD"]).await?);
+    }
+    Ok(paths
+        .into_iter()
+        .filter(|path| {
+            repo.join(path).symlink_metadata().is_ok()
+                || entries.iter().any(|entry| within(entry, path))
+        })
+        .collect())
+}
+
 pub async fn prepare(
     cli: &GitCli,
     repo: &Path,

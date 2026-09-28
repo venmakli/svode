@@ -9,7 +9,7 @@ use super::cli::GitCli;
 use super::host::GitHost;
 use super::ops;
 use super::pending::PendingPaths;
-pub use super::pending::StructuralOp;
+pub use super::pending::{StructuralChange, StructuralOp};
 use super::state::GitRuntime;
 use crate::storage::config::SpaceGitType;
 
@@ -124,11 +124,11 @@ impl AutocommitService {
         &self,
         _project_path: PathBuf,
         space_path: PathBuf,
-        op: StructuralOp,
+        change: StructuralChange,
         paths: Vec<PathBuf>,
     ) {
         if !background_commit_allowed(&space_path, CommitIntent::ContentWorkspace) {
-            self.pending.record(&space_path, Some(op), paths);
+            self.pending.record(&space_path, Some(change), paths);
         }
     }
 }
