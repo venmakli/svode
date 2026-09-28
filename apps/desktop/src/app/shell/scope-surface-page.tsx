@@ -3,6 +3,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ComponentProps,
   type ReactNode,
@@ -236,10 +237,23 @@ function ScopePageSurfaceHost({
   const pageSurface = usePageSurfaceSession();
   const detailController = useCollectionDetailController();
   const detail = usePageDetailContext();
+  const pagePath = detail.page?.path ?? null;
+  const readmePath = props.owner.readmePath;
+  // A path transition of this Page is handed to the host once: neither a new
+  // callback identity nor an owner still resolving the new path repeats it.
+  const pathHandoffRef = useRef({ pagePath, readmePath, hostPath: readmePath });
   useEffect(() => {
-    if (detail.page && detail.page.path !== props.owner.readmePath)
-      onContentPathChange?.(detail.page.path);
-  }, [detail.page, props.owner.readmePath, onContentPathChange]);
+    const handoff = pathHandoffRef.current;
+    if (handoff.readmePath !== readmePath) {
+      handoff.readmePath = readmePath;
+      handoff.hostPath = readmePath;
+    }
+    if (handoff.pagePath === pagePath) return;
+    handoff.pagePath = pagePath;
+    if (!pagePath || pagePath === handoff.hostPath) return;
+    handoff.hostPath = pagePath;
+    onContentPathChange?.(pagePath);
+  }, [pagePath, readmePath, onContentPathChange]);
   useEffect(
     () =>
       registerNavigationGuard?.(async () => {
