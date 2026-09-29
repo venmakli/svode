@@ -279,6 +279,7 @@ if (!isolatedProcess) {
 }
 
 const missingCodex: AvailableAgent = {
+  adapter: "codex",
   name: "codex",
   path: "",
   version: null,
@@ -292,6 +293,7 @@ function agent(
   authStatus: string,
 ): AvailableAgent {
   return {
+    adapter: name === "claude" ? "claude-code" : name,
     name,
     path: `/Users/test/.bun/bin/${name}`,
     version,

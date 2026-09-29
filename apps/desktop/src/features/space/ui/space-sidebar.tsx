@@ -23,6 +23,8 @@ interface SpaceSidebarProps {
   onBeforeNavigation: () => Promise<boolean>;
   onOpenSessions: () => void;
   onOpenSearch: () => void;
+  /** Starts a new agent session in the Space at this path. */
+  onNewSession?: (spacePath: string) => void;
   sessionsAction?: ReactNode;
 }
 
@@ -33,6 +35,7 @@ export function SpaceSidebar({
   onBeforeNavigation,
   onOpenSessions,
   onOpenSearch,
+  onNewSession,
   sessionsAction,
 }: SpaceSidebarProps) {
   return (
@@ -49,6 +52,7 @@ export function SpaceSidebar({
         <NavSpaces
           onActivateContent={onActivateContent}
           onBeforeNavigation={onBeforeNavigation}
+          onNewSession={onNewSession}
         />
       </SidebarContent>
 

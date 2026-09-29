@@ -9,6 +9,12 @@ export interface AgentSessionTarget {
   launchId: string | null;
 }
 
+/** How an entry point opens a session. */
+export interface AgentSessionOpenOptions {
+  /** The user asked for the terminal, e.g. by starting a new session. */
+  focusTerminal?: boolean;
+}
+
 /**
  * The catalog id a target currently resolves to. A pending terminal follows
  * the CLI session matched to its pty, and a provisional launch follows the

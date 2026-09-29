@@ -7,12 +7,18 @@ import {
   CollectionPresentationShell,
 } from "@/features/collection";
 
+import { createAgentAdapterDictionary } from "@/features/agent-adapters";
+
 import type { AgentActorRow } from "../model/agent-actor-types";
 import {
   createAgentActorsPresentation,
   createAgentActorsPresentationDescriptor,
 } from "./agent-actors-presentation";
 
+const agents = createAgentAdapterDictionary([
+  { id: "codex", displayName: "Codex" },
+  { id: "claude-code", displayName: "Claude Code" },
+]);
 const own: AgentActorRow = {
   actorRef: "agent:01arz3ndektsv4rrffq69g5fav",
   adapters: [{ adapter: "codex", effort: "medium", model: "gpt-5.4" }],
@@ -46,6 +52,7 @@ test("Agent Actors uses the fixed schema and one shared edit/delete descriptor s
       onDelete: (row) => calls.push(`delete:${row.ownerPath}`),
       onEdit: (row) => calls.push(`edit:${row.ownerPath}`),
     },
+    agents,
     inheritedVisible: true,
     rows: [own, inherited],
   });
@@ -77,6 +84,7 @@ test("Agent Actors rows lead with the shared rounded agent avatar", () => {
       onDelete: () => undefined,
       onEdit: () => undefined,
     },
+    agents,
     inheritedVisible: false,
     rows: [own],
   });
@@ -92,6 +100,7 @@ test("Agent Actors rows never describe an agent by its raw reference", () => {
   const undescribed = { ...own, description: null };
   const descriptor = createAgentActorsPresentationDescriptor({
     actions: disabledActions(),
+    agents,
     inheritedVisible: false,
     rows: [undescribed],
   });
@@ -108,11 +117,13 @@ test("Agent Actors rows never describe an agent by its raw reference", () => {
 test("Agent Actors default order and search preserve owner provenance", () => {
   const presentation = createAgentActorsPresentation({
     actions: disabledActions(),
+    agents,
     inheritedVisible: true,
     state: { phase: "ready", rows: [inherited, own] },
   });
   const descriptor = createAgentActorsPresentationDescriptor({
     actions: disabledActions(),
+    agents,
     inheritedVisible: true,
     rows: [inherited, own],
   });

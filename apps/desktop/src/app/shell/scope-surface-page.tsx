@@ -9,6 +9,7 @@ import {
   type ReactNode,
 } from "react";
 import { AgentContextSurface } from "@/features/agent-context";
+import { AgentSessionsSurface } from "@/features/agent-sessions";
 import { ActorsSurface } from "@/features/actors";
 import { RoutinesSurface } from "@/features/routines";
 import {
@@ -103,6 +104,11 @@ export function ScopeSurfacePage({
   const detailController = useCollectionDetailController();
   const openSessionPeek = useShellStore((state) => state.openSessionPeek);
   const openSpaceSettings = useShellStore((state) => state.openSpaceSettings);
+  const openAppSettings = useShellStore((state) => state.openAppSettings);
+  const openProvidersSettings = useCallback(
+    () => openAppSettings("providers"),
+    [openAppSettings],
+  );
   const openRepositorySettings = useCallback(
     (repositoryPath: string) => openSpaceSettings(repositoryPath, "git"),
     [openSpaceSettings],
@@ -141,6 +147,13 @@ export function ScopeSurfacePage({
             onOpenSession={openRoutineSession}
           />
         ),
+        sessions: (context) => (
+          <AgentSessionsSurface
+            {...context}
+            onOpenSession={openSessionPeek}
+            onOpenAppSettings={openProvidersSettings}
+          />
+        ),
         readme: () => <ReadmeSurface />,
         collection: () => (
           <CollectionViewsSurface
@@ -159,8 +172,10 @@ export function ScopeSurfacePage({
     [
       collectionRouteState,
       fallbackTitle,
+      openProvidersSettings,
       openRepositorySettings,
       openRoutineSession,
+      openSessionPeek,
       owner,
     ],
   );

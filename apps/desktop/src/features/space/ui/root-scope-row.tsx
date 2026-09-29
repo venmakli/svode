@@ -4,6 +4,7 @@ import {
   Ellipsis,
   FilePlus,
   FolderPlus,
+  SquareTerminal,
 } from "lucide-react";
 import * as m from "@/paraglide/messages.js";
 import {
@@ -15,6 +16,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
@@ -40,6 +42,7 @@ interface RootScopeRowProps {
   onNewPage: () => void;
   onNewFolder: () => void;
   onNewCollection: () => void;
+  onNewSession?: () => void;
   spaceId: string;
   rootPath: string;
   loading: boolean;
@@ -64,6 +67,7 @@ export function RootScopeRow({
   onNewPage,
   onNewFolder,
   onNewCollection,
+  onNewSession,
   spaceId,
   rootPath,
   loading,
@@ -113,6 +117,15 @@ export function RootScopeRow({
               <Database />
               {m.collection_new()}
             </DropdownMenuItem>
+            {onNewSession && (
+              <>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={onNewSession}>
+                  <SquareTerminal />
+                  {m.sessions_action_new()}
+                </DropdownMenuItem>
+              </>
+            )}
           </DropdownMenuContent>
         </DropdownMenu>
         <CollapsibleContent>

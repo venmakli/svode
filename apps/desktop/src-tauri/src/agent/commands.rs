@@ -241,6 +241,7 @@ fn available_agent(diagnostic: AdapterDiagnostic, docs_url: &str) -> AvailableAg
         AdapterDiagnosticStatus::Unknown => "unknown",
     };
     AvailableAgent {
+        adapter: diagnostic.adapter,
         name: diagnostic.adapter.executable().to_string(),
         path: diagnostic.executable_path.unwrap_or_default(),
         version: diagnostic.version,

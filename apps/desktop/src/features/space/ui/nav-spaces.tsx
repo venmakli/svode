@@ -43,11 +43,13 @@ import { SpaceRow } from "./space-row";
 interface NavSpacesProps {
   onActivateContent: () => void;
   onBeforeNavigation: () => Promise<boolean>;
+  onNewSession?: (spacePath: string) => void;
 }
 
 export function NavSpaces({
   onActivateContent,
   onBeforeNavigation,
+  onNewSession,
 }: NavSpacesProps) {
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -145,6 +147,9 @@ export function NavSpaces({
               onNewCollection={() =>
                 handleNewCollection({ id: activeRootId, path: activeRootPath })
               }
+              onNewSession={
+                onNewSession && (() => onNewSession(activeRootPath))
+              }
               spaceId={activeRootId}
               rootPath={activeRootPath}
               loading={treeLoading[activeRootId] ?? false}
@@ -191,6 +196,7 @@ export function NavSpaces({
                       handleNewPage={handleNewPage}
                       handleNewFolder={handleNewFolder}
                       handleNewCollection={handleNewCollection}
+                      onNewSession={onNewSession}
                       openScopeHome={handleOpenSpaceHome}
                       setDeleteTarget={setDeleteTarget}
                       handleCloneMissing={handleCloneMissing}

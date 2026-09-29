@@ -57,12 +57,20 @@ test("app registry exposes canonical Stage 7 surfaces for each owner", () => {
     "attachments",
     "actors",
     "routines",
+    "sessions",
   ]);
   expect(
     resolveScopeSurfaceContributions(contributions, plainSpace, "full").map(
       ({ id }) => id,
     ),
-  ).toEqual(["context", "readme", "attachments", "actors", "routines"]);
+  ).toEqual([
+    "context",
+    "readme",
+    "attachments",
+    "actors",
+    "routines",
+    "sessions",
+  ]);
   expect(
     resolveScopeSurfaceContributions(contributions, collection, "compact").map(
       ({ id }) => id,
@@ -110,7 +118,13 @@ test("canonical definitions cover the owner eligibility matrix without row or ma
           "attachments",
           "actors",
           "routines",
+          "sessions",
         ]);
+        expect(
+          resolveScopeSurfaceContributions(contributions, space, "compact")
+            .map(({ id }) => id)
+            .includes("sessions"),
+        ).toBe(false);
         expect(attachmentOwnerFromScopeOwner(space).hasDirectCollection).toBe(
           hasSchema,
         );

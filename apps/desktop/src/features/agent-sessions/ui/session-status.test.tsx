@@ -70,8 +70,8 @@ test("pid-only runtime without managed pty is not a terminal-open marker", () =>
   expect(
     renderToStaticMarkup(
       <SessionStatusMarker session={doneWithPidOnlyRuntime} />,
-    ),
-  ).toBe("");
+    ).includes(`aria-label="${m.sessions_status_done()}"`),
+  ).toBe(true);
 });
 
 test("stronger status markers are not replaced by terminal-open marker", () => {
@@ -123,8 +123,12 @@ test("waiting markers distinguish approval from user input", () => {
   ).toBe(true);
 });
 
-test("done sessions render without a status marker", () => {
-  expect(renderToStaticMarkup(<SessionStatusMarker session={session()} />)).toBe(
-    "",
+test("every status value has a labelled marker, including done", () => {
+  const markup = renderToStaticMarkup(
+    <SessionStatusMarker session={session()} />,
+  );
+  expect(markup.includes("lucide-circle-check")).toBe(true);
+  expect(markup.includes(`aria-label="${m.sessions_status_done()}"`)).toBe(
+    true,
   );
 });

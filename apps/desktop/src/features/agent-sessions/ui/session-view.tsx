@@ -29,16 +29,12 @@ import {
   EmptyTitle,
 } from "@/components/ui/empty";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useAgentAdapterDictionary } from "@/features/agent-adapters";
 import { useSpace } from "@/features/space";
 import { ManagedTerminalSurface } from "@/features/terminal/session-surface";
 import { getNativeErrorMessage } from "@/platform/native/errors";
 import { useAgentSessionView, type AgentSessionView } from "../hooks";
-import {
-  scopeLabel,
-  sessionTimeLabel,
-  sourceLabel,
-  tooltipDateTime,
-} from "../lib";
+import { scopeLabel, sessionTimeLabel, tooltipDateTime } from "../lib";
 import type { AgentSession, AgentSessionTarget } from "../model";
 import {
   ExternalTerminalAppProvider,
@@ -58,6 +54,8 @@ export const AGENT_SESSION_CONTENT_ATTRIBUTE = "data-agent-session-content";
 
 interface AgentSessionContentProps {
   target: AgentSessionTarget;
+  /** Focus the terminal once it is shown, as after starting a new session. */
+  focusTerminal?: boolean;
   /**
    * Peek chrome: an action row above the identity header that receives the
    * session menu. Without it the menu sits in the identity header.
@@ -71,9 +69,10 @@ interface AgentSessionContentProps {
  */
 export function AgentSessionContent({
   target,
+  focusTerminal,
   renderActions,
 }: AgentSessionContentProps) {
-  const view = useAgentSessionView(target);
+  const view = useAgentSessionView(target, { focusTerminal });
   const [metadataOpen, setMetadataOpen] = useState(false);
   const [confirmCloseOpen, setConfirmCloseOpen] = useState(false);
   const { activeRootName, spaces } = useSpace();
@@ -197,6 +196,7 @@ function SessionIdentity({
   checking: boolean;
   identityLabel: string | null;
 }) {
+  const agents = useAgentAdapterDictionary();
   if (!session) {
     return (
       <div className="flex min-w-0 flex-1 flex-col gap-1.5">
@@ -221,7 +221,7 @@ function SessionIdentity({
       <div className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
         <SessionStatusMarker session={session} />
         <span className="truncate">
-          {[statusLabel(session), sourceLabel(session.source), identityLabel]
+          {[statusLabel(session), agents.label(session.source), identityLabel]
             .filter(Boolean)
             .join(" · ")}
           {time && (

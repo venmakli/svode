@@ -11,6 +11,8 @@ import * as m from "@/paraglide/messages.js";
 
 interface AgentSessionPeekProps {
   target: AgentSessionTarget | null;
+  /** Focus goes to the terminal instead of the peek chrome. */
+  focusTerminal?: boolean;
   onOpenChange: (open: boolean) => void;
   /** Opens the session in the main area; resolves false when a guard kept the stack. */
   onExpand: (
@@ -29,6 +31,7 @@ function isInsideSessionContent(target: EventTarget | null) {
 /** Session in the Page Peek pattern: a wide temporary panel over the context. */
 export function AgentSessionPeek({
   target,
+  focusTerminal = false,
   onOpenChange,
   onExpand,
 }: AgentSessionPeekProps) {
@@ -64,6 +67,10 @@ export function AgentSessionPeek({
           // Esc inside the session belongs to the agent, e.g. to interrupt a turn.
           if (isInsideSessionContent(event.target)) event.preventDefault();
         }}
+        onOpenAutoFocus={(event) => {
+          // The terminal takes focus itself once it is attached.
+          if (focusTerminal) event.preventDefault();
+        }}
         onCloseAutoFocus={(event) => {
           // Expanding hands focus to the main area instead of the opener.
           if (expandingRef.current) event.preventDefault();
@@ -74,6 +81,7 @@ export function AgentSessionPeek({
           <AgentSessionContent
             key={`${shownTarget.sessionId}\n${shownTarget.launchId ?? ""}`}
             target={shownTarget}
+            focusTerminal={focusTerminal}
             renderActions={(menu, view) => (
               <>
                 {menu}

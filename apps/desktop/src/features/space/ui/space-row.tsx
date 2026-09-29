@@ -10,6 +10,7 @@ import {
   FolderPlus,
   Loader2,
   Pencil,
+  SquareTerminal,
   Trash2,
   X,
 } from "lucide-react";
@@ -66,6 +67,7 @@ interface SpaceRowProps {
   handleNewPage: (scope: ScopeTarget) => void;
   handleNewFolder: (scope: ScopeTarget) => void;
   handleNewCollection: (scope: ScopeTarget) => void;
+  onNewSession?: (spacePath: string) => void;
   openScopeHome: (ws: SpaceInfo) => void | Promise<void>;
   setDeleteTarget: (target: DeleteSpaceTarget) => void;
   handleCloneMissing: (spaceId: string, spacePath: string) => void;
@@ -99,6 +101,7 @@ export function SpaceRow({
   handleNewPage,
   handleNewFolder,
   handleNewCollection,
+  onNewSession,
   openScopeHome,
   setDeleteTarget,
   handleCloneMissing,
@@ -279,6 +282,15 @@ export function SpaceRow({
               <Database />
               {m.collection_new()}
             </DropdownMenuItem>
+            {onNewSession && (
+              <>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={() => onNewSession(ws.path)}>
+                  <SquareTerminal />
+                  {m.sessions_action_new()}
+                </DropdownMenuItem>
+              </>
+            )}
             {gitControls.dropdownItem}
             <DropdownMenuSeparator />
             <DropdownMenuItem

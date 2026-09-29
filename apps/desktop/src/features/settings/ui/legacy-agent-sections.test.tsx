@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import { JSDOM } from "jsdom";
+import { loadAgentAdapterIdentities } from "@/features/agent-adapters";
 import { setLocale } from "@/paraglide/runtime";
 import type { AvailableAgent } from "../model";
 import { SpaceAgentSection } from "./space-agent-section";
@@ -9,8 +10,14 @@ import { SpaceInstructionsSection } from "./space-instructions-section";
 
 const noop = () => {};
 
+await loadAgentAdapterIdentities(async () => [
+  { id: "codex", displayName: "Codex" },
+  { id: "claude-code", displayName: "Claude Code" },
+]);
+
 const agents: AvailableAgent[] = [
   {
+    adapter: "claude-code",
     name: "claude",
     path: "/usr/local/bin/claude",
     version: "2.1.0",
@@ -18,6 +25,7 @@ const agents: AvailableAgent[] = [
     docsUrl: "https://example.test/claude",
   },
   {
+    adapter: "codex",
     name: "codex",
     path: "",
     version: null,

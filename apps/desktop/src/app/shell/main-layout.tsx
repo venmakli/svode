@@ -55,7 +55,10 @@ import { GraphSurface, SessionsSurface } from "./main-surfaces";
 import { AgentSessionMainSurface } from "@/features/agent-sessions";
 import { ActiveSpaceContent } from "./active-space-content";
 import { AgentSessionCatalogHost } from "./agent-session-catalog-host";
-import { AgentSessionPeekHost } from "./agent-session-peek-host";
+import {
+  AgentSessionPeekHost,
+  useStartSessionInPeek,
+} from "./agent-session-peek-host";
 import { cn } from "@/shared/lib/utils";
 
 type SidebarProviderStyle = CSSProperties & {
@@ -209,6 +212,7 @@ function ShellLayoutContent({
   const { state, isMobile } = useSidebar();
   const sidebarHidden = state === "collapsed";
   const useResizableSidebar = !isMobile && !sidebarHidden;
+  const startSessionInPeek = useStartSessionInPeek();
 
   const sidebar = (
     <SpaceSidebar
@@ -225,6 +229,7 @@ function ShellLayoutContent({
       onBeforeNavigation={onBeforeNavigation}
       onOpenSessions={onOpenSessions}
       onOpenSearch={onOpenSearch}
+      onNewSession={startSessionInPeek}
       sessionsAction={<TerminalSidebarAction />}
     />
   );

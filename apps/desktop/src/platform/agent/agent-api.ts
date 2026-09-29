@@ -1,6 +1,7 @@
 import { invokeCommand } from "@/platform/native/invoke";
 
 export interface AvailableAgentDto {
+  adapter: string;
   name: string;
   path: string;
   version: string | null;

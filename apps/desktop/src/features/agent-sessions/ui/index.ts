@@ -4,3 +4,4 @@ export {
   AgentSessionBreadcrumbs,
   AgentSessionMainSurface,
 } from "./session-main-surface";
+export { AgentSessionsSurface } from "./sessions-surface";

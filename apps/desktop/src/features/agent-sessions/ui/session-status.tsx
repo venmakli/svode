@@ -1,4 +1,5 @@
 import {
+  CircleCheck,
   CircleHelp,
   LoaderCircle,
   MessageCircleQuestion,
@@ -7,22 +8,28 @@ import {
   Square,
   SquareTerminal,
 } from "lucide-react";
+import { cn } from "@/shared/lib/utils";
 import { hasActionableWait, type AgentSession } from "../model";
 import * as m from "@/paraglide/messages.js";
 
 interface SessionStatusMarkerProps {
   session: AgentSession;
+  className?: string;
 }
 
-export function SessionStatusMarker({ session }: SessionStatusMarkerProps) {
+export function SessionStatusMarker({
+  session,
+  className,
+}: SessionStatusMarkerProps) {
   const label = statusMarkerLabel(session);
   const waitKind = actionableWaitKind(session);
+  const size = cn("size-3", className);
 
   if (waitKind === "approval") {
     return (
       <MessageSquareWarning
         aria-label={label}
-        className="size-3 text-warning"
+        className={cn(size, "text-warning")}
       />
     );
   }
@@ -31,7 +38,7 @@ export function SessionStatusMarker({ session }: SessionStatusMarkerProps) {
     return (
       <MessageCircleQuestion
         aria-label={label}
-        className="size-3 text-warning"
+        className={cn(size, "text-warning")}
       />
     );
   }
@@ -40,45 +47,56 @@ export function SessionStatusMarker({ session }: SessionStatusMarkerProps) {
     return (
       <LoaderCircle
         aria-label={label}
-        className="size-3 animate-spin text-foreground"
+        className={cn(size, "animate-spin text-foreground")}
       />
     );
   }
 
   if (session.status === "failed") {
-    return <OctagonX aria-label={label} className="size-3 text-destructive" />;
+    return (
+      <OctagonX aria-label={label} className={cn(size, "text-destructive")} />
+    );
   }
 
   if (session.runtime?.ptyId) {
     return (
       <SquareTerminal
         aria-label={label}
-        className="size-3 text-muted-foreground"
+        className={cn(size, "text-muted-foreground")}
       />
     );
   }
 
   if (session.status === "stopped") {
-    return <Square aria-label={label} className="size-3 text-muted-foreground" />;
+    return (
+      <Square
+        aria-label={label}
+        className={cn(size, "text-muted-foreground")}
+      />
+    );
   }
 
   if (session.status === "unknown") {
     return (
       <CircleHelp
         aria-label={label}
-        className="size-3 text-muted-foreground"
+        className={cn(size, "text-muted-foreground")}
       />
     );
   }
 
-  return null;
+  return (
+    <CircleCheck
+      aria-label={label}
+      className={cn(size, "text-muted-foreground")}
+    />
+  );
 }
 
 export function statusLabel(session: AgentSession): string {
   const waitKind = actionableWaitKind(session);
   if (waitKind === "approval") return m.sessions_status_waiting_approval();
-  if (waitKind === "input") return m.sessions_status_waiting_input();
-  if (hasActionableWait(session)) return m.sessions_status_waiting();
+  if (hasActionableWait(session)) return m.sessions_status_waiting_input();
   if (session.status === "active") return m.sessions_status_active();
   if (session.status === "failed") return m.sessions_status_failed();
   if (session.status === "stopped") return m.sessions_status_stopped();

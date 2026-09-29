@@ -15,21 +15,12 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { type SpaceInfo, useSpace } from "@/features/space";
+import { useAgentAdapterDictionary } from "@/features/agent-adapters";
+import { useSpace } from "@/features/space";
 import { getNativeErrorMessage } from "@/platform/native/errors";
-import { useAgentSessions } from "../hooks";
-import {
-  childSpaceScopeGroupId,
-  projectScopeGroupId,
-  type AgentSession,
-  type AgentSessionScopeGroup,
-} from "../model";
-import {
-  commandDisplay,
-  scopeLabel,
-  sessionTimeLabel,
-  sourceLabel,
-} from "../lib";
+import { useAgentSessionScopes, useAgentSessions } from "../hooks";
+import type { AgentSession } from "../model";
+import { commandDisplay, scopeLabel, sessionTimeLabel } from "../lib";
 import {
   ExternalTerminalAppProvider,
   ExternalTerminalIcon,
@@ -46,24 +37,8 @@ interface AgentSessionsScreenProps {
 export function AgentSessionsScreen({
   onOpenAppSettings,
 }: AgentSessionsScreenProps) {
-  const {
-    activeRootIcon,
-    activeRootId,
-    activeRootName,
-    activeRootPath,
-    spaces,
-  } = useSpace();
-  const spaceScopes = useMemo(
-    () =>
-      buildSessionSpaceScopes({
-        activeRootIcon,
-        activeRootId,
-        activeRootName,
-        activeRootPath,
-        spaces,
-      }),
-    [activeRootIcon, activeRootId, activeRootName, activeRootPath, spaces],
-  );
+  const { activeRootIcon, activeRootName, activeRootPath, spaces } = useSpace();
+  const spaceScopes = useAgentSessionScopes();
   const rootScope =
     spaceScopes.find((scope) => scope.kind === "project") ?? null;
   const sessions = useAgentSessions(activeRootPath, spaceScopes);
@@ -171,48 +146,6 @@ export function AgentSessionsScreen({
   );
 }
 
-function buildSessionSpaceScopes({
-  activeRootIcon,
-  activeRootId,
-  activeRootName,
-  activeRootPath,
-  spaces,
-}: {
-  activeRootIcon: string | null;
-  activeRootId: string | null;
-  activeRootName: string | null;
-  activeRootPath: string | null;
-  spaces: SpaceInfo[];
-}): AgentSessionScopeGroup[] {
-  const scopes: AgentSessionScopeGroup[] = [];
-
-  if (activeRootId && activeRootPath) {
-    scopes.push({
-      id: projectScopeGroupId(activeRootPath),
-      kind: "project",
-      scopeId: activeRootId,
-      name: activeRootName?.trim() || "Project",
-      icon: activeRootIcon,
-      path: activeRootPath,
-      status: "ready",
-    });
-  }
-
-  spaces.forEach((space) => {
-    scopes.push({
-      id: childSpaceScopeGroupId(space.id),
-      kind: "space",
-      scopeId: space.id,
-      name: space.name,
-      icon: space.icon,
-      path: space.path,
-      status: space.status,
-    });
-  });
-
-  return scopes;
-}
-
 function AgentSessionsHeader({
   session,
   ptyId,
@@ -239,6 +172,7 @@ function AgentSessionsHeader({
   onOpenExternalTerminal: () => void;
 }) {
   const { state } = useSidebar();
+  const agents = useAgentAdapterDictionary();
   const sidebarHidden = state === "collapsed";
 
   return (
@@ -259,7 +193,7 @@ function AgentSessionsHeader({
       <div className="flex min-w-0 shrink-0 items-center gap-2">
         {session && (
           <div className="hidden max-w-[min(52vw,720px)] truncate text-xs text-muted-foreground sm:block">
-            {statusLabel(session)} · {sourceLabel(session.source)} ·{" "}
+            {statusLabel(session)} · {agents.label(session.source)} ·{" "}
             {scopeLabel(session, rootName, spaceNames)} ·{" "}
             {sessionTimeLabel(session)}
           </div>

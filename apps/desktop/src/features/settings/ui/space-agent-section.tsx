@@ -4,11 +4,11 @@ import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { RefreshCw } from "lucide-react";
+import { useAgentAdapterDictionary } from "@/features/agent-adapters";
 import type { ModelOption } from "@/features/chat";
 import type { AvailableAgent, SymlinkHealthReport } from "../model";
 import {
   CliAgentStatusBadge,
-  cliAgentName,
   cliAgentNextStep,
   cliAgentStatus,
 } from "./cli-agent-status";
@@ -45,6 +45,7 @@ export function SpaceAgentSection({
   onRefresh,
 }: SpaceAgentSectionProps) {
   const id = useId();
+  const agentNames = useAgentAdapterDictionary();
   return (
     <>
       <SettingsGroup title={m.settings_agent_chat_group()}>
@@ -109,7 +110,7 @@ export function SpaceAgentSection({
         {agents.map((agent) => (
           <SettingsItem
             key={agent.name}
-            title={cliAgentName(agent)}
+            title={agentNames.label(agent.adapter)}
             description={cliAgentNextStep(agent)}
             actions={
               <>
@@ -118,7 +119,7 @@ export function SpaceAgentSection({
                   checked={enabledClis.includes(agent.name)}
                   disabled={cliAgentStatus(agent) !== "authorized"}
                   aria-label={m.settings_space_cli_use({
-                    agent: cliAgentName(agent),
+                    agent: agentNames.label(agent.adapter),
                   })}
                   onCheckedChange={(checked) =>
                     onCliToggle(agent.name, checked)

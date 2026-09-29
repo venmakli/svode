@@ -93,6 +93,7 @@ impl AgentEvent {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AvailableAgent {
+    pub adapter: crate::agent_adapters::AgentAdapterKind,
     pub name: String,
     pub path: String,
     pub version: Option<String>,

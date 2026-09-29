@@ -18,13 +18,9 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
 } from "@/components/ui/sidebar";
+import { useAgentAdapterDictionary } from "@/features/agent-adapters";
 import { cn } from "@/shared/lib/utils";
-import {
-  scopeLabel,
-  sessionTimeLabel,
-  sourceLabel,
-  tooltipDateTime,
-} from "../lib";
+import { scopeLabel, sessionTimeLabel, tooltipDateTime } from "../lib";
 import {
   isPendingSessionId,
   type AgentSession,
@@ -76,6 +72,7 @@ export function SessionRow({
   onOpenExternalTerminal,
 }: SessionRowProps) {
   const [actionsOpen, setActionsOpen] = useState(false);
+  const agents = useAgentAdapterDictionary();
   const time = sessionTimeLabel(session);
   const hasOpenTerminal = Boolean(session.runtime?.ptyId);
   const canPin =
@@ -111,7 +108,7 @@ export function SessionRow({
         >
           <span className="font-medium">{session.title}</span>
           <span>
-            {sourceLabel(session.source)} ·{" "}
+            {agents.label(session.source)} ·{" "}
             {scopeLabel(session, rootName, spaceNames)}
           </span>
           <span>

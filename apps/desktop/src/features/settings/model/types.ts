@@ -1,4 +1,6 @@
 export interface AvailableAgent {
+  /** Adapter id of the agent in the adapter registry. */
+  adapter: string;
   name: string;
   path: string;
   version: string | null;

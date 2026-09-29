@@ -13,6 +13,7 @@ export const SCOPE_SURFACE_ORDER: Record<ScopeSurfaceId, number> = {
   attachments: 275,
   actors: 300,
   routines: 400,
+  sessions: 450,
 };
 
 export function hasScopeCapability(

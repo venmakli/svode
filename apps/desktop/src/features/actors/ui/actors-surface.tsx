@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle } from "lucide-react";
 
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { useAgentAdapterDictionary } from "@/features/agent-adapters";
 import {
   CollectionHost,
   useCollectionState,
@@ -55,6 +56,7 @@ export function ActorsSurface({
 }) {
   const { refresh, replaceSnapshot, state } = useActorCatalog(owner.spacePath);
   const accessRecovery = useRepositoryAccessPreflight();
+  const agents = useAgentAdapterDictionary();
   const repositoryTarget = useMemo<RepositoryAccessTarget>(
     () => ({
       displayName:
@@ -221,6 +223,7 @@ export function ActorsSurface({
   });
   const agentActorsPresentation = createAgentActorsPresentation({
     actions: agentActors.actions,
+    agents,
     inheritedVisible: agentActors.inheritedVisible,
     onActivate: createCollectionDetailActivation({
       controller: detailController,

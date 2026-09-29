@@ -1,3 +1,4 @@
+import type { AgentAdapterDictionary } from "@/features/agent-adapters";
 import {
   defineCollectionPresentation,
   type CollectionActionState,
@@ -26,11 +27,13 @@ export interface AgentActorsPresentationActions {
 
 export function createAgentActorsPresentation({
   actions,
+  agents,
   inheritedVisible,
   onActivate,
   state,
 }: {
   actions: AgentActorsPresentationActions;
+  agents: AgentAdapterDictionary;
   inheritedVisible: boolean;
   onActivate?: CollectionPresentationDescriptor<AgentActorRow>["onActivate"];
   state: CollectionPresentationState<AgentActorRow>;
@@ -39,6 +42,7 @@ export function createAgentActorsPresentation({
   return defineCollectionPresentation({
     descriptor: createAgentActorsPresentationDescriptor({
       actions,
+      agents,
       inheritedVisible,
       onActivate,
       rows,
@@ -49,15 +53,20 @@ export function createAgentActorsPresentation({
 
 export function createAgentActorsPresentationDescriptor({
   actions,
+  agents,
   inheritedVisible,
   onActivate,
   rows,
 }: {
   actions: AgentActorsPresentationActions;
+  agents: AgentAdapterDictionary;
   inheritedVisible: boolean;
   onActivate?: CollectionPresentationDescriptor<AgentActorRow>["onActivate"];
   rows: readonly AgentActorRow[];
 }): CollectionPresentationDescriptor<AgentActorRow> {
+  const agentOptions = agents.options(
+    rows.flatMap((row) => row.adapters.map((binding) => binding.adapter)),
+  );
   const ownerOptions = [...new Set(rows.map((row) => row.ownerLabel))].map(
     (name) => ({ color: "neutral" as const, name }),
   );
@@ -69,14 +78,11 @@ export function createAgentActorsPresentationDescriptor({
       },
       featureId: "actors",
       getValue: (row) =>
-        row.adapters.map((binding) => adapterLabel(binding.adapter)),
+        row.adapters.map((binding) => agents.label(binding.adapter)),
       key: "clients",
       label: m.agent_actors_field_clients(),
       standard: {
-        options: [
-          { color: "blue", name: "Codex" },
-          { color: "orange", name: "Claude Code" },
-        ],
+        options: agentOptions,
         type: "multi_select",
       },
     }),
@@ -86,14 +92,11 @@ export function createAgentActorsPresentationDescriptor({
         sort: { kind: "standard" },
       },
       featureId: "actors",
-      getValue: (row) => adapterLabel(row.adapters[0]!.adapter),
+      getValue: (row) => agents.label(row.adapters[0]!.adapter),
       key: "primary",
       label: m.agent_actors_field_primary(),
       standard: {
-        options: [
-          { color: "blue", name: "Codex" },
-          { color: "orange", name: "Claude Code" },
-        ],
+        options: agentOptions,
         type: "select",
       },
     }),
@@ -181,7 +184,7 @@ export function createAgentActorsPresentationDescriptor({
       defaultCompare: compareAgentActorsByDefault,
       getSearchText: (row) =>
         `${row.name} ${row.description ?? ""} ${row.ownerLabel} ${row.adapters
-          .map((binding) => adapterLabel(binding.adapter))
+          .map((binding) => agents.label(binding.adapter))
           .join(" ")}`,
     },
     rowActions: [
@@ -203,10 +206,6 @@ export function createAgentActorsPresentationDescriptor({
 
 export function agentActorRowId(row: AgentActorRow): string {
   return JSON.stringify([row.ownerPath, row.id]);
-}
-
-function adapterLabel(adapter: AgentActorRow["adapters"][number]["adapter"]) {
-  return adapter === "codex" ? "Codex" : "Claude Code";
 }
 
 function approvalLabel(mode: AgentActorRow["approvalMode"]) {

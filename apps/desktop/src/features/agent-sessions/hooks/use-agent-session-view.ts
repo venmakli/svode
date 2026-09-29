@@ -8,6 +8,7 @@ import {
   hasActionableWait,
   resolveAgentSessionId,
   type AgentSession,
+  type AgentSessionOpenOptions,
   type AgentSessionTarget,
 } from "../model";
 import { useAgentSessionCatalog } from "./use-agent-session-catalog";
@@ -56,6 +57,7 @@ export function useResolvedAgentSession(
  */
 export function useAgentSessionView(
   target: AgentSessionTarget,
+  { focusTerminal: focusOnOpen = false }: AgentSessionOpenOptions = {},
 ): AgentSessionView {
   const sessions = useAgentSessionCatalog((state) => state.sessions);
   const pendingHandoffs = useAgentSessionCatalog(
@@ -114,7 +116,7 @@ export function useAgentSessionView(
   const [attachedPtyId, setAttachedPtyId] = useState<string | null>(null);
   if (ptyId && ptyId !== attachedPtyId) setAttachedPtyId(ptyId);
   const terminalFinished = !ptyId && attachedPtyId !== null;
-  const [focusTerminal, setFocusTerminal] = useState(false);
+  const [focusTerminal, setFocusTerminal] = useState(focusOnOpen);
 
   const continueInTerminal = useCallback(() => {
     if (!session) return;

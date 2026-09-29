@@ -4,7 +4,6 @@ import {
   terminalActivityAt,
   type AgentSession,
 } from "../model";
-import * as m from "@/paraglide/messages.js";
 
 const MINUTE_MS = 60_000;
 const HOUR_MS = 60 * MINUTE_MS;
@@ -37,12 +36,6 @@ const COMPACT_TIME_SUFFIXES: Record<
     year: "г",
   },
 };
-
-export function sourceLabel(source: AgentSession["source"]): string {
-  if (source === "claude-code") return "Claude Code";
-  if (source === "codex") return "Codex";
-  return m.sessions_source_unknown();
-}
 
 export function shortSessionId(session: AgentSession): string {
   return session.sourceSessionId.slice(0, 8);

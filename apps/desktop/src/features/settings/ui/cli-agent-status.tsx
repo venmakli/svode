@@ -17,12 +17,6 @@ export function cliAgentStatus(agent: AvailableAgent): CliAgentStatus {
   return "unauthorized";
 }
 
-export function cliAgentName(agent: AvailableAgent) {
-  if (agent.name === "claude") return "Claude Code";
-  if (agent.name === "codex") return "Codex";
-  return agent.name;
-}
-
 export function CliAgentStatusBadge({ agent }: { agent: AvailableAgent }) {
   const version = agent.version || "—";
   switch (cliAgentStatus(agent)) {

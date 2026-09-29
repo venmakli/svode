@@ -119,10 +119,12 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
   function Harness({
     projectPath,
     target,
+    focusTerminal,
     onOpenChange,
   }: {
     projectPath: string;
     target: AgentSessionTarget | null;
+    focusTerminal?: boolean;
     onOpenChange: (open: boolean) => void;
   }) {
     useAgentSessionCatalogLifecycle(projectPath);
@@ -134,6 +136,7 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
       <TooltipProvider>
         <AgentSessionPeek
           target={target}
+          focusTerminal={focusTerminal}
           onOpenChange={onOpenChange}
           onExpand={async () => true}
         />
@@ -156,7 +159,11 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
     });
   }
 
-  async function mountPeek(projectPath: string, target: AgentSessionTarget) {
+  async function mountPeek(
+    projectPath: string,
+    target: AgentSessionTarget,
+    focusTerminal?: boolean,
+  ) {
     const container = document.createElement("div");
     document.body.append(container);
     const root: Root = createRoot(container);
@@ -168,6 +175,7 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
           <Harness
             projectPath={projectPath}
             target={next}
+            focusTerminal={focusTerminal}
             onOpenChange={(open) => openChanges.push(open)}
           />,
         );
@@ -202,6 +210,22 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
       expect(terminal()?.dataset.autofocus).toBe("true");
     },
   );
+
+  peekTest("a peek opened to work in the terminal focuses it", async () => {
+    listed = [
+      session({
+        id: "codex:focus",
+        title: "Focus",
+        runtime: { live: true, ptyId: "pty-focus" },
+      }),
+    ];
+    await mountPeek(
+      "/p-focus",
+      { sessionId: "codex:focus", launchId: null },
+      true,
+    );
+    expect(terminal()?.dataset.autofocus).toBe("true");
+  });
 
   peekTest(
     "Esc in the terminal stays with the agent; Esc in the chrome closes",

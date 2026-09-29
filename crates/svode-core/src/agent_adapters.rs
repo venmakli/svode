@@ -20,6 +20,9 @@ pub enum AgentAdapterKind {
 }
 
 impl AgentAdapterKind {
+    /// Every adapter of the registry, in its stable order.
+    pub const ALL: [Self; 2] = [Self::Codex, Self::ClaudeCode];
+
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Codex => CODEX_ADAPTER_ID,
@@ -33,6 +36,22 @@ impl AgentAdapterKind {
             Self::ClaudeCode => "claude",
         }
     }
+
+    /// The agent name the user sees wherever the adapter is labelled.
+    pub fn display_name(self) -> &'static str {
+        match self {
+            Self::Codex => "Codex",
+            Self::ClaudeCode => "Claude Code",
+        }
+    }
+}
+
+/// Identity of an adapter as every host labels it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentAdapterIdentity {
+    pub id: AgentAdapterKind,
+    pub display_name: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -117,11 +136,21 @@ impl SourceRegistryEnvironment {
 pub struct AgentAdapterRegistry;
 
 impl AgentAdapterRegistry {
+    pub fn identities(&self) -> Vec<AgentAdapterIdentity> {
+        AgentAdapterKind::ALL
+            .into_iter()
+            .map(|id| AgentAdapterIdentity {
+                id,
+                display_name: id.display_name().to_string(),
+            })
+            .collect()
+    }
+
     pub fn source_policies(
         &self,
         environment: &SourceRegistryEnvironment,
     ) -> Vec<AgentSourcePolicy> {
-        [AgentAdapterKind::Codex, AgentAdapterKind::ClaudeCode]
+        AgentAdapterKind::ALL
             .into_iter()
             .map(|id| self.source_policy(id, environment))
             .collect()
@@ -132,10 +161,9 @@ impl AgentAdapterRegistry {
         id: AgentAdapterKind,
         environment: &SourceRegistryEnvironment,
     ) -> AgentSourcePolicy {
-        let (display_name, policy, personal_root, skill_policy, project_skills, skill_roots) =
+        let (policy, personal_root, skill_policy, project_skills, skill_roots) =
             match id {
                 AgentAdapterKind::Codex => (
-                    "Codex",
                     InstructionDiscoveryPolicy::CodexAgents,
                     &environment.codex_home,
                     SkillDiscoveryPolicy::CodexDirectoryChain,
@@ -146,7 +174,6 @@ impl AgentAdapterRegistry {
                     }],
                 ),
                 AgentAdapterKind::ClaudeCode => (
-                    "Claude Code",
                     InstructionDiscoveryPolicy::ClaudeMemory,
                     &environment.claude_config_dir,
                     SkillDiscoveryPolicy::ClaudePersonalShadowsProject,
@@ -159,7 +186,7 @@ impl AgentAdapterRegistry {
             };
         AgentSourcePolicy {
             id,
-            display_name: display_name.to_string(),
+            display_name: id.display_name().to_string(),
             personal_root: path_string(personal_root),
             capabilities: AdapterSourceCapabilities {
                 instructions: InstructionDiscoveryCapability { policy },
@@ -309,6 +336,26 @@ mod tests {
         for snapshot in snapshots {
             assert!(!snapshot.capabilities.skills.personal_roots.is_empty());
         }
+    }
+
+    #[test]
+    fn identities_label_every_adapter_like_its_source_policy() {
+        let environment = SourceRegistryEnvironment::for_tests(PathBuf::from("/home/test"));
+        let identities = AgentAdapterRegistry.identities();
+        let policies = AgentAdapterRegistry.source_policies(&environment);
+
+        assert_eq!(
+            identities.iter().map(|identity| identity.id).collect::<Vec<_>>(),
+            AgentAdapterKind::ALL
+        );
+        for (identity, policy) in identities.iter().zip(&policies) {
+            assert_eq!(identity.id, policy.id);
+            assert_eq!(identity.display_name, policy.display_name);
+        }
+        assert_eq!(
+            serde_json::to_value(&identities[1]).unwrap(),
+            serde_json::json!({ "id": "claude-code", "displayName": "Claude Code" })
+        );
     }
 
     #[cfg(unix)]

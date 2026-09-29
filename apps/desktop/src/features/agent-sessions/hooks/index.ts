@@ -5,6 +5,8 @@ export {
   useListedAgentSessions,
 } from "./use-agent-session-catalog";
 export { useAgentSessions } from "./use-agent-sessions";
+export { useAgentSessionScopes } from "./use-agent-session-scopes";
+export { useStartAgentSession } from "./use-start-agent-session";
 export {
   useAgentSessionView,
   useResolvedAgentSession,

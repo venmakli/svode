@@ -1,7 +1,10 @@
 import { create } from "zustand";
 import { ENABLE_IN_APP_CHAT } from "@/app/config/feature-flags";
 import { getActiveContentPath } from "@/features/artifact";
-import type { AgentSessionTarget } from "@/features/agent-sessions";
+import type {
+  AgentSessionOpenOptions,
+  AgentSessionTarget,
+} from "@/features/agent-sessions";
 import type {
   KnowledgeGraphOpenRequest,
   KnowledgeGraphState,
@@ -26,6 +29,8 @@ interface ShellState {
   /** The session shown as the main area object while `mainSurface` is "session". */
   mainSessionTarget: AgentSessionTarget | null;
   sessionPeekTarget: AgentSessionTarget | null;
+  /** The peek was opened for work in the terminal, e.g. a new session. */
+  sessionPeekFocusTerminal: boolean;
   knowledgeGraphOpenRequest: KnowledgeGraphOpenRequest | null;
   nextKnowledgeGraphOpenRequestKey: number;
   sidebarWidth: number;
@@ -43,7 +48,10 @@ interface ShellState {
   openSessionsSurface: () => void;
   openSessionMainSurface: (target: AgentSessionTarget) => void;
   openGraphSurface: (state: KnowledgeGraphState) => void;
-  openSessionPeek: (target: AgentSessionTarget) => void;
+  openSessionPeek: (
+    target: AgentSessionTarget,
+    options?: AgentSessionOpenOptions,
+  ) => void;
   closeSessionPeek: () => void;
 }
 
@@ -87,6 +95,7 @@ export const useShellStore = create<ShellState>((set) => ({
   mainSurface: "content",
   mainSessionTarget: null,
   sessionPeekTarget: null,
+  sessionPeekFocusTerminal: false,
   knowledgeGraphOpenRequest: null,
   nextKnowledgeGraphOpenRequestKey: 1,
   sidebarWidth: readStoredSidebarWidth(),
@@ -144,6 +153,10 @@ export const useShellStore = create<ShellState>((set) => ({
       mainSessionTarget: null,
       sessionPeekTarget: null,
     })),
-  openSessionPeek: (target) => set({ sessionPeekTarget: target }),
+  openSessionPeek: (target, options) =>
+    set({
+      sessionPeekTarget: target,
+      sessionPeekFocusTerminal: options?.focusTerminal ?? false,
+    }),
   closeSessionPeek: () => set({ sessionPeekTarget: null }),
 }));

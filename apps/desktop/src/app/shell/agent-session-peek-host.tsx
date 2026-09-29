@@ -1,11 +1,15 @@
 import { useCallback } from "react";
 import {
   AgentSessionPeek,
+  useStartAgentSession,
   type AgentSession,
   type AgentSessionTarget,
 } from "@/features/agent-sessions";
 import { prepareActiveContentDeactivation } from "@/features/artifact";
-import { useCollectionDetailController } from "@/features/collection/app-shell";
+import {
+  runCollectionNavigation,
+  useCollectionDetailController,
+} from "@/features/collection/app-shell";
 import { useSpace } from "@/features/space";
 import { useShellStore } from "./model";
 
@@ -15,6 +19,9 @@ import { useShellStore } from "./model";
  */
 export function AgentSessionPeekHost() {
   const target = useShellStore((state) => state.sessionPeekTarget);
+  const focusTerminal = useShellStore(
+    (state) => state.sessionPeekFocusTerminal,
+  );
   const closeSessionPeek = useShellStore((state) => state.closeSessionPeek);
   const openSessionMainSurface = useShellStore(
     (state) => state.openSessionMainSurface,
@@ -43,10 +50,31 @@ export function AgentSessionPeekHost() {
   return (
     <AgentSessionPeek
       target={target}
+      focusTerminal={focusTerminal}
       onOpenChange={(open) => {
         if (!open) closeSessionPeek();
       }}
       onExpand={expand}
     />
+  );
+}
+
+/**
+ * Starts a new session in a Space and opens it in the session peek. Until the
+ * routine detail becomes a peek, an open Drawer closes first; a cancelled
+ * guard starts no terminal.
+ */
+export function useStartSessionInPeek() {
+  const startSession = useStartAgentSession();
+  const openSessionPeek = useShellStore((state) => state.openSessionPeek);
+  const detailController = useCollectionDetailController();
+  return useCallback(
+    (spacePath: string) => {
+      void runCollectionNavigation(detailController, async () => {
+        const target = await startSession(spacePath);
+        if (target) openSessionPeek(target, { focusTerminal: true });
+      });
+    },
+    [detailController, openSessionPeek, startSession],
   );
 }

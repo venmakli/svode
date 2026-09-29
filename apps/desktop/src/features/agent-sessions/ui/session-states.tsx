@@ -9,7 +9,8 @@ import {
   EmptyTitle,
 } from "@/components/ui/empty";
 import type { AgentSessionReentryResult } from "../api";
-import { scopeLabel, sourceLabel, tooltipDateTime } from "../lib";
+import { useAgentAdapterDictionary } from "@/features/agent-adapters";
+import { scopeLabel, tooltipDateTime } from "../lib";
 import type { AgentSession } from "../model";
 import { ExternalTerminalIcon } from "./external-terminal-icon";
 import { statusLabel } from "./session-status";
@@ -24,10 +25,11 @@ export function SessionMetadata({
   rootName: string | null;
   spaceNames: Map<string, string>;
 }) {
+  const agents = useAgentAdapterDictionary();
   return (
     <dl className="grid shrink-0 grid-cols-[8rem_minmax(0,1fr)] gap-x-3 gap-y-1 border-b bg-muted/30 px-4 py-3 text-xs">
       <dt className="text-muted-foreground">{m.sessions_metadata_source()}</dt>
-      <dd>{sourceLabel(session.source)}</dd>
+      <dd>{agents.label(session.source)}</dd>
       <dt className="text-muted-foreground">{m.sessions_metadata_scope()}</dt>
       <dd>{scopeLabel(session, rootName, spaceNames)}</dd>
       <dt className="text-muted-foreground">{m.sessions_metadata_status()}</dt>

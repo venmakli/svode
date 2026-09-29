@@ -1,5 +1,6 @@
 import {
   Bot,
+  BotMessageSquare,
   FileText,
   ListChecks,
   Paperclip,
@@ -85,6 +86,15 @@ export function createScopeSurfaceContributions(
       label: m.scope_surface_routines(),
       icon: ListChecks,
       render: renderers.routines ?? unavailable,
+    },
+    {
+      id: "sessions",
+      order: SCOPE_SURFACE_ORDER.sessions,
+      presentations: ["full"],
+      appliesTo: (owner) => owner.identityKind === "registered-space",
+      label: m.scope_surface_sessions(),
+      icon: BotMessageSquare,
+      render: renderers.sessions ?? unavailable,
     },
     {
       id: "context",

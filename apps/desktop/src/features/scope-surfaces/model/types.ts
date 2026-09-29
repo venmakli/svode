@@ -11,6 +11,7 @@ export type ScopeSurfaceId =
   | "app"
   | "collection"
   | "routines"
+  | "sessions"
   | "context";
 
 export type ScopeOwnerKey =
