@@ -1,8 +1,9 @@
-import { useLayoutEffect } from "react";
+import { useEffect, useLayoutEffect } from "react";
 import { useStore } from "zustand";
 import {
   closeManagedTerminalSurface,
   spawnManagedTerminalSurface,
+  subscribeManagedTerminalExit,
 } from "@/features/terminal/session-surface";
 import { getNativeErrorMessage } from "@/platform/native/errors";
 import {
@@ -62,6 +63,15 @@ export function useAgentSessionCatalogLifecycle(projectPath: string | null) {
       browserRefreshEnvironment,
     );
   }, [projectPath]);
+
+  // An exited session terminal is no longer live for any consumer.
+  useEffect(
+    () =>
+      subscribeManagedTerminalExit((ptyId) =>
+        agentSessionCatalog.getState().releaseTerminal(ptyId),
+      ),
+    [],
+  );
 }
 
 export function useAgentSessionCatalog<T>(

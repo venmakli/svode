@@ -49,10 +49,13 @@ import {
   SHELL_SIDEBAR_WIDTH_MAX,
   SHELL_SIDEBAR_WIDTH_MIN,
   useShellStore,
+  type MainSurface,
 } from "./model";
 import { GraphSurface, SessionsSurface } from "./main-surfaces";
+import { AgentSessionMainSurface } from "@/features/agent-sessions";
 import { ActiveSpaceContent } from "./active-space-content";
 import { AgentSessionCatalogHost } from "./agent-session-catalog-host";
+import { AgentSessionPeekHost } from "./agent-session-peek-host";
 import { cn } from "@/shared/lib/utils";
 
 type SidebarProviderStyle = CSSProperties & {
@@ -63,7 +66,7 @@ interface ShellLayoutContentProps {
   sidebarProviderRef: RefObject<HTMLDivElement | null>;
   identityName: string | null;
   identityEmail: string | null;
-  mainSurface: "content" | "sessions" | "graph";
+  mainSurface: MainSurface;
   onActivateContent: () => void;
   onBeforeNavigation: () => Promise<boolean>;
   onOpenSessions: () => void;
@@ -74,7 +77,7 @@ interface ShellLayoutContentProps {
 interface DesktopResizableShellProps {
   sidebarProviderRef: RefObject<HTMLDivElement | null>;
   sidebar: ReactNode;
-  mainSurface: "content" | "sessions" | "graph";
+  mainSurface: MainSurface;
   onBeforeNavigation: () => Promise<boolean>;
   onOpenAppSettings: () => void;
 }
@@ -179,6 +182,7 @@ function MainLayoutRuntime() {
         onOpenAppSettings={openAppSettings}
       />
       <AgentSessionCatalogHost projectPath={activeRootPath} />
+      <AgentSessionPeekHost />
       <SpaceFileWatcher />
       {activeRootPath && <SpaceGitWatcher spacePath={activeRootPath} />}
       <GitMissingDialog open={available === false} onRecheck={recheck} />
@@ -338,15 +342,13 @@ function ShellMainInset({
   onBeforeNavigation,
   onOpenAppSettings,
 }: {
-  mainSurface: "content" | "sessions" | "graph";
+  mainSurface: MainSurface;
   resizable?: boolean;
   onBeforeNavigation: () => Promise<boolean>;
   onOpenAppSettings?: () => void;
 }) {
   const isSessionsSurface = mainSurface === "sessions";
-  const agentSessionOpenRequest = useShellStore(
-    (state) => state.agentSessionOpenRequest,
-  );
+  const mainSessionTarget = useShellStore((state) => state.mainSessionTarget);
   const knowledgeGraphOpenRequest = useShellStore(
     (state) => state.knowledgeGraphOpenRequest,
   );
@@ -370,10 +372,9 @@ function ShellMainInset({
           )}
         >
           {isSessionsSurface ? (
-            <SessionsSurface
-              openRequest={agentSessionOpenRequest}
-              onOpenAppSettings={onOpenAppSettings}
-            />
+            <SessionsSurface onOpenAppSettings={onOpenAppSettings} />
+          ) : mainSurface === "session" && mainSessionTarget ? (
+            <AgentSessionMainSurface target={mainSessionTarget} />
           ) : mainSurface === "graph" ? (
             <GraphSurface
               openRequest={knowledgeGraphOpenRequest}

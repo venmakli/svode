@@ -25,6 +25,11 @@ import { MainBreadcrumbs } from "@/features/space/app-shell";
 import { ProjectExternalOpenButton } from "@/features/external-open";
 import { ProjectSwitcher } from "./project-switcher";
 import { useCollectionDetailController } from "@/features/collection/app-shell";
+import {
+  AgentSessionBreadcrumbs,
+  useAgentSessionSpace,
+  useResolvedAgentSession,
+} from "@/features/agent-sessions";
 
 function isMacPlatform() {
   if (typeof navigator === "undefined") return false;
@@ -100,6 +105,11 @@ export function WindowHeader() {
   const activeContentPath = useActiveContentPath();
   const toggleChatPanel = useShellStore((state) => state.toggleChatPanel);
   const mainSurface = useShellStore((state) => state.mainSurface);
+  const mainSessionTarget = useShellStore((state) =>
+    state.mainSurface === "session" ? state.mainSessionTarget : null,
+  );
+  const mainSession = useResolvedAgentSession(mainSessionTarget);
+  const mainSessionSpace = useAgentSessionSpace(mainSession);
   const openSpaceSettings = useShellStore((state) => state.openSpaceSettings);
   const activeRootPath = useSpace((state) => state.activeRootPath);
   const activeSpacePath = useSpace(selectActiveSpacePath);
@@ -111,6 +121,12 @@ export function WindowHeader() {
   // Check if we're on the /space route
   const isSpaceRoute = matches.some((match) => match.fullPath === "/space");
   const showBreadcrumbs = isSpaceRoute && mainSurface === "content";
+  // A session shows Git sync and changes of its own Space only.
+  const sessionSpace =
+    isSpaceRoute && mainSessionSpace?.ready ? mainSessionSpace : null;
+  const showGitSync =
+    isSpaceRoute &&
+    (!mainSessionTarget || sessionSpace?.spacePath === activeSpacePath);
   const sidebarHidden = state === "collapsed";
 
   return (
@@ -132,10 +148,13 @@ export function WindowHeader() {
             onBeforeNavigation={detailController.prepareForNavigation}
           />
         )}
+        {isSpaceRoute && mainSessionTarget && (
+          <AgentSessionBreadcrumbs target={mainSessionTarget} />
+        )}
       </div>
 
       <div className="flex shrink-0 items-center gap-1">
-        {isSpaceRoute && (
+        {showGitSync && (
           <GitSyncStatusWidget
             activateAccess={mainSurface === "content"}
             onOpenRepositorySettings={(repositoryPath) =>
@@ -159,6 +178,18 @@ export function WindowHeader() {
                 : selection.request.key
             }
             target={changesTarget}
+          />
+        ) : null}
+        {sessionSpace ? (
+          <ChangesControl
+            target={{
+              kind: sessionSpace.spaceId ? "space" : "project",
+              sourceShape: "directory",
+              spacePath: sessionSpace.spacePath,
+              projectPath: activeRootPath,
+              path: "",
+              name: sessionSpace.name,
+            }}
           />
         ) : null}
         {isSpaceRoute && activeRootPath ? (

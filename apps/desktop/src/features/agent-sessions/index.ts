@@ -1,7 +1,15 @@
 export {
   requestAgentSessionCatalogFastRefresh,
   useAgentSessionCatalogLifecycle,
+  useAgentSessionSpace,
   useListedAgentSessions,
+  useResolvedAgentSession,
+  type AgentSessionSpace,
 } from "./hooks";
-export { AgentSessionsScreen } from "./ui";
-export type { AgentSessionOpenRequest, AgentSessionOpenTarget } from "./model";
+export {
+  AgentSessionBreadcrumbs,
+  AgentSessionMainSurface,
+  AgentSessionPeek,
+  AgentSessionsScreen,
+} from "./ui";
+export type { AgentSession, AgentSessionTarget } from "./model";

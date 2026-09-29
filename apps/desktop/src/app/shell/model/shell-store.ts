@@ -1,10 +1,7 @@
 import { create } from "zustand";
 import { ENABLE_IN_APP_CHAT } from "@/app/config/feature-flags";
 import { getActiveContentPath } from "@/features/artifact";
-import type {
-  AgentSessionOpenRequest,
-  AgentSessionOpenTarget,
-} from "@/features/agent-sessions";
+import type { AgentSessionTarget } from "@/features/agent-sessions";
 import type {
   KnowledgeGraphOpenRequest,
   KnowledgeGraphState,
@@ -14,7 +11,7 @@ import type {
   SettingsDestination,
 } from "@/features/settings";
 
-export type MainSurface = "content" | "sessions" | "graph";
+export type MainSurface = "content" | "sessions" | "graph" | "session";
 
 const SIDEBAR_WIDTH_STORAGE_KEY = "svode:shell:sidebar-width";
 
@@ -26,8 +23,9 @@ interface ShellState {
   chatPanelOpen: boolean;
   settingsDestination: SettingsDestination | null;
   mainSurface: MainSurface;
-  agentSessionOpenRequest: AgentSessionOpenRequest | null;
-  nextAgentSessionOpenRequestKey: number;
+  /** The session shown as the main area object while `mainSurface` is "session". */
+  mainSessionTarget: AgentSessionTarget | null;
+  sessionPeekTarget: AgentSessionTarget | null;
   knowledgeGraphOpenRequest: KnowledgeGraphOpenRequest | null;
   nextKnowledgeGraphOpenRequestKey: number;
   sidebarWidth: number;
@@ -42,8 +40,11 @@ interface ShellState {
   ) => void;
   closeSettings: () => void;
   openContentSurface: () => void;
-  openSessionsSurface: (target?: AgentSessionOpenTarget) => void;
+  openSessionsSurface: () => void;
+  openSessionMainSurface: (target: AgentSessionTarget) => void;
   openGraphSurface: (state: KnowledgeGraphState) => void;
+  openSessionPeek: (target: AgentSessionTarget) => void;
+  closeSessionPeek: () => void;
 }
 
 function clampSidebarWidth(width: number) {
@@ -84,8 +85,8 @@ export const useShellStore = create<ShellState>((set) => ({
   chatPanelOpen: false,
   settingsDestination: null,
   mainSurface: "content",
-  agentSessionOpenRequest: null,
-  nextAgentSessionOpenRequestKey: 1,
+  mainSessionTarget: null,
+  sessionPeekTarget: null,
   knowledgeGraphOpenRequest: null,
   nextKnowledgeGraphOpenRequestKey: 1,
   sidebarWidth: readStoredSidebarWidth(),
@@ -112,21 +113,24 @@ export const useShellStore = create<ShellState>((set) => ({
 
   closeSettings: () => set({ settingsDestination: null }),
 
-  openContentSurface: () => set({ mainSurface: "content" }),
-  openSessionsSurface: (target) =>
-    set((state) => {
-      if (!target) {
-        return { agentSessionOpenRequest: null, mainSurface: "sessions" };
-      }
-      return {
-        agentSessionOpenRequest: {
-          ...target,
-          requestKey: state.nextAgentSessionOpenRequestKey,
-        },
-        mainSurface: "sessions",
-        nextAgentSessionOpenRequestKey:
-          state.nextAgentSessionOpenRequestKey + 1,
-      };
+  // A new main area object also ends the session peek above the old one.
+  openContentSurface: () =>
+    set({
+      mainSurface: "content",
+      mainSessionTarget: null,
+      sessionPeekTarget: null,
+    }),
+  openSessionsSurface: () =>
+    set({
+      mainSurface: "sessions",
+      mainSessionTarget: null,
+      sessionPeekTarget: null,
+    }),
+  openSessionMainSurface: (target) =>
+    set({
+      mainSurface: "session",
+      mainSessionTarget: target,
+      sessionPeekTarget: null,
     }),
   openGraphSurface: (graphState) =>
     set((state) => ({
@@ -137,5 +141,9 @@ export const useShellStore = create<ShellState>((set) => ({
       nextKnowledgeGraphOpenRequestKey:
         state.nextKnowledgeGraphOpenRequestKey + 1,
       mainSurface: "graph",
+      mainSessionTarget: null,
+      sessionPeekTarget: null,
     })),
+  openSessionPeek: (target) => set({ sessionPeekTarget: target }),
+  closeSessionPeek: () => set({ sessionPeekTarget: null }),
 }));

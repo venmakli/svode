@@ -14,7 +14,7 @@ import { cn } from "@/shared/lib/utils";
 import { NavSpaces } from "./nav-spaces";
 import * as m from "@/paraglide/messages.js";
 
-type MainSurface = "content" | "sessions" | "graph";
+type MainSurface = "content" | "sessions" | "graph" | "session";
 
 interface SpaceSidebarProps {
   userMenu: ReactNode;

@@ -101,21 +101,20 @@ export function ScopeSurfacePage({
     presentation === "compact" ? (routeState ?? compactRouteState) : routeState;
   const openPage = useOpenPage();
   const detailController = useCollectionDetailController();
-  const openSessionsSurface = useShellStore(
-    (state) => state.openSessionsSurface,
-  );
+  const openSessionPeek = useShellStore((state) => state.openSessionPeek);
   const openSpaceSettings = useShellStore((state) => state.openSpaceSettings);
   const openRepositorySettings = useCallback(
     (repositoryPath: string) => openSpaceSettings(repositoryPath, "git"),
     [openSpaceSettings],
   );
   const openRoutineSession = useCallback(
-    (target: { sessionId: string; launchId: string }) => {
+    ({ sessionId, launchId }: { sessionId: string; launchId: string }) => {
+      // Until the routine detail becomes a peek, its Drawer closes first.
       void runCollectionNavigation(detailController, () => {
-        openSessionsSurface(target);
+        openSessionPeek({ sessionId, launchId });
       });
     },
-    [detailController, openSessionsSurface],
+    [detailController, openSessionPeek],
   );
   const openPath = useCallback(
     (path: string, spaceId?: string | null) =>

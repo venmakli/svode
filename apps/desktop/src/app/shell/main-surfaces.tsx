@@ -1,7 +1,4 @@
-import {
-  AgentSessionsScreen,
-  type AgentSessionOpenRequest,
-} from "@/features/agent-sessions";
+import { AgentSessionsScreen } from "@/features/agent-sessions";
 import {
   KnowledgeGraphScreen,
   knowledgeOpenPath,
@@ -12,10 +9,8 @@ import { useSelectResult } from "@/features/search/app-shell";
 import { useSpace } from "@/features/space";
 
 export function SessionsSurface({
-  openRequest,
   onOpenAppSettings,
 }: {
-  openRequest?: AgentSessionOpenRequest | null;
   onOpenAppSettings?: () => void;
 }) {
   const activeRootPath = useSpace((state) => state.activeRootPath);
@@ -23,7 +18,6 @@ export function SessionsSurface({
     <AgentSessionsScreen
       // Screen-local selection and search start over for another project.
       key={activeRootPath ?? ""}
-      openRequest={openRequest}
       onOpenAppSettings={onOpenAppSettings}
     />
   );

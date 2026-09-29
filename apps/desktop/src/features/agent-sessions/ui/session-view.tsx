@@ -1,0 +1,374 @@
+import { useMemo, useState, type ReactNode } from "react";
+import { Copy, Info, MoreHorizontal, SquareTerminal, X } from "lucide-react";
+import { toast } from "sonner";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
+  Empty,
+  EmptyContent,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from "@/components/ui/empty";
+import { Skeleton } from "@/components/ui/skeleton";
+import { useSpace } from "@/features/space";
+import { ManagedTerminalSurface } from "@/features/terminal/session-surface";
+import { getNativeErrorMessage } from "@/platform/native/errors";
+import { useAgentSessionView, type AgentSessionView } from "../hooks";
+import {
+  scopeLabel,
+  sessionTimeLabel,
+  sourceLabel,
+  tooltipDateTime,
+} from "../lib";
+import type { AgentSession, AgentSessionTarget } from "../model";
+import {
+  ExternalTerminalAppProvider,
+  ExternalTerminalIcon,
+} from "./external-terminal-icon";
+import {
+  ReentryErrorState,
+  SessionMetadata,
+  SessionMissingState,
+  SessionResumingState,
+} from "./session-states";
+import { SessionStatusMarker, statusLabel } from "./session-status";
+import * as m from "@/paraglide/messages.js";
+
+/** Marks the session content, where keys belong to the terminal, not the host. */
+export const AGENT_SESSION_CONTENT_ATTRIBUTE = "data-agent-session-content";
+
+interface AgentSessionContentProps {
+  target: AgentSessionTarget;
+  /**
+   * Peek chrome: an action row above the identity header that receives the
+   * session menu. Without it the menu sits in the identity header.
+   */
+  renderActions?: (menu: ReactNode, view: AgentSessionView) => ReactNode;
+}
+
+/**
+ * Identity, status and terminal of one session, shared by the session peek and
+ * the main area. Opening it never resumes the agent.
+ */
+export function AgentSessionContent({
+  target,
+  renderActions,
+}: AgentSessionContentProps) {
+  const view = useAgentSessionView(target);
+  const [metadataOpen, setMetadataOpen] = useState(false);
+  const [confirmCloseOpen, setConfirmCloseOpen] = useState(false);
+  const { activeRootName, spaces } = useSpace();
+  const spaceNames = useMemo(() => {
+    const names = new Map<string, string>();
+    spaces.forEach((space) => {
+      names.set(space.id, space.name);
+      names.set(space.path, space.name);
+    });
+    return names;
+  }, [spaces]);
+  const session = view.session;
+
+  function closeTerminal() {
+    void view.closeTerminal().catch((error) => {
+      toast.error(m.sessions_toast_close_terminal_failed(), {
+        description: getNativeErrorMessage(error),
+      });
+    });
+  }
+
+  function copyResumeCommand() {
+    const command = view.resumeCommand;
+    if (!command) return;
+    void navigator.clipboard
+      .writeText(command)
+      .then(() => toast.success(m.sessions_toast_command_copied()))
+      .catch((error) => {
+        toast.error(m.sessions_toast_command_copy_failed(), {
+          description: getNativeErrorMessage(error),
+        });
+      });
+  }
+
+  function openExternalTerminal() {
+    void view.openExternalTerminal().catch((error) => {
+      toast.error(m.sessions_toast_external_terminal_failed(), {
+        description: getNativeErrorMessage(error),
+      });
+    });
+  }
+
+  const menu = (
+    <SessionActionsMenu
+      view={view}
+      metadataOpen={metadataOpen}
+      onToggleMetadata={() => setMetadataOpen((open) => !open)}
+      onCloseTerminal={() => {
+        if (view.agentBusy) setConfirmCloseOpen(true);
+        else closeTerminal();
+      }}
+      onCopyCommand={copyResumeCommand}
+      onOpenExternalTerminal={openExternalTerminal}
+    />
+  );
+
+  return (
+    <ExternalTerminalAppProvider>
+      <div className="flex h-full min-h-0 flex-col">
+        {renderActions && (
+          <div className="flex shrink-0 items-center justify-end gap-1 px-2 pb-2">
+            {renderActions(menu, view)}
+          </div>
+        )}
+        <header className="flex shrink-0 items-start gap-3 px-6 pb-3">
+          <SessionIdentity
+            session={session}
+            checking={view.checking}
+            identityLabel={
+              session ? scopeLabel(session, activeRootName, spaceNames) : null
+            }
+          />
+          {!renderActions && menu}
+        </header>
+        {metadataOpen && session && (
+          <SessionMetadata
+            session={session}
+            rootName={activeRootName}
+            spaceNames={spaceNames}
+          />
+        )}
+        <div
+          {...{ [AGENT_SESSION_CONTENT_ATTRIBUTE]: "" }}
+          className="min-h-0 flex-1 overflow-hidden"
+        >
+          <SessionBody
+            view={view}
+            onCopyCommand={copyResumeCommand}
+            onOpenExternalTerminal={openExternalTerminal}
+          />
+        </div>
+      </div>
+      <AlertDialog open={confirmCloseOpen} onOpenChange={setConfirmCloseOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {m.sessions_close_terminal_confirm_title()}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {m.sessions_close_terminal_confirm_description()}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{m.project_cancel()}</AlertDialogCancel>
+            <AlertDialogAction variant="destructive" onClick={closeTerminal}>
+              {m.sessions_action_close_terminal()}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </ExternalTerminalAppProvider>
+  );
+}
+
+function SessionIdentity({
+  session,
+  checking,
+  identityLabel,
+}: {
+  session: AgentSession | null;
+  checking: boolean;
+  identityLabel: string | null;
+}) {
+  if (!session) {
+    return (
+      <div className="flex min-w-0 flex-1 flex-col gap-1.5">
+        {checking ? (
+          <>
+            <Skeleton className="h-6 w-1/2" />
+            <Skeleton className="h-4 w-1/3" />
+          </>
+        ) : (
+          <h2 className="truncate text-lg font-semibold">
+            {m.sessions_title()}
+          </h2>
+        )}
+      </div>
+    );
+  }
+
+  const time = sessionTimeLabel(session);
+  return (
+    <div className="flex min-w-0 flex-1 flex-col gap-1">
+      <h2 className="truncate text-lg font-semibold">{session.title}</h2>
+      <div className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
+        <SessionStatusMarker session={session} />
+        <span className="truncate">
+          {[statusLabel(session), sourceLabel(session.source), identityLabel]
+            .filter(Boolean)
+            .join(" · ")}
+          {time && (
+            <>
+              {" · "}
+              <time
+                dateTime={session.lastActivityAt}
+                title={tooltipDateTime(session.lastActivityAt) ?? undefined}
+              >
+                {time}
+              </time>
+            </>
+          )}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function SessionBody({
+  view,
+  onCopyCommand,
+  onOpenExternalTerminal,
+}: {
+  view: AgentSessionView;
+  onCopyCommand: () => void;
+  onOpenExternalTerminal: () => void;
+}) {
+  const session = view.session;
+
+  if (view.ptyId) {
+    return (
+      <ManagedTerminalSurface
+        ptyId={view.ptyId}
+        title={session?.title ?? m.sessions_title()}
+        autoFocus={view.focusTerminal}
+        containerClassName="pb-0"
+      />
+    );
+  }
+  if (!session && !view.terminalFinished) {
+    return view.checking ? null : <SessionMissingState />;
+  }
+  if (view.reentering) return <SessionResumingState />;
+  if (view.reentryResult?.mode === "error") {
+    return (
+      <ReentryErrorState
+        result={view.reentryResult}
+        onCopyCommand={onCopyCommand}
+        onOpenExternalTerminal={onOpenExternalTerminal}
+        onRetry={view.continueInTerminal}
+      />
+    );
+  }
+
+  const canContinue = Boolean(session?.capabilities.canResume);
+  return (
+    <Empty className="h-full border-0">
+      <EmptyHeader>
+        <EmptyMedia variant="icon">
+          <SquareTerminal />
+        </EmptyMedia>
+        <EmptyTitle>
+          {view.terminalFinished
+            ? m.sessions_terminal_finished_title()
+            : m.sessions_terminal_closed_title()}
+        </EmptyTitle>
+        <EmptyDescription>
+          {canContinue
+            ? m.sessions_continue_description()
+            : m.sessions_continue_unavailable_description()}
+        </EmptyDescription>
+      </EmptyHeader>
+      {canContinue && (
+        <EmptyContent>
+          <Button size="sm" onClick={view.continueInTerminal}>
+            <SquareTerminal data-icon="inline-start" />
+            {m.sessions_action_continue_in_terminal()}
+          </Button>
+        </EmptyContent>
+      )}
+    </Empty>
+  );
+}
+
+function SessionActionsMenu({
+  view,
+  metadataOpen,
+  onToggleMetadata,
+  onCloseTerminal,
+  onCopyCommand,
+  onOpenExternalTerminal,
+}: {
+  view: AgentSessionView;
+  metadataOpen: boolean;
+  onToggleMetadata: () => void;
+  onCloseTerminal: () => void;
+  onCopyCommand: () => void;
+  onOpenExternalTerminal: () => void;
+}) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          aria-label={m.sessions_action_more()}
+        >
+          <MoreHorizontal />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="min-w-56">
+        <DropdownMenuGroup>
+          <DropdownMenuItem
+            disabled={!view.resumeCommand}
+            onSelect={onCopyCommand}
+          >
+            <Copy />
+            {m.sessions_action_copy_resume_command()}
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            disabled={!view.externalTerminalCwd}
+            onSelect={onOpenExternalTerminal}
+          >
+            <ExternalTerminalIcon />
+            {m.sessions_action_open_external_terminal()}
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            disabled={!view.session}
+            onSelect={onToggleMetadata}
+          >
+            <Info />
+            {metadataOpen
+              ? m.sessions_action_hide_metadata()
+              : m.sessions_action_view_metadata()}
+          </DropdownMenuItem>
+        </DropdownMenuGroup>
+        {view.ptyId && (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem variant="destructive" onSelect={onCloseTerminal}>
+              <X />
+              {m.sessions_action_close_terminal()}
+            </DropdownMenuItem>
+          </>
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}

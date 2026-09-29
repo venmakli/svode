@@ -7,11 +7,10 @@ import {
 import {
   DEFAULT_SPACE_GROUP_LIMIT,
   buildAgentSessionGroups,
-  findAgentSessionForOpenRequest,
   isPendingSessionId,
+  resolveAgentSessionId,
   type AgentSession,
   type AgentSessionGroupingResult,
-  type AgentSessionOpenRequest,
   type AgentSessionSelectionSource,
   type AgentSessionScopeGroup,
 } from "../model";
@@ -42,20 +41,10 @@ function resolveSelection(
   sessions: AgentSession[],
   pendingHandoffs: Record<string, string>,
 ): { selectedSessionId: string | null; selectedStableGroupId: string | null } {
-  if (!selection) return { selectedSessionId: null, selectedStableGroupId: null };
+  if (!selection)
+    return { selectedSessionId: null, selectedStableGroupId: null };
 
-  let sessionId = pendingHandoffs[selection.sessionId] ?? selection.sessionId;
-  if (
-    selection.launchId &&
-    !sessions.some((session) => session.id === sessionId)
-  ) {
-    const canonical = sessions.find(
-      (session) =>
-        session.launchId === selection.launchId &&
-        session.runtime?.provisional !== true,
-    );
-    if (canonical) sessionId = canonical.id;
-  }
+  const sessionId = resolveAgentSessionId(selection, sessions, pendingHandoffs);
 
   return {
     selectedSessionId: sessionId,
@@ -105,7 +94,6 @@ interface UseAgentSessionsResult {
 export function useAgentSessions(
   projectPath: string | null,
   spaceScopes: AgentSessionScopeGroup[] = [],
-  openRequest?: AgentSessionOpenRequest | null,
 ): UseAgentSessionsResult {
   const result = useAgentSessionCatalog((state) => state.result);
   const sessions = useAgentSessionCatalog((state) => state.sessions);
@@ -147,27 +135,6 @@ export function useAgentSessions(
     () => new Set(),
   );
   const [selection, setSelection] = useState<SessionSelection | null>(null);
-  const [handledOpenRequestKey, setHandledOpenRequestKey] = useState<
-    number | null
-  >(null);
-  const [openRequestReentry, setOpenRequestReentry] = useState<{
-    requestKey: number;
-    session: AgentSession;
-  } | null>(null);
-
-  // An open request selects its session once the catalog lists it.
-  const openRequestSession =
-    openRequest && handledOpenRequestKey !== openRequest.requestKey
-      ? findAgentSessionForOpenRequest(sessions, openRequest)
-      : null;
-  if (openRequest && openRequestSession) {
-    setHandledOpenRequestKey(openRequest.requestKey);
-    setSelection(selectionFor(openRequestSession, null));
-    setOpenRequestReentry({
-      requestKey: openRequest.requestKey,
-      session: openRequestSession,
-    });
-  }
 
   const { selectedSessionId, selectedStableGroupId } = resolveSelection(
     selection,
@@ -179,15 +146,6 @@ export function useAgentSessions(
   useEffect(() => {
     if (projectPath) void load();
   }, [load, projectPath]);
-
-  const openRequestKey = openRequest?.requestKey ?? null;
-  useEffect(() => {
-    if (projectPath && openRequestKey !== null) void load();
-  }, [load, openRequestKey, projectPath]);
-
-  useEffect(() => {
-    if (openRequestReentry) void reenter(openRequestReentry.session);
-  }, [openRequestReentry, reenter]);
 
   useEffect(() => {
     if (!selectedSessionId) return;

@@ -58,3 +58,23 @@ test("global Variables opens the full settings catalog", () => {
   useShellStore.getState().closeSettings();
   expect(useShellStore.getState().settingsDestination).toBeNull();
 });
+
+test("a session is its own main area object and replaces the session peek", () => {
+  const target = { sessionId: "codex:a", launchId: "launch-a" };
+  useShellStore.getState().openContentSurface();
+
+  useShellStore.getState().openSessionPeek(target);
+  expect(useShellStore.getState().sessionPeekTarget).toEqual(target);
+  expect(useShellStore.getState().mainSurface).toBe("content");
+
+  useShellStore.getState().openSessionMainSurface(target);
+  expect(useShellStore.getState().mainSurface).toBe("session");
+  expect(useShellStore.getState().mainSessionTarget).toEqual(target);
+  expect(useShellStore.getState().sessionPeekTarget).toBeNull();
+
+  useShellStore.getState().openSessionPeek(target);
+  useShellStore.getState().openContentSurface();
+  expect(useShellStore.getState().mainSurface).toBe("content");
+  expect(useShellStore.getState().mainSessionTarget).toBeNull();
+  expect(useShellStore.getState().sessionPeekTarget).toBeNull();
+});

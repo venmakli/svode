@@ -14,6 +14,8 @@ interface UseTerminalPaneRuntimeOptions {
   tab: TerminalTab;
   active: boolean;
   panelOpen: boolean;
+  /** Focus the terminal when it attaches or becomes active; true by default. */
+  autoFocus?: boolean;
 }
 
 type Disposable = { dispose: () => void };
@@ -45,12 +47,14 @@ export function useTerminalPaneRuntime({
   tab,
   active,
   panelOpen,
+  autoFocus = true,
 }: UseTerminalPaneRuntimeOptions) {
   const containerRef = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
   const ptyIdRef = useRef<string | null>(tab.ptyId);
   const activeRef = useRef(active);
+  const autoFocusRef = useRef(autoFocus);
   const panelOpenRef = useRef(panelOpen);
   const fitFrameRef = useRef<number | null>(null);
   const fitTimerRefs = useRef<number[]>([]);
@@ -67,7 +71,8 @@ export function useTerminalPaneRuntime({
   useEffect(() => {
     activeRef.current = active;
     panelOpenRef.current = panelOpen;
-  }, [active, panelOpen]);
+    autoFocusRef.current = autoFocus;
+  }, [active, autoFocus, panelOpen]);
 
   const terminalVisible =
     tab.status === "spawning" ||
@@ -220,7 +225,7 @@ export function useTerminalPaneRuntime({
     fitAddonRef.current = fitAddon;
 
     scheduleStabilizedFit({
-      focus: true,
+      focus: autoFocusRef.current,
       scrollToBottom: true,
     });
 
@@ -259,10 +264,10 @@ export function useTerminalPaneRuntime({
   useEffect(() => {
     if (!active || !panelOpen) return;
     scheduleStabilizedFit({
-      focus: true,
+      focus: autoFocus,
       scrollToBottom: true,
     });
-  }, [active, panelOpen, scheduleStabilizedFit]);
+  }, [active, autoFocus, panelOpen, scheduleStabilizedFit]);
 
   useEffect(() => {
     if (!active || !panelOpen) return;

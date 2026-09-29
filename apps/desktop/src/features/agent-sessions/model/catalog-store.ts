@@ -13,6 +13,7 @@ import {
   type LocalSessionTerminal,
   type PendingAgentSessionTerminal,
 } from "./pending";
+import { resolveAgentSessionId, type AgentSessionTarget } from "./target";
 import type { AgentSession, AgentSessionScopeGroup } from "./types";
 
 /** Backend and terminal effects the project session catalog depends on. */
@@ -68,6 +69,8 @@ export interface AgentSessionCatalogState {
 
   setProject: (projectPath: string | null) => void;
   load: (options?: AgentSessionCatalogLoadOptions) => Promise<void>;
+  /** Loads until a list that started after the call has been read for the target. */
+  loadTarget: (target: AgentSessionTarget) => Promise<void>;
   loadHotStatus: (sessionIds: string[]) => Promise<void>;
   reenter: (session: AgentSession) => Promise<void>;
   togglePinned: (session: AgentSession) => Promise<void>;
@@ -77,6 +80,8 @@ export interface AgentSessionCatalogState {
   ) => Promise<string | null>;
   closeTerminal: (sessionId: string, ptyId: string) => Promise<void>;
   closeAllTerminals: () => Promise<void>;
+  /** Forgets a session terminal whose process has exited. */
+  releaseTerminal: (ptyId: string) => void;
   observeSession: (sessionId: string) => () => void;
   requestFastRefresh: () => () => void;
 }
@@ -87,12 +92,14 @@ type CatalogData = Omit<
   AgentSessionCatalogState,
   | "setProject"
   | "load"
+  | "loadTarget"
   | "loadHotStatus"
   | "reenter"
   | "togglePinned"
   | "openNewSessionTerminal"
   | "closeTerminal"
   | "closeAllTerminals"
+  | "releaseTerminal"
   | "observeSession"
   | "requestFastRefresh"
 >;
@@ -167,6 +174,24 @@ function withSetItem(set: ReadonlySet<string>, item: string, present: boolean) {
     next.delete(item);
   }
   return next;
+}
+
+function withoutTerminalRuntime(
+  result: AgentSessionsListResult | null,
+  ptyIds: ReadonlySet<string>,
+): AgentSessionsListResult | null {
+  if (!result) return result;
+  let changed = false;
+  const sessions = result.sessions.map((session) => {
+    const ptyId = session.runtime?.ptyId;
+    if (!ptyId || !ptyIds.has(ptyId)) return session;
+    changed = true;
+    return {
+      ...session,
+      runtime: { ...session.runtime, ptyId: undefined, live: false },
+    };
+  });
+  return changed ? { ...result, sessions } : result;
 }
 
 function mergeHotStatusSessions(
@@ -265,7 +290,9 @@ export function createAgentSessionCatalogStore(
       };
     };
 
-    const load = async ({ force = false }: AgentSessionCatalogLoadOptions = {}) => {
+    const load = async ({
+      force = false,
+    }: AgentSessionCatalogLoadOptions = {}) => {
       const projectPath = get().projectPath;
       if (!projectPath) return;
       if (listInFlight?.generation === generation) return listInFlight.promise;
@@ -302,8 +329,33 @@ export function createAgentSessionCatalogStore(
           }
         }
       })();
-      listInFlight = { generation: token, requestId: currentRequestId, promise };
+      listInFlight = {
+        generation: token,
+        requestId: currentRequestId,
+        promise,
+      };
       return promise;
+    };
+
+    /** Drops local runtime of terminals that no longer run. */
+    const forgetTerminals = (ptyIds: ReadonlySet<string>) => {
+      const current = get();
+      update({
+        result: withoutTerminalRuntime(current.result, ptyIds),
+        pendingTerminals: current.pendingTerminals.filter(
+          (pending) => !ptyIds.has(pending.ptyId),
+        ),
+        terminals: Object.fromEntries(
+          Object.entries(current.terminals).filter(
+            ([, terminal]) => !ptyIds.has(terminal.ptyId),
+          ),
+        ),
+        reentryResults: Object.fromEntries(
+          Object.entries(current.reentryResults).filter(
+            ([, result]) => !result.ptyId || !ptyIds.has(result.ptyId),
+          ),
+        ),
+      });
     };
 
     return {
@@ -325,10 +377,23 @@ export function createAgentSessionCatalogStore(
 
       load,
 
+      loadTarget: async (target) => {
+        await load();
+        const { sessions, pendingHandoffs } = get();
+        const sessionId = resolveAgentSessionId(
+          target,
+          sessions,
+          pendingHandoffs,
+        );
+        if (sessions.some((session) => session.id === sessionId)) return;
+        await load();
+      },
+
       loadHotStatus: async (sessionIds) => {
         const projectPath = get().projectPath;
         if (!projectPath || sessionIds.length === 0 || !get().result) return;
-        if (listInFlight?.generation === generation) return listInFlight.promise;
+        if (listInFlight?.generation === generation)
+          return listInFlight.promise;
         if (hotInFlight?.generation === generation) return hotInFlight.promise;
 
         const token = generation;
@@ -422,7 +487,9 @@ export function createAgentSessionCatalogStore(
               },
             });
           } finally {
-            if (reentryInFlight.get(session.id)?.requestId === currentRequestId) {
+            if (
+              reentryInFlight.get(session.id)?.requestId === currentRequestId
+            ) {
               reentryInFlight.delete(session.id);
             }
             if (isCurrentProject(token, projectPath)) {
@@ -530,17 +597,13 @@ export function createAgentSessionCatalogStore(
 
       closeTerminal: async (sessionId, ptyId) => {
         await api.closeTerminal(ptyId);
-        const { pendingTerminals, terminals, reentryResults } = get();
+        forgetTerminals(new Set([ptyId]));
+        const { pendingTerminals, terminals } = get();
         update({
           pendingTerminals: pendingTerminals.filter(
-            (pending) => pending.id !== sessionId && pending.ptyId !== ptyId,
+            (pending) => pending.id !== sessionId,
           ),
           terminals: withoutKey(terminals, sessionId),
-          reentryResults: Object.fromEntries(
-            Object.entries(reentryResults).filter(
-              ([, result]) => result.ptyId !== ptyId,
-            ),
-          ),
         });
         await load();
       },
@@ -575,22 +638,7 @@ export function createAgentSessionCatalogStore(
         );
 
         if (closed.size > 0) {
-          const current = get();
-          update({
-            pendingTerminals: current.pendingTerminals.filter(
-              (pending) => !closed.has(pending.ptyId),
-            ),
-            terminals: Object.fromEntries(
-              Object.entries(current.terminals).filter(
-                ([, terminal]) => !closed.has(terminal.ptyId),
-              ),
-            ),
-            reentryResults: Object.fromEntries(
-              Object.entries(current.reentryResults).filter(
-                ([, result]) => !result.ptyId || !closed.has(result.ptyId),
-              ),
-            ),
-          });
+          forgetTerminals(closed);
           await load();
         }
 
@@ -599,6 +647,21 @@ export function createAgentSessionCatalogStore(
             result.status === "rejected",
         );
         if (failed) throw failed.reason;
+      },
+
+      releaseTerminal: (ptyId) => {
+        const { sessions, terminals, reentryResults } = get();
+        const known =
+          sessions.some((session) => session.runtime?.ptyId === ptyId) ||
+          Object.values(terminals).some(
+            (terminal) => terminal.ptyId === ptyId,
+          ) ||
+          Object.values(reentryResults).some(
+            (result) => result.ptyId === ptyId,
+          );
+        if (!known) return;
+        forgetTerminals(new Set([ptyId]));
+        void load();
       },
 
       observeSession: (sessionId) => {

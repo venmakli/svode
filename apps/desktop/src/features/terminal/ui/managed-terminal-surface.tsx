@@ -20,6 +20,8 @@ interface ManagedTerminalSurfaceProps {
   ptyId: string;
   title?: string;
   active?: boolean;
+  /** Moves focus into the terminal once it is attached. */
+  autoFocus?: boolean;
   className?: string;
   containerClassName?: string;
 }
@@ -28,6 +30,7 @@ interface ManagedTerminalSurfaceInstanceProps {
   ptyId: string;
   title: string;
   active: boolean;
+  autoFocus: boolean;
   className?: string;
   containerClassName?: string;
 }
@@ -36,6 +39,7 @@ export function ManagedTerminalSurface({
   ptyId,
   title = "Agent session",
   active = true,
+  autoFocus = true,
   className,
   containerClassName,
 }: ManagedTerminalSurfaceProps) {
@@ -45,6 +49,7 @@ export function ManagedTerminalSurface({
       ptyId={ptyId}
       title={title}
       active={active}
+      autoFocus={autoFocus}
       className={className}
       containerClassName={containerClassName}
     />
@@ -54,6 +59,26 @@ export function ManagedTerminalSurface({
 export async function closeManagedTerminalSurface(ptyId: string) {
   clearTerminalOutput(ptyId);
   await killTerminal(ptyId);
+}
+
+/** Calls the listener with the pty id of every managed terminal that exits. */
+export function subscribeManagedTerminalExit(
+  listener: (ptyId: string) => void,
+): () => void {
+  let unlisten: (() => void) | null = null;
+  let cancelled = false;
+  void onTerminalExit((event) => listener(event.ptyId))
+    .then((stop) => {
+      if (cancelled) stop();
+      else unlisten = stop;
+    })
+    .catch((err) => {
+      console.warn("Failed to listen to managed terminal exit:", err);
+    });
+  return () => {
+    cancelled = true;
+    unlisten?.();
+  };
 }
 
 export function spawnManagedTerminalSurface(
@@ -72,6 +97,7 @@ function ManagedTerminalSurfaceInstance({
   ptyId,
   title,
   active,
+  autoFocus,
   className,
   containerClassName,
 }: ManagedTerminalSurfaceInstanceProps) {
@@ -98,6 +124,7 @@ function ManagedTerminalSurfaceInstance({
       tab,
       active,
       panelOpen: active,
+      autoFocus,
     });
 
   useEffect(() => {
