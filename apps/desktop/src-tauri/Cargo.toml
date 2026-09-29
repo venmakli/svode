@@ -1,6 +1,6 @@
 [package]
 name = "svode-desktop"
-version = "0.0.8"
+version = "0.0.9"
 authors = ["Kamnev Ilya"]
 edition = "2024"
 repository = "https://github.com/venmakli/svode"

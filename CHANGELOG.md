@@ -1,10 +1,55 @@
 # Changelog
 
-## [Unreleased]
+## [0.0.9] - 2026-09-29
+
+### Added
+
+- **Svode CLI.** Added the `svode` command covering the MCP data scope: Page, owner, and item reads and writes, Collection schema, views, and integrity checks, structural changes, asset import, App manifest validation, Search and Knowledge, Git status and repository access verification, and Routine definitions. Commands resolve the Project and Space from the working directory, print `--json` output, and return stable error codes and exit statuses.
+- **Headless runtime.** `svode-mcp --project <path>` and `svode` serve a project without the desktop app: index-backed reads, Git status, repository access, all data writes, and Routine definitions. The headless catalog has 53 tools; `run_routine` stays available only through the running desktop app.
+- **Automatic MCP mode.** `svode-mcp` without arguments uses the desktop bridge when the app answers at session start, and otherwise serves the project of the launch directory headless.
+- **Svode plugin and agent connections.** Added the Svode plugin payload, a CLI-first product skill for Claude Code and Codex, and a stable runtime location `~/.svode` with `svode` and `svode-mcp` launchers. Settings → Providers connects Claude Code and Codex with one switch (skill, `svode`, and MCP) and shows CLI detection, sign-in, versions, and Doctor; `svode integration` does the same without the desktop app. Connections update together with the runtime.
+- **Standalone runtime.** Added a standalone runtime archive and installer script for macOS and Linux x86_64 that installs `svode` and `svode-mcp` without the desktop app and coexists with a desktop installation. Public download channels come later.
+- **Coordinated source writes.** Desktop, MCP, and CLI writers guard managed source writes per repository. Body writes carry the `sourceVersion` of the last read and fail with `SOURCE_STALE` or `SOURCE_BUSY` instead of overwriting another writer's change; the desktop editor keeps a stale draft and offers inline recovery.
+- **External open.** A shared split button opens projects, Pages, documents, and media in the OS default app or another installed app, with real app names and icons on macOS, Windows, and Linux.
+- **Terminal drawer.** The terminal opens in a resizable drawer on the right or at the bottom, toggled from Sessions or with Ctrl+`.
+- **Settings.** Application and project settings share one dialog with a compact user menu, theme controls, update checks, and a keyboard shortcut reference. Settings pages are laid out as titled groups of rows per Project, Space, and repository.
+- **Scoped Variables.** Project, Space, and global Variables with shared secrets for Apps, S3 storage, and LFS credentials, saved through the guarded system autocommit.
+
+### Changed
+
+- Ships the accepted and frozen Stage 9 snapshot. Page, Collection, structural, import, index, Search and Knowledge, Git, and Routine logic moved into the `svode-core` library; the desktop app, MCP, and CLI run the same domain operations with the same validation, effects, and rollback.
+- `svode-mcp` is a standalone package over the shared `svode-tools` tool surface instead of a service embedded in the desktop app.
+- Renamed the LFS sidecar from `lfs-dal` to `svode-lfs`; existing LFS registrations are repaired automatically.
+- The full Page and Peek use one Page detail runtime, and Page, Space, Collection, and App tabs come from one shared scope surface in both views.
+- Merged repository access into the header Git sync control; Changes shows as a quiet icon when its scope has nothing to review.
+- Routine executors are shown as agent actors with an avatar and name.
+- Human avatars use local initials; Gravatar lookups are removed.
+- Upgraded Plate to 53, keeping links inside Markdown tables.
+- Git operations are coordinated per repository and intent, with faster local observation and publication checks.
+
+### Fixed
+
+- Fixed Git saves of new files with non-ASCII paths, saves after a chain of renames, project root saves with submodule Spaces, submodule Spaces left in detached HEAD after cloning, and LFS downloads in submodules and worktrees.
+- `lfs-s3` Spaces declare their object storage in a committed `.lfsconfig`, and LFS push rejections show typed, localized recovery instead of raw Git output.
+- Repository access status follows the actual ability to write, is verified once on activation and expiry, and is shared across processes; access-probe commits no longer appear as actors.
+- Page rename is isolated from unrelated broken Collection schemas. Blocked saves name every blocking repository and let you discard unsaved changes, and unsaved property drafts stay visible.
+- An open Page detail picks up another writer's metadata and schema changes, and only the surface whose file disappeared closes.
+- Select and multi-select columns can be created without options; row action menus open from the keyboard and VoiceOver; attachments include nested Collections and App owners.
+- Failed App processes are no longer treated as external services. App processes and agent CLI detection use the login shell `PATH` when the app is launched from Finder.
+- Fixed sidebar expansion after renames and moves, the dark theme startup background, CRLF frontmatter boundaries on Windows, accumulating incompatible local database copies, local ignore rules for Spaces, and Variables load errors without a cause.
+
+### Migration
+
+- On first start the desktop app installs its runtime into `~/.svode` and moves the Claude Code and Codex MCP entries that earlier desktop versions managed to the `~/.svode/bin/svode-mcp` launcher. Settings → Providers replaces MCP Integrations and CLI Agents. Restart open agent sessions to pick up the change.
+- The `create_collection_item` MCP tool is removed. Create Collection items with `create_page` in the Collection directory; its schema applies by location and initial properties are validated against it.
+- `write_page`, `update_collection_item_body`, `write_space_readme`, and `write_collection_readme` require the `sourceVersion` returned by the last read or write of that source.
 
 ### Compatibility
 
 - Select and multi-select columns may now have no options, and `schema.yaml` stores them as `options: []`. Svode and `svode-mcp` builds up to 0.0.8 reject such a Collection schema with a schema error; update every client that opens the same Space.
+- Headless MCP and the CLI do not launch Routines; one-time Routine launches without the desktop app are planned for a later release.
+- The standalone runtime and installer target macOS and Linux x86_64; Windows support comes later.
+- Auto-update, Apple notarization, and platform code signing remain disabled for dogfood snapshots; installers are distributed through draft prereleases without `latest.json` or updater signatures.
 
 ## [0.0.8] - 2026-09-06
 
