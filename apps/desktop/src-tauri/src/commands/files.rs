@@ -17,7 +17,6 @@ use crate::index::update::IndexUpdateState;
 use crate::index::{IndexState, ResolvedDocLink};
 use crate::properties::read;
 use crate::repo_path::{RootMode, normalize_repo_relative};
-use crate::space::config;
 use svode_core::collections::engine::{
     self as engine, CollectionInfo, CollectionSchema, Column, EntryFieldBatchIntent,
     EntrySchemaResponse, Filter, PropertyOption, PropertyType, RelationBacklink,

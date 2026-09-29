@@ -29,7 +29,6 @@ function session(overrides: Partial<AgentSession> = {}): AgentSession {
       canRevealFile: true,
       hasReadableLog: true,
     },
-    pinned: false,
     sourceMeta: {
       historyPresent: false,
       detailPresent: false,

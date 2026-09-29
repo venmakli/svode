@@ -181,7 +181,7 @@ pub struct SpaceDefaults {
 
 // --- Local Config (.svode/local.json) ---
 
-pub use svode_core::routines::local::{AgentSessionsLocalConfig, GitUserPolicy, LocalConfig};
+pub use svode_core::routines::local::{GitUserPolicy, LocalConfig};
 
 // --- Git type & status ---
 
@@ -281,25 +281,6 @@ mod tests {
                 auto_sync: true,
                 auto_commit_structural: true,
                 auto_commit_system: false,
-            })
-        );
-    }
-
-    #[test]
-    fn local_config_accepts_agent_sessions_overlay() {
-        let config: LocalConfig = serde_json::from_str(
-            r#"{
-                "agentSessions": {
-                    "pinnedSessionIds": ["codex:one", "claude-code:two"]
-                }
-            }"#,
-        )
-        .expect("deserialize local config");
-
-        assert_eq!(
-            config.agent_sessions,
-            Some(AgentSessionsLocalConfig {
-                pinned_session_ids: vec!["codex:one".to_string(), "claude-code:two".to_string()],
             })
         );
     }

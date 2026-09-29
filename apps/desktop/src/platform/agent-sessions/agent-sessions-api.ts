@@ -109,7 +109,6 @@ export interface AgentSession {
   sourceFile?: AgentSessionFileRef;
   counts?: AgentSessionCounts;
   capabilities: AgentSessionCapabilities;
-  pinned: boolean;
   sourceMeta: AgentSessionSourceMeta;
 }
 
@@ -140,7 +139,6 @@ export interface AgentSessionsListResult {
 
 export interface AgentSessionsListSummary {
   returnedSessions: number;
-  pinnedSessions: number;
   unresolvedCandidates: number;
   incompleteCandidates: number;
   malformedLines: number;
@@ -198,13 +196,6 @@ export interface AgentSessionDiagnostic {
   line?: number;
 }
 
-export interface AgentSessionsPinResult {
-  sessionId: string;
-  pinned: boolean;
-  pinnedSessionIds: string[];
-  updatedAt: string;
-}
-
 export type AgentSessionReentryMode =
   | "focused-managed-pty"
   | "spawned-resume-pty"
@@ -254,18 +245,6 @@ export function hotStatusAgentSessions(
   return invoke<AgentSessionsHotStatusResult>("agent_sessions_hot_status", {
     projectPath,
     sessionIds,
-  });
-}
-
-export function setAgentSessionPinned(
-  projectPath: string,
-  sessionId: string,
-  pinned: boolean,
-): Promise<AgentSessionsPinResult> {
-  return invoke<AgentSessionsPinResult>("agent_sessions_set_pinned", {
-    projectPath,
-    sessionId,
-    pinned,
   });
 }
 

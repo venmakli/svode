@@ -8,7 +8,6 @@ use super::reentry;
 use super::refresh::AgentSessionsReadKind;
 use super::types::{
     AgentSessionReentryResult, AgentSessionsHotStatusResult, AgentSessionsListResult,
-    AgentSessionsPinResult,
 };
 use crate::error::AppError;
 use crate::process::path_env::ProcessPath;
@@ -99,31 +98,6 @@ pub async fn agent_sessions_hot_status(
         )?;
         terminal_manager.reconcile_agent_sessions(&result.sessions)?;
         Ok(result)
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn agent_sessions_set_pinned(
-    app: AppHandle,
-    state: State<'_, AgentSessionsState>,
-    terminal_manager: State<'_, TerminalManager>,
-    project_path: String,
-    session_id: String,
-    pinned: bool,
-) -> Result<AgentSessionsPinResult, AppError> {
-    let root = super::scope::normalize_project_path(&project_path)?;
-    crate::git::delivery::repair_scope_best_effort(&app, &root, &root).await;
-    let state = state.inner().clone();
-    let terminal_manager = terminal_manager.inner().clone();
-    run_blocking(move || {
-        read_model::set_pinned(
-            &state,
-            project_path,
-            session_id,
-            pinned,
-            terminal_manager.list_agent_surfaces()?,
-        )
     })
     .await
 }

@@ -42,7 +42,6 @@ function session(
       canRevealFile: true,
       hasReadableLog: true,
     },
-    pinned: overrides.pinned ?? false,
     runtime: overrides.runtime,
     sourceMeta: overrides.sourceMeta ?? {
       historyPresent: false,
@@ -58,10 +57,25 @@ function session(
   };
 }
 
+test("pinned sessions follow pin order rather than activity", () => {
+  const recent = session({ id: "codex:recent" });
+  const older = session({
+    id: "codex:older",
+    lastActivityAt: "2026-07-01T05:00:00Z",
+  });
+  const order = ["codex:older", "codex:recent"];
+
+  const groups = buildAgentSessionGroups({
+    sessions: [recent, older],
+    pinIndex: (item) => order.indexOf(item.id),
+  });
+
+  expect(groups.pinned?.sessions.map((item) => item.id)).toEqual(order);
+});
+
 test("groups sessions as pinned, now, then spaces without duplicates", () => {
   const pinnedActive = session({
     id: "codex:pinned",
-    pinned: true,
     status: "active",
   });
   const active = session({ id: "codex:active", status: "active" });
@@ -69,6 +83,7 @@ test("groups sessions as pinned, now, then spaces without duplicates", () => {
 
   const groups = buildAgentSessionGroups({
     sessions: [pinnedActive, active, done],
+    pinIndex: (item) => (item.id === "codex:pinned" ? 0 : -1),
   });
 
   expect(groups.pinned?.sessions.map((item) => item.id)).toEqual([

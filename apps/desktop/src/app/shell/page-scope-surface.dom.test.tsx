@@ -273,8 +273,8 @@ if (process.env.SVODE_PAGE_SCOPE_TEST !== "1") {
           args: (args ?? {}) as Record<string, unknown>,
         });
         const input = (args ?? {}) as Record<string, unknown>;
-        if (command === "get_expanded_paths") return [];
-        if (command === "save_expanded_paths") return null;
+        if (command === "navigation_expanded_paths") return [];
+        if (command === "navigation_save_expanded_paths") return null;
         if (command === "list_tree_children")
           return input.parentPath === null
             ? [

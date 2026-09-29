@@ -43,7 +43,6 @@ function session(overrides: Partial<AgentSession> & Pick<AgentSession, "id">) {
       canRevealFile: true,
       hasReadableLog: true,
     },
-    pinned: overrides.pinned ?? false,
     sourceMeta: overrides.sourceMeta ?? {
       historyPresent: true,
       detailPresent: false,

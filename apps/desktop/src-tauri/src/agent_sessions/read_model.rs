@@ -21,8 +21,6 @@ use super::types::{
     AgentSessionsListStatus, AgentSessionsSummary,
 };
 use crate::error::AppError;
-use crate::space::config as space_config;
-use crate::space::types::AgentSessionsLocalConfig;
 use crate::terminal::AgentTerminalSurface;
 
 #[cfg(test)]
@@ -42,7 +40,6 @@ pub(crate) fn list_sessions_with_surfaces(
 ) -> Result<AgentSessionsListResult, AppError> {
     let project = normalize_project_path(&project_path)?;
     let scope_index = ScopeIndex::new(&project, load_child_spaces(&project)?)?;
-    let pinned_ids = read_pinned_session_ids(&project)?;
     let generated_at = Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true);
 
     if !force_refresh
@@ -52,7 +49,6 @@ pub(crate) fn list_sessions_with_surfaces(
         return build_list_result(
             &project,
             &scope_index,
-            &pinned_ids,
             generated_at,
             reads,
             force_refresh,
@@ -70,7 +66,6 @@ pub(crate) fn list_sessions_with_surfaces(
     build_list_result(
         &project,
         &scope_index,
-        &pinned_ids,
         generated_at,
         reads,
         force_refresh,
@@ -83,7 +78,6 @@ pub(crate) fn list_sessions_with_surfaces(
 fn build_list_result(
     project: &Path,
     scope_index: &ScopeIndex,
-    pinned_ids: &HashSet<String>,
     generated_at: String,
     reads: Vec<SourceRead>,
     force_refresh: bool,
@@ -121,7 +115,6 @@ fn build_list_result(
 
             let mut session = map_candidate(candidate, scope, last_activity_at);
             apply_terminal_overlay(&mut session, terminal_surfaces);
-            session.pinned = pinned_ids.contains(&session.id);
             read.report.counts.returned_sessions += 1;
             sessions.push(session);
         }
@@ -129,18 +122,10 @@ fn build_list_result(
         reports.push(read.report);
     }
 
-    append_provisional_sessions(
-        &mut sessions,
-        terminal_surfaces,
-        scope_index,
-        pinned_ids,
-        home,
-        None,
-    );
+    append_provisional_sessions(&mut sessions, terminal_surfaces, scope_index, home, None);
 
     sessions.sort_by(compare_sessions);
     summary.returned_sessions = sessions.len();
-    summary.pinned_sessions = sessions.iter().filter(|session| session.pinned).count();
 
     let cache_mode = if let Some(cache_mode) = cache_mode_override {
         cache_mode
@@ -179,7 +164,6 @@ pub(crate) fn hot_status_with_surfaces(
 ) -> Result<AgentSessionsHotStatusResult, AppError> {
     let project = normalize_project_path(&project_path)?;
     let scope_index = ScopeIndex::new(&project, load_child_spaces(&project)?)?;
-    let pinned_ids = read_pinned_session_ids(&project)?;
     let generated_at = Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true);
     let requested = session_ids.into_iter().collect::<HashSet<_>>();
     let mut candidates = candidates_for_session_ids(state, &requested)?;
@@ -239,7 +223,6 @@ pub(crate) fn hot_status_with_surfaces(
 
         let mut session = map_candidate(candidate, scope, last_activity_at);
         apply_terminal_overlay(&mut session, &terminal_surfaces);
-        session.pinned = pinned_ids.contains(&session.id);
         sessions.push(session);
     }
 
@@ -247,7 +230,6 @@ pub(crate) fn hot_status_with_surfaces(
         &mut sessions,
         &terminal_surfaces,
         &scope_index,
-        &pinned_ids,
         &state.home_dir,
         Some(&requested),
     );
@@ -269,7 +251,6 @@ fn append_provisional_sessions(
     sessions: &mut Vec<AgentSession>,
     terminal_surfaces: &[AgentTerminalSurface],
     scope_index: &ScopeIndex,
-    pinned_ids: &HashSet<String>,
     home: &Path,
     requested: Option<&HashSet<String>>,
 ) {
@@ -301,9 +282,7 @@ fn append_provisional_sessions(
         let Some(scope) = resolve_scope(scope_index, &candidate, home) else {
             continue;
         };
-        let mut session = map_provisional_surface(surface, scope);
-        session.pinned = pinned_ids.contains(&session.id);
-        sessions.push(session);
+        sessions.push(map_provisional_surface(surface, scope));
     }
 }
 
@@ -412,54 +391,6 @@ fn merge_report_counts(target: &mut AgentSessionSourceReport, parsed: &AgentSess
     target.truncated_diagnostics += parsed.truncated_diagnostics;
 }
 
-fn read_pinned_session_ids(project: &Path) -> Result<HashSet<String>, AppError> {
-    Ok(space_config::read_local_config(project)?
-        .agent_sessions
-        .map(|config| config.pinned_session_ids.into_iter().collect())
-        .unwrap_or_default())
-}
-
-pub(crate) fn set_pinned(
-    state: &AgentSessionsState,
-    project_path: String,
-    session_id: String,
-    pinned: bool,
-    terminal_surfaces: Vec<AgentTerminalSurface>,
-) -> Result<crate::agent_sessions::types::AgentSessionsPinResult, AppError> {
-    let project = normalize_project_path(&project_path)?;
-    let current = list_sessions_with_surfaces(state, project_path, false, terminal_surfaces)?;
-    let scoped_ids = current
-        .sessions
-        .iter()
-        .map(|session| session.id.clone())
-        .collect::<HashSet<_>>();
-    if !scoped_ids.contains(&session_id) {
-        return Err(AppError::General(format!(
-            "agent session is not scoped to current project: {session_id}"
-        )));
-    }
-
-    let pinned_session_ids = space_config::mutate_local_config(&project, |local| {
-        let overlay = local
-            .agent_sessions
-            .get_or_insert_with(AgentSessionsLocalConfig::default);
-        overlay
-            .pinned_session_ids
-            .retain(|id| scoped_ids.contains(id) && id != &session_id);
-        if pinned {
-            overlay.pinned_session_ids.push(session_id.clone());
-        }
-        Ok(overlay.pinned_session_ids.clone())
-    })?;
-
-    Ok(crate::agent_sessions::types::AgentSessionsPinResult {
-        session_id,
-        pinned,
-        pinned_session_ids,
-        updated_at: Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true),
-    })
-}
-
 fn compare_sessions(a: &AgentSession, b: &AgentSession) -> std::cmp::Ordering {
     let a_active_flags =
         matches!(a.status, AgentSessionStatus::Active) && !a.active_flags.is_empty();
@@ -516,7 +447,6 @@ mod tests {
     use crate::agent_sessions::types::{
         AgentSessionActiveFlag, AgentSessionScopeConfidence, AgentSessionScopeKind,
         AgentSessionScopeStatus, AgentSessionStatusConfidence, AgentSessionStatusSource,
-        AgentSessionsPinResult,
     };
     use crate::terminal::{AgentTerminalStatusEvidence, AgentTerminalSurface};
 
@@ -753,21 +683,6 @@ mod tests {
             reason: reason.to_string(),
             observed_at: "2026-07-04T10:01:00Z".to_string(),
         }
-    }
-
-    fn pin(
-        state: &AgentSessionsState,
-        project: &Path,
-        session_id: &str,
-        pinned: bool,
-    ) -> Result<AgentSessionsPinResult, AppError> {
-        set_pinned(
-            state,
-            project.to_string_lossy().into_owned(),
-            session_id.to_string(),
-            pinned,
-            Vec::new(),
-        )
     }
 
     #[test]
@@ -1903,94 +1818,6 @@ mod tests {
         );
         assert_eq!(codex.truncated_diagnostics, 10);
         assert_eq!(codex.counts.malformed_lines, 60);
-    }
-
-    #[test]
-    fn agent_sessions_pin_known_session_round_trips_local_config() {
-        let temp = tempfile::tempdir().expect("temp dir");
-        let home = temp.path().join("home");
-        let project = temp.path().join("project");
-        fs::create_dir_all(&project).expect("project");
-        write_codex_history(&home, "pin-me", &project, 1_700_000_000);
-
-        let state = AgentSessionsState::with_home(home);
-        let result = pin(&state, &project, "codex:pin-me", true).expect("pin session");
-        assert!(result.pinned);
-        assert_eq!(result.pinned_session_ids, vec!["codex:pin-me"]);
-
-        let local = space_config::read_local_config(&project).expect("read local config");
-        assert_eq!(
-            local
-                .agent_sessions
-                .expect("agent sessions overlay")
-                .pinned_session_ids,
-            vec!["codex:pin-me"]
-        );
-
-        let listed = list_sessions(&state, project.to_string_lossy().into_owned(), false)
-            .expect("list sessions");
-        assert!(listed.sessions[0].pinned);
-        assert_eq!(listed.summary.pinned_sessions, 1);
-    }
-
-    #[test]
-    fn agent_sessions_pin_rejects_unknown_or_unscoped_session_id() {
-        let temp = tempfile::tempdir().expect("temp dir");
-        let home = temp.path().join("home");
-        let project = temp.path().join("project");
-        let unrelated = temp.path().join("unrelated");
-        fs::create_dir_all(&project).expect("project");
-        fs::create_dir_all(&unrelated).expect("unrelated");
-        append_codex_history(
-            &home,
-            vec![serde_json::json!({
-                "sessionId": "outside",
-                "cwd": unrelated.to_string_lossy(),
-                "timestamp": 1_700_000_000,
-                "text": "outside"
-            })],
-        );
-
-        let state = AgentSessionsState::with_home(home);
-        assert!(pin(&state, &project, "codex:missing", true).is_err());
-        assert!(pin(&state, &project, "codex:outside", true).is_err());
-        assert!(!project.join(".svode/local.json").exists());
-    }
-
-    #[test]
-    fn agent_sessions_stale_pinned_ids_are_ignored_and_cleaned_on_write() {
-        let temp = tempfile::tempdir().expect("temp dir");
-        let home = temp.path().join("home");
-        let project = temp.path().join("project");
-        fs::create_dir_all(&project).expect("project");
-        write_codex_history(&home, "known", &project, 1_700_000_000);
-        write(
-            &project.join(".svode/local.json"),
-            &serde_json::json!({
-                "agentSessions": {
-                    "pinnedSessionIds": ["codex:stale", "codex:known"]
-                }
-            })
-            .to_string(),
-        );
-
-        let state = AgentSessionsState::with_home(home);
-        let listed = list_sessions(&state, project.to_string_lossy().into_owned(), false)
-            .expect("list sessions");
-        assert_eq!(listed.sessions.len(), 1);
-        assert!(listed.sessions[0].pinned);
-        assert_eq!(listed.summary.pinned_sessions, 1);
-
-        let result = pin(&state, &project, "codex:known", false).expect("unpin known session");
-        assert!(result.pinned_session_ids.is_empty());
-        let local = space_config::read_local_config(&project).expect("read local config");
-        assert!(
-            local
-                .agent_sessions
-                .expect("agent sessions overlay")
-                .pinned_session_ids
-                .is_empty()
-        );
     }
 
     #[test]

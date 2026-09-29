@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { navigationKeyId, useNavigationState } from "@/features/navigation";
 import {
   openSessionCwdInExternalTerminal,
   type AgentSessionReentryResult,
@@ -6,6 +7,9 @@ import {
 } from "../api";
 import {
   DEFAULT_SPACE_GROUP_LIMIT,
+  agentSessionNavigationIndex,
+  agentSessionNavigationItem,
+  agentSessionNavigationKey,
   buildAgentSessionGroups,
   isPendingSessionId,
   resolveAgentSessionId,
@@ -66,7 +70,8 @@ interface UseAgentSessionsResult {
   selectedReentryResult: AgentSessionReentryResult | null;
   selectedMissing: boolean;
   reenteringSessionId: string | null;
-  pinningSessionIds: ReadonlySet<string>;
+  isPinned: (session: AgentSession) => boolean;
+  isPinning: (session: AgentSession) => boolean;
   collapsedGroupIds: Set<string>;
   setSearchQuery: (query: string) => void;
   refresh: () => Promise<void>;
@@ -107,9 +112,10 @@ export function useAgentSessions(
   const reenteringSessionIds = useAgentSessionCatalog(
     (state) => state.reenteringSessionIds,
   );
-  const pinningSessionIds = useAgentSessionCatalog(
-    (state) => state.pinningSessionIds,
-  );
+  const pinnedItems = useNavigationState((state) => state.pinned);
+  const pendingPinKeyIds = useNavigationState((state) => state.pendingKeyIds);
+  const pin = useNavigationState((state) => state.pin);
+  const unpin = useNavigationState((state) => state.unpin);
   const pendingHandoffs = useAgentSessionCatalog(
     (state) => state.pendingHandoffs,
   );
@@ -118,7 +124,6 @@ export function useAgentSessions(
   const observeSession = useAgentSessionCatalog(
     (state) => state.observeSession,
   );
-  const togglePinned = useAgentSessionCatalog((state) => state.togglePinned);
   const openCatalogTerminal = useAgentSessionCatalog(
     (state) => state.openNewSessionTerminal,
   );
@@ -152,10 +157,26 @@ export function useAgentSessions(
     return observeSession(selectedSessionId);
   }, [observeSession, selectedSessionId]);
 
+  const pinIndex = useCallback(
+    (session: AgentSession) =>
+      agentSessionNavigationIndex(pinnedItems, session),
+    [pinnedItems],
+  );
+  const isPinned = useCallback(
+    (session: AgentSession) => pinIndex(session) >= 0,
+    [pinIndex],
+  );
+  const isPinning = useCallback(
+    (session: AgentSession) =>
+      pendingPinKeyIds.has(navigationKeyId(agentSessionNavigationKey(session))),
+    [pendingPinKeyIds],
+  );
+
   const groups = useMemo(
     () =>
       buildAgentSessionGroups({
         sessions,
+        pinIndex,
         spaceScopes,
         searchQuery,
         visibleLimits,
@@ -163,6 +184,7 @@ export function useAgentSessions(
         selectedStableGroupId,
       }),
     [
+      pinIndex,
       searchQuery,
       selectedSessionId,
       selectedStableGroupId,
@@ -203,6 +225,20 @@ export function useAgentSessions(
       await reenter(session);
     },
     [projectPath, reenter],
+  );
+
+  const togglePinned = useCallback(
+    async (session: AgentSession) => {
+      if (isPendingSessionId(session.id) || session.source === "unknown")
+        return;
+      const index = pinIndex(session);
+      if (index >= 0) {
+        await unpin(pinnedItems[index].key);
+      } else {
+        await pin(agentSessionNavigationItem(session));
+      }
+    },
+    [pin, pinIndex, pinnedItems, unpin],
   );
 
   const showMore = useCallback((groupId: string) => {
@@ -284,7 +320,8 @@ export function useAgentSessions(
     selectedReentryResult,
     selectedMissing,
     reenteringSessionId,
-    pinningSessionIds,
+    isPinned,
+    isPinning,
     collapsedGroupIds,
     setSearchQuery,
     refresh,

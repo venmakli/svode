@@ -246,11 +246,6 @@ mod tests {
                 .bind(format!("owner-{i}")).execute(&routines).await.unwrap();
             let dir = state.dir_for_key(key).await.unwrap();
             crate::space::config::mutate_local_config(&dir, |local| {
-                if i == 0 {
-                    local.agent_sessions = Some(crate::space::types::AgentSessionsLocalConfig {
-                        pinned_session_ids: vec!["codex:retained-pin".into()],
-                    });
-                }
                 local
                     .routines
                     .as_mut()

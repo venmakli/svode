@@ -28,11 +28,6 @@ export interface AgentSessionCatalogApi {
     projectPath: string,
     sessionId: string,
   ) => Promise<AgentSessionReentryResult>;
-  setPinned: (
-    projectPath: string,
-    sessionId: string,
-    pinned: boolean,
-  ) => Promise<unknown>;
   spawnTerminal: (
     cwd: string,
     projectPath: string,
@@ -61,7 +56,6 @@ export interface AgentSessionCatalogState {
   pendingHandoffs: Record<string, string>;
   reentryResults: Record<string, AgentSessionReentryResult>;
   reenteringSessionIds: ReadonlySet<string>;
-  pinningSessionIds: ReadonlySet<string>;
   /** Session ids a consumer keeps under hot status while it shows them. */
   observedSessionIds: Record<string, number>;
   /** Consumers that need the accelerated full-list refresh while visible. */
@@ -73,7 +67,6 @@ export interface AgentSessionCatalogState {
   loadTarget: (target: AgentSessionTarget) => Promise<void>;
   loadHotStatus: (sessionIds: string[]) => Promise<void>;
   reenter: (session: AgentSession) => Promise<void>;
-  togglePinned: (session: AgentSession) => Promise<void>;
   openNewSessionTerminal: (
     scope: AgentSessionScopeGroup,
     title: string,
@@ -95,7 +88,6 @@ type CatalogData = Omit<
   | "loadTarget"
   | "loadHotStatus"
   | "reenter"
-  | "togglePinned"
   | "openNewSessionTerminal"
   | "closeTerminal"
   | "closeAllTerminals"
@@ -120,7 +112,6 @@ function emptyCatalogData(projectPath: string | null): CatalogData {
     pendingHandoffs: {},
     reentryResults: {},
     reenteringSessionIds: EMPTY_SET,
-    pinningSessionIds: EMPTY_SET,
     observedSessionIds: {},
     fastRefreshDemand: 0,
   };
@@ -509,55 +500,6 @@ export function createAgentSessionCatalogStore(
           promise,
         });
         return promise;
-      },
-
-      togglePinned: async (session) => {
-        const projectPath = get().projectPath;
-        if (
-          !projectPath ||
-          get().pinningSessionIds.has(session.id) ||
-          isPendingSessionId(session.id) ||
-          session.source === "unknown"
-        ) {
-          return;
-        }
-
-        const token = generation;
-        update({
-          pinningSessionIds: withSetItem(
-            get().pinningSessionIds,
-            session.id,
-            true,
-          ),
-        });
-        try {
-          await api.setPinned(projectPath, session.id, !session.pinned);
-          if (!isCurrentProject(token, projectPath)) return;
-          const result = get().result;
-          if (result) {
-            update({
-              result: {
-                ...result,
-                sessions: result.sessions.map((item) =>
-                  item.id === session.id
-                    ? { ...item, pinned: !session.pinned }
-                    : item,
-                ),
-              },
-            });
-          }
-          await load();
-        } finally {
-          if (isCurrentProject(token, projectPath)) {
-            update({
-              pinningSessionIds: withSetItem(
-                get().pinningSessionIds,
-                session.id,
-                false,
-              ),
-            });
-          }
-        }
       },
 
       openNewSessionTerminal: async (scope, title) => {

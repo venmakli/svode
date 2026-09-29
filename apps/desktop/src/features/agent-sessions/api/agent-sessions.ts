@@ -3,7 +3,6 @@ import {
   listAgentSessions as listAgentSessionsCommand,
   reenterAgentSession as reenterAgentSessionCommand,
   refreshAgentSessions as refreshAgentSessionsCommand,
-  setAgentSessionPinned as setAgentSessionPinnedCommand,
 } from "@/platform/agent-sessions/agent-sessions-api";
 import {
   listProjectOpeners,
@@ -26,7 +25,6 @@ export type {
   AgentSessionsHotStatusResult,
   AgentSessionsListResult,
   AgentSessionsListStatus,
-  AgentSessionsPinResult,
   AgentSessionSource,
   AgentSessionSourceReport,
   AgentSessionStatus,
@@ -45,14 +43,6 @@ export function hotStatusAgentSessions(
   sessionIds: string[],
 ) {
   return hotStatusAgentSessionsCommand(projectPath, sessionIds);
-}
-
-export function setAgentSessionPinned(
-  projectPath: string,
-  sessionId: string,
-  pinned: boolean,
-) {
-  return setAgentSessionPinnedCommand(projectPath, sessionId, pinned);
 }
 
 export function reenterAgentSession(projectPath: string, sessionId: string) {

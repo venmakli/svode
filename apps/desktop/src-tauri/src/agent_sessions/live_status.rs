@@ -111,7 +111,6 @@ pub(super) fn map_candidate(
         source_file: candidate.source_file,
         counts: Some(counts),
         capabilities: AgentSessionCapabilities::default(),
-        pinned: false,
         source_meta: candidate.source_meta,
     }
 }
@@ -300,7 +299,6 @@ pub(super) fn map_provisional_surface(
             can_reveal_file: false,
             has_readable_log: false,
         },
-        pinned: false,
         source_meta: AgentSessionSourceMeta::default(),
     }
 }

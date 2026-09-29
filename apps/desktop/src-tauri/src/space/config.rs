@@ -36,12 +36,6 @@ pub fn read_local_config(path: &Path) -> Result<LocalConfig, AppError> {
     Ok(svode_core::routines::local::read(path)?)
 }
 
-/// Write local config to {space_path}/.svode/local.json.
-#[cfg(test)]
-pub fn write_local_config(path: &Path, local: &LocalConfig) -> Result<(), AppError> {
-    Ok(svode_core::routines::local::write(path, local)?)
-}
-
 pub fn mutate_local_config<T>(
     path: &Path,
     mutate: impl FnOnce(&mut LocalConfig) -> Result<T, AppError>,
@@ -56,7 +50,7 @@ fn variables_error(error: svode_core::variables::Error) -> AppError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::space::types::{AgentSessionsLocalConfig, GitSpaceConfig, GitUserPolicy};
+    use crate::space::types::{GitSpaceConfig, GitUserPolicy};
     use std::sync::Arc;
     use svode_core::routines::local::RoutinesLocalConfig;
     use svode_core::storage::config::BINARY_ROUTING_VERSION;
@@ -158,27 +152,6 @@ mod tests {
     }
 
     #[test]
-    fn agent_sessions_local_overlay_round_trips_through_local_config() {
-        let temp = tempfile::tempdir().expect("temp dir");
-        let local = LocalConfig {
-            agent_sessions: Some(AgentSessionsLocalConfig {
-                pinned_session_ids: vec!["codex:one".to_string(), "claude-code:two".to_string()],
-            }),
-            ..LocalConfig::default()
-        };
-
-        write_local_config(temp.path(), &local).expect("write local config");
-        let read_back = read_local_config(temp.path()).expect("read local config");
-
-        assert_eq!(read_back.agent_sessions, local.agent_sessions);
-        assert!(
-            std::fs::read_to_string(temp.path().join(".svode/local.json"))
-                .expect("read local")
-                .contains("pinnedSessionIds")
-        );
-    }
-
-    #[test]
     fn local_config_writes_preserve_agent_actor_overlay() {
         let temp = tempfile::tempdir().expect("temp dir");
         let dir = temp.path().join(".svode");
@@ -220,7 +193,7 @@ mod tests {
         let barrier = Arc::new(std::sync::Barrier::new(3));
         let mut writers = Vec::new();
 
-        for owner in ["git", "sessions", "routines"] {
+        for owner in ["git", "agent", "routines"] {
             let path = path.clone();
             let barrier = barrier.clone();
             writers.push(std::thread::spawn(move || {
@@ -234,10 +207,8 @@ mod tests {
                                 auto_commit_system: true,
                             });
                         }
-                        "sessions" => {
-                            local.agent_sessions = Some(AgentSessionsLocalConfig {
-                                pinned_session_ids: vec!["codex:one".into()],
-                            });
+                        "agent" => {
+                            local.agent = Some(serde_json::json!({ "cliPaths": {} }));
                         }
                         "routines" => {
                             let mut routines = RoutinesLocalConfig::default();
@@ -257,10 +228,7 @@ mod tests {
 
         let local = read_local_config(&path).unwrap();
         assert!(local.git.unwrap().auto_sync);
-        assert_eq!(
-            local.agent_sessions.unwrap().pinned_session_ids,
-            vec!["codex:one"]
-        );
+        assert_eq!(local.agent, Some(serde_json::json!({ "cliPaths": {} })));
         assert_eq!(
             local.routines.unwrap().automatic_authority.get("owner"),
             Some(&true)

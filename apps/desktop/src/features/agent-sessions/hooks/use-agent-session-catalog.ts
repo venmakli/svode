@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect } from "react";
 import { useStore } from "zustand";
+import { getNavigationState } from "@/features/navigation";
 import {
   closeManagedTerminalSurface,
   spawnManagedTerminalSurface,
@@ -11,10 +12,10 @@ import {
   listAgentSessions,
   reenterAgentSession,
   refreshAgentSessions,
-  setAgentSessionPinned,
   type AgentSession as ListedAgentSession,
 } from "../api";
 import {
+  confirmedMissingAgentSessionKeys,
   createAgentSessionCatalogStore,
   startAgentSessionCatalogRefresh,
   type AgentSessionCatalogRefreshEnvironment,
@@ -26,7 +27,6 @@ const agentSessionCatalog = createAgentSessionCatalogStore({
   refresh: refreshAgentSessions,
   hotStatus: hotStatusAgentSessions,
   reenter: reenterAgentSession,
-  setPinned: setAgentSessionPinned,
   spawnTerminal: spawnManagedTerminalSurface,
   closeTerminal: closeManagedTerminalSurface,
   errorMessage: getNativeErrorMessage,
@@ -63,6 +63,23 @@ export function useAgentSessionCatalogLifecycle(projectPath: string | null) {
       browserRefreshEnvironment,
     );
   }, [projectPath]);
+
+  // A full list that confirms a session is gone removes it from navigation.
+  useEffect(
+    () =>
+      agentSessionCatalog.subscribe((state, previous) => {
+        if (!state.result || state.listedAt === previous.listedAt) return;
+        const navigation = getNavigationState();
+        if (navigation.projectPath !== state.projectPath) return;
+        void navigation.forget(
+          confirmedMissingAgentSessionKeys(
+            state.result,
+            navigation.pinned.map((item) => item.key),
+          ),
+        );
+      }),
+    [],
+  );
 
   // An exited session terminal is no longer live for any consumer.
   useEffect(

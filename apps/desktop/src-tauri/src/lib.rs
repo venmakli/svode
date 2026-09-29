@@ -21,6 +21,7 @@ mod macos_fullscreen;
 pub mod mcp;
 mod media;
 mod native_file_drop;
+mod navigation;
 mod page;
 mod process;
 mod project_runtime;
@@ -255,8 +256,6 @@ pub fn run() {
             commands::files::unwatch_space,
             commands::files::read_tree_order,
             commands::files::save_tree_order,
-            commands::files::get_expanded_paths,
-            commands::files::save_expanded_paths,
             commands::files::resolve_doc_link,
             commands::files::make_relative_link,
             commands::files::suggest_link_fix,
@@ -305,8 +304,12 @@ pub fn run() {
             agent_sessions::commands::agent_sessions_list,
             agent_sessions::commands::agent_sessions_refresh,
             agent_sessions::commands::agent_sessions_hot_status,
-            agent_sessions::commands::agent_sessions_set_pinned,
             agent_sessions::commands::agent_sessions_reenter,
+            navigation::commands::navigation_read,
+            navigation::commands::navigation_pin,
+            navigation::commands::navigation_forget,
+            navigation::commands::navigation_expanded_paths,
+            navigation::commands::navigation_save_expanded_paths,
             git::commands::git_check_availability,
             git::commands::git_init_space,
             git::commands::git_clone_space,

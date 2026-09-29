@@ -188,7 +188,6 @@ pub struct AgentSession {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub counts: Option<AgentSessionCounts>,
     pub capabilities: AgentSessionCapabilities,
-    pub pinned: bool,
     pub source_meta: AgentSessionSourceMeta,
 }
 
@@ -301,7 +300,6 @@ pub struct AgentSessionsListResult {
 #[serde(rename_all = "camelCase")]
 pub struct AgentSessionsSummary {
     pub returned_sessions: usize,
-    pub pinned_sessions: usize,
     pub unresolved_candidates: usize,
     pub incomplete_candidates: usize,
     pub malformed_lines: usize,
@@ -426,15 +424,6 @@ pub struct AgentSessionDiagnostic {
     pub path: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub line: Option<u64>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AgentSessionsPinResult {
-    pub session_id: String,
-    pub pinned: bool,
-    pub pinned_session_ids: Vec<String>,
-    pub updated_at: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

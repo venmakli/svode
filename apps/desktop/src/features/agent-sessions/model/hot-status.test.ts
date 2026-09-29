@@ -27,7 +27,6 @@ function session(
       canRevealFile: true,
       hasReadableLog: true,
     },
-    pinned: overrides.pinned ?? false,
     sourceMeta: overrides.sourceMeta ?? {
       historyPresent: false,
       detailPresent: false,

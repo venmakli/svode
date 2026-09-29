@@ -42,6 +42,7 @@ interface SessionRowProps {
   source: AgentSessionSelectionSource;
   selected: boolean;
   reentering: boolean;
+  pinned: boolean;
   pinning: boolean;
   rootName: string | null;
   spaceNames: Map<string, string>;
@@ -62,6 +63,7 @@ export function SessionRow({
   source,
   selected,
   reentering,
+  pinned,
   pinning,
   rootName,
   spaceNames,
@@ -149,17 +151,15 @@ export function SessionRow({
               sessionRowActionVisibility,
             )}
             aria-label={
-              session.pinned
-                ? m.sessions_action_unpin()
-                : m.sessions_action_pin()
+              pinned ? m.sessions_action_unpin() : m.sessions_action_pin()
             }
             onClick={() => onTogglePinned(session)}
           >
-            {session.pinned ? <PinOff /> : <Pin />}
+            {pinned ? <PinOff /> : <Pin />}
           </SidebarMenuAction>
         </TooltipTrigger>
         <TooltipContent side="top">
-          {session.pinned ? m.sessions_action_unpin() : m.sessions_action_pin()}
+          {pinned ? m.sessions_action_unpin() : m.sessions_action_pin()}
         </TooltipContent>
       </Tooltip>
       <DropdownMenu open={actionsOpen} onOpenChange={setActionsOpen}>

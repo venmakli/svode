@@ -209,7 +209,7 @@ if (process.env.SVODE_PEEK_PATH_HANDOFF_TEST !== "1") {
             });
           case "git_status":
             return { files: [], branch: "main" };
-          case "get_expanded_paths":
+          case "navigation_expanded_paths":
             return [];
           case "list_templates":
             return [];

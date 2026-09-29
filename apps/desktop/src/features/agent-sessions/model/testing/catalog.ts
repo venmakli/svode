@@ -27,7 +27,6 @@ export function listedSession(
       canRevealFile: true,
       hasReadableLog: true,
     },
-    pinned: false,
     sourceMeta: {
       historyPresent: false,
       detailPresent: false,
@@ -55,7 +54,6 @@ export function listResult(
     sessions,
     summary: {
       returnedSessions: sessions.length,
-      pinnedSessions: 0,
       unresolvedCandidates: 0,
       incompleteCandidates: 0,
       malformedLines: 0,
@@ -108,9 +106,6 @@ export function fakeCatalogApi(): FakeCatalogApi {
     reenter: async (_projectPath, sessionId) => {
       api.calls.push(`reenter:${sessionId}`);
       return api.reentry(sessionId);
-    },
-    setPinned: async (_projectPath, sessionId, pinned) => {
-      api.calls.push(`pin:${sessionId}:${pinned}`);
     },
     spawnTerminal: async (cwd) => {
       nextPty += 1;

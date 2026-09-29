@@ -38,6 +38,8 @@ export interface AgentSessionGroup {
 
 export interface AgentSessionGroupingInput {
   sessions: AgentSession[];
+  /** Pin order of a session, or -1 when it is not pinned. */
+  pinIndex?: (session: AgentSession) => number;
   spaceScopes?: AgentSessionScopeGroup[];
   searchQuery?: string;
   visibleLimits?: Record<string, number>;

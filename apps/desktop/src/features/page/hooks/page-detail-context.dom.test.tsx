@@ -132,7 +132,7 @@ async function harness(
       if (command === "get_page_schema")
         return schema ? { schema: { columns: schema, views: [] } } : null;
       if (command === "list_content_tree_children") return [];
-      if (command === "get_expanded_paths") return [];
+      if (command === "navigation_expanded_paths") return [];
       return null;
     },
     { shouldMockEvents: true },

@@ -41,6 +41,7 @@ import {
   useGitAvailability,
 } from "@/features/git/app-shell";
 import { useGlobalIdentity } from "@/features/identity";
+import { useNavigationStateLifecycle } from "@/features/navigation";
 import { type AppSettingsSection } from "@/features/settings";
 import { UserSettingsFooter } from "./user-settings-footer";
 import { setCurrentAppWindowTitle } from "@/platform/native/window";
@@ -104,6 +105,7 @@ function MainLayoutRuntime() {
   const { activeRootId, activeRootName, activeRootPath, explicitHome } =
     useSpace();
   const { openLastActiveRoot } = useSpaceActions();
+  useNavigationStateLifecycle(activeRootPath);
   const { available, recheck } = useGitAvailability();
   const identity = useGlobalIdentity();
   const identityName = identity?.name ?? null;

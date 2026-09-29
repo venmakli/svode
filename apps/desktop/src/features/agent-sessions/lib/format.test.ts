@@ -26,7 +26,6 @@ function session(lastActivityAt: string): AgentSession {
       canRevealFile: true,
       hasReadableLog: true,
     },
-    pinned: false,
     sourceMeta: {
       historyPresent: false,
       detailPresent: false,

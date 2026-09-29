@@ -33,20 +33,6 @@ pub async fn save_tree_order(
 }
 
 #[tauri::command]
-pub fn get_expanded_paths(space: String) -> Result<Vec<String>, AppError> {
-    let local = config::read_local_config(Path::new(&space))?;
-    Ok(local.expanded_paths)
-}
-
-#[tauri::command]
-pub fn save_expanded_paths(space: String, paths: Vec<String>) -> Result<(), AppError> {
-    config::mutate_local_config(Path::new(&space), |local| {
-        local.expanded_paths = paths;
-        Ok(())
-    })
-}
-
-#[tauri::command]
 pub async fn resolve_doc_link(
     project_path: String,
     source_space_id: Option<String>,

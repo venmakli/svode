@@ -465,7 +465,6 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
         canRevealFile: true,
         hasReadableLog: true,
       },
-      pinned: false,
       sourceMeta: {
         historyPresent: false,
         detailPresent: false,
@@ -495,7 +494,6 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
       sessions,
       summary: {
         returnedSessions: sessions.length,
-        pinnedSessions: 0,
         unresolvedCandidates: 0,
         incompleteCandidates: 0,
         malformedLines: 0,

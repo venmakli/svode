@@ -475,7 +475,8 @@ function SessionGroupMenu({
           source={group.kind === "space" ? "space" : group.kind}
           selected={controller.selectedSessionId === session.id}
           reentering={controller.reenteringSessionId === session.id}
-          pinning={controller.pinningSessionIds.has(session.id)}
+          pinned={controller.isPinned(session)}
+          pinning={controller.isPinning(session)}
           rootName={rootName}
           spaceNames={spaceNames}
           onSelect={(item, source, groupId) =>

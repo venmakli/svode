@@ -69,17 +69,6 @@ export function getScopeOwnerFacts(
   });
 }
 
-export function getContentTreeExpandedPaths(space: string): Promise<string[]> {
-  return invokeCommand<string[]>("get_expanded_paths", { space });
-}
-
-export function saveContentTreeExpandedPaths(
-  space: string,
-  paths: string[],
-): Promise<void> {
-  return invokeCommand<void>("save_expanded_paths", { space, paths });
-}
-
 export function moveContentTreeItem(input: {
   space: string;
   from: string;

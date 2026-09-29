@@ -55,7 +55,6 @@ export function buildPendingAgentSession(
       canRevealFile: false,
       hasReadableLog: false,
     },
-    pinned: false,
     sourceMeta: {
       historyPresent: false,
       detailPresent: false,

@@ -2,8 +2,13 @@
 
 pub const S3_AGENT: &str = crate::storage::s3::CONFIG_REL;
 
+/// Device-local navigation state of a Project: the state file and its
+/// temporary replacement files.
+pub const NAVIGATION_STATE: &str = ".svode/navigation.*";
+
 pub const ENTRIES: &[&str] = &[
     ".svode/local.json",
+    NAVIGATION_STATE,
     crate::git::write_guard::WRITE_LOCK_FILE,
     S3_AGENT,
     ".svode/variables.*",

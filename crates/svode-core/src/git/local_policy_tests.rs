@@ -5,6 +5,8 @@ use super::{
 
 const LOCALS: &[&str] = &[
     "local.json",
+    "navigation.json",
+    "navigation.tmp-1",
     "lfs-s3-agent.json",
     "variables.lock",
     "write.lock",

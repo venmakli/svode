@@ -3,11 +3,13 @@ import {
   type PageDto,
 } from "@/platform/pages/pages-api";
 import {
-  getContentTreeExpandedPaths,
+  getNavigationExpandedPaths,
+  saveNavigationExpandedPaths,
+} from "@/platform/navigation/navigation-api";
+import {
   listContentTree,
   listContentTreeChildren,
   moveContentTreeItem,
-  saveContentTreeExpandedPaths,
   saveContentTreeOrder,
 } from "@/platform/space/content-tree-api";
 import { clearMcpActiveContext, setMcpActiveContext } from "@/platform/mcp";
@@ -140,11 +142,11 @@ export function listSpaceTreeChildren(
 }
 
 export function getSpaceExpandedPaths(spacePath: string) {
-  return getContentTreeExpandedPaths(spacePath);
+  return getNavigationExpandedPaths(spacePath);
 }
 
 export function saveSpaceExpandedPaths(spacePath: string, paths: string[]) {
-  return saveContentTreeExpandedPaths(spacePath, paths);
+  return saveNavigationExpandedPaths(spacePath, paths);
 }
 
 export function moveSpaceTreeItem(input: {

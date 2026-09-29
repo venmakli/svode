@@ -12,6 +12,7 @@ const NOW_GROUP_ID = "now";
 
 export function buildAgentSessionGroups({
   sessions,
+  pinIndex = () => -1,
   spaceScopes = [],
   searchQuery = "",
   visibleLimits = {},
@@ -30,17 +31,18 @@ export function buildAgentSessionGroups({
       ? filteredSessions.find(
           (session) =>
             session.id === selectedSessionId &&
-            !session.pinned &&
+            pinIndex(session) < 0 &&
             !isNowSession(session) &&
             selectedStableGroupId === resolveScopeGroupId(session, scopeIndex),
         )
       : null;
 
   for (const session of filteredSessions) {
-    if (!session.pinned) continue;
+    if (pinIndex(session) < 0) continue;
     pinnedSessions.push(session);
     assigned.add(session.id);
   }
+  pinnedSessions.sort((a, b) => pinIndex(a) - pinIndex(b));
 
   if (stableSpaceSession && !assigned.has(stableSpaceSession.id)) {
     addToSpaceBucket(spaceBuckets, stableSpaceSession, scopeIndex);
