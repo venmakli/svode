@@ -12,6 +12,14 @@ fn write_help(example: &str) -> String {
     format!("{WRITE}\n\nExample:\n  {example}")
 }
 
+const TITLE_RENAME: &str = "Rename: a new title is how to rename a Page, Collection item or Collection. Svode renames the file or directory, rewrites links to it (including link text that followed the old name), relations and sidebar order, and reports every changed path; continue with the path the result returns. A taken name keeps the filename with warning filename_rename_collision; a blocking relation schema or repository keeps it with warning filename_rename_deferred: fix the cause, then set the same title again. The title of a Space README never renames the Space.";
+
+fn title_write_help(example: &str) -> String {
+    format!("{WRITE}\n\n{TITLE_RENAME}\n\nExample:\n  {example}")
+}
+
+const CONTENT_RENAME: &str = "Rename is for folders without a title. A Page, Collection item or Collection keeps its old title and gets only a new file or directory name: rename it by setting its title with `meta set --title` (or `item fields set`) instead.";
+
 const BODY_WRITE: &str = "Safe cycle: read the source with --json and keep its sourceVersion, edit the body, then write the whole result with --source-version <token>. If the source changed after your read, the write fails with SOURCE_STALE and writes nothing: read it again and reapply your change to the current text. SOURCE_BUSY means another Svode operation is writing the same repository: retry later. The result carries the sourceVersion of the written source for the next write. Bodies come from --body-file <path> or --body-file - (stdin); --body <text> is for short inline text. A command reads stdin at most once. The write does not commit to Git; never delete or hand-repair .svode metadata.\n\nWith file access, edit the text below the frontmatter with your own tools instead and keep the frontmatter unchanged; this command is the path for clients without file access.";
 
 fn body_write_help(example: &str) -> String {
@@ -101,8 +109,8 @@ pub enum Noun {
         #[command(subcommand)]
         verb: ItemVerb,
     },
-    /// Structure of Pages, folders and Collections: rename, move, reorder
-    /// and convert.
+    /// Structure of Pages, folders and Collections: folder rename, move,
+    /// reorder and convert.
     #[command(
         after_help = "Example:\n  svode --project ~/Notes content move --path notes/Plan.md --to-parent archive"
     )]
@@ -246,7 +254,7 @@ pub struct SpaceReorderArgs {
 #[derive(Debug, Subcommand)]
 pub enum MetaVerb<S: Args> {
     /// Set, keep or clear title, icon, description and cover.
-    #[command(after_help = write_help("svode page meta set --path notes/today.md --icon 📝 --clear-description\n  svode item meta set --path tasks/fix-login.md --title \"Fix sign-in\"\n  svode collection meta set --collection tasks --cover-file cover.json\n  svode space meta set --space research --description \"Research notes\""))]
+    #[command(after_help = title_write_help("svode page meta set --path notes/today.md --icon 📝 --clear-description\n  svode item meta set --path tasks/fix-login.md --title \"Fix sign-in\"\n  svode collection meta set --collection tasks --cover-file cover.json\n  svode space meta set --space research --description \"Research notes\""))]
     Set {
         #[command(flatten)]
         selector: S,
@@ -260,10 +268,11 @@ pub enum MetaVerb<S: Args> {
 pub struct NoSelector {}
 
 /// Metadata patch: a missing flag keeps the field, `--clear-*` clears it,
-/// a value writes it. `--title` renames by the shared naming rules.
+/// a value writes it. `--title` of a Page, item or Collection renames it.
 #[derive(Debug, Args)]
 pub struct MetadataPatch {
-    /// New title; the source is renamed by the shared naming rules.
+    /// New title. A Page, Collection item or Collection is renamed to match;
+    /// a Space README title never renames the Space.
     #[arg(long)]
     pub title: Option<String>,
     /// New icon.
@@ -314,7 +323,8 @@ pub struct OptionalBody {
 pub struct ReadmeWriteArgs {
     #[command(flatten)]
     pub body: Body,
-    /// New title of the owner README.
+    /// New title of the owner README. A Collection README title renames the
+    /// Collection; a Space README title never renames the Space.
     #[arg(long)]
     pub title: Option<String>,
     /// `sourceVersion` of the README read this body was prepared from.
@@ -403,7 +413,7 @@ pub struct PageWriteArgs {
     pub path: String,
     #[command(flatten)]
     pub body: Body,
-    /// New title; the source is renamed by the shared naming rules.
+    /// New title; the Page is renamed to match, like `page meta set --title`.
     #[arg(long)]
     pub title: Option<String>,
     /// `sourceVersion` of the Page read this body was prepared from.
@@ -681,8 +691,8 @@ pub enum ItemVerb {
 
 #[derive(Debug, Subcommand)]
 pub enum ContentVerb {
-    /// Rename a Page, folder or Collection within its parent.
-    #[command(after_help = structural_help("svode --project ~/Notes content rename --path notes/draft.md --to notes/Plan.md"))]
+    /// Rename a folder without a title within its parent.
+    #[command(after_help = format!("{CONTENT_RENAME}\n\n{}", structural_help("svode --project ~/Notes content rename --path notes/drafts --to notes/archive")))]
     Rename(ContentRenameArgs),
     /// Move a Page, folder or Collection under another parent.
     #[command(after_help = structural_help("svode --project ~/Notes content move --path notes/Plan.md --to-parent archive"))]
@@ -698,7 +708,8 @@ pub enum ContentVerb {
 
 #[derive(Debug, Args)]
 pub struct ContentRenameArgs {
-    /// Existing Page, folder or Collection relative to the selected Space.
+    /// Existing folder relative to the selected Space; a Page or Collection
+    /// keeps its old title.
     #[arg(long, value_name = "RELATIVE")]
     pub path: String,
     /// New path in the same parent.
@@ -760,8 +771,9 @@ pub struct ItemWriteArgs {
 
 #[derive(Debug, Subcommand)]
 pub enum ItemFieldsVerb {
-    /// Atomically set system and custom fields with schema validation.
-    #[command(after_help = write_help("svode --project ~/Notes item fields set --path tasks/fix-login.md --fields-file fields.json"))]
+    /// Atomically set system and custom fields with schema validation; a
+    /// title renames the item.
+    #[command(after_help = title_write_help("svode --project ~/Notes item fields set --path tasks/fix-login.md --fields-file fields.json"))]
     Set(ItemFieldsArgs),
 }
 

@@ -22,7 +22,7 @@ Run `svode guide` once before the first change in a session (in MCP: `get_svode_
 
 - Read files and search text with your own tools. Use `svode search`, `svode collection query` and `svode knowledge` for questions the Svode index answers.
 - Change the text below the frontmatter of an existing Page, Collection item or README with your own editing tools. Keep the frontmatter byte for byte, the line endings and the file location. A new plain Page in an existing folder without `schema.yaml` can be created as a file.
-- Everything else goes through Svode, because Svode applies effects a raw edit misses: frontmatter (title, icon, description, cover, fields, relations), new Collection items and Pages under a leaf Page, rename, move, delete, convert and order, `schema.yaml` and views, attachments, Routine definitions and the `.svode/`, `.routines/` and `.templates/` folders.
+- Everything else goes through Svode, because Svode applies effects a raw edit misses: frontmatter (title, icon, description, cover, fields, relations), new Collection items and Pages under a leaf Page, rename (by title for a Page, item or Collection), move, delete, convert and order, `schema.yaml` and views, attachments, Routine definitions and the `.svode/`, `.routines/` and `.templates/` folders.
 - With file access do not rewrite a body through Svode: the body-write commands and tools serve clients without file access.
 
 ## After a change

@@ -72,7 +72,7 @@ pub fn definitions() -> Vec<ToolDefinition> {
         ),
         def(
             "write_page",
-            "Replace a standalone Page body; Svode preserves its metadata and validates the path. Pass sourceVersion from your last read of this source or from the previous write of it; a changed source fails with SOURCE_STALE (read again and reapply your change), SOURCE_BUSY means another Svode operation is writing (retry later). Returns the canonical path, changedPaths and the new sourceVersion. With file access, edit the body below the frontmatter with your own tools instead; this tool is the path for clients without file access. For new local media, call import_asset first and insert its returned markdownUrl. Does not autocommit.",
+            "Replace a standalone Page body; Svode preserves its metadata and validates the path. Pass sourceVersion from your last read of this source or from the previous write of it; a changed source fails with SOURCE_STALE (read again and reapply your change), SOURCE_BUSY means another Svode operation is writing (retry later). Returns the canonical path, changedPaths and the new sourceVersion. A title string also renames the Page like update_page_metadata and returns newPath; a missing or null title is body-only. With file access, edit the body below the frontmatter with your own tools instead; this tool is the path for clients without file access. For new local media, call import_asset first and insert its returned markdownUrl. Does not autocommit.",
             schema(
                 &[
                     space_id(),
@@ -110,7 +110,7 @@ pub fn definitions() -> Vec<ToolDefinition> {
         ),
         def(
             "update_page_metadata",
-            "Update standalone Page metadata: title, icon, description, and cover. For a new local image cover, call import_asset first and pass its returned coverPath as cover.path; an existing repository file is also allowed. Does not change body and does not autocommit.",
+            "Update standalone Page metadata: title, icon, description, and cover. A new title is how to rename a Page: Svode renames its file, or its directory for a directory-backed Page, rewrites links to it (including link text that followed the old name), relations, and sidebar order, and returns the actual path in page.path with changedPaths. When the new name is taken, the title is saved and the filename kept with warning filename_rename_collision; when a relation schema or another repository blocks the rename, the title is saved with warning filename_rename_deferred: fix the cause, then save the same title again to rename. For a new local image cover, call import_asset first and pass its returned coverPath as cover.path; an existing repository file is also allowed. Does not change body and does not autocommit.",
             schema(
                 &[
                     space_id(),
@@ -147,7 +147,7 @@ pub fn definitions() -> Vec<ToolDefinition> {
         ),
         def(
             "write_space_readme",
-            "Replace the selected Project/Space owner's README body. Pass sourceVersion from your last read of this source or from the previous write of it; a changed source fails with SOURCE_STALE (read again and reapply your change), SOURCE_BUSY means another Svode operation is writing (retry later). Returns the canonical path, changedPaths and the new sourceVersion. With file access, edit the body below the frontmatter with your own tools instead; this tool is the path for clients without file access. Does not autocommit.",
+            "Replace the selected Project/Space owner's README body; a title string also saves the README title, which never renames the Space or its directory. Pass sourceVersion from your last read of this source or from the previous write of it; a changed source fails with SOURCE_STALE (read again and reapply your change), SOURCE_BUSY means another Svode operation is writing (retry later). Returns the canonical path, changedPaths and the new sourceVersion. With file access, edit the body below the frontmatter with your own tools instead; this tool is the path for clients without file access. Does not autocommit.",
             schema(
                 &[
                     space_id(),
@@ -162,7 +162,7 @@ pub fn definitions() -> Vec<ToolDefinition> {
         ),
         def(
             "update_space_metadata",
-            "Update the selected Project/Space owner's README metadata without classifying it as a Page. Does not autocommit.",
+            "Update the selected Project/Space owner's README metadata without classifying it as a Page. A title change never renames the Space or its directory. Does not autocommit.",
             schema(
                 &[
                     space_id(),
@@ -188,7 +188,7 @@ pub fn definitions() -> Vec<ToolDefinition> {
         ),
         def(
             "write_collection_readme",
-            "Replace one Collection owner's README body. Pass sourceVersion from your last read of this source or from the previous write of it; a changed source fails with SOURCE_STALE (read again and reapply your change), SOURCE_BUSY means another Svode operation is writing (retry later). Returns the canonical path, changedPaths and the new sourceVersion. With file access, edit the body below the frontmatter with your own tools instead; this tool is the path for clients without file access. Does not autocommit.",
+            "Replace one Collection owner's README body. A title string also renames the Collection like update_collection_metadata and returns newPath and collectionPath; a missing or null title is body-only. Pass sourceVersion from your last read of this source or from the previous write of it; a changed source fails with SOURCE_STALE (read again and reapply your change), SOURCE_BUSY means another Svode operation is writing (retry later). Returns the canonical path, changedPaths and the new sourceVersion. With file access, edit the body below the frontmatter with your own tools instead; this tool is the path for clients without file access. Does not autocommit.",
             schema(
                 &[
                     space_id(),
@@ -204,7 +204,7 @@ pub fn definitions() -> Vec<ToolDefinition> {
         ),
         def(
             "update_collection_metadata",
-            "Update one Collection owner's README metadata without classifying it as a Page or Collection item. Does not autocommit.",
+            "Update one Collection owner's README metadata without classifying it as a Page or Collection item. A new title is how to rename a Collection: Svode renames its directory, rewrites links to it and its items (including link text that followed the old name), relations and relation schemas that target it, and sidebar order, and returns the actual collectionPath with changedPaths. When the new name is taken, the title is saved and the filename kept with warning filename_rename_collision; when a relation schema or another repository blocks the rename, the title is saved with warning filename_rename_deferred: fix the cause, then save the same title again to rename. Does not autocommit.",
             schema(
                 &[
                     space_id(),
@@ -497,7 +497,7 @@ pub fn definitions() -> Vec<ToolDefinition> {
         ),
         def(
             "update_collection_item_fields",
-            "Atomically update system and custom fields for one Collection item. title uses managed rename; icon, description, cover, and custom fields use Desktop validation. created, updated, and unique_id are read-only. Does not autocommit.",
+            "Atomically update system and custom fields for one Collection item. title is how to rename the item: Svode renames its file, rewrites links to it (including link text that followed the old name), relations, and sidebar order in the same rollback, and returns the actual path in item.path with changedPaths; when the new name is taken, the title is saved and the filename kept with warning filename_rename_collision in item.warnings; when a relation schema or another repository blocks the rename, the title is saved with warning filename_rename_deferred: fix the cause, then save the same title again to rename. icon, description, cover, and custom fields use Desktop validation. created, updated, and unique_id are read-only. Does not autocommit.",
             schema(
                 &[
                     space_id(),
@@ -526,7 +526,7 @@ pub fn definitions() -> Vec<ToolDefinition> {
         ),
         def(
             "update_collection_item_metadata",
-            "Update one Collection item's title, icon, description, or cover. Does not change its body or custom fields and does not autocommit.",
+            "Update one Collection item's title, icon, description, or cover. A new title is how to rename a Collection item: Svode renames its file, rewrites links to it (including link text that followed the old name), relations, and sidebar order, and returns the actual path in item.path with changedPaths. When the new name is taken, the title is saved and the filename kept with warning filename_rename_collision; when a relation schema or another repository blocks the rename, the title is saved with warning filename_rename_deferred: fix the cause, then save the same title again to rename. Does not change its body or custom fields and does not autocommit.",
             schema(
                 &[
                     space_id(),
@@ -566,7 +566,7 @@ pub fn definitions() -> Vec<ToolDefinition> {
         ),
         def(
             "rename_content",
-            "Rename a Page, folder, or Collection in its current parent through Svode's managed structural backend. To change parent, use move_content. This rewrites managed relations, backlinks, sidebar order, and indexes; it returns all changed paths and does not autocommit.",
+            "Change the name of a path in its current parent through Svode's managed structural backend; meant for folders without a title. For a Page, Collection item, or Collection it changes only the file or directory name and keeps the old title: to rename one, change its title with update_page_metadata, update_collection_item_metadata, update_collection_item_fields, or update_collection_metadata instead. To change parent, use move_content. This rewrites managed relations, backlinks, sidebar order, and indexes; it returns all changed paths and does not autocommit.",
             schema(
                 &[
                     space_id(),
@@ -851,9 +851,15 @@ Body saves:
 
 Structural work and integrity:
 - Files-first work covers the body text described under Body saves and new plain Markdown Pages in an existing folder without a schema; create them directly and Svode picks them up. Everything that changes frontmatter, names, structure, schema, attachments or system folders goes through Svode tools.
-- Do not construct `.svode/order`, relation migrations, managed `.assets/` paths, structural Page moves/renames, or Collections manually. Use rename_content, move_content, reorder_content, reorder_spaces, convert_page_to_leaf, or convert_to_collection so Svode preserves relations, backlinks, sidebar order, and indexes. Discover spaces with list_spaces; root is `spaceId: "root"`, while reorder_spaces accepts child ids only.
+- Do not construct `.svode/order`, relation migrations, managed `.assets/` paths, renames, moves, or Collections manually. Rename a Page, Collection item, or Collection by changing its title as described under Renaming; use rename_content for a folder without a title and move_content, reorder_content, reorder_spaces, convert_page_to_leaf, or convert_to_collection for the other structural changes so Svode preserves relations, backlinks, sidebar order, and indexes. Discover spaces with list_spaces; root is `spaceId: "root"`, while reorder_spaces accepts child ids only.
 - Structural tools do not autocommit and return changed/touched paths. convert_to_collection is in-place and manages Page/Collection identity; convert_page_to_leaf applies only to a supported directory-backed Page and does not demote a Collection or remove schema.yaml.
 - When structural files changed outside Svode (by hand, Git or another program), run validate_collection_integrity for the Collection or selected Space and repair every reported relation target, missing Collection item, or stale order reference before continuing.
+
+Renaming:
+- Renaming a Page (leaf, directory-backed, or Collection item) or a Collection means changing its title: update_page_metadata, update_collection_item_metadata, update_collection_item_fields, or update_collection_metadata, or write_page/write_collection_readme with a title. Svode renames the file or directory to match, rewrites links to it (including link text that followed the old name), relations (for a Collection also the relation schemas that target it), and sidebar order in one rollback, and returns the actual path and changedPaths. Continue with the returned path.
+- When the new name is taken, the title is saved and the filename kept with warning filename_rename_collision. When a relation schema or another repository blocks the rename, the title is saved with warning filename_rename_deferred: fix the cause, then save the same title again to rename. Both are applied outcomes, not failures.
+- The title of a Space README (update_space_metadata, write_space_readme) never renames the Space or its directory.
+- rename_content changes the name of a path in its parent and is meant for folders without a title. For a Page, Collection item, or Collection it keeps the old title, so do not use it to rename them.
 
 Managed colocated attachments:
 - To use a new local image, media file, or attachment, call import_asset with the existing Page, Collection item, or owner README contentPath and an absolute local sourcePath. The source is copied, never moved. A leaf Page may become `<name>/README.md`; always use the returned canonical contentPath for the next content or metadata tool call.
@@ -1803,6 +1809,51 @@ mod tests {
                 .contains("managed structural backend")
         );
         assert!(guide_text().contains("Structural work and integrity"));
+    }
+
+    #[test]
+    fn rename_guidance_routes_pages_and_collections_to_a_title_change() {
+        let definitions = definitions();
+        let description = |name: &str| {
+            definitions
+                .iter()
+                .find(|definition| definition.name == name)
+                .unwrap_or_else(|| panic!("missing {name}"))
+                .description
+        };
+        for name in [
+            "update_page_metadata",
+            "update_collection_item_metadata",
+            "update_collection_item_fields",
+            "update_collection_metadata",
+        ] {
+            let text = description(name);
+            assert!(text.contains("is how to rename"), "{name}");
+            assert!(text.contains("rewrites links"), "{name}");
+            assert!(text.contains("filename_rename_collision"), "{name}");
+            assert!(text.contains("filename_rename_deferred"), "{name}");
+        }
+        for name in ["write_page", "write_collection_readme"] {
+            assert!(
+                description(name).contains("A title string also renames"),
+                "{name}"
+            );
+        }
+        for name in ["update_space_metadata", "write_space_readme"] {
+            assert!(
+                description(name).contains("never renames the Space"),
+                "{name}"
+            );
+        }
+        let rename_content = description("rename_content");
+        assert!(rename_content.contains("keeps the old title"));
+        assert!(rename_content.contains("change its title"));
+
+        let guide = guide_text();
+        assert!(guide.contains("Renaming a Page"));
+        assert!(guide.contains("never renames the Space"));
+        assert!(guide.contains("do not use it to rename them"));
+        assert!(!guide.contains("structural Page moves/renames"));
     }
 
     #[test]

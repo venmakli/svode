@@ -31,7 +31,7 @@ use target::Selectors;
 const FILES_FIRST: &str = "\
 Files-first rules for agents and scripts:
 - Svode data are Markdown and YAML files in Git. Edit the text below the frontmatter of an existing Page, item or README with your own tools, keeping the frontmatter byte for byte, the line endings and the file location; a new plain Page in an existing folder without a schema can be created directly. Svode and the desktop app pick these edits up.
-- Everything else goes through Svode commands, so its effects are applied: frontmatter (metadata, fields, relations), names and structure (items, Pages under a leaf Page, rename, move, delete, convert, order), Collection schema and views, attachments, Routine definitions and the .svode, .routines and .templates folders. A field changed directly records no Routine event.
+- Everything else goes through Svode commands, so its effects are applied: frontmatter (metadata, fields, relations), names and structure (items, Pages under a leaf Page, renaming a Page, item or Collection by its title, folder rename, move, delete, convert, order), Collection schema and views, attachments, Routine definitions and the .svode, .routines and .templates folders. A field changed directly records no Routine event.
 - Never delete or hand-repair .svode metadata. A failed command reports its code and target; reread the source and apply the intent again.
 - svode never commits to Git; commit separately when you decide to.
 ";
