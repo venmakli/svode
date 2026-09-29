@@ -70,9 +70,27 @@ if (process.env.SVODE_AGENT_SESSIONS_SURFACE_DOM !== "1") {
   let listed: ListedAgentSession[] = [];
   let listStatus: "ok" | "partial" = "ok";
   const commands: string[] = [];
+  const resolvedLaunches: string[][] = [];
   const { mockNativeIpc } = await import("@/platform/native/testing");
-  mockNativeIpc((command) => {
+  mockNativeIpc((command, payload) => {
     commands.push(command);
+    if (command === "routines_resolve_launches") {
+      resolvedLaunches.push([
+        ...(payload as { launchIds: string[] }).launchIds,
+      ]);
+      return [
+        {
+          launchId: "launch-docs",
+          routineId: "routine-docs",
+          ownerKind: "space",
+          spaceId: "docs",
+          ownerPath: ".",
+          name: "Docs sync",
+          definitionPresent: true,
+        },
+      ];
+    }
+    if (command.startsWith("plugin:event|")) return 1;
     if (
       command === "agent_sessions_list" ||
       command === "agent_sessions_refresh"
@@ -139,6 +157,7 @@ if (process.env.SVODE_AGENT_SESSIONS_SURFACE_DOM !== "1") {
           onOpenAppSettings={() => {
             settingsOpened += 1;
           }}
+          onOpenRoutine={() => undefined}
         />
       </TooltipProvider>
     );
@@ -148,6 +167,7 @@ if (process.env.SVODE_AGENT_SESSIONS_SURFACE_DOM !== "1") {
   function surfaceTest(name: string, fn: () => Promise<void>) {
     test(name, async () => {
       opened.length = 0;
+      resolvedLaunches.length = 0;
       openedWithFocus.length = 0;
       commands.length = 0;
       spawned.length = 0;
@@ -204,6 +224,18 @@ if (process.env.SVODE_AGENT_SESSIONS_SURFACE_DOM !== "1") {
       true,
     );
   });
+
+  surfaceTest(
+    "a Routine launch shows its routine, read from the Routines owner by launch id",
+    async () => {
+      await mountSurface("/project/docs", "docs");
+
+      expect(resolvedLaunches).toEqual([["launch-docs"]]);
+      expect(row("claude-code:docs")?.textContent.includes("Docs sync")).toBe(
+        true,
+      );
+    },
+  );
 
   surfaceTest(
     "activating a row opens its session without resuming it",

@@ -2199,6 +2199,8 @@
   "sessions_field_agent": "Агент",
   "sessions_field_status": "Статус",
   "sessions_field_last_activity": "Последняя активность",
+  "sessions_field_routine": "Рутина",
+  "sessions_action_open_routine": "Открыть рутину",
   "sessions_action_new": "Новая сессия",
   "sessions_collection_empty_title": "В этом пространстве нет сессий",
   "sessions_collection_empty_description": "Запустите CLI-агента в этом пространстве или создайте новую сессию.",

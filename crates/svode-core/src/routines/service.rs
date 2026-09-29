@@ -4,7 +4,7 @@
 //! The host supplies only the Git target repository of an owner, the
 //! repository authorization of its runtime and live execution evidence.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs::{self, File, OpenOptions};
 use std::future::Future;
 use std::io::Write;
@@ -14,9 +14,9 @@ use chrono::{SecondsFormat, Utc};
 
 use super::model::{
     ResolvedRoutineOwner, RoutineCatalogSnapshot, RoutineDefinition, RoutineDiagnostic,
-    RoutineLiveEvidence, RoutineNameConflict, RoutineNameConflictEvidence, RoutineOwnerDescriptor,
-    RoutineOwnerInputKind, RoutineOwnerKind, RoutineRow, RoutineRunOrigin, RoutineTimeBasis,
-    RoutineTrigger,
+    RoutineLaunchLink, RoutineLiveEvidence, RoutineNameConflict, RoutineNameConflictEvidence,
+    RoutineOwnerDescriptor, RoutineOwnerInputKind, RoutineOwnerKind, RoutineRow, RoutineRunOrigin,
+    RoutineTimeBasis, RoutineTrigger,
 };
 use super::store_state::RoutineStoreState;
 use super::{RoutineStoreError, authority, operational, parser, schedule};
@@ -325,6 +325,109 @@ pub async fn discover_project_owners(
         }
     }
     Ok(owners)
+}
+
+/// The Routines that launched sessions, resolved by the launch identities the
+/// sessions carry across every Space of an open project. A launch without a
+/// run is not a Routine launch and gets no link. The name follows the current
+/// definition; once the owner or the definition cannot be read, it is the name
+/// of the Routine's newest launch. An unreadable store of one Space leaves only
+/// its launches unresolved.
+pub async fn resolve_launches(
+    routine_stores: &RoutineStoreState,
+    index_state: &IndexRuntimeState,
+    project_path: &Path,
+    launch_ids: &[String],
+) -> Result<Vec<RoutineLaunchLink>, RoutineServiceError> {
+    let mut links = Vec::new();
+    if launch_ids.is_empty() {
+        return Ok(links);
+    }
+    for key in index_state.routine_inventory_keys(project_path).await? {
+        let space_path = index_state.dir_for_key(&key).await?;
+        let space_id = match &key {
+            IndexKey::Root(_) => None,
+            IndexKey::Space { space_id, .. } => Some(space_id.clone()),
+        };
+        let pool = match routine_stores.get_or_create(&key, &space_path).await {
+            Ok(pool) => pool,
+            Err(error) => {
+                tracing::warn!(space = ?space_id, "routine store is unavailable: {error}");
+                continue;
+            }
+        };
+        let runs = match operational::runs_by_launch_ids(&pool, launch_ids).await {
+            Ok(runs) => runs,
+            Err(error) => {
+                tracing::warn!(space = ?space_id, "failed to read routine launches: {error}");
+                continue;
+            }
+        };
+        let mut owners = HashMap::<String, Option<RoutineCatalogSnapshot>>::new();
+        for run in runs {
+            if !owners.contains_key(&run.owner_path) {
+                let snapshot = launch_owner_snapshot(
+                    project_path,
+                    &space_path,
+                    space_id.as_deref(),
+                    &run.owner_path,
+                )
+                .await;
+                owners.insert(run.owner_path.clone(), snapshot);
+            }
+            let current = owners[&run.owner_path].as_ref().and_then(|snapshot| {
+                snapshot
+                    .routines
+                    .iter()
+                    .find(|row| row.routine_id.as_deref() == Some(run.routine_id.as_str()))
+            });
+            let (name, definition_present) = match current {
+                Some(row) => (row.name.clone(), true),
+                None => (
+                    operational::last_launched_name(&pool, &run.owner_path, &run.routine_id)
+                        .await
+                        .ok()
+                        .flatten()
+                        .unwrap_or_else(|| run.routine_id.clone()),
+                    false,
+                ),
+            };
+            links.push(RoutineLaunchLink {
+                owner_kind: RoutineOwnerKind::for_owner_path(&run.owner_path, space_id.is_none()),
+                space_id: space_id.clone(),
+                launch_id: run.launch_id,
+                routine_id: run.routine_id,
+                owner_path: run.owner_path,
+                name,
+                definition_present,
+            });
+        }
+    }
+    Ok(links)
+}
+
+/// Current definitions of a launch owner, or `None` when the owner can no
+/// longer be resolved or read.
+async fn launch_owner_snapshot(
+    project_path: &Path,
+    space_path: &Path,
+    space_id: Option<&str>,
+    owner_path: &str,
+) -> Option<RoutineCatalogSnapshot> {
+    let owner_kind = if owner_path == "." {
+        RoutineOwnerInputKind::RegisteredSpace
+    } else {
+        RoutineOwnerInputKind::CollectionDirectory
+    };
+    let owner = resolve_owner(
+        project_path,
+        space_path,
+        space_id.unwrap_or("root"),
+        owner_path,
+        owner_kind,
+    )
+    .ok()?;
+    discover_owner(&owner).await.ok()
 }
 
 /// The create candidate of a complete definition: bounded identity, trimmed
@@ -2315,6 +2418,185 @@ mod tests {
                 .await
                 .unwrap()
         );
+    }
+
+    async fn record_launch(
+        routine_stores: &RoutineStoreState,
+        index_state: &IndexRuntimeState,
+        owner: &ResolvedRoutineOwner,
+        launch_id: &str,
+        created_at: &str,
+    ) -> String {
+        let snapshot = discover_owner(owner).await.unwrap();
+        let routine = &snapshot.routines[0];
+        let routine_id = routine.routine_id.clone().unwrap();
+        let pool = open_owner_store(routine_stores, index_state, &owner.index_key)
+            .await
+            .unwrap();
+        operational::create_run(
+            &pool,
+            operational::NewRoutineRun {
+                routine_run_id: &format!("run-{launch_id}"),
+                routine_id: &routine_id,
+                owner_path: &owner.descriptor.owner_path,
+                trigger_type: "manual",
+                definition_fingerprint: &routine.execution_fingerprint,
+                definition_json: &serde_json::to_string(routine.definition.as_ref().unwrap())
+                    .unwrap(),
+                launch_id,
+                source: "codex",
+                source_session_id: None,
+                agent_session_id: &format!("codex:launch:{launch_id}"),
+                created_at,
+            },
+        )
+        .await
+        .unwrap();
+        routine_id
+    }
+
+    fn write_manual_routine(dir: &Path, filename: &str, id: &str, name: &str) {
+        fs::create_dir_all(dir.join(".routines")).unwrap();
+        fs::write(
+            dir.join(".routines").join(filename),
+            format!(
+                "---\nid: {id}\nname: {name}\ntrigger:\n  type: manual\naction:\n  type: run_agent\n  executor: agent:01arz3ndektsv4rrffq69g5fav\n---\nReview\n"
+            ),
+        )
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn launches_resolve_to_their_routine_across_spaces_by_launch_identity() {
+        let temp = tempfile::tempdir().unwrap();
+        let project = &fs::canonicalize(temp.path()).unwrap();
+        let design = project.join("design");
+        write_space_config(project, "Project", &[("design", "design")]);
+        write_space_config(&design, "Design", &[]);
+        write_manual_routine(project, "review.md", "01arz3ndektsv4rrffq69g5fav", "Review");
+        write_manual_routine(&design, "sync.md", "01arz3ndektsv4rrffq69g5fbw", "Sync");
+        let index_state = IndexRuntimeState::default();
+        index_state
+            .upsert_space(
+                project,
+                "design",
+                "design",
+                crate::index::resolver::SpaceStatus::Ready,
+                None,
+            )
+            .await;
+        let routine_stores = RoutineStoreState::new();
+        let root_owner = resolve_owner(
+            project,
+            project,
+            "root",
+            ".",
+            RoutineOwnerInputKind::RegisteredSpace,
+        )
+        .unwrap();
+        let design_owner = resolve_owner(
+            project,
+            &design,
+            "design",
+            ".",
+            RoutineOwnerInputKind::RegisteredSpace,
+        )
+        .unwrap();
+        let review_id = record_launch(
+            &routine_stores,
+            &index_state,
+            &root_owner,
+            "launch-root",
+            "2026-09-29T10:00:00Z",
+        )
+        .await;
+        let sync_id = record_launch(
+            &routine_stores,
+            &index_state,
+            &design_owner,
+            "launch-design",
+            "2026-09-29T10:01:00Z",
+        )
+        .await;
+        let launch_ids = [
+            "launch-root".to_string(),
+            "launch-design".to_string(),
+            "launch-manual".to_string(),
+        ];
+
+        let mut links = resolve_launches(&routine_stores, &index_state, project, &launch_ids)
+            .await
+            .unwrap();
+        links.sort_by(|left, right| left.launch_id.cmp(&right.launch_id));
+        assert_eq!(
+            links,
+            vec![
+                RoutineLaunchLink {
+                    launch_id: "launch-design".into(),
+                    routine_id: sync_id,
+                    owner_kind: RoutineOwnerKind::Space,
+                    space_id: Some("design".into()),
+                    owner_path: ".".into(),
+                    name: "Sync".into(),
+                    definition_present: true,
+                },
+                RoutineLaunchLink {
+                    launch_id: "launch-root".into(),
+                    routine_id: review_id.clone(),
+                    owner_kind: RoutineOwnerKind::Project,
+                    space_id: None,
+                    owner_path: ".".into(),
+                    name: "Review".into(),
+                    definition_present: true,
+                },
+            ]
+        );
+        assert!(
+            resolve_launches(&routine_stores, &index_state, project, &[])
+                .await
+                .unwrap()
+                .is_empty()
+        );
+
+        // A renamed definition shows its current name.
+        write_manual_routine(
+            project,
+            "review.md",
+            "01arz3ndektsv4rrffq69g5fav",
+            "Weekly review",
+        );
+        let renamed = resolve_launches(
+            &routine_stores,
+            &index_state,
+            project,
+            &["launch-root".to_string()],
+        )
+        .await
+        .unwrap();
+        assert_eq!(renamed[0].name, "Weekly review");
+        assert!(renamed[0].definition_present);
+
+        // A deleted definition keeps the name of its newest launch.
+        record_launch(
+            &routine_stores,
+            &index_state,
+            &root_owner,
+            "launch-root-later",
+            "2026-09-29T11:00:00Z",
+        )
+        .await;
+        fs::remove_file(project.join(".routines/review.md")).unwrap();
+        let deleted = resolve_launches(
+            &routine_stores,
+            &index_state,
+            project,
+            &["launch-root".to_string()],
+        )
+        .await
+        .unwrap();
+        assert_eq!(deleted[0].routine_id, review_id);
+        assert_eq!(deleted[0].name, "Weekly review");
+        assert!(!deleted[0].definition_present);
     }
 
     #[tokio::test]

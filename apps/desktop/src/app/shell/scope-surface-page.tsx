@@ -46,6 +46,7 @@ import { useShellStore } from "./model";
 import { createScopeContentRenderers } from "./scope-content-renderers";
 import { CompactScopePeek } from "./compact-scope-peek";
 import { ScopeOwnerActions } from "./scope-owner-actions";
+import { useOpenSessionRoutine } from "./open-session-routine";
 
 interface ScopeSurfacePageProps {
   owner: ScopeOwnerRef;
@@ -113,6 +114,7 @@ export function ScopeSurfacePage({
     (repositoryPath: string) => openSpaceSettings(repositoryPath, "git"),
     [openSpaceSettings],
   );
+  const openSessionRoutine = useOpenSessionRoutine();
   const openRoutineSession = useCallback(
     ({ sessionId, launchId }: { sessionId: string; launchId: string }) => {
       // Until the routine detail becomes a peek, its Drawer closes first.
@@ -152,6 +154,7 @@ export function ScopeSurfacePage({
             {...context}
             onOpenSession={openSessionPeek}
             onOpenAppSettings={openProvidersSettings}
+            onOpenRoutine={openSessionRoutine}
           />
         ),
         readme: () => <ReadmeSurface />,
@@ -176,6 +179,7 @@ export function ScopeSurfacePage({
       openRepositorySettings,
       openRoutineSession,
       openSessionPeek,
+      openSessionRoutine,
       owner,
     ],
   );

@@ -106,6 +106,8 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
       };
     }
     if (command === "list_project_openers") return [];
+    if (command === "routines_resolve_launches") return [];
+    if (command.startsWith("plugin:event|")) return 1;
     throw new Error(`unexpected command ${command}`);
   });
 
@@ -139,6 +141,7 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
           focusTerminal={focusTerminal}
           onOpenChange={onOpenChange}
           onExpand={async () => true}
+          onOpenRoutine={() => undefined}
         />
       </TooltipProvider>
     );

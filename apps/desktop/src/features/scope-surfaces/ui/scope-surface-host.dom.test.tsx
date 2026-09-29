@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { act } from "react";
+import { act, useEffect } from "react";
 import { createRoot } from "react-dom/client";
 import { JSDOM } from "jsdom";
 import {
@@ -7,7 +7,10 @@ import {
   createPageOwner,
 } from "../model/owners";
 import { useScopeSurfaceStore } from "../model/surface-store";
-import type { ScopeSurfaceContribution } from "../model/types";
+import type {
+  ScopeOpenItem,
+  ScopeSurfaceContribution,
+} from "../model/types";
 import { ScopeSurfaceHost } from "./scope-surface-host";
 
 const contribution: ScopeSurfaceContribution = {
@@ -415,6 +418,58 @@ test("Page default intents apply once across remount and unavailable App falls b
     expect(dom.window.document.querySelector("textarea") !== null).toBe(true);
     await act(async () => render(3, true, true));
     expect(findTab(dom, "Readme").getAttribute("aria-selected")).toBe("true");
+  } finally {
+    await act(async () => root.unmount());
+    restoreGlobals();
+    dom.window.close();
+  }
+});
+
+test("an open request addresses an item of its surface once, across remount", async () => {
+  const dom = new JSDOM("<!doctype html><div id=app></div>", {
+    pretendToBeVisual: true,
+    url: "http://localhost/",
+  });
+  const restoreGlobals = installDomGlobals(dom);
+  const root = createRoot(dom.window.document.getElementById("app")!);
+  const target = owner("tasks");
+  const received: Array<string | null> = [];
+  const itemContribution: ScopeSurfaceContribution = {
+    ...contribution,
+    render: ({ openItem }) => <ItemConsumer openItem={openItem} />,
+  };
+  function ItemConsumer({ openItem }: { openItem?: ScopeOpenItem }) {
+    received.push(openItem?.id ?? null);
+    useEffect(() => openItem?.consume());
+    return <div />;
+  }
+  useScopeSurfaceStore.setState({
+    surfaceByOwnerKey: {},
+    openRequestKeyByOwnerKey: {},
+    openItemRequestKeyByOwnerKey: {},
+  });
+  const render = (request: number, itemId?: string) =>
+    root.render(
+      <ScopeSurfaceHost
+        owner={target}
+        presentation="full"
+        contributions={[itemContribution]}
+        header={null}
+        openIntent={{ kind: "target", surfaceId: "collection", itemId }}
+        openRequestKey={request}
+        sessionKey={request}
+      />,
+    );
+  try {
+    await act(async () => render(1, "routine-a"));
+    expect(received[0]).toBe("routine-a");
+    expect(received.at(-1)).toBeNull();
+    received.length = 0;
+    await act(async () => root.render(null));
+    await act(async () => render(1, "routine-a"));
+    expect(received.every((id) => id === null)).toBe(true);
+    await act(async () => render(2, "routine-b"));
+    expect(received.includes("routine-b")).toBe(true);
   } finally {
     await act(async () => root.unmount());
     restoreGlobals();

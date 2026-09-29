@@ -182,6 +182,7 @@ pub fn run() {
             routines::commands::routines_update,
             routines::commands::routines_delete,
             routines::commands::routines_dispatch_manual,
+            routines::commands::routines_resolve_launches,
             git::access::repository_access_get,
             git::access::repository_access_verify,
             git::access::repository_access_activate,

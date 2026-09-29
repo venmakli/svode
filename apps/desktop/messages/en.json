@@ -2199,6 +2199,8 @@
   "sessions_field_agent": "Agent",
   "sessions_field_status": "Status",
   "sessions_field_last_activity": "Last activity",
+  "sessions_field_routine": "Routine",
+  "sessions_action_open_routine": "Open routine",
   "sessions_action_new": "New session",
   "sessions_collection_empty_title": "No sessions in this space",
   "sessions_collection_empty_description": "Start a CLI agent in this space or create a new session.",

@@ -14,7 +14,7 @@ use crate::terminal::TerminalManager;
 use svode_core::routines::authority;
 use svode_core::routines::model::{
     ResolvedRoutineOwner, RoutineAutomaticConsent, RoutineCatalogSnapshot, RoutineDefinition,
-    RoutineManualDispatchResult, RoutineMutationResult, RoutineOwnerInputKind,
+    RoutineLaunchLink, RoutineManualDispatchResult, RoutineMutationResult, RoutineOwnerInputKind,
 };
 #[cfg(test)]
 use svode_core::routines::operational::QueuedRoutineEvent;
@@ -98,6 +98,22 @@ pub async fn routines_refresh(
         terminal_manager,
     )
     .await
+}
+
+#[tauri::command]
+pub async fn routines_resolve_launches(
+    project_path: String,
+    launch_ids: Vec<String>,
+    routine_stores: State<'_, Arc<RoutineStoreState>>,
+    index_state: State<'_, IndexState>,
+) -> Result<Vec<RoutineLaunchLink>, AppError> {
+    Ok(service::resolve_launches(
+        routine_stores.core(),
+        &index_state.core,
+        Path::new(&project_path),
+        &launch_ids,
+    )
+    .await?)
 }
 
 #[tauri::command]

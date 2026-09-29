@@ -23,6 +23,7 @@ export { ScopeOwnerFactsError } from "./ui/scope-owner-facts-error";
 export type {
   ScopeCapability,
   ScopeOpenIntent,
+  ScopeOpenItem,
   ScopeOwnerKey,
   ScopeOwnerRef,
   ScopePresentation,

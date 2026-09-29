@@ -177,3 +177,16 @@ export type RoutineMutationResult =
   | { status: "stale"; currentFingerprint: string | null }
   | { status: "name_conflict"; conflict: RoutineNameConflict }
   | { status: "blocked"; message: string };
+
+/** The Routine that launched a session, resolved by its launch identity. */
+export interface RoutineLaunchLink {
+  launchId: string;
+  routineId: string;
+  resolvedOwnerKind: RoutineResolvedOwnerKind;
+  /** Registered Space of the owner; `null` for the project root. */
+  spaceId: string | null;
+  ownerPath: string;
+  /** Current name, or the last known one once the definition is gone. */
+  name: string;
+  definitionPresent: boolean;
+}

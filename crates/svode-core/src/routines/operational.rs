@@ -2,7 +2,7 @@ use sqlx::{Row, SqlitePool};
 
 use super::RoutineStoreError;
 use super::model::{
-    RoutineCatalogSnapshot, RoutineOwnerKind, RoutineRunRecord, RoutineRunRow,
+    RoutineCatalogSnapshot, RoutineDefinition, RoutineOwnerKind, RoutineRunRecord, RoutineRunRow,
     RoutineRunTerminalStatus,
 };
 
@@ -458,6 +458,64 @@ pub async fn latest_run_record(
             terminal_observed_at: row.terminal_observed_at,
             session_status: row.session_status,
         }))
+}
+
+/// A run found by the launch identity of its session.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LaunchedRun {
+    pub launch_id: String,
+    pub routine_id: String,
+    pub owner_path: String,
+}
+
+const LAUNCH_LOOKUP_CHUNK: usize = 500;
+
+pub async fn runs_by_launch_ids(
+    pool: &SqlitePool,
+    launch_ids: &[String],
+) -> Result<Vec<LaunchedRun>, sqlx::Error> {
+    let mut runs = Vec::new();
+    for chunk in launch_ids.chunks(LAUNCH_LOOKUP_CHUNK) {
+        let placeholders = vec!["?"; chunk.len()].join(", ");
+        let sql = format!(
+            "SELECT launch_id, routine_id, owner_path FROM routine_runs WHERE launch_id IN ({placeholders})"
+        );
+        let mut query = sqlx::query(&sql);
+        for launch_id in chunk {
+            query = query.bind(launch_id);
+        }
+        for row in query.fetch_all(pool).await? {
+            runs.push(LaunchedRun {
+                launch_id: row.try_get("launch_id")?,
+                routine_id: row.try_get("routine_id")?,
+                owner_path: row.try_get("owner_path")?,
+            });
+        }
+    }
+    Ok(runs)
+}
+
+/// The definition name the newest run of one Routine was launched with.
+pub async fn last_launched_name(
+    pool: &SqlitePool,
+    owner_path: &str,
+    routine_id: &str,
+) -> Result<Option<String>, sqlx::Error> {
+    let definition_json = sqlx::query_scalar::<_, String>(
+        r#"
+        SELECT definition_json FROM routine_runs
+        WHERE owner_path = ? AND routine_id = ?
+        ORDER BY created_at DESC, routine_run_id DESC
+        LIMIT 1
+        "#,
+    )
+    .bind(owner_path)
+    .bind(routine_id)
+    .fetch_optional(pool)
+    .await?;
+    Ok(definition_json
+        .and_then(|json| serde_json::from_str::<RoutineDefinition>(&json).ok())
+        .and_then(|definition| definition.name))
 }
 
 fn routine_run_from_row(row: sqlx::sqlite::SqliteRow) -> Result<RoutineRunRow, sqlx::Error> {

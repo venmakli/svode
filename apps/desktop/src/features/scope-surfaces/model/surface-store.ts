@@ -4,12 +4,14 @@ import type { ScopeOwnerKey, ScopeSurfaceId } from "./types";
 interface ScopeSurfaceState {
   surfaceByOwnerKey: Partial<Record<ScopeOwnerKey, ScopeSurfaceId>>;
   openRequestKeyByOwnerKey: Partial<Record<ScopeOwnerKey, number>>;
+  openItemRequestKeyByOwnerKey: Partial<Record<ScopeOwnerKey, number>>;
   setSurface: (ownerKey: ScopeOwnerKey, surfaceId: ScopeSurfaceId) => void;
   applyOpenRequest: (
     ownerKey: ScopeOwnerKey,
     requestKey: number,
     surfaceId: ScopeSurfaceId,
   ) => void;
+  consumeOpenItem: (ownerKey: ScopeOwnerKey, requestKey: number) => void;
   retargetOwner: (fromOwnerKey: ScopeOwnerKey, ownerKey: ScopeOwnerKey) => void;
   clearSurface: (ownerKey: ScopeOwnerKey) => void;
 }
@@ -17,6 +19,7 @@ interface ScopeSurfaceState {
 export const useScopeSurfaceStore = create<ScopeSurfaceState>((set) => ({
   surfaceByOwnerKey: {},
   openRequestKeyByOwnerKey: {},
+  openItemRequestKeyByOwnerKey: {},
   setSurface: (ownerKey, surfaceId) => {
     set((state) => ({
       surfaceByOwnerKey: {
@@ -39,6 +42,18 @@ export const useScopeSurfaceStore = create<ScopeSurfaceState>((set) => ({
         },
       };
     });
+  },
+  consumeOpenItem: (ownerKey, requestKey) => {
+    set((state) =>
+      state.openItemRequestKeyByOwnerKey[ownerKey] === requestKey
+        ? state
+        : {
+            openItemRequestKeyByOwnerKey: {
+              ...state.openItemRequestKeyByOwnerKey,
+              [ownerKey]: requestKey,
+            },
+          },
+    );
   },
   retargetOwner: (fromOwnerKey, ownerKey) => {
     set((state) => {

@@ -59,6 +59,7 @@ import {
   AgentSessionPeekHost,
   useStartSessionInPeek,
 } from "./agent-session-peek-host";
+import { useOpenSessionRoutine } from "./open-session-routine";
 import { cn } from "@/shared/lib/utils";
 
 type SidebarProviderStyle = CSSProperties & {
@@ -353,6 +354,7 @@ function ShellMainInset({
   onOpenAppSettings?: () => void;
 }) {
   const isSessionsSurface = mainSurface === "sessions";
+  const openSessionRoutine = useOpenSessionRoutine();
   const mainSessionTarget = useShellStore((state) => state.mainSessionTarget);
   const knowledgeGraphOpenRequest = useShellStore(
     (state) => state.knowledgeGraphOpenRequest,
@@ -379,7 +381,10 @@ function ShellMainInset({
           {isSessionsSurface ? (
             <SessionsSurface onOpenAppSettings={onOpenAppSettings} />
           ) : mainSurface === "session" && mainSessionTarget ? (
-            <AgentSessionMainSurface target={mainSessionTarget} />
+            <AgentSessionMainSurface
+              target={mainSessionTarget}
+              onOpenRoutine={openSessionRoutine}
+            />
           ) : mainSurface === "graph" ? (
             <GraphSurface
               openRequest={knowledgeGraphOpenRequest}

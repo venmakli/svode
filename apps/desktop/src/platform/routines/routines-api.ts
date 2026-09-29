@@ -203,6 +203,25 @@ export function refreshRoutines(input: RoutineOwnerCommandInput) {
   });
 }
 
+export interface RoutineLaunchLinkDto {
+  launchId: string;
+  routineId: string;
+  ownerKind: RoutineResolvedOwnerKindDto;
+  spaceId: string | null;
+  ownerPath: string;
+  name: string;
+  definitionPresent: boolean;
+}
+
+export function resolveRoutineLaunches(input: {
+  projectPath: string;
+  launchIds: readonly string[];
+}) {
+  return invokeCommand<RoutineLaunchLinkDto[]>("routines_resolve_launches", {
+    ...input,
+  });
+}
+
 export function listenRoutinesInvalidated(
   handler: EventCallback<RoutineInvalidatedEventDto>,
 ): Promise<UnlistenFn> {

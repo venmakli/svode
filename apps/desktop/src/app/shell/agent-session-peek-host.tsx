@@ -12,6 +12,7 @@ import {
 } from "@/features/collection/app-shell";
 import { useSpace } from "@/features/space";
 import { useShellStore } from "./model";
+import { useOpenSessionRoutine } from "./open-session-routine";
 
 /**
  * The session peek of the shell. "Expand" makes the session the main area
@@ -29,6 +30,7 @@ export function AgentSessionPeekHost() {
   const detailController = useCollectionDetailController();
   const openSpace = useSpace((state) => state.openSpace);
   const clearActiveSpace = useSpace((state) => state.clearActiveSpace);
+  const openSessionRoutine = useOpenSessionRoutine();
 
   const expand = useCallback(
     async (sessionTarget: AgentSessionTarget, session: AgentSession | null) => {
@@ -55,6 +57,7 @@ export function AgentSessionPeekHost() {
         if (!open) closeSessionPeek();
       }}
       onExpand={expand}
+      onOpenRoutine={openSessionRoutine}
     />
   );
 }

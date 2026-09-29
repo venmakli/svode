@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { BotMessageSquare, Copy, X } from "lucide-react";
+import { BotMessageSquare, Copy, ListChecks, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Empty,
@@ -20,6 +20,7 @@ import {
   defineOwnerDefinedCollectionProperty,
   type CollectionPropertyDefinition,
 } from "@/features/properties";
+import type { RoutineLaunchLink } from "@/features/routines/catalog";
 import type { AgentSessionsListResult } from "../api";
 import {
   agentSessionLastActivityAt,
@@ -40,6 +41,9 @@ export interface AgentSessionsPresentationActions {
   onCloseTerminal(session: AgentSession): void;
   onCopyResumeCommand(session: AgentSession): void;
   onOpenExternalTerminal(session: AgentSession): void;
+  /** The Routine that launched a session, when one did. */
+  routineOf(session: AgentSession): RoutineLaunchLink | null;
+  onOpenRoutine(routine: RoutineLaunchLink): void;
 }
 
 /** Status values in the order of the lifecycle, each with its own color. */
@@ -86,6 +90,11 @@ export function createAgentSessionsPresentationDescriptor({
   onActivate?: CollectionPresentationDescriptor<AgentSession>["onActivate"];
   rows: readonly AgentSession[];
 }): CollectionPresentationDescriptor<AgentSession> {
+  const routineName = (row: AgentSession) =>
+    actions.routineOf(row)?.name ?? null;
+  const routineOptions = [
+    ...new Set(rows.flatMap((row) => routineName(row) ?? [])),
+  ].map((name) => ({ color: "neutral" as const, name }));
   const properties: readonly CollectionPropertyDefinition<AgentSession>[] = [
     defineOwnerDefinedCollectionProperty({
       capabilities: {
@@ -117,6 +126,17 @@ export function createAgentSessionsPresentationDescriptor({
         })),
         type: "select",
       },
+    }),
+    defineOwnerDefinedCollectionProperty({
+      capabilities: {
+        filter: { kind: "standard" },
+        sort: { kind: "standard" },
+      },
+      featureId: "agent-sessions",
+      getValue: routineName,
+      key: "routine",
+      label: m.sessions_field_routine(),
+      standard: { options: routineOptions, type: "select" },
     }),
     defineComputedCollectionProperty({
       capabilities: {
@@ -155,14 +175,26 @@ export function createAgentSessionsPresentationDescriptor({
       renderLeading: (row) => (
         <SessionStatusMarker session={row} className="size-4" />
       ),
-      visibleProperties: ["agent", "last-activity"],
+      visibleProperties: ["agent", "routine", "last-activity"],
     },
     query: {
       defaultCompare: compareAgentSessionsByDefault,
       getSearchText: (row) =>
-        `${row.title} ${agents.label(row.source)} ${statusLabel(row)}`,
+        `${row.title} ${agents.label(row.source)} ${statusLabel(row)} ${routineName(row) ?? ""}`,
     },
     rowActions: [
+      {
+        getState: () => ({ status: "idle" }),
+        icon: <ListChecks />,
+        id: "open-routine",
+        isVisible: (row) =>
+          actions.routineOf(row)?.definitionPresent === true,
+        label: m.sessions_action_open_routine(),
+        run: (row) => {
+          const routine = actions.routineOf(row);
+          if (routine?.definitionPresent) actions.onOpenRoutine(routine);
+        },
+      },
       {
         getState: () => ({ status: "idle" }),
         icon: <X />,

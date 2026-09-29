@@ -20,6 +20,7 @@ import {
   CollectionHost,
   CollectionToolbarActionButton,
 } from "@/features/collection";
+import type { RoutineLaunchLink } from "@/features/routines/catalog";
 import type { ScopeSurfaceRenderContext } from "@/features/scope-surfaces";
 import { useAgentSessionsCollection } from "../hooks/use-agent-sessions-collection";
 import type { AgentSessionOpenOptions, AgentSessionTarget } from "../model";
@@ -31,17 +32,20 @@ export function AgentSessionsSurface({
   owner,
   onOpenSession,
   onOpenAppSettings,
+  onOpenRoutine,
 }: ScopeSurfaceRenderContext & {
   onOpenSession(
     target: AgentSessionTarget,
     options?: AgentSessionOpenOptions,
   ): void;
   onOpenAppSettings(): void;
+  onOpenRoutine(routine: RoutineLaunchLink): void;
 }) {
   const controller = useAgentSessionsCollection({
     owner,
     onOpenSession,
     onOpenAppSettings,
+    onOpenRoutine,
   });
 
   return (

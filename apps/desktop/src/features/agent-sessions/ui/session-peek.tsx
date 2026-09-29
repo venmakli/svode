@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Maximize2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
+import type { RoutineLaunchLink } from "@/features/routines/catalog";
 import type { AgentSession, AgentSessionTarget } from "../model";
 import {
   AGENT_SESSION_CONTENT_ATTRIBUTE,
@@ -19,6 +20,7 @@ interface AgentSessionPeekProps {
     target: AgentSessionTarget,
     session: AgentSession | null,
   ) => Promise<boolean>;
+  onOpenRoutine(routine: RoutineLaunchLink): void;
 }
 
 function isInsideSessionContent(target: EventTarget | null) {
@@ -34,6 +36,7 @@ export function AgentSessionPeek({
   focusTerminal = false,
   onOpenChange,
   onExpand,
+  onOpenRoutine,
 }: AgentSessionPeekProps) {
   // Keep the last target while the sheet animates out.
   const [shownTarget, setShownTarget] = useState(target);
@@ -82,6 +85,7 @@ export function AgentSessionPeek({
             key={`${shownTarget.sessionId}\n${shownTarget.launchId ?? ""}`}
             target={shownTarget}
             focusTerminal={focusTerminal}
+            onOpenRoutine={onOpenRoutine}
             renderActions={(menu, view) => (
               <>
                 {menu}

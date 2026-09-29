@@ -12,13 +12,19 @@ import { RoutineAutomaticConsentNotice } from "./routine-automatic-consent-notic
 
 export function RoutinesSurface({
   owner,
+  openItem,
   readOnly,
   onOpenSession,
 }: ScopeSurfaceRenderContext & {
   readOnly: boolean;
   onOpenSession(target: RoutineSessionTarget): void;
 }) {
-  const controller = useRoutinesController(owner, onOpenSession, readOnly);
+  const controller = useRoutinesController(
+    owner,
+    onOpenSession,
+    readOnly,
+    openItem,
+  );
   const body =
     controller.collectionState.phase === "ready" ? (
       <CollectionHost

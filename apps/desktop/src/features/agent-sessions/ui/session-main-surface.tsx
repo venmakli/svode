@@ -7,14 +7,17 @@ import {
   BreadcrumbSeparator,
 } from "@/components/ui/breadcrumb";
 import { useAgentSessionSpace, useResolvedAgentSession } from "../hooks";
+import type { RoutineLaunchLink } from "@/features/routines/catalog";
 import type { AgentSessionTarget } from "../model";
 import { AgentSessionContent } from "./session-view";
 
 /** A session as the one object of the main area. */
 export function AgentSessionMainSurface({
   target,
+  onOpenRoutine,
 }: {
   target: AgentSessionTarget;
+  onOpenRoutine(routine: RoutineLaunchLink): void;
 }) {
   const surfaceRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -27,6 +30,7 @@ export function AgentSessionMainSurface({
       <AgentSessionContent
         key={`${target.sessionId}\n${target.launchId ?? ""}`}
         target={target}
+        onOpenRoutine={onOpenRoutine}
       />
     </div>
   );

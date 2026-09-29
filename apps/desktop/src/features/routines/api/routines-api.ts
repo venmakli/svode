@@ -7,6 +7,7 @@ import {
   listenRoutinesInvalidated as listenRoutinesInvalidatedCommand,
   listRoutines as listRoutinesCommand,
   refreshRoutines as refreshRoutinesCommand,
+  resolveRoutineLaunches as resolveRoutineLaunchesCommand,
   setRoutineAutomaticConsent as setRoutineAutomaticConsentCommand,
   updateRoutine as updateRoutineCommand,
   type RoutineCatalogSnapshotDto,
@@ -23,6 +24,7 @@ import type {
   RoutineNameConflict,
   RoutineMutationResult,
   RoutineManualDispatchResult,
+  RoutineLaunchLink,
   RoutineOwnerKind,
   RoutineRow,
 } from "../model/types";
@@ -45,6 +47,17 @@ export async function refreshRoutineCatalog(
   owner: RoutineOwnerInput,
 ): Promise<RoutineCatalogSnapshot> {
   return normalizeSnapshot(await refreshRoutinesCommand(owner));
+}
+
+export async function loadRoutineLaunchLinks(
+  projectPath: string,
+  launchIds: readonly string[],
+): Promise<RoutineLaunchLink[]> {
+  const links = await resolveRoutineLaunchesCommand({ projectPath, launchIds });
+  return links.map(({ ownerKind, ...link }) => ({
+    ...link,
+    resolvedOwnerKind: ownerKind,
+  }));
 }
 
 export function listenRoutineCatalogInvalidated(

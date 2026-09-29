@@ -1,5 +1,12 @@
 import { useMemo, useState, type ReactNode } from "react";
-import { Copy, Info, MoreHorizontal, SquareTerminal, X } from "lucide-react";
+import {
+  Copy,
+  Info,
+  ListChecks,
+  MoreHorizontal,
+  SquareTerminal,
+  X,
+} from "lucide-react";
 import { toast } from "sonner";
 import {
   AlertDialog,
@@ -30,10 +37,18 @@ import {
 } from "@/components/ui/empty";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAgentAdapterDictionary } from "@/features/agent-adapters";
+import {
+  useRoutineLaunchLinks,
+  type RoutineLaunchLink,
+} from "@/features/routines/catalog";
 import { useSpace } from "@/features/space";
 import { ManagedTerminalSurface } from "@/features/terminal/session-surface";
 import { getNativeErrorMessage } from "@/platform/native/errors";
-import { useAgentSessionView, type AgentSessionView } from "../hooks";
+import {
+  useAgentSessionCatalog,
+  useAgentSessionView,
+  type AgentSessionView,
+} from "../hooks";
 import { scopeLabel, sessionTimeLabel, tooltipDateTime } from "../lib";
 import type { AgentSession, AgentSessionTarget } from "../model";
 import {
@@ -61,6 +76,7 @@ interface AgentSessionContentProps {
    * session menu. Without it the menu sits in the identity header.
    */
   renderActions?: (menu: ReactNode, view: AgentSessionView) => ReactNode;
+  onOpenRoutine(routine: RoutineLaunchLink): void;
 }
 
 /**
@@ -71,8 +87,10 @@ export function AgentSessionContent({
   target,
   focusTerminal,
   renderActions,
+  onOpenRoutine,
 }: AgentSessionContentProps) {
   const view = useAgentSessionView(target, { focusTerminal });
+  const routine = useSessionRoutine(view.session);
   const [metadataOpen, setMetadataOpen] = useState(false);
   const [confirmCloseOpen, setConfirmCloseOpen] = useState(false);
   const { activeRootName, spaces } = useSpace();
@@ -126,6 +144,9 @@ export function AgentSessionContent({
       }}
       onCopyCommand={copyResumeCommand}
       onOpenExternalTerminal={openExternalTerminal}
+      onOpenRoutine={
+        routine?.definitionPresent ? () => onOpenRoutine(routine) : null
+      }
     />
   );
 
@@ -307,6 +328,15 @@ function SessionBody({
   );
 }
 
+/** The Routine that launched a session, read from the Routines owner. */
+function useSessionRoutine(session: AgentSession | null) {
+  const projectPath = useAgentSessionCatalog((state) => state.projectPath);
+  const launchId = session?.launchId ?? null;
+  const launchIds = useMemo(() => (launchId ? [launchId] : []), [launchId]);
+  const routines = useRoutineLaunchLinks(projectPath, launchIds);
+  return launchId ? (routines.get(launchId) ?? null) : null;
+}
+
 function SessionActionsMenu({
   view,
   metadataOpen,
@@ -314,6 +344,7 @@ function SessionActionsMenu({
   onCloseTerminal,
   onCopyCommand,
   onOpenExternalTerminal,
+  onOpenRoutine,
 }: {
   view: AgentSessionView;
   metadataOpen: boolean;
@@ -321,6 +352,8 @@ function SessionActionsMenu({
   onCloseTerminal: () => void;
   onCopyCommand: () => void;
   onOpenExternalTerminal: () => void;
+  /** Present when a Routine launched the session and still exists. */
+  onOpenRoutine: (() => void) | null;
 }) {
   return (
     <DropdownMenu>
@@ -335,6 +368,12 @@ function SessionActionsMenu({
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="min-w-56">
         <DropdownMenuGroup>
+          {onOpenRoutine && (
+            <DropdownMenuItem onSelect={onOpenRoutine}>
+              <ListChecks />
+              {m.sessions_action_open_routine()}
+            </DropdownMenuItem>
+          )}
           <DropdownMenuItem
             disabled={!view.resumeCommand}
             onSelect={onCopyCommand}

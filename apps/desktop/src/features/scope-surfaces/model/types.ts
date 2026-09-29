@@ -39,6 +39,14 @@ export interface ScopeOwnerRef {
 export interface ScopeSurfaceRenderContext {
   owner: ScopeOwnerRef;
   presentation: ScopePresentation;
+  /** An item the open request addressed in this surface, until consumed. */
+  openItem?: ScopeOpenItem;
+}
+
+export interface ScopeOpenItem {
+  id: string;
+  /** Marks the request applied, so a remount of the surface does not repeat it. */
+  consume(): void;
 }
 
 export interface ScopeSurfaceContribution {
@@ -54,4 +62,4 @@ export interface ScopeSurfaceContribution {
 
 export type ScopeOpenIntent =
   | { kind: "default" }
-  | { kind: "target"; surfaceId: ScopeSurfaceId };
+  | { kind: "target"; surfaceId: ScopeSurfaceId; itemId?: string };

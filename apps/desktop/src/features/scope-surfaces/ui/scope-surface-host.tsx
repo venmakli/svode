@@ -86,6 +86,12 @@ export function ScopeSurfaceHost({
     (state) => state.applyOpenRequest,
   );
   const retargetOwner = useScopeSurfaceStore((state) => state.retargetOwner);
+  const consumedOpenItemRequestKey = useScopeSurfaceStore(
+    (state) => state.openItemRequestKeyByOwnerKey[owner.ownerKey],
+  );
+  const consumeOpenItem = useScopeSurfaceStore(
+    (state) => state.consumeOpenItem,
+  );
   const effectiveStoredSurfaceId = previousStoredSurfaceId ?? storedSurfaceId;
   const effectiveAppliedOpenRequestKey =
     previousAppliedOpenRequestKey ?? appliedOpenRequestKey;
@@ -174,6 +180,21 @@ export function ScopeSurfaceHost({
     typeof header === "function" ? header(activeSurface.id) : header;
   const retainedReadme = readmeWasMountedRef.current && readmeSurface;
   const activeNonReadme = activeSurface.id === "readme" ? null : activeSurface;
+  const openItemId =
+    presentation === "full" &&
+    openRequestKey !== undefined &&
+    openRequestKey !== consumedOpenItemRequestKey &&
+    openIntent?.kind === "target" &&
+    openIntent.surfaceId === activeSurface.id
+      ? openIntent.itemId
+      : undefined;
+  const openItem =
+    openItemId !== undefined && openRequestKey !== undefined
+      ? {
+          id: openItemId,
+          consume: () => consumeOpenItem(owner.ownerKey, openRequestKey),
+        }
+      : undefined;
   const fillsAvailableSpace = activeSurface.fillAvailableSpace === true;
 
   return (
@@ -238,7 +259,7 @@ export function ScopeSurfaceHost({
             <ScopeSurfaceErrorBoundary
               key={`${sessionKey ?? owner.ownerKey}:${activeNonReadme.id}`}
             >
-              {activeNonReadme.render({ owner, presentation })}
+              {activeNonReadme.render({ owner, presentation, openItem })}
             </ScopeSurfaceErrorBoundary>
           ) : null}
         </div>

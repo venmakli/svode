@@ -425,6 +425,23 @@ impl RoutineRunRecord {
     }
 }
 
+/// The Routine that launched a session, resolved by the launch identity the
+/// session carries. `name` is the current definition name; once the
+/// definition can no longer be read it is the last known name and
+/// `definition_present` is false.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RoutineLaunchLink {
+    pub launch_id: String,
+    pub routine_id: String,
+    pub owner_kind: RoutineOwnerKind,
+    /// Registered Space of the owner; `None` for the project root.
+    pub space_id: Option<String>,
+    pub owner_path: String,
+    pub name: String,
+    pub definition_present: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct RoutineRunRef {

@@ -1,4 +1,4 @@
-import { useCallback, useMemo } from "react";
+import { useCallback, useEffect, useMemo } from "react";
 
 import {
   useCollectionState,
@@ -9,7 +9,7 @@ import {
   createCollectionDetailActivation,
   useOptionalCollectionDetailController,
 } from "@/features/collection/app-shell";
-import type { ScopeOwnerRef } from "@/features/scope-surfaces";
+import type { ScopeOpenItem, ScopeOwnerRef } from "@/features/scope-surfaces";
 import * as m from "@/paraglide/messages.js";
 
 import type { RoutineOwnerInput } from "../api/routines-api";
@@ -34,6 +34,7 @@ export function useRoutinesController(
   owner: ScopeOwnerRef,
   onOpenSession: (target: RoutineSessionTarget) => void,
   readOnly: boolean,
+  openItem?: ScopeOpenItem,
 ) {
   const routineOwner = useMemo<RoutineOwnerInput>(
     () => ({
@@ -114,6 +115,19 @@ export function useRoutinesController(
       routineOwner,
     ],
   );
+  // A Routine addressed by the open request opens once the catalog is read.
+  useEffect(() => {
+    if (!openItem || state.phase !== "ready") return;
+    openItem.consume();
+    const row = state.snapshot.rows.find(
+      (candidate) => candidate.routineId === openItem.id,
+    );
+    if (!row) return;
+    void detailController?.open({
+      ...createReadOnlyDetail(row),
+      selection: { instanceKey, presentationId: "all", rowId: row.id },
+    });
+  }, [createReadOnlyDetail, detailController, instanceKey, openItem, state]);
   const create = useRoutineCreateJourney({ onApplied: onRoutineCreated });
   const createExecutorOwner = create.session?.owner ?? routineOwner;
   const useDetachedCreateExecutors = Boolean(

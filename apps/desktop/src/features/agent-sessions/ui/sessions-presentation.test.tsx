@@ -5,6 +5,7 @@ import {
   applyCollectionQuery,
   EMPTY_COLLECTION_QUERY,
 } from "@/features/collection";
+import type { RoutineLaunchLink } from "@/features/routines/catalog";
 import { setLocale } from "@/paraglide/runtime";
 import type { AgentSession } from "../model";
 import { listedSession, listResult } from "../model/testing/catalog";
@@ -21,6 +22,7 @@ const agents = createAgentAdapterDictionary([
 
 const done = listedSession({
   id: "codex:done",
+  launchId: "launch-review",
   title: "Refactor docs",
   lastActivityAt: "2026-09-29T12:00:00Z",
   resumeCommand: {
@@ -32,6 +34,7 @@ const done = listedSession({
 });
 const working = listedSession({
   id: "claude-code:working",
+  launchId: "launch-sync",
   source: "claude-code",
   title: "Write tests",
   status: "active",
@@ -56,6 +59,26 @@ const withTerminal = listedSession({
 });
 const rows: AgentSession[] = [done, working, waiting, withTerminal];
 
+function routineLink(
+  launchId: string,
+  name: string,
+  definitionPresent: boolean,
+): RoutineLaunchLink {
+  return {
+    launchId,
+    routineId: `routine-${launchId}`,
+    resolvedOwnerKind: "space",
+    spaceId: "docs",
+    ownerPath: ".",
+    name,
+    definitionPresent,
+  };
+}
+const routines = new Map([
+  ["launch-review", routineLink("launch-review", "Review", true)],
+  ["launch-sync", routineLink("launch-sync", "Nightly sync", false)],
+]);
+
 function actions(
   overrides: Partial<AgentSessionsPresentationActions> = {},
 ): AgentSessionsPresentationActions {
@@ -66,6 +89,9 @@ function actions(
     onCloseTerminal: () => undefined,
     onCopyResumeCommand: () => undefined,
     onOpenExternalTerminal: () => undefined,
+    routineOf: (session) =>
+      (session.launchId && routines.get(session.launchId)) || null,
+    onOpenRoutine: () => undefined,
     ...overrides,
   };
 }
@@ -86,12 +112,13 @@ function query(
 
 setLocale("en", { reload: false });
 
-test("rows show the status marker, title, agent and last activity; status stays a query property", () => {
+test("rows show the status marker, title, agent, routine and last activity; status stays a query property", () => {
   const presentation = descriptor();
 
   expect(presentation.properties.map((property) => property.key)).toEqual([
     "agent",
     "status",
+    "routine",
     "last-activity",
   ]);
   expect(presentation.layout.kind).toBe("list");
@@ -99,7 +126,7 @@ test("rows show the status marker, title, agent and last activity; status stays 
     presentation.layout.kind === "list"
       ? presentation.layout.visibleProperties
       : null,
-  ).toEqual(["agent", "last-activity"]);
+  ).toEqual(["agent", "routine", "last-activity"]);
   const status = presentation.properties.find(
     (property) => property.key === "status",
   );
@@ -120,6 +147,47 @@ test("rows show the status marker, title, agent and last activity; status stays 
     (property) => property.key === "agent",
   );
   expect(agent?.getValue(working)).toBe("Claude Code");
+  const routine = presentation.properties.find(
+    (property) => property.key === "routine",
+  );
+  // A deleted definition keeps its last known name; other sessions stay empty.
+  expect(routine?.getValue(done)).toBe("Review");
+  expect(routine?.getValue(working)).toBe("Nightly sync");
+  expect(routine?.getValue(waiting)).toBeNull();
+  expect(
+    routine?.semantics.kind === "standard"
+      ? routine.semantics.standard.options?.map((option) => option.name)
+      : null,
+  ).toEqual(["Review", "Nightly sync"]);
+});
+
+test("filter, sort and search by routine", () => {
+  const presentation = descriptor();
+  const byRoutine = applyCollectionQuery({
+    descriptor: presentation,
+    query: query({
+      filters: [{ propertyKey: "routine", operator: "eq", value: "Review" }],
+    }),
+    rows,
+  });
+  const sorted = applyCollectionQuery({
+    descriptor: presentation,
+    query: query({ sort: [{ propertyKey: "routine", direction: "asc" }] }),
+    rows,
+  });
+  const searched = applyCollectionQuery({
+    descriptor: presentation,
+    query: query({ search: "nightly" }),
+    rows,
+  });
+
+  expect(byRoutine.rows.map((row) => row.id)).toEqual(["codex:done"]);
+  // A select sorts by option order, like every select property.
+  expect(sorted.rows.slice(0, 2).map((row) => row.id)).toEqual([
+    "codex:done",
+    "claude-code:working",
+  ]);
+  expect(searched.rows.map((row) => row.id)).toEqual(["claude-code:working"]);
 });
 
 test("every status value has a labelled marker, including Done", () => {
@@ -200,6 +268,7 @@ test("row actions follow the session: close only an open terminal, copy and open
     actions: actions({
       onCloseTerminal: (session) => calls.push(`close:${session.id}`),
       onCopyResumeCommand: (session) => calls.push(`copy:${session.id}`),
+      onOpenRoutine: (routine) => calls.push(`routine:${routine.routineId}`),
     }),
     agents,
     rows,
@@ -211,15 +280,25 @@ test("row actions follow the session: close only an open terminal, copy and open
 
   expect(visible(withTerminal)).toEqual(["close-terminal"]);
   expect(visible(done)).toEqual([
+    "open-routine",
     "copy-resume-command",
     "open-external-terminal",
   ]);
+  // A deleted routine shows its name without the way to it.
+  expect(visible(working)).toEqual([]);
   for (const action of presentation.rowActions ?? []) {
     if (action.isVisible?.(withTerminal) ?? true) {
       void action.run(withTerminal);
     }
   }
-  expect(calls).toEqual(["close:codex:terminal"]);
+  const openRoutine = presentation.rowActions?.find(
+    (action) => action.id === "open-routine",
+  );
+  void openRoutine?.run(done);
+  expect(calls).toEqual([
+    "close:codex:terminal",
+    "routine:routine-launch-review",
+  ]);
 });
 
 test("collection states: loading, blocking error, partial source and empty Space", () => {

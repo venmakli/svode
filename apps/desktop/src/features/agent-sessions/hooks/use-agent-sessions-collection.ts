@@ -6,6 +6,10 @@ import {
   type CollectionActionState,
   type CollectionInstance,
 } from "@/features/collection";
+import {
+  useRoutineLaunchLinks,
+  type RoutineLaunchLink,
+} from "@/features/routines/catalog";
 import type { ScopeOwnerRef } from "@/features/scope-surfaces";
 import { getNativeErrorMessage } from "@/platform/native/errors";
 import { openSessionCwdInExternalTerminal } from "../api";
@@ -40,6 +44,7 @@ export function useAgentSessionsCollection({
   owner,
   onOpenSession,
   onOpenAppSettings,
+  onOpenRoutine,
 }: {
   owner: ScopeOwnerRef;
   onOpenSession(
@@ -47,6 +52,7 @@ export function useAgentSessionsCollection({
     options?: AgentSessionOpenOptions,
   ): void;
   onOpenAppSettings(): void;
+  onOpenRoutine(routine: RoutineLaunchLink): void;
 }) {
   const agents = useAgentAdapterDictionary();
   const scopes = useAgentSessionScopes();
@@ -83,6 +89,16 @@ export function useAgentSessionsCollection({
     [scope, sessions],
   );
   const refresh = useCallback(() => load({ force: true }), [load]);
+  const launchIds = useMemo(
+    () => (rows ?? []).flatMap((session) => session.launchId ?? []),
+    [rows],
+  );
+  // Each list read also re-reads the Routines of its launches.
+  const routines = useRoutineLaunchLinks(
+    owner.projectPath,
+    launchIds,
+    result?.generatedAt,
+  );
 
   const terminalOf = useCallback(
     (session: AgentSession) =>
@@ -142,6 +158,9 @@ export function useAgentSessionsCollection({
           });
         });
     },
+    routineOf: (session) =>
+      (session.launchId && routines.get(session.launchId)) || null,
+    onOpenRoutine,
     onOpenExternalTerminal: (session) => {
       const cwd = session.resumeCommand?.cwd ?? session.cwd;
       if (!cwd) return;
