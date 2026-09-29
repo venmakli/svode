@@ -41,11 +41,13 @@ import {
   type ScopePresentation,
 } from "@/features/scope-surfaces";
 import type { Page } from "@/features/page";
+import { useSpace } from "@/features/space";
 import { createScopeSurfaceContributions } from "./scope-surface-contributions";
 import { useShellStore } from "./model";
 import { createScopeContentRenderers } from "./scope-content-renderers";
 import { CompactScopePeek } from "./compact-scope-peek";
 import { ScopeOwnerActions } from "./scope-owner-actions";
+import { scopeOwnerNavigationItem } from "./scope-owner-navigation";
 import { useOpenSessionRoutine } from "./open-session-routine";
 
 interface ScopeSurfacePageProps {
@@ -255,6 +257,7 @@ function ScopePageSurfaceHost({
   const pageSurface = usePageSurfaceSession();
   const detailController = useCollectionDetailController();
   const detail = usePageDetailContext();
+  const activeRootId = useSpace((state) => state.activeRootId);
   const pagePath = detail.page?.path ?? null;
   const readmePath = props.owner.readmePath;
   // A path transition of this Page is handed to the host once: neither a new
@@ -318,7 +321,13 @@ function ScopePageSurfaceHost({
             ) : headerActions !== undefined ? (
               headerActions
             ) : (
-              <ScopeOwnerActions readOnly={pageSurface.readOnly} />
+              <ScopeOwnerActions
+                pinItem={scopeOwnerNavigationItem(props.owner, activeRootId, {
+                  title: detail.page?.meta.title ?? props.owner.ownerPath,
+                  icon: detail.page?.meta.icon ?? null,
+                })}
+                readOnly={pageSurface.readOnly}
+              />
             )
           }
         />

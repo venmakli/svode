@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { BotMessageSquare, Copy, ListChecks, X } from "lucide-react";
+import { BotMessageSquare, Copy, ListChecks, Pin, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Empty,
@@ -44,6 +44,10 @@ export interface AgentSessionsPresentationActions {
   /** The Routine that launched a session, when one did. */
   routineOf(session: AgentSession): RoutineLaunchLink | null;
   onOpenRoutine(routine: RoutineLaunchLink): void;
+  /** Whether a session is pinned; null when it cannot be pinned yet. */
+  pinnedOf(session: AgentSession): boolean | null;
+  pinPending(session: AgentSession): boolean;
+  onTogglePin(session: AgentSession): void;
 }
 
 /** Status values in the order of the lifecycle, each with its own color. */
@@ -184,11 +188,21 @@ export function createAgentSessionsPresentationDescriptor({
     },
     rowActions: [
       {
+        getLabel: (row) =>
+          actions.pinnedOf(row) ? m.navigation_unpin() : m.navigation_pin(),
+        getState: (row) =>
+          actions.pinPending(row) ? { status: "pending" } : { status: "idle" },
+        icon: <Pin />,
+        id: "pin",
+        isVisible: (row) => actions.pinnedOf(row) !== null,
+        label: m.navigation_pin(),
+        run: actions.onTogglePin,
+      },
+      {
         getState: () => ({ status: "idle" }),
         icon: <ListChecks />,
         id: "open-routine",
-        isVisible: (row) =>
-          actions.routineOf(row)?.definitionPresent === true,
+        isVisible: (row) => actions.routineOf(row)?.definitionPresent === true,
         label: m.sessions_action_open_routine(),
         run: (row) => {
           const routine = actions.routineOf(row);

@@ -6,7 +6,9 @@ import {
 } from "../page-api";
 import { useOpenPage } from "../navigation";
 import type { Page } from "../model";
-import { useSpaceTreeSync } from "@/features/space";
+import { useSpace, useSpaceTreeSync } from "@/features/space";
+import { PinMenuItem } from "@/features/navigation";
+import { pageNavigationItem } from "../lib/navigation-item";
 import { logTiming, nowMs } from "@/shared/lib/performance";
 import {
   PageDetailProvider,
@@ -95,6 +97,7 @@ function PageArtifactContent({
     (state) => state.reloadTreePathParents,
   );
   const removeTreePath = useSpaceTreeSync((state) => state.removeTreePath);
+  const activeRootId = useSpace((state) => state.activeRootId);
   const [deletePage, setDeletePage] = useState<Page | null>(null);
   const page = detail.page;
   usePageOpenTiming(detail.status, spaceId);
@@ -160,6 +163,9 @@ function PageArtifactContent({
       }}
       onDuplicatePage={duplicateCurrentPage}
       onDeletePage={setDeletePage}
+      actionItemsBeforeDuplicate={
+        <PinMenuItem item={pageNavigationItem(page, spaceId, activeRootId)} />
+      }
       readOnly={pageSurface.readOnly}
       runMutation={pageSurface.runMutation}
     />

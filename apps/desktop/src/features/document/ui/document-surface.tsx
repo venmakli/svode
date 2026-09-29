@@ -1,3 +1,4 @@
+import { artifactNavigationKey, PinToggleButton } from "@/features/navigation";
 import { useMemo, useState, type FormEvent, type ReactNode } from "react";
 import { FileText, FileWarning, KeyRound, RefreshCw } from "lucide-react";
 
@@ -71,10 +72,19 @@ export function DocumentSurface({
         onOpenFullPage();
       }
     : undefined;
-  const toolbarActions =
-    renderToolbarActions && onClose && openFullPage
-      ? renderToolbarActions({ onClose, onOpenFullPage: openFullPage })
-      : undefined;
+  const toolbarActions = (
+    <>
+      <PinToggleButton
+        item={{
+          key: artifactNavigationKey("attachment", path, target.spaceId, null),
+          title,
+        }}
+      />
+      {renderToolbarActions && onClose && openFullPage
+        ? renderToolbarActions({ onClose, onOpenFullPage: openFullPage })
+        : null}
+    </>
+  );
 
   if (session.state.phase === "ready") {
     if (session.state.format === "pptx") {

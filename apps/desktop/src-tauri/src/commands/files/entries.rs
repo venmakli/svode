@@ -264,6 +264,8 @@ pub async fn update_page_field(
 ) -> Result<Entry, AppError> {
     let fields = std::collections::BTreeMap::from([(field, value)]);
     let authorization_space = space.clone();
+    // A title change may rename the Page file.
+    let _changing = crate::navigation::path_change(&space);
     let outcome = crate::page::update_fields(
         PageFieldUpdate {
             space: &space,
@@ -279,6 +281,9 @@ pub async fn update_page_field(
         |paths| require_planned_mutation_paths(&app, &authorization_space, paths),
     )
     .await?;
+    if outcome.page.path != file_path {
+        crate::navigation::artifact_moved(&app, &space, &file_path, &outcome.page.path);
+    }
     Ok(outcome.page)
 }
 
@@ -391,6 +396,7 @@ pub async fn delete_content(
         .await
     })
     .await?;
+    crate::navigation::artifact_removed(&app, &space);
     Ok(())
 }
 
@@ -414,7 +420,8 @@ pub async fn rename_content(
         &to,
     )
     .await?;
-    scope_authorized_mutation_paths(authorized_paths, async {
+    let _changing = crate::navigation::path_change(&space);
+    let modified = scope_authorized_mutation_paths(authorized_paths, async {
         crate::structure::rename(
             &space,
             &from,
@@ -426,7 +433,9 @@ pub async fn rename_content(
         )
         .await
     })
-    .await
+    .await?;
+    crate::navigation::artifact_moved(&app, &space, &from, &to);
+    Ok(modified)
 }
 
 #[tauri::command]
@@ -458,7 +467,8 @@ pub async fn move_content(
         &to,
     )
     .await?;
-    scope_authorized_mutation_paths(authorized_paths, async {
+    let _changing = crate::navigation::path_change(&space);
+    let new_path = scope_authorized_mutation_paths(authorized_paths, async {
         crate::structure::move_entry(
             &space,
             &from,
@@ -470,7 +480,9 @@ pub async fn move_content(
         )
         .await
     })
-    .await
+    .await?;
+    crate::navigation::artifact_moved(&app, &space, &from, &new_path);
+    Ok(new_path)
 }
 
 #[tauri::command]

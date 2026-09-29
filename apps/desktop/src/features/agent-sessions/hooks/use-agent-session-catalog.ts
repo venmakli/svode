@@ -17,6 +17,7 @@ import {
 import {
   confirmedMissingAgentSessionKeys,
   createAgentSessionCatalogStore,
+  retitledAgentSessionPins,
   startAgentSessionCatalogRefresh,
   type AgentSessionCatalogRefreshEnvironment,
   type AgentSessionCatalogState,
@@ -64,7 +65,8 @@ export function useAgentSessionCatalogLifecycle(projectPath: string | null) {
     );
   }, [projectPath]);
 
-  // A full list that confirms a session is gone removes it from navigation.
+  // A full list that confirms a session is gone removes it from navigation;
+  // a listed session keeps its current title as the last known one.
   useEffect(
     () =>
       agentSessionCatalog.subscribe((state, previous) => {
@@ -77,6 +79,14 @@ export function useAgentSessionCatalogLifecycle(projectPath: string | null) {
             navigation.pinned.map((item) => item.key),
           ),
         );
+        for (const item of retitledAgentSessionPins(
+          navigation.pinned,
+          state.result.sessions,
+        )) {
+          navigation.pin(item).catch((error: unknown) => {
+            console.error("Failed to update a pinned session title:", error);
+          });
+        }
       }),
     [],
   );

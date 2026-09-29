@@ -10,10 +10,12 @@ export {
 export {
   AgentSessionBreadcrumbs,
   AgentSessionMainSurface,
+  AgentSessionNavigationItem,
   AgentSessionPeek,
   AgentSessionsSurface,
   AgentSessionsScreen,
 } from "./ui";
+export { agentSessionTargetFor } from "./model";
 export type {
   AgentSession,
   AgentSessionOpenOptions,

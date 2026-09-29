@@ -6,14 +6,25 @@
 //! shares no lock, recovery or watcher invalidation with `.svode/local.json`.
 //! A missing, unreadable or unknown-version file reads as empty and is
 //! replaced by the next write.
+//!
+//! Every read resolves the pinned artifacts and Spaces against their source:
+//! an available target refreshes its display snapshot, an unreadable source
+//! keeps it as unavailable, and only a target whose absence a successful read
+//! confirms is dropped. Sessions are resolved by the frontend catalog.
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
+use svode_core::content_tree::{self, TreeChildKind, TreeLoadError};
+use svode_core::page::SpaceReadiness;
+use tauri::{AppHandle, Emitter};
 
 use crate::error::AppError;
+
+/// Emitted after an in-app change of artifact paths changed navigation keys.
+pub const NAVIGATION_CHANGED_EVENT: &str = "navigation:changed";
 
 const FILE_NAME: &str = "navigation.json";
 /// Replacement files match the same local policy entry as the state file.
@@ -22,6 +33,19 @@ const VERSION: u32 = 1;
 
 /// Serializes read-modify-write of navigation files in this process.
 static WRITE_LOCK: Mutex<()> = Mutex::new(());
+
+/// Projects with an in-app path change in flight, once per change. While one
+/// runs, its source path is already gone but its key is not moved yet, so
+/// reads of that Project do not drop missing targets.
+static PATH_CHANGES: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
+
+fn path_change_in_flight(project: &Path) -> bool {
+    PATH_CHANGES
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .iter()
+        .any(|changing| changing == project)
+}
 
 /// Typed identity of an object in the navigation state. Artifacts are keyed
 /// by their registered Space (`None` for the Project root) and normalized
@@ -66,6 +90,50 @@ pub enum NavigationKey {
 }
 
 impl NavigationKey {
+    /// Registered Space id and repo-relative path of an artifact key.
+    fn artifact(&self) -> Option<(Option<&str>, &str)> {
+        match self {
+            Self::Page { space_id, path }
+            | Self::Collection { space_id, path }
+            | Self::Attachment { space_id, path }
+            | Self::App { space_id, path } => Some((space_id.as_deref(), path)),
+            _ => None,
+        }
+    }
+
+    fn artifact_path_mut(&mut self) -> Option<&mut String> {
+        match self {
+            Self::Page { path, .. }
+            | Self::Collection { path, .. }
+            | Self::Attachment { path, .. }
+            | Self::App { path, .. } => Some(path),
+            _ => None,
+        }
+    }
+
+    /// Whether both keys address one object. An artifact is its Space and
+    /// path, whatever form the key recorded.
+    fn same_target(&self, other: &Self) -> bool {
+        match (self.artifact(), other.artifact()) {
+            (Some(left), Some(right)) => left == right,
+            _ => self == other,
+        }
+    }
+
+    /// The key of the same Page, Collection or App path in its current form.
+    fn with_owner(self, owner: OwnerKind) -> Self {
+        match self {
+            Self::Page { space_id, path }
+            | Self::Collection { space_id, path }
+            | Self::App { space_id, path } => match owner {
+                OwnerKind::Page => Self::Page { space_id, path },
+                OwnerKind::Collection => Self::Collection { space_id, path },
+                OwnerKind::App => Self::App { space_id, path },
+            },
+            other => other,
+        }
+    }
+
     fn normalized(self) -> Result<Self, AppError> {
         let path = |path: String| -> Result<String, AppError> {
             let path = path.replace('\\', "/");
@@ -91,11 +159,11 @@ impl NavigationKey {
             Self::Space { space_id } => Self::Space { space_id },
             Self::Page { space_id, path: p } => Self::Page {
                 space_id,
-                path: path(p)?,
+                path: path(key_path(&p))?,
             },
             Self::Collection { space_id, path: p } => Self::Collection {
                 space_id,
-                path: path(p)?,
+                path: path(key_path(&p))?,
             },
             Self::Attachment { space_id, path: p } => Self::Attachment {
                 space_id,
@@ -103,7 +171,7 @@ impl NavigationKey {
             },
             Self::App { space_id, path: p } => Self::App {
                 space_id,
-                path: path(p)?,
+                path: path(key_path(&p))?,
             },
             Self::Session { session_id } => Self::Session {
                 session_id: id(session_id, "session id")?,
@@ -126,11 +194,26 @@ pub struct NavigationItem {
     pub icon: Option<String>,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+/// A pinned item as the frontend sees it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PinnedItem {
+    #[serde(flatten)]
+    pub item: NavigationItem,
+    /// Whether the source read shows the target; `None` for sessions.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub available: Option<bool>,
+    /// The path an available artifact opens by: the Page file or README of
+    /// a folder owner as the tree shows it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub open_path: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NavigationState {
     /// In pin order, newest last.
-    pub pinned: Vec<NavigationItem>,
+    pub pinned: Vec<PinnedItem>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -141,7 +224,7 @@ struct SpaceExpansion {
     paths: Vec<String>,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct NavigationFile {
     version: u32,
@@ -156,12 +239,6 @@ impl NavigationFile {
         Self {
             version: VERSION,
             ..Self::default()
-        }
-    }
-
-    fn state(self) -> NavigationState {
-        NavigationState {
-            pinned: self.pinned,
         }
     }
 }
@@ -191,17 +268,24 @@ fn write_file(project: &Path, file: &NavigationFile) -> Result<(), AppError> {
     Ok(())
 }
 
+fn is_project(project: &Path) -> bool {
+    project.join(".svode/config.json").is_file()
+}
+
+/// Read-modify-write of the navigation file; it is written only when the
+/// operation changed it.
 fn mutate<T>(
     project: &Path,
     operation: impl FnOnce(&mut NavigationFile) -> Result<T, AppError>,
 ) -> Result<T, AppError> {
-    if !project.join(".svode/config.json").is_file() {
+    if !is_project(project) {
         return Err(AppError::SpaceNotFound(
             svode_core::system_path::user_facing_path(project),
         ));
     }
     let _guard = WRITE_LOCK.lock().unwrap_or_else(|error| error.into_inner());
-    let mut file = read_file(project);
+    let original = read_file(project);
+    let mut file = original.clone();
     let result = operation(&mut file)?;
     // Expansion of a Space that a successful read shows is no longer
     // registered is dropped; an unreadable Project config keeps it.
@@ -213,13 +297,37 @@ fn mutate<T>(
                 .is_none_or(|id| spaces.iter().any(|space| &space.id == id))
         });
     }
-    file.version = VERSION;
-    write_file(project, &file)?;
+    if file != original {
+        file.version = VERSION;
+        write_file(project, &file)?;
+    }
     Ok(result)
 }
 
+/// The pinned items resolved against their sources, keeping the file in step:
+/// refreshed snapshots of available targets, confirmed-missing ones dropped.
+fn resolved(project: &Path, file: &mut NavigationFile) -> NavigationState {
+    NavigationState {
+        pinned: resolve_pinned(project, &mut file.pinned),
+    }
+}
+
+/// Resolves the pinned items against their sources. Outside a Project there
+/// is no navigation state.
 pub fn read_state(project: &Path) -> NavigationState {
-    read_file(project).state()
+    if !is_project(project) {
+        return NavigationState::default();
+    }
+    let mut shown = None;
+    let result = mutate(project, |file| {
+        let state = resolved(project, file);
+        shown = Some(state.clone());
+        Ok(state)
+    });
+    result.unwrap_or_else(|error| {
+        tracing::warn!("navigation state not updated: {error}");
+        shown.unwrap_or_default()
+    })
 }
 
 /// Pins an item at the end, or refreshes the snapshot of an existing pin in
@@ -230,11 +338,15 @@ pub fn pin(project: &Path, item: NavigationItem) -> Result<NavigationState, AppE
         ..item
     };
     mutate(project, |file| {
-        match file.pinned.iter_mut().find(|pinned| pinned.key == item.key) {
+        match file
+            .pinned
+            .iter_mut()
+            .find(|pinned| pinned.key.same_target(&item.key))
+        {
             Some(pinned) => *pinned = item,
             None => file.pinned.push(item),
         }
-        Ok(file.clone().state())
+        Ok(resolved(project, file))
     })
 }
 
@@ -246,14 +358,329 @@ pub fn forget(project: &Path, keys: Vec<NavigationKey>) -> Result<NavigationStat
         .map(NavigationKey::normalized)
         .collect::<Result<Vec<_>, _>>()?;
     mutate(project, |file| {
-        file.pinned.retain(|pinned| !keys.contains(&pinned.key));
-        Ok(file.clone().state())
+        file.pinned
+            .retain(|pinned| !keys.iter().any(|key| key.same_target(&pinned.key)));
+        Ok(resolved(project, file))
     })
+}
+
+/// What a read of its source shows about a pinned artifact or Space.
+enum Resolution {
+    Available {
+        title: String,
+        icon: Option<String>,
+        /// The form a Page, Collection or App has now.
+        owner: Option<OwnerKind>,
+        open_path: Option<String>,
+    },
+    /// The source could not be read, or the Space is missing or broken.
+    Unavailable,
+    /// A successful read of the source confirms the target is gone.
+    Missing,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum OwnerKind {
+    Page,
+    Collection,
+    App,
+}
+
+/// Sources of one resolution pass; the registered Spaces are read once.
+struct Sources<'a> {
+    project: &'a Path,
+    spaces: Option<Option<Vec<content_tree::ProjectChild>>>,
+}
+
+impl<'a> Sources<'a> {
+    fn new(project: &'a Path) -> Self {
+        Self {
+            project,
+            spaces: None,
+        }
+    }
+
+    fn spaces(&mut self) -> Option<&[content_tree::ProjectChild]> {
+        let project = self.project;
+        self.spaces
+            .get_or_insert_with(|| content_tree::list_project_children(project).ok())
+            .as_deref()
+    }
+
+    fn space(&mut self, space_id: Option<&str>) -> Resolution {
+        let Some(id) = space_id else {
+            return match content_tree::read_space_display(self.project) {
+                Ok(display) => Resolution::Available {
+                    title: display.name,
+                    icon: non_empty(display.icon),
+                    owner: None,
+                    open_path: None,
+                },
+                Err(_) => Resolution::Unavailable,
+            };
+        };
+        let Some(spaces) = self.spaces() else {
+            return Resolution::Unavailable;
+        };
+        match spaces.iter().find(|space| space.id == id) {
+            None => Resolution::Missing,
+            Some(space) if space.status == SpaceReadiness::Ready => Resolution::Available {
+                title: space.name.clone(),
+                icon: non_empty(space.icon.clone()),
+                owner: None,
+                open_path: None,
+            },
+            Some(_) => Resolution::Unavailable,
+        }
+    }
+
+    /// Directory of the Space an artifact belongs to, or the resolution of an
+    /// artifact of a Space that is gone or unreadable.
+    fn space_root(&mut self, space_id: Option<&str>) -> Result<PathBuf, Resolution> {
+        let Some(id) = space_id else {
+            return Ok(self.project.to_path_buf());
+        };
+        let Some(spaces) = self.spaces() else {
+            return Err(Resolution::Unavailable);
+        };
+        match spaces.iter().find(|space| space.id == id) {
+            None => Err(Resolution::Missing),
+            Some(space) if space.status == SpaceReadiness::Ready => Ok(space.path.clone()),
+            Some(_) => Err(Resolution::Unavailable),
+        }
+    }
+
+    fn artifact(&mut self, key: &NavigationKey) -> Resolution {
+        let Some((space_id, path)) = key.artifact() else {
+            return Resolution::Unavailable;
+        };
+        let root = match self.space_root(space_id) {
+            Ok(root) => root,
+            Err(resolution) => return resolution,
+        };
+        if matches!(key, NavigationKey::Attachment { .. }) {
+            return attachment(&root, path);
+        }
+        owner(&root, path)
+    }
+}
+
+fn non_empty(value: String) -> Option<String> {
+    (!value.trim().is_empty()).then_some(value)
+}
+
+/// An attachment is a file of the Space; it is not a tree node.
+fn attachment(root: &Path, path: &str) -> Resolution {
+    match std::fs::metadata(root.join(path)) {
+        Ok(metadata) if metadata.is_file() => Resolution::Available {
+            title: path.rsplit('/').next().unwrap_or(path).to_string(),
+            icon: None,
+            owner: None,
+            open_path: Some(path.to_string()),
+        },
+        Ok(_) => Resolution::Missing,
+        Err(error)
+            if error.kind() == std::io::ErrorKind::NotFound && std::fs::read_dir(root).is_ok() =>
+        {
+            Resolution::Missing
+        }
+        Err(_) => Resolution::Unavailable,
+    }
+}
+
+/// A Page, Collection or App is the node of its parent listing with the same
+/// folder identity; the listing reports what it shows and what is gone.
+fn owner(root: &Path, path: &str) -> Resolution {
+    let parent = path.rsplit_once('/').map(|(parent, _)| parent);
+    match content_tree::list_tree_children_checked(&root.to_string_lossy(), parent) {
+        Ok(nodes) => {
+            let Some(node) = nodes.into_iter().find(|node| key_path(&node.path) == path) else {
+                return Resolution::Missing;
+            };
+            let owner = match node.kind {
+                TreeChildKind::Page => OwnerKind::Page,
+                TreeChildKind::Collection => OwnerKind::Collection,
+                TreeChildKind::App => OwnerKind::App,
+                // A folder without README, schema or app is no longer the
+                // pinned object.
+                TreeChildKind::Folder => return Resolution::Missing,
+            };
+            Resolution::Available {
+                title: node.title,
+                icon: node.icon,
+                owner: Some(owner),
+                open_path: Some(node.path),
+            }
+        }
+        Err(TreeLoadError::Missing { .. }) => Resolution::Missing,
+        Err(_) => Resolution::Unavailable,
+    }
+}
+
+/// Resolves pinned items in place and returns what the frontend shows.
+/// Sessions are left to the frontend catalog. While an in-app path change is
+/// in flight, a missing target stays as unavailable.
+fn resolve_pinned(project: &Path, items: &mut Vec<NavigationItem>) -> Vec<PinnedItem> {
+    let drop_missing = !path_change_in_flight(project);
+    let mut sources = Sources::new(project);
+    let mut shown = Vec::with_capacity(items.len());
+    items.retain_mut(|item| {
+        let resolution = match &item.key {
+            NavigationKey::Session { .. } | NavigationKey::SessionLaunch { .. } => {
+                shown.push(PinnedItem {
+                    item: item.clone(),
+                    available: None,
+                    open_path: None,
+                });
+                return true;
+            }
+            NavigationKey::Space { space_id } => sources.space(space_id.as_deref()),
+            key => sources.artifact(key),
+        };
+        let (available, open_path) = match resolution {
+            Resolution::Missing if drop_missing => return false,
+            Resolution::Missing | Resolution::Unavailable => (false, None),
+            Resolution::Available {
+                title,
+                icon,
+                owner,
+                open_path,
+            } => {
+                item.title = title;
+                item.icon = icon;
+                if let Some(owner) = owner {
+                    item.key = item.key.clone().with_owner(owner);
+                }
+                (true, open_path)
+            }
+        };
+        shown.push(PinnedItem {
+            item: item.clone(),
+            available: Some(available),
+            open_path,
+        });
+        true
+    });
+    shown
+}
+
+/// The key path of a tree node or an in-app path: a folder Page, Collection
+/// or App is its folder, whether addressed by the directory or its README.
+fn key_path(path: &str) -> String {
+    let path = path.replace('\\', "/");
+    let path = path.trim_matches('/');
+    match path.rsplit_once('/') {
+        Some((folder, name)) if name.eq_ignore_ascii_case("readme.md") => folder.to_string(),
+        _ => path.to_string(),
+    }
+}
+
+/// `path` with its `from` prefix replaced by `to`, when it is `from` or lies
+/// under it.
+fn remap(path: &str, from: &str, to: &str) -> Option<String> {
+    if path == from {
+        return Some(to.to_string());
+    }
+    path.strip_prefix(from)
+        .filter(|rest| rest.starts_with('/'))
+        .map(|rest| format!("{to}{rest}"))
+}
+
+/// Marks an in-app change of artifact paths of a Project while it runs.
+pub struct PathChange(Option<PathBuf>);
+
+impl Drop for PathChange {
+    fn drop(&mut self) {
+        let Some(project) = self.0.take() else {
+            return;
+        };
+        let mut changes = PATH_CHANGES
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        if let Some(index) = changes.iter().position(|changing| *changing == project) {
+            changes.swap_remove(index);
+        }
+    }
+}
+
+/// Held around an in-app rename, move or change of form in `space`, so a
+/// read in between does not take the old path for a removed target.
+pub fn path_change(space: &str) -> PathChange {
+    let project = svode_core::page::project_for_directory(Path::new(space));
+    if let Some(project) = &project {
+        PATH_CHANGES
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .push(project.clone());
+    }
+    PathChange(project)
+}
+
+/// Moves the keys of the artifact at `from` and of everything under it to
+/// `to`; the moved targets take the form they have now. Returns whether the
+/// navigation state changed.
+fn retarget(space: &Path, from: &str, to: &str) -> Result<bool, AppError> {
+    let (project, space_id) = space_target(space)?;
+    let (from, to) = (key_path(from), key_path(to));
+    mutate(&project, |file| {
+        let before = file.pinned.clone();
+        for item in &mut file.pinned {
+            if item
+                .key
+                .artifact()
+                .is_none_or(|(id, _)| id != space_id.as_deref())
+            {
+                continue;
+            }
+            if let Some(path) = item.key.artifact_path_mut()
+                && let Some(moved) = remap(path, &from, &to)
+            {
+                *path = moved;
+            }
+        }
+        resolved(&project, file);
+        Ok(file.pinned != before)
+    })
+}
+
+/// Re-resolves the pinned items of the Project of `space`. Returns whether
+/// the navigation state changed.
+fn refresh(space: &Path) -> Result<bool, AppError> {
+    let (project, _) = space_target(space)?;
+    mutate(&project, |file| {
+        let before = file.pinned.clone();
+        resolved(&project, file);
+        Ok(file.pinned != before)
+    })
+}
+
+fn notify(app: &AppHandle, changed: Result<bool, AppError>) {
+    match changed {
+        Ok(true) => {
+            if let Err(error) = app.emit(NAVIGATION_CHANGED_EVENT, ()) {
+                tracing::warn!("navigation change not delivered: {error}");
+            }
+        }
+        Ok(false) => {}
+        Err(error) => tracing::warn!("navigation state not updated: {error}"),
+    }
+}
+
+/// Keeps pins on an in-app rename, move or change of form of an artifact.
+/// Navigation is recoverable UI state, so a failure never fails the change.
+pub fn artifact_moved(app: &AppHandle, space: &str, from: &str, to: &str) {
+    notify(app, retarget(Path::new(space), from, to));
+}
+
+/// Drops the pins an in-app deletion removed; the read of their source
+/// confirms they are gone.
+pub fn artifact_removed(app: &AppHandle, space: &str) {
+    notify(app, refresh(Path::new(space)));
 }
 
 /// Project and registered Space id (`None` for the Project root) of a Space
 /// directory.
-fn expansion_target(space: &Path) -> Result<(PathBuf, Option<String>), AppError> {
+fn space_target(space: &Path) -> Result<(PathBuf, Option<String>), AppError> {
     let not_found = || AppError::SpaceNotFound(svode_core::system_path::user_facing_path(space));
     let project = svode_core::page::project_for_directory(space).ok_or_else(not_found)?;
     if project == space {
@@ -274,7 +701,7 @@ fn expansion_target(space: &Path) -> Result<(PathBuf, Option<String>), AppError>
 }
 
 pub fn expanded_paths(space: &Path) -> Result<Vec<String>, AppError> {
-    let (project, space_id) = expansion_target(space)?;
+    let (project, space_id) = space_target(space)?;
     Ok(read_file(&project)
         .expanded
         .into_iter()
@@ -284,7 +711,7 @@ pub fn expanded_paths(space: &Path) -> Result<Vec<String>, AppError> {
 }
 
 pub fn save_expanded_paths(space: &Path, paths: Vec<String>) -> Result<(), AppError> {
-    let (project, space_id) = expansion_target(space)?;
+    let (project, space_id) = space_target(space)?;
     mutate(&project, |file| {
         file.expanded
             .retain(|expansion| expansion.space_id != space_id);
@@ -301,25 +728,35 @@ pub mod commands {
     use super::{NavigationItem, NavigationKey, NavigationState};
     use crate::error::AppError;
 
-    #[tauri::command]
-    pub fn navigation_read(project_path: String) -> NavigationState {
-        super::read_state(Path::new(&project_path))
+    /// Resolving pinned targets reads the file system, so it runs off the
+    /// main thread.
+    async fn blocking<T: Send + 'static>(
+        task: impl FnOnce() -> Result<T, AppError> + Send + 'static,
+    ) -> Result<T, AppError> {
+        tauri::async_runtime::spawn_blocking(task)
+            .await
+            .map_err(|error| AppError::General(format!("Navigation worker failed: {error}")))?
     }
 
     #[tauri::command]
-    pub fn navigation_pin(
+    pub async fn navigation_read(project_path: String) -> Result<NavigationState, AppError> {
+        blocking(move || Ok(super::read_state(Path::new(&project_path)))).await
+    }
+
+    #[tauri::command]
+    pub async fn navigation_pin(
         project_path: String,
         item: NavigationItem,
     ) -> Result<NavigationState, AppError> {
-        super::pin(Path::new(&project_path), item)
+        blocking(move || super::pin(Path::new(&project_path), item)).await
     }
 
     #[tauri::command]
-    pub fn navigation_forget(
+    pub async fn navigation_forget(
         project_path: String,
         keys: Vec<NavigationKey>,
     ) -> Result<NavigationState, AppError> {
-        super::forget(Path::new(&project_path), keys)
+        blocking(move || super::forget(Path::new(&project_path), keys)).await
     }
 
     #[tauri::command]
@@ -375,9 +812,49 @@ mod tests {
         state
             .pinned
             .iter()
-            .map(|item| match &item.key {
+            .map(|pinned| match &pinned.item.key {
                 NavigationKey::Session { session_id } => session_id.clone(),
                 other => format!("{other:?}"),
+            })
+            .collect()
+    }
+
+    fn write(root: &Path, path: &str, content: &str) {
+        let path = root.join(path);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, content).unwrap();
+    }
+
+    fn page(title: &str) -> String {
+        format!("---\ntitle: {title}\n---\n")
+    }
+
+    fn artifact(key: NavigationKey, title: &str) -> NavigationItem {
+        NavigationItem {
+            key,
+            title: title.into(),
+            icon: None,
+        }
+    }
+
+    fn child_page(path: &str) -> NavigationKey {
+        NavigationKey::Page {
+            space_id: Some("child-id".into()),
+            path: path.into(),
+        }
+    }
+
+    /// Keys, titles and availability as the frontend receives them.
+    fn shown(state: &NavigationState) -> Vec<(NavigationKey, String, Option<bool>)> {
+        state
+            .pinned
+            .iter()
+            .map(|pinned| {
+                (
+                    pinned.item.key.clone(),
+                    pinned.item.title.clone(),
+                    pinned.available,
+                )
             })
             .collect()
     }
@@ -397,7 +874,8 @@ mod tests {
         .unwrap();
 
         assert_eq!(pinned_ids(&state), vec!["codex:a", "codex:b"]);
-        assert_eq!(state.pinned[0].title, "Renamed");
+        assert_eq!(state.pinned[0].item.title, "Renamed");
+        assert_eq!(state.pinned[0].available, None);
         assert_eq!(read_state(project.path()), state);
 
         let state = forget(
@@ -414,25 +892,21 @@ mod tests {
     #[test]
     fn artifact_keys_are_normalized_and_invalid_paths_rejected() {
         let project = project();
+        write(
+            &project.path().join("child"),
+            "notes/plan/README.md",
+            &page("Plan"),
+        );
         let state = pin(
             project.path(),
             NavigationItem {
-                key: NavigationKey::Page {
-                    space_id: Some("child-id".into()),
-                    path: "/notes\\plan/".into(),
-                },
+                key: child_page("/notes\\plan/README.md"),
                 title: "Plan".into(),
                 icon: Some("📄".into()),
             },
         )
         .unwrap();
-        assert_eq!(
-            state.pinned[0].key,
-            NavigationKey::Page {
-                space_id: Some("child-id".into()),
-                path: "notes/plan".into(),
-            }
-        );
+        assert_eq!(state.pinned[0].item.key, child_page("notes/plan"));
         assert!(
             pin(
                 project.path(),
@@ -528,6 +1002,207 @@ mod tests {
         assert!(svode_core::git::policy::contains(&format!(
             "child/.svode/{FILE_NAME}"
         )));
+    }
+
+    #[test]
+    fn pinned_targets_resolve_against_their_sources() {
+        let project = project();
+        let child = project.path().join("child");
+        write(&child, "notes/plan.md", &page("Plan"));
+        write(&child, "docs/README.md", &page("Docs"));
+        write(&child, "files/scan.pdf", "pdf");
+        let attachment_key = NavigationKey::Attachment {
+            space_id: Some("child-id".into()),
+            path: "files/scan.pdf".into(),
+        };
+        for item in [
+            artifact(child_page("notes/plan.md"), "Old title"),
+            artifact(child_page("docs"), "Docs"),
+            artifact(attachment_key.clone(), "scan.pdf"),
+            artifact(
+                NavigationKey::Space {
+                    space_id: Some("child-id".into()),
+                },
+                "Child",
+            ),
+            artifact(NavigationKey::Space { space_id: None }, "Project"),
+            session("codex:a"),
+        ] {
+            pin(project.path(), item).unwrap();
+        }
+        // A target already gone is not kept.
+        let state = pin(project.path(), artifact(child_page("gone.md"), "Gone")).unwrap();
+        assert_eq!(
+            shown(&state),
+            vec![
+                (child_page("notes/plan.md"), "Plan".into(), Some(true)),
+                (child_page("docs"), "Docs".into(), Some(true)),
+                (attachment_key.clone(), "scan.pdf".into(), Some(true)),
+                (
+                    NavigationKey::Space {
+                        space_id: Some("child-id".into())
+                    },
+                    "Child".into(),
+                    Some(true)
+                ),
+                (
+                    NavigationKey::Space { space_id: None },
+                    "Project".into(),
+                    Some(true)
+                ),
+                (
+                    NavigationKey::Session {
+                        session_id: "codex:a".into()
+                    },
+                    "codex:a".into(),
+                    None
+                ),
+            ]
+        );
+
+        // A deleted target is dropped by the read that confirms it.
+        std::fs::remove_dir_all(child.join("docs")).unwrap();
+        std::fs::remove_file(child.join("files/scan.pdf")).unwrap();
+        assert_eq!(pinned_ids(&read_state(project.path())).len(), 4);
+
+        // A missing Space keeps its pins as unavailable with the last title.
+        std::fs::rename(&child, project.path().join("moved-away")).unwrap();
+        let state = read_state(project.path());
+        assert_eq!(
+            shown(&state)[..2],
+            [
+                (child_page("notes/plan.md"), "Plan".into(), Some(false)),
+                (
+                    NavigationKey::Space {
+                        space_id: Some("child-id".into())
+                    },
+                    "Child".into(),
+                    Some(false)
+                ),
+            ]
+        );
+
+        // An unreadable Project config confirms nothing.
+        std::fs::write(project.path().join(".svode/config.json"), "broken").unwrap();
+        assert_eq!(read_state(project.path()).pinned.len(), 4);
+
+        // A Space removed from the Project takes its pins with it.
+        std::fs::write(
+            project.path().join(".svode/config.json"),
+            serde_json::json!({ "name": "Project", "spaces": [] }).to_string(),
+        )
+        .unwrap();
+        assert_eq!(
+            pinned_ids(&read_state(project.path())),
+            vec!["Space { space_id: None }", "codex:a"]
+        );
+    }
+
+    #[test]
+    fn in_app_path_changes_move_keys_in_place() {
+        let project = project();
+        let child = project.path().join("child");
+        write(&child, "notes/plan.md", &page("Plan"));
+        write(&child, "area/README.md", &page("Area"));
+        write(&child, "area/sub.md", &page("Sub"));
+        write(project.path(), "area/README.md", &page("Root area"));
+        for item in [
+            session("codex:a"),
+            artifact(child_page("notes/plan.md"), "Plan"),
+            artifact(child_page("area/sub.md"), "Sub"),
+            artifact(child_page("area"), "Area"),
+            artifact(
+                NavigationKey::Page {
+                    space_id: None,
+                    path: "area".into(),
+                },
+                "Root area",
+            ),
+        ] {
+            pin(project.path(), item).unwrap();
+        }
+        let keys = || {
+            read_state(project.path())
+                .pinned
+                .into_iter()
+                .map(|pinned| pinned.item.key)
+                .collect::<Vec<_>>()
+        };
+
+        // Rename of a leaf Page.
+        std::fs::rename(child.join("notes/plan.md"), child.join("notes/next.md")).unwrap();
+        assert!(retarget(&child, "notes/plan.md", "notes/next.md").unwrap());
+        // Move of a folder Page with everything under it, in its Space only.
+        std::fs::create_dir_all(child.join("archive")).unwrap();
+        std::fs::rename(child.join("area"), child.join("archive/area")).unwrap();
+        assert!(retarget(&child, "area/README.md", "archive/area/README.md").unwrap());
+        // Leaf → folder, then folder → Collection at the same path.
+        std::fs::create_dir_all(child.join("notes/next")).unwrap();
+        std::fs::rename(
+            child.join("notes/next.md"),
+            child.join("notes/next/README.md"),
+        )
+        .unwrap();
+        assert!(retarget(&child, "notes/next.md", "notes/next/README.md").unwrap());
+        write(&child, "notes/next/schema.yaml", "fields: []\n");
+        assert!(retarget(&child, "notes/next/README.md", "notes/next/README.md").unwrap());
+
+        assert_eq!(
+            keys(),
+            vec![
+                NavigationKey::Session {
+                    session_id: "codex:a".into()
+                },
+                NavigationKey::Collection {
+                    space_id: Some("child-id".into()),
+                    path: "notes/next".into(),
+                },
+                child_page("archive/area/sub.md"),
+                child_page("archive/area"),
+                NavigationKey::Page {
+                    space_id: None,
+                    path: "area".into(),
+                },
+            ]
+        );
+
+        // An external rename is a removal.
+        std::fs::rename(
+            child.join("archive/area/sub.md"),
+            child.join("archive/area/x.md"),
+        )
+        .unwrap();
+        assert_eq!(keys().len(), 4);
+
+        // Unpin addresses the object, whatever form the caller knew.
+        let state = forget(project.path(), vec![child_page("notes/next/README.md")]).unwrap();
+        assert_eq!(state.pinned.len(), 3);
+        assert_eq!(
+            state.pinned[1].open_path.as_deref(),
+            Some("archive/area/README.md")
+        );
+    }
+
+    #[test]
+    fn reads_during_a_path_change_keep_missing_targets() {
+        let project = project();
+        let child = project.path().join("child");
+        write(&child, "plan.md", &page("Plan"));
+        pin(project.path(), artifact(child_page("plan.md"), "Plan")).unwrap();
+
+        let change = path_change(&child.to_string_lossy());
+        std::fs::rename(child.join("plan.md"), child.join("next.md")).unwrap();
+        assert_eq!(
+            shown(&read_state(project.path())),
+            vec![(child_page("plan.md"), "Plan".into(), Some(false))]
+        );
+        assert!(retarget(&child, "plan.md", "next.md").unwrap());
+        drop(change);
+
+        assert_eq!(
+            shown(&read_state(project.path())),
+            vec![(child_page("next.md"), "Plan".into(), Some(true))]
+        );
     }
 
     #[test]

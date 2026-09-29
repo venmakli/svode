@@ -4,6 +4,7 @@ import {
   navigationKeyId,
   type NavigationItem,
   type NavigationKey,
+  type NavigationPinnedItem,
 } from "./keys";
 import {
   createNavigationStore,
@@ -16,7 +17,7 @@ function sessionItem(sessionId: string): NavigationItem {
 
 /** In-memory Desktop owner: every operation answers with the whole state. */
 function fakeApi() {
-  const files = new Map<string, NavigationItem[]>();
+  const files = new Map<string, NavigationPinnedItem[]>();
   const calls: string[] = [];
   const state = (projectPath: string): NavigationStateDto => ({
     pinned: [...(files.get(projectPath) ?? [])],
@@ -168,4 +169,32 @@ test("forget drops only the given keys and ignores an empty request", async () =
   expect(store.getState().pinned.map((item) => item.title)).toEqual([
     "codex:b",
   ]);
+});
+
+test("refresh shows what Desktop resolved since the last answer", async () => {
+  const { api, files } = fakeApi();
+  const store = createNavigationStore(api);
+  store.getState().setProject("/project");
+  await flush();
+
+  files.set("/project", [{ ...sessionItem("codex:a"), available: false }]);
+  await store.getState().refresh();
+
+  expect(store.getState().pinned).toEqual([
+    { ...sessionItem("codex:a"), available: false },
+  ]);
+});
+
+test("unpin forgets the stored key of the same artifact in another form", async () => {
+  const { api, files } = fakeApi();
+  files.set("/project", [
+    { key: { kind: "collection", spaceId: "s", path: "tasks" }, title: "T" },
+  ]);
+  const store = createNavigationStore(api);
+  store.getState().setProject("/project");
+  await flush();
+
+  await store.getState().unpin({ kind: "page", spaceId: "s", path: "tasks" });
+
+  expect(store.getState().pinned).toEqual([]);
 });

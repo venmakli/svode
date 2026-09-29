@@ -5,3 +5,4 @@ export {
   AgentSessionMainSurface,
 } from "./session-main-surface";
 export { AgentSessionsSurface } from "./sessions-surface";
+export { AgentSessionNavigationItem } from "./session-navigation-item";

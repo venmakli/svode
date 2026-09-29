@@ -57,6 +57,7 @@ import {
 } from "lucide-react";
 import type { TreeNode } from "../model/types";
 import { getArtifactPresentationKind } from "@/features/artifact";
+import { PinMenuItem } from "@/features/navigation";
 import { FileGitIndicatorIcon } from "@/features/git/sidebar";
 import { cn } from "@/shared/lib/utils";
 import { useFileTreeItemActions } from "../hooks/use-file-tree-item-actions";
@@ -103,6 +104,7 @@ export function FileTreeItem({
     handlePageClick,
     handleMakeCollection,
     handleMakePage,
+    pinItem,
     handleNewFolder,
     handleNewPage,
     handleNodeOpenChange,
@@ -269,6 +271,7 @@ export function FileTreeItem({
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" side="bottom">
+        <PinMenuItem item={pinItem} />
         {bareFolder && !node.has_schema && (
           <DropdownMenuItem onClick={handleMakePage}>
             <FileSymlink className="mr-2 h-4 w-4" />

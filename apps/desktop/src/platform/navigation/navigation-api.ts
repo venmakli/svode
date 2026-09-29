@@ -1,4 +1,8 @@
 import { invokeCommand } from "@/platform/native/invoke";
+import { listen, type UnlistenFn } from "@/platform/native/events";
+
+/** Desktop moved or dropped pins after an in-app change of artifact paths. */
+const NAVIGATION_CHANGED_EVENT = "navigation:changed";
 
 /** Artifacts are keyed by registered Space id; no `spaceId` is the Project root. */
 export type NavigationKeyDto =
@@ -17,8 +21,24 @@ export interface NavigationItemDto {
   icon?: string;
 }
 
+/**
+ * A pinned item as resolved by Desktop. `available` is absent for sessions,
+ * which the session catalog resolves; `openPath` is the path an available
+ * artifact opens by.
+ */
+export interface NavigationPinnedItemDto extends NavigationItemDto {
+  available?: boolean;
+  openPath?: string;
+}
+
 export interface NavigationStateDto {
-  pinned: NavigationItemDto[];
+  pinned: NavigationPinnedItemDto[];
+}
+
+export function listenNavigationChanged(
+  handler: () => void,
+): Promise<UnlistenFn> {
+  return listen<void>(NAVIGATION_CHANGED_EVENT, () => handler());
 }
 
 export function readNavigationState(

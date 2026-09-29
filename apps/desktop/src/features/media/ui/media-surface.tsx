@@ -1,3 +1,4 @@
+import { artifactNavigationKey, PinToggleButton } from "@/features/navigation";
 import { useMemo, type ReactNode } from "react";
 import { FileWarning, RefreshCw } from "lucide-react";
 
@@ -71,10 +72,19 @@ export function MediaSurface({
         onOpenFullPage();
       }
     : undefined;
-  const toolbarActions =
-    renderToolbarActions && onClose && openFullPage
-      ? renderToolbarActions({ onClose, onOpenFullPage: openFullPage })
-      : undefined;
+  const toolbarActions = (
+    <>
+      <PinToggleButton
+        item={{
+          key: artifactNavigationKey("attachment", path, target.spaceId, null),
+          title,
+        }}
+      />
+      {renderToolbarActions && onClose && openFullPage
+        ? renderToolbarActions({ onClose, onOpenFullPage: openFullPage })
+        : null}
+    </>
+  );
 
   if (session.state.phase === "loading" || session.state.phase === "ready") {
     const source = session.state.source;

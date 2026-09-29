@@ -15,24 +15,18 @@ import { useShellStore } from "./model";
 import { useOpenSessionRoutine } from "./open-session-routine";
 
 /**
- * The session peek of the shell. "Expand" makes the session the main area
- * object after the guards of the open peek stack and the main area pass.
+ * Makes a session the main area object after the guards of the open peek
+ * stack and the main area pass. Returns whether it opened.
  */
-export function AgentSessionPeekHost() {
-  const target = useShellStore((state) => state.sessionPeekTarget);
-  const focusTerminal = useShellStore(
-    (state) => state.sessionPeekFocusTerminal,
-  );
-  const closeSessionPeek = useShellStore((state) => state.closeSessionPeek);
+export function useOpenSessionInMainArea() {
   const openSessionMainSurface = useShellStore(
     (state) => state.openSessionMainSurface,
   );
   const detailController = useCollectionDetailController();
   const openSpace = useSpace((state) => state.openSpace);
   const clearActiveSpace = useSpace((state) => state.clearActiveSpace);
-  const openSessionRoutine = useOpenSessionRoutine();
 
-  const expand = useCallback(
+  return useCallback(
     async (sessionTarget: AgentSessionTarget, session: AgentSession | null) => {
       if (!(await detailController.prepareForNavigation())) return false;
       if ((await prepareActiveContentDeactivation()) === "blocked")
@@ -48,6 +42,17 @@ export function AgentSessionPeekHost() {
     },
     [clearActiveSpace, detailController, openSessionMainSurface, openSpace],
   );
+}
+
+/** The session peek of the shell; "Expand" opens it in the main area. */
+export function AgentSessionPeekHost() {
+  const target = useShellStore((state) => state.sessionPeekTarget);
+  const focusTerminal = useShellStore(
+    (state) => state.sessionPeekFocusTerminal,
+  );
+  const closeSessionPeek = useShellStore((state) => state.closeSessionPeek);
+  const expand = useOpenSessionInMainArea();
+  const openSessionRoutine = useOpenSessionRoutine();
 
   return (
     <AgentSessionPeek

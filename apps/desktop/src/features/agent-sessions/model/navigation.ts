@@ -1,5 +1,6 @@
 import type { NavigationItem, NavigationKey } from "@/features/navigation";
 import type { AgentSessionsListResult } from "../api";
+import { isPendingSessionId } from "./pending";
 import type { AgentSession } from "./types";
 
 /**
@@ -20,10 +21,39 @@ export function agentSessionNavigationItem(
   return { key: agentSessionNavigationKey(session), title: session.title };
 }
 
+/**
+ * The navigation item a session is pinned by, or null while it has no
+ * identity to pin: a pending session before the catalog matches it, or a
+ * session of an unknown source.
+ */
+export function pinnableAgentSessionItem(
+  session: AgentSession | null,
+): NavigationItem | null {
+  if (!session || session.source === "unknown") return null;
+  if (isPendingSessionId(session.id)) return null;
+  return agentSessionNavigationItem(session);
+}
+
 function addressesSession(key: NavigationKey, session: AgentSession) {
   if (key.kind === "session") return key.sessionId === session.id;
   if (key.kind === "sessionLaunch") return key.launchId === session.launchId;
   return false;
+}
+
+/**
+ * The catalog session a navigation key addresses, or null while the catalog
+ * does not list it. A launch key prefers the canonical session.
+ */
+export function agentSessionForNavigationKey(
+  key: NavigationKey,
+  sessions: readonly AgentSession[],
+): AgentSession | null {
+  const matches = sessions.filter((session) => addressesSession(key, session));
+  return (
+    matches.find((session) => session.runtime?.provisional !== true) ??
+    matches[0] ??
+    null
+  );
 }
 
 /**
@@ -70,5 +100,21 @@ export function confirmedMissingAgentSessionKeys(
       );
     }
     return false;
+  });
+}
+
+/**
+ * Pinned sessions whose listed title differs from their display snapshot,
+ * with the snapshot to keep: the last known title shown while unavailable.
+ */
+export function retitledAgentSessionPins(
+  pinned: readonly NavigationItem[],
+  sessions: readonly AgentSession[],
+): NavigationItem[] {
+  return pinned.flatMap((item) => {
+    const session = agentSessionForNavigationKey(item.key, sessions);
+    return session && session.title !== item.title
+      ? [{ key: item.key, title: session.title }]
+      : [];
   });
 }

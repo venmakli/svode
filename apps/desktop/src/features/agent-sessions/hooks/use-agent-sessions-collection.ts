@@ -10,12 +10,15 @@ import {
   useRoutineLaunchLinks,
   type RoutineLaunchLink,
 } from "@/features/routines/catalog";
+import { navigationKeyId, useNavigationState } from "@/features/navigation";
 import type { ScopeOwnerRef } from "@/features/scope-surfaces";
 import { getNativeErrorMessage } from "@/platform/native/errors";
 import { openSessionCwdInExternalTerminal } from "../api";
 import {
+  agentSessionNavigationIndex,
   hasActionableWait,
   isAgentSessionInScope,
+  pinnableAgentSessionItem,
   type AgentSession,
   type AgentSessionOpenOptions,
   type AgentSessionTarget,
@@ -58,6 +61,10 @@ export function useAgentSessionsCollection({
   const scopes = useAgentSessionScopes();
   const result = useAgentSessionCatalog((state) => state.result);
   const sessions = useAgentSessionCatalog((state) => state.sessions);
+  const pinnedItems = useNavigationState((state) => state.pinned);
+  const pendingPinKeyIds = useNavigationState((state) => state.pendingKeyIds);
+  const pin = useNavigationState((state) => state.pin);
+  const unpin = useNavigationState((state) => state.unpin);
   const error = useAgentSessionCatalog((state) => state.error);
   const loading = useAgentSessionCatalog((state) => state.loading);
   const refreshing = useAgentSessionCatalog((state) => state.refreshing);
@@ -157,6 +164,25 @@ export function useAgentSessionsCollection({
             description: getNativeErrorMessage(copyError),
           });
         });
+    },
+    pinnedOf: (session) =>
+      pinnableAgentSessionItem(session)
+        ? agentSessionNavigationIndex(pinnedItems, session) >= 0
+        : null,
+    pinPending: (session) => {
+      const item = pinnableAgentSessionItem(session);
+      return item ? pendingPinKeyIds.has(navigationKeyId(item.key)) : false;
+    },
+    onTogglePin: (session) => {
+      const item = pinnableAgentSessionItem(session);
+      if (!item) return;
+      const index = agentSessionNavigationIndex(pinnedItems, session);
+      const change = index >= 0 ? unpin(pinnedItems[index].key) : pin(item);
+      change.catch((pinError: unknown) => {
+        toast.error(m.navigation_pin_failed(), {
+          description: getNativeErrorMessage(pinError),
+        });
+      });
     },
     routineOf: (session) =>
       (session.launchId && routines.get(session.launchId)) || null,

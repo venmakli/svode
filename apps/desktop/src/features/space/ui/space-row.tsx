@@ -15,6 +15,7 @@ import {
   X,
 } from "lucide-react";
 import * as m from "@/paraglide/messages.js";
+import { PinMenuItem, spaceNavigationKey } from "@/features/navigation";
 import {
   Collapsible,
   CollapsibleContent,
@@ -270,6 +271,13 @@ export function SpaceRow({
             </SidebarMenuAction>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" side="bottom">
+            <PinMenuItem
+              item={{
+                key: spaceNavigationKey(ws.id, null),
+                title: ws.name,
+                ...(ws.icon ? { icon: ws.icon } : {}),
+              }}
+            />
             <DropdownMenuItem onClick={() => handleNewPage(scope)}>
               <FilePlus />
               {m.space_new_page()}

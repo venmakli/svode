@@ -2205,5 +2205,11 @@
   "sessions_collection_empty_title": "В этом пространстве нет сессий",
   "sessions_collection_empty_description": "Запустите CLI-агента в этом пространстве или создайте новую сессию.",
   "sessions_device_note": "Сессии этого устройства. Они не передаются через Git и не видны другим участникам.",
-  "sessions_source_partial": "Не удалось прочитать сессии {agents}."
+  "sessions_source_partial": "Не удалось прочитать сессии {agents}.",
+  "navigation_pinned": "Закреплённые",
+  "navigation_pin": "Закрепить",
+  "navigation_unpin": "Открепить",
+  "navigation_pin_failed": "Не удалось изменить закрепления",
+  "navigation_unavailable": "Недоступно",
+  "navigation_item_actions": "Действия «{title}»"
 }

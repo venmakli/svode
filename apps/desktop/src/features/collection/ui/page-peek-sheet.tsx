@@ -4,7 +4,9 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
-import type { Page } from "@/features/page";
+import { pageNavigationItem, type Page } from "@/features/page";
+import { PinMenuItem } from "@/features/navigation";
+import { useSpace } from "@/features/space";
 import { PageDetailActions } from "@/features/page/detail";
 import {
   usePageSurfaceSession,
@@ -167,6 +169,7 @@ function PagePeekActions({
 }) {
   const session = usePageSurfaceSession();
   const detail = usePageDetailContext();
+  const activeRootId = useSpace((state) => state.activeRootId);
   const templateDefaultAction =
     !readOnly && template && onSetTemplateDefault ? (
       template.isDefault ? (
@@ -221,7 +224,13 @@ function PagePeekActions({
           })
           .catch(handleError);
       }}
-      actionItemsBeforeDuplicate={templateDefaultAction}
+      actionItemsBeforeDuplicate={
+        template ? (
+          templateDefaultAction
+        ) : (
+          <PinMenuItem item={pageNavigationItem(page, spaceId, activeRootId)} />
+        )
+      }
       duplicateLabel={template ? m.collection_template_duplicate() : undefined}
       readOnly={readOnly}
     />

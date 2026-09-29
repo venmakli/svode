@@ -21,7 +21,8 @@ pub async fn nest_page(
         false,
     )
     .await?;
-    scope_authorized_mutation_paths(authorized_paths, async {
+    let _changing = crate::navigation::path_change(&space);
+    let result = scope_authorized_mutation_paths(authorized_paths, async {
         crate::structure::nest(
             &space,
             &path,
@@ -32,7 +33,9 @@ pub async fn nest_page(
         )
         .await
     })
-    .await
+    .await?;
+    crate::navigation::artifact_moved(&app, &space, &path, &result);
+    Ok(result)
 }
 
 #[tauri::command]
@@ -55,7 +58,8 @@ pub async fn unnest_page(
         false,
     )
     .await?;
-    scope_authorized_mutation_paths(authorized_paths, async {
+    let _changing = crate::navigation::path_change(&space);
+    let result = scope_authorized_mutation_paths(authorized_paths, async {
         crate::structure::unnest(
             &space,
             &path,
@@ -66,7 +70,9 @@ pub async fn unnest_page(
         )
         .await
     })
-    .await
+    .await?;
+    crate::navigation::artifact_moved(&app, &space, &path, &result);
+    Ok(result)
 }
 
 #[tauri::command]
@@ -89,7 +95,8 @@ pub async fn convert_page_to_folder(
         false,
     )
     .await?;
-    scope_authorized_mutation_paths(authorized_paths, async {
+    let _changing = crate::navigation::path_change(&space);
+    let result = scope_authorized_mutation_paths(authorized_paths, async {
         crate::structure::convert_to_folder(
             &space,
             &file_path,
@@ -100,7 +107,9 @@ pub async fn convert_page_to_folder(
         )
         .await
     })
-    .await
+    .await?;
+    crate::navigation::artifact_moved(&app, &space, &file_path, &result.path);
+    Ok(result)
 }
 
 #[tauri::command]
@@ -121,7 +130,8 @@ pub async fn convert_to_collection(
         &path,
     )
     .await?;
-    scope_authorized_mutation_paths(authorized_paths, async {
+    let _changing = crate::navigation::path_change(&space);
+    let result = scope_authorized_mutation_paths(authorized_paths, async {
         crate::structure::convert_to_collection(
             &space,
             &path,
@@ -132,7 +142,9 @@ pub async fn convert_to_collection(
         )
         .await
     })
-    .await
+    .await?;
+    crate::navigation::artifact_moved(&app, &space, &path, &result.collection_path);
+    Ok(result)
 }
 
 #[tauri::command]
@@ -155,7 +167,8 @@ pub async fn convert_page_to_leaf(
         false,
     )
     .await?;
-    scope_authorized_mutation_paths(authorized_paths, async {
+    let _changing = crate::navigation::path_change(&space);
+    let result = scope_authorized_mutation_paths(authorized_paths, async {
         crate::structure::convert_to_leaf(
             &space,
             &file_path,
@@ -166,7 +179,9 @@ pub async fn convert_page_to_leaf(
         )
         .await
     })
-    .await
+    .await?;
+    crate::navigation::artifact_moved(&app, &space, &file_path, &result.path);
+    Ok(result)
 }
 
 #[tauri::command]

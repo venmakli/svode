@@ -3,6 +3,10 @@ import {
   useActiveContentSpaceId,
   useOpenScopeOwner,
 } from "@/features/artifact";
+import {
+  artifactNavigationKey,
+  type NavigationItem,
+} from "@/features/navigation";
 import { useOpenPage } from "@/features/page/navigation";
 import type { TreeNode } from "../model/types";
 import { useEditorFilePendingWrite } from "@/features/editor/file-tree-sync";
@@ -28,6 +32,27 @@ interface UseFileTreeItemActionsInput {
 
 function isBareFolder(node: TreeNode): boolean {
   return !node.path.endsWith(".md");
+}
+
+/** How a tree node is pinned; a bare folder is not a pinnable object. */
+function treeNodeNavigationItem(
+  node: TreeNode,
+  spaceId: string,
+  rootSpaceId: string | null,
+): NavigationItem | null {
+  const kind = node.has_schema
+    ? "collection"
+    : node.kind === "app" || node.has_app
+      ? "app"
+      : isBareFolder(node)
+        ? null
+        : "page";
+  if (!kind) return null;
+  return {
+    key: artifactNavigationKey(kind, node.path, spaceId, rootSpaceId),
+    title: node.title,
+    ...(node.icon ? { icon: node.icon } : {}),
+  };
 }
 
 export function useFileTreeItemActions({
@@ -151,6 +176,7 @@ export function useFileTreeItemActions({
 
   return {
     bareFolder,
+    pinItem: treeNodeNavigationItem(node, spaceId, activeRootId),
     backlinkLabel: deletion.backlinkLabel,
     childLoading,
     closeDeleteDialog: deletion.closeDeleteDialog,

@@ -37,6 +37,7 @@ import {
 } from "@/components/ui/empty";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAgentAdapterDictionary } from "@/features/agent-adapters";
+import { PinMenuItem } from "@/features/navigation";
 import {
   useRoutineLaunchLinks,
   type RoutineLaunchLink,
@@ -50,7 +51,11 @@ import {
   type AgentSessionView,
 } from "../hooks";
 import { scopeLabel, sessionTimeLabel, tooltipDateTime } from "../lib";
-import type { AgentSession, AgentSessionTarget } from "../model";
+import {
+  pinnableAgentSessionItem,
+  type AgentSession,
+  type AgentSessionTarget,
+} from "../model";
 import {
   ExternalTerminalAppProvider,
   ExternalTerminalIcon,
@@ -388,6 +393,7 @@ function SessionActionsMenu({
             <ExternalTerminalIcon />
             {m.sessions_action_open_external_terminal()}
           </DropdownMenuItem>
+          <PinMenuItem item={pinnableAgentSessionItem(view.session)} />
           <DropdownMenuItem
             disabled={!view.session}
             onSelect={onToggleMetadata}

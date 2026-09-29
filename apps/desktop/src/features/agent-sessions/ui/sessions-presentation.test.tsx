@@ -92,6 +92,9 @@ function actions(
     routineOf: (session) =>
       (session.launchId && routines.get(session.launchId)) || null,
     onOpenRoutine: () => undefined,
+    pinnedOf: () => null,
+    pinPending: () => false,
+    onTogglePin: () => undefined,
     ...overrides,
   };
 }
@@ -299,6 +302,28 @@ test("row actions follow the session: close only an open terminal, copy and open
     "close:codex:terminal",
     "routine:routine-launch-review",
   ]);
+});
+
+test("pin and unpin follow the pin state of each row", () => {
+  const toggled: string[] = [];
+  const presentation = createAgentSessionsPresentationDescriptor({
+    actions: actions({
+      pinnedOf: (session) =>
+        session === done ? true : session === working ? false : null,
+      pinPending: (session) => session === working,
+      onTogglePin: (session) => toggled.push(session.id),
+    }),
+    agents,
+    rows,
+  });
+  const pin = presentation.rowActions?.find((action) => action.id === "pin");
+
+  expect(pin?.isVisible?.(withTerminal)).toBe(false);
+  expect(pin?.getLabel?.(done)).toBe("Unpin");
+  expect(pin?.getLabel?.(working)).toBe("Pin");
+  expect(pin?.getState(working)).toEqual({ status: "pending" });
+  void pin?.run(done);
+  expect(toggled).toEqual([done.id]);
 });
 
 test("collection states: loading, blocking error, partial source and empty Space", () => {

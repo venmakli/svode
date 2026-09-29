@@ -26,3 +26,4 @@ export {
   publishPageFilenameWarnings,
   retargetPageFilenameWarnings,
 } from "./lib/filename-warning";
+export { pageNavigationItem } from "./lib/navigation-item";

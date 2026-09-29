@@ -2,9 +2,11 @@ import { expect, test } from "bun:test";
 import type { NavigationItem, NavigationKey } from "@/features/navigation";
 import type { AgentSessionSourceReport, AgentSessionsListResult } from "../api";
 import {
+  agentSessionForNavigationKey,
   agentSessionNavigationIndex,
   agentSessionNavigationKey,
   confirmedMissingAgentSessionKeys,
+  retitledAgentSessionPins,
 } from "./navigation";
 import { listResult, listedSession } from "./testing/catalog";
 
@@ -118,4 +120,54 @@ test("a provisional launch is keyed by launch id and keeps its pin after handoff
   expect(
     agentSessionNavigationIndex(pinned, listedSession({ id: "codex:other" })),
   ).toBe(-1);
+});
+
+test("a pinned key resolves to the catalog session, a launch key to the canonical one", () => {
+  const provisional = listedSession({
+    id: "claude-code:provisional",
+    launchId: "launch-1",
+    runtime: { live: true, provisional: true },
+  });
+  const canonical = listedSession({
+    id: "claude-code:canonical",
+    launchId: "launch-1",
+  });
+  const launchKey: NavigationKey = {
+    kind: "sessionLaunch",
+    launchId: "launch-1",
+  };
+
+  expect(agentSessionForNavigationKey(launchKey, [provisional])).toBe(
+    provisional,
+  );
+  expect(
+    agentSessionForNavigationKey(launchKey, [provisional, canonical]),
+  ).toBe(canonical);
+  expect(
+    agentSessionForNavigationKey({ kind: "session", sessionId: "codex:gone" }, [
+      canonical,
+    ]),
+  ).toBeNull();
+});
+
+test("a listed session with a new title refreshes its pin snapshot under the stored key", () => {
+  const session = listedSession({
+    id: "codex:a",
+    title: "Fix login",
+    launchId: "launch-a",
+  });
+  const pinned: NavigationItem[] = [
+    { key: { kind: "sessionLaunch", launchId: "launch-a" }, title: "codex:a" },
+    { key: { kind: "session", sessionId: "codex:gone" }, title: "Gone" },
+  ];
+
+  expect(retitledAgentSessionPins(pinned, [session])).toEqual([
+    {
+      key: { kind: "sessionLaunch", launchId: "launch-a" },
+      title: "Fix login",
+    },
+  ]);
+  expect(
+    retitledAgentSessionPins([{ ...pinned[0], title: "Fix login" }], [session]),
+  ).toEqual([]);
 });

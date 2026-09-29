@@ -4,6 +4,7 @@ import {
   navigationKeyId,
   type NavigationItem,
   type NavigationKey,
+  type NavigationPinnedItem,
 } from "./keys";
 
 /** Desktop navigation state commands the store depends on. */
@@ -21,13 +22,15 @@ export interface NavigationStateApi {
 
 export interface NavigationStoreState {
   projectPath: string | null;
-  /** Pinned objects in pin order. */
-  pinned: NavigationItem[];
+  /** Pinned objects in pin order, as their sources were last read. */
+  pinned: NavigationPinnedItem[];
   loaded: boolean;
   /** Key ids with a pin or unpin in flight. */
   pendingKeyIds: ReadonlySet<string>;
 
   setProject: (projectPath: string | null) => void;
+  /** Reads the state again; Desktop resolves the targets against their sources. */
+  refresh: () => Promise<void>;
   pin: (item: NavigationItem) => Promise<void>;
   unpin: (key: NavigationKey) => Promise<void>;
   /** Drops targets whose absence a successful read of their source confirmed. */
@@ -102,10 +105,13 @@ export function createNavigationStore(
           pendingKeyIds: EMPTY_SET,
         });
         if (!projectPath) return;
-        void run(api.read).catch((error: unknown) => {
-          console.error("Failed to read navigation state:", error);
-        });
+        void get().refresh();
       },
+
+      refresh: () =>
+        run(api.read).catch((error: unknown) => {
+          console.error("Failed to read navigation state:", error);
+        }),
 
       pin: (item) =>
         run(
@@ -113,11 +119,15 @@ export function createNavigationStore(
           [navigationKeyId(item.key)],
         ),
 
-      unpin: (key) =>
-        run(
-          (projectPath) => api.forget(projectPath, [key]),
-          [navigationKeyId(key)],
-        ),
+      // The stored key is forgotten: it may record an older form of the
+      // same artifact.
+      unpin: (key) => {
+        const id = navigationKeyId(key);
+        const stored =
+          get().pinned.find((item) => navigationKeyId(item.key) === id)?.key ??
+          key;
+        return run((projectPath) => api.forget(projectPath, [stored]), [id]);
+      },
 
       forget: async (keys) => {
         if (keys.length === 0) return;

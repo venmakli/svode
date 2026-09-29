@@ -18,6 +18,9 @@ import {
 } from "@/features/scope-surfaces";
 import { useCollectionRouteState } from "./hooks/use-collection-route-state";
 import { ScopeSurfacePage } from "./scope-surface-page";
+import { scopeOwnerNavigationItem } from "./scope-owner-navigation";
+import { PinToggleButton } from "@/features/navigation";
+import { useSpace } from "@/features/space";
 
 export function CompactScopePeek(props: ScopePeekContext) {
   const [pathState, setPathState] = useState({
@@ -54,6 +57,7 @@ export function CompactScopePeek(props: ScopePeekContext) {
   const fullRoute = useCollectionRouteState();
   const openOwner = useOpenScopeOwner();
   const openPage = useOpenPage();
+  const activeRootId = useSpace((state) => state.activeRootId);
   if (owner && surfaceId === null)
     setSurfaceId(owner.identityKind === "app-directory" ? "app" : "readme");
   if (!owner)
@@ -120,9 +124,14 @@ export function CompactScopePeek(props: ScopePeekContext) {
             metadataBefore={props.metadataBefore}
             headerActions={
               owner.identityKind === "page-file" ||
-              owner.identityKind === "page-directory"
-                ? null
-                : undefined
+              owner.identityKind === "page-directory" ? (
+                <PinToggleButton
+                  item={scopeOwnerNavigationItem(owner, activeRootId, {
+                    title: props.fallbackTitle ?? owner.ownerPath,
+                    icon: props.fallbackIcon ?? null,
+                  })}
+                />
+              ) : undefined
             }
             renderHeaderActions={props.renderHeaderActions}
             registerNavigationGuard={props.registerNavigationGuard}

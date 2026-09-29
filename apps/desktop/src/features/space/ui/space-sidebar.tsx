@@ -26,6 +26,8 @@ interface SpaceSidebarProps {
   /** Starts a new agent session in the Space at this path. */
   onNewSession?: (spacePath: string) => void;
   sessionsAction?: ReactNode;
+  /** Navigation sections between the top actions and the Artifacts tree. */
+  navigationSections?: ReactNode;
 }
 
 export function SpaceSidebar({
@@ -37,6 +39,7 @@ export function SpaceSidebar({
   onOpenSearch,
   onNewSession,
   sessionsAction,
+  navigationSections,
 }: SpaceSidebarProps) {
   return (
     <Sidebar variant="sidebar" collapsible="offcanvas" className="!border-r-0">
@@ -49,6 +52,7 @@ export function SpaceSidebar({
           onOpenSearch={onOpenSearch}
           sessionsAction={sessionsAction}
         />
+        {navigationSections}
         <NavSpaces
           onActivateContent={onActivateContent}
           onBeforeNavigation={onBeforeNavigation}

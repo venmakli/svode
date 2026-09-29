@@ -61,6 +61,7 @@ import {
   useStartSessionInPeek,
 } from "./agent-session-peek-host";
 import { useOpenSessionRoutine } from "./open-session-routine";
+import { PinnedSidebarSection } from "./pinned-sidebar-section";
 import { cn } from "@/shared/lib/utils";
 
 type SidebarProviderStyle = CSSProperties & {
@@ -102,10 +103,27 @@ function MainLayoutRuntime() {
   const detailController = useCollectionDetailController();
   useKeyboardShortcuts();
   useAppGitFocus();
-  const { activeRootId, activeRootName, activeRootPath, explicitHome } =
-    useSpace();
+  const {
+    activeRootIcon,
+    activeRootId,
+    activeRootName,
+    activeRootPath,
+    explicitHome,
+    spaces,
+  } = useSpace();
   const { openLastActiveRoot } = useSpaceActions();
-  useNavigationStateLifecycle(activeRootPath);
+  // Pinned Spaces and their artifacts are resolved again when the registered
+  // Spaces or their display change.
+  const navigationSpacesKey = useMemo(
+    () =>
+      JSON.stringify([
+        activeRootName,
+        activeRootIcon,
+        spaces.map((space) => [space.id, space.status, space.name, space.icon]),
+      ]),
+    [activeRootIcon, activeRootName, spaces],
+  );
+  useNavigationStateLifecycle(activeRootPath, navigationSpacesKey);
   const { available, recheck } = useGitAvailability();
   const identity = useGlobalIdentity();
   const identityName = identity?.name ?? null;
@@ -234,6 +252,12 @@ function ShellLayoutContent({
       onOpenSearch={onOpenSearch}
       onNewSession={startSessionInPeek}
       sessionsAction={<TerminalSidebarAction />}
+      navigationSections={
+        <PinnedSidebarSection
+          onActivateContent={onActivateContent}
+          onBeforeNavigation={onBeforeNavigation}
+        />
+      }
     />
   );
 

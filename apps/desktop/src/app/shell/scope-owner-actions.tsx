@@ -1,19 +1,20 @@
 import { useEffect, useState } from "react";
 import { useSpaceTreeSync } from "@/features/space";
 import { useOpenScopeOwner } from "@/features/artifact";
+import { PinMenuItem, type NavigationItem } from "@/features/navigation";
 import { deletePage, duplicatePage } from "@/features/page/page-api";
 import { useOpenPage } from "@/features/page/navigation";
 import { usePageDetailContext } from "@/features/page/scope-surface";
 import { handleError } from "@/features/page/detail";
-import {
-  PageDeleteDialog,
-  PageDetailActions,
-} from "@/features/page/detail";
+import { PageDeleteDialog, PageDetailActions } from "@/features/page/detail";
 import { publishPageFilenameWarnings, type Page } from "@/features/page";
 
 export function ScopeOwnerActions({
+  pinItem,
   readOnly = false,
 }: {
+  /** The owner object, pinned from this menu. */
+  pinItem: NavigationItem;
   readOnly?: boolean;
 }) {
   const context = usePageDetailContext();
@@ -79,10 +80,9 @@ export function ScopeOwnerActions({
             openPage(page.path, context.spaceId);
           }
         }}
-        onDuplicatePage={(page) =>
-          void duplicateOwner(page).catch(handleError)
-        }
+        onDuplicatePage={(page) => void duplicateOwner(page).catch(handleError)}
         onDeletePage={setPageToDelete}
+        actionItemsBeforeDuplicate={<PinMenuItem item={pinItem} />}
         readOnly={readOnly}
       />
       <PageDeleteDialog
