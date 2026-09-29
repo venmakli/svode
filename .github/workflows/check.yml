@@ -110,6 +110,7 @@ jobs:
       - name: Standalone archive with the plugin payload of the same version, installed for a user without Svode
         run: |
           archive="$(node scripts/standalone-archive.mjs target/debug target/standalone)"
+          rm -rf target/standalone/unpacked
           mkdir -p target/standalone/unpacked
           tar -xzf "$archive" -C target/standalone/unpacked
           root="$(find target/standalone/unpacked -mindepth 1 -maxdepth 1 -type d)"
