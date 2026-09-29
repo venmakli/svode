@@ -1,3 +1,4 @@
+import { toast } from "sonner";
 import * as m from "@/paraglide/messages.js";
 
 export function propertyErrorMessage(error: unknown) {
@@ -8,4 +9,9 @@ export function propertyErrorMessage(error: unknown) {
     if (typeof message === "string") return message;
   }
   return m.toast_error();
+}
+
+export function notifyPropertyAddFailed(error: unknown) {
+  console.error(error);
+  toast.error(m.property_add_failed());
 }

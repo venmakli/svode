@@ -9,6 +9,7 @@ export {
 } from "./ui/schema-column-menu";
 export {
   PROPERTY_TYPE_ICONS,
+  propertyTypeAddUnavailableReason,
   propertyTypeLabel,
   propertyTypeSettingsMeta,
   SensitivePropertyTypeHint,

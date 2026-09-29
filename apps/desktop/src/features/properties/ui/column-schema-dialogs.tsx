@@ -34,6 +34,10 @@ import { PROPERTY_TYPES, STATUS_GROUPS } from "../lib/utils";
 import type { Column, PropertyType } from "../model/types";
 import * as m from "@/paraglide/messages.js";
 import {
+  propertyTypeAddUnavailableReason,
+  propertyTypeLabel,
+} from "./property-type-meta";
+import {
   deferStateUpdate,
   parseOptions,
   type BaseDialogProps,
@@ -43,9 +47,11 @@ export function AddColumnDialog({
   open,
   onOpenChange,
   collectionPath,
+  columns,
   onSubmit,
 }: BaseDialogProps & {
   collectionPath?: string | null;
+  columns: readonly Column[];
   onSubmit: (column: Column) => Promise<void>;
 }) {
   const [name, setName] = useState("");
@@ -94,13 +100,30 @@ export function AddColumnDialog({
               </SelectTrigger>
               <SelectContent>
                 <SelectGroup>
-                  {PROPERTY_TYPES.map((item) => (
-                    <SelectItem key={item.value} value={item.value}>
-                      {item.value === "boolean"
-                        ? m.table_property_type_boolean()
-                        : item.label}
-                    </SelectItem>
-                  ))}
+                  {PROPERTY_TYPES.map((item) => {
+                    const reason = propertyTypeAddUnavailableReason(
+                      columns,
+                      item.value,
+                    );
+                    return (
+                      <SelectItem
+                        key={item.value}
+                        value={item.value}
+                        disabled={Boolean(reason)}
+                      >
+                        {reason ? (
+                          <span className="flex flex-col">
+                            <span>{propertyTypeLabel(item.value)}</span>
+                            <span className="text-xs text-muted-foreground">
+                              {reason}
+                            </span>
+                          </span>
+                        ) : (
+                          propertyTypeLabel(item.value)
+                        )}
+                      </SelectItem>
+                    );
+                  })}
                 </SelectGroup>
               </SelectContent>
             </Select>

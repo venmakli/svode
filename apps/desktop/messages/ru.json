@@ -191,6 +191,8 @@
   "property_actor_all_time": "За всё время",
   "property_actor_multiple": "Разрешить несколько участников",
   "property_pii_git_history_hint": "Приватные данные останутся в Git-истории.",
+  "property_type_add_unavailable": "В коллекции уже есть свойство «{type}»",
+  "property_add_failed": "Не удалось добавить свойство",
   "property_unique_id_prefix": "Префикс",
   "property_unique_id_next": "Следующий: {next}",
   "property_unique_id_normalize": "Нормализовать счётчик",

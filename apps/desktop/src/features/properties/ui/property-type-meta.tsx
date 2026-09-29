@@ -22,6 +22,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { isPropertyTypeAddable } from "../model/add-column";
 import type { Column, PropertyType } from "../model/types";
 import * as m from "@/paraglide/messages.js";
 
@@ -58,6 +59,15 @@ export function propertyTypeLabel(type: PropertyType) {
     relation: String(m.table_property_type_relation()),
   };
   return labels[type];
+}
+
+export function propertyTypeAddUnavailableReason(
+  columns: readonly Column[],
+  type: PropertyType,
+): string | null {
+  return isPropertyTypeAddable(columns, type)
+    ? null
+    : m.property_type_add_unavailable({ type: propertyTypeLabel(type) });
 }
 
 export function propertyTypeSettingsMeta(column: Column): {

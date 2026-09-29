@@ -85,4 +85,5 @@ export {
   resolveActorCandidates,
   valueToString,
 } from "./lib/utils";
+export { notifyPropertyAddFailed } from "./lib/error-message";
 export { PROPERTY_TYPE_ICONS } from "./ui/property-type-meta";

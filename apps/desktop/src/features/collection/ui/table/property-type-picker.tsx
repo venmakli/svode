@@ -7,10 +7,11 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import type { PropertyType } from "@/features/properties";
+import type { Column, PropertyType } from "@/features/properties";
 import { isSensitivePropertyType, PROPERTY_TYPES } from "@/features/properties";
 import {
   PROPERTY_TYPE_ICONS,
+  propertyTypeAddUnavailableReason,
   propertyTypeLabel,
   SensitivePropertyTypeHint,
 } from "@/features/properties/column-menu";
@@ -18,10 +19,12 @@ import * as m from "@/paraglide/messages.js";
 
 export function PropertyTypePicker({
   trigger,
+  columns,
   activeType,
   onSelect,
 }: {
   trigger: ReactNode;
+  columns: readonly Column[];
   activeType?: PropertyType;
   onSelect: (type: PropertyType) => void;
 }) {
@@ -49,21 +52,39 @@ export function PropertyTypePicker({
           <div className="p-1">
             {PROPERTY_TYPES.map((type) => {
               const Icon = PROPERTY_TYPE_ICONS[type.value];
+              const reason = propertyTypeAddUnavailableReason(
+                columns,
+                type.value,
+              );
               return (
                 <Button
                   key={type.value}
                   type="button"
                   variant="ghost"
-                  className="h-9 w-full justify-start gap-3 rounded-lg px-3 text-sm font-normal"
+                  className={
+                    reason
+                      ? "h-auto min-h-9 w-full justify-start gap-3 rounded-lg px-3 py-1.5 text-sm font-normal"
+                      : "h-9 w-full justify-start gap-3 rounded-lg px-3 text-sm font-normal"
+                  }
+                  disabled={Boolean(reason)}
                   onClick={() => {
                     onSelect(type.value);
                     setOpen(false);
                   }}
                 >
                   <Icon data-icon="inline-start" />
-                  <span className="flex-1 text-left">
-                    {propertyTypeLabel(type.value)}
-                  </span>
+                  {reason ? (
+                    <span className="flex min-w-0 flex-1 flex-col text-left">
+                      <span>{propertyTypeLabel(type.value)}</span>
+                      <span className="text-xs whitespace-normal text-muted-foreground">
+                        {reason}
+                      </span>
+                    </span>
+                  ) : (
+                    <span className="flex-1 text-left">
+                      {propertyTypeLabel(type.value)}
+                    </span>
+                  )}
                   {isSensitivePropertyType(type.value) ? (
                     <SensitivePropertyTypeHint />
                   ) : null}

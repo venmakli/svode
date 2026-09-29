@@ -227,6 +227,7 @@ export function ViewSettingsPopover({
       title: m.table_property_type_title(),
       content: (
         <ViewSettingsPropertyAddTypePane
+          schema={schema}
           addColumnWithType={addColumnWithType}
         />
       ),

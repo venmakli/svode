@@ -10,6 +10,7 @@ import {
   listPropertyActors,
   promoteOrphan as promoteOrphanApi,
 } from "../api/schema-api";
+import { notifyPropertyAddFailed } from "../lib/error-message";
 import { normalizeSchema } from "../lib/utils";
 import type {
   ActorCandidate,
@@ -157,11 +158,18 @@ export function usePropertyPanelState({
   );
 
   const addColumn = useCallback(
-    (column: Column) =>
-      runSchemaMutation(async () => {
+    async (column: Column) => {
+      try {
         await addSchemaColumn({ ...schemaMutationContext, column });
+      } catch (error) {
+        notifyPropertyAddFailed(error);
+        return false;
+      }
+      await runSchemaMutation(async () => {
         await refreshSchema();
-      }),
+      });
+      return true;
+    },
     [refreshSchema, runSchemaMutation, schemaMutationContext],
   );
 

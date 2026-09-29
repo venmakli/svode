@@ -280,9 +280,9 @@ export function PropertyPanel({
           open={dialog?.type === "add-column"}
           onOpenChange={(open) => !open && setDialog(null)}
           collectionPath={collectionRootPath}
+          columns={schema.columns}
           onSubmit={async (column) => {
-            await addColumn(column);
-            setDialog(null);
+            if (await addColumn(column)) setDialog(null);
           }}
         />
       ) : null}

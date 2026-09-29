@@ -6,7 +6,7 @@ import {
   TableHeader,
   TableRow as ShadcnTableRow,
 } from "@/components/ui/table";
-import type { PropertyType } from "@/features/properties";
+import type { Column, PropertyType } from "@/features/properties";
 import { PropertyTypePicker } from "./property-type-picker";
 import type { CollectionTableRow } from "./types";
 import * as m from "@/paraglide/messages.js";
@@ -14,10 +14,12 @@ import * as m from "@/paraglide/messages.js";
 export function TableHeaderRow({
   readOnly,
   table,
+  columns,
   onAddColumn,
 }: {
   table: ReactTable<CollectionTableRow>;
   readOnly: boolean;
+  columns: readonly Column[];
   onAddColumn: (type: PropertyType) => void;
 }) {
   return (
@@ -50,6 +52,7 @@ export function TableHeaderRow({
                     </span>
                   </Button>
                 }
+                columns={columns}
                 onSelect={onAddColumn}
               />
             ) : null}

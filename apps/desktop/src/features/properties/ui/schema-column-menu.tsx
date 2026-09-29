@@ -342,6 +342,7 @@ export function SchemaMenuSeparator() {
 export function SchemaMenuRow({
   icon: Icon,
   label,
+  description,
   meta,
   right,
   onClick,
@@ -350,6 +351,7 @@ export function SchemaMenuRow({
 }: {
   icon: LucideIcon;
   label: string;
+  description?: string;
   meta?: string;
   right?: ReactNode;
   onClick?: () => void;
@@ -364,6 +366,7 @@ export function SchemaMenuRow({
       className={cn(
         "min-h-8 w-full justify-start gap-2.5 rounded-md px-2 py-1.5 text-[13px] font-normal",
         "[&_svg:not([class*='size-'])]:size-3.5",
+        description && "h-auto",
         destructive &&
           "text-destructive hover:bg-destructive/10 hover:text-destructive focus-visible:bg-destructive/10 focus-visible:text-destructive",
       )}
@@ -374,9 +377,18 @@ export function SchemaMenuRow({
         className={cn("text-muted-foreground", destructive && "text-current")}
         data-icon="inline-start"
       />
-      <span className="min-w-0 flex-1 truncate text-left font-medium">
-        {label}
-      </span>
+      {description ? (
+        <span className="flex min-w-0 flex-1 flex-col text-left">
+          <span className="truncate font-medium">{label}</span>
+          <span className="text-[11.5px] leading-4 whitespace-normal text-muted-foreground">
+            {description}
+          </span>
+        </span>
+      ) : (
+        <span className="min-w-0 flex-1 truncate text-left font-medium">
+          {label}
+        </span>
+      )}
       {meta ? (
         <span className="shrink-0 text-[11.5px] text-muted-foreground">
           {meta}
@@ -401,11 +413,13 @@ export function PropertyTypeMenuPane({
   activeType,
   disabled = false,
   disableActive = false,
+  unavailableReason,
   onSelect,
 }: {
   activeType: PropertyType;
   disabled?: boolean;
   disableActive?: boolean;
+  unavailableReason?: (type: PropertyType) => string | null;
   onSelect: (type: PropertyType) => void;
 }) {
   return (
@@ -414,12 +428,16 @@ export function PropertyTypeMenuPane({
         {Object.entries(PROPERTY_TYPE_ICONS).map(([type, Icon]) => {
           const propertyType = type as PropertyType;
           const active = propertyType === activeType;
+          const reason = unavailableReason?.(propertyType) ?? undefined;
           return (
             <SchemaMenuRow
               key={type}
               icon={Icon}
               label={propertyTypeLabel(propertyType)}
-              disabled={disabled || (disableActive && active)}
+              description={reason}
+              disabled={
+                disabled || (disableActive && active) || Boolean(reason)
+              }
               right={
                 <span className="flex items-center gap-2">
                   {isSensitivePropertyType(propertyType) ? (

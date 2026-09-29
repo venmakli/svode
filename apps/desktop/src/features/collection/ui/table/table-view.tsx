@@ -123,6 +123,7 @@ export function TableView(props: TableViewProps) {
           <TableHeaderRow
             readOnly={readOnly}
             table={table}
+            columns={schema.columns}
             onAddColumn={(type) => void runtime.handleAddColumn(type)}
           />
           {noRows ? (

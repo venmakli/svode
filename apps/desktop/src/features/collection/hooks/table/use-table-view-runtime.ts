@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { DragEndEvent } from "@dnd-kit/core";
 import type { PropertyType } from "@/features/properties";
+import { notifyPropertyAddFailed } from "@/features/properties";
 import type { TableEditingCell, TableViewProps } from "../../model/table-types";
 import {
   entryParentDir,
@@ -13,7 +14,7 @@ import { titleFilter } from "../../lib/utils";
 import { useCollectionActors } from "../use-collection-actors";
 import { useCollectionColumnActions } from "../use-collection-column-actions";
 import { useCollectionEntryFieldSave } from "../use-collection-entry-field-save";
-import { handleEntryCreateError } from "../error-feedback";
+import { handleEntryCreateError, handleError } from "../error-feedback";
 import {
   usePersistentSet,
   usePersistentSizing,
@@ -188,12 +189,25 @@ export function useTableViewRuntime({
 
   const handleAddColumn = useCallback(
     async (type: PropertyType) => {
-      const { name: columnName } = await addColumn({
-        type,
-        baseName: propertyTypeLabel(type),
-        relation: type === "relation" ? collectionPath || "." : undefined,
-      });
-      await updateViewPatch({ visible_fields: [...visibleFields, columnName] });
+      let columnName: string;
+      try {
+        ({ name: columnName } = await addColumn({
+          type,
+          baseName: propertyTypeLabel(type),
+          relation: type === "relation" ? collectionPath || "." : undefined,
+        }));
+      } catch (error) {
+        notifyPropertyAddFailed(error);
+        return;
+      }
+      try {
+        await updateViewPatch({
+          visible_fields: [...visibleFields, columnName],
+        });
+      } catch (error) {
+        handleError(error);
+        return;
+      }
       setOpenColumn(columnName);
     },
     [addColumn, collectionPath, updateViewPatch, visibleFields],

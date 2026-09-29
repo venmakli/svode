@@ -191,6 +191,8 @@
   "property_actor_all_time": "Show all-time",
   "property_actor_multiple": "Allow multiple actors",
   "property_pii_git_history_hint": "Private data stays in Git history.",
+  "property_type_add_unavailable": "The collection already has a “{type}” property",
+  "property_add_failed": "Couldn't add the property",
   "property_unique_id_prefix": "Prefix",
   "property_unique_id_next": "Next: {next}",
   "property_unique_id_normalize": "Normalize counter",

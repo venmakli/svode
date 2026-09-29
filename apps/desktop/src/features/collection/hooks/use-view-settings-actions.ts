@@ -2,6 +2,7 @@ import { useState } from "react";
 import type { DragEndEvent } from "@dnd-kit/core";
 import { arrayMove } from "@dnd-kit/sortable";
 import type { CollectionSchema, PropertyType } from "@/features/properties";
+import { notifyPropertyAddFailed } from "@/features/properties";
 import { addCollectionColumn } from "../api";
 import { handleError } from "./error-feedback";
 import {
@@ -229,12 +230,18 @@ export function useViewSettingsActions({
 
   async function addColumnWithType(propertyType: PropertyType) {
     const column = { name: nextColumnName(), type: propertyType };
-    const next = await addCollectionColumn({
-      spacePath,
-      collectionPath,
-      column,
-      projectPath,
-    });
+    let next: CollectionSchema;
+    try {
+      next = await addCollectionColumn({
+        spacePath,
+        collectionPath,
+        column,
+        projectPath,
+      });
+    } catch (error) {
+      notifyPropertyAddFailed(error);
+      return;
+    }
     onSchemaChange(next);
     if (view) {
       const nextFields = savedFields.includes(column.name)
