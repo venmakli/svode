@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Compatibility
+
+- Select and multi-select columns may now have no options, and `schema.yaml` stores them as `options: []`. Svode and `svode-mcp` builds up to 0.0.8 reject such a Collection schema with a schema error; update every client that opens the same Space.
+
 ## [0.0.8] - 2026-09-06
 
 ### Added
