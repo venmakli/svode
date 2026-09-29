@@ -145,10 +145,18 @@ pub fn change_schema_type_with_warnings_and_project(
         column.type_ = new_type;
         normalize_column_for_new_type(column, conversion_strategy.as_ref())?;
         normalize_column_relation_paths(column)?;
+        let collect_options = matches!(
+            column.type_,
+            PropertyType::Select | PropertyType::MultiSelect
+        ) && column.options.as_ref().is_none_or(Vec::is_empty);
         let column_snapshot = column.clone();
         validate_schema(&schema)?;
 
-        let files = collection_markdown_files(space, collection_path)?;
+        let mut files = collection_markdown_files(space, collection_path)?;
+        let mut collected_options = Vec::new();
+        if collect_options {
+            files.sort();
+        }
         let (unconverted_relation_field, relation_target_space) =
             if column_snapshot.type_ == PropertyType::Relation {
                 (
@@ -191,6 +199,14 @@ pub fn change_schema_type_with_warnings_and_project(
                             meta.extra.insert(extra_field.to_string(), extra);
                             unconverted_relation_rows += 1;
                         }
+                    } else if collect_options {
+                        if let Some(converted) = convert_value_collecting_options(
+                            value,
+                            column_snapshot.type_,
+                            &mut collected_options,
+                        ) {
+                            meta.extra.insert(column_name.to_string(), converted);
+                        }
                     } else {
                         meta.extra.insert(
                             column_name.to_string(),
@@ -215,6 +231,9 @@ pub fn change_schema_type_with_warnings_and_project(
             }
         }
 
+        if collect_options {
+            find_column_mut(&mut schema, column_name)?.options = Some(collected_options);
+        }
         enforce_relation_limit_one_existing_values(space, collection_path, &column_snapshot)?;
         write_schema_with_project(space, collection_path, &schema, project_path)?;
         if column_snapshot.type_ == PropertyType::UniqueId {
@@ -1296,6 +1315,42 @@ fn convert_value_for_type_from_old(
         return Value::String(unique_id_display_value(old_column.unwrap(), number));
     }
     convert_value_for_type(value, column)
+}
+
+// Returns `None` when the value is empty and the field should be removed.
+fn convert_value_collecting_options(
+    value: Value,
+    type_: PropertyType,
+    options: &mut Vec<PropertyOption>,
+) -> Option<Value> {
+    let mut collect = |raw: &str| -> Option<Value> {
+        let name = raw.trim();
+        if name.is_empty() {
+            return None;
+        }
+        if !options.iter().any(|option| option.name == name) {
+            options.push(PropertyOption {
+                name: name.to_string(),
+                color: None,
+                icon: None,
+                group: None,
+            });
+        }
+        Some(Value::String(name.to_string()))
+    };
+    let names: Vec<String> = match &value {
+        Value::Sequence(sequence) => sequence.iter().filter_map(value_to_scalar_string).collect(),
+        other => value_to_scalar_string(other).into_iter().collect(),
+    };
+    if names.is_empty() && !value.as_sequence().is_some_and(Vec::is_empty) {
+        return Some(value);
+    }
+    if type_ == PropertyType::MultiSelect {
+        let items: Vec<Value> = names.iter().filter_map(|name| collect(name)).collect();
+        (!items.is_empty()).then_some(Value::Sequence(items))
+    } else {
+        names.iter().find_map(|name| collect(name))
+    }
 }
 
 fn unique_id_display_value(column: &Column, number: u64) -> String {

@@ -1816,6 +1816,40 @@ async fn schema_and_view_changes_authorize_the_planned_set_and_return_the_normal
 }
 
 #[tokio::test]
+async fn select_columns_are_added_without_options() {
+    let fixture = index_fixture();
+    let host = FixtureHost::new(None);
+    let target = root_target(&fixture);
+
+    for (name, kind) in [("Choice", "select"), ("Tags", "multi_select")] {
+        let added = call_tool(
+            &host,
+            Some(&target),
+            "add_collection_column",
+            json!({ "collectionPath": "tasks", "column": { "name": name, "type": kind } }),
+        )
+        .await;
+        assert!(!added.is_error, "{kind}");
+    }
+
+    let schema = call_tool(
+        &host,
+        Some(&target),
+        "get_collection_schema",
+        json!({ "collectionPath": "tasks" }),
+    )
+    .await;
+    let columns = structured(&schema)["schema"]["columns"].as_array().unwrap();
+    for name in ["Choice", "Tags"] {
+        let column = columns
+            .iter()
+            .find(|column| column["name"] == name)
+            .unwrap();
+        assert_eq!(column["options"], json!([]), "{name}");
+    }
+}
+
+#[tokio::test]
 async fn integrity_git_status_and_actors_read_through_the_host_runtime() {
     let fixture = index_fixture();
     let host = FixtureHost::new(None);

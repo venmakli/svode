@@ -926,3 +926,284 @@ fn standalone_relation_move_checks_both_owners_nested_capabilities_and_space_bou
     fs::write(root.join("schema.yaml"), "columns: [").unwrap();
     assert!(relation_move_may_affect_collections(root, "a.md", "b.md").unwrap());
 }
+
+fn df_133_collection(space: &Path, schema: &str, items: &[(&str, &str)]) -> String {
+    fs::create_dir_all(space.join("tasks")).unwrap();
+    fs::write(space.join("tasks").join(SCHEMA_FILE), schema).unwrap();
+    for (name, fields) in items {
+        fs::write(
+            space.join("tasks").join(name),
+            format!("---\nid: {name}\ntitle: {name}\ncreated: now\nupdated: now\n{fields}---\n"),
+        )
+        .unwrap();
+    }
+    space.to_str().unwrap().to_string()
+}
+
+fn df_133_column(raw: &str) -> Column {
+    serde_yml::from_str(raw).unwrap()
+}
+
+fn df_133_option_names(schema: &CollectionSchema, column: &str) -> Vec<String> {
+    schema
+        .columns
+        .iter()
+        .find(|item| item.name == column)
+        .unwrap()
+        .options
+        .as_ref()
+        .unwrap()
+        .iter()
+        .map(|option| option.name.clone())
+        .collect()
+}
+
+fn df_133_field(space: &Path, item: &str, field: &str) -> Option<Value> {
+    let raw = fs::read_to_string(space.join("tasks").join(item)).unwrap();
+    let (meta, _) = frontmatter::try_parse(&raw).unwrap().unwrap();
+    meta.extra.get(field).cloned()
+}
+
+#[test]
+fn df_133_select_columns_are_created_without_options() {
+    let tmp = TempDir::new().unwrap();
+    let space = df_133_collection(tmp.path(), "columns: []\nviews: []\n", &[]);
+    let schema_path = tmp.path().join("tasks").join(SCHEMA_FILE);
+
+    add_schema_column(
+        &space,
+        "tasks",
+        df_133_column("{name: Choice, type: select}"),
+    )
+    .unwrap();
+    add_schema_column(
+        &space,
+        "tasks",
+        df_133_column("{name: Tags, type: multi_select, options: []}"),
+    )
+    .unwrap();
+    add_schema_column(
+        &space,
+        "tasks",
+        df_133_column("{name: Kept, type: select, options: [A, {name: B, color: red}]}"),
+    )
+    .unwrap();
+
+    let raw = fs::read_to_string(&schema_path).unwrap();
+    let written: Value = serde_yml::from_str(&raw).unwrap();
+    for column in ["Choice", "Tags"] {
+        let column = written["columns"]
+            .as_sequence()
+            .unwrap()
+            .iter()
+            .find(|item| item["name"].as_str() == Some(column))
+            .unwrap();
+        assert_eq!(column["options"], Value::Sequence(Vec::new()));
+    }
+    let schema = read_schema_at(&schema_path).unwrap();
+    assert!(df_133_option_names(&schema, "Choice").is_empty());
+    assert!(df_133_option_names(&schema, "Tags").is_empty());
+    assert_eq!(df_133_option_names(&schema, "Kept"), ["A", "B"]);
+}
+
+#[test]
+fn df_133_select_without_options_key_is_read_as_empty_list() {
+    let tmp = TempDir::new().unwrap();
+    df_133_collection(
+        tmp.path(),
+        "columns:\n  - { name: Choice, type: select }\n  - { name: Tags, type: multi_select }\nviews: []\n",
+        &[],
+    );
+
+    let schema = read_schema_at(&tmp.path().join("tasks").join(SCHEMA_FILE)).unwrap();
+    assert!(df_133_option_names(&schema, "Choice").is_empty());
+    assert!(df_133_option_names(&schema, "Tags").is_empty());
+}
+
+#[test]
+fn df_133_changing_text_to_select_collects_options_in_path_order() {
+    let tmp = TempDir::new().unwrap();
+    let space = df_133_collection(
+        tmp.path(),
+        "columns:\n  - { name: Note, type: text }\nviews: []\n",
+        &[
+            ("d.md", "Note: a\n"),
+            ("b.md", "Note: \" b \"\n"),
+            ("a.md", "Note: a\n"),
+            ("c.md", "Note: \"\"\n"),
+            ("e.md", ""),
+        ],
+    );
+    let path = tmp.path();
+
+    let schema = change_schema_type(&space, "tasks", "Note", PropertyType::Select, None).unwrap();
+
+    assert_eq!(df_133_option_names(&schema, "Note"), ["a", "b"]);
+    let stored = read_schema_at(&path.join("tasks").join(SCHEMA_FILE)).unwrap();
+    assert_eq!(df_133_option_names(&stored, "Note"), ["a", "b"]);
+    let column = stored
+        .columns
+        .iter()
+        .find(|column| column.name == "Note")
+        .unwrap();
+    for item in ["a.md", "b.md", "c.md", "d.md", "e.md"] {
+        if let Some(value) = df_133_field(path, item, "Note") {
+            validate_property_value(column, &value).unwrap();
+        }
+    }
+    assert_eq!(
+        df_133_field(path, "b.md", "Note"),
+        Some(Value::String("b".into()))
+    );
+    assert_eq!(df_133_field(path, "c.md", "Note"), None);
+    assert_eq!(df_133_field(path, "e.md", "Note"), None);
+}
+
+#[test]
+fn df_133_changing_text_to_multi_select_collects_items() {
+    let tmp = TempDir::new().unwrap();
+    let space = df_133_collection(
+        tmp.path(),
+        "columns:\n  - { name: Note, type: text }\nviews: []\n",
+        &[
+            ("a.md", "Note: [x, y]\n"),
+            ("b.md", "Note: z\n"),
+            ("c.md", "Note: [y, \" \"]\n"),
+        ],
+    );
+    let path = tmp.path();
+
+    let schema =
+        change_schema_type(&space, "tasks", "Note", PropertyType::MultiSelect, None).unwrap();
+
+    assert_eq!(df_133_option_names(&schema, "Note"), ["x", "y", "z"]);
+    let column = schema
+        .columns
+        .iter()
+        .find(|column| column.name == "Note")
+        .unwrap();
+    for item in ["a.md", "b.md", "c.md"] {
+        validate_property_value(column, &df_133_field(path, item, "Note").unwrap()).unwrap();
+    }
+    assert_eq!(
+        df_133_field(path, "c.md", "Note"),
+        Some(serde_yml::from_str("[y]").unwrap())
+    );
+}
+
+#[test]
+fn df_133_changing_between_option_types_keeps_existing_options() {
+    let tmp = TempDir::new().unwrap();
+    let space = df_133_collection(
+        tmp.path(),
+        "columns:\n  - { name: Tag, type: select, options: [A, B] }\n  - name: Stage\n    type: status\n    options:\n      - { name: Open, group: todo }\n      - { name: Closed, group: done }\nviews: []\n",
+        &[("a.md", "Tag: A\nStage: Open\n"), ("b.md", "Tag: Other\n")],
+    );
+
+    let schema =
+        change_schema_type(&space, "tasks", "Tag", PropertyType::MultiSelect, None).unwrap();
+    assert_eq!(df_133_option_names(&schema, "Tag"), ["A", "B"]);
+    let schema = change_schema_type(&space, "tasks", "Stage", PropertyType::Select, None).unwrap();
+    assert_eq!(df_133_option_names(&schema, "Stage"), ["Open", "Closed"]);
+    assert!(
+        schema
+            .columns
+            .iter()
+            .find(|column| column.name == "Stage")
+            .unwrap()
+            .options
+            .as_ref()
+            .unwrap()
+            .iter()
+            .all(|option| option.group.is_none())
+    );
+}
+
+#[test]
+fn df_133_failed_type_change_rolls_back_schema_and_frontmatter() {
+    let tmp = TempDir::new().unwrap();
+    let space = df_133_collection(
+        tmp.path(),
+        "columns:\n  - { name: Note, type: text }\nviews: []\n",
+        &[("a.md", "Note: a\n")],
+    );
+    let path = tmp.path();
+    fs::write(path.join("tasks/z.md"), "---\nNote: [unclosed\n---\n").unwrap();
+    let schema_before = fs::read(path.join("tasks").join(SCHEMA_FILE)).unwrap();
+    let item_before = fs::read(path.join("tasks/a.md")).unwrap();
+
+    assert!(change_schema_type(&space, "tasks", "Note", PropertyType::Select, None).is_err());
+
+    assert_eq!(
+        fs::read(path.join("tasks").join(SCHEMA_FILE)).unwrap(),
+        schema_before
+    );
+    assert_eq!(fs::read(path.join("tasks/a.md")).unwrap(), item_before);
+}
+
+#[test]
+fn df_133_last_option_can_be_deleted_only_from_select_columns() {
+    let tmp = TempDir::new().unwrap();
+    let space = df_133_collection(
+        tmp.path(),
+        "columns:\n  - { name: Tag, type: select, options: [A] }\n  - name: Stage\n    type: status\n    options:\n      - { name: Open, group: todo }\nviews: []\n",
+        &[],
+    );
+
+    let schema = delete_option(&space, "tasks", "Tag", "A", false).unwrap();
+    assert!(df_133_option_names(&schema, "Tag").is_empty());
+    let raw = fs::read_to_string(tmp.path().join("tasks").join(SCHEMA_FILE)).unwrap();
+    assert!(raw.contains("options: []"));
+
+    assert!(delete_option(&space, "tasks", "Stage", "Open", false).is_err());
+}
+
+#[test]
+fn df_133_status_and_unique_id_rules_are_unchanged() {
+    let tmp = TempDir::new().unwrap();
+    let space = df_133_collection(tmp.path(), "columns: []\nviews: []\n", &[]);
+
+    let schema = add_schema_column(
+        &space,
+        "tasks",
+        df_133_column("{name: Stage, type: status}"),
+    )
+    .unwrap();
+    assert_eq!(
+        df_133_option_names(&schema, "Stage"),
+        default_status_options()
+            .into_iter()
+            .map(|option| option.name)
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        add_schema_column(
+            &space,
+            "tasks",
+            df_133_column("{name: Other, type: status}")
+        )
+        .is_err()
+    );
+    assert!(
+        add_schema_column(
+            &space,
+            "tasks",
+            df_133_column("{name: Empty, type: status, options: []}")
+        )
+        .is_err()
+    );
+    add_schema_column(
+        &space,
+        "tasks",
+        df_133_column("{name: ID, type: unique_id}"),
+    )
+    .unwrap();
+    assert!(
+        add_schema_column(
+            &space,
+            "tasks",
+            df_133_column("{name: Key, type: unique_id}")
+        )
+        .is_err()
+    );
+}

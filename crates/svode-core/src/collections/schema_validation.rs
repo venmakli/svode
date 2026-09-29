@@ -28,16 +28,23 @@ pub fn validate_schema(schema: &CollectionSchema) -> Result<(), CollectionError>
 
         match column.type_ {
             PropertyType::Select | PropertyType::MultiSelect => {
-                let options = column.options.as_ref().ok_or_else(|| {
-                    schema_error(format!("column '{}' requires options", column.name))
-                })?;
-                validate_options(&column.name, options, false)?;
+                validate_options(
+                    &column.name,
+                    column.options.as_deref().unwrap_or_default(),
+                    false,
+                )?;
             }
             PropertyType::Status => {
                 status_count += 1;
                 let options = column.options.as_ref().ok_or_else(|| {
                     schema_error(format!("status column '{}' requires options", column.name))
                 })?;
+                if options.is_empty() {
+                    return Err(schema_error(format!(
+                        "column '{}' must define at least one option",
+                        column.name
+                    )));
+                }
                 validate_options(&column.name, options, true)?;
             }
             PropertyType::Relation => {
@@ -157,6 +164,13 @@ pub fn normalize_schema(schema: &mut CollectionSchema) {
             && matches!(column.type_, PropertyType::Email | PropertyType::Phone)
         {
             column.sensitivity = Some(ColumnSensitivity::Pii);
+        }
+        if matches!(
+            column.type_,
+            PropertyType::Select | PropertyType::MultiSelect
+        ) && column.options.is_none()
+        {
+            column.options = Some(Vec::new());
         }
         if column.type_ == PropertyType::Actor {
             column.multiple = Some(column.multiple.unwrap_or(false));
@@ -748,12 +762,6 @@ fn validate_options(
     options: &[PropertyOption],
     require_group: bool,
 ) -> Result<(), CollectionError> {
-    if options.is_empty() {
-        return Err(schema_error(format!(
-            "column '{column_name}' must define at least one option"
-        )));
-    }
-
     let mut names = HashSet::new();
     for option in options {
         let trimmed = option.name.trim();
