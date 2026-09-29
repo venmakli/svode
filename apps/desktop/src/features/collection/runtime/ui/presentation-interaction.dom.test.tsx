@@ -250,6 +250,18 @@ test("neutral Table preserves row focus, activation, and nested action boundarie
     });
     expect(activated).toEqual(["two", "two", "two"]);
 
+    const rowActions = first.querySelector<HTMLElement>(
+      '[aria-label="Row actions"]',
+    )!;
+    await act(async () => {
+      rowActions.dispatchEvent(
+        new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }),
+      );
+    });
+    expect(rowActions.getAttribute("aria-expanded")).toBe("true");
+    expect(first.getAttribute("aria-selected") === "true").toBe(false);
+    expect(activated).toEqual(["two", "two", "two"]);
+
     const action = second.querySelector<HTMLElement>(
       "[data-collection-interactive]",
     )!;

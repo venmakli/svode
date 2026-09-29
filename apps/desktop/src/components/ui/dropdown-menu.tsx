@@ -18,13 +18,47 @@ function DropdownMenuPortal({
   )
 }
 
+// Radix toggles the menu only on pointerdown and keydown, so an accessibility
+// press (AXPress, VoiceOver VO+Space, System Events) that sends a bare click
+// does nothing (radix-ui/primitives#1963). Such a click (detail 0, not produced
+// by Enter/Space) is replayed as the pointerdown Radix already handles.
+// Remove when DropdownMenu moves to Base UI, whose Menu.Trigger toggles on click.
 function DropdownMenuTrigger({
+  onClick,
+  onKeyDown,
   ...props
 }: React.ComponentProps<typeof DropdownMenuPrimitive.Trigger>) {
+  const keyPressRef = React.useRef(false)
+
   return (
     <DropdownMenuPrimitive.Trigger
       data-slot="dropdown-menu-trigger"
       {...props}
+      onKeyDown={(event) => {
+        onKeyDown?.(event)
+        if (event.key !== "Enter" && event.key !== " ") return
+        keyPressRef.current = true
+        event.currentTarget.ownerDocument.addEventListener(
+          "keyup",
+          () => setTimeout(() => (keyPressRef.current = false)),
+          { capture: true, once: true }
+        )
+      }}
+      onClick={(event) => {
+        onClick?.(event)
+        const keyPress = keyPressRef.current
+        keyPressRef.current = false
+        if (keyPress || event.detail !== 0) return
+        if (event.defaultPrevented || props.disabled) return
+        event.currentTarget.dispatchEvent(
+          new PointerEvent("pointerdown", {
+            bubbles: true,
+            cancelable: true,
+            composed: true,
+            button: 0,
+          })
+        )
+      }}
     />
   )
 }
