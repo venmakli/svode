@@ -287,47 +287,6 @@ pub async fn search_content(
     })
 }
 
-pub async fn recent(
-    state: &IndexState,
-    project: PathBuf,
-    scope: Option<SearchScope>,
-    limit: Option<i64>,
-) -> Result<SearchResponse, AppError> {
-    let keys = scope_to_keys(state, &project, scope).await;
-    let total = keys.len();
-    let limit = search_limit(limit);
-    let (pools, indexed) = fan_out(state.clone(), keys, move |pool| async move {
-        search::recent(&pool, limit).await
-    })
-    .await;
-    let mut merged = pools
-        .into_iter()
-        .flat_map(|pool| {
-            pool.hits
-                .into_iter()
-                .map(move |hit| (pool.key.clone(), hit))
-        })
-        .collect::<Vec<_>>();
-    merged.sort_by(|left, right| {
-        match (right.1.updated_at.as_deref(), left.1.updated_at.as_deref()) {
-            (Some(left), Some(right)) => left.cmp(right),
-            (Some(_), None) => std::cmp::Ordering::Less,
-            (None, Some(_)) => std::cmp::Ordering::Greater,
-            (None, None) => std::cmp::Ordering::Equal,
-        }
-    });
-    merged.truncate(limit as usize);
-    let mut items = Vec::with_capacity(merged.len());
-    for (key, hit) in merged {
-        items.push(enrich(state, &key, hit).await);
-    }
-    Ok(SearchResponse {
-        items,
-        indexed_spaces: indexed,
-        total_spaces: total,
-    })
-}
-
 #[allow(clippy::too_many_arguments)]
 pub async fn read_project_knowledge(
     state: &IndexState,

@@ -342,8 +342,6 @@ pub fn run() {
             index::commands::reindex_space,
             index::commands::reindex_project,
             index::commands::search_project_pages_by_title,
-            index::commands::search_project_pages,
-            index::commands::recent_project_pages,
             index::commands::count_broken_links,
             index::commands::get_knowledge_documents,
             storage::commands::upload_asset,

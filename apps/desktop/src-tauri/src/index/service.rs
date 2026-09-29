@@ -26,37 +26,6 @@ pub async fn search_by_title(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub async fn search_content(
-    state: &IndexState,
-    project: PathBuf,
-    query: String,
-    entry_type: Option<String>,
-    table_name: Option<String>,
-    scope: Option<SearchScope>,
-    limit: Option<i64>,
-) -> Result<SearchResponse, AppError> {
-    Ok(svode_core::index::service::search_content(
-        &state.core,
-        project,
-        query,
-        entry_type,
-        table_name,
-        scope,
-        limit,
-    )
-    .await?)
-}
-
-pub async fn recent(
-    state: &IndexState,
-    project: PathBuf,
-    scope: Option<SearchScope>,
-    limit: Option<i64>,
-) -> Result<SearchResponse, AppError> {
-    Ok(svode_core::index::service::recent(&state.core, project, scope, limit).await?)
-}
-
-#[allow(clippy::too_many_arguments)]
 pub async fn read_project_knowledge(
     state: &IndexState,
     project: &Path,

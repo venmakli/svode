@@ -46,38 +46,6 @@ pub async fn search_project_pages_by_title(
 }
 
 #[tauri::command]
-pub async fn search_project_pages(
-    state: State<'_, IndexState>,
-    project_path: String,
-    query: String,
-    entry_type: Option<String>,
-    table_name: Option<String>,
-    scope: Option<SearchScope>,
-    limit: Option<i64>,
-) -> Result<SearchResponse, AppError> {
-    service::search_content(
-        &state,
-        PathBuf::from(project_path),
-        query,
-        entry_type,
-        table_name,
-        scope,
-        limit,
-    )
-    .await
-}
-
-#[tauri::command]
-pub async fn recent_project_pages(
-    state: State<'_, IndexState>,
-    project_path: String,
-    scope: Option<SearchScope>,
-    limit: Option<i64>,
-) -> Result<SearchResponse, AppError> {
-    service::recent(&state, PathBuf::from(project_path), scope, limit).await
-}
-
-#[tauri::command]
 pub async fn count_broken_links(
     state: State<'_, IndexState>,
     project_path: String,
