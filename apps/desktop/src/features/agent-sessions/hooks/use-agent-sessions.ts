@@ -1,48 +1,67 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  hotStatusAgentSessions,
-  listAgentSessions,
   openSessionCwdInExternalTerminal,
-  reenterAgentSession,
-  refreshAgentSessions,
-  setAgentSessionPinned,
   type AgentSessionReentryResult,
   type AgentSessionsListResult,
 } from "../api";
 import {
   DEFAULT_SPACE_GROUP_LIMIT,
-  applyLocalTerminalRuntime,
   buildAgentSessionGroups,
-  buildHotStatusSessionIds,
-  buildPendingAgentSession,
-  findMatchingSessionForPendingTerminal,
   findAgentSessionForOpenRequest,
   isPendingSessionId,
-  pendingSessionId,
   type AgentSession,
   type AgentSessionGroupingResult,
   type AgentSessionOpenRequest,
   type AgentSessionSelectionSource,
   type AgentSessionScopeGroup,
-  type PendingAgentSessionTerminal,
 } from "../model";
-import {
-  closeManagedTerminalSurface,
-  spawnManagedTerminalSurface,
-} from "@/features/terminal/session-surface";
-import { getNativeErrorMessage } from "@/platform/native/errors";
+import { useAgentSessionCatalog } from "./use-agent-session-catalog";
 import * as m from "@/paraglide/messages.js";
 
-const POLL_INTERVAL_MS = 45_000;
-const HOT_STATUS_POLL_INTERVAL_MS = 1_500;
-const HIDDEN_HOT_STATUS_POLL_INTERVAL_MS = 15_000;
-const PENDING_POLL_INTERVAL_MS = 5_000;
+interface SessionSelection {
+  sessionId: string;
+  launchId: string | null;
+  /** Space group that keeps a selected session in place while it changes. */
+  groupId: string | null;
+}
 
-interface SelectedTerminalState {
-  ptyId: string;
-  command?: string;
-  cwd?: string;
-  createdAt?: string;
+function selectionFor(
+  session: AgentSession,
+  groupId: string | null,
+): SessionSelection {
+  return { sessionId: session.id, launchId: session.launchId ?? null, groupId };
+}
+
+/**
+ * The selected session follows its identity handoffs: a pending terminal to
+ * the CLI session matched to it, and a provisional launch to its canonical
+ * session with the same launch id.
+ */
+function resolveSelection(
+  selection: SessionSelection | null,
+  sessions: AgentSession[],
+  pendingHandoffs: Record<string, string>,
+): { selectedSessionId: string | null; selectedStableGroupId: string | null } {
+  if (!selection) return { selectedSessionId: null, selectedStableGroupId: null };
+
+  let sessionId = pendingHandoffs[selection.sessionId] ?? selection.sessionId;
+  if (
+    selection.launchId &&
+    !sessions.some((session) => session.id === sessionId)
+  ) {
+    const canonical = sessions.find(
+      (session) =>
+        session.launchId === selection.launchId &&
+        session.runtime?.provisional !== true,
+    );
+    if (canonical) sessionId = canonical.id;
+  }
+
+  return {
+    selectedSessionId: sessionId,
+    selectedStableGroupId:
+      sessionId === selection.sessionId ? selection.groupId : null,
+  };
 }
 
 interface UseAgentSessionsResult {
@@ -58,7 +77,7 @@ interface UseAgentSessionsResult {
   selectedReentryResult: AgentSessionReentryResult | null;
   selectedMissing: boolean;
   reenteringSessionId: string | null;
-  pinningSessionIds: Set<string>;
+  pinningSessionIds: ReadonlySet<string>;
   collapsedGroupIds: Set<string>;
   setSearchQuery: (query: string) => void;
   refresh: () => Promise<void>;
@@ -78,15 +97,48 @@ interface UseAgentSessionsResult {
   openSelectedExternalTerminal: () => Promise<void>;
 }
 
+/**
+ * Sessions screen view over the project session catalog: selection, search and
+ * grouping stay local to the screen, while the catalog, re-entry state and
+ * session terminals belong to the catalog owner and outlive this screen.
+ */
 export function useAgentSessions(
   projectPath: string | null,
   spaceScopes: AgentSessionScopeGroup[] = [],
   openRequest?: AgentSessionOpenRequest | null,
 ): UseAgentSessionsResult {
-  const [result, setResult] = useState<AgentSessionsListResult | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [refreshing, setRefreshing] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const result = useAgentSessionCatalog((state) => state.result);
+  const sessions = useAgentSessionCatalog((state) => state.sessions);
+  const loading = useAgentSessionCatalog((state) => state.loading);
+  const refreshing = useAgentSessionCatalog((state) => state.refreshing);
+  const error = useAgentSessionCatalog((state) => state.error);
+  const terminals = useAgentSessionCatalog((state) => state.terminals);
+  const reentryResults = useAgentSessionCatalog(
+    (state) => state.reentryResults,
+  );
+  const reenteringSessionIds = useAgentSessionCatalog(
+    (state) => state.reenteringSessionIds,
+  );
+  const pinningSessionIds = useAgentSessionCatalog(
+    (state) => state.pinningSessionIds,
+  );
+  const pendingHandoffs = useAgentSessionCatalog(
+    (state) => state.pendingHandoffs,
+  );
+  const load = useAgentSessionCatalog((state) => state.load);
+  const reenter = useAgentSessionCatalog((state) => state.reenter);
+  const observeSession = useAgentSessionCatalog(
+    (state) => state.observeSession,
+  );
+  const togglePinned = useAgentSessionCatalog((state) => state.togglePinned);
+  const openCatalogTerminal = useAgentSessionCatalog(
+    (state) => state.openNewSessionTerminal,
+  );
+  const closeTerminal = useAgentSessionCatalog((state) => state.closeTerminal);
+  const closeAllTerminals = useAgentSessionCatalog(
+    (state) => state.closeAllTerminals,
+  );
+
   const [searchQuery, setSearchQuery] = useState("");
   const [visibleLimits, setVisibleLimits] = useState<Record<string, number>>(
     {},
@@ -94,344 +146,58 @@ export function useAgentSessions(
   const [collapsedGroupIds, setCollapsedGroupIds] = useState<Set<string>>(
     () => new Set(),
   );
-  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(
-    null,
-  );
-  const [selectedStableGroupId, setSelectedStableGroupId] = useState<
-    string | null
+  const [selection, setSelection] = useState<SessionSelection | null>(null);
+  const [handledOpenRequestKey, setHandledOpenRequestKey] = useState<
+    number | null
   >(null);
-  const [terminalsBySession, setTerminalsBySession] = useState<
-    Record<string, SelectedTerminalState>
-  >({});
-  const [pendingTerminals, setPendingTerminals] = useState<
-    PendingAgentSessionTerminal[]
-  >([]);
-  const [selectedReentryResult, setSelectedReentryResult] =
-    useState<AgentSessionReentryResult | null>(null);
-  const [reenteringSessionId, setReenteringSessionId] = useState<string | null>(
-    null,
-  );
-  const [pinningSessionIds, setPinningSessionIds] = useState<Set<string>>(
-    () => new Set(),
-  );
-  const [windowActive, setWindowActive] = useState(
-    () =>
-      typeof document === "undefined" || document.visibilityState === "visible",
-  );
-  const requestIdRef = useRef(0);
-  const selectionRequestIdRef = useRef(0);
-  const projectPathRef = useRef(projectPath);
-  const resultRef = useRef<AgentSessionsListResult | null>(null);
-  const selectedSessionIdRef = useRef<string | null>(null);
-  const selectedLaunchIdRef = useRef<string | null>(null);
-  const pendingTerminalsRef = useRef<PendingAgentSessionTerminal[]>([]);
-  const handledOpenRequestKeyRef = useRef<number | null>(null);
-  const openRequestLoadKeyRef = useRef<number | null>(null);
-  const loadInFlightRef = useRef<{
-    projectPath: string;
-    requestId: number;
-    promise: Promise<void>;
+  const [openRequestReentry, setOpenRequestReentry] = useState<{
+    requestKey: number;
+    session: AgentSession;
   } | null>(null);
-  const hotStatusInFlightRef = useRef<{
-    projectPath: string;
-    sessionIdsKey: string;
-    promise: Promise<void>;
-  } | null>(null);
-  const staleSnapshotRefreshKeyRef = useRef<string | null>(null);
 
-  useEffect(() => {
-    projectPathRef.current = projectPath;
-  }, [projectPath]);
-
-  useEffect(() => {
-    resultRef.current = result;
-  }, [result]);
-
-  useEffect(() => {
-    selectedSessionIdRef.current = selectedSessionId;
-  }, [selectedSessionId]);
-
-  useEffect(() => {
-    pendingTerminalsRef.current = pendingTerminals;
-  }, [pendingTerminals]);
-
-  useEffect(() => {
-    if (typeof document === "undefined") return;
-
-    const updateWindowActive = () => {
-      setWindowActive(document.visibilityState === "visible");
-    };
-    updateWindowActive();
-    document.addEventListener("visibilitychange", updateWindowActive);
-    window.addEventListener("focus", updateWindowActive);
-    window.addEventListener("blur", updateWindowActive);
-    return () => {
-      document.removeEventListener("visibilitychange", updateWindowActive);
-      window.removeEventListener("focus", updateWindowActive);
-      window.removeEventListener("blur", updateWindowActive);
-    };
-  }, []);
-
-  const reconcilePendingTerminals = useCallback((sessions: AgentSession[]) => {
-    const pending = pendingTerminalsRef.current;
-    if (pending.length === 0) return;
-
-    const usedSessionIds = new Set<string>();
-    const matches: Array<{
-      pending: PendingAgentSessionTerminal;
-      session: AgentSession;
-    }> = [];
-    const remaining: PendingAgentSessionTerminal[] = [];
-
-    pending.forEach((item) => {
-      const match = findMatchingSessionForPendingTerminal(
-        item,
-        sessions,
-        usedSessionIds,
-      );
-      if (!match) {
-        remaining.push(item);
-        return;
-      }
-      usedSessionIds.add(match.id);
-      matches.push({ pending: item, session: match });
+  // An open request selects its session once the catalog lists it.
+  const openRequestSession =
+    openRequest && handledOpenRequestKey !== openRequest.requestKey
+      ? findAgentSessionForOpenRequest(sessions, openRequest)
+      : null;
+  if (openRequest && openRequestSession) {
+    setHandledOpenRequestKey(openRequest.requestKey);
+    setSelection(selectionFor(openRequestSession, null));
+    setOpenRequestReentry({
+      requestKey: openRequest.requestKey,
+      session: openRequestSession,
     });
+  }
 
-    if (matches.length === 0) return;
-
-    const selectedBeforeReconcile = selectedSessionIdRef.current;
-    pendingTerminalsRef.current = remaining;
-    setPendingTerminals(remaining);
-    setTerminalsBySession((current) => {
-      const next = { ...current };
-      matches.forEach(({ pending, session }) => {
-        delete next[pending.id];
-        next[session.id] = {
-          ptyId: pending.ptyId,
-          cwd: pending.cwd,
-          createdAt: pending.createdAt,
-        };
-      });
-      return next;
-    });
-    setSelectedSessionId((current) => {
-      const match = matches.find(({ pending }) => pending.id === current);
-      if (match) {
-        selectedSessionIdRef.current = match.session.id;
-        selectedLaunchIdRef.current = match.session.launchId ?? null;
-      }
-      return match?.session.id ?? current;
-    });
-    setSelectedStableGroupId((current) => {
-      const selectedWasPending = matches.some(
-        ({ pending }) => pending.id === selectedBeforeReconcile,
-      );
-      return selectedWasPending ? null : current;
-    });
-    setSelectedReentryResult((current) => {
-      if (!current || !isPendingSessionId(current.sessionId)) return current;
-      const match = matches.find(
-        ({ pending }) => pending.id === current.sessionId,
-      );
-      return match ? null : current;
-    });
-  }, []);
-
-  const load = useCallback(
-    async (forceRefresh: boolean) => {
-      if (!projectPath) {
-        loadInFlightRef.current = null;
-        setResult(null);
-        setError(null);
-        setLoading(false);
-        setRefreshing(false);
-        return;
-      }
-
-      const inFlight = loadInFlightRef.current;
-      if (inFlight?.projectPath === projectPath) {
-        return inFlight.promise;
-      }
-
-      const requestId = ++requestIdRef.current;
-      const isCurrentRequest = () =>
-        requestIdRef.current === requestId &&
-        projectPathRef.current === projectPath;
-      if (forceRefresh) {
-        setRefreshing(true);
-      } else {
-        const hasResult = Boolean(resultRef.current);
-        setLoading(!hasResult);
-        setRefreshing(hasResult);
-      }
-      setError(null);
-
-      const promise = (async () => {
-        try {
-          const next = forceRefresh
-            ? await refreshAgentSessions(projectPath)
-            : await listAgentSessions(projectPath);
-          if (!isCurrentRequest()) return;
-          reconcilePendingTerminals(next.sessions);
-          setResult(next);
-        } catch (err) {
-          if (!isCurrentRequest()) return;
-          setError(getNativeErrorMessage(err));
-        } finally {
-          if (isCurrentRequest()) {
-            setLoading(false);
-            setRefreshing(false);
-          }
-          if (loadInFlightRef.current?.requestId === requestId) {
-            loadInFlightRef.current = null;
-          }
-        }
-      })();
-      loadInFlightRef.current = { projectPath, requestId, promise };
-      return promise;
-    },
-    [projectPath, reconcilePendingTerminals],
+  const { selectedSessionId, selectedStableGroupId } = resolveSelection(
+    selection,
+    sessions,
+    pendingHandoffs,
   );
 
-  const loadHotStatus = useCallback(
-    async (sessionIds: string[]) => {
-      if (!projectPath || sessionIds.length === 0 || !resultRef.current) {
-        return;
-      }
-      if (loadInFlightRef.current) return loadInFlightRef.current.promise;
-      if (hotStatusInFlightRef.current) {
-        return hotStatusInFlightRef.current.promise;
-      }
-
-      const requestId = requestIdRef.current;
-      const sessionIdsKey = sessionIds.join("\0");
-      const promise = (async () => {
-        try {
-          const hotStatus = await hotStatusAgentSessions(
-            projectPath,
-            sessionIds,
-          );
-          if (
-            requestIdRef.current !== requestId ||
-            projectPathRef.current !== projectPath
-          ) {
-            return;
-          }
-          setResult((current) =>
-            current
-              ? mergeHotStatusSessions(current, hotStatus.sessions)
-              : current,
-          );
-        } catch (error) {
-          console.warn("Failed to refresh agent session hot status:", error);
-        } finally {
-          if (
-            hotStatusInFlightRef.current?.projectPath === projectPath &&
-            hotStatusInFlightRef.current.sessionIdsKey === sessionIdsKey
-          ) {
-            hotStatusInFlightRef.current = null;
-          }
-        }
-      })();
-      hotStatusInFlightRef.current = { projectPath, sessionIdsKey, promise };
-      return promise;
-    },
-    [projectPath],
-  );
-
+  // Opening the screen asks the catalog for the full list.
   useEffect(() => {
-    selectionRequestIdRef.current += 1;
-    hotStatusInFlightRef.current = null;
-    staleSnapshotRefreshKeyRef.current = null;
-    resultRef.current = null;
-    setResult(null);
-    selectedSessionIdRef.current = null;
-    selectedLaunchIdRef.current = null;
-    handledOpenRequestKeyRef.current = null;
-    openRequestLoadKeyRef.current = null;
-    setSelectedSessionId(null);
-    setSelectedStableGroupId(null);
-    setSelectedReentryResult(null);
-    setReenteringSessionId(null);
-    setPinningSessionIds(new Set());
-    setTerminalsBySession({});
-    setPendingTerminals([]);
-    pendingTerminalsRef.current = [];
-    setVisibleLimits({});
-    setCollapsedGroupIds(new Set());
-    void load(false);
+    if (projectPath) void load();
   }, [load, projectPath]);
 
+  const openRequestKey = openRequest?.requestKey ?? null;
   useEffect(() => {
-    if (
-      !projectPath ||
-      !openRequest ||
-      openRequestLoadKeyRef.current === openRequest.requestKey
-    ) {
-      return;
-    }
-    openRequestLoadKeyRef.current = openRequest.requestKey;
-    void load(false);
-  }, [load, openRequest, projectPath]);
+    if (projectPath && openRequestKey !== null) void load();
+  }, [load, openRequestKey, projectPath]);
 
   useEffect(() => {
-    if (!projectPath) return;
-    const interval = window.setInterval(() => {
-      void load(false);
-    }, POLL_INTERVAL_MS);
-    return () => window.clearInterval(interval);
-  }, [load, projectPath]);
+    if (openRequestReentry) void reenter(openRequestReentry.session);
+  }, [openRequestReentry, reenter]);
 
   useEffect(() => {
-    if (!projectPath || result?.cache.mode !== "stale-snapshot") return;
-
-    const refreshKey = `${projectPath}\0${result.generatedAt}`;
-    if (staleSnapshotRefreshKeyRef.current === refreshKey) return;
-    staleSnapshotRefreshKeyRef.current = refreshKey;
-    void load(true);
-  }, [load, projectPath, result?.cache.mode, result?.generatedAt]);
-
-  useEffect(() => {
-    if (!projectPath || pendingTerminals.length === 0) return;
-    const interval = window.setInterval(() => {
-      void load(false);
-    }, PENDING_POLL_INTERVAL_MS);
-    return () => window.clearInterval(interval);
-  }, [load, pendingTerminals.length, projectPath]);
-
-  const sessionsForUi = useMemo(() => {
-    const backendSessions = (result?.sessions ?? []).map((session) =>
-      applyLocalTerminalRuntime(session, terminalsBySession[session.id]),
-    );
-    const pendingSessions = pendingTerminals.map(buildPendingAgentSession);
-    return [...backendSessions, ...pendingSessions];
-  }, [pendingTerminals, result?.sessions, terminalsBySession]);
-
-  const hasProvisionalSession = sessionsForUi.some(
-    (session) => session.runtime?.provisional === true,
-  );
-
-  useEffect(() => {
-    if (!projectPath || !hasProvisionalSession) return;
-    const interval = window.setInterval(() => {
-      void load(false);
-    }, PENDING_POLL_INTERVAL_MS);
-    return () => window.clearInterval(interval);
-  }, [hasProvisionalSession, load, projectPath]);
-
-  const hotStatusSessionIdsKey = useMemo(
-    () =>
-      buildHotStatusSessionIds({
-        sessions: sessionsForUi,
-        selectedSessionId,
-      }).join("\0"),
-    [selectedSessionId, sessionsForUi],
-  );
+    if (!selectedSessionId) return;
+    return observeSession(selectedSessionId);
+  }, [observeSession, selectedSessionId]);
 
   const groups = useMemo(
     () =>
       buildAgentSessionGroups({
-        sessions: sessionsForUi,
+        sessions,
         spaceScopes,
         searchQuery,
         visibleLimits,
@@ -442,42 +208,30 @@ export function useAgentSessions(
       searchQuery,
       selectedSessionId,
       selectedStableGroupId,
-      sessionsForUi,
+      sessions,
       spaceScopes,
       visibleLimits,
     ],
   );
 
-  useEffect(() => {
-    if (!projectPath || !hotStatusSessionIdsKey) return;
-
-    const sessionIds = hotStatusSessionIdsKey.split("\0").filter(Boolean);
-    const pollInterval = windowActive
-      ? HOT_STATUS_POLL_INTERVAL_MS
-      : HIDDEN_HOT_STATUS_POLL_INTERVAL_MS;
-    void loadHotStatus(sessionIds);
-    const interval = window.setInterval(() => {
-      void loadHotStatus(sessionIds);
-    }, pollInterval);
-    return () => window.clearInterval(interval);
-  }, [hotStatusSessionIdsKey, loadHotStatus, projectPath, windowActive]);
-
   const selectedSession =
-    sessionsForUi.find((session) => session.id === selectedSessionId) ?? null;
-  const selectedTerminal = selectedSessionId
-    ? terminalsBySession[selectedSessionId]
-    : undefined;
+    sessions.find((session) => session.id === selectedSessionId) ?? null;
+  const selectedReentryResult = selectedSessionId
+    ? (reentryResults[selectedSessionId] ?? null)
+    : null;
   const selectedPtyId =
     selectedSession?.runtime?.ptyId ??
-    selectedTerminal?.ptyId ??
+    (selectedSessionId ? terminals[selectedSessionId]?.ptyId : undefined) ??
     selectedReentryResult?.ptyId ??
     null;
   const selectedMissing =
     Boolean(selectedSessionId) && !selectedSession && !selectedPtyId;
+  const reenteringSessionId =
+    selectedSessionId && reenteringSessionIds.has(selectedSessionId)
+      ? selectedSessionId
+      : null;
 
-  const refresh = useCallback(async () => {
-    await load(true);
-  }, [load]);
+  const refresh = useCallback(() => load({ force: true }), [load]);
 
   const selectSession = useCallback(
     async (
@@ -486,159 +240,11 @@ export function useAgentSessions(
       groupId: string,
     ) => {
       if (!projectPath) return;
-
-      const selectionRequestId = ++selectionRequestIdRef.current;
-      selectedSessionIdRef.current = session.id;
-      selectedLaunchIdRef.current = session.launchId ?? null;
-      setSelectedSessionId(session.id);
-      setSelectedStableGroupId(source === "space" ? groupId : null);
-      setSelectedReentryResult(null);
-
-      if (isPendingSessionId(session.id)) {
-        setReenteringSessionId(null);
-        return;
-      }
-
-      setReenteringSessionId(session.id);
-
-      try {
-        const reentry = await reenterAgentSession(projectPath, session.id);
-        const ptyId = reentry.ptyId;
-        const projectUnchanged = projectPathRef.current === projectPath;
-        const selectionCurrent =
-          projectUnchanged &&
-          selectionRequestIdRef.current === selectionRequestId;
-
-        if (ptyId && projectUnchanged) {
-          const openedAt = new Date().toISOString();
-          setTerminalsBySession((current) => ({
-            ...current,
-            [session.id]: {
-              ptyId,
-              command:
-                reentry.command?.display ?? session.resumeCommand?.display,
-              cwd: reentry.cwd ?? reentry.command?.cwd ?? session.cwd,
-              createdAt: openedAt,
-            },
-          }));
-        }
-        if (!selectionCurrent) return;
-        setSelectedReentryResult(reentry);
-        void load(false);
-      } catch (err) {
-        if (
-          projectPathRef.current !== projectPath ||
-          selectionRequestIdRef.current !== selectionRequestId
-        ) {
-          return;
-        }
-        setSelectedReentryResult({
-          mode: "error",
-          sessionId: session.id,
-          command: session.resumeCommand,
-          cwd: session.cwd,
-          error: {
-            code: "unknown",
-            message: getNativeErrorMessage(err),
-          },
-        });
-      } finally {
-        if (
-          projectPathRef.current === projectPath &&
-          selectionRequestIdRef.current === selectionRequestId
-        ) {
-          setReenteringSessionId(null);
-        }
-      }
+      setSelection(selectionFor(session, source === "space" ? groupId : null));
+      if (isPendingSessionId(session.id)) return;
+      await reenter(session);
     },
-    [load, projectPath],
-  );
-
-  useEffect(() => {
-    const selectedId = selectedSessionIdRef.current;
-    const launchId = selectedLaunchIdRef.current;
-    if (
-      !selectedId ||
-      !launchId ||
-      sessionsForUi.some((session) => session.id === selectedId)
-    ) {
-      return;
-    }
-
-    const canonical = sessionsForUi.find(
-      (session) =>
-        session.launchId === launchId && session.runtime?.provisional !== true,
-    );
-    if (!canonical) return;
-
-    selectionRequestIdRef.current += 1;
-    selectedSessionIdRef.current = canonical.id;
-    selectedLaunchIdRef.current = canonical.launchId ?? null;
-    setSelectedSessionId(canonical.id);
-    setSelectedStableGroupId(null);
-    setSelectedReentryResult(null);
-    setReenteringSessionId(null);
-  }, [sessionsForUi]);
-
-  useEffect(() => {
-    if (
-      !openRequest ||
-      handledOpenRequestKeyRef.current === openRequest.requestKey
-    ) {
-      return;
-    }
-
-    const session = findAgentSessionForOpenRequest(sessionsForUi, openRequest);
-    if (!session) return;
-
-    handledOpenRequestKeyRef.current = openRequest.requestKey;
-    void selectSession(session, "now", "now");
-  }, [openRequest, selectSession, sessionsForUi]);
-
-  const togglePinned = useCallback(
-    async (session: AgentSession) => {
-      if (
-        !projectPath ||
-        pinningSessionIds.has(session.id) ||
-        isPendingSessionId(session.id) ||
-        session.source === "unknown"
-      ) {
-        return;
-      }
-
-      const pinnedProjectPath = projectPath;
-      setPinningSessionIds((current) => new Set(current).add(session.id));
-      try {
-        await setAgentSessionPinned(
-          pinnedProjectPath,
-          session.id,
-          !session.pinned,
-        );
-        if (projectPathRef.current !== pinnedProjectPath) return;
-        setResult((current) =>
-          current
-            ? {
-                ...current,
-                sessions: current.sessions.map((item) =>
-                  item.id === session.id
-                    ? { ...item, pinned: !session.pinned }
-                    : item,
-                ),
-              }
-            : current,
-        );
-        await load(false);
-      } finally {
-        if (projectPathRef.current === pinnedProjectPath) {
-          setPinningSessionIds((current) => {
-            const next = new Set(current);
-            next.delete(session.id);
-            return next;
-          });
-        }
-      }
-    },
-    [load, pinningSessionIds, projectPath],
+    [projectPath, reenter],
   );
 
   const showMore = useCallback((groupId: string) => {
@@ -681,133 +287,21 @@ export function useAgentSessions(
 
   const openNewSessionTerminal = useCallback(
     async (scope: AgentSessionScopeGroup) => {
-      if (!projectPath || scope.status !== "ready") return;
-
-      const openedAt = new Date().toISOString();
-      const terminal = await spawnManagedTerminalSurface(
-        scope.path,
-        projectPath,
-      );
-      if (projectPathRef.current !== projectPath) {
-        await closeManagedTerminalSurface(terminal.ptyId);
-        return;
-      }
-
-      const pending: PendingAgentSessionTerminal = {
-        id: pendingSessionId(terminal.ptyId),
-        ptyId: terminal.ptyId,
-        title: m.sessions_new_title(),
+      const pendingId = await openCatalogTerminal(
         scope,
-        cwd: terminal.cwd || scope.path,
-        createdAt: openedAt,
-      };
-      pendingTerminalsRef.current = [...pendingTerminalsRef.current, pending];
-      setPendingTerminals((current) => [...current, pending]);
-      setTerminalsBySession((current) => ({
-        ...current,
-        [pending.id]: {
-          ptyId: pending.ptyId,
-          cwd: pending.cwd,
-          createdAt: pending.createdAt,
-        },
-      }));
-      setSelectedSessionId(pending.id);
-      selectedSessionIdRef.current = pending.id;
-      selectedLaunchIdRef.current = null;
-      setSelectedStableGroupId(null);
-      setSelectedReentryResult(null);
-      setReenteringSessionId(null);
-      void load(true);
-    },
-    [load, projectPath],
-  );
-
-  const closeTerminal = useCallback(
-    async (sessionId: string, ptyId: string) => {
-      await closeManagedTerminalSurface(ptyId);
-      setPendingTerminals((current) => {
-        const next = current.filter(
-          (pending) => pending.id !== sessionId && pending.ptyId !== ptyId,
-        );
-        pendingTerminalsRef.current = next;
-        return next;
-      });
-      setTerminalsBySession((current) => {
-        const next = { ...current };
-        delete next[sessionId];
-        return next;
-      });
-      setSelectedReentryResult((current) =>
-        current?.ptyId === ptyId ? null : current,
+        m.sessions_new_title(),
       );
-      await load(false);
+      if (pendingId) {
+        setSelection({ sessionId: pendingId, launchId: null, groupId: null });
+      }
     },
-    [load],
+    [openCatalogTerminal],
   );
 
   const closeSelectedTerminal = useCallback(async () => {
     if (!selectedSessionId || !selectedPtyId) return;
     await closeTerminal(selectedSessionId, selectedPtyId);
   }, [closeTerminal, selectedPtyId, selectedSessionId]);
-
-  const closeAllTerminals = useCallback(async () => {
-    const ptyIds = new Set<string>();
-
-    sessionsForUi.forEach((session) => {
-      if (session.runtime?.ptyId) {
-        ptyIds.add(session.runtime.ptyId);
-      }
-    });
-    Object.values(terminalsBySession).forEach((terminal) => {
-      ptyIds.add(terminal.ptyId);
-    });
-    if (selectedReentryResult?.ptyId) {
-      ptyIds.add(selectedReentryResult.ptyId);
-    }
-
-    if (ptyIds.size === 0) return;
-
-    const results = await Promise.allSettled(
-      Array.from(ptyIds, async (ptyId) => {
-        await closeManagedTerminalSurface(ptyId);
-        return ptyId;
-      }),
-    );
-    const closedPtyIds = new Set(
-      results
-        .filter(
-          (result): result is PromiseFulfilledResult<string> =>
-            result.status === "fulfilled",
-        )
-        .map((result) => result.value),
-    );
-
-    if (closedPtyIds.size > 0) {
-      setPendingTerminals((current) => {
-        const next = current.filter(
-          (pending) => !closedPtyIds.has(pending.ptyId),
-        );
-        pendingTerminalsRef.current = next;
-        return next;
-      });
-      setTerminalsBySession((current) =>
-        Object.fromEntries(
-          Object.entries(current).filter(
-            ([, terminal]) => !closedPtyIds.has(terminal.ptyId),
-          ),
-        ),
-      );
-      setSelectedReentryResult((current) =>
-        current?.ptyId && closedPtyIds.has(current.ptyId) ? null : current,
-      );
-      await load(false);
-    }
-
-    const failed = results.find(
-      (result): result is PromiseRejectedResult => result.status === "rejected",
-    );
-    if (failed) throw failed.reason;
-  }, [load, selectedReentryResult, sessionsForUi, terminalsBySession]);
 
   const openSelectedExternalTerminal = useCallback(async () => {
     const cwd =
@@ -847,22 +341,4 @@ export function useAgentSessions(
     closeAllTerminals,
     openSelectedExternalTerminal,
   };
-}
-
-function mergeHotStatusSessions(
-  current: AgentSessionsListResult,
-  hotSessions: AgentSessionsListResult["sessions"],
-): AgentSessionsListResult {
-  if (hotSessions.length === 0) return current;
-
-  const hotById = new Map(hotSessions.map((session) => [session.id, session]));
-  let changed = false;
-  const sessions = current.sessions.map((session) => {
-    const hot = hotById.get(session.id);
-    if (!hot) return session;
-    changed = true;
-    return hot;
-  });
-
-  return changed ? { ...current, sessions } : current;
 }

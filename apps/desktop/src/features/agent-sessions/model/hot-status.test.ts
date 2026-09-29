@@ -42,7 +42,7 @@ function session(
   };
 }
 
-test("hot status ids include active, waiting, live, and selected sessions", () => {
+test("hot status ids include active, waiting, live, and observed sessions", () => {
   const ids = buildHotStatusSessionIds({
     sessions: [
       session({ id: "codex:done" }),
@@ -59,7 +59,7 @@ test("hot status ids include active, waiting, live, and selected sessions", () =
         runtime: { live: true, ptyId: "pty-live" },
       }),
     ],
-    selectedSessionId: "codex:selected",
+    observedSessionIds: ["codex:selected"],
   });
 
   expect(ids).toEqual([
@@ -76,7 +76,7 @@ test("hot status ids ignore pending and unknown source sessions", () => {
       session({ id: "new-session:pty-1", status: "active" }),
       session({ id: "unknown:active", source: "unknown", status: "active" }),
     ],
-    selectedSessionId: "new-session:pty-1",
+    observedSessionIds: ["new-session:pty-1"],
   });
 
   expect(ids).toEqual([]);

@@ -52,6 +52,7 @@ import {
 } from "./model";
 import { GraphSurface, SessionsSurface } from "./main-surfaces";
 import { ActiveSpaceContent } from "./active-space-content";
+import { AgentSessionCatalogHost } from "./agent-session-catalog-host";
 import { cn } from "@/shared/lib/utils";
 
 type SidebarProviderStyle = CSSProperties & {
@@ -177,6 +178,7 @@ function MainLayoutRuntime() {
         onOpenSearch={() => setCommandPaletteOpen(true)}
         onOpenAppSettings={openAppSettings}
       />
+      <AgentSessionCatalogHost projectPath={activeRootPath} />
       <SpaceFileWatcher />
       {activeRootPath && <SpaceGitWatcher spacePath={activeRootPath} />}
       <GitMissingDialog open={available === false} onRecheck={recheck} />

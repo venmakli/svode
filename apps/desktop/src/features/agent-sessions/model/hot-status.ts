@@ -3,10 +3,10 @@ import type { AgentSession } from "./types";
 
 export function buildHotStatusSessionIds({
   sessions,
-  selectedSessionId,
+  observedSessionIds,
 }: {
   sessions: AgentSession[];
-  selectedSessionId: string | null;
+  observedSessionIds: Iterable<string>;
 }): string[] {
   const ids = new Set<string>();
 
@@ -15,9 +15,11 @@ export function buildHotStatusSessionIds({
     ids.add(session.id);
   }
 
-  const selected = sessions.find((session) => session.id === selectedSessionId);
-  if (selected && isRefreshableSourceSession(selected)) {
-    ids.add(selected.id);
+  const observed = new Set(observedSessionIds);
+  for (const session of sessions) {
+    if (observed.has(session.id) && isRefreshableSourceSession(session)) {
+      ids.add(session.id);
+    }
   }
 
   return Array.from(ids);

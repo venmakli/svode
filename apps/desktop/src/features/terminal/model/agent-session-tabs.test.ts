@@ -6,7 +6,7 @@ import {
   targetToShellTab,
   terminalTabFromAgentSession,
 } from "./agent-session-tabs";
-import type { AgentSession } from "@/features/terminal/api/agent-sessions";
+import type { AgentSession } from "@/platform/agent-sessions/agent-sessions-api";
 import type { TerminalAgentSurface, TerminalTab } from "./types";
 
 function session(overrides: Partial<AgentSession> & Pick<AgentSession, "id">) {

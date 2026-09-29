@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { listTerminalAgentSessions } from "@/features/terminal/api/agent-sessions";
+import type { AgentSession } from "@/platform/agent-sessions/agent-sessions-api";
 import {
   killTerminal,
   listAgentTerminalSurfaces,
@@ -9,7 +9,7 @@ import {
 import { clearTerminalOutput } from "@/features/terminal/lib/output-bus";
 import {
   createInvalidationGuard,
-  createKeyedSingleFlight,
+  createLatestTaskQueue,
 } from "@/features/terminal/lib/agent-session-sync";
 import {
   findMatchingAgentSessionForShellTab,
@@ -43,7 +43,10 @@ interface TerminalState {
   closeTab: (tabId: string) => Promise<void>;
   closeAllTabs: () => void;
   syncAgentSurfaceTabs: () => Promise<boolean>;
-  syncAgentSessionTabs: (projectPath: string) => Promise<boolean>;
+  syncAgentSessionTabs: (
+    projectPath: string,
+    sessions: AgentSession[],
+  ) => Promise<boolean>;
   setActiveTab: (tabId: string) => void;
   markExited: (ptyId: string) => void;
   markError: (ptyId: string, message: string) => void;
@@ -90,7 +93,7 @@ function disposeTerminalSession(ptyId: string, label: string): void {
 }
 
 const terminalTabSyncInvalidation = createInvalidationGuard();
-const agentSessionSyncSingleFlight = createKeyedSingleFlight<boolean>();
+const agentSessionSyncQueue = createLatestTaskQueue<boolean>();
 
 export const useTerminalStore = create<TerminalState>((set, get) => ({
   panelOpen: false,
@@ -103,8 +106,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
   closePanel: () => set({ panelOpen: false }),
 
   togglePanel: async (initialTarget) => {
-    const { panelOpen, createTab, syncAgentSessionTabs, syncAgentSurfaceTabs } =
-      get();
+    const { panelOpen, createTab, syncAgentSurfaceTabs } = get();
     if (panelOpen) {
       set({ panelOpen: false });
       return;
@@ -120,12 +122,6 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     const hasTabs = get().tabs.length > 0;
     if (!hasTabs && initialTarget) {
       await createTab(initialTarget);
-    }
-
-    if (initialTarget) {
-      void syncAgentSessionTabs(initialTarget.path).catch((error) => {
-        console.warn("Failed to sync terminal agent sessions:", error);
-      });
     }
   },
 
@@ -233,15 +229,13 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     return hasTabs;
   },
 
-  syncAgentSessionTabs: (projectPath) => {
+  syncAgentSessionTabs: (projectPath, sessions) => {
     const syncToken = terminalTabSyncInvalidation.capture();
-    return agentSessionSyncSingleFlight.run(projectPath, async () => {
-      const result = await listTerminalAgentSessions(projectPath);
+    return agentSessionSyncQueue.run(async () => {
       if (!terminalTabSyncInvalidation.isCurrent(syncToken)) {
         return false;
       }
 
-      const sessions = result.sessions;
       const currentTabs = get().tabs;
       const usedSessionIds = new Set<string>();
       const linkedByTabId = new Map<string, (typeof sessions)[number]>();

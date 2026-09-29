@@ -1,8 +1,7 @@
 import { expect, test } from "bun:test";
 import {
   createInvalidationGuard,
-  createKeyedSingleFlight,
-  startCompletionDrivenPolling,
+  createLatestTaskQueue,
 } from "@/features/terminal/lib/agent-session-sync";
 
 function deferred<T>() {
@@ -20,32 +19,34 @@ async function flushPromises() {
   await Promise.resolve();
 }
 
-test("terminal agent session sync coalesces requests per project", async () => {
-  const singleFlight = createKeyedSingleFlight<boolean>();
-  const pending = deferred<boolean>();
-  let calls = 0;
-  const task = () => {
-    calls += 1;
-    return pending.promise;
-  };
+test("terminal agent session sync applies only the latest waiting input", async () => {
+  const queue = createLatestTaskQueue<string>();
+  const first = deferred<string>();
+  const calls: string[] = [];
 
-  const first = singleFlight.run("/project", task);
-  const second = singleFlight.run("/project", task);
+  const running = queue.run(() => {
+    calls.push("first");
+    return first.promise;
+  });
+  const replaced = queue.run(async () => {
+    calls.push("replaced");
+    return "replaced";
+  });
+  const latest = queue.run(async () => {
+    calls.push("latest");
+    return "latest";
+  });
   await flushPromises();
 
-  expect(first).toBe(second);
-  expect(calls).toBe(1);
+  expect(replaced).toBe(latest);
+  expect(calls).toEqual(["first"]);
 
-  pending.resolve(true);
-  expect(await first).toBe(true);
-  expect(await second).toBe(true);
+  first.resolve("first");
+  expect(await running).toBe("first");
+  expect(await latest).toBe("latest");
+  expect(calls).toEqual(["first", "latest"]);
 
-  let nextCalls = 0;
-  await singleFlight.run("/project", async () => {
-    nextCalls += 1;
-    return false;
-  });
-  expect(nextCalls).toBe(1);
+  expect(await queue.run(async () => "idle")).toBe("idle");
 });
 
 test("terminal sync invalidation rejects completions from an older root", () => {
@@ -57,59 +58,4 @@ test("terminal sync invalidation rejects completions from an older root", () => 
 
   expect(guard.isCurrent(oldRootToken)).toBe(false);
   expect(guard.isCurrent(guard.capture())).toBe(true);
-});
-
-test("terminal polling waits for completion before scheduling again", async () => {
-  const first = deferred<void>();
-  const scheduled: Array<() => void> = [];
-  let calls = 0;
-
-  const stop = startCompletionDrivenPolling({
-    intervalMs: 5_000,
-    task: () => {
-      calls += 1;
-      return calls === 1 ? first.promise : Promise.resolve();
-    },
-    setTimeout: (callback) => {
-      scheduled.push(callback);
-      return scheduled.length;
-    },
-    clearTimeout: () => {},
-  });
-  await flushPromises();
-
-  expect(calls).toBe(1);
-  expect(scheduled.length).toBe(0);
-
-  first.resolve();
-  await flushPromises();
-  expect(scheduled.length).toBe(1);
-
-  scheduled.shift()?.();
-  await flushPromises();
-  expect(calls).toBe(2);
-
-  stop();
-});
-
-test("stopping an active terminal poll prevents later cycles", async () => {
-  const first = deferred<void>();
-  const scheduled: Array<() => void> = [];
-
-  const stop = startCompletionDrivenPolling({
-    intervalMs: 5_000,
-    task: () => first.promise,
-    setTimeout: (callback) => {
-      scheduled.push(callback);
-      return scheduled.length;
-    },
-    clearTimeout: () => {},
-  });
-  await flushPromises();
-
-  stop();
-  first.resolve();
-  await flushPromises();
-
-  expect(scheduled.length).toBe(0);
 });

@@ -1,4 +1,4 @@
-import type { AgentSession } from "@/features/terminal/api/agent-sessions";
+import type { AgentSession } from "@/platform/agent-sessions/agent-sessions-api";
 import type {
   TerminalAgentSurface,
   TerminalTab,

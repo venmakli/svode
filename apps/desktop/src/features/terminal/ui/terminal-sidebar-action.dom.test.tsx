@@ -56,7 +56,6 @@ if (process.env.SVODE_TERMINAL_SIDEBAR_DOM !== "1") {
       invoke: async (command: string) => {
         commands.push(command);
         if (command === "terminal_list_agent_surfaces") return [];
-        if (command === "agent_sessions_list") return { sessions: [] };
         throw new Error(`unexpected command ${command}`);
       },
     },

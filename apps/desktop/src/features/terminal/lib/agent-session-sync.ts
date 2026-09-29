@@ -1,19 +1,11 @@
-export interface CompletionDrivenPollingOptions {
-  intervalMs: number;
-  task: () => Promise<void>;
-  onError?: (error: unknown) => void;
-  setTimeout?: (callback: () => void, delayMs: number) => number;
-  clearTimeout?: (timeoutId: number) => void;
-}
-
 export interface InvalidationGuard {
   capture(): number;
   invalidate(): void;
   isCurrent(token: number): boolean;
 }
 
-export interface KeyedSingleFlight<T> {
-  run(key: string, task: () => Promise<T>): Promise<T>;
+export interface LatestTaskQueue<T> {
+  run(task: () => Promise<T>): Promise<T>;
 }
 
 export function createInvalidationGuard(): InvalidationGuard {
@@ -27,61 +19,48 @@ export function createInvalidationGuard(): InvalidationGuard {
   };
 }
 
-export function createKeyedSingleFlight<T>(): KeyedSingleFlight<T> {
-  const inFlight = new Map<string, Promise<T>>();
+/**
+ * Runs tasks one at a time. A task submitted while another runs waits for it;
+ * newer submissions replace the waiting one, so only the latest input is
+ * applied after the running task finishes.
+ */
+export function createLatestTaskQueue<T>(): LatestTaskQueue<T> {
+  let running = false;
+  let queued: {
+    task: () => Promise<T>;
+    promise: Promise<T>;
+    resolve: (value: T) => void;
+    reject: (reason?: unknown) => void;
+  } | null = null;
+
+  const start = (task: () => Promise<T>): Promise<T> => {
+    running = true;
+    const promise = Promise.resolve().then(task);
+    const next = () => {
+      running = false;
+      const item = queued;
+      queued = null;
+      if (item) start(item.task).then(item.resolve, item.reject);
+    };
+    void promise.then(next, next);
+    return promise;
+  };
 
   return {
-    run(key: string, task: () => Promise<T>): Promise<T> {
-      const current = inFlight.get(key);
-      if (current) {
-        return current;
+    run(task) {
+      if (!running) return start(task);
+      if (queued) {
+        queued.task = task;
+        return queued.promise;
       }
-
-      const promise = Promise.resolve().then(task);
-      inFlight.set(key, promise);
-      const clear = () => {
-        if (inFlight.get(key) === promise) {
-          inFlight.delete(key);
-        }
-      };
-      void promise.then(clear, clear);
+      let resolve!: (value: T) => void;
+      let reject!: (reason?: unknown) => void;
+      const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+        resolve = resolvePromise;
+        reject = rejectPromise;
+      });
+      queued = { task, promise, resolve, reject };
       return promise;
     },
-  };
-}
-
-export function startCompletionDrivenPolling({
-  intervalMs,
-  task,
-  onError,
-  setTimeout = window.setTimeout.bind(window),
-  clearTimeout = window.clearTimeout.bind(window),
-}: CompletionDrivenPollingOptions): () => void {
-  let stopped = false;
-  let timeoutId: number | null = null;
-
-  const run = async () => {
-    try {
-      await task();
-    } catch (error) {
-      onError?.(error);
-    } finally {
-      if (!stopped) {
-        timeoutId = setTimeout(() => {
-          timeoutId = null;
-          void run();
-        }, intervalMs);
-      }
-    }
-  };
-
-  void run();
-
-  return () => {
-    stopped = true;
-    if (timeoutId !== null) {
-      clearTimeout(timeoutId);
-      timeoutId = null;
-    }
   };
 }

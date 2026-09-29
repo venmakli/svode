@@ -1,10 +1,25 @@
 import { useEffect } from "react";
+import type { AgentSession } from "@/platform/agent-sessions/agent-sessions-api";
 import { useTerminalStore } from "@/features/terminal/hooks/use-terminal-store";
-import { startCompletionDrivenPolling } from "@/features/terminal/lib/agent-session-sync";
 
-const AGENT_SESSION_SYNC_INTERVAL_MS = 5_000;
+export interface TerminalAgentSessionSyncOptions {
+  projectPath: string | null;
+  /** Sessions from the project session catalog; the panel keeps no list. */
+  sessions: AgentSession[] | null;
+  /** Asks the catalog owner for accelerated refresh; returns its release. */
+  requestSessionRefresh: () => () => void;
+}
 
-export function useTerminalAgentSessionSync(projectPath: string | null) {
+/**
+ * Links terminal panel tabs to agent sessions of the project catalog. The
+ * catalog owner decides when sessions are listed; an open panel only asks it
+ * for the accelerated refresh that detects agents started in shell tabs.
+ */
+export function useTerminalAgentSessionSync({
+  projectPath,
+  sessions,
+  requestSessionRefresh,
+}: TerminalAgentSessionSyncOptions) {
   const panelOpen = useTerminalStore((state) => state.panelOpen);
   const syncAgentSurfaceTabs = useTerminalStore(
     (state) => state.syncAgentSurfaceTabs,
@@ -14,35 +29,32 @@ export function useTerminalAgentSessionSync(projectPath: string | null) {
   );
 
   useEffect(() => {
-    if (!projectPath) return;
+    if (!projectPath || !panelOpen) return;
+    return requestSessionRefresh();
+  }, [panelOpen, projectPath, requestSessionRefresh]);
 
-    if (!panelOpen) {
-      void syncAgentSurfaceTabs().catch((error) => {
-        console.warn("Failed to sync terminal agent surfaces:", error);
-      });
-      return;
-    }
-
-    return startCompletionDrivenPolling({
-      intervalMs: AGENT_SESSION_SYNC_INTERVAL_MS,
-      task: async () => {
-        const [surfaceSync, agentSessionSync] = await Promise.allSettled([
-          syncAgentSurfaceTabs(),
-          syncAgentSessionTabs(projectPath),
-        ]);
-        if (surfaceSync.status === "rejected") {
-          console.warn(
-            "Failed to refresh terminal agent surfaces:",
-            surfaceSync.reason,
-          );
-        }
-        if (agentSessionSync.status === "rejected") {
-          console.warn(
-            "Failed to refresh terminal agent sessions:",
-            agentSessionSync.reason,
-          );
-        }
-      },
+  useEffect(() => {
+    if (!projectPath || panelOpen) return;
+    void syncAgentSurfaceTabs().catch((error) => {
+      console.warn("Failed to sync terminal agent surfaces:", error);
     });
-  }, [panelOpen, projectPath, syncAgentSessionTabs, syncAgentSurfaceTabs]);
+  }, [panelOpen, projectPath, syncAgentSurfaceTabs]);
+
+  useEffect(() => {
+    if (!projectPath || !panelOpen) return;
+
+    void syncAgentSurfaceTabs().catch((error) => {
+      console.warn("Failed to refresh terminal agent surfaces:", error);
+    });
+    if (!sessions) return;
+    void syncAgentSessionTabs(projectPath, sessions).catch((error) => {
+      console.warn("Failed to refresh terminal agent sessions:", error);
+    });
+  }, [
+    panelOpen,
+    projectPath,
+    sessions,
+    syncAgentSessionTabs,
+    syncAgentSurfaceTabs,
+  ]);
 }

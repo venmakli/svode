@@ -18,8 +18,11 @@ export function SessionsSurface({
   openRequest?: AgentSessionOpenRequest | null;
   onOpenAppSettings?: () => void;
 }) {
+  const activeRootPath = useSpace((state) => state.activeRootPath);
   return (
     <AgentSessionsScreen
+      // Screen-local selection and search start over for another project.
+      key={activeRootPath ?? ""}
       openRequest={openRequest}
       onOpenAppSettings={onOpenAppSettings}
     />
