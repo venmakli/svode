@@ -245,7 +245,7 @@ export function queryCollectionEntries(input: {
   includeNested: boolean;
   projectPath?: string | null;
 }) {
-  return invokeCommand<PageDto[]>("query_entries", {
+  return invokeCommand<PageDto[]>("query_collection_items", {
     space: input.spacePath,
     collectionPath: input.collectionPath,
     filters: input.filters,
@@ -264,7 +264,7 @@ export function listEntriesForView(input: {
   includeNested: boolean;
   projectPath?: string | null;
 }) {
-  return invokeCommand<PageDto[]>("list_entries_for_view", {
+  return invokeCommand<PageDto[]>("list_collection_view_items", {
     space: input.spacePath,
     collectionPath: input.collectionPath,
     viewName: input.viewName,

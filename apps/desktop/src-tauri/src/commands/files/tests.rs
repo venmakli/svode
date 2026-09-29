@@ -1325,7 +1325,7 @@ async fn write_entry_keeps_the_path_of_a_page_with_a_deferred_filename() {
         .unwrap()
         .as_str()
         .to_string();
-    let saved = write_entry_shared(
+    let saved = write_page_body_shared(
         WriteEntryAuthorization::Preauthorized,
         space_str.clone(),
         "Old name.md".into(),
@@ -1359,7 +1359,7 @@ async fn write_entry_passes_the_source_version_and_returns_the_version_of_its_re
     let loaded = loaded.source_version.unwrap().as_str().to_string();
     let (index_state, nonces) = (IndexState::new(), WriteNonceRegistry::new());
     let save = |content: &'static str, version: Option<String>| {
-        write_entry_shared(
+        write_page_body_shared(
             WriteEntryAuthorization::Preauthorized,
             space_str.clone(),
             "Page.md".into(),

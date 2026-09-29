@@ -138,12 +138,12 @@ if (process.env.SVODE_PEEK_PATH_HANDOFF_TEST !== "1") {
               reason: null,
               lastKnownStatus: null,
             };
-          case "read_entry": {
+          case "read_page": {
             const file = files.get(String(args.path));
             if (!file) throw `File not found: ${String(args.path)}`;
             return file;
           }
-          case "get_entry_schema": {
+          case "get_page_schema": {
             const path = String(args.filePath ?? args.path ?? "");
             return path.startsWith("tasks/") && path !== "tasks/README.md"
               ? { schema, collectionRootPath: "tasks" }
@@ -163,7 +163,7 @@ if (process.env.SVODE_PEEK_PATH_HANDOFF_TEST !== "1") {
               hasApp: false,
             };
           }
-          case "query_entries":
+          case "query_collection_items":
             return [...files.values()].filter(
               (file) =>
                 file.path.startsWith(`${String(args.collectionPath)}/`) &&
@@ -174,7 +174,7 @@ if (process.env.SVODE_PEEK_PATH_HANDOFF_TEST !== "1") {
               { path: "tasks", title: "tasks", nested: false },
               { path: "people", title: "people", nested: false },
             ];
-          case "update_entry_field": {
+          case "update_page_field": {
             // Title save renames the file and rewrites the reverse relation.
             const from = String(args.filePath);
             const current = files.get(from)!;
@@ -194,7 +194,7 @@ if (process.env.SVODE_PEEK_PATH_HANDOFF_TEST !== "1") {
             });
             return next;
           }
-          case "get_entry_detail_state":
+          case "get_page_detail_state":
             return { form: "leaf", subpageCount: 0, otherFileCount: 0 };
           case "resolve_relations_batch":
             return (args.values as string[]).map((value) => {

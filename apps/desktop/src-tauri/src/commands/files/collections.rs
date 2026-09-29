@@ -372,7 +372,7 @@ pub async fn reorder_views(
 }
 
 #[tauri::command]
-pub async fn list_entries_for_view(
+pub async fn list_collection_view_items(
     space: String,
     collection_path: String,
     view_name: String,
@@ -397,7 +397,7 @@ pub async fn list_entries_for_view(
 }
 
 #[tauri::command]
-pub async fn query_entries(
+pub async fn query_collection_items(
     space: String,
     collection_path: String,
     filters: Option<Vec<Filter>>,

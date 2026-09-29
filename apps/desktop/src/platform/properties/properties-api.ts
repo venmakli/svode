@@ -204,7 +204,7 @@ export function listActors(spacePath: string, allTime = false) {
 }
 
 export function getPageSchema(input: { spacePath: string; filePath: string }) {
-  return invokeCommand<PageSchemaResultDto | null>("get_entry_schema", {
+  return invokeCommand<PageSchemaResultDto | null>("get_page_schema", {
     space: input.spacePath,
     filePath: input.filePath,
   });
@@ -433,7 +433,7 @@ export function queryRelationTargetPages(input: {
   const filters = input.titleQuery
     ? [{ field: "title", op: "contains", value: input.titleQuery }]
     : null;
-  return invokeCommand<RelationTargetPageDto[]>("query_entries", {
+  return invokeCommand<RelationTargetPageDto[]>("query_collection_items", {
     space: input.spacePath,
     collectionPath: input.relation,
     filters,

@@ -18,7 +18,7 @@ test("Page adapters expose canonical contracts over private native commands", as
   const calls: Array<{ command: string; args: unknown }> = [];
   mockNativeIpc((command, args) => {
     calls.push({ command, args: args ?? {} });
-    if (command === "create_entry") {
+    if (command === "create_page") {
       return {
         body: "",
         meta: {
@@ -67,7 +67,7 @@ test("Page adapters expose canonical contracts over private native commands", as
     expect(relative).toBe("../Target.md");
     expect(resolved.targetPath).toBe("Target.md");
     expect(calls.map((call) => call.command)).toEqual([
-      "create_entry",
+      "create_page",
       "make_relative_link",
       "resolve_doc_link",
     ]);

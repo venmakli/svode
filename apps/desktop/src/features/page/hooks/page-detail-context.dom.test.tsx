@@ -69,7 +69,7 @@ async function harness(
           repositoryId: spacePath,
           status: options.blocked ? "read_only" : "local",
         };
-      if (command === "read_entry") {
+      if (command === "read_page") {
         if (options.readError || readFailure)
           throw new Error("Invalid frontmatter");
         const page = pages.get(String(input.path));
@@ -78,7 +78,7 @@ async function harness(
         if (readDelay) await readDelay;
         return snapshot;
       }
-      if (command === "create_entry") {
+      if (command === "create_page") {
         if (createDelay) await createDelay;
         if (createFailure) throw new Error("Create failed");
         const path = `${input.parentPath}/README.md`;
@@ -98,7 +98,7 @@ async function harness(
         if (partial) throw new Error("Post-create failure");
         return structuredClone(page);
       }
-      if (command === "update_entry_field") {
+      if (command === "update_page_field") {
         if (fieldDelay) await fieldDelay;
         if (fieldFailure) throw options.fieldError ?? new Error("Save failed");
         const field = String(input.field);
@@ -129,7 +129,7 @@ async function harness(
         pages.set(page.path, updated);
         return structuredClone(updated);
       }
-      if (command === "get_entry_schema")
+      if (command === "get_page_schema")
         return schema ? { schema: { columns: schema, views: [] } } : null;
       if (command === "list_content_tree_children") return [];
       if (command === "get_expanded_paths") return [];
@@ -291,7 +291,7 @@ test("missing header keeps the same description control and focus through shared
       await writes;
       await navigation;
     });
-    expect(view.calls.filter((call) => call === "create_entry").length).toBe(1);
+    expect(view.calls.filter((call) => call === "create_page").length).toBe(1);
     assert.equal(view.pages.get("app-only/README.md")?.meta.title, "app only");
     assert.equal(view.pages.get("app-only/README.md")?.meta.icon, "🚀");
     assert.equal(
@@ -324,7 +324,7 @@ test("external README is reconciled without overwriting body or unrelated metada
     await act(async () => {
       await view.context().updateField("description", "Mine", { flush: true });
     });
-    expect(view.calls.includes("create_entry")).toBe(false);
+    expect(view.calls.includes("create_page")).toBe(false);
     expect(view.pages.get(external.path)).toEqual({
       ...external,
       meta: { ...external.meta, description: "Mine" },
@@ -365,7 +365,7 @@ test("README appearing during pending creation is reread after conflict", async 
       ...external,
       meta: { ...external.meta, icon: "🚀" },
     });
-    expect(view.calls.filter((call) => call === "create_entry").length).toBe(1);
+    expect(view.calls.filter((call) => call === "create_page").length).toBe(1);
   } finally {
     await view.cleanup();
   }
@@ -402,7 +402,7 @@ test("create and field failures retain drafts and session retry recovers partial
       await view.session().retryPersistence();
     });
     expect(view.pages.get("app-only/README.md")?.meta.icon).toBe("🚀");
-    expect(view.calls.filter((call) => call === "create_entry").length).toBe(2);
+    expect(view.calls.filter((call) => call === "create_page").length).toBe(2);
     await act(async () => {
       expect(await view.session().prepareForNavigation()).toBe(true);
     });
@@ -460,7 +460,7 @@ test("read errors and blocked access cannot create; stale creation cannot adopt 
           new RegExp("not editable"),
         );
       });
-      expect(view.calls.includes("create_entry")).toBe(false);
+      expect(view.calls.includes("create_page")).toBe(false);
     } finally {
       await view.cleanup();
     }
@@ -484,7 +484,7 @@ test("read errors and blocked access cannot create; stale creation cannot adopt 
     });
     expect(view.context().readmePath).toBe("other/README.md");
     expect(view.context().page).toBeNull();
-    expect(view.calls.includes("update_entry_field")).toBe(false);
+    expect(view.calls.includes("update_page_field")).toBe(false);
   } finally {
     await view.cleanup();
   }
@@ -546,7 +546,7 @@ for (const presentation of ["full", "compact"] as const) {
     const view = await readyHarness({ presentation });
     try {
       const reads = () =>
-        view.calls.filter((call) => call === "read_entry").length;
+        view.calls.filter((call) => call === "read_page").length;
       const readsBefore = reads();
       view.pages.set(
         README,
@@ -737,9 +737,9 @@ test("a late refresh of the previous target is ignored", async () => {
     expect(view.context().page?.path).toBe("other/README.md");
     expect(view.context().page?.meta.title).toBe("Other");
 
-    const reads = view.calls.filter((call) => call === "read_entry").length;
+    const reads = view.calls.filter((call) => call === "read_page").length;
     await view.fileEvent(README);
-    expect(view.calls.filter((call) => call === "read_entry").length).toBe(
+    expect(view.calls.filter((call) => call === "read_page").length).toBe(
       reads,
     );
   } finally {

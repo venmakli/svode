@@ -76,18 +76,18 @@ export function createPage(input: {
   asReadme?: boolean;
   projectPath: string | null;
 }): Promise<PageDto> {
-  return invokeCommand<PageDto>("create_entry", { ...input });
+  return invokeCommand<PageDto>("create_page", { ...input });
 }
 
 export function readPage(space: string, path: string): Promise<PageDto> {
-  return invokeCommand<PageDto>("read_entry", { space, path });
+  return invokeCommand<PageDto>("read_page", { space, path });
 }
 
 export function getPageDetailState(input: {
   space: string;
   path: string;
 }): Promise<PageDetailStateDto> {
-  return invokeCommand<PageDetailStateDto>("get_entry_detail_state", {
+  return invokeCommand<PageDetailStateDto>("get_page_detail_state", {
     ...input,
   });
 }
@@ -95,7 +95,7 @@ export function getPageDetailState(input: {
 export function writePage(
   input: WritePageInputDto,
 ): Promise<WritePageResultDto> {
-  return invokeCommand<WritePageResultDto>("write_entry", input);
+  return invokeCommand<WritePageResultDto>("write_page_body", input);
 }
 
 export function updatePageField(input: {
@@ -105,7 +105,7 @@ export function updatePageField(input: {
   value: unknown;
   projectPath: string | null;
 }): Promise<PageDto> {
-  return invokeCommand<PageDto>("update_entry_field", { ...input });
+  return invokeCommand<PageDto>("update_page_field", { ...input });
 }
 
 export function deletePage(input: {
@@ -113,7 +113,7 @@ export function deletePage(input: {
   path: string;
   projectPath: string | null;
 }): Promise<void> {
-  return invokeCommand<void>("delete_entry", { ...input });
+  return invokeCommand<void>("delete_content", { ...input });
 }
 
 export function duplicatePage(input: {
@@ -121,7 +121,7 @@ export function duplicatePage(input: {
   filePath: string;
   projectPath: string | null;
 }): Promise<PageDto> {
-  return invokeCommand<PageDto>("duplicate_entry", { ...input });
+  return invokeCommand<PageDto>("duplicate_page", { ...input });
 }
 
 export function getPageBacklinks(input: {
@@ -137,7 +137,7 @@ export function nestPage(input: {
   path: string;
   projectPath: string | null;
 }): Promise<string> {
-  return invokeCommand<string>("nest_entry", { ...input });
+  return invokeCommand<string>("nest_page", { ...input });
 }
 
 export function unnestPage(input: {
@@ -145,7 +145,7 @@ export function unnestPage(input: {
   path: string;
   projectPath: string | null;
 }): Promise<string> {
-  return invokeCommand<string>("unnest_entry", { ...input });
+  return invokeCommand<string>("unnest_page", { ...input });
 }
 
 export function convertPageToFolder(input: {
@@ -153,7 +153,7 @@ export function convertPageToFolder(input: {
   filePath: string;
   projectPath: string | null;
 }): Promise<PageDto> {
-  return invokeCommand<PageDto>("convert_entry_to_folder", { ...input });
+  return invokeCommand<PageDto>("convert_page_to_folder", { ...input });
 }
 
 export function convertPageToLeaf(input: {
@@ -161,7 +161,7 @@ export function convertPageToLeaf(input: {
   filePath: string;
   projectPath: string | null;
 }): Promise<PageDto> {
-  return invokeCommand<PageDto>("convert_entry_to_leaf", { ...input });
+  return invokeCommand<PageDto>("convert_page_to_leaf", { ...input });
 }
 
 export function validatePageLinks(input: {

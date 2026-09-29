@@ -2,7 +2,7 @@
 
 use super::*;
 #[tauri::command]
-pub async fn nest_entry(
+pub async fn nest_page(
     app: AppHandle,
     space: String,
     path: String,
@@ -36,7 +36,7 @@ pub async fn nest_entry(
 }
 
 #[tauri::command]
-pub async fn unnest_entry(
+pub async fn unnest_page(
     app: AppHandle,
     space: String,
     path: String,
@@ -70,7 +70,7 @@ pub async fn unnest_entry(
 }
 
 #[tauri::command]
-pub async fn convert_entry_to_folder(
+pub async fn convert_page_to_folder(
     app: AppHandle,
     space: String,
     file_path: String,
@@ -136,7 +136,7 @@ pub async fn convert_to_collection(
 }
 
 #[tauri::command]
-pub async fn convert_entry_to_leaf(
+pub async fn convert_page_to_leaf(
     app: AppHandle,
     space: String,
     file_path: String,
@@ -203,7 +203,7 @@ pub async fn convert_bare_folder_to_collection(
 }
 
 #[tauri::command]
-pub async fn duplicate_entry(
+pub async fn duplicate_page(
     app: AppHandle,
     space: String,
     file_path: String,

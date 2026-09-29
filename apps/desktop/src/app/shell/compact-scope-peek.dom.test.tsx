@@ -225,8 +225,8 @@ if (process.env.SVODE_COMPACT_SCOPE_TEST !== "1") {
               reason: null,
               lastKnownStatus: null,
             };
-          if (command === "read_entry") return page;
-          if (command === "get_entry_schema") return null;
+          if (command === "read_page") return page;
+          if (command === "get_page_schema") return null;
           if (command === "get_scope_owner_facts") {
             ownerFactReads += 1;
             return {
@@ -435,8 +435,8 @@ if (process.env.SVODE_COMPACT_SCOPE_TEST !== "1") {
             reason: null,
             lastKnownStatus: null,
           };
-        if (command === "read_entry") return page;
-        if (command === "get_entry_schema") return null;
+        if (command === "read_page") return page;
+        if (command === "get_page_schema") return null;
         if (command === "get_scope_owner_facts") {
           const path = String(args && "path" in args ? args.path : "");
           return {
@@ -552,8 +552,8 @@ if (process.env.SVODE_COMPACT_SCOPE_TEST !== "1") {
             reason: null,
             lastKnownStatus: null,
           };
-        if (command === "read_entry") return structuredClone(source);
-        if (command === "get_entry_schema") return null;
+        if (command === "read_page") return structuredClone(source);
+        if (command === "get_page_schema") return null;
         if (command === "get_scope_owner_facts") {
           const path = String(args && "path" in args ? args.path : "");
           return {
@@ -661,11 +661,11 @@ if (process.env.SVODE_COMPACT_SCOPE_TEST !== "1") {
             };
           if (
             !exists &&
-            (command === "read_entry" || command.endsWith("facts"))
+            (command === "read_page" || command.endsWith("facts"))
           )
             throw `File not found: ${path}`;
-          if (command === "read_entry") return page;
-          if (command === "get_entry_schema") return null;
+          if (command === "read_page") return page;
+          if (command === "get_page_schema") return null;
           if (command === "get_scope_owner_facts")
             return {
               identity: "pageFile",

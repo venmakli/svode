@@ -22,7 +22,7 @@ export function createContentTreeFolder(input: {
 }
 
 export function listContentTree(space: string): Promise<TreeNodeDto[]> {
-  return invokeCommand<TreeNodeDto[]>("list_entries", { space });
+  return invokeCommand<TreeNodeDto[]>("list_content_tree", { space });
 }
 
 type DirectTreeNodeDto = Omit<TreeNodeDto, "children"> & {
@@ -86,7 +86,7 @@ export function moveContentTreeItem(input: {
   toParent: string;
   projectPath: string | null;
 }): Promise<string> {
-  return invokeCommand<string>("move_entry", { ...input });
+  return invokeCommand<string>("move_content", { ...input });
 }
 
 export function renameContentTreeItem(input: {
@@ -95,7 +95,7 @@ export function renameContentTreeItem(input: {
   to: string;
   projectPath: string | null;
 }): Promise<string[]> {
-  return invokeCommand<string[]>("rename_entry", { ...input });
+  return invokeCommand<string[]>("rename_content", { ...input });
 }
 
 export function deleteContentTreeItem(input: {
@@ -103,7 +103,7 @@ export function deleteContentTreeItem(input: {
   path: string;
   projectPath: string | null;
 }): Promise<void> {
-  return invokeCommand<void>("delete_entry", { ...input });
+  return invokeCommand<void>("delete_content", { ...input });
 }
 
 export function saveContentTreeOrder(input: {

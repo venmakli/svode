@@ -30,7 +30,7 @@ export function searchProjectEntriesByTitle(
   input: SearchProjectEntriesByTitleInputDto,
 ): Promise<SearchResponseDto> {
   return invokeCommand<SearchResponseDto>(
-    "search_project_entries_by_title",
+    "search_project_pages_by_title",
     input,
   );
 }
@@ -39,7 +39,7 @@ export function searchProjectEntries(
   input: SearchProjectEntriesInputDto,
 ): Promise<SearchResponseDto> {
   const { itemType, ...rest } = input;
-  return invokeCommand<SearchResponseDto>("search_project_entries", {
+  return invokeCommand<SearchResponseDto>("search_project_pages", {
     ...rest,
     entryType: itemType,
   });
@@ -48,5 +48,5 @@ export function searchProjectEntries(
 export function recentProjectEntries(
   input: RecentProjectEntriesInputDto,
 ): Promise<SearchResponseDto> {
-  return invokeCommand<SearchResponseDto>("recent_project_entries", input);
+  return invokeCommand<SearchResponseDto>("recent_project_pages", input);
 }

@@ -288,15 +288,15 @@ if (process.env.SVODE_PAGE_SCOPE_TEST !== "1") {
                 },
               ]
             : [];
-        if (command === "update_entry_field") {
+        if (command === "update_page_field") {
           if (options.fieldError) throw options.fieldError;
           const updated = page(String(input.filePath));
           return input.field === "icon"
             ? { ...updated, meta: { ...updated.meta, icon: input.value } }
             : updated;
         }
-        if (command === "delete_entry") return null;
-        if (command === "duplicate_entry")
+        if (command === "delete_content") return null;
+        if (command === "duplicate_page")
           return { ...page("Note copy.md"), warnings: [] };
         if (command === "repository_access_get")
           return {
@@ -308,7 +308,7 @@ if (process.env.SVODE_PAGE_SCOPE_TEST !== "1") {
             reason: status === "local" ? null : "auth_required",
             lastKnownStatus: null,
           };
-        if (command === "read_entry") {
+        if (command === "read_page") {
           reads += 1;
           if (missing) throw `File not found: ${String(input.path)}`;
           if (readFailures > 0) {
@@ -320,7 +320,7 @@ if (process.env.SVODE_PAGE_SCOPE_TEST !== "1") {
             ? { ...read, meta: { ...read.meta, title: externalTitle } }
             : read;
         }
-        if (command === "get_entry_schema")
+        if (command === "get_page_schema")
           return options.schemaColumns
             ? {
                 schema: {
@@ -868,7 +868,7 @@ if (process.env.SVODE_PAGE_SCOPE_TEST !== "1") {
       });
       expect(titleError().includes("Taken.md")).toBe(true);
       expect(
-        f.calls.some(({ command }) => command === "update_entry_field"),
+        f.calls.some(({ command }) => command === "update_page_field"),
       ).toBe(false);
       await act(async () => {
         (headerProps.onTitleChange as (value: string) => void)("Other");
@@ -900,7 +900,7 @@ if (process.env.SVODE_PAGE_SCOPE_TEST !== "1") {
         await settle();
       });
       expect(
-        f.calls.find(({ command }) => command === "update_entry_field")?.args
+        f.calls.find(({ command }) => command === "update_page_field")?.args
           .field,
       ).toBe("icon");
       expect(f.treeReloads(before)).toEqual(["Folder"]);
@@ -945,7 +945,7 @@ if (process.env.SVODE_PAGE_SCOPE_TEST !== "1") {
         await settle();
       });
       expect(
-        f.calls.find(({ command }) => command === "delete_entry")?.args.path,
+        f.calls.find(({ command }) => command === "delete_content")?.args.path,
       ).toBe("Note.md");
       expect(f.treeReloads(before)).toEqual([null]);
       expect(doc.querySelector("[data-delete]")).toBeNull();

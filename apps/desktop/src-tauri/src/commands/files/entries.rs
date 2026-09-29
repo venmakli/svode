@@ -3,7 +3,7 @@
 use super::*;
 
 #[tauri::command]
-pub fn list_entries(space: String) -> Result<Vec<TreeNode>, AppError> {
+pub fn list_content_tree(space: String) -> Result<Vec<TreeNode>, AppError> {
     let started = Instant::now();
     let space_name = path_name(&space);
     let result = crate::space::content_tree::list_recursive(&space);
@@ -12,19 +12,19 @@ pub fn list_entries(space: String) -> Result<Vec<TreeNode>, AppError> {
     match &result {
         Ok(nodes) => tracing::info!(
             target: "svode::perf",
-            event = "list_entries",
+            event = "list_content_tree",
             space = %space_name,
             node_count = count_tree_nodes(nodes),
             duration_ms,
-            "list_entries completed"
+            "list_content_tree completed"
         ),
         Err(error) => tracing::info!(
             target: "svode::perf",
-            event = "list_entries",
+            event = "list_content_tree",
             space = %space_name,
             duration_ms,
             error_kind = error.kind(),
-            "list_entries failed"
+            "list_content_tree failed"
         ),
     }
 
@@ -87,7 +87,7 @@ pub fn get_scope_owner_facts(
 }
 
 #[tauri::command]
-pub fn get_entry_detail_state(
+pub fn get_page_detail_state(
     space: String,
     path: String,
 ) -> Result<entry::EntryDetailState, AppError> {
@@ -95,7 +95,7 @@ pub fn get_entry_detail_state(
 }
 
 #[tauri::command]
-pub async fn create_entry(
+pub async fn create_page(
     app: AppHandle,
     space: String,
     parent_path: Option<String>,
@@ -231,7 +231,7 @@ impl From<Entry> for EntryRead {
 }
 
 #[tauri::command]
-pub async fn read_entry(
+pub async fn read_page(
     space: String,
     path: String,
     index_state: State<'_, IndexState>,
@@ -242,7 +242,7 @@ pub async fn read_entry(
 }
 
 #[tauri::command]
-pub fn get_entry_schema(
+pub fn get_page_schema(
     space: String,
     file_path: String,
 ) -> Result<Option<EntrySchemaResponse>, AppError> {
@@ -250,7 +250,7 @@ pub fn get_entry_schema(
 }
 
 #[tauri::command]
-pub async fn update_entry_field(
+pub async fn update_page_field(
     app: AppHandle,
     space: String,
     file_path: String,
@@ -283,7 +283,7 @@ pub async fn update_entry_field(
 }
 
 #[tauri::command]
-pub async fn write_entry(
+pub async fn write_page_body(
     app: AppHandle,
     space: String,
     path: String,
@@ -294,7 +294,7 @@ pub async fn write_entry(
     index_updates: State<'_, IndexUpdateState>,
     nonces: State<'_, Arc<WriteNonceRegistry>>,
 ) -> Result<WriteResult, AppError> {
-    write_entry_shared(
+    write_page_body_shared(
         WriteEntryAuthorization::App(&app),
         space,
         path,
@@ -317,7 +317,7 @@ pub(super) enum WriteEntryAuthorization<'a> {
 
 /// Writes the body of a Page. The title, metadata and filename are not part
 /// of a body write; they change through the Page field update.
-pub(super) async fn write_entry_shared(
+pub(super) async fn write_page_body_shared(
     authorization: WriteEntryAuthorization<'_>,
     space: String,
     path: String,
@@ -367,7 +367,7 @@ pub(super) async fn write_entry_shared(
 }
 
 #[tauri::command]
-pub async fn delete_entry(
+pub async fn delete_content(
     app: AppHandle,
     space: String,
     path: String,
@@ -395,7 +395,7 @@ pub async fn delete_entry(
 }
 
 #[tauri::command]
-pub async fn rename_entry(
+pub async fn rename_content(
     app: AppHandle,
     space: String,
     from: String,
@@ -430,7 +430,7 @@ pub async fn rename_entry(
 }
 
 #[tauri::command]
-pub async fn move_entry(
+pub async fn move_content(
     app: AppHandle,
     space: String,
     from: String,

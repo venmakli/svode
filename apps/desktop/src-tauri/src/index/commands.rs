@@ -35,7 +35,7 @@ pub async fn reindex_project(app: AppHandle, project_path: String) -> Result<(),
 }
 
 #[tauri::command]
-pub async fn search_project_entries_by_title(
+pub async fn search_project_pages_by_title(
     state: State<'_, IndexState>,
     project_path: String,
     query: String,
@@ -46,7 +46,7 @@ pub async fn search_project_entries_by_title(
 }
 
 #[tauri::command]
-pub async fn search_project_entries(
+pub async fn search_project_pages(
     state: State<'_, IndexState>,
     project_path: String,
     query: String,
@@ -68,7 +68,7 @@ pub async fn search_project_entries(
 }
 
 #[tauri::command]
-pub async fn recent_project_entries(
+pub async fn recent_project_pages(
     state: State<'_, IndexState>,
     project_path: String,
     scope: Option<SearchScope>,

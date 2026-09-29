@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 const TTL: Duration = Duration::from_secs(3);
 
 /// Short-TTL registry of (canonical_abs_path → nonce) pairs populated by
-/// `write_entry` and consumed by the file watcher. Lets the watcher attach a
+/// `write_page_body` and consumed by the file watcher. Lets the watcher attach a
 /// `writeNonce` to `file:changed` payloads so the editor can filter its own
 /// echoes after an auto-save write.
 pub struct WriteNonceRegistry {
