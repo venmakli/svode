@@ -66,7 +66,7 @@ import {
   SessionMissingState,
   SessionResumingState,
 } from "./session-states";
-import { SessionStatusMarker, statusLabel } from "./session-status";
+import { SessionStatusMarker, statusText } from "./session-status";
 import { AGENT_SESSION_CONTENT_ATTRIBUTE } from "../lib/session-content";
 import * as m from "@/paraglide/messages.js";
 
@@ -245,7 +245,7 @@ function SessionIdentity({
       <div className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
         <SessionStatusMarker session={session} />
         <span className="truncate">
-          {[statusLabel(session), agents.label(session.source), identityLabel]
+          {[statusText(session), agents.label(session.source), identityLabel]
             .filter(Boolean)
             .join(" · ")}
           {time && (

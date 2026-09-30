@@ -34,7 +34,12 @@ import {
   type AgentSession,
 } from "../model";
 import { ExternalTerminalIcon } from "./external-terminal-icon";
-import { statusLabel } from "./session-status";
+import {
+  STATUS_OPTIONS,
+  statusLabel,
+  statusText,
+  statusValueLabel,
+} from "./session-status";
 import * as m from "@/paraglide/messages.js";
 
 export const AGENT_SESSIONS_PRESENTATION_ID = "all";
@@ -58,17 +63,6 @@ export interface AgentSessionsPresentationActions {
   keepable(session: AgentSession): boolean;
   onKeep(session: AgentSession): void;
 }
-
-/** Status values in the order of the lifecycle, each with its own color. */
-const STATUS_OPTIONS = [
-  { color: "orange", label: m.sessions_status_waiting_approval },
-  { color: "yellow", label: m.sessions_status_waiting_input },
-  { color: "blue", label: m.sessions_status_active },
-  { color: "green", label: m.sessions_status_done },
-  { color: "red", label: m.sessions_status_failed },
-  { color: "gray", label: m.sessions_status_stopped },
-  { color: "neutral", label: m.sessions_status_unknown },
-] as const;
 
 export function createAgentSessionsPresentation({
   actions,
@@ -135,7 +129,7 @@ export function createAgentSessionsPresentationDescriptor({
       standard: {
         options: STATUS_OPTIONS.map((option) => ({
           color: option.color,
-          name: option.label(),
+          name: statusValueLabel(option.value),
         })),
         type: "select",
       },
@@ -193,7 +187,7 @@ export function createAgentSessionsPresentationDescriptor({
     query: {
       defaultCompare: compareAgentSessionsByDefault,
       getSearchText: (row) =>
-        `${row.title} ${agents.label(row.source)} ${statusLabel(row)} ${routineName(row) ?? ""}`,
+        `${row.title} ${agents.label(row.source)} ${statusText(row)} ${routineName(row) ?? ""}`,
     },
     rowActions: [
       {

@@ -1,13 +1,9 @@
+import type { AgentSessionStatusDto } from "@/platform/agent-runtime/agent-runtime-api";
 import { invokeCommand as invoke } from "@/platform/native/invoke";
 
 export type AgentSessionSource = "codex" | "claude-code";
-export type AgentSessionStatus =
-  | "active"
-  | "done"
-  | "failed"
-  | "stopped"
-  | "unknown";
-export type AgentSessionActiveFlag = "waitingOnApproval" | "waitingOnUserInput";
+/** The one session status vocabulary of the agent runtime (Stage 10 C10). */
+export type AgentSessionStatus = AgentSessionStatusDto;
 export type AgentSessionTitleSource =
   | "cli-title"
   | "first-user-prompt"
@@ -19,17 +15,6 @@ export type AgentSessionScopeConfidence =
   | "cwd-prefix"
   | "worktree-original"
   | "decoded-source-file";
-export type AgentSessionStatusSource =
-  | "embedded-terminal"
-  | "svode-agent-runtime"
-  | "source-log"
-  | "source-index"
-  | "fallback";
-export type AgentSessionStatusConfidence =
-  | "strong"
-  | "medium"
-  | "weak"
-  | "unknown";
 
 export interface AgentSessionRuntime {
   ptyId?: string;
@@ -88,9 +73,7 @@ export interface AgentSession {
   title: string;
   titleSource: AgentSessionTitleSource;
   status: AgentSessionStatus;
-  activeFlags?: AgentSessionActiveFlag[];
-  statusSource: AgentSessionStatusSource;
-  statusConfidence: AgentSessionStatusConfidence;
+  /** Evidence behind the status, or why sources contradict each other. */
   statusReason?: string;
   runtime?: AgentSessionRuntime;
   projectId?: string;

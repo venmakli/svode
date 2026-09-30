@@ -7,17 +7,17 @@ use regex::Regex;
 use serde_json::Value;
 
 use super::{
-    CandidateCwdSource, PersistedAgentSessionCandidate, PersistedAgentSessionStatus,
-    SourceFingerprint, SourceInputFile, SourceScan, build_fingerprint, collect_optional_file,
-    collect_recursive_dirs, collect_recursive_files, launch_id_from_text, metadata_mtime,
-    nested_string_field, read_jsonl, short_id, source_file_ref, string_field,
-    timestamp_from_fields, title_from_text, user_prompt_title_from_text,
+    CandidateCwdSource, NativeStatusEvidence, PersistedAgentSessionCandidate, SourceFingerprint,
+    SourceInputFile, SourceScan, build_fingerprint, collect_optional_file, collect_recursive_dirs,
+    collect_recursive_files, launch_id_from_text, metadata_mtime, nested_string_field, read_jsonl,
+    short_id, source_file_ref, string_field, timestamp_from_fields, title_from_text,
+    user_prompt_title_from_text,
 };
 use crate::agent_sessions::types::{
-    AgentSessionActiveFlag, AgentSessionCounts, AgentSessionDiagnosticSeverity, AgentSessionSource,
-    AgentSessionSourceReport, AgentSessionSourceStatus, AgentSessionStatus,
-    AgentSessionStatusConfidence, AgentSessionTitleSource,
+    AgentSessionCounts, AgentSessionDiagnosticSeverity, AgentSessionSource,
+    AgentSessionSourceReport, AgentSessionSourceStatus, AgentSessionTitleSource,
 };
+use svode_agents::status::{InteractionKind, SessionState, StopReason};
 
 const SOURCE: AgentSessionSource = AgentSessionSource::Codex;
 
@@ -638,7 +638,7 @@ impl SessionBuilder {
         }
     }
 
-    fn set_status(&mut self, status: PersistedAgentSessionStatus) {
+    fn set_status(&mut self, status: NativeStatusEvidence) {
         let should_replace = self
             .candidate
             .status
@@ -697,14 +697,14 @@ impl DetailParse {
 
 #[derive(Debug, Default)]
 struct CodexTailState {
-    status: Option<PersistedAgentSessionStatus>,
+    status: Option<NativeStatusEvidence>,
     turn_open: bool,
     open_calls: HashMap<String, CodexOpenCall>,
 }
 
 #[derive(Debug, Clone)]
 struct CodexOpenCall {
-    flag: Option<AgentSessionActiveFlag>,
+    request: Option<InteractionKind>,
     observed_at: Option<DateTime<Utc>>,
 }
 
@@ -720,19 +720,24 @@ impl CodexTailState {
                 "task_started" => {
                     self.turn_open = true;
                     self.open_calls.clear();
-                    self.set_active(Vec::new(), None, observed_at, "codex task started");
+                    self.set_state(
+                        SessionState::Running,
+                        None,
+                        observed_at,
+                        "codex task started",
+                    );
                 }
                 "task_complete" => {
                     self.turn_open = false;
                     self.open_calls.clear();
-                    self.status = Some(PersistedAgentSessionStatus {
-                        status: AgentSessionStatus::Done,
-                        active_flags: Vec::new(),
-                        confidence: AgentSessionStatusConfidence::Strong,
-                        reason: "codex task complete".to_string(),
+                    self.set_state(
+                        SessionState::Idle {
+                            stop_reason: Some(StopReason::EndTurn),
+                        },
+                        None,
                         observed_at,
-                        waiting_since: None,
-                    });
+                        "codex task complete",
+                    );
                 }
                 "turn_aborted" => {
                     self.turn_open = false;
@@ -740,14 +745,14 @@ impl CodexTailState {
                     let reason = string_field(payload, &["reason"])
                         .map(|reason| format!("codex turn aborted: {reason}"))
                         .unwrap_or_else(|| "codex turn aborted".to_string());
-                    self.status = Some(PersistedAgentSessionStatus {
-                        status: AgentSessionStatus::Stopped,
-                        active_flags: Vec::new(),
-                        confidence: AgentSessionStatusConfidence::Strong,
-                        reason,
+                    self.set_state(
+                        SessionState::Idle {
+                            stop_reason: Some(StopReason::Cancelled),
+                        },
+                        None,
                         observed_at,
-                        waiting_since: None,
-                    });
+                        &reason,
+                    );
                 }
                 _ => {
                     if self.turn_open {
@@ -768,7 +773,7 @@ impl CodexTailState {
                 self.open_calls.insert(
                     call_id.to_string(),
                     CodexOpenCall {
-                        flag: codex_wait_flag(payload),
+                        request: codex_wait_request(payload),
                         observed_at,
                     },
                 );
@@ -792,7 +797,7 @@ impl CodexTailState {
         }
     }
 
-    fn finish(self) -> Option<PersistedAgentSessionStatus> {
+    fn finish(self) -> Option<NativeStatusEvidence> {
         self.status
     }
 
@@ -802,12 +807,12 @@ impl CodexTailState {
         let mut has_approval = false;
         let mut has_input = false;
         for call in self.open_calls.values() {
-            match call.flag {
-                Some(AgentSessionActiveFlag::WaitingOnApproval) => {
+            match call.request {
+                Some(InteractionKind::Permission) => {
                     has_approval = true;
                     approval_since = earliest_timestamp(approval_since, call.observed_at);
                 }
-                Some(AgentSessionActiveFlag::WaitingOnUserInput) => {
+                Some(InteractionKind::Question) => {
                     has_input = true;
                     input_since = earliest_timestamp(input_since, call.observed_at);
                 }
@@ -815,41 +820,38 @@ impl CodexTailState {
             }
         }
 
-        let (flags, waiting_since) = if has_approval {
+        // An open approval outranks an open question.
+        let (state, waiting_since, reason) = if has_approval {
             (
-                vec![AgentSessionActiveFlag::WaitingOnApproval],
+                SessionState::RequiresAction {
+                    request: InteractionKind::Permission,
+                },
                 approval_since,
+                "codex task waiting for approval",
             )
         } else if has_input {
             (
-                vec![AgentSessionActiveFlag::WaitingOnUserInput],
+                SessionState::RequiresAction {
+                    request: InteractionKind::Question,
+                },
                 input_since,
+                "codex task waiting for user input",
             )
         } else {
-            (Vec::new(), None)
+            (SessionState::Running, None, "codex task in progress")
         };
-
-        let reason = if flags.contains(&AgentSessionActiveFlag::WaitingOnApproval) {
-            "codex task waiting for approval"
-        } else if flags.contains(&AgentSessionActiveFlag::WaitingOnUserInput) {
-            "codex task waiting for user input"
-        } else {
-            "codex task in progress"
-        };
-        self.set_active(flags, waiting_since, observed_at, reason);
+        self.set_state(state, waiting_since, observed_at, reason);
     }
 
-    fn set_active(
+    fn set_state(
         &mut self,
-        active_flags: Vec<AgentSessionActiveFlag>,
+        state: SessionState,
         waiting_since: Option<DateTime<Utc>>,
         observed_at: Option<DateTime<Utc>>,
         reason: &str,
     ) {
-        self.status = Some(PersistedAgentSessionStatus {
-            status: AgentSessionStatus::Active,
-            active_flags,
-            confidence: AgentSessionStatusConfidence::Strong,
+        self.status = Some(NativeStatusEvidence {
+            state,
             reason: reason.to_string(),
             observed_at,
             waiting_since,
@@ -873,21 +875,21 @@ fn is_codex_tool_call(payload: &Value) -> bool {
         .is_some_and(|kind| matches!(kind, "function_call" | "custom_tool_call"))
 }
 
-fn codex_wait_flag(payload: &Value) -> Option<AgentSessionActiveFlag> {
+fn codex_wait_request(payload: &Value) -> Option<InteractionKind> {
     match string_field(payload, &["name"]) {
-        Some("apply_patch") => Some(AgentSessionActiveFlag::WaitingOnApproval),
-        Some("request_user_input") => Some(AgentSessionActiveFlag::WaitingOnUserInput),
-        Some("exec_command") => exec_command_wait_flag(payload),
+        Some("apply_patch") => Some(InteractionKind::Permission),
+        Some("request_user_input") => Some(InteractionKind::Question),
+        Some("exec_command") => exec_command_wait_request(payload),
         _ => None,
     }
 }
 
-fn exec_command_wait_flag(payload: &Value) -> Option<AgentSessionActiveFlag> {
+fn exec_command_wait_request(payload: &Value) -> Option<InteractionKind> {
     let args = string_field(payload, &["arguments"])
         .and_then(|raw| serde_json::from_str::<Value>(raw).ok())?;
     string_field(&args, &["sandbox_permissions"])
         .is_some_and(|value| value == "require_escalated")
-        .then_some(AgentSessionActiveFlag::WaitingOnApproval)
+        .then_some(InteractionKind::Permission)
 }
 
 #[cfg(test)]

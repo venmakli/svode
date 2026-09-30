@@ -11,17 +11,18 @@ use super::cache::{
     SourceRead, candidates_for_session_ids, disk_snapshot_reads, memory_is_empty, read_source,
     source_root, update_candidate, write_snapshot,
 };
-use super::live_status::{apply_terminal_overlay, map_candidate, map_provisional_surface};
+use super::live_status::{map_candidate, map_provisional_surface};
 use super::scope::{ScopeIndex, load_child_spaces, normalize_project_path, resolve_scope};
 use super::sources::{CandidateCwdSource, PersistedAgentSessionCandidate, claude_code, codex};
 use super::types::{
     AgentSession, AgentSessionSource, AgentSessionSourceFileRef, AgentSessionSourceReport,
-    AgentSessionSourceStatus, AgentSessionStatus, AgentSessionTitleSource, AgentSessionsCacheMode,
+    AgentSessionSourceStatus, AgentSessionTitleSource, AgentSessionsCacheMode,
     AgentSessionsCacheReport, AgentSessionsHotStatusResult, AgentSessionsListResult,
     AgentSessionsListStatus, AgentSessionsSummary,
 };
 use crate::error::AppError;
 use crate::terminal::AgentTerminalSurface;
+use svode_agents::status::SessionState;
 
 #[cfg(test)]
 pub(crate) fn list_sessions(
@@ -113,8 +114,7 @@ fn build_list_result(
                 continue;
             };
 
-            let mut session = map_candidate(candidate, scope, last_activity_at);
-            apply_terminal_overlay(&mut session, terminal_surfaces);
+            let session = map_candidate(candidate, scope, last_activity_at, terminal_surfaces);
             read.report.counts.returned_sessions += 1;
             sessions.push(session);
         }
@@ -221,8 +221,7 @@ pub(crate) fn hot_status_with_surfaces(
             continue;
         };
 
-        let mut session = map_candidate(candidate, scope, last_activity_at);
-        apply_terminal_overlay(&mut session, &terminal_surfaces);
+        let session = map_candidate(candidate, scope, last_activity_at, &terminal_surfaces);
         sessions.push(session);
     }
 
@@ -391,18 +390,17 @@ fn merge_report_counts(target: &mut AgentSessionSourceReport, parsed: &AgentSess
     target.truncated_diagnostics += parsed.truncated_diagnostics;
 }
 
+/// Waiting sessions first, then working ones, then by last activity.
 fn compare_sessions(a: &AgentSession, b: &AgentSession) -> std::cmp::Ordering {
-    let a_active_flags =
-        matches!(a.status, AgentSessionStatus::Active) && !a.active_flags.is_empty();
-    let b_active_flags =
-        matches!(b.status, AgentSessionStatus::Active) && !b.active_flags.is_empty();
-    b_active_flags
-        .cmp(&a_active_flags)
-        .then_with(|| {
-            let a_active = matches!(a.status, AgentSessionStatus::Active);
-            let b_active = matches!(b.status, AgentSessionStatus::Active);
-            b_active.cmp(&a_active)
-        })
+    fn work_priority(session: &AgentSession) -> u8 {
+        match session.status.state {
+            SessionState::RequiresAction { .. } => 2,
+            SessionState::Running => 1,
+            SessionState::Idle { .. } | SessionState::Unknown => 0,
+        }
+    }
+    work_priority(b)
+        .cmp(&work_priority(a))
         .then_with(|| b.last_activity_at.cmp(&a.last_activity_at))
         .then_with(|| a.id.cmp(&b.id))
 }
@@ -445,10 +443,21 @@ mod tests {
     use crate::agent_sessions::AgentSessionsState;
     use crate::agent_sessions::live_status::SOURCE_LOG_ACTIVE_STALE_AFTER_SECS;
     use crate::agent_sessions::types::{
-        AgentSessionActiveFlag, AgentSessionScopeConfidence, AgentSessionScopeKind,
-        AgentSessionScopeStatus, AgentSessionStatusConfidence, AgentSessionStatusSource,
+        AgentSessionScopeConfidence, AgentSessionScopeKind, AgentSessionScopeStatus,
     };
     use crate::terminal::{AgentTerminalStatusEvidence, AgentTerminalSurface};
+    use svode_agents::status::{InteractionKind, StatusConfidence, StatusSource, StopReason};
+
+    const PERMISSION: SessionState = SessionState::RequiresAction {
+        request: InteractionKind::Permission,
+    };
+    const QUESTION: SessionState = SessionState::RequiresAction {
+        request: InteractionKind::Question,
+    };
+
+    fn idle(stop_reason: Option<StopReason>) -> SessionState {
+        SessionState::Idle { stop_reason }
+    }
 
     fn write(path: &Path, data: &str) {
         if let Some(parent) = path.parent() {
@@ -604,7 +613,8 @@ mod tests {
         assert_eq!(session.id, "codex:launch:launch-123");
         assert_eq!(session.launch_id.as_deref(), Some("launch-123"));
         assert_eq!(session.routine_run_id.as_deref(), Some("run-123"));
-        assert_eq!(session.status, AgentSessionStatus::Unknown);
+        assert_eq!(session.status.state, SessionState::Unknown);
+        assert_eq!(session.status.source, StatusSource::None);
         assert!(session.runtime.as_ref().expect("runtime").provisional);
         assert!(session.runtime.as_ref().expect("runtime").live);
         assert_eq!(session.title, "Review backlog");
@@ -672,14 +682,16 @@ mod tests {
         assert!(!session.runtime.as_ref().expect("runtime").provisional);
     }
 
-    fn evidence(
-        status: AgentSessionStatus,
-        active_flags: Vec<AgentSessionActiveFlag>,
-        reason: &str,
-    ) -> AgentTerminalStatusEvidence {
+    /// Terminal evidence as the managed PTY records it: exact for a process
+    /// exit, approximate for a request recognized in the terminal text.
+    fn evidence(state: SessionState, reason: &str) -> AgentTerminalStatusEvidence {
         AgentTerminalStatusEvidence {
-            status,
-            active_flags,
+            state,
+            confidence: if state.in_turn() {
+                StatusConfidence::Approximate
+            } else {
+                StatusConfidence::Exact
+            },
             reason: reason.to_string(),
             observed_at: "2026-07-04T10:01:00Z".to_string(),
         }
@@ -1006,6 +1018,76 @@ mod tests {
     }
 
     #[test]
+    fn a_cache_row_from_the_previous_status_vocabulary_is_rescanned() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let home = temp.path().join("home");
+        let project = temp.path().join("project");
+        fs::create_dir_all(&project).expect("project");
+        write_codex_detail(
+            &home,
+            "old-cache",
+            vec![
+                serde_json::json!({
+                    "type": "session_meta",
+                    "payload": { "id": "old-cache", "cwd": project.to_string_lossy() },
+                    "timestamp": recent_source_log_timestamp()
+                }),
+                serde_json::json!({
+                    "type": "event_msg",
+                    "payload": { "type": "task_started" },
+                    "timestamp": recent_source_log_timestamp()
+                }),
+            ],
+        );
+        let first = list_sessions(
+            &AgentSessionsState::with_home(home.clone()),
+            project.to_string_lossy().into_owned(),
+            false,
+        )
+        .expect("first list");
+        assert_eq!(first.sessions[0].status.state, SessionState::Running);
+
+        let db = project.join(".svode/agent-sessions.db");
+        tauri::async_runtime::block_on(async {
+            let pool = sqlx::SqlitePool::connect(&format!("sqlite://{}", db.display()))
+                .await
+                .expect("cache db");
+            let (json,): (String,) =
+                sqlx::query_as("SELECT candidates_json FROM source_cache WHERE source = 'codex'")
+                    .fetch_one(&pool)
+                    .await
+                    .expect("codex row");
+            let previous = json.replace(
+                r#""state":{"state":"running"}"#,
+                r#""status":"active","activeFlags":[],"confidence":"strong""#,
+            );
+            assert_ne!(previous, json);
+            sqlx::query("UPDATE source_cache SET candidates_json = ? WHERE source = 'codex'")
+                .bind(previous)
+                .execute(&pool)
+                .await
+                .expect("previous row");
+            pool.close().await;
+        });
+
+        let restarted = list_sessions(
+            &AgentSessionsState::with_home(home),
+            project.to_string_lossy().into_owned(),
+            false,
+        )
+        .expect("restarted list");
+        // The Claude Code row still reads; only the Codex row is scanned again.
+        assert_eq!(restarted.cache.mode, AgentSessionsCacheMode::Mixed);
+        let codex = restarted
+            .sources
+            .iter()
+            .find(|report| report.source == AgentSessionSource::Codex)
+            .expect("codex report");
+        assert!(!codex.cache_hit);
+        assert_eq!(restarted.sessions[0].status.state, SessionState::Running);
+    }
+
+    #[test]
     fn corrupt_agent_sessions_cache_is_quarantined_and_rebuilt_in_place() {
         let temp = tempfile::tempdir().expect("temp dir");
         let home = temp.path().join("home");
@@ -1062,8 +1144,7 @@ mod tests {
         let state = AgentSessionsState::with_home(home.clone());
         let first = list_sessions(&state, project.to_string_lossy().into_owned(), false)
             .expect("first list");
-        assert_eq!(first.sessions[0].status, AgentSessionStatus::Active);
-        assert!(first.sessions[0].active_flags.is_empty());
+        assert_eq!(first.sessions[0].status.state, SessionState::Running);
 
         append_codex_detail_row(
             &home,
@@ -1086,7 +1167,7 @@ mod tests {
             stale_cached.cache.mode,
             AgentSessionsCacheMode::FingerprintHit
         );
-        assert!(stale_cached.sessions[0].active_flags.is_empty());
+        assert_eq!(stale_cached.sessions[0].status.state, SessionState::Running);
 
         let hot = hot_status_with_surfaces(
             &state,
@@ -1104,18 +1185,11 @@ mod tests {
         );
         assert_eq!(hot.sources[0].counts.hot_files_reparsed, 1);
         assert_eq!(hot.sources[0].counts.files_scanned, 1);
-        assert_eq!(hot.sessions[0].status, AgentSessionStatus::Active);
-        assert_eq!(
-            hot.sessions[0].active_flags,
-            vec![AgentSessionActiveFlag::WaitingOnApproval]
-        );
+        assert_eq!(hot.sessions[0].status.state, PERMISSION);
 
         let refreshed_cache = list_sessions(&state, project.to_string_lossy().into_owned(), false)
             .expect("refreshed cached list");
-        assert_eq!(
-            refreshed_cache.sessions[0].active_flags,
-            vec![AgentSessionActiveFlag::WaitingOnApproval]
-        );
+        assert_eq!(refreshed_cache.sessions[0].status.state, PERMISSION);
 
         let restarted_state = AgentSessionsState::with_home(home);
         let restarted = list_sessions(
@@ -1125,10 +1199,7 @@ mod tests {
         )
         .expect("restarted warm list");
         assert_eq!(restarted.cache.mode, AgentSessionsCacheMode::StaleSnapshot);
-        assert_eq!(
-            restarted.sessions[0].active_flags,
-            vec![AgentSessionActiveFlag::WaitingOnApproval]
-        );
+        assert_eq!(restarted.sessions[0].status.state, PERMISSION);
     }
 
     #[test]
@@ -1160,7 +1231,7 @@ mod tests {
         let state = AgentSessionsState::with_home(home.clone());
         let first = list_sessions(&state, project.to_string_lossy().into_owned(), false)
             .expect("first list");
-        assert_eq!(first.sessions[0].status, AgentSessionStatus::Active);
+        assert_eq!(first.sessions[0].status.state, SessionState::Running);
 
         append_codex_detail_row(
             &home,
@@ -1180,16 +1251,22 @@ mod tests {
         )
         .expect("hot status");
 
-        assert_eq!(hot.sessions[0].status, AgentSessionStatus::Done);
-        assert!(hot.sessions[0].active_flags.is_empty());
         assert_eq!(
-            hot.sessions[0].status_source,
-            AgentSessionStatusSource::SourceLog
+            hot.sessions[0].status.state,
+            idle(Some(StopReason::EndTurn))
+        );
+        assert_eq!(
+            hot.sessions[0].status.source,
+            StatusSource::NativeStatusReader
+        );
+        assert_eq!(
+            hot.sessions[0].status.confidence,
+            StatusConfidence::Approximate
         );
     }
 
     #[test]
-    fn agent_sessions_open_managed_shell_keeps_persisted_done_status() {
+    fn agent_sessions_open_managed_shell_without_evidence_is_unknown() {
         let temp = tempfile::tempdir().expect("temp dir");
         let home = temp.path().join("home");
         let project = temp.path().join("project");
@@ -1211,8 +1288,8 @@ mod tests {
         .expect("list sessions");
 
         let session = &result.sessions[0];
-        assert_eq!(session.status, AgentSessionStatus::Done);
-        assert_eq!(session.status_source, AgentSessionStatusSource::Fallback);
+        assert_eq!(session.status.state, SessionState::Unknown);
+        assert_eq!(session.status.source, StatusSource::None);
         assert!(session.runtime.as_ref().expect("runtime").live);
     }
 
@@ -1233,28 +1310,18 @@ mod tests {
                 "pty-approval",
                 AgentSessionSource::Codex,
                 "needs-approval",
-                Some(evidence(
-                    AgentSessionStatus::Active,
-                    vec![AgentSessionActiveFlag::WaitingOnApproval],
-                    "approval prompt",
-                )),
+                Some(evidence(PERMISSION, "approval prompt")),
             )],
         )
         .expect("list sessions");
 
         let session = &result.sessions[0];
-        assert_eq!(session.status, AgentSessionStatus::Active);
+        assert_eq!(session.status.state, PERMISSION);
+        assert_eq!(session.status.source, StatusSource::ManagedPty);
+        assert_eq!(session.status.confidence, StatusConfidence::Approximate);
         assert_eq!(
-            session.active_flags,
-            vec![AgentSessionActiveFlag::WaitingOnApproval]
-        );
-        assert_eq!(
-            session.status_source,
-            AgentSessionStatusSource::EmbeddedTerminal
-        );
-        assert_eq!(
-            session.status_confidence,
-            AgentSessionStatusConfidence::Strong
+            session.waiting_since.as_deref(),
+            Some("2026-07-04T10:01:00Z")
         );
     }
 
@@ -1302,12 +1369,8 @@ mod tests {
             .expect("list sessions");
 
         let session = &result.sessions[0];
-        assert_eq!(session.status, AgentSessionStatus::Active);
-        assert_eq!(
-            session.active_flags,
-            vec![AgentSessionActiveFlag::WaitingOnApproval]
-        );
-        assert_eq!(session.status_source, AgentSessionStatusSource::SourceLog);
+        assert_eq!(session.status.state, PERMISSION);
+        assert_eq!(session.status.source, StatusSource::NativeStatusReader);
         assert_eq!(session.waiting_since.as_deref(), Some(waiting_ts.as_str()));
     }
 
@@ -1356,12 +1419,8 @@ mod tests {
             .expect("list sessions");
 
         let session = &result.sessions[0];
-        assert_eq!(session.status, AgentSessionStatus::Active);
-        assert_eq!(
-            session.active_flags,
-            vec![AgentSessionActiveFlag::WaitingOnApproval]
-        );
-        assert_eq!(session.status_source, AgentSessionStatusSource::SourceLog);
+        assert_eq!(session.status.state, PERMISSION);
+        assert_eq!(session.status.source, StatusSource::NativeStatusReader);
         assert_eq!(session.waiting_since.as_deref(), Some(waiting_ts.as_str()));
     }
 
@@ -1409,16 +1468,12 @@ mod tests {
             .expect("list sessions");
 
         let session = &result.sessions[0];
-        assert_eq!(session.status, AgentSessionStatus::Active);
-        assert_eq!(
-            session.active_flags,
-            vec![AgentSessionActiveFlag::WaitingOnUserInput]
-        );
-        assert_eq!(session.status_source, AgentSessionStatusSource::SourceLog);
+        assert_eq!(session.status.state, QUESTION);
+        assert_eq!(session.status.source, StatusSource::NativeStatusReader);
     }
 
     #[test]
-    fn agent_sessions_stale_source_log_active_falls_back_to_done() {
+    fn agent_sessions_stale_source_log_active_is_unknown() {
         let temp = tempfile::tempdir().expect("temp dir");
         let home = temp.path().join("home");
         let project = temp.path().join("project");
@@ -1449,14 +1504,13 @@ mod tests {
             .expect("list sessions");
 
         let session = &result.sessions[0];
-        assert_eq!(session.status, AgentSessionStatus::Done);
-        assert!(session.active_flags.is_empty());
-        assert_eq!(session.status_source, AgentSessionStatusSource::Fallback);
+        assert_eq!(session.status.state, SessionState::Unknown);
+        assert_eq!(session.status.source, StatusSource::NativeStatusReader);
         assert!(
             session
                 .status_reason
                 .as_deref()
-                .is_some_and(|reason| reason.contains("stale source-log active evidence ignored"))
+                .is_some_and(|reason| reason.contains("stale native evidence of a turn ignored"))
         );
     }
 
@@ -1500,19 +1554,14 @@ mod tests {
                 "pty-answered",
                 AgentSessionSource::Codex,
                 "answered",
-                Some(evidence(
-                    AgentSessionStatus::Active,
-                    vec![AgentSessionActiveFlag::WaitingOnApproval],
-                    "stale approval prompt",
-                )),
+                Some(evidence(PERMISSION, "stale approval prompt")),
             )],
         )
         .expect("list sessions");
 
         let session = &result.sessions[0];
-        assert_eq!(session.status, AgentSessionStatus::Done);
-        assert!(session.active_flags.is_empty());
-        assert_eq!(session.status_source, AgentSessionStatusSource::SourceLog);
+        assert_eq!(session.status.state, idle(Some(StopReason::EndTurn)));
+        assert_eq!(session.status.source, StatusSource::NativeStatusReader);
         assert_eq!(
             session.runtime.as_ref().expect("runtime").pty_id.as_deref(),
             Some("pty-answered")
@@ -1549,8 +1598,7 @@ mod tests {
             AgentSessionSource::Codex,
             "exited-after-start",
             Some(evidence(
-                AgentSessionStatus::Done,
-                Vec::new(),
+                idle(None),
                 "initial agent command exited successfully",
             )),
         );
@@ -1565,11 +1613,9 @@ mod tests {
         .expect("list sessions");
 
         let session = &result.sessions[0];
-        assert_eq!(session.status, AgentSessionStatus::Done);
-        assert_eq!(
-            session.status_source,
-            AgentSessionStatusSource::EmbeddedTerminal
-        );
+        assert_eq!(session.status.state, idle(None));
+        assert_eq!(session.status.source, StatusSource::ManagedPty);
+        assert_eq!(session.status.confidence, StatusConfidence::Exact);
     }
 
     #[test]
@@ -1596,11 +1642,8 @@ mod tests {
         .expect("list sessions");
 
         let session = &result.sessions[0];
-        assert_eq!(session.status, AgentSessionStatus::Failed);
-        assert_eq!(
-            session.status_source,
-            AgentSessionStatusSource::EmbeddedTerminal
-        );
+        assert_eq!(session.status.state, idle(Some(StopReason::Error)));
+        assert_eq!(session.status.source, StatusSource::ManagedPty);
         assert_eq!(
             session.status_reason.as_deref(),
             Some("initial command failed")
@@ -1641,19 +1684,14 @@ mod tests {
                     "pty-failed",
                     AgentSessionSource::Codex,
                     "failed",
-                    Some(evidence(
-                        AgentSessionStatus::Failed,
-                        Vec::new(),
-                        "agent failed",
-                    )),
+                    Some(evidence(idle(Some(StopReason::Error)), "agent failed")),
                 ),
                 surface(
                     "pty-stopped",
                     AgentSessionSource::Codex,
                     "stopped",
                     Some(evidence(
-                        AgentSessionStatus::Stopped,
-                        Vec::new(),
+                        idle(Some(StopReason::Interrupted)),
                         "agent stopped",
                     )),
                 ),
@@ -1672,57 +1710,74 @@ mod tests {
             .find(|session| session.source_session_id == "stopped")
             .expect("stopped session");
 
-        assert_eq!(failed.status, AgentSessionStatus::Failed);
-        assert_eq!(failed.active_flags, Vec::<AgentSessionActiveFlag>::new());
-        assert_eq!(stopped.status, AgentSessionStatus::Stopped);
-        assert_eq!(stopped.active_flags, Vec::<AgentSessionActiveFlag>::new());
+        assert_eq!(failed.status.state, idle(Some(StopReason::Error)));
+        assert_eq!(stopped.status.state, idle(Some(StopReason::Interrupted)));
     }
 
-    #[test]
-    fn agent_sessions_conflicting_terminal_evidence_becomes_unknown() {
+    fn list_one_session_with_evidence(
+        session_id: &str,
+        evidences: Vec<AgentTerminalStatusEvidence>,
+    ) -> AgentSession {
         let temp = tempfile::tempdir().expect("temp dir");
         let home = temp.path().join("home");
         let project = temp.path().join("project");
         fs::create_dir_all(&project).expect("project");
-        write_codex_history(&home, "conflict", &project, 1_700_000_000);
+        write_codex_history(&home, session_id, &project, 1_700_000_000);
 
         let state = AgentSessionsState::with_home(home);
-        let result = list_sessions_with_surfaces(
+        let surfaces = evidences
+            .into_iter()
+            .enumerate()
+            .map(|(index, evidence)| {
+                surface(
+                    &format!("pty-{index}"),
+                    AgentSessionSource::Codex,
+                    session_id,
+                    Some(evidence),
+                )
+            })
+            .collect();
+        let mut result = list_sessions_with_surfaces(
             &state,
             project.to_string_lossy().into_owned(),
             false,
-            vec![
-                surface(
-                    "pty-active",
-                    AgentSessionSource::Codex,
-                    "conflict",
-                    Some(evidence(
-                        AgentSessionStatus::Active,
-                        vec![AgentSessionActiveFlag::WaitingOnUserInput],
-                        "input prompt",
-                    )),
-                ),
-                surface(
-                    "pty-failed",
-                    AgentSessionSource::Codex,
-                    "conflict",
-                    Some(evidence(AgentSessionStatus::Failed, Vec::new(), "failed")),
-                ),
-            ],
+            surfaces,
         )
         .expect("list sessions");
+        result.sessions.remove(0)
+    }
 
-        let session = &result.sessions[0];
-        assert_eq!(session.status, AgentSessionStatus::Unknown);
-        assert_eq!(
-            session.status_source,
-            AgentSessionStatusSource::EmbeddedTerminal
+    #[test]
+    fn agent_sessions_exact_terminal_evidence_outranks_approximate() {
+        let session = list_one_session_with_evidence(
+            "exact-wins",
+            vec![
+                evidence(QUESTION, "input prompt"),
+                evidence(idle(Some(StopReason::Error)), "failed"),
+            ],
         );
-        assert_eq!(
-            session.status_confidence,
-            AgentSessionStatusConfidence::Unknown
+
+        assert_eq!(session.status.state, idle(Some(StopReason::Error)));
+        assert_eq!(session.status.confidence, StatusConfidence::Exact);
+        assert_eq!(session.waiting_since, None);
+    }
+
+    #[test]
+    fn agent_sessions_conflicting_terminal_evidence_becomes_unknown() {
+        let session = list_one_session_with_evidence(
+            "conflict",
+            vec![
+                evidence(idle(None), "exited"),
+                evidence(idle(Some(StopReason::Error)), "failed"),
+            ],
         );
-        assert!(session.active_flags.is_empty());
+
+        assert_eq!(session.status.state, SessionState::Unknown);
+        assert_eq!(session.status.source, StatusSource::ManagedPty);
+        assert_eq!(
+            session.status_reason.as_deref(),
+            Some("conflicting status evidence")
+        );
     }
 
     #[test]

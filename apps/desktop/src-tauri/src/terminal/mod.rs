@@ -11,11 +11,9 @@ use portable_pty::{Child as PtyChild, CommandBuilder, MasterPty, PtySize, native
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter};
 
-use crate::agent_sessions::types::{
-    AgentSession, AgentSessionActiveFlag, AgentSessionResumeCommand, AgentSessionSource,
-    AgentSessionStatus,
-};
+use crate::agent_sessions::types::{AgentSession, AgentSessionResumeCommand, AgentSessionSource};
 use crate::error::AppError;
+use svode_agents::status::{InteractionKind, SessionState, StatusConfidence, StopReason};
 use svode_agents::writer::{
     ExternalLiveness, UnknownLiveness, Writer, WriterClaim, WriterRegistry, WriterTarget,
 };
@@ -97,17 +95,11 @@ pub(crate) struct AgentTerminalSpawn {
     pub lifecycle_sink: Option<Arc<dyn AgentTerminalLifecycleSink>>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum AgentTerminalOutcomeStatus {
-    Done,
-    Failed,
-    Stopped,
-    Unknown,
-}
-
+/// How the agent command of a managed terminal ended, in the session status
+/// vocabulary: always a stopped turn or unknown.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct AgentTerminalOutcomeEvidence {
-    pub status: AgentTerminalOutcomeStatus,
+    pub state: SessionState,
     pub exit_code: Option<i32>,
     pub reason: String,
     pub observed_at: String,
@@ -123,7 +115,7 @@ pub(crate) trait AgentTerminalLifecycleSink: Send + Sync {
         &self,
         source_session_id: &str,
         agent_session_id: &str,
-        session_status: AgentSessionStatus,
+        session_state: SessionState,
         observed_at: &str,
     ) -> Result<(), AppError>;
 }
@@ -167,19 +159,20 @@ pub(crate) struct AgentTerminalSurface {
     pub(crate) exit_marker_buffer: String,
 }
 
+/// Status evidence of a managed PTY: an exit code is exact, a request
+/// recognized in the terminal text is approximate.
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct AgentTerminalStatusEvidence {
-    pub status: AgentSessionStatus,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub active_flags: Vec<AgentSessionActiveFlag>,
+    pub state: SessionState,
+    pub confidence: StatusConfidence,
     pub reason: String,
     pub observed_at: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct AgentTerminalStatusSignal {
-    active_flags: Vec<AgentSessionActiveFlag>,
+    request: InteractionKind,
     reason: &'static str,
 }
 
@@ -528,7 +521,7 @@ impl TerminalManager {
         };
         self.finish_surface(
             pty_id,
-            AgentTerminalOutcomeStatus::Stopped,
+            INTERRUPTED,
             None,
             "managed terminal stopped by user",
         );
@@ -563,7 +556,7 @@ impl TerminalManager {
         for pty_id in pty_ids {
             self.finish_surface(
                 &pty_id,
-                AgentTerminalOutcomeStatus::Stopped,
+                INTERRUPTED,
                 None,
                 "managed terminal stopped during application shutdown",
             );
@@ -740,7 +733,7 @@ impl TerminalManager {
                             sink.clone(),
                             session.source_session_id.clone(),
                             session.id.clone(),
-                            session.status,
+                            session.status.state,
                         ));
                     }
                 }
@@ -766,7 +759,7 @@ impl TerminalManager {
     fn finish_surface(
         &self,
         pty_id: &str,
-        status: AgentTerminalOutcomeStatus,
+        state: SessionState,
         exit_code: Option<i32>,
         reason: &str,
     ) {
@@ -785,7 +778,7 @@ impl TerminalManager {
             surface.exit_code = exit_code;
             surface.failure_reason = Some(reason.to_string());
             surface.status_evidence = Some(outcome_status_evidence(
-                status,
+                state,
                 reason.to_string(),
                 observed_at.clone(),
             ));
@@ -807,7 +800,7 @@ impl TerminalManager {
             .and_then(|sinks| sinks.get(pty_id).cloned());
         if let Some(sink) = sink
             && let Err(error) = sink.record_terminal_outcome(&AgentTerminalOutcomeEvidence {
-                status,
+                state,
                 exit_code,
                 reason: reason.to_string(),
                 observed_at,
@@ -922,19 +915,17 @@ fn update_agent_surface_output(
     let (visible, exit_code) = strip_agent_exit_marker(surface, data);
     let mut outcome = None;
     if let Some(exit_code) = exit_code {
-        let (session_status, outcome_status, reason) = agent_exit_outcome(exit_code);
+        let (state, reason) = agent_exit_outcome(exit_code);
         surface.finished_at = Some(observed_at.clone());
         surface.exit_code = Some(exit_code);
-        surface.failure_reason =
-            (outcome_status != AgentTerminalOutcomeStatus::Done).then_some(reason.clone());
-        surface.status_evidence = Some(AgentTerminalStatusEvidence {
-            status: session_status,
-            active_flags: Vec::new(),
-            reason: reason.clone(),
-            observed_at: observed_at.clone(),
-        });
+        surface.failure_reason = (exit_code != 0).then_some(reason.clone());
+        surface.status_evidence = Some(outcome_status_evidence(
+            state,
+            reason.clone(),
+            observed_at.clone(),
+        ));
         outcome = Some(AgentTerminalOutcomeEvidence {
-            status: outcome_status,
+            state,
             exit_code: Some(exit_code),
             reason,
             observed_at: observed_at.clone(),
@@ -944,8 +935,10 @@ fn update_agent_surface_output(
         && let Some(signal) = classify_agent_terminal_output(surface.source, &visible)
     {
         surface.status_evidence = Some(AgentTerminalStatusEvidence {
-            status: AgentSessionStatus::Active,
-            active_flags: signal.active_flags,
+            state: SessionState::RequiresAction {
+                request: signal.request,
+            },
+            confidence: StatusConfidence::Approximate,
             reason: signal.reason.to_string(),
             observed_at,
         });
@@ -1036,12 +1029,12 @@ fn finish_reader_surface(
         surface.finished_at = Some(observed_at.clone());
         surface.failure_reason = Some(reason.clone());
         surface.status_evidence = Some(outcome_status_evidence(
-            AgentTerminalOutcomeStatus::Unknown,
+            INTERRUPTED,
             reason.clone(),
             observed_at.clone(),
         ));
         Some(AgentTerminalOutcomeEvidence {
-            status: AgentTerminalOutcomeStatus::Unknown,
+            state: INTERRUPTED,
             exit_code: None,
             reason,
             observed_at: observed_at.clone(),
@@ -1056,41 +1049,41 @@ fn finish_reader_surface(
     }
 }
 
+/// The agent process ended without a turn result: stopped by the user, by the
+/// application exit, or together with its shell.
+const INTERRUPTED: SessionState = SessionState::Idle {
+    stop_reason: Some(StopReason::Interrupted),
+};
+
+/// The process ended: Svode observed it, so the evidence is exact.
 fn outcome_status_evidence(
-    status: AgentTerminalOutcomeStatus,
+    state: SessionState,
     reason: String,
     observed_at: String,
 ) -> AgentTerminalStatusEvidence {
     AgentTerminalStatusEvidence {
-        status: match status {
-            AgentTerminalOutcomeStatus::Done => AgentSessionStatus::Done,
-            AgentTerminalOutcomeStatus::Failed => AgentSessionStatus::Failed,
-            AgentTerminalOutcomeStatus::Stopped => AgentSessionStatus::Stopped,
-            AgentTerminalOutcomeStatus::Unknown => AgentSessionStatus::Unknown,
-        },
-        active_flags: Vec::new(),
+        state,
+        confidence: StatusConfidence::Exact,
         reason,
         observed_at,
     }
 }
 
-fn agent_exit_outcome(exit_code: i32) -> (AgentSessionStatus, AgentTerminalOutcomeStatus, String) {
-    match exit_code {
-        0 => (
-            AgentSessionStatus::Done,
-            AgentTerminalOutcomeStatus::Done,
+/// An exit code says only that the process ended: no stop reason on success,
+/// `error` on any non-zero code.
+pub(crate) fn agent_exit_outcome(exit_code: i32) -> (SessionState, String) {
+    if exit_code == 0 {
+        (
+            SessionState::Idle { stop_reason: None },
             "initial agent command exited successfully".to_string(),
-        ),
-        130 | 143 => (
-            AgentSessionStatus::Stopped,
-            AgentTerminalOutcomeStatus::Stopped,
-            format!("initial agent command was cancelled with code {exit_code}"),
-        ),
-        _ => (
-            AgentSessionStatus::Failed,
-            AgentTerminalOutcomeStatus::Failed,
+        )
+    } else {
+        (
+            SessionState::Idle {
+                stop_reason: Some(StopReason::Error),
+            },
             format!("initial agent command exited with code {exit_code}"),
-        ),
+        )
     }
 }
 
@@ -1098,11 +1091,7 @@ fn clear_waiting_status_after_input(surface: &mut AgentTerminalSurface) {
     let should_clear = surface
         .status_evidence
         .as_ref()
-        .map(|evidence| {
-            matches!(evidence.status, AgentSessionStatus::Active)
-                && !evidence.active_flags.is_empty()
-        })
-        .unwrap_or(false);
+        .is_some_and(|evidence| matches!(evidence.state, SessionState::RequiresAction { .. }));
     if should_clear {
         surface.status_evidence = None;
     }
@@ -1340,7 +1329,7 @@ fn classify_codex_terminal_output(text: &str) -> Option<AgentTerminalStatusSigna
             && (text.contains("command") || text.contains("operation")))
     {
         return Some(AgentTerminalStatusSignal {
-            active_flags: vec![AgentSessionActiveFlag::WaitingOnApproval],
+            request: InteractionKind::Permission,
             reason: "codex approval prompt",
         });
     }
@@ -1351,7 +1340,7 @@ fn classify_codex_terminal_output(text: &str) -> Option<AgentTerminalStatusSigna
         || text.contains("please respond in the terminal")
     {
         return Some(AgentTerminalStatusSignal {
-            active_flags: vec![AgentSessionActiveFlag::WaitingOnUserInput],
+            request: InteractionKind::Question,
             reason: "codex user input prompt",
         });
     }
@@ -1366,7 +1355,7 @@ fn classify_claude_terminal_output(text: &str) -> Option<AgentTerminalStatusSign
         || text.contains("do you want to proceed")
     {
         return Some(AgentTerminalStatusSignal {
-            active_flags: vec![AgentSessionActiveFlag::WaitingOnApproval],
+            request: InteractionKind::Permission,
             reason: "claude approval prompt",
         });
     }
@@ -1377,7 +1366,7 @@ fn classify_claude_terminal_output(text: &str) -> Option<AgentTerminalStatusSign
         || text.contains("please respond in the terminal")
     {
         return Some(AgentTerminalStatusSignal {
-            active_flags: vec![AgentSessionActiveFlag::WaitingOnUserInput],
+            request: InteractionKind::Question,
             reason: "claude user input prompt",
         });
     }
@@ -1815,10 +1804,7 @@ mod tests {
         )
         .expect("approval signal");
 
-        assert_eq!(
-            signal.active_flags,
-            vec![AgentSessionActiveFlag::WaitingOnApproval]
-        );
+        assert_eq!(signal.request, InteractionKind::Permission);
     }
 
     #[test]
@@ -1829,10 +1815,7 @@ mod tests {
         )
         .expect("input signal");
 
-        assert_eq!(
-            signal.active_flags,
-            vec![AgentSessionActiveFlag::WaitingOnUserInput]
-        );
+        assert_eq!(signal.request, InteractionKind::Question);
     }
 
     #[test]
@@ -1934,9 +1917,12 @@ mod tests {
             "sourceSessionId": "s1",
             "title": "s1",
             "titleSource": "session-id",
-            "status": "done",
-            "statusSource": "source-log",
-            "statusConfidence": "strong",
+            "status": {
+                "state": "idle",
+                "stopReason": "end_turn",
+                "source": "native_status_reader",
+                "confidence": "approximate"
+            },
             "scopeKind": "project",
             "scopeStatus": "ready",
             "scopeConfidence": "exact",
@@ -1970,8 +1956,10 @@ mod tests {
     fn terminal_agent_input_clears_waiting_status_evidence() {
         let mut surface = test_surface();
         surface.status_evidence = Some(AgentTerminalStatusEvidence {
-            status: AgentSessionStatus::Active,
-            active_flags: vec![AgentSessionActiveFlag::WaitingOnUserInput],
+            state: SessionState::RequiresAction {
+                request: InteractionKind::Question,
+            },
+            confidence: StatusConfidence::Approximate,
             reason: "input prompt".to_string(),
             observed_at: "2026-07-04T10:01:00Z".to_string(),
         });
@@ -2014,12 +2002,42 @@ mod tests {
     }
 
     #[test]
-    fn terminal_agent_exit_maps_interrupt_to_stopped() {
-        let (session_status, outcome_status, reason) = agent_exit_outcome(130);
+    fn terminal_agent_exit_maps_any_non_zero_code_to_error() {
+        for exit_code in [1, 130, 143] {
+            let (state, reason) = agent_exit_outcome(exit_code);
 
-        assert_eq!(session_status, AgentSessionStatus::Stopped);
-        assert_eq!(outcome_status, AgentTerminalOutcomeStatus::Stopped);
-        assert!(reason.contains("cancelled"));
+            assert_eq!(
+                state,
+                SessionState::Idle {
+                    stop_reason: Some(StopReason::Error)
+                }
+            );
+            assert!(reason.contains(&exit_code.to_string()));
+        }
+        assert_eq!(
+            agent_exit_outcome(0).0,
+            SessionState::Idle { stop_reason: None }
+        );
+    }
+
+    #[test]
+    fn killing_a_managed_agent_terminal_interrupts_its_session() {
+        let manager = TerminalManager::new(WriterRegistry::default());
+        let mut surface = test_surface();
+        surface.routine_run_id = Some("run-one".to_string());
+        manager.insert_agent_surface_for_test(surface);
+
+        manager.kill("pty-agent").unwrap();
+
+        let evidence = manager
+            .list_agent_surfaces()
+            .unwrap()
+            .pop()
+            .unwrap()
+            .status_evidence
+            .unwrap();
+        assert_eq!(evidence.state, INTERRUPTED);
+        assert_eq!(evidence.confidence, StatusConfidence::Exact);
     }
 
     #[test]
@@ -2030,8 +2048,8 @@ mod tests {
         surface.finished_at = Some("2026-08-07T10:00:00Z".to_string());
         surface.exit_code = Some(0);
         surface.status_evidence = Some(AgentTerminalStatusEvidence {
-            status: AgentSessionStatus::Done,
-            active_flags: Vec::new(),
+            state: SessionState::Idle { stop_reason: None },
+            confidence: StatusConfidence::Exact,
             reason: "initial agent command exited successfully".to_string(),
             observed_at: "2026-08-07T10:00:00Z".to_string(),
         });
@@ -2039,7 +2057,7 @@ mod tests {
 
         manager.finish_surface(
             "pty-agent",
-            AgentTerminalOutcomeStatus::Stopped,
+            INTERRUPTED,
             None,
             "managed terminal stopped by user",
         );
@@ -2048,8 +2066,8 @@ mod tests {
         assert!(!retained.live);
         assert_eq!(retained.exit_code, Some(0));
         assert_eq!(
-            retained.status_evidence.unwrap().status,
-            AgentSessionStatus::Done
+            retained.status_evidence.unwrap().state,
+            SessionState::Idle { stop_reason: None }
         );
     }
 
@@ -2168,7 +2186,7 @@ mod tests {
 
         manager.finish_surface(
             "pty-agent",
-            AgentTerminalOutcomeStatus::Done,
+            SessionState::Idle { stop_reason: None },
             Some(0),
             "initial agent command exited successfully",
         );

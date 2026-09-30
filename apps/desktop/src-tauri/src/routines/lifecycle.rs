@@ -8,13 +8,40 @@ use sqlx::SqlitePool;
 use svode_core::routines::operational::{reconcile_agent_session, record_terminal_outcome};
 
 use crate::AppError;
-use crate::agent_sessions::types::AgentSessionStatus;
-use crate::terminal::{
-    AgentTerminalLifecycleSink, AgentTerminalOutcomeEvidence, AgentTerminalOutcomeStatus,
-};
+use crate::terminal::{AgentTerminalLifecycleSink, AgentTerminalOutcomeEvidence};
+use svode_agents::status::{SessionState, StopReason};
 use svode_core::routines::model::{
     ResolvedRoutineOwner, RoutineInvalidationPayload, RoutineRunTerminalStatus,
 };
+
+/// The persisted run outcome of a session status. `routine_runs` keeps its
+/// own format, so rows written before the session status vocabulary read
+/// unchanged.
+fn run_terminal_status(state: SessionState) -> RoutineRunTerminalStatus {
+    match state {
+        SessionState::Idle {
+            stop_reason: Some(StopReason::Error),
+        } => RoutineRunTerminalStatus::Failed,
+        SessionState::Idle {
+            stop_reason: Some(StopReason::Cancelled | StopReason::Interrupted),
+        } => RoutineRunTerminalStatus::Stopped,
+        SessionState::Idle { .. } => RoutineRunTerminalStatus::Done,
+        SessionState::Running | SessionState::RequiresAction { .. } | SessionState::Unknown => {
+            RoutineRunTerminalStatus::Unknown
+        }
+    }
+}
+
+/// The persisted `session_status` value of a session status.
+fn run_session_status(state: SessionState) -> &'static str {
+    if state.in_turn() {
+        "active"
+    } else if state == SessionState::Unknown {
+        "unknown"
+    } else {
+        run_terminal_status(state).as_str()
+    }
+}
 
 pub(crate) struct RoutineRunLifecycleSink {
     pool: Mutex<SqlitePool>,
@@ -92,16 +119,10 @@ impl AgentTerminalLifecycleSink for RoutineRunLifecycleSink {
         evidence: &AgentTerminalOutcomeEvidence,
     ) -> Result<(), AppError> {
         let pool = self.current_pool()?;
-        let status = match evidence.status {
-            AgentTerminalOutcomeStatus::Done => RoutineRunTerminalStatus::Done,
-            AgentTerminalOutcomeStatus::Failed => RoutineRunTerminalStatus::Failed,
-            AgentTerminalOutcomeStatus::Stopped => RoutineRunTerminalStatus::Stopped,
-            AgentTerminalOutcomeStatus::Unknown => RoutineRunTerminalStatus::Unknown,
-        };
         tauri::async_runtime::block_on(record_terminal_outcome(
             &pool,
             &self.routine_run_id,
-            status,
+            run_terminal_status(evidence.state),
             evidence.exit_code,
             &evidence.reason,
             &evidence.observed_at,
@@ -114,23 +135,16 @@ impl AgentTerminalLifecycleSink for RoutineRunLifecycleSink {
         &self,
         source_session_id: &str,
         agent_session_id: &str,
-        session_status: AgentSessionStatus,
+        session_state: SessionState,
         observed_at: &str,
     ) -> Result<(), AppError> {
         let pool = self.current_pool()?;
-        let session_status = match session_status {
-            AgentSessionStatus::Active => "active",
-            AgentSessionStatus::Done => "done",
-            AgentSessionStatus::Failed => "failed",
-            AgentSessionStatus::Stopped => "stopped",
-            AgentSessionStatus::Unknown => "unknown",
-        };
         tauri::async_runtime::block_on(reconcile_agent_session(
             &pool,
             &self.routine_run_id,
             source_session_id,
             agent_session_id,
-            session_status,
+            run_session_status(session_state),
             observed_at,
         ))?;
         self.emit_invalidation();
@@ -238,7 +252,9 @@ mod tests {
             sink.reconcile_agent_session(
                 "source-after-reload",
                 "codex:source-after-reload",
-                AgentSessionStatus::Done,
+                SessionState::Idle {
+                    stop_reason: Some(StopReason::EndTurn),
+                },
                 "2026-08-07T10:02:00Z",
             )
         })
@@ -264,5 +280,35 @@ mod tests {
                 .is_closed()
         );
         store.close_key(&key).await;
+    }
+
+    #[test]
+    fn session_statuses_keep_the_persisted_run_values() {
+        let idle = |stop_reason| SessionState::Idle { stop_reason };
+        let cases = [
+            (SessionState::Running, "active"),
+            (
+                SessionState::RequiresAction {
+                    request: svode_agents::status::InteractionKind::Question,
+                },
+                "active",
+            ),
+            (idle(None), "done"),
+            (idle(Some(StopReason::EndTurn)), "done"),
+            (idle(Some(StopReason::MaxTokens)), "done"),
+            (idle(Some(StopReason::Refusal)), "done"),
+            (idle(Some(StopReason::Error)), "failed"),
+            (idle(Some(StopReason::Cancelled)), "stopped"),
+            (idle(Some(StopReason::Interrupted)), "stopped"),
+            (SessionState::Unknown, "unknown"),
+        ];
+        for (state, persisted) in cases {
+            assert_eq!(run_session_status(state), persisted, "{state:?}");
+            assert!(RoutineRunTerminalStatus::parse(run_terminal_status(state).as_str()).is_some());
+        }
+        assert_eq!(
+            run_terminal_status(idle(Some(StopReason::Error))),
+            RoutineRunTerminalStatus::Failed
+        );
     }
 }

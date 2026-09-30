@@ -1,33 +1,154 @@
 use chrono::{SecondsFormat, Utc};
 
-use super::sources::{PersistedAgentSessionCandidate, PersistedAgentSessionStatus, short_id};
+use super::sources::{NativeStatusEvidence, PersistedAgentSessionCandidate, short_id};
 use super::types::{
-    AgentSession, AgentSessionActiveFlag, AgentSessionCapabilities, AgentSessionResumeCommand,
-    AgentSessionRuntime, AgentSessionScope, AgentSessionSourceMeta, AgentSessionStatus,
-    AgentSessionStatusConfidence, AgentSessionStatusSource, AgentSessionTitleSource,
+    AgentSession, AgentSessionCapabilities, AgentSessionResumeCommand, AgentSessionRuntime,
+    AgentSessionScope, AgentSessionSourceMeta, AgentSessionTitleSource,
 };
 use crate::terminal::{AgentTerminalStatusEvidence, AgentTerminalSurface};
+use svode_agents::status::{SessionState, SessionStatus, StatusConfidence, StatusSource};
 use svode_agents::writer::ExternalLiveness;
 
 pub(super) const SOURCE_LOG_ACTIVE_STALE_AFTER_SECS: i64 = 6 * 60 * 60;
 
 /// What Svode knows about an agent process outside it writing to the
-/// session. Only fresh source-log evidence of a running turn counts; there
-/// is no process scan, so everything else is unknown, never free.
+/// session. Only fresh native evidence of a turn counts; there is no process
+/// scan, so everything else is unknown, never free.
 pub(super) fn external_liveness(session: &AgentSession) -> ExternalLiveness {
-    if session.status == AgentSessionStatus::Active
-        && session.status_source == AgentSessionStatusSource::SourceLog
-    {
+    if session.status.source == StatusSource::NativeStatusReader && session.status.state.in_turn() {
         ExternalLiveness::ExternalActive
     } else {
         ExternalLiveness::Unknown
     }
 }
 
+/// One piece of status evidence with the moment it was observed.
+struct Observation {
+    status: SessionStatus,
+    reason: String,
+    /// RFC 3339 UTC with second precision, so strings order by time.
+    observed_at: String,
+    waiting_since: Option<String>,
+}
+
+/// The session status from its evidence (Stage 10 `02` C10): exact evidence
+/// outranks approximate, within one confidence the latest observation wins,
+/// and different states observed at that same moment give `unknown` with a
+/// diagnostic. No evidence is `unknown`.
+fn resolve_status(observations: Vec<Observation>) -> (SessionStatus, String, Option<String>) {
+    let Some(confidence) = observations
+        .iter()
+        .map(|observation| observation.status.confidence)
+        .max_by_key(|confidence| *confidence == StatusConfidence::Exact)
+    else {
+        return (
+            SessionStatus::unknown(),
+            "no status evidence".to_string(),
+            None,
+        );
+    };
+    let ranked = observations
+        .into_iter()
+        .filter(|observation| observation.status.confidence == confidence)
+        .collect::<Vec<_>>();
+    let latest = ranked
+        .iter()
+        .map(|observation| observation.observed_at.as_str())
+        .max()
+        .expect("ranked evidence")
+        .to_string();
+    let mut current = ranked
+        .into_iter()
+        .filter(|observation| observation.observed_at == latest)
+        .collect::<Vec<_>>();
+    let first = current.remove(0);
+    if current
+        .iter()
+        .any(|observation| observation.status.state != first.status.state)
+    {
+        let source = if current
+            .iter()
+            .all(|observation| observation.status.source == first.status.source)
+        {
+            first.status.source
+        } else {
+            StatusSource::None
+        };
+        return (
+            SessionStatus {
+                state: SessionState::Unknown,
+                source,
+                confidence: StatusConfidence::Approximate,
+            },
+            "conflicting status evidence".to_string(),
+            None,
+        );
+    }
+    (first.status, first.reason, first.waiting_since)
+}
+
+fn native_observation(
+    evidence: NativeStatusEvidence,
+    last_activity_at: chrono::DateTime<Utc>,
+    now: chrono::DateTime<Utc>,
+) -> Observation {
+    let observed_at = evidence.observed_at.unwrap_or(last_activity_at);
+    let stale = evidence.state.in_turn()
+        && now.signed_duration_since(observed_at).num_seconds()
+            > SOURCE_LOG_ACTIVE_STALE_AFTER_SECS;
+    let (state, reason, waiting_since) = if stale {
+        (
+            SessionState::Unknown,
+            format!(
+                "stale native evidence of a turn ignored: {}",
+                evidence.reason
+            ),
+            None,
+        )
+    } else {
+        (
+            evidence.state,
+            evidence.reason,
+            evidence
+                .waiting_since
+                .map(|ts| ts.to_rfc3339_opts(SecondsFormat::Secs, true)),
+        )
+    };
+    Observation {
+        status: SessionStatus {
+            state,
+            source: StatusSource::NativeStatusReader,
+            confidence: StatusConfidence::Approximate,
+        },
+        reason,
+        observed_at: observed_at.to_rfc3339_opts(SecondsFormat::Secs, true),
+        waiting_since,
+    }
+}
+
+fn terminal_observation(evidence: AgentTerminalStatusEvidence) -> Observation {
+    let waiting_since = matches!(evidence.state, SessionState::RequiresAction { .. })
+        .then(|| evidence.observed_at.clone());
+    Observation {
+        status: SessionStatus {
+            state: evidence.state,
+            source: StatusSource::ManagedPty,
+            confidence: evidence.confidence,
+        },
+        reason: evidence.reason,
+        observed_at: evidence.observed_at,
+        waiting_since,
+    }
+}
+
+/// The catalog record of a native session, with its terminal surfaces laid
+/// over it: runtime of the most recent surface and one status resolved from
+/// the native evidence and the evidence of every matching surface.
 pub(super) fn map_candidate(
     candidate: PersistedAgentSessionCandidate,
     scope: AgentSessionScope,
     last_activity_at: chrono::DateTime<Utc>,
+    terminal_surfaces: &[AgentTerminalSurface],
 ) -> AgentSession {
     let id = format!(
         "{}:{}",
@@ -50,45 +171,13 @@ pub(super) fn map_candidate(
         .join(" ");
     let mut counts = candidate.counts;
     counts.messages = Some(counts.user_messages + counts.assistant_messages);
-    let status_evidence = candidate.status;
-    let (status, active_flags, status_source, status_confidence, status_reason, waiting_since) =
-        match status_evidence {
-            Some(evidence)
-                if source_log_active_is_stale(&evidence, last_activity_at, Utc::now()) =>
-            {
-                (
-                    AgentSessionStatus::Done,
-                    Vec::new(),
-                    AgentSessionStatusSource::Fallback,
-                    AgentSessionStatusConfidence::Weak,
-                    Some(format!(
-                        "stale source-log active evidence ignored: {}",
-                        evidence.reason
-                    )),
-                    None,
-                )
-            }
-            Some(evidence) => (
-                evidence.status,
-                evidence.active_flags,
-                AgentSessionStatusSource::SourceLog,
-                evidence.confidence,
-                Some(evidence.reason),
-                evidence
-                    .waiting_since
-                    .map(|ts| ts.to_rfc3339_opts(SecondsFormat::Secs, true)),
-            ),
-            None => (
-                AgentSessionStatus::Done,
-                Vec::new(),
-                AgentSessionStatusSource::Fallback,
-                AgentSessionStatusConfidence::Weak,
-                Some("persisted session without live status evidence".to_string()),
-                None,
-            ),
-        };
+    let mut observations = candidate
+        .status
+        .map(|evidence| native_observation(evidence, last_activity_at, Utc::now()))
+        .into_iter()
+        .collect::<Vec<_>>();
 
-    AgentSession {
+    let mut session = AgentSession {
         id,
         launch_id: candidate.launch_id,
         routine_run_id: None,
@@ -96,11 +185,8 @@ pub(super) fn map_candidate(
         source_session_id: candidate.source_session_id,
         title,
         title_source,
-        status,
-        active_flags,
-        status_source,
-        status_confidence,
-        status_reason,
+        status: SessionStatus::unknown(),
+        status_reason: None,
         runtime: Some(AgentSessionRuntime::default()),
         project_id: None,
         project_path: Some(scope.project_path.clone()),
@@ -114,7 +200,7 @@ pub(super) fn map_candidate(
             .created_at
             .map(|ts| ts.to_rfc3339_opts(SecondsFormat::Secs, true)),
         last_activity_at: last_activity_at.to_rfc3339_opts(SecondsFormat::Secs, true),
-        waiting_since,
+        waiting_since: None,
         duration_ms: None,
         resume_command: Some(AgentSessionResumeCommand {
             display,
@@ -126,13 +212,21 @@ pub(super) fn map_candidate(
         counts: Some(counts),
         capabilities: AgentSessionCapabilities::default(),
         source_meta: candidate.source_meta,
-    }
+    };
+    observations.extend(apply_terminal_runtime(&mut session, terminal_surfaces));
+    let (status, reason, waiting_since) = resolve_status(observations);
+    session.status = status;
+    session.status_reason = Some(reason);
+    session.waiting_since = waiting_since;
+    session
 }
 
-pub(super) fn apply_terminal_overlay(
+/// Lays the most recent matching terminal surface over the session runtime
+/// and returns the status evidence of every matching surface.
+fn apply_terminal_runtime(
     session: &mut AgentSession,
     terminal_surfaces: &[AgentTerminalSurface],
-) {
+) -> Vec<Observation> {
     let matching = terminal_surfaces
         .iter()
         .filter(|surface| {
@@ -142,14 +236,13 @@ pub(super) fn apply_terminal_overlay(
                 || (session.launch_id.is_some() && session.launch_id == surface.launch_id)
         })
         .collect::<Vec<_>>();
-    if matching.is_empty() {
-        return;
-    }
-
-    let runtime_surface = matching
+    let Some(runtime_surface) = matching
         .iter()
         .max_by(|a, b| surface_activity_key(a).cmp(surface_activity_key(b)))
-        .expect("matching surface");
+    else {
+        return Vec::new();
+    };
+
     session.launch_id = session
         .launch_id
         .clone()
@@ -167,92 +260,27 @@ pub(super) fn apply_terminal_overlay(
         last_input_at: runtime_surface.last_input_at.clone(),
     });
 
-    let evidences = matching
+    matching
         .iter()
         .filter_map(|surface| surface_status_evidence(surface))
-        .collect::<Vec<_>>();
-    if evidences.is_empty() {
-        return;
-    }
-    if matches!(session.status_source, AgentSessionStatusSource::SourceLog) {
-        match session.status {
-            AgentSessionStatus::Done | AgentSessionStatus::Failed | AgentSessionStatus::Stopped => {
-                return;
-            }
-            AgentSessionStatus::Active
-                if evidences
-                    .iter()
-                    .all(|evidence| evidence.status == AgentSessionStatus::Active) =>
-            {
-                return;
-            }
-            AgentSessionStatus::Active | AgentSessionStatus::Unknown => {}
-        }
-    }
-
-    let first_status = evidences[0].status;
-    if evidences
-        .iter()
-        .any(|evidence| evidence.status != first_status)
-    {
-        session.status = AgentSessionStatus::Unknown;
-        session.active_flags.clear();
-        session.waiting_since = None;
-        session.status_source = AgentSessionStatusSource::EmbeddedTerminal;
-        session.status_confidence = AgentSessionStatusConfidence::Unknown;
-        session.status_reason = Some("conflicting embedded terminal status evidence".to_string());
-        return;
-    }
-
-    let evidence = evidences
-        .iter()
-        .max_by(|a, b| a.observed_at.cmp(&b.observed_at))
-        .expect("status evidence");
-    session.status = evidence.status;
-    session.status_source = AgentSessionStatusSource::EmbeddedTerminal;
-    session.status_confidence = AgentSessionStatusConfidence::Strong;
-    session.status_reason = Some(evidence.reason.clone());
-
-    if matches!(evidence.status, AgentSessionStatus::Active) {
-        session.active_flags = merged_active_flags(&evidences);
-        session.waiting_since =
-            (!session.active_flags.is_empty()).then(|| evidence.observed_at.clone());
-    } else {
-        session.active_flags.clear();
-        session.waiting_since = None;
-    }
+        .map(terminal_observation)
+        .collect()
 }
 
 pub(super) fn map_provisional_surface(
     surface: &AgentTerminalSurface,
     scope: AgentSessionScope,
 ) -> AgentSession {
-    let evidence = surface_status_evidence(surface);
-    let (status, active_flags, status_confidence, status_reason, waiting_since) = match evidence {
-        Some(evidence) => {
-            let waiting_since = (evidence.status == AgentSessionStatus::Active
-                && !evidence.active_flags.is_empty())
-            .then(|| evidence.observed_at.clone());
-            (
-                evidence.status,
-                evidence.active_flags,
-                AgentSessionStatusConfidence::Strong,
-                Some(evidence.reason),
-                waiting_since,
-            )
-        }
+    let (status, status_reason, waiting_since) = match surface_status_evidence(surface) {
+        Some(evidence) => resolve_status(vec![terminal_observation(evidence)]),
         None if surface.live => (
-            AgentSessionStatus::Unknown,
-            Vec::new(),
-            AgentSessionStatusConfidence::Unknown,
-            Some("routine launch is visible in a managed PTY".to_string()),
+            SessionStatus::unknown(),
+            "routine launch is visible in a managed PTY".to_string(),
             None,
         ),
         None => (
-            AgentSessionStatus::Unknown,
-            Vec::new(),
-            AgentSessionStatusConfidence::Unknown,
-            Some("routine launch has no source session or terminal outcome evidence".to_string()),
+            SessionStatus::unknown(),
+            "routine launch has no source session or terminal outcome evidence".to_string(),
             None,
         ),
     };
@@ -281,10 +309,7 @@ pub(super) fn map_provisional_surface(
         }),
         title_source: AgentSessionTitleSource::CliTitle,
         status,
-        active_flags,
-        status_source: AgentSessionStatusSource::SvodeAgentRuntime,
-        status_confidence,
-        status_reason,
+        status_reason: Some(status_reason),
         runtime: Some(AgentSessionRuntime {
             pty_id: surface.live.then(|| surface.pty_id.clone()),
             pid: None,
@@ -317,19 +342,8 @@ pub(super) fn map_provisional_surface(
     }
 }
 
-fn source_log_active_is_stale(
-    evidence: &PersistedAgentSessionStatus,
-    last_activity_at: chrono::DateTime<Utc>,
-    now: chrono::DateTime<Utc>,
-) -> bool {
-    if !matches!(evidence.status, AgentSessionStatus::Active) {
-        return false;
-    }
-
-    let observed_at = evidence.observed_at.unwrap_or(last_activity_at);
-    now.signed_duration_since(observed_at).num_seconds() > SOURCE_LOG_ACTIVE_STALE_AFTER_SECS
-}
-
+/// The recorded evidence of a surface, or its outcome from the exit code of
+/// a finished initial command.
 fn surface_status_evidence(surface: &AgentTerminalSurface) -> Option<AgentTerminalStatusEvidence> {
     if let Some(evidence) = &surface.status_evidence {
         return Some(evidence.clone());
@@ -337,23 +351,11 @@ fn surface_status_evidence(surface: &AgentTerminalSurface) -> Option<AgentTermin
 
     let finished_at = surface.finished_at.as_ref()?;
     let exit_code = surface.exit_code?;
-    let status = if exit_code == 0 {
-        AgentSessionStatus::Done
-    } else {
-        AgentSessionStatus::Failed
-    };
-    let reason = surface.failure_reason.clone().unwrap_or_else(|| {
-        if exit_code == 0 {
-            "initial agent command exited successfully".to_string()
-        } else {
-            format!("initial agent command exited with code {exit_code}")
-        }
-    });
-
+    let (state, reason) = crate::terminal::agent_exit_outcome(exit_code);
     Some(AgentTerminalStatusEvidence {
-        status,
-        active_flags: Vec::new(),
-        reason,
+        state,
+        confidence: StatusConfidence::Exact,
+        reason: surface.failure_reason.clone().unwrap_or(reason),
         observed_at: finished_at.clone(),
     })
 }
@@ -373,14 +375,109 @@ fn surface_activity_key(surface: &AgentTerminalSurface) -> &str {
     key
 }
 
-fn merged_active_flags(evidences: &[AgentTerminalStatusEvidence]) -> Vec<AgentSessionActiveFlag> {
-    let mut flags = Vec::new();
-    for evidence in evidences {
-        for flag in &evidence.active_flags {
-            if !flags.contains(flag) {
-                flags.push(*flag);
-            }
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use svode_agents::status::{InteractionKind, StopReason};
+
+    fn observation(
+        state: SessionState,
+        source: StatusSource,
+        confidence: StatusConfidence,
+        observed_at: &str,
+    ) -> Observation {
+        Observation {
+            status: SessionStatus {
+                state,
+                source,
+                confidence,
+            },
+            reason: format!("{state:?}"),
+            observed_at: observed_at.to_string(),
+            waiting_since: None,
         }
     }
-    flags
+
+    #[test]
+    fn approximate_evidence_merges_by_observation_time() {
+        let (status, _, _) = resolve_status(vec![
+            observation(
+                SessionState::Running,
+                StatusSource::NativeStatusReader,
+                StatusConfidence::Approximate,
+                "2026-07-04T10:00:00Z",
+            ),
+            observation(
+                SessionState::RequiresAction {
+                    request: InteractionKind::Permission,
+                },
+                StatusSource::ManagedPty,
+                StatusConfidence::Approximate,
+                "2026-07-04T10:00:05Z",
+            ),
+        ]);
+
+        assert_eq!(
+            status.state,
+            SessionState::RequiresAction {
+                request: InteractionKind::Permission
+            }
+        );
+        assert_eq!(status.source, StatusSource::ManagedPty);
+    }
+
+    #[test]
+    fn exact_evidence_outranks_newer_approximate_evidence() {
+        let exited = SessionState::Idle {
+            stop_reason: Some(StopReason::Error),
+        };
+        let (status, _, _) = resolve_status(vec![
+            observation(
+                exited,
+                StatusSource::ManagedPty,
+                StatusConfidence::Exact,
+                "2026-07-04T10:00:00Z",
+            ),
+            observation(
+                SessionState::Running,
+                StatusSource::NativeStatusReader,
+                StatusConfidence::Approximate,
+                "2026-07-04T10:05:00Z",
+            ),
+        ]);
+
+        assert_eq!(status.state, exited);
+        assert_eq!(status.confidence, StatusConfidence::Exact);
+    }
+
+    #[test]
+    fn contradicting_sources_at_one_moment_are_unknown_without_a_source() {
+        let (status, reason, _) = resolve_status(vec![
+            observation(
+                SessionState::Running,
+                StatusSource::NativeStatusReader,
+                StatusConfidence::Approximate,
+                "2026-07-04T10:00:00Z",
+            ),
+            observation(
+                SessionState::RequiresAction {
+                    request: InteractionKind::Question,
+                },
+                StatusSource::ManagedPty,
+                StatusConfidence::Approximate,
+                "2026-07-04T10:00:00Z",
+            ),
+        ]);
+
+        assert_eq!(status.state, SessionState::Unknown);
+        assert_eq!(status.source, StatusSource::None);
+        assert_eq!(reason, "conflicting status evidence");
+    }
+
+    #[test]
+    fn no_evidence_is_unknown() {
+        let (status, _, _) = resolve_status(Vec::new());
+
+        assert_eq!(status, SessionStatus::unknown());
+    }
 }

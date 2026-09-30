@@ -261,7 +261,11 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
       session({
         id: "codex:busy",
         title: "Busy",
-        status: "active",
+        status: {
+          state: "running",
+          source: "native_status_reader",
+          confidence: "approximate",
+        },
         runtime: { live: true, ptyId: "pty-busy" },
       }),
     ];
@@ -445,10 +449,12 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
       sourceSessionId: overrides.id.replace(/^.+:/, ""),
       title: overrides.id,
       titleSource: "session-id",
-      status: "done",
-      activeFlags: [],
-      statusSource: "fallback",
-      statusConfidence: "weak",
+      status: {
+        state: "idle",
+        stopReason: "end_turn",
+        source: "native_status_reader",
+        confidence: "approximate",
+      },
       scopeKind: "project",
       scopeStatus: "ready",
       scopeConfidence: "exact",

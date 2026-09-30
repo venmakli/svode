@@ -6,17 +6,17 @@ use chrono::{DateTime, Utc};
 use serde_json::Value;
 
 use super::{
-    CandidateCwdSource, PersistedAgentSessionCandidate, PersistedAgentSessionStatus,
-    SourceFingerprint, SourceInputFile, SourceScan, build_fingerprint, collect_optional_file,
-    collect_recursive_dirs, collect_recursive_files, launch_id_from_text, metadata_mtime,
-    nested_string_field, read_jsonl, short_id, source_file_ref, string_field,
-    timestamp_from_fields, title_from_text, user_prompt_title_from_text,
+    CandidateCwdSource, NativeStatusEvidence, PersistedAgentSessionCandidate, SourceFingerprint,
+    SourceInputFile, SourceScan, build_fingerprint, collect_optional_file, collect_recursive_dirs,
+    collect_recursive_files, launch_id_from_text, metadata_mtime, nested_string_field, read_jsonl,
+    short_id, source_file_ref, string_field, timestamp_from_fields, title_from_text,
+    user_prompt_title_from_text,
 };
 use crate::agent_sessions::types::{
     AgentSessionCounts, AgentSessionDiagnosticSeverity, AgentSessionSource,
-    AgentSessionSourceReport, AgentSessionSourceStatus, AgentSessionStatus,
-    AgentSessionStatusConfidence, AgentSessionTitleSource,
+    AgentSessionSourceReport, AgentSessionSourceStatus, AgentSessionTitleSource,
 };
+use svode_agents::status::{SessionState, StopReason};
 
 const SOURCE: AgentSessionSource = AgentSessionSource::ClaudeCode;
 
@@ -550,7 +550,7 @@ impl SessionBuilder {
         }
     }
 
-    fn set_status(&mut self, status: PersistedAgentSessionStatus) {
+    fn set_status(&mut self, status: NativeStatusEvidence) {
         let should_replace = self
             .candidate
             .status
@@ -609,7 +609,7 @@ impl DetailParse {
 
 #[derive(Debug, Default)]
 struct ClaudeTailState {
-    status: Option<PersistedAgentSessionStatus>,
+    status: Option<NativeStatusEvidence>,
     open_tool_ids: Vec<String>,
 }
 
@@ -626,8 +626,8 @@ impl ClaudeTailState {
             }
             Some("system") => {
                 if matches!(
-                    self.status.as_ref().map(|status| status.status),
-                    Some(AgentSessionStatus::Done)
+                    self.status.as_ref().map(|status| status.state),
+                    Some(SessionState::Idle { .. })
                 ) {
                     return;
                 }
@@ -639,7 +639,7 @@ impl ClaudeTailState {
         }
     }
 
-    fn finish(self) -> Option<PersistedAgentSessionStatus> {
+    fn finish(self) -> Option<NativeStatusEvidence> {
         self.status
     }
 
@@ -654,10 +654,10 @@ impl ClaudeTailState {
         let stop_reason = nested_string_field(value, &["message", "stop_reason"]);
         if matches!(stop_reason, Some("end_turn" | "stop_sequence")) {
             self.open_tool_ids.clear();
-            self.status = Some(PersistedAgentSessionStatus {
-                status: AgentSessionStatus::Done,
-                active_flags: Vec::new(),
-                confidence: AgentSessionStatusConfidence::Strong,
+            self.status = Some(NativeStatusEvidence {
+                state: SessionState::Idle {
+                    stop_reason: Some(StopReason::EndTurn),
+                },
                 reason: "claude turn complete".to_string(),
                 observed_at,
                 waiting_since: None,
@@ -684,10 +684,8 @@ impl ClaudeTailState {
     }
 
     fn set_active(&mut self, observed_at: Option<DateTime<Utc>>, reason: &str) {
-        self.status = Some(PersistedAgentSessionStatus {
-            status: AgentSessionStatus::Active,
-            active_flags: Vec::new(),
-            confidence: AgentSessionStatusConfidence::Strong,
+        self.status = Some(NativeStatusEvidence {
+            state: SessionState::Running,
             reason: reason.to_string(),
             observed_at,
             waiting_since: None,
@@ -800,8 +798,7 @@ mod tests {
         let scan = scan_root(&root);
         assert_eq!(scan.candidates.len(), 1);
         let status = scan.candidates[0].status.as_ref().expect("status");
-        assert_eq!(status.status, AgentSessionStatus::Active);
-        assert!(status.active_flags.is_empty());
+        assert_eq!(status.state, SessionState::Running);
         assert_eq!(status.reason, "claude tool call in progress");
     }
 
@@ -817,8 +814,12 @@ mod tests {
         let scan = scan_root(&root);
         assert_eq!(scan.candidates.len(), 1);
         let status = scan.candidates[0].status.as_ref().expect("status");
-        assert_eq!(status.status, AgentSessionStatus::Done);
-        assert!(status.active_flags.is_empty());
+        assert_eq!(
+            status.state,
+            SessionState::Idle {
+                stop_reason: Some(StopReason::EndTurn)
+            }
+        );
         assert_eq!(status.reason, "claude turn complete");
     }
 

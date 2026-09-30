@@ -1,4 +1,5 @@
 import { isPendingSessionId } from "./pending";
+import { isAgentTurnActive } from "./status";
 import type { AgentSession } from "./types";
 
 export function buildHotStatusSessionIds({
@@ -28,9 +29,7 @@ export function buildHotStatusSessionIds({
 function isHotStatusCandidate(session: AgentSession): boolean {
   return (
     isRefreshableSourceSession(session) &&
-    (session.status === "active" ||
-      Boolean(session.activeFlags?.length) ||
-      Boolean(session.runtime?.ptyId))
+    (isAgentTurnActive(session) || Boolean(session.runtime?.ptyId))
   );
 }
 

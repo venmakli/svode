@@ -44,6 +44,13 @@ pub enum SessionState {
     Unknown,
 }
 
+impl SessionState {
+    /// A turn is running, blocked on the user or not.
+    pub fn in_turn(self) -> bool {
+        matches!(self, Self::Running | Self::RequiresAction { .. })
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum StatusSource {
@@ -117,5 +124,23 @@ mod tests {
             serde_json::to_value(waiting).unwrap()["state"],
             "requires_action"
         );
+    }
+
+    #[test]
+    fn only_a_running_or_blocked_turn_is_in_turn() {
+        assert!(SessionState::Running.in_turn());
+        assert!(
+            SessionState::RequiresAction {
+                request: InteractionKind::Question
+            }
+            .in_turn()
+        );
+        assert!(
+            !SessionState::Idle {
+                stop_reason: Some(StopReason::Interrupted)
+            }
+            .in_turn()
+        );
+        assert!(!SessionState::Unknown.in_turn());
     }
 }

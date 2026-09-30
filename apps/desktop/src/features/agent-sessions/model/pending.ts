@@ -34,10 +34,7 @@ export function buildPendingAgentSession(
     sourceSessionId: pending.id,
     title: pending.title,
     titleSource: "session-id",
-    status: "unknown",
-    activeFlags: [],
-    statusSource: "embedded-terminal",
-    statusConfidence: "unknown",
+    status: { state: "unknown", source: "none", confidence: "approximate" },
     statusReason: "new managed shell waiting for a CLI agent session",
     runtime: {
       ptyId: pending.ptyId,
@@ -156,7 +153,10 @@ function timestampMs(value: string | undefined): number {
   return Number.isFinite(timestamp) ? timestamp : Number.NaN;
 }
 
-function samePath(left: string | undefined, right: string | undefined): boolean {
+function samePath(
+  left: string | undefined,
+  right: string | undefined,
+): boolean {
   if (!left || !right) return false;
   return normalizePath(left) === normalizePath(right);
 }

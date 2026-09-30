@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use svode_agents::identity::{IdentityNamespace, SessionKey};
+use svode_agents::status::SessionStatus;
 use svode_core::agent_adapters::AgentAdapterKind;
 
 pub(crate) const MAX_SOURCE_DIAGNOSTICS: usize = 50;
@@ -56,23 +57,6 @@ impl AgentSessionSource {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum AgentSessionStatus {
-    Active,
-    Done,
-    Failed,
-    Stopped,
-    Unknown,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub enum AgentSessionActiveFlag {
-    WaitingOnApproval,
-    WaitingOnUserInput,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum AgentSessionTitleSource {
     CliTitle,
@@ -102,25 +86,6 @@ pub enum AgentSessionScopeConfidence {
     CwdPrefix,
     WorktreeOriginal,
     DecodedSourceFile,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum AgentSessionStatusSource {
-    EmbeddedTerminal,
-    SvodeAgentRuntime,
-    SourceLog,
-    SourceIndex,
-    Fallback,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum AgentSessionStatusConfidence {
-    Strong,
-    Medium,
-    Weak,
-    Unknown,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -163,11 +128,9 @@ pub struct AgentSession {
     pub source_session_id: String,
     pub title: String,
     pub title_source: AgentSessionTitleSource,
-    pub status: AgentSessionStatus,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub active_flags: Vec<AgentSessionActiveFlag>,
-    pub status_source: AgentSessionStatusSource,
-    pub status_confidence: AgentSessionStatusConfidence,
+    pub status: SessionStatus,
+    /// Evidence behind the status, or the diagnostic of an unresolvable
+    /// contradiction between sources.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub status_reason: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

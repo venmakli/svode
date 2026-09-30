@@ -12,10 +12,12 @@ function session(
       overrides.sourceSessionId ?? overrides.id.replace(/^.+:/, ""),
     title: overrides.title ?? overrides.id,
     titleSource: overrides.titleSource ?? "session-id",
-    status: overrides.status ?? "done",
-    activeFlags: overrides.activeFlags ?? [],
-    statusSource: overrides.statusSource ?? "fallback",
-    statusConfidence: overrides.statusConfidence ?? "weak",
+    status: overrides.status ?? {
+      state: "idle",
+      stopReason: "end_turn",
+      source: "native_status_reader",
+      confidence: "approximate",
+    },
     scopeKind: overrides.scopeKind ?? "project",
     scopeStatus: overrides.scopeStatus ?? "ready",
     scopeConfidence: overrides.scopeConfidence ?? "exact",
@@ -46,11 +48,22 @@ test("hot status ids include active, waiting, live, and observed sessions", () =
     sessions: [
       session({ id: "codex:done" }),
       session({ id: "codex:selected" }),
-      session({ id: "codex:active", status: "active" }),
+      session({
+        id: "codex:active",
+        status: {
+          state: "running",
+          source: "native_status_reader",
+          confidence: "approximate",
+        },
+      }),
       session({
         id: "codex:waiting",
-        status: "active",
-        activeFlags: ["waitingOnApproval"],
+        status: {
+          state: "requires_action",
+          request: "permission",
+          source: "native_status_reader",
+          confidence: "approximate",
+        },
       }),
       session({
         id: "claude-code:live",
@@ -72,8 +85,23 @@ test("hot status ids include active, waiting, live, and observed sessions", () =
 test("hot status ids ignore pending and unknown source sessions", () => {
   const ids = buildHotStatusSessionIds({
     sessions: [
-      session({ id: "new-session:pty-1", status: "active" }),
-      session({ id: "unknown:active", source: "unknown", status: "active" }),
+      session({
+        id: "new-session:pty-1",
+        status: {
+          state: "running",
+          source: "native_status_reader",
+          confidence: "approximate",
+        },
+      }),
+      session({
+        id: "unknown:active",
+        source: "unknown",
+        status: {
+          state: "running",
+          source: "native_status_reader",
+          confidence: "approximate",
+        },
+      }),
     ],
     observedSessionIds: ["new-session:pty-1"],
   });

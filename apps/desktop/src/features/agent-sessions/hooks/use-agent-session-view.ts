@@ -5,7 +5,7 @@ import {
 } from "../api";
 import { commandDisplay } from "../lib";
 import {
-  hasActionableWait,
+  isAgentTurnActive,
   resolveAgentSessionId,
   type AgentSession,
   type AgentSessionOpenOptions,
@@ -151,9 +151,7 @@ export function useAgentSessionView(
     missing: unresolved && !checking,
     terminalFinished,
     focusTerminal,
-    agentBusy: Boolean(
-      session && (session.status === "active" || hasActionableWait(session)),
-    ),
+    agentBusy: Boolean(session && isAgentTurnActive(session)),
     resumeCommand:
       reentryResult?.command?.display ??
       (session ? commandDisplay(session) : null),

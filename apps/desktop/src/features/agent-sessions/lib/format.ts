@@ -1,6 +1,7 @@
 import { getLocale } from "@/paraglide/runtime.js";
 import {
-  hasActionableWait,
+  isAgentTurnActive,
+  requiresUserAction,
   terminalActivityAt,
   type AgentSession,
 } from "../model";
@@ -57,11 +58,11 @@ export function scopeLabel(
 }
 
 export function sessionTimeLabel(session: AgentSession): string {
-  if (hasActionableWait(session)) {
+  if (requiresUserAction(session)) {
     return shortRelativeTime(session.waitingSince ?? session.lastActivityAt);
   }
 
-  if (session.status === "active" && session.durationMs) {
+  if (isAgentTurnActive(session) && session.durationMs) {
     return shortDuration(session.durationMs);
   }
 

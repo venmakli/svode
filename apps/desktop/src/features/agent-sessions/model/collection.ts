@@ -1,4 +1,5 @@
-import { hasActionableWait, terminalActivityAt } from "./active";
+import { terminalActivityAt } from "./active";
+import { isAgentTurnActive, requiresUserAction } from "./status";
 import type { AgentSession } from "./types";
 
 /** Last activity as the collection shows it: terminal activity while one is open. */
@@ -21,8 +22,8 @@ export function compareAgentSessionsByDefault(
 }
 
 function workPriority(session: AgentSession): number {
-  if (hasActionableWait(session)) return 0;
-  if (session.status === "active") return 1;
+  if (requiresUserAction(session)) return 0;
+  if (isAgentTurnActive(session)) return 1;
   return 2;
 }
 

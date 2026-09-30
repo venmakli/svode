@@ -273,7 +273,17 @@ test("session terminals count each PTY once and leave shell tabs out", async () 
   ]);
   expect(sessionTerminalAgentsBusy(store.getState())).toBe(false);
 
-  api.listed = [history, { ...panelTab, status: "active" }];
+  api.listed = [
+    history,
+    {
+      ...panelTab,
+      status: {
+        state: "running",
+        source: "native_status_reader",
+        confidence: "approximate",
+      },
+    },
+  ];
   await store.getState().load({ force: true });
   expect(sessionTerminalAgentsBusy(store.getState())).toBe(true);
 

@@ -13,7 +13,7 @@ import { useAgentAdapterDictionary } from "@/features/agent-adapters";
 import { scopeLabel, tooltipDateTime } from "../lib";
 import type { AgentSession } from "../model";
 import { ExternalTerminalIcon } from "./external-terminal-icon";
-import { statusLabel } from "./session-status";
+import { statusSourceLabel, statusText } from "./session-status";
 import * as m from "@/paraglide/messages.js";
 
 export function SessionMetadata({
@@ -33,7 +33,11 @@ export function SessionMetadata({
       <dt className="text-muted-foreground">{m.sessions_metadata_scope()}</dt>
       <dd>{scopeLabel(session, rootName, spaceNames)}</dd>
       <dt className="text-muted-foreground">{m.sessions_metadata_status()}</dt>
-      <dd>{statusLabel(session)}</dd>
+      <dd>{statusText(session)}</dd>
+      <dt className="text-muted-foreground">
+        {m.sessions_metadata_status_source()}
+      </dt>
+      <dd>{statusSourceLabel(session)}</dd>
       <dt className="text-muted-foreground">
         {m.sessions_metadata_last_activity()}
       </dt>

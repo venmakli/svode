@@ -13,7 +13,7 @@ import {
   type LocalSessionTerminal,
   type PendingAgentSessionTerminal,
 } from "./pending";
-import { hasActionableWait } from "./active";
+import { isAgentTurnActive } from "./status";
 import { resolveAgentSessionId, type AgentSessionTarget } from "./target";
 import type { AgentSession, AgentSessionScopeGroup } from "./types";
 
@@ -238,7 +238,7 @@ export function sessionTerminalAgentsBusy(
   return state.sessions.some(
     (session) =>
       Boolean(session.runtime?.ptyId ?? state.terminals[session.id]) &&
-      (session.status === "active" || hasActionableWait(session)),
+      isAgentTurnActive(session),
   );
 }
 

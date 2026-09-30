@@ -11,7 +11,11 @@ import {
   type AgentSession,
   type AgentSessionTarget,
 } from "../model";
-import { SessionStatusMarker, statusMarkerLabel } from "./session-status";
+import {
+  SessionStatusMarker,
+  statusMarkerLabel,
+  statusTooltipDetail,
+} from "./session-status";
 
 interface AgentSessionNavigationItemProps {
   navigationKey: NavigationKey;
@@ -68,10 +72,13 @@ export function AgentSessionNavigationItem({
       }
       tooltip={
         session && (
-          <span>
-            {agents.label(session.source)}
-            {space ? ` · ${space.name}` : ""}
-          </span>
+          <>
+            <span>{statusTooltipDetail(session)}</span>
+            <span>
+              {agents.label(session.source)}
+              {space ? ` · ${space.name}` : ""}
+            </span>
+          </>
         )
       }
       active={active}

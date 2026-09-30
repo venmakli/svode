@@ -38,14 +38,22 @@ const working = listedSession({
   launchId: "launch-sync",
   source: "claude-code",
   title: "Write tests",
-  status: "active",
+  status: {
+    state: "running",
+    source: "native_status_reader",
+    confidence: "approximate",
+  },
   lastActivityAt: "2026-09-29T09:00:00Z",
 });
 const waiting = listedSession({
   id: "codex:waiting",
   title: "Review plan",
-  status: "active",
-  activeFlags: ["waitingOnApproval"],
+  status: {
+    state: "requires_action",
+    request: "permission",
+    source: "native_status_reader",
+    confidence: "approximate",
+  },
   lastActivityAt: "2026-09-29T08:00:00Z",
 });
 const withTerminal = listedSession({
@@ -141,12 +149,12 @@ test("rows show the session sign, title, status, agent, routine and last activit
       ? status.semantics.standard.options?.map((option) => option.name)
       : null,
   ).toEqual([
-    "Waiting for approval",
-    "Waiting for input",
+    "Needs action",
     "Working",
     "Done",
-    "Failed",
     "Stopped",
+    "Interrupted",
+    "Error",
     "Unknown",
   ]);
   const agent = presentation.properties.find(
@@ -209,7 +217,7 @@ test("every status value is shown by the Status property, including Done", () =>
       : "";
 
   expect(status?.getValue(done)).toBe("Done");
-  expect(status?.getValue(waiting)).toBe("Waiting for approval");
+  expect(status?.getValue(waiting)).toBe("Needs action");
   // The leading sign is the same for every session: status is a property.
   expect(leading(done)).toBe(leading(waiting));
   expect(leading(withTerminal)).toBe(leading(done));

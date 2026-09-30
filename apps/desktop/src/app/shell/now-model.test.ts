@@ -38,8 +38,20 @@ const none = {
 };
 
 test("each object shows once: pinned first, then active, then kept", () => {
-  const working = session("codex:working", { status: "active" });
-  const pinnedActive = session("codex:pinned", { status: "active" });
+  const working = session("codex:working", {
+    status: {
+      state: "running",
+      source: "native_status_reader",
+      confidence: "approximate",
+    },
+  });
+  const pinnedActive = session("codex:pinned", {
+    status: {
+      state: "running",
+      source: "native_status_reader",
+      confidence: "approximate",
+    },
+  });
   const now = composeNow({
     ...none,
     pinned: [sessionItem("codex:pinned")],
@@ -110,7 +122,13 @@ test("a session in the main area is temporary once it stops being active", () =>
     keepItem: sessionItem("codex:done"),
   });
 
-  const working = session("codex:done", { status: "active" });
+  const working = session("codex:done", {
+    status: {
+      state: "running",
+      source: "native_status_reader",
+      confidence: "approximate",
+    },
+  });
   expect(
     composeNow({
       ...none,

@@ -1,3 +1,4 @@
+import { isAgentTurnActive, requiresUserAction } from "./status";
 import type { AgentSession } from "./types";
 
 /**
@@ -5,15 +6,7 @@ import type { AgentSession } from "./types";
  * terminal. Now lists every active session of the project.
  */
 export function isActiveAgentSession(session: AgentSession): boolean {
-  return (
-    session.status === "active" ||
-    Boolean(session.runtime?.ptyId) ||
-    hasActionableWait(session)
-  );
-}
-
-export function hasActionableWait(session: AgentSession): boolean {
-  return session.status === "active" && Boolean(session.activeFlags?.length);
+  return isAgentTurnActive(session) || Boolean(session.runtime?.ptyId);
 }
 
 export function terminalActivityAt(session: AgentSession): string | undefined {
@@ -43,14 +36,14 @@ export function activeAgentSessions(
 }
 
 function activePriority(session: AgentSession): number {
-  if (hasActionableWait(session)) return 3;
-  if (session.status === "active") return 2;
+  if (requiresUserAction(session)) return 3;
+  if (isAgentTurnActive(session)) return 2;
   if (session.runtime?.ptyId) return 1;
   return 0;
 }
 
 function activityMs(session: AgentSession): number {
-  if (session.status !== "active" && session.runtime?.ptyId) {
+  if (!isAgentTurnActive(session) && session.runtime?.ptyId) {
     return timestampMs(terminalActivityAt(session) ?? session.lastActivityAt);
   }
 

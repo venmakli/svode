@@ -13,7 +13,6 @@ import {
 export type {
   AgentResumeCommand,
   AgentSession,
-  AgentSessionActiveFlag,
   AgentSessionCapabilities,
   AgentSessionCounts,
   AgentSessionFileRef,

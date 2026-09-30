@@ -11,11 +11,11 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::agent_sessions::types::{
-    AgentSessionActiveFlag, AgentSessionCounts, AgentSessionDiagnosticSeverity, AgentSessionSource,
+    AgentSessionCounts, AgentSessionDiagnosticSeverity, AgentSessionSource,
     AgentSessionSourceFileRef, AgentSessionSourceMeta, AgentSessionSourceReport,
-    AgentSessionSourceStatus, AgentSessionStatus, AgentSessionStatusConfidence,
-    AgentSessionTitleSource,
+    AgentSessionSourceStatus, AgentSessionTitleSource,
 };
+use svode_agents::status::SessionState;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -38,7 +38,7 @@ pub(crate) struct PersistedAgentSessionCandidate {
     pub created_at: Option<DateTime<Utc>>,
     pub last_activity_at: Option<DateTime<Utc>>,
     pub source_file: Option<AgentSessionSourceFileRef>,
-    pub status: Option<PersistedAgentSessionStatus>,
+    pub status: Option<NativeStatusEvidence>,
     pub counts: AgentSessionCounts,
     pub source_meta: AgentSessionSourceMeta,
 }
@@ -65,10 +65,10 @@ impl PersistedAgentSessionCandidate {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct PersistedAgentSessionStatus {
-    pub status: AgentSessionStatus,
-    pub active_flags: Vec<AgentSessionActiveFlag>,
-    pub confidence: AgentSessionStatusConfidence,
+/// What the native status reader read from the agent's log tail; always
+/// approximate.
+pub(crate) struct NativeStatusEvidence {
+    pub state: SessionState,
     pub reason: String,
     pub observed_at: Option<DateTime<Utc>>,
     pub waiting_since: Option<DateTime<Utc>>,

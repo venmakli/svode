@@ -106,7 +106,14 @@ test("a hidden window refreshes only hot status of known live sessions", async (
   const api = fakeCatalogApi();
   api.listed = [
     listedSession({ id: "codex:done" }),
-    listedSession({ id: "codex:working", status: "active" }),
+    listedSession({
+      id: "codex:working",
+      status: {
+        state: "running",
+        source: "native_status_reader",
+        confidence: "approximate",
+      },
+    }),
   ];
   const { env, stop } = await startCatalog(api);
   const listsBeforeHidden = count(api, "list:");

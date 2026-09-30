@@ -16,7 +16,7 @@ import { getNativeErrorMessage } from "@/platform/native/errors";
 import { openSessionCwdInExternalTerminal } from "../api";
 import {
   agentSessionNavigationIndex,
-  hasActionableWait,
+  isAgentTurnActive,
   isAgentSessionInScope,
   pinnableAgentSessionItem,
   type AgentSession,
@@ -150,7 +150,7 @@ export function useAgentSessionsCollection({
       const ptyId = terminalOf(session);
       if (!ptyId) return;
       // Closing the terminal of a working or waiting agent interrupts it.
-      if (session.status === "active" || hasActionableWait(session)) {
+      if (isAgentTurnActive(session)) {
         setCloseRequest({ session, ptyId });
       } else {
         closeTerminal({ session, ptyId });
