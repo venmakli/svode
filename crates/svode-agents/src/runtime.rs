@@ -10,6 +10,7 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use serde_json::value::RawValue;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite};
 use tokio::process::Child;
 use tokio::sync::{broadcast, mpsc};
@@ -18,11 +19,12 @@ use crate::acp::normalize::{self, Normalized};
 use crate::acp::rpc::{AUTH_REQUIRED, Incoming, RpcClient, RpcError};
 use crate::acp::{self};
 use crate::activity::{
-    ConnectionState, DetailOutcome, InteractionState, PendingInteraction, SessionDelta,
-    SessionSnapshot,
+    ConnectionState, DetailOutcome, InteractionOption, InteractionState, PendingInteraction,
+    QuestionField, SessionDelta, SessionSnapshot,
 };
 use crate::error::AgentRuntimeError;
 use crate::identity::SessionKey;
+use crate::interaction::{self, AnswerOutcome, InteractionAnswer};
 use crate::process;
 use crate::projection::Projection;
 use crate::status::{InteractionKind, StopReason};
@@ -128,9 +130,32 @@ struct Session {
     acp_id: String,
     connection: Arc<Connection>,
     projection: Mutex<Projection>,
-    /// JSON-RPC id of the request behind the current pending interaction.
-    pending_request: Mutex<Option<(String, Value)>>,
+    /// Locked before `projection` wherever both are held.
+    interactions: Mutex<Interactions>,
     next_interaction: AtomicU64,
+}
+
+#[derive(Default)]
+struct Interactions {
+    open: Option<OpenRequest>,
+    /// Outcome of every resolved interaction of the session, so a repeated
+    /// or stale answer learns it without a side effect.
+    resolved: HashMap<String, InteractionState>,
+}
+
+/// The agent request behind the pending interaction.
+struct OpenRequest {
+    interaction: String,
+    rpc_id: Value,
+    kind: InteractionKind,
+}
+
+impl Interactions {
+    fn close(&mut self, state: InteractionState) -> Option<OpenRequest> {
+        let open = self.open.take()?;
+        self.resolved.insert(open.interaction.clone(), state);
+        Some(open)
+    }
 }
 
 impl AgentRuntime {
@@ -253,7 +278,7 @@ impl AgentRuntime {
             acp_id: acp_id.clone(),
             connection: connection.clone(),
             projection: Mutex::new(Projection::new(key.clone(), state)),
-            pending_request: Mutex::new(None),
+            interactions: Mutex::new(Interactions::default()),
             next_interaction: AtomicU64::new(0),
         });
         connection
@@ -299,8 +324,8 @@ impl AgentRuntime {
                 Err(AgentRuntimeError::ConnectionClosed) => (StopReason::Interrupted, None),
                 Err(error) => (StopReason::Error, Some(error.to_string())),
             };
-            let mut pending_request = session.pending_request.lock().unwrap();
-            pending_request.take();
+            let mut interactions = session.interactions.lock().unwrap();
+            interactions.close(Projection::pending_outcome(reason));
             session
                 .projection
                 .lock()
@@ -315,27 +340,64 @@ impl AgentRuntime {
     /// the prompt or the connection drops. No-op without an active turn.
     pub fn cancel(&self, key: &SessionKey) -> Result<(), AgentRuntimeError> {
         let session = self.session(key)?;
-        // Same lock order as an incoming permission request.
-        let mut pending_request = session.pending_request.lock().unwrap();
+        let mut interactions = session.interactions.lock().unwrap();
         let mut projection = session.projection.lock().unwrap();
         if !projection.turn_active() {
             return Ok(());
         }
         projection.cancelling();
-        if let Some((interaction, request)) = pending_request.take() {
+        if let Some(open) = interactions.close(InteractionState::Cancelled) {
             session
                 .connection
                 .rpc
-                .respond(request, acp::permission_cancelled());
-            projection.resolve_pending(&interaction, InteractionState::Cancelled);
+                .respond(open.rpc_id, acp::cancelled(open.kind));
+            projection.resolve_pending(&open.interaction, InteractionState::Cancelled);
         }
         drop(projection);
-        drop(pending_request);
+        drop(interactions);
         session.connection.rpc.notify(
             acp::SESSION_CANCEL,
             acp::cancel_notification(&session.acp_id),
         );
         Ok(())
+    }
+
+    /// Answers the pending interaction `interaction` once. Any other call —
+    /// a repeat, a stale surface, an unknown id — gets `not_pending` with the
+    /// interaction's state and sends nothing. An answer that does not fit
+    /// the request is refused and the request stays pending.
+    pub fn answer(
+        &self,
+        key: &SessionKey,
+        interaction: &str,
+        answer: InteractionAnswer,
+    ) -> Result<AnswerOutcome, AgentRuntimeError> {
+        let session = self.session(key)?;
+        let mut interactions = session.interactions.lock().unwrap();
+        if interactions
+            .open
+            .as_ref()
+            .is_none_or(|open| open.interaction != interaction)
+        {
+            return Ok(AnswerOutcome::NotPending {
+                state: interactions.resolved.get(interaction).copied(),
+            });
+        }
+        let mut projection = session.projection.lock().unwrap();
+        let pending = projection
+            .pending()
+            .expect("an open request is the pending interaction");
+        interaction::validate(pending, &answer)
+            .map_err(|message| AgentRuntimeError::InvalidAnswer { message })?;
+        let open = interactions
+            .close(InteractionState::Answered)
+            .expect("checked above");
+        session
+            .connection
+            .rpc
+            .respond(open.rpc_id, acp::answer(&answer));
+        projection.resolve_pending(&open.interaction, InteractionState::Answered);
+        Ok(AnswerOutcome::Accepted)
     }
 
     pub fn subscribe(&self, key: &SessionKey) -> Result<SessionSubscription, AgentRuntimeError> {
@@ -469,8 +531,8 @@ impl Connection {
             *current = ConnectionState::Closed;
         }
         for session in self.sessions() {
-            let mut pending_request = session.pending_request.lock().unwrap();
-            pending_request.take();
+            let mut interactions = session.interactions.lock().unwrap();
+            interactions.close(InteractionState::Expired);
             let mut projection = session.projection.lock().unwrap();
             projection.set_connection(ConnectionState::Closed);
             projection.interrupt();
@@ -504,7 +566,10 @@ async fn dispatch(connection: Weak<Connection>, mut incoming: mpsc::UnboundedRec
             Incoming::Request { id, method, params }
                 if method == acp::SESSION_REQUEST_PERMISSION =>
             {
-                request_permission(&connection, id, params);
+                request_permission(&connection, id, &params);
+            }
+            Incoming::Request { id, method, params } if method == acp::ELICITATION_CREATE => {
+                request_question(&connection, id, &params);
             }
             Incoming::Request { id, method, .. } => {
                 connection.rpc.respond_method_not_found(id, &method);
@@ -520,40 +585,86 @@ fn apply(session: &Session, normalized: Normalized) {
     session.projection.lock().unwrap().apply(normalized);
 }
 
-/// Keeps a permission request pending in the session until the user answers
-/// it, the turn is cancelled or the connection is lost. A second concurrent
-/// request, or one for an unknown session, is answered `cancelled`.
-fn request_permission(connection: &Connection, id: Value, params: Value) {
-    let request = match normalize::permission_request(params) {
-        Ok(request) => request,
-        Err(_) => {
-            connection.rpc.respond(id, acp::permission_cancelled());
-            return;
+fn request_permission(connection: &Connection, id: Value, params: &RawValue) {
+    match normalize::permission_request(params.get()) {
+        Ok(request) => open_interaction(
+            connection,
+            id,
+            &request.session_id,
+            InteractionKind::Permission,
+            request.title,
+            request.options,
+            Vec::new(),
+        ),
+        Err(_) => connection.rpc.respond(id, acp::permission_cancelled()),
+    }
+}
+
+/// A form the model does not express is answered `cancel` at once and
+/// named in its session's activity.
+fn request_question(connection: &Connection, id: Value, params: &RawValue) {
+    match normalize::question_request(params.get()) {
+        Ok(request) => open_interaction(
+            connection,
+            id,
+            &request.session_id,
+            InteractionKind::Question,
+            request.title,
+            Vec::new(),
+            request.fields,
+        ),
+        Err(unsupported) => {
+            connection.rpc.respond(id, acp::question_cancelled());
+            if let Some(session) = unsupported
+                .session_id
+                .and_then(|session_id| connection.session(&session_id))
+            {
+                apply(&session, Normalized::Generic(unsupported.reason));
+            }
         }
-    };
-    let Some(session) = connection.session(&request.session_id) else {
-        connection.rpc.respond(id, acp::permission_cancelled());
+    }
+}
+
+/// Keeps an agent request pending in the session until the user answers
+/// it, the turn is cancelled or the connection is lost. A second concurrent
+/// request, or one for an unknown session, is answered `cancel`.
+fn open_interaction(
+    connection: &Connection,
+    id: Value,
+    session_id: &str,
+    kind: InteractionKind,
+    title: String,
+    options: Vec<InteractionOption>,
+    fields: Vec<QuestionField>,
+) {
+    let Some(session) = connection.session(session_id) else {
+        connection.rpc.respond(id, acp::cancelled(kind));
         return;
     };
-    let mut pending_request = session.pending_request.lock().unwrap();
-    if pending_request.is_some() {
-        connection.rpc.respond(id, acp::permission_cancelled());
+    let mut interactions = session.interactions.lock().unwrap();
+    if interactions.open.is_some() {
+        connection.rpc.respond(id, acp::cancelled(kind));
         return;
     }
     let interaction = format!(
         "interaction:{}",
         session.next_interaction.fetch_add(1, Ordering::Relaxed) + 1
     );
-    *pending_request = Some((interaction.clone(), id));
+    interactions.open = Some(OpenRequest {
+        interaction: interaction.clone(),
+        rpc_id: id,
+        kind,
+    });
     session
         .projection
         .lock()
         .unwrap()
         .set_pending(PendingInteraction {
             id: interaction,
-            kind: InteractionKind::Permission,
-            title: normalize::bounded(&request.title, 512),
-            options: request.options,
+            kind,
+            title,
+            options,
+            fields,
             state: InteractionState::Pending,
         });
 }

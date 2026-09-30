@@ -7,6 +7,7 @@ mod acp;
 pub mod activity;
 mod error;
 pub mod identity;
+pub mod interaction;
 mod process;
 mod projection;
 pub mod registry;

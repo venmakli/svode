@@ -23,6 +23,10 @@ pub enum AgentRuntimeError {
     /// A prompt while a turn is active; there is no queue.
     #[error("a turn is already active in this session")]
     TurnActive,
+    /// The answer does not fit what the agent asked; the request stays
+    /// pending.
+    #[error("the answer does not fit the request: {message}")]
+    InvalidAnswer { message: String },
     /// The agent needs its own sign-in; recovery runs the agent's auth.
     #[error("agent requires authentication: {message}")]
     AuthRequired { message: String },

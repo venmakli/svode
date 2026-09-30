@@ -6,13 +6,18 @@ use serde_json::Value;
 use super::wire;
 
 use crate::activity::{
-    DetailBlock, InteractionOption, InteractionOptionKind, ItemStatus, Plan, PlanEntry,
-    PlanEntryPriority, PlanEntryStatus, ToolKind,
+    ChoiceOption, DetailBlock, FieldInput, InteractionOption, InteractionOptionKind, ItemStatus,
+    Plan, PlanEntry, PlanEntryPriority, PlanEntryStatus, QuestionField, ToolKind,
 };
 use crate::status::StopReason;
 
 /// Upper bound for labels taken from unknown agent payloads.
 const LABEL_LIMIT: usize = 80;
+/// Bounds of a pending interaction the runtime hands to consumers.
+pub(crate) const TITLE_LIMIT: usize = 512;
+const QUESTION_LIMIT: usize = 4 * 1024;
+const MAX_FIELDS: usize = 64;
+const MAX_CHOICES: usize = 256;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum MessageRole {
@@ -231,21 +236,24 @@ pub(crate) struct PermissionRequest {
     pub options: Vec<InteractionOption>,
 }
 
-pub(crate) fn permission_request(params: Value) -> Result<PermissionRequest, String> {
+pub(crate) fn permission_request(params: &str) -> Result<PermissionRequest, String> {
     let request: wire::RequestPermission =
-        serde_json::from_value(params).map_err(|error| error.to_string())?;
+        serde_json::from_str(params).map_err(|error| error.to_string())?;
     Ok(PermissionRequest {
         session_id: request.session_id,
-        title: request
-            .tool_call
-            .title
-            .unwrap_or(request.tool_call.tool_call_id),
+        title: bounded(
+            &request
+                .tool_call
+                .title
+                .unwrap_or(request.tool_call.tool_call_id),
+            TITLE_LIMIT,
+        ),
         options: request
             .options
             .into_iter()
             .map(|option| InteractionOption {
                 id: option.option_id,
-                label: option.name,
+                label: bounded(&option.name, TITLE_LIMIT),
                 kind: match option.kind.as_str() {
                     "allow_once" => InteractionOptionKind::AllowOnce,
                     "allow_always" => InteractionOptionKind::AllowAlways,
@@ -256,6 +264,173 @@ pub(crate) fn permission_request(params: Value) -> Result<PermissionRequest, Str
             })
             .collect(),
     })
+}
+
+/// An `elicitation/create` form in Svode terms.
+#[derive(Debug)]
+pub(crate) struct QuestionRequest {
+    pub session_id: String,
+    pub title: String,
+    pub fields: Vec<QuestionField>,
+}
+
+/// An elicitation the model does not express; the runtime answers it
+/// `cancel` and names the reason in the session when it knows the session.
+#[derive(Debug)]
+pub(crate) struct UnsupportedQuestion {
+    pub session_id: Option<String>,
+    pub reason: String,
+}
+
+pub(crate) fn question_request(params: &str) -> Result<QuestionRequest, UnsupportedQuestion> {
+    let request: wire::CreateElicitation =
+        serde_json::from_str(params).map_err(|_| UnsupportedQuestion {
+            session_id: None,
+            reason: "malformed question".into(),
+        })?;
+    let unsupported = |reason: String| UnsupportedQuestion {
+        session_id: request.session_id.clone(),
+        reason: bounded(&reason, LABEL_LIMIT),
+    };
+    let Some(session_id) = request.session_id.clone() else {
+        return Err(unsupported("question outside a session".into()));
+    };
+    if request.mode != "form" {
+        return Err(unsupported(format!("{} question", request.mode)));
+    }
+    let schema = request
+        .requested_schema
+        .ok_or_else(|| unsupported("question without a form".into()))?;
+    if schema.properties.len() > MAX_FIELDS {
+        return Err(unsupported("question with too many fields".into()));
+    }
+    let required = schema.required.unwrap_or_default();
+    let fields = schema
+        .properties
+        .into_iter()
+        .map(|(id, property)| {
+            let required = required.contains(&id);
+            question_field(id, required, property)
+        })
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(unsupported)?;
+    Ok(QuestionRequest {
+        session_id,
+        title: bounded(&request.message, QUESTION_LIMIT),
+        fields,
+    })
+}
+
+fn question_field(id: String, required: bool, property: Value) -> Result<QuestionField, String> {
+    let kind = property
+        .get("type")
+        .and_then(Value::as_str)
+        .map(|kind| bounded(kind, LABEL_LIMIT))
+        .unwrap_or_default();
+    let property: wire::ElicitationProperty =
+        serde_json::from_value(property).map_err(|_| format!("question field of type {kind}"))?;
+    let (title, description, input) = match property {
+        wire::ElicitationProperty::String(text) => {
+            let options = match (text.one_of, text.values) {
+                (Some(options), _) => Some(choices(options)?),
+                (None, Some(values)) => Some(plain_choices(values)?),
+                (None, None) => None,
+            };
+            let input = match options {
+                Some(options) => FieldInput::SingleChoice {
+                    options,
+                    default: text.default,
+                },
+                None => FieldInput::Text {
+                    default: text.default,
+                    min_length: text.min_length,
+                    max_length: text.max_length,
+                    format: text.format,
+                    pattern: text.pattern,
+                },
+            };
+            (text.title, text.description, input)
+        }
+        wire::ElicitationProperty::Number(number) => (
+            number.title,
+            number.description,
+            FieldInput::Number {
+                default: number.default,
+                minimum: number.minimum,
+                maximum: number.maximum,
+            },
+        ),
+        wire::ElicitationProperty::Integer(number) => (
+            number.title,
+            number.description,
+            FieldInput::Integer {
+                default: number.default,
+                minimum: number.minimum,
+                maximum: number.maximum,
+            },
+        ),
+        wire::ElicitationProperty::Boolean(flag) => (
+            flag.title,
+            flag.description,
+            FieldInput::Boolean {
+                default: flag.default,
+            },
+        ),
+        wire::ElicitationProperty::Array(select) => {
+            let options = match (select.items.any_of, select.items.values) {
+                (Some(options), _) => choices(options)?,
+                (None, Some(values)) if select.items.item_type.as_deref() == Some("string") => {
+                    plain_choices(values)?
+                }
+                _ => return Err("question field with unknown choices".into()),
+            };
+            (
+                select.title,
+                select.description,
+                FieldInput::MultipleChoice {
+                    options,
+                    default: select.default,
+                    min_items: select.min_items,
+                    max_items: select.max_items,
+                },
+            )
+        }
+    };
+    Ok(QuestionField {
+        title: bounded(title.as_deref().unwrap_or(&id), TITLE_LIMIT),
+        description: description.map(|text| bounded(&text, QUESTION_LIMIT)),
+        id,
+        required,
+        input,
+    })
+}
+
+fn choices(options: Vec<wire::EnumOption>) -> Result<Vec<ChoiceOption>, String> {
+    if options.len() > MAX_CHOICES {
+        return Err("question field with too many choices".into());
+    }
+    Ok(options
+        .into_iter()
+        .map(|option| ChoiceOption {
+            label: bounded(&option.title, TITLE_LIMIT),
+            description: option.description.map(|text| bounded(&text, TITLE_LIMIT)),
+            id: option.value,
+        })
+        .collect())
+}
+
+fn plain_choices(values: Vec<String>) -> Result<Vec<ChoiceOption>, String> {
+    if values.len() > MAX_CHOICES {
+        return Err("question field with too many choices".into());
+    }
+    Ok(values
+        .into_iter()
+        .map(|value| ChoiceOption {
+            label: bounded(&value, TITLE_LIMIT),
+            description: None,
+            id: value,
+        })
+        .collect())
 }
 
 pub(crate) fn bounded(text: &str, limit: usize) -> String {

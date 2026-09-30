@@ -112,11 +112,7 @@ impl Projection {
             return;
         }
         if let Some(pending) = self.snapshot.pending.clone() {
-            let outcome = match reason {
-                StopReason::Cancelled => InteractionState::Cancelled,
-                _ => InteractionState::Expired,
-            };
-            self.resolve_pending(&pending.id, outcome);
+            self.resolve_pending(&pending.id, Self::pending_outcome(reason));
         }
         self.open_message = None;
         if let Some(message) = error {
@@ -150,6 +146,18 @@ impl Projection {
                 }
             }
         }
+    }
+
+    /// What a request still pending when a turn ends with `reason` becomes.
+    pub(crate) fn pending_outcome(reason: StopReason) -> InteractionState {
+        match reason {
+            StopReason::Cancelled => InteractionState::Cancelled,
+            _ => InteractionState::Expired,
+        }
+    }
+
+    pub(crate) fn pending(&self) -> Option<&PendingInteraction> {
+        self.snapshot.pending.as_ref()
     }
 
     pub(crate) fn set_pending(&mut self, pending: PendingInteraction) {

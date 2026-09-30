@@ -5,6 +5,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use serde::Deserialize;
+use serde_json::value::RawValue;
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::sync::{mpsc, oneshot};
@@ -24,10 +26,11 @@ pub(crate) enum RpcError {
 
 #[derive(Debug)]
 pub(crate) enum Incoming {
+    /// Params stay raw text: a typed parse keeps the agent's key order.
     Request {
         id: Value,
         method: String,
-        params: Value,
+        params: Box<RawValue>,
     },
     Notification {
         method: String,
@@ -90,7 +93,7 @@ impl RpcClient {
                     Ok(_) if line.len() > MAX_LINE_BYTES => break,
                     Ok(_) => {}
                 }
-                let Ok(message) = serde_json::from_slice::<Value>(&line) else {
+                let Ok(message) = serde_json::from_slice::<Message>(&line) else {
                     continue;
                 };
                 route(message, &waiters, &incoming_tx);
@@ -160,19 +163,30 @@ impl RpcClient {
     }
 }
 
-fn route(message: Value, waiters: &Waiters, incoming: &mpsc::UnboundedSender<Incoming>) {
-    let method = message
-        .get("method")
-        .and_then(Value::as_str)
-        .map(str::to_string);
-    let id = message.get("id").cloned().filter(|id| !id.is_null());
-    match (method, id) {
+#[derive(Deserialize)]
+struct Message {
+    #[serde(default)]
+    id: Value,
+    method: Option<String>,
+    params: Option<Box<RawValue>>,
+    result: Option<Value>,
+    error: Option<Value>,
+}
+
+fn route(message: Message, waiters: &Waiters, incoming: &mpsc::UnboundedSender<Incoming>) {
+    let id = Some(message.id).filter(|id| !id.is_null());
+    match (message.method, id) {
         (Some(method), Some(id)) => {
-            let params = message.get("params").cloned().unwrap_or(Value::Null);
+            let params = message
+                .params
+                .unwrap_or_else(|| RawValue::from_string("null".into()).expect("valid JSON"));
             let _ = incoming.send(Incoming::Request { id, method, params });
         }
         (Some(method), None) => {
-            let params = message.get("params").cloned().unwrap_or(Value::Null);
+            let params = message
+                .params
+                .and_then(|params| serde_json::from_str(params.get()).ok())
+                .unwrap_or(Value::Null);
             let _ = incoming.send(Incoming::Notification { method, params });
         }
         (None, Some(id)) => {
@@ -187,15 +201,15 @@ fn route(message: Value, waiters: &Waiters, incoming: &mpsc::UnboundedSender<Inc
             let Some(waiter) = waiter else {
                 return;
             };
-            let result = match message.get("error") {
+            let result = match message.error {
                 Some(error) => Err(RpcError::Remote {
                     code: error
                         .get("code")
                         .and_then(Value::as_i64)
                         .unwrap_or_default(),
-                    message: remote_message(error),
+                    message: remote_message(&error),
                 }),
-                None => Ok(message.get("result").cloned().unwrap_or(Value::Null)),
+                None => Ok(message.result.unwrap_or(Value::Null)),
             };
             let _ = waiter.send(result);
         }

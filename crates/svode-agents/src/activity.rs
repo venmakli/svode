@@ -192,12 +192,82 @@ pub struct InteractionOption {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ChoiceOption {
+    pub id: String,
+    pub label: String,
+    pub description: Option<String>,
+}
+
+/// Input of one question field with the defaults and bounds the agent
+/// declared.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(
+    tag = "type",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
+pub enum FieldInput {
+    /// Free text; `format` and `pattern` are the agent's hints, checked by
+    /// the agent itself.
+    Text {
+        default: Option<String>,
+        min_length: Option<u32>,
+        max_length: Option<u32>,
+        format: Option<String>,
+        pattern: Option<String>,
+    },
+    Number {
+        default: Option<f64>,
+        minimum: Option<f64>,
+        maximum: Option<f64>,
+    },
+    Integer {
+        default: Option<i64>,
+        minimum: Option<i64>,
+        maximum: Option<i64>,
+    },
+    Boolean {
+        default: Option<bool>,
+    },
+    /// One of the options.
+    SingleChoice {
+        options: Vec<ChoiceOption>,
+        default: Option<String>,
+    },
+    /// Any number of the options within the bounds.
+    MultipleChoice {
+        options: Vec<ChoiceOption>,
+        default: Vec<String>,
+        min_items: Option<u64>,
+        max_items: Option<u64>,
+    },
+}
+
+// `f64` fields rule out a derived `Eq`; the agent never sends NaN in JSON.
+impl Eq for FieldInput {}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QuestionField {
+    pub id: String,
+    pub title: String,
+    pub description: Option<String>,
+    pub required: bool,
+    pub input: FieldInput,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PendingInteraction {
     /// Runtime-assigned, unique within the session.
     pub id: String,
     pub kind: InteractionKind,
+    /// The tool call a permission is for, or the question message.
     pub title: String,
+    /// Permission options; empty for a question.
     pub options: Vec<InteractionOption>,
+    /// Question fields in the agent's order; empty for a permission.
+    pub fields: Vec<QuestionField>,
     pub state: InteractionState,
 }
 

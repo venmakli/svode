@@ -8,12 +8,19 @@
 //! the Codex adapter.
 //!
 //! Without `--prompt` it stops after `session/new`, without a paid turn.
+//!
+//! `--on-pending <option kind | decline | cancel>` answers a permission with
+//! its first option of that kind (`allow_once`, `reject_once`, …), declines
+//! a question, or cancels the turn; the answer is then repeated to show
+//! `not_pending`.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use svode_agents::activity::{Change, TurnPhase};
+use svode_agents::activity::{Change, InteractionState, TurnPhase};
+use svode_agents::interaction::InteractionAnswer;
+use svode_agents::status::InteractionKind;
 use svode_agents::{AcpLaunch, AgentRuntime, RuntimeConfig};
 
 #[tokio::main(flavor = "multi_thread")]
@@ -22,6 +29,7 @@ async fn main() {
     let mut agent = "agent".to_string();
     let mut cwd = std::env::current_dir().unwrap();
     let mut prompt = None;
+    let mut on_pending = None;
     let mut env = BTreeMap::new();
     let mut command = Vec::new();
     while let Some(arg) = args.next() {
@@ -29,6 +37,7 @@ async fn main() {
             "--agent" => agent = args.next().expect("--agent value"),
             "--cwd" => cwd = PathBuf::from(args.next().expect("--cwd value")),
             "--prompt" => prompt = Some(args.next().expect("--prompt value")),
+            "--on-pending" => on_pending = Some(args.next().expect("--on-pending value")),
             "--env" => {
                 let pair = args.next().expect("--env KEY=VALUE");
                 let (key, value) = pair.split_once('=').expect("--env KEY=VALUE");
@@ -115,6 +124,40 @@ async fn main() {
                     .collect(),
             };
             println!("seq {} {change}", delta.seq);
+            if let (Change::Pending(pending), Some(action)) = (&delta.change, &on_pending)
+                && pending.state == InteractionState::Pending
+            {
+                if action == "cancel" {
+                    runtime.cancel(&key).unwrap();
+                    println!("cancel requested");
+                    continue;
+                }
+                let answer = match pending.kind {
+                    InteractionKind::Question => InteractionAnswer::Decline,
+                    InteractionKind::Permission => InteractionAnswer::Option {
+                        option_id: pending
+                            .options
+                            .iter()
+                            .find(|option| {
+                                serde_json::to_value(option.kind).unwrap() == action.as_str()
+                            })
+                            .expect("an option of the requested kind")
+                            .id
+                            .clone(),
+                    },
+                };
+                for attempt in ["answer", "repeat"] {
+                    let outcome = runtime.answer(&key, &pending.id, answer.clone());
+                    println!(
+                        "{attempt} {}: {}",
+                        pending.id,
+                        match outcome {
+                            Ok(outcome) => serde_json::to_string(&outcome).unwrap(),
+                            Err(error) => error.to_string(),
+                        }
+                    );
+                }
+            }
         }
         let fresh = runtime.subscribe(&key).unwrap().snapshot;
         println!(

@@ -4,7 +4,10 @@ use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, DuplexStream, ReadHalf, WriteHalf};
 
 use super::*;
-use crate::activity::{Change, DetailBlock, ItemKind, ItemStatus, TurnPhase, UnavailableReason};
+use crate::activity::{
+    Change, DetailBlock, FieldInput, ItemKind, ItemStatus, TurnPhase, UnavailableReason,
+};
+use crate::interaction::FieldValue;
 use crate::status::{SessionState, SessionStatus};
 
 /// The agent end of an in-memory ACP transport, driven step by step.
@@ -54,6 +57,8 @@ impl ScriptedAgent {
     /// Answers `initialize` and `session/new` with session id `s1`.
     async fn open_session(&mut self) {
         let initialize = self.expect("initialize").await;
+        let capabilities = &initialize["params"]["clientCapabilities"];
+        assert_eq!(capabilities["elicitation"], json!({ "form": {} }));
         self.reply(
             &initialize,
             json!({
@@ -539,5 +544,342 @@ async fn a_hung_agent_times_out_into_degraded_and_can_be_stopped() {
     assert_eq!(
         runtime.connection_status(connection).unwrap().state,
         ConnectionState::Closed
+    );
+}
+
+fn permission(id: Value) -> Value {
+    json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "method": "session/request_permission",
+        "params": {
+            "sessionId": "s1",
+            "toolCall": { "toolCallId": "t1", "title": "Run npm test" },
+            "options": [
+                { "optionId": "allow", "name": "Allow", "kind": "allow_once" },
+                { "optionId": "reject", "name": "Reject", "kind": "reject_once" }
+            ]
+        }
+    })
+}
+
+/// A Codex `request_user_input` as `codex-acp` sends it: keys out of
+/// alphabetical order, a choice with an "other" note field.
+fn question(id: Value) -> String {
+    format!(
+        r#"{{"jsonrpc":"2.0","id":{id},"method":"elicitation/create","params":{{"sessionId":"s1","toolCallId":"t2","mode":"form","message":"Codex needs your input to continue.","requestedSchema":{{"type":"object","properties":{{"target":{{"type":"string","title":"Which branch?","oneOf":[{{"const":"main","title":"main"}},{{"const":"dev","title":"dev","description":"Integration"}}]}},"target_note":{{"type":"string","title":"Additional answer or note","maxLength":20}},"force":{{"type":"boolean","title":"Force push?","default":false}}}},"required":["target","force"]}}}}}}"#
+    )
+}
+
+async fn start_turn(
+    runtime: &AgentRuntime,
+) -> (SessionKey, ScriptedAgent, SessionSubscription, Value) {
+    let (_, key, mut agent) = session(runtime).await;
+    let subscription = runtime.subscribe(&key).unwrap();
+    runtime.prompt(&key, "work").unwrap();
+    let prompt = agent.expect("session/prompt").await;
+    (key, agent, subscription, prompt)
+}
+
+/// Follows until a request is pending and the status shows it.
+async fn until_pending(subscription: &mut SessionSubscription) -> PendingInteraction {
+    follow(subscription, |snapshot| {
+        snapshot.pending.is_some()
+            && matches!(
+                snapshot.turn.status.state,
+                SessionState::RequiresAction { .. }
+            )
+    })
+    .await;
+    subscription.snapshot.pending.clone().unwrap()
+}
+
+fn option(id: &str) -> InteractionAnswer {
+    InteractionAnswer::Option {
+        option_id: id.into(),
+    }
+}
+
+#[tokio::test]
+async fn a_permission_is_answered_once_and_later_answers_are_not_pending() {
+    let runtime = AgentRuntime::default();
+    let (key, mut agent, mut subscription, prompt) = start_turn(&runtime).await;
+    agent.send(permission(json!("perm-1"))).await;
+    let pending = until_pending(&mut subscription).await;
+    assert_eq!(pending.kind, InteractionKind::Permission);
+    assert_eq!(pending.title, "Run npm test");
+
+    assert!(matches!(
+        runtime.answer(&key, &pending.id, option("maybe")),
+        Err(AgentRuntimeError::InvalidAnswer { .. })
+    ));
+    assert!(matches!(
+        runtime.answer(&key, &pending.id, InteractionAnswer::Decline),
+        Err(AgentRuntimeError::InvalidAnswer { .. })
+    ));
+    assert_eq!(
+        runtime.answer(&key, "interaction:99", option("allow")),
+        Ok(AnswerOutcome::NotPending { state: None })
+    );
+    assert_eq!(
+        runtime.subscribe(&key).unwrap().snapshot.pending,
+        Some(pending.clone()),
+        "a refused answer leaves the request pending"
+    );
+
+    assert_eq!(
+        runtime.answer(&key, &pending.id, option("allow")),
+        Ok(AnswerOutcome::Accepted)
+    );
+    let answer = agent.recv().await;
+    assert_eq!(answer["id"], "perm-1");
+    assert_eq!(
+        answer["result"],
+        json!({ "outcome": { "outcome": "selected", "optionId": "allow" } })
+    );
+    let deltas = follow(&mut subscription, |snapshot| {
+        snapshot.pending.is_none() && snapshot.turn.status.state == SessionState::Running
+    })
+    .await;
+    assert!(deltas.iter().any(|delta| matches!(
+        &delta.change,
+        Change::Pending(resolved) if resolved.state == InteractionState::Answered
+    )));
+
+    // A repeat and a surface reloaded after the answer both see the outcome.
+    let reloaded = runtime.subscribe(&key).unwrap();
+    assert_eq!(reloaded.snapshot.pending, None);
+    for _ in 0..2 {
+        assert_eq!(
+            runtime.answer(&key, &pending.id, option("reject")),
+            Ok(AnswerOutcome::NotPending {
+                state: Some(InteractionState::Answered)
+            })
+        );
+    }
+
+    // Nothing more reaches the agent: its next message is the turn end.
+    agent
+        .reply(&prompt, json!({ "stopReason": "end_turn" }))
+        .await;
+    follow(&mut subscription, idle).await;
+    agent.send(permission(json!("perm-2"))).await;
+    follow(&mut subscription, |snapshot| snapshot.pending.is_some()).await;
+    let next = subscription.snapshot.pending.clone().unwrap();
+    assert_ne!(next.id, pending.id, "ids are unique within the session");
+}
+
+#[tokio::test]
+async fn a_question_form_keeps_the_agent_order_and_takes_valid_values_only() {
+    let runtime = AgentRuntime::default();
+    let (key, mut agent, mut subscription, _) = start_turn(&runtime).await;
+    agent
+        .output
+        .write_all(format!("{}\n", question(json!(21))).as_bytes())
+        .await
+        .unwrap();
+    let pending = until_pending(&mut subscription).await;
+    assert_eq!(pending.kind, InteractionKind::Question);
+    assert_eq!(pending.title, "Codex needs your input to continue.");
+    assert!(pending.options.is_empty());
+    let ids: Vec<_> = pending
+        .fields
+        .iter()
+        .map(|field| field.id.as_str())
+        .collect();
+    assert_eq!(ids, ["target", "target_note", "force"]);
+    assert!(pending.fields[0].required && !pending.fields[1].required);
+    assert_eq!(pending.fields[0].title, "Which branch?");
+    let FieldInput::SingleChoice { options, .. } = &pending.fields[0].input else {
+        panic!("expected a single choice");
+    };
+    assert_eq!(options[1].description.as_deref(), Some("Integration"));
+    assert_eq!(
+        pending.fields[2].input,
+        FieldInput::Boolean {
+            default: Some(false)
+        }
+    );
+    assert_eq!(
+        subscription.snapshot.turn.status.state,
+        SessionState::RequiresAction {
+            request: InteractionKind::Question
+        }
+    );
+
+    let form = |values: Vec<(&str, FieldValue)>| InteractionAnswer::Form {
+        values: values
+            .into_iter()
+            .map(|(id, value)| (id.to_string(), value))
+            .collect(),
+    };
+    for invalid in [
+        form(vec![("target", FieldValue::Text("main".into()))]),
+        form(vec![
+            ("target", FieldValue::Text("prod".into())),
+            ("force", FieldValue::Boolean(true)),
+        ]),
+        form(vec![
+            ("target", FieldValue::Text("main".into())),
+            ("force", FieldValue::Text("yes".into())),
+        ]),
+        option("main"),
+    ] {
+        assert!(
+            matches!(
+                runtime.answer(&key, &pending.id, invalid),
+                Err(AgentRuntimeError::InvalidAnswer { .. })
+            ),
+            "invalid answers are refused"
+        );
+    }
+    assert_eq!(
+        runtime.answer(
+            &key,
+            &pending.id,
+            form(vec![
+                ("target", FieldValue::Text("dev".into())),
+                ("target_note", FieldValue::Text("after review".into())),
+                ("force", FieldValue::Boolean(false)),
+            ])
+        ),
+        Ok(AnswerOutcome::Accepted)
+    );
+    let answer = agent.recv().await;
+    assert_eq!(answer["id"], 21);
+    assert_eq!(
+        answer["result"],
+        json!({
+            "action": "accept",
+            "content": { "target": "dev", "target_note": "after review", "force": false }
+        })
+    );
+    assert_eq!(
+        runtime.answer(&key, &pending.id, InteractionAnswer::Decline),
+        Ok(AnswerOutcome::NotPending {
+            state: Some(InteractionState::Answered)
+        })
+    );
+}
+
+#[tokio::test]
+async fn a_declined_question_answers_decline() {
+    let runtime = AgentRuntime::default();
+    let (key, mut agent, mut subscription, _) = start_turn(&runtime).await;
+    agent
+        .output
+        .write_all(format!("{}\n", question(json!(3))).as_bytes())
+        .await
+        .unwrap();
+    let pending = until_pending(&mut subscription).await;
+    assert_eq!(
+        runtime.answer(&key, &pending.id, InteractionAnswer::Decline),
+        Ok(AnswerOutcome::Accepted)
+    );
+    assert_eq!(agent.recv().await["result"], json!({ "action": "decline" }));
+}
+
+#[tokio::test]
+async fn cancel_answers_a_pending_question_cancel_and_later_answers_are_not_pending() {
+    let runtime = AgentRuntime::default();
+    let (key, mut agent, mut subscription, prompt) = start_turn(&runtime).await;
+    agent
+        .output
+        .write_all(format!("{}\n", question(json!("q-1"))).as_bytes())
+        .await
+        .unwrap();
+    let pending = until_pending(&mut subscription).await;
+
+    runtime.cancel(&key).unwrap();
+    let answer = agent.recv().await;
+    assert_eq!(answer["id"], "q-1");
+    assert_eq!(answer["result"], json!({ "action": "cancel" }));
+    agent.expect("session/cancel").await;
+    assert_eq!(
+        runtime.answer(&key, &pending.id, InteractionAnswer::Decline),
+        Ok(AnswerOutcome::NotPending {
+            state: Some(InteractionState::Cancelled)
+        })
+    );
+    agent
+        .reply(&prompt, json!({ "stopReason": "cancelled" }))
+        .await;
+    follow(&mut subscription, idle).await;
+    assert_eq!(
+        runtime.answer(&key, &pending.id, InteractionAnswer::Decline),
+        Ok(AnswerOutcome::NotPending {
+            state: Some(InteractionState::Cancelled)
+        })
+    );
+}
+
+#[tokio::test]
+async fn a_lost_connection_expires_the_pending_request_for_later_answers() {
+    let runtime = AgentRuntime::default();
+    let (key, mut agent, mut subscription, _) = start_turn(&runtime).await;
+    agent.send(permission(json!(5))).await;
+    let pending = until_pending(&mut subscription).await;
+    drop(agent);
+    follow(&mut subscription, idle).await;
+    assert_eq!(
+        runtime.answer(&key, &pending.id, option("allow")),
+        Ok(AnswerOutcome::NotPending {
+            state: Some(InteractionState::Expired)
+        })
+    );
+}
+
+#[tokio::test]
+async fn questions_the_model_does_not_express_are_cancelled_with_a_diagnostic() {
+    let runtime = AgentRuntime::default();
+    let (key, mut agent, mut subscription, _) = start_turn(&runtime).await;
+    let requests = [
+        json!({ "sessionId": "s1", "mode": "url", "message": "Sign in", "url": "https://example.com", "elicitationId": "e1" }),
+        json!({ "sessionId": "s1", "mode": "form", "message": "Pick", "requestedSchema": { "type": "object", "properties": { "x": { "type": "_custom" } } } }),
+        json!({ "sessionId": "s1", "mode": "form", "message": "Pick", "requestedSchema": { "type": "object", "properties": { "x": { "type": "array", "items": { "type": "_custom" } } } } }),
+        json!({ "requestId": 1, "mode": "form", "message": "Pick", "requestedSchema": { "type": "object", "properties": {} } }),
+        json!({ "sessionId": "other", "mode": "form", "message": "Pick", "requestedSchema": { "type": "object", "properties": {} } }),
+    ];
+    for (index, params) in requests.into_iter().enumerate() {
+        agent
+            .send(json!({ "jsonrpc": "2.0", "id": index, "method": "elicitation/create", "params": params }))
+            .await;
+        let answer = agent.recv().await;
+        assert_eq!(answer["id"], index);
+        assert_eq!(answer["result"], json!({ "action": "cancel" }));
+    }
+    let diagnostics = follow(&mut subscription, |snapshot| {
+        snapshot
+            .items
+            .iter()
+            .filter(|item| matches!(item.kind, ItemKind::Generic { .. }))
+            .count()
+            == 3
+    })
+    .await;
+    assert!(diagnostics.iter().any(|delta| matches!(
+        &delta.change,
+        Change::Item(item) if item.kind == ItemKind::Generic { label: "url question".into() }
+    )));
+    assert!(runtime.subscribe(&key).unwrap().snapshot.pending.is_none());
+}
+
+#[tokio::test]
+async fn a_second_concurrent_request_is_cancelled_by_its_own_kind() {
+    let runtime = AgentRuntime::default();
+    let (_, mut agent, mut subscription, _) = start_turn(&runtime).await;
+    agent.send(permission(json!(1))).await;
+    until_pending(&mut subscription).await;
+    agent
+        .output
+        .write_all(format!("{}\n", question(json!(2))).as_bytes())
+        .await
+        .unwrap();
+    let answer = agent.recv().await;
+    assert_eq!(answer["id"], 2);
+    assert_eq!(answer["result"], json!({ "action": "cancel" }));
+    assert_eq!(
+        subscription.snapshot.pending.as_ref().unwrap().kind,
+        InteractionKind::Permission
     );
 }
