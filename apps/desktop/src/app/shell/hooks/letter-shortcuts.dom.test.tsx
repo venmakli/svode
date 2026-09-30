@@ -104,11 +104,10 @@ if (process.env.SVODE_LETTER_DOM !== "1") {
   mock.module("../model", () => ({
     useShellStore: () => ({ openAppSettings() {}, toggleChatPanel() {} }),
   }));
-  mock.module("@/features/collection/app-shell", () => ({
-    useCollectionDetailController: () => null,
-    runCollectionNavigation: (_: unknown, action: () => void) => {
+  mock.module("../navigation-guards", () => ({
+    passNavigationGuards: async () => {
       calls.guard++;
-      if (allowNavigation) action();
+      return allowNavigation;
     },
   }));
   mock.module("../working-set", () => ({

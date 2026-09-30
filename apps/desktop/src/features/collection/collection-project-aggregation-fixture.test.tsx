@@ -423,7 +423,6 @@ function createRecordingDetailController() {
       requests.push(request);
       return true;
     },
-    prepareForNavigation: async () => true,
   };
   return { controller, requests };
 }
@@ -521,7 +520,7 @@ test("project aggregate owns dedupe, grouping, provenance, and target routing", 
   ]);
 });
 
-test("scope-local and project instances retain the same shell and Drawer seam", async () => {
+test("scope-local and project instances retain the same shell and detail seam", async () => {
   const { aggregate } = createProjectFixture();
   const local = createLocalFixture();
   const localMarkup = renderPresentation(local.instance, local.presentation);

@@ -13,7 +13,6 @@ test("detail activation owns selection and merges owner and Collection actions",
         requests.push(request);
         return true;
       },
-      prepareForNavigation: async () => true,
     },
     createContent: (row: { id: string }) => ({
       content: row.id,
@@ -49,7 +48,6 @@ test("detail activation preserves a guarded controller rejection", async () => {
     controller: {
       close: async () => true,
       open: async () => false,
-      prepareForNavigation: async () => true,
     },
     createContent: () => ({
       content: null,

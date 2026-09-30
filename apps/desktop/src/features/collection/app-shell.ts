@@ -1,15 +1,10 @@
 export { collectionShortcuts } from "./model/shortcuts";
 export { calendarScopes } from "./model/calendar-utils";
 export {
+  CollectionDetailPeekHost,
   useCollectionDetailController,
-  useOptionalCollectionDetailController,
-} from "./app-shell/detail-controller-context";
-export {
-  focusCollectionDetailTarget,
-  runCollectionNavigation,
-} from "./app-shell/detail-controller";
-export { createCollectionDetailActivation } from "./app-shell/detail-activation";
-export { CollectionDetailDrawerProvider } from "./app-shell/detail-drawer";
+} from "./detail-peek/detail-peek";
+export { createCollectionDetailActivation } from "./detail-peek/detail-activation";
 export type { CalendarScope } from "./model/calendar-types";
 export type {
   CollectionDetailContent,
@@ -17,7 +12,7 @@ export type {
   CollectionDetailFocusOptions,
   CollectionDetailRequest,
   CollectionDetailSelection,
-} from "./app-shell/types";
+} from "./detail-peek/types";
 export type {
   CollectionPeekSurfaceState,
   CollectionRouteState,

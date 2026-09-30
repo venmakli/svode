@@ -12,7 +12,7 @@ import {
 } from "@/features/collection";
 import {
   createCollectionDetailActivation,
-  useOptionalCollectionDetailController,
+  useCollectionDetailController,
 } from "@/features/collection/app-shell";
 import {
   RepositoryAccessPreflightDialog,
@@ -69,7 +69,7 @@ export function ActorsSurface({
     }),
     [onOpenRepositorySettings, owner.spacePath, repositoryOwnerName],
   );
-  const detailController = useOptionalCollectionDetailController();
+  const detailController = useCollectionDetailController();
   const surfaceRef = useRef<HTMLDivElement | null>(null);
   const [focusRowId, setFocusRowId] = useState<string | null>(null);
   const instanceKey = `actors:${owner.ownerKey}`;

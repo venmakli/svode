@@ -41,7 +41,7 @@ const actor: ActorCatalogRow = {
   ],
 };
 
-test("actors rows open in the real DOM and use shared row and Drawer action seams", async () => {
+test("actors rows open in the real DOM and use shared row and detail action seams", async () => {
   const dom = new JSDOM(
     "<!doctype html><html><body><div id=app></div></body></html>",
     { pretendToBeVisual: true, url: "http://localhost/" },
@@ -54,7 +54,6 @@ test("actors rows open in the real DOM and use shared row and Drawer action seam
       requests.push(request);
       return true;
     },
-    prepareForNavigation: async () => true,
   };
   const presentation = createActorsPresentation({
     onActivate: createCollectionDetailActivation({
@@ -96,10 +95,10 @@ test("actors rows open in the real DOM and use shared row and Drawer action seam
     });
     expect(requests.length).toBe(1);
 
-    const drawerActions = renderToStaticMarkup(
+    const detailActions = renderToStaticMarkup(
       <>{requests[0]?.headerActions}</>,
     );
-    expect(drawerActions.includes('aria-label="Row actions"')).toBe(true);
+    expect(detailActions.includes('aria-label="Row actions"')).toBe(true);
 
     for (const key of ["Enter", " "]) {
       await act(async () => {

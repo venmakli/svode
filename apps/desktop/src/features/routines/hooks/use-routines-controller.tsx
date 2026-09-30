@@ -7,7 +7,7 @@ import {
 } from "@/features/collection";
 import {
   createCollectionDetailActivation,
-  useOptionalCollectionDetailController,
+  useCollectionDetailController,
 } from "@/features/collection/app-shell";
 import type { ScopeOpenItem, ScopeOwnerRef } from "@/features/scope-surfaces";
 import * as m from "@/paraglide/messages.js";
@@ -56,7 +56,7 @@ export function useRoutinesController(
     retryAutomaticConsent: automaticConsent.retry,
   });
   const executors = useRoutineExecutors(owner.projectPath, owner.spacePath);
-  const detailController = useOptionalCollectionDetailController();
+  const detailController = useCollectionDetailController();
   const instanceKey = `routines:${owner.ownerKey}`;
   const onDetailInvalidated = useCallback(async () => {
     await detailController?.close();

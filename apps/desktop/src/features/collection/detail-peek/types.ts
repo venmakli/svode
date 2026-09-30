@@ -13,6 +13,8 @@ export interface CollectionDetailRequest {
   content: ReactNode;
   headerActions?: ReactNode;
   footerActions?: ReactNode;
+  /** An editing form keeps the narrow form width; readers get reading width. */
+  layout?: "form" | "reader";
   canClose?: () => boolean | Promise<boolean>;
 }
 
@@ -27,7 +29,6 @@ export interface CollectionDetailController {
     focusOptions?: CollectionDetailFocusOptions,
   ): Promise<boolean>;
   close(selection?: CollectionDetailSelection): Promise<boolean>;
-  prepareForNavigation(): Promise<boolean>;
 }
 
 export type CollectionDetailContent = Omit<

@@ -25,7 +25,12 @@ export interface CollectionDetailControllerStore {
 }
 
 interface CreateCollectionDetailControllerStoreInput {
-  guardErrorMessage: string;
+  guardErrorMessage(): string;
+  /**
+   * Adds the close guard of the open detail to the navigation guards of the
+   * app; returns its removal. A passed guard closes the detail.
+   */
+  registerNavigationGuard?(guard: () => Promise<boolean>): () => void;
 }
 
 const initialSnapshot: CollectionDetailControllerSnapshot = {
@@ -37,8 +42,10 @@ const initialSnapshot: CollectionDetailControllerSnapshot = {
 
 export function createCollectionDetailControllerStore({
   guardErrorMessage,
+  registerNavigationGuard,
 }: CreateCollectionDetailControllerStoreInput): CollectionDetailControllerStore {
   let snapshot = initialSnapshot;
+  let unregisterNavigationGuard: (() => void) | null = null;
   let restoreFocus: CollectionDetailFocusOptions = {};
   let transitionTail: Promise<void> = Promise.resolve();
   let queuedTransitions = 0;
@@ -46,6 +53,13 @@ export function createCollectionDetailControllerStore({
 
   function publish(patch: Partial<CollectionDetailControllerSnapshot>): void {
     snapshot = { ...snapshot, ...patch };
+    if (snapshot.active && !unregisterNavigationGuard) {
+      unregisterNavigationGuard =
+        registerNavigationGuard?.(() => controller.close()) ?? null;
+    } else if (!snapshot.active && unregisterNavigationGuard) {
+      unregisterNavigationGuard();
+      unregisterNavigationGuard = null;
+    }
     for (const listener of listeners) {
       listener();
     }
@@ -84,7 +98,7 @@ export function createCollectionDetailControllerStore({
         diagnostic:
           error instanceof Error && error.message
             ? error.message
-            : guardErrorMessage,
+            : guardErrorMessage(),
       });
       return false;
     }
@@ -180,22 +194,6 @@ export function createCollectionDetailControllerStore({
         return true;
       });
     },
-
-    prepareForNavigation() {
-      return enqueue(async () => {
-        const current = snapshot.active;
-        if (!current) {
-          return true;
-        }
-        if (!(await canLeaveActiveDetail())) {
-          return false;
-        }
-
-        restoreFocus = current.focus;
-        publish({ active: null, diagnostic: null });
-        return true;
-      });
-    },
   };
 
   return {
@@ -219,17 +217,6 @@ export function createCollectionDetailControllerStore({
       return () => listeners.delete(listener);
     },
   };
-}
-
-export async function runCollectionNavigation(
-  controller: CollectionDetailController,
-  transition: () => void | Promise<void>,
-): Promise<boolean> {
-  if (!(await controller.prepareForNavigation())) {
-    return false;
-  }
-  await transition();
-  return true;
 }
 
 export function collectionDetailSelectionEquals(

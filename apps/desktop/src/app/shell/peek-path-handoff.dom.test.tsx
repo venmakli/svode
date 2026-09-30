@@ -76,8 +76,6 @@ if (process.env.SVODE_PEEK_PATH_HANDOFF_TEST !== "1") {
   const { CompactScopePeek } = await import("./compact-scope-peek");
   const { TooltipProvider } = await import("@/components/ui/tooltip");
   const { ThemeProvider } = await import("@/components/ui/theme-provider");
-  const { CollectionDetailDrawerProvider } =
-    await import("@/features/collection/app-shell");
   const { createCollectionDirectoryOwner } =
     await import("@/features/scope-surfaces");
   const { emit } = await import("@/platform/native/events");
@@ -227,9 +225,7 @@ if (process.env.SVODE_PEEK_PATH_HANDOFF_TEST !== "1") {
     root.render(
       <ThemeProvider theme="light" setTheme={() => {}}>
         <TooltipProvider>
-          <CollectionDetailDrawerProvider>
-            {children}
-          </CollectionDetailDrawerProvider>
+          {children}
         </TooltipProvider>
       </ThemeProvider>,
     );

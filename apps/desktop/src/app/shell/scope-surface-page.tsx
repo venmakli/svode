@@ -12,10 +12,7 @@ import { AgentContextSurface } from "@/features/agent-context";
 import { AgentSessionsSurface } from "@/features/agent-sessions";
 import { ActorsSurface } from "@/features/actors";
 import { RoutinesSurface } from "@/features/routines";
-import {
-  runCollectionNavigation,
-  useCollectionDetailController,
-} from "@/features/collection/app-shell";
+import { useCollectionDetailController } from "@/features/collection/app-shell";
 import {
   CollectionViewsSurface,
   type CollectionViewsSurfaceProps,
@@ -104,7 +101,6 @@ export function ScopeSurfacePage({
   const collectionRouteState =
     presentation === "compact" ? (routeState ?? compactRouteState) : routeState;
   const openPage = useOpenPage();
-  const detailController = useCollectionDetailController();
   const openSessionPeek = useShellStore((state) => state.openSessionPeek);
   const openSpaceSettings = useShellStore((state) => state.openSpaceSettings);
   const openAppSettings = useShellStore((state) => state.openAppSettings);
@@ -117,14 +113,11 @@ export function ScopeSurfacePage({
     [openSpaceSettings],
   );
   const openSessionRoutine = useOpenSessionRoutine();
+  // A session opened from the routine detail is its child peek.
   const openRoutineSession = useCallback(
-    ({ sessionId, launchId }: { sessionId: string; launchId: string }) => {
-      // Until the routine detail becomes a peek, its Drawer closes first.
-      void runCollectionNavigation(detailController, () => {
-        openSessionPeek({ sessionId, launchId });
-      });
-    },
-    [detailController, openSessionPeek],
+    ({ sessionId, launchId }: { sessionId: string; launchId: string }) =>
+      openSessionPeek({ sessionId, launchId }),
+    [openSessionPeek],
   );
   const openPath = useCallback(
     (path: string, spaceId?: string | null) =>
@@ -277,11 +270,8 @@ function ScopePageSurfaceHost({
   }, [pagePath, readmePath, onContentPathChange]);
   useEffect(
     () =>
-      registerNavigationGuard?.(async () => {
-        if (!(await detailController.prepareForNavigation())) return false;
-        return pageSurface.prepareToLeave();
-      }),
-    [detailController, pageSurface, registerNavigationGuard],
+      registerNavigationGuard?.(() => pageSurface.prepareToLeave()),
+    [pageSurface, registerNavigationGuard],
   );
   usePublishMainChangesTarget(
     props.presentation === "full"
@@ -333,7 +323,7 @@ function ScopePageSurfaceHost({
         />
       )}
       prepareForSurfaceChange={async () => {
-        if (!(await detailController.prepareForNavigation())) return false;
+        if (!(await detailController.close())) return false;
         return pageSurface.prepareForNavigation();
       }}
     />

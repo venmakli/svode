@@ -6,13 +6,9 @@ import {
   type AgentSessionScopeGroup,
   type AgentSessionTarget,
 } from "@/features/agent-sessions";
-import { prepareActiveContentDeactivation } from "@/features/artifact";
-import {
-  runCollectionNavigation,
-  useCollectionDetailController,
-} from "@/features/collection/app-shell";
 import { useSpace } from "@/features/space";
 import { useShellStore } from "./model";
+import { passNavigationGuards } from "./navigation-guards";
 import { useOpenSessionRoutine } from "./open-session-routine";
 
 /**
@@ -21,7 +17,6 @@ import { useOpenSessionRoutine } from "./open-session-routine";
  * the main area unless the sidebar opened it.
  */
 export function useOpenSessionInMainArea() {
-  const passGuards = useMainAreaGuards();
   const showSession = useShowSessionInMainArea();
 
   return useCallback(
@@ -30,11 +25,11 @@ export function useOpenSessionInMainArea() {
       session: AgentSession | null,
       options?: { focus?: boolean },
     ) => {
-      if (!(await passGuards())) return false;
+      if (!(await passNavigationGuards())) return false;
       showSession(sessionTarget, sessionSpaceOf(session), options);
       return true;
     },
-    [passGuards, showSession],
+    [showSession],
   );
 }
 
@@ -43,13 +38,12 @@ export function useOpenSessionInMainArea() {
  * terminal. The guards pass first: a cancelled one starts no terminal.
  */
 export function useStartSessionInMainArea() {
-  const passGuards = useMainAreaGuards();
   const showSession = useShowSessionInMainArea();
   const startSession = useStartAgentSession();
 
   return useCallback(
     async (scope: AgentSessionScopeGroup) => {
-      if (!(await passGuards())) return;
+      if (!(await passNavigationGuards())) return;
       const target = await startSession(scope.path);
       if (!target) return;
       showSession(
@@ -58,7 +52,7 @@ export function useStartSessionInMainArea() {
         { focusTerminal: true },
       );
     },
-    [passGuards, showSession, startSession],
+    [showSession, startSession],
   );
 }
 
@@ -70,15 +64,6 @@ function sessionSpaceOf(session: AgentSession | null): SessionSpace {
     return { spaceId: session.spaceId };
   }
   return session?.scopeKind === "project" ? { spaceId: null } : null;
-}
-
-/** The guards of the open peek stack and the main area object. */
-function useMainAreaGuards() {
-  const detailController = useCollectionDetailController();
-  return useCallback(async () => {
-    if (!(await detailController.prepareForNavigation())) return false;
-    return (await prepareActiveContentDeactivation()) !== "blocked";
-  }, [detailController]);
 }
 
 function useShowSessionInMainArea() {
@@ -130,21 +115,18 @@ export function AgentSessionPeekHost() {
 }
 
 /**
- * Starts a new session in a Space and opens it in the session peek. Until the
- * routine detail becomes a peek, an open Drawer closes first; a cancelled
- * guard starts no terminal.
+ * Starts a new session in a Space and opens it in the session peek over the
+ * current context.
  */
 export function useStartSessionInPeek() {
   const startSession = useStartAgentSession();
   const openSessionPeek = useShellStore((state) => state.openSessionPeek);
-  const detailController = useCollectionDetailController();
   return useCallback(
     (spacePath: string) => {
-      void runCollectionNavigation(detailController, async () => {
-        const target = await startSession(spacePath);
+      void startSession(spacePath).then((target) => {
         if (target) openSessionPeek(target, { focusTerminal: true });
       });
     },
-    [detailController, openSessionPeek, startSession],
+    [openSessionPeek, startSession],
   );
 }

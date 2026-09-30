@@ -48,7 +48,6 @@ if (process.env.SVODE_NEW_SESSION_ROW_DOM !== "1") {
 
   let selection: Selection | null = null;
   let session: { spaceId: string | null } | null = null;
-  let drawerAllows = true;
   let contentAllows = true;
   const started: string[] = [];
   const openedSpaces: (string | null)[] = [];
@@ -79,12 +78,6 @@ if (process.env.SVODE_NEW_SESSION_ROW_DOM !== "1") {
     prepareActiveContentDeactivation: async () =>
       contentAllows ? "ready" : "blocked",
   }));
-  mock.module("@/features/collection/app-shell", () => ({
-    useCollectionDetailController: () => ({
-      prepareForNavigation: async () => drawerAllows,
-    }),
-    runCollectionNavigation: async () => {},
-  }));
   mock.module("@/features/space", () => ({
     useSpace: (selector: (state: unknown) => unknown) =>
       selector({
@@ -112,7 +105,6 @@ if (process.env.SVODE_NEW_SESSION_ROW_DOM !== "1") {
   async function reset() {
     selection = null;
     session = null;
-    drawerAllows = true;
     contentAllows = true;
     started.length = 0;
     openedSpaces.length = 0;
@@ -161,11 +153,6 @@ if (process.env.SVODE_NEW_SESSION_ROW_DOM !== "1") {
   test("a cancelled guard starts no terminal", async () => {
     await reset();
     await render();
-    drawerAllows = false;
-    await act(async () =>
-      onStart!({ kind: "space", scopeId: "docs", path: "/project/docs" }),
-    );
-    drawerAllows = true;
     contentAllows = false;
     await act(async () =>
       onStart!({ kind: "space", scopeId: "docs", path: "/project/docs" }),

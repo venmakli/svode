@@ -96,9 +96,6 @@ test("closing edit clears its session so unrelated rerenders cannot reopen it", 
       openCount += 1;
       return true;
     },
-    async prepareForNavigation() {
-      return true;
-    },
   };
   const root = createRoot(dom.window.document.getElementById("app")!);
 
@@ -142,9 +139,6 @@ test("an open read-only Detail receives current diagnostics without reopening af
     async open(request) {
       latestRequest = request;
       openCount += 1;
-      return true;
-    },
-    async prepareForNavigation() {
       return true;
     },
   };

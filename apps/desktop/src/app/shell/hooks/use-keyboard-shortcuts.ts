@@ -41,15 +41,11 @@ import {
 } from "@/features/terminal";
 import { useShellStore } from "../model";
 import { useWorkingSetActions } from "../working-set";
+import { passNavigationGuards } from "../navigation-guards";
 import * as m from "@/paraglide/messages.js";
-import {
-  runCollectionNavigation,
-  useCollectionDetailController,
-} from "@/features/collection/app-shell";
 import { useCollectionActivePresentationId } from "@/features/collection";
 
 export function useKeyboardShortcuts() {
-  const detailController = useCollectionDetailController();
   const { closeMainAreaObject } = useWorkingSetActions();
   const activeContentPath = useActiveContentPath();
   const activeContentSpaceId = useActiveContentSpaceId();
@@ -158,7 +154,8 @@ export function useKeyboardShortcuts() {
       // Cmd+Shift+O — go to home / all projects
       if (matchesPhysicalShortcut(e, "KeyO", true)) {
         e.preventDefault();
-        void runCollectionNavigation(detailController, () => {
+        void passNavigationGuards().then((ready) => {
+          if (!ready) return;
           goHome();
           navigate({ to: "/" });
         });
@@ -180,7 +177,6 @@ export function useKeyboardShortcuts() {
     openAppSettings,
     goHome,
     navigate,
-    detailController,
     terminalAvailable,
     toggleTerminal,
   ]);

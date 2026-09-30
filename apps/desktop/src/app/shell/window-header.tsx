@@ -24,7 +24,7 @@ import { GitSyncStatusWidget } from "@/features/git/app-shell";
 import { MainBreadcrumbs } from "@/features/space/app-shell";
 import { ProjectExternalOpenButton } from "@/features/external-open";
 import { ProjectSwitcher } from "./project-switcher";
-import { useCollectionDetailController } from "@/features/collection/app-shell";
+import { passNavigationGuards } from "./navigation-guards";
 import {
   AgentSessionBreadcrumbs,
   useAgentSessionSpace,
@@ -101,7 +101,6 @@ export function ShellChrome() {
 export function WindowHeader() {
   const changesTarget = useMainChangesTarget();
   const { selection } = useActiveContentSelection();
-  const detailController = useCollectionDetailController();
   const activeContentPath = useActiveContentPath();
   const toggleChatPanel = useShellStore((state) => state.toggleChatPanel);
   const mainSurface = useShellStore((state) => state.mainSurface);
@@ -144,9 +143,7 @@ export function WindowHeader() {
     >
       <div className="flex min-w-0 flex-1 items-center gap-2">
         {showBreadcrumbs && (
-          <MainBreadcrumbs
-            onBeforeNavigation={detailController.prepareForNavigation}
-          />
+          <MainBreadcrumbs onBeforeNavigation={passNavigationGuards} />
         )}
         {isSpaceRoute && mainSessionTarget && (
           <AgentSessionBreadcrumbs target={mainSessionTarget} />

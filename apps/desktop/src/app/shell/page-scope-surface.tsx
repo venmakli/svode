@@ -72,7 +72,7 @@ export function PageScopeSurface({
       }
       previousOwnerKey={ownerKeys.previous}
       prepareForSurfaceChange={async (currentSurfaceId) => {
-        if (!(await detailController.prepareForNavigation())) return false;
+        if (!(await detailController.close())) return false;
         return currentSurfaceId === "readme"
           ? pageSurface.prepareForNavigation()
           : true;

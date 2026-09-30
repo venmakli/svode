@@ -1,12 +1,9 @@
 import { useCallback } from "react";
 import { useOpenScopeOwner } from "@/features/artifact";
-import {
-  runCollectionNavigation,
-  useCollectionDetailController,
-} from "@/features/collection/app-shell";
 import type { RoutineLaunchLink } from "@/features/routines/catalog";
 import { getSpaceSnapshot, useSpace } from "@/features/space";
 import { useShellStore } from "./model";
+import { passNavigationGuards } from "./navigation-guards";
 
 /**
  * "Open routine" of a session: the Routines tab of the routine's owner in the
@@ -14,7 +11,6 @@ import { useShellStore } from "./model";
  * new main area object also ends the session peek.
  */
 export function useOpenSessionRoutine() {
-  const detailController = useCollectionDetailController();
   const openContentSurface = useShellStore((state) => state.openContentSurface);
   const openScopeOwner = useOpenScopeOwner();
   const openSpace = useSpace((state) => state.openSpace);
@@ -22,7 +18,8 @@ export function useOpenSessionRoutine() {
 
   return useCallback(
     (routine: RoutineLaunchLink) => {
-      void runCollectionNavigation(detailController, () => {
+      void passNavigationGuards().then((ready) => {
+        if (!ready) return;
         const { activeRootId, activeSpaceId } = getSpaceSnapshot();
         const spaceId = routine.spaceId ?? activeRootId;
         openContentSurface();
@@ -46,7 +43,6 @@ export function useOpenSessionRoutine() {
     },
     [
       clearActiveSpace,
-      detailController,
       openContentSurface,
       openScopeOwner,
       openSpace,

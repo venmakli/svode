@@ -8,7 +8,6 @@ import {
   closeActiveContent,
   prepareActiveContentDeactivation,
 } from "@/features/artifact";
-import { useCollectionDetailController } from "@/features/collection/app-shell";
 import {
   artifactNavigationKey,
   getNavigationState,
@@ -115,7 +114,6 @@ export function useKeepEditedObjects() {
 export function useWorkingSetActions() {
   const object = useMainAreaObject();
   const activeSessions = useActiveAgentSessions();
-  const detailController = useCollectionDetailController();
   const openContentSurface = useShellStore((state) => state.openContentSurface);
   const closeGraphSurface = useShellStore((state) => state.closeGraphSurface);
 
@@ -143,14 +141,13 @@ export function useWorkingSetActions() {
 
   /** Closes the display after the guards; the main page of its Space shows. */
   const closeDisplay = useCallback(async () => {
-    if (!(await detailController.prepareForNavigation())) return false;
     if ((await prepareActiveContentDeactivation()) === "blocked") return false;
     if (useShellStore.getState().mainSurface === "session") {
       openContentSurface();
     }
     closeActiveContent();
     return true;
-  }, [detailController, openContentSurface]);
+  }, [openContentSurface]);
 
   /**
    * ⌘W without a peek: the Graph returns to its object; the main area object

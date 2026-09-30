@@ -123,14 +123,12 @@ if (process.env.SVODE_COMPACT_SCOPE_TEST !== "1") {
     PageDeleteDialog: () => null,
   }));
   mock.module(
-    "@/features/collection/app-shell/detail-controller-context",
+    "@/features/collection/detail-peek/detail-peek",
     () => ({
-      CollectionDetailStoreProvider: ({ children }: { children: ReactNode }) =>
-        children,
-      useCollectionDetailStore: () => null,
-      useOptionalCollectionDetailController: () => null,
+      CollectionDetailPeekHost: () => null,
       useCollectionDetailController: () => ({
-        prepareForNavigation: async () => allowCollectionNavigation,
+        close: async () => allowCollectionNavigation,
+        open: async () => true,
       }),
     }),
   );

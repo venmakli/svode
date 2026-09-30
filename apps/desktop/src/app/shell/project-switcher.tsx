@@ -25,10 +25,7 @@ import { useSpace } from "@/features/space";
 import { cn } from "@/shared/lib/utils";
 import { useShellStore } from "./model";
 import * as m from "@/paraglide/messages.js";
-import {
-  runCollectionNavigation,
-  useCollectionDetailController,
-} from "@/features/collection/app-shell";
+import { passNavigationGuards } from "./navigation-guards";
 
 interface ProjectSwitcherProps {
   className?: string;
@@ -36,7 +33,6 @@ interface ProjectSwitcherProps {
 
 export function ProjectSwitcher({ className }: ProjectSwitcherProps) {
   const navigate = useNavigate();
-  const detailController = useCollectionDetailController();
   const { rootSpaces, activeRootId, activeRootName, activeRootIcon, goHome } =
     useSpace();
   const openContentSurface = useCallback(() => {
@@ -58,15 +54,14 @@ export function ProjectSwitcher({ className }: ProjectSwitcherProps) {
     setCloneDialogOpen,
     setCreateDialogOpen,
   } = useRootProjectWorkflow({
-    beforeRootOpen: detailController.prepareForNavigation,
+    beforeRootOpen: passNavigationGuards,
     onRootOpened: openContentSurface,
   });
 
-  function handleHome() {
-    void runCollectionNavigation(detailController, () => {
-      goHome();
-      navigate({ to: "/" });
-    });
+  async function handleHome() {
+    if (!(await passNavigationGuards())) return;
+    goHome();
+    navigate({ to: "/" });
   }
 
   return (
@@ -92,7 +87,7 @@ export function ProjectSwitcher({ className }: ProjectSwitcherProps) {
                 side="bottom"
                 sideOffset={4}
               >
-                <DropdownMenuItem onClick={handleHome}>
+                <DropdownMenuItem onClick={() => void handleHome()}>
                   <Home />
                   {m.sidebar_all_projects()}
                 </DropdownMenuItem>

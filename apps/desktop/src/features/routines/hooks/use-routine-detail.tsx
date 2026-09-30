@@ -186,6 +186,7 @@ export function useRoutineDetail({
             </Button>
           </div>
         ),
+        layout: "form",
         selection,
         title: routineDetailTitle({
           ...session.row,

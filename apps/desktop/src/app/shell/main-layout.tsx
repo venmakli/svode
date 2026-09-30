@@ -1,5 +1,4 @@
 import {
-  useCallback,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -27,10 +26,7 @@ import {
   useOpenCommandPalette,
 } from "@/features/search/app-shell";
 import { TerminalPanelHost } from "@/features/terminal";
-import {
-  CollectionDetailDrawerProvider,
-  useCollectionDetailController,
-} from "@/features/collection/app-shell";
+import { CollectionDetailPeekHost } from "@/features/collection/app-shell";
 import { setActiveContentShown } from "@/features/artifact";
 import { useSpace, useSpaceActions } from "@/features/space";
 import { SpaceFileWatcher, SpaceSidebar } from "@/features/space/app-shell";
@@ -68,6 +64,7 @@ import { useOpenSessionRoutine } from "./open-session-routine";
 import { NowSidebarSection } from "./now-sidebar-section";
 import { PinnedSidebarSection } from "./pinned-sidebar-section";
 import { useKeepEditedObjects } from "./working-set";
+import { passNavigationGuards } from "./navigation-guards";
 import { cn } from "@/shared/lib/utils";
 
 type SidebarProviderStyle = CSSProperties & {
@@ -95,16 +92,13 @@ interface DesktopResizableShellProps {
 export function MainLayout() {
   return (
     <TooltipProvider delayDuration={300}>
-      <CollectionDetailDrawerProvider>
-        <MainLayoutRuntime />
-      </CollectionDetailDrawerProvider>
+      <MainLayoutRuntime />
     </TooltipProvider>
   );
 }
 
 function MainLayoutRuntime() {
   const navigate = useNavigate();
-  const detailController = useCollectionDetailController();
   useKeyboardShortcuts();
   useKeepEditedObjects();
   useAppGitFocus();
@@ -147,11 +141,6 @@ function MainLayoutRuntime() {
     }),
     [sidebarWidth],
   );
-  const prepareForNavigation = useCallback(
-    () => detailController.prepareForNavigation(),
-    [detailController],
-  );
-
   useEffect(() => {
     openContentSurface();
   }, [openContentSurface]);
@@ -202,17 +191,18 @@ function MainLayoutRuntime() {
         identityEmail={identityEmail}
         mainSurface={mainSurface}
         onActivateContent={openContentSurface}
-        onBeforeNavigation={prepareForNavigation}
+        onBeforeNavigation={passNavigationGuards}
         onOpenSearch={() => setCommandPaletteOpen(true)}
         onOpenAppSettings={openAppSettings}
       />
       <AgentSessionCatalogHost projectPath={activeRootPath} />
+      <CollectionDetailPeekHost />
       <AgentSessionPeekHost />
       <SpaceFileWatcher />
       {activeRootPath && <SpaceGitWatcher spacePath={activeRootPath} />}
       <GitMissingDialog open={available === false} onRecheck={recheck} />
       <CommandPalette
-        onBeforeNavigation={prepareForNavigation}
+        onBeforeNavigation={passNavigationGuards}
         onAfterNavigation={openContentSurface}
         onOpenGraph={openGraphSurface}
       />

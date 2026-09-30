@@ -9,7 +9,7 @@ import {
 } from "@/features/collection";
 import {
   createCollectionDetailActivation,
-  useOptionalCollectionDetailController,
+  useCollectionDetailController,
 } from "@/features/collection/app-shell";
 import type { ScopeSurfaceRenderContext } from "@/features/scope-surfaces";
 
@@ -41,7 +41,7 @@ export function AgentContextSurface({ owner }: ScopeSurfaceRenderContext) {
     projectPath: owner.projectPath,
     spacePath: owner.spacePath,
   });
-  const detailController = useOptionalCollectionDetailController();
+  const detailController = useCollectionDetailController();
   const [openedRow, setOpenedRow] = useState<OpenedAgentContextRow | null>(
     null,
   );

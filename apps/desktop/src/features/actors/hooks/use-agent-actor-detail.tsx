@@ -221,6 +221,7 @@ export function useAgentActorDetail({
             )}
           </div>
         ),
+        layout: "form",
         selection,
         title: detailTitle(editSession.row),
       })

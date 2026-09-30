@@ -3,7 +3,6 @@ import { expect, test } from "bun:test";
 import {
   createCollectionDetailControllerStore,
   focusCollectionDetailTarget,
-  runCollectionNavigation,
 } from "./detail-controller";
 import type {
   CollectionDetailRequest,
@@ -36,7 +35,7 @@ function request(
 
 function createStore() {
   return createCollectionDetailControllerStore({
-    guardErrorMessage: "Close check failed",
+    guardErrorMessage: () => "Close check failed",
   });
 }
 
@@ -194,20 +193,29 @@ test("queued intents never run close guards in parallel", async () => {
   );
 });
 
-test("navigation veto leaves app navigation state untouched", async () => {
-  const store = createStore();
-  let destination = "actors";
-  await store.controller.open(
-    request(firstSelection, { canClose: () => false }),
-  );
-
-  const navigated = await runCollectionNavigation(store.controller, () => {
-    destination = "sessions";
+test("an open detail joins the navigation guards; a passed guard closes it", async () => {
+  const guards: (() => Promise<boolean>)[] = [];
+  const store = createCollectionDetailControllerStore({
+    guardErrorMessage: () => "Close check failed",
+    registerNavigationGuard: (guard) => {
+      guards.push(guard);
+      return () => guards.splice(guards.indexOf(guard), 1);
+    },
   });
+  let allowClose = false;
+  await store.controller.open(
+    request(firstSelection, { canClose: () => allowClose }),
+  );
+  await store.controller.open(request(secondSelection, { canClose: () => allowClose }));
+  expect(guards.length).toBe(1);
 
-  expect(navigated).toBe(false);
-  expect(destination).toBe("actors");
+  expect(await guards[0]!()).toBe(false);
   expect(store.getSnapshot().active?.request.selection).toEqual(firstSelection);
+
+  allowClose = true;
+  expect(await guards[0]!()).toBe(true);
+  expect(store.getSnapshot().active).toBeNull();
+  expect(guards.length).toBe(0);
 });
 
 test("focus restoration falls back when the original trigger disappeared", () => {

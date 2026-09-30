@@ -4,10 +4,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { Sheet } from "@/components/ui/sheet";
 
 import type { CollectionDetailActiveState } from "./detail-controller";
-import {
-  CollectionDetailDrawerFrame,
-  collectionDetailDrawerStyle,
-} from "./detail-drawer";
+import { CollectionDetailPeekFrame } from "./detail-peek";
 
 const active: CollectionDetailActiveState = {
   focus: {},
@@ -25,23 +22,26 @@ const active: CollectionDetailActiveState = {
   },
 };
 
-test("detail drawer keeps equal top, right, and bottom viewport insets", () => {
-  expect(collectionDetailDrawerStyle.top).toBe("0.75rem");
-  expect(collectionDetailDrawerStyle.right).toBe("0.75rem");
-  expect(collectionDetailDrawerStyle.bottom).toBe("0.75rem");
-});
-
-test("detail frame keeps accessible semantics, diagnostic, actions, and its own scroll viewport", () => {
-  const markup = renderToStaticMarkup(
+function renderFrame(
+  state: CollectionDetailActiveState,
+  props: { diagnostic?: string | null; pending?: boolean } = {},
+) {
+  return renderToStaticMarkup(
     <Sheet open>
-      <CollectionDetailDrawerFrame
-        active={active}
-        diagnostic="Save the actor before leaving"
-        pending={false}
+      <CollectionDetailPeekFrame
+        active={state}
+        diagnostic={props.diagnostic ?? null}
+        pending={props.pending ?? false}
         onClose={() => undefined}
       />
     </Sheet>,
   );
+}
+
+test("detail frame keeps accessible semantics, diagnostic, actions, and its own scroll viewport", () => {
+  const markup = renderFrame(active, {
+    diagnostic: "Save the actor before leaving",
+  });
 
   expect(markup.includes("Ada Lovelace")).toBe(true);
   expect(markup.includes("Repository identity and aliases")).toBe(true);
@@ -56,17 +56,21 @@ test("detail frame keeps accessible semantics, diagnostic, actions, and its own 
   expect(markup.includes('role="alert"')).toBe(true);
 });
 
+test("forms keep the former detail width and readers a reading width", () => {
+  const reader = renderFrame(active);
+  const form = renderFrame({
+    ...active,
+    request: { ...active.request, layout: "form" },
+  });
+
+  expect(reader.includes("max-w-3xl")).toBe(true);
+  expect(reader.includes("max-w-[30rem]")).toBe(false);
+  expect(form.includes("max-w-[30rem]")).toBe(true);
+  expect(form.includes("max-w-3xl")).toBe(false);
+});
+
 test("pending guard disables explicit close without removing detail content", () => {
-  const markup = renderToStaticMarkup(
-    <Sheet open>
-      <CollectionDetailDrawerFrame
-        active={active}
-        diagnostic={null}
-        pending
-        onClose={() => undefined}
-      />
-    </Sheet>,
-  );
+  const markup = renderFrame(active, { pending: true });
 
   expect(markup.includes("disabled")).toBe(true);
   expect(markup.includes("Actor details body")).toBe(true);
