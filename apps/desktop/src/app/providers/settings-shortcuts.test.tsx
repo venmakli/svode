@@ -18,6 +18,7 @@ test("app composition contains the full active inventory", () => {
     "close-content",
     "home",
     "sidebar",
+    "terminal",
     "open-folder",
     "close-window",
     "create-project",
