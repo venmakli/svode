@@ -44,6 +44,25 @@ pub(crate) struct NewSessionResponse {
     pub session_id: String,
 }
 
+/// Entries are read one by one, so one malformed entry does not fail the
+/// page.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ListSessionsResponse {
+    #[serde(default)]
+    pub sessions: Vec<Value>,
+    pub next_cursor: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SessionInfo {
+    pub session_id: String,
+    pub cwd: String,
+    pub title: Option<String>,
+    pub updated_at: Option<String>,
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct PromptResponse {

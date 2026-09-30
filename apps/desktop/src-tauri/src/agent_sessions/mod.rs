@@ -1,3 +1,4 @@
+mod acp_list;
 mod cache;
 pub mod commands;
 mod live_status;
@@ -11,6 +12,7 @@ pub mod types;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
+use acp_list::AcpListSources;
 use cache::AgentSessionsReadCache;
 use cache::AgentSessionsSourceScanLocks;
 use refresh::AgentSessionsReadCoordinator;
@@ -21,6 +23,7 @@ pub struct AgentSessionsState {
     pub(crate) cache: Arc<Mutex<AgentSessionsReadCache>>,
     pub(crate) reads: AgentSessionsReadCoordinator,
     pub(crate) source_scan_locks: Arc<AgentSessionsSourceScanLocks>,
+    pub(crate) acp_lists: Arc<AcpListSources>,
 }
 
 impl AgentSessionsState {
@@ -34,8 +37,18 @@ impl AgentSessionsState {
             cache: Arc::new(Mutex::new(AgentSessionsReadCache::default())),
             reads: AgentSessionsReadCoordinator::default(),
             source_scan_locks: Arc::new(AgentSessionsSourceScanLocks::default()),
+            acp_lists: Arc::new(AcpListSources::default()),
         }
     }
+}
+
+/// Reads each listing agent's catalogue again whenever the runtime's own
+/// work changed it; runs for the life of the app process.
+pub fn follow_acp_catalog_changes(state: &AgentSessionsState, runtime: svode_agents::AgentRuntime) {
+    tauri::async_runtime::spawn(acp_list::follow_catalog_changes(
+        state.acp_lists.clone(),
+        runtime,
+    ));
 }
 
 impl Default for AgentSessionsState {

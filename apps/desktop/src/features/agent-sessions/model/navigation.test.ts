@@ -16,6 +16,7 @@ function report(
 ): AgentSessionSourceReport {
   return {
     source,
+    kind: "native-log",
     status,
     rootPath: `/home/${source}`,
     scannedAt: "2026-09-29T10:00:00Z",

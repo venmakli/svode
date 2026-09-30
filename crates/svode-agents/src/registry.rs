@@ -577,6 +577,10 @@ impl AdapterRuntimeRegistry {
             )]),
             cwd: cwd.to_path_buf(),
             acp_id_is_native: false,
+            // The transitional scanners stay the one declared catalogue
+            // source of Codex and Claude Code until the provider matrix
+            // records identity equality and coverage (slice 2.5b).
+            lists_catalog: false,
         }
     }
 }
@@ -1327,6 +1331,7 @@ mod tests {
             Some("/bin/claude")
         );
         assert!(!launch.acp_id_is_native);
+        assert!(!launch.lists_catalog);
     }
 
     #[test]

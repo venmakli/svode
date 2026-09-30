@@ -104,6 +104,19 @@ pub enum AgentSessionSourceStatus {
     PartialError,
     Unreadable,
     Error,
+    /// The last good list is shown; the agent did not answer the latest
+    /// read or is not connected.
+    Stale,
+}
+
+/// How a source reads the agent's sessions: its native store on disk or
+/// the agent's own `session/list` over ACP.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum AgentSessionSourceKind {
+    #[default]
+    NativeLog,
+    AcpList,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -305,6 +318,8 @@ pub struct AgentSessionsHotStatusResult {
 #[serde(rename_all = "camelCase")]
 pub struct AgentSessionSourceReport {
     pub source: AgentSessionSource,
+    #[serde(default)]
+    pub kind: AgentSessionSourceKind,
     pub status: AgentSessionSourceStatus,
     pub root_path: String,
     pub scanned_at: String,
@@ -337,6 +352,7 @@ impl AgentSessionSourceReport {
     pub(crate) fn new(source: AgentSessionSource, root: String) -> Self {
         Self {
             source,
+            kind: AgentSessionSourceKind::NativeLog,
             status: AgentSessionSourceStatus::Ok,
             root_path: root,
             scanned_at: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),

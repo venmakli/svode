@@ -131,6 +131,12 @@ pub fn run() {
             }
             #[cfg(target_os = "macos")]
             macos_fullscreen::install(app.handle());
+            agent_sessions::follow_acp_catalog_changes(
+                &app.state::<agent_sessions::AgentSessionsState>(),
+                app.state::<agent_runtime::AgentRuntimeState>()
+                    .runtime()
+                    .clone(),
+            );
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 let updated_from = installation::take_ownership(&handle).await;

@@ -9,6 +9,7 @@ use super::refresh::AgentSessionsReadKind;
 use super::types::{
     AgentSessionReentryResult, AgentSessionsHotStatusResult, AgentSessionsListResult,
 };
+use crate::agent_runtime::AgentRuntimeState;
 use crate::error::AppError;
 use crate::process::path_env::ProcessPath;
 use crate::terminal::TerminalManager;
@@ -18,10 +19,13 @@ pub async fn agent_sessions_list(
     app: AppHandle,
     state: State<'_, AgentSessionsState>,
     terminal_manager: State<'_, TerminalManager>,
+    agent_runtime: State<'_, AgentRuntimeState>,
     project_path: String,
 ) -> Result<AgentSessionsListResult, AppError> {
     let root = super::scope::normalize_project_path(&project_path)?;
     crate::git::delivery::repair_scope_best_effort(&app, &root, &root).await;
+    // Off the response path: this read shows the last good lists.
+    state.acp_lists.refresh(agent_runtime.runtime());
     let state = state.inner().clone();
     let terminal_manager = terminal_manager.inner().clone();
     let project_key = root.to_string_lossy().into_owned();
@@ -50,10 +54,13 @@ pub async fn agent_sessions_refresh(
     app: AppHandle,
     state: State<'_, AgentSessionsState>,
     terminal_manager: State<'_, TerminalManager>,
+    agent_runtime: State<'_, AgentRuntimeState>,
     project_path: String,
 ) -> Result<AgentSessionsListResult, AppError> {
     let root = super::scope::normalize_project_path(&project_path)?;
     crate::git::delivery::repair_scope_best_effort(&app, &root, &root).await;
+    // Off the response path: this read shows the last good lists.
+    state.acp_lists.refresh(agent_runtime.runtime());
     let state = state.inner().clone();
     let terminal_manager = terminal_manager.inner().clone();
     let project_key = root.to_string_lossy().into_owned();

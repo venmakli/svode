@@ -15,6 +15,7 @@ use crate::agent_sessions::types::{
     AgentSessionSourceFileRef, AgentSessionSourceMeta, AgentSessionSourceReport,
     AgentSessionSourceStatus, AgentSessionTitleSource,
 };
+use svode_agents::identity::IdentityNamespace;
 use svode_agents::status::SessionState;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -29,6 +30,14 @@ pub(crate) enum CandidateCwdSource {
 pub(crate) struct PersistedAgentSessionCandidate {
     pub source: AgentSessionSource,
     pub source_session_id: String,
+    /// Id space of `source_session_id`; ACP ids without recorded equality
+    /// evidence never merge with native rows.
+    #[serde(default = "native_namespace", skip_serializing_if = "is_native")]
+    pub namespace: IdentityNamespace,
+    /// Listed by the agent's `session/list`, not read from its store: no
+    /// source file, counts or readable log.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub from_acp_list: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub launch_id: Option<String>,
     pub title: Option<String>,
@@ -48,6 +57,8 @@ impl PersistedAgentSessionCandidate {
         Self {
             source,
             source_session_id,
+            namespace: IdentityNamespace::Native,
+            from_acp_list: false,
             launch_id: None,
             title: None,
             title_source: AgentSessionTitleSource::SessionId,
@@ -61,6 +72,28 @@ impl PersistedAgentSessionCandidate {
             source_meta: AgentSessionSourceMeta::default(),
         }
     }
+
+    /// Catalogue id of the session: source and native id; an ACP id without
+    /// equality evidence keeps its own namespace, so it never meets a
+    /// native row of the same agent.
+    pub(crate) fn session_id(&self) -> String {
+        match self.namespace {
+            IdentityNamespace::Native => {
+                format!("{}:{}", self.source.as_str(), self.source_session_id)
+            }
+            IdentityNamespace::Acp => {
+                format!("{}:acp:{}", self.source.as_str(), self.source_session_id)
+            }
+        }
+    }
+}
+
+fn native_namespace() -> IdentityNamespace {
+    IdentityNamespace::Native
+}
+
+fn is_native(namespace: &IdentityNamespace) -> bool {
+    *namespace == IdentityNamespace::Native
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

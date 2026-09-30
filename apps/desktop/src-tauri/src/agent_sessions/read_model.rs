@@ -7,6 +7,7 @@ use std::time::Instant;
 use chrono::{SecondsFormat, Utc};
 
 use super::AgentSessionsState;
+use super::acp_list::AcpListRead;
 use super::cache::{
     SourceRead, candidates_for_session_ids, disk_snapshot_reads, memory_is_empty, read_source,
     source_root, update_candidate, write_snapshot,
@@ -43,6 +44,7 @@ pub(crate) fn list_sessions_with_surfaces(
     let scope_index = ScopeIndex::new(&project, load_child_spaces(&project)?)?;
     let generated_at = Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true);
 
+    let acp_reads = state.acp_lists.reads();
     if !force_refresh
         && memory_is_empty(state)?
         && let Some(reads) = disk_snapshot_reads(state, &project, Instant::now())?
@@ -52,6 +54,7 @@ pub(crate) fn list_sessions_with_surfaces(
             &scope_index,
             generated_at,
             reads,
+            acp_reads,
             force_refresh,
             Some(AgentSessionsCacheMode::StaleSnapshot),
             &terminal_surfaces,
@@ -69,6 +72,7 @@ pub(crate) fn list_sessions_with_surfaces(
         &scope_index,
         generated_at,
         reads,
+        acp_reads,
         force_refresh,
         None,
         &terminal_surfaces,
@@ -81,6 +85,7 @@ fn build_list_result(
     scope_index: &ScopeIndex,
     generated_at: String,
     reads: Vec<SourceRead>,
+    acp_reads: Vec<AcpListRead>,
     force_refresh: bool,
     cache_mode_override: Option<AgentSessionsCacheMode>,
     terminal_surfaces: &[AgentTerminalSurface],
@@ -92,34 +97,49 @@ fn build_list_result(
     let mut source_hits = 0usize;
     let mut source_misses = 0usize;
 
-    for mut read in reads {
+    let native_ids = reads
+        .iter()
+        .flat_map(|read| &read.candidates)
+        .map(PersistedAgentSessionCandidate::session_id)
+        .collect::<HashSet<_>>();
+    for read in &reads {
         if read.cache_hit {
             source_hits += 1;
         } else {
             source_misses += 1;
         }
+    }
+    let reads = reads
+        .into_iter()
+        .map(|read| (read.candidates, read.report))
+        .chain(
+            acp_reads
+                .into_iter()
+                .map(|read| listed_candidates(read, &native_ids)),
+        );
 
-        summary.malformed_lines += read.report.counts.malformed_lines;
-        summary.source_errors += read.report.counts.source_errors;
+    for (candidates, mut report) in reads {
+        summary.malformed_lines += report.counts.malformed_lines;
+        summary.source_errors += report.counts.source_errors;
 
-        for candidate in read.candidates {
+        for candidate in candidates {
             let Some(scope) = resolve_scope(scope_index, &candidate, home) else {
-                read.report.counts.unresolved_candidates += 1;
+                report.counts.unresolved_candidates += 1;
                 summary.unresolved_candidates += 1;
                 continue;
             };
             let Some(last_activity_at) = candidate.last_activity_at else {
-                read.report.counts.incomplete_candidates += 1;
+                report.counts.incomplete_candidates += 1;
                 summary.incomplete_candidates += 1;
                 continue;
             };
 
             let session = map_candidate(candidate, scope, last_activity_at, terminal_surfaces);
-            read.report.counts.returned_sessions += 1;
+            report.counts.returned_sessions += 1;
             sessions.push(session);
         }
 
-        reports.push(read.report);
+        reports.push(report);
     }
 
     append_provisional_sessions(&mut sessions, terminal_surfaces, scope_index, home, None);
@@ -154,6 +174,40 @@ fn build_list_result(
             source_misses,
         },
     })
+}
+
+/// Candidates of one agent's ACP list. A session a native source already
+/// reported under the same key stays one record with that source's
+/// metadata: the key, not cwd, title or time, decides.
+fn listed_candidates(
+    read: AcpListRead,
+    native_ids: &HashSet<String>,
+) -> (
+    Vec<PersistedAgentSessionCandidate>,
+    AgentSessionSourceReport,
+) {
+    let candidates = read
+        .sessions
+        .into_iter()
+        .map(|listed| {
+            let mut candidate =
+                PersistedAgentSessionCandidate::new(read.source, listed.key.session_id);
+            candidate.namespace = listed.key.namespace;
+            candidate.from_acp_list = true;
+            if let Some(title) = listed.title {
+                candidate.title = Some(title);
+                candidate.title_source = AgentSessionTitleSource::CliTitle;
+            }
+            candidate.cwd = Some(listed.cwd.to_string_lossy().into_owned());
+            candidate.last_activity_at = listed
+                .updated_at
+                .as_deref()
+                .and_then(super::sources::parse_timestamp_str);
+            candidate
+        })
+        .filter(|candidate| !native_ids.contains(&candidate.session_id()))
+        .collect();
+    (candidates, read.report)
 }
 
 pub(crate) fn hot_status_with_surfaces(
@@ -421,6 +475,7 @@ fn list_status(reports: &[AgentSessionSourceReport], no_sessions: bool) -> Agent
             AgentSessionSourceStatus::PartialError
                 | AgentSessionSourceStatus::Unreadable
                 | AgentSessionSourceStatus::Error
+                | AgentSessionSourceStatus::Stale
         )
     });
     let non_missing = reports
@@ -444,9 +499,12 @@ mod tests {
     use crate::agent_sessions::live_status::SOURCE_LOG_ACTIVE_STALE_AFTER_SECS;
     use crate::agent_sessions::types::{
         AgentSessionScopeConfidence, AgentSessionScopeKind, AgentSessionScopeStatus,
+        AgentSessionSourceKind,
     };
     use crate::terminal::{AgentTerminalStatusEvidence, AgentTerminalSurface};
-    use svode_agents::status::{InteractionKind, StatusConfidence, StatusSource, StopReason};
+    use svode_agents::status::{
+        InteractionKind, SessionStatus, StatusConfidence, StatusSource, StopReason,
+    };
 
     const PERMISSION: SessionState = SessionState::RequiresAction {
         request: InteractionKind::Permission,
@@ -1909,5 +1967,213 @@ mod tests {
 
         assert_eq!(result.sessions.len(), 1);
         assert!(!serialized.contains("SECRET_TOOL_INPUT"));
+    }
+
+    fn acp_list(
+        state: &AgentSessionsState,
+        agent: &str,
+        native: bool,
+        sessions: Vec<(&str, &Path, Option<&str>)>,
+    ) {
+        let list = svode_agents::catalog::SessionList {
+            sessions: sessions
+                .into_iter()
+                .map(
+                    |(id, cwd, updated_at)| svode_agents::catalog::ListedSession {
+                        key: svode_agents::identity::SessionKey::from_acp(agent, id, native),
+                        cwd: cwd.to_path_buf(),
+                        title: Some(format!("ACP {id}")),
+                        updated_at: updated_at.map(str::to_string),
+                    },
+                )
+                .collect(),
+            ..Default::default()
+        };
+        state.acp_lists.apply(agent, Ok(list), 3);
+    }
+
+    fn by_id<'a>(result: &'a AgentSessionsListResult, id: &str) -> &'a AgentSession {
+        result
+            .sessions
+            .iter()
+            .find(|session| session.id == id)
+            .unwrap_or_else(|| panic!("no session {id}"))
+    }
+
+    const LISTED_AT: Option<&str> = Some("2026-09-30T10:00:00Z");
+
+    #[test]
+    fn acp_listed_sessions_are_scoped_to_their_space_in_their_own_namespace() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let home = temp.path().join("home");
+        let project = temp.path().join("project");
+        let child = project.join("dev");
+        fs::create_dir_all(&child).expect("child");
+        write_root_config(&project, vec![space_ref("dev-space", "dev", None)]);
+        write_codex_history(&home, "same-id", &project, 1_700_000_000);
+        let elsewhere = temp.path().join("elsewhere");
+
+        let state = AgentSessionsState::with_home(home);
+        acp_list(
+            &state,
+            "codex",
+            false,
+            vec![
+                ("same-id", &project, LISTED_AT),
+                ("in-child", &child, LISTED_AT),
+                ("unrelated", &elsewhere, LISTED_AT),
+                ("no-time", &project, None),
+            ],
+        );
+        let result = list_sessions(&state, project.to_string_lossy().into_owned(), false)
+            .expect("list sessions");
+
+        let mut ids: Vec<_> = result.sessions.iter().map(|s| s.id.as_str()).collect();
+        ids.sort();
+        assert_eq!(
+            ids,
+            ["codex:acp:in-child", "codex:acp:same-id", "codex:same-id"],
+            "without equality evidence an ACP id never merges with the native row"
+        );
+        let child_session = by_id(&result, "codex:acp:in-child");
+        assert_eq!(child_session.space_id.as_deref(), Some("dev-space"));
+        assert_eq!(child_session.title, "ACP in-child");
+        assert_eq!(
+            child_session.title_source,
+            AgentSessionTitleSource::CliTitle
+        );
+        assert_eq!(child_session.last_activity_at, "2026-09-30T10:00:00Z");
+        assert!(child_session.resume_command.is_none());
+        assert!(!child_session.capabilities.can_resume);
+        assert!(!child_session.capabilities.can_reveal_file);
+        assert!(!child_session.capabilities.has_readable_log);
+        assert!(child_session.counts.is_none());
+        assert_eq!(child_session.status, SessionStatus::unknown());
+
+        let report = result
+            .sources
+            .iter()
+            .find(|report| report.kind == AgentSessionSourceKind::AcpList)
+            .expect("acp list report");
+        assert_eq!(report.source, AgentSessionSource::Codex);
+        assert_eq!(report.counts.returned_sessions, 2);
+        assert_eq!(report.counts.unresolved_candidates, 1);
+        assert_eq!(report.counts.incomplete_candidates, 1);
+        assert_eq!(result.status, AgentSessionsListStatus::Ok);
+    }
+
+    #[test]
+    fn a_native_key_from_the_acp_list_and_a_scanner_is_one_session_with_the_scanner_metadata() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let home = temp.path().join("home");
+        let project = temp.path().join("project");
+        fs::create_dir_all(&project).expect("project");
+        write_root_config(&project, Vec::new());
+        write_codex_history(&home, "shared", &project, 1_700_000_000);
+
+        let state = AgentSessionsState::with_home(home);
+        acp_list(
+            &state,
+            "codex",
+            true,
+            vec![
+                ("shared", &project, LISTED_AT),
+                ("only-listed", &project, LISTED_AT),
+            ],
+        );
+        let result = list_sessions(&state, project.to_string_lossy().into_owned(), false)
+            .expect("list sessions");
+
+        assert_eq!(result.sessions.len(), 2);
+        let shared = by_id(&result, "codex:shared");
+        assert_eq!(shared.title, "shared", "the scanner's metadata is shown");
+        assert!(shared.counts.is_some());
+        assert!(shared.capabilities.can_reveal_file);
+
+        let listed = by_id(&result, "codex:only-listed");
+        assert_eq!(listed.source_session_id, "only-listed");
+        assert!(
+            listed.capabilities.can_resume,
+            "a native id is a resume target"
+        );
+        assert_eq!(
+            listed
+                .resume_command
+                .as_ref()
+                .map(|command| command.display.as_str()),
+            Some("codex resume only-listed")
+        );
+        assert!(!listed.capabilities.can_reveal_file);
+        assert!(listed.counts.is_none());
+    }
+
+    #[test]
+    fn a_managed_terminal_never_attaches_to_a_session_in_the_acp_namespace() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let home = temp.path().join("home");
+        let project = temp.path().join("project");
+        fs::create_dir_all(&project).expect("project");
+        write_root_config(&project, Vec::new());
+
+        let state = AgentSessionsState::with_home(home);
+        acp_list(&state, "codex", false, vec![("s1", &project, LISTED_AT)]);
+        let result = list_sessions_with_surfaces(
+            &state,
+            project.to_string_lossy().into_owned(),
+            false,
+            vec![surface("pty-1", AgentSessionSource::Codex, "s1", None)],
+        )
+        .expect("list sessions");
+
+        let listed = by_id(&result, "codex:acp:s1");
+        assert!(
+            listed
+                .runtime
+                .as_ref()
+                .and_then(|runtime| runtime.pty_id.clone())
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn a_stale_acp_source_keeps_its_last_sessions_and_leaves_the_others_untouched() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let home = temp.path().join("home");
+        let project = temp.path().join("project");
+        fs::create_dir_all(&project).expect("project");
+        write_root_config(&project, Vec::new());
+        write_codex_history(&home, "native", &project, 1_700_000_000);
+
+        let state = AgentSessionsState::with_home(home);
+        acp_list(
+            &state,
+            "claude-code",
+            false,
+            vec![("c1", &project, LISTED_AT)],
+        );
+        state.acp_lists.apply(
+            "claude-code",
+            Err(svode_agents::AgentRuntimeError::Timeout),
+            0,
+        );
+        let result = list_sessions(&state, project.to_string_lossy().into_owned(), false)
+            .expect("list sessions");
+
+        assert_eq!(result.status, AgentSessionsListStatus::Partial);
+        assert!(result.sessions.iter().any(|s| s.id == "claude-code:acp:c1"));
+        assert!(result.sessions.iter().any(|s| s.id == "codex:native"));
+        let stale = result
+            .sources
+            .iter()
+            .find(|report| report.kind == AgentSessionSourceKind::AcpList)
+            .unwrap();
+        assert_eq!(stale.status, AgentSessionSourceStatus::Stale);
+        assert!(
+            result
+                .sources
+                .iter()
+                .filter(|report| report.kind == AgentSessionSourceKind::NativeLog)
+                .all(|report| report.status != AgentSessionSourceStatus::Stale)
+        );
     }
 }

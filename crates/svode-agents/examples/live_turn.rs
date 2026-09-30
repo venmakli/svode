@@ -19,6 +19,9 @@
 //! is given. `--reopen` closes the connection after the turn, connects
 //! again and opens the same session to compare its replay with the live
 //! turn.
+//!
+//! `--list` only reads the agent's `session/list` as the catalogue source
+//! and stops: no session is created or opened, no prompt is sent.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -40,6 +43,7 @@ async fn main() {
     let mut on_pending = None;
     let mut open = None;
     let mut reopen = false;
+    let mut list = false;
     let mut env = BTreeMap::new();
     let mut command = Vec::new();
     while let Some(arg) = args.next() {
@@ -50,6 +54,7 @@ async fn main() {
             "--on-pending" => on_pending = Some(args.next().expect("--on-pending value")),
             "--open" => open = Some(args.next().expect("--open value")),
             "--reopen" => reopen = true,
+            "--list" => list = true,
             "--env" => {
                 let pair = args.next().expect("--env KEY=VALUE");
                 let (key, value) = pair.split_once('=').expect("--env KEY=VALUE");
@@ -73,8 +78,42 @@ async fn main() {
         env,
         cwd: cwd.clone(),
         acp_id_is_native: false,
+        lists_catalog: list,
     };
     let connection = connect(&runtime, &launch).await;
+
+    if list {
+        let offered = runtime.catalog_connections();
+        println!("catalog connections: {offered:?}");
+        let read = Instant::now();
+        match runtime.list_sessions(connection).await {
+            Ok(sessions) => {
+                println!(
+                    "session/list: {} sessions, truncated {}, skipped {} in {:.2}s",
+                    sessions.sessions.len(),
+                    sessions.truncated,
+                    sessions.skipped,
+                    read.elapsed().as_secs_f64()
+                );
+                for session in sessions.sessions.iter().take(5) {
+                    println!(
+                        "  {} {:?} cwd {} updated {:?} title {:?}",
+                        session.key.session_id,
+                        session.key.namespace,
+                        session.cwd.display(),
+                        session.updated_at,
+                        session
+                            .title
+                            .as_deref()
+                            .map(|title| title.chars().take(40).collect::<String>())
+                    );
+                }
+            }
+            Err(error) => println!("session/list failed: {error}"),
+        }
+        runtime.close_connection(connection).await.unwrap();
+        return;
+    }
 
     let key = match open {
         Some(session_id) => {

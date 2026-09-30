@@ -107,7 +107,11 @@ export type AgentSessionSourceReportStatus =
   | "missing-root"
   | "partial-error"
   | "unreadable"
-  | "error";
+  | "error"
+  /** The last good list is shown; the agent did not answer or is not connected. */
+  | "stale";
+/** A source reads the agent's native store or its ACP `session/list`. */
+export type AgentSessionSourceKind = "native-log" | "acp-list";
 export type AgentSessionDiagnosticSeverity = "info" | "warning" | "error";
 
 export interface AgentSessionsListResult {
@@ -147,6 +151,7 @@ export interface AgentSessionsHotStatusResult {
 
 export interface AgentSessionSourceReport {
   source: AgentSessionSource;
+  kind: AgentSessionSourceKind;
   status: AgentSessionSourceReportStatus;
   rootPath: string;
   scannedAt: string;

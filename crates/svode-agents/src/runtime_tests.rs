@@ -8,6 +8,7 @@ use crate::activity::{
     Change, DetailBlock, FieldInput, HistorySource, HistoryState, ItemKind, ItemStatus, TurnPhase,
     UnavailableReason,
 };
+use crate::identity::IdentityNamespace;
 use crate::interaction::FieldValue;
 use crate::status::{SessionState, SessionStatus};
 use crate::writer::WriterRefusal;
@@ -100,6 +101,7 @@ fn launch() -> AcpLaunch {
         env: BTreeMap::new(),
         cwd: PathBuf::from("/project"),
         acp_id_is_native: false,
+        lists_catalog: false,
     }
 }
 
@@ -1585,4 +1587,250 @@ async fn an_idle_session_is_released_and_opens_again_with_a_new_replay() {
     let snapshot = runtime.subscribe(&key).unwrap().snapshot;
     assert_eq!(snapshot.items.len(), 1);
     assert_eq!(snapshot.history.source, HistorySource::Replay);
+}
+
+fn listing(agent: &str) -> AcpLaunch {
+    AcpLaunch {
+        agent: agent.into(),
+        lists_catalog: true,
+        ..launch()
+    }
+}
+
+fn listed_entry(id: &str, cwd: &str) -> Value {
+    json!({ "sessionId": id, "cwd": cwd, "updatedAt": "2026-09-30T10:00:00Z" })
+}
+
+fn list_runtime(list: ListBounds) -> AgentRuntime {
+    AgentRuntime::new(RuntimeConfig {
+        list,
+        ..RuntimeConfig::default()
+    })
+}
+
+#[tokio::test]
+async fn the_session_list_reads_every_page_into_bounded_entries_without_status() {
+    let runtime = AgentRuntime::default();
+    let (id, mut agent) = attached_with(&runtime, &listing("hermes"));
+    let (list, ()) = tokio::join!(runtime.list_sessions(id), async {
+        agent
+            .initialize(json!({ "sessionCapabilities": { "list": {} } }))
+            .await;
+        let first = agent.expect("session/list").await;
+        assert_eq!(first["params"], json!({}), "no cwd filter, no cursor");
+        agent
+            .reply(
+                &first,
+                json!({
+                    "sessions": [
+                        { "sessionId": "s1", "cwd": "/work/app", "title": "Fix build", "_meta": { "messageCount": 12 } },
+                        listed_entry("s2", "/work/app/docs"),
+                    ],
+                    "nextCursor": "page-2"
+                }),
+            )
+            .await;
+        let second = agent.expect("session/list").await;
+        assert_eq!(second["params"], json!({ "cursor": "page-2" }));
+        agent
+            .reply(
+                &second,
+                json!({
+                    "sessions": [
+                        listed_entry("s3", "/elsewhere"),
+                        listed_entry("s1", "/work/app"),
+                        listed_entry("s4", "relative"),
+                        { "cwd": "/no-id" },
+                    ]
+                }),
+            )
+            .await;
+    });
+    let list = list.unwrap();
+    let ids: Vec<_> = list
+        .sessions
+        .iter()
+        .map(|session| session.key.session_id.as_str())
+        .collect();
+    assert_eq!(ids, ["s1", "s2", "s3"]);
+    assert!(!list.truncated);
+    // A repeated id, a relative cwd and an entry without an id.
+    assert_eq!(list.skipped, 3);
+    let first = &list.sessions[0];
+    assert_eq!(first.key.agent, "hermes");
+    assert_eq!(first.key.namespace, IdentityNamespace::Acp);
+    assert_eq!(first.title.as_deref(), Some("Fix build"));
+    assert_eq!(first.updated_at, None);
+    assert_eq!(
+        list.sessions[1].updated_at.as_deref(),
+        Some("2026-09-30T10:00:00Z")
+    );
+    assert_eq!(
+        runtime.connection_status(id).unwrap().state,
+        ConnectionState::Ready
+    );
+}
+
+#[tokio::test]
+async fn acp_ids_join_the_native_namespace_only_for_a_launch_with_evidence() {
+    let runtime = AgentRuntime::default();
+    let (id, mut agent) = attached_with(
+        &runtime,
+        &AcpLaunch {
+            acp_id_is_native: true,
+            ..listing("codex")
+        },
+    );
+    let (list, ()) = tokio::join!(runtime.list_sessions(id), async {
+        agent
+            .initialize(json!({ "sessionCapabilities": { "list": {} } }))
+            .await;
+        let request = agent.expect("session/list").await;
+        agent
+            .reply(
+                &request,
+                json!({ "sessions": [listed_entry("t1", "/work")] }),
+            )
+            .await;
+    });
+    let key = &list.unwrap().sessions[0].key;
+    assert_eq!(key.namespace, IdentityNamespace::Native);
+    assert_eq!(key.agent, "codex");
+}
+
+#[tokio::test]
+async fn the_list_stops_at_its_bounds_and_marks_the_truncation() {
+    let runtime = list_runtime(ListBounds {
+        sessions: 2,
+        ..ListBounds::default()
+    });
+    let (id, mut agent) = attached_with(&runtime, &listing("a"));
+    let (list, ()) = tokio::join!(runtime.list_sessions(id), async {
+        agent
+            .initialize(json!({ "sessionCapabilities": { "list": {} } }))
+            .await;
+        let request = agent.expect("session/list").await;
+        agent
+            .reply(
+                &request,
+                json!({
+                    "sessions": [listed_entry("s1", "/w"), listed_entry("s2", "/w"), listed_entry("s3", "/w")],
+                    "nextCursor": "more"
+                }),
+            )
+            .await;
+        agent.silent().await;
+    });
+    let list = list.unwrap();
+    assert_eq!(list.sessions.len(), 2);
+    assert!(list.truncated);
+
+    // A cursor the agent repeats would page forever.
+    let runtime = AgentRuntime::default();
+    let (id, mut agent) = attached_with(&runtime, &listing("a"));
+    let (list, ()) = tokio::join!(runtime.list_sessions(id), async {
+        agent
+            .initialize(json!({ "sessionCapabilities": { "list": {} } }))
+            .await;
+        for _ in 0..2 {
+            let request = agent.expect("session/list").await;
+            agent
+                .reply(&request, json!({ "sessions": [], "nextCursor": "same" }))
+                .await;
+        }
+        agent.silent().await;
+    });
+    assert!(list.unwrap().truncated);
+}
+
+#[tokio::test]
+async fn an_agent_without_session_list_is_not_asked() {
+    let runtime = AgentRuntime::default();
+    let (id, mut agent) = attached_with(&runtime, &listing("a"));
+    let (list, ()) = tokio::join!(runtime.list_sessions(id), async {
+        agent.initialize(json!({ "loadSession": true })).await;
+        agent.silent().await;
+    });
+    assert_eq!(list.unwrap_err(), AgentRuntimeError::ListUnsupported);
+}
+
+#[tokio::test]
+async fn a_slow_list_times_out_within_its_bound_and_degrades_only_its_connection() {
+    let runtime = list_runtime(ListBounds {
+        timeout: Duration::from_millis(150),
+        ..ListBounds::default()
+    });
+    let (slow, mut slow_agent) = attached_with(&runtime, &listing("slow"));
+    let (other, mut other_agent) = attached_with(&runtime, &listing("other"));
+    let started = Instant::now();
+    let (slow_list, other_list, (), ()) = tokio::join!(
+        runtime.list_sessions(slow),
+        runtime.list_sessions(other),
+        async {
+            slow_agent
+                .initialize(json!({ "sessionCapabilities": { "list": {} } }))
+                .await;
+            slow_agent.expect("session/list").await;
+        },
+        async {
+            other_agent
+                .initialize(json!({ "sessionCapabilities": { "list": {} } }))
+                .await;
+            let request = other_agent.expect("session/list").await;
+            other_agent
+                .reply(&request, json!({ "sessions": [listed_entry("o1", "/w")] }))
+                .await;
+        }
+    );
+    assert_eq!(slow_list.unwrap_err(), AgentRuntimeError::Timeout);
+    assert!(started.elapsed() < Duration::from_secs(2));
+    assert_eq!(
+        runtime.connection_status(slow).unwrap().state,
+        ConnectionState::Degraded
+    );
+    assert_eq!(other_list.unwrap().sessions.len(), 1);
+    assert_eq!(
+        runtime.connection_status(other).unwrap().state,
+        ConnectionState::Ready
+    );
+}
+
+#[tokio::test]
+async fn catalog_connections_offer_one_open_listing_connection_per_agent() {
+    let runtime = AgentRuntime::default();
+    let (first, _first_agent) = attached_with(&runtime, &listing("hermes"));
+    let (_second, _second_agent) = attached_with(&runtime, &listing("hermes"));
+    let (_scanner, _scanner_agent) = attached_with(&runtime, &launch());
+    let (closed, closed_agent) = attached_with(&runtime, &listing("gone"));
+    drop(closed_agent);
+    runtime.close_connection(closed).await.unwrap();
+
+    assert_eq!(
+        runtime.catalog_connections(),
+        vec![CatalogConnection {
+            connection: first,
+            agent: "hermes".into()
+        }]
+    );
+}
+
+#[tokio::test]
+async fn a_new_session_and_a_finished_turn_announce_a_catalog_change() {
+    let runtime = AgentRuntime::default();
+    let mut changes = runtime.catalog_changes();
+    let (_id, key, mut agent) = session(&runtime).await;
+    assert_eq!(changes.recv().await.unwrap().agent, "scripted");
+
+    let mut subscription = runtime.subscribe(&key).unwrap();
+    runtime.prompt(&key, "hi").unwrap();
+    let request = agent.expect("session/prompt").await;
+    agent
+        .reply(&request, json!({ "stopReason": "end_turn" }))
+        .await;
+    follow(&mut subscription, idle).await;
+    let change = tokio::time::timeout(Duration::from_secs(2), changes.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(change.agent, "scripted");
 }

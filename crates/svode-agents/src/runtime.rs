@@ -1,7 +1,7 @@
 //! Session runtime: agent connections and their sessions, turns, cancel and
 //! pending interactions, independent of any mounted UI surface or window.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
@@ -24,6 +24,9 @@ use crate::activity::{
     InteractionState, PendingInteraction, QuestionField, SessionDelta, SessionSnapshot, TurnPhase,
     WriterState,
 };
+use crate::catalog::{
+    self, CatalogChanged, CatalogConnection, CatalogNotices, ListBounds, SessionList,
+};
 use crate::error::AgentRuntimeError;
 use crate::identity::SessionKey;
 use crate::interaction::{self, AnswerOutcome, InteractionAnswer};
@@ -44,6 +47,7 @@ pub struct RuntimeConfig {
     /// Bound of the whole stop sequence when the host process exits.
     pub shutdown_budget: Duration,
     pub retention: Retention,
+    pub list: ListBounds,
 }
 
 impl Default for RuntimeConfig {
@@ -52,6 +56,7 @@ impl Default for RuntimeConfig {
             request_timeout: Duration::from_secs(60),
             shutdown_budget: Duration::from_secs(3),
             retention: Retention::default(),
+            list: ListBounds::default(),
         }
     }
 }
@@ -101,6 +106,9 @@ pub struct AcpLaunch {
     pub cwd: PathBuf,
     /// Recorded evidence that ACP session ids are the agent's native ids.
     pub acp_id_is_native: bool,
+    /// Recorded decision that the agent's `session/list` is its one
+    /// declared catalogue source.
+    pub lists_catalog: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
@@ -156,12 +164,14 @@ struct Inner {
     /// Orders sessions by when they were last opened.
     next_open: AtomicU64,
     sweeping: AtomicBool,
+    catalog: CatalogNotices,
 }
 
 struct Connection {
     runtime: Weak<Inner>,
     agent: String,
     acp_id_is_native: bool,
+    lists_catalog: bool,
     rpc: Arc<RpcClient>,
     state: Mutex<ConnectionState>,
     info: Mutex<Option<AgentInfo>>,
@@ -278,6 +288,7 @@ impl AgentRuntime {
             runtime: Arc::downgrade(&self.inner),
             agent: launch.agent.clone(),
             acp_id_is_native: launch.acp_id_is_native,
+            lists_catalog: launch.lists_catalog,
             rpc,
             state: Mutex::new(ConnectionState::Starting),
             info: Mutex::new(None),
@@ -318,6 +329,105 @@ impl AgentRuntime {
     /// here, so ACP and PTY never write to one session at once.
     pub fn writers(&self) -> WriterRegistry {
         self.inner.writers.clone()
+    }
+
+    /// One open connection per agent whose `session/list` is its declared
+    /// catalogue source. Listing never starts an agent: only connections a
+    /// lifecycle boundary already opened are offered.
+    pub fn catalog_connections(&self) -> Vec<CatalogConnection> {
+        let connections = self.inner.connections.lock().unwrap();
+        let mut ids: Vec<_> = connections
+            .iter()
+            .filter(|(_, connection)| connection.lists_catalog && connection.is_open())
+            .map(|(id, connection)| (*id, connection.agent.clone()))
+            .collect();
+        ids.sort();
+        let mut offered: Vec<CatalogConnection> = Vec::new();
+        for (connection, agent) in ids {
+            if !offered.iter().any(|known| known.agent == agent) {
+                offered.push(CatalogConnection { connection, agent });
+            }
+        }
+        offered
+    }
+
+    /// Reads every page of the agent's `session/list` within the list
+    /// bounds. The read shares the connection's error model: a failure or
+    /// timeout degrades the connection, a lost peer closes it.
+    pub async fn list_sessions(&self, id: ConnectionId) -> Result<SessionList, AgentRuntimeError> {
+        let connection = self.connection(id)?;
+        connection.require_open()?;
+        if connection.info.lock().unwrap().is_none() {
+            self.initialize(&connection).await?;
+        }
+        let declares_list = connection
+            .info
+            .lock()
+            .unwrap()
+            .as_ref()
+            .is_some_and(|info| info.capabilities.list_sessions);
+        if !declares_list {
+            return Err(AgentRuntimeError::ListUnsupported);
+        }
+        let bounds = self.inner.config.list;
+        let deadline = Instant::now() + bounds.timeout;
+        let mut list = SessionList::default();
+        let mut keys = HashSet::new();
+        let mut cursors = HashSet::new();
+        let mut cursor: Option<String> = None;
+        for page in 1.. {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                connection.set_state(ConnectionState::Degraded);
+                return Err(AgentRuntimeError::Timeout);
+            }
+            let response = connection
+                .call(
+                    acp::SESSION_LIST,
+                    acp::list_request(cursor.as_deref()),
+                    Some(remaining),
+                )
+                .await?;
+            let received = acp::list_page(response).map_err(|message| {
+                connection.set_state(ConnectionState::Degraded);
+                AgentRuntimeError::Protocol { message }
+            })?;
+            list.skipped += received.malformed;
+            for entry in received.entries {
+                if list.sessions.len() >= bounds.sessions {
+                    list.truncated = true;
+                    break;
+                }
+                match catalog::listed(
+                    entry,
+                    &connection.agent,
+                    connection.acp_id_is_native,
+                    &bounds,
+                ) {
+                    Some(session) if keys.insert(session.key.clone()) => {
+                        list.sessions.push(session)
+                    }
+                    _ => list.skipped += 1,
+                }
+            }
+            match received.next_cursor {
+                Some(next) if !list.truncated => {
+                    // A repeated cursor would page forever.
+                    if page >= bounds.pages || !cursors.insert(next.clone()) {
+                        list.truncated = true;
+                        break;
+                    }
+                    cursor = Some(next);
+                }
+                _ => break,
+            }
+        }
+        Ok(list)
+    }
+
+    /// Follows catalogue changes the runtime's own work causes.
+    pub fn catalog_changes(&self) -> broadcast::Receiver<CatalogChanged> {
+        self.inner.catalog.subscribe()
     }
 
     pub fn connection_status(&self, id: ConnectionId) -> Option<ConnectionStatus> {
@@ -372,6 +482,7 @@ impl AgentRuntime {
             claim,
         );
         self.inner.register(key.clone(), session);
+        self.inner.catalog.changed(&connection.agent);
         Ok(key)
     }
 
@@ -554,6 +665,10 @@ impl AgentRuntime {
                 .lock()
                 .unwrap()
                 .finish_turn(&turn, reason, error);
+            drop(interactions);
+            if let Some(inner) = session.connection.runtime.upgrade() {
+                inner.catalog.changed(&session.connection.agent);
+            }
         });
         Ok(turn_id)
     }

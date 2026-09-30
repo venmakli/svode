@@ -24,6 +24,9 @@ pub enum AgentRuntimeError {
     /// The agent declares neither `session/load` nor `session/resume`.
     #[error("the agent cannot open existing sessions")]
     OpenUnsupported,
+    /// The agent does not declare `session/list`.
+    #[error("the agent does not list its sessions")]
+    ListUnsupported,
     /// A prompt while a turn is active; there is no queue.
     #[error("a turn is already active in this session")]
     TurnActive,

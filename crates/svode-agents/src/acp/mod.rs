@@ -9,6 +9,7 @@ use std::path::Path;
 
 use serde_json::{Value, json};
 
+use crate::catalog::{ListEntry, ListPage};
 use crate::interaction::{FieldValue, InteractionAnswer};
 use crate::runtime::{AgentCapabilities, AgentInfo};
 use crate::status::InteractionKind;
@@ -20,6 +21,7 @@ pub(crate) const SESSION_RESUME: &str = "session/resume";
 pub(crate) const SESSION_PROMPT: &str = "session/prompt";
 pub(crate) const SESSION_CANCEL: &str = "session/cancel";
 pub(crate) const SESSION_CLOSE: &str = "session/close";
+pub(crate) const SESSION_LIST: &str = "session/list";
 pub(crate) const SESSION_UPDATE: &str = "session/update";
 pub(crate) const SESSION_REQUEST_PERMISSION: &str = "session/request_permission";
 pub(crate) const ELICITATION_CREATE: &str = "elicitation/create";
@@ -79,6 +81,44 @@ pub(crate) fn new_session_id(response: Value) -> Result<String, String> {
     let response: wire::NewSessionResponse =
         serde_json::from_value(response).map_err(|error| error.to_string())?;
     Ok(response.session_id)
+}
+
+/// Params of one `session/list` page. No `cwd` filter: its semantics per
+/// agent are unconfirmed, so the host's scope resolver decides.
+pub(crate) fn list_request(cursor: Option<&str>) -> Value {
+    match cursor {
+        Some(cursor) => json!({ "cursor": cursor }),
+        None => json!({}),
+    }
+}
+
+pub(crate) fn list_page(response: Value) -> Result<ListPage, String> {
+    let response: wire::ListSessionsResponse =
+        serde_json::from_value(response).map_err(|error| error.to_string())?;
+    let mut malformed = 0;
+    let entries = response
+        .sessions
+        .into_iter()
+        .filter_map(
+            |entry| match serde_json::from_value::<wire::SessionInfo>(entry) {
+                Ok(info) => Some(ListEntry {
+                    session_id: info.session_id,
+                    cwd: info.cwd,
+                    title: info.title,
+                    updated_at: info.updated_at,
+                }),
+                Err(_) => {
+                    malformed += 1;
+                    None
+                }
+            },
+        )
+        .collect();
+    Ok(ListPage {
+        entries,
+        malformed,
+        next_cursor: response.next_cursor,
+    })
 }
 
 pub(crate) fn prompt_request(session_id: &str, text: &str) -> Value {

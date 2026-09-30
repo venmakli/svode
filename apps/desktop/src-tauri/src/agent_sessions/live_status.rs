@@ -6,6 +6,7 @@ use super::types::{
     AgentSessionScope, AgentSessionSourceMeta, AgentSessionTitleSource,
 };
 use crate::terminal::{AgentTerminalStatusEvidence, AgentTerminalSurface};
+use svode_agents::identity::IdentityNamespace;
 use svode_agents::status::{SessionState, SessionStatus, StatusConfidence, StatusSource};
 use svode_agents::writer::ExternalLiveness;
 
@@ -150,11 +151,11 @@ pub(super) fn map_candidate(
     last_activity_at: chrono::DateTime<Utc>,
     terminal_surfaces: &[AgentTerminalSurface],
 ) -> AgentSession {
-    let id = format!(
-        "{}:{}",
-        candidate.source.as_str(),
-        candidate.source_session_id
-    );
+    let id = candidate.session_id();
+    // Only a native id is the target of the agent's CLI resume and of a
+    // managed PTY of Svode.
+    let native = candidate.namespace == IdentityNamespace::Native;
+    let listed = candidate.from_acp_list;
     let title = candidate
         .title
         .unwrap_or_else(|| short_id(&candidate.source_session_id));
@@ -171,6 +172,12 @@ pub(super) fn map_candidate(
         .join(" ");
     let mut counts = candidate.counts;
     counts.messages = Some(counts.user_messages + counts.assistant_messages);
+    let resume_command = native.then(|| AgentSessionResumeCommand {
+        display,
+        program,
+        args: argv,
+        cwd: scope.cwd.clone(),
+    });
     let mut observations = candidate
         .status
         .map(|evidence| native_observation(evidence, last_activity_at, Utc::now()))
@@ -202,18 +209,19 @@ pub(super) fn map_candidate(
         last_activity_at: last_activity_at.to_rfc3339_opts(SecondsFormat::Secs, true),
         waiting_since: None,
         duration_ms: None,
-        resume_command: Some(AgentSessionResumeCommand {
-            display,
-            program,
-            args: argv,
-            cwd: scope.cwd,
-        }),
+        resume_command,
         source_file: candidate.source_file,
-        counts: Some(counts),
-        capabilities: AgentSessionCapabilities::default(),
+        counts: (!listed).then_some(counts),
+        capabilities: AgentSessionCapabilities {
+            can_resume: native,
+            can_reveal_file: !listed,
+            has_readable_log: !listed,
+        },
         source_meta: candidate.source_meta,
     };
-    observations.extend(apply_terminal_runtime(&mut session, terminal_surfaces));
+    if native {
+        observations.extend(apply_terminal_runtime(&mut session, terminal_surfaces));
+    }
     let (status, reason, waiting_since) = resolve_status(observations);
     session.status = status;
     session.status_reason = Some(reason);

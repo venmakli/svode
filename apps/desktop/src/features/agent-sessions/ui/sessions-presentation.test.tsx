@@ -444,6 +444,7 @@ test("collection states: loading, blocking error, partial source and empty Space
 function sourceReport(source: "codex" | "claude-code") {
   return {
     source,
+    kind: "native-log" as const,
     status: "ok" as const,
     rootPath: `/home/${source}`,
     scannedAt: "2026-09-29T10:00:00Z",

@@ -72,7 +72,7 @@ pub(super) fn candidates_for_session_ids(
     let mut candidates = Vec::new();
     for cached in cache.sources.values() {
         for candidate in &cached.candidates {
-            if session_ids.contains(&candidate_session_id(candidate)) {
+            if session_ids.contains(&candidate.session_id()) {
                 candidates.push(candidate.clone());
             }
         }
@@ -105,14 +105,6 @@ pub(super) fn update_candidate(
             .sort_by(|a, b| a.source_session_id.cmp(&b.source_session_id));
     }
     Ok(Some(cached.clone()))
-}
-
-fn candidate_session_id(candidate: &PersistedAgentSessionCandidate) -> String {
-    format!(
-        "{}:{}",
-        candidate.source.as_str(),
-        candidate.source_session_id
-    )
 }
 
 pub(super) fn memory_is_empty(state: &AgentSessionsState) -> Result<bool, AppError> {
