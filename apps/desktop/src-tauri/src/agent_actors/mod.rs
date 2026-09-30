@@ -408,8 +408,8 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), CatalogError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::agent_adapters::AgentAdapterKind;
     use svode_core::agent_actors::{AgentAdapter, read_local_approval};
+    use svode_core::agent_adapters::AgentAdapterKind;
     use tempfile::tempdir;
     fn actor(id: &str) -> AgentActor {
         AgentActor {

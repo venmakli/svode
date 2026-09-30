@@ -1,0 +1,308 @@
+//! Agent Activity projection contract (Stage 10 `02` C5): what the runtime
+//! hands to consumers as a session snapshot and ordered deltas. Svode owns
+//! this model; ACP wire types stay inside the ACP client.
+
+use serde::{Deserialize, Serialize};
+
+use crate::identity::SessionKey;
+use crate::status::{InteractionKind, SessionStatus, StopReason};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ConnectionState {
+    /// The user has not connected the agent.
+    NotConnected,
+    /// The agent process is starting and `initialize` is in flight.
+    Starting,
+    /// Capabilities are known.
+    Ready,
+    /// The last call failed or timed out; sessions keep their state and the
+    /// next explicit lifecycle boundary retries.
+    Degraded,
+    /// The agent process exited or the app is shutting down.
+    Closed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WriterState {
+    None,
+    Acp,
+    Pty,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HistorySource {
+    Live,
+    Replay,
+    None,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HistoryState {
+    pub source: HistorySource,
+    pub available: bool,
+    /// Number of evicted items when the retained history is truncated.
+    pub truncated_items: Option<u64>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TurnPhase {
+    None,
+    Running,
+    /// Cancel was requested; the turn runs until the agent answers the prompt.
+    Cancelling,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TurnState {
+    /// The current turn, or the last one once it ended.
+    pub turn_id: Option<String>,
+    pub phase: TurnPhase,
+    pub last_outcome: Option<StopReason>,
+    pub status: SessionStatus,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolKind {
+    Read,
+    Edit,
+    Delete,
+    Move,
+    Search,
+    Execute,
+    Think,
+    Fetch,
+    SwitchMode,
+    Other,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ItemStatus {
+    Pending,
+    InProgress,
+    Completed,
+    Failed,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(
+    tag = "kind",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
+pub enum ItemKind {
+    UserMessage,
+    AgentMessage,
+    Reasoning,
+    ToolCall {
+        tool: ToolKind,
+    },
+    ModeChange,
+    ConfigChange,
+    Usage,
+    TurnOutcome {
+        reason: StopReason,
+    },
+    Error,
+    Interrupted,
+    /// An update or extension this runtime does not model.
+    Generic {
+        label: String,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ActivityItem {
+    /// The agent's id (`messageId`, `toolCallId`) when it has one, else
+    /// assigned by the runtime.
+    pub id: String,
+    pub turn_id: Option<String>,
+    #[serde(flatten)]
+    pub kind: ItemKind,
+    pub status: Option<ItemStatus>,
+    /// Bounded compact text; the full content is the detail.
+    pub summary: String,
+    pub has_detail: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PlanEntryStatus {
+    Pending,
+    InProgress,
+    Completed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PlanEntryPriority {
+    High,
+    Medium,
+    Low,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlanEntry {
+    pub content: String,
+    pub priority: PlanEntryPriority,
+    pub status: PlanEntryStatus,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Plan {
+    pub entries: Vec<PlanEntry>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InteractionState {
+    Pending,
+    Answered,
+    Cancelled,
+    Expired,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InteractionOptionKind {
+    AllowOnce,
+    AllowAlways,
+    RejectOnce,
+    RejectAlways,
+    Other,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InteractionOption {
+    pub id: String,
+    pub label: String,
+    pub kind: InteractionOptionKind,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PendingInteraction {
+    /// Runtime-assigned, unique within the session.
+    pub id: String,
+    pub kind: InteractionKind,
+    pub title: String,
+    pub options: Vec<InteractionOption>,
+    pub state: InteractionState,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionSnapshot {
+    pub seq: u64,
+    pub session: SessionKey,
+    pub connection: ConnectionState,
+    pub turn: TurnState,
+    pub items: Vec<ActivityItem>,
+    pub plan: Option<Plan>,
+    pub pending: Option<PendingInteraction>,
+    pub history: HistoryState,
+    pub writer: WriterState,
+}
+
+/// Exactly one change; applying deltas with consecutive `seq` to the
+/// snapshot reproduces the runtime state.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "change", content = "value", rename_all = "snake_case")]
+pub enum Change {
+    /// Insert or replace the item with this id.
+    Item(ActivityItem),
+    Plan(Plan),
+    Turn(TurnState),
+    /// Set the pending interaction; a non-`pending` state clears it with
+    /// that outcome.
+    Pending(PendingInteraction),
+    History(HistoryState),
+    Connection(ConnectionState),
+    Writer(WriterState),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionDelta {
+    pub seq: u64,
+    #[serde(flatten)]
+    pub change: Change,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(
+    tag = "type",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
+pub enum DetailBlock {
+    Text {
+        text: String,
+    },
+    Diff {
+        path: String,
+        old_text: Option<String>,
+        new_text: String,
+    },
+    /// An agent-side terminal; display only.
+    Terminal {
+        terminal_id: String,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UnavailableReason {
+    TooLarge,
+    NotProvided,
+    Released,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(
+    tag = "outcome",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
+pub enum DetailOutcome {
+    Available { blocks: Vec<DetailBlock> },
+    Unavailable { reason: UnavailableReason },
+    Error { message: String },
+}
+
+impl SessionSnapshot {
+    /// Applies a delta. Returns false on a seq gap: the consumer drops its
+    /// state and resubscribes.
+    pub fn apply(&mut self, delta: &SessionDelta) -> bool {
+        if delta.seq != self.seq + 1 {
+            return false;
+        }
+        self.seq = delta.seq;
+        match &delta.change {
+            Change::Item(item) => match self.items.iter_mut().find(|known| known.id == item.id) {
+                Some(known) => *known = item.clone(),
+                None => self.items.push(item.clone()),
+            },
+            Change::Plan(plan) => self.plan = Some(plan.clone()),
+            Change::Turn(turn) => self.turn = turn.clone(),
+            Change::Pending(pending) => {
+                self.pending = (pending.state == InteractionState::Pending).then(|| pending.clone())
+            }
+            Change::History(history) => self.history = *history,
+            Change::Connection(connection) => self.connection = *connection,
+            Change::Writer(writer) => self.writer = *writer,
+        }
+        true
+    }
+}

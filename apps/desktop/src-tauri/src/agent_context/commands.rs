@@ -3,7 +3,6 @@ use std::path::PathBuf;
 use tauri::State;
 
 use crate::AppError;
-use crate::agent_adapters::system_source_registry_environment;
 
 use super::state::AgentContextState;
 use svode_core::agent_context::model::AgentContextSnapshot;
@@ -32,7 +31,7 @@ async fn discover_and_publish(
     project_path: String,
     space_path: String,
 ) -> Result<AgentContextSnapshot, AppError> {
-    let environment = system_source_registry_environment()?;
+    let environment = svode_core::agent_adapters::system_source_registry_environment()?;
     let project_path = PathBuf::from(project_path);
     let space_path = PathBuf::from(space_path);
     let content = tokio::task::spawn_blocking(move || {

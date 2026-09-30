@@ -161,29 +161,28 @@ impl AgentAdapterRegistry {
         id: AgentAdapterKind,
         environment: &SourceRegistryEnvironment,
     ) -> AgentSourcePolicy {
-        let (policy, personal_root, skill_policy, project_skills, skill_roots) =
-            match id {
-                AgentAdapterKind::Codex => (
-                    InstructionDiscoveryPolicy::CodexAgents,
-                    &environment.codex_home,
-                    SkillDiscoveryPolicy::CodexDirectoryChain,
-                    ".agents/skills",
-                    vec![AgentSkillRoot {
-                        kind: SkillRootKind::StandardPersonal,
-                        path: path_string(&environment.codex_standard_skills_dir),
-                    }],
-                ),
-                AgentAdapterKind::ClaudeCode => (
-                    InstructionDiscoveryPolicy::ClaudeMemory,
-                    &environment.claude_config_dir,
-                    SkillDiscoveryPolicy::ClaudePersonalShadowsProject,
-                    ".claude/skills",
-                    vec![AgentSkillRoot {
-                        kind: SkillRootKind::StandardPersonal,
-                        path: path_string(&environment.claude_config_dir.join("skills")),
-                    }],
-                ),
-            };
+        let (policy, personal_root, skill_policy, project_skills, skill_roots) = match id {
+            AgentAdapterKind::Codex => (
+                InstructionDiscoveryPolicy::CodexAgents,
+                &environment.codex_home,
+                SkillDiscoveryPolicy::CodexDirectoryChain,
+                ".agents/skills",
+                vec![AgentSkillRoot {
+                    kind: SkillRootKind::StandardPersonal,
+                    path: path_string(&environment.codex_standard_skills_dir),
+                }],
+            ),
+            AgentAdapterKind::ClaudeCode => (
+                InstructionDiscoveryPolicy::ClaudeMemory,
+                &environment.claude_config_dir,
+                SkillDiscoveryPolicy::ClaudePersonalShadowsProject,
+                ".claude/skills",
+                vec![AgentSkillRoot {
+                    kind: SkillRootKind::StandardPersonal,
+                    path: path_string(&environment.claude_config_dir.join("skills")),
+                }],
+            ),
+        };
         AgentSourcePolicy {
             id,
             display_name: id.display_name().to_string(),
@@ -238,6 +237,40 @@ pub fn resolve_executable_path(
         Some(paths) => which::which_in(name, Some(paths), home_dir).ok(),
         None => which::which(name).ok(),
     })
+}
+
+/// Resolves the adapter executable for a Space: its Space-local override
+/// first, then [`resolve_executable_path`].
+pub fn resolve_space_executable(
+    id: AgentAdapterKind,
+    space_dir: &Path,
+    home_dir: &Path,
+    search_path: Option<&OsStr>,
+) -> Option<PathBuf> {
+    let local_override = space_executable_override(id, space_dir);
+    resolve_executable_path(id, local_override.as_deref(), home_dir, search_path)
+}
+
+/// The Space-local executable override, `agent.cliPaths` in the Space
+/// `local.json`; a relative path resolves against the Space. An unreadable
+/// or malformed file has no override.
+pub fn space_executable_override(id: AgentAdapterKind, space_dir: &Path) -> Option<PathBuf> {
+    let agent = crate::routines::local::read(space_dir).ok()?.agent?;
+    let paths = agent.get("cliPaths")?.as_object()?;
+    let keys: &[&str] = match id {
+        AgentAdapterKind::Codex => &["codex"],
+        AgentAdapterKind::ClaudeCode => &["claude-code", "claude"],
+    };
+    keys.iter()
+        .find_map(|key| paths.get(*key)?.as_str())
+        .map(|path| {
+            let path = PathBuf::from(path);
+            if path.is_absolute() {
+                path
+            } else {
+                space_dir.join(path)
+            }
+        })
 }
 
 fn resolve_executable_path_with(
@@ -345,7 +378,10 @@ mod tests {
         let policies = AgentAdapterRegistry.source_policies(&environment);
 
         assert_eq!(
-            identities.iter().map(|identity| identity.id).collect::<Vec<_>>(),
+            identities
+                .iter()
+                .map(|identity| identity.id)
+                .collect::<Vec<_>>(),
             AgentAdapterKind::ALL
         );
         for (identity, policy) in identities.iter().zip(&policies) {
@@ -390,6 +426,41 @@ mod tests {
                 None
             },),
             Some(common)
+        );
+    }
+
+    #[test]
+    fn space_override_is_owned_by_space_local_config_and_resolves_relative_paths() {
+        let space = tempfile::tempdir().unwrap();
+        let local = space.path().join(".svode/local.json");
+        std::fs::create_dir_all(local.parent().unwrap()).unwrap();
+        std::fs::write(
+            &local,
+            serde_json::json!({
+                "agent": {
+                    "cliPaths": {
+                        "codex": "bin/codex",
+                        "claude-code": "/opt/custom/claude"
+                    }
+                }
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            space_executable_override(AgentAdapterKind::Codex, space.path()),
+            Some(space.path().join("bin/codex"))
+        );
+        assert_eq!(
+            space_executable_override(AgentAdapterKind::ClaudeCode, space.path()),
+            Some(PathBuf::from("/opt/custom/claude"))
+        );
+
+        std::fs::write(&local, "{ not json").unwrap();
+        assert_eq!(
+            space_executable_override(AgentAdapterKind::Codex, space.path()),
+            None
         );
     }
 

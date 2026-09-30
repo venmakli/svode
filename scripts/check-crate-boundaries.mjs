@@ -1,19 +1,21 @@
 #!/usr/bin/env node
 // Fail when a host-independent package pulls in the desktop crate or Tauri.
 //
-// svode-core, svode-tools, svode-mcp, svode-cli and svode-lfs must build and
-// run with the Desktop closed, so neither they nor anything they depend on may
+// svode-core, svode-agents, svode-tools, svode-mcp, svode-cli and svode-lfs
+// must build and run with the Desktop closed, so neither they nor anything they depend on may
 // reach `svode-desktop` or any `tauri*` package. The CLI and MCP entrypoints
 // share the svode-tools surface and are independent of each other, so neither
 // reaches the other and svode-tools reaches neither. svode-install ships the
 // launchers that stay in ~/.svode after a runtime is gone, so it reaches no
 // other Svode package. svode-connect, the connection manager that the desktop
-// app, svode and svode-mcp share, reaches only svode-install.
+// app, svode and svode-mcp share, reaches only svode-install. svode-agents, the
+// external agent runtime, reaches only svode-core.
 
 import { execFileSync } from "node:child_process";
 
 const packages = [
   "svode-core",
+  "svode-agents",
   "svode-tools",
   "svode-mcp",
   "svode-cli",
@@ -23,6 +25,7 @@ const packages = [
 ];
 const hostBound = (name) => name === "svode-desktop" || /^tauri(-|$)/.test(name);
 const extraForbidden = {
+  "svode-agents": ["svode-tools", "svode-mcp", "svode-cli", "svode-lfs", "svode-install", "svode-connect"],
   "svode-tools": ["svode-mcp", "svode-cli"],
   "svode-mcp": ["svode-cli"],
   "svode-cli": ["svode-mcp"],
@@ -68,5 +71,5 @@ if (failed) {
   process.exit(1);
 }
 console.log(
-  `[crate-boundaries] ok: ${packages.join(", ")} are host-free; svode-cli and svode-mcp are independent over svode-tools; svode-install is self-contained; svode-connect reaches only svode-install`,
+  `[crate-boundaries] ok: ${packages.join(", ")} are host-free; svode-cli and svode-mcp are independent over svode-tools; svode-install is self-contained; svode-connect reaches only svode-install; svode-agents reaches only svode-core`,
 );

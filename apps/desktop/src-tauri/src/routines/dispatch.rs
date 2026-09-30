@@ -10,16 +10,18 @@ use super::{RoutineStoreState, lifecycle};
 use crate::AppError;
 use crate::agent_actors;
 use crate::agent_actors::launch::{AgentLaunchResolution, AgentLaunchValidationCode};
-use crate::agent_adapters::runtime::{
-    AdapterDiagnostic, AdapterTarget, ManualRoutineLaunchInput, SystemRuntimeCommandRunner,
-};
-use crate::agent_adapters::{AgentAdapterKind, AgentAdapterRegistry};
 use crate::agent_sessions::types::{AgentSessionResumeCommand, AgentSessionSource};
 use crate::git::GitState;
 use crate::git::access::{RepositoryAccessState, require_repository_mutation_paths};
 use crate::index::IndexState;
 use crate::index::update::IndexUpdateState;
+use crate::process::path_env::ProcessPath;
 use crate::terminal::{AgentTerminalSpawn, TerminalManager, quote_agent_shell_command};
+use svode_agents::registry::{
+    AdapterDiagnostic, AdapterRuntimeRegistry, AdapterTarget, ManualRoutineLaunchInput,
+    SystemRuntimeCommandRunner,
+};
+use svode_core::agent_adapters::AgentAdapterKind;
 use svode_core::collections::engine::EntryFieldBatchIntent;
 use svode_core::page::fields::PageFieldUpdate;
 use svode_core::page::nonce::WriteNonceRegistry;
@@ -211,7 +213,7 @@ pub(crate) async fn scheduled_dispatch_ready(
     else {
         return false;
     };
-    AgentAdapterRegistry
+    AdapterRuntimeRegistry
         .build_manual_routine_launch(
             &request,
             Path::new(executable_path),
@@ -410,7 +412,7 @@ pub(super) async fn dispatch_routine(
         _ => new_runtime_id(),
     };
     let launch_id = new_runtime_id();
-    let registry = AgentAdapterRegistry;
+    let registry = AdapterRuntimeRegistry;
     let launch = match registry.build_manual_routine_launch(
         &request,
         Path::new(executable_path),
@@ -592,9 +594,11 @@ fn launch_resolution_block(
 async fn collect_adapter_diagnostics(
     launch_space: &Path,
 ) -> BTreeMap<AgentAdapterKind, AdapterDiagnostic> {
-    let registry = AgentAdapterRegistry;
+    let registry = AdapterRuntimeRegistry;
+    let search_path = ProcessPath::session();
     let target = AdapterTarget {
         cwd: launch_space.to_path_buf(),
+        search_path: search_path.get().await.map(ToOwned::to_owned),
     };
     let (codex, claude) = tokio::join!(
         registry.diagnose(

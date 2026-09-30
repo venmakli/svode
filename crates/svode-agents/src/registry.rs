@@ -1,5 +1,11 @@
+//! Runtime plane of the agent adapter registry: model and effort selectors,
+//! binding validation, approval mapping, launch plans, pre-start selection,
+//! version/auth diagnostics and ACP entrypoint descriptions. The identity
+//! plane (adapter ids, source policies, executable resolution) stays in
+//! `svode_core::agent_adapters`.
+
 use std::collections::BTreeMap;
-use std::ffi::OsStr;
+use std::ffi::OsString;
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
@@ -9,11 +15,10 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncReadExt;
 
-use super::{AgentAdapterKind, AgentAdapterRegistry, resolve_executable_path, system_home_dir};
-use crate::agent::types::load_space_agent_config;
 use crate::process;
-use crate::process::path_env::ProcessPath;
+use crate::runtime::AcpLaunch;
 use svode_core::agent_actors::{AgentAdapter, ApprovalMode};
+use svode_core::agent_adapters::{AgentAdapterKind, resolve_space_executable, system_home_dir};
 
 const DIAGNOSTIC_TIMEOUT: Duration = Duration::from_secs(5);
 const MAX_DIAGNOSTIC_OUTPUT_BYTES: usize = 16 * 1024;
@@ -59,6 +64,9 @@ pub struct AdapterDiagnostic {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AdapterTarget {
     pub cwd: PathBuf,
+    /// PATH for executable lookup and diagnostic commands when the host knows
+    /// a better one than the process PATH (a GUI app's login shell PATH).
+    pub search_path: Option<OsString>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -66,6 +74,7 @@ pub struct RuntimeCommandRequest {
     pub program: PathBuf,
     pub arguments: Vec<String>,
     pub cwd: PathBuf,
+    pub search_path: Option<OsString>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -93,7 +102,7 @@ impl RuntimeCommandRunner for SystemRuntimeCommandRunner {
         Box::pin(async move {
             let mut command = tokio::process::Command::new(&request.program);
             // npm/bun/volta installs are `#!/usr/bin/env node` scripts.
-            if let Some(path) = ProcessPath::session().get().await {
+            if let Some(path) = &request.search_path {
                 command.env("PATH", path);
             }
             command
@@ -103,7 +112,7 @@ impl RuntimeCommandRunner for SystemRuntimeCommandRunner {
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
                 .kill_on_drop(true);
-            process::hide_tokio_window(&mut command);
+            process::hide_window(&mut command);
             let output = tokio::time::timeout(DIAGNOSTIC_TIMEOUT, async move {
                 let mut child = command
                     .spawn()
@@ -133,8 +142,8 @@ impl RuntimeCommandRunner for SystemRuntimeCommandRunner {
                     .map_err(|error| format!("adapter diagnostic stderr failed: {error}"))?;
                 Ok::<RuntimeCommandOutput, String>(RuntimeCommandOutput {
                     exit_code: status.code(),
-                    stdout: bounded_text(&stdout_bytes),
-                    stderr: bounded_text(&stderr_bytes),
+                    stdout: process::bounded_text(&stdout_bytes, MAX_DIAGNOSTIC_OUTPUT_BYTES),
+                    stderr: process::bounded_text(&stderr_bytes, MAX_DIAGNOSTIC_OUTPUT_BYTES),
                 })
             })
             .await
@@ -142,12 +151,6 @@ impl RuntimeCommandRunner for SystemRuntimeCommandRunner {
             Ok(output)
         })
     }
-}
-
-fn bounded_text(bytes: &[u8]) -> String {
-    String::from_utf8_lossy(&bytes[..bytes.len().min(MAX_DIAGNOSTIC_OUTPUT_BYTES)])
-        .trim()
-        .to_string()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -283,7 +286,12 @@ pub enum FallbackAfterStart {
     Forbidden,
 }
 
-impl AgentAdapterRegistry {
+/// The runtime plane of the adapter registry. Stateless; the identity plane
+/// is `svode_core::agent_adapters::AgentAdapterRegistry`.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct AdapterRuntimeRegistry;
+
+impl AdapterRuntimeRegistry {
     pub fn descriptors(&self) -> Vec<AdapterRuntimeDescriptor> {
         [AgentAdapterKind::Codex, AgentAdapterKind::ClaudeCode]
             .into_iter()
@@ -431,10 +439,12 @@ impl AgentAdapterRegistry {
                 "home directory is unavailable",
             );
         };
-        let search_path = ProcessPath::session();
-        let Some(path) =
-            resolve_scoped_executable(adapter, &target.cwd, &home_dir, search_path.get().await)
-        else {
+        let Some(path) = resolve_space_executable(
+            adapter,
+            &target.cwd,
+            &home_dir,
+            target.search_path.as_deref(),
+        ) else {
             return AdapterDiagnostic {
                 adapter,
                 status: AdapterDiagnosticStatus::Missing,
@@ -460,6 +470,7 @@ impl AgentAdapterRegistry {
                 program: path.clone(),
                 arguments: vec!["--version".into()],
                 cwd: target.cwd.clone(),
+                search_path: target.search_path.clone(),
             })
             .await;
         let version = match version {
@@ -487,6 +498,7 @@ impl AgentAdapterRegistry {
                 program: path.clone(),
                 arguments: auth_arguments,
                 cwd: target.cwd.clone(),
+                search_path: target.search_path.clone(),
             })
             .await
         {
@@ -521,38 +533,52 @@ impl AgentAdapterRegistry {
     }
 }
 
-/// Resolves the adapter executable for a scope: its `cliPaths` override first,
-/// then the shared resolution of `svode_core::agent_adapters`.
-pub(crate) fn resolve_scoped_executable(
-    adapter: AgentAdapterKind,
-    scope_dir: &Path,
-    home_dir: &Path,
-    search_path: Option<&OsStr>,
-) -> Option<PathBuf> {
-    let executable_override = target_executable_override(adapter, scope_dir);
-    resolve_executable_path(
-        adapter,
-        executable_override.as_deref(),
-        home_dir,
-        search_path,
-    )
+/// The official ACP adapter of a registry agent and the variable through
+/// which the adapter runs the user's own CLI, so terminal and UI sessions
+/// share one auth, configuration and session store.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AcpEntrypoint {
+    pub adapter_package: &'static str,
+    pub executable_env: &'static str,
 }
 
-fn target_executable_override(adapter: AgentAdapterKind, target_space: &Path) -> Option<PathBuf> {
-    let config = load_space_agent_config(target_space);
-    let keys: &[&str] = match adapter {
-        AgentAdapterKind::Codex => &["codex"],
-        AgentAdapterKind::ClaudeCode => &["claude-code", "claude"],
-    };
-    keys.iter().find_map(|key| {
-        config.cli_paths.get(*key).map(|path| {
-            if path.is_absolute() {
-                path.clone()
-            } else {
-                target_space.join(path)
-            }
-        })
-    })
+impl AdapterRuntimeRegistry {
+    pub fn acp_entrypoint(&self, adapter: AgentAdapterKind) -> AcpEntrypoint {
+        match adapter {
+            AgentAdapterKind::Codex => AcpEntrypoint {
+                adapter_package: "@agentclientprotocol/codex-acp",
+                executable_env: "CODEX_PATH",
+            },
+            AgentAdapterKind::ClaudeCode => AcpEntrypoint {
+                adapter_package: "@agentclientprotocol/claude-agent-acp",
+                executable_env: "CLAUDE_CODE_EXECUTABLE",
+            },
+        }
+    }
+
+    /// Launch plan of an installed adapter entry for the user's executable.
+    /// Its session ids stay in the ACP namespace until the provider matrix
+    /// records their equality with native ids.
+    pub fn acp_launch(
+        &self,
+        adapter: AgentAdapterKind,
+        adapter_entry: &Path,
+        executable: &Path,
+        cwd: &Path,
+    ) -> AcpLaunch {
+        let entrypoint = self.acp_entrypoint(adapter);
+        AcpLaunch {
+            agent: adapter.as_str().to_string(),
+            program: adapter_entry.to_path_buf(),
+            args: Vec::new(),
+            env: BTreeMap::from([(
+                entrypoint.executable_env.to_string(),
+                executable.to_string_lossy().into_owned(),
+            )]),
+            cwd: cwd.to_path_buf(),
+            acp_id_is_native: false,
+        }
+    }
 }
 
 fn nonempty(value: String, fallback: &str) -> String {
@@ -873,7 +899,7 @@ mod tests {
 
     #[test]
     fn descriptors_and_unknown_selectors_are_fail_closed_without_mutation() {
-        let registry = AgentAdapterRegistry;
+        let registry = AdapterRuntimeRegistry;
         let descriptors = registry.descriptors();
         assert_eq!(descriptors.len(), 2);
         assert_eq!(descriptors[0].model_options[0].value, None);
@@ -900,7 +926,7 @@ mod tests {
 
     #[test]
     fn launch_argv_snapshots_are_typed_and_prompt_free() {
-        let registry = AgentAdapterRegistry;
+        let registry = AdapterRuntimeRegistry;
         let codex = registry
             .build_launch(
                 &request(
@@ -958,7 +984,7 @@ mod tests {
 
     #[test]
     fn manual_routine_launch_is_adapter_owned_and_carries_launch_marker() {
-        let registry = AgentAdapterRegistry;
+        let registry = AdapterRuntimeRegistry;
         let input = ManualRoutineLaunchInput {
             instruction: "Review backlog".into(),
             launch_id: "launch-one".into(),
@@ -1041,7 +1067,7 @@ mod tests {
 
     #[test]
     fn full_access_mapping_is_explicit_for_each_adapter() {
-        let registry = AgentAdapterRegistry;
+        let registry = AdapterRuntimeRegistry;
         let codex = registry.approval_mapping(AgentAdapterKind::Codex, ApprovalMode::Full);
         let claude = registry.approval_mapping(AgentAdapterKind::ClaudeCode, ApprovalMode::Full);
         assert_eq!(codex.native, NativeApprovalMode::CodexFullAccess);
@@ -1051,7 +1077,7 @@ mod tests {
 
     #[test]
     fn approval_mode_argv_snapshots_do_not_silently_downgrade() {
-        let registry = AgentAdapterRegistry;
+        let registry = AdapterRuntimeRegistry;
         let cases = [
             (
                 AgentAdapterKind::Codex,
@@ -1111,7 +1137,7 @@ mod tests {
 
     #[test]
     fn selection_falls_back_only_before_runtime_start() {
-        let registry = AgentAdapterRegistry;
+        let registry = AdapterRuntimeRegistry;
         let bindings = vec![
             binding(AgentAdapterKind::Codex, Some("gpt-5.6"), None),
             binding(AgentAdapterKind::ClaudeCode, Some("sonnet"), None),
@@ -1193,7 +1219,7 @@ mod tests {
 
     #[tokio::test]
     async fn auth_diagnostics_use_read_only_native_commands() {
-        let registry = AgentAdapterRegistry;
+        let registry = AdapterRuntimeRegistry;
         let runner = FakeRunner::new(vec![
             Ok(RuntimeCommandOutput {
                 exit_code: Some(0),
@@ -1208,6 +1234,7 @@ mod tests {
         ]);
         let target = AdapterTarget {
             cwd: PathBuf::from("/project"),
+            search_path: None,
         };
         let diagnostic = registry
             .diagnose_resolved(
@@ -1225,7 +1252,7 @@ mod tests {
 
     #[tokio::test]
     async fn codex_auth_diagnostic_uses_login_status_without_prompt() {
-        let registry = AgentAdapterRegistry;
+        let registry = AdapterRuntimeRegistry;
         let runner = FakeRunner::new(vec![
             Ok(RuntimeCommandOutput {
                 exit_code: Some(0),
@@ -1243,6 +1270,7 @@ mod tests {
                 AgentAdapterKind::Codex,
                 &AdapterTarget {
                     cwd: PathBuf::from("/project"),
+                    search_path: None,
                 },
                 PathBuf::from("/bin/codex"),
                 &runner,
@@ -1260,7 +1288,7 @@ mod tests {
 
     #[tokio::test]
     async fn diagnostic_runner_failures_are_unknown_not_authenticated() {
-        let registry = AgentAdapterRegistry;
+        let registry = AdapterRuntimeRegistry;
         let runner = FakeRunner::new(vec![
             Ok(RuntimeCommandOutput {
                 exit_code: Some(0),
@@ -1274,6 +1302,7 @@ mod tests {
                 AgentAdapterKind::Codex,
                 &AdapterTarget {
                     cwd: PathBuf::from("/project"),
+                    search_path: None,
                 },
                 PathBuf::from("/bin/codex"),
                 &runner,
@@ -1281,6 +1310,23 @@ mod tests {
             .await;
         assert_eq!(diagnostic.status, AdapterDiagnosticStatus::Unknown);
         assert_eq!(diagnostic.authenticated, None);
+    }
+
+    #[test]
+    fn acp_launch_runs_the_users_cli_through_the_official_adapter() {
+        let launch = AdapterRuntimeRegistry.acp_launch(
+            AgentAdapterKind::ClaudeCode,
+            Path::new("/adapters/claude-agent-acp"),
+            Path::new("/bin/claude"),
+            Path::new("/project"),
+        );
+        assert_eq!(launch.agent, "claude-code");
+        assert_eq!(launch.program, PathBuf::from("/adapters/claude-agent-acp"));
+        assert_eq!(
+            launch.env.get("CLAUDE_CODE_EXECUTABLE").map(String::as_str),
+            Some("/bin/claude")
+        );
+        assert!(!launch.acp_id_is_native);
     }
 
     #[test]
@@ -1293,35 +1339,6 @@ mod tests {
         assert_eq!(
             serde_json::to_value(AgentAdapterKind::ClaudeCode).unwrap(),
             serde_json::json!("claude-code")
-        );
-    }
-
-    #[test]
-    fn target_override_is_owned_by_space_local_config_and_resolves_relative_paths() {
-        let target = tempfile::tempdir().unwrap();
-        let local = target.path().join(".svode/local.json");
-        std::fs::create_dir_all(local.parent().unwrap()).unwrap();
-        std::fs::write(
-            local,
-            serde_json::json!({
-                "agent": {
-                    "cliPaths": {
-                        "codex": "bin/codex",
-                        "claude-code": "/opt/custom/claude"
-                    }
-                }
-            })
-            .to_string(),
-        )
-        .unwrap();
-
-        assert_eq!(
-            target_executable_override(AgentAdapterKind::Codex, target.path()),
-            Some(target.path().join("bin/codex"))
-        );
-        assert_eq!(
-            target_executable_override(AgentAdapterKind::ClaudeCode, target.path()),
-            Some(PathBuf::from("/opt/custom/claude"))
         );
     }
 }

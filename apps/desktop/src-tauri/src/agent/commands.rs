@@ -9,11 +9,13 @@ use crate::agent::executor::AgentExecutor;
 use crate::agent::types::{
     AgentConfig, AgentEvent, AvailableAgent, ModelOption, load_space_agent_config,
 };
-use crate::agent_adapters::runtime::{
-    AdapterDiagnostic, AdapterDiagnosticStatus, AdapterTarget, SystemRuntimeCommandRunner,
-};
-use crate::agent_adapters::{AgentAdapterKind, AgentAdapterRegistry, system_home_dir};
 use crate::error::AppError;
+use crate::process::path_env::ProcessPath;
+use svode_agents::registry::{
+    AdapterDiagnostic, AdapterDiagnosticStatus, AdapterRuntimeRegistry, AdapterTarget,
+    SystemRuntimeCommandRunner,
+};
+use svode_core::agent_adapters::{AgentAdapterKind, system_home_dir};
 
 /// Default timeout for agent execution: 10 minutes.
 const DEFAULT_TIMEOUT_SECS: u64 = 600;
@@ -213,8 +215,12 @@ pub async fn agent_respond_permission(
 pub async fn agent_list_available() -> Result<Vec<AvailableAgent>, AppError> {
     let home_dir = system_home_dir()
         .ok_or_else(|| AppError::PathNotAccessible("home directory is unavailable".into()))?;
-    let registry = AgentAdapterRegistry;
-    let target = AdapterTarget { cwd: home_dir };
+    let registry = AdapterRuntimeRegistry;
+    let search_path = ProcessPath::session();
+    let target = AdapterTarget {
+        cwd: home_dir,
+        search_path: search_path.get().await.map(ToOwned::to_owned),
+    };
     let (claude, codex) = tokio::join!(
         registry.diagnose(
             AgentAdapterKind::ClaudeCode,

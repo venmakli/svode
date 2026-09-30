@@ -55,6 +55,8 @@ jobs:
         run: cargo test -p svode-cli
       - name: Connection manager tests without the desktop crate
         run: cargo test -p svode-connect
+      - name: Agent runtime tests without the desktop crate
+        run: cargo test -p svode-agents
       - name: Workspace tests
         run: cargo test --workspace
       - name: Clippy

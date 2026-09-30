@@ -45,6 +45,16 @@ impl From<svode_core::collections::CollectionError> for AppError {
     }
 }
 
+impl From<svode_core::agent_adapters::SourceRegistryError> for AppError {
+    fn from(error: svode_core::agent_adapters::SourceRegistryError) -> Self {
+        match error {
+            svode_core::agent_adapters::SourceRegistryError::PathNotAccessible(message) => {
+                Self::PathNotAccessible(message)
+            }
+        }
+    }
+}
+
 impl From<svode_core::agent_context::AgentContextError> for AppError {
     fn from(error: svode_core::agent_context::AgentContextError) -> Self {
         match error {

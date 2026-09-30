@@ -1,7 +1,6 @@
 mod actors;
 mod agent;
 mod agent_actors;
-mod agent_adapters;
 mod agent_context;
 mod agent_sessions;
 mod app_windows;
@@ -298,7 +297,7 @@ pub fn run() {
             agent::commands::agent_send,
             agent::commands::agent_stop,
             agent::commands::agent_list_available,
-            agent_adapters::commands::agent_adapters_list_identities,
+            agent_actors::commands::agent_adapters_list_identities,
             agent::commands::agent_list_models,
             agent::commands::agent_respond_permission,
             agent_sessions::commands::agent_sessions_list,

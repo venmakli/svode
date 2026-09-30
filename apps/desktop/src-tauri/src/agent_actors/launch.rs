@@ -5,17 +5,15 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-use crate::agent_adapters::runtime::{
-    AdapterDiagnostic, PreStartBindingAttempt, PreStartSelection,
+use svode_agents::registry::{
+    AdapterDiagnostic, AdapterRuntimeRegistry, AgentLaunchRequest, PreStartBindingAttempt,
+    PreStartSelection,
 };
-use crate::agent_adapters::{AgentAdapterKind, AgentAdapterRegistry};
-
-pub use crate::agent_adapters::runtime::AgentLaunchRequest;
-
 use svode_core::agent_actors::{
     AgentAdapter, ApprovalMode, CanonicalActorResolution, ResolvedAgentActor, read_local_approval,
     resolve_canonical_reference,
 };
+use svode_core::agent_adapters::AgentAdapterKind;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -111,7 +109,7 @@ fn select_resolved_actor(
     resolved: ResolvedAgentActor,
     diagnostics: &BTreeMap<AgentAdapterKind, AdapterDiagnostic>,
 ) -> AgentLaunchResolution {
-    let registry = AgentAdapterRegistry;
+    let registry = AdapterRuntimeRegistry;
     let selection = registry.select_pre_start(&resolved.actor.adapters, diagnostics);
     let mut attempts = launch_attempts(&resolved.actor.adapters, diagnostics, &selection);
     let launch_space_path = launch_space.to_string_lossy().into_owned();
@@ -191,7 +189,7 @@ mod tests {
 
     use super::*;
     use crate::agent_actors::{CatalogMutation, mutate_catalog, write_local_approval};
-    use crate::agent_adapters::runtime::AdapterDiagnosticStatus;
+    use svode_agents::registry::AdapterDiagnosticStatus;
     use svode_core::agent_actors::{AgentActor, local_path, read_catalog};
 
     const ACTOR_ID: &str = "01arz3ndektsv4rrffq69g5fav";

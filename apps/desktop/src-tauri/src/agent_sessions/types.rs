@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::agent_adapters::AgentAdapterKind;
+use svode_core::agent_adapters::AgentAdapterKind;
 
 pub(crate) const MAX_SOURCE_DIAGNOSTICS: usize = 50;
 

@@ -7,19 +7,20 @@ use tauri::{AppHandle, Emitter, State};
 
 use super::{AgentActorMutationInput, mutate_catalog_compound, set_local_approval};
 use crate::AppError;
-use crate::agent_adapters::runtime::{
-    AdapterDiagnostic, AdapterRuntimeDescriptor, AdapterSelectOption, AdapterTarget,
-    ApprovalMapping, BindingValidation, SystemRuntimeCommandRunner,
-};
-use crate::agent_adapters::{AgentAdapterKind, AgentAdapterRegistry};
 use crate::git::GitState;
 use crate::git::access::{RepositoryAccessState, access_store_path};
 use crate::git::require_cli;
+use crate::process::path_env::ProcessPath;
 use crate::space::types::SpaceGitType;
+use svode_agents::registry::{
+    AdapterDiagnostic, AdapterRuntimeDescriptor, AdapterRuntimeRegistry, AdapterSelectOption,
+    AdapterTarget, ApprovalMapping, BindingValidation, SystemRuntimeCommandRunner,
+};
 use svode_core::agent_actors::{
     AgentActorResolution, AgentAdapter, ApprovalMode, CatalogError, catalog_path, read_catalog,
     resolve_catalogs,
 };
+use svode_core::agent_adapters::{AgentAdapterIdentity, AgentAdapterKind, AgentAdapterRegistry};
 use svode_core::git::autocommit::{
     AutocommitService, ExactPathPersistenceOutcome, GuardedExactPathPlan,
 };
@@ -196,7 +197,7 @@ pub async fn agent_actors_get(
         crate::space::config::read_space_config(&own)?;
         None
     };
-    let registry = AgentAdapterRegistry;
+    let registry = AdapterRuntimeRegistry;
     let resolution = resolve_catalogs(&own, inherited_root.as_deref());
     let owner_fingerprints = std::iter::once(own.as_path())
         .chain(
@@ -221,7 +222,7 @@ pub async fn agent_actors_get(
 }
 
 fn binding_runtime_projection(
-    registry: &AgentAdapterRegistry,
+    registry: &AdapterRuntimeRegistry,
     resolution: &AgentActorResolution,
 ) -> Vec<AgentActorBindingRuntime> {
     resolution
@@ -254,13 +255,23 @@ pub async fn agent_actors_diagnose_adapter(
 ) -> Result<AdapterDiagnostic, AppError> {
     let target = canonical_space_path(Path::new(&target_space_path))?;
     crate::space::config::read_space_config(&target)?;
-    Ok(AgentAdapterRegistry
+    let search_path = ProcessPath::session();
+    Ok(AdapterRuntimeRegistry
         .diagnose(
             adapter,
-            &AdapterTarget { cwd: target },
+            &AdapterTarget {
+                cwd: target,
+                search_path: search_path.get().await.map(ToOwned::to_owned),
+            },
             &SystemRuntimeCommandRunner,
         )
         .await)
+}
+
+/// Labels of the registered agent adapters, by adapter id.
+#[tauri::command]
+pub fn agent_adapters_list_identities() -> Vec<AgentAdapterIdentity> {
+    AgentAdapterRegistry.identities()
 }
 
 #[tauri::command]
@@ -273,7 +284,7 @@ pub fn agent_actors_inspect_binding(
     binding: AgentAdapter,
     approval_mode: ApprovalMode,
 ) -> AgentActorBindingInspection {
-    let registry = AgentAdapterRegistry;
+    let registry = AdapterRuntimeRegistry;
     AgentActorBindingInspection {
         validation: registry.validate_binding(&binding),
         effort_options: registry.effort_options(binding.adapter, binding.model.as_deref()),
@@ -923,7 +934,7 @@ mod tests {
             }],
             diagnostics: vec![],
         };
-        let rows = binding_runtime_projection(&AgentAdapterRegistry, &resolution);
+        let rows = binding_runtime_projection(&AdapterRuntimeRegistry, &resolution);
         assert_eq!(rows[0].owner_path, "/project");
         assert_eq!(rows[0].readiness, AgentActorBindingReadiness::Unchecked);
     }

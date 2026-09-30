@@ -7,8 +7,8 @@ use tokio::process::Command;
 use crate::agent::AgentProcess;
 use crate::agent::executor::AgentExecutor;
 use crate::agent::types::{AgentConfig, AgentEvent, ModelOption};
-use crate::agent_adapters::{AgentAdapterKind, resolve_executable_path, system_home_dir};
 use crate::{error::AppError, process};
+use svode_core::agent_adapters::{AgentAdapterKind, resolve_executable_path, system_home_dir};
 
 /// Claude Code CLI executor.
 pub struct ClaudeCodeExecutor;

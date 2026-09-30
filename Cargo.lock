@@ -5270,6 +5270,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 
 [[package]]
+name = "svode-agents"
+version = "0.0.1"
+dependencies = [
+ "serde",
+ "serde_json",
+ "svode-core",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "ulid",
+]
+
+[[package]]
 name = "svode-cli"
 version = "0.0.9"
 dependencies = [
@@ -5350,6 +5363,7 @@ dependencies = [
  "serde_yml",
  "sha2 0.10.9",
  "sqlx",
+ "svode-agents",
  "svode-connect",
  "svode-core",
  "svode-install",

@@ -14,6 +14,7 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 tempfile = "3"
+svode-agents = { path = "../../../crates/svode-agents" }
 svode-core = { path = "../../../crates/svode-core" }
 svode-connect = { path = "../../../crates/svode-connect" }
 svode-install = { path = "../../../crates/svode-install" }

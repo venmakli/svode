@@ -9,9 +9,9 @@ use super::types::{
     AgentSessionReentryResult, AgentSessionResumeCommand, AgentSessionScopeKind,
     AgentSessionScopeStatus, AgentSessionSource,
 };
-use crate::agent_adapters::runtime::resolve_scoped_executable;
 use crate::error::AppError;
 use crate::terminal::{AgentTerminalSpawn, AgentTerminalSurface, quote_agent_shell_command};
+use svode_core::agent_adapters::resolve_space_executable;
 use svode_core::system_path;
 
 pub(crate) fn reenter_session<ResolveCli, SpawnShell>(
@@ -81,7 +81,7 @@ pub(crate) fn resolve_agent_cli_binary(
     home_dir: &Path,
     search_path: Option<&OsStr>,
 ) -> Option<String> {
-    let path = resolve_scoped_executable(source.adapter(), scope_dir, home_dir, search_path)?;
+    let path = resolve_space_executable(source.adapter(), scope_dir, home_dir, search_path)?;
     let canonical = fs::canonicalize(&path).unwrap_or(path);
     Some(system_path::user_facing_path(&canonical))
 }
