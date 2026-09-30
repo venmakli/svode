@@ -129,6 +129,12 @@ export function createCollectionDetailControllerStore({
 
   const controller: CollectionDetailController = {
     open(request, focusOptions) {
+      const updatesShown =
+        snapshot.active !== null &&
+        collectionDetailSelectionEquals(
+          snapshot.active.request.selection,
+          request.selection,
+        );
       return enqueue(async () => {
         const current = snapshot.active;
         if (
@@ -151,6 +157,13 @@ export function createCollectionDetailControllerStore({
             displayed: active,
           });
           return true;
+        }
+
+        // An update of the detail shown when it was requested must not reopen
+        // it after a queued close, e.g. a form rerendering while its close
+        // guard waits for the user.
+        if (updatesShown) {
+          return false;
         }
 
         if (current && !(await canLeaveActiveDetail())) {

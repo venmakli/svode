@@ -193,6 +193,29 @@ test("queued intents never run close guards in parallel", async () => {
   );
 });
 
+test("an update queued while a close guard asks does not reopen the closed detail", async () => {
+  const store = createStore();
+  const answer = deferred<boolean>();
+  await store.controller.open(
+    request(firstSelection, { canClose: () => answer.promise }),
+  );
+
+  const closeResult = store.controller.close(firstSelection);
+  // The form rerenders while the user answers and refreshes its request.
+  const updateResult = store.controller.open(request(firstSelection));
+  answer.resolve(true);
+
+  expect(await closeResult).toBe(true);
+  expect(await updateResult).toBe(false);
+  expect(store.getSnapshot().active).toBeNull();
+
+  // Opening the row again later is a new request and opens it.
+  expect(await store.controller.open(request(firstSelection))).toBe(true);
+  expect(store.getSnapshot().active?.request.selection).toEqual(
+    firstSelection,
+  );
+});
+
 test("an open detail joins the navigation guards; a passed guard closes it", async () => {
   const guards: (() => Promise<boolean>)[] = [];
   const store = createCollectionDetailControllerStore({
