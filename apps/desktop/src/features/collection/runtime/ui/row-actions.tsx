@@ -211,8 +211,7 @@ function CollectionRowActionContextItem(props: CollectionRowActionProps) {
       data-collection-action-state={state.status}
       title={state.message}
       aria-description={state.message}
-      onSelect={(event) => {
-        event.preventDefault();
+      onSelect={() => {
         void run();
       }}
     >
