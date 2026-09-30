@@ -1,5 +1,6 @@
 import {
   useActiveContentPath,
+  useActiveContentShown,
   useActiveContentSpaceId,
   useOpenScopeOwner,
 } from "@/features/artifact";
@@ -78,6 +79,7 @@ export function useFileTreeItemActions({
     });
   const activeContentPath = useActiveContentPath();
   const activeContentSpaceId = useActiveContentSpaceId();
+  const contentShown = useActiveContentShown();
   const {
     expandedPaths,
     treeParentLoading,
@@ -109,6 +111,7 @@ export function useFileTreeItemActions({
     : false;
   const isUnsaved = useEditorFilePendingWrite(spacePath, node.path);
   const isActive =
+    contentShown &&
     (!bareFolder || node.has_app) &&
     activeContentPath === node.path &&
     activeContentSpaceId === spaceId;

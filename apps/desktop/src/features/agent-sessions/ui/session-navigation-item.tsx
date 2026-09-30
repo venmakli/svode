@@ -21,6 +21,9 @@ interface AgentSessionNavigationItemProps {
   mainTarget: AgentSessionTarget | null;
   onOpen: (session: AgentSession) => void;
   menu: ReactNode;
+  onClose?: () => void;
+  temporary?: boolean;
+  onKeep?: () => void;
 }
 
 /**
@@ -34,6 +37,9 @@ export function AgentSessionNavigationItem({
   mainTarget,
   onOpen,
   menu,
+  onClose,
+  temporary,
+  onKeep,
 }: AgentSessionNavigationItemProps) {
   const session = useAgentSessionCatalog((state) =>
     agentSessionForNavigationKey(navigationKey, state.sessions),
@@ -75,6 +81,9 @@ export function AgentSessionNavigationItem({
         if (session) onOpen(session);
       }}
       menu={menu}
+      onClose={onClose}
+      temporary={temporary}
+      onKeep={onKeep}
     />
   );
 }

@@ -2,6 +2,7 @@ import { useCallback } from "react";
 import type { Page } from "@/features/page";
 import { useSpace, useSpaceTreeSync } from "@/features/space";
 import { saveCollectionTreeOrder } from "../api";
+import { useSignalUserEdit } from "@/features/navigation";
 
 export function useCollectionTreeOrder({
   spacePath,
@@ -27,6 +28,7 @@ export function useCollectionTreeOrder({
     [reloadTreeParent, sidebarSpaceId],
   );
 
+  const signalUserEdit = useSignalUserEdit();
   const saveOrder = useCallback(
     async (orderKey: string, entries: Page[]) => {
       await saveCollectionTreeOrder({
@@ -35,8 +37,9 @@ export function useCollectionTreeOrder({
         entries,
         projectPath,
       });
+      signalUserEdit();
     },
-    [projectPath, spacePath],
+    [projectPath, signalUserEdit, spacePath],
   );
 
   return { reloadOrderParent, saveOrder };

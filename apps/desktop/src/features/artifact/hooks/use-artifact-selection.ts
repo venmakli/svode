@@ -31,6 +31,11 @@ export function useActiveContentSpaceId() {
   );
 }
 
+/** Whether the main area shows the selection; only then is it highlighted. */
+export function useActiveContentShown() {
+  return useArtifactSelectionStore((state) => state.contentShown);
+}
+
 export function useOpenArtifact() {
   return useArtifactSelectionStore((state) => state.openArtifact);
 }

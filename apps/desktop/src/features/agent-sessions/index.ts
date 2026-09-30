@@ -1,5 +1,6 @@
 export {
   requestAgentSessionCatalogFastRefresh,
+  useActiveAgentSessions,
   useAgentSessionCatalogLifecycle,
   useAgentSessionSpace,
   useListedAgentSessions,
@@ -15,7 +16,14 @@ export {
   AgentSessionsSurface,
   AgentSessionsScreen,
 } from "./ui";
-export { agentSessionTargetFor } from "./model";
+export { isInsideAgentSessionContent } from "./lib";
+export {
+  agentSessionForNavigationKey,
+  agentSessionNavigationIndex,
+  agentSessionNavigationKey,
+  agentSessionTargetFor,
+  pinnableAgentSessionItem,
+} from "./model";
 export type {
   AgentSession,
   AgentSessionOpenOptions,

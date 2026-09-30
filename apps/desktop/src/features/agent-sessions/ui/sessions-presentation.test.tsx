@@ -95,6 +95,8 @@ function actions(
     pinnedOf: () => null,
     pinPending: () => false,
     onTogglePin: () => undefined,
+    keepable: () => false,
+    onKeep: () => undefined,
     ...overrides,
   };
 }
@@ -324,6 +326,25 @@ test("pin and unpin follow the pin state of each row", () => {
   expect(pin?.getState(working)).toEqual({ status: "pending" });
   void pin?.run(done);
   expect(toggled).toEqual([done.id]);
+});
+
+test("keep in Now shows only for rows that are neither pinned nor kept", () => {
+  const kept: string[] = [];
+  const presentation = createAgentSessionsPresentationDescriptor({
+    actions: actions({
+      keepable: (session) => session === working,
+      onKeep: (session) => kept.push(session.id),
+    }),
+    agents,
+    rows,
+  });
+  const keep = presentation.rowActions?.find((action) => action.id === "keep");
+
+  expect(keep?.label).toBe("Keep in Now");
+  expect(keep?.isVisible?.(working)).toBe(true);
+  expect(keep?.isVisible?.(done)).toBe(false);
+  void keep?.run(working);
+  expect(kept).toEqual([working.id]);
 });
 
 test("collection states: loading, blocking error, partial source and empty Space", () => {

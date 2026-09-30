@@ -66,19 +66,26 @@ if (process.env.SVODE_NAVIGATION_SIDEBAR_DOM !== "1") {
 
   type Item = { key: { kind: string }; title: string };
   const pinned: Item[] = [];
+  const kept: Item[] = [];
   const commands: string[] = [];
+  const state = () => ({ pinned: [...pinned], kept: [...kept] });
   Object.defineProperty(dom.window, "__TAURI_INTERNALS__", {
     value: {
       invoke: async (command: string, args: Record<string, unknown>) => {
         commands.push(command);
-        if (command === "navigation_read") return { pinned: [...pinned] };
+        if (command === "navigation_read") return state();
         if (command === "navigation_pin") {
+          kept.splice(0);
           pinned.push(args.item as Item);
-          return { pinned: [...pinned] };
+          return state();
         }
-        if (command === "navigation_forget") {
+        if (command === "navigation_keep") {
+          kept.push(args.item as Item);
+          return state();
+        }
+        if (command === "navigation_unpin") {
           pinned.splice(0);
-          return { pinned: [] };
+          return state();
         }
         throw new Error(`unexpected command ${command}`);
       },
@@ -92,7 +99,11 @@ if (process.env.SVODE_NAVIGATION_SIDEBAR_DOM !== "1") {
   const { getNavigationState } = await import("../hooks/use-navigation-state");
   const { NavigationSidebarGroup } = await import("./navigation-sidebar-group");
   const { NavigationSidebarItem } = await import("./navigation-sidebar-item");
-  const { PinMenuItem } = await import("./pin-controls");
+  const { NavigationMenuItems, PinMenuItem } = await import("./pin-controls");
+  const { UserEditScope } = await import("./user-edit-scope");
+  const { useSignalUserEdit, signalCreatedArtifact } =
+    await import("../hooks/use-signal-user-edit");
+  const { subscribeUserEdits } = await import("../model/user-edit-signal");
 
   let root: Root | null = null;
   async function render(node: React.ReactNode) {
@@ -195,8 +206,117 @@ if (process.env.SVODE_NAVIGATION_SIDEBAR_DOM !== "1") {
     await render(menu);
     expect(menuItem().textContent).toBe("Unpin");
     await act(async () => menuItem().click());
-    expect(commands.includes("navigation_forget")).toBe(true);
+    expect(commands.includes("navigation_unpin")).toBe(true);
     expect(getNavigationState().pinned).toEqual([]);
+    root?.unmount();
+  });
+
+  test("keep in Now shows until the object is kept or pinned", async () => {
+    await act(async () => getNavigationState().setProject("/project"));
+    const menu = (
+      <DropdownMenu open>
+        <DropdownMenuTrigger>open</DropdownMenuTrigger>
+        <DropdownMenuContent>
+          <NavigationMenuItems
+            item={{ key: { kind: "space", spaceId: "docs" }, title: "Docs" }}
+          />
+        </DropdownMenuContent>
+      </DropdownMenu>
+    );
+    const labels = () =>
+      [...document.querySelectorAll("[role=menuitem]")].map(
+        (item) => item.textContent,
+      );
+    await render(menu);
+    expect(labels()).toEqual(["Pin", "Keep in Now"]);
+
+    const keepItem = [
+      ...document.querySelectorAll<HTMLElement>("[role=menuitem]"),
+    ].find((item) => item.textContent === "Keep in Now")!;
+    await act(async () => keepItem.click());
+    expect(getNavigationState().kept.map((item) => item.title)).toEqual([
+      "Docs",
+    ]);
+    await render(menu);
+    expect(labels()).toEqual(["Pin"]);
+
+    // Pinning a kept object moves it out of Now.
+    const pinItem = document.querySelector<HTMLElement>("[role=menuitem]")!;
+    await act(async () => pinItem.click());
+    expect(getNavigationState().kept).toEqual([]);
+    await render(menu);
+    expect(labels()).toEqual(["Unpin"]);
+    root?.unmount();
+  });
+
+  test("a Now row closes by its named button and a temporary row is kept by double click", async () => {
+    let closed = 0;
+    let keptTimes = 0;
+    await render(
+      <NavigationSidebarItem
+        title="Plan"
+        icon={null}
+        tooltip={null}
+        active
+        unavailable={false}
+        onOpen={() => undefined}
+        menu={null}
+        onClose={() => (closed += 1)}
+        temporary
+        onKeep={() => (keptTimes += 1)}
+      />,
+    );
+    const button = document.querySelector<HTMLButtonElement>(
+      "[data-sidebar=menu-button]",
+    )!;
+    expect(button.className.includes("italic")).toBe(true);
+    expect(button.textContent).toBe("PlanTemporarily open");
+    const close = document.querySelector<HTMLButtonElement>(
+      "[aria-label='Close “Plan”']",
+    )!;
+    await act(async () => close.click());
+    expect(closed).toBe(1);
+    await act(async () =>
+      button.dispatchEvent(
+        new MouseEvent("dblclick", { bubbles: true, cancelable: true }),
+      ),
+    );
+    expect(keptTimes).toBe(1);
+    root?.unmount();
+  });
+
+  test("only edits inside the main area signal; a peek inside it does not", async () => {
+    const edits: string[] = [];
+    const unsubscribe = subscribeUserEdits((edit) =>
+      edits.push(edit.kind === "edit" ? "edit" : `created:${edit.path}`),
+    );
+    function Editor({ id }: { id: string }) {
+      const signal = useSignalUserEdit();
+      return (
+        <button type="button" data-editor={id} onClick={signal}>
+          edit
+        </button>
+      );
+    }
+    await render(
+      <>
+        <UserEditScope mainArea>
+          <Editor id="main" />
+          <UserEditScope mainArea={false}>
+            <Editor id="peek" />
+          </UserEditScope>
+        </UserEditScope>
+        <Editor id="elsewhere" />
+      </>,
+    );
+    for (const id of ["peek", "elsewhere", "main"]) {
+      await act(async () =>
+        document.querySelector<HTMLElement>(`[data-editor=${id}]`)!.click(),
+      );
+    }
+    signalCreatedArtifact("docs", "new.md");
+    expect(edits).toEqual(["edit", "created:new.md"]);
+    unsubscribe();
     root?.unmount();
   });
 }

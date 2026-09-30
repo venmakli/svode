@@ -2,6 +2,7 @@ import { useEffect, useMemo } from "react";
 import {
   useActiveContentPath,
   useActiveContentSelection,
+  useActiveContentShown,
   useActiveContentSpaceId,
 } from "@/features/artifact";
 import { useSpaceStore } from "../model";
@@ -156,13 +157,16 @@ export function useSpaceSidebarActions({
 
   useSpaceLfsStateSync(activeRootPath);
 
+  const contentShown = useActiveContentShown();
   const rootHomeActive =
+    contentShown &&
     activeContentSpaceId === activeRootId &&
     (!activeContentPath || activeContentPath.toLowerCase() === "readme.md");
 
   return {
     activeContentPath,
     activeContentSpaceId,
+    contentShown,
     activeRevealRequest,
     activeRootIcon,
     activeRootId,

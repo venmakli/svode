@@ -4,8 +4,9 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
+import { usePeekStackEntry } from "@/shared/hooks/use-peek-stack-entry";
 import { pageNavigationItem, type Page } from "@/features/page";
-import { PinMenuItem } from "@/features/navigation";
+import { NavigationMenuItems } from "@/features/navigation";
 import { useSpace } from "@/features/space";
 import { PageDetailActions } from "@/features/page/detail";
 import {
@@ -49,6 +50,7 @@ export function PagePeekSheet(props: PagePeekSheetProps) {
     navigation.dismiss();
     props.onOpenChange(false);
   };
+  usePeekStackEntry(Boolean(target), () => void leave(() => close()));
   return (
     <Sheet
       open={Boolean(target)}
@@ -228,7 +230,9 @@ function PagePeekActions({
         template ? (
           templateDefaultAction
         ) : (
-          <PinMenuItem item={pageNavigationItem(page, spaceId, activeRootId)} />
+          <NavigationMenuItems
+            item={pageNavigationItem(page, spaceId, activeRootId)}
+          />
         )
       }
       duplicateLabel={template ? m.collection_template_duplicate() : undefined}

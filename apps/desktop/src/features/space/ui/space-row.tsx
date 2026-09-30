@@ -15,7 +15,7 @@ import {
   X,
 } from "lucide-react";
 import * as m from "@/paraglide/messages.js";
-import { PinMenuItem, spaceNavigationKey } from "@/features/navigation";
+import { NavigationMenuItems, spaceNavigationKey } from "@/features/navigation";
 import {
   Collapsible,
   CollapsibleContent,
@@ -271,7 +271,7 @@ export function SpaceRow({
             </SidebarMenuAction>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" side="bottom">
-            <PinMenuItem
+            <NavigationMenuItems
               item={{
                 key: spaceNavigationKey(ws.id, null),
                 title: ws.name,

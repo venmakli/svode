@@ -1,5 +1,12 @@
 import type { ReactNode } from "react";
-import { BotMessageSquare, Copy, ListChecks, Pin, X } from "lucide-react";
+import {
+  BotMessageSquare,
+  Copy,
+  ListChecks,
+  Pin,
+  SquarePlus,
+  X,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Empty,
@@ -48,6 +55,9 @@ export interface AgentSessionsPresentationActions {
   pinnedOf(session: AgentSession): boolean | null;
   pinPending(session: AgentSession): boolean;
   onTogglePin(session: AgentSession): void;
+  /** Whether "Keep in Now" applies: it has an identity, not pinned or kept. */
+  keepable(session: AgentSession): boolean;
+  onKeep(session: AgentSession): void;
 }
 
 /** Status values in the order of the lifecycle, each with its own color. */
@@ -197,6 +207,15 @@ export function createAgentSessionsPresentationDescriptor({
         isVisible: (row) => actions.pinnedOf(row) !== null,
         label: m.navigation_pin(),
         run: actions.onTogglePin,
+      },
+      {
+        getState: (row) =>
+          actions.pinPending(row) ? { status: "pending" } : { status: "idle" },
+        icon: <SquarePlus />,
+        id: "keep",
+        isVisible: actions.keepable,
+        label: m.navigation_keep(),
+        run: actions.onKeep,
       },
       {
         getState: () => ({ status: "idle" }),

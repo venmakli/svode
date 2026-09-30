@@ -1,7 +1,11 @@
 import { useEffect, useState } from "react";
 import { useSpaceTreeSync } from "@/features/space";
 import { useOpenScopeOwner } from "@/features/artifact";
-import { PinMenuItem, type NavigationItem } from "@/features/navigation";
+import {
+  NavigationMenuItems,
+  signalCreatedArtifact,
+  type NavigationItem,
+} from "@/features/navigation";
 import { deletePage, duplicatePage } from "@/features/page/page-api";
 import { useOpenPage } from "@/features/page/navigation";
 import { usePageDetailContext } from "@/features/page/scope-surface";
@@ -46,6 +50,7 @@ export function ScopeOwnerActions({
     publishPageFilenameWarnings(duplicated.warnings);
     await reloadTreePathParent(context.spaceId, duplicated.path);
     openPage(duplicated.path, context.spaceId);
+    signalCreatedArtifact(context.spaceId, duplicated.path);
   }
 
   async function deleteOwner(page: Page) {
@@ -82,7 +87,7 @@ export function ScopeOwnerActions({
         }}
         onDuplicatePage={(page) => void duplicateOwner(page).catch(handleError)}
         onDeletePage={setPageToDelete}
-        actionItemsBeforeDuplicate={<PinMenuItem item={pinItem} />}
+        actionItemsBeforeDuplicate={<NavigationMenuItems item={pinItem} />}
         readOnly={readOnly}
       />
       <PageDeleteDialog

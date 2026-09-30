@@ -19,6 +19,7 @@ import {
   sameStringSet,
 } from "../../lib/entry-refresh";
 import * as m from "@/paraglide/messages.js";
+import { useSignalUserEdit } from "@/features/navigation";
 
 export function useCalendarEntries({
   collectionPath,
@@ -137,10 +138,12 @@ export function useCalendarEntries({
     },
     [],
   );
+  const signalUserEdit = useSignalUserEdit();
   const { save: saveEntryField } = usePageFieldSave({
     spacePath,
     projectPath,
     applyPageUpdate,
+    onSaved: signalUserEdit,
   });
 
   const updateField = useCallback(

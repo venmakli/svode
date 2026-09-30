@@ -78,3 +78,29 @@ test("a session is its own main area object and replaces the session peek", () =
   expect(useShellStore.getState().mainSessionTarget).toBeNull();
   expect(useShellStore.getState().sessionPeekTarget).toBeNull();
 });
+
+test("closing the Graph returns to the object it was opened over", () => {
+  const target = { sessionId: "codex:a", launchId: null };
+  const graph = {
+    query: "",
+    scope: { kind: "project" as const },
+    filters: createDefaultKnowledgeFilters(),
+    selectedNodeId: null,
+  };
+
+  useShellStore.getState().openSessionMainSurface(target, { focus: false });
+  expect(useShellStore.getState().mainSessionFocus).toBe(false);
+  useShellStore.getState().openGraphSurface(graph);
+  useShellStore.getState().closeGraphSurface();
+  expect(useShellStore.getState().mainSurface).toBe("session");
+  expect(useShellStore.getState().mainSessionTarget).toEqual(target);
+
+  useShellStore.getState().openContentSurface();
+  useShellStore.getState().openGraphSurface(graph);
+  useShellStore.getState().closeGraphSurface();
+  expect(useShellStore.getState().mainSurface).toBe("content");
+
+  // Outside the Graph it changes nothing.
+  useShellStore.getState().closeGraphSurface();
+  expect(useShellStore.getState().mainSurface).toBe("content");
+});

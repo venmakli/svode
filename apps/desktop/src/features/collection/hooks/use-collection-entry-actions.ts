@@ -12,6 +12,10 @@ import {
   type Page,
 } from "@/features/page";
 import type { CollectionSchema } from "@/features/properties";
+import {
+  signalCreatedArtifact,
+  useSignalUserEdit,
+} from "@/features/navigation";
 import { useSpaceTreeSync } from "@/features/space";
 import * as m from "@/paraglide/messages.js";
 import { instantiateTemplate } from "../api";
@@ -19,6 +23,12 @@ import { instantiateTemplate } from "../api";
 function isMissingTemplateError(error: unknown) {
   const message = String(error).toLowerCase();
   return message.includes("not found") || message.includes("filenotfound");
+}
+
+interface RowTarget {
+  spacePath: string;
+  projectPath?: string | null;
+  spaceId: string;
 }
 
 export function useCollectionEntryActions({
@@ -38,6 +48,7 @@ export function useCollectionEntryActions({
 }) {
   const { reloadTreeParent, reloadTreePathParent, removeTreePath } =
     useSpaceTreeSync();
+  const signalUserEdit = useSignalUserEdit();
   const [deleteEntry, setDeleteEntry] = useState<Page | null>(null);
   const [entriesVersion, setEntriesVersion] = useState(0);
   const refreshEntries = useCallback(() => {
@@ -68,9 +79,11 @@ export function useCollectionEntryActions({
         });
         publishPageFilenameWarnings(created.warnings);
         refreshEntries();
+        signalUserEdit();
         await reloadTreeParent(spaceId, collectionPath);
         if (openAfterCreate) {
           openPage(created.path, spaceId);
+          signalCreatedArtifact(spaceId, created.path);
         }
         return created;
       } catch (error) {
@@ -105,17 +118,19 @@ export function useCollectionEntryActions({
     }
     publishPageFilenameWarnings(nextEntry.warnings);
     refreshEntries();
+    signalUserEdit();
     await reloadTreeParent(spaceId, collectionPath);
     if (openAfterCreate) {
       openPage(nextEntry.path, spaceId);
+      signalCreatedArtifact(spaceId, nextEntry.path);
     }
     return nextEntry;
   }
 
-  async function duplicateRow(
-    entryToDuplicate: Page,
-    target = { spacePath, projectPath, spaceId },
-  ) {
+  // A row target comes from its peek; edits made there do not keep the
+  // collection in Now.
+  async function duplicateRow(entryToDuplicate: Page, peekTarget?: RowTarget) {
+    const target = peekTarget ?? { spacePath, projectPath, spaceId };
     const duplicated = await duplicatePageApi({
       spacePath: target.spacePath,
       filePath: entryToDuplicate.path,
@@ -123,14 +138,14 @@ export function useCollectionEntryActions({
     });
     publishPageFilenameWarnings(duplicated.warnings);
     refreshEntries();
+    if (!peekTarget) signalUserEdit();
     await reloadTreePathParent(target.spaceId, duplicated.path);
     openPage(duplicated.path, target.spaceId);
+    signalCreatedArtifact(target.spaceId, duplicated.path);
   }
 
-  async function deleteRow(
-    entryToDelete: Page,
-    target = { spacePath, projectPath, spaceId },
-  ) {
+  async function deleteRow(entryToDelete: Page, peekTarget?: RowTarget) {
+    const target = peekTarget ?? { spacePath, projectPath, spaceId };
     await deletePageApi({
       spacePath: target.spacePath,
       path: entryToDelete.path,
@@ -138,6 +153,7 @@ export function useCollectionEntryActions({
     });
     setDeleteEntry(null);
     refreshEntries();
+    if (!peekTarget) signalUserEdit();
     removeTreePath(target.spaceId, entryToDelete.path);
     await reloadTreePathParent(target.spaceId, entryToDelete.path);
   }
@@ -151,6 +167,7 @@ export function useCollectionEntryActions({
     publishPageFilenameWarnings(duplicated.warnings);
     await reloadTreePathParent(spaceId, duplicated.path);
     openPage(duplicated.path, spaceId);
+    signalCreatedArtifact(spaceId, duplicated.path);
   }
 
   return {

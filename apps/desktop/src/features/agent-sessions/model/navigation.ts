@@ -104,14 +104,15 @@ export function confirmedMissingAgentSessionKeys(
 }
 
 /**
- * Pinned sessions whose listed title differs from their display snapshot,
- * with the snapshot to keep: the last known title shown while unavailable.
+ * Pinned or kept sessions whose listed title differs from their display
+ * snapshot, with the snapshot to keep: the last known title shown while
+ * unavailable.
  */
-export function retitledAgentSessionPins(
-  pinned: readonly NavigationItem[],
+export function retitledAgentSessionItems(
+  items: readonly NavigationItem[],
   sessions: readonly AgentSession[],
 ): NavigationItem[] {
-  return pinned.flatMap((item) => {
+  return items.flatMap((item) => {
     const session = agentSessionForNavigationKey(item.key, sessions);
     return session && session.title !== item.title
       ? [{ key: item.key, title: session.title }]

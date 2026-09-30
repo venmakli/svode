@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import * as m from "@/paraglide/messages.js";
+import { useSignalUserEdit } from "@/features/navigation";
 import { PropertyPanel } from "@/features/properties/panel";
 import { detailPageHeaderClassName } from "@/shared/ui/page-layout";
 import { usePageDetailContext } from "../hooks/page-detail-context";
@@ -27,6 +28,7 @@ export function PageDetailHeader({
   showReadError?: boolean;
 }) {
   const context = usePageDetailContext();
+  const signalUserEdit = useSignalUserEdit();
   const { page, schemaResult } = context;
 
   if (context.status === "loading") {
@@ -125,7 +127,10 @@ export function PageDetailHeader({
             mode={presentation === "compact" ? "peek" : "full"}
             readOnly={readOnly}
             onOpenPath={context.onOpenPath}
-            onSchemaChange={context.applySchema}
+            onSchemaChange={(result) => {
+              context.applySchema(result);
+              signalUserEdit();
+            }}
             onValueChange={context.updateField}
           />
         </div>

@@ -8,6 +8,7 @@ import {
 } from "@/features/artifact";
 import { useOpenPage } from "@/features/page/navigation";
 import type { Page, PageMeta, PageSourceConflict } from "@/features/page";
+import { useSignalUserEdit } from "@/features/navigation";
 import { useSpace, useSpaceTreeSync } from "@/features/space";
 
 import { deserializeEditorMarkdownInsertion } from "../model/markdown-io";
@@ -249,6 +250,7 @@ export function usePlateDocumentSession({
     onActiveDocumentChanged: reconcileExternalChange,
   });
 
+  const signalUserEdit = useSignalUserEdit();
   const handleChange = useCallback(
     (_: { value: Descendant[] }) => {
       const currentPath = currentPathRef.current;
@@ -260,9 +262,17 @@ export function usePlateDocumentSession({
       if (hasContentChange) {
         markUnsaved(spacePath, currentPath);
         scheduleAutoSave();
+        signalUserEdit();
       }
     },
-    [editor, markUnsaved, readOnly, scheduleAutoSave, spacePath],
+    [
+      editor,
+      markUnsaved,
+      readOnly,
+      scheduleAutoSave,
+      signalUserEdit,
+      spacePath,
+    ],
   );
 
   const deserializeToolbarMarkdown = useCallback(

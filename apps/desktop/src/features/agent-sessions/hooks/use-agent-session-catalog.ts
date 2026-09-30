@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect } from "react";
+import { useEffect, useLayoutEffect, useMemo } from "react";
 import { useStore } from "zustand";
 import { getNavigationState } from "@/features/navigation";
 import {
@@ -15,10 +15,12 @@ import {
   type AgentSession as ListedAgentSession,
 } from "../api";
 import {
+  activeAgentSessions,
   confirmedMissingAgentSessionKeys,
   createAgentSessionCatalogStore,
-  retitledAgentSessionPins,
+  retitledAgentSessionItems,
   startAgentSessionCatalogRefresh,
+  type AgentSession,
   type AgentSessionCatalogRefreshEnvironment,
   type AgentSessionCatalogState,
 } from "../model";
@@ -73,18 +75,19 @@ export function useAgentSessionCatalogLifecycle(projectPath: string | null) {
         if (!state.result || state.listedAt === previous.listedAt) return;
         const navigation = getNavigationState();
         if (navigation.projectPath !== state.projectPath) return;
+        const items = [...navigation.pinned, ...navigation.kept];
         void navigation.forget(
           confirmedMissingAgentSessionKeys(
             state.result,
-            navigation.pinned.map((item) => item.key),
+            items.map((item) => item.key),
           ),
         );
-        for (const item of retitledAgentSessionPins(
-          navigation.pinned,
+        for (const item of retitledAgentSessionItems(
+          items,
           state.result.sessions,
         )) {
-          navigation.pin(item).catch((error: unknown) => {
-            console.error("Failed to update a pinned session title:", error);
+          navigation.retitle(item).catch((error: unknown) => {
+            console.error("Failed to update a session title:", error);
           });
         }
       }),
@@ -113,6 +116,15 @@ export function useListedAgentSessions(): ListedAgentSession[] | null {
     agentSessionCatalog,
     (state) => state.result?.sessions ?? null,
   );
+}
+
+/**
+ * The active sessions of the project in their Now order, pending new
+ * sessions included.
+ */
+export function useActiveAgentSessions(): AgentSession[] {
+  const sessions = useStore(agentSessionCatalog, (state) => state.sessions);
+  return useMemo(() => activeAgentSessions(sessions), [sessions]);
 }
 
 /** Keeps the accelerated full-list refresh while the returned release is pending. */

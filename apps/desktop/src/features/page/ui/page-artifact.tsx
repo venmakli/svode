@@ -7,7 +7,10 @@ import {
 import { useOpenPage } from "../navigation";
 import type { Page } from "../model";
 import { useSpace, useSpaceTreeSync } from "@/features/space";
-import { PinMenuItem } from "@/features/navigation";
+import {
+  NavigationMenuItems,
+  signalCreatedArtifact,
+} from "@/features/navigation";
 import { pageNavigationItem } from "../lib/navigation-item";
 import { logTiming, nowMs } from "@/shared/lib/performance";
 import {
@@ -141,6 +144,7 @@ function PageArtifactContent({
     publishPageFilenameWarnings(duplicated.warnings);
     await reloadTreePathParent(spaceId, duplicated.path);
     openPage(duplicated.path, spaceId);
+    signalCreatedArtifact(spaceId, duplicated.path);
   }
 
   const actions = page ? (
@@ -164,7 +168,9 @@ function PageArtifactContent({
       onDuplicatePage={duplicateCurrentPage}
       onDeletePage={setDeletePage}
       actionItemsBeforeDuplicate={
-        <PinMenuItem item={pageNavigationItem(page, spaceId, activeRootId)} />
+        <NavigationMenuItems
+          item={pageNavigationItem(page, spaceId, activeRootId)}
+        />
       }
       readOnly={pageSurface.readOnly}
       runMutation={pageSurface.runMutation}

@@ -4,7 +4,7 @@ import {
   navigationKeyId,
   type NavigationItem,
   type NavigationKey,
-  type NavigationPinnedItem,
+  type NavigationResolvedItem,
 } from "./keys";
 import {
   createNavigationStore,
@@ -17,11 +17,34 @@ function sessionItem(sessionId: string): NavigationItem {
 
 /** In-memory Desktop owner: every operation answers with the whole state. */
 function fakeApi() {
-  const files = new Map<string, NavigationPinnedItem[]>();
+  const files = new Map<string, NavigationResolvedItem[]>();
+  const keptFiles = new Map<string, NavigationResolvedItem[]>();
   const calls: string[] = [];
   const state = (projectPath: string): NavigationStateDto => ({
     pinned: [...(files.get(projectPath) ?? [])],
+    kept: [...(keptFiles.get(projectPath) ?? [])],
   });
+  const without = (
+    list: Map<string, NavigationResolvedItem[]>,
+    projectPath: string,
+    keys: NavigationKey[],
+  ) => {
+    const ids = new Set(keys.map(navigationKeyId));
+    list.set(
+      projectPath,
+      (list.get(projectPath) ?? []).filter(
+        (item) => !ids.has(navigationKeyId(item.key)),
+      ),
+    );
+  };
+  const listed = (
+    list: Map<string, NavigationResolvedItem[]>,
+    projectPath: string,
+    item: NavigationItem,
+  ) =>
+    (list.get(projectPath) ?? []).some(
+      (current) => navigationKeyId(current.key) === navigationKeyId(item.key),
+    );
   const api: NavigationStateApi & { calls: string[] } = {
     calls,
     read: async (projectPath) => {
@@ -30,25 +53,46 @@ function fakeApi() {
     },
     pin: async (projectPath, item) => {
       calls.push(`pin:${projectPath}:${navigationKeyId(item.key)}`);
-      const pinned = (files.get(projectPath) ?? []).filter(
-        (current) => navigationKeyId(current.key) !== navigationKeyId(item.key),
+      without(keptFiles, projectPath, [item.key]);
+      without(files, projectPath, [item.key]);
+      files.set(projectPath, [...(files.get(projectPath) ?? []), item]);
+      return state(projectPath);
+    },
+    keep: async (projectPath, item) => {
+      calls.push(`keep:${projectPath}:${navigationKeyId(item.key)}`);
+      if (
+        !listed(files, projectPath, item) &&
+        !listed(keptFiles, projectPath, item)
+      ) {
+        keptFiles.set(projectPath, [
+          ...(keptFiles.get(projectPath) ?? []),
+          item,
+        ]);
+      }
+      return state(projectPath);
+    },
+    unpin: async (projectPath, keys) => {
+      calls.push(`unpin:${projectPath}:${keys.map(navigationKeyId).join(",")}`);
+      without(files, projectPath, keys);
+      return state(projectPath);
+    },
+    unkeep: async (projectPath, keys) => {
+      calls.push(
+        `unkeep:${projectPath}:${keys.map(navigationKeyId).join(",")}`,
       );
-      files.set(projectPath, [...pinned, item]);
+      without(keptFiles, projectPath, keys);
       return state(projectPath);
     },
     forget: async (projectPath, keys) => {
       const ids = new Set(keys.map(navigationKeyId));
       calls.push(`forget:${projectPath}:${[...ids].join(",")}`);
-      files.set(
-        projectPath,
-        (files.get(projectPath) ?? []).filter(
-          (item) => !ids.has(navigationKeyId(item.key)),
-        ),
-      );
+      without(files, projectPath, keys);
+      without(keptFiles, projectPath, keys);
       return state(projectPath);
     },
+    retitle: async (projectPath) => state(projectPath),
   };
-  return { api, files };
+  return { api, files, keptFiles };
 }
 
 async function flush() {
@@ -197,4 +241,61 @@ test("unpin forgets the stored key of the same artifact in another form", async 
   await store.getState().unpin({ kind: "page", spaceId: "s", path: "tasks" });
 
   expect(store.getState().pinned).toEqual([]);
+});
+
+test("kept objects follow keep order, move to pinned and close alone", async () => {
+  const { api } = fakeApi();
+  const store = createNavigationStore(api);
+  store.getState().setProject("/project");
+  await flush();
+
+  await store.getState().keep(sessionItem("codex:a"));
+  await store.getState().keep(sessionItem("codex:b"));
+  await store.getState().keep(sessionItem("codex:c"));
+  expect(store.getState().kept.map((item) => item.title)).toEqual([
+    "codex:a",
+    "codex:b",
+    "codex:c",
+  ]);
+
+  // Pinning a kept object moves it; keeping a pinned one changes nothing.
+  await store.getState().pin(sessionItem("codex:b"));
+  await store.getState().keep(sessionItem("codex:b"));
+  expect(store.getState().kept.map((item) => item.title)).toEqual([
+    "codex:a",
+    "codex:c",
+  ]);
+  expect(store.getState().pinned.map((item) => item.title)).toEqual([
+    "codex:b",
+  ]);
+
+  await store.getState().unkeep([]);
+  await store.getState().unkeep([
+    { kind: "session", sessionId: "codex:a" },
+    { kind: "session", sessionId: "codex:c" },
+  ]);
+  expect(store.getState().kept).toEqual([]);
+  expect(api.calls.filter((call) => call.startsWith("unkeep")).length).toBe(1);
+
+  // Unpin leaves Now alone.
+  await store.getState().unpin({ kind: "session", sessionId: "codex:b" });
+  expect(store.getState().pinned).toEqual([]);
+  expect(store.getState().kept).toEqual([]);
+});
+
+test("forget drops a confirmed-missing target from pinned and kept", async () => {
+  const { api, files, keptFiles } = fakeApi();
+  files.set("/project", [sessionItem("codex:a")]);
+  keptFiles.set("/project", [sessionItem("codex:b")]);
+  const store = createNavigationStore(api);
+  store.getState().setProject("/project");
+  await flush();
+
+  await store.getState().forget([
+    { kind: "session", sessionId: "codex:a" },
+    { kind: "session", sessionId: "codex:b" },
+  ]);
+
+  expect(store.getState().pinned).toEqual([]);
+  expect(store.getState().kept).toEqual([]);
 });

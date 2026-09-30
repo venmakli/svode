@@ -10,6 +10,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
+import { usePeekStackEntry } from "@/shared/hooks/use-peek-stack-entry";
 import {
   Sheet,
   SheetContent,
@@ -65,6 +66,9 @@ function CollectionDetailDrawerHost() {
     store.getSnapshot,
   );
   const displayed = snapshot.active ?? snapshot.displayed;
+  usePeekStackEntry(snapshot.active !== null, () => {
+    if (displayed) void store.controller.close(displayed.request.selection);
+  });
   if (!displayed) {
     return null;
   }

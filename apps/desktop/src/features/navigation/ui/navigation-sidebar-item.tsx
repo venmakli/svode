@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from "react";
-import { CircleSlash, Ellipsis } from "lucide-react";
+import { CircleSlash, Ellipsis, X } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -31,6 +31,12 @@ interface NavigationSidebarItemProps {
   onOpen: () => void;
   /** Items of the row menu. */
   menu: ReactNode;
+  /** The row closes by its own button, e.g. in Now. */
+  onClose?: () => void;
+  /** The main area object shown only until another one opens. */
+  temporary?: boolean;
+  /** Double click keeps a temporary row. */
+  onKeep?: () => void;
 }
 
 /** A row of a navigation section of the sidebar. */
@@ -42,6 +48,9 @@ export function NavigationSidebarItem({
   unavailable,
   onOpen,
   menu,
+  onClose,
+  temporary = false,
+  onKeep,
 }: NavigationSidebarItemProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   return (
@@ -54,11 +63,13 @@ export function NavigationSidebarItem({
             aria-current={active ? "page" : undefined}
             aria-disabled={unavailable || undefined}
             className={cn(
-              "pr-8",
+              onClose ? "pr-14" : "pr-8",
+              temporary && "italic",
               unavailable &&
                 "text-sidebar-foreground/50 hover:text-sidebar-foreground/50",
             )}
             onClick={unavailable ? undefined : onOpen}
+            onDoubleClick={onKeep}
           >
             <span
               className="flex size-4 shrink-0 items-center justify-center"
@@ -67,6 +78,9 @@ export function NavigationSidebarItem({
               {icon}
             </span>
             <span className="min-w-0 flex-1 truncate">{title}</span>
+            {temporary && (
+              <span className="sr-only">{m.navigation_temporary()}</span>
+            )}
             {unavailable && (
               <CircleSlash
                 className="!size-3 shrink-0"
@@ -82,8 +96,20 @@ export function NavigationSidebarItem({
           <span className="font-medium">{title}</span>
           {tooltip}
           {unavailable && <span>{m.navigation_unavailable()}</span>}
+          {temporary && <span>{m.navigation_temporary()}</span>}
         </TooltipContent>
       </Tooltip>
+      {onClose && (
+        <SidebarMenuAction
+          type="button"
+          showOnHover
+          className="right-7"
+          aria-label={m.navigation_close_item({ title })}
+          onClick={onClose}
+        >
+          <X />
+        </SidebarMenuAction>
+      )}
       <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
         <DropdownMenuTrigger asChild>
           <SidebarMenuAction

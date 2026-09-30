@@ -20,6 +20,9 @@ interface ArtifactSelectionState {
   activeRevealRequest: ContentRevealRequest | null;
   activePathRetarget: ContentPathRetarget | null;
   transitionPending: boolean;
+  /** The main area shows the selection; the Graph or a session hides it. */
+  contentShown: boolean;
+  setContentShown: (shown: boolean) => void;
   openArtifact: (
     target: Omit<ArtifactOpenTarget, "spaceId"> & { spaceId?: string | null },
     options?: OpenArtifactOptions,
@@ -147,6 +150,9 @@ export const useArtifactSelectionStore = create<ArtifactSelectionState>(
     activeRevealRequest: null,
     activePathRetarget: null,
     transitionPending: false,
+    contentShown: true,
+
+    setContentShown: (contentShown) => set({ contentShown }),
 
     openArtifact: (input, options) => {
       const state = get();

@@ -59,6 +59,7 @@ export function NavSpaces({
   const {
     activeContentPath,
     activeContentSpaceId,
+    contentShown,
     activeRevealRequest,
     activeRootIcon,
     activeRootId,
@@ -172,6 +173,7 @@ export function NavSpaces({
                   const tree = fileTrees[space.id] ?? [];
                   const treeLoaded = hasRecordKey(fileTrees, space.id);
                   const isActive =
+                    contentShown &&
                     activeContentSpaceId === space.id &&
                     (!activeContentPath ||
                       activeContentPath.toLowerCase() === "readme.md");

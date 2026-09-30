@@ -1,12 +1,12 @@
 import type {
   NavigationItemDto,
   NavigationKeyDto,
-  NavigationPinnedItemDto,
+  NavigationResolvedItemDto,
 } from "../api/navigation";
 
 export type NavigationKey = NavigationKeyDto;
 export type NavigationItem = NavigationItemDto;
-export type NavigationPinnedItem = NavigationPinnedItemDto;
+export type NavigationResolvedItem = NavigationResolvedItemDto;
 export type NavigationArtifactKind =
   | "page"
   | "collection"

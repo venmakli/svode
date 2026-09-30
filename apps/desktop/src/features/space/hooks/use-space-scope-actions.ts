@@ -7,6 +7,7 @@ import { publishPageFilenameWarnings } from "@/features/page";
 import { useOpenPage } from "@/features/page/navigation";
 import { createTreeFolder } from "../api/content-tree-actions";
 import { useSpaceActions } from "./use-space-actions";
+import { signalCreatedArtifact } from "@/features/navigation";
 
 export type ScopeTarget = { id: string; path: string };
 
@@ -42,6 +43,7 @@ export function useSpaceScopeActions({
           publishPageFilenameWarnings(page.warnings);
           onActivateContent();
           openPage(page.path, scope.id);
+          signalCreatedArtifact(scope.id, page.path);
         }
       } catch (err) {
         console.error("Failed to create page:", err);
@@ -90,6 +92,7 @@ export function useSpaceScopeActions({
           path: page.path,
           spaceId: scope.id,
         });
+        signalCreatedArtifact(scope.id, page.path);
       } catch (err) {
         console.error("Failed to create collection:", err);
         toast.error(m.toast_error());

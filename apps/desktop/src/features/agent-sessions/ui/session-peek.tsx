@@ -2,12 +2,11 @@ import { useEffect, useRef, useState } from "react";
 import { Maximize2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
+import { usePeekStackEntry } from "@/shared/hooks/use-peek-stack-entry";
 import type { RoutineLaunchLink } from "@/features/routines/catalog";
 import type { AgentSession, AgentSessionTarget } from "../model";
-import {
-  AGENT_SESSION_CONTENT_ATTRIBUTE,
-  AgentSessionContent,
-} from "./session-view";
+import { isInsideAgentSessionContent } from "../lib/session-content";
+import { AgentSessionContent } from "./session-view";
 import * as m from "@/paraglide/messages.js";
 
 interface AgentSessionPeekProps {
@@ -23,13 +22,6 @@ interface AgentSessionPeekProps {
   onOpenRoutine(routine: RoutineLaunchLink): void;
 }
 
-function isInsideSessionContent(target: EventTarget | null) {
-  return (
-    target instanceof Element &&
-    target.closest(`[${AGENT_SESSION_CONTENT_ATTRIBUTE}]`) !== null
-  );
-}
-
 /** Session in the Page Peek pattern: a wide temporary panel over the context. */
 export function AgentSessionPeek({
   target,
@@ -43,6 +35,7 @@ export function AgentSessionPeek({
   if (target && target !== shownTarget) setShownTarget(target);
   const expandingRef = useRef(false);
   const [expanding, setExpanding] = useState(false);
+  usePeekStackEntry(Boolean(target), () => onOpenChange(false));
   useEffect(() => {
     if (target) expandingRef.current = false;
   }, [target]);
@@ -68,7 +61,7 @@ export function AgentSessionPeek({
         style={{ width: "min(1120px, max(720px, 66vw), 94vw)" }}
         onEscapeKeyDown={(event) => {
           // Esc inside the session belongs to the agent, e.g. to interrupt a turn.
-          if (isInsideSessionContent(event.target)) event.preventDefault();
+          if (isInsideAgentSessionContent(event.target)) event.preventDefault();
         }}
         onOpenAutoFocus={(event) => {
           // The terminal takes focus itself once it is attached.

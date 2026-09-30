@@ -1,5 +1,6 @@
-//! Device-local navigation state of one Project: pinned objects and the
-//! expanded folders of the Artifacts tree of each registered Space.
+//! Device-local navigation state of one Project: pinned objects, the objects
+//! kept in Now, and the expanded folders of the Artifacts tree of each
+//! registered Space.
 //!
 //! It is recoverable UI state in its own file under the Project `.svode/`,
 //! covered by the managed Git local policy (`svode_core::git::policy`). It
@@ -7,7 +8,11 @@
 //! A missing, unreadable or unknown-version file reads as empty and is
 //! replaced by the next write.
 //!
-//! Every read resolves the pinned artifacts and Spaces against their source:
+//! An object is pinned or kept, never both: pinning a kept object moves it to
+//! the pinned list.
+//!
+//! Every read resolves the pinned and kept artifacts and Spaces against their
+//! source:
 //! an available target refreshes its display snapshot, an unreadable source
 //! keeps it as unavailable, and only a target whose absence a successful read
 //! confirms is dropped. Sessions are resolved by the frontend catalog.
@@ -194,10 +199,10 @@ pub struct NavigationItem {
     pub icon: Option<String>,
 }
 
-/// A pinned item as the frontend sees it.
+/// A pinned or kept item as the frontend sees it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct PinnedItem {
+pub struct ResolvedItem {
     #[serde(flatten)]
     pub item: NavigationItem,
     /// Whether the source read shows the target; `None` for sessions.
@@ -213,7 +218,9 @@ pub struct PinnedItem {
 #[serde(rename_all = "camelCase")]
 pub struct NavigationState {
     /// In pin order, newest last.
-    pub pinned: Vec<PinnedItem>,
+    pub pinned: Vec<ResolvedItem>,
+    /// Kept in Now, in keep order, newest last.
+    pub kept: Vec<ResolvedItem>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -230,6 +237,8 @@ struct NavigationFile {
     version: u32,
     #[serde(default)]
     pinned: Vec<NavigationItem>,
+    #[serde(default)]
+    kept: Vec<NavigationItem>,
     #[serde(default)]
     expanded: Vec<SpaceExpansion>,
 }
@@ -304,16 +313,19 @@ fn mutate<T>(
     Ok(result)
 }
 
-/// The pinned items resolved against their sources, keeping the file in step:
-/// refreshed snapshots of available targets, confirmed-missing ones dropped.
+/// The pinned and kept items resolved against their sources, keeping the file
+/// in step: refreshed snapshots of available targets, confirmed-missing ones
+/// dropped.
 fn resolved(project: &Path, file: &mut NavigationFile) -> NavigationState {
+    let mut sources = Sources::new(project);
     NavigationState {
-        pinned: resolve_pinned(project, &mut file.pinned),
+        pinned: resolve_items(&mut sources, &mut file.pinned),
+        kept: resolve_items(&mut sources, &mut file.kept),
     }
 }
 
-/// Resolves the pinned items against their sources. Outside a Project there
-/// is no navigation state.
+/// Resolves the pinned and kept items against their sources. Outside a
+/// Project there is no navigation state.
 pub fn read_state(project: &Path) -> NavigationState {
     if !is_project(project) {
         return NavigationState::default();
@@ -330,38 +342,108 @@ pub fn read_state(project: &Path) -> NavigationState {
     })
 }
 
-/// Pins an item at the end, or refreshes the snapshot of an existing pin in
-/// place.
-pub fn pin(project: &Path, item: NavigationItem) -> Result<NavigationState, AppError> {
-    let item = NavigationItem {
+fn normalized_item(item: NavigationItem) -> Result<NavigationItem, AppError> {
+    Ok(NavigationItem {
         key: item.key.normalized()?,
         ..item
-    };
+    })
+}
+
+fn normalized_keys(keys: Vec<NavigationKey>) -> Result<Vec<NavigationKey>, AppError> {
+    keys.into_iter().map(NavigationKey::normalized).collect()
+}
+
+fn position(items: &[NavigationItem], key: &NavigationKey) -> Option<usize> {
+    items.iter().position(|item| item.key.same_target(key))
+}
+
+fn remove_all(items: &mut Vec<NavigationItem>, keys: &[NavigationKey]) {
+    items.retain(|item| !keys.iter().any(|key| key.same_target(&item.key)));
+}
+
+/// Pins an item at the end, or refreshes the snapshot of an existing pin in
+/// place. A kept item moves to the pinned list.
+pub fn pin(project: &Path, item: NavigationItem) -> Result<NavigationState, AppError> {
+    let item = normalized_item(item)?;
     mutate(project, |file| {
-        match file
-            .pinned
-            .iter_mut()
-            .find(|pinned| pinned.key.same_target(&item.key))
-        {
-            Some(pinned) => *pinned = item,
+        remove_all(&mut file.kept, std::slice::from_ref(&item.key));
+        match position(&file.pinned, &item.key) {
+            Some(index) => file.pinned[index] = item,
             None => file.pinned.push(item),
         }
         Ok(resolved(project, file))
     })
 }
 
-/// Removes the given keys from the navigation state: an explicit unpin, or
-/// targets whose absence a successful read of their source confirmed.
-pub fn forget(project: &Path, keys: Vec<NavigationKey>) -> Result<NavigationState, AppError> {
-    let keys = keys
-        .into_iter()
-        .map(NavigationKey::normalized)
-        .collect::<Result<Vec<_>, _>>()?;
+/// Keeps an item in Now at the end, or refreshes the snapshot of a kept item
+/// in place. A pinned item is left pinned.
+pub fn keep(project: &Path, item: NavigationItem) -> Result<NavigationState, AppError> {
+    let item = normalized_item(item)?;
     mutate(project, |file| {
-        file.pinned
-            .retain(|pinned| !keys.iter().any(|key| key.same_target(&pinned.key)));
+        if position(&file.pinned, &item.key).is_none() {
+            match position(&file.kept, &item.key) {
+                Some(index) => file.kept[index] = item,
+                None => file.kept.push(item),
+            }
+        }
         Ok(resolved(project, file))
     })
+}
+
+/// Removes the given keys from the pinned list.
+pub fn unpin(project: &Path, keys: Vec<NavigationKey>) -> Result<NavigationState, AppError> {
+    let keys = normalized_keys(keys)?;
+    mutate(project, |file| {
+        remove_all(&mut file.pinned, &keys);
+        Ok(resolved(project, file))
+    })
+}
+
+/// Removes the given keys from Now.
+pub fn unkeep(project: &Path, keys: Vec<NavigationKey>) -> Result<NavigationState, AppError> {
+    let keys = normalized_keys(keys)?;
+    mutate(project, |file| {
+        remove_all(&mut file.kept, &keys);
+        Ok(resolved(project, file))
+    })
+}
+
+/// Removes targets whose absence a successful read of their source confirmed
+/// from the whole navigation state.
+pub fn forget(project: &Path, keys: Vec<NavigationKey>) -> Result<NavigationState, AppError> {
+    let keys = normalized_keys(keys)?;
+    mutate(project, |file| {
+        remove_all(&mut file.pinned, &keys);
+        remove_all(&mut file.kept, &keys);
+        Ok(resolved(project, file))
+    })
+}
+
+/// Refreshes the display snapshot of a pinned or kept item, such as the
+/// current title of a session; an item in neither list is not added.
+pub fn retitle(project: &Path, item: NavigationItem) -> Result<NavigationState, AppError> {
+    let item = normalized_item(item)?;
+    mutate(project, |file| {
+        for items in [&mut file.pinned, &mut file.kept] {
+            if let Some(index) = position(items, &item.key) {
+                items[index] = item.clone();
+            }
+        }
+        Ok(resolved(project, file))
+    })
+}
+
+/// Resolves one artifact or Space against its source without recording it,
+/// e.g. the object of the main area; `None` when the source shows it is gone.
+/// A source that cannot be read keeps the given snapshot as unavailable.
+/// Sessions are resolved by the frontend catalog.
+pub fn describe(project: &Path, item: NavigationItem) -> Result<Option<ResolvedItem>, AppError> {
+    let item = normalized_item(item)?;
+    if !is_project(project) {
+        return Ok(None);
+    }
+    let mut items = vec![item];
+    Ok(resolve_items(&mut Sources::new(project), &mut items).pop())
 }
 
 /// What a read of its source shows about a pinned artifact or Space.
@@ -517,17 +599,16 @@ fn owner(root: &Path, path: &str) -> Resolution {
     }
 }
 
-/// Resolves pinned items in place and returns what the frontend shows.
+/// Resolves navigation items in place and returns what the frontend shows.
 /// Sessions are left to the frontend catalog. While an in-app path change is
 /// in flight, a missing target stays as unavailable.
-fn resolve_pinned(project: &Path, items: &mut Vec<NavigationItem>) -> Vec<PinnedItem> {
-    let drop_missing = !path_change_in_flight(project);
-    let mut sources = Sources::new(project);
+fn resolve_items(sources: &mut Sources, items: &mut Vec<NavigationItem>) -> Vec<ResolvedItem> {
+    let drop_missing = !path_change_in_flight(sources.project);
     let mut shown = Vec::with_capacity(items.len());
     items.retain_mut(|item| {
         let resolution = match &item.key {
             NavigationKey::Session { .. } | NavigationKey::SessionLaunch { .. } => {
-                shown.push(PinnedItem {
+                shown.push(ResolvedItem {
                     item: item.clone(),
                     available: None,
                     open_path: None,
@@ -554,7 +635,7 @@ fn resolve_pinned(project: &Path, items: &mut Vec<NavigationItem>) -> Vec<Pinned
                 (true, open_path)
             }
         };
-        shown.push(PinnedItem {
+        shown.push(ResolvedItem {
             item: item.clone(),
             available: Some(available),
             open_path,
@@ -623,8 +704,8 @@ fn retarget(space: &Path, from: &str, to: &str) -> Result<bool, AppError> {
     let (project, space_id) = space_target(space)?;
     let (from, to) = (key_path(from), key_path(to));
     mutate(&project, |file| {
-        let before = file.pinned.clone();
-        for item in &mut file.pinned {
+        let before = file.clone();
+        for item in file.pinned.iter_mut().chain(file.kept.iter_mut()) {
             if item
                 .key
                 .artifact()
@@ -639,18 +720,18 @@ fn retarget(space: &Path, from: &str, to: &str) -> Result<bool, AppError> {
             }
         }
         resolved(&project, file);
-        Ok(file.pinned != before)
+        Ok(*file != before)
     })
 }
 
-/// Re-resolves the pinned items of the Project of `space`. Returns whether
-/// the navigation state changed.
+/// Re-resolves the pinned and kept items of the Project of `space`. Returns
+/// whether the navigation state changed.
 fn refresh(space: &Path) -> Result<bool, AppError> {
     let (project, _) = space_target(space)?;
     mutate(&project, |file| {
-        let before = file.pinned.clone();
+        let before = file.clone();
         resolved(&project, file);
-        Ok(file.pinned != before)
+        Ok(*file != before)
     })
 }
 
@@ -666,14 +747,15 @@ fn notify(app: &AppHandle, changed: Result<bool, AppError>) {
     }
 }
 
-/// Keeps pins on an in-app rename, move or change of form of an artifact.
+/// Keeps pinned and kept items on an in-app rename, move or change of form of
+/// an artifact.
 /// Navigation is recoverable UI state, so a failure never fails the change.
 pub fn artifact_moved(app: &AppHandle, space: &str, from: &str, to: &str) {
     notify(app, retarget(Path::new(space), from, to));
 }
 
-/// Drops the pins an in-app deletion removed; the read of their source
-/// confirms they are gone.
+/// Drops the pinned and kept items an in-app deletion removed; the read of
+/// their source confirms they are gone.
 pub fn artifact_removed(app: &AppHandle, space: &str) {
     notify(app, refresh(Path::new(space)));
 }
@@ -725,7 +807,7 @@ pub fn save_expanded_paths(space: &Path, paths: Vec<String>) -> Result<(), AppEr
 pub mod commands {
     use std::path::Path;
 
-    use super::{NavigationItem, NavigationKey, NavigationState};
+    use super::{NavigationItem, NavigationKey, NavigationState, ResolvedItem};
     use crate::error::AppError;
 
     /// Resolving pinned targets reads the file system, so it runs off the
@@ -752,11 +834,51 @@ pub mod commands {
     }
 
     #[tauri::command]
+    pub async fn navigation_keep(
+        project_path: String,
+        item: NavigationItem,
+    ) -> Result<NavigationState, AppError> {
+        blocking(move || super::keep(Path::new(&project_path), item)).await
+    }
+
+    #[tauri::command]
+    pub async fn navigation_unpin(
+        project_path: String,
+        keys: Vec<NavigationKey>,
+    ) -> Result<NavigationState, AppError> {
+        blocking(move || super::unpin(Path::new(&project_path), keys)).await
+    }
+
+    #[tauri::command]
+    pub async fn navigation_unkeep(
+        project_path: String,
+        keys: Vec<NavigationKey>,
+    ) -> Result<NavigationState, AppError> {
+        blocking(move || super::unkeep(Path::new(&project_path), keys)).await
+    }
+
+    #[tauri::command]
     pub async fn navigation_forget(
         project_path: String,
         keys: Vec<NavigationKey>,
     ) -> Result<NavigationState, AppError> {
         blocking(move || super::forget(Path::new(&project_path), keys)).await
+    }
+
+    #[tauri::command]
+    pub async fn navigation_retitle(
+        project_path: String,
+        item: NavigationItem,
+    ) -> Result<NavigationState, AppError> {
+        blocking(move || super::retitle(Path::new(&project_path), item)).await
+    }
+
+    #[tauri::command]
+    pub async fn navigation_describe(
+        project_path: String,
+        item: NavigationItem,
+    ) -> Result<Option<ResolvedItem>, AppError> {
+        blocking(move || super::describe(Path::new(&project_path), item)).await
     }
 
     #[tauri::command]
@@ -1202,6 +1324,147 @@ mod tests {
         assert_eq!(
             shown(&read_state(project.path())),
             vec![(child_page("next.md"), "Plan".into(), Some(true))]
+        );
+    }
+
+    fn kept_ids(state: &NavigationState) -> Vec<String> {
+        pinned_ids(&NavigationState {
+            pinned: state.kept.clone(),
+            kept: Vec::new(),
+        })
+    }
+
+    fn session_key(id: &str) -> NavigationKey {
+        NavigationKey::Session {
+            session_id: id.into(),
+        }
+    }
+
+    #[test]
+    fn kept_items_keep_order_and_are_never_also_pinned() {
+        let project = project();
+        keep(project.path(), session("codex:a")).unwrap();
+        keep(project.path(), session("codex:b")).unwrap();
+        pin(project.path(), session("codex:c")).unwrap();
+        // Keeping a kept item refreshes it in place; a pinned one stays pinned.
+        keep(
+            project.path(),
+            NavigationItem {
+                title: "Renamed".into(),
+                ..session("codex:a")
+            },
+        )
+        .unwrap();
+        let state = keep(project.path(), session("codex:c")).unwrap();
+        assert_eq!(kept_ids(&state), vec!["codex:a", "codex:b"]);
+        assert_eq!(state.kept[0].item.title, "Renamed");
+        assert_eq!(pinned_ids(&state), vec!["codex:c"]);
+        assert_eq!(read_state(project.path()), state);
+
+        // Pinning a kept item moves it to the pinned list.
+        let state = pin(project.path(), session("codex:a")).unwrap();
+        assert_eq!(kept_ids(&state), vec!["codex:b"]);
+        assert_eq!(pinned_ids(&state), vec!["codex:c", "codex:a"]);
+
+        // Unpin and close touch only their own list; a confirmed-missing
+        // target leaves both.
+        keep(project.path(), session("codex:d")).unwrap();
+        let state = unpin(project.path(), vec![session_key("codex:b")]).unwrap();
+        assert_eq!(kept_ids(&state), vec!["codex:b", "codex:d"]);
+        let state = unkeep(project.path(), vec![session_key("codex:c")]).unwrap();
+        assert_eq!(pinned_ids(&state), vec!["codex:c", "codex:a"]);
+        let state = unkeep(project.path(), vec![session_key("codex:b")]).unwrap();
+        assert_eq!(kept_ids(&state), vec!["codex:d"]);
+        let state = forget(
+            project.path(),
+            vec![session_key("codex:a"), session_key("codex:d")],
+        )
+        .unwrap();
+        assert_eq!(pinned_ids(&state), vec!["codex:c"]);
+        assert!(state.kept.is_empty());
+    }
+
+    #[test]
+    fn retitle_refreshes_snapshots_without_adding() {
+        let project = project();
+        pin(project.path(), session("codex:a")).unwrap();
+        keep(project.path(), session("codex:b")).unwrap();
+        for id in ["codex:a", "codex:b", "codex:c"] {
+            retitle(
+                project.path(),
+                NavigationItem {
+                    title: format!("{id} now"),
+                    ..session(id)
+                },
+            )
+            .unwrap();
+        }
+        let state = read_state(project.path());
+        assert_eq!(state.pinned[0].item.title, "codex:a now");
+        assert_eq!(state.kept[0].item.title, "codex:b now");
+        assert_eq!(pinned_ids(&state), vec!["codex:a"]);
+        assert_eq!(kept_ids(&state), vec!["codex:b"]);
+    }
+
+    #[test]
+    fn kept_artifacts_resolve_and_follow_in_app_path_changes() {
+        let project = project();
+        let child = project.path().join("child");
+        write(&child, "notes/plan.md", &page("Plan"));
+        write(&child, "gone.md", &page("Gone"));
+        keep(project.path(), artifact(child_page("notes/plan.md"), "Old")).unwrap();
+        let state = keep(project.path(), artifact(child_page("gone.md"), "Gone")).unwrap();
+        assert_eq!(
+            shown(&NavigationState {
+                pinned: state.kept.clone(),
+                kept: Vec::new(),
+            }),
+            vec![
+                (child_page("notes/plan.md"), "Plan".into(), Some(true)),
+                (child_page("gone.md"), "Gone".into(), Some(true)),
+            ]
+        );
+
+        std::fs::remove_file(child.join("gone.md")).unwrap();
+        std::fs::rename(child.join("notes/plan.md"), child.join("notes/next.md")).unwrap();
+        assert!(retarget(&child, "notes/plan.md", "notes/next.md").unwrap());
+        let state = read_state(project.path());
+        assert_eq!(state.kept.len(), 1);
+        assert_eq!(state.kept[0].item.key, child_page("notes/next.md"));
+
+        // A missing Space keeps its kept items as unavailable.
+        std::fs::rename(&child, project.path().join("moved-away")).unwrap();
+        assert_eq!(read_state(project.path()).kept[0].available, Some(false));
+    }
+
+    #[test]
+    fn describe_resolves_without_recording() {
+        let project = project();
+        let child = project.path().join("child");
+        write(&child, "docs/README.md", &page("Docs"));
+        write(&child, "docs/schema.yaml", "fields: []\n");
+
+        let described = describe(
+            project.path(),
+            artifact(child_page("docs/README.md"), "README.md"),
+        )
+        .unwrap()
+        .expect("available collection");
+        assert_eq!(
+            described.item.key,
+            NavigationKey::Collection {
+                space_id: Some("child-id".into()),
+                path: "docs".into(),
+            }
+        );
+        assert_eq!(described.item.title, "Docs");
+        assert_eq!(described.available, Some(true));
+        assert_eq!(read_state(project.path()), NavigationState::default());
+
+        assert!(
+            describe(project.path(), artifact(child_page("gone.md"), "gone"))
+                .unwrap()
+                .is_none()
         );
     }
 

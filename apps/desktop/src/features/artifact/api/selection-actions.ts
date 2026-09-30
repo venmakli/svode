@@ -56,6 +56,11 @@ export function retargetActiveContent(
   useArtifactSelectionStore.getState().retarget(fromPath, path, spaceId);
 }
 
+/** Whether the main area shows the selection, which is then highlighted. */
+export function setActiveContentShown(shown: boolean) {
+  useArtifactSelectionStore.getState().setContentShown(shown);
+}
+
 export function closeActiveContent() {
   useArtifactSelectionStore.getState().close();
 }

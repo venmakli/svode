@@ -4,7 +4,7 @@ import {
   navigationKeyId,
   type NavigationItem,
   type NavigationKey,
-  type NavigationPinnedItem,
+  type NavigationResolvedItem,
 } from "./keys";
 
 /** Desktop navigation state commands the store depends on. */
@@ -14,18 +14,38 @@ export interface NavigationStateApi {
     projectPath: string,
     item: NavigationItem,
   ) => Promise<NavigationStateDto>;
+  keep: (
+    projectPath: string,
+    item: NavigationItem,
+  ) => Promise<NavigationStateDto>;
+  unpin: (
+    projectPath: string,
+    keys: NavigationKey[],
+  ) => Promise<NavigationStateDto>;
+  unkeep: (
+    projectPath: string,
+    keys: NavigationKey[],
+  ) => Promise<NavigationStateDto>;
   forget: (
     projectPath: string,
     keys: NavigationKey[],
+  ) => Promise<NavigationStateDto>;
+  retitle: (
+    projectPath: string,
+    item: NavigationItem,
   ) => Promise<NavigationStateDto>;
 }
 
 export interface NavigationStoreState {
   projectPath: string | null;
   /** Pinned objects in pin order, as their sources were last read. */
-  pinned: NavigationPinnedItem[];
+  pinned: NavigationResolvedItem[];
+  /** Objects kept in Now in keep order; never also pinned. */
+  kept: NavigationResolvedItem[];
   loaded: boolean;
-  /** Key ids with a pin or unpin in flight. */
+  /** Grows with every applied answer: Desktop resolved the sources again. */
+  revision: number;
+  /** Key ids with a pin, keep or removal in flight. */
   pendingKeyIds: ReadonlySet<string>;
 
   setProject: (projectPath: string | null) => void;
@@ -33,8 +53,14 @@ export interface NavigationStoreState {
   refresh: () => Promise<void>;
   pin: (item: NavigationItem) => Promise<void>;
   unpin: (key: NavigationKey) => Promise<void>;
+  /** Keeps the object in Now; a pinned object stays pinned. */
+  keep: (item: NavigationItem) => Promise<void>;
+  /** Removes the objects from Now. */
+  unkeep: (keys: NavigationKey[]) => Promise<void>;
   /** Drops targets whose absence a successful read of their source confirmed. */
   forget: (keys: NavigationKey[]) => Promise<void>;
+  /** Refreshes the last known title of a pinned or kept object. */
+  retitle: (item: NavigationItem) => Promise<void>;
 }
 
 export type NavigationStore = StoreApi<NavigationStoreState>;
@@ -71,7 +97,12 @@ export function createNavigationStore(
         const state = await operation(projectPath);
         if (current(token, projectPath) && request > applied) {
           applied = request;
-          set({ pinned: state.pinned, loaded: true });
+          set({
+            pinned: state.pinned,
+            kept: state.kept,
+            loaded: true,
+            revision: get().revision + 1,
+          });
         }
       } finally {
         if (current(token, projectPath)) setPending(keyIds, false);
@@ -88,10 +119,26 @@ export function createNavigationStore(
       set({ pendingKeyIds: next });
     }
 
+    // The stored key is the one removed: it may record an older form of the
+    // same artifact.
+    function storedKeys(
+      items: readonly NavigationResolvedItem[],
+      keys: readonly NavigationKey[],
+    ): NavigationKey[] {
+      return keys.map((key) => {
+        const id = navigationKeyId(key);
+        return (
+          items.find((item) => navigationKeyId(item.key) === id)?.key ?? key
+        );
+      });
+    }
+
     return {
       projectPath: null,
       pinned: [],
+      kept: [],
       loaded: false,
+      revision: 0,
       pendingKeyIds: EMPTY_SET,
 
       setProject: (projectPath) => {
@@ -101,6 +148,7 @@ export function createNavigationStore(
         set({
           projectPath,
           pinned: [],
+          kept: [],
           loaded: false,
           pendingKeyIds: EMPTY_SET,
         });
@@ -119,15 +167,30 @@ export function createNavigationStore(
           [navigationKeyId(item.key)],
         ),
 
-      // The stored key is forgotten: it may record an older form of the
-      // same artifact.
       unpin: (key) => {
-        const id = navigationKeyId(key);
-        const stored =
-          get().pinned.find((item) => navigationKeyId(item.key) === id)?.key ??
-          key;
-        return run((projectPath) => api.forget(projectPath, [stored]), [id]);
+        const stored = storedKeys(get().pinned, [key]);
+        return run(
+          (projectPath) => api.unpin(projectPath, stored),
+          [navigationKeyId(key)],
+        );
       },
+
+      keep: (item) =>
+        run(
+          (projectPath) => api.keep(projectPath, item),
+          [navigationKeyId(item.key)],
+        ),
+
+      unkeep: (keys) => {
+        if (keys.length === 0) return Promise.resolve();
+        const stored = storedKeys(get().kept, keys);
+        return run(
+          (projectPath) => api.unkeep(projectPath, stored),
+          keys.map(navigationKeyId),
+        );
+      },
+
+      retitle: (item) => run((projectPath) => api.retitle(projectPath, item)),
 
       forget: async (keys) => {
         if (keys.length === 0) return;

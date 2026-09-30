@@ -2,12 +2,16 @@ import { useEffect, useLayoutEffect } from "react";
 import { useStore } from "zustand";
 import {
   forgetNavigationItems,
+  keepNavigationItem,
   listenFileChanged,
   listenFileCreated,
   listenFileDeleted,
   listenNavigationChanged,
   pinNavigationItem,
   readNavigationState,
+  retitleNavigationItem,
+  unkeepNavigationItems,
+  unpinNavigationItems,
 } from "../api/navigation";
 import {
   createNavigationStore,
@@ -20,12 +24,16 @@ const SOURCE_CHANGE_DEBOUNCE_MS = 400;
 const navigationStore = createNavigationStore({
   read: readNavigationState,
   pin: pinNavigationItem,
+  keep: keepNavigationItem,
+  unpin: unpinNavigationItems,
+  unkeep: unkeepNavigationItems,
   forget: forgetNavigationItems,
+  retitle: retitleNavigationItem,
 });
 
 /**
  * Binds the navigation state to the open project and reads it again when
- * the sources of pinned targets may have changed: Desktop moved pins, files
+ * the sources of pinned and kept targets may have changed: Desktop moved pins, files
  * changed, the registered Spaces changed (`spacesKey`), or the window came
  * back to the foreground. Mount once in app composition.
  */

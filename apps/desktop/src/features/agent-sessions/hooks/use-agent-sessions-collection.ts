@@ -62,6 +62,8 @@ export function useAgentSessionsCollection({
   const result = useAgentSessionCatalog((state) => state.result);
   const sessions = useAgentSessionCatalog((state) => state.sessions);
   const pinnedItems = useNavigationState((state) => state.pinned);
+  const keptItems = useNavigationState((state) => state.kept);
+  const keep = useNavigationState((state) => state.keep);
   const pendingPinKeyIds = useNavigationState((state) => state.pendingKeyIds);
   const pin = useNavigationState((state) => state.pin);
   const unpin = useNavigationState((state) => state.unpin);
@@ -181,6 +183,19 @@ export function useAgentSessionsCollection({
       change.catch((pinError: unknown) => {
         toast.error(m.navigation_pin_failed(), {
           description: getNativeErrorMessage(pinError),
+        });
+      });
+    },
+    keepable: (session) =>
+      pinnableAgentSessionItem(session) !== null &&
+      agentSessionNavigationIndex(pinnedItems, session) < 0 &&
+      agentSessionNavigationIndex(keptItems, session) < 0,
+    onKeep: (session) => {
+      const item = pinnableAgentSessionItem(session);
+      if (!item) return;
+      keep(item).catch((keepError: unknown) => {
+        toast.error(m.navigation_keep_failed(), {
+          description: getNativeErrorMessage(keepError),
         });
       });
     },

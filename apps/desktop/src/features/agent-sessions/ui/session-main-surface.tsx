@@ -14,15 +14,18 @@ import { AgentSessionContent } from "./session-view";
 /** A session as the one object of the main area. */
 export function AgentSessionMainSurface({
   target,
+  focus,
   onOpenRoutine,
 }: {
   target: AgentSessionTarget;
+  /** Move focus into the main area, as after "Expand"; the sidebar keeps it. */
+  focus: boolean;
   onOpenRoutine(routine: RoutineLaunchLink): void;
 }) {
   const surfaceRef = useRef<HTMLDivElement>(null);
+  const focusRef = useRef(focus);
   useEffect(() => {
-    // The main area opens by an explicit action, so focus moves into it.
-    surfaceRef.current?.focus({ preventScroll: true });
+    if (focusRef.current) surfaceRef.current?.focus({ preventScroll: true });
   }, []);
 
   return (

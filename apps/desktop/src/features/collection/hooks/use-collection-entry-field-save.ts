@@ -2,6 +2,7 @@ import { useCallback, type Dispatch, type SetStateAction } from "react";
 import { propertyFieldSavePolicy, type Page } from "@/features/page";
 import { usePageFieldSave } from "@/features/page/field-save";
 import type { Column } from "@/features/properties";
+import { useSignalUserEdit } from "@/features/navigation";
 
 export function useCollectionEntryFieldSave({
   spacePath,
@@ -27,10 +28,12 @@ export function useCollectionEntryFieldSave({
     },
     [setEntries, setManualOrderEntries],
   );
+  const signalUserEdit = useSignalUserEdit();
   const { save: saveEntryField } = usePageFieldSave({
     spacePath,
     projectPath,
     applyPageUpdate,
+    onSaved: signalUserEdit,
   });
 
   const saveField = useCallback(

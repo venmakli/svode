@@ -11,6 +11,7 @@ import {
   EmptyTitle,
 } from "@/components/ui/empty";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
+import { usePeekStackEntry } from "@/shared/hooks/use-peek-stack-entry";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useOpenArtifact } from "@/features/artifact";
 import * as m from "@/paraglide/messages.js";
@@ -67,6 +68,7 @@ export function AttachmentsPeek({
       dismiss();
       afterClose?.();
     });
+  usePeekStackEntry(Boolean(target), () => void close());
   const activationRef = useRef(target?.activation);
   useEffect(() => {
     if (target) activationRef.current = target.activation;

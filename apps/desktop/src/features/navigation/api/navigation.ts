@@ -1,11 +1,16 @@
 export {
+  describeNavigationItem,
   forgetNavigationItems,
+  keepNavigationItem,
   listenNavigationChanged,
   pinNavigationItem,
   readNavigationState,
+  retitleNavigationItem,
+  unkeepNavigationItems,
+  unpinNavigationItems,
   type NavigationItemDto,
   type NavigationKeyDto,
-  type NavigationPinnedItemDto,
+  type NavigationResolvedItemDto,
   type NavigationStateDto,
 } from "@/platform/navigation/navigation-api";
 export {

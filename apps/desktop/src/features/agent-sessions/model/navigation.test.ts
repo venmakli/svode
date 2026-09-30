@@ -6,7 +6,7 @@ import {
   agentSessionNavigationIndex,
   agentSessionNavigationKey,
   confirmedMissingAgentSessionKeys,
-  retitledAgentSessionPins,
+  retitledAgentSessionItems,
 } from "./navigation";
 import { listResult, listedSession } from "./testing/catalog";
 
@@ -161,13 +161,16 @@ test("a listed session with a new title refreshes its pin snapshot under the sto
     { key: { kind: "session", sessionId: "codex:gone" }, title: "Gone" },
   ];
 
-  expect(retitledAgentSessionPins(pinned, [session])).toEqual([
+  expect(retitledAgentSessionItems(pinned, [session])).toEqual([
     {
       key: { kind: "sessionLaunch", launchId: "launch-a" },
       title: "Fix login",
     },
   ]);
   expect(
-    retitledAgentSessionPins([{ ...pinned[0], title: "Fix login" }], [session]),
+    retitledAgentSessionItems(
+      [{ ...pinned[0], title: "Fix login" }],
+      [session],
+    ),
   ).toEqual([]);
 });

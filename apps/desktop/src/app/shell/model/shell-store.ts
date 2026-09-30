@@ -26,8 +26,13 @@ interface ShellState {
   chatPanelOpen: boolean;
   settingsDestination: SettingsDestination | null;
   mainSurface: MainSurface;
-  /** The session shown as the main area object while `mainSurface` is "session". */
+  /**
+   * The session shown as the main area object while `mainSurface` is
+   * "session"; the Graph keeps it to return to.
+   */
   mainSessionTarget: AgentSessionTarget | null;
+  /** The main area session was opened by a move into the main area. */
+  mainSessionFocus: boolean;
   sessionPeekTarget: AgentSessionTarget | null;
   /** The peek was opened for work in the terminal, e.g. a new session. */
   sessionPeekFocusTerminal: boolean;
@@ -46,8 +51,13 @@ interface ShellState {
   closeSettings: () => void;
   openContentSurface: () => void;
   openSessionsSurface: () => void;
-  openSessionMainSurface: (target: AgentSessionTarget) => void;
+  openSessionMainSurface: (
+    target: AgentSessionTarget,
+    options?: { focus?: boolean },
+  ) => void;
   openGraphSurface: (state: KnowledgeGraphState) => void;
+  /** Leaves the Graph for the object it was opened over. */
+  closeGraphSurface: () => void;
   openSessionPeek: (
     target: AgentSessionTarget,
     options?: AgentSessionOpenOptions,
@@ -94,6 +104,7 @@ export const useShellStore = create<ShellState>((set) => ({
   settingsDestination: null,
   mainSurface: "content",
   mainSessionTarget: null,
+  mainSessionFocus: false,
   sessionPeekTarget: null,
   sessionPeekFocusTerminal: false,
   knowledgeGraphOpenRequest: null,
@@ -135,10 +146,11 @@ export const useShellStore = create<ShellState>((set) => ({
       mainSessionTarget: null,
       sessionPeekTarget: null,
     }),
-  openSessionMainSurface: (target) =>
+  openSessionMainSurface: (target, options) =>
     set({
       mainSurface: "session",
       mainSessionTarget: target,
+      mainSessionFocus: options?.focus ?? true,
       sessionPeekTarget: null,
     }),
   openGraphSurface: (graphState) =>
@@ -150,9 +162,15 @@ export const useShellStore = create<ShellState>((set) => ({
       nextKnowledgeGraphOpenRequestKey:
         state.nextKnowledgeGraphOpenRequestKey + 1,
       mainSurface: "graph",
-      mainSessionTarget: null,
+      mainSessionFocus: false,
       sessionPeekTarget: null,
     })),
+  closeGraphSurface: () =>
+    set((state) =>
+      state.mainSurface === "graph"
+        ? { mainSurface: state.mainSessionTarget ? "session" : "content" }
+        : {},
+    ),
   openSessionPeek: (target, options) =>
     set({
       sessionPeekTarget: target,

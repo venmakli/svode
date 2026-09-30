@@ -3,6 +3,10 @@ import { toast } from "sonner";
 import { publishPageFilenameWarnings, type Page } from "@/features/page";
 import type { CollectionSchema } from "@/features/properties";
 import { normalizeSchema } from "@/features/properties";
+import {
+  signalCreatedArtifact,
+  useSignalUserEdit,
+} from "@/features/navigation";
 import { useSpaceTreeSync } from "@/features/space";
 import * as m from "@/paraglide/messages.js";
 import {
@@ -45,6 +49,7 @@ export function useCollectionTemplates({
   openPage: (path: string, spaceId: string) => void;
 }) {
   const reloadTreeParent = useSpaceTreeSync((state) => state.reloadTreeParent);
+  const signalUserEdit = useSignalUserEdit();
 
   async function loadTemplatesForMenu() {
     return listTemplates({ spacePath, collectionPath });
@@ -86,8 +91,10 @@ export function useCollectionTemplates({
     });
     publishPageFilenameWarnings(created.warnings);
     refreshEntries();
+    signalUserEdit();
     await reloadTreeParent(spaceId, collectionPath);
     openPage(created.path, spaceId);
+    signalCreatedArtifact(spaceId, created.path);
   }
 
   async function editTemplate(template: TemplateInfo) {

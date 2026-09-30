@@ -1,6 +1,14 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type Dispatch,
+  type SetStateAction,
+} from "react";
 import {
   normalizeSchema,
+  type CollectionSchema,
   type RelationOpenTarget,
 } from "@/features/properties";
 import { useOpenPage } from "@/features/page/navigation";
@@ -9,6 +17,7 @@ import type { Page } from "@/features/page";
 import { useOptionalPageDetailContext } from "@/features/page/scope-surface";
 import type { ScopePeekRenderer } from "@/features/scope-surfaces";
 import type { GitSaveScopeTreeNode } from "@/features/git/app-shell";
+import { useSignalUserEdit } from "@/features/navigation";
 import { useSpace } from "@/features/space";
 import { useViewQuery } from "../query/hooks";
 import { DeleteDialogs } from "./delete-dialogs";
@@ -91,12 +100,28 @@ export function CollectionViewsSurface({
   const saveScopeTree = useSpace(
     (state) => state.fileTrees[spaceId] ?? EMPTY_SAVE_SCOPE_TREE,
   );
-  const { schema, setSchema, loading, schemaError, refreshSchema } =
-    useCollectionSchemaState({
-      spacePath,
-      collectionPath,
-      previousCollectionPath,
-    });
+  const {
+    schema,
+    setSchema: applySchema,
+    loading,
+    schemaError,
+    refreshSchema,
+  } = useCollectionSchemaState({
+    spacePath,
+    collectionPath,
+    previousCollectionPath,
+  });
+  // Schema and saved views change only by user mutations.
+  const signalUserEdit = useSignalUserEdit();
+  const setSchema = useCallback<
+    Dispatch<SetStateAction<CollectionSchema | null>>
+  >(
+    (next) => {
+      applySchema(next);
+      signalUserEdit();
+    },
+    [applySchema, signalUserEdit],
+  );
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);

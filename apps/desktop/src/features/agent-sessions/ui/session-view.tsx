@@ -37,7 +37,7 @@ import {
 } from "@/components/ui/empty";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAgentAdapterDictionary } from "@/features/agent-adapters";
-import { PinMenuItem } from "@/features/navigation";
+import { NavigationMenuItems } from "@/features/navigation";
 import {
   useRoutineLaunchLinks,
   type RoutineLaunchLink,
@@ -67,10 +67,8 @@ import {
   SessionResumingState,
 } from "./session-states";
 import { SessionStatusMarker, statusLabel } from "./session-status";
+import { AGENT_SESSION_CONTENT_ATTRIBUTE } from "../lib/session-content";
 import * as m from "@/paraglide/messages.js";
-
-/** Marks the session content, where keys belong to the terminal, not the host. */
-export const AGENT_SESSION_CONTENT_ATTRIBUTE = "data-agent-session-content";
 
 interface AgentSessionContentProps {
   target: AgentSessionTarget;
@@ -393,7 +391,7 @@ function SessionActionsMenu({
             <ExternalTerminalIcon />
             {m.sessions_action_open_external_terminal()}
           </DropdownMenuItem>
-          <PinMenuItem item={pinnableAgentSessionItem(view.session)} />
+          <NavigationMenuItems item={pinnableAgentSessionItem(view.session)} />
           <DropdownMenuItem
             disabled={!view.session}
             onSelect={onToggleMetadata}

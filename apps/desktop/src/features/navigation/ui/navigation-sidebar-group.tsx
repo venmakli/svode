@@ -17,6 +17,8 @@ interface NavigationSidebarGroupProps {
   /** Stable id of the group; its collapsed state is kept on this device. */
   id: string;
   label: string;
+  /** Group action shown next to the label, e.g. its menu. */
+  action?: ReactNode;
   children: ReactNode;
 }
 
@@ -24,6 +26,7 @@ interface NavigationSidebarGroupProps {
 export function NavigationSidebarGroup({
   id,
   label,
+  action,
   children,
 }: NavigationSidebarGroupProps) {
   const [open, setOpen] = useSidebarGroupOpen(id);
@@ -43,6 +46,7 @@ export function NavigationSidebarGroup({
             <ChevronRight className="!size-3 opacity-0 transition group-hover/navigation-group:opacity-100 group-focus-within/navigation-group:opacity-100 group-data-[state=open]/navigation-group:rotate-90" />
           </CollapsibleTrigger>
         </SidebarGroupLabel>
+        {action}
         <CollapsibleContent>
           <SidebarGroupContent>
             <SidebarMenu>{children}</SidebarMenu>

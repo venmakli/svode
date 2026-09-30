@@ -1,4 +1,4 @@
-import { hasActionableWait, terminalActivityAt } from "./grouping";
+import { hasActionableWait, terminalActivityAt } from "./active";
 import type { AgentSession } from "./types";
 
 /** Last activity as the collection shows it: terminal activity while one is open. */

@@ -16,7 +16,8 @@ import { useOpenSessionRoutine } from "./open-session-routine";
 
 /**
  * Makes a session the main area object after the guards of the open peek
- * stack and the main area pass. Returns whether it opened.
+ * stack and the main area pass. Returns whether it opened. Focus moves into
+ * the main area unless the sidebar opened it.
  */
 export function useOpenSessionInMainArea() {
   const openSessionMainSurface = useShellStore(
@@ -27,7 +28,11 @@ export function useOpenSessionInMainArea() {
   const clearActiveSpace = useSpace((state) => state.clearActiveSpace);
 
   return useCallback(
-    async (sessionTarget: AgentSessionTarget, session: AgentSession | null) => {
+    async (
+      sessionTarget: AgentSessionTarget,
+      session: AgentSession | null,
+      options?: { focus?: boolean },
+    ) => {
       if (!(await detailController.prepareForNavigation())) return false;
       if ((await prepareActiveContentDeactivation()) === "blocked")
         return false;
@@ -37,7 +42,7 @@ export function useOpenSessionInMainArea() {
       } else if (session?.scopeKind === "project") {
         clearActiveSpace();
       }
-      openSessionMainSurface(sessionTarget);
+      openSessionMainSurface(sessionTarget, options);
       return true;
     },
     [clearActiveSpace, detailController, openSessionMainSurface, openSpace],

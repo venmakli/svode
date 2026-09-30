@@ -11,6 +11,7 @@ import {
 import { toast } from "sonner";
 import { normalizeSchema, type PageSchemaResult } from "@/features/properties";
 import { getPageSchema } from "@/features/properties/api";
+import { useSignalUserEdit } from "@/features/navigation";
 import { useSpaceTreeSync } from "@/features/space";
 import * as m from "@/paraglide/messages.js";
 import { createPage, readPage } from "../page-api";
@@ -121,6 +122,7 @@ export function PageDetailProvider({
   const reloadSequenceRef = useRef(0);
   const adoptedReadmePathRef = useRef<string | null>(null);
   const retargetPage = useRetargetPage();
+  const signalUserEdit = useSignalUserEdit();
   const pageSurface = useOptionalPageSurfaceSession();
   const pageName = usePageName({ pagePath: readmePath, page, spaceId });
   const {
@@ -152,6 +154,7 @@ export function PageDetailProvider({
     applyPageUpdate,
     deferTitlePathAdoption: true,
     onSaved: (updated, context) => {
+      signalUserEdit();
       if (isPageTreeMetaField(context.field)) {
         patchPageTreeMeta(
           spaceId,
@@ -288,6 +291,7 @@ export function PageDetailProvider({
     setPage(nextPage);
     setError(null);
     setStatus("ready");
+    signalUserEdit();
     void loadSchema().then((nextSchema) => {
       if (sequence === reloadSequenceRef.current) setSchemaResult(nextSchema);
     });
@@ -304,6 +308,7 @@ export function PageDetailProvider({
     resolvedFallbackTitle,
     reloadTreeParent,
     reloadTreePathParent,
+    signalUserEdit,
     spaceId,
     spacePath,
   ]);

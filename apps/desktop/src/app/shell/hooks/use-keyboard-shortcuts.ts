@@ -1,4 +1,8 @@
-import { matchesPhysicalShortcut } from "@/shared/lib/keyboard-shortcuts";
+import {
+  isMacKeyboardPlatform,
+  matchesPhysicalShortcut,
+} from "@/shared/lib/keyboard-shortcuts";
+import { closeTopPeek } from "@/shared/lib/peek-stack";
 import { useEffect } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { toast } from "sonner";
@@ -10,8 +14,8 @@ import {
 import {
   useActiveContentPath,
   useActiveContentSpaceId,
-  useCloseActiveContent,
 } from "@/features/artifact";
+import { isInsideAgentSessionContent } from "@/features/agent-sessions";
 import {
   commitSaveScopeAndMaybeSync,
   dirtyPathsForGitSaveScope,
@@ -36,6 +40,7 @@ import {
   useTerminalPanelToggle,
 } from "@/features/terminal";
 import { useShellStore } from "../model";
+import { useWorkingSetActions } from "../working-set";
 import * as m from "@/paraglide/messages.js";
 import {
   runCollectionNavigation,
@@ -45,7 +50,7 @@ import { useCollectionActivePresentationId } from "@/features/collection";
 
 export function useKeyboardShortcuts() {
   const detailController = useCollectionDetailController();
-  const closeContent = useCloseActiveContent();
+  const { closeMainAreaObject } = useWorkingSetActions();
   const activeContentPath = useActiveContentPath();
   const activeContentSpaceId = useActiveContentSpaceId();
   const { toggleChatPanel, openAppSettings } = useShellStore();
@@ -83,6 +88,17 @@ export function useKeyboardShortcuts() {
         if (!terminalAvailable) return;
         e.preventDefault();
         toggleTerminal();
+        return;
+      }
+      // ⌘W closes the top peek, else the main area object. In a terminal it
+      // works only inside session content and only as Cmd: Ctrl+W belongs
+      // to the shell; the terminal panel takes no ⌘W.
+      if (matchesPhysicalShortcut(e, "KeyW")) {
+        const inTerminal = isTerminalKeyboardEvent(e);
+        if (inTerminal && !isMacKeyboardPlatform()) return;
+        e.preventDefault();
+        if (inTerminal && !isInsideAgentSessionContent(e.target)) return;
+        if (!closeTopPeek()) void closeMainAreaObject();
         return;
       }
       if (isTerminalKeyboardEvent(e)) return;
@@ -139,12 +155,6 @@ export function useKeyboardShortcuts() {
         toggleCommandPalette();
       }
 
-      // Cmd+W — close document
-      if (isMeta && e.key === "w") {
-        e.preventDefault();
-        void runCollectionNavigation(detailController, closeContent);
-      }
-
       // Cmd+Shift+O — go to home / all projects
       if (matchesPhysicalShortcut(e, "KeyO", true)) {
         e.preventDefault();
@@ -166,7 +176,7 @@ export function useKeyboardShortcuts() {
     actorsPresentationId,
     toggleCommandPalette,
     toggleChatPanel,
-    closeContent,
+    closeMainAreaObject,
     openAppSettings,
     goHome,
     navigate,

@@ -11,6 +11,7 @@ import {
   resolveTreeChildTarget,
 } from "../api/content-tree-actions";
 import type { SpaceInfo } from "../model";
+import { signalCreatedArtifact } from "@/features/navigation";
 
 interface UseFileTreeItemCreateInput {
   node: TreeNode;
@@ -71,6 +72,7 @@ export function useFileTreeItemCreate({
         toggleExpanded(spaceId, parentNodePath);
       }
       openPage(page.path, spaceId);
+      signalCreatedArtifact(spaceId, page.path);
       toast.success(m.toast_page_created());
     } catch (err) {
       console.error("Failed to create page:", err);
@@ -91,6 +93,7 @@ export function useFileTreeItemCreate({
       await reloadTreePathParent(spaceId, node.path);
       await reloadTreeParent(spaceId, node.path);
       openPage(readmePath, spaceId);
+      signalCreatedArtifact(spaceId, readmePath);
     } catch (err) {
       console.error("Failed to make page:", err);
       toast.error(m.toast_error());
@@ -110,6 +113,7 @@ export function useFileTreeItemCreate({
         await reloadTreePathParent(spaceId, node.path);
         await reloadTreeParent(spaceId, node.path);
         openCollectionOwner(ownerPage.path, spaceId);
+        signalCreatedArtifact(spaceId, ownerPage.path);
         return;
       }
 

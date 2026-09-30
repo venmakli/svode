@@ -19,7 +19,7 @@ import {
 import { useCollectionRouteState } from "./hooks/use-collection-route-state";
 import { ScopeSurfacePage } from "./scope-surface-page";
 import { scopeOwnerNavigationItem } from "./scope-owner-navigation";
-import { PinToggleButton } from "@/features/navigation";
+import { PinToggleButton, UserEditScope } from "@/features/navigation";
 import { useSpace } from "@/features/space";
 
 export function CompactScopePeek(props: ScopePeekContext) {
@@ -109,39 +109,42 @@ export function CompactScopePeek(props: ScopePeekContext) {
       </div>
       {error ? <ScopeOwnerFactsError error={error} onRetry={retry} /> : null}
       <div className="scrollbar-hide min-h-0 flex-1 overflow-y-auto overflow-x-hidden">
-        <ScopeSurfaceErrorBoundary>
-          <ScopeSurfacePage
-            owner={owner}
-            presentation="compact"
-            sessionKey={props.sessionKey}
-            routeState={routeState}
-            compactSurfaceState={{
-              surfaceId: selectedSurfaceId,
-              onSurfaceIdChange: setSurfaceId,
-            }}
-            fallbackTitle={props.fallbackTitle}
-            fallbackIcon={props.fallbackIcon}
-            metadataBefore={props.metadataBefore}
-            headerActions={
-              owner.identityKind === "page-file" ||
-              owner.identityKind === "page-directory" ? (
-                <PinToggleButton
-                  item={scopeOwnerNavigationItem(owner, activeRootId, {
-                    title: props.fallbackTitle ?? owner.ownerPath,
-                    icon: props.fallbackIcon ?? null,
-                  })}
-                />
-              ) : undefined
-            }
-            renderHeaderActions={props.renderHeaderActions}
-            registerNavigationGuard={props.registerNavigationGuard}
-            onPageGone={props.dismiss}
-            onContentPathChange={(nextPath) => {
-              setPathState({ input: props.path, current: nextPath });
-              props.onContentPathChange?.(nextPath);
-            }}
-          />
-        </ScopeSurfaceErrorBoundary>
+        {/* Edits inside a peek never keep an object in Now. */}
+        <UserEditScope mainArea={false}>
+          <ScopeSurfaceErrorBoundary>
+            <ScopeSurfacePage
+              owner={owner}
+              presentation="compact"
+              sessionKey={props.sessionKey}
+              routeState={routeState}
+              compactSurfaceState={{
+                surfaceId: selectedSurfaceId,
+                onSurfaceIdChange: setSurfaceId,
+              }}
+              fallbackTitle={props.fallbackTitle}
+              fallbackIcon={props.fallbackIcon}
+              metadataBefore={props.metadataBefore}
+              headerActions={
+                owner.identityKind === "page-file" ||
+                owner.identityKind === "page-directory" ? (
+                  <PinToggleButton
+                    item={scopeOwnerNavigationItem(owner, activeRootId, {
+                      title: props.fallbackTitle ?? owner.ownerPath,
+                      icon: props.fallbackIcon ?? null,
+                    })}
+                  />
+                ) : undefined
+              }
+              renderHeaderActions={props.renderHeaderActions}
+              registerNavigationGuard={props.registerNavigationGuard}
+              onPageGone={props.dismiss}
+              onContentPathChange={(nextPath) => {
+                setPathState({ input: props.path, current: nextPath });
+                props.onContentPathChange?.(nextPath);
+              }}
+            />
+          </ScopeSurfaceErrorBoundary>
+        </UserEditScope>
       </div>
     </div>
   );

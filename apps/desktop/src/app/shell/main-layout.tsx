@@ -32,6 +32,7 @@ import {
   runCollectionNavigation,
   useCollectionDetailController,
 } from "@/features/collection/app-shell";
+import { setActiveContentShown } from "@/features/artifact";
 import { useSpace, useSpaceActions } from "@/features/space";
 import { SpaceFileWatcher, SpaceSidebar } from "@/features/space/app-shell";
 import {
@@ -41,7 +42,10 @@ import {
   useGitAvailability,
 } from "@/features/git/app-shell";
 import { useGlobalIdentity } from "@/features/identity";
-import { useNavigationStateLifecycle } from "@/features/navigation";
+import {
+  UserEditScope,
+  useNavigationStateLifecycle,
+} from "@/features/navigation";
 import { type AppSettingsSection } from "@/features/settings";
 import { UserSettingsFooter } from "./user-settings-footer";
 import { setCurrentAppWindowTitle } from "@/platform/native/window";
@@ -61,7 +65,9 @@ import {
   useStartSessionInPeek,
 } from "./agent-session-peek-host";
 import { useOpenSessionRoutine } from "./open-session-routine";
+import { NowSidebarSection } from "./now-sidebar-section";
 import { PinnedSidebarSection } from "./pinned-sidebar-section";
+import { useKeepEditedObjects } from "./working-set";
 import { cn } from "@/shared/lib/utils";
 
 type SidebarProviderStyle = CSSProperties & {
@@ -102,6 +108,7 @@ function MainLayoutRuntime() {
   const navigate = useNavigate();
   const detailController = useCollectionDetailController();
   useKeyboardShortcuts();
+  useKeepEditedObjects();
   useAppGitFocus();
   const {
     activeRootIcon,
@@ -159,6 +166,12 @@ function MainLayoutRuntime() {
   useEffect(() => {
     openContentSurface();
   }, [openContentSurface]);
+
+  // The tree highlights the selected artifact only while the main area
+  // shows it; a session or the Graph there hides the highlight.
+  useEffect(() => {
+    setActiveContentShown(mainSurface === "content");
+  }, [mainSurface]);
 
   useEffect(() => {
     const title = activeRootName ? `${activeRootName} - Svode` : "Svode";
@@ -253,10 +266,16 @@ function ShellLayoutContent({
       onNewSession={startSessionInPeek}
       sessionsAction={<TerminalSidebarAction />}
       navigationSections={
-        <PinnedSidebarSection
-          onActivateContent={onActivateContent}
-          onBeforeNavigation={onBeforeNavigation}
-        />
+        <>
+          <PinnedSidebarSection
+            onActivateContent={onActivateContent}
+            onBeforeNavigation={onBeforeNavigation}
+          />
+          <NowSidebarSection
+            onActivateContent={onActivateContent}
+            onBeforeNavigation={onBeforeNavigation}
+          />
+        </>
       }
     />
   );
@@ -382,6 +401,7 @@ function ShellMainInset({
   const isSessionsSurface = mainSurface === "sessions";
   const openSessionRoutine = useOpenSessionRoutine();
   const mainSessionTarget = useShellStore((state) => state.mainSessionTarget);
+  const mainSessionFocus = useShellStore((state) => state.mainSessionFocus);
   const knowledgeGraphOpenRequest = useShellStore(
     (state) => state.knowledgeGraphOpenRequest,
   );
@@ -409,6 +429,7 @@ function ShellMainInset({
           ) : mainSurface === "session" && mainSessionTarget ? (
             <AgentSessionMainSurface
               target={mainSessionTarget}
+              focus={mainSessionFocus}
               onOpenRoutine={openSessionRoutine}
             />
           ) : mainSurface === "graph" ? (
@@ -418,7 +439,9 @@ function ShellMainInset({
               onActivateContent={openContentSurface}
             />
           ) : (
-            <ActiveSpaceContent />
+            <UserEditScope mainArea>
+              <ActiveSpaceContent />
+            </UserEditScope>
           )}
         </div>
         <TerminalPanelHost />

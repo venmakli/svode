@@ -24,7 +24,7 @@ if (process.env.SVODE_LETTER_DOM !== "1") {
     mock: { module(path: string, factory: () => unknown): void };
   };
   const dom = new JSDOM(
-    '<div id="app"></div><input id="input"><div class="xterm"><textarea></textarea></div>',
+    '<div id="app"></div><input id="input"><div class="xterm"><textarea></textarea></div><div data-agent-session-content><div class="xterm"><textarea id="session-terminal"></textarea></div></div>',
   );
   for (const [key, value] of Object.entries({
     window: dom.window,
@@ -39,7 +39,14 @@ if (process.env.SVODE_LETTER_DOM !== "1") {
       value,
     });
   }
-  const calls = { palette: 0, home: 0, navigate: 0, guard: 0, create: 0 };
+  const calls = {
+    palette: 0,
+    home: 0,
+    navigate: 0,
+    guard: 0,
+    create: 0,
+    close: 0,
+  };
   const commands: string[] = [];
   Object.defineProperty(dom.window, "__TAURI_INTERNALS__", {
     value: {
@@ -103,6 +110,18 @@ if (process.env.SVODE_LETTER_DOM !== "1") {
       calls.guard++;
       if (allowNavigation) action();
     },
+  }));
+  mock.module("../working-set", () => ({
+    useWorkingSetActions: () => ({
+      closeMainAreaObject: async () => {
+        calls.close++;
+      },
+    }),
+  }));
+  mock.module("@/features/agent-sessions", () => ({
+    isInsideAgentSessionContent: (target: EventTarget | null) =>
+      target instanceof dom.window.Element &&
+      target.closest("[data-agent-session-content]") !== null,
   }));
   mock.module("@/features/collection", () => ({
     useCollectionActivePresentationId: () => null,
@@ -223,6 +242,41 @@ if (process.env.SVODE_LETTER_DOM !== "1") {
     }
     expect(calls.guard).toBe(4);
     expect(calls.navigate).toBe(2);
+  });
+  test("⌘W closes the main area object by its physical key, in session terminals only as Cmd", async () => {
+    for (const mac of [true, false]) {
+      Object.defineProperty(navigator, "platform", {
+        configurable: true,
+        value: mac ? "MacIntel" : "Win32",
+      });
+      await act(async () => {
+        root.render(<Shell />);
+      });
+      const before = calls.close;
+      await act(async () => {
+        expect(fire("KeyW", "ц", mac).defaultPrevented).toBe(true);
+      });
+      expect(calls.close).toBe(before + 1);
+      // The terminal panel takes no ⌘W; Ctrl+W stays with the shell.
+      await act(async () => {
+        expect(
+          fire("KeyW", "w", mac, {}, document.querySelector(".xterm textarea")!)
+            .defaultPrevented,
+        ).toBe(mac);
+      });
+      await act(async () => {
+        expect(
+          fire(
+            "KeyW",
+            "w",
+            mac,
+            {},
+            document.getElementById("session-terminal")!,
+          ).defaultPrevented,
+        ).toBe(mac);
+      });
+      expect(calls.close).toBe(before + (mac ? 2 : 1));
+    }
   });
   test("Ctrl+` toggles the terminal from any focus without taking other keys", async () => {
     const toggle = (extra: KeyboardEventInit = {}, target?: Element) =>

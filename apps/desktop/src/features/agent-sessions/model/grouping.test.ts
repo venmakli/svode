@@ -1,9 +1,9 @@
 import { expect, test } from "bun:test";
+import { isActiveAgentSession } from "./active";
 import {
   buildAgentSessionGroups,
   childSpaceScopeGroupId,
   filterAgentSessions,
-  isNowSession,
   projectScopeGroupId,
 } from "./grouping";
 import type { AgentSession, AgentSessionScopeGroup } from "./types";
@@ -180,7 +180,7 @@ test("now sorting puts actionable waiting above active and live terminals", () =
     "codex:active",
     "codex:live",
   ]);
-  expect(isNowSession(live)).toBe(true);
+  expect(isActiveAgentSession(live)).toBe(true);
 });
 
 test("now sorting orders open terminals by terminal activity", () => {
@@ -221,7 +221,7 @@ test("process-only runtime evidence does not make a session current", () => {
 
   const groups = buildAgentSessionGroups({ sessions: [processOnly] });
 
-  expect(isNowSession(processOnly)).toBe(false);
+  expect(isActiveAgentSession(processOnly)).toBe(false);
   expect(groups.now).toBeNull();
   expect(groups.spaces[0]?.sessions[0]?.id).toBe(processOnly.id);
 });
