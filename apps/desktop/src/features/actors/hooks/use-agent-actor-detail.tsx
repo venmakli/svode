@@ -125,14 +125,15 @@ export function useAgentActorDetail({
       accessRecovery.pending?.intentKey === "agent-actor-update-apply";
     void detailController
       .open({
-        canClose: () => {
+        canClose: async () => {
           if (accessBlocked) {
             accessRecovery?.close();
             return false;
           }
+          // The Tauri dialog plugin makes window.confirm resolve asynchronously.
           if (
             editSession.guard.dirty &&
-            !window.confirm(m.agent_actors_discard_confirm())
+            !(await window.confirm(m.agent_actors_discard_confirm()))
           ) {
             return false;
           }

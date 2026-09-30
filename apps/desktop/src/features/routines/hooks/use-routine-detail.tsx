@@ -108,10 +108,11 @@ export function useRoutineDetail({
     };
     void detailController
       .open({
-        canClose: () => {
+        canClose: async () => {
+          // The Tauri dialog plugin makes window.confirm resolve asynchronously.
           if (
             session.guard.dirty &&
-            !window.confirm(m.routines_discard_confirm())
+            !(await window.confirm(m.routines_discard_confirm()))
           ) {
             return false;
           }

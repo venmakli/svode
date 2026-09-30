@@ -127,6 +127,49 @@ test("closing edit clears its session so unrelated rerenders cannot reopen it", 
   }
 });
 
+test("an unsaved edit waits for the asynchronous confirm of the Tauri dialog", async () => {
+  const dom = createDom();
+  const restoreGlobals = installDomGlobals(dom);
+  let latestRequest: CollectionDetailRequest | null = null;
+  const detailController: CollectionDetailController = {
+    async close() {
+      return true;
+    },
+    async open(request) {
+      latestRequest = request;
+      return true;
+    },
+  };
+  const answers = [false, true];
+  const confirm = window.confirm;
+  // The Tauri dialog plugin replaces window.confirm with an async function.
+  window.confirm = (() =>
+    Promise.resolve(answers.shift())) as unknown as typeof window.confirm;
+  const root = createRoot(dom.window.document.getElementById("app")!);
+
+  try {
+    await act(async () => {
+      root.render(
+        <DetailHarness detailController={detailController} dirty />,
+      );
+      await nextTurn();
+    });
+    const request = latestRequest as CollectionDetailRequest | null;
+    if (!request?.canClose) throw new Error("Expected edit detail to open");
+
+    expect(await request.canClose()).toBe(false);
+    await act(async () => {
+      expect(await request.canClose!()).toBe(true);
+      await nextTurn();
+    });
+  } finally {
+    window.confirm = confirm;
+    await act(async () => root.unmount());
+    restoreGlobals();
+    dom.window.close();
+  }
+});
+
 test("an open read-only Detail receives current diagnostics without reopening after close", async () => {
   const dom = createDom();
   const restoreGlobals = installDomGlobals(dom);
@@ -223,12 +266,14 @@ function AccessHarness({ onContinue }: { onContinue(kind: string): void }) {
 
 function DetailHarness({
   detailController,
+  dirty = false,
 }: {
   detailController: CollectionDetailController;
+  dirty?: boolean;
 }) {
   const [editSession, setEditSession] = useState<AgentActorEditSession | null>({
     draft: createAgentActorDraft(actor.ownerPath, actor),
-    guard: { dirty: false },
+    guard: { dirty },
     row: actor,
   });
   const [, setRenderVersion] = useState(0);
