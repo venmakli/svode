@@ -192,6 +192,11 @@ export type AgentSessionDeltaDto = { seq: number } & (
   /** A non-`pending` state clears the pending interaction. */
   | { change: "pending"; value: AgentPendingInteractionDto }
   | { change: "history"; value: AgentHistoryStateDto }
+  /** Retention evicted these items; the history carries the marker. */
+  | {
+      change: "truncated";
+      value: { itemIds: string[]; history: AgentHistoryStateDto };
+    }
   | { change: "connection"; value: AgentConnectionStateDto }
   | { change: "writer"; value: AgentWriterStateDto }
 );

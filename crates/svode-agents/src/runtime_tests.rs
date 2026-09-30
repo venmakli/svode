@@ -5,7 +5,8 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, DuplexStream, ReadHal
 
 use super::*;
 use crate::activity::{
-    Change, DetailBlock, FieldInput, ItemKind, ItemStatus, TurnPhase, UnavailableReason,
+    Change, DetailBlock, FieldInput, HistorySource, HistoryState, ItemKind, ItemStatus, TurnPhase,
+    UnavailableReason,
 };
 use crate::interaction::FieldValue;
 use crate::status::{SessionState, SessionStatus};
@@ -64,6 +65,12 @@ impl ScriptedAgent {
     }
 
     async fn open_session_declaring(&mut self, agent_capabilities: Value) {
+        self.initialize(agent_capabilities).await;
+        let new_session = self.expect("session/new").await;
+        self.reply(&new_session, json!({ "sessionId": "s1" })).await;
+    }
+
+    async fn initialize(&mut self, agent_capabilities: Value) {
         let initialize = self.expect("initialize").await;
         let capabilities = &initialize["params"]["clientCapabilities"];
         assert_eq!(capabilities["elicitation"], json!({ "form": {} }));
@@ -76,8 +83,12 @@ impl ScriptedAgent {
             }),
         )
         .await;
-        let new_session = self.expect("session/new").await;
-        self.reply(&new_session, json!({ "sessionId": "s1" })).await;
+    }
+
+    /// Nothing reaches the agent for a while.
+    async fn silent(&mut self) {
+        let next = tokio::time::timeout(Duration::from_millis(100), self.lines.next_line()).await;
+        assert!(next.is_err(), "unexpected message {next:?}");
     }
 }
 
@@ -483,7 +494,7 @@ async fn detail_beyond_the_item_limit_is_too_large_and_client_methods_are_refuse
     assert_eq!(refused["id"], 9);
     assert_eq!(refused["error"]["code"], -32601);
 
-    let huge = "x".repeat(crate::projection::DETAIL_LIMIT + 1);
+    let huge = "x".repeat(Retention::default().item_detail + 1);
     agent
         .update("s1", json!({ "sessionUpdate": "tool_call", "toolCallId": "big", "title": "Dump", "content": [{ "type": "content", "content": { "type": "text", "text": huge } }] }))
         .await;
@@ -1051,4 +1062,527 @@ async fn shutdown_stops_waiting_for_an_agent_that_ignores_cancel_at_its_budget()
         Some(StopReason::Interrupted)
     );
     assert_eq!(subscription.snapshot.writer, WriterState::None);
+}
+
+fn user_chunk(text: &str) -> Value {
+    json!({ "sessionUpdate": "user_message_chunk", "content": { "type": "text", "text": text } })
+}
+
+fn agent_chunk(text: &str) -> Value {
+    json!({ "sessionUpdate": "agent_message_chunk", "content": { "type": "text", "text": text } })
+}
+
+fn tool_call(id: &str, output: &str) -> Value {
+    json!({
+        "sessionUpdate": "tool_call",
+        "toolCallId": id,
+        "title": "Read file",
+        "kind": "read",
+        "status": "completed",
+        "content": [{ "type": "content", "content": { "type": "text", "text": output } }]
+    })
+}
+
+fn runtime_with(retention: Retention) -> AgentRuntime {
+    AgentRuntime::new(RuntimeConfig {
+        retention,
+        ..RuntimeConfig::default()
+    })
+}
+
+fn agent_launch(agent: &str) -> AcpLaunch {
+    AcpLaunch {
+        agent: agent.into(),
+        ..launch()
+    }
+}
+
+/// Opens `key` on a new connection of `launch`; the agent answers
+/// `session/load` after replaying `replay`.
+async fn reopened(
+    runtime: &AgentRuntime,
+    launch: &AcpLaunch,
+    key: &SessionKey,
+    replay: Vec<Value>,
+) -> ScriptedAgent {
+    let (id, mut agent) = attached_with(runtime, launch);
+    let (opened, ()) = tokio::join!(
+        runtime.open_session(
+            id,
+            key,
+            Path::new("/project"),
+            ExternalLiveness::Free,
+            UnknownLiveness::NotConfirmed,
+        ),
+        async {
+            agent
+                .initialize(json!({ "loadSession": true, "sessionCapabilities": { "close": {} } }))
+                .await;
+            let load = agent.expect("session/load").await;
+            assert_eq!(load["params"]["sessionId"], key.session_id.as_str());
+            assert_eq!(load["params"]["cwd"], "/project");
+            for update in replay {
+                agent.update(&key.session_id, update).await;
+            }
+            agent.reply(&load, json!({})).await;
+        }
+    );
+    opened.unwrap();
+    agent
+}
+
+fn turn_of(snapshot: &SessionSnapshot, id: &str) -> Option<String> {
+    snapshot
+        .items
+        .iter()
+        .find(|item| item.id == id)
+        .and_then(|item| item.turn_id.clone())
+}
+
+async fn released(runtime: &AgentRuntime, key: &SessionKey) {
+    for _ in 0..500 {
+        if runtime.subscribe(key).is_err() {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    panic!("the session is released");
+}
+
+#[tokio::test]
+async fn a_session_reopened_after_reconnect_is_restored_from_its_replay_without_a_prompt() {
+    let runtime = AgentRuntime::default();
+    let (_first, key, agent) = session(&runtime).await;
+    let mut before = runtime.subscribe(&key).unwrap();
+    drop(agent);
+    follow(&mut before, |snapshot| {
+        snapshot.connection == ConnectionState::Closed
+    })
+    .await;
+    drop(before);
+
+    let mut agent = reopened(
+        &runtime,
+        &launch(),
+        &key,
+        vec![
+            user_chunk("Read the plan"),
+            agent_chunk("Reading"),
+            tool_call("t1", "plan body"),
+            agent_chunk("Done"),
+            user_chunk("Thanks"),
+            agent_chunk("You are welcome"),
+        ],
+    )
+    .await;
+    agent.silent().await;
+
+    let snapshot = runtime.subscribe(&key).unwrap().snapshot;
+    assert_eq!(snapshot.connection, ConnectionState::Ready);
+    assert_eq!(snapshot.writer, WriterState::Acp);
+    assert_eq!(runtime.writers().writer(&key), Some(Writer::Acp));
+    assert_eq!(
+        snapshot.history,
+        HistoryState {
+            source: HistorySource::Replay,
+            available: true,
+            truncated_items: None
+        }
+    );
+    assert_eq!(snapshot.turn.phase, TurnPhase::None);
+    let kinds: Vec<_> = snapshot
+        .items
+        .iter()
+        .map(|item| {
+            (
+                item.kind.clone(),
+                item.turn_id.clone().unwrap(),
+                item.summary.clone(),
+            )
+        })
+        .collect();
+    let replay = |turn: &str| turn.to_string();
+    assert_eq!(
+        kinds,
+        vec![
+            (
+                ItemKind::UserMessage,
+                replay("replay:1"),
+                "Read the plan".into()
+            ),
+            (ItemKind::AgentMessage, replay("replay:1"), "Reading".into()),
+            (
+                ItemKind::ToolCall {
+                    tool: crate::activity::ToolKind::Read
+                },
+                replay("replay:1"),
+                "Read file".into()
+            ),
+            (ItemKind::AgentMessage, replay("replay:1"), "Done".into()),
+            (ItemKind::UserMessage, replay("replay:2"), "Thanks".into()),
+            (
+                ItemKind::AgentMessage,
+                replay("replay:2"),
+                "You are welcome".into()
+            ),
+        ]
+    );
+    assert_eq!(
+        runtime.detail(&key, "t1"),
+        DetailOutcome::Available {
+            blocks: vec![DetailBlock::Text {
+                text: "plan body".into()
+            }]
+        }
+    );
+
+    // The reopened session continues the same native session.
+    let turn = runtime.prompt(&key, "Next").unwrap();
+    let prompt = agent.expect("session/prompt").await;
+    assert_eq!(prompt["params"]["sessionId"], "s1");
+    agent.update("s1", agent_chunk("Live")).await;
+    agent
+        .reply(&prompt, json!({ "stopReason": "end_turn" }))
+        .await;
+    let mut subscription = runtime.subscribe(&key).unwrap();
+    follow(&mut subscription, |snapshot| {
+        snapshot.turn.turn_id.as_deref() == Some(turn.as_str())
+            && snapshot.turn.phase == TurnPhase::None
+    })
+    .await;
+    let live = subscription.snapshot.items.last().unwrap();
+    assert_eq!(live.turn_id.as_deref(), Some(turn.as_str()));
+}
+
+#[tokio::test]
+async fn a_resume_only_agent_continues_the_session_without_history() {
+    let runtime = AgentRuntime::default();
+    let key = SessionKey::from_acp("scripted", "s7", false);
+    let (id, mut agent) = attached(&runtime);
+    let (opened, ()) = tokio::join!(
+        runtime.open_session(
+            id,
+            &key,
+            Path::new("/project"),
+            ExternalLiveness::Free,
+            UnknownLiveness::NotConfirmed,
+        ),
+        async {
+            agent
+                .initialize(json!({ "sessionCapabilities": { "resume": {} } }))
+                .await;
+            let resume = agent.expect("session/resume").await;
+            assert_eq!(resume["params"]["sessionId"], "s7");
+            agent.reply(&resume, json!({})).await;
+        }
+    );
+    opened.unwrap();
+    agent.silent().await;
+    let snapshot = runtime.subscribe(&key).unwrap().snapshot;
+    assert_eq!(
+        snapshot.history,
+        HistoryState {
+            source: HistorySource::None,
+            available: false,
+            truncated_items: None
+        }
+    );
+    assert!(snapshot.items.is_empty());
+    assert_eq!(runtime.writers().writer(&key), Some(Writer::Acp));
+}
+
+#[tokio::test]
+async fn opening_is_refused_without_load_or_resume_and_without_a_free_writer() {
+    let runtime = AgentRuntime::default();
+    let key = SessionKey::from_acp("scripted", "s7", false);
+    let (id, mut agent) = attached(&runtime);
+    let (opened, ()) = tokio::join!(
+        runtime.open_session(
+            id,
+            &key,
+            Path::new("/project"),
+            ExternalLiveness::Free,
+            UnknownLiveness::NotConfirmed,
+        ),
+        agent.initialize(json!({}))
+    );
+    assert_eq!(opened, Err(AgentRuntimeError::OpenUnsupported));
+
+    let (id, mut agent) = attached(&runtime);
+    let (opened, ()) = tokio::join!(
+        runtime.open_session(
+            id,
+            &key,
+            Path::new("/project"),
+            ExternalLiveness::Unknown,
+            UnknownLiveness::NotConfirmed,
+        ),
+        agent.initialize(json!({ "loadSession": true }))
+    );
+    assert_eq!(
+        opened,
+        Err(AgentRuntimeError::WriterRefused {
+            refusal: WriterRefusal::ConfirmationRequired
+        })
+    );
+    agent.silent().await;
+    assert!(runtime.subscribe(&key).is_err());
+    assert_eq!(runtime.writers().writer(&key), None);
+
+    let other = SessionKey::from_acp("another", "s7", false);
+    assert_eq!(
+        runtime
+            .open_session(
+                id,
+                &other,
+                Path::new("/project"),
+                ExternalLiveness::Free,
+                UnknownLiveness::NotConfirmed,
+            )
+            .await,
+        Err(AgentRuntimeError::SessionNotFound)
+    );
+}
+
+#[tokio::test]
+async fn a_failed_load_leaves_no_session_and_frees_the_writer() {
+    let runtime = AgentRuntime::default();
+    let key = SessionKey::from_acp("scripted", "gone", false);
+    let (id, mut agent) = attached(&runtime);
+    let (opened, ()) = tokio::join!(
+        runtime.open_session(
+            id,
+            &key,
+            Path::new("/project"),
+            ExternalLiveness::Free,
+            UnknownLiveness::NotConfirmed,
+        ),
+        async {
+            agent.initialize(json!({ "loadSession": true })).await;
+            let load = agent.expect("session/load").await;
+            agent.update("gone", user_chunk("partial")).await;
+            agent
+                .send(json!({
+                    "jsonrpc": "2.0",
+                    "id": load["id"],
+                    "error": { "code": -32002, "message": "Resource not found" }
+                }))
+                .await;
+        }
+    );
+    assert!(matches!(opened, Err(AgentRuntimeError::Agent { .. })));
+    assert!(runtime.subscribe(&key).is_err());
+    assert_eq!(runtime.writers().writer(&key), None);
+    assert_eq!(runtime.inner.detail_bytes.load(Ordering::Relaxed), 0);
+}
+
+#[tokio::test]
+async fn a_large_replay_keeps_the_newest_whole_turns_and_marks_the_truncation() {
+    let runtime = runtime_with(Retention {
+        session_items: 10,
+        item_detail: 1024,
+        ..Retention::default()
+    });
+    let mut replay = Vec::new();
+    for turn in 1..=500 {
+        replay.push(user_chunk(&format!("question {turn}")));
+        replay.push(agent_chunk(&format!("answer {turn}")));
+        replay.push(tool_call(&format!("t{turn}"), &"o".repeat(100)));
+    }
+    replay.push(tool_call("huge", &"x".repeat(2048)));
+    let key = SessionKey::from_acp("scripted", "big", false);
+    let _agent = reopened(&runtime, &launch(), &key, replay).await;
+
+    let snapshot = runtime.subscribe(&key).unwrap().snapshot;
+    assert!(snapshot.items.len() <= 10, "{} items", snapshot.items.len());
+    let kept = snapshot.items.len() as u64;
+    assert_eq!(snapshot.history.truncated_items, Some(1501 - kept));
+    assert_eq!(snapshot.history.source, HistorySource::Replay);
+    // Only whole turns are evicted: every kept turn has all its items.
+    let turns: std::collections::BTreeSet<_> = snapshot
+        .items
+        .iter()
+        .map(|item| item.turn_id.clone().unwrap())
+        .collect();
+    for turn in &turns {
+        let count = snapshot
+            .items
+            .iter()
+            .filter(|item| item.turn_id.as_ref() == Some(turn))
+            .count();
+        let expected = if turn == "replay:500" { 4 } else { 3 };
+        assert_eq!(count, expected, "turn {turn}");
+    }
+    assert_eq!(turn_of(&snapshot, "huge").as_deref(), Some("replay:500"));
+    assert_eq!(
+        runtime.detail(&key, "huge"),
+        DetailOutcome::Unavailable {
+            reason: UnavailableReason::TooLarge
+        }
+    );
+    assert!(matches!(
+        runtime.detail(&key, "t1"),
+        DetailOutcome::Error { .. }
+    ));
+    // Evicted items no longer hold detail.
+    let held = runtime.inner.detail_bytes.load(Ordering::Relaxed);
+    assert!(held < 1024, "{held} detail bytes held");
+}
+
+#[tokio::test]
+async fn other_sessions_answer_while_a_replay_streams() {
+    let runtime = AgentRuntime::default();
+    let (_connection, other, _other_agent) = session(&runtime).await;
+    let key = SessionKey::from_acp("big", "b1", false);
+    let (id, mut agent) = attached_with(&runtime, &agent_launch("big"));
+    let open = tokio::spawn({
+        let runtime = runtime.clone();
+        let key = key.clone();
+        async move {
+            runtime
+                .open_session(
+                    id,
+                    &key,
+                    Path::new("/project"),
+                    ExternalLiveness::Free,
+                    UnknownLiveness::NotConfirmed,
+                )
+                .await
+        }
+    });
+    agent.initialize(json!({ "loadSession": true })).await;
+    let load = agent.expect("session/load").await;
+    for turn in 0..2_000 {
+        agent.update("b1", user_chunk(&format!("q{turn}"))).await;
+        agent.update("b1", agent_chunk(&"a".repeat(512))).await;
+    }
+    // Mid-replay: the other session and the connection answer at once,
+    // and the replaying session is not served before it is complete.
+    let started = std::time::Instant::now();
+    assert!(runtime.subscribe(&other).is_ok());
+    assert!(runtime.connection_status(id).is_some());
+    assert!(runtime.subscribe(&key).is_err());
+    assert!(started.elapsed() < Duration::from_millis(50));
+
+    agent.reply(&load, json!({})).await;
+    open.await.unwrap().unwrap();
+    let snapshot = runtime.subscribe(&key).unwrap().snapshot;
+    assert_eq!(snapshot.items.len(), 2_000);
+    assert_eq!(snapshot.history.truncated_items, Some(2_000));
+}
+
+#[tokio::test]
+async fn live_turns_past_the_bound_evict_the_oldest_turn_for_subscribers_too() {
+    let runtime = runtime_with(Retention {
+        session_items: 4,
+        ..Retention::default()
+    });
+    let (_connection, key, mut agent) = session(&runtime).await;
+    let mut subscription = runtime.subscribe(&key).unwrap();
+    let mut turns = Vec::new();
+    for text in ["first", "second"] {
+        let turn = runtime.prompt(&key, text).unwrap();
+        let prompt = agent.expect("session/prompt").await;
+        agent.update("s1", agent_chunk("ok")).await;
+        agent
+            .reply(&prompt, json!({ "stopReason": "end_turn" }))
+            .await;
+        follow(&mut subscription, |snapshot| {
+            snapshot.turn.turn_id.as_deref() == Some(turn.as_str())
+                && snapshot.turn.phase == TurnPhase::None
+        })
+        .await;
+        turns.push(turn);
+    }
+    let fresh = runtime.subscribe(&key).unwrap().snapshot;
+    assert_eq!(
+        subscription.snapshot, fresh,
+        "snapshot + deltas = runtime state"
+    );
+    assert_eq!(fresh.history.truncated_items, Some(3));
+    assert!(
+        fresh
+            .items
+            .iter()
+            .all(|item| item.turn_id.as_ref() == Some(&turns[1]))
+    );
+}
+
+#[tokio::test]
+async fn the_process_detail_bound_releases_the_least_recently_opened_session_first() {
+    let runtime = runtime_with(Retention {
+        process_detail: 2_500,
+        ..Retention::default()
+    });
+    let older = SessionKey::from_acp("a", "s1", false);
+    let _a = reopened(
+        &runtime,
+        &agent_launch("a"),
+        &older,
+        vec![
+            user_chunk("q1"),
+            tool_call("t1", &"1".repeat(1000)),
+            user_chunk("q2"),
+            tool_call("t2", &"2".repeat(1000)),
+        ],
+    )
+    .await;
+    let newer = SessionKey::from_acp("b", "s1", false);
+    let _b = reopened(
+        &runtime,
+        &agent_launch("b"),
+        &newer,
+        vec![user_chunk("q"), tool_call("t1", &"3".repeat(1000))],
+    )
+    .await;
+
+    assert_eq!(
+        runtime.detail(&older, "t1"),
+        DetailOutcome::Unavailable {
+            reason: UnavailableReason::Released
+        }
+    );
+    assert!(matches!(
+        runtime.detail(&older, "t2"),
+        DetailOutcome::Available { .. }
+    ));
+    assert!(matches!(
+        runtime.detail(&newer, "t1"),
+        DetailOutcome::Available { .. }
+    ));
+    let older_items = runtime.subscribe(&older).unwrap().snapshot.items;
+    let t1 = older_items.iter().find(|item| item.id == "t1").unwrap();
+    assert_eq!(t1.summary, "Read file", "the summary stays");
+    assert!(runtime.inner.detail_bytes.load(Ordering::Relaxed) <= 2_500);
+}
+
+#[tokio::test]
+async fn an_idle_session_is_released_and_opens_again_with_a_new_replay() {
+    let runtime = runtime_with(Retention {
+        idle_release: Duration::from_millis(40),
+        ..Retention::default()
+    });
+    let key = SessionKey::from_acp("scripted", "s1", false);
+    let agent = reopened(&runtime, &launch(), &key, vec![user_chunk("hello")]).await;
+    // The managed writer holds the session however long it is idle.
+    tokio::time::sleep(Duration::from_millis(150)).await;
+    let subscription = runtime.subscribe(&key).unwrap();
+
+    drop(agent);
+    let mut subscription = subscription;
+    follow(&mut subscription, |snapshot| {
+        snapshot.writer == WriterState::None
+    })
+    .await;
+    // A subscriber holds it too.
+    tokio::time::sleep(Duration::from_millis(150)).await;
+    assert!(runtime.subscribe(&key).is_ok());
+    drop(subscription);
+    released(&runtime, &key).await;
+    assert_eq!(runtime.inner.detail_bytes.load(Ordering::Relaxed), 0);
+
+    let _again = reopened(&runtime, &launch(), &key, vec![user_chunk("hello")]).await;
+    let snapshot = runtime.subscribe(&key).unwrap().snapshot;
+    assert_eq!(snapshot.items.len(), 1);
+    assert_eq!(snapshot.history.source, HistorySource::Replay);
 }

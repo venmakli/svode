@@ -298,8 +298,18 @@ pub enum Change {
     /// that outcome.
     Pending(PendingInteraction),
     History(HistoryState),
+    /// Retention evicted these items; the history carries the truncation
+    /// marker.
+    Truncated(Truncation),
     Connection(ConnectionState),
     Writer(WriterState),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Truncation {
+    pub item_ids: Vec<String>,
+    pub history: HistoryState,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -370,6 +380,11 @@ impl SessionSnapshot {
                 self.pending = (pending.state == InteractionState::Pending).then(|| pending.clone())
             }
             Change::History(history) => self.history = *history,
+            Change::Truncated(truncation) => {
+                self.items
+                    .retain(|item| !truncation.item_ids.contains(&item.id));
+                self.history = truncation.history;
+            }
             Change::Connection(connection) => self.connection = *connection,
             Change::Writer(writer) => self.writer = *writer,
         }

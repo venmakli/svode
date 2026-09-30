@@ -1,8 +1,10 @@
 //! In-memory projection of one session: the snapshot, its monotonic seq,
-//! delivery of deltas and item detail. Lives in the runtime owner process
-//! only; nothing here is persisted.
+//! delivery of deltas, item detail and their retention bounds (Stage 10 `02`
+//! C4). Lives in the runtime owner process only; nothing here is persisted.
 
 use std::collections::HashMap;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use tokio::sync::broadcast;
 
@@ -10,22 +12,44 @@ use crate::acp::normalize::{self, MessageRole, Normalized, ToolUpdate};
 use crate::activity::{
     ActivityItem, Change, ConnectionState, DetailBlock, DetailOutcome, HistorySource, HistoryState,
     InteractionState, ItemKind, ItemStatus, PendingInteraction, SessionDelta, SessionSnapshot,
-    TurnPhase, TurnState, UnavailableReason, WriterState,
+    Truncation, TurnPhase, TurnState, UnavailableReason, WriterState,
 };
 use crate::identity::SessionKey;
+use crate::runtime::Retention;
 use crate::status::{SessionState, SessionStatus, StopReason};
 
 /// Summary bound of one item; longer content is the item detail.
 const SUMMARY_LIMIT: usize = 4 * 1024;
-/// Per-item detail bound (C4); beyond it the detail is `too_large`.
-/// Tunable, not contract.
-pub(crate) const DETAIL_LIMIT: usize = 1024 * 1024;
 /// Deltas a slow subscriber may lag before it sees a seq gap.
 const DELTA_BUFFER: usize = 1024;
+/// Fixed share of one item in the compact bound besides its texts.
+const ITEM_OVERHEAD: usize = 64;
 
 enum Detail {
-    Blocks(Vec<DetailBlock>),
+    /// The content with its size in bytes.
+    Blocks(Vec<DetailBlock>, usize),
+    /// Beyond the per-item bound; never kept.
     TooLarge,
+    /// Released under the process bound; the summary stays.
+    Released,
+}
+
+impl Detail {
+    fn size(&self) -> usize {
+        match self {
+            Detail::Blocks(_, size) => *size,
+            Detail::TooLarge | Detail::Released => 0,
+        }
+    }
+}
+
+/// A `session/load` replay in progress. ACP v1 replays turns without
+/// delimiters, so each user message starts the next replay turn: whole
+/// turns are what retention evicts.
+#[derive(Default)]
+struct Replay {
+    turns: u64,
+    turn: Option<String>,
 }
 
 pub(crate) struct Subscription {
@@ -40,10 +64,26 @@ pub(crate) struct Projection {
     /// Item that chunks without a `messageId` extend, with its role.
     open_message: Option<(MessageRole, String)>,
     next_local_id: u64,
+    retention: Retention,
+    /// Detail bytes of every open session of the process.
+    process_detail: Arc<AtomicUsize>,
+    /// This session's share of `process_detail`.
+    detail_bytes: usize,
+    compact_bytes: usize,
+    replay: Option<Replay>,
 }
 
 impl Projection {
-    pub(crate) fn new(session: SessionKey, connection: ConnectionState) -> Self {
+    /// A projection whose history is `history`; a `replay` one numbers
+    /// replay turns until [`Projection::end_replay`].
+    pub(crate) fn new(
+        session: SessionKey,
+        connection: ConnectionState,
+        history: HistoryState,
+        replay: bool,
+        retention: Retention,
+        process_detail: Arc<AtomicUsize>,
+    ) -> Self {
         let (sender, _) = broadcast::channel(DELTA_BUFFER);
         Self {
             snapshot: SessionSnapshot {
@@ -59,18 +99,39 @@ impl Projection {
                 items: Vec::new(),
                 plan: None,
                 pending: None,
-                history: HistoryState {
-                    source: HistorySource::Live,
-                    available: true,
-                    truncated_items: None,
-                },
+                history,
                 writer: WriterState::Acp,
             },
             sender,
             details: HashMap::new(),
             open_message: None,
             next_local_id: 0,
+            retention,
+            process_detail,
+            detail_bytes: 0,
+            compact_bytes: 0,
+            replay: replay.then(Replay::default),
         }
+    }
+
+    /// History of a new session the runtime starts: live from its first turn.
+    pub(crate) fn live_history() -> HistoryState {
+        HistoryState {
+            source: HistorySource::Live,
+            available: true,
+            truncated_items: None,
+        }
+    }
+
+    /// The agent answered `session/load`: the replay is complete.
+    pub(crate) fn end_replay(&mut self) {
+        self.replay = None;
+        self.open_message = None;
+    }
+
+    /// Consumers holding a delivery of this session.
+    pub(crate) fn subscribers(&self) -> usize {
+        self.sender.receiver_count()
     }
 
     pub(crate) fn subscribe(&self) -> Subscription {
@@ -238,11 +299,14 @@ impl Projection {
 
     pub(crate) fn detail(&self, item_id: &str) -> DetailOutcome {
         match self.details.get(item_id) {
-            Some(Detail::Blocks(blocks)) => DetailOutcome::Available {
+            Some(Detail::Blocks(blocks, _)) => DetailOutcome::Available {
                 blocks: blocks.clone(),
             },
             Some(Detail::TooLarge) => DetailOutcome::Unavailable {
                 reason: UnavailableReason::TooLarge,
+            },
+            Some(Detail::Released) => DetailOutcome::Unavailable {
+                reason: UnavailableReason::Released,
             },
             None if self.snapshot.items.iter().any(|item| item.id == item_id) => {
                 DetailOutcome::Unavailable {
@@ -255,7 +319,44 @@ impl Projection {
         }
     }
 
+    /// Releases the detail of the oldest items outside the current turn
+    /// until `need` bytes are freed; summaries stay. Returns the bytes freed.
+    pub(crate) fn release_detail(&mut self, need: usize) -> usize {
+        let current = self.current_turn();
+        let candidates: Vec<String> = self
+            .snapshot
+            .items
+            .iter()
+            .filter(|item| current.is_none() || item.turn_id != current)
+            .map(|item| item.id.clone())
+            .collect();
+        let mut freed = 0;
+        for id in candidates {
+            if freed >= need {
+                break;
+            }
+            if self
+                .details
+                .get(&id)
+                .is_some_and(|detail| detail.size() > 0)
+            {
+                freed += self.set_detail(&id, Detail::Released);
+            }
+        }
+        freed
+    }
+
     fn append_message(&mut self, role: MessageRole, message_id: Option<String>, text: &str) {
+        if role == MessageRole::User && self.replay.is_some() {
+            let continues = match (&self.open_message, &message_id) {
+                (Some((MessageRole::User, open)), Some(id)) => open == id,
+                (Some((MessageRole::User, _)), None) => true,
+                _ => false,
+            };
+            if !continues {
+                self.next_replay_turn();
+            }
+        }
         let id = match message_id {
             Some(id) => id,
             None => match &self.open_message {
@@ -268,11 +369,11 @@ impl Projection {
         };
         self.open_message = Some((role, id.clone()));
         let mut full = match self.details.get(&id) {
-            Some(Detail::Blocks(blocks)) => match blocks.first() {
+            Some(Detail::Blocks(blocks, _)) => match blocks.first() {
                 Some(DetailBlock::Text { text }) => text.clone(),
                 _ => String::new(),
             },
-            Some(Detail::TooLarge) => return,
+            Some(Detail::TooLarge | Detail::Released) => return,
             None => String::new(),
         };
         full.push_str(text);
@@ -330,12 +431,7 @@ impl Projection {
     fn put_text_item(&mut self, id: String, kind: ItemKind, text: String) {
         let has_detail = text.len() > SUMMARY_LIMIT;
         let summary = normalize::bounded(&text, SUMMARY_LIMIT);
-        if has_detail {
-            self.store_detail(&id, vec![DetailBlock::Text { text }]);
-        } else {
-            self.details
-                .insert(id.clone(), Detail::Blocks(vec![DetailBlock::Text { text }]));
-        }
+        self.store_detail(&id, vec![DetailBlock::Text { text }]);
         let turn_id = self
             .snapshot
             .items
@@ -355,16 +451,101 @@ impl Projection {
 
     fn store_detail(&mut self, id: &str, blocks: Vec<DetailBlock>) {
         let size: usize = blocks.iter().map(block_size).sum();
-        let detail = if size > DETAIL_LIMIT {
+        let detail = if size > self.retention.item_detail {
             Detail::TooLarge
         } else {
-            Detail::Blocks(blocks)
+            Detail::Blocks(blocks, size)
         };
-        self.details.insert(id.to_string(), detail);
+        self.set_detail(id, detail);
+    }
+
+    /// Replaces the item's detail; returns the bytes the old one held.
+    fn set_detail(&mut self, id: &str, detail: Detail) -> usize {
+        self.track_detail(detail.size());
+        let old = self
+            .details
+            .insert(id.to_string(), detail)
+            .map_or(0, |old| old.size());
+        self.untrack_detail(old);
+        old
+    }
+
+    fn track_detail(&mut self, bytes: usize) {
+        self.detail_bytes += bytes;
+        self.process_detail.fetch_add(bytes, Ordering::Relaxed);
+    }
+
+    fn untrack_detail(&mut self, bytes: usize) {
+        self.detail_bytes -= bytes;
+        self.process_detail.fetch_sub(bytes, Ordering::Relaxed);
     }
 
     fn upsert(&mut self, item: ActivityItem) {
+        let old = self
+            .snapshot
+            .items
+            .iter()
+            .find(|known| known.id == item.id)
+            .map_or(0, compact_size);
+        self.compact_bytes = self.compact_bytes - old + compact_size(&item);
         self.emit(Change::Item(item));
+        self.enforce_session_bounds();
+    }
+
+    /// Evicts the oldest turns whole while the session is over its item or
+    /// compact bound. The current turn — and with it the pending
+    /// interaction — is never evicted.
+    fn enforce_session_bounds(&mut self) {
+        while self.snapshot.items.len() > self.retention.session_items
+            || self.compact_bytes > self.retention.session_bytes
+        {
+            let current = self.current_turn();
+            let Some(oldest) = self
+                .snapshot
+                .items
+                .iter()
+                .find(|item| item.turn_id.is_none() || item.turn_id != current)
+            else {
+                return;
+            };
+            let ids: Vec<String> = match &oldest.turn_id {
+                Some(turn) => self
+                    .snapshot
+                    .items
+                    .iter()
+                    .filter(|item| item.turn_id.as_ref() == Some(turn))
+                    .map(|item| item.id.clone())
+                    .collect(),
+                None => vec![oldest.id.clone()],
+            };
+            self.evict(ids);
+        }
+    }
+
+    fn evict(&mut self, item_ids: Vec<String>) {
+        for item in &self.snapshot.items {
+            if item_ids.contains(&item.id) {
+                self.compact_bytes -= compact_size(item);
+            }
+        }
+        for id in &item_ids {
+            if let Some(detail) = self.details.remove(id) {
+                self.untrack_detail(detail.size());
+            }
+        }
+        if self
+            .open_message
+            .as_ref()
+            .is_some_and(|(_, id)| item_ids.contains(id))
+        {
+            self.open_message = None;
+        }
+        let evicted = self.snapshot.history.truncated_items.unwrap_or(0) + item_ids.len() as u64;
+        let history = HistoryState {
+            truncated_items: Some(evicted),
+            ..self.snapshot.history
+        };
+        self.emit(Change::Truncated(Truncation { item_ids, history }));
     }
 
     fn set_turn(&mut self, turn_id: Option<String>, phase: TurnPhase, outcome: Option<StopReason>) {
@@ -399,10 +580,20 @@ impl Projection {
         let _ = self.sender.send(delta);
     }
 
+    /// The live turn, or the replay turn a `session/load` is replaying.
     fn current_turn(&self) -> Option<String> {
-        self.turn_active()
-            .then(|| self.snapshot.turn.turn_id.clone())
-            .flatten()
+        if self.turn_active() {
+            return self.snapshot.turn.turn_id.clone();
+        }
+        self.replay.as_ref().and_then(|replay| replay.turn.clone())
+    }
+
+    fn next_replay_turn(&mut self) {
+        if let Some(replay) = &mut self.replay {
+            replay.turns += 1;
+            replay.turn = Some(format!("replay:{}", replay.turns));
+        }
+        self.open_message = None;
     }
 
     fn local_id(&mut self, scope: &str, kind: &str) -> String {
@@ -425,6 +616,26 @@ fn status_of(
         },
         (_, None) => SessionState::Running,
     })
+}
+
+impl Drop for Projection {
+    fn drop(&mut self) {
+        self.process_detail
+            .fetch_sub(self.detail_bytes, Ordering::Relaxed);
+    }
+}
+
+/// Size of an item in the compact bound.
+fn compact_size(item: &ActivityItem) -> usize {
+    let label = match &item.kind {
+        ItemKind::Generic { label } => label.len(),
+        _ => 0,
+    };
+    ITEM_OVERHEAD
+        + item.id.len()
+        + item.turn_id.as_ref().map_or(0, String::len)
+        + item.summary.len()
+        + label
 }
 
 fn block_size(block: &DetailBlock) -> usize {

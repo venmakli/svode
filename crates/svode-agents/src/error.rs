@@ -21,6 +21,9 @@ pub enum AgentRuntimeError {
     ConnectionClosed,
     #[error("agent session not found")]
     SessionNotFound,
+    /// The agent declares neither `session/load` nor `session/resume`.
+    #[error("the agent cannot open existing sessions")]
+    OpenUnsupported,
     /// A prompt while a turn is active; there is no queue.
     #[error("a turn is already active in this session")]
     TurnActive,

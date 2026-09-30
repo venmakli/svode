@@ -4,7 +4,7 @@
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 
@@ -20,8 +20,9 @@ use crate::acp::normalize::{self, Normalized};
 use crate::acp::rpc::{AUTH_REQUIRED, Incoming, RpcClient, RpcError};
 use crate::acp::{self};
 use crate::activity::{
-    Change, ConnectionState, DetailOutcome, InteractionOption, InteractionState,
-    PendingInteraction, QuestionField, SessionDelta, SessionSnapshot, TurnPhase, WriterState,
+    Change, ConnectionState, DetailOutcome, HistorySource, HistoryState, InteractionOption,
+    InteractionState, PendingInteraction, QuestionField, SessionDelta, SessionSnapshot, TurnPhase,
+    WriterState,
 };
 use crate::error::AgentRuntimeError;
 use crate::identity::SessionKey;
@@ -42,6 +43,7 @@ pub struct RuntimeConfig {
     pub request_timeout: Duration,
     /// Bound of the whole stop sequence when the host process exits.
     pub shutdown_budget: Duration,
+    pub retention: Retention,
 }
 
 impl Default for RuntimeConfig {
@@ -49,6 +51,37 @@ impl Default for RuntimeConfig {
         Self {
             request_timeout: Duration::from_secs(60),
             shutdown_budget: Duration::from_secs(3),
+            retention: Retention::default(),
+        }
+    }
+}
+
+/// Retention bounds of session activity (Stage 10 `02` C4). Tunables with
+/// provisional values until E01 measures real replays.
+#[derive(Debug, Clone, Copy)]
+pub struct Retention {
+    /// Items one session keeps; beyond it the oldest turns are evicted.
+    pub session_items: usize,
+    /// Bytes of the compact items one session keeps.
+    pub session_bytes: usize,
+    /// Detail of one item; beyond it the detail is `too_large`.
+    pub item_detail: usize,
+    /// Detail of all open sessions; beyond it the least recently opened
+    /// sessions release theirs.
+    pub process_detail: usize,
+    /// How long a session without a writer, a live turn or a subscriber is
+    /// kept before it is released; opening it again replays it anew.
+    pub idle_release: Duration,
+}
+
+impl Default for Retention {
+    fn default() -> Self {
+        Self {
+            session_items: 2_000,
+            session_bytes: 2 * 1024 * 1024,
+            item_detail: 1024 * 1024,
+            process_detail: 128 * 1024 * 1024,
+            idle_release: Duration::from_secs(5 * 60),
         }
     }
 }
@@ -118,9 +151,15 @@ struct Inner {
     connections: Mutex<HashMap<ConnectionId, Arc<Connection>>>,
     sessions: Mutex<HashMap<SessionKey, Arc<Session>>>,
     writers: WriterRegistry,
+    /// Detail bytes held by every session of the process.
+    detail_bytes: Arc<AtomicUsize>,
+    /// Orders sessions by when they were last opened.
+    next_open: AtomicU64,
+    sweeping: AtomicBool,
 }
 
 struct Connection {
+    runtime: Weak<Inner>,
     agent: String,
     acp_id_is_native: bool,
     rpc: Arc<RpcClient>,
@@ -141,6 +180,10 @@ struct Session {
     next_interaction: AtomicU64,
     /// The ACP writer slot of the session while this runtime drives it.
     writer: Mutex<Option<WriterClaim>>,
+    /// When the session was last opened, in `Inner::next_open` order.
+    opened: AtomicU64,
+    /// Since when nothing holds the session's data.
+    idle_since: Mutex<Option<Instant>>,
 }
 
 #[derive(Default)]
@@ -232,6 +275,7 @@ impl AgentRuntime {
         let id = ConnectionId(self.inner.next_connection.fetch_add(1, Ordering::Relaxed) + 1);
         let (rpc, incoming) = RpcClient::start(reader, writer);
         let connection = Arc::new(Connection {
+            runtime: Arc::downgrade(&self.inner),
             agent: launch.agent.clone(),
             acp_id_is_native: launch.acp_id_is_native,
             rpc,
@@ -247,7 +291,27 @@ impl AgentRuntime {
             .unwrap()
             .insert(id, connection.clone());
         tokio::spawn(dispatch(Arc::downgrade(&connection), incoming));
+        self.start_idle_sweep();
         id
+    }
+
+    /// Releases idle sessions in the background while the runtime lives.
+    fn start_idle_sweep(&self) {
+        if self.inner.sweeping.swap(true, Ordering::Relaxed) {
+            return;
+        }
+        let idle = self.inner.config.retention.idle_release;
+        let every = (idle / 4).max(Duration::from_millis(10));
+        let inner = Arc::downgrade(&self.inner);
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(every).await;
+                let Some(inner) = inner.upgrade() else {
+                    return;
+                };
+                inner.release_idle_sessions(idle);
+            }
+        });
     }
 
     /// The process-wide writer registry; a host registers its managed PTYs
@@ -299,26 +363,157 @@ impl AgentRuntime {
                 UnknownLiveness::NotConfirmed,
             )
             .map_err(|refusal| AgentRuntimeError::WriterRefused { refusal })?;
+        let session = self.session_entry(
+            &connection,
+            &acp_id,
+            key.clone(),
+            Projection::live_history(),
+            false,
+            claim,
+        );
+        self.inner.register(key.clone(), session);
+        Ok(key)
+    }
+
+    /// Opens an existing session of the agent on this connection so the
+    /// runtime drives it: `session/load` replays its history through the
+    /// one normalizer; an agent with `resume` only continues it without
+    /// history. Opening never sends a prompt. The ACP writer is claimed
+    /// before the agent attaches the session, with the host's evidence
+    /// about external writers. A session this connection already drives is
+    /// left as it is.
+    pub async fn open_session(
+        &self,
+        id: ConnectionId,
+        key: &SessionKey,
+        cwd: &Path,
+        liveness: ExternalLiveness,
+        unknown: UnknownLiveness,
+    ) -> Result<(), AgentRuntimeError> {
+        let connection = self.connection(id)?;
+        connection.require_open()?;
+        if *key
+            != SessionKey::from_acp(
+                &connection.agent,
+                &key.session_id,
+                connection.acp_id_is_native,
+            )
+        {
+            return Err(AgentRuntimeError::SessionNotFound);
+        }
+        if let Ok(open) = self.session(key)
+            && Arc::ptr_eq(&open.connection, &connection)
+            && open.writer.lock().unwrap().is_some()
+        {
+            open.opened.store(self.next_open(), Ordering::Relaxed);
+            return Ok(());
+        }
+        if connection.info.lock().unwrap().is_none() {
+            self.initialize(&connection).await?;
+        }
+        let capabilities = connection
+            .info
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(|info| info.capabilities)
+            .unwrap_or_default();
+        let (method, history) = if capabilities.load_session {
+            (
+                acp::SESSION_LOAD,
+                HistoryState {
+                    source: HistorySource::Replay,
+                    available: true,
+                    truncated_items: None,
+                },
+            )
+        } else if capabilities.resume_session {
+            (
+                acp::SESSION_RESUME,
+                HistoryState {
+                    source: HistorySource::None,
+                    available: false,
+                    truncated_items: None,
+                },
+            )
+        } else {
+            return Err(AgentRuntimeError::OpenUnsupported);
+        };
+        let claim = self
+            .inner
+            .writers
+            .claim(key, Writer::Acp, liveness, unknown)
+            .map_err(|refusal| AgentRuntimeError::WriterRefused { refusal })?;
+        let acp_id = key.session_id.clone();
+        let session = self.session_entry(
+            &connection,
+            &acp_id,
+            key.clone(),
+            history,
+            method == acp::SESSION_LOAD,
+            claim,
+        );
+        let result = connection
+            .call(
+                method,
+                acp::open_session_request(&acp_id, cwd),
+                self.timeout(),
+            )
+            .await;
+        // The replay arrives before the answer; apply all of it first.
+        connection.rpc.barrier().await;
+        match result {
+            Ok(_) => {
+                session.projection.lock().unwrap().end_replay();
+                self.inner.register(key.clone(), session);
+                Ok(())
+            }
+            Err(error) => {
+                connection.forget(&acp_id, &session);
+                Err(error)
+            }
+        }
+    }
+
+    /// A session of `connection` that holds `claim` and receives its
+    /// updates from now on.
+    fn session_entry(
+        &self,
+        connection: &Arc<Connection>,
+        acp_id: &str,
+        key: SessionKey,
+        history: HistoryState,
+        replay: bool,
+        claim: WriterClaim,
+    ) -> Arc<Session> {
         let state = *connection.state.lock().unwrap();
         let session = Arc::new(Session {
-            acp_id: acp_id.clone(),
+            acp_id: acp_id.to_string(),
             connection: connection.clone(),
-            projection: Mutex::new(Projection::new(key.clone(), state)),
+            projection: Mutex::new(Projection::new(
+                key,
+                state,
+                history,
+                replay,
+                self.inner.config.retention,
+                self.inner.detail_bytes.clone(),
+            )),
             interactions: Mutex::new(Interactions::default()),
             next_interaction: AtomicU64::new(0),
             writer: Mutex::new(Some(claim)),
+            opened: AtomicU64::new(self.next_open()),
+            idle_since: Mutex::new(None),
         });
         connection
             .sessions
             .lock()
             .unwrap()
-            .insert(acp_id, session.clone());
-        self.inner
-            .sessions
-            .lock()
-            .unwrap()
-            .insert(key.clone(), session);
-        Ok(key)
+            .insert(acp_id.to_string(), session.clone());
+        session
+    }
+
+    fn next_open(&self) -> u64 {
+        self.inner.next_open.fetch_add(1, Ordering::Relaxed) + 1
     }
 
     /// Accepts a prompt and returns the turn id at once; the runtime owns the
@@ -333,6 +528,7 @@ impl AgentRuntime {
             .unwrap()
             .begin_turn(&turn_id, text)
             .ok_or(AgentRuntimeError::TurnActive)?;
+        self.inner.enforce_detail_bound();
         let request = acp::prompt_request(&session.acp_id, text);
         let turn = turn_id.clone();
         tokio::spawn(async move {
@@ -408,8 +604,12 @@ impl AgentRuntime {
         Ok(AnswerOutcome::Accepted)
     }
 
+    /// Opening a session in a surface: it becomes the most recently opened
+    /// one for the process detail bound.
     pub fn subscribe(&self, key: &SessionKey) -> Result<SessionSubscription, AgentRuntimeError> {
-        let subscription = self.session(key)?.projection.lock().unwrap().subscribe();
+        let session = self.session(key)?;
+        session.opened.store(self.next_open(), Ordering::Relaxed);
+        let subscription = session.projection.lock().unwrap().subscribe();
         Ok(SessionSubscription {
             snapshot: subscription.snapshot,
             deltas: subscription.deltas,
@@ -519,7 +719,86 @@ impl AgentRuntime {
     }
 }
 
+impl Inner {
+    /// Makes `session` the one the runtime serves under `key`; a replaced
+    /// session of a closed connection stops holding its data.
+    fn register(&self, key: SessionKey, session: Arc<Session>) {
+        let replaced = self.sessions.lock().unwrap().insert(key, session.clone());
+        if let Some(old) = replaced.filter(|old| !Arc::ptr_eq(old, &session)) {
+            old.connection.forget(&old.acp_id, &old);
+        }
+    }
+
+    /// Releases detail of the least recently opened sessions, oldest items
+    /// first, while the process is over its detail bound.
+    fn enforce_detail_bound(&self) {
+        let bound = self.config.retention.process_detail;
+        if self.detail_bytes.load(Ordering::Relaxed) <= bound {
+            return;
+        }
+        let connections: Vec<_> = self.connections.lock().unwrap().values().cloned().collect();
+        let mut sessions: Vec<_> = connections
+            .iter()
+            .flat_map(|connection| connection.sessions())
+            .collect();
+        sessions.sort_by_key(|session| session.opened.load(Ordering::Relaxed));
+        for session in sessions {
+            let over = self
+                .detail_bytes
+                .load(Ordering::Relaxed)
+                .saturating_sub(bound);
+            if over == 0 {
+                return;
+            }
+            session.projection.lock().unwrap().release_detail(over);
+        }
+    }
+
+    /// Drops sessions nothing has held for `idle`: no managed writer, no
+    /// live turn and no subscriber.
+    fn release_idle_sessions(&self, idle: Duration) {
+        let now = Instant::now();
+        let known: Vec<(SessionKey, Arc<Session>)> = self
+            .sessions
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(key, session)| (key.clone(), session.clone()))
+            .collect();
+        for (key, session) in known {
+            if session.idle_for(now) < idle {
+                continue;
+            }
+            let mut sessions = self.sessions.lock().unwrap();
+            if sessions
+                .get(&key)
+                .is_some_and(|known| Arc::ptr_eq(known, &session))
+            {
+                sessions.remove(&key);
+            }
+            drop(sessions);
+            session.connection.forget(&session.acp_id, &session);
+        }
+    }
+}
+
 impl Session {
+    /// How long nothing has held the session's data; zero while its writer,
+    /// a live turn or a subscriber does.
+    fn idle_for(&self, now: Instant) -> Duration {
+        let writer = self.writer.lock().unwrap().is_some();
+        let held = writer || {
+            let projection = self.projection.lock().unwrap();
+            projection.turn_active() || projection.subscribers() > 0
+        };
+        let mut idle_since = self.idle_since.lock().unwrap();
+        if held {
+            *idle_since = None;
+            return Duration::ZERO;
+        }
+        now - *idle_since.get_or_insert(now)
+    }
+
     /// Requests cancellation of the active turn: answers the pending request
     /// `cancelled` and keeps the turn `cancelling` until the agent answers
     /// the prompt or the connection drops. No-op without an active turn.
@@ -684,6 +963,18 @@ impl Connection {
     fn session(&self, acp_id: &str) -> Option<Arc<Session>> {
         self.sessions.lock().unwrap().get(acp_id).cloned()
     }
+
+    /// Stops routing updates to `session` unless another session of the
+    /// same id has replaced it.
+    fn forget(&self, acp_id: &str, session: &Arc<Session>) {
+        let mut sessions = self.sessions.lock().unwrap();
+        if sessions
+            .get(acp_id)
+            .is_some_and(|known| Arc::ptr_eq(known, session))
+        {
+            sessions.remove(acp_id);
+        }
+    }
 }
 
 async fn dispatch(connection: Weak<Connection>, mut incoming: mpsc::UnboundedReceiver<Incoming>) {
@@ -698,9 +989,15 @@ async fn dispatch(connection: Weak<Connection>, mut incoming: mpsc::UnboundedRec
                 };
                 if let Some(session) = connection.session(&acp_id) {
                     apply(&session, normalized);
+                    if let Some(runtime) = connection.runtime.upgrade() {
+                        runtime.enforce_detail_bound();
+                    }
                 }
             }
             Incoming::Notification { .. } => {}
+            Incoming::Barrier(done) => {
+                let _ = done.send(());
+            }
             Incoming::Request { id, method, params }
                 if method == acp::SESSION_REQUEST_PERMISSION =>
             {

@@ -15,6 +15,8 @@ use crate::status::InteractionKind;
 
 pub(crate) const INITIALIZE: &str = "initialize";
 pub(crate) const SESSION_NEW: &str = "session/new";
+pub(crate) const SESSION_LOAD: &str = "session/load";
+pub(crate) const SESSION_RESUME: &str = "session/resume";
 pub(crate) const SESSION_PROMPT: &str = "session/prompt";
 pub(crate) const SESSION_CANCEL: &str = "session/cancel";
 pub(crate) const SESSION_CLOSE: &str = "session/close";
@@ -65,6 +67,12 @@ pub(crate) fn agent_info(response: Value) -> Result<AgentInfo, String> {
 
 pub(crate) fn new_session_request(cwd: &Path) -> Value {
     json!({ "cwd": cwd, "mcpServers": [] })
+}
+
+/// Params of `session/load` and `session/resume`: both attach an existing
+/// session in `cwd`; only load replays its history.
+pub(crate) fn open_session_request(session_id: &str, cwd: &Path) -> Value {
+    json!({ "sessionId": session_id, "cwd": cwd, "mcpServers": [] })
 }
 
 pub(crate) fn new_session_id(response: Value) -> Result<String, String> {

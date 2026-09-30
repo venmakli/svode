@@ -36,12 +36,16 @@ pub(crate) enum Incoming {
         method: String,
         params: Value,
     },
+    /// Resolved once everything received before it has been handled.
+    Barrier(oneshot::Sender<()>),
 }
 
 type Waiters = Mutex<Option<HashMap<u64, oneshot::Sender<Result<Value, RpcError>>>>>;
 
 pub(crate) struct RpcClient {
     outgoing: mpsc::UnboundedSender<String>,
+    /// Weak, so the incoming channel still closes when the peer is gone.
+    incoming: mpsc::WeakUnboundedSender<Incoming>,
     /// `None` once the peer is gone: new requests fail as closed.
     waiters: Arc<Waiters>,
     next_id: AtomicU64,
@@ -63,6 +67,7 @@ impl RpcClient {
         let waiters: Arc<Waiters> = Arc::new(Mutex::new(Some(HashMap::new())));
         let client = Arc::new(Self {
             outgoing,
+            incoming: incoming_tx.downgrade(),
             waiters: waiters.clone(),
             next_id: AtomicU64::new(1),
         });
@@ -135,6 +140,22 @@ impl RpcClient {
             None => receiver.await,
         };
         response.unwrap_or(Err(RpcError::Closed))
+    }
+
+    /// Waits until the consumer of incoming messages has handled every
+    /// message that arrived before this call. A response is routed as soon
+    /// as it is read, while the notifications before it may still wait in
+    /// the incoming channel.
+    pub(crate) async fn barrier(&self) {
+        let Some(incoming) = self.incoming.upgrade() else {
+            return;
+        };
+        let (done, handled) = oneshot::channel();
+        let sent = incoming.send(Incoming::Barrier(done)).is_ok();
+        drop(incoming);
+        if sent {
+            let _ = handled.await;
+        }
     }
 
     pub(crate) fn notify(&self, method: &str, params: Value) {
@@ -233,4 +254,75 @@ fn remote_message(error: &Value) -> String {
         _ => message.to_string(),
     };
     super::normalize::bounded(&message, 512)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::AtomicUsize;
+
+    use tokio::io::AsyncWriteExt;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn a_barrier_waits_for_the_notifications_read_before_a_response() {
+        let (client, agent) = tokio::io::duplex(64 * 1024);
+        let (client_read, client_write) = tokio::io::split(client);
+        let (mut agent_read, mut agent_write) = tokio::io::split(agent);
+        let (rpc, mut incoming) = RpcClient::start(client_read, client_write);
+
+        let request = tokio::spawn({
+            let rpc = rpc.clone();
+            async move { rpc.request("session/load", json!({}), None).await }
+        });
+        let mut sent = vec![0u8; 256];
+        let _ = agent_read.read(&mut sent).await.unwrap();
+        for update in 0..3 {
+            let line =
+                json!({ "jsonrpc": "2.0", "method": "session/update", "params": { "n": update } });
+            agent_write
+                .write_all(format!("{line}\n").as_bytes())
+                .await
+                .unwrap();
+        }
+        agent_write
+            .write_all(b"{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}\n")
+            .await
+            .unwrap();
+        request.await.unwrap().unwrap();
+
+        // A slow consumer has not handled the notifications yet.
+        let handled = Arc::new(AtomicUsize::new(0));
+        tokio::spawn({
+            let handled = handled.clone();
+            async move {
+                while let Some(message) = incoming.recv().await {
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                    match message {
+                        Incoming::Barrier(done) => {
+                            let _ = done.send(());
+                        }
+                        _ => {
+                            handled.fetch_add(1, Ordering::Relaxed);
+                        }
+                    }
+                }
+            }
+        });
+        assert_eq!(handled.load(Ordering::Relaxed), 0);
+        rpc.barrier().await;
+        assert_eq!(handled.load(Ordering::Relaxed), 3);
+    }
+
+    #[tokio::test]
+    async fn a_barrier_after_the_peer_is_gone_returns_at_once() {
+        let (client, agent) = tokio::io::duplex(1024);
+        let (client_read, client_write) = tokio::io::split(client);
+        let (rpc, incoming) = RpcClient::start(client_read, client_write);
+        drop(agent);
+        drop(incoming);
+        tokio::time::timeout(Duration::from_secs(1), rpc.barrier())
+            .await
+            .expect("no one handles the barrier");
+    }
 }

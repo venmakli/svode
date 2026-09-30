@@ -13,15 +13,23 @@
 //! its first option of that kind (`allow_once`, `reject_once`, …), declines
 //! a question, or cancels the turn; the answer is then repeated to show
 //! `not_pending`.
+//!
+//! `--open <session id>` opens an existing session instead of creating one:
+//! `session/load` replays its history, no prompt is sent unless `--prompt`
+//! is given. `--reopen` closes the connection after the turn, connects
+//! again and opens the same session to compare its replay with the live
+//! turn.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use svode_agents::activity::{Change, InteractionState, TurnPhase};
+use svode_agents::activity::{ActivityItem, Change, InteractionState, ItemKind, TurnPhase};
+use svode_agents::identity::SessionKey;
 use svode_agents::interaction::InteractionAnswer;
 use svode_agents::status::InteractionKind;
-use svode_agents::{AcpLaunch, AgentRuntime, RuntimeConfig};
+use svode_agents::writer::{ExternalLiveness, UnknownLiveness};
+use svode_agents::{AcpLaunch, AgentRuntime, ConnectionId, RuntimeConfig};
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() {
@@ -30,6 +38,8 @@ async fn main() {
     let mut cwd = std::env::current_dir().unwrap();
     let mut prompt = None;
     let mut on_pending = None;
+    let mut open = None;
+    let mut reopen = false;
     let mut env = BTreeMap::new();
     let mut command = Vec::new();
     while let Some(arg) = args.next() {
@@ -38,6 +48,8 @@ async fn main() {
             "--cwd" => cwd = PathBuf::from(args.next().expect("--cwd value")),
             "--prompt" => prompt = Some(args.next().expect("--prompt value")),
             "--on-pending" => on_pending = Some(args.next().expect("--on-pending value")),
+            "--open" => open = Some(args.next().expect("--open value")),
+            "--reopen" => reopen = true,
             "--env" => {
                 let pair = args.next().expect("--env KEY=VALUE");
                 let (key, value) = pair.split_once('=').expect("--env KEY=VALUE");
@@ -54,40 +66,33 @@ async fn main() {
         ..RuntimeConfig::default()
     });
     let started = Instant::now();
-    let connection = match runtime
-        .connect(AcpLaunch {
-            agent: agent.clone(),
-            program: PathBuf::from(program),
-            args: program_args.to_vec(),
-            env,
-            cwd: cwd.clone(),
-            acp_id_is_native: false,
-        })
-        .await
-    {
-        Ok(connection) => connection,
-        Err(error) => {
-            println!("connect failed: {error}");
-            std::process::exit(1);
-        }
+    let launch = AcpLaunch {
+        agent: agent.clone(),
+        program: PathBuf::from(program),
+        args: program_args.to_vec(),
+        env,
+        cwd: cwd.clone(),
+        acp_id_is_native: false,
     };
-    let status = runtime.connection_status(connection).unwrap();
-    println!(
-        "connected in {:?}: {}",
-        started.elapsed(),
-        serde_json::to_string(&status).unwrap()
-    );
+    let connection = connect(&runtime, &launch).await;
 
-    let key = match runtime.new_session(connection, &cwd).await {
-        Ok(key) => key,
-        Err(error) => {
-            println!(
-                "session/new failed: {error}; connection {:?}",
-                runtime.connection_status(connection).unwrap().state
-            );
-            runtime.close_connection(connection).await.unwrap();
-            std::process::exit(1);
+    let key = match open {
+        Some(session_id) => {
+            let key = SessionKey::from_acp(&agent, &session_id, false);
+            open_existing(&runtime, connection, &key, &cwd).await;
+            key
         }
+        None => match runtime.new_session(connection, &cwd).await {
+            Ok(key) => key,
+            Err(error) => {
+                println!(
+                    "session/new failed: {error}; connection {:?}",
+                    runtime.connection_status(connection).unwrap().state
+                );
+                runtime.close_connection(connection).await.unwrap();
+                std::process::exit(1);
+            }
+        },
     };
     println!("session: {}", serde_json::to_string(&key).unwrap());
 
@@ -174,4 +179,89 @@ async fn main() {
         "stopped: {:?}",
         runtime.connection_status(connection).unwrap().state
     );
+
+    if reopen {
+        let live = messages(&runtime.subscribe(&key).unwrap().snapshot.items);
+        let again = connect(&runtime, &launch).await;
+        open_existing(&runtime, again, &key, &cwd).await;
+        let replayed = messages(&runtime.subscribe(&key).unwrap().snapshot.items);
+        println!("live messages:     {live:?}");
+        println!("replayed messages: {replayed:?}");
+        println!("replay matches the live turn: {}", live == replayed);
+        runtime.close_connection(again).await.unwrap();
+    }
+}
+
+async fn connect(runtime: &AgentRuntime, launch: &AcpLaunch) -> ConnectionId {
+    let started = Instant::now();
+    match runtime.connect(launch.clone()).await {
+        Ok(connection) => {
+            let status = runtime.connection_status(connection).unwrap();
+            println!(
+                "connected in {:?}: {}",
+                started.elapsed(),
+                serde_json::to_string(&status).unwrap()
+            );
+            connection
+        }
+        Err(error) => {
+            println!("connect failed: {error}");
+            std::process::exit(1);
+        }
+    }
+}
+
+/// Opens an existing session; the user of this example has confirmed that
+/// no other process writes to it.
+async fn open_existing(
+    runtime: &AgentRuntime,
+    connection: ConnectionId,
+    key: &SessionKey,
+    cwd: &std::path::Path,
+) {
+    let started = Instant::now();
+    if let Err(error) = runtime
+        .open_session(
+            connection,
+            key,
+            cwd,
+            ExternalLiveness::Unknown,
+            UnknownLiveness::Confirmed,
+        )
+        .await
+    {
+        println!("open failed: {error}");
+        runtime.close_connection(connection).await.unwrap();
+        std::process::exit(1);
+    }
+    let snapshot = runtime.subscribe(key).unwrap().snapshot;
+    println!(
+        "opened in {:?}: history {}, {} items, turn {:?}, writer {:?}",
+        started.elapsed(),
+        serde_json::to_string(&snapshot.history).unwrap(),
+        snapshot.items.len(),
+        snapshot.turn.phase,
+        snapshot.writer
+    );
+    for item in &snapshot.items {
+        println!(
+            "  {} {} {} {:?}",
+            item.turn_id.as_deref().unwrap_or("-"),
+            item.id,
+            serde_json::to_value(&item.kind).unwrap()["kind"],
+            item.summary.chars().take(60).collect::<String>()
+        );
+    }
+}
+
+/// The user and agent messages of a session, as text.
+fn messages(items: &[ActivityItem]) -> Vec<(String, String)> {
+    items
+        .iter()
+        .filter_map(|item| match item.kind {
+            ItemKind::UserMessage => Some(("user".to_string(), item.summary.clone())),
+            ItemKind::AgentMessage => Some(("agent".to_string(), item.summary.clone())),
+            _ => None,
+        })
+        .collect()
 }

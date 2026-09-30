@@ -18,5 +18,5 @@ pub mod writer;
 pub use error::AgentRuntimeError;
 pub use runtime::{
     AcpLaunch, AgentCapabilities, AgentInfo, AgentRuntime, ConnectionId, ConnectionStatus,
-    RuntimeConfig, SessionSubscription,
+    Retention, RuntimeConfig, SessionSubscription,
 };

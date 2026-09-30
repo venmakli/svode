@@ -108,3 +108,36 @@ test("a duplicate delta changes nothing and a seq gap resubscribes", () => {
     "degraded",
   );
 });
+
+test("a truncation drops the evicted items and marks the history", () => {
+  const message = (id: string, turnId: string) => ({
+    kind: "user_message" as const,
+    id,
+    turnId,
+    status: null,
+    summary: id,
+    hasDetail: false,
+  });
+  const state = stateOf(
+    applyAgentActivityMessage(
+      activitySnapshot({
+        seq: 4,
+        items: [message("a", "replay:1"), message("b", "replay:2")],
+      }),
+      {
+        type: "delta",
+        value: {
+          seq: 5,
+          change: "truncated",
+          value: {
+            itemIds: ["a"],
+            history: { source: "replay", available: true, truncatedItems: 1 },
+          },
+        },
+      },
+    ),
+  );
+
+  expect(state.items.map((item) => item.id)).toEqual(["b"]);
+  expect(state.history.truncatedItems).toBe(1);
+});

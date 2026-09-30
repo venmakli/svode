@@ -56,6 +56,14 @@ function applyChange(
       };
     case "history":
       return { ...next, history: delta.value };
+    case "truncated": {
+      const evicted = new Set(delta.value.itemIds);
+      return {
+        ...next,
+        items: current.items.filter((item) => !evicted.has(item.id)),
+        history: delta.value.history,
+      };
+    }
     case "connection":
       return { ...next, connection: delta.value };
     case "writer":
