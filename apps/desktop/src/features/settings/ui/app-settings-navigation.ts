@@ -1,13 +1,6 @@
 import type { ComponentType } from "react";
 import * as m from "@/paraglide/messages.js";
-import {
-  Info,
-  KeyRound,
-  Keyboard,
-  Paintbrush,
-  PlugZap,
-  User,
-} from "lucide-react";
+import { Bot, Info, KeyRound, Keyboard, Paintbrush, User } from "lucide-react";
 import type { AppSettingsSection } from "../model";
 export const APP_SETTINGS_NAV_ITEMS: {
   key: AppSettingsSection;
@@ -32,7 +25,7 @@ export const APP_SETTINGS_NAV_ITEMS: {
   {
     key: "providers",
     label: () => m.settings_providers(),
-    icon: PlugZap,
+    icon: Bot,
   },
   {
     key: "shortcuts",

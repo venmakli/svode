@@ -8,8 +8,11 @@ import { JSDOM } from "jsdom";
 import { getLocale, setLocale } from "@/paraglide/runtime.js";
 import { clearNativeMocks, mockNativeIpc } from "@/platform/native/testing";
 
+import { Bot } from "lucide-react";
+
 import type { McpClientStatus, McpStatus } from "../api";
 import type { AvailableAgent } from "../model";
+import { APP_SETTINGS_NAV_ITEMS } from "./app-settings-navigation";
 import { ProvidersSection } from "./providers-section";
 
 const isolatedProcess = process.env.SVODE_PROVIDERS_SECTION_DOM_PROCESS === "1";
@@ -57,7 +60,7 @@ if (!isolatedProcess) {
         Array.from(harness.dom.window.document.querySelectorAll("h2, h3")).map(
           (heading) => heading.textContent,
         ),
-      ).toEqual(["Agents"]);
+      ).toEqual(["Svode runtime"]);
 
       await act(async () => {
         within(row, "Details").click();
@@ -67,9 +70,10 @@ if (!isolatedProcess) {
       expect(details.includes("/Users/test/.bun/bin/codex")).toBe(true);
       expect(details.includes("codex-cli 0.155.1 · authorized")).toBe(true);
       expect(details.includes("/Users/test/.agents/skills/svode")).toBe(true);
+      // The runtime and its check belong to the section, not to one agent.
       expect(
-        details.includes("Integration 0.0.9 · runtime 0.0.9 (Svode Desktop)"),
-      ).toBe(true);
+        /svode-mcp|\(Svode Desktop\)|Connection check|Run check/.test(details),
+      ).toBe(false);
       expect(harness.dom.window.document.querySelector("textarea")).toBeNull();
       await act(async () => {
         within(row, "Show").click();
@@ -93,6 +97,79 @@ if (!isolatedProcess) {
         summary(clientRow(harness.dom, "codex")).includes("Not connected"),
       ).toBe(true);
       expect(harness.dom.window.document.activeElement).toBe(toggle);
+    } finally {
+      await harness.cleanup();
+      await setLocale(originalLocale, { reload: false });
+    }
+  });
+
+  test("the section shows the agents without a heading and the runtime with its check once", async () => {
+    const originalLocale = getLocale();
+    await setLocale("en", { reload: false });
+    let canonical = providersStatus([
+      client("claude-code", "Claude Code", true),
+      client("codex", "Codex", true),
+    ]);
+    const harness = await renderSection(
+      () => canonical,
+      (next) => {
+        canonical = next;
+      },
+    );
+    try {
+      const document = harness.dom.window.document;
+      const [agents, runtime] = Array.from(
+        document.querySelectorAll<HTMLElement>("section"),
+      ).filter((section) => !section.parentElement?.closest("section"));
+      expect(agents.querySelector("h2, h3, h4")).toBeNull();
+      expect(
+        agents.textContent?.includes(
+          "Svode access connects the Svode skill, the svode command and the Svode MCP server to the agent.",
+        ),
+      ).toBe(true);
+      expect(findButton(harness.dom, "Refresh") !== undefined).toBe(true);
+      expect(agents.querySelectorAll("[data-mcp-client]").length).toBe(2);
+
+      expect(runtime.hasAttribute("data-mcp-runtime")).toBe(true);
+      expect(runtime.querySelector("h3")?.textContent).toBe("Svode runtime");
+      const runtimeText = runtime.textContent ?? "";
+      expect(runtimeText.includes("Active runtime")).toBe(true);
+      expect(runtimeText.includes("/Users/test/.svode/bin/svode-mcp")).toBe(
+        true,
+      );
+      expect(runtimeText.includes("0.0.9 (Svode Desktop)")).toBe(true);
+      expect(runtimeText.includes("Ready")).toBe(true);
+
+      canonical = {
+        ...canonical,
+        doctor: {
+          ok: false,
+          messages: ["runtime 0.0.9"],
+          errors: ["bridge is not running"],
+          bridgeCompatible: true,
+        },
+      };
+      await act(async () => {
+        within(runtime, "Run check").click();
+        await settle();
+      });
+      expect((runtime.textContent ?? "").includes("Needs attention")).toBe(
+        true,
+      );
+      expect(
+        (runtime.textContent ?? "").includes("bridge is not running"),
+      ).toBe(false);
+      await act(async () => {
+        within(runtime, "Show report").click();
+        await settle();
+      });
+      expect(
+        (runtime.textContent ?? "").includes("bridge is not running"),
+      ).toBe(true);
+
+      expect(
+        APP_SETTINGS_NAV_ITEMS.find((item) => item.key === "providers")?.icon,
+      ).toBe(Bot);
     } finally {
       await harness.cleanup();
       await setLocale(originalLocale, { reload: false });
@@ -201,6 +278,11 @@ if (!isolatedProcess) {
           "Прежний Svode Desktop",
         ],
       ]);
+      expect(
+        /svode-mcp|\(Svode Desktop\)|Проверка подключения|Запустить проверку/.test(
+          claude.textContent ?? "",
+        ),
+      ).toBe(false);
       // A client that is not connected shows its missing artifacts as absent.
       expect(artifactRows(codex).map((row) => [row[0], row[3]])).toEqual([
         ["Skill", "Нет"],
@@ -337,6 +419,10 @@ if (!isolatedProcess) {
       expect(
         callout?.textContent?.includes("Svode runtime is unavailable"),
       ).toBe(true);
+      const runtime =
+        document.querySelector<HTMLElement>("[data-mcp-runtime]")!;
+      expect(runtime.textContent?.includes("Unavailable")).toBe(true);
+      expect(runtime.textContent?.includes("0.0.9")).toBe(false);
       const claude = clientRow(harness.dom, "claude-code");
       expect(summary(claude).includes("does not start")).toBe(false);
       expect(summary(claude).includes("Connected")).toBe(true);

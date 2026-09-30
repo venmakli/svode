@@ -1,10 +1,9 @@
 import { useState } from "react";
-import { Copy, LoaderCircle, Stethoscope } from "lucide-react";
+import { Copy, LoaderCircle } from "lucide-react";
 import * as m from "@/paraglide/messages.js";
 import type {
   McpArtifactStatus,
   McpClientStatus,
-  McpDoctorReport,
   McpStatus,
 } from "../hooks/use-mcp-integrations";
 import type { AvailableAgent } from "../model";
@@ -129,15 +128,6 @@ function artifactPurpose(artifact: McpArtifactStatus, withPlugin: boolean) {
   }
 }
 
-function runtimeVersion(server: McpStatus["server"]) {
-  if (!server.runtime) return "—";
-  return server.runtime.kind === "desktop"
-    ? m.settings_providers_runtime_desktop({ version: server.runtime.version })
-    : m.settings_providers_runtime_standalone({
-        version: server.runtime.version,
-      });
-}
-
 function Path({ value }: { value?: string | null }) {
   return (
     <span className="block font-mono text-xs break-all">{value || "—"}</span>
@@ -160,12 +150,9 @@ export function ProviderRow({
   runtimeExplained,
   pending,
   manualConfig,
-  doctor,
-  doctorPending,
   onToggle,
   onShowManualConfig,
   onCopyManualConfig,
-  onRunDoctor,
 }: {
   client: McpClientStatus;
   agent: AvailableAgent | undefined;
@@ -174,20 +161,15 @@ export function ProviderRow({
   runtimeExplained: boolean;
   pending: boolean;
   manualConfig: string | undefined;
-  doctor: McpDoctorReport | null;
-  doctorPending: boolean;
   onToggle: (checked: boolean) => void;
   onShowManualConfig: () => void;
   onCopyManualConfig: () => void;
-  onRunDoctor: () => void;
 }) {
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [configOpen, setConfigOpen] = useState(false);
-  const [reportOpen, setReportOpen] = useState(false);
   const nextStep = agent ? cliAgentNextStep(agent) : null;
   const artifacts = client.artifacts ?? [];
   const withPlugin = artifacts.some((artifact) => artifact.kind === "plugin");
-  const reportLines = doctor ? [...doctor.messages, ...doctor.errors] : [];
 
   return (
     <Collapsible
@@ -260,19 +242,6 @@ export function ProviderRow({
               )
             }
           />
-          <SettingsItem
-            key="svode"
-            title="Svode"
-            description={<Path value={server.command} />}
-            actions={
-              <Value>
-                {m.settings_providers_versions({
-                  integration: client.version ?? "—",
-                  runtime: runtimeVersion(server),
-                })}
-              </Value>
-            }
-          />
           {artifacts.map((artifact) => (
             <SettingsItem
               key={artifact.kind}
@@ -330,65 +299,6 @@ export function ProviderRow({
                   })}
                   className="min-h-24 w-full min-w-0 max-w-full resize-none overflow-x-auto bg-background font-mono text-xs"
                 />
-              </CollapsibleContent>
-            </SettingsItem>
-          </Collapsible>
-          <Collapsible
-            key="doctor"
-            open={reportOpen}
-            onOpenChange={setReportOpen}
-          >
-            <SettingsItem
-              title={m.settings_mcp_doctor_check()}
-              description={
-                doctor
-                  ? doctor.ok
-                    ? m.settings_mcp_doctor_ok()
-                    : m.settings_mcp_doctor_failed()
-                  : m.common_loading()
-              }
-              actions={
-                <>
-                  {reportLines.length > 0 ? (
-                    <SettingsDisclosureTrigger
-                      open={reportOpen}
-                      label={
-                        reportOpen
-                          ? m.settings_mcp_doctor_report_hide()
-                          : m.settings_mcp_doctor_report_show()
-                      }
-                    />
-                  ) : null}
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={onRunDoctor}
-                    disabled={doctorPending}
-                  >
-                    {doctorPending ? (
-                      <LoaderCircle
-                        data-icon="inline-start"
-                        className="animate-spin"
-                      />
-                    ) : (
-                      <Stethoscope data-icon="inline-start" />
-                    )}
-                    {m.settings_mcp_run_doctor()}
-                  </Button>
-                </>
-              }
-            >
-              <CollapsibleContent className="basis-full">
-                <div className="flex min-w-0 flex-col gap-1 rounded-md bg-background p-3 font-mono text-xs text-muted-foreground">
-                  {reportLines.map((line) => (
-                    <p
-                      key={line}
-                      className="break-all [overflow-wrap:anywhere]"
-                    >
-                      {line}
-                    </p>
-                  ))}
-                </div>
               </CollapsibleContent>
             </SettingsItem>
           </Collapsible>

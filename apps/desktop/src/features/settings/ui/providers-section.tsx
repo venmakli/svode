@@ -5,6 +5,7 @@ import { useMcpIntegrations } from "../hooks/use-mcp-integrations";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { ProviderRow } from "./provider-row";
+import { ProvidersRuntimeGroup } from "./providers-runtime-group";
 import { SettingsGroup, SettingsRowSkeleton } from "./settings-layout";
 
 const CLIENT_AGENTS = { "claude-code": "claude", codex: "codex" } as const;
@@ -30,7 +31,6 @@ export function ProvidersSection() {
       </Alert>
 
       <SettingsGroup
-        title={m.settings_mcp_clients_section()}
         description={m.settings_providers_description()}
         aria-busy={!status}
         action={
@@ -81,8 +81,6 @@ export function ProvidersSection() {
                 runtimeExplained={runtimeUnavailable}
                 pending={connections.pendingClients.has(client.id)}
                 manualConfig={connections.manualConfigs[client.id]}
-                doctor={doctor}
-                doctorPending={connections.doctorPending}
                 onToggle={(checked) =>
                   void connections.handleToggle(client, checked)
                 }
@@ -92,7 +90,6 @@ export function ProvidersSection() {
                 onCopyManualConfig={() =>
                   void connections.handleCopyConfig(client.id)
                 }
-                onRunDoctor={() => void connections.handleDoctor()}
               />
             ))
           : [
@@ -100,6 +97,13 @@ export function ProvidersSection() {
               <SettingsRowSkeleton key="second" />,
             ]}
       </SettingsGroup>
+
+      <ProvidersRuntimeGroup
+        server={status?.server}
+        doctor={doctor}
+        doctorPending={connections.doctorPending}
+        onRunDoctor={() => void connections.handleDoctor()}
+      />
     </>
   );
 }
