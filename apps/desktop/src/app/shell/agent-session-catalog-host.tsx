@@ -7,8 +7,8 @@ import { useTerminalAgentSessionSync } from "@/features/terminal";
 
 /**
  * Runs the project session catalog for the whole shell and feeds its sessions
- * to the terminal panel, so neither the Sessions screen nor the panel owns a
- * list or polling of its own.
+ * to the terminal panel, so no consumer or the panel owns a list or polling
+ * of its own.
  */
 export function AgentSessionCatalogHost({
   projectPath,

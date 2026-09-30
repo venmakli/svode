@@ -13,6 +13,7 @@ import {
   type LocalSessionTerminal,
   type PendingAgentSessionTerminal,
 } from "./pending";
+import { hasActionableWait } from "./active";
 import { resolveAgentSessionId, type AgentSessionTarget } from "./target";
 import type { AgentSession, AgentSessionScopeGroup } from "./types";
 
@@ -201,6 +202,44 @@ function mergeHotStatusSessions(
   });
 
   return changed ? { ...current, sessions } : current;
+}
+
+/**
+ * PTYs of the project's session terminals, each once: a session's terminal,
+ * its re-entry, a pending new session and a terminal panel tab the catalog
+ * recognizes as an agent session. Shell tabs are not among them.
+ */
+export function sessionTerminalPtyIds(
+  state: Pick<
+    AgentSessionCatalogState,
+    "sessions" | "terminals" | "reentryResults"
+  >,
+): Set<string> {
+  const ptyIds = new Set<string>();
+  state.sessions.forEach((session) => {
+    if (session.runtime?.ptyId) ptyIds.add(session.runtime.ptyId);
+  });
+  Object.values(state.terminals).forEach((terminal) => {
+    ptyIds.add(terminal.ptyId);
+  });
+  Object.values(state.reentryResults).forEach((result) => {
+    if (result.ptyId) ptyIds.add(result.ptyId);
+  });
+  return ptyIds;
+}
+
+/**
+ * Whether an agent works or waits for the user in one of the session
+ * terminals, so closing them all interrupts it.
+ */
+export function sessionTerminalAgentsBusy(
+  state: Pick<AgentSessionCatalogState, "sessions" | "terminals">,
+): boolean {
+  return state.sessions.some(
+    (session) =>
+      Boolean(session.runtime?.ptyId ?? state.terminals[session.id]) &&
+      (session.status === "active" || hasActionableWait(session)),
+  );
 }
 
 /**
@@ -551,17 +590,7 @@ export function createAgentSessionCatalogStore(
       },
 
       closeAllTerminals: async () => {
-        const { sessions, terminals, reentryResults } = get();
-        const ptyIds = new Set<string>();
-        sessions.forEach((session) => {
-          if (session.runtime?.ptyId) ptyIds.add(session.runtime.ptyId);
-        });
-        Object.values(terminals).forEach((terminal) => {
-          ptyIds.add(terminal.ptyId);
-        });
-        Object.values(reentryResults).forEach((result) => {
-          if (result.ptyId) ptyIds.add(result.ptyId);
-        });
+        const ptyIds = sessionTerminalPtyIds(get());
         if (ptyIds.size === 0) return;
 
         const results = await Promise.allSettled(

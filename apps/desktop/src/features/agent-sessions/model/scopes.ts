@@ -1,4 +1,3 @@
-import { childSpaceScopeGroupId, projectScopeGroupId } from "./grouping";
 import type {
   AgentSession,
   AgentSessionScopeGroup,
@@ -71,4 +70,12 @@ export function isAgentSessionInScope(
     session.scopeKind === "space" &&
     (session.spaceId === scope.scopeId || session.spacePath === scope.path)
   );
+}
+
+function projectScopeGroupId(projectPath: string): string {
+  return `space:project:${projectPath}`;
+}
+
+function childSpaceScopeGroupId(spaceId: string): string {
+  return `space:${spaceId}`;
 }

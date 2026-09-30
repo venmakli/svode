@@ -1,20 +1,24 @@
 import { useState, type ReactNode } from "react";
-import { Ellipsis, X } from "lucide-react";
+import { Ellipsis, SquareX, X } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { SidebarGroupAction } from "@/components/ui/sidebar";
 import {
   AgentSessionNavigationItem,
+  CloseSessionTerminalsDialog,
   agentSessionNavigationKey,
   agentSessionTargetFor,
   pinnableAgentSessionItem,
   useActiveAgentSessions,
+  useSessionTerminals,
   type AgentSession,
   type AgentSessionTarget,
+  type SessionTerminals,
 } from "@/features/agent-sessions";
 import {
   KeepMenuItem,
@@ -47,7 +51,8 @@ interface NowSidebarSectionProps {
 /**
  * "Now" of the main sidebar: active sessions, then the kept objects in keep
  * order, then the temporary main area object. An object pinned or shown
- * higher up is not repeated. Hidden while empty.
+ * higher up is not repeated. Hidden while empty, unless session terminals
+ * are open: its menu closes them.
  */
 export function NowSidebarSection({
   onActivateContent,
@@ -81,6 +86,7 @@ export function NowSidebarSection({
   });
   const openSession = useOpenSessionInMainArea();
   const { closeItem, closeAll } = useWorkingSetActions();
+  const sessionTerminals = useSessionTerminals();
   const [element, setElement] = useState<HTMLElement | null>(null);
   const hold = useInteractionWithin(
     element?.closest<HTMLElement>('[data-sidebar="sidebar"]') ?? element,
@@ -92,7 +98,12 @@ export function NowSidebarSection({
   );
   const activeById = new Map(activeSessions.map((s) => [s.id, s]));
 
-  if (activeSessions.length === 0 && keptItems.length === 0 && !temporary) {
+  if (
+    activeSessions.length === 0 &&
+    keptItems.length === 0 &&
+    !temporary &&
+    sessionTerminals.count === 0
+  ) {
     return null;
   }
 
@@ -110,6 +121,7 @@ export function NowSidebarSection({
           <NowMenu
             canCloseAll={kept.length > 0 || temporary !== null}
             onCloseAll={() => void closeAll(Boolean(temporary))}
+            sessionTerminals={sessionTerminals}
           />
         }
       >
@@ -236,27 +248,53 @@ function ItemMenu({
 function NowMenu({
   canCloseAll,
   onCloseAll,
+  sessionTerminals: { count, agentsBusy, closeAll: closeSessions },
 }: {
   canCloseAll: boolean;
   onCloseAll: () => void;
+  sessionTerminals: SessionTerminals;
 }) {
+  const [confirmOpen, setConfirmOpen] = useState(false);
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <SidebarGroupAction
-          type="button"
-          className="top-2.5 opacity-0 group-hover/navigation-group:opacity-100 group-focus-within/navigation-group:opacity-100 data-[state=open]:opacity-100"
-          aria-label={m.navigation_now_actions()}
-        >
-          <Ellipsis />
-        </SidebarGroupAction>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" side="right" className="min-w-44">
-        <DropdownMenuItem disabled={!canCloseAll} onSelect={onCloseAll}>
-          <X />
-          {m.navigation_close_all()}
-        </DropdownMenuItem>
-      </DropdownMenuContent>
-    </DropdownMenu>
+    <>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <SidebarGroupAction
+            type="button"
+            className="top-2.5 opacity-0 group-hover/navigation-group:opacity-100 group-focus-within/navigation-group:opacity-100 data-[state=open]:opacity-100"
+            aria-label={m.navigation_now_actions()}
+          >
+            <Ellipsis />
+          </SidebarGroupAction>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="start" side="right" className="min-w-44">
+          <DropdownMenuItem disabled={!canCloseAll} onSelect={onCloseAll}>
+            <X />
+            {m.navigation_close_all()}
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem
+            variant="destructive"
+            disabled={count === 0}
+            onSelect={() => {
+              if (agentsBusy) {
+                setConfirmOpen(true);
+              } else {
+                void closeSessions();
+              }
+            }}
+          >
+            <SquareX />
+            {m.sessions_close_all({ count })}
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+      <CloseSessionTerminalsDialog
+        open={confirmOpen}
+        count={count}
+        onOpenChange={setConfirmOpen}
+        onConfirm={() => void closeSessions()}
+      />
+    </>
   );
 }

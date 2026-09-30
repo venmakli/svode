@@ -76,7 +76,7 @@ if (process.env.SVODE_TERMINAL_SIDEBAR_DOM !== "1") {
   const { useTerminalStore } = await import("../hooks/use-terminal-store");
   const { TerminalSidebarAction } = await import("./terminal-sidebar-action");
 
-  let sessionsOpens = 0;
+  let sessionStarts = 0;
   let mounts = 0;
   let disposals = 0;
   function TerminalContent() {
@@ -93,7 +93,7 @@ if (process.env.SVODE_TERMINAL_SIDEBAR_DOM !== "1") {
     return <textarea data-buffer />;
   }
 
-  test("sessions row action toggles the drawer without changing the surface or killing the PTY", async () => {
+  test("the New session row toggles the terminal panel without starting a session or killing the PTY", async () => {
     useTerminalStore.setState({
       panelOpen: false,
       tabs: [
@@ -119,8 +119,8 @@ if (process.env.SVODE_TERMINAL_SIDEBAR_DOM !== "1") {
           <SidebarProvider>
             <SidebarMenu>
               <SidebarMenuItem>
-                <SidebarMenuButton onClick={() => sessionsOpens++}>
-                  Sessions
+                <SidebarMenuButton onClick={() => sessionStarts++}>
+                  New session
                 </SidebarMenuButton>
                 <TerminalSidebarAction />
               </SidebarMenuItem>
@@ -153,7 +153,7 @@ if (process.env.SVODE_TERMINAL_SIDEBAR_DOM !== "1") {
     expect(document.querySelector("[data-buffer]")).toBe(buffer);
     expect(mounts).toBe(1);
     expect(disposals).toBe(0);
-    expect(sessionsOpens).toBe(0);
+    expect(sessionStarts).toBe(0);
     expect(commands.includes("terminal_kill")).toBe(false);
     expect(commands.includes("terminal_spawn")).toBe(false);
 

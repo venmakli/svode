@@ -1,5 +1,9 @@
 import { expect, test } from "bun:test";
-import { createAgentSessionCatalogStore } from "./catalog-store";
+import {
+  createAgentSessionCatalogStore,
+  sessionTerminalAgentsBusy,
+  sessionTerminalPtyIds,
+} from "./catalog-store";
 import type { AgentSessionScopeGroup } from "./types";
 import {
   fakeCatalogApi,
@@ -243,5 +247,43 @@ test("loading a target reads a list that started after the request", async () =>
   expect(api.calls).toEqual(["list:/project", "list:/project"]);
   expect(store.getState().sessions.map((session) => session.id)).toEqual([
     "codex:launched",
+  ]);
+});
+
+test("session terminals count each PTY once and leave shell tabs out", async () => {
+  const api = fakeCatalogApi();
+  const history = listedSession({ id: "codex:history" });
+  // A terminal panel tab the read-model recognizes as an agent session.
+  const panelTab = listedSession({
+    id: "claude:panel",
+    runtime: { ptyId: "pty-panel", live: true },
+  });
+  api.listed = [history, panelTab];
+  const store = createAgentSessionCatalogStore(api);
+  store.getState().setProject("/project");
+  await store.getState().load();
+  await store.getState().reenter(history);
+  await store.getState().openNewSessionTerminal(rootScope, "New session");
+  await flushPromises();
+
+  expect([...sessionTerminalPtyIds(store.getState())].sort()).toEqual([
+    "pty-1",
+    "pty-panel",
+    "pty-resume-codex:history",
+  ]);
+  expect(sessionTerminalAgentsBusy(store.getState())).toBe(false);
+
+  api.listed = [history, { ...panelTab, status: "active" }];
+  await store.getState().load({ force: true });
+  expect(sessionTerminalAgentsBusy(store.getState())).toBe(true);
+
+  // A closed PTY is no longer reported as the runtime of its session.
+  api.listed = [history, { ...panelTab, runtime: undefined }];
+  await store.getState().closeAllTerminals();
+  expect(sessionTerminalPtyIds(store.getState()).size).toBe(0);
+  expect(api.calls.filter((call) => call.startsWith("close:")).sort()).toEqual([
+    "close:pty-1",
+    "close:pty-panel",
+    "close:pty-resume-codex:history",
   ]);
 });

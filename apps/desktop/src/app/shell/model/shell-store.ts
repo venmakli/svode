@@ -14,7 +14,7 @@ import type {
   SettingsDestination,
 } from "@/features/settings";
 
-export type MainSurface = "content" | "sessions" | "graph" | "session";
+export type MainSurface = "content" | "graph" | "session";
 
 const SIDEBAR_WIDTH_STORAGE_KEY = "svode:shell:sidebar-width";
 
@@ -33,6 +33,8 @@ interface ShellState {
   mainSessionTarget: AgentSessionTarget | null;
   /** The main area session was opened by a move into the main area. */
   mainSessionFocus: boolean;
+  /** The main area session was started for work in its terminal. */
+  mainSessionFocusTerminal: boolean;
   sessionPeekTarget: AgentSessionTarget | null;
   /** The peek was opened for work in the terminal, e.g. a new session. */
   sessionPeekFocusTerminal: boolean;
@@ -50,10 +52,9 @@ interface ShellState {
   ) => void;
   closeSettings: () => void;
   openContentSurface: () => void;
-  openSessionsSurface: () => void;
   openSessionMainSurface: (
     target: AgentSessionTarget,
-    options?: { focus?: boolean },
+    options?: { focus?: boolean; focusTerminal?: boolean },
   ) => void;
   openGraphSurface: (state: KnowledgeGraphState) => void;
   /** Leaves the Graph for the object it was opened over. */
@@ -105,6 +106,7 @@ export const useShellStore = create<ShellState>((set) => ({
   mainSurface: "content",
   mainSessionTarget: null,
   mainSessionFocus: false,
+  mainSessionFocusTerminal: false,
   sessionPeekTarget: null,
   sessionPeekFocusTerminal: false,
   knowledgeGraphOpenRequest: null,
@@ -140,17 +142,12 @@ export const useShellStore = create<ShellState>((set) => ({
       mainSessionTarget: null,
       sessionPeekTarget: null,
     }),
-  openSessionsSurface: () =>
-    set({
-      mainSurface: "sessions",
-      mainSessionTarget: null,
-      sessionPeekTarget: null,
-    }),
   openSessionMainSurface: (target, options) =>
     set({
       mainSurface: "session",
       mainSessionTarget: target,
       mainSessionFocus: options?.focus ?? true,
+      mainSessionFocusTerminal: options?.focusTerminal ?? false,
       sessionPeekTarget: null,
     }),
   openGraphSurface: (graphState) =>
@@ -163,6 +160,7 @@ export const useShellStore = create<ShellState>((set) => ({
         state.nextKnowledgeGraphOpenRequestKey + 1,
       mainSurface: "graph",
       mainSessionFocus: false,
+      mainSessionFocusTerminal: false,
       sessionPeekTarget: null,
     })),
   closeGraphSurface: () =>

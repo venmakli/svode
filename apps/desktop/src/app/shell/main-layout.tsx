@@ -26,10 +26,9 @@ import {
   CommandPalette,
   useOpenCommandPalette,
 } from "@/features/search/app-shell";
-import { TerminalPanelHost, TerminalSidebarAction } from "@/features/terminal";
+import { TerminalPanelHost } from "@/features/terminal";
 import {
   CollectionDetailDrawerProvider,
-  runCollectionNavigation,
   useCollectionDetailController,
 } from "@/features/collection/app-shell";
 import { setActiveContentShown } from "@/features/artifact";
@@ -56,7 +55,7 @@ import {
   useShellStore,
   type MainSurface,
 } from "./model";
-import { GraphSurface, SessionsSurface } from "./main-surfaces";
+import { GraphSurface } from "./main-surfaces";
 import { AgentSessionMainSurface } from "@/features/agent-sessions";
 import { ActiveSpaceContent } from "./active-space-content";
 import { AgentSessionCatalogHost } from "./agent-session-catalog-host";
@@ -64,6 +63,7 @@ import {
   AgentSessionPeekHost,
   useStartSessionInPeek,
 } from "./agent-session-peek-host";
+import { NewSessionSidebarRow } from "./new-session-sidebar-row";
 import { useOpenSessionRoutine } from "./open-session-routine";
 import { NowSidebarSection } from "./now-sidebar-section";
 import { PinnedSidebarSection } from "./pinned-sidebar-section";
@@ -81,7 +81,6 @@ interface ShellLayoutContentProps {
   mainSurface: MainSurface;
   onActivateContent: () => void;
   onBeforeNavigation: () => Promise<boolean>;
-  onOpenSessions: () => void;
   onOpenSearch: () => void;
   onOpenAppSettings: (section?: AppSettingsSection) => void;
 }
@@ -91,7 +90,6 @@ interface DesktopResizableShellProps {
   sidebar: ReactNode;
   mainSurface: MainSurface;
   onBeforeNavigation: () => Promise<boolean>;
-  onOpenAppSettings: () => void;
 }
 
 export function MainLayout() {
@@ -138,9 +136,6 @@ function MainLayoutRuntime() {
   const openAppSettings = useShellStore((state) => state.openAppSettings);
   const mainSurface = useShellStore((state) => state.mainSurface);
   const openContentSurface = useShellStore((state) => state.openContentSurface);
-  const openSessionsSurface = useShellStore(
-    (state) => state.openSessionsSurface,
-  );
   const openGraphSurface = useShellStore((state) => state.openGraphSurface);
   const sidebarWidth = useShellStore((state) => state.sidebarWidth);
   const setCommandPaletteOpen = useOpenCommandPalette();
@@ -154,12 +149,6 @@ function MainLayoutRuntime() {
   );
   const prepareForNavigation = useCallback(
     () => detailController.prepareForNavigation(),
-    [detailController],
-  );
-  const runNavigation = useCallback(
-    (transition: () => void) => {
-      void runCollectionNavigation(detailController, transition);
-    },
     [detailController],
   );
 
@@ -214,7 +203,6 @@ function MainLayoutRuntime() {
         mainSurface={mainSurface}
         onActivateContent={openContentSurface}
         onBeforeNavigation={prepareForNavigation}
-        onOpenSessions={() => runNavigation(openSessionsSurface)}
         onOpenSearch={() => setCommandPaletteOpen(true)}
         onOpenAppSettings={openAppSettings}
       />
@@ -239,7 +227,6 @@ function ShellLayoutContent({
   mainSurface,
   onActivateContent,
   onBeforeNavigation,
-  onOpenSessions,
   onOpenSearch,
   onOpenAppSettings,
 }: ShellLayoutContentProps) {
@@ -258,13 +245,11 @@ function ShellLayoutContent({
           onOpenSettings={() => onOpenAppSettings()}
         />
       }
-      mainSurface={mainSurface}
       onActivateContent={onActivateContent}
       onBeforeNavigation={onBeforeNavigation}
-      onOpenSessions={onOpenSessions}
       onOpenSearch={onOpenSearch}
       onNewSession={startSessionInPeek}
-      sessionsAction={<TerminalSidebarAction />}
+      newSessionItem={<NewSessionSidebarRow />}
       navigationSections={
         <>
           <PinnedSidebarSection
@@ -288,7 +273,6 @@ function ShellLayoutContent({
         <ShellMainInset
           mainSurface={mainSurface}
           onBeforeNavigation={onBeforeNavigation}
-          onOpenAppSettings={onOpenAppSettings}
         />
       </>
     );
@@ -302,7 +286,6 @@ function ShellLayoutContent({
         sidebar={sidebar}
         mainSurface={mainSurface}
         onBeforeNavigation={onBeforeNavigation}
-        onOpenAppSettings={onOpenAppSettings}
       />
     </>
   );
@@ -313,7 +296,6 @@ function DesktopResizableShell({
   sidebar,
   mainSurface,
   onBeforeNavigation,
-  onOpenAppSettings,
 }: DesktopResizableShellProps) {
   const [initialSidebarWidth] = useState(
     () => useShellStore.getState().sidebarWidth,
@@ -380,7 +362,6 @@ function DesktopResizableShell({
           mainSurface={mainSurface}
           resizable
           onBeforeNavigation={onBeforeNavigation}
-          onOpenAppSettings={onOpenAppSettings}
         />
       </ResizablePanel>
     </ResizablePanelGroup>
@@ -391,17 +372,17 @@ function ShellMainInset({
   mainSurface,
   resizable = false,
   onBeforeNavigation,
-  onOpenAppSettings,
 }: {
   mainSurface: MainSurface;
   resizable?: boolean;
   onBeforeNavigation: () => Promise<boolean>;
-  onOpenAppSettings?: () => void;
 }) {
-  const isSessionsSurface = mainSurface === "sessions";
   const openSessionRoutine = useOpenSessionRoutine();
   const mainSessionTarget = useShellStore((state) => state.mainSessionTarget);
   const mainSessionFocus = useShellStore((state) => state.mainSessionFocus);
+  const mainSessionFocusTerminal = useShellStore(
+    (state) => state.mainSessionFocusTerminal,
+  );
   const knowledgeGraphOpenRequest = useShellStore(
     (state) => state.knowledgeGraphOpenRequest,
   );
@@ -416,20 +397,14 @@ function ShellMainInset({
           : "md:peer-data-[state=expanded]:[--svode-main-fixed-left:calc(var(--sidebar-width)+1.5rem)] md:peer-data-[state=expanded]:rounded-l-xl md:peer-data-[state=expanded]:border-l md:peer-data-[state=expanded]:border-sidebar-border",
       )}
     >
-      {!isSessionsSurface && <WindowHeader />}
+      <WindowHeader />
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-        <div
-          className={cn(
-            "min-h-0 flex-1 overflow-hidden",
-            !isSessionsSurface && "pb-6",
-          )}
-        >
-          {isSessionsSurface ? (
-            <SessionsSurface onOpenAppSettings={onOpenAppSettings} />
-          ) : mainSurface === "session" && mainSessionTarget ? (
+        <div className="min-h-0 flex-1 overflow-hidden pb-6">
+          {mainSurface === "session" && mainSessionTarget ? (
             <AgentSessionMainSurface
               target={mainSessionTarget}
               focus={mainSessionFocus}
+              focusTerminal={mainSessionFocusTerminal}
               onOpenRoutine={openSessionRoutine}
             />
           ) : mainSurface === "graph" ? (

@@ -15,15 +15,19 @@ import { AgentSessionContent } from "./session-view";
 export function AgentSessionMainSurface({
   target,
   focus,
+  focusTerminal = false,
   onOpenRoutine,
 }: {
   target: AgentSessionTarget;
   /** Move focus into the main area, as after "Expand"; the sidebar keeps it. */
   focus: boolean;
+  /** The session was started for work in its terminal, e.g. a new session. */
+  focusTerminal?: boolean;
   onOpenRoutine(routine: RoutineLaunchLink): void;
 }) {
   const surfaceRef = useRef<HTMLDivElement>(null);
-  const focusRef = useRef(focus);
+  // The terminal takes focus itself once it is attached.
+  const focusRef = useRef(focus && !focusTerminal);
   useEffect(() => {
     if (focusRef.current) surfaceRef.current?.focus({ preventScroll: true });
   }, []);
@@ -33,6 +37,7 @@ export function AgentSessionMainSurface({
       <AgentSessionContent
         key={`${target.sessionId}\n${target.launchId ?? ""}`}
         target={target}
+        focusTerminal={focusTerminal}
         onOpenRoutine={onOpenRoutine}
       />
     </div>

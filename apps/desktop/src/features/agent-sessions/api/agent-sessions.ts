@@ -9,7 +9,6 @@ import {
   openProjectInApp,
   type ExternalAppDto,
 } from "@/platform/project-openers";
-import { openPath } from "@/platform/native/shell";
 
 export type {
   AgentResumeCommand,
@@ -59,8 +58,4 @@ export function openSessionCwdInExternalTerminal(cwd: string) {
 export async function loadExternalTerminalApp(): Promise<ExternalAppDto | null> {
   const apps = await listProjectOpeners();
   return apps.find((app) => app.id === EXTERNAL_TERMINAL_APP_ID) ?? null;
-}
-
-export function revealSessionFile(path: string) {
-  return openPath(path);
 }

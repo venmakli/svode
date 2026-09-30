@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { BotMessageSquare, Search } from "lucide-react";
+import { Search } from "lucide-react";
 import {
   Sidebar,
   SidebarContent,
@@ -14,31 +14,26 @@ import { cn } from "@/shared/lib/utils";
 import { NavSpaces } from "./nav-spaces";
 import * as m from "@/paraglide/messages.js";
 
-type MainSurface = "content" | "sessions" | "graph" | "session";
-
 interface SpaceSidebarProps {
   userMenu: ReactNode;
-  mainSurface: MainSurface;
   onActivateContent: () => void;
   onBeforeNavigation: () => Promise<boolean>;
-  onOpenSessions: () => void;
   onOpenSearch: () => void;
   /** Starts a new agent session in the Space at this path. */
   onNewSession?: (spacePath: string) => void;
-  sessionsAction?: ReactNode;
+  /** The "New session" row above Search. */
+  newSessionItem?: ReactNode;
   /** Navigation sections between the top actions and the Artifacts tree. */
   navigationSections?: ReactNode;
 }
 
 export function SpaceSidebar({
   userMenu,
-  mainSurface,
   onActivateContent,
   onBeforeNavigation,
-  onOpenSessions,
   onOpenSearch,
   onNewSession,
-  sessionsAction,
+  newSessionItem,
   navigationSections,
 }: SpaceSidebarProps) {
   return (
@@ -47,10 +42,8 @@ export function SpaceSidebar({
 
       <SidebarContent>
         <TopLevelSidebarActions
-          mainSurface={mainSurface}
-          onOpenSessions={onOpenSessions}
+          newSessionItem={newSessionItem}
           onOpenSearch={onOpenSearch}
-          sessionsAction={sessionsAction}
         />
         {navigationSections}
         <NavSpaces
@@ -66,28 +59,15 @@ export function SpaceSidebar({
 }
 
 function TopLevelSidebarActions({
-  mainSurface,
-  onOpenSessions,
+  newSessionItem,
   onOpenSearch,
-  sessionsAction,
 }: {
-  mainSurface: MainSurface;
-  onOpenSessions: () => void;
+  newSessionItem?: ReactNode;
   onOpenSearch: () => void;
-  sessionsAction?: ReactNode;
 }) {
   return (
     <SidebarMenu className="px-2 py-2">
-      <SidebarMenuItem>
-        <SidebarMenuButton
-          isActive={mainSurface === "sessions"}
-          onClick={onOpenSessions}
-        >
-          <BotMessageSquare />
-          <span>{m.sidebar_sessions()}</span>
-        </SidebarMenuButton>
-        {sessionsAction}
-      </SidebarMenuItem>
+      {newSessionItem}
       <SidebarMenuItem>
         <SidebarMenuButton onClick={onOpenSearch}>
           <Search />

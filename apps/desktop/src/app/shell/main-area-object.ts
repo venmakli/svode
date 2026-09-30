@@ -32,7 +32,7 @@ export type MainAreaObject =
 
 /**
  * The object shown in the main area, or null while it is empty, shows the
- * Graph or the Sessions screen, or shows a session the catalog does not list.
+ * Graph, or shows a session the catalog does not list.
  */
 export function useMainAreaObject(): MainAreaObject | null {
   const mainSurface = useShellStore((state) => state.mainSurface);

@@ -6,7 +6,7 @@ import { useExternalTerminalApp } from "../hooks";
 
 const ExternalTerminalAppContext = createContext<ExternalApp | null>(null);
 
-/** Shares the external terminal of one Sessions screen with its action icons. */
+/** Shares the external terminal of one sessions surface with its action icons. */
 export function ExternalTerminalAppProvider({
   children,
 }: {

@@ -3,6 +3,7 @@ import {
   AgentSessionPeek,
   useStartAgentSession,
   type AgentSession,
+  type AgentSessionScopeGroup,
   type AgentSessionTarget,
 } from "@/features/agent-sessions";
 import { prepareActiveContentDeactivation } from "@/features/artifact";
@@ -20,12 +21,8 @@ import { useOpenSessionRoutine } from "./open-session-routine";
  * the main area unless the sidebar opened it.
  */
 export function useOpenSessionInMainArea() {
-  const openSessionMainSurface = useShellStore(
-    (state) => state.openSessionMainSurface,
-  );
-  const detailController = useCollectionDetailController();
-  const openSpace = useSpace((state) => state.openSpace);
-  const clearActiveSpace = useSpace((state) => state.clearActiveSpace);
+  const passGuards = useMainAreaGuards();
+  const showSession = useShowSessionInMainArea();
 
   return useCallback(
     async (
@@ -33,19 +30,79 @@ export function useOpenSessionInMainArea() {
       session: AgentSession | null,
       options?: { focus?: boolean },
     ) => {
-      if (!(await detailController.prepareForNavigation())) return false;
-      if ((await prepareActiveContentDeactivation()) === "blocked")
-        return false;
+      if (!(await passGuards())) return false;
+      showSession(sessionTarget, sessionSpaceOf(session), options);
+      return true;
+    },
+    [passGuards, showSession],
+  );
+}
+
+/**
+ * Starts a new session in a Space as the main area object with focus in its
+ * terminal. The guards pass first: a cancelled one starts no terminal.
+ */
+export function useStartSessionInMainArea() {
+  const passGuards = useMainAreaGuards();
+  const showSession = useShowSessionInMainArea();
+  const startSession = useStartAgentSession();
+
+  return useCallback(
+    async (scope: AgentSessionScopeGroup) => {
+      if (!(await passGuards())) return;
+      const target = await startSession(scope.path);
+      if (!target) return;
+      showSession(
+        target,
+        scope.kind === "space" ? { spaceId: scope.scopeId } : { spaceId: null },
+        { focusTerminal: true },
+      );
+    },
+    [passGuards, showSession, startSession],
+  );
+}
+
+/** A registered Space by id, null for the project root; unknown if absent. */
+type SessionSpace = { spaceId: string | null } | null;
+
+function sessionSpaceOf(session: AgentSession | null): SessionSpace {
+  if (session?.scopeKind === "space" && session.spaceId) {
+    return { spaceId: session.spaceId };
+  }
+  return session?.scopeKind === "project" ? { spaceId: null } : null;
+}
+
+/** The guards of the open peek stack and the main area object. */
+function useMainAreaGuards() {
+  const detailController = useCollectionDetailController();
+  return useCallback(async () => {
+    if (!(await detailController.prepareForNavigation())) return false;
+    return (await prepareActiveContentDeactivation()) !== "blocked";
+  }, [detailController]);
+}
+
+function useShowSessionInMainArea() {
+  const openSessionMainSurface = useShellStore(
+    (state) => state.openSessionMainSurface,
+  );
+  const openSpace = useSpace((state) => state.openSpace);
+  const clearActiveSpace = useSpace((state) => state.clearActiveSpace);
+
+  return useCallback(
+    (
+      sessionTarget: AgentSessionTarget,
+      space: SessionSpace,
+      options?: { focus?: boolean; focusTerminal?: boolean },
+    ) => {
       // Git sync and changes of the window header follow the session's Space.
-      if (session?.scopeKind === "space" && session.spaceId) {
-        void openSpace(session.spaceId);
-      } else if (session?.scopeKind === "project") {
+      if (space?.spaceId) {
+        void openSpace(space.spaceId);
+      } else if (space) {
         clearActiveSpace();
       }
       openSessionMainSurface(sessionTarget, options);
-      return true;
     },
-    [clearActiveSpace, detailController, openSessionMainSurface, openSpace],
+    [clearActiveSpace, openSessionMainSurface, openSpace],
   );
 }
 

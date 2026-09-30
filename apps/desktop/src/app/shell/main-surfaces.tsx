@@ -1,4 +1,3 @@
-import { AgentSessionsScreen } from "@/features/agent-sessions";
 import {
   KnowledgeGraphScreen,
   knowledgeOpenPath,
@@ -7,21 +6,6 @@ import {
 } from "@/features/knowledge";
 import { useSelectResult } from "@/features/search/app-shell";
 import { useSpace } from "@/features/space";
-
-export function SessionsSurface({
-  onOpenAppSettings,
-}: {
-  onOpenAppSettings?: () => void;
-}) {
-  const activeRootPath = useSpace((state) => state.activeRootPath);
-  return (
-    <AgentSessionsScreen
-      // Screen-local selection and search start over for another project.
-      key={activeRootPath ?? ""}
-      onOpenAppSettings={onOpenAppSettings}
-    />
-  );
-}
 
 export function GraphSurface({
   openRequest,

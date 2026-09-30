@@ -5,16 +5,19 @@ export {
   useAgentSessionSpace,
   useListedAgentSessions,
   useResolvedAgentSession,
+  useSessionTerminals,
   useStartAgentSession,
   type AgentSessionSpace,
+  type SessionTerminals,
 } from "./hooks";
 export {
   AgentSessionBreadcrumbs,
   AgentSessionMainSurface,
   AgentSessionNavigationItem,
   AgentSessionPeek,
+  CloseSessionTerminalsDialog,
+  NewSessionSidebarItem,
   AgentSessionsSurface,
-  AgentSessionsScreen,
 } from "./ui";
 export { isInsideAgentSessionContent } from "./lib";
 export {
@@ -27,5 +30,7 @@ export {
 export type {
   AgentSession,
   AgentSessionOpenOptions,
+  AgentSessionScopeGroup,
   AgentSessionTarget,
+  NewSessionSpaceRef,
 } from "./model";
