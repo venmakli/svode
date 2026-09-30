@@ -64,9 +64,11 @@ export function RoutineActionFields({
           <FieldLabel>{m.routines_action_type_label()}</FieldLabel>
           <Select
             value={definition.action.type}
-            onValueChange={(value) => {
+            onValueChange={async (value) => {
               if (value === definition.action.type) return;
-              if (!window.confirm(m.routines_change_type_confirm())) return;
+              // The Tauri dialog plugin makes window.confirm resolve asynchronously.
+              if (!(await window.confirm(m.routines_change_type_confirm())))
+                return;
               onChange(
                 changeRoutineAction(
                   definition,

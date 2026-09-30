@@ -49,9 +49,11 @@ export function RoutineTriggerFields({
         <FieldLabel>{m.routines_trigger_label()}</FieldLabel>
         <Select
           value={definition.trigger.type}
-          onValueChange={(value) => {
+          onValueChange={async (value) => {
             if (value === definition.trigger.type) return;
-            if (!window.confirm(m.routines_change_type_confirm())) return;
+            // The Tauri dialog plugin makes window.confirm resolve asynchronously.
+            if (!(await window.confirm(m.routines_change_type_confirm())))
+              return;
             onChange(
               changeRoutineTrigger(definition, value as RoutineTriggerType),
             );
@@ -95,9 +97,11 @@ export function RoutineTriggerFields({
             <FieldLabel>{m.routines_event_type_label()}</FieldLabel>
             <Select
               value={trigger.event}
-              onValueChange={(event) => {
+              onValueChange={async (event) => {
                 if (event === trigger.event) return;
-                if (!window.confirm(m.routines_change_type_confirm())) return;
+                // The Tauri dialog plugin makes window.confirm resolve asynchronously.
+                if (!(await window.confirm(m.routines_change_type_confirm())))
+                  return;
                 onChange(
                   changeRoutineEvent(definition, event as RoutineEventType),
                 );
