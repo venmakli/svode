@@ -11,7 +11,7 @@ import {
   type AgentSession,
   type AgentSessionTarget,
 } from "../model";
-import { SessionStatusMarker } from "./session-status";
+import { SessionStatusMarker, statusMarkerLabel } from "./session-status";
 
 interface AgentSessionNavigationItemProps {
   navigationKey: NavigationKey;
@@ -57,15 +57,14 @@ export function AgentSessionNavigationItem({
   return (
     <NavigationSidebarItem
       title={session?.title ?? fallbackTitle}
-      icon={
-        <span className="relative flex">
-          <BotMessageSquare className="size-4" />
-          {session && (
-            <span className="absolute -right-1 -bottom-1 flex rounded-full bg-sidebar">
-              <SessionStatusMarker session={session} className="size-2.5!" />
-            </span>
-          )}
-        </span>
+      icon={<BotMessageSquare className="size-4" />}
+      status={
+        session
+          ? {
+              marker: <SessionStatusMarker session={session} />,
+              label: statusMarkerLabel(session),
+            }
+          : undefined
       }
       tooltip={
         session && (

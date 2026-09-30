@@ -178,6 +178,30 @@ if (process.env.SVODE_NAVIGATION_SIDEBAR_DOM !== "1") {
     expect(opened).toBe(1);
   });
 
+  test("a status marker takes the menu slot and names the status", async () => {
+    await render(
+      <NavigationSidebarItem
+        title="Fix login"
+        icon={null}
+        status={{ marker: <span data-marker />, label: "Working" }}
+        tooltip={null}
+        active={false}
+        unavailable={false}
+        onOpen={() => undefined}
+        menu={null}
+      />,
+    );
+    const badge = document.querySelector("[data-sidebar=menu-badge]");
+    expect(badge?.querySelector("[data-marker]") === null).toBe(false);
+    expect(badge?.getAttribute("aria-hidden")).toBe("true");
+    expect(
+      document.querySelector("[data-sidebar=menu-button]")?.textContent,
+    ).toBe("Fix loginWorking");
+    expect(
+      document.querySelector("[data-sidebar=menu-action]") === null,
+    ).toBe(false);
+  });
+
   test("the menu item pins, then unpins, the object", async () => {
     await act(async () => getNavigationState().setProject("/project"));
     const menu = (

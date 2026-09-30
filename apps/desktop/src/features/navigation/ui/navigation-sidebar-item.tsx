@@ -7,6 +7,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import {
   SidebarMenuAction,
+  SidebarMenuBadge,
   SidebarMenuButton,
   SidebarMenuItem,
 } from "@/components/ui/sidebar";
@@ -20,8 +21,13 @@ import * as m from "@/paraglide/messages.js";
 
 interface NavigationSidebarItemProps {
   title: string;
-  /** Type icon of the object; a session carries its status marker. */
+  /** Type icon of the object. */
   icon: ReactNode;
+  /**
+   * Status of the object, e.g. of a session: its marker takes the place of
+   * the row menu until the row is hovered or focused.
+   */
+  status?: { marker: ReactNode; label: string };
   /** Where the object lives: its Space, and the agent of a session. */
   tooltip: ReactNode;
   /** The object is the main area object. */
@@ -43,6 +49,7 @@ interface NavigationSidebarItemProps {
 export function NavigationSidebarItem({
   title,
   icon,
+  status,
   tooltip,
   active,
   unavailable,
@@ -78,6 +85,7 @@ export function NavigationSidebarItem({
               {icon}
             </span>
             <span className="min-w-0 flex-1 truncate">{title}</span>
+            {status && <span className="sr-only">{status.label}</span>}
             {temporary && (
               <span className="sr-only">{m.navigation_temporary()}</span>
             )}
@@ -94,6 +102,7 @@ export function NavigationSidebarItem({
           className="flex max-w-80 flex-col items-start gap-1 text-left"
         >
           <span className="font-medium">{title}</span>
+          {status && <span>{status.label}</span>}
           {tooltip}
           {unavailable && <span>{m.navigation_unavailable()}</span>}
           {temporary && <span>{m.navigation_temporary()}</span>}
@@ -109,6 +118,14 @@ export function NavigationSidebarItem({
         >
           <X />
         </SidebarMenuAction>
+      )}
+      {status && !menuOpen && (
+        <SidebarMenuBadge
+          aria-hidden
+          className="hidden group-focus-within/menu-item:opacity-0 group-hover/menu-item:opacity-0 md:flex"
+        >
+          {status.marker}
+        </SidebarMenuBadge>
       )}
       <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
         <DropdownMenuTrigger asChild>
