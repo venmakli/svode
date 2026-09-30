@@ -10,6 +10,7 @@ import { usePageTitleOutcomeStore } from "./page-title-outcome-store";
 export interface OpenPageOptions {
   scopeOpenIntent?: import("@/features/scope-surfaces").ScopeOpenIntent;
   reveal?: boolean;
+  fromSidebar?: boolean;
 }
 
 export type { PageTitleOutcome } from "./page-title-outcome-store";
@@ -26,7 +27,11 @@ export function openPage(
       sourceShape: inferArtifactSourceShape(path),
       semanticHint: { kind: "page" },
     },
-    { reveal: options?.reveal, scopeOpenIntent: options?.scopeOpenIntent },
+    {
+      reveal: options?.reveal,
+      scopeOpenIntent: options?.scopeOpenIntent,
+      fromSidebar: options?.fromSidebar,
+    },
   );
 }
 

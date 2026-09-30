@@ -8,6 +8,7 @@ import {
 } from "react";
 import { useSortable } from "@dnd-kit/sortable";
 import * as m from "@/paraglide/messages.js";
+import { useActiveContentOpenedFromSidebar } from "@/features/artifact";
 import {
   SidebarMenuSub,
   SidebarMenuSubButton,
@@ -150,8 +151,9 @@ export function FileTreeItem({
     [setNodeRef],
   );
 
+  const openedFromSidebar = useActiveContentOpenedFromSidebar();
   useEffect(() => {
-    if (!isActive) return;
+    if (!isActive || openedFromSidebar) return;
     const frame = window.requestAnimationFrame(() => {
       itemRef.current?.scrollIntoView({
         block: "center",
@@ -160,7 +162,7 @@ export function FileTreeItem({
       });
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [isActive, node.path, spaceId]);
+  }, [isActive, node.path, openedFromSidebar, spaceId]);
 
   const isOver = activeId !== null && overId === node.path;
   // Use projection.overPath as source of truth for nest highlight target

@@ -1,5 +1,6 @@
 import { useEffect, useMemo } from "react";
 import {
+  useActiveContentOpenedFromSidebar,
   useActiveContentPath,
   useActiveContentSelection,
   useActiveContentShown,
@@ -52,6 +53,7 @@ export function useSpaceSidebarActions({
   } = useSpaceStore();
   const { deleteSpace } = useSpaceActions();
   const { activeRevealRequest } = useActiveContentSelection();
+  const openedFromSidebar = useActiveContentOpenedFromSidebar();
   const activeContentPath = useActiveContentPath();
   const activeContentSpaceId = useActiveContentSpaceId();
   const {
@@ -128,13 +130,16 @@ export function useSpaceSidebarActions({
   });
 
   useEffect(() => {
-    if (!activeContentPath || !activeContentSpaceId) return;
+    if (!activeContentPath || !activeContentSpaceId || openedFromSidebar) {
+      return;
+    }
     void ensureTreePathVisible(activeContentSpaceId, activeContentPath);
   }, [
     activeContentPath,
     activeContentSpaceId,
     activeRevealRequest,
     ensureTreePathVisible,
+    openedFromSidebar,
   ]);
 
   const { handleNewCollection, handleNewFolder, handleNewPage } =

@@ -19,6 +19,8 @@ interface ArtifactSelectionState {
   selection: ActiveContentSelection | null;
   activeRevealRequest: ContentRevealRequest | null;
   activePathRetarget: ContentPathRetarget | null;
+  /** The selection was opened from the sidebar, which keeps the tree as is. */
+  openedFromSidebar: boolean;
   transitionPending: boolean;
   /** The main area shows the selection; the Graph or a session hides it. */
   contentShown: boolean;
@@ -113,7 +115,10 @@ export function selectedContentPath(
 
 type SelectionUpdate = Pick<
   ArtifactSelectionState,
-  "selection" | "activeRevealRequest" | "activePathRetarget"
+  | "selection"
+  | "activeRevealRequest"
+  | "activePathRetarget"
+  | "openedFromSidebar"
 >;
 
 function applySelectionTransition(
@@ -149,6 +154,7 @@ export const useArtifactSelectionStore = create<ArtifactSelectionState>(
     selection: null,
     activeRevealRequest: null,
     activePathRetarget: null,
+    openedFromSidebar: false,
     transitionPending: false,
     contentShown: true,
 
@@ -191,6 +197,7 @@ export const useArtifactSelectionStore = create<ArtifactSelectionState>(
             }
           : null,
         activePathRetarget: null,
+        openedFromSidebar: options?.fromSidebar === true,
       });
     },
 
@@ -227,6 +234,7 @@ export const useArtifactSelectionStore = create<ArtifactSelectionState>(
               }
             : null,
         activePathRetarget: null,
+        openedFromSidebar: options?.fromSidebar === true,
       });
     },
 
@@ -289,6 +297,7 @@ export const useArtifactSelectionStore = create<ArtifactSelectionState>(
         selection: null,
         activeRevealRequest: null,
         activePathRetarget: null,
+        openedFromSidebar: false,
       }),
   }),
 );

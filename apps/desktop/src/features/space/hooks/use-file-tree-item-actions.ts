@@ -66,17 +66,17 @@ export function useFileTreeItemActions({
   const openPage = useOpenPage();
   const openScopeOwner = useOpenScopeOwner();
   const openCollectionOwner = (path: string, targetSpaceId: string) =>
-    openScopeOwner({
-      kind: "collection",
-      path,
-      spaceId: targetSpaceId,
-    });
+    openScopeOwner(
+      { kind: "collection", path, spaceId: targetSpaceId },
+      { fromSidebar: true },
+    );
   const openAppOwner = (path: string, targetSpaceId: string) =>
-    openScopeOwner({
-      kind: "app-directory",
-      path,
-      spaceId: targetSpaceId,
-    });
+    openScopeOwner(
+      { kind: "app-directory", path, spaceId: targetSpaceId },
+      { fromSidebar: true },
+    );
+  const openTreePage = (path: string, targetSpaceId: string) =>
+    openPage(path, targetSpaceId, { fromSidebar: true });
   const activeContentPath = useActiveContentPath();
   const activeContentSpaceId = useActiveContentSpaceId();
   const contentShown = useActiveContentShown();
@@ -171,7 +171,7 @@ export function useFileTreeItemActions({
     loadTreeChildren,
     onActivateContent,
     onBeforeNavigation,
-    openPage,
+    openPage: openTreePage,
     openCollectionOwner,
     openAppOwner,
     toggleExpanded,

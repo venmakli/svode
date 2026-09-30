@@ -110,18 +110,27 @@ export function useOpenNavigationArtifact({
         void openSpace(key.spaceId);
       }
       if (key.kind === "space") {
-        openScopeOwner({ kind: "space", spaceId });
+        openScopeOwner({ kind: "space", spaceId }, { fromSidebar: true });
         return;
       }
       const path = item.openPath ?? key.path;
       if (key.kind === "collection") {
-        openScopeOwner({ kind: "collection", path, spaceId });
+        openScopeOwner(
+          { kind: "collection", path, spaceId },
+          { fromSidebar: true },
+        );
       } else if (key.kind === "app") {
-        openScopeOwner({ kind: "app-directory", path, spaceId });
+        openScopeOwner(
+          { kind: "app-directory", path, spaceId },
+          { fromSidebar: true },
+        );
       } else if (key.kind === "attachment") {
-        openArtifact({ path, spaceId, sourceShape: "file" });
+        openArtifact(
+          { path, spaceId, sourceShape: "file" },
+          { fromSidebar: true },
+        );
       } else {
-        openPage(path, spaceId);
+        openPage(path, spaceId, { fromSidebar: true });
       }
     },
     [

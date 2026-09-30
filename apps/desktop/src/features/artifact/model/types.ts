@@ -58,11 +58,15 @@ export interface ContentPathRetarget {
 export interface OpenArtifactOptions {
   scopeOpenIntent?: ScopeOpenIntent;
   reveal?: boolean;
+  /** Opened from the sidebar: the tree neither expands nor scrolls to it. */
+  fromSidebar?: boolean;
 }
 
 export interface OpenScopeOwnerOptions {
   reveal?: boolean;
   scopeOpenIntent?: ScopeOpenIntent;
+  /** Opened from the sidebar: the tree neither expands nor scrolls to it. */
+  fromSidebar?: boolean;
 }
 
 export interface ActiveContentSelectionSnapshot {

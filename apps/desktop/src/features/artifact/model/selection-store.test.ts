@@ -10,6 +10,7 @@ function resetSelection() {
     selection: null,
     activeRevealRequest: null,
     activePathRetarget: null,
+    openedFromSidebar: false,
     transitionPending: false,
   });
 }
@@ -222,6 +223,30 @@ test("retarget preserves an owner session and refreshes an Artifact request mark
     path: "notes/README.md",
     spaceId: "root",
   });
+});
+
+test("records whether each open came from the sidebar", () => {
+  resetSelection();
+  const { openArtifact, openScopeOwner, close } =
+    useArtifactSelectionStore.getState();
+
+  openArtifact(
+    { spaceId: "root", path: "notes.md", sourceShape: "file" },
+    { fromSidebar: true },
+  );
+  expect(useArtifactSelectionStore.getState().openedFromSidebar).toBe(true);
+
+  openScopeOwner({ kind: "collection", spaceId: "root", path: "tasks" });
+  expect(useArtifactSelectionStore.getState().openedFromSidebar).toBe(false);
+
+  openScopeOwner(
+    { kind: "space", spaceId: "root" },
+    { fromSidebar: true },
+  );
+  expect(useArtifactSelectionStore.getState().openedFromSidebar).toBe(true);
+
+  close();
+  expect(useArtifactSelectionStore.getState().openedFromSidebar).toBe(false);
 });
 
 test("rejects absolute and traversal targets before they reach an adapter", () => {

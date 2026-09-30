@@ -62,7 +62,7 @@ export function AgentSessionNavigationItem({
           <BotMessageSquare className="size-4" />
           {session && (
             <span className="absolute -right-1 -bottom-1 flex rounded-full bg-sidebar">
-              <SessionStatusMarker session={session} className="size-2.5" />
+              <SessionStatusMarker session={session} className="size-2.5!" />
             </span>
           )}
         </span>

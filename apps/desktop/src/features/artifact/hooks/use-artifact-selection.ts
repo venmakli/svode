@@ -36,6 +36,11 @@ export function useActiveContentShown() {
   return useArtifactSelectionStore((state) => state.contentShown);
 }
 
+/** Whether the selection was opened from the sidebar, which keeps the tree. */
+export function useActiveContentOpenedFromSidebar() {
+  return useArtifactSelectionStore((state) => state.openedFromSidebar);
+}
+
 export function useOpenArtifact() {
   return useArtifactSelectionStore((state) => state.openArtifact);
 }

@@ -11,6 +11,7 @@ export {
 } from "./api/selection-actions";
 export {
   useActiveContentSelection,
+  useActiveContentOpenedFromSidebar,
   useActiveContentPath,
   useActiveContentShown,
   useActiveContentSpaceId,
