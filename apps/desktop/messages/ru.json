@@ -2185,6 +2185,7 @@
   "sessions_collection_empty_description": "Запустите CLI-агента в этом пространстве или создайте новую сессию.",
   "sessions_device_note": "Сессии этого устройства. Они не передаются через Git и не видны другим участникам.",
   "sessions_source_partial": "Не удалось прочитать сессии {agents}.",
+  "sessions_diagnostics_title": "Часть сессий не прочитана",
   "navigation_pinned": "Закреплённые",
   "navigation_pin": "Закрепить",
   "navigation_unpin": "Открепить",

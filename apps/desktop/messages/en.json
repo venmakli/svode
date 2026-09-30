@@ -2185,6 +2185,7 @@
   "sessions_collection_empty_description": "Start a CLI agent in this space or create a new session.",
   "sessions_device_note": "Sessions of this device. They are not shared through Git and other members don't see them.",
   "sessions_source_partial": "Sessions of {agents} could not be read.",
+  "sessions_diagnostics_title": "Some sessions could not be read",
   "navigation_pinned": "Pinned",
   "navigation_pin": "Pin",
   "navigation_unpin": "Unpin",

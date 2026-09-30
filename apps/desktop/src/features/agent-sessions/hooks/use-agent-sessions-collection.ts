@@ -25,6 +25,7 @@ import {
 } from "../model";
 import {
   AGENT_SESSIONS_PRESENTATION_ID,
+  agentSessionsSourceProblem,
   createAgentSessionsPresentation,
   toAgentSessionsPresentationState,
   type AgentSessionsPresentationActions,
@@ -235,8 +236,10 @@ export function useAgentSessionsCollection({
   return {
     collectionState,
     instance,
+    openAppSettings: onOpenAppSettings,
     refresh,
     refreshing: refreshing || loading,
+    sourceProblem: agentSessionsSourceProblem({ result, error }, agents),
     closeRequest,
     confirmClose: () => {
       if (closeRequest) closeTerminal(closeRequest);

@@ -281,8 +281,16 @@ if (process.env.SVODE_AGENT_SESSIONS_SURFACE_DOM !== "1") {
       await mountSurface("/project", "root");
 
       expect(row("codex:root") === null).toBe(false);
+      expect(
+        document.querySelector("[data-collection-diagnostics]"),
+      ).toBeNull();
+      await click(diagnosticsTrigger());
       await click(buttonByText(m.sessions_action_open_settings()));
       expect(settingsOpened).toBe(1);
+      expect(
+        document.querySelector("[data-sessions-diagnostics-dialog]"),
+      ).toBeNull();
+      await click(diagnosticsTrigger());
       const lists = commands.filter(
         (command) => command === "agent_sessions_refresh",
       ).length;
@@ -297,6 +305,13 @@ if (process.env.SVODE_AGENT_SESSIONS_SURFACE_DOM !== "1") {
   function row(id: string) {
     return document.querySelector<HTMLElement>(
       `[data-collection-row="${CSS.escape(id)}"]`,
+    );
+  }
+
+  function diagnosticsTrigger() {
+    return (
+      document.querySelector<HTMLElement>("[data-sessions-diagnostics]") ??
+      undefined
     );
   }
 

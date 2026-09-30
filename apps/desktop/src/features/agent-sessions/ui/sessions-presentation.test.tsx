@@ -11,6 +11,7 @@ import type { AgentSession } from "../model";
 import { listedSession, listResult } from "../model/testing/catalog";
 import {
   createAgentSessionsPresentationDescriptor,
+  agentSessionsSourceProblem,
   toAgentSessionsPresentationState,
   type AgentSessionsPresentationActions,
 } from "./sessions-presentation";
@@ -117,7 +118,7 @@ function query(
 
 setLocale("en", { reload: false });
 
-test("rows show the status marker, title, agent, routine and last activity; status stays a query property", () => {
+test("rows show the session sign, title, status, agent, routine and last activity", () => {
   const presentation = descriptor();
 
   expect(presentation.properties.map((property) => property.key)).toEqual([
@@ -131,7 +132,7 @@ test("rows show the status marker, title, agent, routine and last activity; stat
     presentation.layout.kind === "list"
       ? presentation.layout.visibleProperties
       : null,
-  ).toEqual(["agent", "routine", "last-activity"]);
+  ).toEqual(["status", "agent", "routine", "last-activity"]);
   const status = presentation.properties.find(
     (property) => property.key === "status",
   );
@@ -195,8 +196,11 @@ test("filter, sort and search by routine", () => {
   expect(searched.rows.map((row) => row.id)).toEqual(["claude-code:working"]);
 });
 
-test("every status value has a labelled marker, including Done", () => {
+test("every status value is shown by the Status property, including Done", () => {
   const presentation = descriptor();
+  const status = presentation.properties.find(
+    (property) => property.key === "status",
+  );
   const leading = (session: AgentSession) =>
     presentation.layout.kind === "list"
       ? renderToStaticMarkup(
@@ -204,13 +208,11 @@ test("every status value has a labelled marker, including Done", () => {
         )
       : "";
 
-  expect(leading(done).includes('aria-label="Done"')).toBe(true);
-  expect(leading(waiting).includes('aria-label="Waiting for approval"')).toBe(
-    true,
-  );
-  expect(leading(withTerminal).includes('aria-label="Terminal open"')).toBe(
-    true,
-  );
+  expect(status?.getValue(done)).toBe("Done");
+  expect(status?.getValue(waiting)).toBe("Waiting for approval");
+  // The leading sign is the same for every session: status is a property.
+  expect(leading(done)).toBe(leading(waiting));
+  expect(leading(withTerminal)).toBe(leading(done));
 });
 
 test("default order is waiting, then working, then last activity", () => {
@@ -394,10 +396,16 @@ test("collection states: loading, blocking error, partial source and empty Space
   expect(partialState.phase).toBe("ready");
   if (partialState.phase !== "ready") return;
   expect(partialState.rows).toEqual([done]);
-  const diagnostics = renderToStaticMarkup(<>{partialState.diagnostics}</>);
-  expect(diagnostics.includes("Claude Code")).toBe(true);
-  expect(diagnostics.includes("Retry")).toBe(true);
-  expect(diagnostics.includes("Open settings")).toBe(true);
+  expect(partialState.diagnostics).toEqual([]);
+  expect(
+    agentSessionsSourceProblem({ result: partial, error: null }, agents),
+  ).toBe("Sessions of Claude Code could not be read.");
+  expect(
+    agentSessionsSourceProblem(
+      { result: listResult([done]), error: null },
+      agents,
+    ),
+  ).toBeNull();
 
   const refreshFailed = toAgentSessionsPresentationState(
     {
@@ -413,8 +421,11 @@ test("collection states: loading, blocking error, partial source and empty Space
   if (refreshFailed.phase !== "ready") return;
   expect(refreshFailed.rows).toEqual([done]);
   expect(
-    renderToStaticMarkup(<>{refreshFailed.diagnostics}</>).includes("offline"),
-  ).toBe(true);
+    agentSessionsSourceProblem(
+      { result: listResult([done]), error: "offline" },
+      agents,
+    ),
+  ).toBe("offline");
   expect(
     renderToStaticMarkup(<>{refreshFailed.sourceEmpty}</>).includes(
       "not shared through Git",

@@ -25,6 +25,7 @@ import type { ScopeSurfaceRenderContext } from "@/features/scope-surfaces";
 import { useAgentSessionsCollection } from "../hooks/use-agent-sessions-collection";
 import type { AgentSessionOpenOptions, AgentSessionTarget } from "../model";
 import { ExternalTerminalAppProvider } from "./external-terminal-icon";
+import { SessionsDiagnosticsDialog } from "./sessions-diagnostics-dialog";
 import * as m from "@/paraglide/messages.js";
 
 /** The "Sessions" tab of a registered Space: its own sessions of this device. */
@@ -55,6 +56,12 @@ export function AgentSessionsSurface({
           <CollectionHost
             contextualActions={
               <>
+                <SessionsDiagnosticsDialog
+                  problem={controller.sourceProblem}
+                  retrying={controller.refreshing}
+                  onRetry={() => void controller.refresh()}
+                  onOpenSettings={controller.openAppSettings}
+                />
                 <ToolbarTooltipButton
                   icon={Info}
                   label={m.sessions_device_note()}

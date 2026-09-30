@@ -1,4 +1,3 @@
-import type { ReactNode } from "react";
 import {
   BotMessageSquare,
   Copy,
@@ -35,7 +34,7 @@ import {
   type AgentSession,
 } from "../model";
 import { ExternalTerminalIcon } from "./external-terminal-icon";
-import { SessionStatusMarker, statusLabel } from "./session-status";
+import { statusLabel } from "./session-status";
 import * as m from "@/paraglide/messages.js";
 
 export const AGENT_SESSIONS_PRESENTATION_ID = "all";
@@ -186,10 +185,10 @@ export function createAgentSessionsPresentationDescriptor({
       density: "compact",
       getTitle: (row) => row.title,
       kind: "list",
-      renderLeading: (row) => (
-        <SessionStatusMarker session={row} className="size-4" />
+      renderLeading: () => (
+        <BotMessageSquare className="size-4 text-muted-foreground" />
       ),
-      visibleProperties: ["agent", "routine", "last-activity"],
+      visibleProperties: ["status", "agent", "routine", "last-activity"],
     },
     query: {
       defaultCompare: compareAgentSessionsByDefault,
@@ -265,7 +264,8 @@ interface AgentSessionsCatalogView {
 
 /**
  * Collection state over the catalog: rows stay while a source is partly
- * unavailable or a refresh failed; without any list the failure blocks.
+ * unavailable or a refresh failed (see agentSessionsSourceProblem); without
+ * any list the failure blocks.
  */
 export function toAgentSessionsPresentationState(
   catalog: AgentSessionsCatalogView,
@@ -293,21 +293,28 @@ export function toAgentSessionsPresentationState(
   }
   if (!rows || !agents.ready) return { phase: "initial" };
 
-  const diagnostics: ReactNode[] = [];
-  if (result.status === "partial" || error) {
-    diagnostics.push(
-      <div key="sources" className="flex flex-col items-start gap-2">
-        <span>{error ?? partialSourcesMessage(result, agents)}</span>
-        {recoveryActions}
-      </div>,
-    );
-  }
   return {
-    diagnostics,
+    diagnostics: [],
     phase: "ready",
     rows,
     sourceEmpty: <SessionsEmpty />,
   };
+}
+
+/**
+ * The problem of a listed catalog, shown by the toolbar diagnostics: a partly
+ * unavailable source or a failed refresh.
+ */
+export function agentSessionsSourceProblem(
+  catalog: Pick<AgentSessionsCatalogView, "result" | "error">,
+  agents: AgentAdapterDictionary,
+): string | null {
+  const { result, error } = catalog;
+  if (!result || result.status === "error") return null;
+  if (error) return error;
+  return result.status === "partial"
+    ? partialSourcesMessage(result, agents)
+    : null;
 }
 
 function partialSourcesMessage(
