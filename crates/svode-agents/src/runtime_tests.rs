@@ -9,6 +9,7 @@ use crate::activity::{
 };
 use crate::interaction::FieldValue;
 use crate::status::{SessionState, SessionStatus};
+use crate::writer::WriterRefusal;
 
 /// The agent end of an in-memory ACP transport, driven step by step.
 struct ScriptedAgent {
@@ -56,6 +57,13 @@ impl ScriptedAgent {
 
     /// Answers `initialize` and `session/new` with session id `s1`.
     async fn open_session(&mut self) {
+        self.open_session_declaring(
+            json!({ "loadSession": true, "sessionCapabilities": { "list": {} } }),
+        )
+        .await;
+    }
+
+    async fn open_session_declaring(&mut self, agent_capabilities: Value) {
         let initialize = self.expect("initialize").await;
         let capabilities = &initialize["params"]["clientCapabilities"];
         assert_eq!(capabilities["elicitation"], json!({ "form": {} }));
@@ -63,7 +71,7 @@ impl ScriptedAgent {
             &initialize,
             json!({
                 "protocolVersion": 1,
-                "agentCapabilities": { "loadSession": true, "sessionCapabilities": { "list": {} } },
+                "agentCapabilities": agent_capabilities,
                 "agentInfo": { "name": "scripted", "version": "1.0.0" }
             }),
         )
@@ -85,10 +93,14 @@ fn launch() -> AcpLaunch {
 }
 
 fn attached(runtime: &AgentRuntime) -> (ConnectionId, ScriptedAgent) {
+    attached_with(runtime, &launch())
+}
+
+fn attached_with(runtime: &AgentRuntime, launch: &AcpLaunch) -> (ConnectionId, ScriptedAgent) {
     let (client, agent) = tokio::io::duplex(4 * 1024 * 1024);
     let (client_read, client_write) = tokio::io::split(client);
     let (agent_read, agent_write) = tokio::io::split(agent);
-    let id = runtime.attach(&launch(), client_read, client_write, None);
+    let id = runtime.attach(launch, client_read, client_write, None);
     (
         id,
         ScriptedAgent {
@@ -315,6 +327,7 @@ async fn cancel_answers_the_pending_permission_and_waits_for_the_agent() {
 async fn agent_errors_and_timeouts_degrade_only_their_own_connection() {
     let runtime = AgentRuntime::new(RuntimeConfig {
         request_timeout: Duration::from_millis(200),
+        ..RuntimeConfig::default()
     });
     let (_, healthy_key, mut healthy) = session(&runtime).await;
     let (failing, mut agent) = attached(&runtime);
@@ -523,6 +536,7 @@ async fn an_agent_that_exits_during_initialize_reports_its_stderr_and_closes() {
 async fn a_hung_agent_times_out_into_degraded_and_can_be_stopped() {
     let runtime = AgentRuntime::new(RuntimeConfig {
         request_timeout: Duration::from_millis(200),
+        ..RuntimeConfig::default()
     });
     let error = runtime
         .connect(AcpLaunch {
@@ -882,4 +896,159 @@ async fn a_second_concurrent_request_is_cancelled_by_its_own_kind() {
         subscription.snapshot.pending.as_ref().unwrap().kind,
         InteractionKind::Permission
     );
+}
+
+#[tokio::test]
+async fn a_new_session_holds_the_acp_writer_until_its_connection_closes() {
+    let runtime = AgentRuntime::default();
+    let writers = runtime.writers();
+    let (_connection, key, agent) = session(&runtime).await;
+    assert_eq!(writers.writer(&key), Some(Writer::Acp));
+    assert_eq!(
+        writers
+            .claim(
+                &key,
+                Writer::Pty,
+                ExternalLiveness::Unknown,
+                UnknownLiveness::NotConfirmed
+            )
+            .err(),
+        Some(WriterRefusal::WriterActive {
+            writer: Writer::Acp
+        })
+    );
+    let mut subscription = runtime.subscribe(&key).unwrap();
+    assert_eq!(subscription.snapshot.writer, WriterState::Acp);
+
+    drop(agent);
+    follow(&mut subscription, |snapshot| {
+        snapshot.writer == WriterState::None
+    })
+    .await;
+    assert_eq!(writers.writer(&key), None);
+}
+
+#[tokio::test]
+async fn acp_does_not_take_a_session_a_managed_pty_writes() {
+    let runtime = AgentRuntime::default();
+    let native = SessionKey::from_acp("scripted", "s1", true);
+    let _pty = runtime
+        .writers()
+        .claim(
+            &native,
+            Writer::Pty,
+            ExternalLiveness::Unknown,
+            UnknownLiveness::NotConfirmed,
+        )
+        .unwrap();
+    let (id, mut agent) = attached_with(
+        &runtime,
+        &AcpLaunch {
+            acp_id_is_native: true,
+            ..launch()
+        },
+    );
+    let (created, ()) = tokio::join!(
+        runtime.new_session(id, Path::new("/project")),
+        agent.open_session()
+    );
+    assert_eq!(
+        created,
+        Err(AgentRuntimeError::WriterRefused {
+            refusal: WriterRefusal::WriterActive {
+                writer: Writer::Pty
+            }
+        })
+    );
+    assert!(runtime.subscribe(&native).is_err());
+    assert_eq!(runtime.writers().writer(&native), Some(Writer::Pty));
+}
+
+#[tokio::test]
+async fn leaving_the_surface_does_not_stop_the_turn() {
+    let runtime = AgentRuntime::default();
+    let (_connection, key, mut agent) = session(&runtime).await;
+    let subscription = runtime.subscribe(&key).unwrap();
+    runtime.prompt(&key, "work").unwrap();
+    let prompt = agent.expect("session/prompt").await;
+    drop(subscription);
+
+    agent
+        .reply(&prompt, json!({ "stopReason": "end_turn" }))
+        .await;
+    let mut again = runtime.subscribe(&key).unwrap();
+    follow(&mut again, idle).await;
+    assert_eq!(again.snapshot.turn.last_outcome, Some(StopReason::EndTurn));
+    assert_eq!(again.snapshot.writer, WriterState::Acp);
+}
+
+#[tokio::test]
+async fn shutdown_cancels_live_turns_then_closes_sessions_then_ends_the_agent() {
+    let runtime = AgentRuntime::default();
+    let (connection, mut agent) = attached(&runtime);
+    let (key, ()) = tokio::join!(
+        async {
+            runtime
+                .new_session(connection, Path::new("/project"))
+                .await
+                .unwrap()
+        },
+        agent.open_session_declaring(json!({ "sessionCapabilities": { "close": {} } }))
+    );
+    let mut subscription = runtime.subscribe(&key).unwrap();
+    runtime.prompt(&key, "work").unwrap();
+    let prompt = agent.expect("session/prompt").await;
+
+    let agent_side = async {
+        agent.expect("session/cancel").await;
+        agent
+            .reply(&prompt, json!({ "stopReason": "cancelled" }))
+            .await;
+        let close = agent.expect("session/close").await;
+        assert_eq!(close["params"]["sessionId"], "s1");
+        agent.reply(&close, json!({})).await;
+        agent
+    };
+    let ((), _agent) = tokio::join!(runtime.shutdown(), agent_side);
+
+    follow(&mut subscription, |snapshot| {
+        snapshot.connection == ConnectionState::Closed
+    })
+    .await;
+    assert_eq!(
+        subscription.snapshot.turn.last_outcome,
+        Some(StopReason::Cancelled)
+    );
+    assert_eq!(subscription.snapshot.writer, WriterState::None);
+    assert_eq!(runtime.writers().writer(&key), None);
+    assert_eq!(
+        runtime.connection_status(connection).unwrap().state,
+        ConnectionState::Closed
+    );
+}
+
+#[tokio::test]
+async fn shutdown_stops_waiting_for_an_agent_that_ignores_cancel_at_its_budget() {
+    let runtime = AgentRuntime::new(RuntimeConfig {
+        shutdown_budget: Duration::from_millis(200),
+        ..RuntimeConfig::default()
+    });
+    let (_connection, key, mut agent) = session(&runtime).await;
+    let mut subscription = runtime.subscribe(&key).unwrap();
+    runtime.prompt(&key, "work").unwrap();
+    agent.expect("session/prompt").await;
+
+    let started = std::time::Instant::now();
+    runtime.shutdown().await;
+    assert!(started.elapsed() < Duration::from_secs(2));
+    agent.expect("session/cancel").await;
+    follow(&mut subscription, |snapshot| {
+        idle(snapshot) && snapshot.writer == WriterState::None
+    })
+    .await;
+    assert_eq!(
+        subscription.snapshot.turn.last_outcome,
+        Some(StopReason::Interrupted)
+    );
+    assert_eq!(subscription.snapshot.writer, WriterState::None);
 }

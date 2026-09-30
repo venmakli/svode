@@ -14,13 +14,14 @@ use serde_json::value::RawValue;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite};
 use tokio::process::Child;
 use tokio::sync::{broadcast, mpsc};
+use tokio::time::Instant;
 
 use crate::acp::normalize::{self, Normalized};
 use crate::acp::rpc::{AUTH_REQUIRED, Incoming, RpcClient, RpcError};
 use crate::acp::{self};
 use crate::activity::{
-    ConnectionState, DetailOutcome, InteractionOption, InteractionState, PendingInteraction,
-    QuestionField, SessionDelta, SessionSnapshot,
+    Change, ConnectionState, DetailOutcome, InteractionOption, InteractionState,
+    PendingInteraction, QuestionField, SessionDelta, SessionSnapshot, TurnPhase, WriterState,
 };
 use crate::error::AgentRuntimeError;
 use crate::identity::SessionKey;
@@ -28,6 +29,7 @@ use crate::interaction::{self, AnswerOutcome, InteractionAnswer};
 use crate::process;
 use crate::projection::Projection;
 use crate::status::{InteractionKind, StopReason};
+use crate::writer::{ExternalLiveness, UnknownLiveness, Writer, WriterClaim, WriterRegistry};
 
 /// Kept stderr of a starting agent, shown only when it fails to initialize.
 const STDERR_TAIL_BYTES: usize = 4 * 1024;
@@ -38,12 +40,15 @@ pub struct RuntimeConfig {
     /// Bound for every agent call except a prompt, which runs until the agent
     /// answers or the user cancels.
     pub request_timeout: Duration,
+    /// Bound of the whole stop sequence when the host process exits.
+    pub shutdown_budget: Duration,
 }
 
 impl Default for RuntimeConfig {
     fn default() -> Self {
         Self {
             request_timeout: Duration::from_secs(60),
+            shutdown_budget: Duration::from_secs(3),
         }
     }
 }
@@ -112,6 +117,7 @@ struct Inner {
     next_connection: AtomicU64,
     connections: Mutex<HashMap<ConnectionId, Arc<Connection>>>,
     sessions: Mutex<HashMap<SessionKey, Arc<Session>>>,
+    writers: WriterRegistry,
 }
 
 struct Connection {
@@ -133,6 +139,8 @@ struct Session {
     /// Locked before `projection` wherever both are held.
     interactions: Mutex<Interactions>,
     next_interaction: AtomicU64,
+    /// The ACP writer slot of the session while this runtime drives it.
+    writer: Mutex<Option<WriterClaim>>,
 }
 
 #[derive(Default)]
@@ -242,6 +250,12 @@ impl AgentRuntime {
         id
     }
 
+    /// The process-wide writer registry; a host registers its managed PTYs
+    /// here, so ACP and PTY never write to one session at once.
+    pub fn writers(&self) -> WriterRegistry {
+        self.inner.writers.clone()
+    }
+
     pub fn connection_status(&self, id: ConnectionId) -> Option<ConnectionStatus> {
         let connection = self.connection(id).ok()?;
         let state = *connection.state.lock().unwrap();
@@ -273,6 +287,18 @@ impl AgentRuntime {
             AgentRuntimeError::Protocol { message }
         })?;
         let key = SessionKey::from_acp(&connection.agent, &acp_id, connection.acp_id_is_native);
+        // The agent has just created the session: no process outside this
+        // connection writes to it.
+        let claim = self
+            .inner
+            .writers
+            .claim(
+                &key,
+                Writer::Acp,
+                ExternalLiveness::Free,
+                UnknownLiveness::NotConfirmed,
+            )
+            .map_err(|refusal| AgentRuntimeError::WriterRefused { refusal })?;
         let state = *connection.state.lock().unwrap();
         let session = Arc::new(Session {
             acp_id: acp_id.clone(),
@@ -280,6 +306,7 @@ impl AgentRuntime {
             projection: Mutex::new(Projection::new(key.clone(), state)),
             interactions: Mutex::new(Interactions::default()),
             next_interaction: AtomicU64::new(0),
+            writer: Mutex::new(Some(claim)),
         });
         connection
             .sessions
@@ -339,26 +366,7 @@ impl AgentRuntime {
     /// `cancelled` and keeps the turn `cancelling` until the agent answers
     /// the prompt or the connection drops. No-op without an active turn.
     pub fn cancel(&self, key: &SessionKey) -> Result<(), AgentRuntimeError> {
-        let session = self.session(key)?;
-        let mut interactions = session.interactions.lock().unwrap();
-        let mut projection = session.projection.lock().unwrap();
-        if !projection.turn_active() {
-            return Ok(());
-        }
-        projection.cancelling();
-        if let Some(open) = interactions.close(InteractionState::Cancelled) {
-            session
-                .connection
-                .rpc
-                .respond(open.rpc_id, acp::cancelled(open.kind));
-            projection.resolve_pending(&open.interaction, InteractionState::Cancelled);
-        }
-        drop(projection);
-        drop(interactions);
-        session.connection.rpc.notify(
-            acp::SESSION_CANCEL,
-            acp::cancel_notification(&session.acp_id),
-        );
+        self.session(key)?.cancel();
         Ok(())
     }
 
@@ -419,13 +427,58 @@ impl AgentRuntime {
 
     /// Stops the agent process; its sessions end their turns `interrupted`.
     pub async fn close_connection(&self, id: ConnectionId) -> Result<(), AgentRuntimeError> {
-        let connection = self.connection(id)?;
-        let child = connection.child.lock().unwrap().take();
-        if let Some(mut child) = child {
-            let _ = child.kill().await;
-        }
-        connection.close();
+        self.connection(id)?.terminate().await;
         Ok(())
+    }
+
+    /// Stops every managed connection when the host process exits, within
+    /// the shutdown budget: each live turn gets `session/cancel` and a
+    /// bounded wait for the agent's answer, then every session is closed
+    /// where the agent declared `close`, then the agent process ends.
+    pub async fn shutdown(&self) {
+        let deadline = Instant::now() + self.inner.config.shutdown_budget;
+        let connections: Vec<_> = self
+            .inner
+            .connections
+            .lock()
+            .unwrap()
+            .values()
+            .filter(|connection| connection.is_open())
+            .cloned()
+            .collect();
+        let live: Vec<_> = connections
+            .iter()
+            .flat_map(|connection| connection.sessions())
+            .filter(|session| session.projection.lock().unwrap().turn_active())
+            .collect();
+        for session in &live {
+            session.cancel();
+        }
+        for session in &live {
+            let _ = tokio::time::timeout_at(deadline, session.turn_end()).await;
+        }
+        for connection in &connections {
+            if connection.declares_close() {
+                for session in connection.sessions() {
+                    let remaining = deadline.saturating_duration_since(Instant::now());
+                    if remaining.is_zero() {
+                        break;
+                    }
+                    if connection
+                        .call(
+                            acp::SESSION_CLOSE,
+                            acp::close_request(&session.acp_id),
+                            Some(remaining),
+                        )
+                        .await
+                        .is_ok()
+                    {
+                        session.end();
+                    }
+                }
+            }
+            connection.terminate().await;
+        }
     }
 
     async fn initialize(&self, connection: &Connection) -> Result<(), AgentRuntimeError> {
@@ -466,6 +519,69 @@ impl AgentRuntime {
     }
 }
 
+impl Session {
+    /// Requests cancellation of the active turn: answers the pending request
+    /// `cancelled` and keeps the turn `cancelling` until the agent answers
+    /// the prompt or the connection drops. No-op without an active turn.
+    fn cancel(&self) {
+        let mut interactions = self.interactions.lock().unwrap();
+        let mut projection = self.projection.lock().unwrap();
+        if !projection.turn_active() {
+            return;
+        }
+        projection.cancelling();
+        if let Some(open) = interactions.close(InteractionState::Cancelled) {
+            self.connection
+                .rpc
+                .respond(open.rpc_id, acp::cancelled(open.kind));
+            projection.resolve_pending(&open.interaction, InteractionState::Cancelled);
+        }
+        drop(projection);
+        drop(interactions);
+        self.connection
+            .rpc
+            .notify(acp::SESSION_CANCEL, acp::cancel_notification(&self.acp_id));
+    }
+
+    /// Resolves once no turn is active.
+    async fn turn_end(&self) {
+        let mut deltas = {
+            let projection = self.projection.lock().unwrap();
+            if !projection.turn_active() {
+                return;
+            }
+            projection.subscribe().deltas
+        };
+        loop {
+            match deltas.recv().await {
+                Ok(delta) => {
+                    if matches!(delta.change, Change::Turn(ref turn) if turn.phase == TurnPhase::None)
+                    {
+                        return;
+                    }
+                }
+                Err(broadcast::error::RecvError::Lagged(_)) => {
+                    if !self.projection.lock().unwrap().turn_active() {
+                        return;
+                    }
+                }
+                Err(broadcast::error::RecvError::Closed) => return,
+            }
+        }
+    }
+
+    /// The connection or the session is gone: the active turn ends
+    /// `interrupted`, an open request expires and the writer slot is free.
+    fn end(&self) {
+        let mut interactions = self.interactions.lock().unwrap();
+        interactions.close(InteractionState::Expired);
+        let mut projection = self.projection.lock().unwrap();
+        projection.interrupt();
+        self.writer.lock().unwrap().take();
+        projection.set_writer(WriterState::None);
+    }
+}
+
 impl Connection {
     /// One agent call. Success restores a degraded connection; an error or
     /// timeout degrades it; a lost peer closes it.
@@ -500,6 +616,27 @@ impl Connection {
         }
     }
 
+    fn is_open(&self) -> bool {
+        *self.state.lock().unwrap() != ConnectionState::Closed
+    }
+
+    fn declares_close(&self) -> bool {
+        self.info
+            .lock()
+            .unwrap()
+            .as_ref()
+            .is_some_and(|info| info.capabilities.close_session)
+    }
+
+    /// Ends the agent process and closes the connection.
+    async fn terminate(&self) {
+        let child = self.child.lock().unwrap().take();
+        if let Some(mut child) = child {
+            let _ = child.kill().await;
+        }
+        self.close();
+    }
+
     fn require_open(&self) -> Result<(), AgentRuntimeError> {
         match *self.state.lock().unwrap() {
             ConnectionState::Closed => Err(AgentRuntimeError::ConnectionClosed),
@@ -531,11 +668,12 @@ impl Connection {
             *current = ConnectionState::Closed;
         }
         for session in self.sessions() {
-            let mut interactions = session.interactions.lock().unwrap();
-            interactions.close(InteractionState::Expired);
-            let mut projection = session.projection.lock().unwrap();
-            projection.set_connection(ConnectionState::Closed);
-            projection.interrupt();
+            session
+                .projection
+                .lock()
+                .unwrap()
+                .set_connection(ConnectionState::Closed);
+            session.end();
         }
     }
 

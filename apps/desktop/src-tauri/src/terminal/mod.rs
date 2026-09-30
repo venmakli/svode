@@ -16,6 +16,9 @@ use crate::agent_sessions::types::{
     AgentSessionStatus,
 };
 use crate::error::AppError;
+use svode_agents::writer::{
+    ExternalLiveness, UnknownLiveness, Writer, WriterClaim, WriterRegistry, WriterTarget,
+};
 use svode_core::system_path;
 
 const OUTPUT_EVENT: &str = "terminal:output";
@@ -180,20 +183,32 @@ struct AgentTerminalStatusSignal {
     reason: &'static str,
 }
 
+type WriterClaims = Arc<Mutex<HashMap<String, WriterClaim>>>;
+
 #[derive(Clone)]
 pub struct TerminalManager {
     sessions: Arc<Mutex<HashMap<String, TerminalProcess>>>,
     agent_surfaces: Arc<Mutex<HashMap<String, AgentTerminalSurface>>>,
     lifecycle_sinks: Arc<Mutex<HashMap<String, Arc<dyn AgentTerminalLifecycleSink>>>>,
+    /// The writer registry of the agent runtime; a managed agent PTY holds
+    /// its session's writer slot while the terminal lives.
+    writers: WriterRegistry,
+    writer_claims: WriterClaims,
 }
 
 impl TerminalManager {
-    pub fn new() -> Self {
+    pub fn new(writers: WriterRegistry) -> Self {
         Self {
             sessions: Arc::new(Mutex::new(HashMap::new())),
             agent_surfaces: Arc::new(Mutex::new(HashMap::new())),
             lifecycle_sinks: Arc::new(Mutex::new(HashMap::new())),
+            writers,
+            writer_claims: Arc::new(Mutex::new(HashMap::new())),
         }
+    }
+
+    pub(crate) fn writers(&self) -> &WriterRegistry {
+        &self.writers
     }
 
     pub fn spawn(
@@ -204,7 +219,7 @@ impl TerminalManager {
         cols: u16,
         rows: u16,
     ) -> Result<TerminalSession, AppError> {
-        self.spawn_with_mcp_context(app, cwd, mcp_project_path, None, cols, rows)
+        self.spawn_with_mcp_context(app, cwd, mcp_project_path, None, None, cols, rows)
     }
 
     fn spawn_with_mcp_context(
@@ -213,6 +228,7 @@ impl TerminalManager {
         cwd: String,
         mcp_project_path: Option<String>,
         routine_caller_token: Option<String>,
+        writer_claim: Option<WriterClaim>,
         cols: u16,
         rows: u16,
     ) -> Result<TerminalSession, AppError> {
@@ -288,12 +304,20 @@ impl TerminalManager {
             .lock()
             .map_err(|_| AppError::General("Terminal state lock poisoned".to_string()))?
             .insert(pty_id.clone(), process);
+        // Held before the reader loop starts, which releases it on exit.
+        if let Some(claim) = writer_claim {
+            self.writer_claims
+                .lock()
+                .map_err(|_| AppError::General("Terminal state lock poisoned".to_string()))?
+                .insert(pty_id.clone(), claim);
+        }
 
         if let Err(e) = spawn_reader_loop(
             app,
             self.sessions.clone(),
             self.agent_surfaces.clone(),
             self.lifecycle_sinks.clone(),
+            self.writer_claims.clone(),
             pty_id.clone(),
             reader,
         ) {
@@ -305,16 +329,20 @@ impl TerminalManager {
             {
                 let _ = process.child.kill();
             }
+            release_writer(&self.writer_claims, &pty_id);
             return Err(e);
         }
 
         Ok(session)
     }
 
+    /// Starts the agent CLI in a managed PTY that holds `writer_claim`,
+    /// taken by the caller before the start.
     pub(crate) fn spawn_agent_shell_session(
         &self,
         app: AppHandle,
         spawn: AgentTerminalSpawn,
+        writer_claim: WriterClaim,
     ) -> Result<TerminalSession, AppError> {
         let routine_caller_token = spawn
             .routine_run_id
@@ -326,6 +354,7 @@ impl TerminalManager {
             spawn.cwd.clone(),
             spawn.mcp_project_path.clone(),
             routine_caller_token.clone(),
+            Some(writer_claim),
             DEFAULT_AGENT_TERMINAL_COLS,
             DEFAULT_AGENT_TERMINAL_ROWS,
         )?;
@@ -389,6 +418,8 @@ impl TerminalManager {
                 .clone()
         };
 
+        self.hold_existing_session_writer(&pty_id, source, &source_session_id)?;
+
         let surface = agent_surface_from_existing_session(
             pty_id,
             agent_session_id,
@@ -400,6 +431,40 @@ impl TerminalManager {
         );
 
         self.register_agent_surface(surface)
+    }
+
+    /// A shell tab where the user started the agent CLI becomes the writer
+    /// of the session it is linked to. The CLI already runs in this PTY, so
+    /// the only evidence at hand about other processes is none.
+    fn hold_existing_session_writer(
+        &self,
+        pty_id: &str,
+        source: AgentSessionSource,
+        source_session_id: &str,
+    ) -> Result<(), AppError> {
+        let key = source.writer_key(source_session_id);
+        let mut claims = self
+            .writer_claims
+            .lock()
+            .map_err(|_| AppError::General("Terminal state lock poisoned".to_string()))?;
+        if claims
+            .get(pty_id)
+            .is_some_and(|claim| claim.target() == &WriterTarget::Session(key.clone()))
+        {
+            return Ok(());
+        }
+        claims.remove(pty_id);
+        let claim = self
+            .writers
+            .claim(
+                &key,
+                Writer::Pty,
+                ExternalLiveness::Unknown,
+                UnknownLiveness::NotConfirmed,
+            )
+            .map_err(|refusal| svode_agents::AgentRuntimeError::WriterRefused { refusal })?;
+        claims.insert(pty_id.to_string(), claim);
+        Ok(())
     }
 
     pub fn write(&self, pty_id: &str, data: &str) -> Result<(), AppError> {
@@ -467,6 +532,7 @@ impl TerminalManager {
             None,
             "managed terminal stopped by user",
         );
+        release_writer(&self.writer_claims, pty_id);
 
         kill_result
     }
@@ -501,6 +567,9 @@ impl TerminalManager {
                 None,
                 "managed terminal stopped during application shutdown",
             );
+        }
+        if let Ok(mut claims) = self.writer_claims.lock() {
+            claims.clear();
         }
     }
 
@@ -634,6 +703,10 @@ impl TerminalManager {
                 .lifecycle_sinks
                 .lock()
                 .map_err(|_| AppError::General("Terminal state lock poisoned".to_string()))?;
+            let mut claims = self
+                .writer_claims
+                .lock()
+                .map_err(|_| AppError::General("Terminal state lock poisoned".to_string()))?;
 
             for session in sessions {
                 let Some(launch_id) = session.launch_id.as_deref() else {
@@ -652,6 +725,16 @@ impl TerminalManager {
                 {
                     surface.agent_session_id = session.id.clone();
                     surface.source_session_id = session.source_session_id.clone();
+                    // The launch's writer claim moves to its canonical session.
+                    if let Some(claim) = claims.get_mut(&surface.pty_id)
+                        && let Err(refusal) =
+                            claim.bind(&session.source.writer_key(&session.source_session_id))
+                    {
+                        tracing::warn!(
+                            agent_session_id = session.id,
+                            "managed terminal keeps its launch writer claim: {refusal:?}"
+                        );
+                    }
                     if let Some(sink) = sinks.get(&surface.pty_id) {
                         reconciliations.push((
                             sink.clone(),
@@ -743,17 +826,12 @@ impl TerminalManager {
     }
 }
 
-impl Default for TerminalManager {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 fn spawn_reader_loop(
     app: AppHandle,
     sessions: Arc<Mutex<HashMap<String, TerminalProcess>>>,
     agent_surfaces: Arc<Mutex<HashMap<String, AgentTerminalSurface>>>,
     lifecycle_sinks: Arc<Mutex<HashMap<String, Arc<dyn AgentTerminalLifecycleSink>>>>,
+    writer_claims: WriterClaims,
     pty_id: String,
     mut reader: Box<dyn Read + Send>,
 ) -> Result<(), AppError> {
@@ -802,6 +880,7 @@ fn spawn_reader_loop(
                 let _ = process.child.wait();
             }
             finish_reader_surface(&agent_surfaces, &lifecycle_sinks, &pty_id);
+            release_writer(&writer_claims, &pty_id);
 
             let _ = app.emit(
                 EXIT_EVENT,
@@ -812,6 +891,13 @@ fn spawn_reader_loop(
         })
         .map(|_| ())
         .map_err(|e| AppError::General(format!("Failed to spawn terminal reader thread: {e}")))
+}
+
+/// The terminal is gone, and with it the writer of its session.
+fn release_writer(writer_claims: &WriterClaims, pty_id: &str) {
+    if let Ok(mut claims) = writer_claims.lock() {
+        claims.remove(pty_id);
+    }
 }
 
 fn update_agent_surface_output(
@@ -1710,7 +1796,7 @@ mod tests {
 
     #[test]
     fn terminal_prepare_paths_rejects_unknown_or_exited_session() {
-        let manager = TerminalManager::new();
+        let manager = TerminalManager::new(WriterRegistry::default());
         let error = manager
             .prepare_paths(
                 "missing-pty",
@@ -1767,9 +1853,107 @@ mod tests {
         );
     }
 
+    fn codex_key(session_id: &str) -> svode_agents::identity::SessionKey {
+        AgentSessionSource::Codex.writer_key(session_id)
+    }
+
+    #[test]
+    fn a_linked_agent_terminal_holds_its_session_writer_until_it_is_killed() {
+        let writers = WriterRegistry::default();
+        let manager = TerminalManager::new(writers.clone());
+        manager
+            .hold_existing_session_writer("pty-a", AgentSessionSource::Codex, "s1")
+            .expect("first terminal");
+        // Linking the same terminal again keeps its claim.
+        manager
+            .hold_existing_session_writer("pty-a", AgentSessionSource::Codex, "s1")
+            .expect("same terminal");
+        assert_eq!(writers.writer(&codex_key("s1")), Some(Writer::Pty));
+        assert!(
+            manager
+                .hold_existing_session_writer("pty-b", AgentSessionSource::Codex, "s1")
+                .is_err()
+        );
+        assert_eq!(
+            writers
+                .claim(
+                    &codex_key("s1"),
+                    Writer::Acp,
+                    ExternalLiveness::Free,
+                    UnknownLiveness::NotConfirmed
+                )
+                .err(),
+            Some(svode_agents::writer::WriterRefusal::WriterActive {
+                writer: Writer::Pty
+            })
+        );
+
+        manager.kill("pty-a").expect("kill");
+        assert_eq!(writers.writer(&codex_key("s1")), None);
+        manager
+            .hold_existing_session_writer("pty-b", AgentSessionSource::Codex, "s1")
+            .expect("the slot is free again");
+    }
+
+    #[test]
+    fn a_session_continued_over_acp_is_not_linked_to_a_terminal() {
+        let writers = WriterRegistry::default();
+        let manager = TerminalManager::new(writers.clone());
+        let _acp = writers
+            .claim(
+                &codex_key("s1"),
+                Writer::Acp,
+                ExternalLiveness::Free,
+                UnknownLiveness::NotConfirmed,
+            )
+            .unwrap();
+        let error = manager
+            .hold_existing_session_writer("pty-a", AgentSessionSource::Codex, "s1")
+            .expect_err("ACP writes the session");
+        assert_eq!(error.kind(), "agent_runtime");
+    }
+
+    #[test]
+    fn a_launch_writer_claim_moves_to_the_session_the_launch_became() {
+        let writers = WriterRegistry::default();
+        let manager = TerminalManager::new(writers.clone());
+        let mut surface = test_surface();
+        surface.agent_session_id = "codex:launch:launch-1".to_string();
+        surface.source_session_id = "launch:launch-1".to_string();
+        surface.launch_id = Some("launch-1".to_string());
+        manager.insert_agent_surface_for_test(surface);
+        manager.writer_claims.lock().unwrap().insert(
+            "pty-agent".to_string(),
+            writers.claim_launch("launch-1", Writer::Pty).unwrap(),
+        );
+
+        let session: AgentSession = serde_json::from_value(serde_json::json!({
+            "id": "codex:s1",
+            "launchId": "launch-1",
+            "source": "codex",
+            "sourceSessionId": "s1",
+            "title": "s1",
+            "titleSource": "session-id",
+            "status": "done",
+            "statusSource": "source-log",
+            "statusConfidence": "strong",
+            "scopeKind": "project",
+            "scopeStatus": "ready",
+            "scopeConfidence": "exact",
+            "lastActivityAt": "2026-07-04T10:00:00Z",
+            "capabilities": { "canResume": true, "canRevealFile": false, "hasReadableLog": true },
+            "sourceMeta": serde_json::to_value(crate::agent_sessions::types::AgentSessionSourceMeta::default()).unwrap(),
+        }))
+        .expect("session fixture");
+        manager.reconcile_agent_sessions(&[session]).unwrap();
+
+        assert_eq!(writers.writer(&codex_key("s1")), Some(Writer::Pty));
+        assert!(writers.claim_launch("launch-1", Writer::Pty).is_ok());
+    }
+
     #[test]
     fn terminal_agent_surfaces_do_not_change_generic_terminal_list() {
-        let manager = TerminalManager::new();
+        let manager = TerminalManager::new(WriterRegistry::default());
         manager.insert_agent_surface_for_test(test_surface());
 
         assert!(manager.list().expect("list terminals").is_empty());
@@ -1840,7 +2024,7 @@ mod tests {
 
     #[test]
     fn closing_completed_routine_shell_preserves_initial_command_outcome() {
-        let manager = TerminalManager::new();
+        let manager = TerminalManager::new(WriterRegistry::default());
         let mut surface = test_surface();
         surface.routine_run_id = Some("run-one".to_string());
         surface.finished_at = Some("2026-08-07T10:00:00Z".to_string());
@@ -1949,7 +2133,7 @@ mod tests {
         let other = temp.path().join("other");
         std::fs::create_dir_all(&project).unwrap();
         std::fs::create_dir_all(&other).unwrap();
-        let manager = TerminalManager::new();
+        let manager = TerminalManager::new(WriterRegistry::default());
         let mut surface = test_surface();
         surface.routine_run_id = Some("run-one".to_string());
         surface.launch_id = Some("launch-one".to_string());

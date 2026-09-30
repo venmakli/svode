@@ -3,6 +3,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use super::AgentSessionsState;
+use super::live_status::external_liveness;
 use super::read_model;
 use super::types::{
     AgentSession, AgentSessionReentryError, AgentSessionReentryErrorCode, AgentSessionReentryMode,
@@ -11,6 +12,7 @@ use super::types::{
 };
 use crate::error::AppError;
 use crate::terminal::{AgentTerminalSpawn, AgentTerminalSurface, quote_agent_shell_command};
+use svode_agents::writer::{UnknownLiveness, Writer, WriterClaim, WriterRefusal, WriterRegistry};
 use svode_core::agent_adapters::resolve_space_executable;
 use svode_core::system_path;
 
@@ -19,12 +21,13 @@ pub(crate) fn reenter_session<ResolveCli, SpawnShell>(
     project_path: String,
     session_id: String,
     terminal_surfaces: Vec<AgentTerminalSurface>,
+    writers: &WriterRegistry,
     resolve_cli: ResolveCli,
     spawn_shell: SpawnShell,
 ) -> Result<AgentSessionReentryResult, AppError>
 where
     ResolveCli: FnMut(&AgentSession, &Path) -> Option<String>,
-    SpawnShell: FnMut(AgentTerminalSpawn) -> Result<String, AppError>,
+    SpawnShell: FnMut(AgentTerminalSpawn, WriterClaim) -> Result<String, AppError>,
 {
     let list = match read_model::list_sessions_with_surfaces(
         state,
@@ -59,7 +62,7 @@ where
         ));
     };
 
-    reenter_scoped_session(session, &project, resolve_cli, spawn_shell)
+    reenter_scoped_session(session, &project, writers, resolve_cli, spawn_shell)
 }
 
 pub(crate) fn terminal_unavailable_result(
@@ -89,12 +92,13 @@ pub(crate) fn resolve_agent_cli_binary(
 fn reenter_scoped_session<ResolveCli, SpawnShell>(
     session: &AgentSession,
     project: &Path,
+    writers: &WriterRegistry,
     mut resolve_cli: ResolveCli,
     mut spawn_shell: SpawnShell,
 ) -> Result<AgentSessionReentryResult, AppError>
 where
     ResolveCli: FnMut(&AgentSession, &Path) -> Option<String>,
-    SpawnShell: FnMut(AgentTerminalSpawn) -> Result<String, AppError>,
+    SpawnShell: FnMut(AgentTerminalSpawn, WriterClaim) -> Result<String, AppError>,
 {
     if let Some(pty_id) = live_managed_pty_id(session) {
         return Ok(AgentSessionReentryResult {
@@ -145,6 +149,26 @@ where
         ));
     };
     let command = resolved_resume_command(session, program, cwd.clone());
+    // Terminal resume under unknown liveness keeps today's behaviour: it is
+    // the native CLI the user would start by hand, with its own guards.
+    let claim = match writers.claim(
+        &session.source.writer_key(&session.source_session_id),
+        Writer::Pty,
+        external_liveness(session),
+        UnknownLiveness::NotConfirmed,
+    ) {
+        Ok(claim) => claim,
+        Err(refusal) => {
+            let (code, message) = writer_refusal(refusal);
+            return Ok(error_result(
+                session.id.clone(),
+                code,
+                message,
+                Some(command),
+                Some(cwd),
+            ));
+        }
+    };
 
     let spawn = AgentTerminalSpawn {
         agent_session_id: session.id.clone(),
@@ -158,7 +182,7 @@ where
         routine_run_id: None,
         lifecycle_sink: None,
     };
-    match spawn_shell(spawn) {
+    match spawn_shell(spawn, claim) {
         Ok(pty_id) => Ok(AgentSessionReentryResult {
             mode: AgentSessionReentryMode::SpawnedResumePty,
             session_id: session.id.clone(),
@@ -181,6 +205,33 @@ where
             Some(command),
             Some(cwd),
         )),
+    }
+}
+
+/// Why the session cannot take a terminal writer; the resume command stays
+/// as the manual fallback.
+fn writer_refusal(refusal: WriterRefusal) -> (AgentSessionReentryErrorCode, &'static str) {
+    match refusal {
+        WriterRefusal::WriterActive {
+            writer: Writer::Acp,
+        } => (
+            AgentSessionReentryErrorCode::WriterActive,
+            "Agent session is being continued in Svode; open it there",
+        ),
+        WriterRefusal::WriterActive {
+            writer: Writer::Pty,
+        } => (
+            AgentSessionReentryErrorCode::WriterActive,
+            "Agent session already runs in a managed terminal",
+        ),
+        WriterRefusal::ExternalActive => (
+            AgentSessionReentryErrorCode::ExternalActive,
+            "Agent session is running in another process; continue it there or resume it yourself once it stops",
+        ),
+        WriterRefusal::ConfirmationRequired => (
+            AgentSessionReentryErrorCode::Unknown,
+            "Agent session needs confirmation before it continues",
+        ),
     }
 }
 
@@ -397,8 +448,9 @@ mod tests {
             project.to_string_lossy().into_owned(),
             "codex:live".to_string(),
             vec![live_surface("pty-live", "live")],
+            &WriterRegistry::default(),
             |_, _| panic!("cli resolution should not run for focused PTY"),
-            |_| panic!("spawn should not run for focused PTY"),
+            |_, _| panic!("spawn should not run for focused PTY"),
         )
         .expect("reenter");
 
@@ -428,15 +480,19 @@ mod tests {
         write_codex_history(&home, "done", &project);
 
         let state = AgentSessionsState::with_home(home.clone());
+        // No liveness evidence: terminal resume runs without a confirmation.
+        let writers = WriterRegistry::default();
         let result = reenter_session(
             &state,
             project.to_string_lossy().into_owned(),
             "codex:done".to_string(),
             Vec::new(),
+            &writers,
             move |session, scope_dir| {
                 resolve_agent_cli_binary(session.source, scope_dir, &home, no_search_path())
             },
-            |spawn| {
+            |spawn, claim| {
+                assert_eq!(claim.writer(), Writer::Pty);
                 assert_eq!(spawn.agent_session_id, "codex:done");
                 assert_eq!(spawn.command.program, canonical_display(&bin));
                 assert_eq!(spawn.command.args, vec!["resume", "done"]);
@@ -452,6 +508,101 @@ mod tests {
             result.command.as_ref().expect("command").program,
             canonical_display(&bin)
         );
+    }
+
+    fn write_active_codex_rollout(home: &Path, source_session_id: &str, cwd: &Path) {
+        let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+        write(
+            &home
+                .join(".codex/sessions/2026/07/04")
+                .join(format!("rollout-{source_session_id}.jsonl")),
+            &[
+                serde_json::json!({
+                    "type": "session_meta",
+                    "payload": { "id": source_session_id, "cwd": cwd.to_string_lossy() },
+                    "timestamp": now
+                }),
+                serde_json::json!({
+                    "type": "event_msg",
+                    "payload": { "type": "task_started" },
+                    "timestamp": now
+                }),
+            ]
+            .map(|row| row.to_string())
+            .join("\n"),
+        );
+    }
+
+    #[test]
+    fn agent_sessions_reentry_leaves_a_session_running_elsewhere_to_manual_resume() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let home = temp.path().join("home");
+        let project = temp.path().join("project");
+        fs::create_dir_all(&project).expect("project");
+        write_active_codex_rollout(&home, "elsewhere", &project);
+
+        let state = AgentSessionsState::with_home(home);
+        let writers = WriterRegistry::default();
+        let result = reenter_session(
+            &state,
+            project.to_string_lossy().into_owned(),
+            "codex:elsewhere".to_string(),
+            Vec::new(),
+            &writers,
+            |_, _| Some("codex".to_string()),
+            |_, _| panic!("spawn should not run while another process writes"),
+        )
+        .expect("reenter");
+
+        assert_eq!(result.mode, AgentSessionReentryMode::Error);
+        assert_eq!(
+            result.error.as_ref().expect("error").code,
+            AgentSessionReentryErrorCode::ExternalActive
+        );
+        assert_eq!(
+            result.command.as_ref().expect("manual fallback").args,
+            vec!["resume", "elsewhere"]
+        );
+        assert_eq!(
+            writers.writer(&AgentSessionSource::Codex.writer_key("elsewhere")),
+            None
+        );
+    }
+
+    #[test]
+    fn agent_sessions_reentry_does_not_start_a_terminal_for_a_session_svode_continues() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let home = temp.path().join("home");
+        let project = temp.path().join("project");
+        fs::create_dir_all(&project).expect("project");
+        write_codex_history(&home, "in-svode", &project);
+
+        let state = AgentSessionsState::with_home(home);
+        let writers = WriterRegistry::default();
+        let _acp = writers
+            .claim(
+                &AgentSessionSource::Codex.writer_key("in-svode"),
+                Writer::Acp,
+                svode_agents::writer::ExternalLiveness::Free,
+                UnknownLiveness::NotConfirmed,
+            )
+            .expect("acp writer");
+        let result = reenter_session(
+            &state,
+            project.to_string_lossy().into_owned(),
+            "codex:in-svode".to_string(),
+            Vec::new(),
+            &writers,
+            |_, _| Some("codex".to_string()),
+            |_, _| panic!("spawn should not run while ACP writes"),
+        )
+        .expect("reenter");
+
+        assert_eq!(
+            result.error.as_ref().expect("error").code,
+            AgentSessionReentryErrorCode::WriterActive
+        );
+        assert!(result.command.is_some());
     }
 
     #[test]
@@ -476,8 +627,9 @@ mod tests {
             project.to_string_lossy().into_owned(),
             "codex:missing".to_string(),
             Vec::new(),
+            &WriterRegistry::default(),
             |_, _| panic!("cli resolution should not run without cwd"),
-            |_| panic!("spawn should not run without cwd"),
+            |_, _| panic!("spawn should not run without cwd"),
         )
         .expect("reenter");
 
@@ -506,8 +658,9 @@ mod tests {
             project.to_string_lossy().into_owned(),
             "codex:no-cli".to_string(),
             Vec::new(),
+            &WriterRegistry::default(),
             |_, _| None,
-            |_| panic!("spawn should not run without cli"),
+            |_, _| panic!("spawn should not run without cli"),
         )
         .expect("reenter");
 

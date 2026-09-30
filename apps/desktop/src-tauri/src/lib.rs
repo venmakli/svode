@@ -50,6 +50,10 @@ pub fn run() {
 
     tracing::info!("Starting Svode desktop app");
 
+    let agent_runtime_state = agent_runtime::AgentRuntimeState::new();
+    // Managed agent PTYs and ACP sessions share one writer registry.
+    let terminal_manager = terminal::TerminalManager::new(agent_runtime_state.runtime().writers());
+
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
@@ -65,7 +69,7 @@ pub fn run() {
         .manage(files::FileWatcher::new())
         .manage(agent::AgentSessions::new())
         .manage(agent_sessions::AgentSessionsState::new())
-        .manage(agent_runtime::AgentRuntimeState::new())
+        .manage(agent_runtime_state)
         .manage(Arc::new(svode_core::page::nonce::WriteNonceRegistry::new()))
         .manage(git::GitState::new())
         .manage(identity::IdentityState::new())
@@ -77,7 +81,7 @@ pub fn run() {
         .manage(mcp::project_sessions::ProjectSessions::new())
         .manage(mcp::commands::McpConfigState::new())
         .manage(actors::ActorCatalogState::new())
-        .manage(terminal::TerminalManager::new())
+        .manage(terminal_manager)
         .manage(media::MediaSourceState::new())
         .manage(apps::AppSourceState::new())
         .manage(apps::AppProcessState::new())
@@ -407,6 +411,8 @@ pub fn run() {
         .expect("error while building tauri application")
         .run(|app_handle, event| {
             if let tauri::RunEvent::ExitRequested { .. } = event {
+                let agent_runtime = app_handle.state::<agent_runtime::AgentRuntimeState>();
+                tauri::async_runtime::block_on(agent_runtime.runtime().shutdown());
                 let terminal_manager = app_handle.state::<terminal::TerminalManager>();
                 terminal_manager.kill_all();
                 let app_processes = app_handle.state::<apps::AppProcessState>();

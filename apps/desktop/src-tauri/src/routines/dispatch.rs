@@ -21,6 +21,7 @@ use svode_agents::registry::{
     AdapterDiagnostic, AdapterRuntimeRegistry, AdapterTarget, ManualRoutineLaunchInput,
     SystemRuntimeCommandRunner,
 };
+use svode_agents::writer::{ExternalLiveness, UnknownLiveness, Writer};
 use svode_core::agent_adapters::AgentAdapterKind;
 use svode_core::collections::engine::EntryFieldBatchIntent;
 use svode_core::page::fields::PageFieldUpdate;
@@ -499,7 +500,22 @@ pub(super) async fn dispatch_routine(
             ),
         )),
     };
-    let terminal = match terminal_manager.spawn_agent_shell_session(app.clone(), spawn) {
+    // A new launch: the pre-assigned session id or, until the source reports
+    // it, the launch id holds the writer slot from before the agent starts.
+    let writers = terminal_manager.writers();
+    let claim = match launch.source_session_id.as_deref() {
+        Some(session_id) => writers.claim(
+            &source.writer_key(session_id),
+            Writer::Pty,
+            ExternalLiveness::Free,
+            UnknownLiveness::NotConfirmed,
+        ),
+        None => writers.claim_launch(&launch_id, Writer::Pty),
+    }
+    .map_err(|refusal| AppError::from(svode_agents::AgentRuntimeError::WriterRefused { refusal }));
+    let spawned = claim
+        .and_then(|claim| terminal_manager.spawn_agent_shell_session(app.clone(), spawn, claim));
+    let terminal = match spawned {
         Ok(terminal) => terminal,
         Err(error) => {
             let message = format!("failed to start agent CLI: {error}");

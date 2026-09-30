@@ -17,6 +17,7 @@ pub(crate) const INITIALIZE: &str = "initialize";
 pub(crate) const SESSION_NEW: &str = "session/new";
 pub(crate) const SESSION_PROMPT: &str = "session/prompt";
 pub(crate) const SESSION_CANCEL: &str = "session/cancel";
+pub(crate) const SESSION_CLOSE: &str = "session/close";
 pub(crate) const SESSION_UPDATE: &str = "session/update";
 pub(crate) const SESSION_REQUEST_PERMISSION: &str = "session/request_permission";
 pub(crate) const ELICITATION_CREATE: &str = "elicitation/create";
@@ -77,6 +78,10 @@ pub(crate) fn prompt_request(session_id: &str, text: &str) -> Value {
 }
 
 pub(crate) fn cancel_notification(session_id: &str) -> Value {
+    json!({ "sessionId": session_id })
+}
+
+pub(crate) fn close_request(session_id: &str) -> Value {
     json!({ "sessionId": session_id })
 }
 

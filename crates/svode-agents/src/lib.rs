@@ -13,6 +13,7 @@ mod projection;
 pub mod registry;
 mod runtime;
 pub mod status;
+pub mod writer;
 
 pub use error::AgentRuntimeError;
 pub use runtime::{

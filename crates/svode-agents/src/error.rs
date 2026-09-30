@@ -1,6 +1,7 @@
 use serde::Serialize;
 
 use crate::runtime::ConnectionId;
+use crate::writer::WriterRefusal;
 
 #[derive(Debug, thiserror::Error, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "code", rename_all = "snake_case")]
@@ -30,6 +31,10 @@ pub enum AgentRuntimeError {
     /// The agent needs its own sign-in; recovery runs the agent's auth.
     #[error("agent requires authentication: {message}")]
     AuthRequired { message: String },
+    /// The session has another managed writer, an external process writes
+    /// to it, or unknown liveness needs the user's confirmation.
+    #[error("the session cannot take this writer: {refusal:?}")]
+    WriterRefused { refusal: WriterRefusal },
     #[error("agent call timed out")]
     Timeout,
     #[error("agent call failed: {message}")]

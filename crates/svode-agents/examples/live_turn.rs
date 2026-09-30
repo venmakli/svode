@@ -51,6 +51,7 @@ async fn main() {
 
     let runtime = AgentRuntime::new(RuntimeConfig {
         request_timeout: Duration::from_secs(60),
+        ..RuntimeConfig::default()
     });
     let started = Instant::now();
     let connection = match runtime

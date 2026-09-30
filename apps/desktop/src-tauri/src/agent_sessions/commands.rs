@@ -127,11 +127,13 @@ pub async fn agent_sessions_reenter(
         };
         let home_dir = state.home_dir.clone();
 
+        let writers = terminal_manager.writers().clone();
         reentry::reenter_session(
             &state,
             project_path,
             session_id,
             terminal_surfaces,
+            &writers,
             move |session, scope_dir| {
                 reentry::resolve_agent_cli_binary(
                     session.source,
@@ -140,9 +142,9 @@ pub async fn agent_sessions_reenter(
                     search_path.as_deref(),
                 )
             },
-            move |spawn| {
+            move |spawn, claim| {
                 terminal_manager
-                    .spawn_agent_shell_session(app.clone(), spawn)
+                    .spawn_agent_shell_session(app.clone(), spawn, claim)
                     .map(|session| session.pty_id)
             },
         )

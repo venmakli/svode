@@ -7,8 +7,22 @@ use super::types::{
     AgentSessionStatusConfidence, AgentSessionStatusSource, AgentSessionTitleSource,
 };
 use crate::terminal::{AgentTerminalStatusEvidence, AgentTerminalSurface};
+use svode_agents::writer::ExternalLiveness;
 
 pub(super) const SOURCE_LOG_ACTIVE_STALE_AFTER_SECS: i64 = 6 * 60 * 60;
+
+/// What Svode knows about an agent process outside it writing to the
+/// session. Only fresh source-log evidence of a running turn counts; there
+/// is no process scan, so everything else is unknown, never free.
+pub(super) fn external_liveness(session: &AgentSession) -> ExternalLiveness {
+    if session.status == AgentSessionStatus::Active
+        && session.status_source == AgentSessionStatusSource::SourceLog
+    {
+        ExternalLiveness::ExternalActive
+    } else {
+        ExternalLiveness::Unknown
+    }
+}
 
 pub(super) fn map_candidate(
     candidate: PersistedAgentSessionCandidate,

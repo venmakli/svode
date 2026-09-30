@@ -185,6 +185,12 @@ impl Projection {
         }
     }
 
+    pub(crate) fn set_writer(&mut self, writer: WriterState) {
+        if self.snapshot.writer != writer {
+            self.emit(Change::Writer(writer));
+        }
+    }
+
     pub(crate) fn apply(&mut self, normalized: Normalized) {
         match normalized {
             Normalized::Message {

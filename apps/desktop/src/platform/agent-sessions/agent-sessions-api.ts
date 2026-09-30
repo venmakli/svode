@@ -206,6 +206,8 @@ export type AgentSessionReentryErrorCode =
   | "cli-not-found"
   | "cwd-not-accessible"
   | "resume-unavailable"
+  | "writer-active"
+  | "external-active"
   | "unknown";
 
 export interface AgentSessionReentryError {

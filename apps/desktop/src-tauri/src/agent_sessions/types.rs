@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 
+use svode_agents::identity::{IdentityNamespace, SessionKey};
 use svode_core::agent_adapters::AgentAdapterKind;
 
 pub(crate) const MAX_SOURCE_DIAGNOSTICS: usize = 50;
@@ -16,6 +17,16 @@ impl AgentSessionSource {
         match self {
             Self::Codex => "codex",
             Self::ClaudeCode => "claude-code",
+        }
+    }
+
+    /// Writer-registry key of a session this source reports: terminal
+    /// sessions carry the agent's native session id.
+    pub(crate) fn writer_key(self, source_session_id: &str) -> SessionKey {
+        SessionKey {
+            agent: self.adapter().as_str().to_string(),
+            namespace: IdentityNamespace::Native,
+            session_id: source_session_id.to_string(),
         }
     }
 
@@ -441,6 +452,10 @@ pub enum AgentSessionReentryErrorCode {
     CliNotFound,
     CwdNotAccessible,
     ResumeUnavailable,
+    /// Another managed writer of Svode drives the session.
+    WriterActive,
+    /// A process outside Svode writes to the session.
+    ExternalActive,
     Unknown,
 }
 
