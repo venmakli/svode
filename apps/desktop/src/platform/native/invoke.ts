@@ -1,4 +1,5 @@
 import {
+  Channel,
   convertFileSrc as tauriConvertFileSrc,
   invoke as tauriInvoke,
   type InvokeArgs,
@@ -6,6 +7,9 @@ import {
 } from "@tauri-apps/api/core";
 
 export type { InvokeArgs, InvokeOptions };
+
+/** Ordered stream of messages from one command to its caller. */
+export { Channel as NativeChannel };
 
 export function invokeCommand<T>(
   command: string,

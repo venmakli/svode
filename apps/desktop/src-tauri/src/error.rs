@@ -55,6 +55,12 @@ impl From<svode_core::agent_adapters::SourceRegistryError> for AppError {
     }
 }
 
+impl From<svode_agents::AgentRuntimeError> for AppError {
+    fn from(error: svode_agents::AgentRuntimeError) -> Self {
+        Self::AgentRuntime(error)
+    }
+}
+
 impl From<svode_core::agent_context::AgentContextError> for AppError {
     fn from(error: svode_core::agent_context::AgentContextError) -> Self {
         match error {
@@ -502,6 +508,9 @@ pub enum AppError {
     SourceStale { path: String },
 
     #[error("{0}")]
+    AgentRuntime(svode_agents::AgentRuntimeError),
+
+    #[error("{0}")]
     General(String),
 }
 
@@ -542,6 +551,7 @@ impl AppError {
             AppError::PageWriteRecovery { .. } => "page_write_recovery",
             AppError::SourceBusy { .. } => "source_busy",
             AppError::SourceStale { .. } => "source_stale",
+            AppError::AgentRuntime(_) => "agent_runtime",
             AppError::General(_) => "general",
         }
     }
@@ -558,6 +568,12 @@ impl Serialize for AppError {
             }
             AppError::VariablesProblem(problem) => {
                 serde_json::json!({ "kind": self.kind(), "message": self.to_string(), "problem": problem }).serialize(serializer)
+            }
+            AppError::AgentRuntime(error) => {
+                let code = serde_json::to_value(error)
+                    .ok()
+                    .and_then(|value| value.get("code").cloned());
+                serde_json::json!({ "kind": self.kind(), "message": self.to_string(), "code": code }).serialize(serializer)
             }
             AppError::SourceBusy { path } | AppError::SourceStale { path } => {
                 serde_json::json!({ "kind": self.kind(), "message": self.to_string(), "path": path }).serialize(serializer)
@@ -619,6 +635,17 @@ impl Serialize for AppError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn agent_runtime_error_serializes_its_code() {
+        let value =
+            serde_json::to_value(AppError::from(svode_agents::AgentRuntimeError::TurnActive))
+                .unwrap();
+
+        assert_eq!(value["kind"], "agent_runtime");
+        assert_eq!(value["code"], "turn_active");
+        assert_eq!(value["message"], "a turn is already active in this session");
+    }
 
     #[test]
     fn page_name_conflict_serializes_as_structured_tauri_error() {

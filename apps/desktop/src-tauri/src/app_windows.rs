@@ -360,6 +360,8 @@ pub fn handle_window_event(app: &AppHandle, window: &Window, event: &WindowEvent
                 stop_project_runtime(app, &project_id);
             }
             active_state.remove_window(&label);
+            app.state::<crate::agent_runtime::AgentRuntimeState>()
+                .release_webview(&label);
         }
         _ => {}
     }

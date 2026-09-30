@@ -9,3 +9,4 @@ export * from "./scopes";
 export * from "./target";
 export * from "./types";
 export * from "./new-session";
+export * from "./activity";

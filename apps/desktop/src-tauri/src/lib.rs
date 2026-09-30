@@ -2,6 +2,7 @@ mod actors;
 mod agent;
 mod agent_actors;
 mod agent_context;
+mod agent_runtime;
 mod agent_sessions;
 mod app_windows;
 mod apps;
@@ -64,6 +65,7 @@ pub fn run() {
         .manage(files::FileWatcher::new())
         .manage(agent::AgentSessions::new())
         .manage(agent_sessions::AgentSessionsState::new())
+        .manage(agent_runtime::AgentRuntimeState::new())
         .manage(Arc::new(svode_core::page::nonce::WriteNonceRegistry::new()))
         .manage(git::GitState::new())
         .manage(identity::IdentityState::new())
@@ -89,6 +91,13 @@ pub fn run() {
         .menu(app_windows::build_initial_app_menu)
         .on_menu_event(|app, event| {
             app_windows::handle_menu_event(app, event.id().as_ref());
+        })
+        .on_page_load(|webview, payload| {
+            if payload.event() == tauri::webview::PageLoadEvent::Started {
+                webview
+                    .state::<agent_runtime::AgentRuntimeState>()
+                    .release_webview(webview.label());
+            }
         })
         .on_window_event(|window, event| {
             let app = window.app_handle();
@@ -304,6 +313,12 @@ pub fn run() {
             agent_sessions::commands::agent_sessions_refresh,
             agent_sessions::commands::agent_sessions_hot_status,
             agent_sessions::commands::agent_sessions_reenter,
+            agent_runtime::commands::agent_runtime_subscribe,
+            agent_runtime::commands::agent_runtime_unsubscribe,
+            agent_runtime::commands::agent_runtime_detail,
+            agent_runtime::commands::agent_runtime_prompt,
+            agent_runtime::commands::agent_runtime_cancel,
+            agent_runtime::commands::agent_runtime_answer,
             navigation::commands::navigation_read,
             navigation::commands::navigation_pin,
             navigation::commands::navigation_keep,
