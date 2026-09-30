@@ -133,6 +133,21 @@ fn sync_turns_a_previous_desktop_entry_into_a_full_connection_and_disconnect_rem
         fs::read_link(home.path(".claude/skills/svode")).unwrap(),
         home.path(".svode/current/plugins/svode")
     );
+    let (code, status) = home.integration(&["status"]);
+    assert_eq!(code, 0, "{status}");
+    let kinds = |id: &str| {
+        Home::client(&status, id)["artifacts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|artifact| format!("{} {}", artifact["kind"], artifact["state"]))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(kinds("claude-code"), [r#""plugin" "managed""#]);
+    assert_eq!(
+        kinds("codex"),
+        [r#""skill" "managed""#, r#""mcp-entry" "managed""#]
+    );
 
     let (code, disconnected) = home.integration(&["disconnect", "--all"]);
     assert_eq!(code, 0, "{disconnected}");

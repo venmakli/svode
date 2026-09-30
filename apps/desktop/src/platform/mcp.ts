@@ -68,7 +68,7 @@ export type McpArtifactState =
   | "unreadable";
 
 export interface McpArtifactStatus {
-  kind: "skill" | "mcp-entry";
+  kind: "plugin" | "skill" | "mcp-entry";
   path: string;
   state: McpArtifactState;
 }

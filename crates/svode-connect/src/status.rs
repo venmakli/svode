@@ -42,7 +42,7 @@ pub struct Issue {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ArtifactStatus {
-    /// `skill` or `mcp-entry`.
+    /// `plugin`, `skill` or `mcp-entry`.
     pub kind: String,
     pub path: String,
     /// `absent`, `managed`, `previous`, `foreign`, `custom` or `unreadable`.
@@ -307,8 +307,12 @@ fn issues(
     issues
 }
 
+/// The artifacts of the way `client` is connected, in display order.
+/// Claude Code gets skill, MCP server and `svode` from one plugin; its user
+/// entry is listed only while it exists, as one the plugin makes redundant
+/// or conflicts with. Codex reads the shared skill and a managed entry.
 fn artifacts(machine: &Machine, client: Client, inspection: &Inspection) -> Vec<ArtifactStatus> {
-    let skill = match inspection.skill {
+    let link = match inspection.skill {
         Link::Absent => "absent",
         Link::Managed => "managed",
         Link::Foreign => "foreign",
@@ -320,18 +324,23 @@ fn artifacts(machine: &Machine, client: Client, inspection: &Inspection) -> Vec<
         Entry::Custom => "custom",
         Entry::Unreadable(_) => "unreadable",
     };
-    vec![
-        ArtifactStatus {
-            kind: "skill".into(),
-            path: machine.skill_link(client).display().to_string(),
-            state: skill.into(),
+    let artifact = |kind: &str, path: PathBuf, state: &str| ArtifactStatus {
+        kind: kind.into(),
+        path: path.display().to_string(),
+        state: state.into(),
+    };
+    let mut artifacts = vec![artifact(
+        match client {
+            Client::ClaudeCode => "plugin",
+            Client::Codex => "skill",
         },
-        ArtifactStatus {
-            kind: "mcp-entry".into(),
-            path: machine.mcp_config(client).display().to_string(),
-            state: entry.into(),
-        },
-    ]
+        machine.skill_link(client),
+        link,
+    )];
+    if client == Client::Codex || inspection.entry != Entry::Absent {
+        artifacts.push(artifact("mcp-entry", machine.mcp_config(client), entry));
+    }
+    artifacts
 }
 
 /// MCP config for a client configured by hand: the stable launcher in

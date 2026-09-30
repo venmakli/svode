@@ -273,6 +273,88 @@ fn conflicts_refuse_a_connection_before_any_write() {
     assert_eq!(claude.attention_code.as_deref(), Some("skill_conflict"));
 }
 
+fn artifacts(status: &crate::ClientStatus) -> Vec<(&str, &str)> {
+    status
+        .artifacts
+        .iter()
+        .map(|artifact| (artifact.kind.as_str(), artifact.state.as_str()))
+        .collect()
+}
+
+#[test]
+fn artifacts_follow_the_way_each_client_is_connected() {
+    let home = Home::with_desktop();
+    let machine = home.machine();
+
+    // Not connected: the plugin of Claude Code is missing and it has no entry.
+    let claude = client(&status(&machine, &[], None), Client::ClaudeCode);
+    assert_eq!(artifacts(&claude), [("plugin", "absent")]);
+    assert_eq!(
+        claude.artifacts[0].path,
+        home.path(".claude/skills/svode").display().to_string()
+    );
+
+    // Connected: the plugin only.
+    connect(&machine, Client::ClaudeCode).unwrap();
+    let claude = client(&status(&machine, &[], None), Client::ClaudeCode);
+    assert_eq!(artifacts(&claude), [("plugin", "managed")]);
+    assert!(claude.issues.is_empty(), "{claude:?}");
+
+    // A user entry is listed while it exists, with its own attention.
+    home.previous_entries();
+    fs::remove_file(home.path(".claude/skills/svode")).unwrap();
+    let claude = client(&status(&machine, &[], None), Client::ClaudeCode);
+    assert_eq!(
+        artifacts(&claude),
+        [("plugin", "absent"), ("mcp-entry", "previous")]
+    );
+    assert_eq!(
+        claude.artifacts[1].path,
+        home.path(".claude.json").display().to_string()
+    );
+    assert_eq!(claude.attention_code.as_deref(), Some("incomplete"));
+
+    connect(&machine, Client::ClaudeCode).unwrap();
+    home.write(
+        ".claude.json",
+        r#"{"mcpServers":{"svode":{"command":"my-wrapper"}}}"#,
+    );
+    let claude = client(&status(&machine, &[], None), Client::ClaudeCode);
+    assert_eq!(
+        artifacts(&claude),
+        [("plugin", "managed"), ("mcp-entry", "custom")]
+    );
+    assert_eq!(claude.attention_code.as_deref(), Some("custom_conflict"));
+
+    home.write(".claude.json", "{ not json");
+    let claude = client(&status(&machine, &[], None), Client::ClaudeCode);
+    assert_eq!(
+        artifacts(&claude),
+        [("plugin", "managed"), ("mcp-entry", "unreadable")]
+    );
+    assert_eq!(claude.attention_code.as_deref(), Some("config_unreadable"));
+
+    // Codex: the shared skill and the managed entry.
+    home.write(".codex/config.toml", "");
+    connect(&machine, Client::Codex).unwrap();
+    let codex = client(&status(&machine, &[], None), Client::Codex);
+    assert_eq!(
+        artifacts(&codex),
+        [("skill", "managed"), ("mcp-entry", "managed")]
+    );
+    assert_eq!(
+        codex.artifacts[1].path,
+        home.path(".codex/config.toml").display().to_string()
+    );
+    home.write(".codex/config.toml", "");
+    let codex = client(&status(&machine, &[], None), Client::Codex);
+    assert_eq!(
+        artifacts(&codex),
+        [("skill", "managed"), ("mcp-entry", "absent")]
+    );
+    assert_eq!(codex.attention_code.as_deref(), Some("incomplete"));
+}
+
 #[test]
 fn a_project_entry_that_overrides_the_user_one_is_a_conflict() {
     let home = Home::with_desktop();

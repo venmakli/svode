@@ -81,8 +81,8 @@ function toggleBlocked(client: McpClientStatus, server: McpStatus["server"]) {
   );
 }
 
-function artifactState(artifact: McpArtifactStatus | undefined) {
-  switch (artifact?.state) {
+function artifactState(artifact: McpArtifactStatus) {
+  switch (artifact.state) {
     case "managed":
       return m.settings_providers_artifact_managed();
     case "previous":
@@ -95,6 +95,37 @@ function artifactState(artifact: McpArtifactStatus | undefined) {
       return m.settings_providers_artifact_unreadable();
     default:
       return m.settings_providers_artifact_absent();
+  }
+}
+
+function artifactTitle(kind: McpArtifactStatus["kind"]) {
+  switch (kind) {
+    case "plugin":
+      return m.settings_providers_plugin();
+    case "skill":
+      return m.settings_providers_skill();
+    case "mcp-entry":
+      return m.settings_providers_mcp_entry();
+  }
+}
+
+// What the artifact gives the agent. A plugin brings its own MCP server,
+// so an entry next to it is one the plugin makes redundant or conflicts with.
+function artifactPurpose(artifact: McpArtifactStatus, withPlugin: boolean) {
+  switch (artifact.kind) {
+    case "plugin":
+      return m.settings_providers_plugin_description();
+    case "skill":
+      return m.settings_providers_skill_description();
+    case "mcp-entry":
+      if (!withPlugin) return m.settings_providers_mcp_entry_description();
+      if (artifact.state === "custom") {
+        return m.settings_providers_mcp_entry_plugin_conflict();
+      }
+      if (artifact.state === "unreadable") {
+        return m.settings_providers_mcp_entry_plugin_unreadable();
+      }
+      return m.settings_providers_mcp_entry_plugin_redundant();
   }
 }
 
@@ -154,10 +185,8 @@ export function ProviderRow({
   const [configOpen, setConfigOpen] = useState(false);
   const [reportOpen, setReportOpen] = useState(false);
   const nextStep = agent ? cliAgentNextStep(agent) : null;
-  const artifact = (kind: McpArtifactStatus["kind"]) =>
-    client.artifacts?.find((candidate) => candidate.kind === kind);
-  const skill = artifact("skill");
-  const entry = artifact("mcp-entry");
+  const artifacts = client.artifacts ?? [];
+  const withPlugin = artifacts.some((artifact) => artifact.kind === "plugin");
   const reportLines = doctor ? [...doctor.messages, ...doctor.errors] : [];
 
   return (
@@ -244,18 +273,22 @@ export function ProviderRow({
               </Value>
             }
           />
-          <SettingsItem
-            key="skill"
-            title={m.settings_providers_skill()}
-            description={<Path value={skill?.path} />}
-            actions={<Value>{artifactState(skill)}</Value>}
-          />
-          <SettingsItem
-            key="entry"
-            title={m.settings_providers_mcp_entry()}
-            description={<Path value={entry?.path ?? client.configPath} />}
-            actions={<Value>{artifactState(entry)}</Value>}
-          />
+          {artifacts.map((artifact) => (
+            <SettingsItem
+              key={artifact.kind}
+              data-mcp-artifact={artifact.kind}
+              title={artifactTitle(artifact.kind)}
+              description={
+                <>
+                  <Path value={artifact.path} />
+                  <span className="block">
+                    {artifactPurpose(artifact, withPlugin)}
+                  </span>
+                </>
+              }
+              actions={<Value>{artifactState(artifact)}</Value>}
+            />
+          ))}
           <Collapsible
             key="manual"
             open={configOpen}

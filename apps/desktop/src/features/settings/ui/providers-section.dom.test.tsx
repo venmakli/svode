@@ -99,6 +99,119 @@ if (!isolatedProcess) {
     }
   });
 
+  test("details list the artifacts of the way each agent is connected", async () => {
+    const originalLocale = getLocale();
+    await setLocale("en", { reload: false });
+    let canonical = providersStatus([
+      client("claude-code", "Claude Code", true),
+      client("codex", "Codex", true),
+    ]);
+    const harness = await renderSection(
+      () => canonical,
+      (next) => {
+        canonical = next;
+      },
+    );
+    try {
+      const claude = clientRow(harness.dom, "claude-code");
+      const codex = clientRow(harness.dom, "codex");
+      await act(async () => {
+        within(claude, "Details").click();
+        within(codex, "Details").click();
+        await settle();
+      });
+      expect(artifactRows(claude)).toEqual([
+        [
+          "Plugin",
+          "/Users/test/.claude/skills/svode",
+          "The Svode skill, MCP server and svode command for the agent in one plugin",
+          "Svode",
+        ],
+      ]);
+      expect(
+        /Not set up|MCP entry|\.claude\.json/.test(claude.textContent ?? ""),
+      ).toBe(false);
+      expect(artifactRows(codex)).toEqual([
+        [
+          "Skill",
+          "/Users/test/.agents/skills/svode",
+          "Shared agent skill that teaches the agent to work with Svode",
+          "Svode",
+        ],
+        [
+          "MCP entry",
+          "/Users/test/.codex/config.toml",
+          "Starts the Svode MCP server for the agent",
+          "Svode",
+        ],
+      ]);
+      expect((codex.textContent ?? "").includes("Not set up")).toBe(false);
+    } finally {
+      await harness.cleanup();
+      await setLocale(originalLocale, { reload: false });
+    }
+  });
+
+  test("Russian details show an extra Claude entry with its own state", async () => {
+    const originalLocale = getLocale();
+    await setLocale("ru", { reload: false });
+    const connected = client("claude-code", "Claude Code", true);
+    let canonical = providersStatus([
+      {
+        ...connected,
+        attentionCode: "incomplete",
+        status: "attention",
+        complete: false,
+        artifacts: [
+          ...(connected.artifacts ?? []),
+          {
+            kind: "mcp-entry",
+            path: "/Users/test/.claude.json",
+            state: "previous",
+          },
+        ],
+      },
+      client("codex", "Codex", false),
+    ]);
+    const harness = await renderSection(
+      () => canonical,
+      (next) => {
+        canonical = next;
+      },
+    );
+    try {
+      const claude = clientRow(harness.dom, "claude-code");
+      const codex = clientRow(harness.dom, "codex");
+      await act(async () => {
+        within(claude, "Подробнее").click();
+        within(codex, "Подробнее").click();
+        await settle();
+      });
+      expect(artifactRows(claude)).toEqual([
+        [
+          "Plugin",
+          "/Users/test/.claude/skills/svode",
+          "Skill Svode, MCP-сервер и команда svode для агента в одном plugin",
+          "Svode",
+        ],
+        [
+          "Запись MCP",
+          "/Users/test/.claude.json",
+          "Не нужна: MCP-сервер Svode уже приходит из plugin",
+          "Прежний Svode Desktop",
+        ],
+      ]);
+      // A client that is not connected shows its missing artifacts as absent.
+      expect(artifactRows(codex).map((row) => [row[0], row[3]])).toEqual([
+        ["Skill", "Нет"],
+        ["Запись MCP", "Нет"],
+      ]);
+    } finally {
+      await harness.cleanup();
+      await setLocale(originalLocale, { reload: false });
+    }
+  });
+
   test("Russian custom conflict has one localized attention state and a disabled switch", async () => {
     const originalLocale = getLocale();
     await setLocale("ru", { reload: false });
@@ -381,10 +494,7 @@ function client(
   name: string,
   installed: boolean,
 ): McpClientStatus {
-  const skill =
-    id === "codex"
-      ? "/Users/test/.agents/skills/svode"
-      : "/Users/test/.claude/skills/svode";
+  const state = installed ? "managed" : "absent";
   return {
     id,
     name,
@@ -393,23 +503,40 @@ function client(
     managed: installed,
     status: installed ? "installed" : "mcp_not_installed",
     path: `/Users/test/.bun/bin/${id}`,
-    configPath: "/Users/test/.codex/config.toml",
+    configPath:
+      id === "codex"
+        ? "/Users/test/.codex/config.toml"
+        : "/Users/test/.claude.json",
     complete: installed,
     version: installed ? "0.0.9" : null,
-    artifacts: [
-      { kind: "skill", path: skill, state: installed ? "managed" : "absent" },
-      {
-        kind: "mcp-entry",
-        path: "/Users/test/.codex/config.toml",
-        state: installed && id === "codex" ? "managed" : "absent",
-      },
-    ],
+    artifacts:
+      id === "codex"
+        ? [
+            { kind: "skill", path: "/Users/test/.agents/skills/svode", state },
+            {
+              kind: "mcp-entry",
+              path: "/Users/test/.codex/config.toml",
+              state,
+            },
+          ]
+        : [{ kind: "plugin", path: "/Users/test/.claude/skills/svode", state }],
   };
 }
 
 // The always visible part of a row, without its details.
 function summary(row: HTMLElement) {
   return row.querySelector('[data-slot="item-content"]')?.textContent ?? "";
+}
+
+// Title, path, purpose and state of each artifact in the open details.
+function artifactRows(row: HTMLElement) {
+  return Array.from(row.querySelectorAll("[data-mcp-artifact]")).map((item) => [
+    item.querySelector('[data-slot="item-title"]')?.textContent ?? "",
+    ...Array.from(
+      item.querySelectorAll('[data-slot="item-description"] > span'),
+    ).map((span) => span.textContent ?? ""),
+    item.querySelector('[data-slot="item-actions"]')?.textContent ?? "",
+  ]);
 }
 
 function within(row: HTMLElement, name: string) {
