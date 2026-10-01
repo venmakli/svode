@@ -1,8 +1,9 @@
 //! ACP list source of the Sessions read-model (Stage 10 `02` C3). The last
 //! good `session/list` of every agent whose declared catalogue source it is
-//! lives here; reads run off the list response path, so a slow or missing
-//! agent leaves the other sources and its own last good list untouched and
-//! only marks its source `stale`.
+//! lives here; reads run off the list response path. A failed or slow read
+//! leaves the other sources and its own last good list untouched and only
+//! marks its source `stale`; an agent without a live connection keeps its
+//! last good list, since closing an idle connection is normal.
 
 use std::collections::HashMap;
 use std::future::Future;
@@ -71,8 +72,8 @@ pub(crate) struct AcpListRead {
 
 impl AcpListSources {
     /// Starts a read of every listing agent not being read already and
-    /// returns at once. Agents without an open connection keep their last
-    /// good list, marked stale; no agent process is started.
+    /// returns at once. Only live connections are read; no agent process is
+    /// started.
     pub(crate) fn refresh(self: &Arc<Self>, lister: &impl CatalogLister) -> Vec<JoinHandle<()>> {
         self.start(lister, None)
     }
@@ -93,13 +94,6 @@ impl AcpListSources {
     ) -> Vec<JoinHandle<()>> {
         let connections = lister.catalog_connections();
         let mut agents = self.agents.lock().unwrap();
-        for (agent, list) in agents.iter_mut() {
-            if only.is_none_or(|only| only == agent)
-                && !connections.iter().any(|known| &known.agent == agent)
-            {
-                list.problem = Some("the agent is not connected".to_string());
-            }
-        }
         let mut reads = Vec::new();
         for CatalogConnection { connection, agent } in connections {
             if only.is_some_and(|only| only != agent) {
@@ -405,7 +399,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_closed_connection_leaves_the_last_list_stale_without_starting_the_agent() {
+    async fn a_closed_connection_keeps_the_last_list_without_starting_the_agent() {
         let sources = Arc::new(AcpListSources::default());
         let lister = FakeLister::default();
         lister.connect(
@@ -418,7 +412,7 @@ mod tests {
         let reads = sources.refresh(&lister);
         assert!(reads.is_empty());
         let read = &sources.reads()[0];
-        assert_eq!(read.report.status, AgentSessionSourceStatus::Stale);
+        assert_eq!(read.report.status, AgentSessionSourceStatus::Ok);
         assert_eq!(read.sessions.len(), 1);
         assert_eq!(lister.calls.load(Ordering::Relaxed), 1);
     }
