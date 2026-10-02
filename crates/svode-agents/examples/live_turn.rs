@@ -24,6 +24,12 @@
 //! again and opens the same session to compare its replay with the live
 //! turn.
 //!
+//! `--read <session id>` reads an existing session without becoming its
+//! writer: `session/load` replays it, `session/close` detaches it, and a
+//! prompt is refused. `--writer-refusal <reason>` names the error reason
+//! with which the agent refuses a session another client writes to
+//! (`thread_active_writer` for Codex).
+//!
 //! `--list` only reads the agent's `session/list` as the catalogue source
 //! and stops: no session is created or opened, no prompt is sent.
 
@@ -46,6 +52,8 @@ async fn main() {
     let mut prompt = None;
     let mut on_pending = None;
     let mut open = None;
+    let mut read = None;
+    let mut writer_refusal = None;
     let mut reopen = false;
     let mut list = false;
     let mut settings = Vec::new();
@@ -59,6 +67,10 @@ async fn main() {
             "--on-pending" => on_pending = Some(args.next().expect("--on-pending value")),
             "--open" => open = Some(args.next().expect("--open value")),
             "--reopen" => reopen = true,
+            "--read" => read = Some(args.next().expect("--read value")),
+            "--writer-refusal" => {
+                writer_refusal = Some(args.next().expect("--writer-refusal value"))
+            }
             "--list" => list = true,
             "--setting" => {
                 let pair = args.next().expect("--setting ID=VALUE");
@@ -92,8 +104,44 @@ async fn main() {
         cwd: cwd.clone(),
         acp_id_is_native: false,
         lists_catalog: list,
+        read_only_open: read.is_some(),
+        writer_refusal,
     };
     let connection = connect(&runtime, &launch).await;
+
+    if let Some(session_id) = read {
+        let key = SessionKey::from_acp(&agent, &session_id, false);
+        let started = Instant::now();
+        match runtime.read_session(connection, &key, &cwd).await {
+            Ok(()) => {
+                let snapshot = runtime.subscribe(&key).unwrap().snapshot;
+                println!(
+                    "read in {:?}: history {}, {} items, writer {:?}, writer slot {:?}",
+                    started.elapsed(),
+                    serde_json::to_string(&snapshot.history).unwrap(),
+                    snapshot.items.len(),
+                    snapshot.writer,
+                    runtime.writers().writer(&key)
+                );
+                for (role, text) in messages(&snapshot.items) {
+                    println!("  {role}: {:?}", text.chars().take(60).collect::<String>());
+                }
+                match runtime.prompt(&key, "not sent") {
+                    Ok(turn) => println!("prompt accepted: {turn}"),
+                    Err(error) => {
+                        println!("prompt refused: {}", serde_json::to_string(&error).unwrap())
+                    }
+                }
+            }
+            Err(error) => println!(
+                "read refused in {:?}: {}",
+                started.elapsed(),
+                serde_json::to_string(&error).unwrap()
+            ),
+        }
+        runtime.close_connection(connection).await.unwrap();
+        return;
+    }
 
     if list {
         let offered = runtime.catalog_connections();

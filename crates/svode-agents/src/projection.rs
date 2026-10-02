@@ -83,6 +83,7 @@ impl Projection {
         connection: ConnectionState,
         history: HistoryState,
         replay: bool,
+        writer: WriterState,
         retention: Retention,
         process_detail: Arc<AtomicUsize>,
     ) -> Self {
@@ -102,7 +103,7 @@ impl Projection {
                 plan: None,
                 pending: None,
                 history,
-                writer: WriterState::Acp,
+                writer,
                 settings: Vec::new(),
             },
             sender,

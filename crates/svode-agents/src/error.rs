@@ -24,6 +24,15 @@ pub enum AgentRuntimeError {
     /// The agent declares neither `session/load` nor `session/resume`.
     #[error("the agent cannot open existing sessions")]
     OpenUnsupported,
+    /// No recorded evidence that loading and closing a session add no
+    /// turns or messages to the agent's conversation, or the agent does
+    /// not replay history: open the session with a writer instead.
+    #[error("the agent cannot read a session without becoming its writer")]
+    ReadOnlyUnsupported,
+    /// The session is open read-only; a prompt needs it opened with a
+    /// writer first.
+    #[error("the session is open read-only")]
+    WriterRequired,
     /// The agent does not declare `session/list`.
     #[error("the agent does not list its sessions")]
     ListUnsupported,

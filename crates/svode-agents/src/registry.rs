@@ -571,6 +571,14 @@ impl AdapterRuntimeRegistry {
             // source of Codex and Claude Code until the provider matrix
             // records identity equality and coverage (slice 2.5b).
             lists_catalog: false,
+            // E01: load and close of both agents change their store only
+            // in service records, which Svode accepts.
+            read_only_open: true,
+            writer_refusal: match adapter {
+                AgentAdapterKind::Codex => Some("thread_active_writer".into()),
+                // Claude loads a session another process writes to.
+                AgentAdapterKind::ClaudeCode => None,
+            },
         }
     }
 }
@@ -1464,6 +1472,20 @@ mod tests {
         );
         assert!(!launch.acp_id_is_native);
         assert!(!launch.lists_catalog);
+        assert!(launch.read_only_open);
+        assert_eq!(launch.writer_refusal, None);
+
+        let codex = AdapterRuntimeRegistry.acp_launch(
+            AgentAdapterKind::Codex,
+            Path::new("/adapters/codex-acp"),
+            Path::new("/bin/codex"),
+            Path::new("/project"),
+        );
+        assert!(codex.read_only_open);
+        assert_eq!(
+            codex.writer_refusal.as_deref(),
+            Some("thread_active_writer")
+        );
     }
 
     #[test]

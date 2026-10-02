@@ -102,6 +102,8 @@ fn launch() -> AcpLaunch {
         cwd: PathBuf::from("/project"),
         acp_id_is_native: false,
         lists_catalog: false,
+        read_only_open: false,
+        writer_refusal: None,
     }
 }
 
@@ -2147,4 +2149,316 @@ async fn an_opened_session_reports_its_settings_and_keeps_replayed_ones() {
     opened.unwrap();
     let snapshot = runtime.subscribe(&key).unwrap().snapshot;
     assert_eq!(snapshot.settings[0].current_value, "agent");
+}
+
+fn reading(writer_refusal: Option<&str>) -> AcpLaunch {
+    AcpLaunch {
+        read_only_open: true,
+        writer_refusal: writer_refusal.map(str::to_string),
+        ..launch()
+    }
+}
+
+/// Reads `key` on connection `id`; the agent answers `session/load` after
+/// replaying `replay` and then `session/close` where it declares `close`.
+async fn read(
+    runtime: &AgentRuntime,
+    id: ConnectionId,
+    agent: &mut ScriptedAgent,
+    key: &SessionKey,
+    replay: Vec<Value>,
+    close: bool,
+) -> Result<(), AgentRuntimeError> {
+    let (read, ()) = tokio::join!(
+        runtime.read_session(id, key, Path::new("/project")),
+        async {
+            let load = agent.expect("session/load").await;
+            assert_eq!(load["params"]["sessionId"], key.session_id.as_str());
+            for update in replay {
+                agent.update(&key.session_id, update).await;
+            }
+            agent.reply(&load, json!({})).await;
+            if close {
+                let close = agent.expect("session/close").await;
+                assert_eq!(close["params"]["sessionId"], key.session_id.as_str());
+                agent.reply(&close, json!({})).await;
+            }
+        }
+    );
+    read
+}
+
+fn messages(snapshot: &SessionSnapshot) -> Vec<String> {
+    snapshot
+        .items
+        .iter()
+        .map(|item| item.summary.clone())
+        .collect()
+}
+
+#[tokio::test]
+async fn reading_replays_the_history_then_closes_the_session_without_a_writer() {
+    let runtime = AgentRuntime::default();
+    let key = SessionKey::from_acp("scripted", "s7", false);
+    let (id, mut agent) = attached_with(&runtime, &reading(None));
+    let (initialized, ()) = tokio::join!(
+        runtime.read_session(id, &key, Path::new("/project")),
+        async {
+            agent
+                .initialize(json!({ "loadSession": true, "sessionCapabilities": { "close": {} } }))
+                .await;
+            let load = agent.expect("session/load").await;
+            agent.update("s7", user_chunk("Read the plan")).await;
+            agent.update("s7", agent_chunk("Done")).await;
+            agent.reply(&load, json!({})).await;
+            let close = agent.expect("session/close").await;
+            agent.reply(&close, json!({})).await;
+        }
+    );
+    initialized.unwrap();
+
+    let snapshot = runtime.subscribe(&key).unwrap().snapshot;
+    assert_eq!(messages(&snapshot), vec!["Read the plan", "Done"]);
+    assert_eq!(
+        snapshot.history,
+        HistoryState {
+            source: HistorySource::Replay,
+            available: true,
+            truncated_items: None
+        }
+    );
+    assert_eq!(snapshot.writer, WriterState::None);
+    assert_eq!(runtime.writers().writer(&key), None);
+
+    // The snapshot does not follow the session, and no prompt reaches it.
+    agent.update("s7", agent_chunk("Later")).await;
+    assert_eq!(
+        runtime.prompt(&key, "Next"),
+        Err(AgentRuntimeError::WriterRequired)
+    );
+    agent.silent().await;
+    assert_eq!(runtime.subscribe(&key).unwrap().snapshot, snapshot);
+
+    // Reading again replays the session anew.
+    read(
+        &runtime,
+        id,
+        &mut agent,
+        &key,
+        vec![
+            user_chunk("Read the plan"),
+            agent_chunk("Done"),
+            user_chunk("Thanks"),
+        ],
+        true,
+    )
+    .await
+    .unwrap();
+    let again = runtime.subscribe(&key).unwrap().snapshot;
+    assert_eq!(messages(&again), vec!["Read the plan", "Done", "Thanks"]);
+    assert_eq!(again.writer, WriterState::None);
+    agent.silent().await;
+}
+
+#[tokio::test]
+async fn an_agent_without_close_keeps_the_read_session_attached_and_idle() {
+    let runtime = AgentRuntime::default();
+    let key = SessionKey::from_acp("scripted", "s7", false);
+    let (id, mut agent) = attached_with(&runtime, &reading(None));
+    let (initialized, ()) = tokio::join!(
+        runtime.read_session(id, &key, Path::new("/project")),
+        async {
+            agent.initialize(json!({ "loadSession": true })).await;
+            let load = agent.expect("session/load").await;
+            agent.update("s7", user_chunk("Hello")).await;
+            agent.reply(&load, json!({})).await;
+        }
+    );
+    initialized.unwrap();
+    agent.silent().await;
+    let snapshot = runtime.subscribe(&key).unwrap().snapshot;
+    assert_eq!(messages(&snapshot), vec!["Hello"]);
+    assert_eq!(runtime.writers().writer(&key), None);
+}
+
+#[tokio::test]
+async fn reading_goes_on_while_another_process_writes_unless_the_agent_refuses() {
+    let runtime = AgentRuntime::default();
+    let key = SessionKey::from_acp("scripted", "s7", false);
+    let _pty = runtime
+        .writers()
+        .claim(
+            &key,
+            Writer::Pty,
+            ExternalLiveness::Free,
+            UnknownLiveness::NotConfirmed,
+        )
+        .unwrap();
+    let (id, mut agent) = attached_with(&runtime, &reading(None));
+    agent_initialized(&runtime, id, &mut agent).await;
+    read(
+        &runtime,
+        id,
+        &mut agent,
+        &key,
+        vec![user_chunk("Hello")],
+        true,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        messages(&runtime.subscribe(&key).unwrap().snapshot),
+        vec!["Hello"]
+    );
+    assert_eq!(runtime.writers().writer(&key), Some(Writer::Pty));
+
+    // An agent that refuses a session another of its clients writes to.
+    let other = SessionKey::from_acp("scripted", "s8", false);
+    let (id, mut agent) = attached_with(&runtime, &reading(Some("thread_active_writer")));
+    agent_initialized(&runtime, id, &mut agent).await;
+    let (refused, ()) = tokio::join!(
+        runtime.read_session(id, &other, Path::new("/project")),
+        async {
+            let load = agent.expect("session/load").await;
+            agent
+            .send(json!({
+                "jsonrpc": "2.0",
+                "id": load["id"],
+                "error": {
+                    "code": -32600,
+                    "message": "Invalid request: This Codex session is in use by another Codex client",
+                    "data": { "reason": "thread_active_writer", "threadId": "s8" }
+                }
+            }))
+            .await;
+        }
+    );
+    assert_eq!(
+        refused,
+        Err(AgentRuntimeError::WriterRefused {
+            refusal: WriterRefusal::ExternalActive
+        })
+    );
+    assert!(runtime.subscribe(&other).is_err());
+    agent.silent().await;
+    assert_eq!(
+        runtime.connection_status(id).unwrap().state,
+        ConnectionState::Ready
+    );
+
+    // Opening with a writer gets the same refusal and frees the slot.
+    let (opened, ()) = tokio::join!(
+        runtime.open_session(
+            id,
+            &other,
+            Path::new("/project"),
+            ExternalLiveness::Free,
+            UnknownLiveness::NotConfirmed,
+        ),
+        async {
+            let load = agent.expect("session/load").await;
+            agent
+                .send(json!({
+                    "jsonrpc": "2.0",
+                    "id": load["id"],
+                    "error": { "code": -32600, "message": "in use", "data": { "reason": "thread_active_writer" } }
+                }))
+                .await;
+        }
+    );
+    assert_eq!(
+        opened,
+        Err(AgentRuntimeError::WriterRefused {
+            refusal: WriterRefusal::ExternalActive
+        })
+    );
+    assert_eq!(runtime.writers().writer(&other), None);
+}
+
+/// Initializes the connection through a read of a session the agent does
+/// not have; nothing is registered.
+async fn agent_initialized(runtime: &AgentRuntime, id: ConnectionId, agent: &mut ScriptedAgent) {
+    let missing = SessionKey::from_acp("scripted", "missing", false);
+    let (read, ()) = tokio::join!(
+        runtime.read_session(id, &missing, Path::new("/project")),
+        async {
+            agent
+                .initialize(json!({ "loadSession": true, "sessionCapabilities": { "close": {} } }))
+                .await;
+            let load = agent.expect("session/load").await;
+            agent
+                .send(json!({
+                    "jsonrpc": "2.0",
+                    "id": load["id"],
+                    "error": { "code": -32002, "message": "Resource not found" }
+                }))
+                .await;
+        }
+    );
+    assert!(matches!(read, Err(AgentRuntimeError::Agent { .. })));
+    assert!(runtime.subscribe(&missing).is_err());
+}
+
+#[tokio::test]
+async fn without_read_only_evidence_the_history_is_not_read_and_an_external_writer_refuses_opening()
+{
+    let runtime = AgentRuntime::default();
+    let key = SessionKey::from_acp("scripted", "s7", false);
+    let (id, mut agent) = attached(&runtime);
+    assert_eq!(
+        runtime.read_session(id, &key, Path::new("/project")).await,
+        Err(AgentRuntimeError::ReadOnlyUnsupported)
+    );
+    let (opened, ()) = tokio::join!(
+        runtime.open_session(
+            id,
+            &key,
+            Path::new("/project"),
+            ExternalLiveness::ExternalActive,
+            UnknownLiveness::Confirmed,
+        ),
+        agent.initialize(json!({ "loadSession": true }))
+    );
+    assert_eq!(
+        opened,
+        Err(AgentRuntimeError::WriterRefused {
+            refusal: WriterRefusal::ExternalActive
+        })
+    );
+    agent.silent().await;
+    assert!(runtime.subscribe(&key).is_err());
+
+    // An agent that does not replay history is not read either.
+    let (id, mut agent) = attached_with(&runtime, &reading(None));
+    let (read, ()) = tokio::join!(
+        runtime.read_session(id, &key, Path::new("/project")),
+        agent.initialize(json!({ "sessionCapabilities": { "resume": {} } }))
+    );
+    assert_eq!(read, Err(AgentRuntimeError::ReadOnlyUnsupported));
+    agent.silent().await;
+}
+
+#[tokio::test]
+async fn a_session_the_runtime_drives_is_not_read_again() {
+    let runtime = AgentRuntime::default();
+    let (id, mut agent) = attached_with(&runtime, &reading(None));
+    let (key, ()) = tokio::join!(
+        async {
+            runtime
+                .new_session(id, Path::new("/project"), &[])
+                .await
+                .unwrap()
+        },
+        agent.open_session()
+    );
+    runtime
+        .read_session(id, &key, Path::new("/project"))
+        .await
+        .unwrap();
+    agent.silent().await;
+    assert_eq!(runtime.writers().writer(&key), Some(Writer::Acp));
+    assert_eq!(
+        runtime.subscribe(&key).unwrap().snapshot.writer,
+        WriterState::Acp
+    );
 }

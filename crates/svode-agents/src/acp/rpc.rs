@@ -19,7 +19,13 @@ pub(crate) const AUTH_REQUIRED: i64 = -32000;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum RpcError {
-    Remote { code: i64, message: String },
+    /// `reason` is the agent's `data.reason`, a stable code some agents
+    /// send next to the message.
+    Remote {
+        code: i64,
+        message: String,
+        reason: Option<String>,
+    },
     Timeout,
     Closed,
 }
@@ -229,6 +235,11 @@ fn route(message: Message, waiters: &Waiters, incoming: &mpsc::UnboundedSender<I
                         .and_then(Value::as_i64)
                         .unwrap_or_default(),
                     message: remote_message(&error),
+                    reason: error
+                        .get("data")
+                        .and_then(|data| data.get("reason"))
+                        .and_then(Value::as_str)
+                        .map(str::to_string),
                 }),
                 None => Ok(message.result.unwrap_or(Value::Null)),
             };

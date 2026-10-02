@@ -33,7 +33,9 @@ use crate::interaction::{self, AnswerOutcome, InteractionAnswer};
 use crate::process;
 use crate::projection::Projection;
 use crate::status::{InteractionKind, StopReason};
-use crate::writer::{ExternalLiveness, UnknownLiveness, Writer, WriterClaim, WriterRegistry};
+use crate::writer::{
+    ExternalLiveness, UnknownLiveness, Writer, WriterClaim, WriterRefusal, WriterRegistry,
+};
 
 /// Kept stderr of a starting agent, shown only when it fails to initialize.
 const STDERR_TAIL_BYTES: usize = 4 * 1024;
@@ -109,6 +111,13 @@ pub struct AcpLaunch {
     /// Recorded decision that the agent's `session/list` is its one
     /// declared catalogue source.
     pub lists_catalog: bool,
+    /// Recorded evidence that `session/load` and `session/close` add no
+    /// turns or messages to the agent's conversation, so its history is
+    /// read without becoming the session's writer.
+    pub read_only_open: bool,
+    /// The error `data.reason` with which the agent refuses to attach a
+    /// session another of its clients writes to.
+    pub writer_refusal: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
@@ -181,6 +190,8 @@ struct Connection {
     agent: String,
     acp_id_is_native: bool,
     lists_catalog: bool,
+    read_only_open: bool,
+    writer_refusal: Option<String>,
     rpc: Arc<RpcClient>,
     state: Mutex<ConnectionState>,
     info: Mutex<Option<AgentInfo>>,
@@ -197,7 +208,8 @@ struct Session {
     /// Locked before `projection` wherever both are held.
     interactions: Mutex<Interactions>,
     next_interaction: AtomicU64,
-    /// The ACP writer slot of the session while this runtime drives it.
+    /// The ACP writer slot of the session while this runtime drives it;
+    /// none for a session read without a writer.
     writer: Mutex<Option<WriterClaim>>,
     /// When the session was last opened, in `Inner::next_open` order.
     opened: AtomicU64,
@@ -298,6 +310,8 @@ impl AgentRuntime {
             agent: launch.agent.clone(),
             acp_id_is_native: launch.acp_id_is_native,
             lists_catalog: launch.lists_catalog,
+            read_only_open: launch.read_only_open,
+            writer_refusal: launch.writer_refusal.clone(),
             rpc,
             state: Mutex::new(ConnectionState::Starting),
             info: Mutex::new(None),
@@ -492,7 +506,7 @@ impl AgentRuntime {
             key.clone(),
             Projection::live_history(),
             false,
-            claim,
+            Some(claim),
         );
         session.projection.lock().unwrap().set_settings(declared);
         for value in settings {
@@ -682,7 +696,7 @@ impl AgentRuntime {
             key.clone(),
             history,
             method == acp::SESSION_LOAD,
-            claim,
+            Some(claim),
         );
         let result = connection
             .call(
@@ -711,8 +725,100 @@ impl AgentRuntime {
         }
     }
 
-    /// A session of `connection` that holds `claim` and receives its
-    /// updates from now on.
+    /// Reads the history of an existing session without becoming its
+    /// writer: `session/load` replays it through the one normalizer, then
+    /// `session/close` detaches it where the agent declares `close`. No
+    /// prompt is sent. Only for an agent with recorded evidence that load
+    /// and close add no turns or messages; another process writing to the
+    /// session does not prevent it unless the agent itself refuses. The
+    /// snapshot does not follow the session afterwards: reading it again
+    /// replays it anew. A session this runtime drives is left as it is.
+    pub async fn read_session(
+        &self,
+        id: ConnectionId,
+        key: &SessionKey,
+        cwd: &Path,
+    ) -> Result<(), AgentRuntimeError> {
+        let connection = self.connection(id)?;
+        connection.require_open()?;
+        if *key
+            != SessionKey::from_acp(
+                &connection.agent,
+                &key.session_id,
+                connection.acp_id_is_native,
+            )
+        {
+            return Err(AgentRuntimeError::SessionNotFound);
+        }
+        if let Ok(open) = self.session(key)
+            && open.writer.lock().unwrap().is_some()
+        {
+            open.opened.store(self.next_open(), Ordering::Relaxed);
+            return Ok(());
+        }
+        if !connection.read_only_open {
+            return Err(AgentRuntimeError::ReadOnlyUnsupported);
+        }
+        if connection.info.lock().unwrap().is_none() {
+            self.initialize(&connection).await?;
+        }
+        let loads = connection
+            .info
+            .lock()
+            .unwrap()
+            .as_ref()
+            .is_some_and(|info| info.capabilities.load_session);
+        if !loads {
+            return Err(AgentRuntimeError::ReadOnlyUnsupported);
+        }
+        let acp_id = key.session_id.clone();
+        let session = self.session_entry(
+            &connection,
+            &acp_id,
+            key.clone(),
+            HistoryState {
+                source: HistorySource::Replay,
+                available: true,
+                truncated_items: None,
+            },
+            true,
+            None,
+        );
+        let result = connection
+            .call(
+                acp::SESSION_LOAD,
+                acp::open_session_request(&acp_id, cwd),
+                self.timeout(),
+            )
+            .await;
+        connection.rpc.barrier().await;
+        // Nothing the agent sends after the replay belongs to this reading.
+        connection.forget(&acp_id, &session);
+        let response = result?;
+        {
+            let mut projection = session.projection.lock().unwrap();
+            projection.end_replay();
+            if let Some(declared) = acp::opened_session_settings(response) {
+                projection.set_settings(declared);
+            }
+        }
+        if connection.declares_close() {
+            // A failed close leaves the session attached and idle, as an
+            // agent without `close` does; the history is read either way.
+            let _ = connection
+                .call(
+                    acp::SESSION_CLOSE,
+                    acp::close_request(&acp_id),
+                    self.timeout(),
+                )
+                .await;
+        }
+        self.inner.register(key.clone(), session);
+        Ok(())
+    }
+
+    /// A session of `connection` that holds `claim`, if any, and receives
+    /// its updates from now on.
     fn session_entry(
         &self,
         connection: &Arc<Connection>,
@@ -720,9 +826,14 @@ impl AgentRuntime {
         key: SessionKey,
         history: HistoryState,
         replay: bool,
-        claim: WriterClaim,
+        claim: Option<WriterClaim>,
     ) -> Arc<Session> {
         let state = *connection.state.lock().unwrap();
+        let writer = if claim.is_some() {
+            WriterState::Acp
+        } else {
+            WriterState::None
+        };
         let session = Arc::new(Session {
             acp_id: acp_id.to_string(),
             connection: connection.clone(),
@@ -731,12 +842,13 @@ impl AgentRuntime {
                 state,
                 history,
                 replay,
+                writer,
                 self.inner.config.retention,
                 self.inner.detail_bytes.clone(),
             )),
             interactions: Mutex::new(Interactions::default()),
             next_interaction: AtomicU64::new(0),
-            writer: Mutex::new(Some(claim)),
+            writer: Mutex::new(claim),
             opened: AtomicU64::new(self.next_open()),
             idle_since: Mutex::new(None),
         });
@@ -757,6 +869,9 @@ impl AgentRuntime {
     pub fn prompt(&self, key: &SessionKey, text: &str) -> Result<String, AgentRuntimeError> {
         let session = self.session(key)?;
         session.connection.require_open()?;
+        if session.writer.lock().unwrap().is_none() {
+            return Err(AgentRuntimeError::WriterRequired);
+        }
         let turn_id = ulid::Ulid::new().to_string().to_ascii_lowercase();
         session
             .projection
@@ -1119,7 +1234,19 @@ impl Connection {
             Err(RpcError::Remote {
                 code: AUTH_REQUIRED,
                 message,
+                ..
             }) => Err(AgentRuntimeError::AuthRequired { message }),
+            // The agent's own evidence of another writer is a refusal like
+            // Svode's, not a failure of the connection.
+            Err(RpcError::Remote {
+                reason: Some(reason),
+                ..
+            }) if self.writer_refusal.as_deref() == Some(reason.as_str()) => {
+                self.set_state(ConnectionState::Ready);
+                Err(AgentRuntimeError::WriterRefused {
+                    refusal: WriterRefusal::ExternalActive,
+                })
+            }
             Err(RpcError::Remote { message, .. }) => {
                 self.set_state(ConnectionState::Degraded);
                 Err(AgentRuntimeError::Agent { message })
