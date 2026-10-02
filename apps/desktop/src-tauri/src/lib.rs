@@ -442,25 +442,31 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app_handle, event| {
-            if let tauri::RunEvent::ExitRequested { .. } = event {
-                let agent_runtime = app_handle.state::<agent_runtime::AgentRuntimeState>();
-                tauri::async_runtime::block_on(agent_runtime.runtime().shutdown());
-                let terminal_manager = app_handle.state::<terminal::TerminalManager>();
-                terminal_manager.kill_all();
-                let app_processes = app_handle.state::<apps::AppProcessState>();
-                app_processes.kill_all();
-
-                if let Err(error) = native_file_drop::clear_materialized_file_drops(app_handle) {
-                    tracing::warn!("failed to clear dropped-file cache during exit: {error}");
-                }
-
-                let autocommit =
-                    app_handle.state::<Arc<svode_core::git::autocommit::AutocommitService>>();
-                let project_sessions = app_handle.state::<mcp::project_sessions::ProjectSessions>();
-                tauri::async_runtime::block_on(async {
-                    autocommit.flush_all().await;
-                    project_sessions.close_all().await;
-                });
+            // Every normal exit path ends in `Exit`; macOS app-menu Quit and Windows
+            // File → Quit never emit `ExitRequested` (tauri#9198).
+            if let tauri::RunEvent::Exit = event {
+                shutdown_desktop(app_handle);
             }
         });
+}
+
+fn shutdown_desktop(app_handle: &tauri::AppHandle) {
+    tracing::info!("running desktop shutdown sequence");
+    let agent_runtime = app_handle.state::<agent_runtime::AgentRuntimeState>();
+    tauri::async_runtime::block_on(agent_runtime.runtime().shutdown());
+    let terminal_manager = app_handle.state::<terminal::TerminalManager>();
+    terminal_manager.kill_all();
+    let app_processes = app_handle.state::<apps::AppProcessState>();
+    app_processes.kill_all();
+
+    if let Err(error) = native_file_drop::clear_materialized_file_drops(app_handle) {
+        tracing::warn!("failed to clear dropped-file cache during exit: {error}");
+    }
+
+    let autocommit = app_handle.state::<Arc<svode_core::git::autocommit::AutocommitService>>();
+    let project_sessions = app_handle.state::<mcp::project_sessions::ProjectSessions>();
+    tauri::async_runtime::block_on(async {
+        autocommit.flush_all().await;
+        project_sessions.close_all().await;
+    });
 }
