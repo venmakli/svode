@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
+use std::sync::LazyLock;
 
 use chrono::{DateTime, Utc};
 use regex::Regex;
@@ -700,6 +701,9 @@ struct CodexTailState {
     status: Option<NativeStatusEvidence>,
     turn_open: bool,
     open_calls: HashMap<String, CodexOpenCall>,
+    // Set by the latest turn settings when approval requests are not put to
+    // the user; a rollout without turn settings asks the user.
+    approvals_bypass_user: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -714,6 +718,11 @@ impl CodexTailState {
         let payload = value.get("payload").unwrap_or(value);
         let payload_type = string_field(payload, &["type"]).unwrap_or_default();
         let observed_at = timestamp_from_fields(payload).or_else(|| timestamp_from_fields(value));
+
+        if event_type == "turn_context" {
+            self.approvals_bypass_user = approvals_bypass_user(payload);
+            return;
+        }
 
         if event_type == "event_msg" {
             match payload_type {
@@ -808,6 +817,7 @@ impl CodexTailState {
         let mut has_input = false;
         for call in self.open_calls.values() {
             match call.request {
+                Some(InteractionKind::Permission) if self.approvals_bypass_user => {}
                 Some(InteractionKind::Permission) => {
                     has_approval = true;
                     approval_since = earliest_timestamp(approval_since, call.observed_at);
@@ -880,6 +890,7 @@ fn codex_wait_request(payload: &Value) -> Option<InteractionKind> {
         Some("apply_patch") => Some(InteractionKind::Permission),
         Some("request_user_input") => Some(InteractionKind::Question),
         Some("exec_command") => exec_command_wait_request(payload),
+        Some("exec") => code_mode_wait_request(payload),
         _ => None,
     }
 }
@@ -890,6 +901,54 @@ fn exec_command_wait_request(payload: &Value) -> Option<InteractionKind> {
     string_field(&args, &["sandbox_permissions"])
         .is_some_and(|value| value == "require_escalated")
         .then_some(InteractionKind::Permission)
+}
+
+static CODE_MODE_TOOL: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"\btools\s*(?:\.\s*([A-Za-z_]\w*)|\[\s*["']([A-Za-z_]\w*)["']\s*\])"#)
+        .expect("valid code mode tool regex")
+});
+
+static ESCALATION: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"\bsandbox_permissions["']?\s*:\s*["']require_escalated["']"#)
+        .expect("valid escalation regex")
+});
+
+/// Classifies a code-mode `exec` cell by the tools its JS input calls; the
+/// input is matched as text and never executed.
+fn code_mode_wait_request(payload: &Value) -> Option<InteractionKind> {
+    let input = string_field(payload, &["input"])?;
+    let mut runs_commands = false;
+    let mut edits_files = false;
+    for captures in CODE_MODE_TOOL.captures_iter(input) {
+        match captures
+            .get(1)
+            .or_else(|| captures.get(2))
+            .map(|m| m.as_str())
+        {
+            Some("exec_command" | "write_stdin") => runs_commands = true,
+            Some("apply_patch") => edits_files = true,
+            _ => {}
+        }
+    }
+    if runs_commands {
+        ESCALATION
+            .is_match(input)
+            .then_some(InteractionKind::Permission)
+    } else {
+        edits_files.then_some(InteractionKind::Permission)
+    }
+}
+
+fn approvals_bypass_user(turn_context: &Value) -> bool {
+    let policy = turn_context.get("approval_policy");
+    let never = policy.and_then(Value::as_str) == Some("never");
+    let sandbox_approval_off = policy
+        .and_then(|policy| policy.get("granular"))
+        .and_then(|granular| granular.get("sandbox_approval"))
+        .and_then(Value::as_bool)
+        == Some(false);
+    let auto_review = string_field(turn_context, &["approvals_reviewer"]) == Some("auto_review");
+    never || sandbox_approval_off || auto_review
 }
 
 #[cfg(test)]
@@ -906,6 +965,279 @@ mod tests {
     fn scan_root(root: &Path) -> SourceScan {
         let (fingerprint, report) = collect_fingerprint(root);
         scan(root, fingerprint, report)
+    }
+
+    const PERMISSION: SessionState = SessionState::RequiresAction {
+        request: InteractionKind::Permission,
+    };
+    const QUESTION: SessionState = SessionState::RequiresAction {
+        request: InteractionKind::Question,
+    };
+
+    fn turn_context(approval_policy: Value, approvals_reviewer: &str) -> Value {
+        serde_json::json!({
+            "type": "turn_context",
+            "timestamp": "2026-10-01T21:40:00Z",
+            "payload": {
+                "turn_id": "turn-1",
+                "cwd": "/tmp/project",
+                "approval_policy": approval_policy,
+                "approvals_reviewer": approvals_reviewer,
+                "sandbox_policy": { "type": "workspace-write" }
+            }
+        })
+    }
+
+    fn task_started() -> Value {
+        serde_json::json!({
+            "type": "event_msg",
+            "timestamp": "2026-10-01T21:40:01Z",
+            "payload": { "type": "task_started", "turn_id": "turn-1" }
+        })
+    }
+
+    fn exec_cell(call_id: &str, input: &str, timestamp: &str) -> Value {
+        serde_json::json!({
+            "type": "response_item",
+            "timestamp": timestamp,
+            "payload": {
+                "type": "custom_tool_call",
+                "id": format!("ctc_{call_id}"),
+                "status": "completed",
+                "call_id": call_id,
+                "name": "exec",
+                "input": input
+            }
+        })
+    }
+
+    fn call_output(call_id: &str, timestamp: &str) -> Value {
+        serde_json::json!({
+            "type": "response_item",
+            "timestamp": timestamp,
+            "payload": {
+                "type": "custom_tool_call_output",
+                "call_id": call_id,
+                "output": "Script completed"
+            }
+        })
+    }
+
+    fn function_call(name: &str, call_id: &str, arguments: &str, timestamp: &str) -> Value {
+        serde_json::json!({
+            "type": "response_item",
+            "timestamp": timestamp,
+            "payload": {
+                "type": "function_call",
+                "name": name,
+                "call_id": call_id,
+                "arguments": arguments
+            }
+        })
+    }
+
+    fn tail_status(rows: &[Value]) -> NativeStatusEvidence {
+        let mut tail = CodexTailState::default();
+        for row in rows {
+            tail.observe(row);
+        }
+        tail.finish().expect("tail status")
+    }
+
+    fn on_request_user() -> Value {
+        turn_context(Value::from("on-request"), "user")
+    }
+
+    const ESCALATED_UNQUOTED: &str = "const r = await tools.exec_command({cmd: \"touch /tmp/outside.txt\", sandbox_permissions: \"require_escalated\", justification: \"write outside workspace\", yield_time_ms: 30000});\ntext(r.output);";
+    const ESCALATED_QUOTED: &str = "const r = await tools.exec_command({ \"cmd\": \"touch /tmp/outside.txt\" , \"sandbox_permissions\" :\n  'require_escalated' });\ntext(r.output);";
+    const COMMAND: &str = "const r = await tools.exec_command({cmd: \"rg -n foo\", yield_time_ms: 10000});\ntext(r.output);";
+    const PATCH: &str = "const r = await tools.apply_patch(\"*** Begin Patch\\n*** Update File: a.txt\\n@@\\n-old\\n+new\\n*** End Patch\");\ntext(r);";
+
+    #[test]
+    fn agent_sessions_codex_code_mode_escalation_waits_for_permission() {
+        for input in [ESCALATED_UNQUOTED, ESCALATED_QUOTED] {
+            let status = tail_status(&[
+                on_request_user(),
+                task_started(),
+                exec_cell("call-esc", input, "2026-10-01T21:40:05Z"),
+            ]);
+            assert_eq!(status.state, PERMISSION, "input: {input}");
+            assert_eq!(
+                status.waiting_since.map(|ts| ts.to_rfc3339()).as_deref(),
+                Some("2026-10-01T21:40:05+00:00")
+            );
+        }
+    }
+
+    #[test]
+    fn agent_sessions_codex_code_mode_command_without_escalation_runs() {
+        let status = tail_status(&[
+            on_request_user(),
+            task_started(),
+            exec_cell("call-cmd", COMMAND, "2026-10-01T21:40:05Z"),
+        ]);
+        assert_eq!(status.state, SessionState::Running);
+        assert_eq!(status.waiting_since, None);
+    }
+
+    #[test]
+    fn agent_sessions_codex_code_mode_edit_only_waits_and_edit_with_command_runs() {
+        let edit_only = tail_status(&[
+            on_request_user(),
+            task_started(),
+            exec_cell("call-edit", PATCH, "2026-10-01T21:40:05Z"),
+        ]);
+        assert_eq!(edit_only.state, PERMISSION);
+
+        let edit_with_command = tail_status(&[
+            on_request_user(),
+            task_started(),
+            exec_cell(
+                "call-mixed",
+                &format!("{PATCH}\n{COMMAND}"),
+                "2026-10-01T21:40:05Z",
+            ),
+        ]);
+        assert_eq!(edit_with_command.state, SessionState::Running);
+
+        let edit_with_stdin = tail_status(&[
+            on_request_user(),
+            task_started(),
+            exec_cell(
+                "call-stdin",
+                &format!("{PATCH}\nawait tools[\"write_stdin\"]({{session_id: 3, chars: \"\"}});"),
+                "2026-10-01T21:40:05Z",
+            ),
+        ]);
+        assert_eq!(edit_with_stdin.state, SessionState::Running);
+    }
+
+    #[test]
+    fn agent_sessions_codex_questions_block_only_when_synchronous() {
+        let blocking = tail_status(&[
+            on_request_user(),
+            task_started(),
+            function_call(
+                "request_user_input",
+                "call-q",
+                "{\"questions\":[]}",
+                "2026-10-01T21:40:05Z",
+            ),
+        ]);
+        assert_eq!(blocking.state, QUESTION);
+
+        let async_question = tail_status(&[
+            on_request_user(),
+            task_started(),
+            function_call(
+                "request_user_input_async",
+                "call-qa",
+                "{\"questions\":[]}",
+                "2026-10-01T21:40:05Z",
+            ),
+        ]);
+        assert_eq!(async_question.state, SessionState::Running);
+    }
+
+    #[test]
+    fn agent_sessions_codex_turn_settings_without_user_review_do_not_wait() {
+        let granular = serde_json::json!({
+            "granular": {
+                "sandbox_approval": false,
+                "rules": false,
+                "skill_approval": false,
+                "request_permissions": true,
+                "mcp_elicitations": true
+            }
+        });
+        for settings in [
+            turn_context(Value::from("never"), "user"),
+            turn_context(granular, "user"),
+            turn_context(Value::from("on-request"), "auto_review"),
+        ] {
+            for input in [ESCALATED_UNQUOTED, PATCH] {
+                let status = tail_status(&[
+                    settings.clone(),
+                    task_started(),
+                    exec_cell("call-auto", input, "2026-10-01T21:40:05Z"),
+                ]);
+                assert_eq!(status.state, SessionState::Running, "settings: {settings}");
+            }
+            let legacy = tail_status(&[
+                settings.clone(),
+                task_started(),
+                function_call(
+                    "exec_command",
+                    "call-legacy",
+                    "{\"cmd\":\"date\",\"sandbox_permissions\":\"require_escalated\"}",
+                    "2026-10-01T21:40:05Z",
+                ),
+            ]);
+            assert_eq!(legacy.state, SessionState::Running, "settings: {settings}");
+        }
+
+        let granular_with_sandbox_approval = turn_context(
+            serde_json::json!({ "granular": { "sandbox_approval": true } }),
+            "user",
+        );
+        let status = tail_status(&[
+            granular_with_sandbox_approval,
+            task_started(),
+            exec_cell("call-esc", ESCALATED_UNQUOTED, "2026-10-01T21:40:05Z"),
+        ]);
+        assert_eq!(status.state, PERMISSION);
+
+        let without_turn_context = tail_status(&[
+            task_started(),
+            exec_cell("call-esc", ESCALATED_UNQUOTED, "2026-10-01T21:40:05Z"),
+        ]);
+        assert_eq!(without_turn_context.state, PERMISSION);
+    }
+
+    #[test]
+    fn agent_sessions_codex_code_mode_request_transitions() {
+        let approved = tail_status(&[
+            on_request_user(),
+            task_started(),
+            exec_cell("call-esc", ESCALATED_UNQUOTED, "2026-10-01T21:40:05Z"),
+            call_output("call-esc", "2026-10-01T21:41:30Z"),
+        ]);
+        assert_eq!(approved.state, SessionState::Running);
+        assert_eq!(approved.waiting_since, None);
+
+        let denied = tail_status(&[
+            on_request_user(),
+            task_started(),
+            exec_cell("call-esc", ESCALATED_UNQUOTED, "2026-10-01T21:40:05Z"),
+            call_output("call-esc", "2026-10-01T21:41:30Z"),
+            serde_json::json!({
+                "type": "event_msg",
+                "timestamp": "2026-10-01T21:41:31Z",
+                "payload": { "type": "turn_aborted", "reason": "interrupted" }
+            }),
+        ]);
+        assert_eq!(
+            denied.state,
+            SessionState::Idle {
+                stop_reason: Some(StopReason::Cancelled)
+            }
+        );
+
+        let permission_over_question = tail_status(&[
+            on_request_user(),
+            task_started(),
+            function_call("request_user_input", "call-q", "{}", "2026-10-01T21:40:03Z"),
+            exec_cell("call-edit", PATCH, "2026-10-01T21:40:05Z"),
+            exec_cell("call-esc", ESCALATED_QUOTED, "2026-10-01T21:40:09Z"),
+        ]);
+        assert_eq!(permission_over_question.state, PERMISSION);
+        assert_eq!(
+            permission_over_question
+                .waiting_since
+                .map(|ts| ts.to_rfc3339())
+                .as_deref(),
+            Some("2026-10-01T21:40:05+00:00")
+        );
     }
 
     #[test]

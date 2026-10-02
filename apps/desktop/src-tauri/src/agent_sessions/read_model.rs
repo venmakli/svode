@@ -1530,6 +1530,126 @@ mod tests {
         assert_eq!(session.status.source, StatusSource::NativeStatusReader);
     }
 
+    fn codex_code_mode_escalation(call_id: &str, timestamp: &str) -> serde_json::Value {
+        serde_json::json!({
+            "type": "response_item",
+            "payload": {
+                "type": "custom_tool_call",
+                "status": "completed",
+                "call_id": call_id,
+                "name": "exec",
+                "input": "const r = await tools.exec_command({cmd: \"touch /tmp/outside.txt\", sandbox_permissions: \"require_escalated\"});\ntext(r.output);"
+            },
+            "timestamp": timestamp
+        })
+    }
+
+    fn codex_code_mode_rows(
+        source_session_id: &str,
+        project: &Path,
+        timestamp: &str,
+    ) -> Vec<serde_json::Value> {
+        vec![
+            serde_json::json!({
+                "type": "session_meta",
+                "payload": {
+                    "id": source_session_id,
+                    "cwd": project.to_string_lossy(),
+                    "cli_version": "0.159.3"
+                },
+                "timestamp": timestamp
+            }),
+            serde_json::json!({
+                "type": "turn_context",
+                "payload": {
+                    "approval_policy": "on-request",
+                    "approvals_reviewer": "user"
+                },
+                "timestamp": timestamp
+            }),
+            serde_json::json!({
+                "type": "event_msg",
+                "payload": { "type": "task_started" },
+                "timestamp": timestamp
+            }),
+        ]
+    }
+
+    #[test]
+    fn agent_sessions_codex_code_mode_hot_status_matches_list() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let home = temp.path().join("home");
+        let project = temp.path().join("project");
+        fs::create_dir_all(&project).expect("project");
+        let started_ts = recent_source_log_timestamp();
+        write_codex_detail(
+            &home,
+            "code-mode",
+            codex_code_mode_rows("code-mode", &project, &started_ts),
+        );
+
+        let state = AgentSessionsState::with_home(home.clone());
+        let first = list_sessions(&state, project.to_string_lossy().into_owned(), false)
+            .expect("first list");
+        assert_eq!(first.sessions[0].status.state, SessionState::Running);
+
+        let waiting_ts = recent_source_log_timestamp();
+        append_codex_detail_row(
+            &home,
+            "code-mode",
+            codex_code_mode_escalation("call-esc", &waiting_ts),
+        );
+
+        let hot = hot_status_with_surfaces(
+            &state,
+            project.to_string_lossy().into_owned(),
+            vec!["codex:code-mode".to_string()],
+            Vec::new(),
+        )
+        .expect("hot status");
+        assert_eq!(hot.sessions[0].status.state, PERMISSION);
+        assert_eq!(
+            hot.sessions[0].status.source,
+            StatusSource::NativeStatusReader
+        );
+        assert_eq!(
+            hot.sessions[0].waiting_since.as_deref(),
+            Some(waiting_ts.as_str())
+        );
+
+        let fresh = list_sessions(
+            &AgentSessionsState::with_home(home),
+            project.to_string_lossy().into_owned(),
+            true,
+        )
+        .expect("fresh list");
+        assert_eq!(fresh.sessions[0].status.state, hot.sessions[0].status.state);
+        assert_eq!(
+            fresh.sessions[0].waiting_since,
+            hot.sessions[0].waiting_since
+        );
+    }
+
+    #[test]
+    fn agent_sessions_codex_stale_code_mode_request_is_unknown() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let home = temp.path().join("home");
+        let project = temp.path().join("project");
+        fs::create_dir_all(&project).expect("project");
+        let stale_ts = stale_source_log_timestamp();
+        let mut rows = codex_code_mode_rows("stale-request", &project, &stale_ts);
+        rows.push(codex_code_mode_escalation("call-esc", &stale_ts));
+        write_codex_detail(&home, "stale-request", rows);
+
+        let state = AgentSessionsState::with_home(home);
+        let result = list_sessions(&state, project.to_string_lossy().into_owned(), false)
+            .expect("list sessions");
+
+        let session = &result.sessions[0];
+        assert_eq!(session.status.state, SessionState::Unknown);
+        assert_eq!(session.status.source, StatusSource::NativeStatusReader);
+    }
+
     #[test]
     fn agent_sessions_stale_source_log_active_is_unknown() {
         let temp = tempfile::tempdir().expect("temp dir");
