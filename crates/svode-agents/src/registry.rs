@@ -650,6 +650,38 @@ impl AdapterRuntimeRegistry {
     }
 }
 
+/// Whether Svode offers the agent for chat in this version (Stage 10 `03`
+/// A8). Supported and limited are given only by live evidence; until then an
+/// agent stays deferred.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum AgentVerdict {
+    Supported,
+    Deferred,
+}
+
+impl AdapterRuntimeRegistry {
+    /// Codex and Claude Code: start, prompt, stop, permissions, history,
+    /// continuation and their external sessions live (E01, slice 2.5b).
+    pub fn verdict(&self, adapter: AgentAdapterKind) -> AgentVerdict {
+        match adapter {
+            AgentAdapterKind::Codex | AgentAdapterKind::ClaudeCode => AgentVerdict::Supported,
+            _ => AgentVerdict::Deferred,
+        }
+    }
+
+    /// Arguments of the agent's own sign-in command, which the user runs in a
+    /// Svode terminal (A5). Live 2026-10-02: `codex login` and
+    /// `claude auth login` of the installed CLIs.
+    pub fn sign_in_arguments(&self, adapter: AgentAdapterKind) -> Option<Vec<String>> {
+        match adapter {
+            AgentAdapterKind::Codex => Some(vec!["login".into()]),
+            AgentAdapterKind::ClaudeCode => Some(vec!["auth".into(), "login".into()]),
+            _ => None,
+        }
+    }
+}
+
 /// Which native session store a transitional Sessions scanner reads.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NativeSessionLog {
@@ -1543,9 +1575,33 @@ mod tests {
         assert_eq!(registry.terminal_resume_args(agent, "s1"), None);
         assert_eq!(registry.native_session_log(agent), None);
         assert_eq!(registry.acp_approval(agent, ApprovalMode::Ask), None);
+        assert_eq!(registry.verdict(agent), AgentVerdict::Deferred);
+        assert_eq!(registry.sign_in_arguments(agent), None);
         assert_eq!(
             registry.terminal_resume_args(AgentAdapterKind::Codex, "s1"),
             Some(vec!["resume".to_string(), "s1".to_string()])
+        );
+    }
+
+    #[test]
+    fn a_supported_agent_has_an_entrypoint_and_its_own_sign_in() {
+        let registry = AdapterRuntimeRegistry;
+        for agent in AgentAdapterKind::ALL {
+            if registry.verdict(agent) == AgentVerdict::Supported {
+                assert!(registry.acp_entrypoint(agent).is_some(), "{agent:?}");
+            }
+        }
+        assert_eq!(
+            registry.sign_in_arguments(AgentAdapterKind::ClaudeCode),
+            Some(vec!["auth".to_string(), "login".to_string()])
+        );
+        assert_eq!(
+            registry.sign_in_arguments(AgentAdapterKind::Codex),
+            Some(vec!["login".to_string()])
+        );
+        assert_eq!(
+            serde_json::to_value(AgentVerdict::Deferred).unwrap(),
+            serde_json::json!({ "state": "deferred" })
         );
     }
 

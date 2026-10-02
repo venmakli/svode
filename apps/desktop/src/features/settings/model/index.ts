@@ -1,8 +1,4 @@
-export type {
-  AppPreferences,
-  AvailableAgent,
-  SymlinkHealthReport,
-} from "./types";
+export type { AppPreferences } from "./types";
 export {
   APP_SETTINGS_SECTION_KINDS,
   type AppSettingsSection,

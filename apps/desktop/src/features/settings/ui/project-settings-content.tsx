@@ -58,7 +58,6 @@ export function ProjectSettingsContent({
     open,
     enabled: enableLegacyAgentIntegration,
     spacePath: projectPath,
-    projectPath,
     saveConfig,
   });
   const defaultsSettings = useSpaceSettingsDefaults({
@@ -120,18 +119,12 @@ export function ProjectSettingsContent({
       {enableLegacyAgentIntegration && section === "ai-agent" && (
         <ProjectOwnerBlock name={projectName} icon={activeRootIcon}>
           <SpaceAgentSection
-            agents={agentSettings.agents}
-            enabledClis={agentSettings.enabledClis}
             defaultModel={agentSettings.defaultModel}
             systemPrompt={agentSettings.systemPrompt}
             availableModels={agentSettings.availableModels}
-            healthReport={agentSettings.healthReport}
-            refreshing={agentSettings.refreshing}
             onDefaultModelChange={agentSettings.handleDefaultModelChange}
             onSystemPromptChange={agentSettings.setSystemPrompt}
             onSystemPromptBlur={agentSettings.handleSystemPromptBlur}
-            onCliToggle={agentSettings.handleCliToggle}
-            onRefresh={agentSettings.handleRefresh}
           />
         </ProjectOwnerBlock>
       )}

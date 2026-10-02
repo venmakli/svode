@@ -89,18 +89,6 @@ impl AgentEvent {
     }
 }
 
-/// Info about an available agent CLI.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AvailableAgent {
-    pub adapter: svode_core::agent_adapters::AgentAdapterKind,
-    pub name: String,
-    pub path: String,
-    pub version: Option<String>,
-    pub auth_status: String,
-    pub docs_url: String,
-}
-
 /// A model option available for an agent CLI.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

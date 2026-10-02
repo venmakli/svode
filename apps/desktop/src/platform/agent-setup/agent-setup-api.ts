@@ -1,4 +1,5 @@
 import { invokeCommand } from "@/platform/native/invoke";
+import type { TerminalSession } from "@/platform/terminal";
 
 /** Executable, CLI version and sign-in from the bounded diagnostic commands. */
 export interface AgentCliDiagnosticDto {
@@ -41,19 +42,31 @@ export interface AgentAdapterSetupDto {
   node: AgentNodeStatusDto;
 }
 
+/** Whether Svode offers the agent for chat in this version. */
+export type AgentVerdictDto = { state: "supported" } | { state: "deferred" };
+
 /** Setup facts of one agent; reading them starts no agent process. */
 export interface AgentSetupDto {
   agent: string;
   enabled: boolean;
+  verdict: AgentVerdictDto;
+  /** Where the vendor explains how to install the CLI. */
+  installHint: string;
+  /** The agent has its own sign-in command a terminal can run. */
+  canSignIn: boolean;
   cli: AgentCliDiagnosticDto;
-  cliRange: AgentCliVersionRangeDto;
+  /** `null` until the agent's version range is verified. */
+  cliRange: AgentCliVersionRangeDto | null;
   cliVersion: AgentCliVersionStatusDto;
   /** `null` when the agent's ACP entrypoint is its own command. */
   adapter: AgentAdapterSetupDto | null;
 }
 
 /** `kind: "agent_adapter"` errors of the install, update and enable commands. */
-export type AgentAdapterErrorDto = { kind: "agent_adapter"; message: string } & (
+export type AgentAdapterErrorDto = {
+  kind: "agent_adapter";
+  message: string;
+} & (
   | { code: "no_adapter" }
   | { code: "node_missing"; required: number }
   | { code: "node_unsupported"; version: string; required: number }
@@ -83,4 +96,9 @@ export function updateAgentAdapter(agent: string): Promise<AgentSetupDto> {
 
 export function removeAgentAdapter(agent: string): Promise<AgentSetupDto> {
   return invokeCommand<AgentSetupDto>("agent_setup_remove_adapter", { agent });
+}
+
+/** Opens a terminal that runs the agent's own sign-in command. */
+export function signInAgent(agent: string): Promise<TerminalSession> {
+  return invokeCommand<TerminalSession>("agent_setup_sign_in", { agent });
 }

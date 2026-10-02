@@ -4,8 +4,6 @@ export type {
   AppPreferences,
   AppSettingsSection,
   AppVariablesContext,
-  AvailableAgent,
-  SymlinkHealthReport,
 } from "./model";
 export { SettingsDialog } from "./ui/settings-dialog";
 export type { SettingsDestination } from "./model/settings-destination";

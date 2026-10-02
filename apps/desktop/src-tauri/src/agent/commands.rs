@@ -6,16 +6,8 @@ use tauri::{AppHandle, Emitter, State};
 use crate::agent::AgentSessions;
 use crate::agent::claude::{self, ClaudeCodeExecutor};
 use crate::agent::executor::AgentExecutor;
-use crate::agent::types::{
-    AgentConfig, AgentEvent, AvailableAgent, ModelOption, load_space_agent_config,
-};
+use crate::agent::types::{AgentConfig, AgentEvent, ModelOption, load_space_agent_config};
 use crate::error::AppError;
-use crate::process::path_env::ProcessPath;
-use svode_agents::registry::{
-    AdapterDiagnostic, AdapterDiagnosticStatus, AdapterRuntimeRegistry, AdapterTarget,
-    SystemRuntimeCommandRunner,
-};
-use svode_core::agent_adapters::{AgentAdapterKind, system_home_dir};
 
 /// Default timeout for agent execution: 10 minutes.
 const DEFAULT_TIMEOUT_SECS: u64 = 600;
@@ -208,52 +200,6 @@ pub async fn agent_respond_permission(
         tracing::error!("Failed to respond to permission: {e}");
     }
     result
-}
-
-/// List the agent CLIs detected on this device for Settings.
-#[tauri::command]
-pub async fn agent_list_available() -> Result<Vec<AvailableAgent>, AppError> {
-    let home_dir = system_home_dir()
-        .ok_or_else(|| AppError::PathNotAccessible("home directory is unavailable".into()))?;
-    let registry = AdapterRuntimeRegistry;
-    let search_path = ProcessPath::session();
-    let target = AdapterTarget {
-        cwd: home_dir,
-        search_path: search_path.get().await.map(ToOwned::to_owned),
-    };
-    let (claude, codex) = tokio::join!(
-        registry.diagnose(
-            AgentAdapterKind::ClaudeCode,
-            &target,
-            &SystemRuntimeCommandRunner
-        ),
-        registry.diagnose(
-            AgentAdapterKind::Codex,
-            &target,
-            &SystemRuntimeCommandRunner
-        ),
-    );
-    Ok(vec![
-        available_agent(claude, "https://docs.anthropic.com/claude-code"),
-        available_agent(codex, "https://github.com/openai/codex"),
-    ])
-}
-
-fn available_agent(diagnostic: AdapterDiagnostic, docs_url: &str) -> AvailableAgent {
-    let auth_status = match diagnostic.status {
-        AdapterDiagnosticStatus::Ready => "authorized",
-        AdapterDiagnosticStatus::Unauthenticated => "unauthorized",
-        AdapterDiagnosticStatus::Missing => "not_found",
-        AdapterDiagnosticStatus::Unknown => "unknown",
-    };
-    AvailableAgent {
-        adapter: diagnostic.adapter,
-        name: diagnostic.adapter.executable().to_string(),
-        path: diagnostic.executable_path.unwrap_or_default(),
-        version: diagnostic.version,
-        auth_status: auth_status.to_string(),
-        docs_url: docs_url.to_string(),
-    }
 }
 
 /// List available models for the active agent CLI in a space.

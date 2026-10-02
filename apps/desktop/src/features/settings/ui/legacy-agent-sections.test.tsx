@@ -1,38 +1,12 @@
 import { expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import { JSDOM } from "jsdom";
-import { loadAgentAdapterIdentities } from "@/features/agent-adapters";
 import { setLocale } from "@/paraglide/runtime";
-import type { AvailableAgent } from "../model";
 import { SpaceAgentSection } from "./space-agent-section";
 import { SpaceDefaultsSection } from "./space-defaults-section";
 import { SpaceInstructionsSection } from "./space-instructions-section";
 
 const noop = () => {};
-
-await loadAgentAdapterIdentities(async () => [
-  { id: "codex", displayName: "Codex" },
-  { id: "claude-code", displayName: "Claude Code" },
-]);
-
-const agents: AvailableAgent[] = [
-  {
-    adapter: "claude-code",
-    name: "claude",
-    path: "/usr/local/bin/claude",
-    version: "2.1.0",
-    authStatus: "authorized",
-    docsUrl: "https://example.test/claude",
-  },
-  {
-    adapter: "codex",
-    name: "codex",
-    path: "",
-    version: null,
-    authStatus: "not_found",
-    docsUrl: "https://example.test/codex",
-  },
-];
 
 function render(element: React.ReactElement) {
   return new JSDOM(renderToStaticMarkup(element)).window.document;
@@ -53,29 +27,24 @@ function expectOneCardPerGroup(document: Document) {
   }
 }
 
-test("AI agent: chat group with the model select and stacked prompt, CLI agents as rows with switches", () => {
+test("AI agent: one chat group with the model select and stacked prompt", () => {
   setLocale("en", { reload: false });
   const document = render(
     <SpaceAgentSection
-      agents={agents}
-      enabledClis={["claude"]}
       defaultModel="sonnet"
       systemPrompt=""
       availableModels={[
         { id: "sonnet", name: "Sonnet", description: "Balanced" },
       ]}
-      healthReport={{ restored: 0 } as never}
-      refreshing={false}
       onDefaultModelChange={noop}
       onSystemPromptChange={noop}
       onSystemPromptBlur={noop}
-      onCliToggle={noop}
-      onRefresh={noop}
     />,
   );
-  expect(groupTitles(document)).toEqual(["Chat", "CLI Agents"]);
+  // Agents are switched on once for the app in Providers, not per project.
+  expect(groupTitles(document)).toEqual(["Chat"]);
   expectOneCardPerGroup(document);
-  const [chat, clis] = Array.from(document.querySelectorAll("body > section"));
+  const [chat] = Array.from(document.querySelectorAll("body > section"));
   expect(chat.querySelector('[data-slot="select-trigger"]')?.textContent).toBe(
     "Sonnet",
   );
@@ -85,20 +54,6 @@ test("AI agent: chat group with the model select and stacked prompt, CLI agents 
       ?.closest('[data-slot="field"]')
       ?.getAttribute("data-orientation"),
   ).toBe("vertical");
-  expect(clis.textContent?.includes("Instruction links are OK")).toBe(true);
-  const switches = Array.from(clis.querySelectorAll('[role="switch"]'));
-  expect(switches.map((node) => node.getAttribute("aria-label"))).toEqual([
-    "Use Claude Code in this project",
-    "Use Codex in this project",
-  ]);
-  expect(switches.map((node) => node.getAttribute("aria-checked"))).toEqual([
-    "true",
-    "false",
-  ]);
-  expect(switches[1].hasAttribute("disabled")).toBe(true);
-  expect(
-    clis.querySelector('a[href="https://example.test/codex"]') !== null,
-  ).toBe(true);
 });
 
 test("Defaults: one group with the model select and prompt", () => {

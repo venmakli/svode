@@ -218,6 +218,33 @@ impl TerminalManager {
         self.spawn_with_mcp_context(app, cwd, mcp_project_path, None, None, cols, rows)
     }
 
+    /// A shell terminal that runs `program` with `args` as its first input,
+    /// so the user sees and answers the command as if typed by hand.
+    pub(crate) fn spawn_command_shell(
+        &self,
+        app: AppHandle,
+        cwd: String,
+        program: &str,
+        args: &[String],
+    ) -> Result<TerminalSession, AppError> {
+        let session = self.spawn(
+            app,
+            cwd,
+            None,
+            DEFAULT_AGENT_TERMINAL_COLS,
+            DEFAULT_AGENT_TERMINAL_ROWS,
+        )?;
+        let shell_kind = self.shell_kind(&session.pty_id)?;
+        if let Err(error) = self.write(
+            &session.pty_id,
+            &agent_initial_shell_input(program, args, None, shell_kind),
+        ) {
+            let _ = self.kill(&session.pty_id);
+            return Err(error);
+        }
+        Ok(session)
+    }
+
     fn spawn_with_mcp_context(
         &self,
         app: AppHandle,

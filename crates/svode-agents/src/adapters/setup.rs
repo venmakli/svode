@@ -7,7 +7,7 @@ use super::{
     evaluate_cli_version,
 };
 use crate::registry::{
-    AdapterDiagnostic, AdapterRuntimeRegistry, AdapterTarget, RuntimeCommandRunner,
+    AdapterDiagnostic, AdapterRuntimeRegistry, AdapterTarget, AgentVerdict, RuntimeCommandRunner,
 };
 
 /// What a host shows about an agent without starting it: executable, CLI
@@ -19,6 +19,12 @@ use crate::registry::{
 pub struct AgentSetup {
     pub agent: AgentAdapterKind,
     pub enabled: bool,
+    pub verdict: AgentVerdict,
+    /// Where the vendor explains how to install the CLI; Svode never
+    /// installs it.
+    pub install_hint: &'static str,
+    /// The agent has its own sign-in command a terminal can run (A5).
+    pub can_sign_in: bool,
     /// Executable, version and sign-in from the bounded `--version` and
     /// sign-in status commands.
     pub cli: AdapterDiagnostic,
@@ -81,6 +87,9 @@ impl AdapterStore {
         };
         AgentSetup {
             agent,
+            verdict: AdapterRuntimeRegistry.verdict(agent),
+            install_hint: agent.install_hint(),
+            can_sign_in: AdapterRuntimeRegistry.sign_in_arguments(agent).is_some(),
             enabled: agent_enabled(
                 enabled_choice,
                 adapter.as_ref().map(|adapter| &adapter.install),

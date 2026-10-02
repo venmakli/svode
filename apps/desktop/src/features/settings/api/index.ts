@@ -6,7 +6,6 @@ export {
 } from "./app-settings-api";
 export * from "./app-variables-api";
 export { getAppVersion } from "./app-version-api";
-export { checkSymlinkHealth, listAvailableAgents } from "./agent-api";
 export * from "./mcp-api";
 export * from "./space-agent-api";
 export * from "./space-config-api";
@@ -14,3 +13,4 @@ export * from "./space-git-api";
 export * from "./space-health-api";
 export * from "./space-identity-api";
 export * from "./space-storage-api";
+export * from "./agent-setup-api";

@@ -6,13 +6,11 @@ import type {
   McpClientStatus,
   McpStatus,
 } from "../hooks/use-mcp-integrations";
-import type { AvailableAgent } from "../model";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent } from "@/components/ui/collapsible";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
-import { CliAgentStatusBadge, cliAgentNextStep } from "./cli-agent-status";
 import {
   SettingsDisclosureTrigger,
   SettingsItem,
@@ -144,7 +142,6 @@ function Value({ children }: { children: string }) {
 
 export function ProviderRow({
   client,
-  agent,
   server,
   runtimeUpdatedFrom,
   runtimeExplained,
@@ -155,7 +152,6 @@ export function ProviderRow({
   onCopyManualConfig,
 }: {
   client: McpClientStatus;
-  agent: AvailableAgent | undefined;
   server: McpStatus["server"];
   runtimeUpdatedFrom: string | null;
   runtimeExplained: boolean;
@@ -167,7 +163,6 @@ export function ProviderRow({
 }) {
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [configOpen, setConfigOpen] = useState(false);
-  const nextStep = agent ? cliAgentNextStep(agent) : null;
   const artifacts = client.artifacts ?? [];
   const withPlugin = artifacts.some((artifact) => artifact.kind === "plugin");
 
@@ -180,18 +175,11 @@ export function ProviderRow({
     >
       <SettingsItem
         title={client.name}
-        description={
-          <>
-            <span className="block">
-              {connectionDescription(
-                client,
-                runtimeUpdatedFrom,
-                runtimeExplained,
-              )}
-            </span>
-            {nextStep ? <span className="block">{nextStep}</span> : null}
-          </>
-        }
+        description={connectionDescription(
+          client,
+          runtimeUpdatedFrom,
+          runtimeExplained,
+        )}
         actions={
           <>
             {client.status === "attention" ? (
@@ -230,18 +218,6 @@ export function ProviderRow({
       />
       <CollapsibleContent className="min-w-0 border-t bg-muted/40">
         <SettingsRows>
-          <SettingsItem
-            key="cli"
-            title={m.settings_providers_cli()}
-            description={<Path value={agent?.path} />}
-            actions={
-              agent ? (
-                <CliAgentStatusBadge agent={agent} />
-              ) : (
-                <Value>{m.common_loading()}</Value>
-              )
-            }
-          />
           {artifacts.map((artifact) => (
             <SettingsItem
               key={artifact.kind}

@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import * as bunTest from "bun:test";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { act } from "react";
@@ -10,10 +11,16 @@ import { clearNativeMocks, mockNativeIpc } from "@/platform/native/testing";
 
 import { Bot } from "lucide-react";
 
-import type { McpClientStatus, McpStatus } from "../api";
-import type { AvailableAgent } from "../model";
+import type { AgentSetupDto, McpClientStatus, McpStatus } from "../api";
 import { APP_SETTINGS_NAV_ITEMS } from "./app-settings-navigation";
-import { ProvidersSection } from "./providers-section";
+
+// Radix chooses its layout effect when it loads, so the UI is imported once
+// a document exists.
+let ProvidersSection: typeof import("./providers-section").ProvidersSection;
+const signInTerminals = {
+  closed: [] as string[],
+  exit: null as ((ptyId: string) => void) | null,
+};
 
 const isolatedProcess = process.env.SVODE_PROVIDERS_SECTION_DOM_PROCESS === "1";
 
@@ -36,6 +43,26 @@ if (!isolatedProcess) {
     expect(child.status).toBe(0);
   });
 } else {
+  const { mock } = bunTest as typeof bunTest & {
+    mock: { module(path: string, factory: () => unknown): void };
+  };
+  installDomGlobals(createDom());
+  mock.module("@/features/terminal/session-surface", () => ({
+    ManagedTerminalSurface: ({ ptyId }: { ptyId: string }) => (
+      <div data-terminal={ptyId} />
+    ),
+    closeManagedTerminalSurface: async (ptyId: string) => {
+      signInTerminals.closed.push(ptyId);
+    },
+    subscribeManagedTerminalExit: (listener: (ptyId: string) => void) => {
+      signInTerminals.exit = listener;
+      return () => {
+        if (signInTerminals.exit === listener) signInTerminals.exit = null;
+      };
+    },
+  }));
+  ({ ProvidersSection } = await import("./providers-section"));
+
   test("a connected row shows the version, its details and keeps focus through disconnect", async () => {
     const originalLocale = getLocale();
     await setLocale("en", { reload: false });
@@ -60,15 +87,15 @@ if (!isolatedProcess) {
         Array.from(harness.dom.window.document.querySelectorAll("h2, h3")).map(
           (heading) => heading.textContent,
         ),
-      ).toEqual(["Svode runtime"]);
+      ).toEqual(["Svode access", "Svode runtime"]);
 
       await act(async () => {
         within(row, "Details").click();
         await settle();
       });
       const details = row.textContent ?? "";
-      expect(details.includes("/Users/test/.bun/bin/codex")).toBe(true);
-      expect(details.includes("codex-cli 0.155.1 · authorized")).toBe(true);
+      // The agent CLI is a fact of the agent row, not of Svode access.
+      expect(details.includes("/Users/test/.bun/bin/codex")).toBe(false);
       expect(details.includes("/Users/test/.agents/skills/svode")).toBe(true);
       // The runtime and its check belong to the section, not to one agent.
       expect(
@@ -103,7 +130,7 @@ if (!isolatedProcess) {
     }
   });
 
-  test("the section shows the agents without a heading and the runtime with its check once", async () => {
+  test("the section shows the agents without a heading, Svode access below them and the runtime with its check once", async () => {
     const originalLocale = getLocale();
     await setLocale("en", { reload: false });
     let canonical = providersStatus([
@@ -118,17 +145,26 @@ if (!isolatedProcess) {
     );
     try {
       const document = harness.dom.window.document;
-      const [agents, runtime] = Array.from(
+      const [agents, access, runtime] = Array.from(
         document.querySelectorAll<HTMLElement>("section"),
       ).filter((section) => !section.parentElement?.closest("section"));
       expect(agents.querySelector("h2, h3, h4")).toBeNull();
       expect(
         agents.textContent?.includes(
+          "Use the agents found on this device in Svode chat and sessions",
+        ),
+      ).toBe(true);
+      expect(within(agents, "Refresh") !== undefined).toBe(true);
+      expect(agents.querySelectorAll("[data-agent]").length).toBe(2);
+      expect(agents.querySelectorAll("[data-mcp-client]").length).toBe(0);
+      expect(access.hasAttribute("data-svode-access")).toBe(true);
+      expect(access.querySelector("h3")?.textContent).toBe("Svode access");
+      expect(
+        access.textContent?.includes(
           "Svode access connects the Svode skill, the svode command and the Svode MCP server to the agent.",
         ),
       ).toBe(true);
-      expect(findButton(harness.dom, "Refresh") !== undefined).toBe(true);
-      expect(agents.querySelectorAll("[data-mcp-client]").length).toBe(2);
+      expect(access.querySelectorAll("[data-mcp-client]").length).toBe(2);
 
       expect(runtime.hasAttribute("data-mcp-runtime")).toBe(true);
       expect(runtime.querySelector("h3")?.textContent).toBe("Svode runtime");
@@ -341,7 +377,7 @@ if (!isolatedProcess) {
     }
   });
 
-  test("an update of this start asks to restart open sessions, a missing agent offers its install", async () => {
+  test("an update of this start asks to restart open sessions and a missing client cannot connect", async () => {
     const originalLocale = getLocale();
     await setLocale("en", { reload: false });
     let canonical: McpStatus = {
@@ -360,7 +396,6 @@ if (!isolatedProcess) {
       (next) => {
         canonical = next;
       },
-      [agent("claude", "2.1.282 (Claude Code)", "unauthorized"), missingCodex],
     );
     try {
       const claude = summary(clientRow(harness.dom, "claude-code"));
@@ -369,12 +404,8 @@ if (!isolatedProcess) {
           "Updated to Svode 0.0.9. Agent sessions that are already open get it after a restart.",
         ),
       ).toBe(true);
-      expect(claude.includes("Run `claude login` in terminal")).toBe(true);
       const codex = clientRow(harness.dom, "codex");
       expect(summary(codex).includes("Not found on this device")).toBe(true);
-      expect(
-        codex.querySelector('a[href="https://example.test/codex"]') !== null,
-      ).toBe(true);
       expect(
         codex.querySelector<HTMLButtonElement>('button[role="switch"]')
           ?.disabled,
@@ -443,7 +474,7 @@ if (!isolatedProcess) {
     }
   });
 
-  test("a runtime that speaks another bridge protocol is reported above the agents", async () => {
+  test("a runtime that speaks another bridge protocol is reported in Svode access", async () => {
     const originalLocale = getLocale();
     await setLocale("ru", { reload: false });
     let canonical: McpStatus = {
@@ -475,48 +506,540 @@ if (!isolatedProcess) {
       await setLocale(originalLocale, { reload: false });
     }
   });
+
+  test("each found agent shows one state, a deferred agent cannot be turned on and missing agents are folded", async () => {
+    const originalLocale = getLocale();
+    await setLocale("en", { reload: false });
+    const status = providersStatus([
+      client("claude-code", "Claude Code", true),
+      client("codex", "Codex", true),
+    ]);
+    const harness = await renderSection(
+      () => status,
+      () => {},
+      [
+        agentSetup("codex", {
+          cli: {
+            ...agentSetup("codex").cli,
+            version: "codex-cli 0.160.0",
+          },
+          cliVersion: { state: "untested", testedUpTo: "0.159.3" },
+        }),
+        agentSetup("claude-code", {
+          enabled: false,
+          adapter: {
+            ...agentSetup("claude-code").adapter!,
+            install: { state: "not_installed" },
+            node: { state: "missing" },
+          },
+        }),
+        deferredSetup("hermes", true),
+        deferredSetup("gemini-cli", false),
+        deferredSetup("cursor", false),
+      ],
+    );
+    try {
+      const codex = agentRow(harness.dom, "codex");
+      expect(title(codex)).toBe("Codex0.160.0");
+      expect(stateOf(codex)).toBe(
+        "Ready · CLI is newer than the tested 0.159.3",
+      );
+      expect(switchOf(codex).getAttribute("aria-checked")).toBe("true");
+      expect(switchOf(codex).getAttribute("aria-label")).toBe(
+        "Use Codex in Svode",
+      );
+
+      const claude = agentRow(harness.dom, "claude-code");
+      expect(stateOf(claude)).toBe("Needs Node.js 22 or newer");
+      expect(switchOf(claude).disabled).toBe(true);
+
+      const hermes = agentRow(harness.dom, "hermes");
+      expect(title(hermes)).toBe("Hermes0.18.2");
+      expect(stateOf(hermes)).toBe("Not supported yet");
+      expect(switchOf(hermes).disabled).toBe(true);
+      expect(hermes.querySelector('[aria-label^="More actions"]')).toBeNull();
+
+      // One list of agents: none of them is listed twice.
+      const notFound = harness.dom.window.document.querySelector<HTMLElement>(
+        "[data-agents-not-found]",
+      )!;
+      expect(summary(notFound).includes("Not found (2)")).toBe(true);
+      expect(notFound.querySelector("a")).toBeNull();
+      await act(async () => {
+        within(notFound, "Show").click();
+        await settle();
+      });
+      expect(
+        Array.from(notFound.querySelectorAll("a")).map((link) =>
+          link.getAttribute("href"),
+        ),
+      ).toEqual([
+        "https://example.test/gemini-cli",
+        "https://example.test/cursor",
+      ]);
+      expect(
+        harness.dom.window.document.querySelectorAll('[data-agent="codex"]')
+          .length,
+      ).toBe(1);
+    } finally {
+      await harness.cleanup();
+      await setLocale(originalLocale, { reload: false });
+    }
+  });
+
+  test("turning on an agent that needs its adapter asks first and shows the install and its failure in the row; otherwise the switch acts at once", async () => {
+    const originalLocale = getLocale();
+    await setLocale("en", { reload: false });
+    const status = providersStatus([
+      client("claude-code", "Claude Code", true),
+      client("codex", "Codex", true),
+    ]);
+    let rejectInstall: (error: unknown) => void = () => {};
+    const enabled: string[] = [];
+    const disabled: string[] = [];
+    const harness = await renderSection(
+      () => status,
+      () => {},
+      [
+        agentSetup("codex", {
+          enabled: false,
+          adapter: {
+            ...agentSetup("codex").adapter!,
+            install: { state: "not_installed" },
+          },
+        }),
+        agentSetup("claude-code", { enabled: false }),
+      ],
+      {
+        agent_setup_enable: ({ agent }) => {
+          enabled.push(String(agent));
+          if (agent === "codex")
+            return new Promise((_, reject) => {
+              rejectInstall = reject;
+            });
+          return agentSetup("claude-code");
+        },
+        agent_setup_disable: ({ agent }) => {
+          disabled.push(String(agent));
+          return agentSetup("claude-code", { enabled: false });
+        },
+      },
+    );
+    try {
+      const document = harness.dom.window.document;
+      const codex = agentRow(harness.dom, "codex");
+      expect(stateOf(codex)).toBe(
+        "Adapter not installed: turning the agent on installs it",
+      );
+      await act(async () => {
+        switchOf(codex).click();
+        await settle();
+      });
+      const dialog = document.querySelector<HTMLElement>(
+        '[role="alertdialog"]',
+      )!;
+      expect((dialog.textContent ?? "").includes("Turn on Codex?")).toBe(true);
+      expect(
+        (dialog.textContent ?? "").includes(
+          "@agentclientprotocol/codex-acp 2.1.1",
+        ),
+      ).toBe(true);
+      expect(enabled).toEqual([]);
+      await act(async () => {
+        within(dialog, "Turn on").click();
+        await settle();
+      });
+      expect(enabled).toEqual(["codex"]);
+      expect(stateOf(agentRow(harness.dom, "codex"))).toBe(
+        "Installing the adapter…",
+      );
+      await act(async () => {
+        rejectInstall({
+          kind: "agent_adapter",
+          code: "node_missing",
+          required: 20,
+          message: "Node.js 20 or newer was not found",
+        });
+        await settle();
+      });
+      const failed = agentRow(harness.dom, "codex");
+      expect(stateOf(failed)).toBe(
+        "Adapter not installed: Node.js 20 or newer was not found",
+      );
+      expect(within(failed, "Retry") !== undefined).toBe(true);
+      expect(switchOf(failed).getAttribute("aria-checked")).toBe("false");
+
+      // An installed adapter needs no confirmation either way.
+      await act(async () => {
+        switchOf(agentRow(harness.dom, "claude-code")).click();
+        await settle();
+      });
+      expect(document.querySelector('[role="alertdialog"]')).toBeNull();
+      expect(enabled).toEqual(["codex", "claude-code"]);
+      expect(stateOf(agentRow(harness.dom, "claude-code"))).toBe("Ready");
+      await act(async () => {
+        switchOf(agentRow(harness.dom, "claude-code")).click();
+        await settle();
+      });
+      expect(document.querySelector('[role="alertdialog"]')).toBeNull();
+      expect(disabled).toEqual(["claude-code"]);
+      expect(stateOf(agentRow(harness.dom, "claude-code"))).toBe("Off");
+    } finally {
+      await harness.cleanup();
+      await setLocale(originalLocale, { reload: false });
+    }
+  });
+
+  test("Check shows its result in the row and a failed start offers Retry", async () => {
+    const originalLocale = getLocale();
+    await setLocale("en", { reload: false });
+    const status = providersStatus([
+      client("claude-code", "Claude Code", true),
+      client("codex", "Codex", true),
+    ]);
+    const checks: unknown[] = [
+      {
+        state: "ready",
+        agent: {
+          name: "@agentclientprotocol/codex-acp",
+          version: "2.1.1",
+          capabilities: {
+            loadSession: true,
+            listSessions: true,
+            resumeSession: true,
+            closeSession: true,
+          },
+        },
+      },
+      { state: "failed_to_start", message: "initialize timed out" },
+      { state: "failed_to_start", message: "initialize timed out" },
+    ];
+    const checked: string[] = [];
+    const harness = await renderSection(
+      () => status,
+      () => {},
+      undefined,
+      {
+        agent_runtime_check: ({ agent }) => {
+          checked.push(String(agent));
+          return checks.shift();
+        },
+      },
+    );
+    try {
+      await chooseMenuItem(harness.dom, "codex", "Check");
+      expect(checked).toEqual(["codex"]);
+      expect(stateOf(agentRow(harness.dom, "codex"))).toBe(
+        "Check passed · @agentclientprotocol/codex-acp 2.1.1",
+      );
+      // Other rows keep their own state.
+      expect(stateOf(agentRow(harness.dom, "claude-code"))).toBe("Ready");
+
+      await chooseMenuItem(harness.dom, "codex", "Check");
+      const codex = agentRow(harness.dom, "codex");
+      expect(stateOf(codex)).toBe("Could not start: initialize timed out");
+      await act(async () => {
+        within(codex, "Retry").click();
+        await settle();
+      });
+      expect(checked).toEqual(["codex", "codex", "codex"]);
+    } finally {
+      await harness.cleanup();
+      await setLocale(originalLocale, { reload: false });
+    }
+  });
+
+  test("opening Providers reads the facts only: no agent starts and nothing is installed", async () => {
+    const status = providersStatus([
+      client("claude-code", "Claude Code", true),
+      client("codex", "Codex", true),
+    ]);
+    const harness = await renderSection(
+      () => status,
+      () => {},
+      [
+        agentSetup("codex", {
+          enabled: false,
+          adapter: {
+            ...agentSetup("codex").adapter!,
+            install: { state: "not_installed" },
+          },
+        }),
+        agentSetup("claude-code"),
+        deferredSetup("hermes", true),
+      ],
+    );
+    try {
+      expect(harness.commands.includes("agent_setup_list")).toBe(true);
+      expect(
+        harness.commands.filter((command) =>
+          /^agent_runtime|^agent_setup_(?!list)|^mcp_(install|remove)|^terminal_/.test(
+            command,
+          ),
+        ),
+      ).toEqual([]);
+      expect(harness.commands.includes("agent_list_available")).toBe(false);
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  test("Russian rows: sign-in, removing the adapter with a confirmation and a failed sign-in terminal", async () => {
+    const originalLocale = getLocale();
+    await setLocale("ru", { reload: false });
+    const status = providersStatus([
+      client("claude-code", "Claude Code", true),
+      client("codex", "Codex", true),
+    ]);
+    const removed: string[] = [];
+    const harness = await renderSection(
+      () => status,
+      () => {},
+      [
+        agentSetup("codex"),
+        agentSetup("claude-code", {
+          cli: {
+            ...agentSetup("claude-code").cli,
+            status: "unauthenticated",
+            authenticated: false,
+          },
+        }),
+        deferredSetup("hermes", true),
+        deferredSetup("cursor", false),
+      ],
+      {
+        agent_setup_remove_adapter: ({ agent }) => {
+          removed.push(String(agent));
+          return agentSetup("codex", {
+            enabled: false,
+            adapter: {
+              ...agentSetup("codex").adapter!,
+              install: { state: "not_installed" },
+            },
+          });
+        },
+        agent_setup_sign_in: () => {
+          throw { kind: "agent_cli_not_found", message: "claude" };
+        },
+      },
+    );
+    try {
+      const document = harness.dom.window.document;
+      expect(stateOf(agentRow(harness.dom, "codex"))).toBe("Готов");
+      expect(stateOf(agentRow(harness.dom, "hermes"))).toBe(
+        "Пока не поддерживается",
+      );
+      const notFound = document.querySelector<HTMLElement>(
+        "[data-agents-not-found]",
+      )!;
+      expect(summary(notFound).includes("Не найдены (1)")).toBe(true);
+
+      const claude = agentRow(harness.dom, "claude-code");
+      expect(stateOf(claude)).toBe("Нужен вход");
+      await act(async () => {
+        within(claude, "Войти").click();
+        await settle();
+      });
+      expect(stateOf(agentRow(harness.dom, "claude-code"))).toBe(
+        "Терминал входа не открылся: claude",
+      );
+
+      await chooseMenuItem(harness.dom, "codex", "Удалить адаптер");
+      const dialog = document.querySelector<HTMLElement>(
+        '[role="alertdialog"]',
+      )!;
+      expect(
+        (dialog.textContent ?? "").includes("Удалить адаптер Codex?"),
+      ).toBe(true);
+      expect(
+        (dialog.textContent ?? "").includes(
+          "Вход, настройки и сессии Codex и работа в его терминале не меняются",
+        ),
+      ).toBe(true);
+      expect(removed).toEqual([]);
+      await act(async () => {
+        within(dialog, "Удалить адаптер").click();
+        await settle();
+      });
+      expect(removed).toEqual(["codex"]);
+      expect(stateOf(agentRow(harness.dom, "codex"))).toBe(
+        "Адаптер не установлен: включение агента установит его",
+      );
+    } finally {
+      await harness.cleanup();
+      await setLocale(originalLocale, { reload: false });
+    }
+  });
+
+  test("Sign in opens the agent's sign-in terminal and reads the facts again when it exits and closes", async () => {
+    const originalLocale = getLocale();
+    await setLocale("en", { reload: false });
+    const status = providersStatus([
+      client("claude-code", "Claude Code", true),
+      client("codex", "Codex", true),
+    ]);
+    let signedIn = false;
+    const signInCalls: string[] = [];
+    const signedOut = agentSetup("claude-code", {
+      cli: {
+        ...agentSetup("claude-code").cli,
+        status: "unauthenticated",
+        authenticated: false,
+      },
+    });
+    const harness = await renderSection(
+      () => status,
+      () => {},
+      undefined,
+      {
+        agent_setup_list: () => [
+          agentSetup("codex"),
+          signedIn ? agentSetup("claude-code") : signedOut,
+        ],
+        agent_setup_sign_in: ({ agent }) => {
+          signInCalls.push(String(agent));
+          return {
+            ptyId: "pty-sign-in",
+            cwd: "/Users/test",
+            shell: "/bin/zsh",
+            cols: 120,
+            rows: 30,
+          };
+        },
+      },
+    );
+    try {
+      const document = harness.dom.window.document;
+      expect(stateOf(agentRow(harness.dom, "claude-code"))).toBe(
+        "Sign-in required",
+      );
+      await act(async () => {
+        within(agentRow(harness.dom, "claude-code"), "Sign in").click();
+        await settle();
+      });
+      expect(signInCalls).toEqual(["claude-code"]);
+      const dialog = document.querySelector<HTMLElement>('[role="dialog"]')!;
+      expect(
+        (dialog.textContent ?? "").includes("Sign in to Claude Code"),
+      ).toBe(true);
+      expect(
+        dialog.querySelector('[data-terminal="pty-sign-in"]') === null,
+      ).toBe(false);
+
+      signedIn = true;
+      await act(async () => {
+        signInTerminals.exit?.("pty-sign-in");
+        await settle();
+      });
+      expect(stateOf(agentRow(harness.dom, "claude-code"))).toBe("Ready");
+
+      await act(async () => {
+        within(dialog, "Done").click();
+        await settle();
+      });
+      expect(signInTerminals.closed.includes("pty-sign-in")).toBe(true);
+      expect(document.querySelector('[role="dialog"]')).toBeNull();
+    } finally {
+      await harness.cleanup();
+      await setLocale(originalLocale, { reload: false });
+    }
+  });
 }
 
-const missingCodex: AvailableAgent = {
-  adapter: "codex",
-  name: "codex",
-  path: "",
-  version: null,
-  authStatus: "not_found",
-  docsUrl: "https://example.test/codex",
-};
+const IDENTITIES = [
+  { id: "codex", displayName: "Codex" },
+  { id: "claude-code", displayName: "Claude Code" },
+  { id: "hermes", displayName: "Hermes" },
+  { id: "gemini-cli", displayName: "Gemini CLI" },
+  { id: "cursor", displayName: "Cursor" },
+];
 
-function agent(
-  name: string,
-  version: string,
-  authStatus: string,
-): AvailableAgent {
+function agentSetup(
+  agent: string,
+  overrides: Partial<AgentSetupDto> = {},
+): AgentSetupDto {
+  const adapterPackage =
+    agent === "codex"
+      ? "@agentclientprotocol/codex-acp"
+      : "@agentclientprotocol/claude-agent-acp";
   return {
-    adapter: name === "claude" ? "claude-code" : name,
-    name,
-    path: `/Users/test/.bun/bin/${name}`,
-    version,
-    authStatus,
-    docsUrl: `https://example.test/${name}`,
+    agent,
+    enabled: true,
+    verdict: { state: "supported" },
+    installHint: `https://example.test/${agent}`,
+    canSignIn: true,
+    cli: {
+      adapter: agent,
+      status: "ready",
+      executablePath: `/Users/test/.bun/bin/${agent}`,
+      version:
+        agent === "codex" ? "codex-cli 0.159.3" : "2.1.287 (Claude Code)",
+      authenticated: true,
+      code: null,
+      message: null,
+    },
+    cliRange:
+      agent === "codex"
+        ? { minimum: "0.159.1", testedUpTo: "0.159.3" }
+        : { minimum: "2.1.286", testedUpTo: "2.1.287" },
+    cliVersion: { state: "supported" },
+    adapter: {
+      package: adapterPackage,
+      pinnedVersion: agent === "codex" ? "2.1.1" : "0.85.0",
+      install: {
+        state: "installed",
+        version: agent === "codex" ? "2.1.1" : "0.85.0",
+      },
+      requiredNodeMajor: agent === "codex" ? 20 : 22,
+      node: { state: "ready", path: "/usr/local/bin/node", version: "22.23.1" },
+    },
+    ...overrides,
   };
 }
+
+function deferredSetup(agent: string, found: boolean): AgentSetupDto {
+  return {
+    agent,
+    enabled: true,
+    verdict: { state: "deferred" },
+    installHint: `https://example.test/${agent}`,
+    canSignIn: false,
+    cli: {
+      adapter: agent,
+      status: found ? "unknown" : "missing",
+      executablePath: found ? `/usr/local/bin/${agent}` : null,
+      version: found ? "0.18.2" : null,
+      authenticated: null,
+      code: found ? "auth_status_unavailable" : "adapter_missing",
+      message: null,
+    },
+    cliRange: null,
+    cliVersion: { state: "unknown" },
+    adapter: null,
+  };
+}
+
+type Handler = (args: Record<string, unknown>) => unknown;
 
 async function renderSection(
   getCanonical: () => McpStatus,
   setCanonical: (status: McpStatus) => void,
-  agents: AvailableAgent[] = [
-    agent("claude", "2.1.282 (Claude Code)", "authorized"),
-    agent("codex", "codex-cli 0.155.1", "authorized"),
-  ],
+  setups: AgentSetupDto[] = [agentSetup("codex"), agentSetup("claude-code")],
+  handlers: Record<string, Handler> = {},
 ) {
   const dom = createDom();
   const restoreGlobals = installDomGlobals(dom);
   const printed: string[] = [];
+  const commands: string[] = [];
   mockNativeIpc(
     (command, args) => {
+      commands.push(command);
+      const handler = handlers[command];
+      if (handler) return handler((args ?? {}) as Record<string, unknown>);
+      if (command === "agent_adapters_list_identities") return IDENTITIES;
+      if (command === "agent_setup_list") return setups;
       if (command === "mcp_get_status") return getCanonical();
       if (command === "mcp_run_doctor") return getCanonical().doctor;
-      if (command === "agent_list_available") return agents;
       if (command === "mcp_print_config") {
         const id = String((args as Record<string, unknown>).client);
         printed.push(id);
@@ -548,6 +1071,7 @@ async function renderSection(
   return {
     dom,
     printed,
+    commands,
     cleanup: async () => {
       await act(async () => root.unmount());
       clearNativeMocks();
@@ -625,6 +1149,47 @@ function artifactRows(row: HTMLElement) {
   ]);
 }
 
+function agentRow(dom: JSDOM, agent: string) {
+  return dom.window.document.querySelector<HTMLElement>(
+    `[data-agent="${agent}"]`,
+  )!;
+}
+
+function title(row: HTMLElement) {
+  return row.querySelector('[data-slot="item-title"]')?.textContent ?? "";
+}
+
+function stateOf(row: HTMLElement) {
+  return row.querySelector("[data-agent-state]")?.textContent ?? "";
+}
+
+function switchOf(row: HTMLElement) {
+  return row.querySelector<HTMLButtonElement>('button[role="switch"]')!;
+}
+
+async function chooseMenuItem(dom: JSDOM, agent: string, name: string) {
+  const trigger = agentRow(dom, agent).querySelector<HTMLButtonElement>(
+    '[aria-label^="More actions"], [aria-label^="Другие действия"]',
+  )!;
+  await act(async () => {
+    trigger.dispatchEvent(
+      new dom.window.KeyboardEvent("keydown", {
+        bubbles: true,
+        cancelable: true,
+        key: "Enter",
+      }),
+    );
+    await settle();
+  });
+  const item = Array.from(
+    dom.window.document.querySelectorAll<HTMLElement>('[role="menuitem"]'),
+  ).find((candidate) => candidate.textContent?.trim() === name)!;
+  await act(async () => {
+    item.click();
+    await settle();
+  });
+}
+
 function within(row: HTMLElement, name: string) {
   return Array.from(row.querySelectorAll("button")).find(
     (button) => button.textContent?.trim() === name,
@@ -653,12 +1218,25 @@ function createDom() {
 function installDomGlobals(dom: JSDOM) {
   const values: Record<string, unknown> = {
     CustomEvent: dom.window.CustomEvent,
+    DOMRect: dom.window.DOMRect,
+    DocumentFragment: dom.window.DocumentFragment,
     Element: dom.window.Element,
     Event: dom.window.Event,
+    FocusEvent: dom.window.FocusEvent,
     HTMLElement: dom.window.HTMLElement,
+    HTMLInputElement: dom.window.HTMLInputElement,
     IS_REACT_ACT_ENVIRONMENT: true,
+    KeyboardEvent: dom.window.KeyboardEvent,
     MouseEvent: dom.window.MouseEvent,
+    MutationObserver: dom.window.MutationObserver,
     Node: dom.window.Node,
+    NodeFilter: dom.window.NodeFilter,
+    PointerEvent: dom.window.PointerEvent,
+    ResizeObserver: class {
+      disconnect() {}
+      observe() {}
+      unobserve() {}
+    },
     document: dom.window.document,
     getComputedStyle: dom.window.getComputedStyle,
     navigator: dom.window.navigator,
