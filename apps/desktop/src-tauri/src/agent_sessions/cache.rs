@@ -1,396 +1,176 @@
-use std::collections::{HashMap, HashSet};
+//! The last good session list of each agent, saved per project so the
+//! catalogue shows it after the app starts, before an agent connection opens
+//! (Stage 10 `02` C3, condition 3 of the scanner removal). A rebuildable
+//! cache: the project's sessions with their bounded list fields and native
+//! status evidence, no transcript (C8).
+
+use std::collections::HashMap;
 use std::fs;
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
+use std::sync::Mutex;
+use std::time::Duration;
+
+use chrono::{DateTime, SecondsFormat, Utc};
+use serde::{Deserialize, Serialize};
+use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
+use svode_agents::catalog::ListedSession;
 use svode_core::agent_adapters::AgentId;
 
-use chrono::{SecondsFormat, Utc};
-use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
-
-use super::AgentSessionsState;
-use super::sources::{NativeSource, PersistedAgentSessionCandidate, SourceScan};
-use super::types::AgentSessionSourceReport;
+use super::native_status::NativeLogRead;
 use crate::error::AppError;
 
-#[derive(Debug, Default)]
-pub(crate) struct AgentSessionsReadCache {
-    sources: HashMap<AgentId, CachedSourceScan>,
+#[derive(Default)]
+pub(crate) struct CatalogSnapshots {
+    projects: Mutex<HashMap<PathBuf, ProjectSnapshot>>,
 }
 
-#[derive(Debug, Default)]
-pub(crate) struct AgentSessionsSourceScanLocks {
-    locks: std::sync::Mutex<HashMap<AgentId, std::sync::Arc<std::sync::Mutex<()>>>>,
+#[derive(Default)]
+struct ProjectSnapshot {
+    lists: HashMap<AgentId, SavedList>,
+    /// Hash of the sessions last written per agent.
+    written: HashMap<AgentId, u64>,
 }
 
-impl AgentSessionsSourceScanLocks {
-    fn for_source(
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SavedList {
+    pub read_at: DateTime<Utc>,
+    pub sessions: Vec<SavedSession>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SavedSession {
+    pub listed: ListedSession,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native: Option<NativeLogRead>,
+}
+
+impl CatalogSnapshots {
+    /// The lists saved for the project, read from disk on its first use;
+    /// `loaded` sees them once, when they are read.
+    pub(crate) fn lists(
         &self,
-        source: &AgentId,
-    ) -> Result<std::sync::Arc<std::sync::Mutex<()>>, AppError> {
-        let mut locks = self.locks.lock().map_err(|_| {
-            AppError::General("Agent sessions source scan lock registry poisoned".to_string())
-        })?;
-        Ok(locks
-            .entry(source.clone())
-            .or_insert_with(|| std::sync::Arc::new(std::sync::Mutex::new(())))
-            .clone())
-    }
-}
-
-#[derive(Debug, Clone)]
-pub(super) struct CachedSourceScan {
-    pub(super) fingerprint: String,
-    pub(super) candidates: Vec<PersistedAgentSessionCandidate>,
-    pub(super) report: AgentSessionSourceReport,
-}
-
-#[derive(Debug)]
-pub(super) struct SourceRead {
-    pub(super) candidates: Vec<PersistedAgentSessionCandidate>,
-    pub(super) report: AgentSessionSourceReport,
-    pub(super) cache_hit: bool,
-}
-
-pub(super) fn candidates_for_session_ids(
-    state: &AgentSessionsState,
-    session_ids: &HashSet<String>,
-) -> Result<Vec<PersistedAgentSessionCandidate>, AppError> {
-    if session_ids.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    let cache = state
-        .cache
-        .lock()
-        .map_err(|_| AppError::General("Agent sessions cache lock poisoned".to_string()))?;
-    let mut candidates = Vec::new();
-    for cached in cache.sources.values() {
-        for candidate in &cached.candidates {
-            if session_ids.contains(&candidate.session_id()) {
-                candidates.push(candidate.clone());
-            }
+        project: &Path,
+        loaded: impl FnOnce(&HashMap<AgentId, SavedList>),
+    ) -> HashMap<AgentId, SavedList> {
+        let mut projects = self.projects.lock().unwrap();
+        if let Some(snapshot) = projects.get(project) {
+            return snapshot.lists.clone();
         }
+        let lists = read_saved_lists(project);
+        loaded(&lists);
+        let written = lists
+            .iter()
+            .filter_map(|(agent, list)| Some((agent.clone(), sessions_hash(&list.sessions)?)))
+            .collect();
+        projects.insert(
+            project.to_path_buf(),
+            ProjectSnapshot {
+                lists: lists.clone(),
+                written,
+            },
+        );
+        lists
     }
-    Ok(candidates)
-}
 
-pub(super) fn update_candidate(
-    state: &AgentSessionsState,
-    candidate: PersistedAgentSessionCandidate,
-) -> Result<Option<CachedSourceScan>, AppError> {
-    let mut cache = state
-        .cache
-        .lock()
-        .map_err(|_| AppError::General("Agent sessions cache lock poisoned".to_string()))?;
-    let Some(cached) = cache.sources.get_mut(&candidate.source) else {
-        return Ok(None);
-    };
-
-    if let Some(existing) = cached
-        .candidates
-        .iter_mut()
-        .find(|item| item.source_session_id == candidate.source_session_id)
-    {
-        *existing = candidate;
-    } else {
-        cached.candidates.push(candidate);
-        cached
-            .candidates
-            .sort_by(|a, b| a.source_session_id.cmp(&b.source_session_id));
+    /// Keeps the agent's list of the project and writes it when its sessions
+    /// differ from the last written ones.
+    pub(crate) fn save(&self, project: &Path, agent: &AgentId, list: SavedList) {
+        let Some(hash) = sessions_hash(&list.sessions) else {
+            return;
+        };
+        let mut projects = self.projects.lock().unwrap();
+        let snapshot = projects.entry(project.to_path_buf()).or_default();
+        if snapshot.written.get(agent) == Some(&hash) {
+            return;
+        }
+        match write_saved_list(project, agent, &list) {
+            Ok(()) => {
+                snapshot.written.insert(agent.clone(), hash);
+            }
+            Err(error) => tracing::warn!(
+                "agent sessions snapshot write failed for {}: {error}",
+                project.display()
+            ),
+        }
+        snapshot.lists.insert(agent.clone(), list);
     }
-    Ok(Some(cached.clone()))
 }
 
-pub(super) fn memory_is_empty(state: &AgentSessionsState) -> Result<bool, AppError> {
-    let cache = state
-        .cache
-        .lock()
-        .map_err(|_| AppError::General("Agent sessions cache lock poisoned".to_string()))?;
-    Ok(cache.sources.is_empty())
+fn sessions_hash(sessions: &[SavedSession]) -> Option<u64> {
+    let json = serde_json::to_string(sessions).ok()?;
+    let mut hasher = DefaultHasher::new();
+    json.hash(&mut hasher);
+    Some(hasher.finish())
 }
 
-pub(super) fn disk_snapshot_reads(
-    state: &AgentSessionsState,
-    project: &Path,
-    started: Instant,
-) -> Result<Option<Vec<SourceRead>>, AppError> {
+fn read_saved_lists(project: &Path) -> HashMap<AgentId, SavedList> {
     let db_path = cache_db_path(project);
     if !db_path.is_file() {
-        return Ok(None);
+        return HashMap::new();
     }
-
-    let mut rows = Vec::new();
-    for source in NativeSource::all() {
-        match read_disk_source_cache_row(&db_path, &source.agent) {
-            Ok(Some(row)) => rows.push((source.agent, row)),
-            Ok(None) => return Ok(None),
-            Err(error) => {
-                tracing::warn!(
-                    "agent sessions stale snapshot read failed for {}: {error}",
-                    db_path.display()
-                );
-                return Ok(None);
+    let rows = tauri::async_runtime::block_on(async {
+        let pool = open_cache_pool(&db_path, false).await?;
+        ensure_cache_schema(&pool).await?;
+        let rows =
+            sqlx::query_as::<_, (String, String)>("SELECT agent, list_json FROM acp_list_snapshot")
+                .fetch_all(&pool)
+                .await?;
+        pool.close().await;
+        Ok::<_, AppError>(rows)
+    });
+    let rows = match rows {
+        Ok(rows) => rows,
+        Err(error) => {
+            tracing::warn!(
+                "agent sessions snapshot read failed for {}: {error}",
+                db_path.display()
+            );
+            return HashMap::new();
+        }
+    };
+    rows.into_iter()
+        .filter_map(|(agent, json)| {
+            let agent = AgentId::parse(&agent).ok()?;
+            match serde_json::from_str::<SavedList>(&json) {
+                Ok(list) => Some((agent, list)),
+                Err(error) => {
+                    tracing::warn!("agent sessions snapshot of {agent:?} is unreadable: {error}");
+                    None
+                }
             }
-        }
-    }
-
-    let mut reads = Vec::new();
-    for (source, row) in rows {
-        let mut report = row.report;
-        report.cache_hit = true;
-        report.fingerprint = Some(row.fingerprint.clone());
-        report.duration_ms = Some(started.elapsed().as_millis());
-
-        let read = SourceRead {
-            candidates: row.candidates,
-            report,
-            cache_hit: true,
-        };
-        cache_source_read(state, &source, row.fingerprint, &read)?;
-        reads.push(read);
-    }
-
-    Ok(Some(reads))
+        })
+        .collect()
 }
 
-pub(super) fn read_source(
-    state: &AgentSessionsState,
-    project: &Path,
-    native: &NativeSource,
-    force_refresh: bool,
-) -> Result<SourceRead, AppError> {
-    let source = &native.agent;
-    let requested_at = Instant::now();
-    let scan_lock = state.source_scan_locks.for_source(source)?;
-    let _scan_guard = scan_lock
-        .lock()
-        .map_err(|_| AppError::General("Agent sessions source scan lock poisoned".to_string()))?;
-    let scan_wait_ms = requested_at.elapsed().as_millis();
-    let started = Instant::now();
-    let root = native.root(&state.home_dir);
-    let (fingerprint, report) = native.collect_fingerprint(&root);
-
-    if !force_refresh {
-        if let Some(read) = cached_source_read(state, source, &fingerprint.value, started)? {
-            log_source_read(project, source, force_refresh, scan_wait_ms, &read);
-            return Ok(read);
-        }
-        if let Some(read) =
-            disk_cached_source_read(state, project, source, &fingerprint.value, started)?
-        {
-            log_source_read(project, source, force_refresh, scan_wait_ms, &read);
-            return Ok(read);
-        }
-    }
-
-    let mut scan = native.scan(&root, fingerprint, report);
-    scan.report.cache_hit = false;
-    scan.report.duration_ms = Some(started.elapsed().as_millis());
-    cache_source_scan(state, source, &scan)?;
-    cache_source_scan_on_disk(project, source, &scan);
-    let read = source_read_from_scan(scan);
-    log_source_read(project, source, force_refresh, scan_wait_ms, &read);
-    Ok(read)
-}
-
-fn log_source_read(
-    project: &Path,
-    source: &AgentId,
-    force_refresh: bool,
-    scan_wait_ms: u128,
-    read: &SourceRead,
-) {
-    tracing::info!(
-        target: "svode::agent_sessions",
-        event = "source_read_finished",
-        project_path = %project.display(),
-        source = source.as_str(),
-        force_refresh,
-        cache_hit = read.cache_hit,
-        cache_mode = if force_refresh {
-            "force-refresh"
-        } else if read.cache_hit {
-            "cache-hit"
-        } else {
-            "fresh-scan"
-        },
-        scan_wait_ms,
-        duration_ms = read.report.duration_ms.unwrap_or_default(),
-        files_scanned = read.report.counts.files_scanned,
-        records_read = read.report.counts.records_read,
-        malformed_lines = read.report.counts.malformed_lines,
-        source_errors = read.report.counts.source_errors,
-    );
-}
-
-pub(super) fn write_snapshot(
-    project: &Path,
-    source: &AgentId,
-    fingerprint: &str,
-    candidates: &[PersistedAgentSessionCandidate],
-    report: &AgentSessionSourceReport,
-) {
+fn write_saved_list(project: &Path, agent: &AgentId, list: &SavedList) -> Result<(), AppError> {
     let db_path = cache_db_path(project);
-    let candidates_json = match serde_json::to_string(candidates) {
-        Ok(value) => value,
-        Err(error) => {
-            tracing::warn!("agent sessions disk cache serialization failed: {error}");
-            return;
-        }
-    };
-    let report_json = match serde_json::to_string(report) {
-        Ok(value) => value,
-        Err(error) => {
-            tracing::warn!("agent sessions disk cache report serialization failed: {error}");
-            return;
-        }
-    };
-    let source_key = source.as_str().to_string();
-    let updated_at = Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true);
-
-    let write = tauri::async_runtime::block_on(async {
+    let list_json = serde_json::to_string(list)?;
+    let saved_at = Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true);
+    tauri::async_runtime::block_on(async {
         let pool = open_writable_cache_pool(&db_path).await?;
         sqlx::query(
             r#"
-            INSERT INTO source_cache (
-                source,
-                fingerprint,
-                candidates_json,
-                report_json,
-                updated_at
-            )
-            VALUES (?, ?, ?, ?, ?)
-            ON CONFLICT(source) DO UPDATE SET
-                fingerprint = excluded.fingerprint,
-                candidates_json = excluded.candidates_json,
-                report_json = excluded.report_json,
-                updated_at = excluded.updated_at
+            INSERT INTO acp_list_snapshot (agent, list_json, saved_at)
+            VALUES (?, ?, ?)
+            ON CONFLICT(agent) DO UPDATE SET
+                list_json = excluded.list_json,
+                saved_at = excluded.saved_at
             "#,
         )
-        .bind(source_key)
-        .bind(fingerprint)
-        .bind(candidates_json)
-        .bind(report_json)
-        .bind(updated_at)
+        .bind(agent.as_str())
+        .bind(list_json)
+        .bind(saved_at)
         .execute(&pool)
         .await?;
         pool.close().await;
-        Ok::<_, AppError>(())
-    });
-
-    if let Err(error) = write {
-        tracing::warn!(
-            "agent sessions disk cache write failed for {}: {error}",
-            db_path.display()
-        );
-    }
-}
-
-struct DiskSourceCacheRow {
-    fingerprint: String,
-    candidates: Vec<PersistedAgentSessionCandidate>,
-    report: AgentSessionSourceReport,
-}
-
-fn disk_cached_source_read(
-    state: &AgentSessionsState,
-    project: &Path,
-    source: &AgentId,
-    fingerprint: &str,
-    started: Instant,
-) -> Result<Option<SourceRead>, AppError> {
-    let db_path = cache_db_path(project);
-    if !db_path.is_file() {
-        return Ok(None);
-    }
-
-    match read_disk_source_cache_row(&db_path, source) {
-        Ok(Some(row)) if row.fingerprint == fingerprint => {
-            let mut report = row.report;
-            report.cache_hit = true;
-            report.fingerprint = Some(row.fingerprint);
-            report.duration_ms = Some(started.elapsed().as_millis());
-            let read = SourceRead {
-                candidates: row.candidates,
-                report,
-                cache_hit: true,
-            };
-            cache_source_read(state, source, fingerprint.to_string(), &read)?;
-            Ok(Some(read))
-        }
-        Ok(Some(_)) | Ok(None) => Ok(None),
-        Err(error) => {
-            tracing::warn!(
-                "agent sessions disk cache read failed for {}: {error}",
-                db_path.display()
-            );
-            Ok(None)
-        }
-    }
-}
-
-fn read_disk_source_cache_row(
-    db_path: &Path,
-    source: &AgentId,
-) -> Result<Option<DiskSourceCacheRow>, AppError> {
-    tauri::async_runtime::block_on(async {
-        let pool = open_cache_pool(db_path, false).await?;
-        ensure_cache_schema(&pool).await?;
-        let row = sqlx::query_as::<_, (String, String, String)>(
-            "SELECT fingerprint, candidates_json, report_json FROM source_cache WHERE source = ?",
-        )
-        .bind(source.as_str())
-        .fetch_optional(&pool)
-        .await?;
-        pool.close().await;
-
-        let Some((fingerprint, candidates_json, report_json)) = row else {
-            return Ok(None);
-        };
-        let candidates =
-            serde_json::from_str::<Vec<PersistedAgentSessionCandidate>>(&candidates_json)?;
-        let report = serde_json::from_str::<AgentSessionSourceReport>(&report_json)?;
-
-        Ok::<_, AppError>(Some(DiskSourceCacheRow {
-            fingerprint,
-            candidates,
-            report,
-        }))
+        Ok(())
     })
 }
 
-fn cache_source_scan_on_disk(project: &Path, source: &AgentId, scan: &SourceScan) {
-    write_snapshot(
-        project,
-        source,
-        &scan.fingerprint,
-        &scan.candidates,
-        &scan.report,
-    );
-}
-
-fn cache_source_read(
-    state: &AgentSessionsState,
-    source: &AgentId,
-    fingerprint: String,
-    read: &SourceRead,
-) -> Result<(), AppError> {
-    let mut cache = state
-        .cache
-        .lock()
-        .map_err(|_| AppError::General("Agent sessions cache lock poisoned".to_string()))?;
-    cache.sources.insert(
-        source.clone(),
-        CachedSourceScan {
-            fingerprint,
-            candidates: read.candidates.clone(),
-            report: read.report.clone(),
-        },
-    );
-    Ok(())
-}
-
-fn cache_db_path(project: &Path) -> PathBuf {
+pub(super) fn cache_db_path(project: &Path) -> PathBuf {
     project.join(".svode").join("agent-sessions.db")
 }
 
@@ -445,75 +225,22 @@ async fn replace_corrupt_cache(db_path: &Path) -> Result<sqlx::SqlitePool, AppEr
     Ok(pool)
 }
 
+/// The snapshot table; the scanners' catalogue cache of earlier versions is
+/// dropped with its rows.
 async fn ensure_cache_schema(pool: &sqlx::SqlitePool) -> Result<(), AppError> {
     sqlx::query(
         r#"
-        CREATE TABLE IF NOT EXISTS source_cache (
-            source TEXT PRIMARY KEY NOT NULL,
-            fingerprint TEXT NOT NULL,
-            candidates_json TEXT NOT NULL,
-            report_json TEXT NOT NULL,
-            updated_at TEXT NOT NULL
+        CREATE TABLE IF NOT EXISTS acp_list_snapshot (
+            agent TEXT PRIMARY KEY NOT NULL,
+            list_json TEXT NOT NULL,
+            saved_at TEXT NOT NULL
         )
         "#,
     )
     .execute(pool)
     .await?;
+    sqlx::query("DROP TABLE IF EXISTS source_cache")
+        .execute(pool)
+        .await?;
     Ok(())
-}
-
-fn cached_source_read(
-    state: &AgentSessionsState,
-    source: &AgentId,
-    fingerprint: &str,
-    started: Instant,
-) -> Result<Option<SourceRead>, AppError> {
-    let cache = state
-        .cache
-        .lock()
-        .map_err(|_| AppError::General("Agent sessions cache lock poisoned".to_string()))?;
-    let Some(cached) = cache.sources.get(&source) else {
-        return Ok(None);
-    };
-    if cached.fingerprint != fingerprint {
-        return Ok(None);
-    }
-
-    let mut report = cached.report.clone();
-    report.cache_hit = true;
-    report.fingerprint = Some(cached.fingerprint.clone());
-    report.duration_ms = Some(started.elapsed().as_millis());
-    Ok(Some(SourceRead {
-        candidates: cached.candidates.clone(),
-        report,
-        cache_hit: true,
-    }))
-}
-
-fn cache_source_scan(
-    state: &AgentSessionsState,
-    source: &AgentId,
-    scan: &SourceScan,
-) -> Result<(), AppError> {
-    let mut cache = state
-        .cache
-        .lock()
-        .map_err(|_| AppError::General("Agent sessions cache lock poisoned".to_string()))?;
-    cache.sources.insert(
-        source.clone(),
-        CachedSourceScan {
-            fingerprint: scan.fingerprint.clone(),
-            candidates: scan.candidates.clone(),
-            report: scan.report.clone(),
-        },
-    );
-    Ok(())
-}
-
-fn source_read_from_scan(scan: SourceScan) -> SourceRead {
-    SourceRead {
-        candidates: scan.candidates,
-        report: scan.report,
-        cache_hit: false,
-    }
 }

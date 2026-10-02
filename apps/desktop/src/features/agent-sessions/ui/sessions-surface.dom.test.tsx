@@ -387,19 +387,6 @@ if (process.env.SVODE_AGENT_SESSIONS_SURFACE_DOM !== "1") {
       lastActivityAt: "2026-09-29T10:00:00Z",
       capabilities: {
         canResume: true,
-        canRevealFile: true,
-        hasReadableLog: true,
-      },
-      sourceMeta: {
-        historyPresent: false,
-        detailPresent: false,
-        sessionIndexPresent: false,
-        detailFileCount: 0,
-        historyLineCount: 0,
-        detailLineCount: 0,
-        malformedLineCount: 0,
-        functionCallCount: 0,
-        notes: [],
       },
       ...overrides,
     };

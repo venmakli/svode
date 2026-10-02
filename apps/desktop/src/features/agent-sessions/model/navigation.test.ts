@@ -16,25 +16,16 @@ function report(
 ): AgentSessionSourceReport {
   return {
     source,
-    kind: "native-log",
     status,
-    rootPath: `/home/${source}`,
-    scannedAt: "2026-09-29T10:00:00Z",
-    cacheHit: false,
+    readAt: "2026-09-29T10:00:00Z",
     counts: {
-      filesScanned: 0,
       recordsRead: 0,
       candidates: 0,
       returnedSessions: 0,
       unresolvedCandidates: 0,
       incompleteCandidates: 0,
-      malformedLines: 0,
-      sourceErrors: 0,
-      hotFilesChecked: 0,
-      hotFilesReparsed: 0,
     },
     diagnostics: [],
-    truncatedDiagnostics: 0,
   };
 }
 
@@ -68,18 +59,10 @@ test("a complete fresh list confirms only absent session keys", () => {
   ]);
 });
 
-test("a partial, failed or stale read confirms nothing", () => {
+test("a partial read or a list saved before the app started confirms nothing", () => {
   for (const result of [
     fullList({ status: "partial" }),
-    fullList({ status: "error" }),
-    fullList({
-      cache: {
-        mode: "stale-snapshot",
-        hit: true,
-        sourceHits: 2,
-        sourceMisses: 0,
-      },
-    }),
+    fullList({ cache: { mode: "stale-snapshot" } }),
   ]) {
     expect(confirmedMissingAgentSessionKeys(result, keys)).toEqual([]);
   }
@@ -87,7 +70,7 @@ test("a partial, failed or stale read confirms nothing", () => {
 
 test("an unread source keeps its sessions and every launch key", () => {
   const result = fullList({
-    sources: [report("codex"), report("claude-code", "missing-root")],
+    sources: [report("codex"), report("claude-code", "stale")],
   });
 
   expect(confirmedMissingAgentSessionKeys(result, keys)).toEqual([

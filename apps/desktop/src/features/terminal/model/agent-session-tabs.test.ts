@@ -16,7 +16,7 @@ function session(overrides: Partial<AgentSession> & Pick<AgentSession, "id">) {
     sourceSessionId:
       overrides.sourceSessionId ?? overrides.id.replace(/^.+:/, ""),
     title: overrides.title ?? "Fix auth flow",
-    titleSource: "first-user-prompt",
+    titleSource: "cli-title",
     status: overrides.status ?? {
       state: "idle",
       stopReason: "end_turn",
@@ -36,25 +36,9 @@ function session(overrides: Partial<AgentSession> & Pick<AgentSession, "id">) {
     startedAt: overrides.startedAt,
     lastActivityAt: overrides.lastActivityAt ?? "2026-07-05T10:00:00Z",
     waitingSince: overrides.waitingSince,
-    durationMs: overrides.durationMs,
     resumeCommand: overrides.resumeCommand,
-    sourceFile: overrides.sourceFile,
-    counts: overrides.counts,
     capabilities: overrides.capabilities ?? {
       canResume: true,
-      canRevealFile: true,
-      hasReadableLog: true,
-    },
-    sourceMeta: overrides.sourceMeta ?? {
-      historyPresent: true,
-      detailPresent: false,
-      sessionIndexPresent: false,
-      detailFileCount: 0,
-      historyLineCount: 1,
-      detailLineCount: 0,
-      malformedLineCount: 0,
-      functionCallCount: 0,
-      notes: [],
     },
   };
 

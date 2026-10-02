@@ -20,8 +20,7 @@ use tokio::sync::broadcast::error::RecvError;
 use crate::agent_runtime::connections::AgentConnections;
 
 use super::types::{
-    AgentSessionDiagnosticSeverity, AgentSessionSourceKind, AgentSessionSourceReport,
-    AgentSessionSourceStatus,
+    AgentSessionDiagnosticSeverity, AgentSessionSourceReport, AgentSessionSourceStatus,
 };
 
 /// What the read-model needs from the agent runtime to read catalogues.
@@ -70,6 +69,8 @@ pub(crate) struct AcpListRead {
     pub source: AgentId,
     pub sessions: Vec<ListedSession>,
     pub report: AgentSessionSourceReport,
+    /// When the last good list was read; `None` before any good read.
+    pub read_at: Option<DateTime<Utc>>,
 }
 
 impl AcpListSources {
@@ -191,13 +192,11 @@ fn session_source(agent: &str) -> Option<AgentId> {
 }
 
 fn read_of(source: AgentId, list: &AgentList) -> AcpListRead {
-    let mut report = AgentSessionSourceReport::new(source.clone(), "session/list".to_string());
-    report.kind = AgentSessionSourceKind::AcpList;
     // Always served from the last good read, never on the response path.
-    report.cache_hit = true;
+    let mut report = AgentSessionSourceReport::new(source.clone());
     let mut sessions = Vec::new();
     if let Some(last_good) = &list.last_good {
-        report.scanned_at = last_good.read_at.to_rfc3339_opts(SecondsFormat::Secs, true);
+        report.read_at = Some(last_good.read_at.to_rfc3339_opts(SecondsFormat::Secs, true));
         report.duration_ms = Some(last_good.duration_ms);
         report.counts.records_read = last_good.list.sessions.len() + last_good.list.skipped;
         report.counts.candidates = last_good.list.sessions.len();
@@ -209,8 +208,6 @@ fn read_of(source: AgentId, list: &AgentList) -> AcpListRead {
                     "{} entries of the agent's session list were malformed, out of bounds or repeated",
                     last_good.list.skipped
                 ),
-                None,
-                None,
             );
         }
         if last_good.list.truncated {
@@ -218,8 +215,6 @@ fn read_of(source: AgentId, list: &AgentList) -> AcpListRead {
                 AgentSessionDiagnosticSeverity::Warning,
                 "acp-list-truncated",
                 "The agent's session list is longer than Svode reads; older sessions are not shown",
-                None,
-                None,
             );
         }
         sessions = last_good.list.sessions.clone();
@@ -234,14 +229,13 @@ fn read_of(source: AgentId, list: &AgentList) -> AcpListRead {
             } else {
                 format!("The agent's session list is unavailable: {problem}")
             },
-            None,
-            None,
         );
     }
     AcpListRead {
         source,
         sessions,
         report,
+        read_at: list.last_good.as_ref().map(|last_good| last_good.read_at),
     }
 }
 
@@ -375,7 +369,6 @@ mod tests {
             .find(|read| read.source == AgentAdapterKind::Codex.id())
             .unwrap();
         assert_eq!(codex.report.status, AgentSessionSourceStatus::Stale);
-        assert_eq!(codex.report.kind, AgentSessionSourceKind::AcpList);
         assert_eq!(codex.sessions.len(), 1, "last good list survives");
         assert_eq!(codex.report.diagnostics[0].code, "acp-list-stale");
         let claude = reads

@@ -2,28 +2,31 @@ mod acp_list;
 mod cache;
 pub mod commands;
 mod live_status;
+mod native_status;
 mod read_model;
 mod reentry;
 mod refresh;
 mod scope;
-mod sources;
 pub mod types;
 
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use acp_list::AcpListSources;
-use cache::AgentSessionsReadCache;
-use cache::AgentSessionsSourceScanLocks;
+use cache::CatalogSnapshots;
+use native_status::NativeStatusReader;
 use refresh::AgentSessionsReadCoordinator;
 
+/// The Sessions catalogue: each agent's ACP list, the lists saved per project
+/// for the time before an agent connection opens, and the native status
+/// reader of the listed sessions.
 #[derive(Clone)]
 pub struct AgentSessionsState {
     pub(crate) home_dir: PathBuf,
-    pub(crate) cache: Arc<Mutex<AgentSessionsReadCache>>,
     pub(crate) reads: AgentSessionsReadCoordinator,
-    pub(crate) source_scan_locks: Arc<AgentSessionsSourceScanLocks>,
     pub(crate) acp_lists: Arc<AcpListSources>,
+    pub(crate) snapshots: Arc<CatalogSnapshots>,
+    pub(crate) native_status: Arc<NativeStatusReader>,
 }
 
 impl AgentSessionsState {
@@ -33,11 +36,11 @@ impl AgentSessionsState {
 
     pub(crate) fn with_home(home_dir: PathBuf) -> Self {
         Self {
+            native_status: Arc::new(NativeStatusReader::new(home_dir.clone())),
             home_dir,
-            cache: Arc::new(Mutex::new(AgentSessionsReadCache::default())),
             reads: AgentSessionsReadCoordinator::default(),
-            source_scan_locks: Arc::new(AgentSessionsSourceScanLocks::default()),
             acp_lists: Arc::new(AcpListSources::default()),
+            snapshots: Arc::new(CatalogSnapshots::default()),
         }
     }
 }

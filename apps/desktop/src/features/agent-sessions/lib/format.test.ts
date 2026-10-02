@@ -25,19 +25,6 @@ function session(lastActivityAt: string): AgentSession {
     lastActivityAt,
     capabilities: {
       canResume: true,
-      canRevealFile: true,
-      hasReadableLog: true,
-    },
-    sourceMeta: {
-      historyPresent: false,
-      detailPresent: false,
-      sessionIndexPresent: false,
-      detailFileCount: 0,
-      historyLineCount: 0,
-      detailLineCount: 0,
-      malformedLineCount: 0,
-      functionCallCount: 0,
-      notes: [],
     },
   };
 }

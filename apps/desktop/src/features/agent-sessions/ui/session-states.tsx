@@ -50,10 +50,6 @@ export function SessionMetadata({
         {m.sessions_metadata_session_id()}
       </dt>
       <dd className="truncate">{session.sourceSessionId}</dd>
-      <dt className="text-muted-foreground">
-        {m.sessions_metadata_source_file()}
-      </dt>
-      <dd className="truncate">{session.sourceFile?.path ?? "—"}</dd>
     </dl>
   );
 }

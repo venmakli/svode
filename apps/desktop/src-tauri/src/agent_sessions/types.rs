@@ -5,8 +5,6 @@ use svode_agents::registry::AdapterRuntimeRegistry;
 use svode_agents::status::SessionStatus;
 use svode_core::agent_adapters::AgentId;
 
-pub(crate) const MAX_SOURCE_DIAGNOSTICS: usize = 50;
-
 /// Writer-registry key of a session a Sessions source reports: terminal
 /// sessions carry the agent's native session id.
 pub(crate) fn native_writer_key(agent: &AgentId, source_session_id: &str) -> SessionKey {
@@ -14,6 +12,16 @@ pub(crate) fn native_writer_key(agent: &AgentId, source_session_id: &str) -> Ses
         agent: agent.as_str().to_string(),
         namespace: IdentityNamespace::Native,
         session_id: source_session_id.to_string(),
+    }
+}
+
+/// Catalogue id of a session: its agent and native id; an ACP id without
+/// equality evidence keeps its own namespace, so it never meets a native
+/// record of the same agent.
+pub(crate) fn catalog_session_id(agent: &AgentId, key: &SessionKey) -> String {
+    match key.namespace {
+        IdentityNamespace::Native => format!("{}:{}", agent.as_str(), key.session_id),
+        IdentityNamespace::Acp => format!("{}:acp:{}", agent.as_str(), key.session_id),
     }
 }
 
@@ -33,7 +41,6 @@ pub(crate) fn terminal_resume_argv(
 #[serde(rename_all = "kebab-case")]
 pub enum AgentSessionTitleSource {
     CliTitle,
-    FirstUserPrompt,
     SessionId,
 }
 
@@ -57,8 +64,6 @@ pub enum AgentSessionScopeStatus {
 pub enum AgentSessionScopeConfidence {
     Exact,
     CwdPrefix,
-    WorktreeOriginal,
-    DecodedSourceFile,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -66,39 +71,24 @@ pub enum AgentSessionScopeConfidence {
 pub enum AgentSessionsListStatus {
     Ok,
     Partial,
-    Error,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum AgentSessionSourceStatus {
     Ok,
-    MissingRoot,
-    PartialError,
-    Unreadable,
-    Error,
     /// The last good list is shown; the agent did not answer the latest
-    /// read or is not connected.
+    /// read.
     Stale,
-}
-
-/// How a source reads the agent's sessions: its native store on disk or
-/// the agent's own `session/list` over ACP.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum AgentSessionSourceKind {
-    #[default]
-    NativeLog,
-    AcpList,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum AgentSessionsCacheMode {
-    FreshScan,
-    FingerprintHit,
-    ForceRefresh,
-    Mixed,
+    /// Every list was read by this app process.
+    Current,
+    /// A list saved before the app started is shown until its agent's
+    /// connection opens; it confirms no session missing.
     StaleSnapshot,
 }
 
@@ -140,15 +130,8 @@ pub struct AgentSession {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub waiting_since: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub duration_ms: Option<u64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resume_command: Option<AgentSessionResumeCommand>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub source_file: Option<AgentSessionSourceFileRef>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub counts: Option<AgentSessionCounts>,
     pub capabilities: AgentSessionCapabilities,
-    pub source_meta: AgentSessionSourceMeta,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -179,39 +162,8 @@ pub struct AgentSessionResumeCommand {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct AgentSessionSourceFileRef {
-    pub path: String,
-    pub mtime_ms: u128,
-    pub size_bytes: u64,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AgentSessionCounts {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub messages: Option<u32>,
-    pub user_messages: u32,
-    pub assistant_messages: u32,
-    pub function_calls: u32,
-    pub malformed_lines: u32,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct AgentSessionCapabilities {
     pub can_resume: bool,
-    pub can_reveal_file: bool,
-    pub has_readable_log: bool,
-}
-
-impl Default for AgentSessionCapabilities {
-    fn default() -> Self {
-        Self {
-            can_resume: true,
-            can_reveal_file: true,
-            has_readable_log: true,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -227,21 +179,6 @@ pub struct AgentSessionScope {
     pub space_path: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cwd: Option<String>,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AgentSessionSourceMeta {
-    pub history_present: bool,
-    pub detail_present: bool,
-    pub session_index_present: bool,
-    pub detail_file_count: u32,
-    pub history_line_count: u32,
-    pub detail_line_count: u32,
-    pub malformed_line_count: u32,
-    pub function_call_count: u32,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub notes: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -262,17 +199,12 @@ pub struct AgentSessionsSummary {
     pub returned_sessions: usize,
     pub unresolved_candidates: usize,
     pub incomplete_candidates: usize,
-    pub malformed_lines: usize,
-    pub source_errors: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentSessionsCacheReport {
     pub mode: AgentSessionsCacheMode,
-    pub hit: bool,
-    pub source_hits: usize,
-    pub source_misses: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -284,57 +216,43 @@ pub struct AgentSessionsHotStatusResult {
     pub checked_sessions: usize,
     pub updated_sessions: usize,
     pub skipped_sessions: usize,
-    pub sources: Vec<AgentSessionSourceReport>,
 }
 
+/// One agent's session list as the catalogue shows it: the agent's ACP
+/// `session/list`, its declared catalogue source.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentSessionSourceReport {
     pub source: AgentId,
-    #[serde(default)]
-    pub kind: AgentSessionSourceKind,
     pub status: AgentSessionSourceStatus,
-    pub root_path: String,
-    pub scanned_at: String,
-    pub cache_hit: bool,
+    /// When the shown list was read.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub read_at: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub duration_ms: Option<u128>,
     pub counts: AgentSessionSourceCounts,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub fingerprint: Option<String>,
     pub diagnostics: Vec<AgentSessionDiagnostic>,
-    pub truncated_diagnostics: usize,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentSessionSourceCounts {
-    pub files_scanned: usize,
     pub records_read: usize,
     pub candidates: usize,
     pub returned_sessions: usize,
     pub unresolved_candidates: usize,
     pub incomplete_candidates: usize,
-    pub malformed_lines: usize,
-    pub source_errors: usize,
-    pub hot_files_checked: usize,
-    pub hot_files_reparsed: usize,
 }
 
 impl AgentSessionSourceReport {
-    pub(crate) fn new(source: AgentId, root: String) -> Self {
+    pub(crate) fn new(source: AgentId) -> Self {
         Self {
             source,
-            kind: AgentSessionSourceKind::NativeLog,
             status: AgentSessionSourceStatus::Ok,
-            root_path: root,
-            scanned_at: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
-            cache_hit: false,
+            read_at: None,
             duration_ms: None,
             counts: AgentSessionSourceCounts::default(),
-            fingerprint: None,
             diagnostics: Vec::new(),
-            truncated_diagnostics: 0,
         }
     }
 
@@ -343,29 +261,12 @@ impl AgentSessionSourceReport {
         severity: AgentSessionDiagnosticSeverity,
         code: impl Into<String>,
         message: impl Into<String>,
-        path: Option<String>,
-        line: Option<u64>,
     ) {
-        if matches!(severity, AgentSessionDiagnosticSeverity::Error) {
-            self.counts.source_errors += 1;
-        }
-        if self.diagnostics.len() >= MAX_SOURCE_DIAGNOSTICS {
-            self.truncated_diagnostics += 1;
-            return;
-        }
         self.diagnostics.push(AgentSessionDiagnostic {
             severity,
             code: code.into(),
             message: message.into(),
-            path,
-            line,
         });
-    }
-
-    pub(crate) fn mark_partial_if_ok(&mut self) {
-        if matches!(self.status, AgentSessionSourceStatus::Ok) {
-            self.status = AgentSessionSourceStatus::PartialError;
-        }
     }
 }
 
@@ -374,7 +275,6 @@ impl AgentSessionSourceReport {
 pub enum AgentSessionDiagnosticSeverity {
     Info,
     Warning,
-    Error,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -383,10 +283,6 @@ pub struct AgentSessionDiagnostic {
     pub severity: AgentSessionDiagnosticSeverity,
     pub code: String,
     pub message: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub path: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub line: Option<u64>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

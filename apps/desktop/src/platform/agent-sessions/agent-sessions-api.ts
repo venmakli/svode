@@ -5,17 +5,10 @@ import { invokeCommand as invoke } from "@/platform/native/invoke";
 export type AgentSessionSource = string;
 /** The one session status vocabulary of the agent runtime (Stage 10 C10). */
 export type AgentSessionStatus = AgentSessionStatusDto;
-export type AgentSessionTitleSource =
-  | "cli-title"
-  | "first-user-prompt"
-  | "session-id";
+export type AgentSessionTitleSource = "cli-title" | "session-id";
 export type AgentSessionScopeKind = "project" | "space";
 export type AgentSessionScopeStatus = "ready" | "missing" | "broken";
-export type AgentSessionScopeConfidence =
-  | "exact"
-  | "cwd-prefix"
-  | "worktree-original"
-  | "decoded-source-file";
+export type AgentSessionScopeConfidence = "exact" | "cwd-prefix";
 
 export interface AgentSessionRuntime {
   ptyId?: string;
@@ -33,36 +26,8 @@ export interface AgentResumeCommand {
   cwd?: string;
 }
 
-export interface AgentSessionFileRef {
-  path: string;
-  mtimeMs: number;
-  sizeBytes: number;
-}
-
-export interface AgentSessionCounts {
-  messages?: number;
-  userMessages: number;
-  assistantMessages: number;
-  functionCalls: number;
-  malformedLines: number;
-}
-
 export interface AgentSessionCapabilities {
   canResume: boolean;
-  canRevealFile: boolean;
-  hasReadableLog: boolean;
-}
-
-export interface AgentSessionSourceMeta {
-  historyPresent: boolean;
-  detailPresent: boolean;
-  sessionIndexPresent: boolean;
-  detailFileCount: number;
-  historyLineCount: number;
-  detailLineCount: number;
-  malformedLineCount: number;
-  functionCallCount: number;
-  notes: string[];
 }
 
 export interface AgentSession {
@@ -88,32 +53,21 @@ export interface AgentSession {
   startedAt?: string;
   lastActivityAt: string;
   waitingSince?: string;
-  durationMs?: number;
   resumeCommand?: AgentResumeCommand;
-  sourceFile?: AgentSessionFileRef;
-  counts?: AgentSessionCounts;
   capabilities: AgentSessionCapabilities;
-  sourceMeta: AgentSessionSourceMeta;
 }
 
-export type AgentSessionsListStatus = "ok" | "partial" | "error";
-export type AgentSessionsCacheMode =
-  | "fresh-scan"
-  | "fingerprint-hit"
-  | "force-refresh"
-  | "mixed"
-  | "stale-snapshot";
+export type AgentSessionsListStatus = "ok" | "partial";
+/**
+ * `stale-snapshot`: a list saved before the app started is shown until its
+ * agent's connection opens; it confirms no session missing.
+ */
+export type AgentSessionsCacheMode = "current" | "stale-snapshot";
 export type AgentSessionSourceReportStatus =
   | "ok"
-  | "missing-root"
-  | "partial-error"
-  | "unreadable"
-  | "error"
-  /** The last good list is shown; the agent did not answer or is not connected. */
+  /** The last good list is shown; the agent did not answer the latest read. */
   | "stale";
-/** A source reads the agent's native store or its ACP `session/list`. */
-export type AgentSessionSourceKind = "native-log" | "acp-list";
-export type AgentSessionDiagnosticSeverity = "info" | "warning" | "error";
+export type AgentSessionDiagnosticSeverity = "info" | "warning";
 
 export interface AgentSessionsListResult {
   status: AgentSessionsListStatus;
@@ -129,15 +83,10 @@ export interface AgentSessionsListSummary {
   returnedSessions: number;
   unresolvedCandidates: number;
   incompleteCandidates: number;
-  malformedLines: number;
-  sourceErrors: number;
 }
 
 export interface AgentSessionsCacheState {
   mode: AgentSessionsCacheMode;
-  hit: boolean;
-  sourceHits: number;
-  sourceMisses: number;
 }
 
 export interface AgentSessionsHotStatusResult {
@@ -147,42 +96,31 @@ export interface AgentSessionsHotStatusResult {
   checkedSessions: number;
   updatedSessions: number;
   skippedSessions: number;
-  sources: AgentSessionSourceReport[];
 }
 
+/** One agent's session list: its ACP `session/list`. */
 export interface AgentSessionSourceReport {
   source: AgentSessionSource;
-  kind: AgentSessionSourceKind;
   status: AgentSessionSourceReportStatus;
-  rootPath: string;
-  scannedAt: string;
-  cacheHit: boolean;
+  /** When the shown list was read. */
+  readAt?: string;
   durationMs?: number;
   counts: AgentSessionSourceCounts;
-  fingerprint?: string;
   diagnostics: AgentSessionDiagnostic[];
-  truncatedDiagnostics: number;
 }
 
 export interface AgentSessionSourceCounts {
-  filesScanned: number;
   recordsRead: number;
   candidates: number;
   returnedSessions: number;
   unresolvedCandidates: number;
   incompleteCandidates: number;
-  malformedLines: number;
-  sourceErrors: number;
-  hotFilesChecked: number;
-  hotFilesReparsed: number;
 }
 
 export interface AgentSessionDiagnostic {
   severity: AgentSessionDiagnosticSeverity;
   code: string;
   message: string;
-  path?: string;
-  line?: number;
 }
 
 export type AgentSessionReentryMode =

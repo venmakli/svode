@@ -468,19 +468,6 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
       },
       capabilities: {
         canResume: true,
-        canRevealFile: true,
-        hasReadableLog: true,
-      },
-      sourceMeta: {
-        historyPresent: false,
-        detailPresent: false,
-        sessionIndexPresent: false,
-        detailFileCount: 0,
-        historyLineCount: 0,
-        detailLineCount: 0,
-        malformedLineCount: 0,
-        functionCallCount: 0,
-        notes: [],
       },
       ...overrides,
     };

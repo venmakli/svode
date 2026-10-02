@@ -294,11 +294,6 @@ fn log_read_result(
 ) {
     match result {
         Ok(result) => {
-            let files_scanned = result
-                .sources
-                .iter()
-                .map(|source| source.counts.files_scanned)
-                .sum::<usize>();
             let records_read = result
                 .sources
                 .iter()
@@ -311,11 +306,8 @@ fn log_read_result(
                 operation = flight_key.kind.as_str(),
                 flight_id,
                 duration_ms,
-                files_scanned,
                 records_read,
                 returned_sessions = result.sessions.len(),
-                malformed_lines = result.summary.malformed_lines,
-                source_errors = result.summary.source_errors,
                 cache_mode = ?result.cache.mode,
                 active_agent_session_reads = coordinator.inner.active_reads.load(Ordering::Relaxed),
                 active_full_refreshes = coordinator.inner.active_full_refreshes.load(Ordering::Relaxed),
@@ -346,9 +338,7 @@ fn log_read_result(
 
 #[cfg(test)]
 mod tests {
-    use std::fmt::Write as _;
     use std::fs;
-    use std::io::Write as _;
     use std::path::Path;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Condvar, Mutex as StdMutex};
@@ -369,10 +359,7 @@ mod tests {
             sources: Vec::new(),
             summary: AgentSessionsSummary::default(),
             cache: AgentSessionsCacheReport {
-                mode: AgentSessionsCacheMode::ForceRefresh,
-                hit: false,
-                source_hits: 0,
-                source_misses: 2,
+                mode: AgentSessionsCacheMode::Current,
             },
         }
     }
@@ -401,44 +388,30 @@ mod tests {
         wake.notify_all();
     }
 
-    fn write_large_source_fixture(home: &Path, project: &Path, session_count: usize) {
-        let mut codex_history = String::new();
-        let mut claude_history = String::new();
-        for index in 0..session_count {
-            writeln!(
-                codex_history,
-                "{}",
-                serde_json::json!({
-                    "sessionId": format!("codex-stress-{index}"),
-                    "cwd": project.to_string_lossy(),
-                    "timestamp": 1_700_000_000 + index,
-                    "text": format!("Codex stress session {index}"),
+    /// Large last good lists of both agents, with no native logs.
+    fn list_large_catalogues(state: &AgentSessionsState, project: &Path, session_count: usize) {
+        for agent in ["codex", "claude-code"] {
+            let sessions = (0..session_count)
+                .map(|index| svode_agents::catalog::ListedSession {
+                    key: svode_agents::identity::SessionKey::from_acp(
+                        agent,
+                        &format!("{agent}-stress-{index}"),
+                        true,
+                    ),
+                    cwd: project.to_path_buf(),
+                    title: Some(format!("{agent} stress session {index}")),
+                    updated_at: Some("2026-09-30T10:00:00Z".into()),
                 })
-            )
-            .expect("format codex fixture");
-            writeln!(
-                claude_history,
-                "{}",
-                serde_json::json!({
-                    "sessionId": format!("claude-stress-{index}"),
-                    "display": format!("Claude stress session {index}"),
-                    "project": project.to_string_lossy(),
-                    "timestamp": 1_700_000_000 + index,
-                })
-            )
-            .expect("format claude fixture");
+                .collect();
+            state.acp_lists.apply(
+                agent,
+                Ok(svode_agents::catalog::SessionList {
+                    sessions,
+                    ..Default::default()
+                }),
+                1,
+            );
         }
-        codex_history.push_str("{\"malformed\":\n");
-        claude_history.push_str("{\"malformed\":\n");
-
-        let codex_path = home.join(".codex/history.jsonl");
-        let claude_path = home.join(".claude/history.jsonl");
-        fs::create_dir_all(codex_path.parent().expect("codex parent"))
-            .expect("create codex fixture dir");
-        fs::create_dir_all(claude_path.parent().expect("claude parent"))
-            .expect("create claude fixture dir");
-        fs::write(codex_path, codex_history).expect("write codex fixture");
-        fs::write(claude_path, claude_history).expect("write claude fixture");
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -724,7 +697,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-    async fn large_malformed_sources_remain_single_flight_during_refresh_storm() {
+    async fn large_catalogues_remain_single_flight_during_refresh_storm() {
         const CONSUMERS: usize = 24;
         const SESSIONS_PER_SOURCE: usize = 1_000;
 
@@ -732,10 +705,10 @@ mod tests {
         let home = temp.path().join("home");
         let project = temp.path().join("project");
         fs::create_dir_all(&project).expect("create project");
-        write_large_source_fixture(&home, &project, SESSIONS_PER_SOURCE);
 
         let coordinator = AgentSessionsReadCoordinator::default();
         let state = AgentSessionsState::with_home(home.clone());
+        list_large_catalogues(&state, &project, SESSIONS_PER_SOURCE);
         let calls = Arc::new(AtomicUsize::new(0));
         let gate = Arc::new((StdMutex::new(false), Condvar::new()));
         let project_path = project.to_string_lossy().into_owned();
@@ -756,7 +729,7 @@ mod tests {
                         move || {
                             calls.fetch_add(1, Ordering::SeqCst);
                             wait_for_release(&gate);
-                            read_model::list_sessions(&state, project_path, true)
+                            read_model::list_sessions(&state, project_path, Vec::new())
                         },
                     )
                     .await
@@ -764,41 +737,16 @@ mod tests {
         }
         wait_until(|| calls.load(Ordering::SeqCst) == 1);
 
-        let append_path = home.join(".codex/history.jsonl");
-        let append_project = project.clone();
-        let append = std::thread::spawn(move || {
-            std::thread::sleep(std::time::Duration::from_millis(1));
-            let mut file = fs::OpenOptions::new()
-                .append(true)
-                .open(append_path)
-                .expect("open fixture for append");
-            writeln!(
-                file,
-                "{}",
-                serde_json::json!({
-                    "sessionId": "codex-appended-during-scan",
-                    "cwd": append_project.to_string_lossy(),
-                    "timestamp": 1_700_100_000,
-                    "text": "Appended while the shared scan is active",
-                })
-            )
-            .expect("append source row");
-        });
-
         release(&gate);
         for consumer in consumers {
             let result = consumer
                 .await
                 .expect("consumer task")
                 .expect("consumer result");
-            assert_eq!(result.cache.mode, AgentSessionsCacheMode::ForceRefresh);
-            assert!(matches!(
-                result.status,
-                AgentSessionsListStatus::Ok | AgentSessionsListStatus::Partial
-            ));
-            assert!(result.sessions.len() >= SESSIONS_PER_SOURCE * 2);
+            assert_eq!(result.cache.mode, AgentSessionsCacheMode::Current);
+            assert_eq!(result.status, AgentSessionsListStatus::Ok);
+            assert_eq!(result.sessions.len(), SESSIONS_PER_SOURCE * 2);
         }
-        append.join().expect("append thread");
         assert_eq!(calls.load(Ordering::SeqCst), 1);
     }
 }

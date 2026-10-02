@@ -385,7 +385,6 @@
   "sessions_metadata_last_activity": "Последняя активность",
   "sessions_metadata_cwd": "CWD",
   "sessions_metadata_session_id": "ID сессии",
-  "sessions_metadata_source_file": "Файл источника",
   "sessions_peek_title": "Сессия агента",
   "sessions_action_close_peek": "Закрыть",
   "sessions_action_continue_in_terminal": "Продолжить в терминале",

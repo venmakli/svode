@@ -1962,8 +1962,7 @@ mod tests {
             "scopeStatus": "ready",
             "scopeConfidence": "exact",
             "lastActivityAt": "2026-07-04T10:00:00Z",
-            "capabilities": { "canResume": true, "canRevealFile": false, "hasReadableLog": true },
-            "sourceMeta": serde_json::to_value(crate::agent_sessions::types::AgentSessionSourceMeta::default()).unwrap(),
+            "capabilities": { "canResume": true },
         }))
         .expect("session fixture");
         manager.reconcile_agent_sessions(&[session]).unwrap();

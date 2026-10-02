@@ -29,12 +29,7 @@ where
     ResolveCli: FnMut(&AgentSession, &Path) -> Option<String>,
     SpawnShell: FnMut(AgentTerminalSpawn, WriterClaim) -> Result<String, AppError>,
 {
-    let list = match read_model::list_sessions_with_surfaces(
-        state,
-        project_path,
-        false,
-        terminal_surfaces,
-    ) {
+    let list = match read_model::list_sessions(state, project_path, terminal_surfaces) {
         Ok(list) => list,
         Err(AppError::PathNotAccessible(path)) => {
             return Ok(error_result(
@@ -363,17 +358,18 @@ mod tests {
         fs::write(path, data).expect("write fixture");
     }
 
-    fn write_codex_history(home: &Path, source_session_id: &str, cwd: &Path) {
-        write(
-            &home.join(".codex/history.jsonl"),
-            &serde_json::json!({
-                "sessionId": source_session_id,
-                "cwd": cwd.to_string_lossy(),
-                "timestamp": 1700000000,
-                "text": source_session_id,
-            })
-            .to_string(),
-        );
+    /// The session as Codex lists it over ACP.
+    fn listed(state: &AgentSessionsState, source_session_id: &str, cwd: &Path) {
+        let list = svode_agents::catalog::SessionList {
+            sessions: vec![svode_agents::catalog::ListedSession {
+                key: svode_agents::identity::SessionKey::from_acp("codex", source_session_id, true),
+                cwd: cwd.to_path_buf(),
+                title: Some(source_session_id.to_string()),
+                updated_at: Some("2023-11-14T22:13:20Z".to_string()),
+            }],
+            ..Default::default()
+        };
+        state.acp_lists.apply("codex", Ok(list), 1);
     }
 
     fn write_root_config(project: &Path, spaces: Vec<serde_json::Value>) {
@@ -427,9 +423,9 @@ mod tests {
         let home = temp.path().join("home");
         let project = temp.path().join("project");
         fs::create_dir_all(&project).expect("project");
-        write_codex_history(&home, "live", &project);
 
         let state = AgentSessionsState::with_home(home);
+        listed(&state, "live", &project);
         let result = reenter_session(
             &state,
             project.to_string_lossy().into_owned(),
@@ -464,9 +460,9 @@ mod tests {
             })
             .to_string(),
         );
-        write_codex_history(&home, "done", &project);
 
         let state = AgentSessionsState::with_home(home.clone());
+        listed(&state, "done", &project);
         // No liveness evidence: terminal resume runs without a confirmation.
         let writers = WriterRegistry::default();
         let result = reenter_session(
@@ -497,26 +493,20 @@ mod tests {
         );
     }
 
-    fn write_active_codex_rollout(home: &Path, source_session_id: &str, cwd: &Path) {
+    const ELSEWHERE: &str = "0199a1b2-0000-7000-8000-000000000001";
+
+    fn write_active_codex_rollout(home: &Path, source_session_id: &str) {
         let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
         write(
-            &home
-                .join(".codex/sessions/2026/07/04")
-                .join(format!("rollout-{source_session_id}.jsonl")),
-            &[
-                serde_json::json!({
-                    "type": "session_meta",
-                    "payload": { "id": source_session_id, "cwd": cwd.to_string_lossy() },
-                    "timestamp": now
-                }),
-                serde_json::json!({
-                    "type": "event_msg",
-                    "payload": { "type": "task_started" },
-                    "timestamp": now
-                }),
-            ]
-            .map(|row| row.to_string())
-            .join("\n"),
+            &home.join(".codex/sessions/2026/07/04").join(format!(
+                "rollout-2026-07-04T10-00-00-{source_session_id}.jsonl"
+            )),
+            &serde_json::json!({
+                "type": "event_msg",
+                "payload": { "type": "task_started" },
+                "timestamp": now
+            })
+            .to_string(),
         );
     }
 
@@ -526,14 +516,15 @@ mod tests {
         let home = temp.path().join("home");
         let project = temp.path().join("project");
         fs::create_dir_all(&project).expect("project");
-        write_active_codex_rollout(&home, "elsewhere", &project);
+        write_active_codex_rollout(&home, ELSEWHERE);
 
         let state = AgentSessionsState::with_home(home);
+        listed(&state, ELSEWHERE, &project);
         let writers = WriterRegistry::default();
         let result = reenter_session(
             &state,
             project.to_string_lossy().into_owned(),
-            "codex:elsewhere".to_string(),
+            format!("codex:{ELSEWHERE}"),
             Vec::new(),
             &writers,
             |_, _| Some("codex".to_string()),
@@ -548,13 +539,10 @@ mod tests {
         );
         assert_eq!(
             result.command.as_ref().expect("manual fallback").args,
-            vec!["resume", "elsewhere"]
+            vec!["resume", ELSEWHERE]
         );
         assert_eq!(
-            writers.writer(&native_writer_key(
-                &AgentAdapterKind::Codex.id(),
-                "elsewhere"
-            )),
+            writers.writer(&native_writer_key(&AgentAdapterKind::Codex.id(), ELSEWHERE)),
             None
         );
     }
@@ -565,9 +553,9 @@ mod tests {
         let home = temp.path().join("home");
         let project = temp.path().join("project");
         fs::create_dir_all(&project).expect("project");
-        write_codex_history(&home, "in-svode", &project);
 
         let state = AgentSessionsState::with_home(home);
+        listed(&state, "in-svode", &project);
         let writers = WriterRegistry::default();
         let _acp = writers
             .claim(
@@ -609,9 +597,9 @@ mod tests {
                 "repo": "https://example.com/missing.git",
             })],
         );
-        write_codex_history(&home, "missing", &project.join("missing/sub"));
 
         let state = AgentSessionsState::with_home(home);
+        listed(&state, "missing", &project.join("missing/sub"));
         let result = reenter_session(
             &state,
             project.to_string_lossy().into_owned(),
@@ -640,9 +628,9 @@ mod tests {
         let home = temp.path().join("home");
         let project = temp.path().join("project");
         fs::create_dir_all(&project).expect("project");
-        write_codex_history(&home, "no-cli", &project);
 
         let state = AgentSessionsState::with_home(home);
+        listed(&state, "no-cli", &project);
         let result = reenter_session(
             &state,
             project.to_string_lossy().into_owned(),

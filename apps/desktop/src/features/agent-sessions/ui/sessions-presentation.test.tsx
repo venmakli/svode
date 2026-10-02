@@ -391,7 +391,7 @@ test("collection states: loading, blocking error, partial source and empty Space
     sources: [
       {
         ...sourceReport("claude-code"),
-        status: "unreadable" as const,
+        status: "stale" as const,
       },
       sourceReport("codex"),
     ],
@@ -444,24 +444,15 @@ test("collection states: loading, blocking error, partial source and empty Space
 function sourceReport(source: string) {
   return {
     source,
-    kind: "native-log" as const,
     status: "ok" as const,
-    rootPath: `/home/${source}`,
-    scannedAt: "2026-09-29T10:00:00Z",
-    cacheHit: true,
+    readAt: "2026-09-29T10:00:00Z",
     counts: {
-      filesScanned: 0,
       recordsRead: 0,
       candidates: 0,
       returnedSessions: 0,
       unresolvedCandidates: 0,
       incompleteCandidates: 0,
-      malformedLines: 0,
-      sourceErrors: 0,
-      hotFilesChecked: 0,
-      hotFilesReparsed: 0,
     },
     diagnostics: [],
-    truncatedDiagnostics: 0,
   };
 }

@@ -35,7 +35,7 @@ function session(overrides: Partial<AgentSession> & Pick<AgentSession, "id">) {
     source: "codex",
     sourceSessionId: overrides.id.replace(/^.+:/, ""),
     title: overrides.title ?? "Real session",
-    titleSource: "first-user-prompt",
+    titleSource: "cli-title",
     status: {
       state: "idle",
       stopReason: "end_turn",
@@ -50,19 +50,6 @@ function session(overrides: Partial<AgentSession> & Pick<AgentSession, "id">) {
     lastActivityAt: "2026-07-05T10:01:00Z",
     capabilities: {
       canResume: true,
-      canRevealFile: true,
-      hasReadableLog: true,
-    },
-    sourceMeta: {
-      historyPresent: true,
-      detailPresent: false,
-      sessionIndexPresent: false,
-      detailFileCount: 0,
-      historyLineCount: 1,
-      detailLineCount: 0,
-      malformedLineCount: 0,
-      functionCallCount: 0,
-      notes: [],
     },
   };
 

@@ -1,14 +1,16 @@
 use chrono::{SecondsFormat, Utc};
 
-use super::sources::{NativeStatusEvidence, PersistedAgentSessionCandidate, short_id};
+use super::native_status::{NativeLogRead, NativeStatusEvidence, short_id};
 use super::types::{
     AgentSession, AgentSessionCapabilities, AgentSessionResumeCommand, AgentSessionRuntime,
-    AgentSessionScope, AgentSessionSourceMeta, AgentSessionTitleSource, terminal_resume_argv,
+    AgentSessionScope, AgentSessionTitleSource, catalog_session_id, terminal_resume_argv,
 };
 use crate::terminal::{AgentTerminalStatusEvidence, AgentTerminalSurface};
+use svode_agents::catalog::ListedSession;
 use svode_agents::identity::IdentityNamespace;
 use svode_agents::status::{SessionState, SessionStatus, StatusConfidence, StatusSource};
 use svode_agents::writer::ExternalLiveness;
+use svode_core::agent_adapters::AgentId;
 
 pub(super) const SOURCE_LOG_ACTIVE_STALE_AFTER_SECS: i64 = 6 * 60 * 60;
 
@@ -142,32 +144,31 @@ fn terminal_observation(evidence: AgentTerminalStatusEvidence) -> Observation {
     }
 }
 
-/// The catalog record of a native session, with its terminal surfaces laid
+/// The catalogue record of a listed session, with its terminal surfaces laid
 /// over it: runtime of the most recent surface and one status resolved from
 /// the native evidence and the evidence of every matching surface.
-pub(super) fn map_candidate(
-    candidate: PersistedAgentSessionCandidate,
+pub(super) fn map_listed(
+    source: AgentId,
+    listed: ListedSession,
+    native_read: Option<NativeLogRead>,
     scope: AgentSessionScope,
     last_activity_at: chrono::DateTime<Utc>,
     terminal_surfaces: &[AgentTerminalSurface],
 ) -> AgentSession {
-    let id = candidate.session_id();
+    let id = catalog_session_id(&source, &listed.key);
     // Only a native id is the target of the agent's CLI resume and of a
     // managed PTY of Svode.
-    let native = candidate.namespace == IdentityNamespace::Native;
-    let listed = candidate.from_acp_list;
-    let title = candidate
-        .title
-        .unwrap_or_else(|| short_id(&candidate.source_session_id));
-    let title_source = if title.is_empty() {
-        AgentSessionTitleSource::SessionId
-    } else {
-        candidate.title_source
+    let native = listed.key.namespace == IdentityNamespace::Native;
+    let source_session_id = listed.key.session_id;
+    let (title, title_source) = match listed.title.filter(|title| !title.is_empty()) {
+        Some(title) => (title, AgentSessionTitleSource::CliTitle),
+        None => (
+            short_id(&source_session_id),
+            AgentSessionTitleSource::SessionId,
+        ),
     };
-    let mut counts = candidate.counts;
-    counts.messages = Some(counts.user_messages + counts.assistant_messages);
     let resume_command = native
-        .then(|| terminal_resume_argv(&candidate.source, &candidate.source_session_id))
+        .then(|| terminal_resume_argv(&source, &source_session_id))
         .flatten()
         .map(|mut argv| {
             let program = argv.remove(0);
@@ -181,18 +182,25 @@ pub(super) fn map_candidate(
                 cwd: scope.cwd.clone(),
             }
         });
-    let mut observations = candidate
-        .status
+    let (launch_id, evidence) = native_read
+        .map(|read| (read.launch_id, read.status))
+        .unwrap_or_default();
+    // The list is read at lifecycle boundaries; the log tells of later work.
+    let last_activity_at = evidence
+        .as_ref()
+        .and_then(|evidence| evidence.observed_at)
+        .map_or(last_activity_at, |observed| observed.max(last_activity_at));
+    let mut observations = evidence
         .map(|evidence| native_observation(evidence, last_activity_at, Utc::now()))
         .into_iter()
         .collect::<Vec<_>>();
 
     let mut session = AgentSession {
         id,
-        launch_id: candidate.launch_id,
+        launch_id,
         routine_run_id: None,
-        source: candidate.source,
-        source_session_id: candidate.source_session_id,
+        source,
+        source_session_id,
         title,
         title_source,
         status: SessionStatus::unknown(),
@@ -206,21 +214,11 @@ pub(super) fn map_candidate(
         space_path: scope.space_path.clone(),
         scope_confidence: scope.confidence,
         cwd: scope.cwd.clone(),
-        started_at: candidate
-            .created_at
-            .map(|ts| ts.to_rfc3339_opts(SecondsFormat::Secs, true)),
+        started_at: None,
         last_activity_at: last_activity_at.to_rfc3339_opts(SecondsFormat::Secs, true),
         waiting_since: None,
-        duration_ms: None,
         resume_command,
-        source_file: candidate.source_file,
-        counts: (!listed).then_some(counts),
-        capabilities: AgentSessionCapabilities {
-            can_resume: native,
-            can_reveal_file: !listed,
-            has_readable_log: !listed,
-        },
-        source_meta: candidate.source_meta,
+        capabilities: AgentSessionCapabilities { can_resume: native },
     };
     if native {
         observations.extend(apply_terminal_runtime(&mut session, terminal_surfaces));
@@ -340,16 +338,8 @@ pub(super) fn map_provisional_surface(
         started_at: Some(surface.created_at.clone()),
         last_activity_at,
         waiting_since,
-        duration_ms: None,
         resume_command: None,
-        source_file: None,
-        counts: None,
-        capabilities: AgentSessionCapabilities {
-            can_resume: false,
-            can_reveal_file: false,
-            has_readable_log: false,
-        },
-        source_meta: AgentSessionSourceMeta::default(),
+        capabilities: AgentSessionCapabilities { can_resume: false },
     }
 }
 

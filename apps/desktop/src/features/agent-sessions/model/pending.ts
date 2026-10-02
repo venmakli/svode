@@ -47,22 +47,7 @@ export function buildPendingAgentSession(
     cwd: pending.cwd,
     startedAt: pending.createdAt,
     lastActivityAt: pending.createdAt,
-    capabilities: {
-      canResume: false,
-      canRevealFile: false,
-      hasReadableLog: false,
-    },
-    sourceMeta: {
-      historyPresent: false,
-      detailPresent: false,
-      sessionIndexPresent: false,
-      detailFileCount: 0,
-      historyLineCount: 0,
-      detailLineCount: 0,
-      malformedLineCount: 0,
-      functionCallCount: 0,
-      notes: ["new managed shell"],
-    },
+    capabilities: { canResume: false },
   };
 
   if (pending.scope.kind === "project") {

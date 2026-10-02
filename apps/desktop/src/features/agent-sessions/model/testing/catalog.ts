@@ -26,19 +26,6 @@ export function listedSession(
     lastActivityAt: "2026-09-29T10:00:00Z",
     capabilities: {
       canResume: true,
-      canRevealFile: true,
-      hasReadableLog: true,
-    },
-    sourceMeta: {
-      historyPresent: false,
-      detailPresent: false,
-      sessionIndexPresent: false,
-      detailFileCount: 0,
-      historyLineCount: 0,
-      detailLineCount: 0,
-      malformedLineCount: 0,
-      functionCallCount: 0,
-      notes: [],
     },
     ...overrides,
   };
@@ -52,19 +39,12 @@ export function listResult(
     generatedAt,
     projectPath: "/project",
     status: "ok",
-    cache: {
-      mode: "fingerprint-hit",
-      hit: true,
-      sourceHits: 1,
-      sourceMisses: 0,
-    },
+    cache: { mode: "current" },
     sessions,
     summary: {
       returnedSessions: sessions.length,
       unresolvedCandidates: 0,
       incompleteCandidates: 0,
-      malformedLines: 0,
-      sourceErrors: 0,
     },
     sources: [],
   };

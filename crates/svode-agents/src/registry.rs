@@ -568,10 +568,9 @@ impl AdapterRuntimeRegistry {
 
     /// Whether the agent's `session/list` is its one declared catalogue
     /// source. E01: the lists of Codex and Claude Code cover the sessions
-    /// of the CLI, IDE and the provider's desktop app; records the
-    /// transitional scanners also find stay one session per key. Both are
-    /// listed without `cwd`: their filter matches the exact directory only,
-    /// so it would drop sessions in a Space's subfolders.
+    /// of the CLI, IDE and the provider's desktop app. Both are listed
+    /// without `cwd`: their filter matches the exact directory only, so it
+    /// would drop sessions in a Space's subfolders.
     pub fn lists_catalog(&self, adapter: AgentAdapterKind) -> bool {
         matches!(
             adapter,
@@ -638,9 +637,9 @@ impl AdapterRuntimeRegistry {
         Some(vec![flag.to_string(), native_session_id.to_string()])
     }
 
-    /// The transitional native reader of the agent's session store that the
-    /// Sessions catalogue still runs next to its ACP list (Stage 10 `02`,
-    /// removed by slice 2.8).
+    /// The agent's native session log the Sessions status reader reads the
+    /// status of a listed session from (Stage 10 `02` C10): ACP gives no
+    /// status of a session another process drives.
     pub fn native_session_log(&self, adapter: AgentAdapterKind) -> Option<NativeSessionLog> {
         match adapter {
             AgentAdapterKind::Codex => Some(NativeSessionLog::CodexRollouts),
@@ -682,7 +681,7 @@ impl AdapterRuntimeRegistry {
     }
 }
 
-/// Which native session store a transitional Sessions scanner reads.
+/// Which native session log the Sessions status reader reads.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NativeSessionLog {
     /// `rollout-*.jsonl` under the Codex home.

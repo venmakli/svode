@@ -17,8 +17,6 @@ export type {
   AgentResumeCommand,
   AgentSession,
   AgentSessionCapabilities,
-  AgentSessionCounts,
-  AgentSessionFileRef,
   AgentSessionReentryError,
   AgentSessionReentryErrorCode,
   AgentSessionReentryMode,

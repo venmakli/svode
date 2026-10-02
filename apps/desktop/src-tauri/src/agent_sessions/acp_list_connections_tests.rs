@@ -283,20 +283,24 @@ async fn the_desktop_planner_refuses_a_disabled_or_unknown_agent() {
     );
 }
 
-/// Live acceptance of the ACP catalogue of Codex and Claude Code on the
-/// user's real stores: an open collection starts both agents with the
-/// pinned adapters and the user's CLIs, their `session/list` joins the
-/// scanners' records of the project in `SVODE_LIVE_PROJECT` one session per
-/// key, and no adapter process is left. Lists only: no session is created,
-/// loaded or prompted.
+/// Live acceptance of slice 2.8 on the user's real stores: an open
+/// collection starts Codex and Claude Code with the pinned adapters and the
+/// user's CLIs; the catalogue of the project in `SVODE_LIVE_PROJECT` is their
+/// ACP lists alone, one session per key, with status from the native reader;
+/// a new app process shows the saved lists before any connection opens; no
+/// adapter process is left. Lists only: no session is created, loaded or
+/// prompted.
 #[tokio::test]
 #[ignore = "live: downloads the pinned adapters from npm and lists the user's Codex and Claude Code sessions"]
-async fn live_the_acp_lists_join_the_scanners_one_session_per_key() {
-    use std::collections::HashSet;
+async fn live_the_acp_lists_are_the_catalogue_with_native_status() {
+    use std::collections::{BTreeMap, HashSet};
 
     use crate::agent_sessions::read_model::list_sessions;
+    use crate::agent_sessions::types::AgentSessionsCacheMode;
 
     let project = std::env::var("SVODE_LIVE_PROJECT").expect("SVODE_LIVE_PROJECT");
+    let cache = crate::agent_sessions::cache::cache_db_path(&PathBuf::from(&project));
+    let cache_existed = cache.exists();
     let dir = tempfile::tempdir().unwrap();
     let setup = crate::agent_setup::live_setup_with_pinned_adapters(dir.path()).await;
     let runtime = AgentRuntime::default();
@@ -308,59 +312,80 @@ async fn live_the_acp_lists_join_the_scanners_one_session_per_key() {
     settle(state.acp_lists.raise(&connections, &runtime)).await;
     println!("raise and list: {:?}", started.elapsed());
 
-    let listing = state.clone();
-    let result = tokio::task::spawn_blocking(move || list_sessions(&listing, project, true))
-        .await
-        .unwrap()
-        .unwrap();
+    let list = |state: &crate::agent_sessions::AgentSessionsState| {
+        let (state, project) = (state.clone(), project.clone());
+        async move {
+            let started = std::time::Instant::now();
+            let result =
+                tokio::task::spawn_blocking(move || list_sessions(&state, project, Vec::new()))
+                    .await
+                    .unwrap()
+                    .unwrap();
+            (result, started.elapsed())
+        }
+    };
+    let (cold, cold_took) = list(&state).await;
+    let (warm, warm_took) = list(&state).await;
+    println!("catalogue with native status: cold {cold_took:?}, warm {warm_took:?}");
+
     let mut ids = HashSet::new();
-    for session in &result.sessions {
+    for session in &warm.sessions {
         assert!(ids.insert(&session.id), "duplicate {}", session.id);
+        assert!(
+            !session.id.contains(":acp:"),
+            "listed ids join the native namespace"
+        );
     }
     for source in [
         AgentAdapterKind::Codex.id(),
         AgentAdapterKind::ClaudeCode.id(),
     ] {
-        let reports: Vec<_> = result
+        let report = warm
             .sources
             .iter()
-            .filter(|report| report.source == source)
-            .collect();
-        for report in &reports {
-            println!(
-                "{source:?} {:?}: status {:?}, read {} ms, candidates {}, returned {}, unresolved {}, diagnostics {:?}",
-                report.kind,
-                report.status,
-                report.duration_ms.unwrap_or_default(),
-                report.counts.candidates,
-                report.counts.returned_sessions,
-                report.counts.unresolved_candidates,
-                report
-                    .diagnostics
-                    .iter()
-                    .map(|diagnostic| diagnostic.code.as_str())
-                    .collect::<Vec<_>>()
-            );
-        }
-        let acp = reports
-            .iter()
-            .find(|report| report.kind == AgentSessionSourceKind::AcpList)
+            .find(|report| report.source == source)
             .expect("the agent's ACP list was read");
-        assert_eq!(acp.status, AgentSessionSourceStatus::Ok);
-        assert!(acp.counts.candidates > 0);
-        assert!(
-            result
-                .sessions
-                .iter()
-                .filter(|session| session.source == source)
-                .all(|session| !session.id.contains(":acp:")),
-            "listed ids join the native namespace"
+        assert_eq!(report.status, AgentSessionSourceStatus::Ok);
+        let mut states = BTreeMap::new();
+        for session in warm
+            .sessions
+            .iter()
+            .filter(|session| session.source == source)
+        {
+            *states
+                .entry(format!(
+                    "{:?}/{:?}",
+                    session.status.state, session.status.source
+                ))
+                .or_insert(0usize) += 1;
+        }
+        println!(
+            "{source:?}: listed {} in {} ms, returned {}, unresolved {}; status {states:?}",
+            report.counts.candidates,
+            report.duration_ms.unwrap_or_default(),
+            report.counts.returned_sessions,
+            report.counts.unresolved_candidates,
         );
+        assert!(report.counts.returned_sessions > 0);
     }
-    println!("sessions of the project: {}", result.sessions.len());
+    println!("sessions of the project: {}", warm.sessions.len());
+    assert_eq!(cold.sessions.len(), warm.sessions.len());
+
+    let restarted = crate::agent_sessions::AgentSessionsState::new();
+    let (saved, saved_took) = list(&restarted).await;
+    println!("new process before any connection: {saved_took:?}");
+    assert_eq!(saved.cache.mode, AgentSessionsCacheMode::StaleSnapshot);
+    assert_eq!(saved.sessions.len(), warm.sessions.len());
 
     connections.release_webview("live");
     runtime.shutdown().await;
+    if !cache_existed {
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{suffix}", cache.display()));
+        }
+        // Only an empty `.svode` this run created goes.
+        let _ = std::fs::remove_dir(cache.parent().unwrap());
+    }
     let left = std::process::Command::new("pgrep")
         .args(["-f", &dir.path().to_string_lossy()])
         .output()

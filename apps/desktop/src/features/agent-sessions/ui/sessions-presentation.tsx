@@ -270,8 +270,8 @@ export function toAgentSessionsPresentationState(
   const recoveryActions = (
     <SessionsRecoveryActions disabled={refreshing} {...recovery} />
   );
-  if (!result || result.status === "error") {
-    if (!error && result?.status !== "error") return { phase: "initial" };
+  if (!result) {
+    if (!error) return { phase: "initial" };
     return {
       error: (
         <div className="flex flex-col items-start gap-2">
@@ -304,7 +304,7 @@ export function agentSessionsSourceProblem(
   agents: AgentAdapterDictionary,
 ): string | null {
   const { result, error } = catalog;
-  if (!result || result.status === "error") return null;
+  if (!result) return null;
   if (error) return error;
   return result.status === "partial"
     ? partialSourcesMessage(result, agents)
@@ -316,9 +316,7 @@ function partialSourcesMessage(
   agents: AgentAdapterDictionary,
 ) {
   const unavailable = result.sources
-    .filter(
-      (source) => source.status !== "ok" && source.status !== "missing-root",
-    )
+    .filter((source) => source.status !== "ok")
     .map((source) => agents.label(source.source));
   return unavailable.length > 0
     ? m.sessions_source_partial({ agents: unavailable.join(", ") })

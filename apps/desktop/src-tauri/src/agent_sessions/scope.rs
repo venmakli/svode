@@ -1,7 +1,6 @@
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
-use super::sources::{CandidateCwdSource, PersistedAgentSessionCandidate};
 use super::types::{
     AgentSessionScope, AgentSessionScopeConfidence, AgentSessionScopeKind, AgentSessionScopeStatus,
 };
@@ -60,15 +59,15 @@ impl ScopeIndex {
         Ok(Self { entries })
     }
 
-    fn resolve(&self, cwd: &Path, cwd_source: CandidateCwdSource) -> Option<AgentSessionScope> {
+    fn resolve(&self, cwd: &Path) -> Option<AgentSessionScope> {
         let entry = self
             .entries
             .iter()
             .find(|entry| cwd == entry.path || cwd.starts_with(&entry.path))?;
-        let confidence = match cwd_source {
-            CandidateCwdSource::WorktreeOriginal => AgentSessionScopeConfidence::WorktreeOriginal,
-            CandidateCwdSource::Cwd if cwd == entry.path => AgentSessionScopeConfidence::Exact,
-            CandidateCwdSource::Cwd => AgentSessionScopeConfidence::CwdPrefix,
+        let confidence = if cwd == entry.path {
+            AgentSessionScopeConfidence::Exact
+        } else {
+            AgentSessionScopeConfidence::CwdPrefix
         };
 
         Some(AgentSessionScope {
@@ -91,15 +90,15 @@ pub(super) fn load_child_spaces(project: &Path) -> Result<Vec<SpaceInfo>, AppErr
     }
 }
 
+/// The project or Space a session belongs to by its working directory.
 pub(super) fn resolve_scope(
     scope_index: &ScopeIndex,
-    candidate: &PersistedAgentSessionCandidate,
+    cwd: &Path,
     home: &Path,
 ) -> Option<AgentSessionScope> {
-    let cwd_raw = candidate.cwd.as_ref()?;
-    let expanded = expand_home(cwd_raw, home);
+    let expanded = expand_home(&cwd.to_string_lossy(), home);
     let cwd = normalize_existing_or_lexical(&expanded)?;
-    scope_index.resolve(&cwd, candidate.cwd_source)
+    scope_index.resolve(&cwd)
 }
 
 pub(super) fn normalize_project_path(project_path: &str) -> Result<PathBuf, AppError> {

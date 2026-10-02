@@ -68,11 +68,10 @@ export function startAgentSessionCatalogRefresh(
   let visible = env.isVisible();
   let listTimer: Timer | null = null;
   let hotTimer: Timer | null = null;
-  let staleSnapshotKey: string | null = null;
   let hadFastDemand = store.getState().fastRefreshDemand > 0;
 
-  const load = (force = false) => {
-    void store.getState().load({ force });
+  const load = () => {
+    void store.getState().load();
   };
 
   const replaceTimer = (
@@ -113,14 +112,6 @@ export function startAgentSessionCatalogRefresh(
       });
       if (sessionIds.length > 0) {
         void store.getState().loadHotStatus(sessionIds);
-      }
-    }
-
-    if (state.result?.cache.mode === "stale-snapshot") {
-      const key = `${state.projectPath}\0${state.result.generatedAt}`;
-      if (staleSnapshotKey !== key) {
-        staleSnapshotKey = key;
-        load(true);
       }
     }
 

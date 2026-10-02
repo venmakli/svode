@@ -1,6 +1,5 @@
 import { getLocale } from "@/paraglide/runtime.js";
 import {
-  isAgentTurnActive,
   requiresUserAction,
   terminalActivityAt,
   type AgentSession,
@@ -62,10 +61,6 @@ export function sessionTimeLabel(session: AgentSession): string {
     return shortRelativeTime(session.waitingSince ?? session.lastActivityAt);
   }
 
-  if (isAgentTurnActive(session) && session.durationMs) {
-    return shortDuration(session.durationMs);
-  }
-
   if (session.runtime?.ptyId) {
     return shortRelativeTime(
       terminalActivityAt(session) ?? session.lastActivityAt,
@@ -98,10 +93,6 @@ function shortRelativeTime(value: string): string {
 
   const diffMs = Math.max(0, Date.now() - then);
   return compactElapsedTime(diffMs);
-}
-
-function shortDuration(durationMs: number): string {
-  return compactElapsedTime(Math.max(0, durationMs));
 }
 
 function compactElapsedTime(elapsedMs: number): string {
