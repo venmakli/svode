@@ -263,10 +263,10 @@ async fn a_reloading_webview_releases_only_its_own_collections() {
 }
 
 #[test]
-fn codex_and_claude_code_list_through_their_scanners_until_slice_2_5b() {
+fn an_open_collection_keeps_codex_and_claude_code_for_their_acp_lists() {
     let dir = tempfile::tempdir().unwrap();
     let setup = crate::agent_setup::AgentSetupState::new(dir.path(), dir.path().to_path_buf());
-    assert!(setup.catalog_agents().is_empty());
+    assert_eq!(setup.catalog_agents(), ["codex", "claude-code"]);
 }
 
 #[tokio::test]
@@ -282,5 +282,91 @@ async fn the_desktop_planner_refuses_a_disabled_or_unknown_agent() {
     assert_eq!(
         setup.plan("future-agent").await,
         Err(LaunchUnavailable::NotSupported)
+    );
+}
+
+/// Live acceptance of the ACP catalogue of Codex and Claude Code on the
+/// user's real stores: an open collection starts both agents with the
+/// pinned adapters and the user's CLIs, their `session/list` joins the
+/// scanners' records of the project in `SVODE_LIVE_PROJECT` one session per
+/// key, and no adapter process is left. Lists only: no session is created,
+/// loaded or prompted.
+#[tokio::test]
+#[ignore = "live: downloads the pinned adapters from npm and lists the user's Codex and Claude Code sessions"]
+async fn live_the_acp_lists_join_the_scanners_one_session_per_key() {
+    use std::collections::HashSet;
+
+    use crate::agent_sessions::read_model::list_sessions;
+
+    let project = std::env::var("SVODE_LIVE_PROJECT").expect("SVODE_LIVE_PROJECT");
+    let dir = tempfile::tempdir().unwrap();
+    let setup = crate::agent_setup::live_setup_with_pinned_adapters(dir.path()).await;
+    let runtime = AgentRuntime::default();
+    let connections = Arc::new(AgentConnections::new(runtime.clone(), setup));
+    let state = crate::agent_sessions::AgentSessionsState::new();
+
+    connections.hold_catalog("live");
+    let started = std::time::Instant::now();
+    settle(state.acp_lists.raise(&connections, &runtime)).await;
+    println!("raise and list: {:?}", started.elapsed());
+
+    let listing = state.clone();
+    let result = tokio::task::spawn_blocking(move || list_sessions(&listing, project, true))
+        .await
+        .unwrap()
+        .unwrap();
+    let mut ids = HashSet::new();
+    for session in &result.sessions {
+        assert!(ids.insert(&session.id), "duplicate {}", session.id);
+    }
+    for source in [AgentSessionSource::Codex, AgentSessionSource::ClaudeCode] {
+        let reports: Vec<_> = result
+            .sources
+            .iter()
+            .filter(|report| report.source == source)
+            .collect();
+        for report in &reports {
+            println!(
+                "{source:?} {:?}: status {:?}, read {} ms, candidates {}, returned {}, unresolved {}, diagnostics {:?}",
+                report.kind,
+                report.status,
+                report.duration_ms.unwrap_or_default(),
+                report.counts.candidates,
+                report.counts.returned_sessions,
+                report.counts.unresolved_candidates,
+                report
+                    .diagnostics
+                    .iter()
+                    .map(|diagnostic| diagnostic.code.as_str())
+                    .collect::<Vec<_>>()
+            );
+        }
+        let acp = reports
+            .iter()
+            .find(|report| report.kind == AgentSessionSourceKind::AcpList)
+            .expect("the agent's ACP list was read");
+        assert_eq!(acp.status, AgentSessionSourceStatus::Ok);
+        assert!(acp.counts.candidates > 0);
+        assert!(
+            result
+                .sessions
+                .iter()
+                .filter(|session| session.source == source)
+                .all(|session| !session.id.contains(":acp:")),
+            "listed ids join the native namespace"
+        );
+    }
+    println!("sessions of the project: {}", result.sessions.len());
+
+    connections.release_webview("live");
+    runtime.shutdown().await;
+    let left = std::process::Command::new("pgrep")
+        .args(["-f", &dir.path().to_string_lossy()])
+        .output()
+        .unwrap();
+    assert!(
+        left.stdout.is_empty(),
+        "adapter processes left: {}",
+        String::from_utf8_lossy(&left.stdout)
     );
 }

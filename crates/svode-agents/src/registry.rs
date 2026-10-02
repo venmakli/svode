@@ -553,18 +553,28 @@ impl AdapterRuntimeRegistry {
     }
 
     /// Whether the agent's `session/list` is its one declared catalogue
-    /// source. The transitional scanners stay the source of Codex and
-    /// Claude Code until the provider matrix records identity equality and
-    /// coverage (slice 2.5b).
+    /// source. E01: the lists of Codex and Claude Code cover the sessions
+    /// of the CLI, IDE and the provider's desktop app; records the
+    /// transitional scanners also find stay one session per key. Both are
+    /// listed without `cwd`: their filter matches the exact directory only,
+    /// so it would drop sessions in a Space's subfolders.
     pub fn lists_catalog(&self, adapter: AgentAdapterKind) -> bool {
         match adapter {
-            AgentAdapterKind::Codex | AgentAdapterKind::ClaudeCode => false,
+            AgentAdapterKind::Codex | AgentAdapterKind::ClaudeCode => true,
+        }
+    }
+
+    /// Whether the agent's ACP `sessionId` is its native session id. E01:
+    /// every listed id of Codex is the rollout `session_meta.id` and every
+    /// listed id of Claude Code is the jsonl session UUID.
+    pub fn acp_id_is_native(&self, adapter: AgentAdapterKind) -> bool {
+        match adapter {
+            AgentAdapterKind::Codex | AgentAdapterKind::ClaudeCode => true,
         }
     }
 
     /// Launch plan of the installed adapter, run by the user's Node.js, for
-    /// the user's executable. Its session ids stay in the ACP namespace
-    /// until the provider matrix records their equality with native ids.
+    /// the user's executable.
     pub fn acp_launch(
         &self,
         adapter: AgentAdapterKind,
@@ -584,7 +594,7 @@ impl AdapterRuntimeRegistry {
                 executable.to_string_lossy().into_owned(),
             )]),
             cwd: cwd.to_path_buf(),
-            acp_id_is_native: false,
+            acp_id_is_native: self.acp_id_is_native(adapter),
             lists_catalog: self.lists_catalog(adapter),
             // E01: load and close of both agents change their store only
             // in service records, which Svode accepts.
@@ -1492,8 +1502,8 @@ mod tests {
             launch.env.get("CLAUDE_CODE_EXECUTABLE").map(String::as_str),
             Some("/bin/claude")
         );
-        assert!(!launch.acp_id_is_native);
-        assert!(!launch.lists_catalog);
+        assert!(launch.acp_id_is_native);
+        assert!(launch.lists_catalog);
         assert!(launch.read_only_open);
         assert_eq!(launch.writer_refusal, None);
 
@@ -1504,6 +1514,8 @@ mod tests {
             Path::new("/bin/codex"),
             Path::new("/project"),
         );
+        assert!(codex.acp_id_is_native);
+        assert!(codex.lists_catalog);
         assert!(codex.read_only_open);
         assert_eq!(
             codex.writer_refusal.as_deref(),

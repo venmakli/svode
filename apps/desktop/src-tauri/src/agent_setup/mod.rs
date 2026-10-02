@@ -148,6 +148,29 @@ fn read_file(config_dir: &Path) -> Result<Option<serde_json::Value>, AppError> {
     }
 }
 
+/// Agent setup of live tests in `root`: the pinned adapters of every agent
+/// installed from npm and every agent enabled.
+#[cfg(test)]
+pub(crate) async fn live_setup_with_pinned_adapters(root: &std::path::Path) -> AgentSetupState {
+    let setup = AgentSetupState::new(&root.join("data"), root.join("config"));
+    for agent in AgentAdapterKind::ALL {
+        let started = std::time::Instant::now();
+        setup
+            .store
+            .prepare_enable(
+                agent,
+                &commands::target().await.unwrap(),
+                &SystemRuntimeCommandRunner,
+                &*setup.source,
+            )
+            .await
+            .unwrap();
+        setup.set_choice(agent, true).unwrap();
+        println!("{agent:?}: adapter installed in {:?}", started.elapsed());
+    }
+    setup
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -189,22 +212,7 @@ mod tests {
         use crate::agent_runtime::connections::AgentConnections;
 
         let dir = tempfile::tempdir().unwrap();
-        let setup = AgentSetupState::new(&dir.path().join("data"), dir.path().join("config"));
-        for agent in AgentAdapterKind::ALL {
-            let started = Instant::now();
-            setup
-                .store
-                .prepare_enable(
-                    agent,
-                    &commands::target().await.unwrap(),
-                    &SystemRuntimeCommandRunner,
-                    &*setup.source,
-                )
-                .await
-                .unwrap();
-            setup.set_choice(agent, true).unwrap();
-            println!("{agent:?}: adapter installed in {:?}", started.elapsed());
-        }
+        let setup = live_setup_with_pinned_adapters(dir.path()).await;
         let runtime = AgentRuntime::default();
         let connections = AgentConnections::new(runtime.clone(), setup.clone());
         for agent in AgentAdapterKind::ALL {
