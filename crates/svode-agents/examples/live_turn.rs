@@ -9,6 +9,10 @@
 //!
 //! Without `--prompt` it stops after `session/new`, without a paid turn.
 //!
+//! `--setting ID=VALUE` applies a declared session setting at creation, as
+//! an ACP launch applies the mode an Actor approval maps to, and prints the
+//! settings the session then reports.
+//!
 //! `--on-pending <option kind | decline | cancel>` answers a permission with
 //! its first option of that kind (`allow_once`, `reject_once`, …), declines
 //! a question, or cancels the turn; the answer is then repeated to show
@@ -32,7 +36,7 @@ use svode_agents::identity::SessionKey;
 use svode_agents::interaction::InteractionAnswer;
 use svode_agents::status::InteractionKind;
 use svode_agents::writer::{ExternalLiveness, UnknownLiveness};
-use svode_agents::{AcpLaunch, AgentRuntime, ConnectionId, RuntimeConfig};
+use svode_agents::{AcpLaunch, AgentRuntime, ConnectionId, RuntimeConfig, SettingValue};
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() {
@@ -44,6 +48,7 @@ async fn main() {
     let mut open = None;
     let mut reopen = false;
     let mut list = false;
+    let mut settings = Vec::new();
     let mut env = BTreeMap::new();
     let mut command = Vec::new();
     while let Some(arg) = args.next() {
@@ -55,6 +60,14 @@ async fn main() {
             "--open" => open = Some(args.next().expect("--open value")),
             "--reopen" => reopen = true,
             "--list" => list = true,
+            "--setting" => {
+                let pair = args.next().expect("--setting ID=VALUE");
+                let (setting, value) = pair.split_once('=').expect("--setting ID=VALUE");
+                settings.push(SettingValue {
+                    setting: setting.to_string(),
+                    value: value.to_string(),
+                });
+            }
             "--env" => {
                 let pair = args.next().expect("--env KEY=VALUE");
                 let (key, value) = pair.split_once('=').expect("--env KEY=VALUE");
@@ -121,8 +134,23 @@ async fn main() {
             open_existing(&runtime, connection, &key, &cwd).await;
             key
         }
-        None => match runtime.new_session(connection, &cwd).await {
-            Ok(key) => key,
+        None => match runtime.new_session(connection, &cwd, &settings).await {
+            Ok(key) => {
+                for setting in runtime.subscribe(&key).unwrap().snapshot.settings {
+                    println!(
+                        "setting {} ({:?}) = {} of {:?}",
+                        setting.id,
+                        setting.category,
+                        setting.current_value,
+                        setting
+                            .options
+                            .iter()
+                            .map(|option| option.value.as_str())
+                            .collect::<Vec<_>>()
+                    );
+                }
+                key
+            }
             Err(error) => {
                 println!(
                     "session/new failed: {error}; connection {:?}",

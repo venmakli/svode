@@ -41,10 +41,30 @@ pub enum AgentRuntimeError {
     /// to it, or unknown liveness needs the user's confirmation.
     #[error("the session cannot take this writer: {refusal:?}")]
     WriterRefused { refusal: WriterRefusal },
+    /// A setting value the session was created with did not apply; the
+    /// session was closed before any prompt.
+    #[error("setting {setting}={value} was refused: {reason}")]
+    SettingRefused {
+        setting: String,
+        value: String,
+        reason: SettingRefusal,
+    },
     #[error("agent call timed out")]
     Timeout,
     #[error("agent call failed: {message}")]
     Agent { message: String },
     #[error("agent sent an invalid response: {message}")]
     Protocol { message: String },
+}
+
+/// Why a session setting value did not apply.
+#[derive(Debug, thiserror::Error, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum SettingRefusal {
+    /// The session does not declare this setting or this value.
+    #[error("the agent does not declare it in this session")]
+    NotDeclared,
+    /// The agent refused the change or did not confirm the value.
+    #[error("the agent refused it: {message}")]
+    Agent { message: String },
 }

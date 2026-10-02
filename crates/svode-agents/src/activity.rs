@@ -271,6 +271,37 @@ pub struct PendingInteraction {
     pub state: InteractionState,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SettingCategory {
+    Mode,
+    Model,
+    ThoughtLevel,
+    Other,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SettingOption {
+    pub value: String,
+    pub name: String,
+    pub description: Option<String>,
+}
+
+/// A session setting the agent declared, in its order. Legacy session modes
+/// of an agent without config options are one setting of category `mode`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionSetting {
+    pub id: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub category: SettingCategory,
+    /// Confirmed by the agent; a requested value is not applied before.
+    pub current_value: String,
+    pub options: Vec<SettingOption>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionSnapshot {
@@ -283,6 +314,7 @@ pub struct SessionSnapshot {
     pub pending: Option<PendingInteraction>,
     pub history: HistoryState,
     pub writer: WriterState,
+    pub settings: Vec<SessionSetting>,
 }
 
 /// Exactly one change; applying deltas with consecutive `seq` to the
@@ -303,6 +335,8 @@ pub enum Change {
     Truncated(Truncation),
     Connection(ConnectionState),
     Writer(WriterState),
+    /// Replaces the whole set of session settings.
+    Settings(Vec<SessionSetting>),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -387,6 +421,7 @@ impl SessionSnapshot {
             }
             Change::Connection(connection) => self.connection = *connection,
             Change::Writer(writer) => self.writer = *writer,
+            Change::Settings(settings) => self.settings = settings.clone(),
         }
         true
     }

@@ -42,6 +42,68 @@ pub(crate) struct Implementation {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct NewSessionResponse {
     pub session_id: String,
+    #[serde(flatten)]
+    pub settings: DeclaredSettings,
+}
+
+/// What `session/new`, `session/load` and `session/resume` declare about
+/// the session's settings; entries are read one by one.
+#[derive(Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct DeclaredSettings {
+    pub config_options: Option<Vec<Value>>,
+    pub modes: Option<SessionModeState>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SessionModeState {
+    pub current_mode_id: String,
+    #[serde(default)]
+    pub available_modes: Vec<Value>,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct SessionMode {
+    pub id: String,
+    pub name: String,
+    pub description: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SetConfigOptionResponse {
+    #[serde(default)]
+    pub config_options: Vec<Value>,
+}
+
+/// One config option; only `select` ones with a string value are modelled.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ConfigOption {
+    pub id: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub category: Option<String>,
+    #[serde(rename = "type")]
+    pub option_type: String,
+    pub current_value: Value,
+    #[serde(default)]
+    pub options: Vec<Value>,
+}
+
+/// A select value, or a named group of them.
+#[derive(Deserialize)]
+#[serde(untagged)]
+pub(crate) enum ConfigSelectEntry {
+    Value {
+        value: String,
+        name: String,
+        description: Option<String>,
+    },
+    Group {
+        options: Vec<Value>,
+    },
 }
 
 /// Entries are read one by one, so one malformed entry does not fail the
@@ -89,7 +151,10 @@ pub(crate) enum SessionUpdate {
         #[serde(rename = "currentModeId")]
         current_mode_id: String,
     },
-    ConfigOptionUpdate {},
+    ConfigOptionUpdate {
+        #[serde(rename = "configOptions", default)]
+        config_options: Vec<Value>,
+    },
     SessionInfoUpdate {},
     UsageUpdate {
         used: u64,

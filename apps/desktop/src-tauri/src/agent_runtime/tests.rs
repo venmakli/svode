@@ -38,6 +38,7 @@ fn snapshot(seq: u64) -> SessionSnapshot {
             truncated_items: None,
         },
         writer: WriterState::Acp,
+        settings: Vec::new(),
     }
 }
 

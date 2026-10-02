@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use tokio::io::AsyncReadExt;
 
 use crate::process;
-use crate::runtime::AcpLaunch;
+use crate::runtime::{AcpLaunch, SettingValue};
 use svode_core::agent_actors::{AgentAdapter, ApprovalMode};
 use svode_core::agent_adapters::{AgentAdapterKind, resolve_space_executable, system_home_dir};
 
@@ -358,44 +358,34 @@ impl AdapterRuntimeRegistry {
         bindings: &[AgentAdapter],
         diagnostics: &BTreeMap<AgentAdapterKind, AdapterDiagnostic>,
     ) -> PreStartSelection {
-        let mut selected = None;
-        let attempts = bindings
-            .iter()
-            .enumerate()
-            .map(|(index, binding)| {
-                let adapter = binding.adapter;
-                let validation = validate_binding(binding);
-                let diagnostic = diagnostics.get(&adapter);
-                let reason_code = validation
-                    .issues
-                    .first()
-                    .map(|issue| issue.code.clone())
-                    .or_else(|| match diagnostic.map(|value| value.status) {
-                        Some(AdapterDiagnosticStatus::Ready) => None,
-                        Some(AdapterDiagnosticStatus::Missing) => Some("adapter_missing".into()),
-                        Some(AdapterDiagnosticStatus::Unauthenticated) => {
-                            Some("adapter_unauthenticated".into())
-                        }
-                        Some(AdapterDiagnosticStatus::Unknown) | None => {
-                            Some("adapter_unchecked".into())
-                        }
-                    });
-                let eligible = reason_code.is_none();
-                if eligible && selected.is_none() {
-                    selected = Some(index);
-                }
-                PreStartBindingAttempt {
-                    binding_index: index,
-                    adapter,
-                    eligible,
-                    reason_code,
-                }
-            })
-            .collect();
-        PreStartSelection {
-            selected_binding_index: selected,
-            attempts,
-        }
+        select_pre_start(bindings, diagnostics, |_| None)
+    }
+
+    /// Pre-start selection for an ACP launch: a binding whose agent has no
+    /// equivalent of the Actor's approval mode is skipped like any other
+    /// unavailable binding, never downgraded.
+    pub fn select_acp_pre_start(
+        &self,
+        bindings: &[AgentAdapter],
+        approval_mode: ApprovalMode,
+        diagnostics: &BTreeMap<AgentAdapterKind, AdapterDiagnostic>,
+    ) -> PreStartSelection {
+        select_pre_start(bindings, diagnostics, |adapter| {
+            acp_approval(adapter, approval_mode)
+                .is_none()
+                .then(|| "approval_mapping_missing".to_string())
+        })
+    }
+
+    /// The session setting value an Actor approval maps to when the agent
+    /// runs over ACP. An ACP launch applies it after creating the session
+    /// and before the first prompt. `None`: the agent has no equivalent.
+    pub fn acp_approval(
+        &self,
+        adapter: AgentAdapterKind,
+        mode: ApprovalMode,
+    ) -> Option<SettingValue> {
+        acp_approval(adapter, mode)
     }
 
     pub fn mark_started(
@@ -721,6 +711,72 @@ fn validate_binding(binding: &AgentAdapter) -> BindingValidation {
         },
         issues,
     }
+}
+
+fn select_pre_start(
+    bindings: &[AgentAdapter],
+    diagnostics: &BTreeMap<AgentAdapterKind, AdapterDiagnostic>,
+    transport_issue: impl Fn(AgentAdapterKind) -> Option<String>,
+) -> PreStartSelection {
+    let mut selected = None;
+    let attempts = bindings
+        .iter()
+        .enumerate()
+        .map(|(index, binding)| {
+            let adapter = binding.adapter;
+            let validation = validate_binding(binding);
+            let diagnostic = diagnostics.get(&adapter);
+            let reason_code = validation
+                .issues
+                .first()
+                .map(|issue| issue.code.clone())
+                .or_else(|| transport_issue(adapter))
+                .or_else(|| match diagnostic.map(|value| value.status) {
+                    Some(AdapterDiagnosticStatus::Ready) => None,
+                    Some(AdapterDiagnosticStatus::Missing) => Some("adapter_missing".into()),
+                    Some(AdapterDiagnosticStatus::Unauthenticated) => {
+                        Some("adapter_unauthenticated".into())
+                    }
+                    Some(AdapterDiagnosticStatus::Unknown) | None => {
+                        Some("adapter_unchecked".into())
+                    }
+                });
+            let eligible = reason_code.is_none();
+            if eligible && selected.is_none() {
+                selected = Some(index);
+            }
+            PreStartBindingAttempt {
+                binding_index: index,
+                adapter,
+                eligible,
+                reason_code,
+            }
+        })
+        .collect();
+    PreStartSelection {
+        selected_binding_index: selected,
+        attempts,
+    }
+}
+
+/// Live evidence E01 (2026-10-01): claude-agent-acp 0.84.0 with Claude Code
+/// 2.1.286 and codex-acp 2.1.0 with codex-cli 0.159.3 declare these values
+/// of the config option `mode` (also as legacy modes). Codex `ask` and
+/// `auto` match the terminal argv of `build_launch`; a new Codex session
+/// starts in `agent`, so the value is always applied.
+fn acp_approval(adapter: AgentAdapterKind, mode: ApprovalMode) -> Option<SettingValue> {
+    let value = match (adapter, mode) {
+        (AgentAdapterKind::Codex, ApprovalMode::Ask) => "workspace-write",
+        (AgentAdapterKind::Codex, ApprovalMode::Auto) => "agent",
+        (AgentAdapterKind::Codex, ApprovalMode::Full) => "agent-full-access",
+        (AgentAdapterKind::ClaudeCode, ApprovalMode::Ask) => "default",
+        (AgentAdapterKind::ClaudeCode, ApprovalMode::Auto) => "auto",
+        (AgentAdapterKind::ClaudeCode, ApprovalMode::Full) => "bypassPermissions",
+    };
+    Some(SettingValue {
+        setting: "mode".into(),
+        value: value.into(),
+    })
 }
 
 fn approval_mapping(adapter: AgentAdapterKind, mode: ApprovalMode) -> ApprovalMapping {
@@ -1077,6 +1133,82 @@ mod tests {
         assert_eq!(codex.native, NativeApprovalMode::CodexFullAccess);
         assert_eq!(claude.native, NativeApprovalMode::ClaudeBypassPermissions);
         assert!(codex.danger && claude.danger);
+    }
+
+    #[test]
+    fn acp_approval_maps_each_mode_to_the_agent_mode_without_downgrade() {
+        let registry = AdapterRuntimeRegistry;
+        for (adapter, mode, value) in [
+            (
+                AgentAdapterKind::Codex,
+                ApprovalMode::Ask,
+                "workspace-write",
+            ),
+            (AgentAdapterKind::Codex, ApprovalMode::Auto, "agent"),
+            (
+                AgentAdapterKind::Codex,
+                ApprovalMode::Full,
+                "agent-full-access",
+            ),
+            (AgentAdapterKind::ClaudeCode, ApprovalMode::Ask, "default"),
+            (AgentAdapterKind::ClaudeCode, ApprovalMode::Auto, "auto"),
+            (
+                AgentAdapterKind::ClaudeCode,
+                ApprovalMode::Full,
+                "bypassPermissions",
+            ),
+        ] {
+            assert_eq!(
+                registry.acp_approval(adapter, mode),
+                Some(SettingValue {
+                    setting: "mode".into(),
+                    value: value.into(),
+                }),
+                "{adapter:?} {mode:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn acp_selection_skips_a_binding_without_approval_mapping() {
+        let ready = |adapter| AdapterDiagnostic {
+            adapter,
+            status: AdapterDiagnosticStatus::Ready,
+            executable_path: Some("/bin/agent".into()),
+            version: Some("1".into()),
+            authenticated: Some(true),
+            code: None,
+            message: None,
+        };
+        let diagnostics = BTreeMap::from([
+            (AgentAdapterKind::Codex, ready(AgentAdapterKind::Codex)),
+            (
+                AgentAdapterKind::ClaudeCode,
+                ready(AgentAdapterKind::ClaudeCode),
+            ),
+        ]);
+        let bindings = vec![
+            binding(AgentAdapterKind::Codex, None, None),
+            binding(AgentAdapterKind::ClaudeCode, None, None),
+        ];
+        let mapped = AdapterRuntimeRegistry.select_acp_pre_start(
+            &bindings,
+            ApprovalMode::Full,
+            &diagnostics,
+        );
+        assert_eq!(mapped.selected_binding_index, Some(0));
+
+        // An agent without an equivalent of the Actor's mode is skipped, the
+        // next binding is selected; nothing is downgraded.
+        let selection = select_pre_start(&bindings, &diagnostics, |adapter| {
+            (adapter == AgentAdapterKind::Codex).then(|| "approval_mapping_missing".to_string())
+        });
+        assert_eq!(selection.selected_binding_index, Some(1));
+        assert!(!selection.attempts[0].eligible);
+        assert_eq!(
+            selection.attempts[0].reason_code.as_deref(),
+            Some("approval_mapping_missing")
+        );
     }
 
     #[test]

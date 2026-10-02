@@ -7,7 +7,8 @@ use super::wire;
 
 use crate::activity::{
     ChoiceOption, DetailBlock, FieldInput, InteractionOption, InteractionOptionKind, ItemStatus,
-    Plan, PlanEntry, PlanEntryPriority, PlanEntryStatus, QuestionField, ToolKind,
+    Plan, PlanEntry, PlanEntryPriority, PlanEntryStatus, QuestionField, SessionSetting,
+    SettingCategory, SettingOption, ToolKind,
 };
 use crate::status::StopReason;
 
@@ -18,6 +19,11 @@ pub(crate) const TITLE_LIMIT: usize = 512;
 const QUESTION_LIMIT: usize = 4 * 1024;
 const MAX_FIELDS: usize = 64;
 const MAX_CHOICES: usize = 256;
+const MAX_SETTINGS: usize = 64;
+const SETTING_NAME_LIMIT: usize = 256;
+const SETTING_DESCRIPTION_LIMIT: usize = 1024;
+/// Id of the one setting legacy session modes become.
+pub(crate) const LEGACY_MODE_SETTING: &str = "mode";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum MessageRole {
@@ -46,7 +52,8 @@ pub(crate) enum Normalized {
     Tool(ToolUpdate),
     Plan(Plan),
     ModeChange(String),
-    ConfigChange,
+    /// The full set of config options with their current values.
+    ConfigChange(Vec<SessionSetting>),
     Usage {
         used: u64,
         size: u64,
@@ -120,10 +127,107 @@ fn normalize(update: wire::SessionUpdate) -> Normalized {
         wire::SessionUpdate::CurrentModeUpdate { current_mode_id } => {
             Normalized::ModeChange(bounded(&current_mode_id, LABEL_LIMIT))
         }
-        wire::SessionUpdate::ConfigOptionUpdate {} => Normalized::ConfigChange,
+        wire::SessionUpdate::ConfigOptionUpdate { config_options } => {
+            Normalized::ConfigChange(config_settings(config_options))
+        }
         wire::SessionUpdate::UsageUpdate { used, size } => Normalized::Usage { used, size },
         wire::SessionUpdate::AvailableCommandsUpdate {}
         | wire::SessionUpdate::SessionInfoUpdate {} => Normalized::None,
+    }
+}
+
+/// Settings a session declared, and whether they are legacy session modes,
+/// which are changed by `session/set_mode` instead of a config option.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct DeclaredSettings {
+    pub settings: Vec<SessionSetting>,
+    pub legacy_modes: bool,
+}
+
+/// Config options win over legacy modes when an agent declares both.
+pub(crate) fn declared_settings(declared: wire::DeclaredSettings) -> DeclaredSettings {
+    if let Some(options) = declared.config_options {
+        return DeclaredSettings {
+            settings: config_settings(options),
+            legacy_modes: false,
+        };
+    }
+    let Some(modes) = declared.modes else {
+        return DeclaredSettings::default();
+    };
+    let options = modes
+        .available_modes
+        .into_iter()
+        .filter_map(|mode| serde_json::from_value::<wire::SessionMode>(mode).ok())
+        .take(MAX_CHOICES)
+        .map(|mode| setting_option(mode.id, mode.name, mode.description))
+        .collect();
+    DeclaredSettings {
+        settings: vec![SessionSetting {
+            id: LEGACY_MODE_SETTING.into(),
+            name: "Mode".into(),
+            description: None,
+            category: SettingCategory::Mode,
+            current_value: modes.current_mode_id,
+            options,
+        }],
+        legacy_modes: true,
+    }
+}
+
+/// Select options with a string value, in the agent's order; groups are
+/// flattened, other option types are left to the agent's defaults.
+pub(crate) fn config_settings(options: Vec<Value>) -> Vec<SessionSetting> {
+    options
+        .into_iter()
+        .filter_map(|option| serde_json::from_value::<wire::ConfigOption>(option).ok())
+        .filter(|option| option.option_type == "select")
+        .filter_map(|option| {
+            let current_value = option.current_value.as_str()?.to_string();
+            Some(SessionSetting {
+                id: option.id,
+                name: bounded(&option.name, SETTING_NAME_LIMIT),
+                description: option
+                    .description
+                    .map(|text| bounded(&text, SETTING_DESCRIPTION_LIMIT)),
+                category: match option.category.as_deref() {
+                    Some("mode") => SettingCategory::Mode,
+                    Some("model") => SettingCategory::Model,
+                    Some("thought_level") => SettingCategory::ThoughtLevel,
+                    _ => SettingCategory::Other,
+                },
+                current_value,
+                options: select_options(option.options),
+            })
+        })
+        .take(MAX_SETTINGS)
+        .collect()
+}
+
+fn select_options(entries: Vec<Value>) -> Vec<SettingOption> {
+    let mut options = Vec::new();
+    for entry in entries {
+        match serde_json::from_value::<wire::ConfigSelectEntry>(entry) {
+            Ok(wire::ConfigSelectEntry::Value {
+                value,
+                name,
+                description,
+            }) => options.push(setting_option(value, name, description)),
+            Ok(wire::ConfigSelectEntry::Group { options: grouped }) => {
+                options.extend(select_options(grouped))
+            }
+            Err(_) => {}
+        }
+    }
+    options.truncate(MAX_CHOICES);
+    options
+}
+
+fn setting_option(value: String, name: String, description: Option<String>) -> SettingOption {
+    SettingOption {
+        value,
+        name: bounded(&name, SETTING_NAME_LIMIT),
+        description: description.map(|text| bounded(&text, SETTING_DESCRIPTION_LIMIT)),
     }
 }
 

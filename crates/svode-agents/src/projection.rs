@@ -8,11 +8,11 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use tokio::sync::broadcast;
 
-use crate::acp::normalize::{self, MessageRole, Normalized, ToolUpdate};
+use crate::acp::normalize::{self, DeclaredSettings, MessageRole, Normalized, ToolUpdate};
 use crate::activity::{
     ActivityItem, Change, ConnectionState, DetailBlock, DetailOutcome, HistorySource, HistoryState,
-    InteractionState, ItemKind, ItemStatus, PendingInteraction, SessionDelta, SessionSnapshot,
-    Truncation, TurnPhase, TurnState, UnavailableReason, WriterState,
+    InteractionState, ItemKind, ItemStatus, PendingInteraction, SessionDelta, SessionSetting,
+    SessionSnapshot, Truncation, TurnPhase, TurnState, UnavailableReason, WriterState,
 };
 use crate::identity::SessionKey;
 use crate::runtime::Retention;
@@ -71,6 +71,8 @@ pub(crate) struct Projection {
     detail_bytes: usize,
     compact_bytes: usize,
     replay: Option<Replay>,
+    /// The settings are legacy session modes, changed by `session/set_mode`.
+    legacy_modes: bool,
 }
 
 impl Projection {
@@ -101,6 +103,7 @@ impl Projection {
                 pending: None,
                 history,
                 writer: WriterState::Acp,
+                settings: Vec::new(),
             },
             sender,
             details: HashMap::new(),
@@ -111,6 +114,7 @@ impl Projection {
             detail_bytes: 0,
             compact_bytes: 0,
             replay: replay.then(Replay::default),
+            legacy_modes: false,
         }
     }
 
@@ -246,6 +250,40 @@ impl Projection {
         }
     }
 
+    pub(crate) fn settings(&self) -> &[SessionSetting] {
+        &self.snapshot.settings
+    }
+
+    pub(crate) fn legacy_modes(&self) -> bool {
+        self.legacy_modes
+    }
+
+    /// The settings the agent declared or confirmed.
+    pub(crate) fn set_settings(&mut self, declared: DeclaredSettings) {
+        self.legacy_modes = declared.legacy_modes;
+        if self.snapshot.settings != declared.settings {
+            self.emit(Change::Settings(declared.settings));
+        }
+    }
+
+    /// The agent confirmed `mode` as the current legacy session mode.
+    pub(crate) fn set_legacy_mode(&mut self, mode: &str) {
+        if !self.legacy_modes {
+            return;
+        }
+        let mut settings = self.snapshot.settings.clone();
+        let Some(setting) = settings
+            .iter_mut()
+            .find(|setting| setting.id == normalize::LEGACY_MODE_SETTING)
+        else {
+            return;
+        };
+        if setting.current_value != mode {
+            setting.current_value = mode.to_string();
+            self.emit(Change::Settings(settings));
+        }
+    }
+
     pub(crate) fn set_writer(&mut self, writer: WriterState) {
         if self.snapshot.writer != writer {
             self.emit(Change::Writer(writer));
@@ -265,10 +303,15 @@ impl Projection {
                 self.emit(Change::Plan(plan));
             }
             Normalized::ModeChange(mode) => {
+                self.set_legacy_mode(&mode);
                 let id = self.local_id("session", "mode");
                 self.put_text_item(id, ItemKind::ModeChange, mode);
             }
-            Normalized::ConfigChange => {
+            Normalized::ConfigChange(settings) => {
+                self.set_settings(DeclaredSettings {
+                    settings,
+                    legacy_modes: false,
+                });
                 let id = self.local_id("session", "config");
                 self.put_text_item(id, ItemKind::ConfigChange, String::new());
             }

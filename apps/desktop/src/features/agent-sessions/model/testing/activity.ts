@@ -23,6 +23,7 @@ export function activitySnapshot(
     pending: null,
     history: { source: "live", available: true, truncatedItems: null },
     writer: "acp",
+    settings: [],
     ...overrides,
   };
 }

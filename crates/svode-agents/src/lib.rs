@@ -16,8 +16,8 @@ mod runtime;
 pub mod status;
 pub mod writer;
 
-pub use error::AgentRuntimeError;
+pub use error::{AgentRuntimeError, SettingRefusal};
 pub use runtime::{
     AcpLaunch, AgentCapabilities, AgentInfo, AgentRuntime, ConnectionId, ConnectionStatus,
-    Retention, RuntimeConfig, SessionSubscription,
+    Retention, RuntimeConfig, SessionSubscription, SettingValue,
 };

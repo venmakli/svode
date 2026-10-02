@@ -68,5 +68,7 @@ function applyChange(
       return { ...next, connection: delta.value };
     case "writer":
       return { ...next, writer: delta.value };
+    case "settings":
+      return { ...next, settings: delta.value };
   }
 }

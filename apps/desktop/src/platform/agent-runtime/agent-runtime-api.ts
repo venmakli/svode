@@ -172,6 +172,23 @@ export interface AgentPendingInteractionDto {
   state: AgentInteractionStateDto;
 }
 
+export type AgentSettingCategoryDto =
+  | "mode"
+  | "model"
+  | "thought_level"
+  | "other";
+
+/** A session setting the agent declared, in its order. */
+export interface AgentSessionSettingDto {
+  id: string;
+  name: string;
+  description: string | null;
+  category: AgentSettingCategoryDto;
+  /** Confirmed by the agent. */
+  currentValue: string;
+  options: { value: string; name: string; description: string | null }[];
+}
+
 export interface AgentSessionSnapshotDto {
   seq: number;
   session: AgentSessionKeyDto;
@@ -182,6 +199,7 @@ export interface AgentSessionSnapshotDto {
   pending: AgentPendingInteractionDto | null;
   history: AgentHistoryStateDto;
   writer: AgentWriterStateDto;
+  settings: AgentSessionSettingDto[];
 }
 
 /** Exactly one change with seq = previous + 1. */
@@ -199,6 +217,8 @@ export type AgentSessionDeltaDto = { seq: number } & (
     }
   | { change: "connection"; value: AgentConnectionStateDto }
   | { change: "writer"; value: AgentWriterStateDto }
+  /** Replaces the whole set of session settings. */
+  | { change: "settings"; value: AgentSessionSettingDto[] }
 );
 
 /** The snapshot first, then the deltas after it in seq order. */

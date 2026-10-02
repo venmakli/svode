@@ -27,7 +27,7 @@ use crate::activity::{
 use crate::catalog::{
     self, CatalogChanged, CatalogConnection, CatalogNotices, ListBounds, SessionList,
 };
-use crate::error::AgentRuntimeError;
+use crate::error::{AgentRuntimeError, SettingRefusal};
 use crate::identity::SessionKey;
 use crate::interaction::{self, AnswerOutcome, InteractionAnswer};
 use crate::process;
@@ -114,6 +114,15 @@ pub struct AcpLaunch {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct ConnectionId(pub u64);
+
+/// A value for one declared session setting, such as the agent mode an
+/// Actor approval maps to.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SettingValue {
+    pub setting: String,
+    pub value: String,
+}
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -437,12 +446,16 @@ impl AgentRuntime {
         Some(ConnectionStatus { state, agent })
     }
 
-    /// Creates a session in `cwd`. A connection that failed to initialize
-    /// retries it here, at the next lifecycle boundary.
+    /// Creates a session in `cwd` and applies `settings` before the session
+    /// is handed out, so no prompt can precede them. A value the new session
+    /// does not declare, or one the agent refuses, closes the session and
+    /// refuses the creation. A connection that failed to initialize retries
+    /// it here, at the next lifecycle boundary.
     pub async fn new_session(
         &self,
         id: ConnectionId,
         cwd: &Path,
+        settings: &[SettingValue],
     ) -> Result<SessionKey, AgentRuntimeError> {
         let connection = self.connection(id)?;
         connection.require_open()?;
@@ -456,7 +469,7 @@ impl AgentRuntime {
                 self.timeout(),
             )
             .await?;
-        let acp_id = acp::new_session_id(response).map_err(|message| {
+        let (acp_id, declared) = acp::new_session(response).map_err(|message| {
             connection.set_state(ConnectionState::Degraded);
             AgentRuntimeError::Protocol { message }
         })?;
@@ -481,9 +494,116 @@ impl AgentRuntime {
             false,
             claim,
         );
+        session.projection.lock().unwrap().set_settings(declared);
+        for value in settings {
+            if let Err(error) = self.apply_setting(&session, value).await {
+                self.close_session(&session).await;
+                return Err(error);
+            }
+        }
         self.inner.register(key.clone(), session);
         self.inner.catalog.changed(&connection.agent);
         Ok(key)
+    }
+
+    /// Sets one declared setting and waits for the agent to confirm it.
+    async fn apply_setting(
+        &self,
+        session: &Session,
+        value: &SettingValue,
+    ) -> Result<(), AgentRuntimeError> {
+        let refused = |reason| AgentRuntimeError::SettingRefused {
+            setting: value.setting.clone(),
+            value: value.value.clone(),
+            reason,
+        };
+        let legacy = {
+            let projection = session.projection.lock().unwrap();
+            let declared = projection.settings().iter().any(|setting| {
+                setting.id == value.setting
+                    && setting
+                        .options
+                        .iter()
+                        .any(|option| option.value == value.value)
+            });
+            if !declared {
+                return Err(refused(SettingRefusal::NotDeclared));
+            }
+            projection.legacy_modes()
+        };
+        let agent_refused = |error: AgentRuntimeError| match error {
+            AgentRuntimeError::Agent { message } | AgentRuntimeError::Protocol { message } => {
+                refused(SettingRefusal::Agent { message })
+            }
+            other => other,
+        };
+        if legacy {
+            session
+                .connection
+                .call(
+                    acp::SESSION_SET_MODE,
+                    acp::set_mode_request(&session.acp_id, &value.value),
+                    self.timeout(),
+                )
+                .await
+                .map_err(agent_refused)?;
+            session
+                .projection
+                .lock()
+                .unwrap()
+                .set_legacy_mode(&value.value);
+        } else {
+            let response = session
+                .connection
+                .call(
+                    acp::SESSION_SET_CONFIG_OPTION,
+                    acp::set_config_option_request(&session.acp_id, &value.setting, &value.value),
+                    self.timeout(),
+                )
+                .await
+                .map_err(agent_refused)?;
+            let settings = acp::set_config_option_settings(response)
+                .map_err(|message| refused(SettingRefusal::Agent { message }))?;
+            session
+                .projection
+                .lock()
+                .unwrap()
+                .set_settings(normalize::DeclaredSettings {
+                    settings,
+                    legacy_modes: false,
+                });
+        }
+        let confirmed = session
+            .projection
+            .lock()
+            .unwrap()
+            .settings()
+            .iter()
+            .any(|setting| setting.id == value.setting && setting.current_value == value.value);
+        if confirmed {
+            Ok(())
+        } else {
+            Err(refused(SettingRefusal::Agent {
+                message: "the agent did not confirm the value".into(),
+            }))
+        }
+    }
+
+    /// Closes a session the runtime does not hand out: `session/close` where
+    /// the agent declares it, then the session stops holding its writer.
+    async fn close_session(&self, session: &Arc<Session>) {
+        if session.connection.declares_close() {
+            let _ = session
+                .connection
+                .call(
+                    acp::SESSION_CLOSE,
+                    acp::close_request(&session.acp_id),
+                    self.timeout(),
+                )
+                .await;
+        }
+        session.end();
+        session.connection.forget(&session.acp_id, session);
     }
 
     /// Opens an existing session of the agent on this connection so the
@@ -574,8 +694,13 @@ impl AgentRuntime {
         // The replay arrives before the answer; apply all of it first.
         connection.rpc.barrier().await;
         match result {
-            Ok(_) => {
-                session.projection.lock().unwrap().end_replay();
+            Ok(response) => {
+                let mut projection = session.projection.lock().unwrap();
+                projection.end_replay();
+                if let Some(declared) = acp::opened_session_settings(response) {
+                    projection.set_settings(declared);
+                }
+                drop(projection);
                 self.inner.register(key.clone(), session);
                 Ok(())
             }

@@ -128,7 +128,7 @@ async fn session(runtime: &AgentRuntime) -> (ConnectionId, SessionKey, ScriptedA
     let (key, ()) = tokio::join!(
         async {
             runtime
-                .new_session(id, Path::new("/project"))
+                .new_session(id, Path::new("/project"), &[])
                 .await
                 .unwrap()
         },
@@ -345,19 +345,22 @@ async fn agent_errors_and_timeouts_degrade_only_their_own_connection() {
     let (_, healthy_key, mut healthy) = session(&runtime).await;
     let (failing, mut agent) = attached(&runtime);
 
-    let (result, ()) = tokio::join!(runtime.new_session(failing, Path::new("/project")), async {
-        let initialize = agent.expect("initialize").await;
-        agent
-            .reply(
-                &initialize,
-                json!({ "protocolVersion": 1, "agentCapabilities": {} }),
-            )
-            .await;
-        let new_session = agent.expect("session/new").await;
-        agent
+    let (result, ()) = tokio::join!(
+        runtime.new_session(failing, Path::new("/project"), &[]),
+        async {
+            let initialize = agent.expect("initialize").await;
+            agent
+                .reply(
+                    &initialize,
+                    json!({ "protocolVersion": 1, "agentCapabilities": {} }),
+                )
+                .await;
+            let new_session = agent.expect("session/new").await;
+            agent
             .send(json!({ "jsonrpc": "2.0", "id": new_session["id"], "error": { "code": -32603, "message": "Internal error", "data": { "details": "boom" } } }))
             .await;
-    });
+        }
+    );
     assert_eq!(
         result,
         Err(AgentRuntimeError::Agent {
@@ -370,7 +373,7 @@ async fn agent_errors_and_timeouts_degrade_only_their_own_connection() {
     );
 
     let (result, _) = tokio::join!(
-        runtime.new_session(failing, Path::new("/project")),
+        runtime.new_session(failing, Path::new("/project"), &[]),
         agent.expect("session/new")
     );
     assert_eq!(result, Err(AgentRuntimeError::Timeout));
@@ -388,12 +391,15 @@ async fn agent_errors_and_timeouts_degrade_only_their_own_connection() {
     follow(&mut subscription, idle).await;
     assert_eq!(subscription.snapshot.connection, ConnectionState::Ready);
 
-    let (result, ()) = tokio::join!(runtime.new_session(failing, Path::new("/project")), async {
-        let new_session = agent.expect("session/new").await;
-        agent
-            .reply(&new_session, json!({ "sessionId": "s2" }))
-            .await;
-    });
+    let (result, ()) = tokio::join!(
+        runtime.new_session(failing, Path::new("/project"), &[]),
+        async {
+            let new_session = agent.expect("session/new").await;
+            agent
+                .reply(&new_session, json!({ "sessionId": "s2" }))
+                .await;
+        }
+    );
     assert!(result.is_ok(), "the next lifecycle boundary retries");
     assert_eq!(
         runtime.connection_status(failing).unwrap().state,
@@ -406,7 +412,7 @@ async fn auth_required_is_a_recovery_outcome_not_a_degraded_connection() {
     let runtime = AgentRuntime::default();
     let (connection, mut agent) = attached(&runtime);
     let (result, ()) = tokio::join!(
-        runtime.new_session(connection, Path::new("/project")),
+        runtime.new_session(connection, Path::new("/project"), &[]),
         async {
             let initialize = agent.expect("initialize").await;
             agent
@@ -962,7 +968,7 @@ async fn acp_does_not_take_a_session_a_managed_pty_writes() {
         },
     );
     let (created, ()) = tokio::join!(
-        runtime.new_session(id, Path::new("/project")),
+        runtime.new_session(id, Path::new("/project"), &[]),
         agent.open_session()
     );
     assert_eq!(
@@ -1002,7 +1008,7 @@ async fn shutdown_cancels_live_turns_then_closes_sessions_then_ends_the_agent() 
     let (key, ()) = tokio::join!(
         async {
             runtime
-                .new_session(connection, Path::new("/project"))
+                .new_session(connection, Path::new("/project"), &[])
                 .await
                 .unwrap()
         },
@@ -1833,4 +1839,312 @@ async fn a_new_session_and_a_finished_turn_announce_a_catalog_change() {
         .unwrap()
         .unwrap();
     assert_eq!(change.agent, "scripted");
+}
+
+/// Config option `mode` and the same values as legacy modes, as Codex and
+/// Claude Code declare them.
+fn mode_settings(current: &str) -> Value {
+    json!({
+        "sessionId": "s1",
+        "configOptions": [
+            {
+                "id": "mode", "name": "Approval Preset", "category": "mode", "type": "select",
+                "currentValue": current,
+                "options": [
+                    { "value": "read-only", "name": "Read Only" },
+                    { "value": "workspace-write", "name": "Default", "description": "User review" },
+                    { "value": "agent", "name": "Auto review" }
+                ]
+            },
+            {
+                "id": "model", "name": "Model", "category": "model", "type": "select",
+                "currentValue": "gpt",
+                "options": [{ "group": "OpenAI", "options": [{ "value": "gpt", "name": "GPT" }] }]
+            },
+            { "id": "fast-mode", "name": "Fast", "type": "boolean", "currentValue": false }
+        ],
+        "modes": {
+            "currentModeId": current,
+            "availableModes": [{ "id": "agent", "name": "Auto review" }]
+        }
+    })
+}
+
+fn approval(value: &str) -> SettingValue {
+    SettingValue {
+        setting: "mode".into(),
+        value: value.into(),
+    }
+}
+
+#[tokio::test]
+async fn a_new_session_applies_the_mode_before_it_is_handed_out() {
+    let runtime = AgentRuntime::default();
+    let (id, mut agent) = attached(&runtime);
+    let (key, ()) = tokio::join!(
+        async {
+            runtime
+                .new_session(id, Path::new("/project"), &[approval("workspace-write")])
+                .await
+                .unwrap()
+        },
+        async {
+            agent
+                .initialize(json!({ "sessionCapabilities": { "close": {} } }))
+                .await;
+            let new_session = agent.expect("session/new").await;
+            agent.reply(&new_session, mode_settings("agent")).await;
+            let set = agent.expect("session/set_config_option").await;
+            assert_eq!(
+                set["params"],
+                json!({ "sessionId": "s1", "configId": "mode", "value": "workspace-write" })
+            );
+            let mut confirmed = mode_settings("workspace-write");
+            confirmed.as_object_mut().unwrap().remove("sessionId");
+            confirmed.as_object_mut().unwrap().remove("modes");
+            agent.reply(&set, confirmed).await;
+        }
+    );
+    let snapshot = runtime.subscribe(&key).unwrap().snapshot;
+    let ids: Vec<_> = snapshot.settings.iter().map(|s| s.id.as_str()).collect();
+    assert_eq!(ids, ["mode", "model"], "boolean options are not modelled");
+    let mode = &snapshot.settings[0];
+    assert_eq!(mode.category, crate::activity::SettingCategory::Mode);
+    assert_eq!(mode.current_value, "workspace-write");
+    assert_eq!(mode.options[1].description.as_deref(), Some("User review"));
+    assert_eq!(snapshot.settings[1].options[0].value, "gpt");
+    agent.silent().await;
+}
+
+#[tokio::test]
+async fn an_undeclared_mode_closes_the_new_session_without_a_prompt() {
+    let runtime = AgentRuntime::default();
+    let (id, mut agent) = attached(&runtime);
+    let settings = [approval("agent-full-access")];
+    let (created, ()) = tokio::join!(
+        runtime.new_session(id, Path::new("/project"), &settings),
+        async {
+            agent
+                .initialize(json!({ "sessionCapabilities": { "close": {} } }))
+                .await;
+            let new_session = agent.expect("session/new").await;
+            agent.reply(&new_session, mode_settings("agent")).await;
+            let close = agent.expect("session/close").await;
+            assert_eq!(close["params"], json!({ "sessionId": "s1" }));
+            agent.reply(&close, json!({})).await;
+        }
+    );
+    assert_eq!(
+        created,
+        Err(AgentRuntimeError::SettingRefused {
+            setting: "mode".into(),
+            value: "agent-full-access".into(),
+            reason: SettingRefusal::NotDeclared,
+        })
+    );
+    let key = SessionKey::from_acp("scripted", "s1", false);
+    assert!(runtime.subscribe(&key).is_err());
+    assert_eq!(runtime.writers().writer(&key), None);
+    agent.silent().await;
+}
+
+#[tokio::test]
+async fn a_mode_the_agent_refuses_closes_the_new_session() {
+    let runtime = AgentRuntime::default();
+    let (id, mut agent) = attached(&runtime);
+    let settings = [approval("workspace-write")];
+    let (created, ()) = tokio::join!(
+        runtime.new_session(id, Path::new("/project"), &settings),
+        async {
+            agent
+                .initialize(json!({ "sessionCapabilities": { "close": {} } }))
+                .await;
+            let new_session = agent.expect("session/new").await;
+            agent.reply(&new_session, mode_settings("agent")).await;
+            let set = agent.expect("session/set_config_option").await;
+            agent
+                .send(json!({
+                    "jsonrpc": "2.0", "id": set["id"],
+                    "error": { "code": -32602, "message": "not allowed" }
+                }))
+                .await;
+            let close = agent.expect("session/close").await;
+            agent.reply(&close, json!({})).await;
+        }
+    );
+    assert_eq!(
+        created,
+        Err(AgentRuntimeError::SettingRefused {
+            setting: "mode".into(),
+            value: "workspace-write".into(),
+            reason: SettingRefusal::Agent {
+                message: "not allowed".into()
+            },
+        })
+    );
+    agent.silent().await;
+}
+
+#[tokio::test]
+async fn an_unconfirmed_mode_is_refused() {
+    let runtime = AgentRuntime::default();
+    let (id, mut agent) = attached(&runtime);
+    let settings = [approval("workspace-write")];
+    let (created, ()) = tokio::join!(
+        runtime.new_session(id, Path::new("/project"), &settings),
+        async {
+            agent.initialize(json!({})).await;
+            let new_session = agent.expect("session/new").await;
+            agent.reply(&new_session, mode_settings("agent")).await;
+            let set = agent.expect("session/set_config_option").await;
+            agent.reply(&set, mode_settings("agent")).await;
+        }
+    );
+    assert!(matches!(
+        created,
+        Err(AgentRuntimeError::SettingRefused {
+            reason: SettingRefusal::Agent { .. },
+            ..
+        })
+    ));
+    // Without a declared `close` the agent keeps the session idle; the
+    // runtime does not hand it out.
+    let key = SessionKey::from_acp("scripted", "s1", false);
+    assert!(runtime.subscribe(&key).is_err());
+    assert_eq!(runtime.writers().writer(&key), None);
+    agent.silent().await;
+}
+
+#[tokio::test]
+async fn legacy_modes_are_one_mode_setting_changed_by_set_mode() {
+    let runtime = AgentRuntime::default();
+    let (id, mut agent) = attached(&runtime);
+    let (key, ()) = tokio::join!(
+        async {
+            runtime
+                .new_session(id, Path::new("/project"), &[approval("plan")])
+                .await
+                .unwrap()
+        },
+        async {
+            agent.initialize(json!({})).await;
+            let new_session = agent.expect("session/new").await;
+            agent
+                .reply(
+                    &new_session,
+                    json!({
+                        "sessionId": "s1",
+                        "modes": {
+                            "currentModeId": "default",
+                            "availableModes": [
+                                { "id": "default", "name": "Manual" },
+                                { "id": "plan", "name": "Plan", "description": "Plan first" }
+                            ]
+                        }
+                    }),
+                )
+                .await;
+            let set = agent.expect("session/set_mode").await;
+            assert_eq!(
+                set["params"],
+                json!({ "sessionId": "s1", "modeId": "plan" })
+            );
+            agent.reply(&set, json!({})).await;
+        }
+    );
+    let mut subscription = runtime.subscribe(&key).unwrap();
+    let mode = &subscription.snapshot.settings[0];
+    assert_eq!(
+        (mode.id.as_str(), mode.current_value.as_str()),
+        ("mode", "plan")
+    );
+    assert_eq!(mode.options.len(), 2);
+
+    agent
+        .update(
+            "s1",
+            json!({ "sessionUpdate": "current_mode_update", "currentModeId": "default" }),
+        )
+        .await;
+    follow(&mut subscription, |snapshot| {
+        snapshot.settings[0].current_value == "default"
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn a_config_option_update_replaces_the_session_settings() {
+    let runtime = AgentRuntime::default();
+    let (id, mut agent) = attached(&runtime);
+    let (key, ()) = tokio::join!(
+        async {
+            runtime
+                .new_session(id, Path::new("/project"), &[])
+                .await
+                .unwrap()
+        },
+        async {
+            agent.initialize(json!({})).await;
+            let new_session = agent.expect("session/new").await;
+            agent.reply(&new_session, mode_settings("agent")).await;
+        }
+    );
+    let mut subscription = runtime.subscribe(&key).unwrap();
+    assert_eq!(subscription.snapshot.settings[0].current_value, "agent");
+    let mut update = mode_settings("read-only");
+    let options = update["configOptions"].take();
+    agent
+        .update(
+            "s1",
+            json!({ "sessionUpdate": "config_option_update", "configOptions": options }),
+        )
+        .await;
+    let deltas = follow(&mut subscription, |snapshot| {
+        snapshot.settings[0].current_value == "read-only"
+    })
+    .await;
+    assert!(
+        deltas
+            .iter()
+            .any(|delta| matches!(delta.change, Change::Settings(_)))
+    );
+}
+
+#[tokio::test]
+async fn an_opened_session_reports_its_settings_and_keeps_replayed_ones() {
+    let runtime = AgentRuntime::default();
+    let key = SessionKey::from_acp("scripted", "s1", false);
+    let mut options = mode_settings("read-only");
+    let options = options["configOptions"].take();
+    reopened(
+        &runtime,
+        &launch(),
+        &key,
+        vec![json!({ "sessionUpdate": "config_option_update", "configOptions": options })],
+    )
+    .await;
+    // The load answer declares nothing: the replayed settings stay.
+    let snapshot = runtime.subscribe(&key).unwrap().snapshot;
+    assert_eq!(snapshot.settings[0].current_value, "read-only");
+
+    let (id, mut agent) = attached(&runtime);
+    let (opened, ()) = tokio::join!(
+        runtime.open_session(
+            id,
+            &key,
+            Path::new("/project"),
+            ExternalLiveness::Free,
+            UnknownLiveness::NotConfirmed,
+        ),
+        async {
+            agent.initialize(json!({ "loadSession": true })).await;
+            let load = agent.expect("session/load").await;
+            let mut declared = mode_settings("agent");
+            declared.as_object_mut().unwrap().remove("sessionId");
+            agent.reply(&load, declared).await;
+        }
+    );
+    opened.unwrap();
+    let snapshot = runtime.subscribe(&key).unwrap().snapshot;
+    assert_eq!(snapshot.settings[0].current_value, "agent");
 }

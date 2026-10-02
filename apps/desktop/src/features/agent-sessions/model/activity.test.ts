@@ -141,3 +141,27 @@ test("a truncation drops the evicted items and marks the history", () => {
   expect(state.items.map((item) => item.id)).toEqual(["b"]);
   expect(state.history.truncatedItems).toBe(1);
 });
+
+test("a settings delta replaces the session settings", () => {
+  const mode = {
+    id: "mode",
+    name: "Approval Preset",
+    description: null,
+    category: "mode" as const,
+    currentValue: "workspace-write",
+    options: [
+      { value: "workspace-write", name: "Default", description: null },
+      { value: "agent", name: "Auto review", description: null },
+    ],
+  };
+
+  const state = stateOf(
+    applyAgentActivityMessage(activitySnapshot(), {
+      type: "delta",
+      value: { seq: 1, change: "settings", value: [mode] },
+    }),
+  );
+
+  expect(state.settings).toEqual([mode]);
+  expect(state.seq).toBe(1);
+});

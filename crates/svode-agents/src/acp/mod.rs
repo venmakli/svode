@@ -9,10 +9,12 @@ use std::path::Path;
 
 use serde_json::{Value, json};
 
+use crate::activity::SessionSetting;
 use crate::catalog::{ListEntry, ListPage};
 use crate::interaction::{FieldValue, InteractionAnswer};
 use crate::runtime::{AgentCapabilities, AgentInfo};
 use crate::status::InteractionKind;
+use normalize::DeclaredSettings;
 
 pub(crate) const INITIALIZE: &str = "initialize";
 pub(crate) const SESSION_NEW: &str = "session/new";
@@ -22,6 +24,8 @@ pub(crate) const SESSION_PROMPT: &str = "session/prompt";
 pub(crate) const SESSION_CANCEL: &str = "session/cancel";
 pub(crate) const SESSION_CLOSE: &str = "session/close";
 pub(crate) const SESSION_LIST: &str = "session/list";
+pub(crate) const SESSION_SET_CONFIG_OPTION: &str = "session/set_config_option";
+pub(crate) const SESSION_SET_MODE: &str = "session/set_mode";
 pub(crate) const SESSION_UPDATE: &str = "session/update";
 pub(crate) const SESSION_REQUEST_PERMISSION: &str = "session/request_permission";
 pub(crate) const ELICITATION_CREATE: &str = "elicitation/create";
@@ -77,10 +81,38 @@ pub(crate) fn open_session_request(session_id: &str, cwd: &Path) -> Value {
     json!({ "sessionId": session_id, "cwd": cwd, "mcpServers": [] })
 }
 
-pub(crate) fn new_session_id(response: Value) -> Result<String, String> {
+/// The new session's id and the settings it declares.
+pub(crate) fn new_session(response: Value) -> Result<(String, DeclaredSettings), String> {
     let response: wire::NewSessionResponse =
         serde_json::from_value(response).map_err(|error| error.to_string())?;
-    Ok(response.session_id)
+    Ok((
+        response.session_id,
+        normalize::declared_settings(response.settings),
+    ))
+}
+
+/// Settings an opened session declares; `None` when the answer declares
+/// none, so settings the replay reported stay.
+pub(crate) fn opened_session_settings(response: Value) -> Option<DeclaredSettings> {
+    serde_json::from_value::<wire::DeclaredSettings>(response)
+        .ok()
+        .filter(|declared| declared.config_options.is_some() || declared.modes.is_some())
+        .map(normalize::declared_settings)
+}
+
+pub(crate) fn set_config_option_request(session_id: &str, setting: &str, value: &str) -> Value {
+    json!({ "sessionId": session_id, "configId": setting, "value": value })
+}
+
+/// The full set of config options the agent answers a change with.
+pub(crate) fn set_config_option_settings(response: Value) -> Result<Vec<SessionSetting>, String> {
+    let response: wire::SetConfigOptionResponse =
+        serde_json::from_value(response).map_err(|error| error.to_string())?;
+    Ok(normalize::config_settings(response.config_options))
+}
+
+pub(crate) fn set_mode_request(session_id: &str, mode: &str) -> Value {
+    json!({ "sessionId": session_id, "modeId": mode })
 }
 
 /// Params of one `session/list` page. No `cwd` filter: its semantics per
