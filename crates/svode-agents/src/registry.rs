@@ -449,6 +449,27 @@ impl AdapterRuntimeRegistry {
         self.diagnose_resolved(adapter, target, path, runner).await
     }
 
+    /// The output of the executable's bounded `--version`.
+    pub async fn cli_version(
+        &self,
+        path: &Path,
+        target: &AdapterTarget,
+        runner: &dyn RuntimeCommandRunner,
+    ) -> Result<String, String> {
+        match runner
+            .run(&RuntimeCommandRequest {
+                program: path.to_path_buf(),
+                arguments: vec!["--version".into()],
+                cwd: target.cwd.clone(),
+                search_path: target.search_path.clone(),
+            })
+            .await?
+        {
+            output if output.exit_code == Some(0) && !output.stdout.is_empty() => Ok(output.stdout),
+            output => Err(nonempty(output.stderr, "version check failed")),
+        }
+    }
+
     async fn diagnose_resolved(
         &self,
         adapter: AgentAdapterKind,
@@ -456,24 +477,8 @@ impl AdapterRuntimeRegistry {
         path: PathBuf,
         runner: &dyn RuntimeCommandRunner,
     ) -> AdapterDiagnostic {
-        let version = runner
-            .run(&RuntimeCommandRequest {
-                program: path.clone(),
-                arguments: vec!["--version".into()],
-                cwd: target.cwd.clone(),
-                search_path: target.search_path.clone(),
-            })
-            .await;
-        let version = match version {
-            Ok(output) if output.exit_code == Some(0) && !output.stdout.is_empty() => output.stdout,
-            Ok(output) => {
-                return unknown_diagnostic_with_path(
-                    adapter,
-                    &path,
-                    "version_failed",
-                    nonempty(output.stderr, "version check failed"),
-                );
-            }
+        let version = match self.cli_version(&path, target, runner).await {
+            Ok(version) => version,
             Err(error) => {
                 return unknown_diagnostic_with_path(adapter, &path, "version_failed", error);
             }
@@ -547,6 +552,16 @@ impl AdapterRuntimeRegistry {
         }
     }
 
+    /// Whether the agent's `session/list` is its one declared catalogue
+    /// source. The transitional scanners stay the source of Codex and
+    /// Claude Code until the provider matrix records identity equality and
+    /// coverage (slice 2.5b).
+    pub fn lists_catalog(&self, adapter: AgentAdapterKind) -> bool {
+        match adapter {
+            AgentAdapterKind::Codex | AgentAdapterKind::ClaudeCode => false,
+        }
+    }
+
     /// Launch plan of the installed adapter, run by the user's Node.js, for
     /// the user's executable. Its session ids stay in the ACP namespace
     /// until the provider matrix records their equality with native ids.
@@ -563,16 +578,14 @@ impl AdapterRuntimeRegistry {
             agent: adapter.as_str().to_string(),
             program: node.to_path_buf(),
             args: vec![installed.entry.to_string_lossy().into_owned()],
+            environment: None,
             env: BTreeMap::from([(
                 entrypoint.executable_env.to_string(),
                 executable.to_string_lossy().into_owned(),
             )]),
             cwd: cwd.to_path_buf(),
             acp_id_is_native: false,
-            // The transitional scanners stay the one declared catalogue
-            // source of Codex and Claude Code until the provider matrix
-            // records identity equality and coverage (slice 2.5b).
-            lists_catalog: false,
+            lists_catalog: self.lists_catalog(adapter),
             // E01: load and close of both agents change their store only
             // in service records, which Svode accepts.
             read_only_open: true,

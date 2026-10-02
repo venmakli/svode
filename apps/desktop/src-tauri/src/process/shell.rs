@@ -1,4 +1,6 @@
 use std::path::Path;
+use std::process::Stdio;
+use std::time::Duration;
 
 pub(crate) fn login_shell() -> String {
     select_login_shell(std::env::var("SHELL").ok().as_deref(), |command| {
@@ -8,6 +10,46 @@ pub(crate) fn login_shell() -> String {
             which::which(command).is_ok()
         }
     })
+}
+
+/// Stdout of a short shell script, at most `max_bytes`, within `deadline`;
+/// the shell is killed when it hangs, fails or prints too much.
+pub(crate) async fn read_output(
+    mut command: tokio::process::Command,
+    deadline: Duration,
+    max_bytes: u64,
+) -> std::io::Result<Vec<u8>> {
+    use std::io::{Error, ErrorKind};
+    use tokio::io::AsyncReadExt;
+
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .kill_on_drop(true);
+    let mut child = command.spawn()?;
+    let stdout = child.stdout.take().expect("shell stdout is piped");
+    let result = tokio::time::timeout(deadline, async {
+        let mut output = Vec::new();
+        stdout.take(max_bytes + 1).read_to_end(&mut output).await?;
+        if output.len() as u64 > max_bytes {
+            return Err(Error::new(
+                ErrorKind::InvalidData,
+                "shell output exceeds limit",
+            ));
+        }
+        if !child.wait().await?.success() {
+            return Err(Error::other("shell command failed"));
+        }
+        Ok(output)
+    })
+    .await
+    .unwrap_or_else(|_| Err(Error::new(ErrorKind::TimedOut, "shell timed out")));
+    if result.is_err() {
+        // Reap the direct child even when startup hangs or leaves stdout open.
+        let _ = child.kill().await;
+    }
+    result
 }
 
 pub(crate) fn select_login_shell(env_shell: Option<&str>, exists: impl Fn(&str) -> bool) -> String {

@@ -362,6 +362,11 @@ pub fn handle_window_event(app: &AppHandle, window: &Window, event: &WindowEvent
             active_state.remove_window(&label);
             app.state::<crate::agent_runtime::AgentRuntimeState>()
                 .release_webview(&label);
+            if let Some(connections) = app
+                .try_state::<std::sync::Arc<crate::agent_runtime::connections::AgentConnections>>()
+            {
+                connections.release_webview(&label);
+            }
         }
         _ => {}
     }

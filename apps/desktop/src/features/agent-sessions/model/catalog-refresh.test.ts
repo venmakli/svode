@@ -176,3 +176,18 @@ test("returning to the foreground reloads the list after the minimal gap", async
   expect(count(api, "list:")).toBe(2);
   stop();
 });
+
+test("a return to the foreground starts agent catalogue connections and a poll never does", async () => {
+  const { api, env, stop } = await startCatalog();
+
+  await env.advance(INTERVALS.listMs * 2);
+  expect(count(api, "raise")).toBe(0);
+
+  await env.setVisible(false);
+  await env.setVisible(true);
+  expect(count(api, "raise")).toBe(1);
+
+  await env.focus();
+  expect(count(api, "raise")).toBe(1);
+  stop();
+});

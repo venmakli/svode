@@ -67,49 +67,10 @@ fn shell_path_command(shell: &str) -> tokio::process::Command {
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 async fn read_shell_path(
-    mut command: tokio::process::Command,
+    command: tokio::process::Command,
     deadline: std::time::Duration,
 ) -> std::io::Result<OsString> {
-    use std::io::{Error, ErrorKind};
-    use std::process::Stdio;
-    use tokio::io::AsyncReadExt;
-
-    command
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .kill_on_drop(true);
-    let mut child = command.spawn()?;
-    let stdout = child.stdout.take().expect("shell stdout is piped");
-    let result = tokio::time::timeout(deadline, async {
-        let mut output = Vec::new();
-        stdout
-            .take(MAX_OUTPUT_BYTES + 1)
-            .read_to_end(&mut output)
-            .await?;
-        if output.len() as u64 > MAX_OUTPUT_BYTES {
-            return Err(Error::new(
-                ErrorKind::InvalidData,
-                "shell PATH output exceeds limit",
-            ));
-        }
-        if !child.wait().await?.success() {
-            return Err(Error::other("shell PATH command failed"));
-        }
-        parse_shell_path(&output)
-    })
-    .await
-    .unwrap_or_else(|_| {
-        Err(Error::new(
-            ErrorKind::TimedOut,
-            "shell PATH lookup timed out",
-        ))
-    });
-    if result.is_err() {
-        // Reap the direct child even when startup hangs or leaves stdout open.
-        let _ = child.kill().await;
-    }
-    result
+    parse_shell_path(&super::shell::read_output(command, deadline, MAX_OUTPUT_BYTES).await?)
 }
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]

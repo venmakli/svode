@@ -1,35 +1,43 @@
 //! Desktop host of agent setup: the device-local adapter directory in the
-//! app data and the user's enable choices in the app config. Rules and
-//! installation belong to `svode_agents::adapters`.
+//! app data and the user's enable choices in the app config, handed to the
+//! library when an agent launches. Rules and installation belong to
+//! `svode_agents::adapters`.
 
 pub mod commands;
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
-use svode_agents::adapters::{AdapterStore, RegistryPackageSource};
+use svode_agents::adapters::{
+    AdapterStore, LaunchContext, LaunchUnavailable, RegistryPackageSource,
+};
+use svode_agents::registry::{AdapterRuntimeRegistry, SystemRuntimeCommandRunner};
 use svode_core::agent_adapters::AgentAdapterKind;
 
+use crate::agent_runtime::connections::{LaunchPlanner, PlanFuture};
 use crate::error::AppError;
+use crate::process::login_env::LoginEnvironment;
 
 const ENABLEMENT_FILE: &str = "agents.json";
 
+/// Clones share one store, package source and choices lock.
+#[derive(Clone)]
 pub struct AgentSetupState {
-    store: AdapterStore,
-    source: RegistryPackageSource,
+    store: Arc<AdapterStore>,
+    source: Arc<RegistryPackageSource>,
     config_dir: PathBuf,
     /// Serializes read-modify-write of the enable choices.
-    choices: Mutex<()>,
+    choices: Arc<Mutex<()>>,
 }
 
 impl AgentSetupState {
     pub fn new(data_dir: &Path, config_dir: PathBuf) -> Self {
         Self {
-            store: AdapterStore::new(data_dir.join("agent-adapters")),
-            source: RegistryPackageSource::new(),
+            store: Arc::new(AdapterStore::new(data_dir.join("agent-adapters"))),
+            source: Arc::new(RegistryPackageSource::new()),
             config_dir,
-            choices: Mutex::new(()),
+            choices: Arc::new(Mutex::new(())),
         }
     }
 
@@ -46,6 +54,49 @@ impl AgentSetupState {
     fn set_choice(&self, agent: AgentAdapterKind, enabled: bool) -> Result<(), AppError> {
         let _guard = self.choices.lock().unwrap();
         write_choice(&self.config_dir, agent.as_str(), enabled)
+    }
+}
+
+/// Launches in the home directory with the login shell environment, the
+/// login shell PATH and the user's enable choice.
+impl LaunchPlanner for AgentSetupState {
+    fn catalog_agents(&self) -> Vec<String> {
+        AgentAdapterKind::ALL
+            .into_iter()
+            .filter(|agent| AdapterRuntimeRegistry.lists_catalog(*agent))
+            .map(|agent| agent.as_str().to_string())
+            .collect()
+    }
+
+    fn plan<'a>(&'a self, agent: &'a str) -> PlanFuture<'a> {
+        Box::pin(async move {
+            let Some(kind) = AgentAdapterKind::ALL
+                .into_iter()
+                .find(|kind| kind.as_str() == agent)
+            else {
+                return Err(LaunchUnavailable::NotSupported);
+            };
+            // Without a home directory no executable resolves.
+            let target =
+                commands::target()
+                    .await
+                    .map_err(|_| LaunchUnavailable::ExecutableMissing {
+                        executable: kind.executable().to_string(),
+                    })?;
+            let context = LaunchContext {
+                target,
+                environment: LoginEnvironment::session().get().await,
+                env: BTreeMap::new(),
+            };
+            self.store
+                .launch_plan(
+                    kind,
+                    self.choice(kind),
+                    &context,
+                    &SystemRuntimeCommandRunner,
+                )
+                .await
+        })
     }
 }
 
@@ -122,6 +173,56 @@ mod tests {
         let value = read_file(dir.path()).unwrap().unwrap();
         assert_eq!(value["agents"]["future-agent"]["extra"], 1);
         assert_eq!(value["other"], true);
+    }
+
+    /// Live acceptance of the explicit check with the user's CLIs: installs
+    /// the pinned adapters into a temporary app data directory, then checks
+    /// each agent through the Desktop planner (login shell environment and
+    /// PATH) and shows that no adapter process is left.
+    #[tokio::test]
+    #[ignore = "live: downloads the pinned adapters from npm and starts the user's Codex and Claude Code"]
+    async fn live_check_starts_initializes_and_closes_the_users_agents() {
+        use std::time::Instant;
+
+        use svode_agents::{AgentCheck, AgentRuntime};
+
+        use crate::agent_runtime::connections::AgentConnections;
+
+        let dir = tempfile::tempdir().unwrap();
+        let setup = AgentSetupState::new(&dir.path().join("data"), dir.path().join("config"));
+        for agent in AgentAdapterKind::ALL {
+            let started = Instant::now();
+            setup
+                .store
+                .prepare_enable(
+                    agent,
+                    &commands::target().await.unwrap(),
+                    &SystemRuntimeCommandRunner,
+                    &*setup.source,
+                )
+                .await
+                .unwrap();
+            setup.set_choice(agent, true).unwrap();
+            println!("{agent:?}: adapter installed in {:?}", started.elapsed());
+        }
+        let runtime = AgentRuntime::default();
+        let connections = AgentConnections::new(runtime.clone(), setup.clone());
+        for agent in AgentAdapterKind::ALL {
+            let started = Instant::now();
+            let check = connections.check(agent.as_str()).await;
+            println!("{agent:?}: {check:?} in {:?}", started.elapsed());
+            assert!(matches!(check, AgentCheck::Ready { .. }), "{check:?}");
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        let left = std::process::Command::new("pgrep")
+            .args(["-f", &dir.path().to_string_lossy()])
+            .output()
+            .unwrap();
+        assert!(
+            left.stdout.is_empty(),
+            "adapter processes left: {}",
+            String::from_utf8_lossy(&left.stdout)
+        );
     }
 
     #[test]

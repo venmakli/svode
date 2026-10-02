@@ -3,6 +3,7 @@
 //! runtime does not depend on a window; a subscription only delivers it.
 
 pub mod commands;
+pub mod connections;
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};

@@ -100,6 +100,7 @@ async fn main() {
         agent: agent.clone(),
         program: PathBuf::from(program),
         args: program_args.to_vec(),
+        environment: None,
         env,
         cwd: cwd.clone(),
         acp_id_is_native: false,

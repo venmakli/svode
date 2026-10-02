@@ -13,7 +13,10 @@ import {
 import { navigationKeyId, useNavigationState } from "@/features/navigation";
 import type { ScopeOwnerRef } from "@/features/scope-surfaces";
 import { getNativeErrorMessage } from "@/platform/native/errors";
-import { openSessionCwdInExternalTerminal } from "../api";
+import {
+  holdAgentSessionCatalog,
+  openSessionCwdInExternalTerminal,
+} from "../api";
 import {
   agentSessionNavigationIndex,
   isAgentTurnActive,
@@ -76,6 +79,7 @@ export function useAgentSessionsCollection({
     (state) => state.reentryResults,
   );
   const load = useAgentSessionCatalog((state) => state.load);
+  const raiseCatalog = useAgentSessionCatalog((state) => state.raiseCatalog);
   const closeCatalogTerminal = useAgentSessionCatalog(
     (state) => state.closeTerminal,
   );
@@ -84,7 +88,9 @@ export function useAgentSessionsCollection({
   const [closeRequest, setCloseRequest] =
     useState<AgentSessionTerminalClose | null>(null);
 
-  // Opening the collection asks the catalog for the full list.
+  // Opening the collection asks the catalog for the full list and keeps the
+  // connections of agents whose catalogue is their ACP list while it is open.
+  useEffect(() => holdAgentSessionCatalog(), []);
   useEffect(() => {
     void load();
   }, [load]);
@@ -98,7 +104,10 @@ export function useAgentSessionsCollection({
         : null,
     [scope, sessions],
   );
-  const refresh = useCallback(() => load({ force: true }), [load]);
+  const refresh = useCallback(() => {
+    raiseCatalog();
+    return load({ force: true });
+  }, [load, raiseCatalog]);
   const launchIds = useMemo(
     () => (rows ?? []).flatMap((session) => session.launchId ?? []),
     [rows],

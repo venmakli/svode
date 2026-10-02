@@ -1,8 +1,11 @@
 import {
+  holdAgentSessionCatalog as holdAgentSessionCatalogCommand,
   hotStatusAgentSessions as hotStatusAgentSessionsCommand,
   listAgentSessions as listAgentSessionsCommand,
+  raiseAgentSessionCatalog as raiseAgentSessionCatalogCommand,
   reenterAgentSession as reenterAgentSessionCommand,
   refreshAgentSessions as refreshAgentSessionsCommand,
+  releaseAgentSessionCatalog,
 } from "@/platform/agent-sessions/agent-sessions-api";
 import {
   listProjectOpeners,
@@ -34,6 +37,26 @@ export function listAgentSessions(projectPath: string) {
 
 export function refreshAgentSessions(projectPath: string) {
   return refreshAgentSessionsCommand(projectPath);
+}
+
+export function raiseAgentSessionCatalog() {
+  return raiseAgentSessionCatalogCommand();
+}
+
+/**
+ * Keeps the catalogue connections of an open Sessions collection; the
+ * returned release ends the hold, also when it is still being granted.
+ */
+export function holdAgentSessionCatalog(): () => void {
+  const hold = holdAgentSessionCatalogCommand();
+  hold.catch((error: unknown) => {
+    console.error("Failed to hold the session catalogue:", error);
+  });
+  return () => {
+    void hold
+      .then((id) => releaseAgentSessionCatalog(id))
+      .catch(() => {});
+  };
 }
 
 export function hotStatusAgentSessions(

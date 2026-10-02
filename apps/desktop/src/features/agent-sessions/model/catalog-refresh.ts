@@ -56,7 +56,8 @@ function hotStatusKey(state: AgentSessionCatalogState): string {
  * is visible it polls the full list (accelerated for pending/provisional
  * records and explicit fast-refresh demand) plus hot status; while hidden it
  * polls only hot status of already known active, pending and provisional
- * records. Returning to the foreground reloads the full list.
+ * records. Returning to the foreground reloads the full list and starts the
+ * agent connections an open Sessions collection needs; polls never start one.
  */
 export function startAgentSessionCatalogRefresh(
   store: AgentSessionCatalogStore,
@@ -141,6 +142,7 @@ export function startAgentSessionCatalogRefresh(
         listedAt === null ||
         env.now() - listedAt >= intervals.foregroundMinGapMs
       ) {
+        store.getState().raiseCatalog();
         load();
       }
     }

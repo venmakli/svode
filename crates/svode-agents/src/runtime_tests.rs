@@ -98,6 +98,7 @@ fn launch() -> AcpLaunch {
         agent: "scripted".into(),
         program: PathBuf::from("scripted"),
         args: Vec::new(),
+        environment: None,
         env: BTreeMap::new(),
         cwd: PathBuf::from("/project"),
         acp_id_is_native: false,
@@ -2460,5 +2461,208 @@ async fn a_session_the_runtime_drives_is_not_read_again() {
     assert_eq!(
         runtime.subscribe(&key).unwrap().snapshot.writer,
         WriterState::Acp
+    );
+}
+
+/// A `/bin/sh` ACP agent that answers `initialize` with the agent version
+/// `<$SVODE_PROBE or ->|<home when $HOME is set>` and an empty
+/// `session/list`, so a test sees the environment of the process.
+#[cfg(unix)]
+fn sh_agent(env: &[(&str, &str)]) -> AcpLaunch {
+    const SCRIPT: &str = r#"while IFS= read -r line; do
+  id=${line#'{"id":'}; id=${id%%,*}
+  case "$line" in
+    *'"method":"initialize"'*) printf '{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":1,"agentCapabilities":{"sessionCapabilities":{"list":{}}},"agentInfo":{"name":"sh","version":"%s|%s"}}}\n' "$id" "${SVODE_PROBE:--}" "${HOME:+home}";;
+    *'"method":"session/list"'*) printf '{"jsonrpc":"2.0","id":%s,"result":{"sessions":[]}}\n' "$id";;
+  esac
+done"#;
+    AcpLaunch {
+        program: PathBuf::from("/bin/sh"),
+        args: vec!["-c".into(), SCRIPT.into()],
+        env: env
+            .iter()
+            .map(|(name, value)| (name.to_string(), value.to_string()))
+            .collect(),
+        cwd: std::env::temp_dir(),
+        ..launch()
+    }
+}
+
+#[cfg(unix)]
+fn version(runtime: &AgentRuntime, lease: &ConnectionLease) -> String {
+    runtime
+        .connection_status(lease.connection())
+        .unwrap()
+        .agent
+        .unwrap()
+        .version
+        .unwrap()
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn one_launch_plan_shares_its_connection_and_another_provenance_gets_its_own() {
+    let runtime = AgentRuntime::default();
+    let shared = runtime.acquire(sh_agent(&[])).await.unwrap();
+    let again = runtime.acquire(sh_agent(&[])).await.unwrap();
+    assert_eq!(shared.connection(), again.connection());
+
+    // A Routine caller token is part of its launch plan.
+    let first = runtime
+        .acquire(sh_agent(&[("SVODE_PROBE", "token-a")]))
+        .await
+        .unwrap();
+    let second = runtime
+        .acquire(sh_agent(&[("SVODE_PROBE", "token-b")]))
+        .await
+        .unwrap();
+    let connections = [shared.connection(), first.connection(), second.connection()];
+    assert_eq!(
+        connections.iter().collect::<HashSet<_>>().len(),
+        3,
+        "{connections:?}"
+    );
+    assert!(version(&runtime, &shared).starts_with("-|"));
+    assert!(version(&runtime, &first).starts_with("token-a|"));
+    assert!(version(&runtime, &second).starts_with("token-b|"));
+    runtime.shutdown().await;
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn the_hosts_environment_replaces_the_inherited_one() {
+    let runtime = AgentRuntime::default();
+    let inherited = runtime.acquire(sh_agent(&[])).await.unwrap();
+    assert_eq!(version(&runtime, &inherited), "-|home");
+
+    let lease = runtime
+        .acquire(AcpLaunch {
+            environment: Some(LaunchEnvironment::new([(
+                OsString::from("SVODE_PROBE"),
+                OsString::from("login-shell"),
+            )])),
+            ..sh_agent(&[])
+        })
+        .await
+        .unwrap();
+    // HOME of the test process does not reach the agent.
+    assert_eq!(version(&runtime, &lease), "login-shell|");
+    assert_eq!(
+        format!(
+            "{:?}",
+            LaunchEnvironment::new([(OsString::from("KEY"), OsString::from("secret"))])
+        ),
+        "LaunchEnvironment(1 variables)"
+    );
+    runtime.shutdown().await;
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_connection_closes_after_idle_once_no_lease_holds_it() {
+    let runtime = AgentRuntime::new(RuntimeConfig {
+        connection_idle: Duration::from_millis(60),
+        ..RuntimeConfig::default()
+    });
+    let lease = runtime.acquire(sh_agent(&[])).await.unwrap();
+    let id = lease.connection();
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(lease.is_open());
+
+    drop(lease);
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(
+        runtime.connection_status(id).unwrap().state,
+        ConnectionState::Closed
+    );
+    // The next boundary starts the agent again.
+    let lease = runtime.acquire(sh_agent(&[])).await.unwrap();
+    assert_ne!(lease.connection(), id);
+    assert!(lease.is_open());
+    runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_session_open_in_a_surface_keeps_its_connection_past_idle() {
+    let runtime = AgentRuntime::new(RuntimeConfig {
+        connection_idle: Duration::from_millis(60),
+        ..RuntimeConfig::default()
+    });
+    let (id, key, _agent) = session(&runtime).await;
+    let subscription = runtime.subscribe(&key).unwrap();
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(
+        runtime.connection_status(id).unwrap().state,
+        ConnectionState::Ready
+    );
+
+    drop(subscription);
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(
+        runtime.connection_status(id).unwrap().state,
+        ConnectionState::Closed
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_check_closes_the_connection_it_started_and_keeps_one_still_needed() {
+    let runtime = AgentRuntime::default();
+    let AgentCheck::Ready { agent } = runtime.check(sh_agent(&[])).await else {
+        panic!("the agent starts");
+    };
+    assert_eq!(agent.name.as_deref(), Some("sh"));
+    assert!(agent.capabilities.list_sessions);
+    assert!(runtime.catalog_connections().is_empty());
+    assert!(
+        runtime
+            .inner
+            .connections
+            .lock()
+            .unwrap()
+            .values()
+            .all(|connection| !connection.is_open())
+    );
+
+    let lease = runtime.acquire(sh_agent(&[])).await.unwrap();
+    assert!(matches!(
+        runtime.check(sh_agent(&[])).await,
+        AgentCheck::Ready { .. }
+    ));
+    assert!(lease.is_open());
+    runtime.shutdown().await;
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_failed_start_is_a_check_outcome_and_leaves_no_process() {
+    let runtime = AgentRuntime::new(RuntimeConfig {
+        request_timeout: Duration::from_millis(200),
+        ..RuntimeConfig::default()
+    });
+    let exiting = AcpLaunch {
+        program: PathBuf::from("/bin/sh"),
+        args: vec!["-c".into(), "echo 'adapter crashed' >&2; exit 3".into()],
+        cwd: std::env::temp_dir(),
+        ..launch()
+    };
+    let AgentCheck::FailedToStart { message } = runtime.check(exiting).await else {
+        panic!("the agent fails to start");
+    };
+    assert!(message.contains("adapter crashed"), "{message}");
+
+    let hung = AcpLaunch {
+        program: PathBuf::from("/bin/sh"),
+        args: vec!["-c".into(), "cat > /dev/null".into()],
+        cwd: std::env::temp_dir(),
+        ..launch()
+    };
+    let error = runtime.acquire(hung).await.unwrap_err();
+    let AgentRuntimeError::Initialize { connection, .. } = error else {
+        panic!("expected an initialize failure, got {error:?}");
+    };
+    assert_eq!(
+        runtime.connection_status(connection).unwrap().state,
+        ConnectionState::Closed
     );
 }

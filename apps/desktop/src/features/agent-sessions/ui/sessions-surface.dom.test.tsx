@@ -71,6 +71,7 @@ if (process.env.SVODE_AGENT_SESSIONS_SURFACE_DOM !== "1") {
   let listStatus: "ok" | "partial" = "ok";
   const commands: string[] = [];
   const resolvedLaunches: string[][] = [];
+  const releasedHolds: number[] = [];
   const { mockNativeIpc } = await import("@/platform/native/testing");
   mockNativeIpc((command, payload) => {
     commands.push(command);
@@ -115,6 +116,12 @@ if (process.env.SVODE_AGENT_SESSIONS_SURFACE_DOM !== "1") {
       ];
     }
     if (command === "list_project_openers") return [];
+    if (command === "agent_sessions_hold_catalog") return 7;
+    if (command === "agent_sessions_release_catalog") {
+      releasedHolds.push((payload as { hold: number }).hold);
+      return undefined;
+    }
+    if (command === "agent_sessions_raise_catalog") return undefined;
     throw new Error(`unexpected command ${command}`);
   });
 
@@ -170,6 +177,7 @@ if (process.env.SVODE_AGENT_SESSIONS_SURFACE_DOM !== "1") {
       resolvedLaunches.length = 0;
       openedWithFocus.length = 0;
       commands.length = 0;
+      releasedHolds.length = 0;
       spawned.length = 0;
       listStatus = "ok";
       try {
@@ -224,6 +232,23 @@ if (process.env.SVODE_AGENT_SESSIONS_SURFACE_DOM !== "1") {
       true,
     );
   });
+
+  surfaceTest(
+    "an open collection holds the agent catalogue until it closes",
+    async () => {
+      await mountSurface("/project", "root");
+      expect(
+        commands.filter((command) => command === "agent_sessions_hold_catalog"),
+      ).toEqual(["agent_sessions_hold_catalog"]);
+      expect(commands.includes("agent_sessions_raise_catalog")).toBe(false);
+
+      for (const root of mounted.splice(0)) {
+        await act(async () => root.unmount());
+      }
+      await settle();
+      expect(releasedHolds).toEqual([7]);
+    },
+  );
 
   surfaceTest(
     "a Routine launch shows its routine, read from the Routines owner by launch id",
@@ -299,6 +324,10 @@ if (process.env.SVODE_AGENT_SESSIONS_SURFACE_DOM !== "1") {
         commands.filter((command) => command === "agent_sessions_refresh")
           .length,
       ).toBe(lists + 1);
+      // An explicit refresh starts the connections the collection needs.
+      expect(
+        commands.filter((command) => command === "agent_sessions_raise_catalog"),
+      ).toEqual(["agent_sessions_raise_catalog"]);
     },
   );
 

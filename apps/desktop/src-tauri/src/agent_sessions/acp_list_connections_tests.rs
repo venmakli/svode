@@ -1,0 +1,286 @@
+use std::collections::BTreeMap;
+use std::path::PathBuf;
+use std::sync::Arc;
+use std::time::Duration;
+
+use svode_agents::activity::ConnectionState;
+use svode_agents::adapters::LaunchUnavailable;
+use svode_agents::catalog::ListBounds;
+use svode_agents::{AcpLaunch, AgentCheck, AgentRuntime, RuntimeConfig};
+use tauri::async_runtime::JoinHandle;
+
+use super::*;
+use crate::agent_runtime::connections::{AgentConnections, LaunchPlanner, PlanFuture};
+
+/// A `/bin/sh` ACP agent that declares `session/list` and answers it by
+/// `$SVODE_LIST`: `ok` with one session, `error`, or `hang`.
+fn scripted(agent: &str, list: &str) -> AcpLaunch {
+    const SCRIPT: &str = r#"while IFS= read -r line; do
+  id=${line#'{"id":'}; id=${id%%,*}
+  case "$line" in
+    *'"method":"initialize"'*) printf '{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":1,"agentCapabilities":{"sessionCapabilities":{"list":{}}},"agentInfo":{"name":"scripted","version":"1.0.0"}}}\n' "$id";;
+    *'"method":"session/list"'*) case "$SVODE_LIST" in
+      ok) printf '{"jsonrpc":"2.0","id":%s,"result":{"sessions":[{"sessionId":"s1","cwd":"/work","title":"first","updatedAt":"2026-10-02T10:00:00Z"}]}}\n' "$id";;
+      error) printf '{"jsonrpc":"2.0","id":%s,"error":{"code":-32603,"message":"list failed"}}\n' "$id";;
+    esac;;
+  esac
+done"#;
+    AcpLaunch {
+        agent: agent.into(),
+        program: PathBuf::from("/bin/sh"),
+        args: vec!["-c".into(), SCRIPT.into()],
+        environment: None,
+        env: BTreeMap::from([("SVODE_LIST".into(), list.into())]),
+        cwd: std::env::temp_dir(),
+        acp_id_is_native: false,
+        lists_catalog: true,
+        read_only_open: false,
+        writer_refusal: None,
+    }
+}
+
+struct ScriptedPlanner(Vec<(&'static str, Result<AcpLaunch, LaunchUnavailable>)>);
+
+impl LaunchPlanner for ScriptedPlanner {
+    fn catalog_agents(&self) -> Vec<String> {
+        self.0.iter().map(|(agent, _)| agent.to_string()).collect()
+    }
+
+    fn plan<'a>(&'a self, agent: &'a str) -> PlanFuture<'a> {
+        let plan = self
+            .0
+            .iter()
+            .find(|(known, _)| *known == agent)
+            .map(|(_, plan)| plan.clone())
+            .unwrap_or(Err(LaunchUnavailable::NotSupported));
+        Box::pin(async move { plan })
+    }
+}
+
+fn runtime() -> AgentRuntime {
+    AgentRuntime::new(RuntimeConfig {
+        request_timeout: Duration::from_secs(2),
+        connection_idle: Duration::from_millis(100),
+        list: ListBounds {
+            timeout: Duration::from_millis(300),
+            ..ListBounds::default()
+        },
+        ..RuntimeConfig::default()
+    })
+}
+
+fn owner(
+    runtime: &AgentRuntime,
+    plans: Vec<(&'static str, Result<AcpLaunch, LaunchUnavailable>)>,
+) -> (Arc<AgentConnections>, Arc<AcpListSources>) {
+    (
+        Arc::new(AgentConnections::new(
+            runtime.clone(),
+            ScriptedPlanner(plans),
+        )),
+        Arc::new(AcpListSources::default()),
+    )
+}
+
+async fn settle(tasks: Vec<JoinHandle<()>>) {
+    for task in tasks {
+        task.await.unwrap();
+    }
+}
+
+fn open_agents(runtime: &AgentRuntime) -> Vec<String> {
+    runtime
+        .catalog_connections()
+        .into_iter()
+        .map(|connection| connection.agent)
+        .collect()
+}
+
+fn status(
+    sources: &AcpListSources,
+    source: AgentSessionSource,
+) -> (AgentSessionSourceStatus, usize) {
+    let read = sources
+        .reads()
+        .into_iter()
+        .find(|read| read.source == source)
+        .expect("the agent's list was read");
+    (read.report.status, read.sessions.len())
+}
+
+#[tokio::test]
+async fn an_open_collection_starts_its_agents_and_after_it_closes_they_idle_out() {
+    let runtime = runtime();
+    let (connections, sources) = owner(&runtime, vec![("codex", Ok(scripted("codex", "ok")))]);
+
+    // Without an open collection a refresh starts nothing.
+    settle(sources.raise(&connections, &runtime)).await;
+    assert!(open_agents(&runtime).is_empty());
+
+    let hold = connections.hold_catalog("main");
+    settle(sources.raise(&connections, &runtime)).await;
+    assert_eq!(open_agents(&runtime), ["codex"]);
+    assert_eq!(
+        status(&sources, AgentSessionSource::Codex),
+        (AgentSessionSourceStatus::Ok, 1)
+    );
+
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    assert_eq!(
+        open_agents(&runtime),
+        ["codex"],
+        "an open collection keeps it"
+    );
+
+    connections.release_catalog(hold);
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    assert!(open_agents(&runtime).is_empty());
+    // Closing an idle connection is normal: the last list stays, not stale.
+    assert_eq!(
+        status(&sources, AgentSessionSource::Codex),
+        (AgentSessionSourceStatus::Ok, 1)
+    );
+    runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn only_a_boundary_with_an_open_collection_restarts_a_lost_connection() {
+    let runtime = runtime();
+    let (connections, sources) = owner(&runtime, vec![("codex", Ok(scripted("codex", "ok")))]);
+    let hold = connections.hold_catalog("main");
+    settle(sources.raise(&connections, &runtime)).await;
+    let lost = runtime.catalog_connections()[0].connection;
+    runtime.close_connection(lost).await.unwrap();
+
+    // A poll reads live connections only.
+    settle(sources.refresh(&runtime)).await;
+    assert!(open_agents(&runtime).is_empty());
+
+    // Refresh or the window's return to the foreground with the collection open.
+    settle(sources.raise(&connections, &runtime)).await;
+    assert_eq!(open_agents(&runtime), ["codex"]);
+    assert_ne!(runtime.catalog_connections()[0].connection, lost);
+
+    connections.release_catalog(hold);
+    let reopened = runtime.catalog_connections()[0].connection;
+    runtime.close_connection(reopened).await.unwrap();
+    settle(sources.raise(&connections, &runtime)).await;
+    assert!(open_agents(&runtime).is_empty());
+    runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_failing_or_slow_list_marks_only_its_own_source_stale() {
+    for failing in ["error", "hang"] {
+        let runtime = runtime();
+        let (connections, sources) = owner(
+            &runtime,
+            vec![
+                ("codex", Ok(scripted("codex", failing))),
+                ("claude-code", Ok(scripted("claude-code", "ok"))),
+            ],
+        );
+        connections.hold_catalog("main");
+        settle(sources.raise(&connections, &runtime)).await;
+
+        assert_eq!(
+            status(&sources, AgentSessionSource::Codex),
+            (AgentSessionSourceStatus::Stale, 0),
+            "{failing}"
+        );
+        assert_eq!(
+            status(&sources, AgentSessionSource::ClaudeCode),
+            (AgentSessionSourceStatus::Ok, 1),
+            "{failing}"
+        );
+        runtime.shutdown().await;
+    }
+}
+
+#[tokio::test]
+async fn an_unavailable_agent_is_never_started() {
+    let runtime = runtime();
+    let (connections, sources) = owner(
+        &runtime,
+        vec![
+            ("codex", Err(LaunchUnavailable::Disabled)),
+            ("claude-code", Err(LaunchUnavailable::AdapterNotInstalled)),
+        ],
+    );
+    connections.hold_catalog("main");
+    settle(sources.raise(&connections, &runtime)).await;
+    assert!(open_agents(&runtime).is_empty());
+    assert!(sources.reads().is_empty());
+    assert_eq!(
+        connections.check("codex").await,
+        AgentCheck::Unavailable {
+            reason: LaunchUnavailable::Disabled
+        }
+    );
+}
+
+#[tokio::test]
+async fn a_check_starts_initializes_and_closes_unless_a_collection_keeps_the_agent() {
+    let runtime = runtime();
+    let (connections, sources) = owner(&runtime, vec![("codex", Ok(scripted("codex", "ok")))]);
+
+    let AgentCheck::Ready { agent } = connections.check("codex").await else {
+        panic!("the agent starts");
+    };
+    assert_eq!(agent.name.as_deref(), Some("scripted"));
+    assert!(open_agents(&runtime).is_empty(), "closed right after");
+
+    connections.hold_catalog("main");
+    settle(sources.raise(&connections, &runtime)).await;
+    let open = runtime.catalog_connections()[0].connection;
+    assert!(matches!(
+        connections.check("codex").await,
+        AgentCheck::Ready { .. }
+    ));
+    assert_eq!(
+        runtime.connection_status(open).unwrap().state,
+        ConnectionState::Ready
+    );
+    runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_reloading_webview_releases_only_its_own_collections() {
+    let runtime = runtime();
+    let (connections, sources) = owner(&runtime, vec![("codex", Ok(scripted("codex", "ok")))]);
+    connections.hold_catalog("main");
+    connections.hold_catalog("project-2");
+    settle(sources.raise(&connections, &runtime)).await;
+
+    connections.release_webview("main");
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    assert_eq!(open_agents(&runtime), ["codex"]);
+
+    connections.release_webview("project-2");
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    assert!(open_agents(&runtime).is_empty());
+    runtime.shutdown().await;
+}
+
+#[test]
+fn codex_and_claude_code_list_through_their_scanners_until_slice_2_5b() {
+    let dir = tempfile::tempdir().unwrap();
+    let setup = crate::agent_setup::AgentSetupState::new(dir.path(), dir.path().to_path_buf());
+    assert!(setup.catalog_agents().is_empty());
+}
+
+#[tokio::test]
+async fn the_desktop_planner_refuses_a_disabled_or_unknown_agent() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("agents.json"),
+        r#"{"agents":{"codex":{"enabled":false}}}"#,
+    )
+    .unwrap();
+    let setup = crate::agent_setup::AgentSetupState::new(dir.path(), dir.path().to_path_buf());
+    assert_eq!(setup.plan("codex").await, Err(LaunchUnavailable::Disabled));
+    assert_eq!(
+        setup.plan("future-agent").await,
+        Err(LaunchUnavailable::NotSupported)
+    );
+}

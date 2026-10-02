@@ -1,12 +1,16 @@
 //! Thin Tauri commands over the agent runtime. They run on the async
 //! runtime, where the agent runtime owns its calls.
 
+use std::sync::Arc;
+
+use svode_agents::AgentCheck;
 use svode_agents::activity::DetailOutcome;
 use svode_agents::identity::SessionKey;
 use svode_agents::interaction::{AnswerOutcome, InteractionAnswer};
 use tauri::ipc::Channel;
 use tauri::{State, Webview};
 
+use super::connections::AgentConnections;
 use super::{ActivityMessage, AgentRuntimeState};
 use crate::error::AppError;
 
@@ -67,4 +71,14 @@ pub async fn agent_runtime_answer(
     answer: InteractionAnswer,
 ) -> Result<AnswerOutcome, AppError> {
     Ok(state.runtime().answer(&session, &interaction, answer)?)
+}
+
+/// The user's explicit check of an agent: starts it, runs `initialize` and
+/// closes it unless something else needs the connection.
+#[tauri::command]
+pub async fn agent_runtime_check(
+    connections: State<'_, Arc<AgentConnections>>,
+    agent: String,
+) -> Result<AgentCheck, AppError> {
+    Ok(connections.check(&agent).await)
 }

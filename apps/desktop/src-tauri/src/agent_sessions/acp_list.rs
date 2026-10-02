@@ -17,6 +17,8 @@ use svode_core::agent_adapters::AgentAdapterKind;
 use tauri::async_runtime::JoinHandle;
 use tokio::sync::broadcast::error::RecvError;
 
+use crate::agent_runtime::connections::AgentConnections;
+
 use super::types::{
     AgentSessionDiagnosticSeverity, AgentSessionSource, AgentSessionSourceKind,
     AgentSessionSourceReport, AgentSessionSourceStatus,
@@ -76,6 +78,31 @@ impl AcpListSources {
     /// started.
     pub(crate) fn refresh(self: &Arc<Self>, lister: &impl CatalogLister) -> Vec<JoinHandle<()>> {
         self.start(lister, None)
+    }
+
+    /// Starts the catalogue connections an open Sessions collection needs
+    /// and reads each list once its connection is open. Agents start on
+    /// their own, so a slow agent never delays another.
+    pub(crate) fn raise(
+        self: &Arc<Self>,
+        connections: &Arc<AgentConnections>,
+        lister: &impl CatalogLister,
+    ) -> Vec<JoinHandle<()>> {
+        connections
+            .held_catalog_agents()
+            .into_iter()
+            .map(|agent| {
+                let (sources, connections, lister) =
+                    (self.clone(), connections.clone(), lister.clone());
+                tauri::async_runtime::spawn(async move {
+                    if connections.raise_catalog_agent(&agent).await {
+                        for read in sources.refresh_agent(&lister, &agent) {
+                            let _ = read.await;
+                        }
+                    }
+                })
+            })
+            .collect()
     }
 
     /// Reads one agent's list again after the runtime's own work changed it.
@@ -238,6 +265,10 @@ pub(crate) async fn follow_catalog_changes(sources: Arc<AcpListSources>, runtime
         }
     }
 }
+
+#[cfg(all(test, unix))]
+#[path = "acp_list_connections_tests.rs"]
+mod connections_tests;
 
 #[cfg(test)]
 mod tests {

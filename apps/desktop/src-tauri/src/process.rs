@@ -1,3 +1,4 @@
+pub(crate) mod login_env;
 pub(crate) mod path_env;
 #[cfg(not(windows))]
 pub(crate) mod shell;

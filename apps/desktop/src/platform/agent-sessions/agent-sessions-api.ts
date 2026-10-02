@@ -228,6 +228,26 @@ export function refreshAgentSessions(
   });
 }
 
+/**
+ * A Sessions collection opened: the catalogue connections of agents that
+ * list their sessions over ACP start and stay until the hold is released.
+ */
+export function holdAgentSessionCatalog(): Promise<number> {
+  return invoke<number>("agent_sessions_hold_catalog");
+}
+
+export function releaseAgentSessionCatalog(hold: number): Promise<void> {
+  return invoke<void>("agent_sessions_release_catalog", { hold });
+}
+
+/**
+ * An explicit refresh or a return to the foreground: starts the catalogue
+ * connections an open collection needs; without one it starts nothing.
+ */
+export function raiseAgentSessionCatalog(): Promise<void> {
+  return invoke<void>("agent_sessions_raise_catalog");
+}
+
 export function hotStatusAgentSessions(
   projectPath: string,
   sessionIds: string[],

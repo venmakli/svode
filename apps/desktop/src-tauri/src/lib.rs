@@ -102,6 +102,11 @@ pub fn run() {
                 webview
                     .state::<agent_runtime::AgentRuntimeState>()
                     .release_webview(webview.label());
+                if let Some(connections) =
+                    webview.try_state::<Arc<agent_runtime::connections::AgentConnections>>()
+                {
+                    connections.release_webview(webview.label());
+                }
             }
         })
         .on_window_event(|window, event| {
@@ -124,10 +129,17 @@ pub fn run() {
                 git_host,
             ));
             app.manage(service);
-            app.manage(agent_setup::AgentSetupState::new(
+            let agent_setup = agent_setup::AgentSetupState::new(
                 &app.path().app_data_dir()?,
                 app.path().app_config_dir()?,
-            ));
+            );
+            app.manage(agent_setup.clone());
+            app.manage(Arc::new(agent_runtime::connections::AgentConnections::new(
+                app.state::<agent_runtime::AgentRuntimeState>()
+                    .runtime()
+                    .clone(),
+                agent_setup,
+            )));
             if let Err(error) = native_file_drop::clear_materialized_file_drops(app.handle()) {
                 tracing::warn!("failed to clear dropped-file cache during setup: {error}");
             }
@@ -328,12 +340,16 @@ pub fn run() {
             agent_sessions::commands::agent_sessions_refresh,
             agent_sessions::commands::agent_sessions_hot_status,
             agent_sessions::commands::agent_sessions_reenter,
+            agent_sessions::commands::agent_sessions_hold_catalog,
+            agent_sessions::commands::agent_sessions_raise_catalog,
+            agent_sessions::commands::agent_sessions_release_catalog,
             agent_runtime::commands::agent_runtime_subscribe,
             agent_runtime::commands::agent_runtime_unsubscribe,
             agent_runtime::commands::agent_runtime_detail,
             agent_runtime::commands::agent_runtime_prompt,
             agent_runtime::commands::agent_runtime_cancel,
             agent_runtime::commands::agent_runtime_answer,
+            agent_runtime::commands::agent_runtime_check,
             agent_setup::commands::agent_setup_list,
             agent_setup::commands::agent_setup_enable,
             agent_setup::commands::agent_setup_disable,

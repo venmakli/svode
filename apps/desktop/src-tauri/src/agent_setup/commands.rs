@@ -2,16 +2,21 @@
 //! version, sign-in and Node.js checks: it starts no ACP process and
 //! installs nothing. Install, update and removal are explicit actions.
 
+use std::sync::Arc;
+
 use svode_agents::adapters::AgentSetup;
 use svode_agents::registry::{AdapterTarget, SystemRuntimeCommandRunner};
 use svode_core::agent_adapters::{AgentAdapterKind, system_home_dir};
 use tauri::State;
 
 use super::AgentSetupState;
+use crate::agent_runtime::connections::AgentConnections;
 use crate::error::AppError;
 use crate::process::path_env::ProcessPath;
 
-async fn target() -> Result<AdapterTarget, AppError> {
+/// The home directory, where no Space-local override applies, and the
+/// login shell PATH.
+pub(super) async fn target() -> Result<AdapterTarget, AppError> {
     let home = system_home_dir()
         .ok_or_else(|| AppError::PathNotAccessible("home directory is unavailable".into()))?;
     Ok(AdapterTarget {
@@ -56,7 +61,7 @@ pub async fn agent_setup_enable(
             agent,
             &target().await?,
             &SystemRuntimeCommandRunner,
-            &state.source,
+            &*state.source,
         )
         .await?;
     state.set_choice(agent, true)?;
@@ -68,9 +73,11 @@ pub async fn agent_setup_enable(
 #[tauri::command]
 pub async fn agent_setup_disable(
     state: State<'_, AgentSetupState>,
+    connections: State<'_, Arc<AgentConnections>>,
     agent: AgentAdapterKind,
 ) -> Result<AgentSetup, AppError> {
     state.set_choice(agent, false)?;
+    connections.forget_agent(agent.as_str());
     setup(&state, agent).await
 }
 
@@ -85,7 +92,7 @@ pub async fn agent_setup_update_adapter(
             agent,
             &target().await?,
             &SystemRuntimeCommandRunner,
-            &state.source,
+            &*state.source,
         )
         .await?;
     setup(&state, agent).await

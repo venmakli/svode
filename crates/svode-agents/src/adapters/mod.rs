@@ -2,9 +2,11 @@
 //! Svode release fixes with its whole dependency tree, the Node.js runtime
 //! that executes it, installation into a host-chosen device-local
 //! directory, the verified CLI version range and the setup facts a host
-//! shows for an agent. Nothing here starts an ACP process.
+//! shows for an agent, and the launch plan of an available agent. Nothing
+//! here starts an ACP process.
 
 mod install;
+mod launch;
 mod node;
 mod setup;
 mod source;
@@ -13,6 +15,7 @@ use serde::Serialize;
 use svode_core::agent_adapters::AgentAdapterKind;
 
 pub use install::{AdapterInstallState, AdapterStore, InstalledAdapter};
+pub use launch::{LaunchContext, LaunchUnavailable};
 pub use node::{NodeStatus, detect_node};
 pub use setup::{AdapterSetup, AgentSetup, agent_enabled};
 pub use source::{PackageSource, RegistryPackageSource};

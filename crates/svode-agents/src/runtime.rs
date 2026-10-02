@@ -2,6 +2,8 @@
 //! pending interactions, independent of any mounted UI surface or window.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::ffi::{OsStr, OsString};
+use std::fmt;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
@@ -24,6 +26,7 @@ use crate::activity::{
     InteractionState, PendingInteraction, QuestionField, SessionDelta, SessionSnapshot, TurnPhase,
     WriterState,
 };
+use crate::adapters::LaunchUnavailable;
 use crate::catalog::{
     self, CatalogChanged, CatalogConnection, CatalogNotices, ListBounds, SessionList,
 };
@@ -50,6 +53,10 @@ pub struct RuntimeConfig {
     pub shutdown_budget: Duration,
     pub retention: Retention,
     pub list: ListBounds,
+    /// How long a connection nothing needs stays open before it closes: no
+    /// lease, no live turn and no session open in a surface. An agent
+    /// process with an open session takes 0.5–1.1 GiB (E01).
+    pub connection_idle: Duration,
 }
 
 impl Default for RuntimeConfig {
@@ -59,6 +66,7 @@ impl Default for RuntimeConfig {
             shutdown_budget: Duration::from_secs(3),
             retention: Retention::default(),
             list: ListBounds::default(),
+            connection_idle: Duration::from_secs(2 * 60),
         }
     }
 }
@@ -96,14 +104,18 @@ impl Default for Retention {
 /// How to start one agent's ACP entrypoint. One launch provenance per
 /// connection: a Routine caller token in `env` never serves sessions of
 /// another origin.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AcpLaunch {
     /// Stable agent id; the identity namespace of its sessions.
     pub agent: String,
     pub program: PathBuf,
     pub args: Vec<String>,
-    /// Added to the inherited environment.
+    /// The whole environment of the process; `None` inherits the host's.
+    #[serde(skip)]
+    pub environment: Option<LaunchEnvironment>,
+    /// Added on top of the environment: the variables of the agent's
+    /// description and of the launch provenance.
     pub env: BTreeMap<String, String>,
     pub cwd: PathBuf,
     /// Recorded evidence that ACP session ids are the agent's native ids.
@@ -120,9 +132,90 @@ pub struct AcpLaunch {
     pub writer_refusal: Option<String>,
 }
 
+/// The user's login shell environment a host captured for agent processes
+/// (Stage 10 `03` A1). It lives only in memory; its debug output names no
+/// variable, so it never reaches logs or diagnostics.
+#[derive(Clone, PartialEq, Eq, Hash)]
+pub struct LaunchEnvironment(Arc<BTreeMap<OsString, OsString>>);
+
+impl LaunchEnvironment {
+    pub fn new(variables: impl IntoIterator<Item = (OsString, OsString)>) -> Self {
+        Self(Arc::new(variables.into_iter().collect()))
+    }
+
+    pub fn get(&self, name: &str) -> Option<&OsStr> {
+        self.0.get(OsStr::new(name)).map(OsString::as_os_str)
+    }
+}
+
+impl fmt::Debug for LaunchEnvironment {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "LaunchEnvironment({} variables)", self.0.len())
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct ConnectionId(pub u64);
+
+/// Keeps a connection open: while a lease lives the connection never
+/// closes for idleness. A host holds one for as long as a lifecycle
+/// boundary needs the agent, such as an open Sessions collection or a
+/// running launch.
+pub struct ConnectionLease {
+    id: ConnectionId,
+    connection: Arc<Connection>,
+}
+
+impl ConnectionLease {
+    fn new(id: ConnectionId, connection: Arc<Connection>) -> Self {
+        connection.holds.fetch_add(1, Ordering::SeqCst);
+        Self { id, connection }
+    }
+
+    pub fn connection(&self) -> ConnectionId {
+        self.id
+    }
+
+    pub fn is_open(&self) -> bool {
+        self.connection.is_open()
+    }
+}
+
+impl Drop for ConnectionLease {
+    fn drop(&mut self) {
+        self.connection.holds.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+impl fmt::Debug for ConnectionLease {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ConnectionLease")
+            .field("connection", &self.id)
+            .field("agent", &self.connection.agent)
+            .finish()
+    }
+}
+
+/// Result of the user's explicit check of an agent: start, `initialize`,
+/// close. Each outcome is recoverable on its own (Stage 10 `03` A1).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(
+    tag = "state",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
+pub enum AgentCheck {
+    /// The agent started and declared these capabilities.
+    Ready { agent: AgentInfo },
+    /// The agent is not available, so nothing was started.
+    Unavailable { reason: LaunchUnavailable },
+    /// The agent needs its own sign-in.
+    AuthRequired { message: String },
+    /// The process, `initialize` or its timeout failed; the message carries
+    /// the bounded diagnostics.
+    FailedToStart { message: String },
+}
 
 /// A value for one declared session setting, such as the agent mode an
 /// Actor approval maps to.
@@ -183,7 +276,12 @@ struct Inner {
     next_open: AtomicU64,
     sweeping: AtomicBool,
     catalog: CatalogNotices,
+    /// The connection of each launch plan; acquiring and idle closing of
+    /// one plan take its lock, other agents are never waited for.
+    slots: Mutex<HashMap<AcpLaunch, Slot>>,
 }
+
+type Slot = Arc<tokio::sync::Mutex<Option<ConnectionId>>>;
 
 struct Connection {
     runtime: Weak<Inner>,
@@ -199,6 +297,12 @@ struct Connection {
     stderr: Arc<Mutex<Vec<u8>>>,
     /// Sessions by the agent's ACP session id.
     sessions: Mutex<HashMap<String, Arc<Session>>>,
+    /// Leases a host holds.
+    holds: AtomicUsize,
+    /// Since when nothing needs the connection.
+    idle_since: Mutex<Option<Instant>>,
+    /// The launch plan slot of a connection a host acquired.
+    slot: Mutex<Option<Slot>>,
 }
 
 struct Session {
@@ -254,6 +358,9 @@ impl AgentRuntime {
     /// explicit lifecycle boundary for an agent the user connected.
     pub async fn connect(&self, launch: AcpLaunch) -> Result<ConnectionId, AgentRuntimeError> {
         let mut command = tokio::process::Command::new(&launch.program);
+        if let Some(environment) = &launch.environment {
+            command.env_clear().envs(environment.0.iter());
+        }
         command
             .args(&launch.args)
             .envs(&launch.env)
@@ -318,6 +425,9 @@ impl AgentRuntime {
             child: Mutex::new(child),
             stderr: Arc::new(Mutex::new(Vec::new())),
             sessions: Mutex::new(HashMap::new()),
+            holds: AtomicUsize::new(0),
+            idle_since: Mutex::new(None),
+            slot: Mutex::new(None),
         });
         self.inner
             .connections
@@ -329,13 +439,15 @@ impl AgentRuntime {
         id
     }
 
-    /// Releases idle sessions in the background while the runtime lives.
+    /// Releases idle sessions and closes idle connections in the
+    /// background while the runtime lives.
     fn start_idle_sweep(&self) {
         if self.inner.sweeping.swap(true, Ordering::Relaxed) {
             return;
         }
         let idle = self.inner.config.retention.idle_release;
-        let every = (idle / 4).max(Duration::from_millis(10));
+        let connection_idle = self.inner.config.connection_idle;
+        let every = (idle.min(connection_idle) / 4).max(Duration::from_millis(10));
         let inner = Arc::downgrade(&self.inner);
         tokio::spawn(async move {
             loop {
@@ -344,8 +456,90 @@ impl AgentRuntime {
                     return;
                 };
                 inner.release_idle_sessions(idle);
+                inner.close_idle_connections(connection_idle).await;
             }
         });
+    }
+
+    /// A connection for `launch`, held while the lease lives: the open one
+    /// started from the same launch plan, or a new one. Launch provenance
+    /// is part of the plan, so a launch with its own caller token or
+    /// executable never shares a connection with sessions of another
+    /// origin. Only called on an explicit lifecycle boundary for an
+    /// available agent. An agent that fails to start leaves no process.
+    pub async fn acquire(&self, launch: AcpLaunch) -> Result<ConnectionLease, AgentRuntimeError> {
+        let slot = self.slot(&launch);
+        let mut current = slot.lock().await;
+        self.acquire_in(&slot, &mut current, launch).await
+    }
+
+    /// The user's explicit check of an agent: starts it unless its launch
+    /// plan already has an open connection, runs `initialize` and closes
+    /// the connection right away unless something else needs it.
+    pub async fn check(&self, launch: AcpLaunch) -> AgentCheck {
+        let slot = self.slot(&launch);
+        let mut current = slot.lock().await;
+        let lease = match self.acquire_in(&slot, &mut current, launch).await {
+            Ok(lease) => lease,
+            Err(AgentRuntimeError::AuthRequired { message }) => {
+                return AgentCheck::AuthRequired { message };
+            }
+            Err(error) => {
+                return AgentCheck::FailedToStart {
+                    message: error.to_string(),
+                };
+            }
+        };
+        let info = lease.connection.info.lock().unwrap().clone();
+        let connection = lease.connection.clone();
+        drop(lease);
+        if !connection.needed() {
+            connection.terminate().await;
+        }
+        match info {
+            Some(agent) => AgentCheck::Ready { agent },
+            None => AgentCheck::FailedToStart {
+                message: AgentRuntimeError::ConnectionClosed.to_string(),
+            },
+        }
+    }
+
+    fn slot(&self, launch: &AcpLaunch) -> Slot {
+        self.inner
+            .slots
+            .lock()
+            .unwrap()
+            .entry(launch.clone())
+            .or_default()
+            .clone()
+    }
+
+    async fn acquire_in(
+        &self,
+        slot: &Slot,
+        current: &mut Option<ConnectionId>,
+        launch: AcpLaunch,
+    ) -> Result<ConnectionLease, AgentRuntimeError> {
+        if let Some(id) = *current
+            && let Ok(connection) = self.connection(id)
+            && connection.is_open()
+        {
+            return Ok(ConnectionLease::new(id, connection));
+        }
+        match self.connect(launch).await {
+            Ok(id) => {
+                let connection = self.connection(id)?;
+                *connection.slot.lock().unwrap() = Some(slot.clone());
+                *current = Some(id);
+                Ok(ConnectionLease::new(id, connection))
+            }
+            Err(error) => {
+                if let AgentRuntimeError::Initialize { connection, .. } = &error {
+                    let _ = self.close_connection(*connection).await;
+                }
+                Err(error)
+            }
+        }
     }
 
     /// The process-wide writer registry; a host registers its managed PTYs
@@ -1135,6 +1329,53 @@ impl Inner {
             session.connection.forget(&session.acp_id, &session);
         }
     }
+
+    /// Closes connections nothing has needed for `idle`. A connection a
+    /// host acquired closes under its launch plan lock, so an acquire of
+    /// the same plan never receives a connection that is closing.
+    async fn close_idle_connections(&self, idle: Duration) {
+        let now = Instant::now();
+        let open: Vec<_> = self
+            .connections
+            .lock()
+            .unwrap()
+            .values()
+            .filter(|connection| connection.is_open())
+            .cloned()
+            .collect();
+        for connection in open {
+            if connection.idle_for(now) < idle {
+                continue;
+            }
+            let slot = connection.slot.lock().unwrap().clone();
+            match slot {
+                Some(slot) => {
+                    let Ok(_plan) = slot.try_lock() else {
+                        continue;
+                    };
+                    if !connection.needed() {
+                        connection.terminate().await;
+                    }
+                }
+                None => connection.terminate().await,
+            }
+        }
+        // Plans of closed connections, such as those of finished launches,
+        // are not kept.
+        let connections = self.connections.lock().unwrap();
+        self.slots.lock().unwrap().retain(|_, slot| {
+            let Ok(current) = slot.try_lock() else {
+                return true;
+            };
+            match *current {
+                Some(id) => connections
+                    .get(&id)
+                    .is_some_and(|connection| connection.is_open()),
+                // Kept while an acquire is about to take it.
+                None => Arc::strong_count(slot) > 1,
+            }
+        });
+    }
 }
 
 impl Session {
@@ -1264,6 +1505,28 @@ impl Connection {
 
     fn is_open(&self) -> bool {
         *self.state.lock().unwrap() != ConnectionState::Closed
+    }
+
+    /// A host lease, a live turn (and with it a pending interaction) or a
+    /// session open in a surface keeps the connection.
+    fn needed(&self) -> bool {
+        self.holds.load(Ordering::SeqCst) > 0
+            || self.sessions().iter().any(|session| {
+                let projection = session.projection.lock().unwrap();
+                projection.turn_active() || projection.subscribers() > 0
+            })
+    }
+
+    /// How long nothing has needed the connection; zero while something
+    /// does.
+    fn idle_for(&self, now: Instant) -> Duration {
+        let needed = self.needed();
+        let mut idle_since = self.idle_since.lock().unwrap();
+        if needed {
+            *idle_since = None;
+            return Duration::ZERO;
+        }
+        now - *idle_since.get_or_insert(now)
     }
 
     fn declares_close(&self) -> bool {

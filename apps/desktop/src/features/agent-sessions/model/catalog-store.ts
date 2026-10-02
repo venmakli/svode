@@ -21,6 +21,8 @@ import type { AgentSession, AgentSessionScopeGroup } from "./types";
 export interface AgentSessionCatalogApi {
   list: (projectPath: string) => Promise<AgentSessionsListResult>;
   refresh: (projectPath: string) => Promise<AgentSessionsListResult>;
+  /** Starts the catalogue connections an open collection needs. */
+  raiseCatalog: () => Promise<void>;
   hotStatus: (
     projectPath: string,
     sessionIds: string[],
@@ -64,6 +66,11 @@ export interface AgentSessionCatalogState {
 
   setProject: (projectPath: string | null) => void;
   load: (options?: AgentSessionCatalogLoadOptions) => Promise<void>;
+  /**
+   * An explicit refresh or a return to the foreground: starts the agent
+   * connections an open Sessions collection needs. Polls never call it.
+   */
+  raiseCatalog: () => void;
   /** Loads until a list that started after the call has been read for the target. */
   loadTarget: (target: AgentSessionTarget) => Promise<void>;
   loadHotStatus: (sessionIds: string[]) => Promise<void>;
@@ -86,6 +93,7 @@ type CatalogData = Omit<
   AgentSessionCatalogState,
   | "setProject"
   | "load"
+  | "raiseCatalog"
   | "loadTarget"
   | "loadHotStatus"
   | "reenter"
@@ -406,6 +414,13 @@ export function createAgentSessionCatalogStore(
       },
 
       load,
+
+      raiseCatalog: () => {
+        if (!get().projectPath) return;
+        api.raiseCatalog().catch((error: unknown) => {
+          console.error("Failed to start agent catalogue connections:", error);
+        });
+      },
 
       loadTarget: async (target) => {
         await load();

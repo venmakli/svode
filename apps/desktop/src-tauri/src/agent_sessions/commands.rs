@@ -1,6 +1,7 @@
 use std::ffi::OsStr;
+use std::sync::Arc;
 
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, State, Webview};
 
 use super::AgentSessionsState;
 use super::read_model;
@@ -10,6 +11,7 @@ use super::types::{
     AgentSessionReentryResult, AgentSessionsHotStatusResult, AgentSessionsListResult,
 };
 use crate::agent_runtime::AgentRuntimeState;
+use crate::agent_runtime::connections::AgentConnections;
 use crate::error::AppError;
 use crate::process::path_env::ProcessPath;
 use crate::terminal::TerminalManager;
@@ -82,6 +84,43 @@ pub async fn agent_sessions_refresh(
             },
         )
         .await
+}
+
+/// A Sessions collection opened in this webview: the catalogue connections
+/// of agents that list their sessions over ACP start and stay until the
+/// hold is released or the webview reloads.
+#[tauri::command]
+pub async fn agent_sessions_hold_catalog(
+    webview: Webview,
+    state: State<'_, AgentSessionsState>,
+    agent_runtime: State<'_, AgentRuntimeState>,
+    connections: State<'_, Arc<AgentConnections>>,
+) -> Result<u64, AppError> {
+    let hold = connections.hold_catalog(webview.label());
+    state.acp_lists.raise(&connections, agent_runtime.runtime());
+    Ok(hold)
+}
+
+/// An explicit refresh or the window's return to the foreground: starts the
+/// catalogue connections an open collection needs and is not running;
+/// without an open collection it starts nothing. Polls never call it.
+#[tauri::command]
+pub async fn agent_sessions_raise_catalog(
+    state: State<'_, AgentSessionsState>,
+    agent_runtime: State<'_, AgentRuntimeState>,
+    connections: State<'_, Arc<AgentConnections>>,
+) -> Result<(), AppError> {
+    state.acp_lists.raise(&connections, agent_runtime.runtime());
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn agent_sessions_release_catalog(
+    connections: State<'_, Arc<AgentConnections>>,
+    hold: u64,
+) -> Result<(), AppError> {
+    connections.release_catalog(hold);
+    Ok(())
 }
 
 #[tauri::command]

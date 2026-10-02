@@ -95,6 +95,9 @@ export function fakeCatalogApi(): FakeCatalogApi {
       api.calls.push(`refresh:${projectPath}`);
       return listResult(api.listed);
     },
+    raiseCatalog: async () => {
+      api.calls.push("raise");
+    },
     hotStatus: async (projectPath, sessionIds) => {
       api.calls.push(`hot:${sessionIds.join(",")}`);
       const sessions = api.listed.filter((session) =>

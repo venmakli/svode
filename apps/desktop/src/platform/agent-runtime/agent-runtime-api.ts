@@ -283,6 +283,43 @@ export function agentRuntimeErrorCode(
   return null;
 }
 
+export interface AgentInfoDto {
+  name: string | null;
+  version: string | null;
+  capabilities: {
+    loadSession: boolean;
+    listSessions: boolean;
+    resumeSession: boolean;
+    closeSession: boolean;
+  };
+}
+
+/** Why an agent cannot start now; each is its own recoverable outcome. */
+export type AgentLaunchUnavailableDto =
+  | { code: "disabled" }
+  | { code: "executable_missing"; executable: string }
+  | { code: "not_supported" }
+  | { code: "node_missing"; required: number }
+  | { code: "node_unsupported"; version: string; required: number }
+  | { code: "node_unknown"; message: string }
+  | { code: "adapter_not_installed" }
+  | { code: "adapter_needs_update"; installedVersion: string }
+  | { code: "cli_unsupported"; version: string; minimum: string };
+
+export type AgentCheckDto =
+  | { state: "ready"; agent: AgentInfoDto }
+  | { state: "unavailable"; reason: AgentLaunchUnavailableDto }
+  | { state: "auth_required"; message: string }
+  | { state: "failed_to_start"; message: string };
+
+/**
+ * The user's explicit check of an agent: starts it, runs `initialize` and
+ * closes it unless something else needs the connection.
+ */
+export function checkAgent(agent: string): Promise<AgentCheckDto> {
+  return invoke<AgentCheckDto>("agent_runtime_check", { agent });
+}
+
 /** Opens a delivery of the session's activity; resolves to its id. */
 export function subscribeAgentSession(
   session: AgentSessionKeyDto,

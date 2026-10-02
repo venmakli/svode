@@ -10,6 +10,7 @@ import { getNativeErrorMessage } from "@/platform/native/errors";
 import {
   hotStatusAgentSessions,
   listAgentSessions,
+  raiseAgentSessionCatalog,
   reenterAgentSession,
   refreshAgentSessions,
   type AgentSession as ListedAgentSession,
@@ -28,6 +29,7 @@ import {
 const agentSessionCatalog = createAgentSessionCatalogStore({
   list: listAgentSessions,
   refresh: refreshAgentSessions,
+  raiseCatalog: raiseAgentSessionCatalog,
   hotStatus: hotStatusAgentSessions,
   reenter: reenterAgentSession,
   spawnTerminal: spawnManagedTerminalSurface,
