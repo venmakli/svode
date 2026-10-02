@@ -36,7 +36,7 @@ export async function loadAgentActors(
     const key = runtimeKey(runtime.ownerPath, runtime.actorId);
     const values = runtimeByRow[key] ?? [];
     values[runtime.bindingIndex] = Object.freeze({
-      approval: Object.freeze({ ...runtime.approval }),
+      approval: runtime.approval && Object.freeze({ ...runtime.approval }),
       effortOptions: Object.freeze(
         runtime.effortOptions.map((option) => Object.freeze({ ...option })),
       ),
@@ -143,7 +143,7 @@ export async function inspectAgentActorBinding(
     approvalMode,
   );
   return Object.freeze({
-    approval: Object.freeze({ ...result.approval }),
+    approval: result.approval && Object.freeze({ ...result.approval }),
     effortOptions: Object.freeze(
       result.effortOptions.map((option) => Object.freeze({ ...option })),
     ),

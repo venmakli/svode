@@ -70,10 +70,7 @@ impl LaunchPlanner for AgentSetupState {
 
     fn plan<'a>(&'a self, agent: &'a str) -> PlanFuture<'a> {
         Box::pin(async move {
-            let Some(kind) = AgentAdapterKind::ALL
-                .into_iter()
-                .find(|kind| kind.as_str() == agent)
-            else {
+            let Some(kind) = AgentAdapterKind::from_id(agent) else {
                 return Err(LaunchUnavailable::NotSupported);
             };
             // Without a home directory no executable resolves.
@@ -148,12 +145,20 @@ fn read_file(config_dir: &Path) -> Result<Option<serde_json::Value>, AppError> {
     }
 }
 
+/// The agents that run through a pinned adapter.
+#[cfg(test)]
+fn adapter_agents() -> impl Iterator<Item = AgentAdapterKind> {
+    AgentAdapterKind::ALL
+        .into_iter()
+        .filter(|agent| svode_agents::adapters::adapter_pin(*agent).is_some())
+}
+
 /// Agent setup of live tests in `root`: the pinned adapters of every agent
 /// installed from npm and every agent enabled.
 #[cfg(test)]
 pub(crate) async fn live_setup_with_pinned_adapters(root: &std::path::Path) -> AgentSetupState {
     let setup = AgentSetupState::new(&root.join("data"), root.join("config"));
-    for agent in AgentAdapterKind::ALL {
+    for agent in adapter_agents() {
         let started = std::time::Instant::now();
         setup
             .store
@@ -215,7 +220,7 @@ mod tests {
         let setup = live_setup_with_pinned_adapters(dir.path()).await;
         let runtime = AgentRuntime::default();
         let connections = AgentConnections::new(runtime.clone(), setup.clone());
-        for agent in AgentAdapterKind::ALL {
+        for agent in adapter_agents() {
             let started = Instant::now();
             let check = connections.check(agent.as_str()).await;
             println!("{agent:?}: {check:?} in {:?}", started.elapsed());

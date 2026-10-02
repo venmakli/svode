@@ -40,6 +40,18 @@ export function agentActorEffectiveBoundary(
   }
 }
 
+/**
+ * The approval boundary of a binding: its mapping, unavailable without one,
+ * or checking while the mapping is not read yet.
+ */
+export function agentActorBoundarySummary(
+  mapping: AgentActorApprovalMapping | null | undefined,
+) {
+  if (mapping === null) return m.agent_actors_binding_unavailable();
+  if (!mapping) return m.agent_actors_binding_checking();
+  return `${agentActorApprovalLabel(mapping.requested)}: ${agentActorEffectiveBoundary(mapping.native)}`;
+}
+
 export function agentActorSelectorLabel(value: string | null) {
   return value ?? m.agent_actors_client_default();
 }
@@ -79,6 +91,12 @@ export function agentActorValidationIssueLabel(
   }
   if (issue.code === "unknown_effort_selector") {
     return m.agent_actors_effort_selector_unknown();
+  }
+  if (issue.code === "unknown_adapter") {
+    return m.agent_actors_adapter_unknown();
+  }
+  if (issue.code === "approval_mapping_missing") {
+    return m.agent_actors_adapter_not_bindable();
   }
   return m.agent_actors_binding_invalid();
 }

@@ -36,8 +36,7 @@ import type {
 
 import {
   agentActorApprovalDescription,
-  agentActorApprovalLabel,
-  agentActorEffectiveBoundary,
+  agentActorBoundarySummary,
 } from "./agent-actor-copy";
 import { AgentAdapterCard } from "./agent-adapter-card";
 
@@ -70,7 +69,9 @@ export function AgentActorForm({
   validateOnSubmit = true,
 }: {
   approvalMappings: Readonly<
-    Partial<Record<AgentActorBinding["adapter"], AgentActorApprovalMapping>>
+    Partial<
+      Record<AgentActorBinding["adapter"], AgentActorApprovalMapping | null>
+    >
   >;
   descriptors: readonly AgentActorAdapterDescriptor[];
   diagnostics: Readonly<
@@ -228,9 +229,7 @@ export function AgentActorForm({
                       {descriptor?.label ?? binding.adapter}
                     </dt>
                     <dd className="text-muted-foreground text-sm">
-                      {mapping
-                        ? `${agentActorApprovalLabel(mapping.requested)}: ${agentActorEffectiveBoundary(mapping.native)}`
-                        : m.agent_actors_binding_checking()}
+                      {agentActorBoundarySummary(mapping)}
                     </dd>
                   </div>
                 );

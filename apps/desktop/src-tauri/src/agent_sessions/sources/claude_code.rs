@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
+use svode_core::agent_adapters::{AgentAdapterKind, AgentId};
 
 use chrono::{DateTime, Utc};
 use serde_json::Value;
@@ -13,15 +14,18 @@ use super::{
     user_prompt_title_from_text,
 };
 use crate::agent_sessions::types::{
-    AgentSessionCounts, AgentSessionDiagnosticSeverity, AgentSessionSource,
-    AgentSessionSourceReport, AgentSessionSourceStatus, AgentSessionTitleSource,
+    AgentSessionCounts, AgentSessionDiagnosticSeverity, AgentSessionSourceReport,
+    AgentSessionSourceStatus, AgentSessionTitleSource,
 };
 use svode_agents::status::{SessionState, StopReason};
 
-const SOURCE: AgentSessionSource = AgentSessionSource::ClaudeCode;
+/// The agent whose native store this scanner reads.
+fn source() -> AgentId {
+    AgentAdapterKind::ClaudeCode.id()
+}
 
 pub(crate) fn collect_fingerprint(root: &Path) -> (SourceFingerprint, AgentSessionSourceReport) {
-    let mut report = AgentSessionSourceReport::new(SOURCE, root.to_string_lossy().into_owned());
+    let mut report = AgentSessionSourceReport::new(source(), root.to_string_lossy().into_owned());
     if !root.exists() {
         report.status = AgentSessionSourceStatus::MissingRoot;
         let fingerprint = SourceFingerprint {
@@ -447,7 +451,7 @@ fn builder_for<'a>(
 ) -> &'a mut SessionBuilder {
     builders
         .entry(id.clone())
-        .or_insert_with(|| SessionBuilder::new(SOURCE, id))
+        .or_insert_with(|| SessionBuilder::new(source(), id))
 }
 
 #[derive(Debug)]
@@ -461,7 +465,7 @@ struct SessionBuilder {
 }
 
 impl SessionBuilder {
-    fn new(source: AgentSessionSource, source_session_id: String) -> Self {
+    fn new(source: AgentId, source_session_id: String) -> Self {
         Self {
             candidate: PersistedAgentSessionCandidate::new(source, source_session_id),
             title_priority: u8::MAX,

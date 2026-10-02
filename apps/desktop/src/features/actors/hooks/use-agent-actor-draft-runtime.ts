@@ -6,19 +6,20 @@ import type {
   AgentActorBinding,
   AgentActorBindingRuntime,
   AgentActorDraft,
+  AgentAdapterId,
 } from "../model/agent-actor-types";
 import type { AgentActorDraftRuntimePhase } from "../model/agent-actor-draft";
 
 export interface AgentActorDraftRuntimeState {
   phase: AgentActorDraftRuntimePhase;
-  runtime: Partial<Record<"claude-code" | "codex", AgentActorBindingRuntime>>;
+  runtime: Partial<Record<AgentAdapterId, AgentActorBindingRuntime>>;
 }
 
 export function useAgentActorDraftRuntime(draft: AgentActorDraft | null) {
   const [state, setState] = useState<{
     key: string;
     phase: AgentActorDraftRuntimePhase;
-    runtime: Partial<Record<"claude-code" | "codex", AgentActorBindingRuntime>>;
+    runtime: Partial<Record<AgentAdapterId, AgentActorBindingRuntime>>;
   }>({ key: "", phase: "idle", runtime: {} });
   const key = useMemo(
     () => (draft ? JSON.stringify([draft.approvalMode, draft.adapters]) : ""),

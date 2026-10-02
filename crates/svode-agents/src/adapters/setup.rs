@@ -22,7 +22,9 @@ pub struct AgentSetup {
     /// Executable, version and sign-in from the bounded `--version` and
     /// sign-in status commands.
     pub cli: AdapterDiagnostic,
-    pub cli_range: CliVersionRange,
+    /// `None` until the agent's range is verified; its version then stays
+    /// unknown.
+    pub cli_range: Option<CliVersionRange>,
     pub cli_version: CliVersionStatus,
     /// `None` when the agent's ACP entrypoint is its own command.
     pub adapter: Option<AdapterSetup>,
@@ -57,7 +59,10 @@ impl AdapterStore {
     ) -> AgentSetup {
         let cli = AdapterRuntimeRegistry.diagnose(agent, target, runner).await;
         let cli_range = cli_version_range(agent);
-        let cli_version = evaluate_cli_version(cli.version.as_deref(), cli_range);
+        let cli_version = match cli_range {
+            Some(range) => evaluate_cli_version(cli.version.as_deref(), range),
+            None => CliVersionStatus::Unknown,
+        };
         let adapter = match adapter_pin(agent) {
             Some(pin) => Some(AdapterSetup {
                 package: pin.package.to_string(),

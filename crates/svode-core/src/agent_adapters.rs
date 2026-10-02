@@ -9,49 +9,253 @@ pub enum SourceRegistryError {
     PathNotAccessible(String),
 }
 
-pub const CODEX_ADAPTER_ID: &str = "codex";
-pub const CLAUDE_CODE_ADAPTER_ID: &str = "claude-code";
+/// Prefix of the device-local namespace of custom ACP agents. No built-in
+/// id starts with it, so a custom agent never shares a built-in agent's
+/// sessions, Actor bindings or settings.
+pub const CUSTOM_AGENT_ID_PREFIX: &str = "custom-";
+const MAX_AGENT_ID_LEN: usize = 64;
 
+/// A built-in agent of this Svode release (Stage 10 `03` A2): the closed
+/// portable set whose ids alone may appear in portable data. Matches over it
+/// belong to the agent descriptions; every other consumer derives its list
+/// of agents from the registry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum AgentAdapterKind {
     Codex,
     ClaudeCode,
+    Cursor,
+    Opencode,
+    Hermes,
+    Openclaw,
+    Pi,
+    QwenCode,
+    KimiCode,
+    GrokBuild,
+    GeminiCli,
 }
 
 impl AgentAdapterKind {
-    /// Every adapter of the registry, in its stable order.
-    pub const ALL: [Self; 2] = [Self::Codex, Self::ClaudeCode];
+    /// Every built-in agent of the registry, in its stable order.
+    pub const ALL: [Self; 11] = [
+        Self::Codex,
+        Self::ClaudeCode,
+        Self::Cursor,
+        Self::Opencode,
+        Self::Hermes,
+        Self::Openclaw,
+        Self::Pi,
+        Self::QwenCode,
+        Self::KimiCode,
+        Self::GrokBuild,
+        Self::GeminiCli,
+    ];
 
     pub fn as_str(self) -> &'static str {
         match self {
-            Self::Codex => CODEX_ADAPTER_ID,
-            Self::ClaudeCode => CLAUDE_CODE_ADAPTER_ID,
+            Self::Codex => "codex",
+            Self::ClaudeCode => "claude-code",
+            Self::Cursor => "cursor",
+            Self::Opencode => "opencode",
+            Self::Hermes => "hermes",
+            Self::Openclaw => "openclaw",
+            Self::Pi => "pi",
+            Self::QwenCode => "qwen-code",
+            Self::KimiCode => "kimi-code",
+            Self::GrokBuild => "grok-build",
+            Self::GeminiCli => "gemini-cli",
         }
+    }
+
+    /// The built-in agent with this id, if this release knows it.
+    pub fn from_id(id: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|agent| agent.as_str() == id)
     }
 
     pub fn executable(self) -> &'static str {
         match self {
             Self::Codex => "codex",
             Self::ClaudeCode => "claude",
+            Self::Cursor => "cursor-agent",
+            Self::Opencode => "opencode",
+            Self::Hermes => "hermes",
+            Self::Openclaw => "openclaw",
+            Self::Pi => "pi",
+            Self::QwenCode => "qwen",
+            Self::KimiCode => "kimi",
+            Self::GrokBuild => "grok",
+            Self::GeminiCli => "gemini",
         }
     }
 
-    /// The agent name the user sees wherever the adapter is labelled.
+    /// The agent name the user sees wherever the agent is labelled.
     pub fn display_name(self) -> &'static str {
         match self {
             Self::Codex => "Codex",
             Self::ClaudeCode => "Claude Code",
+            Self::Cursor => "Cursor",
+            Self::Opencode => "opencode",
+            Self::Hermes => "Hermes",
+            Self::Openclaw => "OpenClaw",
+            Self::Pi => "pi",
+            Self::QwenCode => "Qwen Code",
+            Self::KimiCode => "Kimi Code",
+            Self::GrokBuild => "Grok Build",
+            Self::GeminiCli => "Gemini CLI",
         }
+    }
+
+    /// Where the vendor explains how to install the agent's CLI; Svode
+    /// never installs it.
+    pub fn install_hint(self) -> &'static str {
+        match self {
+            Self::Codex => "https://github.com/openai/codex",
+            Self::ClaudeCode => "https://docs.anthropic.com/claude-code",
+            Self::Cursor => "https://cursor.com/cli",
+            Self::Opencode => "https://opencode.ai",
+            Self::Hermes => "https://hermes-agent.nousresearch.com",
+            Self::Openclaw => "https://docs.openclaw.ai/start/getting-started",
+            Self::Pi => "https://pi.dev",
+            Self::QwenCode => "https://github.com/QwenLM/qwen-code",
+            Self::KimiCode => "https://github.com/MoonshotAI/kimi-code",
+            Self::GrokBuild => "https://github.com/xai-org/grok-build",
+            Self::GeminiCli => "https://github.com/google-gemini/gemini-cli",
+        }
+    }
+
+    pub fn id(self) -> AgentId {
+        AgentId(self.as_str().to_string())
     }
 }
 
-/// Identity of an adapter as every host labels it.
+impl std::fmt::Display for AgentAdapterKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("invalid agent id: {0:?}")]
+pub struct InvalidAgentId(pub String);
+
+/// The one stable id of an agent in every plan: a built-in id, a custom id
+/// of this device, or the id of an agent a newer Svode knows. Lowercase ASCII
+/// letters, digits and `-`.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
+pub struct AgentId(String);
+
+impl AgentId {
+    pub fn parse(id: &str) -> Result<Self, InvalidAgentId> {
+        let valid = !id.is_empty()
+            && id.len() <= MAX_AGENT_ID_LEN
+            && id
+                .bytes()
+                .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+            && !id.starts_with('-')
+            && !id.ends_with('-');
+        if valid {
+            Ok(Self(id.to_string()))
+        } else {
+            Err(InvalidAgentId(id.to_string()))
+        }
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    /// The built-in agent of this release with this id.
+    pub fn builtin(&self) -> Option<AgentAdapterKind> {
+        AgentAdapterKind::from_id(&self.0)
+    }
+
+    pub fn is_custom(&self) -> bool {
+        self.0.starts_with(CUSTOM_AGENT_ID_PREFIX)
+    }
+}
+
+impl TryFrom<String> for AgentId {
+    type Error = InvalidAgentId;
+
+    fn try_from(id: String) -> Result<Self, Self::Error> {
+        Self::parse(&id)
+    }
+}
+
+impl From<AgentId> for String {
+    fn from(id: AgentId) -> Self {
+        id.0
+    }
+}
+
+impl From<AgentAdapterKind> for AgentId {
+    fn from(agent: AgentAdapterKind) -> Self {
+        agent.id()
+    }
+}
+
+impl PartialEq<AgentAdapterKind> for AgentId {
+    fn eq(&self, agent: &AgentAdapterKind) -> bool {
+        self.0 == agent.as_str()
+    }
+}
+
+impl std::fmt::Display for AgentId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+/// The device-local id of a custom ACP agent, in its own namespace. It is
+/// never written to portable data.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
+pub struct CustomAgentId(AgentId);
+
+impl CustomAgentId {
+    pub fn parse(id: &str) -> Result<Self, InvalidAgentId> {
+        let id = AgentId::parse(id)?;
+        if id.is_custom() && id.as_str().len() > CUSTOM_AGENT_ID_PREFIX.len() {
+            Ok(Self(id))
+        } else {
+            Err(InvalidAgentId(id.0))
+        }
+    }
+
+    pub fn agent_id(&self) -> &AgentId {
+        &self.0
+    }
+}
+
+impl TryFrom<String> for CustomAgentId {
+    type Error = InvalidAgentId;
+
+    fn try_from(id: String) -> Result<Self, Self::Error> {
+        Self::parse(&id)
+    }
+}
+
+impl From<CustomAgentId> for String {
+    fn from(id: CustomAgentId) -> Self {
+        id.0.0
+    }
+}
+
+impl From<CustomAgentId> for AgentId {
+    fn from(id: CustomAgentId) -> Self {
+        id.0
+    }
+}
+
+/// Identity of a built-in agent as every host labels it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentAdapterIdentity {
     pub id: AgentAdapterKind,
     pub display_name: String,
+    pub executable: String,
+    pub install_hint: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -142,17 +346,21 @@ impl AgentAdapterRegistry {
             .map(|id| AgentAdapterIdentity {
                 id,
                 display_name: id.display_name().to_string(),
+                executable: id.executable().to_string(),
+                install_hint: id.install_hint().to_string(),
             })
             .collect()
     }
 
+    /// Source policies of the agents that take part in Agent Context. An
+    /// agent without one stays out of it until its sources are decided.
     pub fn source_policies(
         &self,
         environment: &SourceRegistryEnvironment,
     ) -> Vec<AgentSourcePolicy> {
         AgentAdapterKind::ALL
             .into_iter()
-            .map(|id| self.source_policy(id, environment))
+            .filter_map(|id| self.source_policy(id, environment))
             .collect()
     }
 
@@ -160,7 +368,7 @@ impl AgentAdapterRegistry {
         &self,
         id: AgentAdapterKind,
         environment: &SourceRegistryEnvironment,
-    ) -> AgentSourcePolicy {
+    ) -> Option<AgentSourcePolicy> {
         let (policy, personal_root, skill_policy, project_skills, skill_roots) = match id {
             AgentAdapterKind::Codex => (
                 InstructionDiscoveryPolicy::CodexAgents,
@@ -182,8 +390,17 @@ impl AgentAdapterRegistry {
                     path: path_string(&environment.claude_config_dir.join("skills")),
                 }],
             ),
+            AgentAdapterKind::Cursor
+            | AgentAdapterKind::Opencode
+            | AgentAdapterKind::Hermes
+            | AgentAdapterKind::Openclaw
+            | AgentAdapterKind::Pi
+            | AgentAdapterKind::QwenCode
+            | AgentAdapterKind::KimiCode
+            | AgentAdapterKind::GrokBuild
+            | AgentAdapterKind::GeminiCli => return None,
         };
-        AgentSourcePolicy {
+        Some(AgentSourcePolicy {
             id,
             display_name: id.display_name().to_string(),
             personal_root: path_string(personal_root),
@@ -195,7 +412,7 @@ impl AgentAdapterRegistry {
                     personal_roots: skill_roots,
                 },
             },
-        }
+        })
     }
 }
 
@@ -258,8 +475,8 @@ pub fn space_executable_override(id: AgentAdapterKind, space_dir: &Path) -> Opti
     let agent = crate::routines::local::read(space_dir).ok()?.agent?;
     let paths = agent.get("cliPaths")?.as_object()?;
     let keys: &[&str] = match id {
-        AgentAdapterKind::Codex => &["codex"],
         AgentAdapterKind::ClaudeCode => &["claude-code", "claude"],
+        _ => &[id.as_str()],
     };
     keys.iter()
         .find_map(|key| paths.get(*key)?.as_str())
@@ -321,6 +538,11 @@ fn common_executable_locations(id: AgentAdapterKind, home_dir: &Path) -> Vec<Pat
             home_dir.join(".local/bin").join(executable),
             home_dir.join(".npm/bin").join(executable),
             home_dir.join(".bun/bin").join(executable),
+        ],
+        _ => vec![
+            home_dir.join(".local/bin").join(executable),
+            home_dir.join(".bun/bin").join(executable),
+            home_dir.join(".npm-global/bin").join(executable),
         ],
     };
     candidates.push(PathBuf::from("/opt/homebrew/bin").join(executable));
@@ -384,13 +606,77 @@ mod tests {
                 .collect::<Vec<_>>(),
             AgentAdapterKind::ALL
         );
-        for (identity, policy) in identities.iter().zip(&policies) {
-            assert_eq!(identity.id, policy.id);
-            assert_eq!(identity.display_name, policy.display_name);
+        for policy in &policies {
+            let identity = identities.iter().find(|identity| identity.id == policy.id);
+            assert_eq!(
+                identity.map(|identity| &identity.display_name),
+                Some(&policy.display_name)
+            );
         }
         assert_eq!(
             serde_json::to_value(&identities[1]).unwrap(),
-            serde_json::json!({ "id": "claude-code", "displayName": "Claude Code" })
+            serde_json::json!({
+                "id": "claude-code",
+                "displayName": "Claude Code",
+                "executable": "claude",
+                "installHint": "https://docs.anthropic.com/claude-code"
+            })
+        );
+    }
+
+    #[test]
+    fn a_new_built_in_agent_needs_no_source_policy() {
+        let environment = SourceRegistryEnvironment::for_tests(PathBuf::from("/home/test"));
+        let policies = AgentAdapterRegistry.source_policies(&environment);
+
+        assert_eq!(
+            policies.iter().map(|policy| policy.id).collect::<Vec<_>>(),
+            [AgentAdapterKind::Codex, AgentAdapterKind::ClaudeCode]
+        );
+        assert!(
+            AgentAdapterRegistry
+                .identities()
+                .iter()
+                .any(|identity| identity.id == AgentAdapterKind::GeminiCli)
+        );
+    }
+
+    #[test]
+    fn built_in_ids_are_agent_ids_outside_the_custom_namespace() {
+        for agent in AgentAdapterKind::ALL {
+            let id = AgentId::parse(agent.as_str()).unwrap();
+            assert_eq!(id.builtin(), Some(agent));
+            assert!(!id.is_custom());
+            assert_eq!(id, agent);
+            assert_eq!(
+                serde_json::to_value(agent).unwrap(),
+                serde_json::to_value(&id).unwrap()
+            );
+        }
+    }
+
+    #[test]
+    fn agent_ids_keep_unknown_agents_and_reject_malformed_ids() {
+        let future: AgentId = serde_json::from_str(r#""future-agent""#).unwrap();
+        assert_eq!(future.as_str(), "future-agent");
+        assert_eq!(future.builtin(), None);
+        for malformed in ["", "Codex", "claude code", "-codex", "codex-", "a:b"] {
+            assert!(AgentId::parse(malformed).is_err(), "{malformed:?}");
+        }
+        assert!(serde_json::from_str::<AgentId>(r#""Codex""#).is_err());
+    }
+
+    #[test]
+    fn custom_ids_live_in_their_own_namespace() {
+        let custom = CustomAgentId::parse("custom-my-agent").unwrap();
+        let id = AgentId::from(custom.clone());
+        assert!(id.is_custom());
+        assert_eq!(id.builtin(), None);
+        assert!(CustomAgentId::parse("codex").is_err());
+        assert!(CustomAgentId::parse("custom").is_err());
+        assert_eq!(
+            serde_json::to_value(&custom).unwrap(),
+            serde_json::json!("custom-my-agent")
         );
     }
 

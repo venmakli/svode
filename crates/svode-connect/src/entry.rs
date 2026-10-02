@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use serde_json::{Map, Value};
 
 use crate::error::ConnectError;
-use crate::machine::{Client, Machine};
+use crate::machine::{Client, Kit, Machine};
 
 /// Environment variable whose value marks an entry the manager owns.
 pub const MARKER_ENV: &str = "SVODE_MCP_MANAGED";
@@ -49,9 +49,9 @@ pub(crate) fn read(machine: &Machine, client: Client) -> Entry {
         Ok(content) => content,
         Err(error) => return Entry::Unreadable(error.message),
     };
-    match client {
-        Client::ClaudeCode => claude_entry(&content),
-        Client::Codex => codex_entry(&content),
+    match client.kit {
+        Kit::ClaudePlugin => claude_entry(&content),
+        Kit::CodexMcp => codex_entry(&content),
     }
 }
 
@@ -81,13 +81,13 @@ pub(crate) fn write_codex(machine: &Machine, launcher: &Path) -> Result<(), Conn
 pub(crate) fn remove(machine: &Machine, client: Client) -> Result<(), ConnectError> {
     let path = machine.mcp_config(client);
     let before = read_text(&path)?;
-    let after = match client {
-        Client::ClaudeCode => remove_claude_entry(&before)?,
-        Client::Codex => remove_toml_block(&before),
+    let after = match client.kit {
+        Kit::ClaudePlugin => remove_claude_entry(&before)?,
+        Kit::CodexMcp => remove_toml_block(&before),
     };
-    let removed = match client {
-        Client::ClaudeCode => claude_entry(&after),
-        Client::Codex => codex_entry(&after),
+    let removed = match client.kit {
+        Kit::ClaudePlugin => claude_entry(&after),
+        Kit::CodexMcp => codex_entry(&after),
     };
     if removed != Entry::Absent {
         return Err(unsupported_form(&path));
@@ -252,8 +252,8 @@ pub(crate) fn higher_precedence(
     let Some(project) = machine.project.as_deref() else {
         return Ok(None);
     };
-    match client {
-        Client::ClaudeCode => {
+    match client.kit {
+        Kit::ClaudePlugin => {
             let shared = project.join(".mcp.json");
             if json_root(&shared)?
                 .get("mcpServers")
@@ -272,7 +272,7 @@ pub(crate) fn higher_precedence(
                 .is_some_and(|servers| servers.contains_key("svode"));
             Ok(local.then_some(user))
         }
-        Client::Codex => {
+        Kit::CodexMcp => {
             let path = project.join(".codex").join("config.toml");
             let content = read_text(&path)?;
             if content.trim().is_empty() {

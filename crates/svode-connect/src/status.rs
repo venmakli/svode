@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use crate::entry::{self, Entry};
 use crate::error::ConnectError;
 use crate::link::Link;
-use crate::machine::{ActiveRuntime, Client, Machine};
+use crate::machine::{ActiveRuntime, Client, Kit, Machine};
 use crate::manager::{self, Inspection};
 use crate::policy;
 
@@ -167,7 +167,7 @@ pub fn runtime_info(machine: &Machine) -> RuntimeInfo {
 /// Status of every client. `failed` carries what a reconcile just before
 /// could not repair.
 pub fn client_statuses(machine: &Machine, failed: &[(Client, ConnectError)]) -> Vec<ClientStatus> {
-    Client::ALL
+    Client::all()
         .into_iter()
         .map(|client| {
             let error = failed
@@ -292,7 +292,7 @@ fn issues(
                 ),
             );
         }
-        if client == Client::ClaudeCode
+        if client.kit == Kit::ClaudePlugin
             && let Some(seconds) = policy::claude_mcp_blocked_for(machine)
         {
             push(
@@ -330,14 +330,14 @@ fn artifacts(machine: &Machine, client: Client, inspection: &Inspection) -> Vec<
         state: state.into(),
     };
     let mut artifacts = vec![artifact(
-        match client {
-            Client::ClaudeCode => "plugin",
-            Client::Codex => "skill",
+        match client.kit {
+            Kit::ClaudePlugin => "plugin",
+            Kit::CodexMcp => "skill",
         },
         machine.skill_link(client),
         link,
     )];
-    if client == Client::Codex || inspection.entry != Entry::Absent {
+    if client.kit == Kit::CodexMcp || inspection.entry != Entry::Absent {
         artifacts.push(artifact("mcp-entry", machine.mcp_config(client), entry));
     }
     artifacts
@@ -358,12 +358,12 @@ pub fn manual_config(machine: &Machine) -> ManualConfig {
 /// The manual config in the form of `client`.
 pub fn manual_config_text(machine: &Machine, client: Client) -> String {
     let command = manual_command(machine);
-    match client {
-        Client::ClaudeCode => format!(
+    match client.kit {
+        Kit::ClaudePlugin => format!(
             "claude mcp add --transport stdio --scope user svode -- {}",
             shell_quote(&command)
         ),
-        Client::Codex => entry::codex_block(Path::new(&command), false),
+        Kit::CodexMcp => entry::codex_block(Path::new(&command), false),
     }
 }
 

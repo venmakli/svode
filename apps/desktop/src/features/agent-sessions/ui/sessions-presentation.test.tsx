@@ -441,7 +441,7 @@ test("collection states: loading, blocking error, partial source and empty Space
   ).toBe(true);
 });
 
-function sourceReport(source: "codex" | "claude-code") {
+function sourceReport(source: string) {
   return {
     source,
     kind: "native-log" as const,

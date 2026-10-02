@@ -21,7 +21,7 @@ interface ActorRow {
 
 interface ContextArtifactRow {
   artifactId: string;
-  client: "claude-code" | "codex";
+  client: string;
   scopeLabel: string;
   title: string;
 }

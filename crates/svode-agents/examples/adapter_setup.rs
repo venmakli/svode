@@ -27,10 +27,7 @@ async fn main() {
             "--root" => root = Some(PathBuf::from(args.next().expect("--root value"))),
             "--agent" => {
                 let id = args.next().expect("--agent value");
-                agent = Some(
-                    serde_json::from_value::<AgentAdapterKind>(serde_json::Value::String(id))
-                        .expect("--agent codex | claude-code"),
-                );
+                agent = Some(AgentAdapterKind::from_id(&id).expect("--agent <built-in agent id>"));
             }
             "--install" => install = true,
             "--remove" => remove = true,
@@ -67,13 +64,15 @@ async fn main() {
         .await
         .require(pin.node_major)
         .expect("node");
-        let launch = AdapterRuntimeRegistry.acp_launch(
-            agent,
-            &node,
-            &installed,
-            &PathBuf::from(executable),
-            &target.cwd,
-        );
+        let launch = AdapterRuntimeRegistry
+            .acp_launch(
+                agent,
+                &node,
+                &installed,
+                &PathBuf::from(executable),
+                &target.cwd,
+            )
+            .expect("agent with an adapter entrypoint");
         println!(
             "launch: {} {} with {:?}",
             launch.program.display(),

@@ -1,4 +1,5 @@
-export type AgentAdapterId = "claude-code" | "codex";
+/** An agent id from the registry; a catalog may hold one this build does not know. */
+export type AgentAdapterId = string;
 export type AgentActorApprovalMode = "ask" | "auto" | "full";
 export type AgentActorRuntimeStatus = "ready" | "attention" | "unchecked";
 
@@ -83,7 +84,8 @@ export interface AgentActorCatalogSnapshot {
 }
 
 export interface AgentActorBindingRuntime {
-  approval: AgentActorApprovalMapping;
+  /** `null` for a binding of an agent without an approval mapping. */
+  approval: AgentActorApprovalMapping | null;
   effortOptions: readonly AgentActorSelectOption[];
   validation: AgentActorBindingValidation;
 }

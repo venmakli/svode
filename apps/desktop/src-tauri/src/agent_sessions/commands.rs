@@ -182,7 +182,7 @@ pub async fn agent_sessions_reenter(
             &writers,
             move |session, scope_dir| {
                 reentry::resolve_agent_cli_binary(
-                    session.source,
+                    &session.source,
                     scope_dir,
                     &home_dir,
                     search_path.as_deref(),

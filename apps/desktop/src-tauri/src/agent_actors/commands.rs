@@ -68,7 +68,8 @@ pub struct AgentActorBindingRuntime {
     pub binding_index: usize,
     pub validation: BindingValidation,
     pub effort_options: Vec<AdapterSelectOption>,
-    pub approval: ApprovalMapping,
+    /// `None` for a binding of an agent without an approval mapping.
+    pub approval: Option<ApprovalMapping>,
     pub readiness: AgentActorBindingReadiness,
 }
 
@@ -83,7 +84,8 @@ pub enum AgentActorBindingReadiness {
 pub struct AgentActorBindingInspection {
     pub validation: BindingValidation,
     pub effort_options: Vec<AdapterSelectOption>,
-    pub approval: ApprovalMapping,
+    /// `None` for a binding of an agent without an approval mapping.
+    pub approval: Option<ApprovalMapping>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
@@ -240,8 +242,8 @@ fn binding_runtime_projection(
                     binding_index,
                     validation: registry.validate_binding(binding),
                     effort_options: registry
-                        .effort_options(binding.adapter, binding.model.as_deref()),
-                    approval: registry.approval_mapping(binding.adapter, resolved.approval_mode),
+                        .effort_options(&binding.adapter, binding.model.as_deref()),
+                    approval: registry.approval_mapping(&binding.adapter, resolved.approval_mode),
                     readiness: AgentActorBindingReadiness::Unchecked,
                 })
         })
@@ -287,8 +289,8 @@ pub fn agent_actors_inspect_binding(
     let registry = AdapterRuntimeRegistry;
     AgentActorBindingInspection {
         validation: registry.validate_binding(&binding),
-        effort_options: registry.effort_options(binding.adapter, binding.model.as_deref()),
-        approval: registry.approval_mapping(binding.adapter, approval_mode),
+        effort_options: registry.effort_options(&binding.adapter, binding.model.as_deref()),
+        approval: registry.approval_mapping(&binding.adapter, approval_mode),
     }
 }
 
@@ -904,7 +906,7 @@ mod tests {
     fn binding_inspection_is_process_free_and_adapter_owned() {
         let inspection = agent_actors_inspect_binding(
             AgentAdapter {
-                adapter: AgentAdapterKind::ClaudeCode,
+                adapter: AgentAdapterKind::ClaudeCode.id(),
                 model: Some("haiku".into()),
                 effort: None,
             },
@@ -912,7 +914,25 @@ mod tests {
         );
         assert!(inspection.validation.issues.is_empty());
         assert_eq!(inspection.effort_options.len(), 1);
-        assert!(inspection.approval.danger);
+        assert!(inspection.approval.unwrap().danger);
+    }
+
+    #[test]
+    fn a_binding_of_an_unknown_agent_is_shown_unavailable_without_a_mapping() {
+        let inspection = agent_actors_inspect_binding(
+            AgentAdapter {
+                adapter: svode_core::agent_adapters::AgentId::parse("future-agent").unwrap(),
+                model: Some("m".into()),
+                effort: None,
+            },
+            ApprovalMode::Ask,
+        );
+        assert_eq!(
+            inspection.validation.status,
+            svode_agents::registry::BindingValidationStatus::Unavailable
+        );
+        assert_eq!(inspection.validation.issues[0].code, "unknown_adapter");
+        assert_eq!(inspection.approval, None);
     }
 
     #[test]
@@ -924,7 +944,7 @@ mod tests {
                     name: "Docs".into(),
                     description: None,
                     adapters: vec![AgentAdapter {
-                        adapter: AgentAdapterKind::Codex,
+                        adapter: AgentAdapterKind::Codex.id(),
                         model: None,
                         effort: None,
                     }],

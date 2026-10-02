@@ -19,6 +19,7 @@ import type {
   AgentActorAdapterDiagnostic,
   AgentActorBindingValidation,
   AgentActorCatalogSnapshot,
+  AgentAdapterId,
 } from "../model/agent-actor-types";
 
 const agentActorRefreshDebounceMs = 120;
@@ -30,12 +31,12 @@ interface ScopedAgentActorCatalogState {
 
 interface ScopedAgentActorDiagnostics {
   sourceKey: string;
-  value: Partial<Record<"claude-code" | "codex", AgentActorAdapterDiagnostic>>;
+  value: Partial<Record<AgentAdapterId, AgentActorAdapterDiagnostic>>;
 }
 
 interface ScopedPendingAdapter {
   sourceKey: string;
-  value: "claude-code" | "codex" | null;
+  value: AgentAdapterId | null;
 }
 
 export function useAgentActorCatalog(
@@ -137,7 +138,7 @@ export function useAgentActorCatalog(
   }, [launchSpacePath, projectPath, sourceKey]);
 
   const diagnose = useCallback(
-    async (adapter: "claude-code" | "codex") => {
+    async (adapter: AgentAdapterId) => {
       if (pendingAdapter) return null;
       setScopedPendingAdapter({ sourceKey, value: adapter });
       try {
@@ -171,7 +172,7 @@ export function useAgentActorCatalog(
       const runtime =
         state.snapshot.bindingRuntime[runtimeKey(row.ownerPath, row.id)] ?? [];
       const validations: Partial<
-        Record<"claude-code" | "codex", AgentActorBindingValidation>
+        Record<AgentAdapterId, AgentActorBindingValidation>
       > = {};
       row.adapters.forEach((binding, index) => {
         const validation = runtime[index]?.validation;

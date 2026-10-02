@@ -10,6 +10,8 @@ use serde_json::{Value, json};
 use svode_install::{DesktopRuntime, Layout, take_desktop_ownership};
 use tempfile::TempDir;
 
+use svode_core::agent_adapters::AgentAdapterKind;
+
 use crate::{Client, Machine, connect, disconnect, reconcile, status};
 
 const PREVIOUS: &str = "svode-desktop-bridge-v1";
@@ -134,6 +136,14 @@ fn runtime_files(binaries: &Path, payload: &Path, version: &str) {
     .unwrap();
 }
 
+fn claude_client() -> Client {
+    Client::of(AgentAdapterKind::ClaudeCode).unwrap()
+}
+
+fn codex_client() -> Client {
+    Client::of(AgentAdapterKind::Codex).unwrap()
+}
+
 fn client(status: &crate::Status, client: Client) -> crate::ClientStatus {
     status
         .clients
@@ -148,7 +158,7 @@ fn connecting_claude_code_links_the_plugin_and_writes_no_mcp_entry() {
     let home = Home::with_desktop();
     home.write(".claude.json", "{\"theme\":\"dark\"}");
 
-    assert!(connect(&home.machine(), Client::ClaudeCode).unwrap());
+    assert!(connect(&home.machine(), claude_client()).unwrap());
 
     assert_eq!(
         home.link(".claude/skills/svode").unwrap(),
@@ -156,12 +166,12 @@ fn connecting_claude_code_links_the_plugin_and_writes_no_mcp_entry() {
     );
     let config: Value = serde_json::from_str(&home.read(".claude.json")).unwrap();
     assert_eq!(config, json!({ "theme": "dark" }));
-    let status = client(&status(&home.machine(), &[], None), Client::ClaudeCode);
+    let status = client(&status(&home.machine(), &[], None), claude_client());
     assert!(status.installed && status.complete, "{status:?}");
     assert_eq!(status.status, "installed");
     assert_eq!(status.version.as_deref(), Some("0.0.9"));
     // Connecting again changes nothing.
-    assert!(!connect(&home.machine(), Client::ClaudeCode).unwrap());
+    assert!(!connect(&home.machine(), claude_client()).unwrap());
 }
 
 #[test]
@@ -171,7 +181,7 @@ fn connecting_codex_links_the_shared_skill_and_starts_the_launcher_in_automatic_
         "# mine\nmodel = \"gpt-5.5\"\n\n[projects.\"/work\"]\ntrust_level = \"trusted\"\n";
     home.write(".codex/config.toml", original);
 
-    assert!(connect(&home.machine(), Client::Codex).unwrap());
+    assert!(connect(&home.machine(), codex_client()).unwrap());
 
     assert_eq!(
         home.link(".agents/skills/svode").unwrap(),
@@ -191,7 +201,7 @@ fn connecting_codex_links_the_shared_skill_and_starts_the_launcher_in_automatic_
         Some(crate::MARKER)
     );
     assert!(!config.contains("approval"));
-    assert!(client(&status(&home.machine(), &[], None), Client::Codex).complete);
+    assert!(client(&status(&home.machine(), &[], None), codex_client()).complete);
 }
 
 #[test]
@@ -236,9 +246,9 @@ fn a_previous_desktop_entry_becomes_a_full_connection_without_reenabling() {
 #[test]
 fn reconcile_restores_a_missing_artifact_of_a_connected_client_only() {
     let home = Home::with_desktop();
-    connect(&home.machine(), Client::Codex).unwrap();
+    connect(&home.machine(), codex_client()).unwrap();
     fs::remove_file(home.path(".agents/skills/svode")).unwrap();
-    let status_before = client(&status(&home.machine(), &[], None), Client::Codex);
+    let status_before = client(&status(&home.machine(), &[], None), codex_client());
     assert_eq!(status_before.attention_code.as_deref(), Some("incomplete"));
 
     assert!(reconcile(&home.machine()).0);
@@ -246,7 +256,7 @@ fn reconcile_restores_a_missing_artifact_of_a_connected_client_only() {
 
     // A client without any Svode artifact is not connected and stays so.
     assert!(home.link(".claude/skills/svode").is_none());
-    let claude = client(&status(&home.machine(), &[], None), Client::ClaudeCode);
+    let claude = client(&status(&home.machine(), &[], None), claude_client());
     assert!(!claude.installed);
 }
 
@@ -255,21 +265,21 @@ fn conflicts_refuse_a_connection_before_any_write() {
     let home = Home::with_desktop();
     let custom = "[mcp_servers.svode]\ncommand = \"my-wrapper\"\nargs = []\n";
     home.write(".codex/config.toml", custom);
-    let error = connect(&home.machine(), Client::Codex).unwrap_err();
+    let error = connect(&home.machine(), codex_client()).unwrap_err();
     assert_eq!(error.code, "CUSTOM_CONFIG_CONFLICT");
     assert!(home.link(".agents/skills/svode").is_none());
     assert_eq!(home.read(".codex/config.toml"), custom);
-    let codex = client(&status(&home.machine(), &[], None), Client::Codex);
+    let codex = client(&status(&home.machine(), &[], None), codex_client());
     assert_eq!(codex.attention_code.as_deref(), Some("custom_conflict"));
     // Disconnecting leaves the custom entry.
-    assert!(!disconnect(&home.machine(), Client::Codex).unwrap());
+    assert!(!disconnect(&home.machine(), codex_client()).unwrap());
     assert_eq!(home.read(".codex/config.toml"), custom);
 
     home.write(".claude/skills/svode/SKILL.md", "my own skill");
-    let error = connect(&home.machine(), Client::ClaudeCode).unwrap_err();
+    let error = connect(&home.machine(), claude_client()).unwrap_err();
     assert_eq!(error.code, "SKILL_CONFLICT");
     assert_eq!(home.read(".claude/skills/svode/SKILL.md"), "my own skill");
-    let claude = client(&status(&home.machine(), &[], None), Client::ClaudeCode);
+    let claude = client(&status(&home.machine(), &[], None), claude_client());
     assert_eq!(claude.attention_code.as_deref(), Some("skill_conflict"));
 }
 
@@ -287,7 +297,7 @@ fn artifacts_follow_the_way_each_client_is_connected() {
     let machine = home.machine();
 
     // Not connected: the plugin of Claude Code is missing and it has no entry.
-    let claude = client(&status(&machine, &[], None), Client::ClaudeCode);
+    let claude = client(&status(&machine, &[], None), claude_client());
     assert_eq!(artifacts(&claude), [("plugin", "absent")]);
     assert_eq!(
         claude.artifacts[0].path,
@@ -295,15 +305,15 @@ fn artifacts_follow_the_way_each_client_is_connected() {
     );
 
     // Connected: the plugin only.
-    connect(&machine, Client::ClaudeCode).unwrap();
-    let claude = client(&status(&machine, &[], None), Client::ClaudeCode);
+    connect(&machine, claude_client()).unwrap();
+    let claude = client(&status(&machine, &[], None), claude_client());
     assert_eq!(artifacts(&claude), [("plugin", "managed")]);
     assert!(claude.issues.is_empty(), "{claude:?}");
 
     // A user entry is listed while it exists, with its own attention.
     home.previous_entries();
     fs::remove_file(home.path(".claude/skills/svode")).unwrap();
-    let claude = client(&status(&machine, &[], None), Client::ClaudeCode);
+    let claude = client(&status(&machine, &[], None), claude_client());
     assert_eq!(
         artifacts(&claude),
         [("plugin", "absent"), ("mcp-entry", "previous")]
@@ -314,12 +324,12 @@ fn artifacts_follow_the_way_each_client_is_connected() {
     );
     assert_eq!(claude.attention_code.as_deref(), Some("incomplete"));
 
-    connect(&machine, Client::ClaudeCode).unwrap();
+    connect(&machine, claude_client()).unwrap();
     home.write(
         ".claude.json",
         r#"{"mcpServers":{"svode":{"command":"my-wrapper"}}}"#,
     );
-    let claude = client(&status(&machine, &[], None), Client::ClaudeCode);
+    let claude = client(&status(&machine, &[], None), claude_client());
     assert_eq!(
         artifacts(&claude),
         [("plugin", "managed"), ("mcp-entry", "custom")]
@@ -327,7 +337,7 @@ fn artifacts_follow_the_way_each_client_is_connected() {
     assert_eq!(claude.attention_code.as_deref(), Some("custom_conflict"));
 
     home.write(".claude.json", "{ not json");
-    let claude = client(&status(&machine, &[], None), Client::ClaudeCode);
+    let claude = client(&status(&machine, &[], None), claude_client());
     assert_eq!(
         artifacts(&claude),
         [("plugin", "managed"), ("mcp-entry", "unreadable")]
@@ -336,8 +346,8 @@ fn artifacts_follow_the_way_each_client_is_connected() {
 
     // Codex: the shared skill and the managed entry.
     home.write(".codex/config.toml", "");
-    connect(&machine, Client::Codex).unwrap();
-    let codex = client(&status(&machine, &[], None), Client::Codex);
+    connect(&machine, codex_client()).unwrap();
+    let codex = client(&status(&machine, &[], None), codex_client());
     assert_eq!(
         artifacts(&codex),
         [("skill", "managed"), ("mcp-entry", "managed")]
@@ -347,7 +357,7 @@ fn artifacts_follow_the_way_each_client_is_connected() {
         home.path(".codex/config.toml").display().to_string()
     );
     home.write(".codex/config.toml", "");
-    let codex = client(&status(&machine, &[], None), Client::Codex);
+    let codex = client(&status(&machine, &[], None), codex_client());
     assert_eq!(
         artifacts(&codex),
         [("skill", "managed"), ("mcp-entry", "absent")]
@@ -365,12 +375,12 @@ fn a_project_entry_that_overrides_the_user_one_is_a_conflict() {
     );
     let machine = home.machine_for(Some(&project));
     assert_eq!(
-        connect(&machine, Client::ClaudeCode).unwrap_err().code,
+        connect(&machine, claude_client()).unwrap_err().code,
         "HIGHER_PRECEDENCE_CONFLICT"
     );
     assert!(home.link(".claude/skills/svode").is_none());
     assert_eq!(
-        client(&status(&machine, &[], None), Client::ClaudeCode)
+        client(&status(&machine, &[], None), claude_client())
             .attention_code
             .as_deref(),
         Some("higher_precedence_conflict")
@@ -378,13 +388,13 @@ fn a_project_entry_that_overrides_the_user_one_is_a_conflict() {
 }
 
 #[test]
-fn disconnect_removes_only_marked_artifacts_and_the_shared_skill_with_codex() {
+fn disconnect_removes_only_marked_artifacts_and_the_shared_skill_with_codex_client() {
     let home = Home::with_desktop();
-    connect(&home.machine(), Client::ClaudeCode).unwrap();
-    connect(&home.machine(), Client::Codex).unwrap();
+    connect(&home.machine(), claude_client()).unwrap();
+    connect(&home.machine(), codex_client()).unwrap();
     home.write(".agents/skills/other/SKILL.md", "other");
 
-    assert!(disconnect(&home.machine(), Client::Codex).unwrap());
+    assert!(disconnect(&home.machine(), codex_client()).unwrap());
     assert!(home.link(".agents/skills/svode").is_none());
     assert_eq!(home.read(".agents/skills/other/SKILL.md"), "other");
     let codex: toml::Table = toml::from_str(&home.read(".codex/config.toml")).unwrap();
@@ -396,9 +406,9 @@ fn disconnect_removes_only_marked_artifacts_and_the_shared_skill_with_codex() {
     // Claude Code stays connected.
     assert!(home.link(".claude/skills/svode").is_some());
 
-    assert!(disconnect(&home.machine(), Client::ClaudeCode).unwrap());
+    assert!(disconnect(&home.machine(), claude_client()).unwrap());
     assert!(home.link(".claude/skills/svode").is_none());
-    assert!(!disconnect(&home.machine(), Client::ClaudeCode).unwrap());
+    assert!(!disconnect(&home.machine(), claude_client()).unwrap());
 }
 
 #[test]
@@ -408,7 +418,7 @@ fn without_a_runtime_nothing_is_connected_or_rewritten() {
     let before = (home.read(".claude.json"), home.read(".codex/config.toml"));
 
     assert_eq!(
-        connect(&home.machine(), Client::Codex).unwrap_err().code,
+        connect(&home.machine(), codex_client()).unwrap_err().code,
         "RUNTIME_UNAVAILABLE"
     );
     let (changed, errors) = reconcile(&home.machine());
@@ -432,7 +442,7 @@ fn without_a_runtime_nothing_is_connected_or_rewritten() {
 #[test]
 fn client_policies_and_the_claude_needs_auth_cache_are_reported() {
     let home = Home::with_desktop();
-    connect(&home.machine(), Client::ClaudeCode).unwrap();
+    connect(&home.machine(), claude_client()).unwrap();
     home.write(
         "policy/managed-settings.json",
         r#"{"strictKnownMarketplaces":[{"source":"github","repo":"acme/plugins"}]}"#,
@@ -451,14 +461,14 @@ fn client_policies_and_the_claude_needs_auth_cache_are_reported() {
     );
 
     let status = status(&home.machine(), &[], None);
-    let claude = client(&status, Client::ClaudeCode);
+    let claude = client(&status, claude_client());
     let codes = claude
         .issues
         .iter()
         .map(|issue| issue.code.as_str())
         .collect::<Vec<_>>();
     assert_eq!(codes, ["client_policy_blocked", "mcp_start_failed"]);
-    let codex = client(&status, Client::Codex);
+    let codex = client(&status, codex_client());
     assert_eq!(
         codex.attention_code.as_deref(),
         Some("client_policy_blocked")
@@ -486,8 +496,8 @@ fn client_policies_and_the_claude_needs_auth_cache_are_reported() {
         r#"{"strictKnownMarketplaces":[{"source":"skills-dir"}]}"#,
     );
     let status = crate::status(&home.machine(), &[], None);
-    assert!(client(&status, Client::ClaudeCode).issues.is_empty());
-    assert!(client(&status, Client::Codex).issues.is_empty());
+    assert!(client(&status, claude_client()).issues.is_empty());
+    assert!(client(&status, codex_client()).issues.is_empty());
 }
 
 #[test]
@@ -496,9 +506,9 @@ fn the_manual_config_starts_the_stable_launcher_and_carries_no_marker() {
     let manual = crate::manual_config(&home.machine());
     assert_eq!(manual.command, home.launcher().display().to_string());
     assert!(manual.args.is_empty() && manual.env.is_empty());
-    let codex = crate::manual_config_text(&home.machine(), Client::Codex);
+    let codex = crate::manual_config_text(&home.machine(), codex_client());
     assert!(!codex.contains(crate::MARKER_ENV));
-    let claude = crate::manual_config_text(&home.machine(), Client::ClaudeCode);
+    let claude = crate::manual_config_text(&home.machine(), claude_client());
     assert!(claude.ends_with(&format!("-- '{}'", home.launcher().display())));
 }
 

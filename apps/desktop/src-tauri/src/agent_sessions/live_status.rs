@@ -3,7 +3,7 @@ use chrono::{SecondsFormat, Utc};
 use super::sources::{NativeStatusEvidence, PersistedAgentSessionCandidate, short_id};
 use super::types::{
     AgentSession, AgentSessionCapabilities, AgentSessionResumeCommand, AgentSessionRuntime,
-    AgentSessionScope, AgentSessionSourceMeta, AgentSessionTitleSource,
+    AgentSessionScope, AgentSessionSourceMeta, AgentSessionTitleSource, terminal_resume_argv,
 };
 use crate::terminal::{AgentTerminalStatusEvidence, AgentTerminalSurface};
 use svode_agents::identity::IdentityNamespace;
@@ -164,20 +164,23 @@ pub(super) fn map_candidate(
     } else {
         candidate.title_source
     };
-    let mut argv = candidate.source.resume_argv(&candidate.source_session_id);
-    let program = argv.remove(0);
-    let display = std::iter::once(program.as_str())
-        .chain(argv.iter().map(String::as_str))
-        .collect::<Vec<_>>()
-        .join(" ");
     let mut counts = candidate.counts;
     counts.messages = Some(counts.user_messages + counts.assistant_messages);
-    let resume_command = native.then(|| AgentSessionResumeCommand {
-        display,
-        program,
-        args: argv,
-        cwd: scope.cwd.clone(),
-    });
+    let resume_command = native
+        .then(|| terminal_resume_argv(&candidate.source, &candidate.source_session_id))
+        .flatten()
+        .map(|mut argv| {
+            let program = argv.remove(0);
+            AgentSessionResumeCommand {
+                display: std::iter::once(program.as_str())
+                    .chain(argv.iter().map(String::as_str))
+                    .collect::<Vec<_>>()
+                    .join(" "),
+                program,
+                args: argv,
+                cwd: scope.cwd.clone(),
+            }
+        });
     let mut observations = candidate
         .status
         .map(|evidence| native_observation(evidence, last_activity_at, Utc::now()))
@@ -306,7 +309,7 @@ pub(super) fn map_provisional_surface(
         id: surface.agent_session_id.clone(),
         launch_id: surface.launch_id.clone(),
         routine_run_id: surface.routine_run_id.clone(),
-        source: surface.source,
+        source: surface.source.clone(),
         source_session_id: surface.source_session_id.clone(),
         title: surface.title.clone().unwrap_or_else(|| {
             surface

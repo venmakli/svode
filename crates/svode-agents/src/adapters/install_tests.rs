@@ -428,8 +428,7 @@ async fn without_node_of_the_required_version_nothing_is_downloaded() {
 
 #[test]
 fn release_pins_fix_a_verifiable_tree_without_agent_binaries() {
-    for agent in AgentAdapterKind::ALL {
-        let pin = adapter_pin(agent).unwrap();
+    for pin in AgentAdapterKind::ALL.into_iter().filter_map(adapter_pin) {
         let manifest = parse_manifest(pin).unwrap();
         let root = format!("node_modules/{}", pin.package);
         assert!(

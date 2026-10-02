@@ -5,7 +5,8 @@ import {
 } from "@/platform/native/events";
 import { invokeCommand } from "@/platform/native/invoke";
 
-export type SupportedAdapterIdDto = "claude-code" | "codex";
+/** The id of an agent that takes part in Agent Context. */
+export type SupportedAdapterIdDto = string;
 export type AgentContextSourceSupportDto = "client_native" | "svode_recognized";
 export type AgentContextSourceResolutionDto =
   | "included"

@@ -106,16 +106,18 @@ impl AdapterStore {
             .cli_version(&executable, target, runner)
             .await
             .ok();
-        if let CliVersionStatus::Unsupported { minimum } =
-            evaluate_cli_version(version.as_deref(), cli_version_range(agent))
+        if let Some(range) = cli_version_range(agent)
+            && let CliVersionStatus::Unsupported { minimum } =
+                evaluate_cli_version(version.as_deref(), range)
         {
             return Err(LaunchUnavailable::CliUnsupported {
                 version: version.unwrap_or_default().trim().to_string(),
                 minimum,
             });
         }
-        let mut launch =
-            AdapterRuntimeRegistry.acp_launch(agent, &node, &installed, &executable, &home);
+        let mut launch = AdapterRuntimeRegistry
+            .acp_launch(agent, &node, &installed, &executable, &home)
+            .ok_or(LaunchUnavailable::NotSupported)?;
         launch.environment = context.environment.clone();
         // The description's variables win over the provenance's.
         let mut env = context.env.clone();

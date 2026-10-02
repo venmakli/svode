@@ -1,7 +1,8 @@
 import type { AgentSessionStatusDto } from "@/platform/agent-runtime/agent-runtime-api";
 import { invokeCommand as invoke } from "@/platform/native/invoke";
 
-export type AgentSessionSource = "codex" | "claude-code";
+/** The id of the session's agent in the registry. */
+export type AgentSessionSource = string;
 /** The one session status vocabulary of the agent runtime (Stage 10 C10). */
 export type AgentSessionStatus = AgentSessionStatusDto;
 export type AgentSessionTitleSource =

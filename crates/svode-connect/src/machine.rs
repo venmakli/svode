@@ -5,54 +5,89 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use svode_core::agent_adapters::AgentAdapterKind;
+
 use crate::error::ConnectError;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum Client {
-    ClaudeCode,
-    Codex,
+/// An agent the manager connects, under its id from the agent registry, and
+/// how it is connected (Stage 10 `03` A9).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Client {
+    agent: AgentAdapterKind,
+    pub(crate) kit: Kit,
+}
+
+/// The Svode integration kit of a client.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Kit {
+    /// The skill link of the Claude Code plugin, which also brings MCP.
+    ClaudePlugin,
+    /// The skill shared by the agents of the machine and a managed MCP entry.
+    CodexMcp,
 }
 
 impl Client {
-    pub const ALL: [Client; 2] = [Client::ClaudeCode, Client::Codex];
+    /// The client of an agent, when the manager can connect it.
+    pub fn of(agent: AgentAdapterKind) -> Option<Self> {
+        let kit = match agent {
+            AgentAdapterKind::ClaudeCode => Kit::ClaudePlugin,
+            AgentAdapterKind::Codex => Kit::CodexMcp,
+            _ => return None,
+        };
+        Some(Self { agent, kit })
+    }
 
+    /// Every client, in the order of the agent registry.
+    pub fn all() -> Vec<Self> {
+        AgentAdapterKind::ALL
+            .into_iter()
+            .filter_map(Self::of)
+            .collect()
+    }
+
+    /// A client by agent id; `claude`, the command of Claude Code, also
+    /// names it.
     pub fn parse(value: &str) -> Result<Self, ConnectError> {
-        match value {
-            "claude-code" | "claude" => Ok(Self::ClaudeCode),
-            "codex" => Ok(Self::Codex),
-            _ => Err(ConnectError::new(
-                "UNSUPPORTED_CLIENT",
-                format!("unsupported agent client: {value}; expected claude-code or codex"),
-            )),
-        }
+        let id = if value == "claude" {
+            AgentAdapterKind::ClaudeCode.as_str()
+        } else {
+            value
+        };
+        AgentAdapterKind::from_id(id)
+            .and_then(Self::of)
+            .ok_or_else(|| {
+                let expected = Self::all()
+                    .into_iter()
+                    .map(Self::as_str)
+                    .collect::<Vec<_>>()
+                    .join(" or ");
+                ConnectError::new(
+                    "UNSUPPORTED_CLIENT",
+                    format!("unsupported agent client: {value}; expected {expected}"),
+                )
+            })
+    }
+
+    pub fn agent(self) -> AgentAdapterKind {
+        self.agent
     }
 
     pub fn as_str(self) -> &'static str {
-        match self {
-            Self::ClaudeCode => "claude-code",
-            Self::Codex => "codex",
-        }
+        self.agent.as_str()
     }
 
     pub fn name(self) -> &'static str {
-        match self {
-            Self::ClaudeCode => "Claude Code",
-            Self::Codex => "Codex",
-        }
+        self.agent.display_name()
     }
 
     pub(crate) fn command(self) -> &'static str {
-        match self {
-            Self::ClaudeCode => "claude",
-            Self::Codex => "codex",
-        }
+        self.agent.executable()
     }
 
     /// Whether the client reads the skill shared by every agent of the
     /// machine from `~/.agents/skills` rather than a skill of its own.
     pub(crate) fn uses_shared_skill(self) -> bool {
-        matches!(self, Self::Codex)
+        self.kit == Kit::CodexMcp
     }
 }
 
@@ -192,24 +227,24 @@ impl Machine {
     /// Where the client finds the Svode skill (and for Claude Code the
     /// whole plugin), and what that link points to.
     pub(crate) fn skill_link(&self, client: Client) -> PathBuf {
-        match client {
-            Client::ClaudeCode => self.claude_dir().join("skills").join("svode"),
-            Client::Codex => self.home.join(".agents").join("skills").join("svode"),
+        match client.kit {
+            Kit::ClaudePlugin => self.claude_dir().join("skills").join("svode"),
+            Kit::CodexMcp => self.home.join(".agents").join("skills").join("svode"),
         }
     }
 
     pub(crate) fn skill_target(stable: &Stable, client: Client) -> PathBuf {
-        match client {
-            Client::ClaudeCode => stable.payload.clone(),
-            Client::Codex => stable.payload.join("skills").join("svode"),
+        match client.kit {
+            Kit::ClaudePlugin => stable.payload.clone(),
+            Kit::CodexMcp => stable.payload.join("skills").join("svode"),
         }
     }
 
     /// The user config that holds the MCP entry of `client`.
     pub(crate) fn mcp_config(&self, client: Client) -> PathBuf {
-        match client {
-            Client::ClaudeCode => self.claude_config(),
-            Client::Codex => self.codex_config(),
+        match client.kit {
+            Kit::ClaudePlugin => self.claude_config(),
+            Kit::CodexMcp => self.codex_config(),
         }
     }
 }

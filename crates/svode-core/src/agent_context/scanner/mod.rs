@@ -6,7 +6,10 @@ mod skills;
 use std::path::{Path, PathBuf};
 
 use super::AgentContextError;
-use crate::agent_adapters::{AgentAdapterKind, AgentAdapterRegistry, SourceRegistryEnvironment};
+use crate::agent_adapters::{
+    AgentAdapterKind, AgentAdapterRegistry, InstructionDiscoveryPolicy as InstructionPolicy,
+    SourceRegistryEnvironment,
+};
 
 use super::model::{
     AgentContextDiagnostic, AgentContextSnapshotContent, InstructionDiscovery,
@@ -50,18 +53,18 @@ pub fn scan(
     let directory_chain = root_to_target_chain(&repository_root, &target_root);
     let adapters = AgentAdapterRegistry.source_policies(environment);
     let mut result = DiscoveryResult::default();
-    result.append(codex::discover(
-        &repository_root,
-        &target_root,
-        &directory_chain,
-        environment,
-    ));
-    result.append(claude::discover(
-        &repository_root,
-        &target_root,
-        &directory_chain,
-        environment,
-    ));
+    for adapter in &adapters {
+        let discover = match adapter.capabilities.instructions.policy {
+            InstructionPolicy::CodexAgents => codex::discover,
+            InstructionPolicy::ClaudeMemory => claude::discover,
+        };
+        result.append(discover(
+            &repository_root,
+            &target_root,
+            &directory_chain,
+            environment,
+        ));
+    }
     result.append(discover_recognized(&target_root));
     result.append(skills::discover(
         &repository_root,

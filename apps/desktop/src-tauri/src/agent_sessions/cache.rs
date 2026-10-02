@@ -2,35 +2,36 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
+use svode_core::agent_adapters::AgentId;
 
 use chrono::{SecondsFormat, Utc};
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
 
 use super::AgentSessionsState;
-use super::sources::{PersistedAgentSessionCandidate, SourceScan, claude_code, codex};
-use super::types::{AgentSessionSource, AgentSessionSourceReport};
+use super::sources::{NativeSource, PersistedAgentSessionCandidate, SourceScan};
+use super::types::AgentSessionSourceReport;
 use crate::error::AppError;
 
 #[derive(Debug, Default)]
 pub(crate) struct AgentSessionsReadCache {
-    sources: HashMap<AgentSessionSource, CachedSourceScan>,
+    sources: HashMap<AgentId, CachedSourceScan>,
 }
 
 #[derive(Debug, Default)]
 pub(crate) struct AgentSessionsSourceScanLocks {
-    locks: std::sync::Mutex<HashMap<AgentSessionSource, std::sync::Arc<std::sync::Mutex<()>>>>,
+    locks: std::sync::Mutex<HashMap<AgentId, std::sync::Arc<std::sync::Mutex<()>>>>,
 }
 
 impl AgentSessionsSourceScanLocks {
     fn for_source(
         &self,
-        source: AgentSessionSource,
+        source: &AgentId,
     ) -> Result<std::sync::Arc<std::sync::Mutex<()>>, AppError> {
         let mut locks = self.locks.lock().map_err(|_| {
             AppError::General("Agent sessions source scan lock registry poisoned".to_string())
         })?;
         Ok(locks
-            .entry(source)
+            .entry(source.clone())
             .or_insert_with(|| std::sync::Arc::new(std::sync::Mutex::new(())))
             .clone())
     }
@@ -48,13 +49,6 @@ pub(super) struct SourceRead {
     pub(super) candidates: Vec<PersistedAgentSessionCandidate>,
     pub(super) report: AgentSessionSourceReport,
     pub(super) cache_hit: bool,
-}
-
-pub(super) fn source_root(home: &Path, source: AgentSessionSource) -> PathBuf {
-    match source {
-        AgentSessionSource::Codex => home.join(".codex"),
-        AgentSessionSource::ClaudeCode => home.join(".claude"),
-    }
 }
 
 pub(super) fn candidates_for_session_ids(
@@ -126,9 +120,9 @@ pub(super) fn disk_snapshot_reads(
     }
 
     let mut rows = Vec::new();
-    for source in [AgentSessionSource::Codex, AgentSessionSource::ClaudeCode] {
-        match read_disk_source_cache_row(&db_path, source) {
-            Ok(Some(row)) => rows.push((source, row)),
+    for source in NativeSource::all() {
+        match read_disk_source_cache_row(&db_path, &source.agent) {
+            Ok(Some(row)) => rows.push((source.agent, row)),
             Ok(None) => return Ok(None),
             Err(error) => {
                 tracing::warn!(
@@ -152,7 +146,7 @@ pub(super) fn disk_snapshot_reads(
             report,
             cache_hit: true,
         };
-        cache_source_read(state, source, row.fingerprint, &read)?;
+        cache_source_read(state, &source, row.fingerprint, &read)?;
         reads.push(read);
     }
 
@@ -162,9 +156,10 @@ pub(super) fn disk_snapshot_reads(
 pub(super) fn read_source(
     state: &AgentSessionsState,
     project: &Path,
-    source: AgentSessionSource,
+    native: &NativeSource,
     force_refresh: bool,
 ) -> Result<SourceRead, AppError> {
+    let source = &native.agent;
     let requested_at = Instant::now();
     let scan_lock = state.source_scan_locks.for_source(source)?;
     let _scan_guard = scan_lock
@@ -172,11 +167,8 @@ pub(super) fn read_source(
         .map_err(|_| AppError::General("Agent sessions source scan lock poisoned".to_string()))?;
     let scan_wait_ms = requested_at.elapsed().as_millis();
     let started = Instant::now();
-    let root = source_root(&state.home_dir, source);
-    let (fingerprint, report) = match source {
-        AgentSessionSource::Codex => codex::collect_fingerprint(&root),
-        AgentSessionSource::ClaudeCode => claude_code::collect_fingerprint(&root),
-    };
+    let root = native.root(&state.home_dir);
+    let (fingerprint, report) = native.collect_fingerprint(&root);
 
     if !force_refresh {
         if let Some(read) = cached_source_read(state, source, &fingerprint.value, started)? {
@@ -191,11 +183,7 @@ pub(super) fn read_source(
         }
     }
 
-    let scan = match source {
-        AgentSessionSource::Codex => codex::scan(&root, fingerprint, report),
-        AgentSessionSource::ClaudeCode => claude_code::scan(&root, fingerprint, report),
-    };
-    let mut scan = scan;
+    let mut scan = native.scan(&root, fingerprint, report);
     scan.report.cache_hit = false;
     scan.report.duration_ms = Some(started.elapsed().as_millis());
     cache_source_scan(state, source, &scan)?;
@@ -207,7 +195,7 @@ pub(super) fn read_source(
 
 fn log_source_read(
     project: &Path,
-    source: AgentSessionSource,
+    source: &AgentId,
     force_refresh: bool,
     scan_wait_ms: u128,
     read: &SourceRead,
@@ -237,7 +225,7 @@ fn log_source_read(
 
 pub(super) fn write_snapshot(
     project: &Path,
-    source: AgentSessionSource,
+    source: &AgentId,
     fingerprint: &str,
     candidates: &[PersistedAgentSessionCandidate],
     report: &AgentSessionSourceReport,
@@ -307,7 +295,7 @@ struct DiskSourceCacheRow {
 fn disk_cached_source_read(
     state: &AgentSessionsState,
     project: &Path,
-    source: AgentSessionSource,
+    source: &AgentId,
     fingerprint: &str,
     started: Instant,
 ) -> Result<Option<SourceRead>, AppError> {
@@ -343,7 +331,7 @@ fn disk_cached_source_read(
 
 fn read_disk_source_cache_row(
     db_path: &Path,
-    source: AgentSessionSource,
+    source: &AgentId,
 ) -> Result<Option<DiskSourceCacheRow>, AppError> {
     tauri::async_runtime::block_on(async {
         let pool = open_cache_pool(db_path, false).await?;
@@ -371,7 +359,7 @@ fn read_disk_source_cache_row(
     })
 }
 
-fn cache_source_scan_on_disk(project: &Path, source: AgentSessionSource, scan: &SourceScan) {
+fn cache_source_scan_on_disk(project: &Path, source: &AgentId, scan: &SourceScan) {
     write_snapshot(
         project,
         source,
@@ -383,7 +371,7 @@ fn cache_source_scan_on_disk(project: &Path, source: AgentSessionSource, scan: &
 
 fn cache_source_read(
     state: &AgentSessionsState,
-    source: AgentSessionSource,
+    source: &AgentId,
     fingerprint: String,
     read: &SourceRead,
 ) -> Result<(), AppError> {
@@ -392,7 +380,7 @@ fn cache_source_read(
         .lock()
         .map_err(|_| AppError::General("Agent sessions cache lock poisoned".to_string()))?;
     cache.sources.insert(
-        source,
+        source.clone(),
         CachedSourceScan {
             fingerprint,
             candidates: read.candidates.clone(),
@@ -476,7 +464,7 @@ async fn ensure_cache_schema(pool: &sqlx::SqlitePool) -> Result<(), AppError> {
 
 fn cached_source_read(
     state: &AgentSessionsState,
-    source: AgentSessionSource,
+    source: &AgentId,
     fingerprint: &str,
     started: Instant,
 ) -> Result<Option<SourceRead>, AppError> {
@@ -504,7 +492,7 @@ fn cached_source_read(
 
 fn cache_source_scan(
     state: &AgentSessionsState,
-    source: AgentSessionSource,
+    source: &AgentId,
     scan: &SourceScan,
 ) -> Result<(), AppError> {
     let mut cache = state
@@ -512,7 +500,7 @@ fn cache_source_scan(
         .lock()
         .map_err(|_| AppError::General("Agent sessions cache lock poisoned".to_string()))?;
     cache.sources.insert(
-        source,
+        source.clone(),
         CachedSourceScan {
             fingerprint: scan.fingerprint.clone(),
             candidates: scan.candidates.clone(),

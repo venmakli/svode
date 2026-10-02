@@ -69,7 +69,7 @@ export function AgentAdapterCard({
   onMakePrimary,
   onRemove,
 }: {
-  approvalMapping?: AgentActorApprovalMapping;
+  approvalMapping?: AgentActorApprovalMapping | null;
   binding: AgentActorBinding;
   canRemove: boolean;
   checkDisabled: boolean;

@@ -10,7 +10,7 @@ use super::{RoutineStoreState, lifecycle};
 use crate::AppError;
 use crate::agent_actors;
 use crate::agent_actors::launch::{AgentLaunchResolution, AgentLaunchValidationCode};
-use crate::agent_sessions::types::{AgentSessionResumeCommand, AgentSessionSource};
+use crate::agent_sessions::types::{AgentSessionResumeCommand, native_writer_key};
 use crate::git::GitState;
 use crate::git::access::{RepositoryAccessState, require_repository_mutation_paths};
 use crate::index::IndexState;
@@ -442,7 +442,7 @@ pub(super) async fn dispatch_routine(
             ));
         }
     };
-    let source = adapter_session_source(launch.adapter);
+    let source = launch.adapter.id();
     let source_session_id = launch
         .source_session_id
         .clone()
@@ -505,7 +505,7 @@ pub(super) async fn dispatch_routine(
     let writers = terminal_manager.writers();
     let claim = match launch.source_session_id.as_deref() {
         Some(session_id) => writers.claim(
-            &source.writer_key(session_id),
+            &native_writer_key(&launch.adapter.id(), session_id),
             Writer::Pty,
             ExternalLiveness::Free,
             UnknownLiveness::NotConfirmed,
@@ -610,35 +610,29 @@ fn launch_resolution_block(
 async fn collect_adapter_diagnostics(
     launch_space: &Path,
 ) -> BTreeMap<AgentAdapterKind, AdapterDiagnostic> {
-    let registry = AdapterRuntimeRegistry;
     let search_path = ProcessPath::session();
     let target = AdapterTarget {
         cwd: launch_space.to_path_buf(),
         search_path: search_path.get().await.map(ToOwned::to_owned),
     };
-    let (codex, claude) = tokio::join!(
-        registry.diagnose(
-            AgentAdapterKind::Codex,
-            &target,
-            &SystemRuntimeCommandRunner,
-        ),
-        registry.diagnose(
-            AgentAdapterKind::ClaudeCode,
-            &target,
-            &SystemRuntimeCommandRunner,
-        ),
-    );
-    BTreeMap::from([
-        (AgentAdapterKind::Codex, codex),
-        (AgentAdapterKind::ClaudeCode, claude),
-    ])
-}
-
-fn adapter_session_source(adapter: AgentAdapterKind) -> AgentSessionSource {
-    match adapter {
-        AgentAdapterKind::Codex => AgentSessionSource::Codex,
-        AgentAdapterKind::ClaudeCode => AgentSessionSource::ClaudeCode,
+    // Every agent an Actor binding can use, checked concurrently.
+    let mut checks = tokio::task::JoinSet::new();
+    for descriptor in AdapterRuntimeRegistry.descriptors() {
+        let target = target.clone();
+        checks.spawn(async move {
+            AdapterRuntimeRegistry
+                .diagnose(descriptor.id, &target, &SystemRuntimeCommandRunner)
+                .await
+        });
     }
+    let mut diagnostics = BTreeMap::new();
+    while let Some(checked) = checks.join_next().await {
+        // A check that did not finish leaves its agent unchecked.
+        if let Ok(diagnostic) = checked {
+            diagnostics.insert(diagnostic.adapter, diagnostic);
+        }
+    }
+    diagnostics
 }
 
 fn routine_owner_kind_name(kind: RoutineOwnerKind) -> &'static str {

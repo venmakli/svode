@@ -10,6 +10,7 @@ import { getLocale, setLocale } from "@/paraglide/runtime.js";
 import type {
   AgentActorAdapterDescriptor,
   AgentActorAdapterDiagnostic,
+  AgentActorApprovalMapping,
   AgentActorBinding,
   AgentActorBindingRuntime,
   AgentActorDraft,
@@ -237,6 +238,42 @@ if (!isolatedDetailDomProcess) {
       await setLocale(originalLocale, { reload: false });
     }
   });
+
+  test("a binding of an agent this build does not know is shown unavailable with its reason", async () => {
+    const originalLocale = getLocale();
+    await setLocale("en", { reload: false });
+    const harness = await renderDetail({
+      diagnostics: { codex: diagnostic("codex", "ready") },
+      draft: draft("ask", [binding("codex"), binding("future-agent", "m1")]),
+      runtime: {
+        codex: bindingRuntime("codex_user_review", "ask"),
+        "future-agent": {
+          approval: null,
+          effortOptions: [{ label: "BACKEND CLIENT DEFAULT", value: null }],
+          validation: {
+            issues: [
+              {
+                code: "unknown_adapter",
+                field: "adapter",
+                message: "BACKEND VALIDATION",
+              },
+            ],
+            status: "unavailable",
+          },
+        },
+      },
+    });
+    try {
+      await clickButton(harness.dom, "Show or hide future-agent details");
+      const card = textOf(harness.dom, '[data-agent-adapter="future-agent"]');
+      expect(card.includes("not part of this version of Svode")).toBe(true);
+      expect(card.includes("Checking")).toBe(false);
+      expect(card.includes("BACKEND VALIDATION")).toBe(false);
+    } finally {
+      await harness.cleanup();
+      await setLocale(originalLocale, { reload: false });
+    }
+  });
 }
 
 async function renderDetail({
@@ -312,7 +349,7 @@ function binding(
 }
 
 function bindingRuntime(
-  native: AgentActorBindingRuntime["approval"]["native"],
+  native: AgentActorApprovalMapping["native"],
   requested: AgentActorDraft["approvalMode"],
   invalidEffort = false,
 ): AgentActorBindingRuntime {

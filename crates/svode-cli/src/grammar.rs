@@ -185,12 +185,15 @@ pub enum Noun {
 pub enum IntegrationVerb {
     /// Connect a client: the Svode skill, `svode` for its agent and the MCP server.
     #[command(after_help = "Example:\n  svode integration connect claude-code")]
-    Connect { client: ClientName },
+    Connect {
+        #[arg(value_parser = client_ids())]
+        client: String,
+    },
     /// Disconnect a client, or every client with --all.
     #[command(after_help = "Example:\n  svode integration disconnect codex")]
     Disconnect {
-        #[arg(required_unless_present = "all", conflicts_with = "all")]
-        client: Option<ClientName>,
+        #[arg(required_unless_present = "all", conflicts_with = "all", value_parser = client_ids())]
+        client: Option<String>,
         #[arg(long)]
         all: bool,
     },
@@ -203,10 +206,13 @@ pub enum IntegrationVerb {
     Sync,
 }
 
-#[derive(Debug, Clone, Copy, ValueEnum)]
-pub enum ClientName {
-    ClaudeCode,
-    Codex,
+/// Ids of the agents the connection manager connects.
+fn client_ids() -> clap::builder::PossibleValuesParser {
+    clap::builder::PossibleValuesParser::new(
+        svode_connect::Client::all()
+            .into_iter()
+            .map(svode_connect::Client::as_str),
+    )
 }
 
 #[derive(Debug, Subcommand)]

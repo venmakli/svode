@@ -3,7 +3,8 @@ import { listen, type UnlistenFn } from "@/platform/native/events";
 
 const MCP_STATUS_CHANGED_EVENT = "mcp:status-changed";
 
-export type McpClientId = "claude-code" | "codex";
+/** The agent id of a client the connection manager connects. */
+export type McpClientId = string;
 
 export type McpServerStatus = "installed" | "not_found";
 

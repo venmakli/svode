@@ -3,7 +3,9 @@ use std::fs::{self, File};
 use std::io::{Read, Take};
 use std::path::{Path, PathBuf};
 
-use crate::agent_adapters::{AgentAdapterKind, AgentSourcePolicy, SkillRootKind};
+use crate::agent_adapters::{
+    AgentAdapterKind, AgentSourcePolicy, SkillDiscoveryPolicy, SkillRootKind,
+};
 
 use super::super::model::{
     DiagnosticSeverity, InstructionOwner, InstructionOwnerKind, MarkdownPreview,
@@ -117,8 +119,7 @@ pub(super) fn discover(
     let personal_shadows_project = adapters
         .iter()
         .filter(|adapter| {
-            adapter.capabilities.skills.policy
-                == crate::agent_adapters::SkillDiscoveryPolicy::ClaudePersonalShadowsProject
+            adapter.capabilities.skills.policy == SkillDiscoveryPolicy::ClaudePersonalShadowsProject
         })
         .map(|adapter| adapter.id)
         .collect::<BTreeSet<_>>();
@@ -159,9 +160,11 @@ fn roots<'a>(directory_chain: &[PathBuf], adapters: &'a [AgentSourcePolicy]) -> 
             roots.push(RootSpec {
                 adapter,
                 scope: SkillScope::Project,
-                discovery_kind: match adapter.id {
-                    AgentAdapterKind::Codex => SkillDiscoveryKind::CodexProject,
-                    AgentAdapterKind::ClaudeCode => SkillDiscoveryKind::ClaudeProject,
+                discovery_kind: match adapter.capabilities.skills.policy {
+                    SkillDiscoveryPolicy::CodexDirectoryChain => SkillDiscoveryKind::CodexProject,
+                    SkillDiscoveryPolicy::ClaudePersonalShadowsProject => {
+                        SkillDiscoveryKind::ClaudeProject
+                    }
                 },
                 root: directory.join(project_relative_root),
                 owner: InstructionOwner {
@@ -174,11 +177,14 @@ fn roots<'a>(directory_chain: &[PathBuf], adapters: &'a [AgentSourcePolicy]) -> 
             roots.push(RootSpec {
                 adapter,
                 scope: SkillScope::Personal,
-                discovery_kind: match (adapter.id, personal_root.kind) {
-                    (AgentAdapterKind::Codex, SkillRootKind::StandardPersonal) => {
-                        SkillDiscoveryKind::CodexStandardPersonal
+                discovery_kind: match (adapter.capabilities.skills.policy, personal_root.kind) {
+                    (
+                        SkillDiscoveryPolicy::CodexDirectoryChain,
+                        SkillRootKind::StandardPersonal,
+                    ) => SkillDiscoveryKind::CodexStandardPersonal,
+                    (SkillDiscoveryPolicy::ClaudePersonalShadowsProject, _) => {
+                        SkillDiscoveryKind::ClaudePersonal
                     }
-                    (AgentAdapterKind::ClaudeCode, _) => SkillDiscoveryKind::ClaudePersonal,
                 },
                 root: PathBuf::from(&personal_root.path),
                 owner: InstructionOwner {

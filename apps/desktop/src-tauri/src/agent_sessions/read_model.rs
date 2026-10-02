@@ -10,20 +10,21 @@ use super::AgentSessionsState;
 use super::acp_list::AcpListRead;
 use super::cache::{
     SourceRead, candidates_for_session_ids, disk_snapshot_reads, memory_is_empty, read_source,
-    source_root, update_candidate, write_snapshot,
+    update_candidate, write_snapshot,
 };
 use super::live_status::{map_candidate, map_provisional_surface};
 use super::scope::{ScopeIndex, load_child_spaces, normalize_project_path, resolve_scope};
-use super::sources::{CandidateCwdSource, PersistedAgentSessionCandidate, claude_code, codex};
+use super::sources::{CandidateCwdSource, NativeSource, PersistedAgentSessionCandidate};
 use super::types::{
-    AgentSession, AgentSessionSource, AgentSessionSourceFileRef, AgentSessionSourceReport,
-    AgentSessionSourceStatus, AgentSessionTitleSource, AgentSessionsCacheMode,
-    AgentSessionsCacheReport, AgentSessionsHotStatusResult, AgentSessionsListResult,
-    AgentSessionsListStatus, AgentSessionsSummary,
+    AgentSession, AgentSessionSourceFileRef, AgentSessionSourceReport, AgentSessionSourceStatus,
+    AgentSessionTitleSource, AgentSessionsCacheMode, AgentSessionsCacheReport,
+    AgentSessionsHotStatusResult, AgentSessionsListResult, AgentSessionsListStatus,
+    AgentSessionsSummary,
 };
 use crate::error::AppError;
 use crate::terminal::AgentTerminalSurface;
 use svode_agents::status::SessionState;
+use svode_core::agent_adapters::AgentId;
 
 #[cfg(test)]
 pub(crate) fn list_sessions(
@@ -63,8 +64,8 @@ pub(crate) fn list_sessions_with_surfaces(
     }
 
     let mut reads = Vec::new();
-    for source in [AgentSessionSource::Codex, AgentSessionSource::ClaudeCode] {
-        reads.push(read_source(state, &project, source, force_refresh)?);
+    for source in NativeSource::all() {
+        reads.push(read_source(state, &project, &source, force_refresh)?);
     }
 
     build_list_result(
@@ -191,7 +192,7 @@ fn listed_candidates(
         .into_iter()
         .map(|listed| {
             let mut candidate =
-                PersistedAgentSessionCandidate::new(read.source, listed.key.session_id);
+                PersistedAgentSessionCandidate::new(read.source.clone(), listed.key.session_id);
             candidate.namespace = listed.key.namespace;
             candidate.from_acp_list = true;
             if let Some(title) = listed.title {
@@ -221,7 +222,7 @@ pub(crate) fn hot_status_with_surfaces(
     let generated_at = Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true);
     let requested = session_ids.into_iter().collect::<HashSet<_>>();
     let mut candidates = candidates_for_session_ids(state, &requested)?;
-    let mut reports = HashMap::<AgentSessionSource, AgentSessionSourceReport>::new();
+    let mut reports = HashMap::<AgentId, AgentSessionSourceReport>::new();
     let mut sessions = Vec::new();
     let mut checked_sessions = 0usize;
     let mut updated_sessions = 0usize;
@@ -229,19 +230,23 @@ pub(crate) fn hot_status_with_surfaces(
 
     for mut candidate in candidates.drain(..) {
         checked_sessions += 1;
-        let source = candidate.source;
-        let root = source_root(&state.home_dir, source);
-        let report = reports.entry(source).or_insert_with(|| {
-            AgentSessionSourceReport::new(source, root.to_string_lossy().into_owned())
+        let Some(native) = NativeSource::of(&candidate.source) else {
+            skipped_sessions += 1;
+            continue;
+        };
+        let source = native.agent.clone();
+        let root = native.root(&state.home_dir);
+        let report = reports.entry(source.clone()).or_insert_with(|| {
+            AgentSessionSourceReport::new(source.clone(), root.to_string_lossy().into_owned())
         });
         report.counts.hot_files_checked += 1;
 
         if let Some(source_file) = candidate.source_file.as_ref() {
             let path = PathBuf::from(&source_file.path);
-            if is_detail_source_file(source, &path) && source_file_metadata_changed(source_file) {
+            if native.is_detail_file(&path) && source_file_metadata_changed(source_file) {
                 report.counts.hot_files_reparsed += 1;
                 let (detail_candidate, detail_report) =
-                    parse_hot_detail_candidate(source, &root, &path, &candidate.source_session_id);
+                    parse_hot_detail_candidate(&native, &root, &path, &candidate.source_session_id);
                 merge_report_counts(report, &detail_report);
                 match detail_candidate {
                     Some(detail_candidate) => {
@@ -249,7 +254,7 @@ pub(crate) fn hot_status_with_surfaces(
                         if let Some(updated_cache) = update_candidate(state, candidate.clone())? {
                             write_snapshot(
                                 &project,
-                                source,
+                                &source,
                                 &updated_cache.fingerprint,
                                 &updated_cache.candidates,
                                 &updated_cache.report,
@@ -328,8 +333,10 @@ fn append_provisional_sessions(
         if requested.is_some_and(|ids| !ids.contains(&surface.agent_session_id)) {
             continue;
         }
-        let mut candidate =
-            PersistedAgentSessionCandidate::new(surface.source, surface.source_session_id.clone());
+        let mut candidate = PersistedAgentSessionCandidate::new(
+            surface.source.clone(),
+            surface.source_session_id.clone(),
+        );
         candidate.cwd = Some(surface.shell_cwd.clone());
         candidate.cwd_source = CandidateCwdSource::Cwd;
         let Some(scope) = resolve_scope(scope_index, &candidate, home) else {
@@ -345,23 +352,8 @@ fn source_file_metadata_changed(source_file: &AgentSessionSourceFileRef) -> bool
     current.mtime_ms != source_file.mtime_ms || current.size_bytes != source_file.size_bytes
 }
 
-fn is_detail_source_file(source: AgentSessionSource, path: &Path) -> bool {
-    match source {
-        AgentSessionSource::Codex => path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .is_some_and(|name| name.starts_with("rollout-") && name.ends_with(".jsonl")),
-        AgentSessionSource::ClaudeCode => {
-            path.extension().and_then(|ext| ext.to_str()) == Some("jsonl")
-                && path
-                    .components()
-                    .any(|component| component.as_os_str().to_string_lossy().as_ref() == "projects")
-        }
-    }
-}
-
 fn parse_hot_detail_candidate(
-    source: AgentSessionSource,
+    native: &NativeSource,
     root: &Path,
     path: &Path,
     source_session_id: &str,
@@ -369,11 +361,9 @@ fn parse_hot_detail_candidate(
     Option<PersistedAgentSessionCandidate>,
     AgentSessionSourceReport,
 ) {
-    let report = AgentSessionSourceReport::new(source, root.to_string_lossy().into_owned());
-    let (candidates, report) = match source {
-        AgentSessionSource::Codex => codex::scan_detail_file(path, report),
-        AgentSessionSource::ClaudeCode => claude_code::scan_detail_file(root, path, report),
-    };
+    let report =
+        AgentSessionSourceReport::new(native.agent.clone(), root.to_string_lossy().into_owned());
+    let (candidates, report) = native.scan_detail_file(root, path, report);
     let candidate = candidates
         .into_iter()
         .find(|candidate| candidate.source_session_id == source_session_id);
@@ -497,6 +487,7 @@ mod tests {
     use super::*;
     use crate::agent_sessions::AgentSessionsState;
     use crate::agent_sessions::live_status::SOURCE_LOG_ACTIVE_STALE_AFTER_SECS;
+    use crate::agent_sessions::types::terminal_resume_argv;
     use crate::agent_sessions::types::{
         AgentSessionScopeConfidence, AgentSessionScopeKind, AgentSessionScopeStatus,
         AgentSessionSourceKind,
@@ -505,6 +496,7 @@ mod tests {
     use svode_agents::status::{
         InteractionKind, SessionStatus, StatusConfidence, StatusSource, StopReason,
     };
+    use svode_core::agent_adapters::AgentAdapterKind;
 
     const PERMISSION: SessionState = SessionState::RequiresAction {
         request: InteractionKind::Permission,
@@ -608,7 +600,7 @@ mod tests {
 
     fn surface(
         pty_id: &str,
-        source: AgentSessionSource,
+        source: AgentId,
         source_session_id: &str,
         evidence: Option<AgentTerminalStatusEvidence>,
     ) -> AgentTerminalSurface {
@@ -620,10 +612,11 @@ mod tests {
             mcp_project_path: None,
             mcp_routine_caller_token: None,
             title: Some(format!("Session {source_session_id}")),
+            initial_agent_argv: terminal_resume_argv(&source, source_session_id)
+                .unwrap_or_default(),
             source,
             source_session_id: source_session_id.to_string(),
             live: true,
-            initial_agent_argv: source.resume_argv(source_session_id),
             initial_agent_cwd: Some("/tmp/project".to_string()),
             shell_cwd: "/tmp/project".to_string(),
             created_at: "2026-07-04T10:00:00Z".to_string(),
@@ -647,7 +640,7 @@ mod tests {
         let state = AgentSessionsState::with_home(home);
         let mut provisional = surface(
             "pty-routine",
-            AgentSessionSource::Codex,
+            AgentAdapterKind::Codex.id(),
             "launch:launch-123",
             None,
         );
@@ -707,7 +700,7 @@ mod tests {
         let state = AgentSessionsState::with_home(home);
         let mut provisional = surface(
             "pty-one",
-            AgentSessionSource::Codex,
+            AgentAdapterKind::Codex.id(),
             "launch:launch-one",
             None,
         );
@@ -1139,7 +1132,7 @@ mod tests {
         let codex = restarted
             .sources
             .iter()
-            .find(|report| report.source == AgentSessionSource::Codex)
+            .find(|report| report.source == AgentAdapterKind::Codex.id())
             .expect("codex report");
         assert!(!codex.cache_hit);
         assert_eq!(restarted.sessions[0].status.state, SessionState::Running);
@@ -1338,7 +1331,7 @@ mod tests {
             false,
             vec![surface(
                 "pty-live",
-                AgentSessionSource::Codex,
+                AgentAdapterKind::Codex.id(),
                 "live-shell",
                 None,
             )],
@@ -1366,7 +1359,7 @@ mod tests {
             false,
             vec![surface(
                 "pty-approval",
-                AgentSessionSource::Codex,
+                AgentAdapterKind::Codex.id(),
                 "needs-approval",
                 Some(evidence(PERMISSION, "approval prompt")),
             )],
@@ -1730,7 +1723,7 @@ mod tests {
             false,
             vec![surface(
                 "pty-answered",
-                AgentSessionSource::Codex,
+                AgentAdapterKind::Codex.id(),
                 "answered",
                 Some(evidence(PERMISSION, "stale approval prompt")),
             )],
@@ -1773,7 +1766,7 @@ mod tests {
         );
         let done_surface = surface(
             "pty-exited",
-            AgentSessionSource::Codex,
+            AgentAdapterKind::Codex.id(),
             "exited-after-start",
             Some(evidence(
                 idle(None),
@@ -1804,8 +1797,12 @@ mod tests {
         fs::create_dir_all(&project).expect("project");
         write_codex_history(&home, "exit-failed", &project, 1_700_000_000);
 
-        let mut failed_surface =
-            surface("pty-exit", AgentSessionSource::Codex, "exit-failed", None);
+        let mut failed_surface = surface(
+            "pty-exit",
+            AgentAdapterKind::Codex.id(),
+            "exit-failed",
+            None,
+        );
         failed_surface.finished_at = Some("2026-07-04T10:02:00Z".to_string());
         failed_surface.exit_code = Some(2);
         failed_surface.failure_reason = Some("initial command failed".to_string());
@@ -1860,13 +1857,13 @@ mod tests {
             vec![
                 surface(
                     "pty-failed",
-                    AgentSessionSource::Codex,
+                    AgentAdapterKind::Codex.id(),
                     "failed",
                     Some(evidence(idle(Some(StopReason::Error)), "agent failed")),
                 ),
                 surface(
                     "pty-stopped",
-                    AgentSessionSource::Codex,
+                    AgentAdapterKind::Codex.id(),
                     "stopped",
                     Some(evidence(
                         idle(Some(StopReason::Interrupted)),
@@ -1909,7 +1906,7 @@ mod tests {
             .map(|(index, evidence)| {
                 surface(
                     &format!("pty-{index}"),
-                    AgentSessionSource::Codex,
+                    AgentAdapterKind::Codex.id(),
                     session_id,
                     Some(evidence),
                 )
@@ -1995,7 +1992,7 @@ mod tests {
 
         assert_eq!(result.status, AgentSessionsListStatus::Error);
         assert!(result.sources.iter().any(|source| {
-            source.source == AgentSessionSource::Codex
+            source.source == AgentAdapterKind::Codex.id()
                 && source.status == AgentSessionSourceStatus::Unreadable
         }));
     }
@@ -2042,7 +2039,7 @@ mod tests {
         let codex = result
             .sources
             .iter()
-            .find(|source| source.source == AgentSessionSource::Codex)
+            .find(|source| source.source == AgentAdapterKind::Codex.id())
             .expect("codex report");
 
         assert_eq!(
@@ -2112,6 +2109,35 @@ mod tests {
         state.acp_lists.apply(agent, Ok(list), 3);
     }
 
+    /// An agent the code does not name (a custom or test agent, or a new
+    /// built-in one) reaches the Sessions catalogue under its own id from its
+    /// list alone: no consumer keeps a list of agents.
+    #[test]
+    fn an_agent_with_a_list_is_a_sessions_source_under_its_own_id() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let home = temp.path().join("home");
+        let project = temp.path().join("project");
+        fs::create_dir_all(&project).expect("project");
+        write_root_config(&project, Vec::new());
+
+        let state = AgentSessionsState::with_home(home);
+        acp_list(
+            &state,
+            "test-agent",
+            false,
+            vec![("t1", &project, LISTED_AT)],
+        );
+        let result = list_sessions(&state, project.to_string_lossy().into_owned(), false)
+            .expect("list sessions");
+
+        let session = by_id(&result, "test-agent:acp:t1");
+        assert_eq!(session.source.as_str(), "test-agent");
+        assert!(session.resume_command.is_none());
+        assert!(result.sources.iter().any(|report| {
+            report.kind == AgentSessionSourceKind::AcpList && report.source.as_str() == "test-agent"
+        }));
+    }
+
     fn by_id<'a>(result: &'a AgentSessionsListResult, id: &str) -> &'a AgentSession {
         result
             .sessions
@@ -2175,7 +2201,7 @@ mod tests {
             .iter()
             .find(|report| report.kind == AgentSessionSourceKind::AcpList)
             .expect("acp list report");
-        assert_eq!(report.source, AgentSessionSource::Codex);
+        assert_eq!(report.source, AgentAdapterKind::Codex.id());
         assert_eq!(report.counts.returned_sessions, 2);
         assert_eq!(report.counts.unresolved_candidates, 1);
         assert_eq!(report.counts.incomplete_candidates, 1);
@@ -2241,7 +2267,7 @@ mod tests {
             &state,
             project.to_string_lossy().into_owned(),
             false,
-            vec![surface("pty-1", AgentSessionSource::Codex, "s1", None)],
+            vec![surface("pty-1", AgentAdapterKind::Codex.id(), "s1", None)],
         )
         .expect("list sessions");
 

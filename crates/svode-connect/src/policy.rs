@@ -8,7 +8,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde_json::Value;
 
 use crate::entry::read_text;
-use crate::machine::{Client, Machine};
+use crate::machine::{Client, Kit, Machine};
 
 /// Claude Code keeps a plugin stdio server that failed to start out of new
 /// sessions for this long unless the entry names its own TTL.
@@ -18,9 +18,9 @@ const CLAUDE_CLOCK_SKEW_MS: u64 = 60_000;
 /// A setting that keeps the connection of `client` from working, with the
 /// file that holds it.
 pub(crate) fn blocking(machine: &Machine, client: Client) -> Vec<String> {
-    match client {
-        Client::ClaudeCode => claude(machine),
-        Client::Codex => codex(machine),
+    match client.kit {
+        Kit::ClaudePlugin => claude(machine),
+        Kit::CodexMcp => codex(machine),
     }
 }
 

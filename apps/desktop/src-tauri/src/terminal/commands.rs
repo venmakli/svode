@@ -2,8 +2,8 @@ use serde::Serialize;
 use tauri::{AppHandle, State};
 
 use super::{AgentTerminalSurface, TerminalManager, TerminalResourcePath, TerminalSession};
-use crate::agent_sessions::types::AgentSessionSource;
 use crate::error::AppError;
+use svode_core::agent_adapters::AgentId;
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -11,7 +11,7 @@ pub struct TerminalAgentSurfaceSession {
     pub pty_id: String,
     pub agent_session_id: String,
     pub title: Option<String>,
-    pub source: AgentSessionSource,
+    pub source: AgentId,
     pub source_session_id: String,
     pub shell_cwd: String,
     pub created_at: String,
@@ -98,7 +98,7 @@ pub fn terminal_register_agent_session(
     pty_id: String,
     agent_session_id: String,
     title: Option<String>,
-    source: AgentSessionSource,
+    source: AgentId,
     source_session_id: String,
     shell_cwd: Option<String>,
     created_at: Option<String>,

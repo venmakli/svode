@@ -5309,6 +5309,7 @@ version = "0.0.1"
 dependencies = [
  "serde",
  "serde_json",
+ "svode-core",
  "svode-install",
  "tempfile",
  "toml 0.9.12+spec-1.1.0",

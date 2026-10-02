@@ -20,7 +20,7 @@ import type {
 } from "../model/agent-actor-types";
 import {
   agentActorApprovalLabel,
-  agentActorEffectiveBoundary,
+  agentActorBoundarySummary,
   agentActorSelectorLabel,
 } from "./agent-actor-copy";
 
@@ -116,11 +116,7 @@ export function AgentActorCreateReview({
                 <ReviewValue
                   key={binding.adapter}
                   label={descriptor?.label ?? binding.adapter}
-                  value={
-                    mapping
-                      ? `${agentActorApprovalLabel(mapping.requested)}: ${agentActorEffectiveBoundary(mapping.native)}`
-                      : m.agent_actors_binding_checking()
-                  }
+                  value={agentActorBoundarySummary(mapping)}
                 />
               );
             })}

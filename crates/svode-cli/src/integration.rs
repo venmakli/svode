@@ -7,7 +7,7 @@ use svode_connect::{Client, ClientStatus, ConnectError, Machine, RESTART_NOTICE}
 use svode_tools::target::project_for_cwd;
 
 use crate::error::CliError;
-use crate::grammar::{ClientName, IntegrationVerb};
+use crate::grammar::IntegrationVerb;
 use crate::output::Outcome;
 use crate::target::Selectors;
 use crate::tools::envelope;
@@ -24,7 +24,7 @@ pub fn run(verb: IntegrationVerb, selectors: &Selectors<'_>) -> Result<Outcome, 
         .with_project(project.as_deref());
     match verb {
         IntegrationVerb::Connect { client } => {
-            let client = client_of(client);
+            let client = Client::parse(&client).map_err(failure)?;
             let changed = svode_connect::connect(&machine, client).map_err(failure)?;
             let statuses = svode_connect::client_statuses(&machine, &[]);
             let status = statuses.iter().find(|status| status.id == client.as_str());
@@ -46,8 +46,8 @@ pub fn run(verb: IntegrationVerb, selectors: &Selectors<'_>) -> Result<Outcome, 
         }
         IntegrationVerb::Disconnect { client, all } => {
             let clients = match (client, all) {
-                (Some(client), _) => vec![client_of(client)],
-                (None, _) => Client::ALL.to_vec(),
+                (Some(client), _) => vec![Client::parse(&client).map_err(failure)?],
+                (None, _) => Client::all(),
             };
             let mut changed = false;
             let mut human = String::new();
@@ -145,13 +145,6 @@ fn clients_human(statuses: &[ClientStatus]) -> String {
         }
     }
     out
-}
-
-fn client_of(name: ClientName) -> Client {
-    match name {
-        ClientName::ClaudeCode => Client::ClaudeCode,
-        ClientName::Codex => Client::Codex,
-    }
 }
 
 fn failure(error: ConnectError) -> CliError {

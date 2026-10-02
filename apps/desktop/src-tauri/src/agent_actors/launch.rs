@@ -177,7 +177,11 @@ fn enrich_attempt(
     AgentLaunchBindingAttempt {
         binding_index: attempt.binding_index,
         binding: binding.clone(),
-        diagnostic: diagnostics.get(&attempt.adapter).cloned(),
+        diagnostic: attempt
+            .adapter
+            .builtin()
+            .and_then(|adapter| diagnostics.get(&adapter))
+            .cloned(),
         eligible: attempt.eligible,
         reason_code: attempt.reason_code.clone(),
     }
@@ -200,7 +204,7 @@ mod tests {
         effort: Option<&str>,
     ) -> AgentAdapter {
         AgentAdapter {
-            adapter,
+            adapter: adapter.id(),
             model: model.map(str::to_string),
             effort: effort.map(str::to_string),
         }

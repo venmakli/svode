@@ -5,7 +5,8 @@ import {
   type UnlistenFn,
 } from "@/platform/native/events";
 
-export type AgentAdapterIdDto = "claude-code" | "codex";
+/** An agent id from the registry; a catalog may hold one this build does not know. */
+export type AgentAdapterIdDto = string;
 export type AgentActorApprovalModeDto = "ask" | "auto" | "full";
 
 export interface AgentActorBindingDto {
@@ -59,7 +60,7 @@ export interface AgentActorBindingRuntimeDto {
   bindingIndex: number;
   validation: AgentActorBindingValidationDto;
   effortOptions: AgentActorSelectOptionDto[];
-  approval: AgentActorApprovalMappingDto;
+  approval: AgentActorApprovalMappingDto | null;
   readiness: "unchecked";
 }
 
@@ -94,7 +95,7 @@ export interface AgentActorAdapterDiagnosticDto {
 export interface AgentActorBindingInspectionDto {
   validation: AgentActorBindingValidationDto;
   effortOptions: AgentActorSelectOptionDto[];
-  approval: AgentActorApprovalMappingDto;
+  approval: AgentActorApprovalMappingDto | null;
 }
 
 export interface AgentActorRoutineReferenceDto {

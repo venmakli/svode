@@ -417,7 +417,7 @@ mod tests {
             name: "A".into(),
             description: None,
             adapters: vec![AgentAdapter {
-                adapter: AgentAdapterKind::Codex,
+                adapter: AgentAdapterKind::Codex.id(),
                 model: Some("future-model".into()),
                 effort: Some("future-effort".into()),
             }],
@@ -435,6 +435,46 @@ mod tests {
             Err(CatalogError::Stale)
         ));
     }
+    /// Stage 10 `03` A7: a binding of an agent another Svode version knows
+    /// stays in the catalog unchanged while the other actors are edited.
+    #[test]
+    fn a_binding_of_an_unknown_agent_survives_edits_of_other_actors() {
+        let d = tempdir().unwrap();
+        let path = catalog_path(d.path());
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let future = "01arz3ndektsv4rrffq69g5fav";
+        let other = "01arz3ndektsv4rrffq69g5faw";
+        fs::write(
+            &path,
+            serde_json::json!({
+                "schemaVersion": 1,
+                "actors": [
+                    {
+                        "id": future,
+                        "name": "Future",
+                        "adapters": [{"adapter": "future-agent", "model": "m", "effort": "e"}]
+                    },
+                    {"id": other, "name": "Other", "adapters": [{"adapter": "codex"}]}
+                ]
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        let (catalog, fp) = read_catalog(d.path()).unwrap();
+        assert_eq!(catalog.actors.len(), 2);
+        let mut edited = catalog.actors[1].clone();
+        edited.name = "Renamed".into();
+        mutate_catalog(d.path(), &fp, CatalogMutation::Update(edited)).unwrap();
+
+        let written: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        assert_eq!(
+            written["actors"][0]["adapters"],
+            serde_json::json!([{"adapter": "future-agent", "model": "m", "effort": "e"}])
+        );
+        assert_eq!(written["actors"][1]["name"], "Renamed");
+    }
+
     #[test]
     fn local_overlay_is_not_portable() {
         let d = tempdir().unwrap();

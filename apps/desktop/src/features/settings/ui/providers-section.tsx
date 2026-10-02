@@ -8,7 +8,10 @@ import { ProviderRow } from "./provider-row";
 import { ProvidersRuntimeGroup } from "./providers-runtime-group";
 import { SettingsGroup, SettingsRowSkeleton } from "./settings-layout";
 
-const CLIENT_AGENTS = { "claude-code": "claude", codex: "codex" } as const;
+const CLIENT_AGENTS: Readonly<Record<string, string>> = {
+  "claude-code": "claude",
+  codex: "codex",
+};
 
 export function ProvidersSection() {
   const connections = useMcpIntegrations();

@@ -206,14 +206,16 @@ function ReadOnlyAdapterCard({
         <CollapsibleContent>
           <CardContent className="flex flex-col gap-3">
             {runtime ? (
-              <Alert>
-                <AlertTitle>
-                  {m.agent_actors_effective_boundary_label()}
-                </AlertTitle>
-                <AlertDescription>
-                  {agentActorEffectiveBoundary(runtime.approval.native)}
-                </AlertDescription>
-              </Alert>
+              runtime.approval ? (
+                <Alert>
+                  <AlertTitle>
+                    {m.agent_actors_effective_boundary_label()}
+                  </AlertTitle>
+                  <AlertDescription>
+                    {agentActorEffectiveBoundary(runtime.approval.native)}
+                  </AlertDescription>
+                </Alert>
+              ) : null
             ) : (
               <p className="text-sm text-muted-foreground" aria-live="polite">
                 {m.agent_actors_binding_checking()}

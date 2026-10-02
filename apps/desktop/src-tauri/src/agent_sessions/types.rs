@@ -1,59 +1,32 @@
 use serde::{Deserialize, Serialize};
 
 use svode_agents::identity::{IdentityNamespace, SessionKey};
+use svode_agents::registry::AdapterRuntimeRegistry;
 use svode_agents::status::SessionStatus;
-use svode_core::agent_adapters::AgentAdapterKind;
+use svode_core::agent_adapters::AgentId;
 
 pub(crate) const MAX_SOURCE_DIAGNOSTICS: usize = 50;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum AgentSessionSource {
-    Codex,
-    ClaudeCode,
+/// Writer-registry key of a session a Sessions source reports: terminal
+/// sessions carry the agent's native session id.
+pub(crate) fn native_writer_key(agent: &AgentId, source_session_id: &str) -> SessionKey {
+    SessionKey {
+        agent: agent.as_str().to_string(),
+        namespace: IdentityNamespace::Native,
+        session_id: source_session_id.to_string(),
+    }
 }
 
-impl AgentSessionSource {
-    pub(crate) fn as_str(self) -> &'static str {
-        match self {
-            Self::Codex => "codex",
-            Self::ClaudeCode => "claude-code",
-        }
-    }
-
-    /// Writer-registry key of a session this source reports: terminal
-    /// sessions carry the agent's native session id.
-    pub(crate) fn writer_key(self, source_session_id: &str) -> SessionKey {
-        SessionKey {
-            agent: self.adapter().as_str().to_string(),
-            namespace: IdentityNamespace::Native,
-            session_id: source_session_id.to_string(),
-        }
-    }
-
-    pub(crate) fn adapter(self) -> AgentAdapterKind {
-        match self {
-            Self::Codex => AgentAdapterKind::Codex,
-            Self::ClaudeCode => AgentAdapterKind::ClaudeCode,
-        }
-    }
-
-    pub(crate) fn resume_program(self) -> &'static str {
-        self.adapter().executable()
-    }
-
-    pub(crate) fn resume_args(self, source_session_id: &str) -> Vec<String> {
-        match self {
-            Self::Codex => vec!["resume".to_string(), source_session_id.to_string()],
-            Self::ClaudeCode => vec!["--resume".to_string(), source_session_id.to_string()],
-        }
-    }
-
-    pub(crate) fn resume_argv(self, source_session_id: &str) -> Vec<String> {
-        let mut argv = vec![self.resume_program().to_string()];
-        argv.extend(self.resume_args(source_session_id));
-        argv
-    }
+/// The command that continues a session in its agent's terminal by native
+/// id, when the agent's description has one.
+pub(crate) fn terminal_resume_argv(
+    agent: &AgentId,
+    source_session_id: &str,
+) -> Option<Vec<String>> {
+    let builtin = agent.builtin()?;
+    let mut argv = vec![builtin.executable().to_string()];
+    argv.extend(AdapterRuntimeRegistry.terminal_resume_args(builtin, source_session_id)?);
+    Some(argv)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -137,7 +110,7 @@ pub struct AgentSession {
     pub launch_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub routine_run_id: Option<String>,
-    pub source: AgentSessionSource,
+    pub source: AgentId,
     pub source_session_id: String,
     pub title: String,
     pub title_source: AgentSessionTitleSource,
@@ -317,7 +290,7 @@ pub struct AgentSessionsHotStatusResult {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentSessionSourceReport {
-    pub source: AgentSessionSource,
+    pub source: AgentId,
     #[serde(default)]
     pub kind: AgentSessionSourceKind,
     pub status: AgentSessionSourceStatus,
@@ -349,7 +322,7 @@ pub struct AgentSessionSourceCounts {
 }
 
 impl AgentSessionSourceReport {
-    pub(crate) fn new(source: AgentSessionSource, root: String) -> Self {
+    pub(crate) fn new(source: AgentId, root: String) -> Self {
         Self {
             source,
             kind: AgentSessionSourceKind::NativeLog,

@@ -27,7 +27,7 @@ export interface TerminalAgentSurfaceSession {
   ptyId: string;
   agentSessionId: string;
   title?: string | null;
-  source: "codex" | "claude-code";
+  source: string;
   sourceSessionId: string;
   shellCwd: string;
   createdAt: string;
@@ -39,7 +39,7 @@ export interface RegisterAgentTerminalSessionInput {
   ptyId: string;
   agentSessionId: string;
   title?: string | null;
-  source: "codex" | "claude-code";
+  source: string;
   sourceSessionId: string;
   shellCwd?: string | null;
   createdAt?: string | null;

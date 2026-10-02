@@ -8,8 +8,9 @@
 // reaches the other and svode-tools reaches neither. svode-install ships the
 // launchers that stay in ~/.svode after a runtime is gone, so it reaches no
 // other Svode package. svode-connect, the connection manager that the desktop
-// app, svode and svode-mcp share, reaches only svode-install. svode-agents, the
-// external agent runtime, reaches only svode-core.
+// app, svode and svode-mcp share, reaches only svode-install and svode-core,
+// whose agent registry gives it its clients' ids. svode-agents, the external
+// agent runtime, reaches only svode-core.
 
 import { execFileSync } from "node:child_process";
 
@@ -30,7 +31,7 @@ const extraForbidden = {
   "svode-mcp": ["svode-cli"],
   "svode-cli": ["svode-mcp"],
   "svode-install": ["svode-core", "svode-tools", "svode-mcp", "svode-cli", "svode-lfs", "svode-connect"],
-  "svode-connect": ["svode-core", "svode-tools", "svode-mcp", "svode-cli", "svode-lfs"],
+  "svode-connect": ["svode-tools", "svode-mcp", "svode-cli", "svode-lfs"],
 };
 const forbidden = (pkg, name) => hostBound(name) || (extraForbidden[pkg] ?? []).includes(name);
 
@@ -71,5 +72,5 @@ if (failed) {
   process.exit(1);
 }
 console.log(
-  `[crate-boundaries] ok: ${packages.join(", ")} are host-free; svode-cli and svode-mcp are independent over svode-tools; svode-install is self-contained; svode-connect reaches only svode-install; svode-agents reaches only svode-core`,
+  `[crate-boundaries] ok: ${packages.join(", ")} are host-free; svode-cli and svode-mcp are independent over svode-tools; svode-install is self-contained; svode-connect reaches only svode-install and svode-core; svode-agents reaches only svode-core`,
 );

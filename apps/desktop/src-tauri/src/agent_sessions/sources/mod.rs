@@ -5,18 +5,106 @@ use std::fs::{self, File, Metadata};
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
+use svode_agents::registry::{AdapterRuntimeRegistry, NativeSessionLog};
+use svode_core::agent_adapters::{AgentAdapterKind, AgentId};
 
 use chrono::{DateTime, TimeZone, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::agent_sessions::types::{
-    AgentSessionCounts, AgentSessionDiagnosticSeverity, AgentSessionSource,
-    AgentSessionSourceFileRef, AgentSessionSourceMeta, AgentSessionSourceReport,
-    AgentSessionSourceStatus, AgentSessionTitleSource,
+    AgentSessionCounts, AgentSessionDiagnosticSeverity, AgentSessionSourceFileRef,
+    AgentSessionSourceMeta, AgentSessionSourceReport, AgentSessionSourceStatus,
+    AgentSessionTitleSource,
 };
 use svode_agents::identity::IdentityNamespace;
 use svode_agents::status::SessionState;
+
+/// A transitional Sessions source that reads an agent's native session
+/// store: an agent whose description declares a native session log.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct NativeSource {
+    pub agent: AgentId,
+    log: NativeSessionLog,
+}
+
+impl NativeSource {
+    /// The native sources of every agent of the registry that has one.
+    pub(crate) fn all() -> Vec<Self> {
+        AgentAdapterKind::ALL
+            .into_iter()
+            .filter_map(|agent| Self::of(&agent.id()))
+            .collect()
+    }
+
+    pub(crate) fn of(agent: &AgentId) -> Option<Self> {
+        let log = AdapterRuntimeRegistry.native_session_log(agent.builtin()?)?;
+        Some(Self {
+            agent: agent.clone(),
+            log,
+        })
+    }
+
+    pub(crate) fn root(&self, home: &Path) -> PathBuf {
+        match self.log {
+            NativeSessionLog::CodexRollouts => home.join(".codex"),
+            NativeSessionLog::ClaudeProjects => home.join(".claude"),
+        }
+    }
+
+    pub(crate) fn collect_fingerprint(
+        &self,
+        root: &Path,
+    ) -> (SourceFingerprint, AgentSessionSourceReport) {
+        match self.log {
+            NativeSessionLog::CodexRollouts => codex::collect_fingerprint(root),
+            NativeSessionLog::ClaudeProjects => claude_code::collect_fingerprint(root),
+        }
+    }
+
+    pub(crate) fn scan(
+        &self,
+        root: &Path,
+        fingerprint: SourceFingerprint,
+        report: AgentSessionSourceReport,
+    ) -> SourceScan {
+        match self.log {
+            NativeSessionLog::CodexRollouts => codex::scan(root, fingerprint, report),
+            NativeSessionLog::ClaudeProjects => claude_code::scan(root, fingerprint, report),
+        }
+    }
+
+    /// Whether `path` is one session's detail file in this store.
+    pub(crate) fn is_detail_file(&self, path: &Path) -> bool {
+        match self.log {
+            NativeSessionLog::CodexRollouts => path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with("rollout-") && name.ends_with(".jsonl")),
+            NativeSessionLog::ClaudeProjects => {
+                path.extension().and_then(|ext| ext.to_str()) == Some("jsonl")
+                    && path.components().any(|component| {
+                        component.as_os_str().to_string_lossy().as_ref() == "projects"
+                    })
+            }
+        }
+    }
+
+    pub(crate) fn scan_detail_file(
+        &self,
+        root: &Path,
+        path: &Path,
+        report: AgentSessionSourceReport,
+    ) -> (
+        Vec<PersistedAgentSessionCandidate>,
+        AgentSessionSourceReport,
+    ) {
+        match self.log {
+            NativeSessionLog::CodexRollouts => codex::scan_detail_file(path, report),
+            NativeSessionLog::ClaudeProjects => claude_code::scan_detail_file(root, path, report),
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -28,7 +116,7 @@ pub(crate) enum CandidateCwdSource {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct PersistedAgentSessionCandidate {
-    pub source: AgentSessionSource,
+    pub source: AgentId,
     pub source_session_id: String,
     /// Id space of `source_session_id`; ACP ids without recorded equality
     /// evidence never merge with native rows.
@@ -53,7 +141,7 @@ pub(crate) struct PersistedAgentSessionCandidate {
 }
 
 impl PersistedAgentSessionCandidate {
-    pub(crate) fn new(source: AgentSessionSource, source_session_id: String) -> Self {
+    pub(crate) fn new(source: AgentId, source_session_id: String) -> Self {
         Self {
             source,
             source_session_id,

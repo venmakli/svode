@@ -7,6 +7,7 @@ use svode_agents::activity::ConnectionState;
 use svode_agents::adapters::LaunchUnavailable;
 use svode_agents::catalog::ListBounds;
 use svode_agents::{AcpLaunch, AgentCheck, AgentRuntime, RuntimeConfig};
+use svode_core::agent_adapters::AgentAdapterKind;
 use tauri::async_runtime::JoinHandle;
 
 use super::*;
@@ -96,10 +97,7 @@ fn open_agents(runtime: &AgentRuntime) -> Vec<String> {
         .collect()
 }
 
-fn status(
-    sources: &AcpListSources,
-    source: AgentSessionSource,
-) -> (AgentSessionSourceStatus, usize) {
+fn status(sources: &AcpListSources, source: AgentId) -> (AgentSessionSourceStatus, usize) {
     let read = sources
         .reads()
         .into_iter()
@@ -121,7 +119,7 @@ async fn an_open_collection_starts_its_agents_and_after_it_closes_they_idle_out(
     settle(sources.raise(&connections, &runtime)).await;
     assert_eq!(open_agents(&runtime), ["codex"]);
     assert_eq!(
-        status(&sources, AgentSessionSource::Codex),
+        status(&sources, AgentAdapterKind::Codex.id()),
         (AgentSessionSourceStatus::Ok, 1)
     );
 
@@ -137,7 +135,7 @@ async fn an_open_collection_starts_its_agents_and_after_it_closes_they_idle_out(
     assert!(open_agents(&runtime).is_empty());
     // Closing an idle connection is normal: the last list stays, not stale.
     assert_eq!(
-        status(&sources, AgentSessionSource::Codex),
+        status(&sources, AgentAdapterKind::Codex.id()),
         (AgentSessionSourceStatus::Ok, 1)
     );
     runtime.shutdown().await;
@@ -184,12 +182,12 @@ async fn a_failing_or_slow_list_marks_only_its_own_source_stale() {
         settle(sources.raise(&connections, &runtime)).await;
 
         assert_eq!(
-            status(&sources, AgentSessionSource::Codex),
+            status(&sources, AgentAdapterKind::Codex.id()),
             (AgentSessionSourceStatus::Stale, 0),
             "{failing}"
         );
         assert_eq!(
-            status(&sources, AgentSessionSource::ClaudeCode),
+            status(&sources, AgentAdapterKind::ClaudeCode.id()),
             (AgentSessionSourceStatus::Ok, 1),
             "{failing}"
         );
@@ -319,7 +317,10 @@ async fn live_the_acp_lists_join_the_scanners_one_session_per_key() {
     for session in &result.sessions {
         assert!(ids.insert(&session.id), "duplicate {}", session.id);
     }
-    for source in [AgentSessionSource::Codex, AgentSessionSource::ClaudeCode] {
+    for source in [
+        AgentAdapterKind::Codex.id(),
+        AgentAdapterKind::ClaudeCode.id(),
+    ] {
         let reports: Vec<_> = result
             .sources
             .iter()

@@ -8,12 +8,12 @@ use super::read_model;
 use super::types::{
     AgentSession, AgentSessionReentryError, AgentSessionReentryErrorCode, AgentSessionReentryMode,
     AgentSessionReentryResult, AgentSessionResumeCommand, AgentSessionScopeKind,
-    AgentSessionScopeStatus, AgentSessionSource,
+    AgentSessionScopeStatus, native_writer_key, terminal_resume_argv,
 };
 use crate::error::AppError;
 use crate::terminal::{AgentTerminalSpawn, AgentTerminalSurface, quote_agent_shell_command};
 use svode_agents::writer::{UnknownLiveness, Writer, WriterClaim, WriterRefusal, WriterRegistry};
-use svode_core::agent_adapters::resolve_space_executable;
+use svode_core::agent_adapters::{AgentId, resolve_space_executable};
 use svode_core::system_path;
 
 pub(crate) fn reenter_session<ResolveCli, SpawnShell>(
@@ -79,12 +79,12 @@ pub(crate) fn terminal_unavailable_result(
 }
 
 pub(crate) fn resolve_agent_cli_binary(
-    source: AgentSessionSource,
+    source: &AgentId,
     scope_dir: &Path,
     home_dir: &Path,
     search_path: Option<&OsStr>,
 ) -> Option<String> {
-    let path = resolve_space_executable(source.adapter(), scope_dir, home_dir, search_path)?;
+    let path = resolve_space_executable(source.builtin()?, scope_dir, home_dir, search_path)?;
     let canonical = fs::canonicalize(&path).unwrap_or(path);
     Some(system_path::user_facing_path(&canonical))
 }
@@ -111,7 +111,11 @@ where
         });
     }
 
-    if !session.capabilities.can_resume || session.source_session_id.trim().is_empty() {
+    let resume = terminal_resume_argv(&session.source, &session.source_session_id).filter(|_| {
+        session.capabilities.can_resume && !session.source_session_id.trim().is_empty()
+    });
+    let Some((resume_program, resume_args)) = resume.as_deref().and_then(<[String]>::split_first)
+    else {
         return Ok(error_result(
             session.id.clone(),
             AgentSessionReentryErrorCode::ResumeUnavailable,
@@ -119,12 +123,12 @@ where
             None,
             None,
         ));
-    }
+    };
 
     let cwd = match resolve_safe_cwd(session, project) {
         Ok(cwd) => cwd,
         Err(raw_cwd) => {
-            let command = fallback_resume_command(session, raw_cwd.clone());
+            let command = resume_command(resume_program, resume_args, raw_cwd.clone());
             return Ok(error_result(
                 session.id.clone(),
                 AgentSessionReentryErrorCode::CwdNotAccessible,
@@ -136,23 +140,20 @@ where
     };
     let scope_dir = scope_config_dir(session, project);
     let Some(program) = resolve_cli(session, &scope_dir) else {
-        let command = fallback_resume_command(session, Some(cwd.clone()));
+        let command = resume_command(resume_program, resume_args, Some(cwd.clone()));
         return Ok(error_result(
             session.id.clone(),
             AgentSessionReentryErrorCode::CliNotFound,
-            format!(
-                "{} CLI binary was not found",
-                session.source.resume_program()
-            ),
+            format!("{resume_program} CLI binary was not found"),
             Some(command),
             Some(cwd),
         ));
     };
-    let command = resolved_resume_command(session, program, cwd.clone());
+    let command = resume_command(&program, resume_args, Some(cwd.clone()));
     // Terminal resume under unknown liveness keeps today's behaviour: it is
     // the native CLI the user would start by hand, with its own guards.
     let claim = match writers.claim(
-        &session.source.writer_key(&session.source_session_id),
+        &native_writer_key(&session.source, &session.source_session_id),
         Writer::Pty,
         external_liveness(session),
         UnknownLiveness::NotConfirmed,
@@ -173,7 +174,7 @@ where
     let spawn = AgentTerminalSpawn {
         agent_session_id: session.id.clone(),
         title: Some(session.title.clone()),
-        source: session.source,
+        source: session.source.clone(),
         source_session_id: session.source_session_id.clone(),
         command: command.clone(),
         cwd: cwd.clone(),
@@ -243,30 +244,15 @@ fn live_managed_pty_id(session: &AgentSession) -> Option<String> {
         .and_then(|runtime| runtime.pty_id.clone())
 }
 
-fn resolved_resume_command(
-    session: &AgentSession,
-    program: String,
-    cwd: String,
-) -> AgentSessionResumeCommand {
-    let args = session.source.resume_args(&session.source_session_id);
-    AgentSessionResumeCommand {
-        display: quote_agent_shell_command(&program, &args),
-        program,
-        args,
-        cwd: Some(cwd),
-    }
-}
-
-fn fallback_resume_command(
-    session: &AgentSession,
+fn resume_command(
+    program: &str,
+    args: &[String],
     cwd: Option<String>,
 ) -> AgentSessionResumeCommand {
-    let program = session.source.resume_program().to_string();
-    let args = session.source.resume_args(&session.source_session_id);
     AgentSessionResumeCommand {
-        display: quote_agent_shell_command(&program, &args),
-        program,
-        args,
+        display: quote_agent_shell_command(program, args),
+        program: program.to_string(),
+        args: args.to_vec(),
         cwd,
     }
 }
@@ -354,6 +340,7 @@ mod tests {
     use super::*;
     use crate::agent_sessions::AgentSessionsState;
     use crate::terminal::AgentTerminalSurface;
+    use svode_core::agent_adapters::AgentAdapterKind;
 
     // An empty search PATH keeps the developer's own CLIs out of the tests.
     fn no_search_path() -> Option<&'static OsStr> {
@@ -413,7 +400,7 @@ mod tests {
             mcp_project_path: None,
             mcp_routine_caller_token: None,
             title: Some(format!("Session {source_session_id}")),
-            source: AgentSessionSource::Codex,
+            source: AgentAdapterKind::Codex.id(),
             source_session_id: source_session_id.to_string(),
             live: true,
             initial_agent_argv: vec![
@@ -489,7 +476,7 @@ mod tests {
             Vec::new(),
             &writers,
             move |session, scope_dir| {
-                resolve_agent_cli_binary(session.source, scope_dir, &home, no_search_path())
+                resolve_agent_cli_binary(&session.source, scope_dir, &home, no_search_path())
             },
             |spawn, claim| {
                 assert_eq!(claim.writer(), Writer::Pty);
@@ -564,7 +551,10 @@ mod tests {
             vec!["resume", "elsewhere"]
         );
         assert_eq!(
-            writers.writer(&AgentSessionSource::Codex.writer_key("elsewhere")),
+            writers.writer(&native_writer_key(
+                &AgentAdapterKind::Codex.id(),
+                "elsewhere"
+            )),
             None
         );
     }
@@ -581,7 +571,7 @@ mod tests {
         let writers = WriterRegistry::default();
         let _acp = writers
             .claim(
-                &AgentSessionSource::Codex.writer_key("in-svode"),
+                &native_writer_key(&AgentAdapterKind::Codex.id(), "in-svode"),
                 Writer::Acp,
                 svode_agents::writer::ExternalLiveness::Free,
                 UnknownLiveness::NotConfirmed,
@@ -681,9 +671,13 @@ mod tests {
         fs::create_dir_all(&project).expect("project");
         write_executable(&codex);
 
-        let resolved =
-            resolve_agent_cli_binary(AgentSessionSource::Codex, &project, &home, no_search_path())
-                .expect("codex path");
+        let resolved = resolve_agent_cli_binary(
+            &AgentAdapterKind::Codex.id(),
+            &project,
+            &home,
+            no_search_path(),
+        )
+        .expect("codex path");
 
         assert_eq!(resolved, canonical_display(&codex));
     }
@@ -708,7 +702,7 @@ mod tests {
         );
 
         let resolved = resolve_agent_cli_binary(
-            AgentSessionSource::ClaudeCode,
+            &AgentAdapterKind::ClaudeCode.id(),
             &project,
             temp.path(),
             no_search_path(),

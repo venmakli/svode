@@ -5,13 +5,16 @@ use std::io::{Read, Write};
 use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::thread;
+use svode_core::agent_adapters::{AgentAdapterKind, AgentId};
 
 use chrono::{SecondsFormat, Utc};
 use portable_pty::{Child as PtyChild, CommandBuilder, MasterPty, PtySize, native_pty_system};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter};
 
-use crate::agent_sessions::types::{AgentSession, AgentSessionResumeCommand, AgentSessionSource};
+use crate::agent_sessions::types::{
+    AgentSession, AgentSessionResumeCommand, native_writer_key, terminal_resume_argv,
+};
 use crate::error::AppError;
 use svode_agents::status::{InteractionKind, SessionState, StatusConfidence, StopReason};
 use svode_agents::writer::{
@@ -85,7 +88,7 @@ pub struct TerminalResourcePath {
 pub(crate) struct AgentTerminalSpawn {
     pub agent_session_id: String,
     pub title: Option<String>,
-    pub source: AgentSessionSource,
+    pub source: AgentId,
     pub source_session_id: String,
     pub command: AgentSessionResumeCommand,
     pub cwd: String,
@@ -135,7 +138,7 @@ pub(crate) struct AgentTerminalSurface {
     pub(crate) mcp_routine_caller_token: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
-    pub source: AgentSessionSource,
+    pub source: AgentId,
     pub source_session_id: String,
     pub live: bool,
     pub initial_agent_argv: Vec<String>,
@@ -393,7 +396,7 @@ impl TerminalManager {
         pty_id: String,
         agent_session_id: String,
         title: Option<String>,
-        source: AgentSessionSource,
+        source: AgentId,
         source_session_id: String,
         shell_cwd: Option<String>,
         created_at: Option<String>,
@@ -411,7 +414,7 @@ impl TerminalManager {
                 .clone()
         };
 
-        self.hold_existing_session_writer(&pty_id, source, &source_session_id)?;
+        self.hold_existing_session_writer(&pty_id, &source, &source_session_id)?;
 
         let surface = agent_surface_from_existing_session(
             pty_id,
@@ -432,10 +435,10 @@ impl TerminalManager {
     fn hold_existing_session_writer(
         &self,
         pty_id: &str,
-        source: AgentSessionSource,
+        source: &AgentId,
         source_session_id: &str,
     ) -> Result<(), AppError> {
-        let key = source.writer_key(source_session_id);
+        let key = native_writer_key(source, source_session_id);
         let mut claims = self
             .writer_claims
             .lock()
@@ -720,8 +723,10 @@ impl TerminalManager {
                     surface.source_session_id = session.source_session_id.clone();
                     // The launch's writer claim moves to its canonical session.
                     if let Some(claim) = claims.get_mut(&surface.pty_id)
-                        && let Err(refusal) =
-                            claim.bind(&session.source.writer_key(&session.source_session_id))
+                        && let Err(refusal) = claim.bind(&native_writer_key(
+                            &session.source,
+                            &session.source_session_id,
+                        ))
                     {
                         tracing::warn!(
                             agent_session_id = session.id,
@@ -932,7 +937,7 @@ fn update_agent_surface_output(
         });
     }
     if outcome.is_none()
-        && let Some(signal) = classify_agent_terminal_output(surface.source, &visible)
+        && let Some(signal) = classify_agent_terminal_output(&surface.source, &visible)
     {
         surface.status_evidence = Some(AgentTerminalStatusEvidence {
             state: SessionState::RequiresAction {
@@ -1140,7 +1145,7 @@ fn agent_surface_from_existing_session(
     pty_id: String,
     agent_session_id: String,
     title: Option<String>,
-    source: AgentSessionSource,
+    source: AgentId,
     source_session_id: String,
     shell_cwd: String,
     created_at: String,
@@ -1153,10 +1158,10 @@ fn agent_surface_from_existing_session(
         mcp_project_path: None,
         mcp_routine_caller_token: None,
         title,
+        initial_agent_argv: terminal_resume_argv(&source, &source_session_id).unwrap_or_default(),
         source,
         source_session_id: source_session_id.clone(),
         live: true,
-        initial_agent_argv: source.resume_argv(&source_session_id),
         initial_agent_cwd: None,
         shell_cwd,
         created_at,
@@ -1306,7 +1311,7 @@ fn is_safe_windows_shell_byte(byte: u8) -> bool {
 }
 
 fn classify_agent_terminal_output(
-    source: AgentSessionSource,
+    source: &AgentId,
     data: &str,
 ) -> Option<AgentTerminalStatusSignal> {
     let normalized = normalize_terminal_text(data);
@@ -1314,9 +1319,12 @@ fn classify_agent_terminal_output(
         return None;
     }
 
-    match source {
-        AgentSessionSource::Codex => classify_codex_terminal_output(&normalized),
-        AgentSessionSource::ClaudeCode => classify_claude_terminal_output(&normalized),
+    // Terminal heuristics exist only for the agents Svode starts in a
+    // managed PTY.
+    match source.builtin() {
+        Some(AgentAdapterKind::Codex) => classify_codex_terminal_output(&normalized),
+        Some(AgentAdapterKind::ClaudeCode) => classify_claude_terminal_output(&normalized),
+        _ => None,
     }
 }
 
@@ -1589,7 +1597,7 @@ mod tests {
             mcp_project_path: None,
             mcp_routine_caller_token: None,
             title: Some("Test session".to_string()),
-            source: AgentSessionSource::Codex,
+            source: AgentAdapterKind::Codex.id(),
             source_session_id: "session".to_string(),
             live: true,
             initial_agent_argv: vec![
@@ -1614,7 +1622,7 @@ mod tests {
         AgentTerminalSpawn {
             agent_session_id: "codex:session".to_string(),
             title: Some("Test session".to_string()),
-            source: AgentSessionSource::Codex,
+            source: AgentAdapterKind::Codex.id(),
             source_session_id: "session".to_string(),
             command: AgentSessionResumeCommand {
                 display: "codex resume session".to_string(),
@@ -1799,7 +1807,7 @@ mod tests {
     #[test]
     fn terminal_agent_classifier_detects_codex_approval_prompt() {
         let signal = classify_agent_terminal_output(
-            AgentSessionSource::Codex,
+            &AgentAdapterKind::Codex.id(),
             "\u{1b}[33mApproval required: approve command?\u{1b}[0m",
         )
         .expect("approval signal");
@@ -1810,7 +1818,7 @@ mod tests {
     #[test]
     fn terminal_agent_classifier_detects_claude_user_input_prompt() {
         let signal = classify_agent_terminal_output(
-            AgentSessionSource::ClaudeCode,
+            &AgentAdapterKind::ClaudeCode.id(),
             "Claude is waiting for your input. Please enter your response.",
         )
         .expect("input signal");
@@ -1822,14 +1830,14 @@ mod tests {
     fn terminal_agent_classifier_ignores_weak_waiting_hints() {
         assert!(
             classify_agent_terminal_output(
-                AgentSessionSource::Codex,
+                &AgentAdapterKind::Codex.id(),
                 "The task may require approval later, continuing for now.",
             )
             .is_none()
         );
         assert!(
             classify_agent_terminal_output(
-                AgentSessionSource::ClaudeCode,
+                &AgentAdapterKind::ClaudeCode.id(),
                 "Waiting can happen when a tool asks permission.",
             )
             .is_none()
@@ -1837,7 +1845,7 @@ mod tests {
     }
 
     fn codex_key(session_id: &str) -> svode_agents::identity::SessionKey {
-        AgentSessionSource::Codex.writer_key(session_id)
+        native_writer_key(&AgentAdapterKind::Codex.id(), session_id)
     }
 
     #[test]
@@ -1845,16 +1853,16 @@ mod tests {
         let writers = WriterRegistry::default();
         let manager = TerminalManager::new(writers.clone());
         manager
-            .hold_existing_session_writer("pty-a", AgentSessionSource::Codex, "s1")
+            .hold_existing_session_writer("pty-a", &AgentAdapterKind::Codex.id(), "s1")
             .expect("first terminal");
         // Linking the same terminal again keeps its claim.
         manager
-            .hold_existing_session_writer("pty-a", AgentSessionSource::Codex, "s1")
+            .hold_existing_session_writer("pty-a", &AgentAdapterKind::Codex.id(), "s1")
             .expect("same terminal");
         assert_eq!(writers.writer(&codex_key("s1")), Some(Writer::Pty));
         assert!(
             manager
-                .hold_existing_session_writer("pty-b", AgentSessionSource::Codex, "s1")
+                .hold_existing_session_writer("pty-b", &AgentAdapterKind::Codex.id(), "s1")
                 .is_err()
         );
         assert_eq!(
@@ -1874,7 +1882,7 @@ mod tests {
         manager.kill("pty-a").expect("kill");
         assert_eq!(writers.writer(&codex_key("s1")), None);
         manager
-            .hold_existing_session_writer("pty-b", AgentSessionSource::Codex, "s1")
+            .hold_existing_session_writer("pty-b", &AgentAdapterKind::Codex.id(), "s1")
             .expect("the slot is free again");
     }
 
@@ -1891,7 +1899,7 @@ mod tests {
             )
             .unwrap();
         let error = manager
-            .hold_existing_session_writer("pty-a", AgentSessionSource::Codex, "s1")
+            .hold_existing_session_writer("pty-a", &AgentAdapterKind::Codex.id(), "s1")
             .expect_err("ACP writes the session");
         assert_eq!(error.kind(), "agent_runtime");
     }
@@ -2204,7 +2212,7 @@ mod tests {
             "pty-existing".to_string(),
             "codex:session".to_string(),
             Some("Existing session".to_string()),
-            AgentSessionSource::Codex,
+            AgentAdapterKind::Codex.id(),
             "session".to_string(),
             "/tmp/project".to_string(),
             "2026-07-04T10:00:00Z".to_string(),

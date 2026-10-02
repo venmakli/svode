@@ -13,15 +13,15 @@ use std::time::Instant;
 use chrono::{DateTime, SecondsFormat, Utc};
 use svode_agents::catalog::{CatalogConnection, ListedSession, SessionList};
 use svode_agents::{AgentRuntime, AgentRuntimeError, ConnectionId};
-use svode_core::agent_adapters::AgentAdapterKind;
+use svode_core::agent_adapters::AgentId;
 use tauri::async_runtime::JoinHandle;
 use tokio::sync::broadcast::error::RecvError;
 
 use crate::agent_runtime::connections::AgentConnections;
 
 use super::types::{
-    AgentSessionDiagnosticSeverity, AgentSessionSource, AgentSessionSourceKind,
-    AgentSessionSourceReport, AgentSessionSourceStatus,
+    AgentSessionDiagnosticSeverity, AgentSessionSourceKind, AgentSessionSourceReport,
+    AgentSessionSourceStatus,
 };
 
 /// What the read-model needs from the agent runtime to read catalogues.
@@ -67,7 +67,7 @@ struct LastGood {
 
 /// One agent's catalogue as the read-model merges it.
 pub(crate) struct AcpListRead {
-    pub source: AgentSessionSource,
+    pub source: AgentId,
     pub sessions: Vec<ListedSession>,
     pub report: AgentSessionSourceReport,
 }
@@ -173,29 +173,25 @@ impl AcpListSources {
             .filter(|(_, list)| list.last_good.is_some() || list.problem.is_some())
             .filter_map(|(agent, list)| {
                 let Some(source) = session_source(agent) else {
-                    tracing::warn!(agent, "agent has no Sessions source; its list is not shown");
+                    tracing::warn!(agent, "agent id is malformed; its list is not shown");
                     return None;
                 };
                 Some(read_of(source, list))
             })
             .collect();
-        reads.sort_by_key(|read| read.source.as_str());
+        reads.sort_by(|left, right| left.source.cmp(&right.source));
         reads
     }
 }
 
-fn session_source(agent: &str) -> Option<AgentSessionSource> {
-    let adapter = AgentAdapterKind::ALL
-        .into_iter()
-        .find(|adapter| adapter.as_str() == agent)?;
-    Some(match adapter {
-        AgentAdapterKind::Codex => AgentSessionSource::Codex,
-        AgentAdapterKind::ClaudeCode => AgentSessionSource::ClaudeCode,
-    })
+/// Any agent with a session list is a Sessions source under its own id,
+/// a built-in, custom or test agent alike.
+fn session_source(agent: &str) -> Option<AgentId> {
+    AgentId::parse(agent).ok()
 }
 
-fn read_of(source: AgentSessionSource, list: &AgentList) -> AcpListRead {
-    let mut report = AgentSessionSourceReport::new(source, "session/list".to_string());
+fn read_of(source: AgentId, list: &AgentList) -> AcpListRead {
+    let mut report = AgentSessionSourceReport::new(source.clone(), "session/list".to_string());
     report.kind = AgentSessionSourceKind::AcpList;
     // Always served from the last good read, never on the response path.
     report.cache_hit = true;
@@ -273,7 +269,9 @@ mod connections_tests;
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
+
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use svode_core::agent_adapters::AgentAdapterKind;
 
     use svode_agents::identity::SessionKey;
     use tokio::sync::Notify;
@@ -374,7 +372,7 @@ mod tests {
         let reads = sources.reads();
         let codex = reads
             .iter()
-            .find(|read| read.source == AgentSessionSource::Codex)
+            .find(|read| read.source == AgentAdapterKind::Codex.id())
             .unwrap();
         assert_eq!(codex.report.status, AgentSessionSourceStatus::Stale);
         assert_eq!(codex.report.kind, AgentSessionSourceKind::AcpList);
@@ -382,7 +380,7 @@ mod tests {
         assert_eq!(codex.report.diagnostics[0].code, "acp-list-stale");
         let claude = reads
             .iter()
-            .find(|read| read.source == AgentSessionSource::ClaudeCode)
+            .find(|read| read.source == AgentAdapterKind::ClaudeCode.id())
             .unwrap();
         assert_eq!(claude.report.status, AgentSessionSourceStatus::Ok);
 
@@ -395,7 +393,7 @@ mod tests {
         let codex = sources
             .reads()
             .into_iter()
-            .find(|read| read.source == AgentSessionSource::Codex)
+            .find(|read| read.source == AgentAdapterKind::Codex.id())
             .unwrap();
         assert_eq!(codex.report.status, AgentSessionSourceStatus::Ok);
         assert!(codex.sessions.is_empty());
@@ -449,14 +447,21 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn an_agent_without_a_sessions_source_is_not_shown() {
+    async fn every_agent_with_a_list_is_a_source_and_a_malformed_id_is_not_shown() {
         let sources = Arc::new(AcpListSources::default());
         let lister = FakeLister::default();
         lister.connect(
             "hermes",
             Ok(list_of(vec![listed("hermes", "h1", "/w", false)])),
         );
+        lister.connect(
+            "Not An Id",
+            Ok(list_of(vec![listed("Not An Id", "x1", "/w", false)])),
+        );
         settle(sources.refresh(&lister)).await;
-        assert!(sources.reads().is_empty());
+        let reads = sources.reads();
+        assert_eq!(reads.len(), 1);
+        assert_eq!(reads[0].source.as_str(), "hermes");
+        assert_eq!(reads[0].sessions.len(), 1);
     }
 }

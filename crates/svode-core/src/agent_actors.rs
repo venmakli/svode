@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::agent_adapters::AgentAdapterKind;
+use crate::agent_adapters::AgentId;
 
 const CATALOG_RELATIVE_PATH: &str = ".svode/agent-actors.json";
 const LOCAL_RELATIVE_PATH: &str = ".svode/local.json";
@@ -47,7 +47,9 @@ pub struct AgentActor {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AgentAdapter {
-    pub adapter: AgentAdapterKind,
+    /// Any well-formed agent id, so a binding of an agent another Svode
+    /// version knows is read as unavailable and kept as is on every write.
+    pub adapter: AgentId,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -329,7 +331,7 @@ fn ensure_known_v1_shape(value: &serde_json::Value) -> Result<(), CatalogError> 
                 &format!("actors[{actor_index}].adapters[{adapter_index}]"),
             )?;
             if let Some(adapter_id) = adapter.get("adapter").and_then(serde_json::Value::as_str) {
-                if !matches!(adapter_id, "codex" | "claude-code") {
+                if AgentId::parse(adapter_id).is_err() {
                     return Err(CatalogError::Compatibility(format!(
                         "unsupported adapter id: {adapter_id}"
                     )));
@@ -373,6 +375,7 @@ fn fingerprint(raw: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::agent_adapters::AgentAdapterKind;
     use tempfile::tempdir;
 
     fn actor(id: &str) -> AgentActor {
@@ -381,7 +384,7 @@ mod tests {
             name: "A".into(),
             description: None,
             adapters: vec![AgentAdapter {
-                adapter: AgentAdapterKind::Codex,
+                adapter: AgentAdapterKind::Codex.id(),
                 model: Some("future-model".into()),
                 effort: Some("future-effort".into()),
             }],
@@ -435,7 +438,40 @@ mod tests {
     }
 
     #[test]
-    fn unsupported_adapter_id_is_a_read_only_compatibility_state() {
+    fn a_binding_of_an_unknown_agent_is_read_and_kept_as_is() {
+        let d = tempdir().unwrap();
+        let path = catalog_path(d.path());
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(
+            &path,
+            r#"{
+                "schemaVersion": 1,
+                "actors": [{
+                    "id": "01arz3ndektsv4rrffq69g5fav",
+                    "name": "Future agent",
+                    "adapters": [
+                        {"adapter":"future-client","model":"m1","effort":"e1"},
+                        {"adapter":"codex"}
+                    ]
+                }]
+            }"#,
+        )
+        .unwrap();
+
+        let (catalog, _) = read_catalog(d.path()).unwrap();
+        let bindings = &catalog.actors[0].adapters;
+        assert_eq!(bindings[0].adapter.as_str(), "future-client");
+        assert_eq!(bindings[0].adapter.builtin(), None);
+        assert_eq!(bindings[0].model.as_deref(), Some("m1"));
+        assert_eq!(bindings[1].adapter, AgentAdapterKind::Codex);
+        assert_eq!(
+            serde_json::to_value(&bindings[0]).unwrap(),
+            serde_json::json!({"adapter":"future-client","model":"m1","effort":"e1"})
+        );
+    }
+
+    #[test]
+    fn a_malformed_adapter_id_is_a_read_only_compatibility_state() {
         let d = tempdir().unwrap();
         let path = catalog_path(d.path());
         fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -444,7 +480,7 @@ mod tests {
             "actors": [{
                 "id": "01arz3ndektsv4rrffq69g5fav",
                 "name": "Future agent",
-                "adapters": [{"adapter":"future-client"}]
+                "adapters": [{"adapter":"Future Client"}]
             }]
         }"#;
         fs::write(&path, raw).unwrap();

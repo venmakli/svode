@@ -16,7 +16,7 @@ use std::path::PathBuf;
 use crate::entry::{self, Entry};
 use crate::error::ConnectError;
 use crate::link::{self, Link};
-use crate::machine::{Client, Machine, Stable};
+use crate::machine::{Client, Kit, Machine, Stable};
 
 /// What one client has on this machine.
 #[derive(Debug, Clone)]
@@ -54,9 +54,9 @@ pub(crate) fn complete(machine: &Machine, client: Client, inspection: &Inspectio
         return false;
     };
     inspection.skill == Link::Managed
-        && match client {
-            Client::ClaudeCode => !inspection.entry.is_svode(),
-            Client::Codex => entry::is_canonical(&inspection.entry, &stable.launcher_mcp),
+        && match client.kit {
+            Kit::ClaudePlugin => !inspection.entry.is_svode(),
+            Kit::CodexMcp => entry::is_canonical(&inspection.entry, &stable.launcher_mcp),
         }
 }
 
@@ -131,7 +131,7 @@ pub fn connect(machine: &Machine, client: Client) -> Result<bool, ConnectError> 
 pub fn reconcile(machine: &Machine) -> (bool, Vec<(Client, ConnectError)>) {
     let mut changed = false;
     let mut errors = Vec::new();
-    for client in Client::ALL {
+    for client in Client::all() {
         let inspection = inspect(machine, client);
         if !inspection.connected() || complete(machine, client, &inspection) {
             continue;
@@ -163,17 +163,17 @@ fn apply(
     let link = machine.skill_link(client);
     let linked = link::ensure(&link, &Machine::skill_target(stable, client));
     let mut changed = *linked.as_ref().unwrap_or(&false);
-    let entry = match (client, &inspection.entry) {
+    let entry = match (client.kit, &inspection.entry) {
         (_, Entry::Custom) => Err(custom_conflict(machine, client)),
         (_, Entry::Unreadable(message)) => {
             Err(ConnectError::new("CONFIG_UNREADABLE", message.clone()))
         }
-        (Client::ClaudeCode, current) if current.is_svode() && linked.is_ok() => {
+        (Kit::ClaudePlugin, current) if current.is_svode() && linked.is_ok() => {
             entry::remove(machine, client).map(|()| true)
         }
-        (Client::ClaudeCode, _) => Ok(false),
-        (Client::Codex, current) if entry::is_canonical(current, &stable.launcher_mcp) => Ok(false),
-        (Client::Codex, _) => entry::write_codex(machine, &stable.launcher_mcp).map(|()| true),
+        (Kit::ClaudePlugin, _) => Ok(false),
+        (Kit::CodexMcp, current) if entry::is_canonical(current, &stable.launcher_mcp) => Ok(false),
+        (Kit::CodexMcp, _) => entry::write_codex(machine, &stable.launcher_mcp).map(|()| true),
     };
     changed |= *entry.as_ref().unwrap_or(&false);
     (changed, linked.and(entry).map(|_| ()))
@@ -194,7 +194,7 @@ pub fn disconnect(machine: &Machine, client: Client) -> Result<bool, ConnectErro
     }
     if let Some(stable) = &machine.stable {
         let shared_by_another = client.uses_shared_skill()
-            && Client::ALL.into_iter().any(|other| {
+            && Client::all().into_iter().any(|other| {
                 other != client && other.uses_shared_skill() && inspect(machine, other).connected()
             });
         if !shared_by_another {

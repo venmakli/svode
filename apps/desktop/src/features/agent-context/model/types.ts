@@ -1,4 +1,5 @@
-export type SupportedAdapterId = "claude-code" | "codex";
+/** The id of an agent that takes part in Agent Context. */
+export type SupportedAdapterId = string;
 
 export interface AgentContextDiagnostic {
   adapterId: SupportedAdapterId | null;

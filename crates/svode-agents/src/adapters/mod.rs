@@ -61,6 +61,7 @@ pub fn adapter_pin(agent: AgentAdapterKind) -> Option<&'static AdapterPin> {
     match agent {
         AgentAdapterKind::ClaudeCode => Some(&CLAUDE_AGENT_ACP),
         AgentAdapterKind::Codex => Some(&CODEX_ACP),
+        _ => None,
     }
 }
 
@@ -75,17 +76,18 @@ pub struct CliVersionRange {
 
 /// Claude Code: the CLI the pinned Claude Agent SDK bundles, newer CLIs
 /// being the verified direction. Codex: the `@openai/codex` range the
-/// pinned `codex-acp` declares.
-pub fn cli_version_range(agent: AgentAdapterKind) -> CliVersionRange {
+/// pinned `codex-acp` declares. `None` until the agent's range is verified.
+pub fn cli_version_range(agent: AgentAdapterKind) -> Option<CliVersionRange> {
     match agent {
-        AgentAdapterKind::ClaudeCode => CliVersionRange {
+        AgentAdapterKind::ClaudeCode => Some(CliVersionRange {
             minimum: "2.1.286",
             tested_up_to: "2.1.287",
-        },
-        AgentAdapterKind::Codex => CliVersionRange {
+        }),
+        AgentAdapterKind::Codex => Some(CliVersionRange {
             minimum: "0.159.1",
             tested_up_to: "0.159.3",
-        },
+        }),
+        _ => None,
     }
 }
 
@@ -245,8 +247,10 @@ mod tests {
 
     #[test]
     fn every_agent_range_is_ordered() {
-        for agent in AgentAdapterKind::ALL {
-            let range = cli_version_range(agent);
+        for range in AgentAdapterKind::ALL
+            .into_iter()
+            .filter_map(cli_version_range)
+        {
             assert!(parse_version(range.minimum) <= parse_version(range.tested_up_to));
         }
     }

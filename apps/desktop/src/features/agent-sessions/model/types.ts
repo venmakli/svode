@@ -4,7 +4,8 @@ import type {
   AgentSessionStatus,
 } from "../api";
 
-export type AgentSessionSource = BackendAgentSessionSource | "unknown";
+/** An agent id, or `unknown` while a pending session has none. */
+export type AgentSessionSource = BackendAgentSessionSource;
 export type AgentSession = Omit<BackendAgentSession, "source"> & {
   source: AgentSessionSource;
 };

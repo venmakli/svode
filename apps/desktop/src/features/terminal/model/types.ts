@@ -11,7 +11,8 @@ export interface TerminalTarget {
 
 export type TerminalTabStatus = "spawning" | "ready" | "error" | "exited";
 export type TerminalTabOrigin = "shell" | "agent-session";
-export type TerminalAgentSessionSource = "codex" | "claude-code";
+/** The id of the session's agent in the registry. */
+export type TerminalAgentSessionSource = string;
 
 export interface TerminalAgentSurface {
   ptyId: string;
