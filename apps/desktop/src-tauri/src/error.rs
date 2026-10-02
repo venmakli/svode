@@ -61,6 +61,12 @@ impl From<svode_agents::AgentRuntimeError> for AppError {
     }
 }
 
+impl From<svode_agents::adapters::AdapterError> for AppError {
+    fn from(error: svode_agents::adapters::AdapterError) -> Self {
+        Self::AgentAdapter(error)
+    }
+}
+
 impl From<svode_core::agent_context::AgentContextError> for AppError {
     fn from(error: svode_core::agent_context::AgentContextError) -> Self {
         match error {
@@ -511,6 +517,9 @@ pub enum AppError {
     AgentRuntime(svode_agents::AgentRuntimeError),
 
     #[error("{0}")]
+    AgentAdapter(svode_agents::adapters::AdapterError),
+
+    #[error("{0}")]
     General(String),
 }
 
@@ -552,6 +561,7 @@ impl AppError {
             AppError::SourceBusy { .. } => "source_busy",
             AppError::SourceStale { .. } => "source_stale",
             AppError::AgentRuntime(_) => "agent_runtime",
+            AppError::AgentAdapter(_) => "agent_adapter",
             AppError::General(_) => "general",
         }
     }
@@ -574,6 +584,14 @@ impl Serialize for AppError {
                     .ok()
                     .and_then(|value| value.get("code").cloned());
                 serde_json::json!({ "kind": self.kind(), "message": self.to_string(), "code": code }).serialize(serializer)
+            }
+            AppError::AgentAdapter(error) => {
+                let mut value = serde_json::to_value(error).unwrap_or_default();
+                if let Some(fields) = value.as_object_mut() {
+                    fields.insert("kind".into(), self.kind().into());
+                    fields.insert("message".into(), self.to_string().into());
+                }
+                value.serialize(serializer)
             }
             AppError::SourceBusy { path } | AppError::SourceStale { path } => {
                 serde_json::json!({ "kind": self.kind(), "message": self.to_string(), "path": path }).serialize(serializer)
@@ -645,6 +663,26 @@ mod tests {
         assert_eq!(value["kind"], "agent_runtime");
         assert_eq!(value["code"], "turn_active");
         assert_eq!(value["message"], "a turn is already active in this session");
+    }
+
+    #[test]
+    fn agent_adapter_error_serializes_its_code_and_fields() {
+        let value = serde_json::to_value(AppError::from(
+            svode_agents::adapters::AdapterError::NodeUnsupported {
+                version: "v20.19.0".into(),
+                required: 22,
+            },
+        ))
+        .unwrap();
+
+        assert_eq!(value["kind"], "agent_adapter");
+        assert_eq!(value["code"], "node_unsupported");
+        assert_eq!(value["version"], "v20.19.0");
+        assert_eq!(value["required"], 22);
+        assert_eq!(
+            value["message"],
+            "Node.js v20.19.0 is older than the required 22"
+        );
     }
 
     #[test]

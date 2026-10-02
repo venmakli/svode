@@ -5,6 +5,7 @@
 
 mod acp;
 pub mod activity;
+pub mod adapters;
 pub mod catalog;
 mod error;
 pub mod identity;

@@ -1,0 +1,154 @@
+{
+ "packages": [
+  {
+   "path": "node_modules/@agentclientprotocol/codex-acp",
+   "version": "2.1.1",
+   "resolved": "https://registry.npmjs.org/@agentclientprotocol/codex-acp/-/codex-acp-2.1.1.tgz",
+   "integrity": "sha512-dppZxW3f8kNbTDbR25+lBLtNst5DIC/Sm7GtRF69PI1Ilqv12tDSsIb0hJQW0iNzkx+JdDvX76HOyv5Uibu1qQ=="
+  },
+  {
+   "path": "node_modules/@agentclientprotocol/sdk",
+   "version": "1.6.0",
+   "resolved": "https://registry.npmjs.org/@agentclientprotocol/sdk/-/sdk-1.6.0.tgz",
+   "integrity": "sha512-XxXrmX7aZkDgOB0Rg9cu+ZFyiUUc5lF2n9seO3Gc4OR+MTdfZOwIqF6m3LvsmmM8K3qgPmXkDH8/IFM2u9vdcQ=="
+  },
+  {
+   "path": "node_modules/@openai/codex",
+   "version": "0.159.3",
+   "resolved": "https://registry.npmjs.org/@openai/codex/-/codex-0.159.3.tgz",
+   "integrity": "sha512-hg4nlqCwRb87GocxNnHvz4sadOrdJ71mO0a4CUYWXjAozJe2gtuAdRFldKGSQXw9m7SgR4ydis12KDVVPgzDkQ=="
+  },
+  {
+   "path": "node_modules/@openai/codex-darwin-arm64",
+   "version": "0.159.3-darwin-arm64",
+   "resolved": "https://registry.npmjs.org/@openai/codex/-/codex-0.159.3-darwin-arm64.tgz",
+   "integrity": "sha512-aI4UY14YURYxJxnRK+AE4QU+aek0mgtyyo7Rw9rNbCQUYETRQ0NYdJzU9ytljERGpPlht3dHHI1u4NhqHoDJDQ==",
+   "optional": true
+  },
+  {
+   "path": "node_modules/@openai/codex-darwin-x64",
+   "version": "0.159.3-darwin-x64",
+   "resolved": "https://registry.npmjs.org/@openai/codex/-/codex-0.159.3-darwin-x64.tgz",
+   "integrity": "sha512-KTOQOD184DMXpR3TqnDUnLsgad14WJn+x3XmjBaXRHchKYGttjREwqrwzC61xQYFeh6VkogAceybR+SMbbgvYQ==",
+   "optional": true
+  },
+  {
+   "path": "node_modules/@openai/codex-linux-arm64",
+   "version": "0.159.3-linux-arm64",
+   "resolved": "https://registry.npmjs.org/@openai/codex/-/codex-0.159.3-linux-arm64.tgz",
+   "integrity": "sha512-84C1yhAI+i0hqh77Akp/Ma09Z4d5oLKcZKqW1WZpEDh8bKbNvvbNEd6pE+GMUe2Kwg7jCbuvkRNH1zgK+SCM3Q==",
+   "optional": true
+  },
+  {
+   "path": "node_modules/@openai/codex-linux-x64",
+   "version": "0.159.3-linux-x64",
+   "resolved": "https://registry.npmjs.org/@openai/codex/-/codex-0.159.3-linux-x64.tgz",
+   "integrity": "sha512-xlHydfOksnNt/qz4BEVFvjMWunweaVSNtha/DkVUwWZnVZxbqiJwsXSl2iZDk04b6k/g0OI7jU06XqzHB2s5og==",
+   "optional": true
+  },
+  {
+   "path": "node_modules/@openai/codex-win32-arm64",
+   "version": "0.159.3-win32-arm64",
+   "resolved": "https://registry.npmjs.org/@openai/codex/-/codex-0.159.3-win32-arm64.tgz",
+   "integrity": "sha512-4C+EuH1zE4rO5w1MsrnS98Tvq6Ff4+zeNr3pVeR/UsQ+VrTY5BCA9nZuXuCXNLKak1tLOw81b+fQM4jKGFCeDA==",
+   "optional": true
+  },
+  {
+   "path": "node_modules/@openai/codex-win32-x64",
+   "version": "0.159.3-win32-x64",
+   "resolved": "https://registry.npmjs.org/@openai/codex/-/codex-0.159.3-win32-x64.tgz",
+   "integrity": "sha512-h8w5nslfQyoYbonZaRlLwvPKFS9Mcxz5vUeCeoHKF5SsZUP9jSBH7hxUdc8RWJffJtfbV2qxdnImVAj9zy2fwA==",
+   "optional": true
+  },
+  {
+   "path": "node_modules/bundle-name",
+   "version": "4.1.1",
+   "resolved": "https://registry.npmjs.org/bundle-name/-/bundle-name-4.1.1.tgz",
+   "integrity": "sha512-DdH81/zPLVS11EUgWq3tEu/xn+EzljlMYooDNdzWEnFha3R3NBMpMV1UqYIpjYHV/SgpFKMIX1Oh7o06SjM/oA=="
+  },
+  {
+   "path": "node_modules/default-browser",
+   "version": "5.5.1",
+   "resolved": "https://registry.npmjs.org/default-browser/-/default-browser-5.5.1.tgz",
+   "integrity": "sha512-m1pAzaJgZ/gssEqlOhJkPJp8Xly7QyW6xcrkUa2KKcDeDSEMP7X8xipU3snUcfisTQx0w1AGae+9UtJSfVnXGw=="
+  },
+  {
+   "path": "node_modules/default-browser-id",
+   "version": "5.0.1",
+   "resolved": "https://registry.npmjs.org/default-browser-id/-/default-browser-id-5.0.1.tgz",
+   "integrity": "sha512-x1VCxdX4t+8wVfd1so/9w+vQ4vx7lKd2Qp5tDRutErwmR85OgmfX7RlLRMWafRMY7hbEiXIbudNrjOAPa/hL8Q=="
+  },
+  {
+   "path": "node_modules/define-lazy-prop",
+   "version": "3.0.0",
+   "resolved": "https://registry.npmjs.org/define-lazy-prop/-/define-lazy-prop-3.0.0.tgz",
+   "integrity": "sha512-N+MeXYoqr3pOgn8xfyRPREN7gHakLYjhsHhWGT3fWAiL4IkAt0iDw14QiiEm2bE30c5XX5q0FtAA3CK5f9/BUg=="
+  },
+  {
+   "path": "node_modules/diff",
+   "version": "9.0.0",
+   "resolved": "https://registry.npmjs.org/diff/-/diff-9.0.0.tgz",
+   "integrity": "sha512-svtcdpS8CgJyqAjEQIXdb3OjhFVVYjzGAPO8WGCmRbrml64SPw/jJD4GoE98aR7r25A0XcgrK3F02yw9R/vhQw=="
+  },
+  {
+   "path": "node_modules/is-docker",
+   "version": "3.0.0",
+   "resolved": "https://registry.npmjs.org/is-docker/-/is-docker-3.0.0.tgz",
+   "integrity": "sha512-eljcgEDlEns/7AXFosB5K/2nCM4P7FQPkGc/DWLy5rmFEWvZayGrik1d9/QIY5nJ4f9YsVvBkA6kJpHn9rISdQ=="
+  },
+  {
+   "path": "node_modules/is-in-ssh",
+   "version": "1.0.0",
+   "resolved": "https://registry.npmjs.org/is-in-ssh/-/is-in-ssh-1.0.0.tgz",
+   "integrity": "sha512-jYa6Q9rH90kR1vKB6NM7qqd1mge3Fx4Dhw5TVlK1MUBqhEOuCagrEHMevNuCcbECmXZ0ThXkRm+Ymr51HwEPAw=="
+  },
+  {
+   "path": "node_modules/is-inside-container",
+   "version": "1.0.0",
+   "resolved": "https://registry.npmjs.org/is-inside-container/-/is-inside-container-1.0.0.tgz",
+   "integrity": "sha512-KIYLCCJghfHZxqjYBE7rEy0OBuTd5xCHS7tHVgvCLkx7StIoaxwNW3hCALgEUjFfeRk+MG/Qxmp/vtETEF3tRA=="
+  },
+  {
+   "path": "node_modules/is-wsl",
+   "version": "3.1.1",
+   "resolved": "https://registry.npmjs.org/is-wsl/-/is-wsl-3.1.1.tgz",
+   "integrity": "sha512-e6rvdUCiQCAuumZslxRJWR/Doq4VpPR82kqclvcS0efgt430SlGIk05vdCN58+VrzgtIcfNODjozVielycD4Sw=="
+  },
+  {
+   "path": "node_modules/open",
+   "version": "11.0.4",
+   "resolved": "https://registry.npmjs.org/open/-/open-11.0.4.tgz",
+   "integrity": "sha512-++Zlftm0kVLPmzC06t6epuWmcRMDbI4z5P3NNX979WA/k23+NtSOynEGzsVfZwguKw2mi5umVgnBlJQMwRz4Pg=="
+  },
+  {
+   "path": "node_modules/powershell-utils",
+   "version": "0.2.1",
+   "resolved": "https://registry.npmjs.org/powershell-utils/-/powershell-utils-0.2.1.tgz",
+   "integrity": "sha512-C+y9x90UElAddDZmV4qOx9W53B61PO7cIqWz2dQsWlwswuq4mr8NEwytdGKboYbQlGZ3awrkTeNvcZiZNHnQ8A=="
+  },
+  {
+   "path": "node_modules/run-applescript",
+   "version": "7.1.0",
+   "resolved": "https://registry.npmjs.org/run-applescript/-/run-applescript-7.1.0.tgz",
+   "integrity": "sha512-DPe5pVFaAsinSaV6QjQ6gdiedWDcRCbUuiQfQa2wmWV7+xC9bGulGI8+TdRmoFkAPaBXk8CrAbnlY2ISniJ47Q=="
+  },
+  {
+   "path": "node_modules/vscode-jsonrpc",
+   "version": "9.0.3",
+   "resolved": "https://registry.npmjs.org/vscode-jsonrpc/-/vscode-jsonrpc-9.0.3.tgz",
+   "integrity": "sha512-qETYf9PCl1lVfwR+oBmMfc4vP2nqLNA35ABxorw3j06+xlKRgDVxbLgKm4Y/xPL0YWdeDjLoI4ImICIT3nB0zQ=="
+  },
+  {
+   "path": "node_modules/wsl-utils",
+   "version": "1.0.1",
+   "resolved": "https://registry.npmjs.org/wsl-utils/-/wsl-utils-1.0.1.tgz",
+   "integrity": "sha512-c16PKLIRxBYpR3jSWsdS7SFp0COm5SOQdiFjY818dYFHJbMGuLBszpF07LBWmOS1uzrHa9VGdynsEgoeKy0oOQ=="
+  },
+  {
+   "path": "node_modules/zod",
+   "version": "4.6.5",
+   "resolved": "https://registry.npmjs.org/zod/-/zod-4.6.5.tgz",
+   "integrity": "sha512-v5l/aFXZQeai4awLbOpSoHecE9UiMrnfx75tEXLjNonXVARxQ5mOeipTjROUchszUNCqnE+hqAMujRsRHsut2Q=="
+  }
+ ]
+}

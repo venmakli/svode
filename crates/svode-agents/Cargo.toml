@@ -6,11 +6,17 @@ rust-version = "1.89"
 
 [dependencies]
 svode-core = { path = "../svode-core" }
+base64 = "0.22"
+flate2 = "1"
+reqwest = { version = "0.13", default-features = false, features = ["rustls"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["raw_value"] }
+sha2 = "0.10"
+tar = "0.4"
 thiserror = "2"
 tokio = { version = "1", features = ["process", "time", "macros", "rt", "io-util", "sync"] }
 ulid = "1"
+which = "7"
 
 [dev-dependencies]
 tempfile = "3"

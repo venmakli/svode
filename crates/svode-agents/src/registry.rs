@@ -15,6 +15,7 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncReadExt;
 
+use crate::adapters::{AdapterPin, InstalledAdapter, adapter_pin};
 use crate::process;
 use crate::runtime::{AcpLaunch, SettingValue};
 use svode_core::agent_actors::{AgentAdapter, ApprovalMode};
@@ -528,7 +529,7 @@ impl AdapterRuntimeRegistry {
 /// share one auth, configuration and session store.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AcpEntrypoint {
-    pub adapter_package: &'static str,
+    pub adapter: &'static AdapterPin,
     pub executable_env: &'static str,
 }
 
@@ -536,31 +537,32 @@ impl AdapterRuntimeRegistry {
     pub fn acp_entrypoint(&self, adapter: AgentAdapterKind) -> AcpEntrypoint {
         match adapter {
             AgentAdapterKind::Codex => AcpEntrypoint {
-                adapter_package: "@agentclientprotocol/codex-acp",
+                adapter: adapter_pin(adapter).expect("Codex runs through its adapter"),
                 executable_env: "CODEX_PATH",
             },
             AgentAdapterKind::ClaudeCode => AcpEntrypoint {
-                adapter_package: "@agentclientprotocol/claude-agent-acp",
+                adapter: adapter_pin(adapter).expect("Claude Code runs through its adapter"),
                 executable_env: "CLAUDE_CODE_EXECUTABLE",
             },
         }
     }
 
-    /// Launch plan of an installed adapter entry for the user's executable.
-    /// Its session ids stay in the ACP namespace until the provider matrix
-    /// records their equality with native ids.
+    /// Launch plan of the installed adapter, run by the user's Node.js, for
+    /// the user's executable. Its session ids stay in the ACP namespace
+    /// until the provider matrix records their equality with native ids.
     pub fn acp_launch(
         &self,
         adapter: AgentAdapterKind,
-        adapter_entry: &Path,
+        node: &Path,
+        installed: &InstalledAdapter,
         executable: &Path,
         cwd: &Path,
     ) -> AcpLaunch {
         let entrypoint = self.acp_entrypoint(adapter);
         AcpLaunch {
             agent: adapter.as_str().to_string(),
-            program: adapter_entry.to_path_buf(),
-            args: Vec::new(),
+            program: node.to_path_buf(),
+            args: vec![installed.entry.to_string_lossy().into_owned()],
             env: BTreeMap::from([(
                 entrypoint.executable_env.to_string(),
                 executable.to_string_lossy().into_owned(),
@@ -1458,14 +1460,21 @@ mod tests {
 
     #[test]
     fn acp_launch_runs_the_users_cli_through_the_official_adapter() {
+        let installed = |name: &str| InstalledAdapter {
+            version: "1.0.0".into(),
+            dir: PathBuf::from("/adapters").join(name),
+            entry: PathBuf::from("/adapters").join(name).join("index.js"),
+        };
         let launch = AdapterRuntimeRegistry.acp_launch(
             AgentAdapterKind::ClaudeCode,
-            Path::new("/adapters/claude-agent-acp"),
+            Path::new("/bin/node"),
+            &installed("claude-agent-acp"),
             Path::new("/bin/claude"),
             Path::new("/project"),
         );
         assert_eq!(launch.agent, "claude-code");
-        assert_eq!(launch.program, PathBuf::from("/adapters/claude-agent-acp"));
+        assert_eq!(launch.program, PathBuf::from("/bin/node"));
+        assert_eq!(launch.args, ["/adapters/claude-agent-acp/index.js"]);
         assert_eq!(
             launch.env.get("CLAUDE_CODE_EXECUTABLE").map(String::as_str),
             Some("/bin/claude")
@@ -1477,7 +1486,8 @@ mod tests {
 
         let codex = AdapterRuntimeRegistry.acp_launch(
             AgentAdapterKind::Codex,
-            Path::new("/adapters/codex-acp"),
+            Path::new("/bin/node"),
+            &installed("codex-acp"),
             Path::new("/bin/codex"),
             Path::new("/project"),
         );

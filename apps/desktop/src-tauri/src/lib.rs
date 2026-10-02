@@ -4,6 +4,7 @@ mod agent_actors;
 mod agent_context;
 mod agent_runtime;
 mod agent_sessions;
+mod agent_setup;
 mod app_windows;
 mod apps;
 mod attachments;
@@ -123,6 +124,10 @@ pub fn run() {
                 git_host,
             ));
             app.manage(service);
+            app.manage(agent_setup::AgentSetupState::new(
+                &app.path().app_data_dir()?,
+                app.path().app_config_dir()?,
+            ));
             if let Err(error) = native_file_drop::clear_materialized_file_drops(app.handle()) {
                 tracing::warn!("failed to clear dropped-file cache during setup: {error}");
             }
@@ -329,6 +334,11 @@ pub fn run() {
             agent_runtime::commands::agent_runtime_prompt,
             agent_runtime::commands::agent_runtime_cancel,
             agent_runtime::commands::agent_runtime_answer,
+            agent_setup::commands::agent_setup_list,
+            agent_setup::commands::agent_setup_enable,
+            agent_setup::commands::agent_setup_disable,
+            agent_setup::commands::agent_setup_update_adapter,
+            agent_setup::commands::agent_setup_remove_adapter,
             navigation::commands::navigation_read,
             navigation::commands::navigation_pin,
             navigation::commands::navigation_keep,
