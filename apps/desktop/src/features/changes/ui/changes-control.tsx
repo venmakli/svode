@@ -2,14 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { FileDiff } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-  SheetTrigger,
-} from "@/components/ui/sheet";
+import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import {
   Tooltip,
   TooltipContent,
@@ -119,28 +112,16 @@ function ScopeChangesControl({
             : undefined
         }
       >
-        <SheetHeader className="shrink-0 pr-12">
-          <SheetTitle>{m.changes_title()}</SheetTitle>
-          <SheetDescription className="truncate">
-            {target.name}
-          </SheetDescription>
-          {scope.path ? (
-            <p className="truncate text-xs text-muted-foreground">
-              {scope.path}
-            </p>
-          ) : null}
-        </SheetHeader>
-        {open ? (
-          <ChangesBody
-            key={`${scope.kind}:${scope.path}`}
-            scope={scope}
-            status={status}
-            error={statusError}
-            paths={paths}
-            reader={reader}
-            name={target.name}
-          />
-        ) : null}
+        <ChangesBody
+          key={`${scope.kind}:${scope.path}`}
+          open={open}
+          scope={scope}
+          status={status}
+          error={statusError}
+          paths={paths}
+          reader={reader}
+          name={target.name}
+        />
         <ChangesSaveFooter
           save={save}
           dirty={dirty}
