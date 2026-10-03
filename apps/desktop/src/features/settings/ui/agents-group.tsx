@@ -2,27 +2,28 @@ import { useCallback, useState } from "react";
 import { ArrowUpRight, RefreshCw, TriangleAlert } from "lucide-react";
 import * as m from "@/paraglide/messages.js";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent } from "@/components/ui/collapsible";
 import { useAgentAdapterDictionary } from "@/features/agent-adapters";
 import type { AgentSetupDto } from "../api";
 import type { AgentSetups } from "../hooks/use-agent-setups";
+import type { McpStatus } from "../hooks/use-mcp-integrations";
+import {
+  ownPartRemoval,
+  toolsOffer,
+  type IntegrationOperation,
+} from "../model/svode-integration";
 import {
   agentFound,
   agentRowView,
   enableInstallsAdapter,
   type AgentRowAction,
 } from "../model/agent-row";
+import {
+  AgentConfirmationDialog,
+  type AgentConfirmation,
+  type AgentConfirmationChoice,
+} from "./agent-confirmation-dialog";
 import { AgentRow } from "./agent-row";
 import { AgentSignInDialog } from "./agent-sign-in-dialog";
 import {
@@ -33,24 +34,29 @@ import {
   SettingsRows,
 } from "./settings-layout";
 
-type Confirmation = { kind: "enable" | "remove"; setup: AgentSetupDto };
-
 /**
  * The one list of agents: found agents with their state and switch, then
- * the agents that are not found with the vendor's install hint.
+ * the agents that are not found with the vendor's install hint. Turning an
+ * agent on can add its Svode tools; turning it off can remove its own part.
  */
 export function AgentsGroup({
   agents,
+  integration,
+  onRunIntegration,
   refreshing,
   onRefresh,
 }: {
   agents: AgentSetups;
+  integration: McpStatus | null;
+  onRunIntegration: (operation: IntegrationOperation) => Promise<string | null>;
   refreshing: boolean;
   onRefresh: () => void;
 }) {
   const names = useAgentAdapterDictionary();
   // The last confirmation stays rendered while its dialog closes.
-  const [confirmation, setConfirmation] = useState<Confirmation | null>(null);
+  const [confirmation, setConfirmation] = useState<AgentConfirmation | null>(
+    null,
+  );
   const [confirmationOpen, setConfirmationOpen] = useState(false);
   const [signIn, setSignIn] = useState<{
     agent: string;
@@ -61,7 +67,7 @@ export function AgentsGroup({
   const found = setups?.filter(agentFound) ?? [];
   const notFound = setups?.filter((setup) => !agentFound(setup)) ?? [];
 
-  const confirm = (next: Confirmation) => {
+  const confirm = (next: AgentConfirmation) => {
     setConfirmation(next);
     setConfirmationOpen(true);
   };
@@ -72,11 +78,43 @@ export function AgentsGroup({
   };
 
   const toggle = (setup: AgentSetupDto, enabled: boolean) => {
-    if (enabled && enableInstallsAdapter(setup)) {
-      confirm({ kind: "enable", setup });
-      return;
+    if (enabled) {
+      const tools = toolsOffer(integration, setup.agent);
+      if (tools || enableInstallsAdapter(setup))
+        return confirm({ kind: "enable", setup, tools });
+    } else {
+      const removal = ownPartRemoval(integration, setup.agent);
+      if (removal) return confirm({ kind: "disable", setup, removal });
     }
     void agents.setEnabled(setup, enabled);
+  };
+
+  // The agent and its Svode tools change independently: a failure of one
+  // leaves the other as it went.
+  const confirmed = (
+    next: AgentConfirmation,
+    choice: AgentConfirmationChoice,
+  ) => {
+    const agent = next.setup.agent;
+    switch (next.kind) {
+      case "enable":
+        void agents.setEnabled(next.setup, true);
+        if (next.tools && choice.addTools)
+          void onRunIntegration({ kind: "install", client: agent });
+        return;
+      case "disable":
+        void agents.setEnabled(next.setup, false);
+        if (choice.removePart)
+          void onRunIntegration({ kind: "remove", client: agent }).then(
+            (error) => {
+              if (!error && choice.removeShared)
+                void onRunIntegration({ kind: "remove_shared" });
+            },
+          );
+        return;
+      case "remove":
+        void agents.removeAdapter(agent);
+    }
   };
 
   const act = (setup: AgentSetupDto, action: AgentRowAction) => {
@@ -104,8 +142,6 @@ export function AgentsGroup({
 
   const signedIn = useCallback(() => void reload(), [reload]);
   const label = (agent: string) => names.label(agent);
-  const confirmed = confirmation?.setup;
-  const adapter = confirmed?.adapter;
 
   return (
     <>
@@ -212,53 +248,14 @@ export function AgentsGroup({
             ]}
       </SettingsGroup>
 
-      <AlertDialog open={confirmationOpen} onOpenChange={setConfirmationOpen}>
-        <AlertDialogContent>
-          {confirmed ? (
-            <>
-              <AlertDialogHeader>
-                <AlertDialogTitle>
-                  {confirmation.kind === "enable"
-                    ? m.settings_agents_enable_title({
-                        agent: label(confirmed.agent),
-                      })
-                    : m.settings_agents_remove_title({
-                        agent: label(confirmed.agent),
-                      })}
-                </AlertDialogTitle>
-                <AlertDialogDescription>
-                  {confirmation.kind === "enable"
-                    ? m.settings_agents_enable_description({
-                        agent: label(confirmed.agent),
-                        package: adapter?.package ?? "",
-                        version: adapter?.pinnedVersion ?? "",
-                      })
-                    : m.settings_agents_remove_description({
-                        agent: label(confirmed.agent),
-                      })}
-                </AlertDialogDescription>
-              </AlertDialogHeader>
-              <AlertDialogFooter>
-                <AlertDialogCancel>{m.project_cancel()}</AlertDialogCancel>
-                {confirmation.kind === "enable" ? (
-                  <AlertDialogAction
-                    onClick={() => void agents.setEnabled(confirmed, true)}
-                  >
-                    {m.settings_agents_enable_action()}
-                  </AlertDialogAction>
-                ) : (
-                  <AlertDialogAction
-                    variant="destructive"
-                    onClick={() => void agents.removeAdapter(confirmed.agent)}
-                  >
-                    {m.settings_agents_remove_adapter()}
-                  </AlertDialogAction>
-                )}
-              </AlertDialogFooter>
-            </>
-          ) : null}
-        </AlertDialogContent>
-      </AlertDialog>
+      <AgentConfirmationDialog
+        confirmation={confirmation}
+        open={confirmationOpen}
+        onOpenChange={setConfirmationOpen}
+        label={label}
+        names={(ids) => ids.map(label).join(", ")}
+        onConfirm={confirmed}
+      />
 
       {signIn ? (
         <AgentSignInDialog

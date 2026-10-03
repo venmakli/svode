@@ -437,7 +437,6 @@ pub fn run() {
             mcp::commands::mcp_install_client,
             mcp::commands::mcp_remove_client,
             mcp::commands::mcp_remove_shared_skill,
-            mcp::commands::mcp_print_config,
             mcp::commands::mcp_run_doctor,
         ])
         .build(tauri::generate_context!())

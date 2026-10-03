@@ -66,12 +66,22 @@ export type McpArtifactState =
   | "previous"
   | "foreign"
   | "custom"
-  | "unreadable";
+  | "unreadable"
+  // A Svode installation made outside the manager, such as from an agent
+  // marketplace; reported once its channel is recognized.
+  | "external";
 
 export interface McpArtifactStatus {
   kind: "plugin" | "skill" | "mcp-entry";
   path: string;
   state: McpArtifactState;
+  /** Channel of an `external` installation. */
+  source?: string | null;
+}
+
+export interface McpIssue {
+  code: McpClientAttentionCode;
+  message: string;
 }
 
 export interface McpClientStatus {
@@ -87,12 +97,38 @@ export interface McpClientStatus {
   message?: string | null;
   complete?: boolean;
   version?: string | null;
+  issues: McpIssue[];
   artifacts?: McpArtifactStatus[];
+  /** The part of the kit that belongs to this agent alone: its consent. */
+  ownPart: McpArtifactStatus;
+  /** What the kit of the agent lacks compared to the others. */
+  limitation: string | null;
+}
+
+/** The skill several agents of the machine read, a part of the machine. */
+export interface McpSharedSkillStatus {
+  path: string;
+  state: "absent" | "managed" | "foreign";
+  /** Found agents that read it, connected or not. */
+  readers: McpClientId[];
+  /** Connected agents whose own part needs it. */
+  requiredBy: McpClientId[];
+}
+
+/** The MCP server entry for configuring a client by hand. */
+export interface McpManualConfig {
+  name: string;
+  transport: string;
+  command: string;
+  args: string[];
+  env: Record<string, string>;
 }
 
 export interface McpStatus {
   server: McpServerInfo;
   clients: McpClientStatus[];
+  sharedSkill: McpSharedSkillStatus;
+  manualConfig: McpManualConfig;
   doctor: McpDoctorReport;
   // Version the active runtime had before this start of the app switched
   // the connected clients to its own.
@@ -135,8 +171,9 @@ export function removeMcpClient(client: McpClientId): Promise<McpStatus> {
   return invoke<McpStatus>("mcp_remove_client", { client });
 }
 
-export function printMcpConfig(client: McpClientId): Promise<string> {
-  return invoke<string>("mcp_print_config", { client });
+/** Removes the shared skill; refused while a connected agent needs it. */
+export function removeMcpSharedSkill(): Promise<McpStatus> {
+  return invoke<McpStatus>("mcp_remove_shared_skill");
 }
 
 export function runMcpDoctor(): Promise<McpDoctorReport> {

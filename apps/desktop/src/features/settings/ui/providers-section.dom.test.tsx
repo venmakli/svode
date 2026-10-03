@@ -63,74 +63,7 @@ if (!isolatedProcess) {
   }));
   ({ ProvidersSection } = await import("./providers-section"));
 
-  test("a connected row shows the version, its details and keeps focus through disconnect", async () => {
-    const originalLocale = getLocale();
-    await setLocale("en", { reload: false });
-    let canonical = providersStatus([
-      client("claude-code", "Claude Code", true),
-      client("codex", "Codex", true),
-    ]);
-    const harness = await renderSection(
-      () => canonical,
-      (next) => {
-        canonical = next;
-      },
-    );
-    try {
-      const row = clientRow(harness.dom, "codex");
-      expect(row.textContent?.includes("Connected · Svode 0.0.9")).toBe(true);
-      expect(/restart|Details/.test(summary(row))).toBe(false);
-      expect(
-        row.textContent?.includes("/Users/test/.agents/skills/svode"),
-      ).toBe(false);
-      expect(
-        Array.from(harness.dom.window.document.querySelectorAll("h2, h3")).map(
-          (heading) => heading.textContent,
-        ),
-      ).toEqual(["Svode access", "Svode runtime"]);
-
-      await act(async () => {
-        within(row, "Details").click();
-        await settle();
-      });
-      const details = row.textContent ?? "";
-      // The agent CLI is a fact of the agent row, not of Svode access.
-      expect(details.includes("/Users/test/.bun/bin/codex")).toBe(false);
-      expect(details.includes("/Users/test/.agents/skills/svode")).toBe(true);
-      // The runtime and its check belong to the section, not to one agent.
-      expect(
-        /svode-mcp|\(Svode Desktop\)|Connection check|Run check/.test(details),
-      ).toBe(false);
-      expect(harness.dom.window.document.querySelector("textarea")).toBeNull();
-      await act(async () => {
-        within(row, "Show").click();
-        await settle();
-      });
-      expect(row.querySelector("textarea")?.textContent).toBe(
-        "[mcp_servers.svode]",
-      );
-      expect(harness.printed).toEqual(["codex"]);
-
-      const toggle = row.querySelector<HTMLButtonElement>(
-        'button[role="switch"]',
-      )!;
-      expect(toggle.getAttribute("aria-label")).toBe("Svode access for Codex");
-      toggle.focus();
-      await act(async () => {
-        toggle.click();
-        await settle();
-      });
-      expect(
-        summary(clientRow(harness.dom, "codex")).includes("Not connected"),
-      ).toBe(true);
-      expect(harness.dom.window.document.activeElement).toBe(toggle);
-    } finally {
-      await harness.cleanup();
-      await setLocale(originalLocale, { reload: false });
-    }
-  });
-
-  test("the section shows the agents without a heading, Svode access below them and the runtime with its check once", async () => {
+  test("the section shows the agents, the Svode integration with its installed parts and the runtime once, without an access switch, details or a PII alert", async () => {
     const originalLocale = getLocale();
     await setLocale("en", { reload: false });
     let canonical = providersStatus([
@@ -145,9 +78,7 @@ if (!isolatedProcess) {
     );
     try {
       const document = harness.dom.window.document;
-      const [agents, access, runtime] = Array.from(
-        document.querySelectorAll<HTMLElement>("section"),
-      ).filter((section) => !section.parentElement?.closest("section"));
+      const [agents, integration, runtime] = topSections(harness.dom);
       expect(agents.querySelector("h2, h3, h4")).toBeNull();
       expect(
         agents.textContent?.includes(
@@ -156,25 +87,45 @@ if (!isolatedProcess) {
       ).toBe(true);
       expect(within(agents, "Refresh") !== undefined).toBe(true);
       expect(agents.querySelectorAll("[data-agent]").length).toBe(2);
-      expect(agents.querySelectorAll("[data-mcp-client]").length).toBe(0);
-      expect(access.hasAttribute("data-svode-access")).toBe(true);
-      expect(access.querySelector("h3")?.textContent).toBe("Svode access");
+
+      expect(integration.hasAttribute("data-svode-integration")).toBe(true);
+      expect(integration.querySelector("h3")?.textContent).toBe(
+        "Svode integration",
+      );
+      expect(partRows(integration)).toEqual([
+        ["Svode plugin", "Claude Code"],
+        ["Svode MCP", "Codex"],
+        ["Shared skill", "Read by Codex"],
+        [
+          "Manual MCP setup",
+          "A standard mcpServers entry for an agent Svode does not set up",
+        ],
+      ]);
+      expect(within(integration, "Manage…") !== undefined).toBe(true);
+
+      // One permanent list of agents: switches belong to agent rows only,
+      // and no row of the page has an access switch or expandable details.
+      expect(document.querySelectorAll('button[role="switch"]').length).toBe(2);
       expect(
-        access.textContent?.includes(
-          "Svode access connects the Svode skill, the svode command and the Svode MCP server to the agent.",
+        Array.from(document.querySelectorAll('button[role="switch"]')).every(
+          (toggle) => toggle.closest("[data-agent]"),
         ),
       ).toBe(true);
-      expect(access.querySelectorAll("[data-mcp-client]").length).toBe(2);
+      expect(document.querySelector("[data-mcp-client]")).toBeNull();
+      expect(findButton(harness.dom, "Details") === undefined).toBe(true);
+      expect(
+        /Svode access|External agent access/.test(
+          document.body.textContent ?? "",
+        ),
+      ).toBe(false);
 
       expect(runtime.hasAttribute("data-mcp-runtime")).toBe(true);
       expect(runtime.querySelector("h3")?.textContent).toBe("Svode runtime");
       const runtimeText = runtime.textContent ?? "";
-      expect(runtimeText.includes("Active runtime")).toBe(true);
       expect(runtimeText.includes("/Users/test/.svode/bin/svode-mcp")).toBe(
         true,
       );
       expect(runtimeText.includes("0.0.9 (Svode Desktop)")).toBe(true);
-      expect(runtimeText.includes("Ready")).toBe(true);
 
       canonical = {
         ...canonical,
@@ -192,9 +143,6 @@ if (!isolatedProcess) {
       expect((runtime.textContent ?? "").includes("Needs attention")).toBe(
         true,
       );
-      expect(
-        (runtime.textContent ?? "").includes("bridge is not running"),
-      ).toBe(false);
       await act(async () => {
         within(runtime, "Show report").click();
         await settle();
@@ -212,296 +160,635 @@ if (!isolatedProcess) {
     }
   });
 
-  test("details list the artifacts of the way each agent is connected", async () => {
+  test("Russian: with nothing installed the block explains it and Install… opens the Svode tools dialog with the data warning", async () => {
+    const originalLocale = getLocale();
+    await setLocale("ru", { reload: false });
+    const status = providersStatus([
+      client("claude-code", "Claude Code", false),
+      client("codex", "Codex", false),
+    ]);
+    const harness = await renderSection(
+      () => status,
+      () => {},
+    );
+    try {
+      const [, integration] = topSections(harness.dom);
+      expect(partRows(integration)).toEqual([
+        ["Инструменты Svode пока не установлены ни одному агенту.", ""],
+        [
+          "Ручная настройка MCP",
+          "Стандартная запись mcpServers для агента, которого Svode не настраивает",
+        ],
+      ]);
+      expect(within(integration, "Управлять…") === undefined).toBe(true);
+      await act(async () => {
+        within(integration, "Установить…").click();
+        await settle();
+      });
+      const dialog =
+        harness.dom.window.document.querySelector<HTMLElement>(
+          "[data-svode-tools]",
+        )!;
+      expect(dialog.querySelector("h2")?.textContent).toBe("Инструменты Svode");
+      expect(
+        (dialog.textContent ?? "").includes(
+          "Агенты с инструментами Svode могут читать и изменять данные проектов Svode",
+        ),
+      ).toBe(true);
+      expect(toolsAgents(dialog)).toEqual([
+        ["codex", "Codex", "MCP и общий skill", "false", "enabled"],
+        ["claude-code", "Claude Code", "Плагин", "false", "enabled"],
+      ]);
+      // Nothing to remove yet: the shared skill comes with the agents.
+      expect(
+        dialog.querySelector(
+          "[data-tools-shared] [data-slot=field-description]",
+        )?.textContent,
+      ).toBe("Читают: Codex · Ставится вместе с агентами, которым он нужен");
+      expect(within(dialog, "Применить").disabled).toBe(true);
+      expect(harness.commands.includes("mcp_print_config")).toBe(false);
+    } finally {
+      await harness.cleanup();
+      await setLocale(originalLocale, { reload: false });
+    }
+  });
+
+  test("a part problem shows in its row with Fix when reconnecting completes it, and an installation outside Svode shows its source", async () => {
     const originalLocale = getLocale();
     await setLocale("en", { reload: false });
     let canonical = providersStatus([
+      client("claude-code", "Claude Code", false, {
+        ownPart: {
+          kind: "plugin",
+          path: "/Users/test/.claude/plugins/svode",
+          state: "external",
+          source: "the Claude Code marketplace",
+        },
+      }),
+      client("codex", "Codex", true, {
+        status: "attention",
+        attentionCode: "incomplete",
+        issues: [{ code: "incomplete", message: "skill missing" }],
+      }),
+    ]);
+    const harness = await renderSection(
+      () => canonical,
+      (next) => {
+        canonical = next;
+      },
+    );
+    try {
+      const [, integration] = topSections(harness.dom);
+      expect(partRows(integration).slice(0, 3)).toEqual([
+        ["Shared skill", "Read by Codex"],
+        [
+          "Svode plugin",
+          "Claude Code · Installed outside Svode from the Claude Code marketplace",
+        ],
+        ["Svode MCP", "Codex · Part of the kit is missing"],
+      ]);
+      const codexPart = integration.querySelector<HTMLElement>(
+        '[data-integration-part="problem:codex"]',
+      )!;
+      expect(within(codexPart, "Fix") !== undefined).toBe(true);
+      expect(
+        integration.querySelector(
+          '[data-integration-part="external:claude-code"] button',
+        ),
+      ).toBeNull();
+      await act(async () => {
+        within(codexPart, "Fix").click();
+        await settle();
+      });
+      expect(harness.installed).toEqual(["codex"]);
+      expect(partRows(integration).slice(0, 2)).toEqual([
+        ["Svode MCP", "Codex"],
+        ["Shared skill", "Read by Codex"],
+      ]);
+      expect(
+        integration.querySelector("[data-integration-restart]")?.textContent,
+      ).toBe(
+        "Agent sessions that are already open get the changes after a restart.",
+      );
+    } finally {
+      await harness.cleanup();
+      await setLocale(originalLocale, { reload: false });
+    }
+  });
+
+  test("Russian: a conflict, a failed install with Retry and the runtime callouts belong to the integration block", async () => {
+    const originalLocale = getLocale();
+    await setLocale("ru", { reload: false });
+    const consoleError = console.error;
+    console.error = () => {};
+    let canonical = providersStatus([
+      client("claude-code", "Claude Code", false),
+      client("codex", "Codex", false, {
+        status: "attention",
+        attentionCode: "custom_conflict",
+        issues: [{ code: "custom_conflict", message: "custom" }],
+      }),
+    ]);
+    let failInstall = true;
+    const harness = await renderSection(
+      () => canonical,
+      (next) => {
+        canonical = next;
+      },
+      undefined,
+      {
+        mcp_install_client: () => {
+          if (failInstall)
+            throw { kind: "general", message: "config is locked" };
+          return undefined;
+        },
+      },
+    );
+    try {
+      const [agents, integration] = topSections(harness.dom);
+      expect(partRows(integration)[0]).toEqual([
+        "MCP Svode",
+        "Codex · Конфликт: своя запись svode в /Users/test/.codex/config.toml",
+      ]);
+      // The conflict cannot be chosen in the dialog; Claude Code can.
+      await act(async () => {
+        within(integration, "Управлять…").click();
+        await settle();
+      });
+      const document = harness.dom.window.document;
+      let dialog = document.querySelector<HTMLElement>("[data-svode-tools]")!;
+      expect(toolsAgents(dialog)).toEqual([
+        [
+          "codex",
+          "Codex",
+          "MCP и общий skill · Конфликт: своя запись svode в /Users/test/.codex/config.toml",
+          "false",
+          "disabled",
+        ],
+        ["claude-code", "Claude Code", "Плагин", "false", "enabled"],
+      ]);
+      await act(async () => {
+        checkboxOf(dialog, "claude-code").click();
+        await settle();
+      });
+      expect(summaryLines(dialog)).toEqual([
+        "Установить плагин Svode для Claude Code",
+      ]);
+      await act(async () => {
+        within(dialog, "Применить").click();
+        await settle();
+      });
+      dialog = document.querySelector<HTMLElement>("[data-svode-tools]")!;
+      expect(results(dialog)).toEqual([
+        [
+          "failed",
+          "Установить плагин Svode для Claude CodeНе удалось: config is locked",
+        ],
+      ]);
+      await act(async () => {
+        within(dialog, "Закрыть").click();
+        await settle();
+      });
+      // The failure stays on its part with Retry until it succeeds.
+      const failed = integration.querySelector<HTMLElement>(
+        '[data-integration-part="failed:claude-code"]',
+      )!;
+      expect(
+        failed.textContent?.includes(
+          "Claude Code · Не установлено: config is locked",
+        ),
+      ).toBe(true);
+      failInstall = false;
+      await act(async () => {
+        within(failed, "Повторить").click();
+        await settle();
+      });
+      expect(partRows(integration)[0]).toEqual(["Плагин Svode", "Claude Code"]);
+      expect(agents.textContent?.includes("Svode runtime недоступен")).toBe(
+        false,
+      );
+
+      canonical = {
+        ...canonical,
+        server: { status: "not_found", command: null },
+      };
+      await act(async () => {
+        within(agents, "Обновить").click();
+        await settle();
+      });
+      expect(
+        integration
+          .querySelector('[role="alert"]')
+          ?.textContent?.includes("Svode runtime недоступен"),
+      ).toBe(true);
+      expect(agents.querySelector('[role="alert"]')).toBeNull();
+
+      canonical = {
+        ...canonical,
+        server: providersStatus([]).server,
+        doctor: { ...canonical.doctor, bridgeCompatible: false },
+      };
+      await act(async () => {
+        within(agents, "Обновить").click();
+        await settle();
+      });
+      expect(
+        integration
+          .querySelector('[role="alert"]')
+          ?.textContent?.includes("Несовместимая версия bridge"),
+      ).toBe(true);
+    } finally {
+      console.error = consoleError;
+      await harness.cleanup();
+      await setLocale(originalLocale, { reload: false });
+    }
+  });
+
+  test("manual setup shows one standard mcpServers JSON", async () => {
+    const originalLocale = getLocale();
+    await setLocale("en", { reload: false });
+    const status = providersStatus([
       client("claude-code", "Claude Code", true),
       client("codex", "Codex", true),
     ]);
     const harness = await renderSection(
-      () => canonical,
-      (next) => {
-        canonical = next;
-      },
+      () => status,
+      () => {},
     );
     try {
-      const claude = clientRow(harness.dom, "claude-code");
-      const codex = clientRow(harness.dom, "codex");
+      const manual = harness.dom.window.document.querySelector<HTMLElement>(
+        "[data-manual-config]",
+      )!;
       await act(async () => {
-        within(claude, "Details").click();
-        within(codex, "Details").click();
+        within(manual, "Show").click();
         await settle();
       });
-      expect(artifactRows(claude)).toEqual([
-        [
-          "Plugin",
-          "/Users/test/.claude/skills/svode",
-          "The Svode skill, MCP server and svode command for the agent in one plugin",
-          "Svode",
-        ],
-      ]);
-      expect(
-        /Not set up|MCP entry|\.claude\.json/.test(claude.textContent ?? ""),
-      ).toBe(false);
-      expect(artifactRows(codex)).toEqual([
-        [
-          "Skill",
-          "/Users/test/.agents/skills/svode",
-          "Shared agent skill that teaches the agent to work with Svode",
-          "Svode",
-        ],
-        [
-          "MCP entry",
-          "/Users/test/.codex/config.toml",
-          "Starts the Svode MCP server for the agent",
-          "Svode",
-        ],
-      ]);
-      expect((codex.textContent ?? "").includes("Not set up")).toBe(false);
+      const config = manual.querySelector("textarea")!;
+      expect(config.getAttribute("aria-label")).toBe("Manual MCP config");
+      expect(JSON.parse(config.value)).toEqual({
+        mcpServers: {
+          svode: { command: "/Users/test/.svode/bin/svode-mcp", args: [] },
+        },
+      });
+      expect(harness.commands.includes("mcp_print_config")).toBe(false);
     } finally {
       await harness.cleanup();
       await setLocale(originalLocale, { reload: false });
     }
   });
 
-  test("Russian details show an extra Claude entry with its own state", async () => {
+  test("turning on offers Svode tools in the same confirmation and the adapter and the tools are independent results", async () => {
     const originalLocale = getLocale();
-    await setLocale("ru", { reload: false });
-    const connected = client("claude-code", "Claude Code", true);
-    let canonical = providersStatus([
-      {
-        ...connected,
-        attentionCode: "incomplete",
-        status: "attention",
-        complete: false,
-        artifacts: [
-          ...(connected.artifacts ?? []),
-          {
-            kind: "mcp-entry",
-            path: "/Users/test/.claude.json",
-            state: "previous",
-          },
-        ],
-      },
-      client("codex", "Codex", false),
-    ]);
-    const harness = await renderSection(
-      () => canonical,
-      (next) => {
-        canonical = next;
-      },
-    );
-    try {
-      const claude = clientRow(harness.dom, "claude-code");
-      const codex = clientRow(harness.dom, "codex");
-      await act(async () => {
-        within(claude, "Подробнее").click();
-        within(codex, "Подробнее").click();
-        await settle();
-      });
-      expect(artifactRows(claude)).toEqual([
-        [
-          "Plugin",
-          "/Users/test/.claude/skills/svode",
-          "Skill Svode, MCP-сервер и команда svode для агента в одном plugin",
-          "Svode",
-        ],
-        [
-          "Запись MCP",
-          "/Users/test/.claude.json",
-          "Не нужна: MCP-сервер Svode уже приходит из plugin",
-          "Прежний Svode Desktop",
-        ],
-      ]);
-      expect(
-        /svode-mcp|\(Svode Desktop\)|Проверка подключения|Запустить проверку/.test(
-          claude.textContent ?? "",
-        ),
-      ).toBe(false);
-      // A client that is not connected shows its missing artifacts as absent.
-      expect(artifactRows(codex).map((row) => [row[0], row[3]])).toEqual([
-        ["Skill", "Нет"],
-        ["Запись MCP", "Нет"],
-      ]);
-    } finally {
-      await harness.cleanup();
-      await setLocale(originalLocale, { reload: false });
-    }
-  });
-
-  test("Russian custom conflict has one localized attention state and a disabled switch", async () => {
-    const originalLocale = getLocale();
-    await setLocale("ru", { reload: false });
+    await setLocale("en", { reload: false });
+    const consoleError = console.error;
+    console.error = () => {};
     let canonical = providersStatus([
       client("claude-code", "Claude Code", false),
-      {
-        ...client("codex", "Codex", false),
-        attentionCode: "custom_conflict",
-        status: "attention",
-      },
-    ]);
-    const harness = await renderSection(
-      () => canonical,
-      (next) => {
-        canonical = next;
-      },
-    );
-    try {
-      const text = summary(clientRow(harness.dom, "codex"));
-      expect(
-        clientRow(harness.dom, "codex").textContent?.includes(
-          "Требует внимания",
-        ),
-      ).toBe(true);
-      expect(text.includes("настроена вручную")).toBe(true);
-      expect(/connected|needs attention|custom conflict/i.test(text)).toBe(
-        false,
-      );
-      expect(
-        clientRow(harness.dom, "codex").querySelector<HTMLButtonElement>(
-          'button[role="switch"]',
-        )?.disabled,
-      ).toBe(true);
-
-      const refresh = findButton(harness.dom, "Обновить");
-      refresh.focus();
-      await act(async () => {
-        refresh.click();
-        await settle();
-      });
-      expect(harness.dom.window.document.activeElement).toBe(refresh);
-    } finally {
-      await harness.cleanup();
-      await setLocale(originalLocale, { reload: false });
-    }
-  });
-
-  test("an update of this start asks to restart open sessions and a missing client cannot connect", async () => {
-    const originalLocale = getLocale();
-    await setLocale("en", { reload: false });
-    let canonical: McpStatus = {
-      ...providersStatus([
-        client("claude-code", "Claude Code", true),
-        {
-          ...client("codex", "Codex", false),
-          found: false,
-          status: "not_found",
-        },
-      ]),
-      runtimeUpdatedFrom: "0.0.8",
-    };
-    const harness = await renderSection(
-      () => canonical,
-      (next) => {
-        canonical = next;
-      },
-    );
-    try {
-      const claude = summary(clientRow(harness.dom, "claude-code"));
-      expect(
-        claude.includes(
-          "Updated to Svode 0.0.9. Agent sessions that are already open get it after a restart.",
-        ),
-      ).toBe(true);
-      const codex = clientRow(harness.dom, "codex");
-      expect(summary(codex).includes("Not found on this device")).toBe(true);
-      expect(
-        codex.querySelector<HTMLButtonElement>('button[role="switch"]')
-          ?.disabled,
-      ).toBe(true);
-    } finally {
-      await harness.cleanup();
-      await setLocale(originalLocale, { reload: false });
-    }
-  });
-
-  test("an unavailable runtime is explained once and a connected client can still disconnect", async () => {
-    const originalLocale = getLocale();
-    await setLocale("en", { reload: false });
-    const status = providersStatus([
-      {
-        ...client("claude-code", "Claude Code", true),
-        attentionCode: "runtime_unavailable",
-        status: "attention",
-        version: null,
-      },
       client("codex", "Codex", false),
     ]);
-    let canonical: McpStatus = {
-      ...status,
-      runtimeUpdatedFrom: "0.0.8",
-      server: {
-        status: "not_found",
-        command: "/Users/test/.svode/bin/svode-mcp",
-      },
-    };
+    const enabled: string[] = [];
     const harness = await renderSection(
       () => canonical,
       (next) => {
         canonical = next;
+      },
+      [
+        agentSetup("codex", {
+          enabled: false,
+          adapter: {
+            ...agentSetup("codex").adapter!,
+            install: { state: "not_installed" },
+          },
+        }),
+        agentSetup("claude-code", { enabled: false }),
+      ],
+      {
+        agent_setup_enable: ({ agent }) => {
+          enabled.push(String(agent));
+          if (agent === "codex")
+            throw {
+              kind: "agent_adapter",
+              code: "download",
+              package: "@agentclientprotocol/codex-acp",
+              message: "offline",
+            };
+          return agentSetup("claude-code");
+        },
+        mcp_install_client: ({ client: id }) => {
+          if (id === "claude-code")
+            throw { kind: "general", message: "plugin folder is read-only" };
+          return undefined;
+        },
       },
     );
     try {
       const document = harness.dom.window.document;
-      const callout = document.querySelector(
-        '[data-slot="alert"][class*="destructive"]',
+      await act(async () => {
+        switchOf(agentRow(harness.dom, "codex")).click();
+        await settle();
+      });
+      let dialog = document.querySelector<HTMLElement>('[role="alertdialog"]')!;
+      const text = dialog.textContent ?? "";
+      expect(text.includes("Turn on Codex?")).toBe(true);
+      expect(text.includes("@agentclientprotocol/codex-acp 2.1.1")).toBe(true);
+      expect(text.includes("Add Svode tools")).toBe(true);
+      expect(
+        text.includes(
+          "Adds the Svode MCP server to Codex and the shared skill with the svode command.",
+        ),
+      ).toBe(true);
+      expect(
+        text.includes(
+          "Codex will be able to read and change the data of Svode projects, including personal data.",
+        ),
+      ).toBe(true);
+      expect(
+        dialog
+          .querySelector('button[role="checkbox"]')
+          ?.getAttribute("aria-checked"),
+      ).toBe("true");
+      await act(async () => {
+        within(dialog, "Turn on").click();
+        await settle();
+      });
+      expect(document.querySelector('[role="alertdialog"]')).toBeNull();
+      expect(enabled).toEqual(["codex"]);
+      expect(harness.installed).toEqual(["codex"]);
+      // The adapter failed in the row; the tools went in independently.
+      expect(stateOf(agentRow(harness.dom, "codex"))).toBe(
+        "Adapter not installed: the download failed",
       );
+      const [, integration] = topSections(harness.dom);
+      expect(partRows(integration).slice(0, 2)).toEqual([
+        ["Svode MCP", "Codex"],
+        ["Shared skill", "Read by Codex"],
+      ]);
+
+      // Claude Code needs no adapter: the confirmation is about the tools,
+      // which fail on their own while the agent turns on.
+      await act(async () => {
+        switchOf(agentRow(harness.dom, "claude-code")).click();
+        await settle();
+      });
+      dialog = document.querySelector<HTMLElement>('[role="alertdialog"]')!;
       expect(
-        callout?.textContent?.includes("Svode runtime is unavailable"),
+        (dialog.textContent ?? "").includes(
+          "Claude Code becomes available in Svode chat and sessions.",
+        ),
       ).toBe(true);
-      const runtime =
-        document.querySelector<HTMLElement>("[data-mcp-runtime]")!;
-      expect(runtime.textContent?.includes("Unavailable")).toBe(true);
-      expect(runtime.textContent?.includes("0.0.9")).toBe(false);
-      const claude = clientRow(harness.dom, "claude-code");
-      expect(summary(claude).includes("does not start")).toBe(false);
-      expect(summary(claude).includes("Connected")).toBe(true);
-      expect(summary(claude).includes("Updated to")).toBe(false);
-      expect(summary(claude).includes("—")).toBe(false);
       expect(
-        claude.querySelector<HTMLButtonElement>('button[role="switch"]')
-          ?.disabled,
+        (dialog.textContent ?? "").includes(
+          "Installs the Svode plugin: the skill, the svode command and the Svode MCP server.",
+        ),
+      ).toBe(true);
+      await act(async () => {
+        within(dialog, "Turn on").click();
+        await settle();
+      });
+      expect(enabled).toEqual(["codex", "claude-code"]);
+      expect(stateOf(agentRow(harness.dom, "claude-code"))).toBe("Ready");
+      expect(
+        integration
+          .querySelector('[data-integration-part="failed:claude-code"]')
+          ?.textContent?.includes(
+            "Claude Code · Not installed: plugin folder is read-only",
+          ),
+      ).toBe(true);
+    } finally {
+      console.error = consoleError;
+      await harness.cleanup();
+      await setLocale(originalLocale, { reload: false });
+    }
+  });
+
+  test("Russian: unchecking the tools only turns the agent on, and turning off asks only when Svode can remove the agent's own part and removes nothing by default", async () => {
+    const originalLocale = getLocale();
+    await setLocale("ru", { reload: false });
+    let canonical = providersStatus([
+      client("claude-code", "Claude Code", false),
+      client("codex", "Codex", true),
+    ]);
+    const enabled: string[] = [];
+    const disabled: string[] = [];
+    const harness = await renderSection(
+      () => canonical,
+      (next) => {
+        canonical = next;
+      },
+      [agentSetup("codex"), agentSetup("claude-code", { enabled: false })],
+      {
+        agent_setup_enable: ({ agent }) => {
+          enabled.push(String(agent));
+          return agentSetup(String(agent));
+        },
+        agent_setup_disable: ({ agent }) => {
+          disabled.push(String(agent));
+          return agentSetup(String(agent), { enabled: false });
+        },
+      },
+    );
+    try {
+      const document = harness.dom.window.document;
+      await act(async () => {
+        switchOf(agentRow(harness.dom, "claude-code")).click();
+        await settle();
+      });
+      let dialog = document.querySelector<HTMLElement>('[role="alertdialog"]')!;
+      expect(dialog.querySelector("h2")?.textContent).toBe(
+        "Включить Claude Code?",
+      );
+      await act(async () => {
+        dialog
+          .querySelector<HTMLButtonElement>('button[role="checkbox"]')!
+          .click();
+        await settle();
+      });
+      await act(async () => {
+        within(dialog, "Включить").click();
+        await settle();
+      });
+      expect(enabled).toEqual(["claude-code"]);
+      expect(harness.installed).toEqual([]);
+
+      // Turning off asks for Codex, which has its own part; the option to
+      // remove it is off, and the shared skill is offered only with it.
+      await act(async () => {
+        switchOf(agentRow(harness.dom, "codex")).click();
+        await settle();
+      });
+      dialog = document.querySelector<HTMLElement>('[role="alertdialog"]')!;
+      expect(dialog.querySelector("h2")?.textContent).toBe("Выключить Codex?");
+      expect(
+        (dialog.textContent ?? "").includes(
+          "MCP Svode перестанет работать и в терминале Codex. Общий skill сохранится.",
+        ),
+      ).toBe(true);
+      expect(checkboxes(dialog)).toEqual([
+        ["Также удалить MCP Svode", "false"],
+      ]);
+      await act(async () => {
+        within(dialog, "Выключить").click();
+        await settle();
+      });
+      expect(disabled).toEqual(["codex"]);
+      expect(harness.removed).toEqual([]);
+
+      // Turned on again, Codex goes off with its own part and the shared
+      // skill no other agent reads.
+      await act(async () => {
+        switchOf(agentRow(harness.dom, "codex")).click();
+        await settle();
+      });
+      expect(enabled).toEqual(["claude-code", "codex"]);
+      await act(async () => {
+        switchOf(agentRow(harness.dom, "codex")).click();
+        await settle();
+      });
+      dialog = document.querySelector<HTMLElement>('[role="alertdialog"]')!;
+      await act(async () => {
+        dialog
+          .querySelector<HTMLButtonElement>('button[role="checkbox"]')!
+          .click();
+        await settle();
+      });
+      expect(checkboxes(dialog)).toEqual([
+        ["Также удалить MCP Svode", "true"],
+        ["Также удалить общий skill", "false"],
+      ]);
+      await act(async () => {
+        dialog
+          .querySelectorAll<HTMLButtonElement>('button[role="checkbox"]')[1]!
+          .click();
+        await settle();
+      });
+      await act(async () => {
+        within(dialog, "Выключить").click();
+        await settle();
+      });
+      expect(harness.removed).toEqual(["codex", "#shared"]);
+      const [, integration] = topSections(harness.dom);
+      expect(
+        integration.querySelector("[data-integration-empty]") === null,
       ).toBe(false);
-      expect(
-        clientRow(harness.dom, "codex").querySelector<HTMLButtonElement>(
-          'button[role="switch"]',
-        )?.disabled,
-      ).toBe(true);
+
+      // An agent without an own part turns off at once.
+      await act(async () => {
+        switchOf(agentRow(harness.dom, "claude-code")).click();
+        await settle();
+      });
+      expect(document.querySelector('[role="alertdialog"]')).toBeNull();
+      expect(disabled).toEqual(["codex", "codex", "claude-code"]);
     } finally {
       await harness.cleanup();
       await setLocale(originalLocale, { reload: false });
     }
   });
 
-  test("a runtime that speaks another bridge protocol is reported in Svode access", async () => {
+  test("Manage…: a summary before applying, a partial success with retry, and the shared skill stays while a checked agent needs it", async () => {
     const originalLocale = getLocale();
-    await setLocale("ru", { reload: false });
-    let canonical: McpStatus = {
-      ...providersStatus([
-        client("claude-code", "Claude Code", true),
-        client("codex", "Codex", false),
-      ]),
-      doctor: {
-        ok: false,
-        messages: [],
-        errors: ["svode-mcp of the runtime speaks bridge protocol a, not b"],
-        bridgeCompatible: false,
-      },
-    };
+    await setLocale("en", { reload: false });
+    const consoleError = console.error;
+    console.error = () => {};
+    let canonical = providersStatus([
+      client("claude-code", "Claude Code", true),
+      client("codex", "Codex", true),
+    ]);
+    let sharedAttempts = 0;
     const harness = await renderSection(
       () => canonical,
       (next) => {
         canonical = next;
       },
+      [
+        agentSetup("codex"),
+        agentSetup("claude-code"),
+        deferredSetup("hermes", true),
+      ],
+      {
+        mcp_remove_shared_skill: () => {
+          sharedAttempts += 1;
+          if (sharedAttempts === 1)
+            throw { kind: "general", message: "the skill folder is busy" };
+          return undefined;
+        },
+      },
     );
     try {
+      const document = harness.dom.window.document;
+      const [, integration] = topSections(harness.dom);
+      await act(async () => {
+        within(integration, "Manage…").click();
+        await settle();
+      });
+      let dialog = document.querySelector<HTMLElement>("[data-svode-tools]")!;
+      expect(toolsAgents(dialog)).toEqual([
+        [
+          "codex",
+          "Codex",
+          "MCP and shared skill · Installed",
+          "true",
+          "enabled",
+        ],
+        ["claude-code", "Claude Code", "Plugin · Installed", "true", "enabled"],
+        ["hermes", "Hermes", "Not supported yet", "false", "disabled"],
+      ]);
+      const shared = () =>
+        dialog.querySelector<HTMLButtonElement>(
+          '[data-tools-shared] button[role="checkbox"]',
+        )!;
+      expect(shared().getAttribute("aria-checked")).toBe("true");
+      expect(shared().disabled).toBe(true);
       expect(
-        harness.dom.window.document.body.textContent?.includes(
-          "Несовместимая версия bridge",
-        ),
-      ).toBe(true);
+        dialog.querySelector(
+          "[data-tools-shared] [data-slot=field-description]",
+        )?.textContent,
+      ).toBe("Read by Codex · Needed by Codex");
+      expect(summaryLines(dialog)).toEqual(["Nothing to change"]);
+      expect(within(dialog, "Apply").disabled).toBe(true);
+
+      await act(async () => {
+        checkboxOf(dialog, "codex").click();
+        await settle();
+      });
+      expect(shared().disabled).toBe(false);
+      await act(async () => {
+        shared().click();
+        await settle();
+      });
+      expect(summaryLines(dialog)).toEqual([
+        "Remove Svode MCP from Codex",
+        "Remove the shared skill: it stops working for Codex",
+      ]);
+      await act(async () => {
+        within(dialog, "Apply").click();
+        await settle();
+      });
+      dialog = document.querySelector<HTMLElement>("[data-svode-tools]")!;
+      expect(results(dialog)).toEqual([
+        ["done", "Remove Svode MCP from CodexDone"],
+        [
+          "failed",
+          "Remove the shared skill: it stops working for CodexFailed: the skill folder is busy",
+        ],
+      ]);
+      await act(async () => {
+        within(dialog, "Retry failed").click();
+        await settle();
+      });
+      expect(results(dialog)).toEqual([
+        ["done", "Remove Svode MCP from CodexDone"],
+        ["done", "Remove the shared skill: it stops working for CodexDone"],
+      ]);
+      expect(harness.removed).toEqual(["codex", "#shared"]);
+      expect(findButton(harness.dom, "Retry failed") === undefined).toBe(true);
+      await act(async () => {
+        within(dialog, "Close").click();
+        await settle();
+      });
+      expect(document.querySelector("[data-svode-tools]")).toBeNull();
+      expect(partRows(integration)[0]).toEqual(["Svode plugin", "Claude Code"]);
     } finally {
+      console.error = consoleError;
       await harness.cleanup();
       await setLocale(originalLocale, { reload: false });
     }
@@ -587,7 +874,7 @@ if (!isolatedProcess) {
     }
   });
 
-  test("turning on an agent that needs its adapter asks first and shows the install and its failure in the row; otherwise the switch acts at once", async () => {
+  test("turning on an agent that needs its adapter asks first and shows the install and its failure in the row; with nothing to install or remove the switch acts at once", async () => {
     const originalLocale = getLocale();
     await setLocale("en", { reload: false });
     const status = providersStatus([
@@ -677,12 +964,22 @@ if (!isolatedProcess) {
       expect(document.querySelector('[role="alertdialog"]')).toBeNull();
       expect(enabled).toEqual(["codex", "claude-code"]);
       expect(stateOf(agentRow(harness.dom, "claude-code"))).toBe("Ready");
+      // Claude Code has its Svode plugin: turning it off asks, and by
+      // default removes nothing.
       await act(async () => {
         switchOf(agentRow(harness.dom, "claude-code")).click();
         await settle();
       });
-      expect(document.querySelector('[role="alertdialog"]')).toBeNull();
+      const off = document.querySelector<HTMLElement>('[role="alertdialog"]')!;
+      expect(
+        (off.textContent ?? "").includes("Also remove the Svode plugin"),
+      ).toBe(true);
+      await act(async () => {
+        within(off, "Turn off").click();
+        await settle();
+      });
       expect(disabled).toEqual(["claude-code"]);
+      expect(harness.removed).toEqual([]);
       expect(stateOf(agentRow(harness.dom, "claude-code"))).toBe("Off");
     } finally {
       await harness.cleanup();
@@ -1021,6 +1318,7 @@ function deferredSetup(agent: string, found: boolean): AgentSetupDto {
 
 type Handler = (args: Record<string, unknown>) => unknown;
 
+// A handler that returns undefined lets the canonical mock answer.
 async function renderSection(
   getCanonical: () => McpStatus,
   setCanonical: (status: McpStatus) => void,
@@ -1029,32 +1327,42 @@ async function renderSection(
 ) {
   const dom = createDom();
   const restoreGlobals = installDomGlobals(dom);
-  const printed: string[] = [];
+  const installed: string[] = [];
+  const removed: string[] = [];
   const commands: string[] = [];
   mockNativeIpc(
     (command, args) => {
       commands.push(command);
-      const handler = handlers[command];
-      if (handler) return handler((args ?? {}) as Record<string, unknown>);
+      const values = (args ?? {}) as Record<string, unknown>;
+      const handled = handlers[command]?.(values);
+      if (handled !== undefined) return handled;
       if (command === "agent_adapters_list_identities") return IDENTITIES;
       if (command === "agent_setup_list") return setups;
       if (command === "mcp_get_status") return getCanonical();
       if (command === "mcp_run_doctor") return getCanonical().doctor;
-      if (command === "mcp_print_config") {
-        const id = String((args as Record<string, unknown>).client);
-        printed.push(id);
-        return id === "codex" ? "[mcp_servers.svode]" : "claude mcp add";
-      }
       if (command === "mcp_install_client" || command === "mcp_remove_client") {
-        const id = String((args as Record<string, unknown>).client);
-        const installed = command === "mcp_install_client";
-        const next = {
-          ...getCanonical(),
-          clients: getCanonical().clients.map((candidate) =>
+        const id = String(values.client);
+        const install = command === "mcp_install_client";
+        (install ? installed : removed).push(id);
+        const next = withClients(
+          getCanonical(),
+          getCanonical().clients.map((candidate) =>
             candidate.id === id
-              ? client(candidate.id, candidate.name, installed)
+              ? client(candidate.id, candidate.name, install)
               : candidate,
           ),
+        );
+        setCanonical(next);
+        return next;
+      }
+      if (command === "mcp_remove_shared_skill") {
+        const current = getCanonical();
+        if (current.sharedSkill.requiredBy.length)
+          throw { kind: "general", message: "the shared skill is needed" };
+        removed.push("#shared");
+        const next = {
+          ...current,
+          sharedSkill: { ...current.sharedSkill, state: "absent" as const },
         };
         setCanonical(next);
         return next;
@@ -1070,7 +1378,8 @@ async function renderSection(
   });
   return {
     dom,
-    printed,
+    installed,
+    removed,
     commands,
     cleanup: async () => {
       await act(async () => root.unmount());
@@ -1082,19 +1391,54 @@ async function renderSection(
 }
 
 function providersStatus(clients: McpClientStatus[]): McpStatus {
-  return {
-    server: {
-      status: "installed",
-      command: "/Users/test/.svode/bin/svode-mcp",
-      version: "0.0.9",
-      runtime: { kind: "desktop", version: "0.0.9" },
+  return withClients(
+    {
+      server: {
+        status: "installed",
+        command: "/Users/test/.svode/bin/svode-mcp",
+        version: "0.0.9",
+        runtime: { kind: "desktop", version: "0.0.9" },
+      },
+      clients: [],
+      sharedSkill: {
+        path: "/Users/test/.agents/skills/svode",
+        state: "absent",
+        readers: clients.some((candidate) => candidate.id === "codex")
+          ? ["codex"]
+          : [],
+        requiredBy: [],
+      },
+      manualConfig: {
+        name: "svode",
+        transport: "stdio",
+        command: "/Users/test/.svode/bin/svode-mcp",
+        args: [],
+        env: {},
+      },
+      doctor: {
+        ok: true,
+        messages: ["ready"],
+        errors: [],
+        bridgeCompatible: true,
+      },
     },
     clients,
-    doctor: {
-      ok: true,
-      messages: ["ready"],
-      errors: [],
-      bridgeCompatible: true,
+  );
+}
+
+// Codex needs the shared skill: connecting it installs the skill, while
+// removing its own part keeps it.
+function withClients(status: McpStatus, clients: McpClientStatus[]): McpStatus {
+  const requiredBy = clients
+    .filter((candidate) => candidate.id === "codex" && candidate.installed)
+    .map((candidate) => candidate.id);
+  return {
+    ...status,
+    clients,
+    sharedSkill: {
+      ...status.sharedSkill,
+      state: requiredBy.length ? "managed" : status.sharedSkill.state,
+      requiredBy,
     },
   };
 }
@@ -1103,8 +1447,13 @@ function client(
   id: McpClientStatus["id"],
   name: string,
   installed: boolean,
+  overrides: Partial<McpClientStatus> = {},
 ): McpClientStatus {
   const state = installed ? "managed" : "absent";
+  const configPath =
+    id === "codex"
+      ? "/Users/test/.codex/config.toml"
+      : "/Users/test/.claude.json";
   return {
     id,
     name,
@@ -1113,40 +1462,89 @@ function client(
     managed: installed,
     status: installed ? "installed" : "mcp_not_installed",
     path: `/Users/test/.bun/bin/${id}`,
-    configPath:
-      id === "codex"
-        ? "/Users/test/.codex/config.toml"
-        : "/Users/test/.claude.json",
+    configPath,
     complete: installed,
     version: installed ? "0.0.9" : null,
-    artifacts:
+    issues: [],
+    ownPart:
       id === "codex"
-        ? [
-            { kind: "skill", path: "/Users/test/.agents/skills/svode", state },
-            {
-              kind: "mcp-entry",
-              path: "/Users/test/.codex/config.toml",
-              state,
-            },
-          ]
-        : [{ kind: "plugin", path: "/Users/test/.claude/skills/svode", state }],
+        ? { kind: "mcp-entry", path: configPath, state }
+        : { kind: "plugin", path: "/Users/test/.claude/skills/svode", state },
+    limitation: null,
+    ...overrides,
   };
 }
 
-// The always visible part of a row, without its details.
-function summary(row: HTMLElement) {
-  return row.querySelector('[data-slot="item-content"]')?.textContent ?? "";
+// Top-level sections of the page: agents, Svode integration and runtime.
+function topSections(dom: JSDOM) {
+  return Array.from(
+    dom.window.document.querySelectorAll<HTMLElement>("section"),
+  ).filter((section) => !section.parentElement?.closest("section"));
 }
 
-// Title, path, purpose and state of each artifact in the open details.
-function artifactRows(row: HTMLElement) {
-  return Array.from(row.querySelectorAll("[data-mcp-artifact]")).map((item) => [
-    item.querySelector('[data-slot="item-title"]')?.textContent ?? "",
-    ...Array.from(
-      item.querySelectorAll('[data-slot="item-description"] > span'),
-    ).map((span) => span.textContent ?? ""),
-    item.querySelector('[data-slot="item-actions"]')?.textContent ?? "",
+// Title and description of each row of the integration block.
+function partRows(integration: HTMLElement) {
+  return Array.from(integration.querySelectorAll('[data-slot="item"]')).map(
+    (item) => [
+      item.querySelector('[data-slot="item-title"]')?.textContent ?? "",
+      item.querySelector('[data-slot="item-description"]')?.textContent ?? "",
+    ],
+  );
+}
+
+// Agent, name, kit and state, checked and whether it can be changed.
+function toolsAgents(dialog: HTMLElement) {
+  return Array.from(
+    dialog.querySelectorAll<HTMLElement>("[data-tools-agent]"),
+  ).map((field) => {
+    const box = field.querySelector<HTMLButtonElement>(
+      'button[role="checkbox"]',
+    )!;
+    return [
+      field.dataset.toolsAgent ?? "",
+      field.querySelector('[data-slot="field-label"]')?.textContent ?? "",
+      field.querySelector('[data-slot="field-description"]')?.textContent ?? "",
+      box.getAttribute("aria-checked") ?? "",
+      box.disabled ? "disabled" : "enabled",
+    ];
+  });
+}
+
+function checkboxOf(dialog: HTMLElement, agent: string) {
+  return dialog.querySelector<HTMLButtonElement>(
+    `[data-tools-agent="${agent}"] button[role="checkbox"]`,
+  )!;
+}
+
+function summaryLines(dialog: HTMLElement) {
+  const summary = dialog.querySelector("[data-tools-summary]")!;
+  const lines = Array.from(summary.querySelectorAll("li"));
+  return lines.length
+    ? lines.map((line) => line.textContent ?? "")
+    : [summary.querySelector("p")?.textContent ?? ""];
+}
+
+function results(dialog: HTMLElement) {
+  return Array.from(
+    dialog.querySelectorAll<HTMLElement>("li[data-tools-result]"),
+  ).map((line) => [line.dataset.toolsResult ?? "", line.textContent ?? ""]);
+}
+
+// Options of a confirmation with whether each is checked.
+function checkboxes(dialog: HTMLElement) {
+  return Array.from(
+    dialog.querySelectorAll<HTMLElement>("[data-confirmation-option]"),
+  ).map((option) => [
+    option.querySelector('[data-slot="field-label"]')?.textContent ?? "",
+    option
+      .querySelector('button[role="checkbox"]')
+      ?.getAttribute("aria-checked") ?? "",
   ]);
+}
+
+// The always visible part of a row.
+function summary(row: HTMLElement) {
+  return row.querySelector('[data-slot="item-content"]')?.textContent ?? "";
 }
 
 function agentRow(dom: JSDOM, agent: string) {
@@ -1194,12 +1592,6 @@ function within(row: HTMLElement, name: string) {
   return Array.from(row.querySelectorAll("button")).find(
     (button) => button.textContent?.trim() === name,
   ) as HTMLButtonElement;
-}
-
-function clientRow(dom: JSDOM, id: McpClientStatus["id"]) {
-  return dom.window.document.querySelector<HTMLElement>(
-    `[data-mcp-client="${id}"]`,
-  )!;
 }
 
 function findButton(dom: JSDOM, name: string) {

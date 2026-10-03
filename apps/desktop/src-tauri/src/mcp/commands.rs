@@ -76,14 +76,6 @@ pub async fn mcp_get_status(
     Ok(status(&state, &machine, &errors).await)
 }
 
-/// MCP config of the client for a user who configures it by hand.
-#[tauri::command]
-pub fn mcp_print_config(client: String) -> Result<String, AppError> {
-    let client = Client::parse(&client).map_err(app_error)?;
-    let machine = Machine::user().map_err(app_error)?;
-    Ok(svode_connect::manual_config_text(&machine, client))
-}
-
 /// Connects the client completely: skill, `svode` and MCP.
 #[tauri::command]
 pub async fn mcp_install_client(

@@ -2,8 +2,8 @@ export {
   getMcpStatus,
   installMcpClient,
   listenMcpStatusChanged,
-  printMcpConfig,
   removeMcpClient,
+  removeMcpSharedSkill,
   runMcpDoctor,
 } from "@/platform/mcp";
 export type {
@@ -12,5 +12,7 @@ export type {
   McpClientStatus,
   McpArtifactStatus,
   McpDoctorReport,
+  McpManualConfig,
+  McpSharedSkillStatus,
   McpStatus,
 } from "@/platform/mcp";

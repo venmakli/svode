@@ -5,11 +5,8 @@ import { JSDOM } from "jsdom";
 import { emit as emitNativeEvent } from "@/platform/native/events";
 import { clearNativeMocks, mockNativeIpc } from "@/platform/native/testing";
 
-import {
-  type McpClientStatus,
-  type McpStatus,
-  useMcpIntegrations,
-} from "./use-mcp-integrations";
+import type { McpClientStatus } from "../api";
+import { type McpStatus, useMcpIntegrations } from "./use-mcp-integrations";
 
 const MCP_STATUS_CHANGED_EVENT = "mcp:status-changed";
 
@@ -124,7 +121,7 @@ test("converges mounted MCP surfaces, deduplicates equal snapshots, and cleans u
   }
 });
 
-test("keeps per-client pending isolated and ignores a late toggle result", async () => {
+test("keeps per-client pending isolated and ignores a late install result", async () => {
   const dom = createDom();
   const restoreGlobals = installDomGlobals(dom);
   let canonical = mcpStatus(false, false);
@@ -175,7 +172,7 @@ test("keeps per-client pending isolated and ignores a late toggle result", async
   }
 });
 
-test("re-reads canonical MCP status after a failed client mutation", async () => {
+test("re-reads canonical MCP status after a failed client mutation and keeps its error for the part", async () => {
   const dom = createDom();
   const restoreGlobals = installDomGlobals(dom);
   const canonical = mcpStatus(false, false);
@@ -212,6 +209,11 @@ test("re-reads canonical MCP status after a failed client mutation", async () =>
     expect(reads > readsBeforeMutation).toBe(true);
     expect(clientState(dom, "only", "codex")).toBe("off");
     expect(pendingState(dom, "only", "codex")).toBe("idle");
+    expect(
+      dom.window.document.querySelector(
+        '[data-harness="only"] [data-failure="codex"]',
+      )?.textContent,
+    ).toBe("client config write failed");
   } finally {
     await act(async () => root.unmount());
     console.error = previousConsoleError;
@@ -242,15 +244,20 @@ function McpHarness({
       <span data-client="codex">{codex?.installed ? "on" : "off"}</span>
       <span data-client="claude-code">{claude?.installed ? "on" : "off"}</span>
       <span data-pending="codex">
-        {settings.pendingClients.has("codex") ? "pending" : "idle"}
+        {settings.activity.pending.has("codex") ? "pending" : "idle"}
       </span>
       <span data-pending="claude-code">
-        {settings.pendingClients.has("claude-code") ? "pending" : "idle"}
+        {settings.activity.pending.has("claude-code") ? "pending" : "idle"}
+      </span>
+      <span data-failure="codex">
+        {settings.activity.failures.codex?.message ?? "none"}
       </span>
       <span data-doctor>{settings.doctor?.messages[0] ?? "none"}</span>
       <button
         data-action="install-codex"
-        onClick={() => codex && settings.handleToggle(codex, true)}
+        onClick={() =>
+          codex && settings.run({ kind: "install", client: codex.id })
+        }
       />
       <button data-action="refresh" onClick={settings.loadStatus} />
     </div>
@@ -271,6 +278,19 @@ function mcpStatus(
       client("claude-code", "Claude Code", claude),
       client("codex", "Codex", codex),
     ],
+    sharedSkill: {
+      path: "/Users/test/.agents/skills/svode",
+      state: codex ? "managed" : "absent",
+      readers: ["codex"],
+      requiredBy: codex ? ["codex"] : [],
+    },
+    manualConfig: {
+      name: "svode",
+      transport: "stdio",
+      command: "/Users/test/.svode/bin/svode-mcp",
+      args: [],
+      env: {},
+    },
     doctor: { ok: true, messages: [doctorMessage], errors: [] },
   };
 }
@@ -287,6 +307,13 @@ function client(
     installed,
     managed: installed,
     status: installed ? "installed" : "mcp_not_installed",
+    issues: [],
+    ownPart: {
+      kind: id === "codex" ? "mcp-entry" : "plugin",
+      path: "/Users/test/.codex/config.toml",
+      state: installed ? "managed" : "absent",
+    },
+    limitation: null,
   };
 }
 

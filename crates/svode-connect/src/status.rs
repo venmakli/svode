@@ -46,8 +46,14 @@ pub struct ArtifactStatus {
     /// `plugin`, `skill` or `mcp-entry`.
     pub kind: String,
     pub path: String,
-    /// `absent`, `managed`, `previous`, `foreign`, `custom` or `unreadable`.
+    /// `absent`, `managed`, `previous`, `foreign`, `custom`, `unreadable`,
+    /// or `external` for a Svode installation made outside the manager.
     pub state: String,
+    /// Channel of an `external` installation, such as an agent marketplace.
+    /// Recognizing channels comes with the plugin distribution (Stage 11);
+    /// until then none is reported.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -384,6 +390,7 @@ fn skill_artifact(machine: &Machine, client: Client, inspection: &Inspection) ->
         .into(),
         path: machine.skill_link(client).display().to_string(),
         state: link_state(inspection.skill).into(),
+        source: None,
     }
 }
 
@@ -399,6 +406,7 @@ fn entry_artifact(machine: &Machine, client: Client, inspection: &Inspection) ->
             Entry::Unreadable(_) => "unreadable",
         }
         .into(),
+        source: None,
     }
 }
 

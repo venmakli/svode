@@ -5,33 +5,33 @@ import {
   getMcpStatus,
   installMcpClient,
   listenMcpStatusChanged,
-  printMcpConfig,
   removeMcpClient,
+  removeMcpSharedSkill,
   runMcpDoctor,
-  type McpClientId,
-  type McpClientStatus,
   type McpDoctorReport,
   type McpStatus,
 } from "../api";
+import {
+  manualConfigJson,
+  operationKey,
+  type IntegrationActivity,
+  type IntegrationOperation,
+} from "../model/svode-integration";
 
-export type {
-  McpArtifactStatus,
-  McpClientStatus,
-  McpDoctorReport,
-  McpStatus,
-} from "../api";
+export type { McpDoctorReport, McpStatus } from "../api";
 
 export function useMcpIntegrations() {
   const [status, setStatus] = useState<McpStatus | null>(null);
   const [doctor, setDoctor] = useState<McpDoctorReport | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [doctorPending, setDoctorPending] = useState(false);
-  const [pendingClients, setPendingClients] = useState<
-    ReadonlySet<McpClientId>
-  >(() => new Set());
-  const [manualConfigs, setManualConfigs] = useState<
-    Partial<Record<McpClientId, string>>
-  >({});
+  const [pending, setPending] = useState<
+    ReadonlyMap<string, IntegrationOperation>
+  >(() => new Map());
+  const [failures, setFailures] = useState<IntegrationActivity["failures"]>({});
+  // The set of installed parts changed in this window: open agent sessions
+  // get it after a restart.
+  const [changed, setChanged] = useState(false);
   const mountedRef = useRef(false);
   const requestGenerationRef = useRef(0);
   const doctorRequestGenerationRef = useRef(0);
@@ -137,72 +137,65 @@ export function useMcpIntegrations() {
     };
   }, [reconcileStatus]);
 
-  const loadManualConfig = useCallback(
-    async (client: McpClientId) => {
-      const loaded = manualConfigs[client];
-      if (loaded !== undefined) return loaded;
-      const text = await printMcpConfig(client);
-      if (mountedRef.current)
-        setManualConfigs((current) => ({ ...current, [client]: text }));
-      return text;
-    },
-    [manualConfigs],
-  );
-
-  const showManualConfig = useCallback(
-    (client: McpClientId) => {
-      void loadManualConfig(client).catch((err) => {
-        console.error("mcp_print_config failed:", err);
-        toast.error(m.toast_error());
-      });
-    },
-    [loadManualConfig],
-  );
-
-  const handleToggle = useCallback(
-    async (client: McpClientStatus, checked: boolean) => {
+  // Runs one operation; the part shows it while it runs and its error after.
+  // Resolves to the error message, or null on success.
+  const run = useCallback(
+    async (operation: IntegrationOperation): Promise<string | null> => {
+      const key = operationKey(operation);
       const generation = ++requestGenerationRef.current;
-      setPendingClients((current) => addPendingClient(current, client.id));
+      setPending((current) => new Map(current).set(key, operation));
+      setFailures((current) => withoutKey(current, key));
       try {
-        const next = checked
-          ? await installMcpClient(client.id)
-          : await removeMcpClient(client.id);
+        const next =
+          operation.kind === "install"
+            ? await installMcpClient(operation.client)
+            : operation.kind === "remove"
+              ? await removeMcpClient(operation.client)
+              : await removeMcpSharedSkill();
         applyStatus(next, generation, null);
-        toast.success(
-          checked
-            ? m.settings_providers_connected_toast()
-            : m.toast_settings_saved(),
-        );
+        if (mountedRef.current) setChanged(true);
+        return null;
       } catch (err) {
-        console.error("MCP client toggle failed:", err);
+        console.error("Svode integration operation failed:", err);
+        const message = errorMessage(err);
+        if (mountedRef.current)
+          setFailures((current) => ({
+            ...current,
+            [key]: { operation, message },
+          }));
         try {
           await reconcileStatus(false);
         } catch (reconcileError) {
           console.error(
-            "Failed to reconcile MCP status after toggle error:",
+            "Failed to reconcile MCP status after an operation error:",
             reconcileError,
           );
         }
-        toast.error(m.toast_error());
+        return message;
       } finally {
-        setPendingClients((current) => removePendingClient(current, client.id));
+        if (mountedRef.current)
+          setPending((current) => {
+            const next = new Map(current);
+            next.delete(key);
+            return next;
+          });
       }
     },
     [applyStatus, reconcileStatus],
   );
 
-  const handleCopyConfig = useCallback(
-    async (client: McpClientId) => {
-      try {
-        await navigator.clipboard.writeText(await loadManualConfig(client));
-        toast.success(m.settings_mcp_config_copied());
-      } catch (err) {
-        console.error("MCP config copy failed:", err);
-        toast.error(m.toast_error());
-      }
-    },
-    [loadManualConfig],
-  );
+  const handleCopyConfig = useCallback(async () => {
+    if (!status) return;
+    try {
+      await navigator.clipboard.writeText(
+        manualConfigJson(status.manualConfig),
+      );
+      toast.success(m.settings_mcp_config_copied());
+    } catch (err) {
+      console.error("MCP config copy failed:", err);
+      toast.error(m.toast_error());
+    }
+  }, [status]);
 
   const handleDoctor = useCallback(async () => {
     const generation = ++doctorRequestGenerationRef.current;
@@ -234,11 +227,10 @@ export function useMcpIntegrations() {
     doctor,
     refreshing,
     doctorPending,
-    pendingClients,
-    manualConfigs,
+    activity: { pending, failures } satisfies IntegrationActivity,
+    changed,
     loadStatus,
-    showManualConfig,
-    handleToggle,
+    run,
     handleCopyConfig,
     handleDoctor,
   };
@@ -248,24 +240,26 @@ function mcpOwnerStatusFingerprint(status: McpStatus): string {
   return JSON.stringify({
     server: status.server,
     clients: status.clients,
+    sharedSkill: status.sharedSkill,
+    manualConfig: status.manualConfig,
     runtimeUpdatedFrom: status.runtimeUpdatedFrom,
   });
 }
 
-function addPendingClient(
-  current: ReadonlySet<McpClientId>,
-  client: McpClientId,
-): ReadonlySet<McpClientId> {
-  if (current.has(client)) return current;
-  return new Set([...current, client]);
+function withoutKey<T>(
+  current: Readonly<Record<string, T>>,
+  key: string,
+): Readonly<Record<string, T>> {
+  if (!(key in current)) return current;
+  const next = { ...current };
+  delete next[key];
+  return next;
 }
 
-function removePendingClient(
-  current: ReadonlySet<McpClientId>,
-  client: McpClientId,
-): ReadonlySet<McpClientId> {
-  if (!current.has(client)) return current;
-  const next = new Set(current);
-  next.delete(client);
-  return next;
+function errorMessage(error: unknown) {
+  if (error && typeof error === "object" && "message" in error) {
+    const { message } = error as { message: unknown };
+    if (typeof message === "string") return message;
+  }
+  return String(error);
 }
