@@ -90,7 +90,8 @@ pub struct CliVersionRange {
 /// being the verified direction. Codex: the `@openai/codex` range the
 /// pinned `codex-acp` declares. opencode, Cursor and pi: the version checked
 /// live in slice 3.2 (2026-10-03), the only one verified with their
-/// entrypoint. `None` until the agent's range is verified.
+/// entrypoint; Hermes: its release date checked live in slice 3.3. `None`
+/// until the agent's range is verified.
 pub fn cli_version_range(agent: AgentAdapterKind) -> Option<CliVersionRange> {
     match agent {
         AgentAdapterKind::ClaudeCode => Some(CliVersionRange {
@@ -113,6 +114,11 @@ pub fn cli_version_range(agent: AgentAdapterKind) -> Option<CliVersionRange> {
         AgentAdapterKind::Pi => Some(CliVersionRange {
             minimum: "1.0.0",
             tested_up_to: "1.0.0",
+        }),
+        // The registry reads the release date Hermes prints as its version.
+        AgentAdapterKind::Hermes => Some(CliVersionRange {
+            minimum: "2026.9.24",
+            tested_up_to: "2026.9.24",
         }),
         _ => None,
     }

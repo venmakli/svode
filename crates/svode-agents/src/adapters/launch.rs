@@ -87,7 +87,7 @@ impl AdapterStore {
             }
         };
         let version = AdapterRuntimeRegistry
-            .cli_version(&executable, target, runner)
+            .cli_version(agent, &executable, target, runner)
             .await
             .ok();
         if let Some(range) = cli_version_range(agent)
@@ -400,14 +400,14 @@ mod tests {
         );
         // A described agent that is not found stays missing, an undescribed
         // one is not supported.
-        executable(bin.path(), "hermes");
+        executable(bin.path(), "qwen");
         assert_eq!(
             store
                 .launch_plan(
-                    AgentAdapterKind::Hermes,
+                    AgentAdapterKind::QwenCode,
                     None,
                     &context(bin.path()),
-                    &opencode("0.18.2"),
+                    &opencode("0.24.7"),
                 )
                 .await
                 .unwrap_err(),

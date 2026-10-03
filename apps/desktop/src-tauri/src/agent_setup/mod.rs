@@ -506,6 +506,7 @@ mod tests {
                 "claude-code",
                 "cursor",
                 "opencode",
+                "hermes",
                 "pi",
                 on.id.agent_id().as_str()
             ]

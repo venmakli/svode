@@ -827,7 +827,7 @@ if (!isolatedProcess) {
           },
         }),
         deferredSetup("hermes", true),
-        deferredSetup("gemini-cli", false),
+        deferredSetup("kimi-code", false),
         deferredSetup("cursor", false),
       ],
     );
@@ -867,7 +867,7 @@ if (!isolatedProcess) {
           link.getAttribute("href"),
         ),
       ).toEqual([
-        "https://example.test/gemini-cli",
+        "https://example.test/kimi-code",
         "https://example.test/cursor",
       ]);
       expect(
@@ -1626,7 +1626,7 @@ const IDENTITIES = [
   { id: "codex", displayName: "Codex" },
   { id: "claude-code", displayName: "Claude Code" },
   { id: "hermes", displayName: "Hermes" },
-  { id: "gemini-cli", displayName: "Gemini CLI" },
+  { id: "kimi-code", displayName: "Kimi Code" },
   { id: "cursor", displayName: "Cursor" },
 ];
 

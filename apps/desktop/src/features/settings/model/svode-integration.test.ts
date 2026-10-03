@@ -198,13 +198,13 @@ test("integration parts: a running and a failed operation replace the state of t
 
 test("confirmation offers: turning on offers the kit with the shared skill and its other readers", () => {
   const fresh = status([client("claude-code", false), client("codex", false)], {
-    readers: ["codex", "gemini-cli"],
+    readers: ["codex", "kimi-code"],
   });
   expect(toolsOffer(fresh, "codex")).toEqual({
     agent: "codex",
     kit: "mcp_shared",
     sharedReused: false,
-    alsoReaders: ["gemini-cli"],
+    alsoReaders: ["kimi-code"],
     limitation: null,
   });
   expect(toolsOffer(fresh, "claude-code")).toEqual({
@@ -250,7 +250,7 @@ test("confirmation offers: turning off offers the shared skill only to its last 
     sharedRemovable: false,
   });
   const readByOthers = status([client("codex", true)], {
-    readers: ["codex", "gemini-cli"],
+    readers: ["codex", "kimi-code"],
   });
   expect(ownPartRemoval(readByOthers, "codex")?.sharedRemovable).toBe(false);
   expect(ownPartRemoval(alone, "hermes")).toBeNull();

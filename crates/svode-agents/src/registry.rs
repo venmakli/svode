@@ -456,9 +456,10 @@ impl AdapterRuntimeRegistry {
         self.diagnose_resolved(adapter, target, path, runner).await
     }
 
-    /// The output of the executable's bounded `--version`.
+    /// The CLI version from the executable's bounded `--version` output.
     pub async fn cli_version(
         &self,
+        adapter: AgentAdapterKind,
         path: &Path,
         target: &AdapterTarget,
         runner: &dyn RuntimeCommandRunner,
@@ -472,7 +473,9 @@ impl AdapterRuntimeRegistry {
             })
             .await?
         {
-            output if output.exit_code == Some(0) && !output.stdout.is_empty() => Ok(output.stdout),
+            output if output.exit_code == Some(0) && !output.stdout.is_empty() => {
+                Ok(cli_version_text(adapter, output.stdout))
+            }
             output => Err(nonempty(output.stderr, "version check failed")),
         }
     }
@@ -484,7 +487,7 @@ impl AdapterRuntimeRegistry {
         path: PathBuf,
         runner: &dyn RuntimeCommandRunner,
     ) -> AdapterDiagnostic {
-        let version = match self.cli_version(&path, target, runner).await {
+        let version = match self.cli_version(adapter, &path, target, runner).await {
             Ok(version) => version,
             Err(error) => {
                 return unknown_diagnostic_with_path(adapter, &path, "version_failed", error);
@@ -568,7 +571,7 @@ impl AdapterRuntimeRegistry {
             AgentAdapterKind::Codex => "CODEX_PATH",
             AgentAdapterKind::ClaudeCode => "CLAUDE_CODE_EXECUTABLE",
             AgentAdapterKind::Pi => "PI_ACP_PI_COMMAND",
-            AgentAdapterKind::Opencode | AgentAdapterKind::Cursor => {
+            AgentAdapterKind::Opencode | AgentAdapterKind::Cursor | AgentAdapterKind::Hermes => {
                 return Some(AcpEntrypoint::Command { args: &["acp"] });
             }
             _ => return None,
@@ -585,7 +588,8 @@ impl AdapterRuntimeRegistry {
     /// without `cwd`: their filter matches the exact directory only, so it
     /// would drop sessions in a Space's subfolders. Slice 3.2: the lists of
     /// opencode and pi cover their terminal sessions; the list of Cursor
-    /// has only the sessions its ACP entrypoint created.
+    /// has only the sessions its ACP entrypoint created. Slice 3.3: so has
+    /// the list of Hermes, its CLI and desktop sessions stay out.
     pub fn lists_catalog(&self, adapter: AgentAdapterKind) -> bool {
         matches!(
             adapter,
@@ -593,6 +597,7 @@ impl AdapterRuntimeRegistry {
                 | AgentAdapterKind::ClaudeCode
                 | AgentAdapterKind::Opencode
                 | AgentAdapterKind::Cursor
+                | AgentAdapterKind::Hermes
                 | AgentAdapterKind::Pi
         )
     }
@@ -602,12 +607,15 @@ impl AdapterRuntimeRegistry {
     /// listed id of Claude Code is the jsonl session UUID. Slice 3.2: the
     /// ids of opencode and pi are those of their terminal sessions both
     /// ways; Cursor keeps ACP sessions apart from its terminal chats.
+    /// Slice 3.3: an ACP session of Hermes is its `state.db` session, which
+    /// `hermes --resume` continues.
     pub fn acp_id_is_native(&self, adapter: AgentAdapterKind) -> bool {
         matches!(
             adapter,
             AgentAdapterKind::Codex
                 | AgentAdapterKind::ClaudeCode
                 | AgentAdapterKind::Opencode
+                | AgentAdapterKind::Hermes
                 | AgentAdapterKind::Pi
         )
     }
@@ -650,7 +658,7 @@ impl AdapterRuntimeRegistry {
             cwd: cwd.to_path_buf(),
             acp_id_is_native: self.acp_id_is_native(adapter),
             lists_catalog: self.lists_catalog(adapter),
-            // E01 and slice 3.2: load and close of these agents change
+            // E01, slices 3.2 and 3.3: load and close of these agents change
             // their store at most in service records, which Svode accepts.
             read_only_open: true,
             writer_refusal: match adapter {
@@ -669,7 +677,7 @@ impl AdapterRuntimeRegistry {
     /// id, when the agent documents such a command. Slice 3.2: `opencode
     /// --session` and `pi --session` continue the same session; Cursor
     /// has no such command for its ACP sessions, its `--resume` with such
-    /// an id starts an empty chat.
+    /// an id starts an empty chat. Slice 3.3: `hermes --resume`.
     pub fn terminal_resume_args(
         &self,
         adapter: AgentAdapterKind,
@@ -677,7 +685,7 @@ impl AdapterRuntimeRegistry {
     ) -> Option<Vec<String>> {
         let flag = match adapter {
             AgentAdapterKind::Codex => "resume",
-            AgentAdapterKind::ClaudeCode => "--resume",
+            AgentAdapterKind::ClaudeCode | AgentAdapterKind::Hermes => "--resume",
             AgentAdapterKind::Opencode | AgentAdapterKind::Pi => "--session",
             _ => return None,
         };
@@ -735,6 +743,7 @@ impl AdapterRuntimeRegistry {
     /// continuation and their external sessions live (E01, slice 2.5b).
     /// opencode: the same with opencode 2.0.22 (slice 3.2). Cursor
     /// 2026.10.01 and pi 1.0.0 with `pi-acp` 0.0.34: limited (slice 3.2).
+    /// Hermes 2026.9.24: limited, it lists only its ACP sessions (slice 3.3).
     pub fn verdict(&self, adapter: AgentAdapterKind) -> AgentVerdict {
         match adapter {
             AgentAdapterKind::Codex | AgentAdapterKind::ClaudeCode | AgentAdapterKind::Opencode => {
@@ -752,6 +761,9 @@ impl AdapterRuntimeRegistry {
                     AgentRestriction::TurnErrorsHidden,
                 ],
             },
+            AgentAdapterKind::Hermes => AgentVerdict::Limited {
+                restrictions: &[AgentRestriction::ExternalSessionsUnlisted],
+            },
             _ => AgentVerdict::Deferred,
         }
     }
@@ -761,7 +773,8 @@ impl AdapterRuntimeRegistry {
     /// `claude auth login` of the installed CLIs. Slice 3.2: `opencode auth
     /// login` and `agent login`, as their ACP auth methods name them; pi
     /// signs in from its own terminal UI (`/login`), as its `pi-acp` terminal
-    /// auth method does.
+    /// auth method does. Slice 3.3: `hermes acp --setup`, the Hermes
+    /// terminal auth method `hermes-setup`.
     pub fn sign_in_arguments(&self, adapter: AgentAdapterKind) -> Option<Vec<String>> {
         match adapter {
             AgentAdapterKind::Codex | AgentAdapterKind::Cursor => Some(vec!["login".into()]),
@@ -769,6 +782,7 @@ impl AdapterRuntimeRegistry {
                 Some(vec!["auth".into(), "login".into()])
             }
             AgentAdapterKind::Pi => Some(Vec::new()),
+            AgentAdapterKind::Hermes => Some(vec!["acp".into(), "--setup".into()]),
             _ => None,
         }
     }
@@ -825,6 +839,22 @@ impl AuthSignal {
             Self::JsonFlag(_) => Some(false),
         }
     }
+}
+
+/// The version in the agent's `--version` output. Slice 3.3: Hermes prints
+/// `Hermes Agent v<release> (<release date>)` from a release and
+/// `Hermes Agent vgit.<commit> (<release date>)` from a checkout without
+/// tags, so its version is the release date both print.
+fn cli_version_text(adapter: AgentAdapterKind, output: String) -> String {
+    let release_date = match adapter {
+        AgentAdapterKind::Hermes => output
+            .split_once('(')
+            .and_then(|(_, rest)| rest.split_once(')'))
+            .map(|(date, _)| date.trim().to_string())
+            .filter(|date| !date.is_empty()),
+        _ => None,
+    };
+    release_date.unwrap_or(output)
 }
 
 fn nonempty(value: String, fallback: &str) -> String {
@@ -1650,7 +1680,7 @@ mod tests {
             model: Some("future-model".into()),
             effort: None,
         };
-        let unmapped = binding(AgentAdapterKind::GeminiCli, None, None);
+        let unmapped = binding(AgentAdapterKind::KimiCode, None, None);
         let custom = AgentAdapter {
             adapter: AgentId::parse("custom-hermes").unwrap(),
             model: None,
@@ -1718,7 +1748,7 @@ mod tests {
     #[test]
     fn an_agent_without_a_description_has_no_entrypoint_or_catalogue() {
         let registry = AdapterRuntimeRegistry;
-        let agent = AgentAdapterKind::Hermes;
+        let agent = AgentAdapterKind::QwenCode;
         assert_eq!(registry.acp_entrypoint(agent), None);
         assert!(!registry.lists_catalog(agent));
         assert!(!registry.acp_id_is_native(agent));
@@ -1949,10 +1979,11 @@ mod tests {
     }
 
     #[test]
-    fn opencode_and_cursor_run_their_own_acp_command() {
+    fn opencode_cursor_and_hermes_run_their_own_acp_command() {
         for (agent, executable, native) in [
             (AgentAdapterKind::Opencode, "/bin/opencode", true),
             (AgentAdapterKind::Cursor, "/bin/cursor-agent", false),
+            (AgentAdapterKind::Hermes, "/bin/hermes", true),
         ] {
             assert_eq!(
                 AdapterRuntimeRegistry.acp_entrypoint(agent),
@@ -1981,6 +2012,10 @@ mod tests {
                 Some(vec!["--session".to_string(), "s1".to_string()])
             );
         }
+        assert_eq!(
+            AdapterRuntimeRegistry.terminal_resume_args(AgentAdapterKind::Hermes, "s1"),
+            Some(vec!["--resume".to_string(), "s1".to_string()])
+        );
     }
 
     #[test]
@@ -2004,12 +2039,53 @@ mod tests {
                 "restrictions": ["no_permission_requests", "turn_errors_hidden"]
             })
         );
+        assert_eq!(
+            serde_json::to_value(registry.verdict(AgentAdapterKind::Hermes)).unwrap(),
+            serde_json::json!({
+                "state": "limited",
+                "restrictions": ["external_sessions_unlisted"]
+            })
+        );
         for agent in [
             AgentAdapterKind::Opencode,
             AgentAdapterKind::Cursor,
             AgentAdapterKind::Pi,
         ] {
             assert!(registry.sign_in_arguments(agent).is_some(), "{agent:?}");
+        }
+        assert_eq!(
+            registry.sign_in_arguments(AgentAdapterKind::Hermes),
+            Some(vec!["acp".to_string(), "--setup".to_string()])
+        );
+    }
+
+    #[tokio::test]
+    async fn hermes_version_is_the_release_date_it_prints() {
+        for (output, version) in [
+            (
+                "Hermes Agent vgit.7cd77b4 (2026.9.24) · upstream 330d9d6d\nInstall method: git\n",
+                "2026.9.24",
+            ),
+            ("Hermes Agent v0.18.2+3 (2026.9.24)\n", "2026.9.24"),
+        ] {
+            let runner = FakeRunner::new(vec![Ok(RuntimeCommandOutput {
+                exit_code: Some(0),
+                stdout: output.into(),
+                stderr: String::new(),
+            })]);
+            let diagnostic = AdapterRuntimeRegistry
+                .diagnose_resolved(
+                    AgentAdapterKind::Hermes,
+                    &AdapterTarget {
+                        cwd: PathBuf::from("/project"),
+                        search_path: None,
+                    },
+                    PathBuf::from("/bin/hermes"),
+                    &runner,
+                )
+                .await;
+            assert_eq!(diagnostic.version.as_deref(), Some(version));
+            assert_eq!(diagnostic.status, AdapterDiagnosticStatus::Unknown);
         }
     }
 

@@ -439,8 +439,10 @@ mod tests {
             Err(CatalogError::Stale)
         ));
     }
-    /// Stage 10 `03` A7: a binding of an agent another Svode version knows
-    /// stays in the catalog unchanged while the other actors are edited.
+    /// Stage 10 `03` A7: a binding of an agent another Svode version knows,
+    /// or of a built-in agent this release dropped (`gemini-cli`, slice
+    /// 3.3), stays in the catalog unchanged while the other actors are
+    /// edited.
     #[test]
     fn a_binding_of_an_unknown_agent_survives_edits_of_other_actors() {
         let d = tempdir().unwrap();
@@ -456,7 +458,10 @@ mod tests {
                     {
                         "id": future,
                         "name": "Future",
-                        "adapters": [{"adapter": "future-agent", "model": "m", "effort": "e"}]
+                        "adapters": [
+                            {"adapter": "future-agent", "model": "m", "effort": "e"},
+                            {"adapter": "gemini-cli"}
+                        ]
                     },
                     {"id": other, "name": "Other", "adapters": [{"adapter": "codex"}]}
                 ]
@@ -474,7 +479,10 @@ mod tests {
         let written: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
         assert_eq!(
             written["actors"][0]["adapters"],
-            serde_json::json!([{"adapter": "future-agent", "model": "m", "effort": "e"}])
+            serde_json::json!([
+                {"adapter": "future-agent", "model": "m", "effort": "e"},
+                {"adapter": "gemini-cli"}
+            ])
         );
         assert_eq!(written["actors"][1]["name"], "Renamed");
     }

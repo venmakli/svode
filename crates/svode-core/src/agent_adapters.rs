@@ -27,28 +27,24 @@ pub enum AgentAdapterKind {
     Cursor,
     Opencode,
     Hermes,
-    Openclaw,
     Pi,
     QwenCode,
     KimiCode,
     GrokBuild,
-    GeminiCli,
 }
 
 impl AgentAdapterKind {
     /// Every built-in agent of the registry, in its stable order.
-    pub const ALL: [Self; 11] = [
+    pub const ALL: [Self; 9] = [
         Self::Codex,
         Self::ClaudeCode,
         Self::Cursor,
         Self::Opencode,
         Self::Hermes,
-        Self::Openclaw,
         Self::Pi,
         Self::QwenCode,
         Self::KimiCode,
         Self::GrokBuild,
-        Self::GeminiCli,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -58,12 +54,10 @@ impl AgentAdapterKind {
             Self::Cursor => "cursor",
             Self::Opencode => "opencode",
             Self::Hermes => "hermes",
-            Self::Openclaw => "openclaw",
             Self::Pi => "pi",
             Self::QwenCode => "qwen-code",
             Self::KimiCode => "kimi-code",
             Self::GrokBuild => "grok-build",
-            Self::GeminiCli => "gemini-cli",
         }
     }
 
@@ -79,12 +73,10 @@ impl AgentAdapterKind {
             Self::Cursor => "cursor-agent",
             Self::Opencode => "opencode",
             Self::Hermes => "hermes",
-            Self::Openclaw => "openclaw",
             Self::Pi => "pi",
             Self::QwenCode => "qwen",
             Self::KimiCode => "kimi",
             Self::GrokBuild => "grok",
-            Self::GeminiCli => "gemini",
         }
     }
 
@@ -96,12 +88,10 @@ impl AgentAdapterKind {
             Self::Cursor => "Cursor",
             Self::Opencode => "opencode",
             Self::Hermes => "Hermes",
-            Self::Openclaw => "OpenClaw",
             Self::Pi => "pi",
             Self::QwenCode => "Qwen Code",
             Self::KimiCode => "Kimi Code",
             Self::GrokBuild => "Grok Build",
-            Self::GeminiCli => "Gemini CLI",
         }
     }
 
@@ -114,12 +104,10 @@ impl AgentAdapterKind {
             Self::Cursor => "https://cursor.com/cli",
             Self::Opencode => "https://opencode.ai",
             Self::Hermes => "https://hermes-agent.nousresearch.com",
-            Self::Openclaw => "https://docs.openclaw.ai/start/getting-started",
             Self::Pi => "https://pi.dev",
             Self::QwenCode => "https://github.com/QwenLM/qwen-code",
             Self::KimiCode => "https://github.com/MoonshotAI/kimi-code",
             Self::GrokBuild => "https://github.com/xai-org/grok-build",
-            Self::GeminiCli => "https://github.com/google-gemini/gemini-cli",
         }
     }
 
@@ -393,12 +381,10 @@ impl AgentAdapterRegistry {
             AgentAdapterKind::Cursor
             | AgentAdapterKind::Opencode
             | AgentAdapterKind::Hermes
-            | AgentAdapterKind::Openclaw
             | AgentAdapterKind::Pi
             | AgentAdapterKind::QwenCode
             | AgentAdapterKind::KimiCode
-            | AgentAdapterKind::GrokBuild
-            | AgentAdapterKind::GeminiCli => return None,
+            | AgentAdapterKind::GrokBuild => return None,
         };
         Some(AgentSourcePolicy {
             id,
@@ -644,7 +630,7 @@ mod tests {
             AgentAdapterRegistry
                 .identities()
                 .iter()
-                .any(|identity| identity.id == AgentAdapterKind::GeminiCli)
+                .any(|identity| identity.id == AgentAdapterKind::QwenCode)
         );
     }
 
@@ -667,6 +653,10 @@ mod tests {
         let future: AgentId = serde_json::from_str(r#""future-agent""#).unwrap();
         assert_eq!(future.as_str(), "future-agent");
         assert_eq!(future.builtin(), None);
+        // Built-in agents dropped from the list (slice 3.3).
+        for dropped in ["gemini-cli", "openclaw"] {
+            assert_eq!(AgentId::parse(dropped).unwrap().builtin(), None);
+        }
         for malformed in ["", "Codex", "claude code", "-codex", "codex-", "a:b"] {
             assert!(AgentId::parse(malformed).is_err(), "{malformed:?}");
         }
