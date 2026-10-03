@@ -57,7 +57,10 @@ pub(crate) fn list_sessions(
         let mut report = catalog.report;
         let scoped = scoped_sessions(&scope_index, &state.home_dir, catalog.sessions, &mut report);
         let mut native = read_native(state, &catalog.source, &scoped);
-        if let Some(read_at) = catalog.read_at {
+        // A custom agent's id is of this device and the agent may be removed:
+        // its list is read again once its connection opens, never saved
+        // into the project.
+        if let Some(read_at) = catalog.read_at.filter(|_| !catalog.source.is_custom()) {
             let saved = scoped
                 .iter()
                 .map(|session| SavedSession {

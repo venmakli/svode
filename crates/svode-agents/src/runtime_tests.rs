@@ -1824,6 +1824,34 @@ async fn catalog_connections_offer_one_open_listing_connection_per_agent() {
 }
 
 #[tokio::test]
+async fn an_agent_that_declares_no_list_is_no_catalogue_and_its_declaration_is_kept() {
+    let runtime = AgentRuntime::default();
+    let (id, mut agent) = attached_with(&runtime, &listing("custom-agent"));
+    assert_eq!(runtime.declared("custom-agent"), None);
+    assert_eq!(
+        runtime.catalog_connections().len(),
+        1,
+        "not initialized yet"
+    );
+    let (list, ()) = tokio::join!(runtime.list_sessions(id), async {
+        agent.initialize(json!({ "loadSession": true })).await;
+    });
+    assert_eq!(list.unwrap_err(), AgentRuntimeError::ListUnsupported);
+    assert!(runtime.catalog_connections().is_empty());
+
+    let declared = runtime.declared("custom-agent").unwrap();
+    assert_eq!(declared.name.as_deref(), Some("scripted"));
+    assert!(declared.capabilities.load_session);
+    assert!(!declared.capabilities.list_sessions);
+    // The declaration outlives the connection until the agent changes.
+    drop(agent);
+    runtime.close_connection(id).await.unwrap();
+    assert!(runtime.declared("custom-agent").is_some());
+    runtime.forget_declared("custom-agent");
+    assert_eq!(runtime.declared("custom-agent"), None);
+}
+
+#[tokio::test]
 async fn a_new_session_and_a_finished_turn_announce_a_catalog_change() {
     let runtime = AgentRuntime::default();
     let mut changes = runtime.catalog_changes();

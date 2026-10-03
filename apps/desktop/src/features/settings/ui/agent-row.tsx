@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { Ellipsis, LoaderCircle } from "lucide-react";
 import * as m from "@/paraglide/messages.js";
 import { Button } from "@/components/ui/button";
@@ -8,7 +9,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Switch } from "@/components/ui/switch";
-import type { AgentSetupDto } from "../api";
+import type { AgentInfoDto, AgentSetupDto } from "../api";
 import {
   agentDeferred,
   cliVersionLabel,
@@ -56,6 +57,8 @@ function pendingText(operation: AgentOperation) {
       return m.settings_agents_pending_update();
     case "remove":
       return m.settings_agents_pending_remove();
+    case "remove_custom":
+      return m.settings_agents_pending_remove_custom();
     case "check":
     case "sign_in":
       return m.settings_agents_pending_check();
@@ -71,6 +74,8 @@ function failedText(operation: AgentOperation, error: AgentOperationError) {
       return m.settings_agents_failed_update(value);
     case "remove":
       return m.settings_agents_failed_remove(value);
+    case "remove_custom":
+      return m.settings_agents_failed_remove_custom(value);
     case "enable":
     case "disable":
       return m.settings_agents_failed_toggle(value);
@@ -81,7 +86,20 @@ function failedText(operation: AgentOperation, error: AgentOperationError) {
   }
 }
 
-function stateText(state: AgentRowState) {
+/** What a custom agent declared, or the restriction of what it did not. */
+export function declaredText(capabilities: AgentInfoDto["capabilities"]) {
+  if (!capabilities.listSessions || !capabilities.loadSession)
+    return m.settings_agents_new_session_only();
+  const declared = [
+    m.settings_agents_capability_list(),
+    m.settings_agents_capability_history(),
+  ];
+  if (capabilities.resumeSession)
+    declared.push(m.settings_agents_capability_resume());
+  return m.settings_agents_declared({ capabilities: declared.join(", ") });
+}
+
+export function stateText(state: AgentRowState) {
   switch (state.kind) {
     case "deferred":
       return m.settings_agents_state_deferred();
@@ -120,13 +138,24 @@ function stateText(state: AgentRowState) {
       return m.settings_agents_state_failed_to_start({
         message: state.message,
       });
-    case "checked":
-      return state.name && state.version
-        ? m.settings_agents_state_checked_version({
-            name: state.name,
-            version: state.version,
-          })
-        : m.settings_agents_state_checked();
+    case "command_missing":
+      return m.settings_agents_state_command_missing({
+        command: state.command,
+      });
+    case "checked": {
+      const checked =
+        state.name && state.version
+          ? m.settings_agents_state_checked_version({
+              name: state.name,
+              version: state.version,
+            })
+          : m.settings_agents_state_checked();
+      return state.declared
+        ? `${checked} · ${declaredText(state.declared)}`
+        : checked;
+    }
+    case "limited":
+      return m.settings_agents_state_new_session_only();
     case "disabled":
       return m.settings_agents_state_disabled();
     case "ready":
@@ -159,6 +188,7 @@ const ATTENTION = new Set<AgentRowState["kind"]>([
   "cli_unsupported",
   "adapter_outdated",
   "failed_to_start",
+  "command_missing",
 ]);
 
 /**
@@ -182,16 +212,72 @@ export function AgentRow({
   onCheck: () => void;
   onRemoveAdapter: () => void;
 }) {
-  const version = cliVersionLabel(setup);
   const pending = view.state.kind === "pending";
   const deferred = agentDeferred(setup);
   const adapterInstalled =
     setup.adapter !== null && setup.adapter.install.state !== "not_installed";
+
+  return (
+    <AgentRowFrame
+      agent={setup.agent}
+      label={label}
+      version={cliVersionLabel(setup)}
+      view={view}
+      menu={
+        deferred ? null : (
+          <>
+            <DropdownMenuItem disabled={pending} onSelect={onCheck}>
+              {m.settings_agents_check()}
+            </DropdownMenuItem>
+            {adapterInstalled ? (
+              <DropdownMenuItem
+                variant="destructive"
+                disabled={pending}
+                onSelect={onRemoveAdapter}
+              >
+                {m.settings_agents_remove_adapter()}
+              </DropdownMenuItem>
+            ) : null}
+          </>
+        )
+      }
+      checked={setup.enabled && !deferred}
+      toggleDisabled={deferred || (!setup.enabled && enableBlocked(setup))}
+      onToggle={onToggle}
+      onAction={onAction}
+    />
+  );
+}
+
+/** The composition every agent row shares, built-in or custom. */
+export function AgentRowFrame({
+  agent,
+  label,
+  version,
+  view,
+  menu,
+  checked,
+  toggleDisabled,
+  onToggle,
+  onAction,
+}: {
+  agent: string;
+  label: string;
+  version: string | null;
+  view: AgentRowView;
+  /** Items of the ⋯ menu; none hides it. */
+  menu: ReactNode;
+  checked: boolean;
+  toggleDisabled: boolean;
+  onToggle: (enabled: boolean) => void;
+  onAction: (action: AgentRowAction) => void;
+}) {
   const { state, warning, action } = view;
+  const pending = state.kind === "pending";
 
   return (
     <SettingsItem
-      data-agent={setup.agent}
+      data-agent={agent}
       title={
         <>
           {label}
@@ -229,7 +315,7 @@ export function AgentRow({
               {actionText(action)}
             </Button>
           ) : null}
-          {deferred ? null : (
+          {menu ? (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button
@@ -240,25 +326,12 @@ export function AgentRow({
                   <Ellipsis />
                 </Button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                <DropdownMenuItem disabled={pending} onSelect={onCheck}>
-                  {m.settings_agents_check()}
-                </DropdownMenuItem>
-                {adapterInstalled ? (
-                  <DropdownMenuItem
-                    variant="destructive"
-                    disabled={pending}
-                    onSelect={onRemoveAdapter}
-                  >
-                    {m.settings_agents_remove_adapter()}
-                  </DropdownMenuItem>
-                ) : null}
-              </DropdownMenuContent>
+              <DropdownMenuContent align="end">{menu}</DropdownMenuContent>
             </DropdownMenu>
-          )}
+          ) : null}
           <Switch
-            checked={setup.enabled && !deferred}
-            disabled={deferred || (!setup.enabled && enableBlocked(setup))}
+            checked={checked}
+            disabled={toggleDisabled}
             aria-disabled={pending || undefined}
             aria-label={m.settings_agents_toggle({ agent: label })}
             className="aria-disabled:cursor-not-allowed aria-disabled:opacity-50"

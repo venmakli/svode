@@ -67,6 +67,12 @@ impl From<svode_agents::adapters::AdapterError> for AppError {
     }
 }
 
+impl From<svode_agents::custom::CustomAgentError> for AppError {
+    fn from(error: svode_agents::custom::CustomAgentError) -> Self {
+        Self::CustomAgent(error)
+    }
+}
+
 impl From<svode_core::agent_context::AgentContextError> for AppError {
     fn from(error: svode_core::agent_context::AgentContextError) -> Self {
         match error {
@@ -520,6 +526,9 @@ pub enum AppError {
     AgentAdapter(svode_agents::adapters::AdapterError),
 
     #[error("{0}")]
+    CustomAgent(svode_agents::custom::CustomAgentError),
+
+    #[error("{0}")]
     General(String),
 }
 
@@ -562,6 +571,7 @@ impl AppError {
             AppError::SourceStale { .. } => "source_stale",
             AppError::AgentRuntime(_) => "agent_runtime",
             AppError::AgentAdapter(_) => "agent_adapter",
+            AppError::CustomAgent(_) => "custom_agent",
             AppError::General(_) => "general",
         }
     }
@@ -586,6 +596,14 @@ impl Serialize for AppError {
                 serde_json::json!({ "kind": self.kind(), "message": self.to_string(), "code": code }).serialize(serializer)
             }
             AppError::AgentAdapter(error) => {
+                let mut value = serde_json::to_value(error).unwrap_or_default();
+                if let Some(fields) = value.as_object_mut() {
+                    fields.insert("kind".into(), self.kind().into());
+                    fields.insert("message".into(), self.to_string().into());
+                }
+                value.serialize(serializer)
+            }
+            AppError::CustomAgent(error) => {
                 let mut value = serde_json::to_value(error).unwrap_or_default();
                 if let Some(fields) = value.as_object_mut() {
                     fields.insert("kind".into(), self.kind().into());
@@ -683,6 +701,20 @@ mod tests {
             value["message"],
             "Node.js v20.19.0 is older than the required 22"
         );
+    }
+
+    #[test]
+    fn custom_agent_error_serializes_its_code_and_fields() {
+        let value = serde_json::to_value(AppError::from(
+            svode_agents::custom::CustomAgentError::InvalidVariable {
+                name: "1KEY".into(),
+            },
+        ))
+        .unwrap();
+
+        assert_eq!(value["kind"], "custom_agent");
+        assert_eq!(value["code"], "invalid_variable");
+        assert_eq!(value["name"], "1KEY");
     }
 
     #[test]

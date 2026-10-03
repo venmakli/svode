@@ -279,6 +279,8 @@ struct Inner {
     /// The connection of each launch plan; acquiring and idle closing of
     /// one plan take its lock, other agents are never waited for.
     slots: Mutex<HashMap<AcpLaunch, Slot>>,
+    /// What each agent declared in its last `initialize` of this process.
+    declared: Mutex<HashMap<String, AgentInfo>>,
 }
 
 type Slot = Arc<tokio::sync::Mutex<Option<ConnectionId>>>;
@@ -548,14 +550,35 @@ impl AgentRuntime {
         self.inner.writers.clone()
     }
 
+    /// What the agent declared in its last `initialize` in this process,
+    /// whichever boundary started it; `None` before it first started.
+    pub fn declared(&self, agent: &str) -> Option<AgentInfo> {
+        self.inner.declared.lock().unwrap().get(agent).cloned()
+    }
+
+    /// Forgets what the agent declared, once its definition changed.
+    pub fn forget_declared(&self, agent: &str) {
+        self.inner.declared.lock().unwrap().remove(agent);
+    }
+
     /// One open connection per agent whose `session/list` is its declared
-    /// catalogue source. Listing never starts an agent: only connections a
-    /// lifecycle boundary already opened are offered.
+    /// catalogue source, unless its `initialize` declared no list. Listing
+    /// never starts an agent: only connections a lifecycle boundary already
+    /// opened are offered.
     pub fn catalog_connections(&self) -> Vec<CatalogConnection> {
         let connections = self.inner.connections.lock().unwrap();
         let mut ids: Vec<_> = connections
             .iter()
-            .filter(|(_, connection)| connection.lists_catalog && connection.is_open())
+            .filter(|(_, connection)| {
+                connection.lists_catalog
+                    && connection.is_open()
+                    && connection
+                        .info
+                        .lock()
+                        .unwrap()
+                        .as_ref()
+                        .is_none_or(|info| info.capabilities.list_sessions)
+            })
             .map(|(id, connection)| (*id, connection.agent.clone()))
             .collect();
         ids.sort();
@@ -1238,6 +1261,11 @@ impl AgentRuntime {
             connection.set_state(ConnectionState::Degraded);
             AgentRuntimeError::Protocol { message }
         })?;
+        self.inner
+            .declared
+            .lock()
+            .unwrap()
+            .insert(connection.agent.clone(), info.clone());
         *connection.info.lock().unwrap() = Some(info);
         connection.set_state(ConnectionState::Ready);
         Ok(())

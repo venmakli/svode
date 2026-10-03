@@ -301,6 +301,29 @@ pub fn validate_catalog(c: &AgentActorCatalog) -> Result<(), CatalogError> {
     Ok(())
 }
 
+/// A custom agent lives on one device, so a new binding of it never enters
+/// the portable catalog; a binding already in the file stays as it is
+/// (Stage 10 `03` A2, A7). `previous` is the actor before an update.
+pub fn refuse_new_custom_bindings(
+    previous: Option<&AgentActor>,
+    next: &AgentActor,
+) -> Result<(), CatalogError> {
+    let kept = |binding: &AgentAdapter| {
+        previous.is_some_and(|previous| previous.adapters.contains(binding))
+    };
+    match next
+        .adapters
+        .iter()
+        .find(|binding| binding.adapter.is_custom() && !kept(binding))
+    {
+        Some(binding) => Err(CatalogError::Invalid(format!(
+            "{} is a custom agent of this device and cannot be an Actor binding",
+            binding.adapter
+        ))),
+        None => Ok(()),
+    }
+}
+
 fn ensure_known_v1_shape(value: &serde_json::Value) -> Result<(), CatalogError> {
     const ROOT_FIELDS: &[&str] = &["schemaVersion", "actors"];
     const ACTOR_FIELDS: &[&str] = &["id", "name", "description", "adapters"];
@@ -467,6 +490,40 @@ mod tests {
         assert_eq!(
             serde_json::to_value(&bindings[0]).unwrap(),
             serde_json::json!({"adapter":"future-client","model":"m1","effort":"e1"})
+        );
+    }
+
+    #[test]
+    fn a_custom_agent_never_becomes_a_new_portable_binding() {
+        let binding = |adapter: &str| AgentAdapter {
+            adapter: crate::agent_adapters::AgentId::parse(adapter).unwrap(),
+            model: None,
+            effort: None,
+        };
+        let actor = |adapters: Vec<AgentAdapter>| AgentActor {
+            id: "01arz3ndektsv4rrffq69g5fav".into(),
+            name: "Reviewer".into(),
+            description: None,
+            adapters,
+        };
+        let custom = actor(vec![binding("custom-hermes"), binding("codex")]);
+        assert!(matches!(
+            refuse_new_custom_bindings(None, &custom),
+            Err(CatalogError::Invalid(_))
+        ));
+        assert!(matches!(
+            refuse_new_custom_bindings(Some(&actor(vec![binding("codex")])), &custom),
+            Err(CatalogError::Invalid(_))
+        ));
+        // One already in the file is kept when the actor is edited.
+        let renamed = AgentActor {
+            name: "Renamed".into(),
+            ..custom.clone()
+        };
+        assert_eq!(refuse_new_custom_bindings(Some(&custom), &renamed), Ok(()));
+        assert_eq!(
+            refuse_new_custom_bindings(None, &actor(vec![binding("future-agent")])),
+            Ok(())
         );
     }
 

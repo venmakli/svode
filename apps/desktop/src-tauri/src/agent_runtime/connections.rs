@@ -13,6 +13,7 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use svode_agents::adapters::LaunchUnavailable;
+use svode_agents::custom::CustomAgentDefinition;
 use svode_agents::{AcpLaunch, AgentCheck, AgentRuntime, AgentRuntimeError, ConnectionLease};
 
 pub(crate) type PlanFuture<'a> =
@@ -26,6 +27,13 @@ pub(crate) trait LaunchPlanner: Send + Sync {
     /// The launch plan of an available agent, or why it is not available;
     /// starts nothing.
     fn plan<'a>(&'a self, agent: &'a str) -> PlanFuture<'a>;
+    /// The launch plan of a custom agent the user is adding (`agent: None`)
+    /// or editing, before it is saved.
+    fn plan_draft<'a>(
+        &'a self,
+        agent: Option<&'a str>,
+        definition: CustomAgentDefinition,
+    ) -> PlanFuture<'a>;
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -90,6 +98,18 @@ impl AgentConnections {
         }
     }
 
+    /// The user's check of a custom agent's definition before it is saved.
+    pub async fn check_draft(
+        &self,
+        agent: Option<&str>,
+        definition: CustomAgentDefinition,
+    ) -> AgentCheck {
+        match self.planner.plan_draft(agent, definition).await {
+            Ok(launch) => self.runtime.check(launch).await,
+            Err(reason) => AgentCheck::Unavailable { reason },
+        }
+    }
+
     /// A Sessions collection opened in `webview`; the caller raises the
     /// catalogue connections.
     pub fn hold_catalog(&self, webview: &str) -> u64 {
@@ -123,12 +143,21 @@ impl AgentConnections {
     }
 
     /// Agents whose catalogue connection an open collection needs; none
-    /// while no collection is open.
+    /// while no collection is open. An agent that declared no list in this
+    /// process is not started for it again.
     pub(crate) fn held_catalog_agents(&self) -> Vec<String> {
         if self.catalog.lock().unwrap().holds.is_empty() {
             return Vec::new();
         }
-        self.planner.catalog_agents()
+        self.planner
+            .catalog_agents()
+            .into_iter()
+            .filter(|agent| {
+                self.runtime
+                    .declared(agent)
+                    .is_none_or(|info| info.capabilities.list_sessions)
+            })
+            .collect()
     }
 
     /// Starts the agent's catalogue connection unless it is open; true when

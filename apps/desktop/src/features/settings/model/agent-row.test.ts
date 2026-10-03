@@ -145,6 +145,8 @@ test("the latest activity of the row shows before its facts", () => {
     kind: "checked",
     name: "@agentclientprotocol/codex-acp",
     version: "2.1.1",
+    // A built-in agent is described; only a custom one shows its declaration.
+    declared: null,
   });
   expect(
     agentRowView(setup(), {

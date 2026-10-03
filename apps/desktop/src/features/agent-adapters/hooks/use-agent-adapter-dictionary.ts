@@ -1,5 +1,8 @@
 import { useEffect, useMemo, useSyncExternalStore } from "react";
-import { listAgentAdapterIdentities } from "../api/agent-adapters";
+import {
+  listAgentAdapterIdentities,
+  listenCustomAgentsChanged,
+} from "../api/agent-adapters";
 import {
   createAgentAdapterDictionary,
   type AgentAdapterDictionary,
@@ -16,6 +19,7 @@ let snapshot: AgentAdapterIdentitiesSnapshot = {
   failed: false,
 };
 let request: Promise<void> | null = null;
+let followingChanges = false;
 const listeners = new Set<() => void>();
 
 function setSnapshot(next: AgentAdapterIdentitiesSnapshot) {
@@ -34,9 +38,23 @@ function getSnapshot() {
   return snapshot;
 }
 
+// Custom agents carry their own labels: any window that adds, renames or
+// removes one makes every window read the labels again.
+function followCustomAgentChanges() {
+  if (followingChanges) return;
+  followingChanges = true;
+  listenCustomAgentsChanged(() => {
+    request = null;
+    void loadAgentAdapterIdentities();
+  }).catch(() => {
+    followingChanges = false;
+  });
+}
+
 /**
- * Reads the adapter registry once for the app process; every agent label
- * shares the result. A failed read is retried by the next call.
+ * Reads the agent labels once for the app process, and again when custom
+ * agents change; every agent label shares the result. A failed read is
+ * retried by the next call.
  */
 export function loadAgentAdapterIdentities(
   list: () => Promise<AgentAdapterIdentity[]> = listAgentAdapterIdentities,
@@ -58,6 +76,7 @@ export function useAgentAdapterDictionary(): AgentAdapterDictionary {
     getSnapshot,
   );
   useEffect(() => {
+    followCustomAgentChanges();
     if (!identities) void loadAgentAdapterIdentities();
   }, [identities]);
   return useMemo(

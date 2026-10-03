@@ -816,10 +816,20 @@ fn unavailable(code: &str, field: &str, message: String) -> BindingValidation {
     }
 }
 
-/// A binding of an agent this version does not know, or of a built-in agent
-/// without an approval mapping, is unavailable and stays in the catalog
-/// (Stage 10 `03` A7).
+/// A binding of an agent this version does not know, of a custom agent, or
+/// of a built-in agent without an approval mapping, is unavailable and stays
+/// in the catalog (Stage 10 `03` A7).
 fn validate_binding(binding: &AgentAdapter) -> BindingValidation {
+    if binding.adapter.is_custom() {
+        return unavailable(
+            "custom_agent",
+            "adapter",
+            format!(
+                "{} is a custom agent of one device and cannot run an Agent Actor",
+                binding.adapter
+            ),
+        );
+    }
     let Some(adapter) = binding.adapter.builtin() else {
         return unavailable(
             "unknown_adapter",
@@ -1497,7 +1507,7 @@ mod tests {
     }
 
     #[test]
-    fn bindings_of_unknown_and_unmapped_agents_are_unavailable_and_skipped() {
+    fn bindings_of_unknown_custom_and_unmapped_agents_are_unavailable_and_skipped() {
         let registry = AdapterRuntimeRegistry;
         assert_eq!(
             registry
@@ -1513,9 +1523,15 @@ mod tests {
             effort: None,
         };
         let unmapped = binding(AgentAdapterKind::GeminiCli, None, None);
+        let custom = AgentAdapter {
+            adapter: AgentId::parse("custom-hermes").unwrap(),
+            model: None,
+            effort: None,
+        };
         for (binding, code) in [
             (&future, "unknown_adapter"),
             (&unmapped, "approval_mapping_missing"),
+            (&custom, "custom_agent"),
         ] {
             let validation = registry.validate_binding(binding);
             assert_eq!(validation.status, BindingValidationStatus::Unavailable);
@@ -1544,15 +1560,22 @@ mod tests {
             code: None,
             message: None,
         };
+        // A Routine run starts only from a selected binding, so a custom
+        // agent never becomes a run's source.
         let selection = registry.select_pre_start(
             &[
                 future,
                 unmapped,
+                custom,
                 binding(AgentAdapterKind::Codex, None, None),
             ],
             &BTreeMap::from([(AgentAdapterKind::Codex, ready)]),
         );
-        assert_eq!(selection.selected_binding_index, Some(2));
+        assert_eq!(selection.selected_binding_index, Some(3));
+        assert_eq!(
+            selection.attempts[2].reason_code.as_deref(),
+            Some("custom_agent")
+        );
         assert_eq!(selection.attempts[0].adapter.as_str(), "future-agent");
         assert_eq!(
             selection.attempts[0].reason_code.as_deref(),

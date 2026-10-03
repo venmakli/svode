@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useAgentAdapterDictionary } from "@/features/agent-adapters";
 import { useAgentSetups } from "../hooks/use-agent-setups";
+import { useCustomAgents } from "../hooks/use-custom-agents";
 import { useMcpIntegrations } from "../hooks/use-mcp-integrations";
 import { agentFound } from "../model/agent-row";
 import { AgentsGroup } from "./agents-group";
@@ -14,6 +15,7 @@ import { SvodeToolsDialog } from "./svode-tools-dialog";
  */
 export function ProvidersSection() {
   const agents = useAgentSetups();
+  const custom = useCustomAgents();
   const integration = useMcpIntegrations();
   const names = useAgentAdapterDictionary();
   const [manageOpen, setManageOpen] = useState(false);
@@ -26,11 +28,13 @@ export function ProvidersSection() {
     <>
       <AgentsGroup
         agents={agents}
+        custom={custom}
         integration={status}
         onRunIntegration={integration.run}
         refreshing={agents.refreshing || integration.refreshing}
         onRefresh={() => {
           void agents.refresh();
+          void custom.refresh();
           void integration.loadStatus();
         }}
       />

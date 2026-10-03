@@ -20,7 +20,9 @@ use svode_core::agent_actors::{
     AgentActorResolution, AgentAdapter, ApprovalMode, CatalogError, catalog_path, read_catalog,
     resolve_catalogs,
 };
-use svode_core::agent_adapters::{AgentAdapterIdentity, AgentAdapterKind, AgentAdapterRegistry};
+use svode_core::agent_adapters::{
+    AgentAdapterIdentity, AgentAdapterKind, AgentAdapterRegistry, AgentId,
+};
 use svode_core::git::autocommit::{
     AutocommitService, ExactPathPersistenceOutcome, GuardedExactPathPlan,
 };
@@ -270,10 +272,38 @@ pub async fn agent_actors_diagnose_adapter(
         .await)
 }
 
-/// Labels of the registered agent adapters, by adapter id.
+/// An agent's id and the name every surface labels it with.
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentLabel {
+    id: AgentId,
+    display_name: String,
+}
+
+/// Labels of the registry agents and of this device's custom agents, by
+/// agent id.
 #[tauri::command]
-pub fn agent_adapters_list_identities() -> Vec<AgentAdapterIdentity> {
-    AgentAdapterRegistry.identities()
+pub fn agent_adapters_list_identities(
+    setup: State<'_, crate::agent_setup::AgentSetupState>,
+) -> Vec<AgentLabel> {
+    agent_labels(AgentAdapterRegistry.identities(), setup.custom_agents())
+}
+
+fn agent_labels(
+    identities: Vec<AgentAdapterIdentity>,
+    custom: Vec<svode_agents::custom::CustomAgent>,
+) -> Vec<AgentLabel> {
+    identities
+        .into_iter()
+        .map(|identity| AgentLabel {
+            id: identity.id.id(),
+            display_name: identity.display_name,
+        })
+        .chain(custom.into_iter().map(|agent| AgentLabel {
+            id: agent.id.into(),
+            display_name: agent.definition.name,
+        }))
+        .collect()
 }
 
 #[tauri::command]
@@ -892,6 +922,29 @@ fn catalog_relative_path(repository: &Path, owner: &Path) -> Result<String, AppE
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn custom_agents_are_labelled_after_the_registry_agents() {
+        let custom = svode_agents::custom::CustomAgent {
+            id: svode_core::agent_adapters::CustomAgentId::parse("custom-hermes").unwrap(),
+            definition: svode_agents::custom::CustomAgentDefinition {
+                name: "My Hermes".into(),
+                command: "hermes".into(),
+                args: vec!["acp".into()],
+                env: Default::default(),
+            },
+        };
+        let labels = agent_labels(AgentAdapterRegistry.identities(), vec![custom]);
+        let value = serde_json::to_value(&labels).unwrap();
+        assert_eq!(
+            value[0],
+            serde_json::json!({ "id": "codex", "displayName": "Codex" })
+        );
+        assert_eq!(
+            value.as_array().unwrap().last().unwrap(),
+            &serde_json::json!({ "id": "custom-hermes", "displayName": "My Hermes" })
+        );
+    }
     use tempfile::tempdir;
 
     #[test]

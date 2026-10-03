@@ -5,7 +5,7 @@
 //! marks its source `stale`; an agent without a live connection keeps its
 //! last good list, since closing an idle connection is normal.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -48,6 +48,9 @@ impl CatalogLister for AgentRuntime {
 #[derive(Default)]
 pub(crate) struct AcpListSources {
     agents: Mutex<HashMap<String, AgentList>>,
+    /// Removed agents: neither read nor shown, even while a connection of
+    /// theirs is still open or a read of theirs ends.
+    forgotten: Mutex<HashSet<String>>,
 }
 
 #[derive(Default)]
@@ -115,6 +118,23 @@ impl AcpListSources {
         self.start(lister, Some(agent))
     }
 
+    /// A removed agent's lists of this process are dropped and no longer
+    /// read.
+    pub(crate) fn forget(&self, agent: &str) {
+        let mut agents = self.agents.lock().unwrap();
+        agents.remove(agent);
+        self.forgotten.lock().unwrap().insert(agent.to_string());
+    }
+
+    /// An agent added again under a forgotten id is read again.
+    pub(crate) fn remember(&self, agent: &str) {
+        self.forgotten.lock().unwrap().remove(agent);
+    }
+
+    fn is_forgotten(&self, agent: &str) -> bool {
+        self.forgotten.lock().unwrap().contains(agent)
+    }
+
     fn start(
         self: &Arc<Self>,
         lister: &impl CatalogLister,
@@ -124,7 +144,7 @@ impl AcpListSources {
         let mut agents = self.agents.lock().unwrap();
         let mut reads = Vec::new();
         for CatalogConnection { connection, agent } in connections {
-            if only.is_some_and(|only| only != agent) {
+            if only.is_some_and(|only| only != agent) || self.is_forgotten(&agent) {
                 continue;
             }
             let list = agents.entry(agent.clone()).or_default();
@@ -150,6 +170,9 @@ impl AcpListSources {
         duration_ms: u128,
     ) {
         let mut agents = self.agents.lock().unwrap();
+        if self.is_forgotten(agent) {
+            return;
+        }
         let list = agents.entry(agent.to_string()).or_default();
         list.reading = false;
         match result {

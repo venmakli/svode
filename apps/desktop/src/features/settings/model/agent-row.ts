@@ -1,4 +1,4 @@
-import type { AgentCheckDto, AgentSetupDto } from "../api";
+import type { AgentCheckDto, AgentInfoDto, AgentSetupDto } from "../api";
 
 /** What the user did with one agent row. */
 export type AgentOperation =
@@ -7,6 +7,7 @@ export type AgentOperation =
   | "disable"
   | "update"
   | "remove"
+  | "remove_custom"
   | "check"
   | "sign_in";
 
@@ -17,6 +18,7 @@ export interface AgentOperationError {
   required?: number;
   version?: string;
   package?: string;
+  name?: string;
 }
 
 /** A check result the row shows; an unavailable agent shows its facts instead. */
@@ -44,7 +46,15 @@ export type AgentRowState =
   | { kind: "adapter_missing" }
   | { kind: "adapter_outdated"; version: string }
   | { kind: "failed_to_start"; message: string }
-  | { kind: "checked"; name: string | null; version: string | null }
+  | { kind: "command_missing"; command: string }
+  | {
+      kind: "checked";
+      name: string | null;
+      version: string | null;
+      /** What a custom agent declared; built-in agents are described. */
+      declared: AgentInfoDto["capabilities"] | null;
+    }
+  | { kind: "limited"; restriction: "new_session_only" }
   | { kind: "disabled" }
   | { kind: "ready" };
 
@@ -117,13 +127,17 @@ function requiredAction(setup: AgentSetupDto): AgentRowState | null {
   return null;
 }
 
-function checkedState(result: AgentCheckResult): AgentRowState {
+export function checkedState(
+  result: AgentCheckResult,
+  custom = false,
+): AgentRowState {
   switch (result.state) {
     case "ready":
       return {
         kind: "checked",
         name: result.agent.name,
         version: result.agent.version,
+        declared: custom ? result.agent.capabilities : null,
       };
     case "auth_required":
       return { kind: "sign_in" };
@@ -132,13 +146,13 @@ function checkedState(result: AgentCheckResult): AgentRowState {
   }
 }
 
-function actionFor(
-  setup: AgentSetupDto,
+export function actionFor(
+  canSignIn: boolean,
   state: AgentRowState,
 ): AgentRowAction | null {
   switch (state.kind) {
     case "sign_in":
-      return setup.canSignIn ? "sign_in" : null;
+      return canSignIn ? "sign_in" : null;
     case "adapter_outdated":
       return "update";
     case "failed":
@@ -183,7 +197,7 @@ export function agentRowView(
   return {
     state,
     warning: WARNED_STATES.has(state.kind) ? cliWarning(setup) : null,
-    action: actionFor(setup, state),
+    action: actionFor(setup.canSignIn, state),
   };
 }
 
@@ -200,6 +214,7 @@ export function agentOperationError(error: unknown): AgentOperationError {
         : {}),
       ...(typeof value.version === "string" ? { version: value.version } : {}),
       ...(typeof value.package === "string" ? { package: value.package } : {}),
+      ...(typeof value.name === "string" ? { name: value.name } : {}),
     };
   }
   return { code: null, message: String(error) };

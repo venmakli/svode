@@ -1,5 +1,12 @@
+import type {
+  AgentCheckDto,
+  AgentInfoDto,
+} from "@/platform/agent-runtime/agent-runtime-api";
+import { listen, type UnlistenFn } from "@/platform/native/events";
 import { invokeCommand } from "@/platform/native/invoke";
 import type { TerminalSession } from "@/platform/terminal";
+
+const CUSTOM_AGENTS_CHANGED_EVENT = "agents:custom-changed";
 
 /** Executable, CLI version and sign-in from the bounded diagnostic commands. */
 export interface AgentCliDiagnosticDto {
@@ -101,4 +108,94 @@ export function removeAgentAdapter(agent: string): Promise<AgentSetupDto> {
 /** Opens a terminal that runs the agent's own sign-in command. */
 export function signInAgent(agent: string): Promise<TerminalSession> {
   return invokeCommand<TerminalSession>("agent_setup_sign_in", { agent });
+}
+
+/** What the user enters for a custom ACP agent. */
+export interface CustomAgentDefinitionDto {
+  name: string;
+  command: string;
+  args: string[];
+  /** Not meant for secrets: keys come from the login shell environment. */
+  env: Record<string, string>;
+}
+
+/** Facts of a custom agent; reading them only looks its command up. */
+export interface CustomAgentSetupDto extends CustomAgentDefinitionDto {
+  agent: string;
+  enabled: boolean;
+  /** `null` when the command is not found. */
+  executablePath: string | null;
+  /** What the agent declared in its last start in this app process. */
+  declared: AgentInfoDto | null;
+  restriction: "new_session_only" | null;
+}
+
+/** `kind: "custom_agent"` errors of the custom agent commands. */
+export type CustomAgentErrorDto = {
+  kind: "custom_agent";
+  message: string;
+} & (
+  | { code: "name_missing" }
+  | { code: "command_missing" }
+  | { code: "invalid_variable"; name: string }
+  | { code: "not_found"; agent: string }
+);
+
+export function listCustomAgents(): Promise<CustomAgentSetupDto[]> {
+  return invokeCommand<CustomAgentSetupDto[]>("agent_custom_list");
+}
+
+export function addCustomAgent(
+  definition: CustomAgentDefinitionDto,
+): Promise<CustomAgentSetupDto> {
+  return invokeCommand<CustomAgentSetupDto>("agent_custom_add", {
+    definition,
+  });
+}
+
+/** Changes everything but the agent's id, so its sessions keep theirs. */
+export function updateCustomAgent(
+  agent: string,
+  definition: CustomAgentDefinitionDto,
+): Promise<CustomAgentSetupDto> {
+  return invokeCommand<CustomAgentSetupDto>("agent_custom_update", {
+    agent,
+    definition,
+  });
+}
+
+/** Svode forgets the agent; its own sessions and configuration stay. */
+export function removeCustomAgent(agent: string): Promise<void> {
+  return invokeCommand<void>("agent_custom_remove", { agent });
+}
+
+export function setCustomAgentEnabled(
+  agent: string,
+  enabled: boolean,
+): Promise<CustomAgentSetupDto> {
+  return invokeCommand<CustomAgentSetupDto>("agent_custom_set_enabled", {
+    agent,
+    enabled,
+  });
+}
+
+/**
+ * Checks a definition before it is saved: starts the command, runs
+ * `initialize` and closes it. `agent` is the custom agent being edited.
+ */
+export function checkCustomAgentDraft(
+  agent: string | null,
+  definition: CustomAgentDefinitionDto,
+): Promise<AgentCheckDto> {
+  return invokeCommand<AgentCheckDto>("agent_custom_check", {
+    agent,
+    definition,
+  });
+}
+
+/** Any window added, changed or removed a custom agent. */
+export function listenCustomAgentsChanged(
+  handler: () => void,
+): Promise<UnlistenFn> {
+  return listen<void>(CUSTOM_AGENTS_CHANGED_EVENT, () => handler());
 }

@@ -11,7 +11,13 @@ import { clearNativeMocks, mockNativeIpc } from "@/platform/native/testing";
 
 import { Bot } from "lucide-react";
 
-import type { AgentSetupDto, McpClientStatus, McpStatus } from "../api";
+import type {
+  AgentSetupDto,
+  CustomAgentDefinitionDto,
+  CustomAgentSetupDto,
+  McpClientStatus,
+  McpStatus,
+} from "../api";
 import { APP_SETTINGS_NAV_ITEMS } from "./app-settings-navigation";
 
 // Radix chooses its layout effect when it loads, so the UI is imported once
@@ -1241,6 +1247,314 @@ if (!isolatedProcess) {
       await setLocale(originalLocale, { reload: false });
     }
   });
+
+  test("Add ACP agent… checks the command before it is saved, and the custom agent's row checks and removes it while Svode tools leave it out", async () => {
+    const originalLocale = getLocale();
+    await setLocale("en", { reload: false });
+    let customAgents: CustomAgentSetupDto[] = [];
+    const calls: Array<[string, Record<string, unknown>]> = [];
+    const declared = (all: boolean) => ({
+      loadSession: true,
+      listSessions: all,
+      resumeSession: all,
+      closeSession: false,
+    });
+    const status = providersStatus([
+      client("claude-code", "Claude Code", true),
+      client("codex", "Codex", true),
+    ]);
+    const harness = await renderSection(
+      () => status,
+      () => {},
+      undefined,
+      {
+        agent_custom_list: () => customAgents,
+        agent_custom_check: (args) => {
+          calls.push(["check", args]);
+          return {
+            state: "ready",
+            agent: {
+              name: "scripted",
+              version: "1.0.0",
+              capabilities: declared(false),
+            },
+          };
+        },
+        agent_custom_add: (args) => {
+          calls.push(["add", args]);
+          customAgents = [
+            customSetup(
+              "custom-my-acp-agent",
+              args.definition as CustomAgentDefinitionDto,
+            ),
+          ];
+          return customAgents[0];
+        },
+        agent_custom_set_enabled: (args) => {
+          calls.push(["set_enabled", args]);
+          customAgents = customAgents.map((agent) => ({
+            ...agent,
+            enabled: Boolean(args.enabled),
+          }));
+          return customAgents[0];
+        },
+        agent_runtime_check: (args) => {
+          calls.push(["runtime_check", args]);
+          return {
+            state: "ready",
+            agent: {
+              name: "hermes-agent",
+              version: "unknown",
+              capabilities: declared(true),
+            },
+          };
+        },
+        agent_custom_remove: (args) => {
+          calls.push(["remove", args]);
+          customAgents = [];
+          return null;
+        },
+      },
+    );
+    try {
+      const document = harness.dom.window.document;
+      const [agents, integration] = topSections(harness.dom);
+      // Opening the page starts no custom agent.
+      expect(harness.commands.includes("agent_custom_list")).toBe(true);
+      expect(
+        harness.commands.some((command) =>
+          ["agent_custom_check", "agent_runtime_check"].includes(command),
+        ),
+      ).toBe(false);
+
+      await act(async () => {
+        within(agents, "Add ACP agent…").click();
+        await settle();
+      });
+      const form = document.querySelector<HTMLElement>(
+        "[data-custom-agent-form]",
+      )!;
+      expect(form.querySelector("h2")?.textContent).toBe("Add ACP agent");
+      expect(
+        (form.textContent ?? "").includes(
+          "Not for secrets: the agent gets keys and tokens from the login shell environment or its own configuration.",
+        ),
+      ).toBe(true);
+
+      await act(async () => {
+        within(form, "Add").click();
+        await settle();
+      });
+      expect((form.textContent ?? "").includes("Enter a name")).toBe(true);
+
+      setFieldValue(field(form, "custom-agent-name"), "My ACP agent");
+      setFieldValue(field(form, "custom-agent-command"), "hermes");
+      setFieldValue(field(form, "custom-agent-args"), "acp\n");
+      setFieldValue(field(form, "custom-agent-env"), "not a variable");
+      await act(async () => {
+        within(form, "Check").click();
+        await settle();
+      });
+      expect(
+        (form.textContent ?? "").includes(
+          "Not a NAME=value line: not a variable",
+        ),
+      ).toBe(true);
+      expect(calls.length).toBe(0);
+
+      setFieldValue(field(form, "custom-agent-env"), "HERMES_MODE=acp");
+      await act(async () => {
+        within(form, "Check").click();
+        await settle();
+      });
+      const definition = {
+        name: "My ACP agent",
+        command: "hermes",
+        args: ["acp"],
+        env: { HERMES_MODE: "acp" },
+      };
+      expect(calls).toEqual([["check", { agent: null, definition }]]);
+      expect(form.querySelector("[data-custom-agent-check]")?.textContent).toBe(
+        "Check passed · scripted 1.0.0 · new sessions only",
+      );
+
+      await act(async () => {
+        within(form, "Add").click();
+        await settle();
+      });
+      expect(calls[1]).toEqual(["add", { definition }]);
+      expect(document.querySelector("[data-custom-agent-form]")).toBeNull();
+      const row = () => agentRow(harness.dom, "custom-my-acp-agent");
+      expect(title(row())).toBe("My ACP agent");
+      expect(stateOf(row())).toBe("Ready");
+
+      // Turning a custom agent off and on installs and asks nothing.
+      await act(async () => {
+        switchOf(row()).click();
+        await settle();
+      });
+      expect(document.querySelector('[role="alertdialog"]')).toBeNull();
+      expect(calls[2]).toEqual([
+        "set_enabled",
+        { agent: "custom-my-acp-agent", enabled: false },
+      ]);
+      expect(stateOf(row())).toBe("Off");
+      await act(async () => {
+        switchOf(row()).click();
+        await settle();
+      });
+      expect(stateOf(row())).toBe("Ready");
+
+      await chooseMenuItem(harness.dom, "custom-my-acp-agent", "Check");
+      expect(calls.at(-1)).toEqual([
+        "runtime_check",
+        { agent: "custom-my-acp-agent" },
+      ]);
+      expect(stateOf(row())).toBe(
+        "Check passed · hermes-agent unknown · declares session list, history, resume",
+      );
+
+      // Svode installs no tools for a custom agent.
+      await act(async () => {
+        within(integration, "Manage…").click();
+        await settle();
+      });
+      const tools = document.querySelector<HTMLElement>("[data-svode-tools]")!;
+      expect(toolsAgents(tools).map(([agent]) => agent)).toEqual([
+        "codex",
+        "claude-code",
+      ]);
+      expect((tools.textContent ?? "").includes("My ACP agent")).toBe(false);
+      await act(async () => {
+        within(tools, "Cancel").click();
+        await settle();
+      });
+
+      await chooseMenuItem(harness.dom, "custom-my-acp-agent", "Remove");
+      const removal = document.querySelector<HTMLElement>(
+        "[data-custom-agent-remove]",
+      )!;
+      expect(removal.querySelector("h2")?.textContent).toBe(
+        "Remove My ACP agent?",
+      );
+      expect(
+        (removal.textContent ?? "").includes(
+          "The agent's sessions, sign-in and settings stay as they are.",
+        ),
+      ).toBe(true);
+      await act(async () => {
+        within(removal, "Remove").click();
+        await settle();
+      });
+      expect(calls.at(-1)).toEqual([
+        "remove",
+        { agent: "custom-my-acp-agent" },
+      ]);
+      expect(
+        document.querySelector('[data-agent="custom-my-acp-agent"]'),
+      ).toBeNull();
+    } finally {
+      await harness.cleanup();
+      await setLocale(originalLocale, { reload: false });
+    }
+  });
+
+  test("Russian: a custom agent row shows a missing command and the new-session-only restriction, and editing keeps its id and shows a rejected variable at its field", async () => {
+    const originalLocale = getLocale();
+    await setLocale("ru", { reload: false });
+    const definition = {
+      name: "Hermes ACP",
+      command: "hermes",
+      args: ["acp"],
+      env: { HERMES_MODE: "acp" },
+    };
+    let customAgents = [
+      customSetup("custom-hermes-acp", definition, {
+        restriction: "new_session_only",
+      }),
+      customSetup(
+        "custom-missing",
+        { ...definition, name: "Missing", command: "no-such-agent" },
+        { executablePath: null },
+      ),
+    ];
+    const updates: Record<string, unknown>[] = [];
+    const harness = await renderSection(
+      () => providersStatus([client("codex", "Codex", false)]),
+      () => {},
+      undefined,
+      {
+        agent_custom_list: () => customAgents,
+        agent_custom_update: (args) => {
+          updates.push(args);
+          if (updates.length === 1)
+            throw {
+              kind: "custom_agent",
+              code: "invalid_variable",
+              name: "1KEY",
+              message: "1KEY is not a valid environment variable name",
+            };
+          const next = customSetup(
+            String(args.agent),
+            args.definition as CustomAgentDefinitionDto,
+            { restriction: "new_session_only" },
+          );
+          customAgents = [next, customAgents[1]];
+          return next;
+        },
+      },
+    );
+    try {
+      const document = harness.dom.window.document;
+      const limited = agentRow(harness.dom, "custom-hermes-acp");
+      expect(stateOf(limited)).toBe(
+        "Только новые сессии: агент не объявил список или загрузку сессий",
+      );
+      const missing = agentRow(harness.dom, "custom-missing");
+      expect(stateOf(missing)).toBe("Команда не найдена: no-such-agent");
+      expect(
+        missing
+          .querySelector("[data-agent-state]")
+          ?.classList.contains("text-destructive"),
+      ).toBe(true);
+      expect(within(missing, "Повторить") === undefined).toBe(true);
+
+      await chooseMenuItem(harness.dom, "custom-hermes-acp", "Изменить…");
+      const form = document.querySelector<HTMLElement>(
+        "[data-custom-agent-form]",
+      )!;
+      expect(form.querySelector("h2")?.textContent).toBe("Изменить ACP-агента");
+      expect(field(form, "custom-agent-name").value).toBe("Hermes ACP");
+      expect(field(form, "custom-agent-args").value).toBe("acp");
+      expect(field(form, "custom-agent-env").value).toBe("HERMES_MODE=acp");
+
+      setFieldValue(field(form, "custom-agent-name"), "Hermes");
+      await act(async () => {
+        within(form, "Сохранить").click();
+        await settle();
+      });
+      expect(
+        (form.textContent ?? "").includes("Строка не вида NAME=значение: 1KEY"),
+      ).toBe(true);
+      expect(document.querySelector("[data-custom-agent-form]") === null).toBe(
+        false,
+      );
+
+      await act(async () => {
+        within(form, "Сохранить").click();
+        await settle();
+      });
+      expect(updates[1]).toEqual({
+        agent: "custom-hermes-acp",
+        definition: { ...definition, name: "Hermes" },
+      });
+      expect(document.querySelector("[data-custom-agent-form]")).toBeNull();
+      expect(title(agentRow(harness.dom, "custom-hermes-acp"))).toBe("Hermes");
+    } finally {
+      await harness.cleanup();
+      await setLocale(originalLocale, { reload: false });
+    }
+  });
 }
 
 const IDENTITIES = [
@@ -1294,6 +1608,53 @@ function agentSetup(
   };
 }
 
+function customSetup(
+  agent: string,
+  definition: CustomAgentDefinitionDto,
+  overrides: Partial<CustomAgentSetupDto> = {},
+): CustomAgentSetupDto {
+  return {
+    agent,
+    ...definition,
+    enabled: true,
+    executablePath: `/usr/local/bin/${definition.command}`,
+    declared: null,
+    restriction: null,
+    ...overrides,
+  };
+}
+
+function field(container: HTMLElement, id: string) {
+  return container.querySelector<HTMLInputElement | HTMLTextAreaElement>(
+    `#${id}`,
+  )!;
+}
+
+function setFieldValue(
+  input: HTMLInputElement | HTMLTextAreaElement,
+  value: string,
+) {
+  const window = input.ownerDocument.defaultView!;
+  const prototype =
+    input.tagName === "TEXTAREA"
+      ? window.HTMLTextAreaElement.prototype
+      : window.HTMLInputElement.prototype;
+  // React watches value changes of the focused field in this DOM.
+  act(() => {
+    input.focus();
+    Object.getOwnPropertyDescriptor(prototype, "value")?.set?.call(
+      input,
+      value,
+    );
+    input.dispatchEvent(new window.Event("input", { bubbles: true }));
+    const propertyChange = new window.Event("propertychange", {
+      bubbles: true,
+    });
+    Object.defineProperty(propertyChange, "propertyName", { value: "value" });
+    input.dispatchEvent(propertyChange);
+  });
+}
+
 function deferredSetup(agent: string, found: boolean): AgentSetupDto {
   return {
     agent,
@@ -1338,6 +1699,7 @@ async function renderSection(
       if (handled !== undefined) return handled;
       if (command === "agent_adapters_list_identities") return IDENTITIES;
       if (command === "agent_setup_list") return setups;
+      if (command === "agent_custom_list") return [];
       if (command === "mcp_get_status") return getCanonical();
       if (command === "mcp_run_doctor") return getCanonical().doctor;
       if (command === "mcp_install_client" || command === "mcp_remove_client") {
@@ -1608,6 +1970,21 @@ function createDom() {
 }
 
 function installDomGlobals(dom: JSDOM) {
+  // React watches the focused field through these in this DOM.
+  Object.defineProperties(dom.window.HTMLElement.prototype, {
+    attachEvent: {
+      configurable: true,
+      value(this: HTMLElement, name: string, listener: EventListener) {
+        this.addEventListener(name.replace(/^on/, ""), listener);
+      },
+    },
+    detachEvent: {
+      configurable: true,
+      value(this: HTMLElement, name: string, listener: EventListener) {
+        this.removeEventListener(name.replace(/^on/, ""), listener);
+      },
+    },
+  });
   const values: Record<string, unknown> = {
     CustomEvent: dom.window.CustomEvent,
     DOMRect: dom.window.DOMRect,

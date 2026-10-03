@@ -1,12 +1,13 @@
 import { useCallback, useState } from "react";
-import { ArrowUpRight, RefreshCw, TriangleAlert } from "lucide-react";
+import { ArrowUpRight, Plus, RefreshCw, TriangleAlert } from "lucide-react";
 import * as m from "@/paraglide/messages.js";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent } from "@/components/ui/collapsible";
 import { useAgentAdapterDictionary } from "@/features/agent-adapters";
-import type { AgentSetupDto } from "../api";
+import type { AgentSetupDto, CustomAgentSetupDto } from "../api";
 import type { AgentSetups } from "../hooks/use-agent-setups";
+import type { CustomAgents } from "../hooks/use-custom-agents";
 import type { McpStatus } from "../hooks/use-mcp-integrations";
 import {
   ownPartRemoval,
@@ -24,8 +25,12 @@ import {
   type AgentConfirmation,
   type AgentConfirmationChoice,
 } from "./agent-confirmation-dialog";
+import { customAgentRowView } from "../model/custom-agent";
 import { AgentRow } from "./agent-row";
 import { AgentSignInDialog } from "./agent-sign-in-dialog";
+import { CustomAgentDialog } from "./custom-agent-dialog";
+import { CustomAgentRemoveDialog } from "./custom-agent-remove-dialog";
+import { CustomAgentRow } from "./custom-agent-row";
 import {
   SettingsDisclosureTrigger,
   SettingsGroup,
@@ -35,18 +40,22 @@ import {
 } from "./settings-layout";
 
 /**
- * The one list of agents: found agents with their state and switch, then
- * the agents that are not found with the vendor's install hint. Turning an
+ * The one list of agents: found agents with their state and switch, the
+ * custom ACP agents the user added, the agents that are not found with the
+ * vendor's install hint, and the entry to add a custom agent. Turning an
  * agent on can add its Svode tools; turning it off can remove its own part.
+ * Svode installs no tools for a custom agent.
  */
 export function AgentsGroup({
   agents,
+  custom,
   integration,
   onRunIntegration,
   refreshing,
   onRefresh,
 }: {
   agents: AgentSetups;
+  custom: CustomAgents;
   integration: McpStatus | null;
   onRunIntegration: (operation: IntegrationOperation) => Promise<string | null>;
   refreshing: boolean;
@@ -63,6 +72,13 @@ export function AgentsGroup({
     ptyId: string;
   } | null>(null);
   const [notFoundOpen, setNotFoundOpen] = useState(false);
+  // The form is open with the agent it edits, or with none to add one.
+  const [customForm, setCustomForm] = useState<{
+    editing: CustomAgentSetupDto | null;
+  } | null>(null);
+  // The last agent to remove stays rendered while its dialog closes.
+  const [removing, setRemoving] = useState<CustomAgentSetupDto | null>(null);
+  const [removeOpen, setRemoveOpen] = useState(false);
   const { setups, reload } = agents;
   const found = setups?.filter(agentFound) ?? [];
   const notFound = setups?.filter((setup) => !agentFound(setup)) ?? [];
@@ -140,6 +156,37 @@ export function AgentsGroup({
     }
   };
 
+  const actCustom = (setup: CustomAgentSetupDto) => {
+    const activity = custom.activity(setup.agent);
+    const operation =
+      activity?.kind === "failed" ? activity.operation : "check";
+    switch (operation) {
+      case "enable":
+      case "disable":
+        return void custom.setEnabled(setup.agent, operation === "enable");
+      case "remove_custom":
+        return void custom.remove(setup.agent);
+      default:
+        return void custom.check(setup.agent);
+    }
+  };
+
+  const customRows = (custom.agents ?? []).map((setup) => (
+    <CustomAgentRow
+      key={setup.agent}
+      setup={setup}
+      view={customAgentRowView(setup, custom.activity(setup.agent))}
+      onToggle={(enabled) => void custom.setEnabled(setup.agent, enabled)}
+      onAction={() => actCustom(setup)}
+      onCheck={() => void custom.check(setup.agent)}
+      onEdit={() => setCustomForm({ editing: setup })}
+      onRemove={() => {
+        setRemoving(setup);
+        setRemoveOpen(true);
+      }}
+    />
+  ));
+
   const signedIn = useCallback(() => void reload(), [reload]);
   const label = (agent: string) => names.label(agent);
 
@@ -187,6 +234,7 @@ export function AgentsGroup({
                   onRemoveAdapter={() => confirm({ kind: "remove", setup })}
                 />
               )),
+              ...customRows,
               notFound.length ? (
                 <Collapsible
                   key="not-found"
@@ -241,6 +289,16 @@ export function AgentsGroup({
                   </CollapsibleContent>
                 </Collapsible>
               ) : null,
+              <div key="add-custom" className="px-2 py-1.5">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setCustomForm({ editing: null })}
+                >
+                  <Plus data-icon="inline-start" />
+                  {m.settings_agents_custom_add()}
+                </Button>
+              </div>,
             ].filter(Boolean)
           : [
               <SettingsRowSkeleton key="first" />,
@@ -256,6 +314,26 @@ export function AgentsGroup({
         names={(ids) => ids.map(label).join(", ")}
         onConfirm={confirmed}
       />
+
+      {customForm ? (
+        <CustomAgentDialog
+          editing={customForm.editing}
+          onCheck={custom.checkDraft}
+          onSave={async (agent, definition) =>
+            (await custom.save(agent, definition)).error
+          }
+          onClose={() => setCustomForm(null)}
+        />
+      ) : null}
+
+      {removing ? (
+        <CustomAgentRemoveDialog
+          name={removing.name}
+          open={removeOpen}
+          onOpenChange={setRemoveOpen}
+          onConfirm={() => void custom.remove(removing.agent)}
+        />
+      ) : null}
 
       {signIn ? (
         <AgentSignInDialog

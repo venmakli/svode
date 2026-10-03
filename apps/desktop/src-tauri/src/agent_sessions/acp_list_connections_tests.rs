@@ -14,12 +14,14 @@ use super::*;
 use crate::agent_runtime::connections::{AgentConnections, LaunchPlanner, PlanFuture};
 
 /// A `/bin/sh` ACP agent that declares `session/list` and answers it by
-/// `$SVODE_LIST`: `ok` with one session, `error`, or `hang`.
+/// `$SVODE_LIST`: `ok` with one session, `error`, or `hang`; with `none` it
+/// declares no list.
 fn scripted(agent: &str, list: &str) -> AcpLaunch {
     const SCRIPT: &str = r#"while IFS= read -r line; do
   id=${line#'{"id":'}; id=${id%%,*}
   case "$line" in
-    *'"method":"initialize"'*) printf '{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":1,"agentCapabilities":{"sessionCapabilities":{"list":{}}},"agentInfo":{"name":"scripted","version":"1.0.0"}}}\n' "$id";;
+    *'"method":"initialize"'*) caps='{"sessionCapabilities":{"list":{}}}'; [ "$SVODE_LIST" = none ] && caps='{}'
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":1,"agentCapabilities":%s,"agentInfo":{"name":"scripted","version":"1.0.0"}}}\n' "$id" "$caps";;
     *'"method":"session/list"'*) case "$SVODE_LIST" in
       ok) printf '{"jsonrpc":"2.0","id":%s,"result":{"sessions":[{"sessionId":"s1","cwd":"/work","title":"first","updatedAt":"2026-10-02T10:00:00Z"}]}}\n' "$id";;
       error) printf '{"jsonrpc":"2.0","id":%s,"error":{"code":-32603,"message":"list failed"}}\n' "$id";;
@@ -55,6 +57,14 @@ impl LaunchPlanner for ScriptedPlanner {
             .map(|(_, plan)| plan.clone())
             .unwrap_or(Err(LaunchUnavailable::NotSupported));
         Box::pin(async move { plan })
+    }
+
+    fn plan_draft<'a>(
+        &'a self,
+        agent: Option<&'a str>,
+        _definition: svode_agents::custom::CustomAgentDefinition,
+    ) -> PlanFuture<'a> {
+        self.plan(agent.unwrap_or("draft"))
     }
 }
 
@@ -258,6 +268,84 @@ async fn a_reloading_webview_releases_only_its_own_collections() {
     tokio::time::sleep(Duration::from_millis(400)).await;
     assert!(open_agents(&runtime).is_empty());
     runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_custom_agent_lists_under_its_own_id_and_one_without_a_list_starts_once() {
+    let runtime = runtime();
+    let (connections, sources) = owner(
+        &runtime,
+        vec![
+            ("custom-lister", Ok(scripted("custom-lister", "ok"))),
+            ("custom-plain", Ok(scripted("custom-plain", "none"))),
+        ],
+    );
+    connections.hold_catalog("main");
+    settle(sources.raise(&connections, &runtime)).await;
+
+    let lister = AgentId::parse("custom-lister").unwrap();
+    assert_eq!(
+        status(&sources, lister.clone()),
+        (AgentSessionSourceStatus::Ok, 1)
+    );
+    let read = sources
+        .reads()
+        .into_iter()
+        .find(|read| read.source == lister)
+        .unwrap();
+    assert_eq!(
+        read.sessions[0].key,
+        svode_agents::identity::SessionKey::from_acp("custom-lister", "s1", false),
+        "its own namespace, never merged with a built-in agent"
+    );
+    // Without a declared list the agent is no source, not stale, and an
+    // open collection does not start it again.
+    assert!(
+        sources
+            .reads()
+            .iter()
+            .all(|read| read.source.as_str() != "custom-plain")
+    );
+    assert_eq!(connections.held_catalog_agents(), ["custom-lister"]);
+
+    // A removed agent is neither read nor shown while its connection lives,
+    // and is read again once added back under the same id.
+    sources.forget("custom-lister");
+    settle(sources.refresh(&runtime)).await;
+    assert!(sources.reads().is_empty());
+    sources.remember("custom-lister");
+    settle(sources.refresh(&runtime)).await;
+    assert_eq!(status(&sources, lister), (AgentSessionSourceStatus::Ok, 1));
+    runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_draft_check_starts_the_command_and_reports_what_it_declares() {
+    let runtime = runtime();
+    let (connections, _) = owner(
+        &runtime,
+        vec![("custom-draft", Ok(scripted("custom-draft", "none")))],
+    );
+    let definition = svode_agents::custom::CustomAgentDefinition {
+        name: "Draft".into(),
+        command: "/bin/sh".into(),
+        args: Vec::new(),
+        env: BTreeMap::new(),
+    };
+    let AgentCheck::Ready { agent } = connections
+        .check_draft(Some("custom-draft"), definition)
+        .await
+    else {
+        panic!("the draft starts");
+    };
+    assert!(!agent.capabilities.list_sessions);
+    assert!(open_agents(&runtime).is_empty(), "closed right after");
+    assert_eq!(
+        runtime
+            .declared("custom-draft")
+            .map(|info| info.capabilities.list_sessions),
+        Some(false)
+    );
 }
 
 #[test]

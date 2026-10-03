@@ -4,14 +4,22 @@
 
 use std::sync::Arc;
 
+use svode_agents::AgentCheck;
 use svode_agents::adapters::AgentSetup;
+use svode_agents::custom::{
+    CustomAgent, CustomAgentDefinition, CustomAgentSetup, custom_agent_setup,
+};
 use svode_agents::registry::{AdapterRuntimeRegistry, AdapterTarget, SystemRuntimeCommandRunner};
-use svode_core::agent_adapters::{AgentAdapterKind, resolve_space_executable, system_home_dir};
-use tauri::{AppHandle, State};
+use svode_core::agent_adapters::{
+    AgentAdapterKind, CustomAgentId, resolve_space_executable, system_home_dir,
+};
+use tauri::{AppHandle, Emitter, State};
 use tokio::task::JoinSet;
 
 use super::AgentSetupState;
+use crate::agent_runtime::AgentRuntimeState;
 use crate::agent_runtime::connections::AgentConnections;
+use crate::agent_sessions::AgentSessionsState;
 use crate::error::AppError;
 use crate::process::path_env::ProcessPath;
 use crate::terminal::{TerminalManager, TerminalSession};
@@ -32,7 +40,7 @@ async fn setup(state: &AgentSetupState, agent: AgentAdapterKind) -> Result<Agent
         .store
         .agent_setup(
             agent,
-            state.choice(agent),
+            state.choice(agent.as_str()),
             &target().await?,
             &SystemRuntimeCommandRunner,
         )
@@ -55,7 +63,7 @@ pub async fn agent_setup_list(
                 .store
                 .agent_setup(
                     agent,
-                    state.choice(agent),
+                    state.choice(agent.as_str()),
                     &target,
                     &SystemRuntimeCommandRunner,
                 )
@@ -84,7 +92,7 @@ pub async fn agent_setup_enable(
             &*state.source,
         )
         .await?;
-    state.set_choice(agent, true)?;
+    state.set_choice(agent.as_str(), true)?;
     setup(&state, agent).await
 }
 
@@ -96,7 +104,7 @@ pub async fn agent_setup_disable(
     connections: State<'_, Arc<AgentConnections>>,
     agent: AgentAdapterKind,
 ) -> Result<AgentSetup, AppError> {
-    state.set_choice(agent, false)?;
+    state.set_choice(agent.as_str(), false)?;
     connections.forget_agent(agent.as_str());
     setup(&state, agent).await
 }
@@ -154,4 +162,121 @@ pub async fn agent_setup_sign_in(
         &executable.to_string_lossy(),
         &args,
     )
+}
+
+/// The custom agents changed; every window reads their labels and rows again.
+const CUSTOM_AGENTS_CHANGED_EVENT: &str = "agents:custom-changed";
+
+async fn custom_setup(
+    state: &AgentSetupState,
+    runtime: &AgentRuntimeState,
+    agent: &CustomAgent,
+) -> Result<CustomAgentSetup, AppError> {
+    let id = agent.id.agent_id().as_str();
+    Ok(custom_agent_setup(
+        agent,
+        state.choice(id),
+        &target().await?,
+        runtime.runtime().declared(id),
+    ))
+}
+
+/// The custom ACP agents in the order the user added them. Only their
+/// commands are looked up; nothing starts.
+#[tauri::command]
+pub async fn agent_custom_list(
+    state: State<'_, AgentSetupState>,
+    runtime: State<'_, AgentRuntimeState>,
+) -> Result<Vec<CustomAgentSetup>, AppError> {
+    let mut setups = Vec::new();
+    for agent in state.custom_agents() {
+        setups.push(custom_setup(&state, &runtime, &agent).await?);
+    }
+    Ok(setups)
+}
+
+#[tauri::command]
+pub async fn agent_custom_add(
+    app: AppHandle,
+    state: State<'_, AgentSetupState>,
+    runtime: State<'_, AgentRuntimeState>,
+    sessions: State<'_, AgentSessionsState>,
+    definition: CustomAgentDefinition,
+) -> Result<CustomAgentSetup, AppError> {
+    let agent = state.add_custom_agent(definition)?;
+    sessions.acp_lists.remember(agent.id.agent_id().as_str());
+    let _ = app.emit(CUSTOM_AGENTS_CHANGED_EVENT, ());
+    custom_setup(&state, &runtime, &agent).await
+}
+
+/// A changed command is another process: what the agent declared and its
+/// catalogue connection are dropped. Its sessions keep their ids.
+#[tauri::command]
+pub async fn agent_custom_update(
+    app: AppHandle,
+    state: State<'_, AgentSetupState>,
+    runtime: State<'_, AgentRuntimeState>,
+    connections: State<'_, Arc<AgentConnections>>,
+    agent: CustomAgentId,
+    definition: CustomAgentDefinition,
+) -> Result<CustomAgentSetup, AppError> {
+    let agent = state.update_custom_agent(agent, definition)?;
+    let id = agent.id.agent_id().as_str();
+    connections.forget_agent(id);
+    runtime.runtime().forget_declared(id);
+    let _ = app.emit(CUSTOM_AGENTS_CHANGED_EVENT, ());
+    custom_setup(&state, &runtime, &agent).await
+}
+
+/// Svode forgets the agent: its command, enable choice, catalogue
+/// connection and the list read in this process. The agent's own sessions
+/// and configuration stay as they are.
+#[tauri::command]
+pub async fn agent_custom_remove(
+    app: AppHandle,
+    state: State<'_, AgentSetupState>,
+    runtime: State<'_, AgentRuntimeState>,
+    connections: State<'_, Arc<AgentConnections>>,
+    sessions: State<'_, AgentSessionsState>,
+    agent: CustomAgentId,
+) -> Result<(), AppError> {
+    state.remove_custom_agent(&agent)?;
+    let id = agent.agent_id().as_str();
+    connections.forget_agent(id);
+    runtime.runtime().forget_declared(id);
+    sessions.acp_lists.forget(id);
+    let _ = app.emit(CUSTOM_AGENTS_CHANGED_EVENT, ());
+    Ok(())
+}
+
+/// Turning a custom agent on or off installs and removes nothing.
+#[tauri::command]
+pub async fn agent_custom_set_enabled(
+    state: State<'_, AgentSetupState>,
+    runtime: State<'_, AgentRuntimeState>,
+    connections: State<'_, Arc<AgentConnections>>,
+    agent: CustomAgentId,
+    enabled: bool,
+) -> Result<CustomAgentSetup, AppError> {
+    let custom = state.custom_agent(&agent)?;
+    let id = agent.agent_id().as_str();
+    state.set_choice(id, enabled)?;
+    if !enabled {
+        connections.forget_agent(id);
+    }
+    custom_setup(&state, &runtime, &custom).await
+}
+
+/// The user's check of a definition in the form, before it is saved:
+/// starts the command, runs `initialize` and closes it. `agent` is the
+/// custom agent being edited, none for a new one.
+#[tauri::command]
+pub async fn agent_custom_check(
+    connections: State<'_, Arc<AgentConnections>>,
+    agent: Option<CustomAgentId>,
+    definition: CustomAgentDefinition,
+) -> Result<AgentCheck, AppError> {
+    let definition = definition.normalized()?;
+    let agent = agent.map(|agent| agent.agent_id().as_str().to_string());
+    Ok(connections.check_draft(agent.as_deref(), definition).await)
 }

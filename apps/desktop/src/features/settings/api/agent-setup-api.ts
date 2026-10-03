@@ -1,15 +1,26 @@
 export {
+  addCustomAgent,
+  checkCustomAgentDraft,
   disableAgent,
   enableAgent,
   listAgentSetups,
+  listCustomAgents,
+  listenCustomAgentsChanged,
   removeAgentAdapter,
+  removeCustomAgent,
+  setCustomAgentEnabled,
   signInAgent,
   updateAgentAdapter,
+  updateCustomAgent,
   type AgentAdapterErrorDto,
   type AgentSetupDto,
+  type CustomAgentDefinitionDto,
+  type CustomAgentErrorDto,
+  type CustomAgentSetupDto,
 } from "@/platform/agent-setup/agent-setup-api";
 export {
   checkAgent,
   type AgentCheckDto,
+  type AgentInfoDto,
   type AgentLaunchUnavailableDto,
 } from "@/platform/agent-runtime/agent-runtime-api";

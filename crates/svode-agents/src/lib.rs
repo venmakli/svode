@@ -7,6 +7,7 @@ mod acp;
 pub mod activity;
 pub mod adapters;
 pub mod catalog;
+pub mod custom;
 mod error;
 pub mod identity;
 pub mod interaction;

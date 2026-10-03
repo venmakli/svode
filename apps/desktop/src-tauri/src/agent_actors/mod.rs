@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 
 use svode_core::agent_actors::{
     AgentActor, AgentActorCatalog, ApprovalMode, CatalogError, catalog_path, read_catalog,
-    validate_catalog,
+    refuse_new_custom_bindings, validate_catalog,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -121,6 +121,7 @@ pub fn mutate_catalog(
             if catalog.actors.iter().any(|a| a.id == actor.id) {
                 return Err(CatalogError::Invalid("duplicate actor id".into()));
             }
+            refuse_new_custom_bindings(None, &actor)?;
             catalog.actors.push(actor);
         }
         CatalogMutation::Update(actor) => {
@@ -130,6 +131,7 @@ pub fn mutate_catalog(
                 .iter_mut()
                 .find(|a| a.id == actor.id)
                 .ok_or_else(|| CatalogError::Invalid("actor not found".into()))?;
+            refuse_new_custom_bindings(Some(item), &actor)?;
             *item = actor;
         }
         CatalogMutation::Delete(id) => catalog.actors.retain(|a| a.id != id),
@@ -228,6 +230,7 @@ fn next_catalog(
             if catalog.actors.iter().any(|a| a.id == actor.id) {
                 return Err(CatalogError::Invalid("duplicate actor id".into()));
             }
+            refuse_new_custom_bindings(None, &actor)?;
             catalog.actors.push(actor);
         }
         CatalogMutation::Update(actor) => {
@@ -237,6 +240,7 @@ fn next_catalog(
                 .iter_mut()
                 .find(|a| a.id == actor.id)
                 .ok_or_else(|| CatalogError::Invalid("actor not found".into()))?;
+            refuse_new_custom_bindings(Some(item), &actor)?;
             *item = actor;
         }
         CatalogMutation::Delete(id) => catalog.actors.retain(|a| a.id != id),
@@ -473,6 +477,53 @@ mod tests {
             serde_json::json!([{"adapter": "future-agent", "model": "m", "effort": "e"}])
         );
         assert_eq!(written["actors"][1]["name"], "Renamed");
+    }
+
+    /// A custom agent's id never reaches the portable catalog (A2, A7).
+    #[test]
+    fn a_custom_agent_binding_is_refused_and_the_catalog_stays_as_it_was() {
+        let d = tempdir().unwrap();
+        let (_, fp) = read_catalog(d.path()).unwrap();
+        let id = "01arz3ndektsv4rrffq69g5fav".to_string();
+        let mut custom = actor(&id);
+        custom.adapters[0].adapter =
+            svode_core::agent_adapters::AgentId::parse("custom-hermes").unwrap();
+        let refused = mutate_catalog_compound(
+            d.path(),
+            &fp,
+            CompoundCatalogMutation {
+                mutation: CatalogMutation::Create(custom.clone()),
+                approval_mode: Some(ApprovalMode::Ask),
+            },
+        );
+        assert!(matches!(refused, Err(CatalogError::Invalid(_))));
+        assert!(!catalog_path(d.path()).exists());
+
+        let created = mutate_catalog_compound(
+            d.path(),
+            &fp,
+            CompoundCatalogMutation {
+                mutation: CatalogMutation::Create(actor(&id)),
+                approval_mode: None,
+            },
+        )
+        .unwrap();
+        let before = fs::read(catalog_path(d.path())).unwrap();
+        let (_, fp) = read_catalog(d.path()).unwrap();
+        let mut edited = created.actors[0].clone();
+        edited.adapters.push(custom.adapters[0].clone());
+        assert!(matches!(
+            mutate_catalog_compound(
+                d.path(),
+                &fp,
+                CompoundCatalogMutation {
+                    mutation: CatalogMutation::Update(edited),
+                    approval_mode: None,
+                },
+            ),
+            Err(CatalogError::Invalid(_))
+        ));
+        assert_eq!(fs::read(catalog_path(d.path())).unwrap(), before);
     }
 
     #[test]
