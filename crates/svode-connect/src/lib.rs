@@ -1,8 +1,9 @@
 //! The connection manager: gives agents the Svode tools of the plugin
 //! payload in the stable location `~/.svode` (Claude Code, Codex, opencode,
-//! Qwen Code and pi get a part of their own; Grok Build reads the shared
-//! skill only), keeps connected clients complete, disconnects them, removes
-//! the shared skill on request and reports their status.
+//! Qwen Code, pi, Kimi Code and Hermes get a part of their own; Grok Build
+//! and Cursor read the shared skill only), keeps connected clients complete,
+//! disconnects them, removes the shared skill on request and reports their
+//! status.
 //!
 //! It is the only owner of Svode's artifacts in client configs. The desktop
 //! app (Settings and reconcile at every start), `svode integration` and the
@@ -15,6 +16,7 @@
 mod agent_mcp;
 mod entry;
 mod error;
+mod hermes;
 mod link;
 mod machine;
 mod manager;

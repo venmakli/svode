@@ -140,11 +140,11 @@ fn runtime_files(binaries: &Path, payload: &Path, version: &str) {
 }
 
 fn claude_client() -> Client {
-    Client::of(AgentAdapterKind::ClaudeCode).unwrap()
+    Client::of(AgentAdapterKind::ClaudeCode)
 }
 
 fn codex_client() -> Client {
-    Client::of(AgentAdapterKind::Codex).unwrap()
+    Client::of(AgentAdapterKind::Codex)
 }
 
 pub(super) fn client(status: &crate::Status, client: Client) -> crate::ClientStatus {

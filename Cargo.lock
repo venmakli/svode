@@ -5319,6 +5319,7 @@ dependencies = [
  "jsonc-parser",
  "serde",
  "serde_json",
+ "serde_yml",
  "svode-core",
  "svode-install",
  "tempfile",

@@ -11,6 +11,7 @@ use svode_core::agent_adapters::AgentAdapterKind;
 
 use crate::entry::{self, Entry};
 use crate::error::ConnectError;
+use crate::hermes;
 use crate::link::{self, Link};
 use crate::machine::{ActiveRuntime, Client, Kit, Machine};
 use crate::manager::{self, Inspection};
@@ -44,7 +45,8 @@ pub struct Issue {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ArtifactStatus {
-    /// `plugin`, `skill` or `mcp-entry`.
+    /// `plugin`, `skill`, `mcp-entry` or `skills-entry` (the skill
+    /// directory entry of Hermes).
     pub kind: String,
     pub path: String,
     /// `absent`, `managed`, `previous`, `foreign`, `custom`, `unreadable`,
@@ -74,7 +76,8 @@ pub struct ClientStatus {
     pub attention_code: Option<String>,
     /// Path of the client CLI.
     pub path: Option<String>,
-    /// User config that holds its MCP entry.
+    /// User config that holds its own entry: the MCP entry, or the skill
+    /// directory entry of Hermes.
     pub config_path: Option<String>,
     pub message: Option<String>,
     /// Every artifact of a connected client is in place.
@@ -218,7 +221,7 @@ fn client_status(
     let connected = inspection.connected();
     let complete = connected && manager::complete(machine, client, &inspection);
     let command = machine.find(client.agent());
-    let config = machine.mcp_config(client);
+    let config = machine.entry_config(client);
     let found =
         command.is_some() || config.as_ref().is_some_and(|path| path.is_file()) || connected;
     let issues = issues(
@@ -277,10 +280,21 @@ pub fn shared_skill_status(machine: &Machine) -> SharedSkillStatus {
         state: link_state(state).into(),
         readers: ids(Client::all()
             .into_iter()
-            .filter(|client| client.uses_shared_skill() && machine.find(client.agent()).is_some())
+            .filter(|client| reads_shared_skill(machine, *client))
             .collect()),
         required_by: ids(manager::shared_skill_required_by(machine)),
     }
+}
+
+/// A found agent that reads `~/.agents/skills`; Hermes reads it only while
+/// its skill directories list it.
+fn reads_shared_skill(machine: &Machine, client: Client) -> bool {
+    let reads = match client.kit {
+        Kit::ClaudePlugin => false,
+        Kit::HermesSkills => hermes::lists_shared_dir(machine),
+        Kit::CodexMcp | Kit::AgentMcp(_) | Kit::SharedSkillOnly => true,
+    };
+    reads && machine.find(client.agent()).is_some()
 }
 
 /// Issues of one client, the most important first.
@@ -318,7 +332,7 @@ fn issues(
             "custom_conflict",
             format!(
                 "{} holds a custom svode MCP entry; Svode does not replace it",
-                machine.mcp_config(client).map_or_else(
+                machine.entry_config(client).map_or_else(
                     || client.name().to_string(),
                     |path| path.display().to_string()
                 )
@@ -372,12 +386,13 @@ fn issues(
 /// Claude Code gets skill, MCP server and `svode` from one plugin; its user
 /// entry is listed only while it exists, as one the plugin makes redundant
 /// or conflicts with. The others read the shared skill and, except an agent
-/// without an own part, have a managed entry.
+/// without an own part, have a managed entry: an MCP entry, or the skill
+/// directory entry of Hermes.
 fn artifacts(machine: &Machine, client: Client, inspection: &Inspection) -> Vec<ArtifactStatus> {
     let mut artifacts = vec![skill_artifact(machine, client, inspection)];
     let entry = match client.kit {
         Kit::ClaudePlugin => inspection.entry != Entry::Absent,
-        Kit::CodexMcp | Kit::CommandMcp(_) => true,
+        Kit::CodexMcp | Kit::AgentMcp(_) | Kit::HermesSkills => true,
         Kit::SharedSkillOnly => false,
     };
     if entry {
@@ -389,7 +404,9 @@ fn artifacts(machine: &Machine, client: Client, inspection: &Inspection) -> Vec<
 fn own_part(machine: &Machine, client: Client, inspection: &Inspection) -> Option<ArtifactStatus> {
     match client.kit {
         Kit::ClaudePlugin => Some(skill_artifact(machine, client, inspection)),
-        Kit::CodexMcp | Kit::CommandMcp(_) => Some(entry_artifact(machine, client, inspection)),
+        Kit::CodexMcp | Kit::AgentMcp(_) | Kit::HermesSkills => {
+            Some(entry_artifact(machine, client, inspection))
+        }
         Kit::SharedSkillOnly => None,
     }
 }
@@ -409,9 +426,13 @@ fn skill_artifact(machine: &Machine, client: Client, inspection: &Inspection) ->
 
 fn entry_artifact(machine: &Machine, client: Client, inspection: &Inspection) -> ArtifactStatus {
     ArtifactStatus {
-        kind: "mcp-entry".into(),
+        kind: match client.kit {
+            Kit::HermesSkills => "skills-entry",
+            _ => "mcp-entry",
+        }
+        .into(),
         path: machine
-            .mcp_config(client)
+            .entry_config(client)
             .map(|path| path.display().to_string())
             .unwrap_or_default(),
         state: match &inspection.entry {
@@ -455,19 +476,30 @@ pub fn manual_config_text(machine: &Machine, client: Client) -> String {
             shell_quote(&command)
         ),
         Kit::CodexMcp => entry::codex_block(Path::new(&command), false),
-        Kit::CommandMcp(kind) => kind.manual(&shell_quote(&command)),
+        Kit::AgentMcp(kind) => kind
+            .manual(&shell_quote(&command))
+            .unwrap_or_else(|| mcp_servers_json(&command)),
         // Configured by hand the entry works in the agent's terminal, where
         // the agent starts MCP servers in the session directory.
+        Kit::HermesSkills => format!(
+            "mcp_servers:\n  svode:\n    command: '{}'\n",
+            command.replace('\'', "''")
+        ),
         Kit::SharedSkillOnly => match client.agent() {
             AgentAdapterKind::GrokBuild => {
                 format!("grok mcp add svode {}", shell_quote(&command))
             }
-            _ => serde_json::to_string_pretty(&serde_json::json!({
-                "mcpServers": { "svode": { "command": command, "args": [] } }
-            }))
-            .unwrap_or_default(),
+            _ => mcp_servers_json(&command),
         },
     }
+}
+
+/// The standard `mcpServers` entry of a JSON config.
+fn mcp_servers_json(command: &str) -> String {
+    serde_json::to_string_pretty(&serde_json::json!({
+        "mcpServers": { "svode": { "command": command, "args": [] } }
+    }))
+    .unwrap_or_default()
 }
 
 fn manual_command(machine: &Machine) -> String {

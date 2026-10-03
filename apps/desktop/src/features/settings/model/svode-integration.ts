@@ -18,9 +18,19 @@ export function operationKey(operation: IntegrationOperation) {
   return operation.kind === "remove_shared" ? SHARED_PART : operation.client;
 }
 
-/** What the own part of an agent brings: its plugin, or an MCP entry that
- * goes with the shared skill when the agent reads it. */
-export type IntegrationKit = "plugin" | "mcp_shared" | "mcp";
+/** What the own part of an agent brings: its plugin, an MCP entry that
+ * goes with the shared skill when the agent reads it, or the entry that
+ * makes the agent read the shared skill (Hermes). */
+export type IntegrationKit = "plugin" | "mcp_shared" | "mcp" | "shared_skill";
+
+/** The kind of an own part: a plugin, an MCP entry, or an entry that makes
+ * the agent read the shared skill. */
+export type IntegrationPart = "plugin" | "mcp" | "skills";
+
+/** A kit whose own part needs the shared skill. */
+function needsShared(kit: IntegrationKit | null) {
+  return kit === "mcp_shared" || kit === "shared_skill";
+}
 
 /** A conflicting installation: Svode leaves it unchanged. */
 const CONFLICTS = new Set<McpClientAttentionCode>([
@@ -50,6 +60,7 @@ export function kitOf(
   status: McpStatus,
 ): IntegrationKit {
   if (client.ownPart.kind === "plugin") return "plugin";
+  if (client.ownPart.kind === "skills-entry") return "shared_skill";
   return readsSharedSkill(client.id, status) ? "mcp_shared" : "mcp";
 }
 
@@ -83,10 +94,10 @@ function conflictOf(client: McpClientStatus) {
 
 /** One row of the Svode integration block. */
 export type IntegrationPartRow =
-  | { kind: "installed"; part: "plugin" | "mcp"; agents: string[] }
+  | { kind: "installed"; part: IntegrationPart; agents: string[] }
   | {
       kind: "problem";
-      part: "plugin" | "mcp";
+      part: IntegrationPart;
       agent: string;
       code: McpClientAttentionCode;
       configPath: string | null;
@@ -94,19 +105,19 @@ export type IntegrationPartRow =
     }
   | {
       kind: "external";
-      part: "plugin" | "mcp";
+      part: IntegrationPart;
       agent: string;
       source: string | null;
     }
   | {
       kind: "pending";
-      part: "plugin" | "mcp" | "shared";
+      part: IntegrationPart | "shared";
       agent: string | null;
       operation: IntegrationOperation["kind"];
     }
   | {
       kind: "failed";
-      part: "plugin" | "mcp" | "shared";
+      part: IntegrationPart | "shared";
       agent: string | null;
       operation: IntegrationOperation;
       message: string;
@@ -121,8 +132,15 @@ export interface IntegrationActivity {
   >;
 }
 
-function partOf(client: OwnPartClient): "plugin" | "mcp" {
-  return client.ownPart.kind === "plugin" ? "plugin" : "mcp";
+function partOf(client: OwnPartClient): IntegrationPart {
+  switch (client.ownPart.kind) {
+    case "plugin":
+      return "plugin";
+    case "skills-entry":
+      return "skills";
+    default:
+      return "mcp";
+  }
 }
 
 /**
@@ -134,7 +152,11 @@ export function integrationParts(
   status: McpStatus,
   activity: IntegrationActivity,
 ): IntegrationPartRow[] {
-  const healthy: Record<"plugin" | "mcp", string[]> = { plugin: [], mcp: [] };
+  const healthy: Record<IntegrationPart, string[]> = {
+    plugin: [],
+    mcp: [],
+    skills: [],
+  };
   const rows: IntegrationPartRow[] = [];
   for (const client of status.clients) {
     // An agent without its own part shows among the shared skill's readers.
@@ -214,7 +236,7 @@ export function integrationParts(
   }
 
   return [
-    ...(["plugin", "mcp"] as const)
+    ...(["plugin", "mcp", "skills"] as const)
       .filter((part) => healthy[part].length)
       .map(
         (part): IntegrationPartRow => ({
@@ -263,9 +285,9 @@ export function toolsOffer(
   return {
     agent,
     kit,
-    sharedReused: kit === "mcp_shared" && sharedInstalled,
+    sharedReused: needsShared(kit) && sharedInstalled,
     alsoReaders:
-      kit === "mcp_shared" && !sharedInstalled
+      needsShared(kit) && !sharedInstalled
         ? status.sharedSkill.readers.filter((reader) => reader !== agent)
         : [],
     limitation: client.limitation,
@@ -275,7 +297,7 @@ export function toolsOffer(
 /** What the confirmation of turning an agent off offers to remove. */
 export interface OwnPartRemoval {
   agent: string;
-  part: "plugin" | "mcp";
+  part: IntegrationPart;
   /** Removing this own part leaves the shared skill to no one else. */
   sharedRemovable: boolean;
 }
@@ -402,7 +424,7 @@ export function sharedNeededBy(
   choice: ToolsChoice,
 ): string[] {
   return entries
-    .filter((entry) => entry.kit === "mcp_shared" && choice.agents[entry.agent])
+    .filter((entry) => needsShared(entry.kit) && choice.agents[entry.agent])
     .map((entry) => entry.agent);
 }
 

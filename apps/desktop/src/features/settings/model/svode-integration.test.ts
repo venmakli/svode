@@ -384,6 +384,57 @@ test("an agent that only reads the shared skill shows among its readers and has 
   expect(ownPartRemoval(current, "grok-build")).toBeNull();
 });
 
+test("Hermes gets the shared skill through an entry of its own: its own row, the shared skill it needs and its removal", () => {
+  const hermes = (installed: boolean) =>
+    client("hermes", installed, {
+      ownPart: {
+        kind: "skills-entry",
+        path: "/home/.hermes/config.yaml",
+        state: installed ? "managed" : "absent",
+      },
+      limitation: "starts MCP servers in its own directory",
+    });
+  const fresh = status([client("codex", false), hermes(false)]);
+  expect(toolsOffer(fresh, "hermes")).toEqual({
+    agent: "hermes",
+    kit: "shared_skill",
+    sharedReused: false,
+    alsoReaders: ["codex"],
+    limitation: "starts MCP servers in its own directory",
+  });
+  const entries = toolsEntries(fresh, ["codex", "hermes"]);
+  expect(entries.map((entry) => [entry.agent, entry.kit])).toEqual([
+    ["codex", "mcp_shared"],
+    ["hermes", "shared_skill"],
+  ]);
+  const choice = { agents: { codex: false, hermes: true }, shared: false };
+  expect(sharedChoice(fresh, entries, choice)).toEqual({
+    installed: false,
+    checked: true,
+    locked: true,
+    neededBy: ["hermes"],
+  });
+  expect(toolsPlan(fresh, entries, choice).changes).toEqual([
+    { kind: "install", agent: "hermes", kit: "shared_skill" },
+    { kind: "add_shared", readers: ["codex"] },
+  ]);
+
+  const connected = status([client("codex", false), hermes(true)], {
+    state: "managed",
+    readers: ["codex", "hermes"],
+    requiredBy: ["hermes"],
+  });
+  expect(integrationParts(connected, IDLE)).toEqual([
+    { kind: "installed", part: "skills", agents: ["hermes"] },
+    { kind: "shared", readers: ["codex", "hermes"], skillOnly: [] },
+  ]);
+  expect(ownPartRemoval(connected, "hermes")).toEqual({
+    agent: "hermes",
+    part: "skills",
+    sharedRemovable: false,
+  });
+});
+
 test("the manual config is one standard mcpServers entry", () => {
   const config = status([]).manualConfig;
   expect(JSON.parse(manualConfigJson(config))).toEqual({

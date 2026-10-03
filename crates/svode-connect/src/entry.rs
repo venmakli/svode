@@ -1,7 +1,8 @@
 //! The `svode` MCP entry in the user configs of the agents: which kind it
 //! is, and writes that keep every other byte the client or the user put
 //! there. Claude Code (`~/.claude.json`) and Codex (`~/.codex/config.toml`)
-//! are edited here; the entries agent commands write are in `agent_mcp`.
+//! are edited here; the entries in the JSON configs of other agents are in
+//! `agent_mcp`, the skill directory entry of Hermes in `hermes`.
 
 use std::fs::{self, OpenOptions};
 use std::io::Write;
@@ -11,6 +12,7 @@ use serde_json::{Map, Value};
 
 use crate::agent_mcp;
 use crate::error::ConnectError;
+use crate::hermes;
 use crate::machine::{Client, Kit, Machine};
 
 /// Environment variable whose value marks an entry the manager owns.
@@ -50,7 +52,8 @@ pub(crate) fn read(machine: &Machine, client: Client) -> Entry {
     let (path, parse): (_, fn(&str) -> Entry) = match client.kit {
         Kit::ClaudePlugin => (machine.claude_config(), claude_entry),
         Kit::CodexMcp => (machine.codex_config(), codex_entry),
-        Kit::CommandMcp(kind) => return agent_mcp::read(machine, kind),
+        Kit::AgentMcp(kind) => return agent_mcp::read(machine, kind),
+        Kit::HermesSkills => return hermes::read(machine),
         Kit::SharedSkillOnly => return Entry::Absent,
     };
     match read_text(&path) {
@@ -91,7 +94,8 @@ pub(crate) fn remove(machine: &Machine, client: Client) -> Result<(), ConnectErr
             |text| Ok(remove_toml_block(text)),
             codex_entry,
         ),
-        Kit::CommandMcp(kind) => return agent_mcp::remove(machine, kind),
+        Kit::AgentMcp(kind) => return agent_mcp::remove(machine, kind),
+        Kit::HermesSkills => return hermes::remove(machine),
         Kit::SharedSkillOnly => return Ok(()),
     };
     let before = read_text(&path)?;
@@ -282,8 +286,8 @@ pub(crate) fn higher_precedence(
                 .is_some_and(|servers| servers.contains_key("svode"));
             Ok(local.then_some(user))
         }
-        Kit::CommandMcp(kind) => agent_mcp::higher_precedence(project, kind),
-        Kit::SharedSkillOnly => Ok(None),
+        Kit::AgentMcp(kind) => agent_mcp::higher_precedence(project, kind),
+        Kit::HermesSkills | Kit::SharedSkillOnly => Ok(None),
         Kit::CodexMcp => {
             let path = project.join(".codex").join("config.toml");
             let content = read_text(&path)?;

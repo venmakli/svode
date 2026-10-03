@@ -74,6 +74,7 @@ pub fn run(verb: IntegrationVerb, selectors: &Selectors<'_>) -> Result<Outcome, 
                     .and_then(|status| status.own_part.as_ref())
                     .map_or("Svode tools", |part| match part.kind.as_str() {
                         "plugin" => "Svode plugin",
+                        "skills-entry" => "shared skill directory entry",
                         _ => "Svode MCP entry",
                     });
                 human.push_str(&if removed {

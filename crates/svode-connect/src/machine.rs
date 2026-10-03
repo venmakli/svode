@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use svode_core::agent_adapters::{AgentAdapterKind, resolve_executable_path};
 
-use crate::agent_mcp::CommandMcp;
+use crate::agent_mcp::AgentMcp;
 use crate::error::ConnectError;
 
 /// An agent the manager connects, under its id from the agent registry, and
@@ -29,35 +29,38 @@ pub(crate) enum Kit {
     /// Own part: a managed MCP entry. Shared part: the skill every agent of
     /// the machine reads from `~/.agents/skills`.
     CodexMcp,
-    /// Own part: a managed MCP entry the agent's own command writes. Shared
-    /// part: the shared skill.
-    CommandMcp(CommandMcp),
+    /// Own part: a managed MCP entry in the agent's JSON config, written by
+    /// its own command where it has one. Shared part: the shared skill.
+    AgentMcp(AgentMcp),
+    /// Own part: a marked entry of the skill directories in the Hermes
+    /// config that lists the shared skill directory. Shared part: the
+    /// shared skill. No MCP entry, for a reason its limitation names.
+    HermesSkills,
     /// No own part: the agent reads the shared skill and gets no MCP entry,
     /// for a reason its limitation names.
     SharedSkillOnly,
 }
 
 impl Client {
-    /// The client of an agent, when the manager can connect it.
-    pub fn of(agent: AgentAdapterKind) -> Option<Self> {
+    /// The client of an agent: every agent of the registry gets the Svode
+    /// tools by its kit.
+    pub fn of(agent: AgentAdapterKind) -> Self {
         let kit = match agent {
             AgentAdapterKind::ClaudeCode => Kit::ClaudePlugin,
             AgentAdapterKind::Codex => Kit::CodexMcp,
-            AgentAdapterKind::Opencode => Kit::CommandMcp(CommandMcp::Opencode),
-            AgentAdapterKind::QwenCode => Kit::CommandMcp(CommandMcp::QwenCode),
-            AgentAdapterKind::Pi => Kit::CommandMcp(CommandMcp::Pi),
-            AgentAdapterKind::GrokBuild => Kit::SharedSkillOnly,
-            _ => return None,
+            AgentAdapterKind::Opencode => Kit::AgentMcp(AgentMcp::Opencode),
+            AgentAdapterKind::QwenCode => Kit::AgentMcp(AgentMcp::QwenCode),
+            AgentAdapterKind::Pi => Kit::AgentMcp(AgentMcp::Pi),
+            AgentAdapterKind::KimiCode => Kit::AgentMcp(AgentMcp::KimiCode),
+            AgentAdapterKind::Hermes => Kit::HermesSkills,
+            AgentAdapterKind::GrokBuild | AgentAdapterKind::Cursor => Kit::SharedSkillOnly,
         };
-        Some(Self { agent, kit })
+        Self { agent, kit }
     }
 
     /// Every client, in the order of the agent registry.
     pub fn all() -> Vec<Self> {
-        AgentAdapterKind::ALL
-            .into_iter()
-            .filter_map(Self::of)
-            .collect()
+        AgentAdapterKind::ALL.into_iter().map(Self::of).collect()
     }
 
     /// A client by agent id; `claude`, the command of Claude Code, also
@@ -68,19 +71,17 @@ impl Client {
         } else {
             value
         };
-        AgentAdapterKind::from_id(id)
-            .and_then(Self::of)
-            .ok_or_else(|| {
-                let expected = Self::all()
-                    .into_iter()
-                    .map(Self::as_str)
-                    .collect::<Vec<_>>()
-                    .join(" or ");
-                ConnectError::new(
-                    "UNSUPPORTED_CLIENT",
-                    format!("unsupported agent client: {value}; expected {expected}"),
-                )
-            })
+        AgentAdapterKind::from_id(id).map(Self::of).ok_or_else(|| {
+            let expected = Self::all()
+                .into_iter()
+                .map(Self::as_str)
+                .collect::<Vec<_>>()
+                .join(" or ");
+            ConnectError::new(
+                "UNSUPPORTED_CLIENT",
+                format!("unsupported agent client: {value}; expected {expected}"),
+            )
+        })
     }
 
     pub fn agent(self) -> AgentAdapterKind {
@@ -95,8 +96,8 @@ impl Client {
         self.agent.display_name()
     }
 
-    /// Whether the client reads the skill shared by every agent of the
-    /// machine from `~/.agents/skills` rather than a skill of its own.
+    /// Whether the kit of the client uses the skill shared by the agents of
+    /// the machine in `~/.agents/skills` rather than a skill of its own.
     pub(crate) fn uses_shared_skill(self) -> bool {
         self.kit != Kit::ClaudePlugin
     }
@@ -117,6 +118,18 @@ impl Client {
             // the chat of Svode, not in the session directory.
             AgentAdapterKind::GrokBuild => Some(
                 "Grok Build starts MCP servers in its own directory rather than the session's, so Svode MCP could not tell the project in the chat of Svode; it gets the shared skill and svode only",
+            ),
+            // E03, Hermes 2026.9.24: the same in an ACP session; it reads
+            // the shared skill through `skills.external_dirs` instead of
+            // `~/.agents/skills`.
+            AgentAdapterKind::Hermes => Some(
+                "Hermes starts MCP servers in its own directory rather than the session's, so Svode MCP could not tell the project in the chat of Svode; it gets the shared skill and svode only",
+            ),
+            // E03, Cursor 2026.10.01: turns were refused by the plan, so
+            // where it starts MCP servers in a session is not verified, and
+            // it starts a configured server only once it is approved.
+            AgentAdapterKind::Cursor => Some(
+                "Where Cursor starts MCP servers in a session is not verified yet, and it starts one only after it is approved, so Svode adds no MCP entry; it gets the shared skill and svode only",
             ),
             _ => None,
         }
@@ -307,12 +320,18 @@ impl Machine {
         stable.payload.join("skills").join("svode")
     }
 
-    /// The user config that holds the MCP entry of `client`, if it has one.
-    pub(crate) fn mcp_config(&self, client: Client) -> Option<PathBuf> {
+    pub(crate) fn hermes_config(&self) -> PathBuf {
+        self.home.join(".hermes").join("config.yaml")
+    }
+
+    /// The user config that holds the entry of `client` — its MCP entry or
+    /// the skill directory entry of Hermes — if it has one.
+    pub(crate) fn entry_config(&self, client: Client) -> Option<PathBuf> {
         match client.kit {
             Kit::ClaudePlugin => Some(self.claude_config()),
             Kit::CodexMcp => Some(self.codex_config()),
-            Kit::CommandMcp(kind) => Some(kind.config(self)),
+            Kit::AgentMcp(kind) => Some(kind.config(self)),
+            Kit::HermesSkills => Some(self.hermes_config()),
             Kit::SharedSkillOnly => None,
         }
     }

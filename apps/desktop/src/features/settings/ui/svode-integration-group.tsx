@@ -12,6 +12,7 @@ import {
   manualConfigJson,
   type IntegrationActivity,
   type IntegrationOperation,
+  type IntegrationPart,
   type IntegrationPartRow,
 } from "../model/svode-integration";
 import {
@@ -55,12 +56,14 @@ export function externalText(source: string | null) {
     : m.settings_integration_external();
 }
 
-function partTitle(part: "plugin" | "mcp" | "shared") {
+function partTitle(part: IntegrationPart | "shared") {
   switch (part) {
     case "plugin":
       return m.settings_integration_part_plugin();
     case "mcp":
       return m.settings_integration_part_mcp();
+    case "skills":
+      return m.settings_integration_part_skills();
     case "shared":
       return m.settings_integration_part_shared();
   }

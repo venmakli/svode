@@ -2,12 +2,14 @@
 //! agent has its own part, whose presence is the agent's consent, and may
 //! need a shared part of the machine:
 //!
-//! | Client                  | Own part                                               | Shared part              |
-//! |-------------------------|--------------------------------------------------------|--------------------------|
-//! | Claude Code             | `~/.claude/skills/svode` → payload: skill, `bin/`, MCP | —                        |
-//! | Codex                   | `[mcp_servers.svode]` in `~/.codex/config.toml`        | `~/.agents/skills/svode` |
-//! | opencode, Qwen Code, pi | the `svode` MCP entry their own `mcp add` writes       | `~/.agents/skills/svode` |
-//! | Grok Build              | — (its limitation says why)                            | `~/.agents/skills/svode` |
+//! | Client                  | Own part                                                   | Shared part              |
+//! |-------------------------|------------------------------------------------------------|--------------------------|
+//! | Claude Code             | `~/.claude/skills/svode` → payload: skill, `bin/`, MCP     | —                        |
+//! | Codex                   | `[mcp_servers.svode]` in `~/.codex/config.toml`            | `~/.agents/skills/svode` |
+//! | opencode, Qwen Code, pi | the `svode` MCP entry their own `mcp add` writes           | `~/.agents/skills/svode` |
+//! | Kimi Code               | the `svode` MCP entry in `~/.kimi-code/mcp.json`           | `~/.agents/skills/svode` |
+//! | Hermes                  | the `skills.external_dirs` item in `~/.hermes/config.yaml` | `~/.agents/skills/svode` |
+//! | Grok Build, Cursor      | — (their limitation says why)                              | `~/.agents/skills/svode` |
 //!
 //! A client is connected when its own part carries the Svode marker; a
 //! connected client always gets its complete kit, including a missing shared
@@ -18,11 +20,12 @@
 //! wrote earlier is removed once the plugin link is in place; Codex keeps a
 //! managed entry that starts the stable launcher.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::agent_mcp;
 use crate::entry::{self, Entry};
 use crate::error::ConnectError;
+use crate::hermes;
 use crate::link::{self, Link};
 use crate::machine::{Client, Kit, Machine, Stable};
 
@@ -38,12 +41,12 @@ pub(crate) struct Inspection {
 
 impl Inspection {
     /// The own part of the client carries the Svode marker: the plugin link
-    /// or an entry of Claude Code, the MCP entry of the others. The shared
-    /// skill alone connects nobody.
+    /// or an entry of Claude Code, the MCP entry or the skill directory
+    /// entry of the others. The shared skill alone connects nobody.
     pub fn connected(&self) -> bool {
         match self.kit {
             Kit::ClaudePlugin => self.skill == Link::Managed || self.entry.is_svode(),
-            Kit::CodexMcp | Kit::CommandMcp(_) => self.entry.is_svode(),
+            Kit::CodexMcp | Kit::AgentMcp(_) | Kit::HermesSkills => self.entry.is_svode(),
             Kit::SharedSkillOnly => false,
         }
     }
@@ -73,8 +76,11 @@ pub(crate) fn complete(machine: &Machine, client: Client, inspection: &Inspectio
     inspection.skill == Link::Managed
         && match client.kit {
             Kit::ClaudePlugin => !inspection.entry.is_svode(),
-            Kit::CodexMcp | Kit::CommandMcp(_) => {
+            Kit::CodexMcp | Kit::AgentMcp(_) => {
                 entry::is_canonical(&inspection.entry, &stable.launcher_mcp)
+            }
+            Kit::HermesSkills => {
+                entry::is_canonical(&inspection.entry, Path::new(hermes::SHARED_DIR))
             }
             Kit::SharedSkillOnly => false,
         }
@@ -154,7 +160,9 @@ pub fn connect(machine: &Machine, client: Client) -> Result<bool, ConnectError> 
         }
         _ => {}
     }
-    if matches!(client.kit, Kit::CommandMcp(_)) && machine.find(client.agent()).is_none() {
+    if matches!(client.kit, Kit::AgentMcp(kind) if kind.by_command())
+        && machine.find(client.agent()).is_none()
+    {
         return Err(agent_mcp::not_found(client.agent()));
     }
     let (changed, result) = apply(machine, stable, client, &inspection);
@@ -210,15 +218,21 @@ fn apply(
             entry::remove(machine, client).map(|()| true)
         }
         (Kit::ClaudePlugin, _) => Ok(false),
-        (Kit::CodexMcp | Kit::CommandMcp(_), current)
+        (Kit::CodexMcp | Kit::AgentMcp(_), current)
             if entry::is_canonical(current, &stable.launcher_mcp) =>
         {
             Ok(false)
         }
         (Kit::CodexMcp, _) => entry::write_codex(machine, &stable.launcher_mcp).map(|()| true),
-        (Kit::CommandMcp(kind), _) => {
+        (Kit::AgentMcp(kind), _) => {
             agent_mcp::write(machine, kind, &stable.launcher_mcp).map(|()| true)
         }
+        (Kit::HermesSkills, current)
+            if entry::is_canonical(current, Path::new(hermes::SHARED_DIR)) =>
+        {
+            Ok(false)
+        }
+        (Kit::HermesSkills, _) => hermes::write(machine).map(|()| true),
         (Kit::SharedSkillOnly, _) => Ok(false),
     };
     changed |= *entry.as_ref().unwrap_or(&false);
@@ -226,8 +240,9 @@ fn apply(
 }
 
 /// Removes the own part of `client` where it carries the Svode marker:
-/// the plugin link and any marked entry of Claude Code, the MCP entry of
-/// the others; an agent without an own part has nothing to remove.
+/// the plugin link and any marked entry of Claude Code, the MCP entry or
+/// the skill directory entry of the others; an agent without an own part
+/// has nothing to remove.
 /// Custom entries, foreign skills and the shared skill stay. Returns
 /// whether anything changed.
 pub fn disconnect(machine: &Machine, client: Client) -> Result<bool, ConnectError> {
@@ -294,7 +309,7 @@ fn custom_conflict(machine: &Machine, client: Client) -> ConnectError {
             "{} already has a custom svode MCP entry in {}; Svode did not replace it",
             client.name(),
             machine
-                .mcp_config(client)
+                .entry_config(client)
                 .map_or_else(|| "its config".into(), |path| path.display().to_string())
         ),
     )

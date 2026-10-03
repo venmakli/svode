@@ -43,6 +43,30 @@ function kitText(kit: IntegrationKit) {
       return m.settings_tools_kit_mcp_shared();
     case "mcp":
       return m.settings_tools_kit_mcp();
+    case "shared_skill":
+      return m.settings_tools_kit_shared_skill();
+  }
+}
+
+function installText(kit: IntegrationKit, agent: string) {
+  switch (kit) {
+    case "plugin":
+      return m.settings_tools_change_install_plugin({ agent });
+    case "shared_skill":
+      return m.settings_tools_change_install_skills({ agent });
+    default:
+      return m.settings_tools_change_install_mcp({ agent });
+  }
+}
+
+function removeText(kit: IntegrationKit, agent: string) {
+  switch (kit) {
+    case "plugin":
+      return m.settings_tools_change_remove_plugin({ agent });
+    case "shared_skill":
+      return m.settings_tools_change_remove_skills({ agent });
+    default:
+      return m.settings_tools_change_remove_mcp({ agent });
   }
 }
 
@@ -99,17 +123,9 @@ export function SvodeToolsDialog({
   const changeText = (change: ToolsChange) => {
     switch (change.kind) {
       case "install":
-        return change.kit === "plugin"
-          ? m.settings_tools_change_install_plugin({
-              agent: label(change.agent),
-            })
-          : m.settings_tools_change_install_mcp({ agent: label(change.agent) });
+        return installText(change.kit, label(change.agent));
       case "remove":
-        return change.kit === "plugin"
-          ? m.settings_tools_change_remove_plugin({
-              agent: label(change.agent),
-            })
-          : m.settings_tools_change_remove_mcp({ agent: label(change.agent) });
+        return removeText(change.kit, label(change.agent));
       case "add_shared":
         return m.settings_tools_change_add_shared({
           agents: names(change.readers),

@@ -72,7 +72,9 @@ export type McpArtifactState =
   | "external";
 
 export interface McpArtifactStatus {
-  kind: "plugin" | "skill" | "mcp-entry";
+  /** `skills-entry`: the entry of the skill directories in the Hermes
+   * config that makes it read the shared skill. */
+  kind: "plugin" | "skill" | "mcp-entry" | "skills-entry";
   path: string;
   state: McpArtifactState;
   /** Channel of an `external` installation. */

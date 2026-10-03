@@ -20,7 +20,12 @@ import {
 } from "@/components/ui/field";
 import type { AgentSetupDto } from "../api";
 import { enableInstallsAdapter } from "../model/agent-row";
-import type { OwnPartRemoval, ToolsOffer } from "../model/svode-integration";
+import type {
+  IntegrationKit,
+  IntegrationPart,
+  OwnPartRemoval,
+  ToolsOffer,
+} from "../model/svode-integration";
 
 export type AgentConfirmation =
   | { kind: "enable"; setup: AgentSetupDto; tools: ToolsOffer | null }
@@ -32,6 +37,41 @@ export interface AgentConfirmationChoice {
   addTools: boolean;
   removePart: boolean;
   removeShared: boolean;
+}
+
+function toolsText(kit: IntegrationKit, agent: string) {
+  switch (kit) {
+    case "plugin":
+      return m.settings_agents_enable_tools_plugin();
+    case "mcp_shared":
+      return m.settings_agents_enable_tools_mcp_shared({ agent });
+    case "mcp":
+      return m.settings_agents_enable_tools_mcp({ agent });
+    case "shared_skill":
+      return m.settings_agents_enable_tools_shared_skill({ agent });
+  }
+}
+
+function removalTitle(part: IntegrationPart) {
+  switch (part) {
+    case "plugin":
+      return m.settings_agents_disable_remove_plugin();
+    case "mcp":
+      return m.settings_agents_disable_remove_mcp();
+    case "skills":
+      return m.settings_agents_disable_remove_skills();
+  }
+}
+
+function removalDescription(part: IntegrationPart, agent: string) {
+  switch (part) {
+    case "plugin":
+      return m.settings_agents_disable_remove_plugin_description({ agent });
+    case "mcp":
+      return m.settings_agents_disable_remove_mcp_description({ agent });
+    case "skills":
+      return m.settings_agents_disable_remove_skills_description({ agent });
+  }
 }
 
 function OptionField({
@@ -155,11 +195,7 @@ export function AgentConfirmationDialog({
                   title={m.settings_agents_enable_tools()}
                 >
                   <span>
-                    {tools.kit === "plugin"
-                      ? m.settings_agents_enable_tools_plugin()
-                      : tools.kit === "mcp_shared"
-                        ? m.settings_agents_enable_tools_mcp_shared({ agent })
-                        : m.settings_agents_enable_tools_mcp({ agent })}
+                    {toolsText(tools.kit, agent)}
                     {tools.sharedReused
                       ? ` ${m.settings_agents_enable_tools_shared_reused()}`
                       : null}
@@ -185,19 +221,9 @@ export function AgentConfirmationDialog({
                       removeShared: removePart && value.removeShared,
                     })
                   }
-                  title={
-                    removal.part === "plugin"
-                      ? m.settings_agents_disable_remove_plugin()
-                      : m.settings_agents_disable_remove_mcp()
-                  }
+                  title={removalTitle(removal.part)}
                 >
-                  {removal.part === "plugin"
-                    ? m.settings_agents_disable_remove_plugin_description({
-                        agent,
-                      })
-                    : m.settings_agents_disable_remove_mcp_description({
-                        agent,
-                      })}
+                  {removalDescription(removal.part, agent)}
                 </OptionField>
                 {removal.sharedRemovable && value.removePart ? (
                   <OptionField

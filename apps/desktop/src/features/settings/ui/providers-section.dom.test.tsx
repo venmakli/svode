@@ -880,6 +880,120 @@ if (!isolatedProcess) {
     }
   });
 
+  test("Kimi Code shares the MCP row and Hermes gets a shared skill access row, its kit and its removal on turning off, in en and ru", async () => {
+    const originalLocale = getLocale();
+    const base = providersStatus([
+      client("codex", "Codex", false),
+      client("claude-code", "Claude Code", false),
+      client("hermes", "Hermes", true, {
+        configPath: "/Users/test/.hermes/config.yaml",
+        ownPart: {
+          kind: "skills-entry",
+          path: "/Users/test/.hermes/config.yaml",
+          state: "managed",
+        },
+        limitation: "Hermes starts MCP servers in its own directory",
+      }),
+      client("kimi-code", "Kimi Code", true, {
+        configPath: "/Users/test/.kimi-code/mcp.json",
+        ownPart: {
+          kind: "mcp-entry",
+          path: "/Users/test/.kimi-code/mcp.json",
+          state: "managed",
+        },
+      }),
+    ]);
+    const status: McpStatus = {
+      ...base,
+      sharedSkill: {
+        ...base.sharedSkill,
+        state: "managed",
+        readers: ["codex", "hermes", "kimi-code"],
+        requiredBy: ["hermes", "kimi-code"],
+      },
+    };
+    for (const [locale, text] of [
+      [
+        "en",
+        {
+          mcp: "Svode MCP",
+          skills: "Shared skill access",
+          shared: "Shared skill",
+          readers: "Read by Codex, Hermes, Kimi Code",
+          hermesKit: "Shared skill · Installed",
+          kimiKit: "MCP and shared skill · Installed",
+          removal: "Also remove shared skill access",
+          cancel: "Cancel",
+          manage: "Manage…",
+        },
+      ],
+      [
+        "ru",
+        {
+          mcp: "MCP Svode",
+          skills: "Доступ к общему skill",
+          shared: "Общий skill",
+          readers: "Читают: Codex, Hermes, Kimi Code",
+          hermesKit: "Общий skill · Установлено",
+          kimiKit: "MCP и общий skill · Установлено",
+          removal: "Также отключить общий skill",
+          cancel: "Отмена",
+          manage: "Управлять…",
+        },
+      ],
+    ] as const) {
+      await setLocale(locale, { reload: false });
+      const harness = await renderSection(
+        () => status,
+        () => {},
+        [
+          agentSetup("codex"),
+          agentSetup("claude-code"),
+          agentSetup("hermes"),
+          agentSetup("kimi-code"),
+        ],
+      );
+      try {
+        const [, integration] = topSections(harness.dom);
+        expect(partRows(integration).slice(0, 3)).toEqual([
+          [text.mcp, "Kimi Code"],
+          [text.skills, "Hermes"],
+          [text.shared, text.readers],
+        ]);
+
+        await act(async () => {
+          switchOf(agentRow(harness.dom, "hermes")).click();
+          await settle();
+        });
+        const off = harness.dom.window.document.querySelector<HTMLElement>(
+          '[role="alertdialog"]',
+        )!;
+        expect((off.textContent ?? "").includes(text.removal)).toBe(true);
+        await act(async () => {
+          within(off, text.cancel).click();
+          await settle();
+        });
+
+        await act(async () => {
+          within(integration, text.manage).click();
+          await settle();
+        });
+        const dialog =
+          harness.dom.window.document.querySelector<HTMLElement>(
+            "[data-svode-tools]",
+          )!;
+        const kits = Object.fromEntries(
+          toolsAgents(dialog).map(([agent, , kit]) => [agent, kit]),
+        );
+        expect(kits.hermes).toBe(text.hermesKit);
+        expect(kits["kimi-code"]).toBe(text.kimiKit);
+      } finally {
+        await harness.cleanup();
+      }
+    }
+    await setLocale(originalLocale, { reload: false });
+  });
+
   test("each found agent shows one state, a deferred agent cannot be turned on and missing agents are folded", async () => {
     const originalLocale = getLocale();
     await setLocale("en", { reload: false });

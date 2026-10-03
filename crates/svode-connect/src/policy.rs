@@ -7,8 +7,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::Value;
 
-use crate::agent_mcp::{self, CommandMcp};
+use crate::agent_mcp::{self, AgentMcp};
 use crate::entry::read_text;
+use crate::hermes;
 use crate::machine::{Client, Kit, Machine};
 
 /// Claude Code keeps a plugin stdio server that failed to start out of new
@@ -22,9 +23,40 @@ pub(crate) fn blocking(machine: &Machine, client: Client) -> Vec<String> {
     match client.kit {
         Kit::ClaudePlugin => claude(machine),
         Kit::CodexMcp => codex(machine),
-        Kit::CommandMcp(CommandMcp::QwenCode) => qwen(machine),
-        Kit::CommandMcp(CommandMcp::Pi) => pi(machine),
-        Kit::CommandMcp(CommandMcp::Opencode) | Kit::SharedSkillOnly => Vec::new(),
+        Kit::AgentMcp(AgentMcp::QwenCode) => qwen(machine),
+        Kit::AgentMcp(AgentMcp::Pi) => pi(machine),
+        Kit::HermesSkills => hermes_skills(machine),
+        Kit::AgentMcp(AgentMcp::Opencode | AgentMcp::KimiCode) | Kit::SharedSkillOnly => Vec::new(),
+    }
+}
+
+/// `skills.disabled` of the Hermes config turns skills off by name: a list,
+/// one name, or a list `hermes config set` stored as a string.
+fn hermes_skills(machine: &Machine) -> Vec<String> {
+    let Some(config) = hermes::config(machine) else {
+        return Vec::new();
+    };
+    let names = match &config["skills"]["disabled"] {
+        serde_yml::Value::Sequence(names) => names
+            .iter()
+            .filter_map(|name| name.as_str().map(str::to_string))
+            .collect(),
+        serde_yml::Value::String(names) => names
+            .trim()
+            .trim_start_matches('[')
+            .trim_end_matches(']')
+            .split(',')
+            .map(|name| name.trim().trim_matches(['\'', '"']).to_string())
+            .collect(),
+        _ => Vec::new(),
+    };
+    if names.iter().any(|name| name.trim() == "svode") {
+        vec![format!(
+            "skills.disabled in {} turns off the Svode skill",
+            machine.hermes_config().display()
+        )]
+    } else {
+        Vec::new()
     }
 }
 
