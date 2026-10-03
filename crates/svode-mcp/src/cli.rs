@@ -131,12 +131,28 @@ fn parse_client_arg(args: &[String]) -> Result<Client, ToolError> {
     let client = args
         .windows(2)
         .find_map(|pair| (pair[0] == "--client").then(|| pair[1].as_str()))
-        .ok_or_else(|| ToolError::new("INVALID_ARGS", "expected --client <claude-code|codex>"))?;
+        .ok_or_else(|| {
+            ToolError::new(
+                "INVALID_ARGS",
+                format!("expected --client <{}>", client_ids().join("|")),
+            )
+        })?;
     Client::parse(client).map_err(connect_error)
 }
 
-fn usage() -> &'static str {
-    "Usage:
+/// Ids of the agents the connection manager gives a part of their own.
+fn client_ids() -> Vec<&'static str> {
+    Client::all()
+        .into_iter()
+        .filter(|client| client.has_own_part())
+        .map(Client::as_str)
+        .collect()
+}
+
+fn usage() -> String {
+    let ids = client_ids().join("|");
+    format!(
+        "Usage:
   svode-mcp
       Automatic mode, chosen once at session start. With the Svode desktop
       app running: its bridge, targeting SVODE_MCP_PROJECT_PATH, else the
@@ -145,19 +161,20 @@ fn usage() -> &'static str {
       outside a project, tool calls answer PROJECT_UNAVAILABLE.
   svode-mcp --app desktop
   svode-mcp --project <path> [--space <root|space-id>]
-  svode-mcp install --client <claude-code|codex>
+  svode-mcp install --client <{ids}>
       Connect the client to Svode: skill, svode and this server (same as
       `svode integration connect`).
-  svode-mcp remove --client <claude-code|codex>
-      Remove the client's own Svode part (the Claude Code plugin, the Codex
-      MCP entry); the skill shared by the agents of the machine stays, and
-      `svode integration disconnect --shared-skill` removes it.
-  svode-mcp print-config --client <claude-code|codex>
+  svode-mcp remove --client <{ids}>
+      Remove the client's own Svode part (the Claude Code plugin, the MCP
+      entry of the others); the skill shared by the agents of the machine
+      stays, and `svode integration disconnect --shared-skill` removes it.
+  svode-mcp print-config --client <agent>
       MCP config for a client you configure by hand.
   svode-mcp doctor
   svode-mcp --bridge-protocol
   svode-mcp --version
   svode-mcp --help"
+    )
 }
 
 #[cfg(test)]
