@@ -800,6 +800,86 @@ if (!isolatedProcess) {
     }
   });
 
+  test("an agent with an MCP entry of its own shares the MCP row, and an agent that only reads the shared skill is named there without a checkbox", async () => {
+    const originalLocale = getLocale();
+    await setLocale("en", { reload: false });
+    const base = providersStatus([
+      client("codex", "Codex", false),
+      client("claude-code", "Claude Code", false),
+      client("opencode", "opencode", true, {
+        configPath: "/Users/test/.config/opencode/opencode.json",
+        ownPart: {
+          kind: "mcp-entry",
+          path: "/Users/test/.config/opencode/opencode.json",
+          state: "managed",
+        },
+      }),
+      client("grok-build", "Grok Build", false, {
+        configPath: null,
+        ownPart: null,
+        limitation: "Grok Build starts MCP servers in its own directory",
+      }),
+    ]);
+    const status: McpStatus = {
+      ...base,
+      sharedSkill: {
+        ...base.sharedSkill,
+        state: "managed",
+        readers: ["codex", "opencode", "grok-build"],
+        requiredBy: ["opencode"],
+      },
+    };
+    const harness = await renderSection(
+      () => status,
+      () => {},
+      [
+        agentSetup("codex"),
+        agentSetup("claude-code"),
+        agentSetup("opencode"),
+        agentSetup("grok-build"),
+      ],
+    );
+    try {
+      const [, integration] = topSections(harness.dom);
+      expect(partRows(integration).slice(0, 2)).toEqual([
+        ["Svode MCP", "opencode"],
+        [
+          "Shared skill",
+          "Read by Codex, opencode, Grok Build · Skill and svode only, without Svode MCP: Grok Build",
+        ],
+      ]);
+      await act(async () => {
+        within(integration, "Manage…").click();
+        await settle();
+      });
+      const dialog =
+        harness.dom.window.document.querySelector<HTMLElement>(
+          "[data-svode-tools]",
+        )!;
+      expect(toolsAgents(dialog)).toEqual([
+        ["codex", "Codex", "MCP and shared skill", "false", "enabled"],
+        ["claude-code", "Claude Code", "Plugin", "false", "enabled"],
+        [
+          "opencode",
+          "opencode",
+          "MCP and shared skill · Installed",
+          "true",
+          "enabled",
+        ],
+      ]);
+      expect(
+        dialog.querySelector(
+          "[data-tools-shared] [data-slot=field-description]",
+        )?.textContent,
+      ).toBe(
+        "Read by Codex, opencode, Grok Build · Skill and svode only, without Svode MCP: Grok Build · Needed by opencode",
+      );
+    } finally {
+      await harness.cleanup();
+      await setLocale(originalLocale, { reload: false });
+    }
+  });
+
   test("each found agent shows one state, a deferred agent cannot be turned on and missing agents are folded", async () => {
     const originalLocale = getLocale();
     await setLocale("en", { reload: false });
@@ -1628,6 +1708,8 @@ const IDENTITIES = [
   { id: "hermes", displayName: "Hermes" },
   { id: "kimi-code", displayName: "Kimi Code" },
   { id: "cursor", displayName: "Cursor" },
+  { id: "opencode", displayName: "opencode" },
+  { id: "grok-build", displayName: "Grok Build" },
 ];
 
 function agentSetup(

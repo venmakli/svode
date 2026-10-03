@@ -7,6 +7,7 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 
 use serde::{Deserialize, Serialize};
+use svode_core::agent_adapters::AgentAdapterKind;
 
 use crate::entry::{self, Entry};
 use crate::error::ConnectError;
@@ -83,8 +84,9 @@ pub struct ClientStatus {
     pub issues: Vec<Issue>,
     pub artifacts: Vec<ArtifactStatus>,
     /// The part of the kit that belongs to this agent alone; its marker is
-    /// the agent's consent.
-    pub own_part: ArtifactStatus,
+    /// the agent's consent. `None` for an agent that only reads the shared
+    /// skill.
+    pub own_part: Option<ArtifactStatus>,
     /// What the kit of the agent lacks compared to the others.
     pub limitation: Option<String>,
 }
@@ -217,7 +219,8 @@ fn client_status(
     let complete = connected && manager::complete(machine, client, &inspection);
     let command = machine.find(client.agent());
     let config = machine.mcp_config(client);
-    let found = command.is_some() || config.is_file() || connected;
+    let found =
+        command.is_some() || config.as_ref().is_some_and(|path| path.is_file()) || connected;
     let issues = issues(
         machine,
         client,
@@ -242,7 +245,7 @@ fn client_status(
         .into(),
         attention_code: attention.map(|issue| issue.code.clone()),
         path: command.map(|path| path.display().to_string()),
-        config_path: Some(config.display().to_string()),
+        config_path: config.map(|path| path.display().to_string()),
         message: attention.map(|issue| issue.message.clone()),
         complete,
         version: connected
@@ -315,7 +318,10 @@ fn issues(
             "custom_conflict",
             format!(
                 "{} holds a custom svode MCP entry; Svode does not replace it",
-                machine.mcp_config(client).display()
+                machine.mcp_config(client).map_or_else(
+                    || client.name().to_string(),
+                    |path| path.display().to_string()
+                )
             ),
         );
     }
@@ -365,19 +371,26 @@ fn issues(
 /// The artifacts of the way `client` is connected, in display order.
 /// Claude Code gets skill, MCP server and `svode` from one plugin; its user
 /// entry is listed only while it exists, as one the plugin makes redundant
-/// or conflicts with. Codex reads the shared skill and a managed entry.
+/// or conflicts with. The others read the shared skill and, except an agent
+/// without an own part, have a managed entry.
 fn artifacts(machine: &Machine, client: Client, inspection: &Inspection) -> Vec<ArtifactStatus> {
     let mut artifacts = vec![skill_artifact(machine, client, inspection)];
-    if client.kit == Kit::CodexMcp || inspection.entry != Entry::Absent {
+    let entry = match client.kit {
+        Kit::ClaudePlugin => inspection.entry != Entry::Absent,
+        Kit::CodexMcp | Kit::CommandMcp(_) => true,
+        Kit::SharedSkillOnly => false,
+    };
+    if entry {
         artifacts.push(entry_artifact(machine, client, inspection));
     }
     artifacts
 }
 
-fn own_part(machine: &Machine, client: Client, inspection: &Inspection) -> ArtifactStatus {
+fn own_part(machine: &Machine, client: Client, inspection: &Inspection) -> Option<ArtifactStatus> {
     match client.kit {
-        Kit::ClaudePlugin => skill_artifact(machine, client, inspection),
-        Kit::CodexMcp => entry_artifact(machine, client, inspection),
+        Kit::ClaudePlugin => Some(skill_artifact(machine, client, inspection)),
+        Kit::CodexMcp | Kit::CommandMcp(_) => Some(entry_artifact(machine, client, inspection)),
+        Kit::SharedSkillOnly => None,
     }
 }
 
@@ -385,7 +398,7 @@ fn skill_artifact(machine: &Machine, client: Client, inspection: &Inspection) ->
     ArtifactStatus {
         kind: match client.kit {
             Kit::ClaudePlugin => "plugin",
-            Kit::CodexMcp => "skill",
+            _ => "skill",
         }
         .into(),
         path: machine.skill_link(client).display().to_string(),
@@ -397,7 +410,10 @@ fn skill_artifact(machine: &Machine, client: Client, inspection: &Inspection) ->
 fn entry_artifact(machine: &Machine, client: Client, inspection: &Inspection) -> ArtifactStatus {
     ArtifactStatus {
         kind: "mcp-entry".into(),
-        path: machine.mcp_config(client).display().to_string(),
+        path: machine
+            .mcp_config(client)
+            .map(|path| path.display().to_string())
+            .unwrap_or_default(),
         state: match &inspection.entry {
             Entry::Absent => "absent",
             Entry::Managed(_) => "managed",
@@ -439,6 +455,18 @@ pub fn manual_config_text(machine: &Machine, client: Client) -> String {
             shell_quote(&command)
         ),
         Kit::CodexMcp => entry::codex_block(Path::new(&command), false),
+        Kit::CommandMcp(kind) => kind.manual(&shell_quote(&command)),
+        // Configured by hand the entry works in the agent's terminal, where
+        // the agent starts MCP servers in the session directory.
+        Kit::SharedSkillOnly => match client.agent() {
+            AgentAdapterKind::GrokBuild => {
+                format!("grok mcp add svode {}", shell_quote(&command))
+            }
+            _ => serde_json::to_string_pretty(&serde_json::json!({
+                "mcpServers": { "svode": { "command": command, "args": [] } }
+            }))
+            .unwrap_or_default(),
+        },
     }
 }
 
@@ -517,6 +545,8 @@ pub(crate) fn doctor_with(
                     .map(|version| format!(" ({version})"))
                     .unwrap_or_default()
             )
+        } else if client.found && client.own_part.is_none() {
+            "reads the shared skill only".into()
         } else if client.found {
             "not connected".into()
         } else {

@@ -593,6 +593,7 @@
   "settings_integration_part_shared": "Shared skill",
   "settings_integration_readers": "Read by {agents}",
   "settings_integration_no_readers": "No agent found on this device reads it",
+  "settings_integration_skill_only": "Skill and svode only, without Svode MCP: {agents}",
   "settings_integration_external": "Installed outside Svode",
   "settings_integration_external_source": "Installed outside Svode from {source}",
   "settings_integration_shared_conflict": "Another skill named svode is in {path}. Svode leaves it unchanged.",

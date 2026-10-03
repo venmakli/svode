@@ -1,6 +1,7 @@
-//! The `svode` MCP entry in the user configs of Claude Code
-//! (`~/.claude.json`) and Codex (`~/.codex/config.toml`): which kind it is,
-//! and writes that keep every other byte the client or the user put there.
+//! The `svode` MCP entry in the user configs of the agents: which kind it
+//! is, and writes that keep every other byte the client or the user put
+//! there. Claude Code (`~/.claude.json`) and Codex (`~/.codex/config.toml`)
+//! are edited here; the entries agent commands write are in `agent_mcp`.
 
 use std::fs::{self, OpenOptions};
 use std::io::Write;
@@ -8,6 +9,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::{Map, Value};
 
+use crate::agent_mcp;
 use crate::error::ConnectError;
 use crate::machine::{Client, Kit, Machine};
 
@@ -45,13 +47,15 @@ impl Entry {
 }
 
 pub(crate) fn read(machine: &Machine, client: Client) -> Entry {
-    let content = match read_text(&machine.mcp_config(client)) {
-        Ok(content) => content,
-        Err(error) => return Entry::Unreadable(error.message),
+    let (path, parse): (_, fn(&str) -> Entry) = match client.kit {
+        Kit::ClaudePlugin => (machine.claude_config(), claude_entry),
+        Kit::CodexMcp => (machine.codex_config(), codex_entry),
+        Kit::CommandMcp(kind) => return agent_mcp::read(machine, kind),
+        Kit::SharedSkillOnly => return Entry::Absent,
     };
-    match client.kit {
-        Kit::ClaudePlugin => claude_entry(&content),
-        Kit::CodexMcp => codex_entry(&content),
+    match read_text(&path) {
+        Ok(content) => parse(&content),
+        Err(error) => Entry::Unreadable(error.message),
     }
 }
 
@@ -79,23 +83,27 @@ pub(crate) fn write_codex(machine: &Machine, launcher: &Path) -> Result<(), Conn
 }
 
 pub(crate) fn remove(machine: &Machine, client: Client) -> Result<(), ConnectError> {
-    let path = machine.mcp_config(client);
+    type Edit = fn(&str) -> Result<String, ConnectError>;
+    let (path, edit, parse): (_, Edit, fn(&str) -> Entry) = match client.kit {
+        Kit::ClaudePlugin => (machine.claude_config(), remove_claude_entry, claude_entry),
+        Kit::CodexMcp => (
+            machine.codex_config(),
+            |text| Ok(remove_toml_block(text)),
+            codex_entry,
+        ),
+        Kit::CommandMcp(kind) => return agent_mcp::remove(machine, kind),
+        Kit::SharedSkillOnly => return Ok(()),
+    };
     let before = read_text(&path)?;
-    let after = match client.kit {
-        Kit::ClaudePlugin => remove_claude_entry(&before)?,
-        Kit::CodexMcp => remove_toml_block(&before),
-    };
-    let removed = match client.kit {
-        Kit::ClaudePlugin => claude_entry(&after),
-        Kit::CodexMcp => codex_entry(&after),
-    };
+    let after = edit(&before)?;
+    let removed = parse(&after);
     if removed != Entry::Absent {
         return Err(unsupported_form(&path));
     }
     write_if_unchanged(&path, &before, &after)
 }
 
-fn unsupported_form(path: &Path) -> ConnectError {
+pub(crate) fn unsupported_form(path: &Path) -> ConnectError {
     ConnectError::new(
         "CONFIG_UNSUPPORTED_FORM",
         format!(
@@ -222,7 +230,9 @@ fn toml_launch(entry: &toml::Table) -> Option<Launch> {
     Some(Launch { command, args })
 }
 
-fn classify(marker: Option<&str>, launch: Option<Launch>, plain: bool) -> Entry {
+/// An entry by its marker; an unmarked `plain` entry with the launch of a
+/// previous desktop app is that app's.
+pub(crate) fn classify(marker: Option<&str>, launch: Option<Launch>, plain: bool) -> Entry {
     match marker {
         Some(MARKER) => Entry::Managed(launch),
         Some(PREVIOUS_MARKER) => Entry::Previous,
@@ -272,6 +282,8 @@ pub(crate) fn higher_precedence(
                 .is_some_and(|servers| servers.contains_key("svode"));
             Ok(local.then_some(user))
         }
+        Kit::CommandMcp(kind) => agent_mcp::higher_precedence(project, kind),
+        Kit::SharedSkillOnly => Ok(None),
         Kit::CodexMcp => {
             let path = project.join(".codex").join("config.toml");
             let content = read_text(&path)?;
@@ -361,7 +373,11 @@ pub(crate) fn read_text(path: &Path) -> Result<String, ConnectError> {
 
 /// Writes `after` only if the file still holds `before`: an edit the client
 /// or the user made meanwhile is never overwritten.
-fn write_if_unchanged(path: &Path, before: &str, after: &str) -> Result<(), ConnectError> {
+pub(crate) fn write_if_unchanged(
+    path: &Path,
+    before: &str,
+    after: &str,
+) -> Result<(), ConnectError> {
     if read_text(path)? != before {
         return Err(ConnectError::new(
             "CONFIG_CHANGED",

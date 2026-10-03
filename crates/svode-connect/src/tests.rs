@@ -16,14 +16,16 @@ use crate::{Client, Machine, connect, disconnect, reconcile, remove_shared_skill
 
 const PREVIOUS: &str = "svode-desktop-bridge-v1";
 
-struct Home {
+mod agents;
+
+pub(super) struct Home {
     _dir: TempDir,
     home: PathBuf,
     bundle: PathBuf,
 }
 
 impl Home {
-    fn new() -> Self {
+    pub(super) fn new() -> Self {
         let dir = tempfile::tempdir().unwrap();
         let home = dir.path().join("home");
         let bundle = dir.path().join("Applications/Svode.app/Contents/MacOS");
@@ -36,7 +38,7 @@ impl Home {
     }
 
     /// Home with the desktop app owning the stable location.
-    fn with_desktop() -> Self {
+    pub(super) fn with_desktop() -> Self {
         let home = Self::new();
         let payload = home.bundle.join("../Resources/plugins/svode");
         runtime_files(&home.bundle, &payload, "0.0.9");
@@ -52,38 +54,39 @@ impl Home {
         home
     }
 
-    fn machine(&self) -> Machine {
+    pub(super) fn machine(&self) -> Machine {
         self.machine_for(None)
     }
 
-    fn machine_for(&self, project: Option<&Path>) -> Machine {
+    pub(super) fn machine_for(&self, project: Option<&Path>) -> Machine {
         Machine::at(self.home.clone())
             .with_project(project)
             .with_policies(
                 vec![self.home.join("policy/managed-settings.json")],
                 self.home.join("policy/requirements.toml"),
+                self.home.join("policy/qwen-settings.json"),
             )
     }
 
-    fn path(&self, relative: &str) -> PathBuf {
+    pub(super) fn path(&self, relative: &str) -> PathBuf {
         self.home.join(relative)
     }
 
-    fn write(&self, relative: &str, content: &str) {
+    pub(super) fn write(&self, relative: &str, content: &str) {
         let path = self.path(relative);
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(path, content).unwrap();
     }
 
-    fn read(&self, relative: &str) -> String {
+    pub(super) fn read(&self, relative: &str) -> String {
         fs::read_to_string(self.path(relative)).unwrap_or_default()
     }
 
-    fn link(&self, relative: &str) -> Option<PathBuf> {
+    pub(super) fn link(&self, relative: &str) -> Option<PathBuf> {
         fs::read_link(self.path(relative)).ok()
     }
 
-    fn launcher(&self) -> PathBuf {
+    pub(super) fn launcher(&self) -> PathBuf {
         self.path(".svode/bin/svode-mcp")
     }
 
@@ -144,7 +147,7 @@ fn codex_client() -> Client {
     Client::of(AgentAdapterKind::Codex).unwrap()
 }
 
-fn client(status: &crate::Status, client: Client) -> crate::ClientStatus {
+pub(super) fn client(status: &crate::Status, client: Client) -> crate::ClientStatus {
     status
         .clients
         .iter()
@@ -230,7 +233,7 @@ fn a_previous_desktop_entry_becomes_a_full_connection_without_reenabling() {
         assert!(!text.contains("Svode.app"), "{text}");
     }
     let status = status(&home.machine(), &[], None);
-    for client in &status.clients {
+    for client in [claude_client(), codex_client()].map(|one| client(&status, one)) {
         assert_eq!(client.status, "installed", "{client:?}");
     }
 
@@ -356,8 +359,9 @@ fn artifacts_follow_the_way_each_client_is_connected() {
         codex.artifacts[1].path,
         home.path(".codex/config.toml").display().to_string()
     );
+    let own_part = codex.own_part.as_ref().unwrap();
     assert_eq!(
-        (codex.own_part.kind.as_str(), codex.own_part.state.as_str()),
+        (own_part.kind.as_str(), own_part.state.as_str()),
         ("mcp-entry", "managed")
     );
     // Without its entry Codex only reads the shared skill: not connected.
@@ -560,7 +564,7 @@ fn without_a_runtime_nothing_is_connected_or_rewritten() {
     );
     let status = status(&home.machine(), &errors, None);
     assert_eq!(status.server.status, "not_found");
-    for client in &status.clients {
+    for client in [claude_client(), codex_client()].map(|one| client(&status, one)) {
         assert!(client.installed);
         assert_eq!(
             client.attention_code.as_deref(),

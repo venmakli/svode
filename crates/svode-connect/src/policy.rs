@@ -7,6 +7,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::Value;
 
+use crate::agent_mcp::{self, CommandMcp};
 use crate::entry::read_text;
 use crate::machine::{Client, Kit, Machine};
 
@@ -21,7 +22,74 @@ pub(crate) fn blocking(machine: &Machine, client: Client) -> Vec<String> {
     match client.kit {
         Kit::ClaudePlugin => claude(machine),
         Kit::CodexMcp => codex(machine),
+        Kit::CommandMcp(CommandMcp::QwenCode) => qwen(machine),
+        Kit::CommandMcp(CommandMcp::Pi) => pi(machine),
+        Kit::CommandMcp(CommandMcp::Opencode) | Kit::SharedSkillOnly => Vec::new(),
     }
+}
+
+/// `mcp.allowed` and `mcp.excluded` of the user and system settings of
+/// Qwen Code decide which configured servers it starts.
+fn qwen(machine: &Machine) -> Vec<String> {
+    let mut found = Vec::new();
+    let user = machine.home.join(".qwen").join("settings.json");
+    for file in [&user, &machine.qwen_system_settings] {
+        let Ok(settings) = agent_mcp::jsonc_value(file) else {
+            continue;
+        };
+        let at = file.display();
+        let names = |key: &str| {
+            settings["mcp"][key]
+                .as_array()
+                .map(|names| names.iter().any(|name| name.as_str() == Some("svode")))
+        };
+        if names("allowed") == Some(false) {
+            found.push(format!(
+                "mcp.allowed in {at} does not allow the svode MCP server"
+            ));
+        }
+        if names("excluded") == Some(true) {
+            found.push(format!(
+                "mcp.excluded in {at} excludes the svode MCP server"
+            ));
+        }
+    }
+    found
+}
+
+/// pi reads `mcp.json` through its built-in MCP support, which an extension
+/// such as `pi-mcp-adapter` replaces and `-builtin:mcp` turns off.
+fn pi(machine: &Machine) -> Vec<String> {
+    let file = machine.home.join(".pi").join("agent").join("settings.json");
+    let Ok(settings) = agent_mcp::jsonc_value(&file) else {
+        return Vec::new();
+    };
+    let at = file.display();
+    let mut found = Vec::new();
+    let adapter = settings["packages"].as_array().is_some_and(|packages| {
+        packages.iter().any(|package| {
+            package
+                .as_str()
+                .or_else(|| package["source"].as_str())
+                .is_some_and(|source| source.contains("pi-mcp-adapter"))
+        })
+    });
+    if adapter {
+        found.push(format!(
+            "pi-mcp-adapter in {at} replaces the built-in MCP support of pi, so pi does not read the Svode MCP entry of mcp.json"
+        ));
+    }
+    let off = settings["extensions"].as_array().is_some_and(|extensions| {
+        extensions
+            .iter()
+            .any(|extension| extension.as_str() == Some("-builtin:mcp"))
+    });
+    if off {
+        found.push(format!(
+            "-builtin:mcp in {at} turns off the built-in MCP support of pi"
+        ));
+    }
+    found
 }
 
 fn claude(machine: &Machine) -> Vec<String> {

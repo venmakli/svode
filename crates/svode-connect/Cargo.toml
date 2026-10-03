@@ -4,7 +4,7 @@ version = "0.0.1"
 edition = "2024"
 authors = ["Kamnev Ilya"]
 repository = "https://github.com/venmakli/svode"
-description = "Svode connection manager: connects the plugin payload of the stable location ~/.svode to Claude Code and Codex, reconciles, disconnects and reports status."
+description = "Svode connection manager: gives agents the Svode tools of the stable location ~/.svode, reconciles, disconnects and reports status."
 
 [lib]
 name = "svode_connect"
@@ -15,6 +15,7 @@ svode-core = { path = "../svode-core" }
 svode-install = { path = "../svode-install" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+jsonc-parser = { version = "0.34", features = ["cst", "serde"] }
 toml = "0.9"
 
 [dev-dependencies]

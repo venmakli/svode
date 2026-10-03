@@ -71,7 +71,7 @@ pub async fn mcp_get_status(
 ) -> Result<ConnectionsStatus, AppError> {
     let _guard = state.operation_lock.lock().await;
     let machine = machine(&app).await?;
-    let (changed, errors) = svode_connect::reconcile(&machine);
+    let (changed, errors) = reconcile(&machine).await;
     emit_if_changed(&app, changed);
     Ok(status(&state, &machine, &errors).await)
 }
@@ -127,7 +127,8 @@ async fn change_client(
     let client = Client::parse(client).map_err(app_error)?;
     let _guard = state.operation_lock.lock().await;
     let machine = machine(app).await?;
-    let changed = step(&machine, client).map_err(app_error)?;
+    // A step may run the agent's own command, which can take seconds.
+    let changed = blocking(&machine, move |machine| step(machine, client)).await?;
     emit_if_changed(app, changed);
     Ok(status(state, &machine, &[]).await)
 }
@@ -160,6 +161,26 @@ async fn machine(app: &AppHandle) -> Result<Machine, AppError> {
         .with_search_path(ProcessPath::session().get().await))
 }
 
+/// Runs a step of the manager off the async runtime.
+async fn blocking<T: Send + 'static>(
+    machine: &Machine,
+    step: impl FnOnce(&Machine) -> Result<T, ConnectError> + Send + 'static,
+) -> Result<T, AppError> {
+    let machine = machine.clone();
+    tauri::async_runtime::spawn_blocking(move || step(&machine))
+        .await
+        .map_err(|error| AppError::General(error.to_string()))?
+        .map_err(app_error)
+}
+
+/// Reconcile repairs with the agents' own commands, so it runs off the
+/// async runtime too.
+async fn reconcile(machine: &Machine) -> (bool, Vec<(Client, ConnectError)>) {
+    blocking(machine, |machine| Ok(svode_connect::reconcile(machine)))
+        .await
+        .unwrap_or_else(|_| (false, Vec::new()))
+}
+
 fn app_error(error: ConnectError) -> AppError {
     AppError::General(error.message)
 }
@@ -188,7 +209,7 @@ pub async fn reconcile_clients(app: &AppHandle, updated_from: Option<String>) {
             return;
         }
     };
-    let (changed, errors) = svode_connect::reconcile(&machine);
+    let (changed, errors) = reconcile(&machine).await;
     for (client, error) in errors {
         tracing::warn!("{} connection was not completed: {error}", client.name());
     }

@@ -2,10 +2,12 @@
 //! agent has its own part, whose presence is the agent's consent, and may
 //! need a shared part of the machine:
 //!
-//! | Client      | Own part                                               | Shared part              |
-//! |-------------|--------------------------------------------------------|--------------------------|
-//! | Claude Code | `~/.claude/skills/svode` → payload: skill, `bin/`, MCP | —                        |
-//! | Codex       | `[mcp_servers.svode]` in `~/.codex/config.toml`        | `~/.agents/skills/svode` |
+//! | Client                  | Own part                                               | Shared part              |
+//! |-------------------------|--------------------------------------------------------|--------------------------|
+//! | Claude Code             | `~/.claude/skills/svode` → payload: skill, `bin/`, MCP | —                        |
+//! | Codex                   | `[mcp_servers.svode]` in `~/.codex/config.toml`        | `~/.agents/skills/svode` |
+//! | opencode, Qwen Code, pi | the `svode` MCP entry their own `mcp add` writes       | `~/.agents/skills/svode` |
+//! | Grok Build              | — (its limitation says why)                            | `~/.agents/skills/svode` |
 //!
 //! A client is connected when its own part carries the Svode marker; a
 //! connected client always gets its complete kit, including a missing shared
@@ -18,6 +20,7 @@
 
 use std::path::PathBuf;
 
+use crate::agent_mcp;
 use crate::entry::{self, Entry};
 use crate::error::ConnectError;
 use crate::link::{self, Link};
@@ -35,12 +38,13 @@ pub(crate) struct Inspection {
 
 impl Inspection {
     /// The own part of the client carries the Svode marker: the plugin link
-    /// or an entry of Claude Code, the MCP entry of Codex. The shared skill
-    /// alone connects nobody.
+    /// or an entry of Claude Code, the MCP entry of the others. The shared
+    /// skill alone connects nobody.
     pub fn connected(&self) -> bool {
         match self.kit {
             Kit::ClaudePlugin => self.skill == Link::Managed || self.entry.is_svode(),
-            Kit::CodexMcp => self.entry.is_svode(),
+            Kit::CodexMcp | Kit::CommandMcp(_) => self.entry.is_svode(),
+            Kit::SharedSkillOnly => false,
         }
     }
 }
@@ -69,7 +73,10 @@ pub(crate) fn complete(machine: &Machine, client: Client, inspection: &Inspectio
     inspection.skill == Link::Managed
         && match client.kit {
             Kit::ClaudePlugin => !inspection.entry.is_svode(),
-            Kit::CodexMcp => entry::is_canonical(&inspection.entry, &stable.launcher_mcp),
+            Kit::CodexMcp | Kit::CommandMcp(_) => {
+                entry::is_canonical(&inspection.entry, &stable.launcher_mcp)
+            }
+            Kit::SharedSkillOnly => false,
         }
 }
 
@@ -107,6 +114,18 @@ fn installed(machine: &Machine) -> Result<&Stable, ConnectError> {
 /// first write, so a refused connection writes nothing. Returns whether
 /// anything changed.
 pub fn connect(machine: &Machine, client: Client) -> Result<bool, ConnectError> {
+    if !client.has_own_part() {
+        return Err(ConnectError::new(
+            "NO_OWN_PART",
+            format!(
+                "Svode has no part of its own to add to {}: {}",
+                client.name(),
+                client
+                    .limitation()
+                    .unwrap_or("it reads the shared Svode skill")
+            ),
+        ));
+    }
     let stable = installed(machine)?;
     if stable.runtime.is_none() {
         return Err(ConnectError::new(
@@ -134,6 +153,9 @@ pub fn connect(machine: &Machine, client: Client) -> Result<bool, ConnectError> 
             return Err(ConnectError::new("CONFIG_UNREADABLE", message.clone()));
         }
         _ => {}
+    }
+    if matches!(client.kit, Kit::CommandMcp(_)) && machine.find(client.agent()).is_none() {
+        return Err(agent_mcp::not_found(client.agent()));
     }
     let (changed, result) = apply(machine, stable, client, &inspection);
     result.map(|()| changed)
@@ -188,8 +210,16 @@ fn apply(
             entry::remove(machine, client).map(|()| true)
         }
         (Kit::ClaudePlugin, _) => Ok(false),
-        (Kit::CodexMcp, current) if entry::is_canonical(current, &stable.launcher_mcp) => Ok(false),
+        (Kit::CodexMcp | Kit::CommandMcp(_), current)
+            if entry::is_canonical(current, &stable.launcher_mcp) =>
+        {
+            Ok(false)
+        }
         (Kit::CodexMcp, _) => entry::write_codex(machine, &stable.launcher_mcp).map(|()| true),
+        (Kit::CommandMcp(kind), _) => {
+            agent_mcp::write(machine, kind, &stable.launcher_mcp).map(|()| true)
+        }
+        (Kit::SharedSkillOnly, _) => Ok(false),
     };
     changed |= *entry.as_ref().unwrap_or(&false);
     (changed, linked.and(entry).map(|_| ()))
@@ -197,7 +227,8 @@ fn apply(
 
 /// Removes the own part of `client` where it carries the Svode marker:
 /// the plugin link and any marked entry of Claude Code, the MCP entry of
-/// Codex. Custom entries, foreign skills and the shared skill stay. Returns
+/// the others; an agent without an own part has nothing to remove.
+/// Custom entries, foreign skills and the shared skill stay. Returns
 /// whether anything changed.
 pub fn disconnect(machine: &Machine, client: Client) -> Result<bool, ConnectError> {
     let mut changed = false;
@@ -210,7 +241,7 @@ pub fn disconnect(machine: &Machine, client: Client) -> Result<bool, ConnectErro
         changed = true;
     }
     if let Some(stable) = &machine.stable
-        && !client.uses_shared_skill()
+        && client.kit == Kit::ClaudePlugin
     {
         changed |= link::remove(
             &machine.skill_link(client),
@@ -262,7 +293,9 @@ fn custom_conflict(machine: &Machine, client: Client) -> ConnectError {
         format!(
             "{} already has a custom svode MCP entry in {}; Svode did not replace it",
             client.name(),
-            machine.mcp_config(client).display()
+            machine
+                .mcp_config(client)
+                .map_or_else(|| "its config".into(), |path| path.display().to_string())
         ),
     )
 }

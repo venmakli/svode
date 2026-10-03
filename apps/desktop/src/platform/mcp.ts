@@ -99,8 +99,9 @@ export interface McpClientStatus {
   version?: string | null;
   issues: McpIssue[];
   artifacts?: McpArtifactStatus[];
-  /** The part of the kit that belongs to this agent alone: its consent. */
-  ownPart: McpArtifactStatus;
+  /** The part of the kit that belongs to this agent alone: its consent.
+   * `null` for an agent that only reads the shared skill. */
+  ownPart: McpArtifactStatus | null;
   /** What the kit of the agent lacks compared to the others. */
   limitation: string | null;
 }

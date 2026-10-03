@@ -36,12 +36,31 @@ const FIXABLE = new Set<McpClientAttentionCode>([
   "repair_failed",
 ]);
 
+/** A client of the manager that can get a part of its own. */
+type OwnPartClient = McpClientStatus & {
+  ownPart: NonNullable<McpClientStatus["ownPart"]>;
+};
+
+function hasOwnPart(client: McpClientStatus): client is OwnPartClient {
+  return client.ownPart !== null;
+}
+
 export function kitOf(
-  client: McpClientStatus,
+  client: OwnPartClient,
   status: McpStatus,
 ): IntegrationKit {
   if (client.ownPart.kind === "plugin") return "plugin";
   return readsSharedSkill(client.id, status) ? "mcp_shared" : "mcp";
+}
+
+/** Readers of the shared skill that get nothing else: no part of their own,
+ * so no MCP Svode (their limitation says why). */
+export function skillOnlyReaders(status: McpStatus): string[] {
+  return status.sharedSkill.readers.filter((reader) =>
+    status.clients.some(
+      (client) => client.id === reader && !hasOwnPart(client),
+    ),
+  );
 }
 
 function readsSharedSkill(agent: string, status: McpStatus) {
@@ -92,7 +111,7 @@ export type IntegrationPartRow =
       operation: IntegrationOperation;
       message: string;
     }
-  | { kind: "shared"; readers: string[] }
+  | { kind: "shared"; readers: string[]; skillOnly: string[] }
   | { kind: "shared_conflict"; path: string };
 
 export interface IntegrationActivity {
@@ -102,7 +121,7 @@ export interface IntegrationActivity {
   >;
 }
 
-function partOf(client: McpClientStatus): "plugin" | "mcp" {
+function partOf(client: OwnPartClient): "plugin" | "mcp" {
   return client.ownPart.kind === "plugin" ? "plugin" : "mcp";
 }
 
@@ -118,6 +137,8 @@ export function integrationParts(
   const healthy: Record<"plugin" | "mcp", string[]> = { plugin: [], mcp: [] };
   const rows: IntegrationPartRow[] = [];
   for (const client of status.clients) {
+    // An agent without its own part shows among the shared skill's readers.
+    if (!hasOwnPart(client)) continue;
     const part = partOf(client);
     const pending = activity.pending.get(client.id);
     const failure = activity.failures[client.id];
@@ -183,7 +204,11 @@ export function integrationParts(
       message: sharedFailure.message,
     });
   } else if (status.sharedSkill.state === "managed") {
-    shared.push({ kind: "shared", readers: status.sharedSkill.readers });
+    shared.push({
+      kind: "shared",
+      readers: status.sharedSkill.readers,
+      skillOnly: skillOnlyReaders(status),
+    });
   } else if (status.sharedSkill.state === "foreign") {
     shared.push({ kind: "shared_conflict", path: status.sharedSkill.path });
   }
@@ -223,7 +248,8 @@ export function toolsOffer(
   agent: string,
 ): ToolsOffer | null {
   const client = status?.clients.find((candidate) => candidate.id === agent);
-  if (!status || !client || !client.found || client.installed) return null;
+  if (!status || !client || !hasOwnPart(client)) return null;
+  if (!client.found || client.installed) return null;
   if (!runtimeReady(status) || client.ownPart.state === "external") return null;
   if (
     client.issues.some(
@@ -260,7 +286,7 @@ export function ownPartRemoval(
   agent: string,
 ): OwnPartRemoval | null {
   const client = status?.clients.find((candidate) => candidate.id === agent);
-  if (!status || !client?.installed) return null;
+  if (!status || !client?.installed || !hasOwnPart(client)) return null;
   if (!["managed", "previous"].includes(client.ownPart.state)) return null;
   const { sharedSkill } = status;
   return {
@@ -294,49 +320,61 @@ export interface ToolsEntry {
 
 /**
  * The found agents in registry order: the ones the manager connects with
- * their kit and state, the others as not supported yet.
+ * their kit and state, the others as not supported yet. An agent that only
+ * reads the shared skill has nothing to check here; the shared skill row
+ * names it.
  */
 export function toolsEntries(
   status: McpStatus,
   foundAgents: string[],
 ): ToolsEntry[] {
-  return foundAgents.map((agent): ToolsEntry => {
-    const client = status.clients.find((candidate) => candidate.id === agent);
-    if (!client)
-      return {
+  const onlyReaders = new Set(
+    status.clients
+      .filter((client) => !hasOwnPart(client))
+      .map((client) => client.id),
+  );
+  return foundAgents
+    .filter((agent) => !onlyReaders.has(agent))
+    .map((agent): ToolsEntry => {
+      const client = status.clients.find((candidate) => candidate.id === agent);
+      if (!client || !hasOwnPart(client))
+        return {
+          agent,
+          kit: null,
+          installed: false,
+          blocked: { reason: "unsupported" },
+        };
+      const base = {
         agent,
-        kit: null,
-        installed: false,
-        blocked: { reason: "unsupported" },
+        kit: kitOf(client, status),
+        installed: client.installed,
       };
-    const base = {
-      agent,
-      kit: kitOf(client, status),
-      installed: client.installed,
-    };
-    if (client.ownPart.state === "external")
-      return {
-        ...base,
-        blocked: { reason: "external", source: client.ownPart.source ?? null },
-      };
-    // A connected agent can always give its own part back.
-    if (client.installed) return { ...base, blocked: null };
-    const conflict = conflictOf(client);
-    if (conflict)
-      return {
-        ...base,
-        blocked: {
-          reason: "conflict",
-          code: conflict.code,
-          configPath: client.configPath ?? null,
-        },
-      };
-    if (client.issues.some((issue) => issue.code === "client_policy_blocked"))
-      return { ...base, blocked: { reason: "policy" } };
-    if (!runtimeReady(status))
-      return { ...base, blocked: { reason: "runtime" } };
-    return { ...base, blocked: null };
-  });
+      if (client.ownPart.state === "external")
+        return {
+          ...base,
+          blocked: {
+            reason: "external",
+            source: client.ownPart.source ?? null,
+          },
+        };
+      // A connected agent can always give its own part back.
+      if (client.installed) return { ...base, blocked: null };
+      const conflict = conflictOf(client);
+      if (conflict)
+        return {
+          ...base,
+          blocked: {
+            reason: "conflict",
+            code: conflict.code,
+            configPath: client.configPath ?? null,
+          },
+        };
+      if (client.issues.some((issue) => issue.code === "client_policy_blocked"))
+        return { ...base, blocked: { reason: "policy" } };
+      if (!runtimeReady(status))
+        return { ...base, blocked: { reason: "runtime" } };
+      return { ...base, blocked: null };
+    });
 }
 
 /** The choice of the dialog: agents to have their own part, and whether to

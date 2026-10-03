@@ -171,7 +171,7 @@ pub enum Noun {
         after_help = "Opens no index or store. Target problems are reported in the result.\n\nExample:\n  svode doctor --project ~/Notes --json"
     )]
     Doctor,
-    /// Connection of Claude Code and Codex to Svode: skill, `svode` and MCP.
+    /// Svode tools for the agents of the machine: skill, `svode` and MCP.
     #[command(
         after_help = "A connection refers to the Svode runtime in ~/.svode, so it follows the version of the active runtime. Only what Svode added is ever changed or removed; custom entries are reported as conflicts. --project selects the Project whose project and local client entries are checked.\n\nExamples:\n  svode integration connect codex\n  svode integration status --json"
     )]
@@ -217,11 +217,12 @@ pub enum IntegrationVerb {
     Sync,
 }
 
-/// Ids of the agents the connection manager connects.
+/// Ids of the agents the connection manager gives a part of their own.
 fn client_ids() -> clap::builder::PossibleValuesParser {
     clap::builder::PossibleValuesParser::new(
         svode_connect::Client::all()
             .into_iter()
+            .filter(|client| client.has_own_part())
             .map(svode_connect::Client::as_str),
     )
 }

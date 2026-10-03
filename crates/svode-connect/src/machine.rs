@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use svode_core::agent_adapters::{AgentAdapterKind, resolve_executable_path};
 
+use crate::agent_mcp::CommandMcp;
 use crate::error::ConnectError;
 
 /// An agent the manager connects, under its id from the agent registry, and
@@ -28,6 +29,12 @@ pub(crate) enum Kit {
     /// Own part: a managed MCP entry. Shared part: the skill every agent of
     /// the machine reads from `~/.agents/skills`.
     CodexMcp,
+    /// Own part: a managed MCP entry the agent's own command writes. Shared
+    /// part: the shared skill.
+    CommandMcp(CommandMcp),
+    /// No own part: the agent reads the shared skill and gets no MCP entry,
+    /// for a reason its limitation names.
+    SharedSkillOnly,
 }
 
 impl Client {
@@ -36,6 +43,10 @@ impl Client {
         let kit = match agent {
             AgentAdapterKind::ClaudeCode => Kit::ClaudePlugin,
             AgentAdapterKind::Codex => Kit::CodexMcp,
+            AgentAdapterKind::Opencode => Kit::CommandMcp(CommandMcp::Opencode),
+            AgentAdapterKind::QwenCode => Kit::CommandMcp(CommandMcp::QwenCode),
+            AgentAdapterKind::Pi => Kit::CommandMcp(CommandMcp::Pi),
+            AgentAdapterKind::GrokBuild => Kit::SharedSkillOnly,
             _ => return None,
         };
         Some(Self { agent, kit })
@@ -87,14 +98,27 @@ impl Client {
     /// Whether the client reads the skill shared by every agent of the
     /// machine from `~/.agents/skills` rather than a skill of its own.
     pub(crate) fn uses_shared_skill(self) -> bool {
-        self.kit == Kit::CodexMcp
+        self.kit != Kit::ClaudePlugin
+    }
+
+    /// Whether the manager can give the agent a part of its own, whose
+    /// marker is the agent's consent. An agent without one is only a reader
+    /// of the shared skill.
+    pub fn has_own_part(self) -> bool {
+        self.kit != Kit::SharedSkillOnly
     }
 
     /// What the kit of the agent lacks compared to the others, with its
     /// evidence; `None` for a complete kit.
     pub(crate) fn limitation(self) -> Option<&'static str> {
-        match self.kit {
-            Kit::ClaudePlugin | Kit::CodexMcp => None,
+        match self.agent {
+            // E03, Grok Build 1.0.46: in an ACP session it starts MCP
+            // servers in its own process directory, the home directory in
+            // the chat of Svode, not in the session directory.
+            AgentAdapterKind::GrokBuild => Some(
+                "Grok Build starts MCP servers in its own directory rather than the session's, so Svode MCP could not tell the project in the chat of Svode; it gets the shared skill and svode only",
+            ),
+            _ => None,
         }
     }
 }
@@ -170,6 +194,8 @@ pub struct Machine {
     pub(crate) project: Option<PathBuf>,
     pub(crate) claude_policies: Vec<PathBuf>,
     pub(crate) codex_requirements: PathBuf,
+    /// System settings of Qwen Code for every user of the machine.
+    pub(crate) qwen_system_settings: PathBuf,
     /// PATH the agent executables are searched in instead of the process
     /// PATH, e.g. the login shell PATH of a GUI app.
     pub(crate) search_path: Option<OsString>,
@@ -200,6 +226,7 @@ impl Machine {
             project: None,
             claude_policies: system_claude_policies(),
             codex_requirements: PathBuf::from("/etc/codex/requirements.toml"),
+            qwen_system_settings: system_qwen_settings(),
             search_path: None,
         }
     }
@@ -223,9 +250,15 @@ impl Machine {
     }
 
     #[cfg(test)]
-    pub(crate) fn with_policies(mut self, claude: Vec<PathBuf>, codex: PathBuf) -> Self {
+    pub(crate) fn with_policies(
+        mut self,
+        claude: Vec<PathBuf>,
+        codex: PathBuf,
+        qwen: PathBuf,
+    ) -> Self {
         self.claude_policies = claude;
         self.codex_requirements = codex;
+        self.qwen_system_settings = qwen;
         self
     }
 
@@ -253,14 +286,14 @@ impl Machine {
     pub(crate) fn skill_link(&self, client: Client) -> PathBuf {
         match client.kit {
             Kit::ClaudePlugin => self.claude_dir().join("skills").join("svode"),
-            Kit::CodexMcp => self.shared_skill_link(),
+            _ => self.shared_skill_link(),
         }
     }
 
     pub(crate) fn skill_target(stable: &Stable, client: Client) -> PathBuf {
         match client.kit {
             Kit::ClaudePlugin => stable.payload.clone(),
-            Kit::CodexMcp => Self::shared_skill_target(stable),
+            _ => Self::shared_skill_target(stable),
         }
     }
 
@@ -274,12 +307,23 @@ impl Machine {
         stable.payload.join("skills").join("svode")
     }
 
-    /// The user config that holds the MCP entry of `client`.
-    pub(crate) fn mcp_config(&self, client: Client) -> PathBuf {
+    /// The user config that holds the MCP entry of `client`, if it has one.
+    pub(crate) fn mcp_config(&self, client: Client) -> Option<PathBuf> {
         match client.kit {
-            Kit::ClaudePlugin => self.claude_config(),
-            Kit::CodexMcp => self.codex_config(),
+            Kit::ClaudePlugin => Some(self.claude_config()),
+            Kit::CodexMcp => Some(self.codex_config()),
+            Kit::CommandMcp(kind) => Some(kind.config(self)),
+            Kit::SharedSkillOnly => None,
         }
+    }
+}
+
+/// System settings of Qwen Code for every user of the machine.
+fn system_qwen_settings() -> PathBuf {
+    if cfg!(target_os = "macos") {
+        PathBuf::from("/Library/Application Support/QwenCode/settings.json")
+    } else {
+        PathBuf::from("/etc/qwen-code/settings.json")
     }
 }
 

@@ -7,6 +7,7 @@ import {
   ownPartRemoval,
   SHARED_PART,
   sharedChoice,
+  skillOnlyReaders,
   toolsEntries,
   toolsOffer,
   toolsPlan,
@@ -86,7 +87,7 @@ test("integration parts: installed parts list their agents and the shared skill 
   ).toEqual([
     { kind: "installed", part: "plugin", agents: ["claude-code"] },
     { kind: "installed", part: "mcp", agents: ["codex"] },
-    { kind: "shared", readers: ["codex"] },
+    { kind: "shared", readers: ["codex"], skillOnly: [] },
   ]);
 });
 
@@ -106,7 +107,7 @@ test("integration parts: a problem gets its own row, fixable only when reconnect
     IDLE,
   );
   expect(rows).toEqual([
-    { kind: "shared", readers: ["codex"] },
+    { kind: "shared", readers: ["codex"], skillOnly: [] },
     {
       kind: "problem",
       part: "plugin",
@@ -346,6 +347,41 @@ test("the Svode tools dialog: installing an agent that reads the shared skill na
       { kind: "install", client: "codex" },
     ],
   });
+});
+
+test("an agent that only reads the shared skill shows among its readers and has nothing to choose", () => {
+  const grok = client("grok-build", false, {
+    ownPart: null,
+    configPath: null,
+    limitation: "starts MCP servers in its own directory",
+  });
+  const opencode = client("opencode", true);
+  const current = status([client("codex", false), opencode, grok], {
+    state: "managed",
+    readers: ["codex", "opencode", "grok-build"],
+    requiredBy: ["opencode"],
+  });
+
+  expect(skillOnlyReaders(current)).toEqual(["grok-build"]);
+  expect(integrationParts(current, IDLE)).toEqual([
+    { kind: "installed", part: "mcp", agents: ["opencode"] },
+    {
+      kind: "shared",
+      readers: ["codex", "opencode", "grok-build"],
+      skillOnly: ["grok-build"],
+    },
+  ]);
+  expect(
+    toolsEntries(current, ["codex", "opencode", "grok-build"]).map((entry) => [
+      entry.agent,
+      entry.kit,
+    ]),
+  ).toEqual([
+    ["codex", "mcp_shared"],
+    ["opencode", "mcp_shared"],
+  ]);
+  expect(toolsOffer(current, "grok-build")).toBeNull();
+  expect(ownPartRemoval(current, "grok-build")).toBeNull();
 });
 
 test("the manual config is one standard mcpServers entry", () => {

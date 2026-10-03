@@ -593,6 +593,7 @@
   "settings_integration_part_shared": "Общий skill",
   "settings_integration_readers": "Читают: {agents}",
   "settings_integration_no_readers": "Найденные на устройстве агенты его не читают",
+  "settings_integration_skill_only": "Только skill и svode, без MCP Svode: {agents}",
   "settings_integration_external": "Установлено вне Svode",
   "settings_integration_external_source": "Установлено вне Svode из {source}",
   "settings_integration_shared_conflict": "В {path} другой skill с именем svode. Svode его не меняет.",

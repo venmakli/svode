@@ -53,7 +53,10 @@ pub fn run(verb: IntegrationVerb, selectors: &Selectors<'_>) -> Result<Outcome, 
         } => {
             let clients = match client {
                 Some(client) => vec![Client::parse(&client).map_err(failure)?],
-                None if all => Client::all(),
+                None if all => Client::all()
+                    .into_iter()
+                    .filter(|client| client.has_own_part())
+                    .collect(),
                 None => Vec::new(),
             };
             let before = svode_connect::client_statuses(&machine, &[]);
@@ -68,11 +71,10 @@ pub fn run(verb: IntegrationVerb, selectors: &Selectors<'_>) -> Result<Outcome, 
                 let part = before
                     .iter()
                     .find(|status| status.id == client.as_str())
-                    .map_or("Svode tools", |status| {
-                        match status.own_part.kind.as_str() {
-                            "plugin" => "Svode plugin",
-                            _ => "Svode MCP entry",
-                        }
+                    .and_then(|status| status.own_part.as_ref())
+                    .map_or("Svode tools", |part| match part.kind.as_str() {
+                        "plugin" => "Svode plugin",
+                        _ => "Svode MCP entry",
                     });
                 human.push_str(&if removed {
                     format!("Removed the {part} of {}.\n", client.name())
@@ -212,6 +214,7 @@ fn clients_human(statuses: &[ClientStatus]) -> String {
     let mut out = String::new();
     for status in statuses {
         let state = match (status.installed, status.found) {
+            (false, true) if status.own_part.is_none() => "reads the shared skill only".to_string(),
             (true, _) => format!(
                 "connected{}",
                 status
@@ -224,6 +227,9 @@ fn clients_human(statuses: &[ClientStatus]) -> String {
             (false, false) => "not found".to_string(),
         };
         out.push_str(&format!("{}: {state}\n", status.name));
+        if let Some(limitation) = status.limitation.as_deref().filter(|_| status.found) {
+            out.push_str(&format!("  {limitation}\n"));
+        }
         for issue in &status.issues {
             out.push_str(&format!("  ! {}: {}\n", issue.code, issue.message));
         }

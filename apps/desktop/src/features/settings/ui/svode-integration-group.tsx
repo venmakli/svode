@@ -119,9 +119,18 @@ export function SvodeIntegrationGroup({
       case "installed":
         return names(row.agents);
       case "shared":
-        return row.readers.length
-          ? m.settings_integration_readers({ agents: names(row.readers) })
-          : m.settings_integration_no_readers();
+        return [
+          row.readers.length
+            ? m.settings_integration_readers({ agents: names(row.readers) })
+            : m.settings_integration_no_readers(),
+          row.skillOnly.length
+            ? m.settings_integration_skill_only({
+                agents: names(row.skillOnly),
+              })
+            : null,
+        ]
+          .filter(Boolean)
+          .join(" · ");
       case "shared_conflict":
         return m.settings_integration_shared_conflict({ path: row.path });
       case "external":

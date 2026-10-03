@@ -24,6 +24,7 @@ import type { McpStatus } from "../hooks/use-mcp-integrations";
 import {
   initialToolsChoice,
   sharedChoice,
+  skillOnlyReaders,
   toolsEntries,
   toolsPlan,
   type IntegrationKit,
@@ -91,6 +92,7 @@ export function SvodeToolsDialog({
   } | null>(null);
   const [running, setRunning] = useState(false);
   const shared = sharedChoice(status, entries, choice);
+  const skillOnly = skillOnlyReaders(status);
   const plan = toolsPlan(status, entries, choice);
   const names = (agents: string[]) => agents.map(label).join(", ");
 
@@ -307,6 +309,11 @@ export function SvodeToolsDialog({
                                   agents: names(status.sharedSkill.readers),
                                 })
                               : m.settings_integration_no_readers(),
+                            skillOnly.length
+                              ? m.settings_integration_skill_only({
+                                  agents: names(skillOnly),
+                                })
+                              : null,
                             shared.neededBy.length
                               ? m.settings_tools_shared_needed({
                                   agents: names(shared.neededBy),
