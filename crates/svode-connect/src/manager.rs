@@ -1,11 +1,16 @@
-//! Connect, reconcile and disconnect. A client is connected when at least
-//! one of its artifacts carries the Svode marker; a connected client always
-//! gets the complete set, and disconnecting removes only marked artifacts.
+//! Connect, reconcile and disconnect (Stage 10 `03` A9). The kit of an
+//! agent has its own part, whose presence is the agent's consent, and may
+//! need a shared part of the machine:
 //!
-//! | Client      | Skill, CLI and MCP                                              |
-//! |-------------|-----------------------------------------------------------------|
-//! | Claude Code | `~/.claude/skills/svode` → payload: skill, `bin/` and plugin MCP |
-//! | Codex       | `~/.agents/skills/svode` → payload skill; `[mcp_servers.svode]` |
+//! | Client      | Own part                                               | Shared part              |
+//! |-------------|--------------------------------------------------------|--------------------------|
+//! | Claude Code | `~/.claude/skills/svode` → payload: skill, `bin/`, MCP | —                        |
+//! | Codex       | `[mcp_servers.svode]` in `~/.codex/config.toml`        | `~/.agents/skills/svode` |
+//!
+//! A client is connected when its own part carries the Svode marker; a
+//! connected client always gets its complete kit, including a missing shared
+//! part. Disconnecting removes only the client's own marked part; the shared
+//! skill goes only by an explicit [`remove_shared_skill`].
 //!
 //! Claude Code gets its MCP server from the plugin, so a user entry Svode
 //! wrote earlier is removed once the plugin link is in place; Codex keeps a
@@ -21,6 +26,7 @@ use crate::machine::{Client, Kit, Machine, Stable};
 /// What one client has on this machine.
 #[derive(Debug, Clone)]
 pub(crate) struct Inspection {
+    kit: Kit,
     pub skill: Link,
     pub entry: Entry,
     /// A project or local entry that overrides the user entry.
@@ -28,8 +34,14 @@ pub(crate) struct Inspection {
 }
 
 impl Inspection {
+    /// The own part of the client carries the Svode marker: the plugin link
+    /// or an entry of Claude Code, the MCP entry of Codex. The shared skill
+    /// alone connects nobody.
     pub fn connected(&self) -> bool {
-        self.skill == Link::Managed || self.entry.is_svode()
+        match self.kit {
+            Kit::ClaudePlugin => self.skill == Link::Managed || self.entry.is_svode(),
+            Kit::CodexMcp => self.entry.is_svode(),
+        }
     }
 }
 
@@ -42,6 +54,7 @@ pub(crate) fn inspect(machine: &Machine, client: Client) -> Inspection {
         None => Link::Absent,
     };
     Inspection {
+        kit: client.kit,
         skill,
         entry: entry::read(machine, client),
         higher: entry::higher_precedence(machine, client),
@@ -88,9 +101,11 @@ fn installed(machine: &Machine) -> Result<&Stable, ConnectError> {
     Ok(stable)
 }
 
-/// Connects `client` completely: its skill, `svode` for the agent and the
-/// MCP server. Every conflict is checked before the first write, so a
-/// refused connection writes nothing. Returns whether anything changed.
+/// Connects `client` completely: its own part and the shared part its kit
+/// needs, reusing a shared part already in place, so the agent gets the
+/// skill, `svode` and the MCP server. Every conflict is checked before the
+/// first write, so a refused connection writes nothing. Returns whether
+/// anything changed.
 pub fn connect(machine: &Machine, client: Client) -> Result<bool, ConnectError> {
     let stable = installed(machine)?;
     if stable.runtime.is_none() {
@@ -126,8 +141,9 @@ pub fn connect(machine: &Machine, client: Client) -> Result<bool, ConnectError> 
 
 /// Brings every connected client to the complete set: a managed MCP entry
 /// of a previous desktop app becomes a full connection, and a set with a
-/// missing artifact is repaired. Clients that are not connected are left
-/// alone. Returns whether anything changed and what could not be repaired.
+/// missing artifact, the shared skill included, is repaired. Clients without
+/// their own part are left alone, also when they read the shared skill.
+/// Returns whether anything changed and what could not be repaired.
 pub fn reconcile(machine: &Machine) -> (bool, Vec<(Client, ConnectError)>) {
     let mut changed = false;
     let mut errors = Vec::new();
@@ -179,9 +195,10 @@ fn apply(
     (changed, linked.and(entry).map(|_| ()))
 }
 
-/// Removes the marked artifacts of `client`; custom entries and foreign
-/// skills stay. The shared skill goes with the last client that reads it.
-/// Returns whether anything changed.
+/// Removes the own part of `client` where it carries the Svode marker:
+/// the plugin link and any marked entry of Claude Code, the MCP entry of
+/// Codex. Custom entries, foreign skills and the shared skill stay. Returns
+/// whether anything changed.
 pub fn disconnect(machine: &Machine, client: Client) -> Result<bool, ConnectError> {
     let mut changed = false;
     let entry = entry::read(machine, client);
@@ -192,19 +209,51 @@ pub fn disconnect(machine: &Machine, client: Client) -> Result<bool, ConnectErro
         entry::remove(machine, client)?;
         changed = true;
     }
-    if let Some(stable) = &machine.stable {
-        let shared_by_another = client.uses_shared_skill()
-            && Client::all().into_iter().any(|other| {
-                other != client && other.uses_shared_skill() && inspect(machine, other).connected()
-            });
-        if !shared_by_another {
-            changed |= link::remove(
-                &machine.skill_link(client),
-                &Machine::skill_target(stable, client),
-            )?;
-        }
+    if let Some(stable) = &machine.stable
+        && !client.uses_shared_skill()
+    {
+        changed |= link::remove(
+            &machine.skill_link(client),
+            &Machine::skill_target(stable, client),
+        )?;
     }
     Ok(changed)
+}
+
+/// The connected clients whose kit needs the shared skill.
+pub(crate) fn shared_skill_required_by(machine: &Machine) -> Vec<Client> {
+    Client::all()
+        .into_iter()
+        .filter(|client| client.uses_shared_skill() && inspect(machine, *client).connected())
+        .collect()
+}
+
+/// Removes the shared skill while it is Svode's link. Refused while the own
+/// part of a connected client needs it: reconcile would restore it.
+/// Returns whether anything changed.
+pub fn remove_shared_skill(machine: &Machine) -> Result<bool, ConnectError> {
+    let Some(stable) = &machine.stable else {
+        return Ok(false);
+    };
+    let required_by = shared_skill_required_by(machine);
+    if !required_by.is_empty() {
+        let names = required_by
+            .iter()
+            .map(|client| client.name())
+            .collect::<Vec<_>>()
+            .join(", ");
+        return Err(ConnectError::new(
+            "SHARED_SKILL_REQUIRED",
+            format!(
+                "the shared Svode skill {} is part of the Svode tools of {names}; remove their tools first",
+                machine.shared_skill_link().display()
+            ),
+        ));
+    }
+    link::remove(
+        &machine.shared_skill_link(),
+        &Machine::shared_skill_target(stable),
+    )
 }
 
 fn custom_conflict(machine: &Machine, client: Client) -> ConnectError {

@@ -181,3 +181,41 @@ fn a_custom_entry_is_a_conflict_that_nothing_overwrites() {
     );
     assert_eq!(fs::read_to_string(&config).unwrap(), custom);
 }
+
+#[test]
+fn disconnecting_codex_keeps_the_shared_skill_until_its_explicit_removal() {
+    let home = Home::new();
+    home.desktop("0.0.9");
+    let skill = home.path(".agents/skills/svode");
+    let (code, connected) = home.integration(&["connect", "codex"]);
+    assert_eq!(code, 0, "{connected}");
+    assert_eq!(connected["sharedSkill"]["requiredBy"][0], "codex");
+
+    // While the entry of Codex needs it, the shared skill is not removed.
+    let (code, refused) = home.integration(&["disconnect", "--shared-skill"]);
+    assert_eq!(code, 1, "{refused}");
+    assert_eq!(refused["error"]["code"], "SHARED_SKILL_REQUIRED");
+    assert!(fs::read_link(&skill).is_ok());
+
+    let (code, disconnected) = home.integration(&["disconnect", "codex"]);
+    assert_eq!(code, 0, "{disconnected}");
+    assert_eq!(disconnected["changed"], true);
+    assert_eq!(Home::client(&disconnected, "codex")["installed"], false);
+    assert_eq!(disconnected["sharedSkill"]["state"], "managed");
+    assert!(fs::read_link(&skill).is_ok());
+    let (_, status) = home.integration(&["status"]);
+    assert_eq!(status["sharedSkill"]["state"], "managed");
+    assert_eq!(
+        status["sharedSkill"]["requiredBy"],
+        Value::Array(Vec::new())
+    );
+
+    let (code, removed) = home.integration(&["disconnect", "--shared-skill"]);
+    assert_eq!(code, 0, "{removed}");
+    assert_eq!(removed["changed"], true);
+    assert_eq!(removed["sharedSkill"]["state"], "absent");
+    assert!(fs::symlink_metadata(&skill).is_err());
+    let (code, again) = home.integration(&["disconnect", "--shared-skill"]);
+    assert_eq!(code, 0, "{again}");
+    assert_eq!(again["changed"], false);
+}

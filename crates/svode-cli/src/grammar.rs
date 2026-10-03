@@ -189,13 +189,24 @@ pub enum IntegrationVerb {
         #[arg(value_parser = client_ids())]
         client: String,
     },
-    /// Disconnect a client, or every client with --all.
-    #[command(after_help = "Example:\n  svode integration disconnect codex")]
+    /// Remove the Svode part of a client; the shared skill stays.
+    #[command(
+        after_help = "Examples:\n  svode integration disconnect codex\n  svode integration disconnect --shared-skill"
+    )]
     Disconnect {
-        #[arg(required_unless_present = "all", conflicts_with = "all", value_parser = client_ids())]
+        #[arg(
+            required_unless_present_any = ["all", "shared_skill"],
+            conflicts_with_all = ["all", "shared_skill"],
+            value_parser = client_ids()
+        )]
         client: Option<String>,
-        #[arg(long)]
+        /// Every client's part and the shared skill.
+        #[arg(long, conflicts_with = "shared_skill")]
         all: bool,
+        /// The skill shared by the agents of the machine, once no client's
+        /// part needs it.
+        #[arg(long)]
+        shared_skill: bool,
     },
     /// Status of every client and of the runtime they use.
     #[command(after_help = "Example:\n  svode integration status --json")]

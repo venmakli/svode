@@ -26,8 +26,8 @@ async fn run_args(args: &[String]) -> Result<(), ToolError> {
             headless::run(project, space).await
         }
         // The connection manager shared with the desktop app and `svode
-        // integration`: install and remove connect or disconnect the whole
-        // integration of the client, not only its MCP entry.
+        // integration`: install connects the whole kit of the client, remove
+        // takes off its own part and keeps the shared skill.
         Some("install") => change(args, svode_connect::connect),
         Some("remove") => change(args, svode_connect::disconnect),
         Some("print-config") => {
@@ -149,7 +149,9 @@ fn usage() -> &'static str {
       Connect the client to Svode: skill, svode and this server (same as
       `svode integration connect`).
   svode-mcp remove --client <claude-code|codex>
-      Disconnect it; only what Svode added is removed.
+      Remove the client's own Svode part (the Claude Code plugin, the Codex
+      MCP entry); the skill shared by the agents of the machine stays, and
+      `svode integration disconnect --shared-skill` removes it.
   svode-mcp print-config --client <claude-code|codex>
       MCP config for a client you configure by hand.
   svode-mcp doctor

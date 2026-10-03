@@ -1,15 +1,16 @@
-//! Status and diagnostics of the connections, the runtime they use and the
-//! manual MCP config for users who configure a client by hand.
+//! Status and diagnostics of the connections, the shared skill, the runtime
+//! they use and the manual MCP config for users who configure a client by
+//! hand.
 
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::{Command, Stdio};
 
 use serde::{Deserialize, Serialize};
 
 use crate::entry::{self, Entry};
 use crate::error::ConnectError;
-use crate::link::Link;
+use crate::link::{self, Link};
 use crate::machine::{ActiveRuntime, Client, Kit, Machine};
 use crate::manager::{self, Inspection};
 use crate::policy;
@@ -75,6 +76,26 @@ pub struct ClientStatus {
     pub version: Option<String>,
     pub issues: Vec<Issue>,
     pub artifacts: Vec<ArtifactStatus>,
+    /// The part of the kit that belongs to this agent alone; its marker is
+    /// the agent's consent.
+    pub own_part: ArtifactStatus,
+    /// What the kit of the agent lacks compared to the others.
+    pub limitation: Option<String>,
+}
+
+/// The skill shared by the agents of the machine, a part of the machine
+/// rather than of one agent.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SharedSkillStatus {
+    pub path: String,
+    /// `absent`, `managed` or `foreign`.
+    pub state: String,
+    /// Ids of the found agents that read it, connected or not. It does not
+    /// promise that their open sessions loaded it.
+    pub readers: Vec<String>,
+    /// Ids of the connected agents whose own part needs it.
+    pub required_by: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -125,6 +146,7 @@ pub struct DoctorReport {
 pub struct Status {
     pub server: RuntimeInfo,
     pub clients: Vec<ClientStatus>,
+    pub shared_skill: SharedSkillStatus,
     pub manual_config: ManualConfig,
     pub doctor: DoctorReport,
 }
@@ -187,7 +209,7 @@ fn client_status(
     let inspection = manager::inspect(machine, client);
     let connected = inspection.connected();
     let complete = connected && manager::complete(machine, client, &inspection);
-    let command = find_command(client.command());
+    let command = machine.find(client.agent());
     let config = machine.mcp_config(client);
     let found = command.is_some() || config.is_file() || connected;
     let issues = issues(
@@ -222,6 +244,33 @@ fn client_status(
             .flatten(),
         issues,
         artifacts: artifacts(machine, client, &inspection),
+        own_part: own_part(machine, client, &inspection),
+        limitation: client.limitation().map(str::to_string),
+    }
+}
+
+/// The shared skill with the found agents that read it and the connected
+/// ones that need it.
+pub fn shared_skill_status(machine: &Machine) -> SharedSkillStatus {
+    let path = machine.shared_skill_link();
+    let state = match &machine.stable {
+        Some(stable) => link::state(&path, &Machine::shared_skill_target(stable)),
+        None => Link::Absent,
+    };
+    let ids = |clients: Vec<Client>| {
+        clients
+            .into_iter()
+            .map(|client| client.as_str().to_string())
+            .collect()
+    };
+    SharedSkillStatus {
+        path: path.display().to_string(),
+        state: link_state(state).into(),
+        readers: ids(Client::all()
+            .into_iter()
+            .filter(|client| client.uses_shared_skill() && machine.find(client.agent()).is_some())
+            .collect()),
+        required_by: ids(manager::shared_skill_required_by(machine)),
     }
 }
 
@@ -312,35 +361,53 @@ fn issues(
 /// entry is listed only while it exists, as one the plugin makes redundant
 /// or conflicts with. Codex reads the shared skill and a managed entry.
 fn artifacts(machine: &Machine, client: Client, inspection: &Inspection) -> Vec<ArtifactStatus> {
-    let link = match inspection.skill {
+    let mut artifacts = vec![skill_artifact(machine, client, inspection)];
+    if client.kit == Kit::CodexMcp || inspection.entry != Entry::Absent {
+        artifacts.push(entry_artifact(machine, client, inspection));
+    }
+    artifacts
+}
+
+fn own_part(machine: &Machine, client: Client, inspection: &Inspection) -> ArtifactStatus {
+    match client.kit {
+        Kit::ClaudePlugin => skill_artifact(machine, client, inspection),
+        Kit::CodexMcp => entry_artifact(machine, client, inspection),
+    }
+}
+
+fn skill_artifact(machine: &Machine, client: Client, inspection: &Inspection) -> ArtifactStatus {
+    ArtifactStatus {
+        kind: match client.kit {
+            Kit::ClaudePlugin => "plugin",
+            Kit::CodexMcp => "skill",
+        }
+        .into(),
+        path: machine.skill_link(client).display().to_string(),
+        state: link_state(inspection.skill).into(),
+    }
+}
+
+fn entry_artifact(machine: &Machine, client: Client, inspection: &Inspection) -> ArtifactStatus {
+    ArtifactStatus {
+        kind: "mcp-entry".into(),
+        path: machine.mcp_config(client).display().to_string(),
+        state: match &inspection.entry {
+            Entry::Absent => "absent",
+            Entry::Managed(_) => "managed",
+            Entry::Previous => "previous",
+            Entry::Custom => "custom",
+            Entry::Unreadable(_) => "unreadable",
+        }
+        .into(),
+    }
+}
+
+fn link_state(link: Link) -> &'static str {
+    match link {
         Link::Absent => "absent",
         Link::Managed => "managed",
         Link::Foreign => "foreign",
-    };
-    let entry = match &inspection.entry {
-        Entry::Absent => "absent",
-        Entry::Managed(_) => "managed",
-        Entry::Previous => "previous",
-        Entry::Custom => "custom",
-        Entry::Unreadable(_) => "unreadable",
-    };
-    let artifact = |kind: &str, path: PathBuf, state: &str| ArtifactStatus {
-        kind: kind.into(),
-        path: path.display().to_string(),
-        state: state.into(),
-    };
-    let mut artifacts = vec![artifact(
-        match client.kit {
-            Kit::ClaudePlugin => "plugin",
-            Kit::CodexMcp => "skill",
-        },
-        machine.skill_link(client),
-        link,
-    )];
-    if client.kit == Kit::CodexMcp || inspection.entry != Entry::Absent {
-        artifacts.push(artifact("mcp-entry", machine.mcp_config(client), entry));
     }
-    artifacts
 }
 
 /// MCP config for a client configured by hand: the stable launcher in
@@ -485,35 +552,6 @@ fn bridge_protocol_of(binary: &Path) -> Option<String> {
         .status
         .success()
         .then(|| String::from_utf8_lossy(&output.stdout).trim().to_string())
-}
-
-fn find_command(command: &str) -> Option<PathBuf> {
-    if let Ok(path) = which::which(command) {
-        return Some(path);
-    }
-    let mut dirs = Vec::new();
-    if let Some(home) = std::env::var_os("HOME").map(PathBuf::from) {
-        for suffix in [
-            ".local/bin",
-            ".volta/bin",
-            ".cargo/bin",
-            ".bun/bin",
-            ".npm-global/bin",
-            ".pnpm",
-            "Library/pnpm",
-            "Library/Application Support/pnpm",
-        ] {
-            dirs.push(home.join(suffix));
-        }
-    }
-    if cfg!(target_os = "macos") {
-        for dir in ["/opt/homebrew/bin", "/usr/local/bin", "/opt/local/bin"] {
-            dirs.push(PathBuf::from(dir));
-        }
-    }
-    dirs.into_iter()
-        .map(|dir| dir.join(command))
-        .find(|candidate| is_executable(candidate))
 }
 
 #[cfg(unix)]

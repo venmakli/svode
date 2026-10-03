@@ -53,7 +53,7 @@ fn install_runtime(home: &Path) {
 }
 
 #[test]
-fn install_and_remove_connect_and_disconnect_the_whole_client() {
+fn install_connects_the_whole_client_and_remove_keeps_the_shared_skill() {
     let dir = tempfile::tempdir().unwrap();
     let home = dir.path().canonicalize().unwrap();
 
@@ -77,7 +77,9 @@ fn install_and_remove_connect_and_disconnect_the_whole_client() {
 
     let output = run(&home, &["remove", "--client", "codex"]);
     assert!(output.status.success());
-    assert!(!home.join(".agents/skills/svode").exists());
+    let result: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(result["status"]["installed"], false);
+    assert!(home.join(".agents/skills/svode").is_symlink());
     assert!(
         !fs::read_to_string(home.join(".codex/config.toml"))
             .unwrap()

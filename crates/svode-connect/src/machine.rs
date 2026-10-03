@@ -1,11 +1,12 @@
 //! Where the manager reads and writes on one machine: the client configs
 //! under the home directory, the stable location and the client policies.
 
+use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use svode_core::agent_adapters::AgentAdapterKind;
+use svode_core::agent_adapters::{AgentAdapterKind, resolve_executable_path};
 
 use crate::error::ConnectError;
 
@@ -17,12 +18,15 @@ pub struct Client {
     pub(crate) kit: Kit,
 }
 
-/// The Svode integration kit of a client.
+/// The Svode integration kit of a client: its own part, which is the
+/// agent's consent, and the shared part of the machine it needs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Kit {
-    /// The skill link of the Claude Code plugin, which also brings MCP.
+    /// Own part: the skill link of the Claude Code plugin, which also brings
+    /// MCP. No shared part.
     ClaudePlugin,
-    /// The skill shared by the agents of the machine and a managed MCP entry.
+    /// Own part: a managed MCP entry. Shared part: the skill every agent of
+    /// the machine reads from `~/.agents/skills`.
     CodexMcp,
 }
 
@@ -80,14 +84,18 @@ impl Client {
         self.agent.display_name()
     }
 
-    pub(crate) fn command(self) -> &'static str {
-        self.agent.executable()
-    }
-
     /// Whether the client reads the skill shared by every agent of the
     /// machine from `~/.agents/skills` rather than a skill of its own.
     pub(crate) fn uses_shared_skill(self) -> bool {
         self.kit == Kit::CodexMcp
+    }
+
+    /// What the kit of the agent lacks compared to the others, with its
+    /// evidence; `None` for a complete kit.
+    pub(crate) fn limitation(self) -> Option<&'static str> {
+        match self.kit {
+            Kit::ClaudePlugin | Kit::CodexMcp => None,
+        }
     }
 }
 
@@ -162,6 +170,9 @@ pub struct Machine {
     pub(crate) project: Option<PathBuf>,
     pub(crate) claude_policies: Vec<PathBuf>,
     pub(crate) codex_requirements: PathBuf,
+    /// PATH the agent executables are searched in instead of the process
+    /// PATH, e.g. the login shell PATH of a GUI app.
+    pub(crate) search_path: Option<OsString>,
 }
 
 impl Machine {
@@ -189,7 +200,20 @@ impl Machine {
             project: None,
             claude_policies: system_claude_policies(),
             codex_requirements: PathBuf::from("/etc/codex/requirements.toml"),
+            search_path: None,
         }
+    }
+
+    /// Searches agent executables in `path` instead of the process PATH.
+    pub fn with_search_path(mut self, path: Option<&OsStr>) -> Self {
+        self.search_path = path.map(OsStr::to_os_string);
+        self
+    }
+
+    /// The executable of `agent` by the one resolver of the agent registry
+    /// (Stage 10 `03` A1); found agents are the readers of the shared skill.
+    pub(crate) fn find(&self, agent: AgentAdapterKind) -> Option<PathBuf> {
+        resolve_executable_path(agent, None, &self.home, self.search_path.as_deref())
     }
 
     /// Also checks the project and local client entries of `project`.
@@ -229,15 +253,25 @@ impl Machine {
     pub(crate) fn skill_link(&self, client: Client) -> PathBuf {
         match client.kit {
             Kit::ClaudePlugin => self.claude_dir().join("skills").join("svode"),
-            Kit::CodexMcp => self.home.join(".agents").join("skills").join("svode"),
+            Kit::CodexMcp => self.shared_skill_link(),
         }
     }
 
     pub(crate) fn skill_target(stable: &Stable, client: Client) -> PathBuf {
         match client.kit {
             Kit::ClaudePlugin => stable.payload.clone(),
-            Kit::CodexMcp => stable.payload.join("skills").join("svode"),
+            Kit::CodexMcp => Self::shared_skill_target(stable),
         }
+    }
+
+    /// The skill shared by the agents of the machine that read
+    /// `~/.agents/skills`.
+    pub(crate) fn shared_skill_link(&self) -> PathBuf {
+        self.home.join(".agents").join("skills").join("svode")
+    }
+
+    pub(crate) fn shared_skill_target(stable: &Stable) -> PathBuf {
+        stable.payload.join("skills").join("svode")
     }
 
     /// The user config that holds the MCP entry of `client`.

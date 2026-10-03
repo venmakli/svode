@@ -7,6 +7,7 @@ use tokio::sync::Mutex;
 
 use super::active::{self, ActiveProjectContext, ActiveProjectState};
 use crate::AppError;
+use crate::process::path_env::ProcessPath;
 use svode_mcp::bridge;
 
 const MCP_STATUS_CHANGED_EVENT: &str = "mcp:status-changed";
@@ -69,7 +70,7 @@ pub async fn mcp_get_status(
     state: State<'_, McpConfigState>,
 ) -> Result<ConnectionsStatus, AppError> {
     let _guard = state.operation_lock.lock().await;
-    let machine = machine(&app)?;
+    let machine = machine(&app).await?;
     let (changed, errors) = svode_connect::reconcile(&machine);
     emit_if_changed(&app, changed);
     Ok(status(&state, &machine, &errors).await)
@@ -102,9 +103,23 @@ pub async fn mcp_remove_client(
     change_client(&app, &state, &client, svode_connect::disconnect).await
 }
 
+/// Removes the skill shared by the agents of the machine; refused while the
+/// own part of a connected agent needs it.
+#[tauri::command]
+pub async fn mcp_remove_shared_skill(
+    app: AppHandle,
+    state: State<'_, McpConfigState>,
+) -> Result<ConnectionsStatus, AppError> {
+    let _guard = state.operation_lock.lock().await;
+    let machine = machine(&app).await?;
+    let changed = svode_connect::remove_shared_skill(&machine).map_err(app_error)?;
+    emit_if_changed(&app, changed);
+    Ok(status(&state, &machine, &[]).await)
+}
+
 #[tauri::command]
 pub async fn mcp_run_doctor(app: AppHandle) -> Result<DoctorReport, AppError> {
-    let machine = machine(&app)?;
+    let machine = machine(&app).await?;
     Ok(svode_connect::doctor(
         &machine,
         Some(&bridge::probe().await),
@@ -119,7 +134,7 @@ async fn change_client(
 ) -> Result<ConnectionsStatus, AppError> {
     let client = Client::parse(client).map_err(app_error)?;
     let _guard = state.operation_lock.lock().await;
-    let machine = machine(app)?;
+    let machine = machine(app).await?;
     let changed = step(&machine, client).map_err(app_error)?;
     emit_if_changed(app, changed);
     Ok(status(state, &machine, &[]).await)
@@ -141,15 +156,16 @@ async fn status(
 }
 
 /// The user of the app, checking the project and local entries of the
-/// Project of the active window.
-fn machine(app: &AppHandle) -> Result<Machine, AppError> {
+/// Project of the active window and finding agents on the login shell PATH.
+async fn machine(app: &AppHandle) -> Result<Machine, AppError> {
     let project = app
         .state::<ActiveProjectState>()
         .get()
         .map(|context| Path::new(&context.project_path).to_path_buf());
     Ok(Machine::user()
         .map_err(app_error)?
-        .with_project(project.as_deref()))
+        .with_project(project.as_deref())
+        .with_search_path(ProcessPath::session().get().await))
 }
 
 fn app_error(error: ConnectError) -> AppError {
@@ -173,7 +189,7 @@ pub async fn reconcile_clients(app: &AppHandle, updated_from: Option<String>) {
         .runtime_updated_from
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner()) = updated_from;
-    let machine = match machine(app) {
+    let machine = match machine(app).await {
         Ok(machine) => machine,
         Err(error) => {
             tracing::warn!("agent client connections were not reconciled: {error}");

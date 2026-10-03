@@ -1,6 +1,7 @@
 //! The connection manager: connects the Svode plugin payload of the stable
 //! location `~/.svode` to Claude Code and Codex, keeps connected clients
-//! complete, disconnects them and reports their status.
+//! complete, disconnects them, removes the shared skill on request and
+//! reports their status.
 //!
 //! It is the only owner of Svode's artifacts in client configs. The desktop
 //! app (Settings and reconcile at every start), `svode integration` and the
@@ -21,14 +22,15 @@ mod status;
 pub use entry::{MARKER, MARKER_ENV};
 pub use error::ConnectError;
 pub use machine::{ActiveRuntime, Client, Machine};
-pub use manager::{connect, disconnect, reconcile};
+pub use manager::{connect, disconnect, reconcile, remove_shared_skill};
 pub use status::{
     ArtifactStatus, BridgeProbe, ClientStatus, DoctorReport, Issue, ManualConfig, RESTART_NOTICE,
-    RuntimeInfo, Status, client_statuses, doctor, manual_config, manual_config_text, runtime_info,
+    RuntimeInfo, SharedSkillStatus, Status, client_statuses, doctor, manual_config,
+    manual_config_text, runtime_info, shared_skill_status,
 };
 
-/// Status of the runtime and every client with the manual config and a
-/// doctor report. `failed` carries what a reconcile just before could not
+/// Status of the runtime, every client and the shared skill with the manual
+/// config and a doctor report. `failed` carries what a reconcile just before could not
 /// repair.
 pub fn status(
     machine: &Machine,
@@ -41,6 +43,7 @@ pub fn status(
         doctor: status::doctor_with(machine, bridge, &clients),
         manual_config: manual_config(machine),
         clients,
+        shared_skill: shared_skill_status(machine),
     }
 }
 

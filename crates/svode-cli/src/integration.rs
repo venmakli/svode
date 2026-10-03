@@ -3,7 +3,9 @@
 //! only and opens no Project.
 
 use serde_json::{Map, json};
-use svode_connect::{Client, ClientStatus, ConnectError, Machine, RESTART_NOTICE};
+use svode_connect::{
+    Client, ClientStatus, ConnectError, Machine, RESTART_NOTICE, SharedSkillStatus,
+};
 use svode_tools::target::project_for_cwd;
 
 use crate::error::CliError;
@@ -42,26 +44,66 @@ pub fn run(verb: IntegrationVerb, selectors: &Selectors<'_>) -> Result<Outcome, 
                     client.name()
                 )
             };
-            Ok(result(human, changed, &statuses))
+            Ok(result(human, changed, &statuses, &machine))
         }
-        IntegrationVerb::Disconnect { client, all } => {
-            let clients = match (client, all) {
-                (Some(client), _) => vec![Client::parse(&client).map_err(failure)?],
-                (None, _) => Client::all(),
+        IntegrationVerb::Disconnect {
+            client,
+            all,
+            shared_skill,
+        } => {
+            let clients = match client {
+                Some(client) => vec![Client::parse(&client).map_err(failure)?],
+                None if all => Client::all(),
+                None => Vec::new(),
             };
+            let before = svode_connect::client_statuses(&machine, &[]);
+            let needed_shared = svode_connect::shared_skill_status(&machine).required_by;
             let mut changed = false;
+            let mut left_shared = false;
             let mut human = String::new();
             for client in clients {
                 let removed = svode_connect::disconnect(&machine, client).map_err(failure)?;
                 changed |= removed;
+                left_shared |= removed && needed_shared.iter().any(|id| id == client.as_str());
+                let part = before
+                    .iter()
+                    .find(|status| status.id == client.as_str())
+                    .map_or("Svode tools", |status| {
+                        match status.own_part.kind.as_str() {
+                            "plugin" => "Svode plugin",
+                            _ => "Svode MCP entry",
+                        }
+                    });
                 human.push_str(&if removed {
-                    format!("Disconnected {} from Svode.\n", client.name())
+                    format!("Removed the {part} of {}.\n", client.name())
                 } else {
-                    format!("{} was not connected to Svode.\n", client.name())
+                    format!("{} had no {part} to remove.\n", client.name())
                 });
             }
+            let shared = svode_connect::shared_skill_status(&machine);
+            if all || shared_skill {
+                let removed = svode_connect::remove_shared_skill(&machine).map_err(failure)?;
+                changed |= removed;
+                human.push_str(&match (removed, shared.state.as_str()) {
+                    (true, _) => format!(
+                        "Removed the shared Svode skill {}{}.\n",
+                        shared.path,
+                        agent_list(", which ", &shared.readers, " read")
+                    ),
+                    (false, "foreign") => {
+                        format!("{} is not the Svode skill; Svode left it.\n", shared.path)
+                    }
+                    (false, _) => "The shared Svode skill was not installed.\n".to_string(),
+                });
+            } else if left_shared && shared.state == "managed" {
+                human.push_str(&format!(
+                    "The shared Svode skill {} stays{}; `svode integration disconnect --shared-skill` removes it.\n",
+                    shared.path,
+                    agent_list(" for ", &shared.readers, "")
+                ));
+            }
             let statuses = svode_connect::client_statuses(&machine, &[]);
-            Ok(result(human, changed, &statuses))
+            Ok(result(human, changed, &statuses, &machine))
         }
         IntegrationVerb::Status => {
             let status = svode_connect::status(&machine, &[], None);
@@ -77,11 +119,16 @@ pub fn run(verb: IntegrationVerb, selectors: &Selectors<'_>) -> Result<Outcome, 
                 }
             };
             human.push_str(&clients_human(&status.clients));
+            human.push_str(&shared_human(&status.shared_skill));
             Ok(Outcome {
                 human,
                 envelope: envelope(
                     Map::new(),
-                    json!({ "runtime": status.server, "clients": status.clients }),
+                    json!({
+                        "runtime": status.server,
+                        "clients": status.clients,
+                        "sharedSkill": status.shared_skill,
+                    }),
                 ),
                 warnings: Vec::new(),
             })
@@ -107,21 +154,58 @@ pub fn run(verb: IntegrationVerb, selectors: &Selectors<'_>) -> Result<Outcome, 
             } else {
                 "The Svode connections are complete.\n".to_string()
             };
-            Ok(result(human, changed, &statuses))
+            Ok(result(human, changed, &statuses, &machine))
         }
     }
 }
 
-fn result(mut human: String, changed: bool, statuses: &[ClientStatus]) -> Outcome {
+fn result(
+    mut human: String,
+    changed: bool,
+    statuses: &[ClientStatus],
+    machine: &Machine,
+) -> Outcome {
+    let shared = svode_connect::shared_skill_status(machine);
     human.push_str(&clients_human(statuses));
+    human.push_str(&shared_human(&shared));
     Outcome {
         human,
         envelope: envelope(
             Map::new(),
-            json!({ "changed": changed, "clients": statuses }),
+            json!({ "changed": changed, "clients": statuses, "sharedSkill": shared }),
         ),
         warnings: Vec::new(),
     }
+}
+
+/// The shared skill: a part of the machine with the agents that read it
+/// and the connected ones that need it.
+fn shared_human(shared: &SharedSkillStatus) -> String {
+    let state = match shared.state.as_str() {
+        "managed" => "installed",
+        "foreign" => "not the Svode skill",
+        _ => "not installed",
+    };
+    format!(
+        "shared skill {}: {state}{}{}\n",
+        shared.path,
+        agent_list("; read by ", &shared.readers, ""),
+        agent_list("; needed by ", &shared.required_by, "")
+    )
+}
+
+/// `prefix` and the names of the agents with ids `ids`, then `suffix`;
+/// nothing without agents.
+fn agent_list(prefix: &str, ids: &[String], suffix: &str) -> String {
+    if ids.is_empty() {
+        return String::new();
+    }
+    let names = ids
+        .iter()
+        .map(|id| Client::parse(id).map_or_else(|_| id.clone(), |client| client.name().to_string()))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("{prefix}{names}{suffix}")
 }
 
 fn clients_human(statuses: &[ClientStatus]) -> String {

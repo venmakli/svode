@@ -12,7 +12,7 @@ use tempfile::TempDir;
 
 use svode_core::agent_adapters::AgentAdapterKind;
 
-use crate::{Client, Machine, connect, disconnect, reconcile, status};
+use crate::{Client, Machine, connect, disconnect, reconcile, remove_shared_skill, status};
 
 const PREVIOUS: &str = "svode-desktop-bridge-v1";
 
@@ -356,13 +356,19 @@ fn artifacts_follow_the_way_each_client_is_connected() {
         codex.artifacts[1].path,
         home.path(".codex/config.toml").display().to_string()
     );
+    assert_eq!(
+        (codex.own_part.kind.as_str(), codex.own_part.state.as_str()),
+        ("mcp-entry", "managed")
+    );
+    // Without its entry Codex only reads the shared skill: not connected.
     home.write(".codex/config.toml", "");
     let codex = client(&status(&machine, &[], None), codex_client());
     assert_eq!(
         artifacts(&codex),
         [("skill", "managed"), ("mcp-entry", "absent")]
     );
-    assert_eq!(codex.attention_code.as_deref(), Some("incomplete"));
+    assert!(!codex.installed && codex.issues.is_empty(), "{codex:?}");
+    assert_eq!(codex.status, "mcp_not_installed");
 }
 
 #[test]
@@ -388,27 +394,151 @@ fn a_project_entry_that_overrides_the_user_one_is_a_conflict() {
 }
 
 #[test]
-fn disconnect_removes_only_marked_artifacts_and_the_shared_skill_with_codex_client() {
+fn disconnect_removes_only_the_own_part_and_keeps_the_shared_skill() {
     let home = Home::with_desktop();
     connect(&home.machine(), claude_client()).unwrap();
     connect(&home.machine(), codex_client()).unwrap();
     home.write(".agents/skills/other/SKILL.md", "other");
 
     assert!(disconnect(&home.machine(), codex_client()).unwrap());
-    assert!(home.link(".agents/skills/svode").is_none());
-    assert_eq!(home.read(".agents/skills/other/SKILL.md"), "other");
     let codex: toml::Table = toml::from_str(&home.read(".codex/config.toml")).unwrap();
     assert!(
         codex
             .get("mcp_servers")
             .is_none_or(|servers| servers.get("svode").is_none())
     );
+    assert!(home.link(".agents/skills/svode").is_some());
+    assert_eq!(home.read(".agents/skills/other/SKILL.md"), "other");
+    // Codex is left with the skill only, and nothing writes its entry back.
+    assert_eq!(reconcile(&home.machine()), (false, Vec::new()));
+    assert!(!client(&status(&home.machine(), &[], None), codex_client()).installed);
+    assert!(!disconnect(&home.machine(), codex_client()).unwrap());
     // Claude Code stays connected.
     assert!(home.link(".claude/skills/svode").is_some());
 
     assert!(disconnect(&home.machine(), claude_client()).unwrap());
     assert!(home.link(".claude/skills/svode").is_none());
     assert!(!disconnect(&home.machine(), claude_client()).unwrap());
+    assert!(home.link(".agents/skills/svode").is_some());
+}
+
+#[test]
+fn a_shared_skill_without_a_codex_entry_connects_nobody() {
+    let home = Home::with_desktop();
+    connect(&home.machine(), codex_client()).unwrap();
+    home.write(".codex/config.toml", "model = \"gpt-5.5\"\n");
+    let before = home.read(".codex/config.toml");
+
+    assert_eq!(reconcile(&home.machine()), (false, Vec::new()));
+    assert_eq!(home.read(".codex/config.toml"), before);
+    let status = status(&home.machine(), &[], None);
+    assert!(!client(&status, codex_client()).installed);
+    assert_eq!(status.shared_skill.state, "managed");
+    assert!(status.shared_skill.required_by.is_empty());
+}
+
+#[test]
+fn the_shared_skill_goes_only_by_its_explicit_removal_once_no_own_part_needs_it() {
+    let home = Home::with_desktop();
+    connect(&home.machine(), codex_client()).unwrap();
+    let shared = status(&home.machine(), &[], None).shared_skill;
+    assert_eq!(
+        shared.path,
+        home.path(".agents/skills/svode").display().to_string()
+    );
+    assert_eq!(shared.required_by, ["codex"]);
+
+    // The entry of Codex needs it: refused, nothing removed.
+    let error = remove_shared_skill(&home.machine()).unwrap_err();
+    assert_eq!(error.code, "SHARED_SKILL_REQUIRED");
+    assert!(error.message.contains("Codex"), "{error}");
+    assert!(home.link(".agents/skills/svode").is_some());
+
+    disconnect(&home.machine(), codex_client()).unwrap();
+    assert!(remove_shared_skill(&home.machine()).unwrap());
+    assert!(home.link(".agents/skills/svode").is_none());
+    assert_eq!(
+        status(&home.machine(), &[], None).shared_skill.state,
+        "absent"
+    );
+    assert!(!remove_shared_skill(&home.machine()).unwrap());
+
+    // A skill that is not Svode's link stays.
+    home.write(".agents/skills/svode/SKILL.md", "my own skill");
+    assert!(!remove_shared_skill(&home.machine()).unwrap());
+    assert_eq!(home.read(".agents/skills/svode/SKILL.md"), "my own skill");
+    assert_eq!(
+        status(&home.machine(), &[], None).shared_skill.state,
+        "foreign"
+    );
+}
+
+#[test]
+fn the_readers_of_the_shared_skill_are_the_found_agents_that_read_it() {
+    let home = Home::with_desktop();
+    let bin = home.path("login-bin");
+    for executable in ["codex", "claude"] {
+        home.write(&format!("login-bin/{executable}"), "#!/bin/sh\n");
+        fs::set_permissions(bin.join(executable), fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let machine = home.machine().with_search_path(Some(bin.as_os_str()));
+
+    let status = status(&machine, &[], None);
+    // Claude Code reads its own plugin, not the shared skill; Codex is a
+    // reader without being connected.
+    assert_eq!(status.shared_skill.readers, ["codex"]);
+    assert!(status.shared_skill.required_by.is_empty());
+    let codex = client(&status, codex_client());
+    assert!(codex.found && !codex.installed);
+    assert_eq!(
+        codex.path.as_deref(),
+        Some(bin.join("codex").to_str().unwrap())
+    );
+}
+
+#[test]
+fn the_status_keeps_its_json_fields_and_adds_the_parts() {
+    let home = Home::with_desktop();
+    connect(&home.machine(), codex_client()).unwrap();
+    let json = serde_json::to_value(status(&home.machine(), &[], None)).unwrap();
+    for field in ["server", "clients", "manualConfig", "doctor", "sharedSkill"] {
+        assert!(json.get(field).is_some(), "{field}");
+    }
+    let codex = json["clients"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|client| client["id"] == "codex")
+        .unwrap();
+    for field in [
+        "id",
+        "name",
+        "found",
+        "installed",
+        "managed",
+        "status",
+        "attentionCode",
+        "path",
+        "configPath",
+        "message",
+        "complete",
+        "version",
+        "issues",
+        "artifacts",
+        "ownPart",
+        "limitation",
+    ] {
+        assert!(codex.get(field).is_some(), "{field}");
+    }
+    assert_eq!(
+        json["sharedSkill"],
+        json!({
+            "path": home.path(".agents/skills/svode").display().to_string(),
+            "state": "managed",
+            "readers": json["sharedSkill"]["readers"],
+            "requiredBy": ["codex"],
+        })
+    );
 }
 
 #[test]
