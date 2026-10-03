@@ -91,6 +91,33 @@ test("a row shows one state in the priority of the contract", () => {
   ).toBe("deferred");
 });
 
+test("a limited agent shows its main restriction after required actions", () => {
+  const cursor = setup({
+    agent: "cursor",
+    verdict: {
+      state: "limited",
+      restrictions: ["external_sessions_unlisted", "no_terminal_continuation"],
+    },
+    adapter: null,
+    cliVersion: { state: "untested", testedUpTo: "2026.10.1" },
+  });
+  const view = agentRowView(cursor, null);
+  expect(view.state).toEqual({
+    kind: "limited",
+    restrictions: ["external_sessions_unlisted", "no_terminal_continuation"],
+  });
+  expect(view.warning).toEqual({ kind: "untested", testedUpTo: "2026.10.1" });
+  expect(view.action).toBeNull();
+  // The restriction stays when the agent is off, like a custom agent's.
+  expect(agentRowView({ ...cursor, enabled: false }, null).state.kind).toBe(
+    "limited",
+  );
+  expect(
+    agentRowView({ ...cursor, cli: signedOut }, null).state.kind,
+  ).toBe("sign_in");
+  expect(enableBlocked(cursor)).toBe(false);
+});
+
 test("each state offers at most one contextual action", () => {
   expect(agentRowView(setup({ cli: signedOut }), null).action).toBe("sign_in");
   expect(

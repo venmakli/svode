@@ -68,7 +68,7 @@ test("a custom row shows activity, then a missing command, then its restriction,
   });
   expect(
     customAgentRowView(setup({ restriction: "new_session_only" }), null).state,
-  ).toEqual({ kind: "limited", restriction: "new_session_only" });
+  ).toEqual({ kind: "limited", restrictions: ["new_session_only"] });
   expect(
     customAgentRowView(
       setup({ executablePath: null, restriction: "new_session_only" }),

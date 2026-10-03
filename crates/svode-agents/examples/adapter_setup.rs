@@ -67,9 +67,8 @@ async fn main() {
         let launch = AdapterRuntimeRegistry
             .acp_launch(
                 agent,
-                &node,
-                &installed,
                 &PathBuf::from(executable),
+                Some((&node, &installed)),
                 &target.cwd,
             )
             .expect("agent with an adapter entrypoint");

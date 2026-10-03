@@ -8,6 +8,11 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import { Switch } from "@/components/ui/switch";
 import type { AgentInfoDto, AgentSetupDto } from "../api";
 import {
@@ -17,6 +22,7 @@ import {
   type AgentCliWarning,
   type AgentOperation,
   type AgentOperationError,
+  type AgentRestriction,
   type AgentRowAction,
   type AgentRowState,
   type AgentRowView,
@@ -99,6 +105,21 @@ export function declaredText(capabilities: AgentInfoDto["capabilities"]) {
   return m.settings_agents_declared({ capabilities: declared.join(", ") });
 }
 
+function restrictionText(restriction: AgentRestriction) {
+  switch (restriction) {
+    case "new_session_only":
+      return m.settings_agents_state_new_session_only();
+    case "external_sessions_unlisted":
+      return m.settings_agents_restriction_external_sessions_unlisted();
+    case "no_terminal_continuation":
+      return m.settings_agents_restriction_no_terminal_continuation();
+    case "no_permission_requests":
+      return m.settings_agents_restriction_no_permission_requests();
+    case "turn_errors_hidden":
+      return m.settings_agents_restriction_turn_errors_hidden();
+  }
+}
+
 export function stateText(state: AgentRowState) {
   switch (state.kind) {
     case "deferred":
@@ -155,7 +176,7 @@ export function stateText(state: AgentRowState) {
         : checked;
     }
     case "limited":
-      return m.settings_agents_state_new_session_only();
+      return restrictionText(state.restrictions[0]);
     case "disabled":
       return m.settings_agents_state_disabled();
     case "ready":
@@ -295,6 +316,25 @@ export function AgentRowFrame({
         >
           {stateText(state)}
           {warning ? ` · ${warningText(warning)}` : null}
+          {state.kind === "limited" && state.restrictions.length > 1 ? (
+            <>
+              {" · "}
+              <Popover>
+                <PopoverTrigger asChild>
+                  <Button variant="link" size="xs" className="h-auto p-0">
+                    {m.settings_agents_restrictions_all()}
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent align="start" className="w-80 text-sm">
+                  <ul className="list-disc space-y-1 pl-4">
+                    {state.restrictions.map((restriction) => (
+                      <li key={restriction}>{restrictionText(restriction)}</li>
+                    ))}
+                  </ul>
+                </PopoverContent>
+              </Popover>
+            </>
+          ) : null}
         </span>
       }
       actions={

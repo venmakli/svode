@@ -18,6 +18,9 @@
 //! a question, or cancels the turn; the answer is then repeated to show
 //! `not_pending`.
 //!
+//! `--cancel-after <ms>` cancels the turn that long after the prompt, for
+//! agents that run tools without asking.
+//!
 //! `--open <session id>` opens an existing session instead of creating one:
 //! `session/load` replays its history, no prompt is sent unless `--prompt`
 //! is given. `--reopen` closes the connection after the turn, connects
@@ -51,6 +54,7 @@ async fn main() {
     let mut cwd = std::env::current_dir().unwrap();
     let mut prompt = None;
     let mut on_pending = None;
+    let mut cancel_after = None;
     let mut open = None;
     let mut read = None;
     let mut writer_refusal = None;
@@ -64,6 +68,14 @@ async fn main() {
             "--agent" => agent = args.next().expect("--agent value"),
             "--cwd" => cwd = PathBuf::from(args.next().expect("--cwd value")),
             "--prompt" => prompt = Some(args.next().expect("--prompt value")),
+            "--cancel-after" => {
+                cancel_after = Some(Duration::from_millis(
+                    args.next()
+                        .expect("--cancel-after milliseconds")
+                        .parse()
+                        .expect("--cancel-after milliseconds"),
+                ))
+            }
             "--on-pending" => on_pending = Some(args.next().expect("--on-pending value")),
             "--open" => open = Some(args.next().expect("--open value")),
             "--reopen" => reopen = true,
@@ -107,6 +119,7 @@ async fn main() {
         lists_catalog: list,
         read_only_open: read.is_some(),
         writer_refusal,
+        session_per_connection: false,
     };
     let connection = connect(&runtime, &launch).await;
 
@@ -216,6 +229,14 @@ async fn main() {
         let mut subscription = runtime.subscribe(&key).unwrap();
         let turn = runtime.prompt(&key, &prompt).unwrap();
         println!("turn accepted: {turn}");
+        if let Some(delay) = cancel_after {
+            let runtime = runtime.clone();
+            let key = key.clone();
+            tokio::spawn(async move {
+                tokio::time::sleep(delay).await;
+                println!("cancel requested: {:?}", runtime.cancel(&key));
+            });
+        }
         let mut gaps = 0;
         while !(subscription.snapshot.turn.phase == TurnPhase::None
             && subscription.snapshot.turn.turn_id.is_some())

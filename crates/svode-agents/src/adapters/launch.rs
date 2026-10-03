@@ -1,13 +1,14 @@
 use std::collections::BTreeMap;
+use std::path::PathBuf;
 
 use serde::Serialize;
 use svode_core::agent_adapters::{AgentAdapterKind, resolve_space_executable, system_home_dir};
 
 use super::{
-    AdapterError, AdapterInstallState, AdapterStore, CliVersionStatus, adapter_pin,
-    cli_version_range, detect_node, evaluate_cli_version,
+    AdapterError, AdapterInstallState, AdapterPin, AdapterStore, CliVersionStatus,
+    InstalledAdapter, cli_version_range, detect_node, evaluate_cli_version,
 };
-use crate::registry::{AdapterRuntimeRegistry, AdapterTarget, RuntimeCommandRunner};
+use crate::registry::{AcpEntrypoint, AdapterRuntimeRegistry, AdapterTarget, RuntimeCommandRunner};
 use crate::runtime::{AcpLaunch, LaunchEnvironment};
 
 /// Why an agent cannot start now (Stage 10 `03` A1). Each is a recoverable
@@ -76,7 +77,54 @@ impl AdapterStore {
                 .ok_or_else(|| LaunchUnavailable::ExecutableMissing {
                     executable: agent.executable().to_string(),
                 })?;
-        let pin = adapter_pin(agent).ok_or(LaunchUnavailable::NotSupported)?;
+        let entrypoint = AdapterRuntimeRegistry
+            .acp_entrypoint(agent)
+            .ok_or(LaunchUnavailable::NotSupported)?;
+        let adapter_run = match entrypoint {
+            AcpEntrypoint::Command { .. } => None,
+            AcpEntrypoint::Adapter { adapter: pin, .. } => {
+                Some(self.adapter_run(pin, target, runner).await?)
+            }
+        };
+        let version = AdapterRuntimeRegistry
+            .cli_version(&executable, target, runner)
+            .await
+            .ok();
+        if let Some(range) = cli_version_range(agent)
+            && let CliVersionStatus::Unsupported { minimum } =
+                evaluate_cli_version(version.as_deref(), range)
+        {
+            return Err(LaunchUnavailable::CliUnsupported {
+                version: version.unwrap_or_default().trim().to_string(),
+                minimum,
+            });
+        }
+        let mut launch = AdapterRuntimeRegistry
+            .acp_launch(
+                agent,
+                &executable,
+                adapter_run
+                    .as_ref()
+                    .map(|(node, installed)| (node.as_path(), installed)),
+                &home,
+            )
+            .ok_or(LaunchUnavailable::NotSupported)?;
+        launch.environment = context.environment.clone();
+        // The description's variables win over the provenance's.
+        let mut env = context.env.clone();
+        env.append(&mut launch.env);
+        launch.env = env;
+        Ok(launch)
+    }
+
+    /// Node.js of the version the adapter requires and the installed
+    /// adapter of the current pin.
+    async fn adapter_run(
+        &self,
+        pin: &AdapterPin,
+        target: &AdapterTarget,
+        runner: &dyn RuntimeCommandRunner,
+    ) -> Result<(PathBuf, InstalledAdapter), LaunchUnavailable> {
         let node = detect_node(
             pin.node_major,
             &target.cwd,
@@ -102,28 +150,7 @@ impl AdapterStore {
                 .installed(pin)
                 .ok_or(LaunchUnavailable::AdapterNotInstalled)?,
         };
-        let version = AdapterRuntimeRegistry
-            .cli_version(&executable, target, runner)
-            .await
-            .ok();
-        if let Some(range) = cli_version_range(agent)
-            && let CliVersionStatus::Unsupported { minimum } =
-                evaluate_cli_version(version.as_deref(), range)
-        {
-            return Err(LaunchUnavailable::CliUnsupported {
-                version: version.unwrap_or_default().trim().to_string(),
-                minimum,
-            });
-        }
-        let mut launch = AdapterRuntimeRegistry
-            .acp_launch(agent, &node, &installed, &executable, &home)
-            .ok_or(LaunchUnavailable::NotSupported)?;
-        launch.environment = context.environment.clone();
-        // The description's variables win over the provenance's.
-        let mut env = context.env.clone();
-        env.append(&mut launch.env);
-        launch.env = env;
-        Ok(launch)
+        Ok((node, installed))
     }
 }
 
@@ -137,6 +164,7 @@ mod tests {
     use std::pin::Pin;
 
     use super::*;
+    use crate::adapters::adapter_pin;
     use crate::registry::{RuntimeCommandOutput, RuntimeCommandRequest};
 
     /// Answers `--version` of `node` and of the agent's CLI.
@@ -327,6 +355,63 @@ mod tests {
             })
             .unwrap(),
             serde_json::json!({ "code": "adapter_needs_update", "installedVersion": "0.0.1" })
+        );
+    }
+
+    #[tokio::test]
+    async fn an_agent_with_its_own_command_needs_no_node_or_adapter() {
+        let root = tempfile::tempdir().unwrap();
+        let bin = tempfile::tempdir().unwrap();
+        executable(bin.path(), "opencode");
+        let store = AdapterStore::new(root.path().to_path_buf());
+        let opencode = |cli| Versions { node: "", cli };
+
+        let launch = store
+            .launch_plan(
+                AgentAdapterKind::Opencode,
+                None,
+                &context(bin.path()),
+                &opencode("2.0.22"),
+            )
+            .await
+            .unwrap();
+        assert_eq!(launch.agent, "opencode");
+        assert_eq!(launch.program, bin.path().join("opencode"));
+        assert_eq!(launch.args, ["acp"]);
+        // Only the provenance variables are added.
+        assert_eq!(
+            launch.env.keys().collect::<Vec<_>>(),
+            ["CODEX_PATH", "SVODE_MCP_ROUTINE_CALLER_TOKEN"]
+        );
+        assert_eq!(
+            store
+                .launch_plan(
+                    AgentAdapterKind::Opencode,
+                    None,
+                    &context(bin.path()),
+                    &opencode("1.18.31"),
+                )
+                .await
+                .unwrap_err(),
+            LaunchUnavailable::CliUnsupported {
+                version: "1.18.31".into(),
+                minimum: "2.0.22".into()
+            }
+        );
+        // A described agent that is not found stays missing, an undescribed
+        // one is not supported.
+        executable(bin.path(), "hermes");
+        assert_eq!(
+            store
+                .launch_plan(
+                    AgentAdapterKind::Hermes,
+                    None,
+                    &context(bin.path()),
+                    &opencode("0.18.2"),
+                )
+                .await
+                .unwrap_err(),
+            LaunchUnavailable::NotSupported
         );
     }
 }

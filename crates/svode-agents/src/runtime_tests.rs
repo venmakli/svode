@@ -105,6 +105,7 @@ fn launch() -> AcpLaunch {
         lists_catalog: false,
         read_only_open: false,
         writer_refusal: None,
+        session_per_connection: false,
     }
 }
 
@@ -1824,6 +1825,51 @@ async fn catalog_connections_offer_one_open_listing_connection_per_agent() {
 }
 
 #[tokio::test]
+async fn a_connection_of_an_agent_with_one_session_per_connection_serves_one_session() {
+    let runtime = AgentRuntime::default();
+    let launch = AcpLaunch {
+        session_per_connection: true,
+        ..listing("pi")
+    };
+    let (id, mut agent) = attached_with(&runtime, &launch);
+    assert_eq!(runtime.catalog_connections().len(), 1);
+    let (key, ()) = tokio::join!(
+        async {
+            runtime
+                .new_session(id, Path::new("/project"), &[])
+                .await
+                .unwrap()
+        },
+        agent.open_session()
+    );
+    // Its list now has only the session's directory.
+    assert!(runtime.catalog_connections().is_empty());
+    assert_eq!(
+        runtime
+            .new_session(id, Path::new("/project"), &[])
+            .await
+            .unwrap_err(),
+        AgentRuntimeError::ConnectionTaken
+    );
+    let other = SessionKey::from_acp("pi", "s2", false);
+    assert_eq!(
+        runtime
+            .open_session(
+                id,
+                &other,
+                Path::new("/project"),
+                ExternalLiveness::Free,
+                UnknownLiveness::NotConfirmed,
+            )
+            .await
+            .unwrap_err(),
+        AgentRuntimeError::ConnectionTaken
+    );
+    agent.silent().await;
+    assert!(runtime.subscribe(&key).is_ok());
+}
+
+#[tokio::test]
 async fn an_agent_that_declares_no_list_is_no_catalogue_and_its_declaration_is_kept() {
     let runtime = AgentRuntime::default();
     let (id, mut agent) = attached_with(&runtime, &listing("custom-agent"));
@@ -2184,6 +2230,7 @@ fn reading(writer_refusal: Option<&str>) -> AcpLaunch {
     AcpLaunch {
         read_only_open: true,
         writer_refusal: writer_refusal.map(str::to_string),
+        session_per_connection: false,
         ..launch()
     }
 }
@@ -2502,6 +2549,7 @@ fn sh_agent(env: &[(&str, &str)]) -> AcpLaunch {
   case "$line" in
     *'"method":"initialize"'*) printf '{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":1,"agentCapabilities":{"sessionCapabilities":{"list":{}}},"agentInfo":{"name":"sh","version":"%s|%s"}}}\n' "$id" "${SVODE_PROBE:--}" "${HOME:+home}";;
     *'"method":"session/list"'*) printf '{"jsonrpc":"2.0","id":%s,"result":{"sessions":[]}}\n' "$id";;
+    *'"method":"session/new"'*) printf '{"jsonrpc":"2.0","id":%s,"result":{"sessionId":"s1"}}\n' "$id";;
   esac
 done"#;
     AcpLaunch {
@@ -2514,6 +2562,41 @@ done"#;
         cwd: std::env::temp_dir(),
         ..launch()
     }
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_launch_plan_with_one_session_per_connection_starts_another_after_a_session() {
+    let runtime = AgentRuntime::default();
+    let plan = AcpLaunch {
+        agent: "pi".into(),
+        lists_catalog: true,
+        session_per_connection: true,
+        ..sh_agent(&[])
+    };
+    let catalog = runtime.acquire(plan.clone()).await.unwrap();
+    runtime
+        .new_session(catalog.connection(), Path::new("/project"), &[])
+        .await
+        .unwrap();
+    let next = runtime.acquire(plan.clone()).await.unwrap();
+    assert_ne!(next.connection(), catalog.connection());
+    assert_eq!(
+        runtime.catalog_connections(),
+        vec![CatalogConnection {
+            connection: next.connection(),
+            agent: "pi".into()
+        }]
+    );
+    // An agent without the rule keeps sharing its connection.
+    let shared = runtime.acquire(sh_agent(&[])).await.unwrap();
+    runtime
+        .new_session(shared.connection(), Path::new("/project"), &[])
+        .await
+        .unwrap();
+    let again = runtime.acquire(sh_agent(&[])).await.unwrap();
+    assert_eq!(again.connection(), shared.connection());
+    runtime.shutdown().await;
 }
 
 #[cfg(unix)]

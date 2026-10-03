@@ -101,6 +101,6 @@ function customAgentState(
   if (!setup.executablePath)
     return { kind: "command_missing", command: setup.command };
   if (setup.restriction)
-    return { kind: "limited", restriction: setup.restriction };
+    return { kind: "limited", restrictions: [setup.restriction] };
   return { kind: setup.enabled ? "ready" : "disabled" };
 }

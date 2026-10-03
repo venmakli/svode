@@ -49,8 +49,19 @@ export interface AgentAdapterSetupDto {
   node: AgentNodeStatusDto;
 }
 
+/** What a limited agent lacks, recorded with live evidence. */
+export type AgentRestrictionDto =
+  | "external_sessions_unlisted"
+  | "no_terminal_continuation"
+  | "no_permission_requests"
+  | "turn_errors_hidden";
+
 /** Whether Svode offers the agent for chat in this version. */
-export type AgentVerdictDto = { state: "supported" } | { state: "deferred" };
+export type AgentVerdictDto =
+  | { state: "supported" }
+  /** The first restriction is the main one. */
+  | { state: "limited"; restrictions: AgentRestrictionDto[] }
+  | { state: "deferred" };
 
 /** Setup facts of one agent; reading them starts no agent process. */
 export interface AgentSetupDto {

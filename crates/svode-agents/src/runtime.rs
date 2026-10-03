@@ -130,6 +130,11 @@ pub struct AcpLaunch {
     /// The error `data.reason` with which the agent refuses to attach a
     /// session another of its clients writes to.
     pub writer_refusal: Option<String>,
+    /// Recorded evidence that the agent serves one session per connection
+    /// and lists differently once a session ran on it: a connection that
+    /// created, opened or read a session serves only that one and is no
+    /// longer the plan's shared or catalogue connection.
+    pub session_per_connection: bool,
 }
 
 /// The user's login shell environment a host captured for agent processes
@@ -292,6 +297,10 @@ struct Connection {
     lists_catalog: bool,
     read_only_open: bool,
     writer_refusal: Option<String>,
+    session_per_connection: bool,
+    /// A connection of an agent with one session per connection that has
+    /// served its session.
+    taken: AtomicBool,
     rpc: Arc<RpcClient>,
     state: Mutex<ConnectionState>,
     info: Mutex<Option<AgentInfo>>,
@@ -421,6 +430,8 @@ impl AgentRuntime {
             lists_catalog: launch.lists_catalog,
             read_only_open: launch.read_only_open,
             writer_refusal: launch.writer_refusal.clone(),
+            session_per_connection: launch.session_per_connection,
+            taken: AtomicBool::new(false),
             rpc,
             state: Mutex::new(ConnectionState::Starting),
             info: Mutex::new(None),
@@ -544,6 +555,31 @@ impl AgentRuntime {
         }
     }
 
+    /// Gives the connection of an agent with one session per connection to
+    /// the session about to start on it: once taken, its plan's next
+    /// acquire starts another connection and its list no longer stands for
+    /// the catalogue.
+    async fn take_for_session(
+        &self,
+        id: ConnectionId,
+        connection: &Connection,
+    ) -> Result<(), AgentRuntimeError> {
+        if !connection.session_per_connection {
+            return Ok(());
+        }
+        if connection.taken.swap(true, Ordering::Relaxed) {
+            return Err(AgentRuntimeError::ConnectionTaken);
+        }
+        let slot = connection.slot.lock().unwrap().clone();
+        if let Some(slot) = slot {
+            let mut current = slot.lock().await;
+            if *current == Some(id) {
+                *current = None;
+            }
+        }
+        Ok(())
+    }
+
     /// The process-wide writer registry; a host registers its managed PTYs
     /// here, so ACP and PTY never write to one session at once.
     pub fn writers(&self) -> WriterRegistry {
@@ -572,6 +608,7 @@ impl AgentRuntime {
             .filter(|(_, connection)| {
                 connection.lists_catalog
                     && connection.is_open()
+                    && !connection.taken.load(Ordering::Relaxed)
                     && connection
                         .info
                         .lock()
@@ -693,6 +730,7 @@ impl AgentRuntime {
         if connection.info.lock().unwrap().is_none() {
             self.initialize(&connection).await?;
         }
+        self.take_for_session(id, &connection).await?;
         let response = connection
             .call(
                 acp::SESSION_NEW,
@@ -901,6 +939,7 @@ impl AgentRuntime {
         } else {
             return Err(AgentRuntimeError::OpenUnsupported);
         };
+        self.take_for_session(id, &connection).await?;
         let claim = self
             .inner
             .writers
@@ -988,6 +1027,7 @@ impl AgentRuntime {
         if !loads {
             return Err(AgentRuntimeError::ReadOnlyUnsupported);
         }
+        self.take_for_session(id, &connection).await?;
         let acp_id = key.session_id.clone();
         let session = self.session_entry(
             &connection,

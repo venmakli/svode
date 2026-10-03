@@ -880,6 +880,71 @@ if (!isolatedProcess) {
     }
   });
 
+  test("a limited agent shows its main restriction with all of them on request and can be turned on; an agent with its own ACP command is ready without an adapter", async () => {
+    const originalLocale = getLocale();
+    await setLocale("en", { reload: false });
+    const status = providersStatus([
+      client("claude-code", "Claude Code", true),
+      client("codex", "Codex", true),
+    ]);
+    const found = (agent: string, version: string): AgentSetupDto => ({
+      ...deferredSetup(agent, true),
+      verdict: { state: "supported" },
+      canSignIn: true,
+      cli: { ...deferredSetup(agent, true).cli, version },
+      cliRange: { minimum: version, testedUpTo: version },
+      cliVersion: { state: "supported" },
+    });
+    const harness = await renderSection(
+      () => status,
+      () => {},
+      [
+        agentSetup("codex"),
+        agentSetup("claude-code"),
+        {
+          ...found("cursor", "2026.10.01-e373342"),
+          verdict: {
+            state: "limited",
+            restrictions: [
+              "external_sessions_unlisted",
+              "no_terminal_continuation",
+            ],
+          },
+        },
+        found("opencode", "2.0.22"),
+      ],
+    );
+    try {
+      const cursor = agentRow(harness.dom, "cursor");
+      expect(title(cursor)).toBe("Cursor2026.10.01-e373342");
+      expect(stateOf(cursor)).toBe(
+        "Only sessions started in Svode are listed: the agent's terminal and IDE sessions continue there · All restrictions",
+      );
+      expect(switchOf(cursor).disabled).toBe(false);
+      expect(switchOf(cursor).getAttribute("aria-checked")).toBe("true");
+      await act(async () => {
+        within(cursor, "All restrictions").click();
+        await settle();
+      });
+      const items = Array.from(
+        harness.dom.window.document.querySelectorAll(
+          "[data-slot=popover-content] li",
+        ),
+      ).map((item) => item.textContent);
+      expect(items).toEqual([
+        "Only sessions started in Svode are listed: the agent's terminal and IDE sessions continue there",
+        "Sessions started in Svode cannot be continued in the agent's terminal",
+      ]);
+
+      const opencode = agentRow(harness.dom, "opencode");
+      expect(stateOf(opencode)).toBe("Ready");
+      expect(switchOf(opencode).disabled).toBe(false);
+    } finally {
+      await harness.cleanup();
+      await setLocale(originalLocale, { reload: false });
+    }
+  });
+
   test("turning on an agent that needs its adapter asks first and shows the install and its failure in the row; with nothing to install or remove the switch acts at once", async () => {
     const originalLocale = getLocale();
     await setLocale("en", { reload: false });

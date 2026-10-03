@@ -55,12 +55,24 @@ const CODEX_ACP: AdapterPin = AdapterPin {
     manifest: include_str!("pins/codex-acp.json"),
 };
 
+/// A third-party adapter of pi, not written by the pi team; it runs the
+/// user's `pi --mode rpc`.
+const PI_ACP: AdapterPin = AdapterPin {
+    agent: AgentAdapterKind::Pi,
+    package: "pi-acp",
+    version: "0.0.34",
+    entry: "dist/index.js",
+    node_major: 20,
+    manifest: include_str!("pins/pi-acp.json"),
+};
+
 /// The adapter pin of an agent, or `None` when its ACP entrypoint is its
 /// own command.
 pub fn adapter_pin(agent: AgentAdapterKind) -> Option<&'static AdapterPin> {
     match agent {
         AgentAdapterKind::ClaudeCode => Some(&CLAUDE_AGENT_ACP),
         AgentAdapterKind::Codex => Some(&CODEX_ACP),
+        AgentAdapterKind::Pi => Some(&PI_ACP),
         _ => None,
     }
 }
@@ -76,7 +88,9 @@ pub struct CliVersionRange {
 
 /// Claude Code: the CLI the pinned Claude Agent SDK bundles, newer CLIs
 /// being the verified direction. Codex: the `@openai/codex` range the
-/// pinned `codex-acp` declares. `None` until the agent's range is verified.
+/// pinned `codex-acp` declares. opencode, Cursor and pi: the version checked
+/// live in slice 3.2 (2026-10-03), the only one verified with their
+/// entrypoint. `None` until the agent's range is verified.
 pub fn cli_version_range(agent: AgentAdapterKind) -> Option<CliVersionRange> {
     match agent {
         AgentAdapterKind::ClaudeCode => Some(CliVersionRange {
@@ -86,6 +100,19 @@ pub fn cli_version_range(agent: AgentAdapterKind) -> Option<CliVersionRange> {
         AgentAdapterKind::Codex => Some(CliVersionRange {
             minimum: "0.159.1",
             tested_up_to: "0.159.3",
+        }),
+        AgentAdapterKind::Opencode => Some(CliVersionRange {
+            minimum: "2.0.22",
+            tested_up_to: "2.0.22",
+        }),
+        // `agent --version` prints `2026.10.01-e373342`.
+        AgentAdapterKind::Cursor => Some(CliVersionRange {
+            minimum: "2026.10.1",
+            tested_up_to: "2026.10.1",
+        }),
+        AgentAdapterKind::Pi => Some(CliVersionRange {
+            minimum: "1.0.0",
+            tested_up_to: "1.0.0",
         }),
         _ => None,
     }

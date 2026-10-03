@@ -1,4 +1,10 @@
-import type { AgentCheckDto, AgentInfoDto, AgentSetupDto } from "../api";
+import type {
+  AgentCheckDto,
+  AgentInfoDto,
+  AgentRestrictionDto,
+  AgentSetupDto,
+  CustomAgentSetupDto,
+} from "../api";
 
 /** What the user did with one agent row. */
 export type AgentOperation =
@@ -35,6 +41,12 @@ type NodeProblem = Exclude<
   { state: "ready" }
 >;
 
+/** What an agent lacks: a limited built-in agent's recorded restrictions or
+ * what a custom agent did not declare. */
+export type AgentRestriction =
+  | AgentRestrictionDto
+  | NonNullable<CustomAgentSetupDto["restriction"]>;
+
 /** The one state a row shows, in the priority of the settings contract. */
 export type AgentRowState =
   | { kind: "deferred" }
@@ -54,7 +66,8 @@ export type AgentRowState =
       /** What a custom agent declared; built-in agents are described. */
       declared: AgentInfoDto["capabilities"] | null;
     }
-  | { kind: "limited"; restriction: "new_session_only" }
+  /** The first restriction is the main one the row shows. */
+  | { kind: "limited"; restrictions: AgentRestriction[] }
   | { kind: "disabled" }
   | { kind: "ready" };
 
@@ -178,7 +191,10 @@ function stateFor(
     };
   if (activity?.kind === "checked") return checkedState(activity.result);
   return (
-    requiredAction(setup) ?? { kind: setup.enabled ? "ready" : "disabled" }
+    requiredAction(setup) ??
+    (setup.verdict.state === "limited"
+      ? { kind: "limited", restrictions: setup.verdict.restrictions }
+      : { kind: setup.enabled ? "ready" : "disabled" })
   );
 }
 
@@ -186,6 +202,7 @@ const WARNED_STATES = new Set<AgentRowState["kind"]>([
   "ready",
   "disabled",
   "checked",
+  "limited",
 ]);
 
 /** One state, one contextual action and an optional CLI version warning. */

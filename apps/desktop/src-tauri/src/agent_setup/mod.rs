@@ -391,7 +391,7 @@ mod tests {
     /// each agent through the Desktop planner (login shell environment and
     /// PATH) and shows that no adapter process is left.
     #[tokio::test]
-    #[ignore = "live: downloads the pinned adapters from npm and starts the user's Codex and Claude Code"]
+    #[ignore = "live: downloads the pinned adapters from npm and starts the user's described agents"]
     async fn live_check_starts_initializes_and_closes_the_users_agents() {
         use std::time::Instant;
 
@@ -403,7 +403,10 @@ mod tests {
         let setup = live_setup_with_pinned_adapters(dir.path()).await;
         let runtime = AgentRuntime::default();
         let connections = AgentConnections::new(runtime.clone(), setup.clone());
-        for agent in adapter_agents() {
+        let described = AgentAdapterKind::ALL
+            .into_iter()
+            .filter(|agent| AdapterRuntimeRegistry.acp_entrypoint(*agent).is_some());
+        for agent in described {
             let started = Instant::now();
             let check = connections.check(agent.as_str()).await;
             println!("{agent:?}: {check:?} in {:?}", started.elapsed());
@@ -498,7 +501,14 @@ mod tests {
 
         assert_eq!(
             setup.catalog_agents(),
-            ["codex", "claude-code", on.id.agent_id().as_str()]
+            [
+                "codex",
+                "claude-code",
+                "cursor",
+                "opencode",
+                "pi",
+                on.id.agent_id().as_str()
+            ]
         );
         assert_eq!(
             setup.plan(off.id.agent_id().as_str()).await,

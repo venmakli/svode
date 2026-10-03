@@ -6,6 +6,7 @@ use std::time::Duration;
 use svode_agents::activity::ConnectionState;
 use svode_agents::adapters::LaunchUnavailable;
 use svode_agents::catalog::ListBounds;
+use svode_agents::registry::AdapterRuntimeRegistry;
 use svode_agents::{AcpLaunch, AgentCheck, AgentRuntime, RuntimeConfig};
 use svode_core::agent_adapters::AgentAdapterKind;
 use tauri::async_runtime::JoinHandle;
@@ -39,6 +40,7 @@ done"#;
         lists_catalog: true,
         read_only_open: false,
         writer_refusal: None,
+        session_per_connection: false,
     }
 }
 
@@ -349,10 +351,13 @@ async fn a_draft_check_starts_the_command_and_reports_what_it_declares() {
 }
 
 #[test]
-fn an_open_collection_keeps_codex_and_claude_code_for_their_acp_lists() {
+fn an_open_collection_keeps_the_agents_whose_acp_list_is_their_catalogue() {
     let dir = tempfile::tempdir().unwrap();
     let setup = crate::agent_setup::AgentSetupState::new(dir.path(), dir.path().to_path_buf());
-    assert_eq!(setup.catalog_agents(), ["codex", "claude-code"]);
+    assert_eq!(
+        setup.catalog_agents(),
+        ["codex", "claude-code", "cursor", "opencode", "pi"]
+    );
 }
 
 #[tokio::test]
@@ -379,7 +384,7 @@ async fn the_desktop_planner_refuses_a_disabled_or_unknown_agent() {
 /// adapter process is left. Lists only: no session is created, loaded or
 /// prompted.
 #[tokio::test]
-#[ignore = "live: downloads the pinned adapters from npm and lists the user's Codex and Claude Code sessions"]
+#[ignore = "live: downloads the pinned adapters from npm and lists the user's agents' sessions"]
 async fn live_the_acp_lists_are_the_catalogue_with_native_status() {
     use std::collections::{BTreeMap, HashSet};
 
@@ -419,15 +424,25 @@ async fn live_the_acp_lists_are_the_catalogue_with_native_status() {
     let mut ids = HashSet::new();
     for session in &warm.sessions {
         assert!(ids.insert(&session.id), "duplicate {}", session.id);
-        assert!(
+        let native = session
+            .source
+            .builtin()
+            .is_some_and(|agent| AdapterRuntimeRegistry.acp_id_is_native(agent));
+        assert_eq!(
             !session.id.contains(":acp:"),
-            "listed ids join the native namespace"
+            native,
+            "only ids with evidence join the native namespace: {}",
+            session.id
         );
     }
-    for source in [
-        AgentAdapterKind::Codex.id(),
-        AgentAdapterKind::ClaudeCode.id(),
-    ] {
+    // The agents whose sessions the project has, `codex,claude-code` unless
+    // `SVODE_LIVE_AGENTS` names others.
+    let agents = std::env::var("SVODE_LIVE_AGENTS").unwrap_or("codex,claude-code".into());
+    for source in agents.split(',').map(|id| {
+        AgentAdapterKind::from_id(id)
+            .expect("a built-in agent")
+            .id()
+    }) {
         let report = warm
             .sources
             .iter()

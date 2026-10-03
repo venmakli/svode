@@ -21,6 +21,10 @@ pub enum AgentRuntimeError {
     ConnectionClosed,
     #[error("agent session not found")]
     SessionNotFound,
+    /// The agent keeps one session per connection and this connection
+    /// already had one: acquire another connection.
+    #[error("the agent connection already serves a session")]
+    ConnectionTaken,
     /// The agent declares neither `session/load` nor `session/resume`.
     #[error("the agent cannot open existing sessions")]
     OpenUnsupported,

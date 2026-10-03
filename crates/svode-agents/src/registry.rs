@@ -490,7 +490,7 @@ impl AdapterRuntimeRegistry {
                 return unknown_diagnostic_with_path(adapter, &path, "version_failed", error);
             }
         };
-        let Some(auth_arguments) = auth_status_arguments(adapter) else {
+        let Some(auth) = auth_status_command(adapter) else {
             // Without a sign-in status command, sign-in is unknown until the
             // agent runs (Stage 10 `03` A5).
             return AdapterDiagnostic {
@@ -506,13 +506,16 @@ impl AdapterRuntimeRegistry {
         match runner
             .run(&RuntimeCommandRequest {
                 program: path.clone(),
-                arguments: auth_arguments,
+                arguments: auth.arguments.iter().map(|arg| arg.to_string()).collect(),
                 cwd: target.cwd.clone(),
                 search_path: target.search_path.clone(),
             })
             .await
-        {
-            Ok(output) if output.exit_code == Some(0) => AdapterDiagnostic {
+            .and_then(|output| match auth.signal.signed_in(&output) {
+                Some(signed_in) => Ok((signed_in, output)),
+                None => Err("sign-in status output is not recognised".to_string()),
+            }) {
+            Ok((true, _)) => AdapterDiagnostic {
                 adapter,
                 status: AdapterDiagnosticStatus::Ready,
                 executable_path: Some(path.to_string_lossy().into_owned()),
@@ -521,7 +524,7 @@ impl AdapterRuntimeRegistry {
                 code: None,
                 message: None,
             },
-            Ok(output) => AdapterDiagnostic {
+            Ok((false, output)) => AdapterDiagnostic {
                 adapter,
                 status: AdapterDiagnosticStatus::Unauthenticated,
                 executable_path: Some(path.to_string_lossy().into_owned()),
@@ -543,13 +546,19 @@ impl AdapterRuntimeRegistry {
     }
 }
 
-/// The official ACP adapter of a registry agent and the variable through
-/// which the adapter runs the user's own CLI, so terminal and UI sessions
-/// share one auth, configuration and session store.
+/// How the ACP entrypoint of a registry agent starts. Either way it runs
+/// the user's own CLI, so terminal and UI sessions share one auth,
+/// configuration and session store.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct AcpEntrypoint {
-    pub adapter: &'static AdapterPin,
-    pub executable_env: &'static str,
+pub enum AcpEntrypoint {
+    /// The user's executable with the agent's own ACP arguments.
+    Command { args: &'static [&'static str] },
+    /// An npm adapter that Node.js runs; the adapter runs the user's
+    /// executable named by `executable_env`.
+    Adapter {
+        adapter: &'static AdapterPin,
+        executable_env: &'static str,
+    },
 }
 
 impl AdapterRuntimeRegistry {
@@ -558,9 +567,13 @@ impl AdapterRuntimeRegistry {
         let executable_env = match adapter {
             AgentAdapterKind::Codex => "CODEX_PATH",
             AgentAdapterKind::ClaudeCode => "CLAUDE_CODE_EXECUTABLE",
+            AgentAdapterKind::Pi => "PI_ACP_PI_COMMAND",
+            AgentAdapterKind::Opencode | AgentAdapterKind::Cursor => {
+                return Some(AcpEntrypoint::Command { args: &["acp"] });
+            }
             _ => return None,
         };
-        Some(AcpEntrypoint {
+        Some(AcpEntrypoint::Adapter {
             adapter: adapter_pin(adapter)?,
             executable_env,
         })
@@ -570,60 +583,93 @@ impl AdapterRuntimeRegistry {
     /// source. E01: the lists of Codex and Claude Code cover the sessions
     /// of the CLI, IDE and the provider's desktop app. Both are listed
     /// without `cwd`: their filter matches the exact directory only, so it
-    /// would drop sessions in a Space's subfolders.
+    /// would drop sessions in a Space's subfolders. Slice 3.2: the lists of
+    /// opencode and pi cover their terminal sessions; the list of Cursor
+    /// has only the sessions its ACP entrypoint created.
     pub fn lists_catalog(&self, adapter: AgentAdapterKind) -> bool {
         matches!(
             adapter,
-            AgentAdapterKind::Codex | AgentAdapterKind::ClaudeCode
+            AgentAdapterKind::Codex
+                | AgentAdapterKind::ClaudeCode
+                | AgentAdapterKind::Opencode
+                | AgentAdapterKind::Cursor
+                | AgentAdapterKind::Pi
         )
     }
 
     /// Whether the agent's ACP `sessionId` is its native session id. E01:
     /// every listed id of Codex is the rollout `session_meta.id` and every
-    /// listed id of Claude Code is the jsonl session UUID.
+    /// listed id of Claude Code is the jsonl session UUID. Slice 3.2: the
+    /// ids of opencode and pi are those of their terminal sessions both
+    /// ways; Cursor keeps ACP sessions apart from its terminal chats.
     pub fn acp_id_is_native(&self, adapter: AgentAdapterKind) -> bool {
         matches!(
             adapter,
-            AgentAdapterKind::Codex | AgentAdapterKind::ClaudeCode
+            AgentAdapterKind::Codex
+                | AgentAdapterKind::ClaudeCode
+                | AgentAdapterKind::Opencode
+                | AgentAdapterKind::Pi
         )
     }
 
-    /// Launch plan of the installed adapter, run by the user's Node.js, for
-    /// the user's executable. `None` for an agent without an adapter entrypoint.
+    /// Launch plan of the agent's ACP entrypoint for the user's executable:
+    /// its own command, or the installed adapter run by the user's Node.js
+    /// (`adapter_run`). `None` for an agent without an entrypoint, or for an
+    /// adapter entrypoint without its Node.js and installation.
     pub fn acp_launch(
         &self,
         adapter: AgentAdapterKind,
-        node: &Path,
-        installed: &InstalledAdapter,
         executable: &Path,
+        adapter_run: Option<(&Path, &InstalledAdapter)>,
         cwd: &Path,
     ) -> Option<AcpLaunch> {
-        let entrypoint = self.acp_entrypoint(adapter)?;
+        let (program, args, env) = match self.acp_entrypoint(adapter)? {
+            AcpEntrypoint::Command { args } => (
+                executable.to_path_buf(),
+                args.iter().map(|arg| arg.to_string()).collect(),
+                BTreeMap::new(),
+            ),
+            AcpEntrypoint::Adapter { executable_env, .. } => {
+                let (node, installed) = adapter_run?;
+                (
+                    node.to_path_buf(),
+                    vec![installed.entry.to_string_lossy().into_owned()],
+                    BTreeMap::from([(
+                        executable_env.to_string(),
+                        executable.to_string_lossy().into_owned(),
+                    )]),
+                )
+            }
+        };
         Some(AcpLaunch {
             agent: adapter.as_str().to_string(),
-            program: node.to_path_buf(),
-            args: vec![installed.entry.to_string_lossy().into_owned()],
+            program,
+            args,
             environment: None,
-            env: BTreeMap::from([(
-                entrypoint.executable_env.to_string(),
-                executable.to_string_lossy().into_owned(),
-            )]),
+            env,
             cwd: cwd.to_path_buf(),
             acp_id_is_native: self.acp_id_is_native(adapter),
             lists_catalog: self.lists_catalog(adapter),
-            // E01: load and close of both agents change their store only
-            // in service records, which Svode accepts.
+            // E01 and slice 3.2: load and close of these agents change
+            // their store at most in service records, which Svode accepts.
             read_only_open: true,
             writer_refusal: match adapter {
                 AgentAdapterKind::Codex => Some("thread_active_writer".into()),
                 // Claude loads a session another process writes to.
                 _ => None,
             },
+            // Slice 3.2: `pi-acp` keeps one live pi per connection, closes
+            // the other sessions when one is loaded, and lists only the
+            // last session's directory once a session ran.
+            session_per_connection: adapter == AgentAdapterKind::Pi,
         })
     }
 
     /// Arguments that continue the agent's session in its terminal by native
-    /// id, when the agent documents such a command.
+    /// id, when the agent documents such a command. Slice 3.2: `opencode
+    /// --session` and `pi --session` continue the same session; Cursor
+    /// has no such command for its ACP sessions, its `--resume` with such
+    /// an id starts an empty chat.
     pub fn terminal_resume_args(
         &self,
         adapter: AgentAdapterKind,
@@ -632,6 +678,7 @@ impl AdapterRuntimeRegistry {
         let flag = match adapter {
             AgentAdapterKind::Codex => "resume",
             AgentAdapterKind::ClaudeCode => "--resume",
+            AgentAdapterKind::Opencode | AgentAdapterKind::Pi => "--session",
             _ => return None,
         };
         Some(vec![flag.to_string(), native_session_id.to_string()])
@@ -653,29 +700,75 @@ impl AdapterRuntimeRegistry {
 /// A8). Supported and limited are given only by live evidence; until then an
 /// agent stays deferred.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(tag = "state", rename_all = "snake_case")]
+#[serde(
+    tag = "state",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
 pub enum AgentVerdict {
     Supported,
+    /// Offered for chat; the first restriction is the main one.
+    Limited {
+        restrictions: &'static [AgentRestriction],
+    },
     Deferred,
+}
+
+/// What a limited agent lacks, recorded with live evidence (A8).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentRestriction {
+    /// The agent lists only the sessions started in Svode; its terminal and
+    /// IDE sessions continue there.
+    ExternalSessionsUnlisted,
+    /// Sessions started in Svode cannot be continued in the agent's
+    /// terminal.
+    NoTerminalContinuation,
+    /// The agent runs its tools without asking for permission.
+    NoPermissionRequests,
+    /// A turn the provider fails ends without its error.
+    TurnErrorsHidden,
 }
 
 impl AdapterRuntimeRegistry {
     /// Codex and Claude Code: start, prompt, stop, permissions, history,
     /// continuation and their external sessions live (E01, slice 2.5b).
+    /// opencode: the same with opencode 2.0.22 (slice 3.2). Cursor
+    /// 2026.10.01 and pi 1.0.0 with `pi-acp` 0.0.34: limited (slice 3.2).
     pub fn verdict(&self, adapter: AgentAdapterKind) -> AgentVerdict {
         match adapter {
-            AgentAdapterKind::Codex | AgentAdapterKind::ClaudeCode => AgentVerdict::Supported,
+            AgentAdapterKind::Codex | AgentAdapterKind::ClaudeCode | AgentAdapterKind::Opencode => {
+                AgentVerdict::Supported
+            }
+            AgentAdapterKind::Cursor => AgentVerdict::Limited {
+                restrictions: &[
+                    AgentRestriction::ExternalSessionsUnlisted,
+                    AgentRestriction::NoTerminalContinuation,
+                ],
+            },
+            AgentAdapterKind::Pi => AgentVerdict::Limited {
+                restrictions: &[
+                    AgentRestriction::NoPermissionRequests,
+                    AgentRestriction::TurnErrorsHidden,
+                ],
+            },
             _ => AgentVerdict::Deferred,
         }
     }
 
     /// Arguments of the agent's own sign-in command, which the user runs in a
     /// Svode terminal (A5). Live 2026-10-02: `codex login` and
-    /// `claude auth login` of the installed CLIs.
+    /// `claude auth login` of the installed CLIs. Slice 3.2: `opencode auth
+    /// login` and `agent login`, as their ACP auth methods name them; pi
+    /// signs in from its own terminal UI (`/login`), as its `pi-acp` terminal
+    /// auth method does.
     pub fn sign_in_arguments(&self, adapter: AgentAdapterKind) -> Option<Vec<String>> {
         match adapter {
-            AgentAdapterKind::Codex => Some(vec!["login".into()]),
-            AgentAdapterKind::ClaudeCode => Some(vec!["auth".into(), "login".into()]),
+            AgentAdapterKind::Codex | AgentAdapterKind::Cursor => Some(vec!["login".into()]),
+            AgentAdapterKind::ClaudeCode | AgentAdapterKind::Opencode => {
+                Some(vec!["auth".into(), "login".into()])
+            }
+            AgentAdapterKind::Pi => Some(Vec::new()),
             _ => None,
         }
     }
@@ -690,12 +783,47 @@ pub enum NativeSessionLog {
     ClaudeProjects,
 }
 
-/// Arguments of the agent's read-only sign-in status command (A5).
-fn auth_status_arguments(adapter: AgentAdapterKind) -> Option<Vec<String>> {
-    match adapter {
-        AgentAdapterKind::Codex => Some(vec!["login".into(), "status".into()]),
-        AgentAdapterKind::ClaudeCode => Some(vec!["auth".into(), "status".into(), "--json".into()]),
-        _ => None,
+/// The agent's read-only sign-in status command (A5) and how its output
+/// tells that the user is signed in.
+struct AuthStatusCommand {
+    arguments: &'static [&'static str],
+    signal: AuthSignal,
+}
+
+enum AuthSignal {
+    /// Exit code 0.
+    ExitCode,
+    /// Exit code 0 and this boolean field of the JSON output. Slice 3.2:
+    /// `agent status` exits with 0 signed out too.
+    JsonFlag(&'static str),
+}
+
+fn auth_status_command(adapter: AgentAdapterKind) -> Option<AuthStatusCommand> {
+    let (arguments, signal): (&'static [&'static str], _) = match adapter {
+        AgentAdapterKind::Codex => (&["login", "status"], AuthSignal::ExitCode),
+        AgentAdapterKind::ClaudeCode => (&["auth", "status", "--json"], AuthSignal::ExitCode),
+        AgentAdapterKind::Cursor => (
+            &["status", "--format", "json"],
+            AuthSignal::JsonFlag("isAuthenticated"),
+        ),
+        _ => return None,
+    };
+    Some(AuthStatusCommand { arguments, signal })
+}
+
+impl AuthSignal {
+    /// `None`: the output does not say.
+    fn signed_in(&self, output: &RuntimeCommandOutput) -> Option<bool> {
+        match self {
+            Self::ExitCode => Some(output.exit_code == Some(0)),
+            Self::JsonFlag(field) if output.exit_code == Some(0) => {
+                serde_json::from_str::<serde_json::Value>(&output.stdout)
+                    .ok()?
+                    .get(field)?
+                    .as_bool()
+            }
+            Self::JsonFlag(_) => Some(false),
+        }
     }
 }
 
@@ -1590,7 +1718,7 @@ mod tests {
     #[test]
     fn an_agent_without_a_description_has_no_entrypoint_or_catalogue() {
         let registry = AdapterRuntimeRegistry;
-        let agent = AgentAdapterKind::Opencode;
+        let agent = AgentAdapterKind::Hermes;
         assert_eq!(registry.acp_entrypoint(agent), None);
         assert!(!registry.lists_catalog(agent));
         assert!(!registry.acp_id_is_native(agent));
@@ -1758,9 +1886,8 @@ mod tests {
         let launch = AdapterRuntimeRegistry
             .acp_launch(
                 AgentAdapterKind::ClaudeCode,
-                Path::new("/bin/node"),
-                &installed("claude-agent-acp"),
                 Path::new("/bin/claude"),
+                Some((Path::new("/bin/node"), &installed("claude-agent-acp"))),
                 Path::new("/project"),
             )
             .unwrap();
@@ -1779,9 +1906,8 @@ mod tests {
         let codex = AdapterRuntimeRegistry
             .acp_launch(
                 AgentAdapterKind::Codex,
-                Path::new("/bin/node"),
-                &installed("codex-acp"),
                 Path::new("/bin/codex"),
+                Some((Path::new("/bin/node"), &installed("codex-acp"))),
                 Path::new("/project"),
             )
             .unwrap();
@@ -1792,6 +1918,140 @@ mod tests {
             codex.writer_refusal.as_deref(),
             Some("thread_active_writer")
         );
+        assert!(!codex.session_per_connection);
+
+        let pi = AdapterRuntimeRegistry
+            .acp_launch(
+                AgentAdapterKind::Pi,
+                Path::new("/bin/pi"),
+                Some((Path::new("/bin/node"), &installed("pi-acp"))),
+                Path::new("/project"),
+            )
+            .unwrap();
+        assert_eq!(pi.program, PathBuf::from("/bin/node"));
+        assert_eq!(
+            pi.env.get("PI_ACP_PI_COMMAND").map(String::as_str),
+            Some("/bin/pi")
+        );
+        assert!(pi.acp_id_is_native);
+        assert!(pi.lists_catalog);
+        assert!(pi.session_per_connection);
+        // An adapter entrypoint does not start without its Node.js.
+        assert_eq!(
+            AdapterRuntimeRegistry.acp_launch(
+                AgentAdapterKind::Pi,
+                Path::new("/bin/pi"),
+                None,
+                Path::new("/project"),
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn opencode_and_cursor_run_their_own_acp_command() {
+        for (agent, executable, native) in [
+            (AgentAdapterKind::Opencode, "/bin/opencode", true),
+            (AgentAdapterKind::Cursor, "/bin/cursor-agent", false),
+        ] {
+            assert_eq!(
+                AdapterRuntimeRegistry.acp_entrypoint(agent),
+                Some(AcpEntrypoint::Command { args: &["acp"] })
+            );
+            let launch = AdapterRuntimeRegistry
+                .acp_launch(agent, Path::new(executable), None, Path::new("/home"))
+                .unwrap();
+            assert_eq!(launch.program, PathBuf::from(executable));
+            assert_eq!(launch.args, ["acp"]);
+            assert!(launch.env.is_empty());
+            assert!(launch.lists_catalog);
+            assert_eq!(launch.acp_id_is_native, native, "{agent:?}");
+            assert!(launch.read_only_open);
+            assert_eq!(launch.writer_refusal, None);
+            assert!(!launch.session_per_connection);
+        }
+        // Cursor's ACP sessions are not its terminal chats.
+        assert_eq!(
+            AdapterRuntimeRegistry.terminal_resume_args(AgentAdapterKind::Cursor, "s1"),
+            None
+        );
+        for agent in [AgentAdapterKind::Opencode, AgentAdapterKind::Pi] {
+            assert_eq!(
+                AdapterRuntimeRegistry.terminal_resume_args(agent, "s1"),
+                Some(vec!["--session".to_string(), "s1".to_string()])
+            );
+        }
+    }
+
+    #[test]
+    fn a_limited_agent_names_its_restrictions_main_first() {
+        let registry = AdapterRuntimeRegistry;
+        assert_eq!(
+            registry.verdict(AgentAdapterKind::Opencode),
+            AgentVerdict::Supported
+        );
+        assert_eq!(
+            serde_json::to_value(registry.verdict(AgentAdapterKind::Cursor)).unwrap(),
+            serde_json::json!({
+                "state": "limited",
+                "restrictions": ["external_sessions_unlisted", "no_terminal_continuation"]
+            })
+        );
+        assert_eq!(
+            serde_json::to_value(registry.verdict(AgentAdapterKind::Pi)).unwrap(),
+            serde_json::json!({
+                "state": "limited",
+                "restrictions": ["no_permission_requests", "turn_errors_hidden"]
+            })
+        );
+        for agent in [
+            AgentAdapterKind::Opencode,
+            AgentAdapterKind::Cursor,
+            AgentAdapterKind::Pi,
+        ] {
+            assert!(registry.sign_in_arguments(agent).is_some(), "{agent:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn cursor_sign_in_is_read_from_its_status_json_not_its_exit_code() {
+        let status = |stdout: &str| {
+            Ok(RuntimeCommandOutput {
+                exit_code: Some(0),
+                stdout: stdout.into(),
+                stderr: String::new(),
+            })
+        };
+        let version = || status("2026.10.01-e373342");
+        for (output, expected) in [
+            (
+                status(r#"{"status":"authenticated","isAuthenticated":true}"#),
+                AdapterDiagnosticStatus::Ready,
+            ),
+            (
+                status(r#"{"status":"unauthenticated","isAuthenticated":false}"#),
+                AdapterDiagnosticStatus::Unauthenticated,
+            ),
+            (status("Not logged in"), AdapterDiagnosticStatus::Unknown),
+        ] {
+            let runner = FakeRunner::new(vec![version(), output]);
+            let diagnostic = AdapterRuntimeRegistry
+                .diagnose_resolved(
+                    AgentAdapterKind::Cursor,
+                    &AdapterTarget {
+                        cwd: PathBuf::from("/project"),
+                        search_path: None,
+                    },
+                    PathBuf::from("/bin/cursor-agent"),
+                    &runner,
+                )
+                .await;
+            assert_eq!(diagnostic.status, expected);
+            assert_eq!(
+                runner.requests.lock().unwrap()[1].arguments,
+                ["status", "--format", "json"]
+            );
+        }
     }
 
     #[tokio::test]

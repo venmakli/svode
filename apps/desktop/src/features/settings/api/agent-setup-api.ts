@@ -13,6 +13,7 @@ export {
   updateAgentAdapter,
   updateCustomAgent,
   type AgentAdapterErrorDto,
+  type AgentRestrictionDto,
   type AgentSetupDto,
   type CustomAgentDefinitionDto,
   type CustomAgentErrorDto,
