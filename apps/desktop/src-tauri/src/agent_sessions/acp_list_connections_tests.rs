@@ -356,7 +356,15 @@ fn an_open_collection_keeps_the_agents_whose_acp_list_is_their_catalogue() {
     let setup = crate::agent_setup::AgentSetupState::new(dir.path(), dir.path().to_path_buf());
     assert_eq!(
         setup.catalog_agents(),
-        ["codex", "claude-code", "cursor", "opencode", "hermes", "pi"]
+        [
+            "codex",
+            "claude-code",
+            "cursor",
+            "opencode",
+            "hermes",
+            "pi",
+            "grok-build"
+        ]
     );
 }
 

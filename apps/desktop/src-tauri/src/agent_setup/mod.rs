@@ -508,6 +508,7 @@ mod tests {
                 "opencode",
                 "hermes",
                 "pi",
+                "grok-build",
                 on.id.agent_id().as_str()
             ]
         );

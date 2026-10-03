@@ -574,6 +574,11 @@ impl AdapterRuntimeRegistry {
             AgentAdapterKind::Opencode | AgentAdapterKind::Cursor | AgentAdapterKind::Hermes => {
                 return Some(AcpEntrypoint::Command { args: &["acp"] });
             }
+            AgentAdapterKind::GrokBuild => {
+                return Some(AcpEntrypoint::Command {
+                    args: &["agent", "stdio"],
+                });
+            }
             _ => return None,
         };
         Some(AcpEntrypoint::Adapter {
@@ -589,7 +594,8 @@ impl AdapterRuntimeRegistry {
     /// would drop sessions in a Space's subfolders. Slice 3.2: the lists of
     /// opencode and pi cover their terminal sessions; the list of Cursor
     /// has only the sessions its ACP entrypoint created. Slice 3.3: so has
-    /// the list of Hermes, its CLI and desktop sessions stay out.
+    /// the list of Hermes, its CLI and desktop sessions stay out. Slice
+    /// 3.5: the list of Grok Build covers its terminal sessions.
     pub fn lists_catalog(&self, adapter: AgentAdapterKind) -> bool {
         matches!(
             adapter,
@@ -599,6 +605,7 @@ impl AdapterRuntimeRegistry {
                 | AgentAdapterKind::Cursor
                 | AgentAdapterKind::Hermes
                 | AgentAdapterKind::Pi
+                | AgentAdapterKind::GrokBuild
         )
     }
 
@@ -608,7 +615,9 @@ impl AdapterRuntimeRegistry {
     /// ids of opencode and pi are those of their terminal sessions both
     /// ways; Cursor keeps ACP sessions apart from its terminal chats.
     /// Slice 3.3: an ACP session of Hermes is its `state.db` session, which
-    /// `hermes --resume` continues.
+    /// `hermes --resume` continues. Slice 3.5: an ACP session of Grok Build
+    /// is its session under `~/.grok/sessions`, which `grok --resume`
+    /// continues, and its terminal sessions are listed by their ids.
     pub fn acp_id_is_native(&self, adapter: AgentAdapterKind) -> bool {
         matches!(
             adapter,
@@ -617,6 +626,7 @@ impl AdapterRuntimeRegistry {
                 | AgentAdapterKind::Opencode
                 | AgentAdapterKind::Hermes
                 | AgentAdapterKind::Pi
+                | AgentAdapterKind::GrokBuild
         )
     }
 
@@ -658,8 +668,9 @@ impl AdapterRuntimeRegistry {
             cwd: cwd.to_path_buf(),
             acp_id_is_native: self.acp_id_is_native(adapter),
             lists_catalog: self.lists_catalog(adapter),
-            // E01, slices 3.2 and 3.3: load and close of these agents change
-            // their store at most in service records, which Svode accepts.
+            // E01, slices 3.2, 3.3 and 3.5: load and close of these agents
+            // change their store at most in service records, which Svode
+            // accepts.
             read_only_open: true,
             writer_refusal: match adapter {
                 AgentAdapterKind::Codex => Some("thread_active_writer".into()),
@@ -677,7 +688,8 @@ impl AdapterRuntimeRegistry {
     /// id, when the agent documents such a command. Slice 3.2: `opencode
     /// --session` and `pi --session` continue the same session; Cursor
     /// has no such command for its ACP sessions, its `--resume` with such
-    /// an id starts an empty chat. Slice 3.3: `hermes --resume`.
+    /// an id starts an empty chat. Slice 3.3: `hermes --resume`. Slice 3.5:
+    /// `grok --resume`.
     pub fn terminal_resume_args(
         &self,
         adapter: AgentAdapterKind,
@@ -685,7 +697,9 @@ impl AdapterRuntimeRegistry {
     ) -> Option<Vec<String>> {
         let flag = match adapter {
             AgentAdapterKind::Codex => "resume",
-            AgentAdapterKind::ClaudeCode | AgentAdapterKind::Hermes => "--resume",
+            AgentAdapterKind::ClaudeCode
+            | AgentAdapterKind::Hermes
+            | AgentAdapterKind::GrokBuild => "--resume",
             AgentAdapterKind::Opencode | AgentAdapterKind::Pi => "--session",
             _ => return None,
         };
@@ -744,11 +758,13 @@ impl AdapterRuntimeRegistry {
     /// opencode: the same with opencode 2.0.22 (slice 3.2). Cursor
     /// 2026.10.01 and pi 1.0.0 with `pi-acp` 0.0.34: limited (slice 3.2).
     /// Hermes 2026.9.24: limited, it lists only its ACP sessions (slice 3.3).
+    /// Grok Build 1.0.46: supported (slice 3.5).
     pub fn verdict(&self, adapter: AgentAdapterKind) -> AgentVerdict {
         match adapter {
-            AgentAdapterKind::Codex | AgentAdapterKind::ClaudeCode | AgentAdapterKind::Opencode => {
-                AgentVerdict::Supported
-            }
+            AgentAdapterKind::Codex
+            | AgentAdapterKind::ClaudeCode
+            | AgentAdapterKind::Opencode
+            | AgentAdapterKind::GrokBuild => AgentVerdict::Supported,
             AgentAdapterKind::Cursor => AgentVerdict::Limited {
                 restrictions: &[
                     AgentRestriction::ExternalSessionsUnlisted,
@@ -774,10 +790,13 @@ impl AdapterRuntimeRegistry {
     /// login` and `agent login`, as their ACP auth methods name them; pi
     /// signs in from its own terminal UI (`/login`), as its `pi-acp` terminal
     /// auth method does. Slice 3.3: `hermes acp --setup`, the Hermes
-    /// terminal auth method `hermes-setup`.
+    /// terminal auth method `hermes-setup`. Slice 3.5: `grok login`; Grok
+    /// Build declares no terminal auth method.
     pub fn sign_in_arguments(&self, adapter: AgentAdapterKind) -> Option<Vec<String>> {
         match adapter {
-            AgentAdapterKind::Codex | AgentAdapterKind::Cursor => Some(vec!["login".into()]),
+            AgentAdapterKind::Codex | AgentAdapterKind::Cursor | AgentAdapterKind::GrokBuild => {
+                Some(vec!["login".into()])
+            }
             AgentAdapterKind::ClaudeCode | AgentAdapterKind::Opencode => {
                 Some(vec!["auth".into(), "login".into()])
             }
@@ -2016,6 +2035,67 @@ mod tests {
             AdapterRuntimeRegistry.terminal_resume_args(AgentAdapterKind::Hermes, "s1"),
             Some(vec!["--resume".to_string(), "s1".to_string()])
         );
+    }
+
+    #[test]
+    fn grok_build_runs_its_agent_over_stdio_with_native_ids() {
+        let agent = AgentAdapterKind::GrokBuild;
+        assert_eq!(
+            AdapterRuntimeRegistry.acp_entrypoint(agent),
+            Some(AcpEntrypoint::Command {
+                args: &["agent", "stdio"]
+            })
+        );
+        let launch = AdapterRuntimeRegistry
+            .acp_launch(agent, Path::new("/bin/grok"), None, Path::new("/home"))
+            .unwrap();
+        assert_eq!(launch.program, PathBuf::from("/bin/grok"));
+        assert_eq!(launch.args, ["agent", "stdio"]);
+        assert!(launch.env.is_empty());
+        assert!(launch.lists_catalog);
+        assert!(launch.acp_id_is_native);
+        assert!(launch.read_only_open);
+        assert_eq!(launch.writer_refusal, None);
+        assert!(!launch.session_per_connection);
+        assert_eq!(
+            AdapterRuntimeRegistry.terminal_resume_args(agent, "s1"),
+            Some(vec!["--resume".to_string(), "s1".to_string()])
+        );
+        assert_eq!(
+            AdapterRuntimeRegistry.verdict(agent),
+            AgentVerdict::Supported
+        );
+        assert_eq!(
+            AdapterRuntimeRegistry.sign_in_arguments(agent),
+            Some(vec!["login".to_string()])
+        );
+    }
+
+    #[tokio::test]
+    async fn grok_build_reads_its_version_and_has_unknown_sign_in() {
+        let runner = FakeRunner::new(vec![Ok(RuntimeCommandOutput {
+            exit_code: Some(0),
+            stdout: "grok 1.0.46 (2765805b9442) [stable]\n".into(),
+            stderr: String::new(),
+        })]);
+        let diagnostic = AdapterRuntimeRegistry
+            .diagnose_resolved(
+                AgentAdapterKind::GrokBuild,
+                &AdapterTarget {
+                    cwd: PathBuf::from("/project"),
+                    search_path: None,
+                },
+                PathBuf::from("/bin/grok"),
+                &runner,
+            )
+            .await;
+        assert_eq!(
+            crate::adapters::parse_version(diagnostic.version.as_deref().unwrap()),
+            Some((1, 0, 46))
+        );
+        assert_eq!(diagnostic.status, AdapterDiagnosticStatus::Unknown);
+        assert_eq!(diagnostic.authenticated, None);
+        assert_eq!(runner.requests.lock().unwrap().len(), 1);
     }
 
     #[test]

@@ -525,12 +525,16 @@ fn common_executable_locations(id: AgentAdapterKind, home_dir: &Path) -> Vec<Pat
             home_dir.join(".npm/bin").join(executable),
             home_dir.join(".bun/bin").join(executable),
         ],
-        // The vendor installer puts it here and adds it to PATH only in
-        // the interactive shell profile.
+        // The vendor installers of opencode and Grok Build put them here
+        // and add them to PATH only in the interactive shell profile.
         AgentAdapterKind::Opencode => vec![
             home_dir.join(".opencode/bin").join(executable),
             home_dir.join(".local/bin").join(executable),
             home_dir.join(".bun/bin").join(executable),
+        ],
+        AgentAdapterKind::GrokBuild => vec![
+            home_dir.join(".grok/bin").join(executable),
+            home_dir.join(".local/bin").join(executable),
         ],
         _ => vec![
             home_dir.join(".local/bin").join(executable),
@@ -714,20 +718,20 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn opencode_is_found_where_its_installer_puts_it() {
-        let directory = tempfile::tempdir().unwrap();
-        let installed = directory.path().join(".opencode/bin/opencode");
-        std::fs::create_dir_all(installed.parent().unwrap()).unwrap();
-        make_executable(&installed);
-        assert_eq!(
-            resolve_executable_path_with(
-                AgentAdapterKind::Opencode,
-                None,
-                directory.path(),
-                |_| { None }
-            ),
-            Some(installed)
-        );
+    fn opencode_and_grok_build_are_found_where_their_installers_put_them() {
+        for (agent, location) in [
+            (AgentAdapterKind::Opencode, ".opencode/bin/opencode"),
+            (AgentAdapterKind::GrokBuild, ".grok/bin/grok"),
+        ] {
+            let directory = tempfile::tempdir().unwrap();
+            let installed = directory.path().join(location);
+            std::fs::create_dir_all(installed.parent().unwrap()).unwrap();
+            make_executable(&installed);
+            assert_eq!(
+                resolve_executable_path_with(agent, None, directory.path(), |_| { None }),
+                Some(installed)
+            );
+        }
     }
 
     #[test]
