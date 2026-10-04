@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { Copy, History, Info, SquareTerminal } from "lucide-react";
+import { Copy, History, Info, RotateCw, SquareTerminal } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Marker, MarkerContent, MarkerIcon } from "@/components/ui/marker";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -30,6 +30,9 @@ export interface ChatContinuation {
   attaching: boolean;
   refusal: ContinueRefusal | null;
   attach: () => Promise<boolean>;
+  /** Reads the history again while another process writes to the session. */
+  refresh: () => void;
+  refreshing: boolean;
   /** Manual fallback while another process writes to the session. */
   onCopyResumeCommand: (() => void) | null;
 }
@@ -183,7 +186,7 @@ export function SessionChat({
             onStop={composer.stop}
           />
         ) : externalWriter ? (
-          <ExternalWriter onCopyResumeCommand={continuation.onCopyResumeCommand} />
+          <ExternalWriter continuation={continuation} />
         ) : (
           <div>
             {composer.draft.notSent && (
@@ -330,15 +333,28 @@ function AttachConfirmation({
   );
 }
 
-/** In place of the composer while another process writes to the session. */
+/**
+ * In place of the composer while another process writes to the session:
+ * the timeline is a snapshot of what was read, which "Refresh" reads again
+ * (`04`, opening an existing session).
+ */
 function ExternalWriter({
-  onCopyResumeCommand,
+  continuation: { refresh, refreshing, onCopyResumeCommand },
 }: {
-  onCopyResumeCommand: (() => void) | null;
+  continuation: ChatContinuation;
 }) {
   return (
     <div className="flex flex-wrap items-center gap-2 rounded-lg border p-3 text-sm">
-      <p className="min-w-0 flex-1">{m.sessions_chat_external_writer()}</p>
+      <div className="min-w-0 flex-1">
+        <p>{m.sessions_chat_external_writer()}</p>
+        <p className="text-xs text-muted-foreground">{m.sessions_chat_snapshot()}</p>
+      </div>
+      <Button size="sm" variant="outline" disabled={refreshing} onClick={refresh}>
+        <RotateCw data-icon="inline-start" />
+        {refreshing
+          ? m.sessions_chat_snapshot_refreshing()
+          : m.sessions_chat_snapshot_refresh()}
+      </Button>
       <Button
         size="sm"
         variant="outline"

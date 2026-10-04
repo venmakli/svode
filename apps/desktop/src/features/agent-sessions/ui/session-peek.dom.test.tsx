@@ -93,6 +93,8 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
   /** Writer and turn of the snapshot a chat subscription delivers. */
   let snapshotWriter: "none" | "acp" = "none";
   let snapshotTurn: "none" | "running" = "none";
+  /** The message a reading of the history replays. */
+  let replayedMessage = "Earlier";
   const { mockNativeIpc } = await import("@/platform/native/testing");
   mockNativeIpc((command, args) => {
     const payload = (args ?? {}) as Record<string, unknown>;
@@ -302,6 +304,62 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
       expect(
         commands.filter((command) => command === "agent_runtime_prompt"),
       ).toEqual(["agent_runtime_prompt"]);
+    },
+  );
+
+  peekTest(
+    "while another process writes to a session the chat shows a snapshot, which Refresh reads again",
+    async () => {
+      const key = { agent: "claude", namespace: "native", sessionId: "busy" };
+      listed = [
+        session({
+          id: "claude:busy",
+          source: "claude",
+          title: "Busy",
+          capabilities: { canResume: true, canOpenInChat: true },
+        }),
+      ];
+      openings.length = 0;
+      commands.length = 0;
+      snapshotWriter = "none";
+      openingOutcome = () => ({
+        outcome: "opened",
+        session: key,
+        liveness: "external_active",
+      });
+      await mountPeek("/p-busy", { sessionId: "claude:busy", launchId: null });
+
+      // The history is read; the composer gives way to the manual fallback.
+      expect(openings).toEqual([false]);
+      expect(document.body.textContent?.includes("Earlier")).toBe(true);
+      expect(document.body.textContent?.includes(m.sessions_chat_snapshot())).toBe(
+        true,
+      );
+      expect(buttonByLabel(m.sessions_chat_send())).toBeNull();
+      expect(Boolean(buttonByText(m.sessions_action_copy_resume_command()))).toBe(
+        true,
+      );
+
+      // Refresh reads the history again without attaching; the other
+      // process has finished, so the chat may continue the session.
+      replayedMessage = "Later";
+      openingOutcome = () => ({
+        outcome: "opened",
+        session: key,
+        liveness: "unknown",
+      });
+      try {
+        await click(buttonByText(m.sessions_chat_snapshot_refresh()));
+      } finally {
+        replayedMessage = "Earlier";
+      }
+      expect(openings).toEqual([false, false]);
+      expect(document.body.textContent?.includes("Later")).toBe(true);
+      expect(document.body.textContent?.includes(m.sessions_chat_snapshot())).toBe(
+        false,
+      );
+      expect(Boolean(buttonByLabel(m.sessions_chat_send()))).toBe(true);
+      expect(commands.includes("agent_runtime_prompt")).toBe(false);
     },
   );
 
@@ -868,7 +926,7 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
           id: "u1",
           turnId: "replay:1",
           status: null,
-          summary: "Earlier",
+          summary: replayedMessage,
           hasDetail: false,
         },
       ],

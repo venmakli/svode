@@ -26,6 +26,12 @@ export type SessionOpening =
   | { state: "auth_required"; message: string }
   | { state: "failed"; message: string };
 
+/**
+ * What an opening shows while it runs: the loading state, a busy "Load
+ * history", or the snapshot read before, kept until the new reading.
+ */
+type OpenMode = "read" | "load_history" | "refresh";
+
 /** Why continuing a read session did not attach it; the draft stays. */
 export type ContinueRefusal =
   | Extract<AgentSessionOpeningDto, { outcome: "unavailable" | "auth_required" }>
@@ -34,20 +40,24 @@ export type ContinueRefusal =
 /**
  * Opening an existing session in the chat (Stage 10 `04`, opening and
  * continuing): the history without a prompt, "Load history" when attaching
- * needs the user's confirmation, and attaching a read session before its
+ * needs the user's confirmation, reading a snapshot again while another
+ * process writes to the session, and attaching a read session before its
  * first send.
  */
 export function useSessionOpening(projectPath: string | null, sessionId: string) {
   const [opening, setOpening] = useState<SessionOpening>({ state: "opening" });
   const [attaching, setAttaching] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [continueRefusal, setContinueRefusal] = useState<ContinueRefusal | null>(null);
   const generation = useRef(0);
 
   const open = useCallback(
-    async (attach: boolean) => {
+    async (mode: OpenMode) => {
       if (!projectPath) return;
       const own = ++generation.current;
-      if (attach) setAttaching(true);
+      const attach = mode === "load_history";
+      if (mode === "load_history") setAttaching(true);
+      else if (mode === "refresh") setRefreshing(true);
       else setOpening({ state: "opening" });
       try {
         const outcome = await openSessionInChat(projectPath, sessionId, attach);
@@ -61,14 +71,17 @@ export function useSessionOpening(projectPath: string | null, sessionId: string)
           setOpening({ state: "failed", message: errorMessage(error) });
         }
       } finally {
-        if (own === generation.current) setAttaching(false);
+        if (own === generation.current) {
+          setAttaching(false);
+          setRefreshing(false);
+        }
       }
     },
     [projectPath, sessionId],
   );
 
   useEffect(() => {
-    void open(false);
+    void open("read");
     return () => {
       generation.current += 1;
     };
@@ -111,8 +124,11 @@ export function useSessionOpening(projectPath: string | null, sessionId: string)
     attaching,
     continueRefusal,
     /** "Load history": attach the session, confirming this attempt. */
-    loadHistory: () => void open(true),
-    retry: () => void open(false),
+    loadHistory: () => void open("load_history"),
+    retry: () => void open("read"),
+    refreshing,
+    /** Reads the history again; the snapshot stays shown until then. */
+    refresh: () => void open("refresh"),
     attach,
   };
 }

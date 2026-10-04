@@ -725,6 +725,88 @@ async fn opening_reads_the_history_without_a_writer_where_the_agent_has_evidence
 }
 
 #[tokio::test]
+async fn while_another_process_writes_a_session_the_history_is_a_snapshot_read_again_on_request() {
+    let runtime = runtime();
+    let dir = tempfile::tempdir().unwrap();
+    let log = dir.path().join("calls");
+    let (connections, _) = owner(
+        &runtime,
+        vec![("claude", Ok(history_agent("claude", true, &log)))],
+    );
+    let key = SessionKey::from_acp("claude", "h1", true);
+    let busy = SessionOpening::Opened {
+        session: key.clone(),
+        liveness: ExternalLiveness::ExternalActive,
+    };
+
+    // An agent with read-only evidence reads the history without a writer.
+    assert_eq!(
+        connections
+            .open_session(
+                "claude",
+                &key,
+                dir.path(),
+                ExternalLiveness::ExternalActive,
+                false
+            )
+            .await
+            .unwrap(),
+        busy
+    );
+    let snapshot = runtime.subscribe(&key).unwrap().snapshot;
+    assert_eq!(snapshot.writer, WriterState::None);
+    assert_eq!(snapshot.items[0].summary, "Earlier");
+    assert_eq!(runtime.writers().writer(&key), None);
+
+    // Continuing it is refused before the agent hears of it.
+    assert_eq!(
+        connections
+            .open_session(
+                "claude",
+                &key,
+                dir.path(),
+                ExternalLiveness::ExternalActive,
+                true
+            )
+            .await
+            .unwrap(),
+        SessionOpening::ExternalActive
+    );
+    assert_eq!(calls(&log), ["initialize", "session/load", "session/close"]);
+
+    // Refresh replays the history anew, still without a writer or a prompt.
+    assert_eq!(
+        connections
+            .open_session(
+                "claude",
+                &key,
+                dir.path(),
+                ExternalLiveness::ExternalActive,
+                false
+            )
+            .await
+            .unwrap(),
+        busy
+    );
+    assert_eq!(
+        calls(&log),
+        [
+            "initialize",
+            "session/load",
+            "session/close",
+            "session/load",
+            "session/close"
+        ]
+    );
+    assert_eq!(
+        runtime.subscribe(&key).unwrap().snapshot.writer,
+        WriterState::None
+    );
+    assert_eq!(runtime.writers().writer(&key), None);
+    runtime.shutdown().await;
+}
+
+#[tokio::test]
 async fn without_read_only_evidence_attaching_needs_a_confirmation_of_each_attempt() {
     let runtime = runtime();
     let dir = tempfile::tempdir().unwrap();

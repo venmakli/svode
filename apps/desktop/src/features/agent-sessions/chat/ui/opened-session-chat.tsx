@@ -92,6 +92,8 @@ export function OpenedSessionChat({
           attaching: opening.attaching,
           refusal: opening.continueRefusal,
           attach: opening.attach,
+          refreshing: opening.refreshing,
+          refresh: opening.refresh,
           onCopyResumeCommand,
         }}
         onOpenInTerminal={
