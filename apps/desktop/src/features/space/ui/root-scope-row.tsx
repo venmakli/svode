@@ -1,4 +1,5 @@
 import {
+  BotMessageSquare,
   ChevronRight,
   Database,
   Ellipsis,
@@ -44,6 +45,7 @@ interface RootScopeRowProps {
   onNewFolder: () => void;
   onNewCollection: () => void;
   onNewSession?: () => void;
+  onNewTerminal?: () => void;
   spaceId: string;
   rootPath: string;
   loading: boolean;
@@ -69,6 +71,7 @@ export function RootScopeRow({
   onNewFolder,
   onNewCollection,
   onNewSession,
+  onNewTerminal,
   spaceId,
   rootPath,
   loading,
@@ -125,14 +128,18 @@ export function RootScopeRow({
               <Database />
               {m.collection_new()}
             </DropdownMenuItem>
+            {(onNewSession || onNewTerminal) && <DropdownMenuSeparator />}
             {onNewSession && (
-              <>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem onClick={onNewSession}>
-                  <SquareTerminal />
-                  {m.sessions_action_new()}
-                </DropdownMenuItem>
-              </>
+              <DropdownMenuItem onClick={onNewSession}>
+                <BotMessageSquare />
+                {m.sessions_action_new()}
+              </DropdownMenuItem>
+            )}
+            {onNewTerminal && (
+              <DropdownMenuItem onClick={onNewTerminal}>
+                <SquareTerminal />
+                {m.terminal_new_terminal()}
+              </DropdownMenuItem>
             )}
           </DropdownMenuContent>
         </DropdownMenu>

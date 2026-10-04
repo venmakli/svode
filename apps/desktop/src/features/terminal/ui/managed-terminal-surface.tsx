@@ -114,7 +114,6 @@ function ManagedTerminalSurfaceInstance({
       ptyId,
       status,
       error,
-      origin: "agent-session",
       createdAt,
     }),
     [createdAt, error, ptyId, status, title],

@@ -1,13 +1,11 @@
 import { expect, test } from "bun:test";
 import {
+  applyAgentSessionsToTabs,
   findMatchingAgentSessionForShellTab,
-  isLiveAgentTerminalSession,
-  syncTabsWithAgentSurfaces,
   targetToShellTab,
-  terminalTabFromAgentSession,
 } from "./agent-session-tabs";
 import type { AgentSession } from "@/platform/agent-sessions/agent-sessions-api";
-import type { TerminalAgentSurface, TerminalTab } from "./types";
+import type { TerminalTab } from "./types";
 
 function session(overrides: Partial<AgentSession> & Pick<AgentSession, "id">) {
   const base: AgentSession = {
@@ -64,91 +62,55 @@ function shellTab(overrides: Partial<TerminalTab> = {}) {
   } satisfies TerminalTab;
 }
 
-function surface(
-  overrides: Partial<TerminalAgentSurface> &
-    Pick<TerminalAgentSurface, "ptyId" | "agentSessionId">,
-) {
-  return {
-    ptyId: overrides.ptyId,
-    agentSessionId: overrides.agentSessionId,
-    title: overrides.title ?? "Live task",
-    source: overrides.source ?? "codex",
-    sourceSessionId: overrides.sourceSessionId ?? overrides.agentSessionId,
-    shellCwd: overrides.shellCwd ?? "/repo",
-    createdAt: overrides.createdAt ?? "2026-07-05T10:02:00Z",
-    lastOutputAt: overrides.lastOutputAt,
-    lastInputAt: overrides.lastInputAt,
-  } satisfies TerminalAgentSurface;
-}
+test("session terminals opened outside the panel get no tab", () => {
+  const shell = shellTab();
+  const managed = session({
+    id: "codex:managed",
+    runtime: { live: true, ptyId: "pty-managed" },
+  });
 
-test("builds a terminal tab for a live agent session pty", () => {
-  const item = session({
+  expect(applyAgentSessionsToTabs([shell], [managed], new Map())).toEqual([
+    shell,
+  ]);
+});
+
+test("a shell tab shows the agent session recognized in it", () => {
+  const shell = shellTab({ id: "shell-live", ptyId: "pty-live" });
+  const live = session({
     id: "codex:live",
     title: "Release notes",
     runtime: { live: true, ptyId: "pty-live" },
   });
 
-  const tab = terminalTabFromAgentSession(item, "/repo");
-
-  expect(isLiveAgentTerminalSession(item)).toBe(true);
+  const [tab] = applyAgentSessionsToTabs([shell], [live], new Map());
+  expect(tab?.id).toBe("shell-live");
   expect(tab?.title).toBe("Release notes");
-  expect(tab?.ptyId).toBe("pty-live");
-  expect(tab?.origin).toBe("agent-session");
   expect(tab?.agentSessionId).toBe("codex:live");
+  expect(tab?.cwd).toBe(shell.cwd);
+  expect(tab?.scopeId).toBe(shell.scopeId);
 });
 
-test("syncs live agent surfaces without keeping stale agent session tabs", () => {
-  const oldAgentTab = shellTab({
-    id: "agent-session:old:pty-old",
-    title: "Old run",
-    ptyId: "pty-old",
-    origin: "agent-session",
-    agentSessionId: "codex:old",
-  });
-  const existingShellTab = shellTab({
-    id: "shell-tab",
-    ptyId: "pty-shell",
-  });
+test("a tab linked in this sync shows its session before the catalog lists the PTY", () => {
+  const shell = shellTab({ id: "shell-new" });
+  const linked = session({ id: "claude:new", title: "Fix login" });
 
-  const tabs = syncTabsWithAgentSurfaces(
-    [oldAgentTab, existingShellTab],
-    [surface({ ptyId: "pty-live", agentSessionId: "codex:live" })],
-  );
-
-  expect(tabs.some((tab) => tab.id === "agent-session:old:pty-old")).toBe(
-    false,
-  );
-  expect(tabs.find((tab) => tab.id === "shell-tab")?.origin).toBe("shell");
-  expect(
-    tabs.find((tab) => tab.id === "agent-session:codex:live:pty-live")?.title,
-  ).toBe("Live task");
-});
-
-test("syncs a matching shell tab into the registered agent surface", () => {
-  const shell = shellTab({
-    id: "shell-live",
-    ptyId: "pty-live",
-    createdAt: "2026-07-05T10:00:00Z",
-  });
-
-  const tabs = syncTabsWithAgentSurfaces(
+  const [tab] = applyAgentSessionsToTabs(
     [shell],
-    [
-      surface({
-        ptyId: "pty-live",
-        agentSessionId: "codex:live",
-        title: "Use existing tab",
-      }),
-    ],
+    [linked],
+    new Map([["shell-new", linked]]),
   );
+  expect(tab?.agentSessionId).toBe("claude:new");
+  expect(tab?.title).toBe("Fix login");
+});
 
-  expect(tabs.length).toBe(1);
-  const [tab] = tabs;
-  if (!tab) throw new Error("Expected a synced terminal tab");
-  expect(tab.id).toBe("shell-live");
-  expect(tab.origin).toBe("agent-session");
-  expect(tab.title).toBe("Use existing tab");
-  expect(tab.createdAt).toBe("2026-07-05T10:00:00Z");
+test("a tab already showing a session is not matched again", () => {
+  const tab = shellTab({ agentSessionId: "codex:first" });
+  const next = session({
+    id: "codex:second",
+    startedAt: "2026-07-05T10:00:10Z",
+  });
+
+  expect(findMatchingAgentSessionForShellTab(tab, [next])).toBeNull();
 });
 
 test("does not match a shell tab to older agent session history", () => {

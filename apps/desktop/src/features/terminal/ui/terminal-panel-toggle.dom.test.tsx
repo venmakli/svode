@@ -6,13 +6,13 @@ import { act, useEffect } from "react";
 import { createRoot } from "react-dom/client";
 import { JSDOM } from "jsdom";
 
-if (process.env.SVODE_TERMINAL_SIDEBAR_DOM !== "1") {
-  test("terminal sidebar action DOM", () => {
+if (process.env.SVODE_TERMINAL_PANEL_TOGGLE_DOM !== "1") {
+  test("terminal panel toggle DOM", () => {
     const child = spawnSync(
       process.execPath,
       ["test", fileURLToPath(import.meta.url)],
       {
-        env: { ...process.env, SVODE_TERMINAL_SIDEBAR_DOM: "1" },
+        env: { ...process.env, SVODE_TERMINAL_PANEL_TOGGLE_DOM: "1" },
         encoding: "utf8",
       },
     );
@@ -55,7 +55,6 @@ if (process.env.SVODE_TERMINAL_SIDEBAR_DOM !== "1") {
     value: {
       invoke: async (command: string) => {
         commands.push(command);
-        if (command === "terminal_list_agent_surfaces") return [];
         throw new Error(`unexpected command ${command}`);
       },
     },
@@ -70,13 +69,13 @@ if (process.env.SVODE_TERMINAL_SIDEBAR_DOM !== "1") {
       }),
   }));
 
-  const { SidebarMenu, SidebarMenuButton, SidebarMenuItem, SidebarProvider } =
-    await import("@/components/ui/sidebar");
   const { TooltipProvider } = await import("@/components/ui/tooltip");
   const { useTerminalStore } = await import("../hooks/use-terminal-store");
-  const { TerminalSidebarAction } = await import("./terminal-sidebar-action");
+  const { TerminalPanelToggle } = await import("./terminal-panel-toggle");
+  const { shortcutLabel } = await import("@/shared/lib/shortcut-description");
+  const { terminalToggleShortcut } = await import("../model/shortcuts");
+  const keys = shortcutLabel(terminalToggleShortcut);
 
-  let sessionStarts = 0;
   let mounts = 0;
   let disposals = 0;
   function TerminalContent() {
@@ -93,7 +92,7 @@ if (process.env.SVODE_TERMINAL_SIDEBAR_DOM !== "1") {
     return <textarea data-buffer />;
   }
 
-  test("the New session row toggles the terminal panel without starting a session or killing the PTY", async () => {
+  test("the window header toggle shows and hides the panel without killing the PTY", async () => {
     useTerminalStore.setState({
       panelOpen: false,
       tabs: [
@@ -106,7 +105,6 @@ if (process.env.SVODE_TERMINAL_SIDEBAR_DOM !== "1") {
           ptyId: "pty",
           status: "ready",
           error: null,
-          origin: "shell",
           createdAt: "2026-09-26T00:00:00.000Z",
         },
       ],
@@ -116,36 +114,23 @@ if (process.env.SVODE_TERMINAL_SIDEBAR_DOM !== "1") {
     await act(async () =>
       root.render(
         <TooltipProvider>
-          <SidebarProvider>
-            <SidebarMenu>
-              <SidebarMenuItem>
-                <SidebarMenuButton onClick={() => sessionStarts++}>
-                  New session
-                </SidebarMenuButton>
-                <TerminalSidebarAction />
-              </SidebarMenuItem>
-            </SidebarMenu>
-            <TerminalContent />
-          </SidebarProvider>
+          <TerminalPanelToggle />
+          <TerminalContent />
         </TooltipProvider>,
       ),
     );
     const action = () =>
-      document.querySelector<HTMLButtonElement>(
-        '[data-sidebar="menu-action"]',
-      )!;
+      document.querySelector<HTMLButtonElement>("[aria-keyshortcuts]")!;
     const buffer = document.querySelector("[data-buffer]");
 
-    expect(action().getAttribute("aria-label")).toBe("Show terminal");
+    expect(action().getAttribute("aria-label")).toBe(`Show terminal (${keys})`);
     expect(action().getAttribute("aria-pressed")).toBe("false");
-    expect(action().className.includes("md:opacity-0")).toBe(true);
     expect(action().getAttribute("aria-keyshortcuts")).toBe("Control+`");
 
     await act(async () => action().click());
     expect(useTerminalStore.getState().panelOpen).toBe(true);
-    expect(action().getAttribute("aria-label")).toBe("Hide terminal");
+    expect(action().getAttribute("aria-label")).toBe(`Hide terminal (${keys})`);
     expect(action().getAttribute("aria-pressed")).toBe("true");
-    expect(action().className.includes("md:opacity-100")).toBe(true);
 
     await act(async () => action().click());
     expect(useTerminalStore.getState().panelOpen).toBe(false);
@@ -153,7 +138,6 @@ if (process.env.SVODE_TERMINAL_SIDEBAR_DOM !== "1") {
     expect(document.querySelector("[data-buffer]")).toBe(buffer);
     expect(mounts).toBe(1);
     expect(disposals).toBe(0);
-    expect(sessionStarts).toBe(0);
     expect(commands.includes("terminal_kill")).toBe(false);
     expect(commands.includes("terminal_spawn")).toBe(false);
 

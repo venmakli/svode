@@ -2,7 +2,6 @@ import { create } from "zustand";
 import type { AgentSession } from "@/platform/agent-sessions/agent-sessions-api";
 import {
   killTerminal,
-  listAgentTerminalSurfaces,
   registerAgentTerminalSession,
   spawnTerminal,
 } from "@/features/terminal/api/terminal";
@@ -12,12 +11,9 @@ import {
   createLatestTaskQueue,
 } from "@/features/terminal/lib/agent-session-sync";
 import {
+  applyAgentSessionsToTabs,
   findMatchingAgentSessionForShellTab,
-  isLiveAgentTerminalSession,
-  mergeAgentSessionIntoTab,
-  syncTabsWithAgentSurfaces,
   targetToShellTab,
-  terminalTabFromAgentSession,
 } from "@/features/terminal/model/agent-session-tabs";
 import type {
   TerminalTab,
@@ -35,6 +31,8 @@ interface TerminalState {
   panelRatio: number;
   tabs: TerminalTab[];
   activeTabId: string | null;
+  /** The tab whose terminal should take focus, renewed on every request. */
+  focusRequest: { tabId: string; seq: number } | null;
   openPanel: () => void;
   closePanel: () => void;
   togglePanel: (initialTarget: TerminalTarget | null) => Promise<void>;
@@ -42,12 +40,10 @@ interface TerminalState {
   createTab: (target: TerminalTarget) => Promise<void>;
   closeTab: (tabId: string) => Promise<void>;
   closeAllTabs: () => void;
-  syncAgentSurfaceTabs: () => Promise<boolean>;
-  syncAgentSessionTabs: (
-    projectPath: string,
-    sessions: AgentSession[],
-  ) => Promise<boolean>;
+  syncAgentSessionTabs: (sessions: AgentSession[]) => Promise<void>;
   setActiveTab: (tabId: string) => void;
+  /** Opens the panel on the tab of this PTY and focuses its terminal. */
+  showTabForPty: (ptyId: string) => void;
   markExited: (ptyId: string) => void;
   markError: (ptyId: string, message: string) => void;
 }
@@ -75,16 +71,6 @@ function nextActiveTabId(
   );
 }
 
-function resolveActiveTabId(
-  tabs: TerminalTab[],
-  activeTabId: string | null,
-): string | null {
-  if (activeTabId && tabs.some((tab) => tab.id === activeTabId)) {
-    return activeTabId;
-  }
-  return tabs[0]?.id ?? null;
-}
-
 function disposeTerminalSession(ptyId: string, label: string): void {
   clearTerminalOutput(ptyId);
   killTerminal(ptyId).catch((error) => {
@@ -93,34 +79,28 @@ function disposeTerminalSession(ptyId: string, label: string): void {
 }
 
 const terminalTabSyncInvalidation = createInvalidationGuard();
-const agentSessionSyncQueue = createLatestTaskQueue<boolean>();
+const agentSessionSyncQueue = createLatestTaskQueue<void>();
 
 export const useTerminalStore = create<TerminalState>((set, get) => ({
   panelOpen: false,
   panelRatio: DEFAULT_PANEL_RATIO,
   tabs: [],
   activeTabId: null,
+  focusRequest: null,
 
   openPanel: () => set({ panelOpen: true }),
 
   closePanel: () => set({ panelOpen: false }),
 
   togglePanel: async (initialTarget) => {
-    const { panelOpen, createTab, syncAgentSurfaceTabs } = get();
+    const { panelOpen, createTab } = get();
     if (panelOpen) {
       set({ panelOpen: false });
       return;
     }
 
     set({ panelOpen: true });
-    try {
-      await syncAgentSurfaceTabs();
-    } catch (error) {
-      console.warn("Failed to sync terminal agent surfaces:", error);
-    }
-
-    const hasTabs = get().tabs.length > 0;
-    if (!hasTabs && initialTarget) {
+    if (get().tabs.length === 0 && initialTarget) {
       await createTab(initialTarget);
     }
   },
@@ -208,42 +188,16 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     });
   },
 
-  syncAgentSurfaceTabs: async () => {
-    const syncToken = terminalTabSyncInvalidation.capture();
-    const surfaces = await listAgentTerminalSurfaces();
-    if (!terminalTabSyncInvalidation.isCurrent(syncToken)) {
-      return false;
-    }
-
-    let hasTabs = false;
-
-    set((state) => {
-      const nextTabs = syncTabsWithAgentSurfaces(state.tabs, surfaces);
-      hasTabs = nextTabs.length > 0;
-      return {
-        tabs: nextTabs,
-        activeTabId: resolveActiveTabId(nextTabs, state.activeTabId),
-      };
-    });
-
-    return hasTabs;
-  },
-
-  syncAgentSessionTabs: (projectPath, sessions) => {
+  syncAgentSessionTabs: (sessions) => {
     const syncToken = terminalTabSyncInvalidation.capture();
     return agentSessionSyncQueue.run(async () => {
-      if (!terminalTabSyncInvalidation.isCurrent(syncToken)) {
-        return false;
-      }
+      if (!terminalTabSyncInvalidation.isCurrent(syncToken)) return;
 
-      const currentTabs = get().tabs;
       const usedSessionIds = new Set<string>();
-      const linkedByTabId = new Map<string, (typeof sessions)[number]>();
+      const linkedByTabId = new Map<string, AgentSession>();
 
-      for (const tab of currentTabs) {
-        if (!terminalTabSyncInvalidation.isCurrent(syncToken)) {
-          return false;
-        }
+      for (const tab of get().tabs) {
+        if (!terminalTabSyncInvalidation.isCurrent(syncToken)) return;
 
         const match = findMatchingAgentSessionForShellTab(
           tab,
@@ -269,60 +223,11 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
         }
       }
 
-      if (!terminalTabSyncInvalidation.isCurrent(syncToken)) {
-        return false;
-      }
+      if (!terminalTabSyncInvalidation.isCurrent(syncToken)) return;
 
-      let hasTabs = false;
-      set((state) => {
-        const liveSessions = sessions.filter(isLiveAgentTerminalSession);
-        const liveByPtyId = new Map(
-          liveSessions
-            .map((session) =>
-              session.runtime?.ptyId ? [session.runtime.ptyId, session] : null,
-            )
-            .filter(
-              (entry): entry is [string, (typeof sessions)[number]] =>
-                entry !== null,
-            ),
-        );
-        const existingPtyIds = new Set(
-          state.tabs
-            .map((tab) => tab.ptyId)
-            .filter((ptyId): ptyId is string => Boolean(ptyId)),
-        );
-        const nextTabs = state.tabs.map((tab) => {
-          if (tab.ptyId) {
-            const liveSession = liveByPtyId.get(tab.ptyId);
-            if (liveSession) {
-              return mergeAgentSessionIntoTab(tab, liveSession, projectPath);
-            }
-          }
-
-          const linkedSession = linkedByTabId.get(tab.id);
-          return linkedSession
-            ? mergeAgentSessionIntoTab(tab, linkedSession, projectPath)
-            : tab;
-        });
-
-        for (const session of liveSessions) {
-          const ptyId = session.runtime?.ptyId;
-          if (!ptyId || existingPtyIds.has(ptyId)) continue;
-          const tab = terminalTabFromAgentSession(session, projectPath);
-          if (tab) {
-            nextTabs.push(tab);
-            existingPtyIds.add(ptyId);
-          }
-        }
-
-        hasTabs = nextTabs.length > 0;
-        return {
-          tabs: nextTabs,
-          activeTabId: resolveActiveTabId(nextTabs, state.activeTabId),
-        };
-      });
-
-      return hasTabs;
+      set((state) => ({
+        tabs: applyAgentSessionsToTabs(state.tabs, sessions, linkedByTabId),
+      }));
     });
   },
 
@@ -331,32 +236,26 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     set({ activeTabId: tabId });
   },
 
+  showTabForPty: (ptyId) => {
+    const tab = get().tabs.find((item) => item.ptyId === ptyId);
+    if (!tab) return;
+    set((state) => ({
+      panelOpen: true,
+      activeTabId: tab.id,
+      focusRequest: {
+        tabId: tab.id,
+        seq: (state.focusRequest?.seq ?? 0) + 1,
+      },
+    }));
+  },
+
   markExited: (ptyId) => {
-    if (
-      get().tabs.some(
-        (tab) => tab.ptyId === ptyId && tab.origin === "agent-session",
-      )
-    ) {
-      clearTerminalOutput(ptyId);
-    }
-
     terminalTabSyncInvalidation.invalidate();
-    set((state) => {
-      const nextTabs = state.tabs
-        .map((tab) => {
-          if (tab.ptyId !== ptyId) return tab;
-          if (tab.origin === "agent-session") return null;
-          return { ...tab, status: "exited" } satisfies TerminalTab;
-        })
-        .filter((tab): tab is TerminalTab => tab !== null);
-      const activeTabId = resolveActiveTabId(nextTabs, state.activeTabId);
-
-      return {
-        tabs: nextTabs,
-        activeTabId,
-        panelOpen: activeTabId ? state.panelOpen : false,
-      };
-    });
+    set((state) => ({
+      tabs: state.tabs.map((tab) =>
+        tab.ptyId === ptyId ? { ...tab, status: "exited" } : tab,
+      ),
+    }));
   },
 
   markError: (ptyId, message) =>

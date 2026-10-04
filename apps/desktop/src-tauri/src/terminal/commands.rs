@@ -1,23 +1,8 @@
-use serde::Serialize;
 use tauri::{AppHandle, State};
 
-use super::{AgentTerminalSurface, TerminalManager, TerminalResourcePath, TerminalSession};
+use super::{TerminalManager, TerminalResourcePath, TerminalSession};
 use crate::error::AppError;
 use svode_core::agent_adapters::AgentId;
-
-#[derive(Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct TerminalAgentSurfaceSession {
-    pub pty_id: String,
-    pub agent_session_id: String,
-    pub title: Option<String>,
-    pub source: AgentId,
-    pub source_session_id: String,
-    pub shell_cwd: String,
-    pub created_at: String,
-    pub last_output_at: Option<String>,
-    pub last_input_at: Option<String>,
-}
 
 #[tauri::command]
 pub fn terminal_spawn(
@@ -81,18 +66,6 @@ pub fn terminal_prepare_resource_paths(
 }
 
 #[tauri::command]
-pub fn terminal_list_agent_surfaces(
-    manager: State<'_, TerminalManager>,
-) -> Result<Vec<TerminalAgentSurfaceSession>, AppError> {
-    Ok(manager
-        .list_agent_surfaces()?
-        .into_iter()
-        .filter(|surface| surface.live)
-        .map(TerminalAgentSurfaceSession::from)
-        .collect())
-}
-
-#[tauri::command]
 pub fn terminal_register_agent_session(
     manager: State<'_, TerminalManager>,
     pty_id: String,
@@ -112,20 +85,4 @@ pub fn terminal_register_agent_session(
         shell_cwd,
         created_at,
     )
-}
-
-impl From<AgentTerminalSurface> for TerminalAgentSurfaceSession {
-    fn from(surface: AgentTerminalSurface) -> Self {
-        Self {
-            pty_id: surface.pty_id,
-            agent_session_id: surface.agent_session_id,
-            title: surface.title,
-            source: surface.source,
-            source_session_id: surface.source_session_id,
-            shell_cwd: surface.shell_cwd,
-            created_at: surface.created_at,
-            last_output_at: surface.last_output_at,
-            last_input_at: surface.last_input_at,
-        }
-    }
 }

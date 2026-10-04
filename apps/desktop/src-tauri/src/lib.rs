@@ -431,7 +431,6 @@ pub fn run() {
             terminal::commands::terminal_list,
             terminal::commands::terminal_prepare_paths,
             terminal::commands::terminal_prepare_resource_paths,
-            terminal::commands::terminal_list_agent_surfaces,
             terminal::commands::terminal_register_agent_session,
             native_file_drop::native_file_drop_paths,
             native_file_drop::materialize_file_drop,

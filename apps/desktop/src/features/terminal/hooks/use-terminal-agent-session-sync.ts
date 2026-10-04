@@ -21,9 +21,6 @@ export function useTerminalAgentSessionSync({
   requestSessionRefresh,
 }: TerminalAgentSessionSyncOptions) {
   const panelOpen = useTerminalStore((state) => state.panelOpen);
-  const syncAgentSurfaceTabs = useTerminalStore(
-    (state) => state.syncAgentSurfaceTabs,
-  );
   const syncAgentSessionTabs = useTerminalStore(
     (state) => state.syncAgentSessionTabs,
   );
@@ -34,27 +31,9 @@ export function useTerminalAgentSessionSync({
   }, [panelOpen, projectPath, requestSessionRefresh]);
 
   useEffect(() => {
-    if (!projectPath || panelOpen) return;
-    void syncAgentSurfaceTabs().catch((error) => {
-      console.warn("Failed to sync terminal agent surfaces:", error);
-    });
-  }, [panelOpen, projectPath, syncAgentSurfaceTabs]);
-
-  useEffect(() => {
-    if (!projectPath || !panelOpen) return;
-
-    void syncAgentSurfaceTabs().catch((error) => {
-      console.warn("Failed to refresh terminal agent surfaces:", error);
-    });
-    if (!sessions) return;
-    void syncAgentSessionTabs(projectPath, sessions).catch((error) => {
+    if (!projectPath || !panelOpen || !sessions) return;
+    void syncAgentSessionTabs(sessions).catch((error) => {
       console.warn("Failed to refresh terminal agent sessions:", error);
     });
-  }, [
-    panelOpen,
-    projectPath,
-    sessions,
-    syncAgentSessionTabs,
-    syncAgentSurfaceTabs,
-  ]);
+  }, [panelOpen, projectPath, sessions, syncAgentSessionTabs]);
 }

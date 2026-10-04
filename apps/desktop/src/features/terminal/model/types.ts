@@ -10,21 +10,6 @@ export interface TerminalTarget {
 }
 
 export type TerminalTabStatus = "spawning" | "ready" | "error" | "exited";
-export type TerminalTabOrigin = "shell" | "agent-session";
-/** The id of the session's agent in the registry. */
-export type TerminalAgentSessionSource = string;
-
-export interface TerminalAgentSurface {
-  ptyId: string;
-  agentSessionId: string;
-  title?: string | null;
-  source: TerminalAgentSessionSource;
-  sourceSessionId: string;
-  shellCwd: string;
-  createdAt: string;
-  lastOutputAt?: string | null;
-  lastInputAt?: string | null;
-}
 
 export interface TerminalTab {
   id: string;
@@ -35,9 +20,7 @@ export interface TerminalTab {
   ptyId: string | null;
   status: TerminalTabStatus;
   error: string | null;
-  origin: TerminalTabOrigin;
   createdAt: string;
+  /** The agent session recognized in this tab, while it runs here. */
   agentSessionId?: string;
-  agentSessionSource?: TerminalAgentSessionSource;
-  agentSourceSessionId?: string;
 }

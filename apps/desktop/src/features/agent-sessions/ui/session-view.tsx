@@ -43,7 +43,10 @@ import {
   type RoutineLaunchLink,
 } from "@/features/routines/catalog";
 import { useSpace } from "@/features/space";
-import { ManagedTerminalSurface } from "@/features/terminal/session-surface";
+import {
+  ManagedTerminalSurface,
+  usePanelTerminal,
+} from "@/features/terminal/session-surface";
 import { getNativeErrorMessage } from "@/platform/native/errors";
 import {
   useAgentSessionCatalog,
@@ -275,7 +278,29 @@ function SessionBody({
   onOpenExternalTerminal: () => void;
 }) {
   const session = view.session;
+  const panelTerminal = usePanelTerminal(view.ptyId);
 
+  if (view.ptyId && panelTerminal.inPanel) {
+    return (
+      <Empty className="h-full border-0">
+        <EmptyHeader>
+          <EmptyMedia variant="icon">
+            <SquareTerminal />
+          </EmptyMedia>
+          <EmptyTitle>{m.sessions_terminal_in_panel_title()}</EmptyTitle>
+          <EmptyDescription>
+            {m.sessions_terminal_in_panel_description()}
+          </EmptyDescription>
+        </EmptyHeader>
+        <EmptyContent>
+          <Button size="sm" onClick={panelTerminal.show}>
+            <SquareTerminal data-icon="inline-start" />
+            {m.sessions_action_show_in_panel()}
+          </Button>
+        </EmptyContent>
+      </Empty>
+    );
+  }
   if (view.ptyId) {
     return (
       <ManagedTerminalSurface

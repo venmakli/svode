@@ -23,6 +23,7 @@ import { cn } from "@/shared/lib/utils";
 import { GitSyncStatusWidget } from "@/features/git/app-shell";
 import { MainBreadcrumbs } from "@/features/space/app-shell";
 import { ProjectExternalOpenButton } from "@/features/external-open";
+import { TerminalPanelToggle } from "@/features/terminal";
 import { ProjectSwitcher } from "./project-switcher";
 import { passNavigationGuards } from "./navigation-guards";
 import {
@@ -190,7 +191,10 @@ export function WindowHeader() {
           />
         ) : null}
         {isSpaceRoute && activeRootPath ? (
-          <ProjectExternalOpenButton projectPath={activeRootPath} />
+          <>
+            <TerminalPanelToggle />
+            <ProjectExternalOpenButton projectPath={activeRootPath} />
+          </>
         ) : null}
         {ENABLE_IN_APP_CHAT && (
           <Tooltip>

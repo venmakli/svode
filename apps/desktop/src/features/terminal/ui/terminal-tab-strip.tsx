@@ -1,4 +1,4 @@
-import { X } from "lucide-react";
+import { BotMessageSquare, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/shared/lib/utils";
 import { useTerminalStore } from "@/features/terminal/hooks/use-terminal-store";
@@ -29,10 +29,13 @@ export function TerminalTabStrip({ tabs, activeTabId }: TerminalTabStripProps) {
           >
             <button
               type="button"
-              className="min-w-0 flex-1 truncate text-left"
+              className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
               onClick={() => setActiveTab(tab.id)}
             >
-              {tab.title}
+              {tab.agentSessionId && (
+                <BotMessageSquare aria-hidden className="size-3.5 shrink-0" />
+              )}
+              <span className="truncate">{tab.title}</span>
             </button>
             <Button
               variant="ghost"

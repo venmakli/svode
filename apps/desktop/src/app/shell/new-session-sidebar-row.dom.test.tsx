@@ -86,9 +86,6 @@ if (process.env.SVODE_NEW_SESSION_ROW_DOM !== "1") {
         clearActiveSpace: () => openedSpaces.push(null),
       }),
   }));
-  mock.module("@/features/terminal", () => ({
-    TerminalSidebarAction: () => null,
-  }));
   mock.module("./open-session-routine", () => ({
     useOpenSessionRoutine: () => () => {},
   }));

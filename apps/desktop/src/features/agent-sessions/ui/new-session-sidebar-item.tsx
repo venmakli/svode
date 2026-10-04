@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useState } from "react";
 import { Box, Check, ChevronDown, FolderClosed, Plus } from "lucide-react";
 import {
   Command,
@@ -38,8 +38,6 @@ interface NewSessionSidebarItemProps {
   /** Space of the main area object; null while it is not known. */
   space: NewSessionSpaceRef | null;
   onStart: (scope: AgentSessionScopeGroup) => void;
-  /** Another action of the row, e.g. the terminal panel toggle. */
-  action?: ReactNode;
 }
 
 /**
@@ -49,7 +47,6 @@ interface NewSessionSidebarItemProps {
 export function NewSessionSidebarItem({
   space,
   onStart,
-  action,
 }: NewSessionSidebarItemProps) {
   const scopes = useAgentSessionScopes();
   const target = resolveNewSessionTarget(scopes, space);
@@ -64,7 +61,7 @@ export function NewSessionSidebarItem({
         <TooltipTrigger asChild>
           <SidebarMenuButton
             type="button"
-            className={cn("pr-14", !current && "text-sidebar-foreground/50")}
+            className={cn("pr-8", !current && "text-sidebar-foreground/50")}
             aria-label={label}
             aria-disabled={!current || undefined}
             onClick={current ? () => onStart(current) : undefined}
@@ -82,7 +79,6 @@ export function NewSessionSidebarItem({
         current={current}
         onChoose={onStart}
       />
-      {action}
     </SidebarMenuItem>
   );
 }
@@ -116,7 +112,6 @@ function SpaceChooser({
             <SidebarMenuAction
               type="button"
               showOnHover
-              className="right-7"
               aria-label={m.sessions_new_choose_space()}
             >
               <ChevronDown />

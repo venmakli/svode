@@ -132,7 +132,6 @@ if (process.env.SVODE_NEW_SESSION_ITEM_DOM !== "1") {
               <NewSessionSidebarItem
                 space={{ spaceId }}
                 onStart={(scope) => started.push(scope.path)}
-                action={<button type="button" data-toggle />}
               />
             </SidebarMenu>
           </SidebarProvider>
@@ -148,7 +147,10 @@ if (process.env.SVODE_NEW_SESSION_ITEM_DOM !== "1") {
       "New session in “Docs”",
     );
     expect(mainButton().getAttribute("aria-disabled")).toBeNull();
-    expect(document.querySelector("[data-toggle]") === null).toBe(false);
+    // The Space chooser is the only action; the terminal toggle is gone.
+    expect(
+      document.querySelectorAll('[data-sidebar="menu-action"]').length,
+    ).toBe(1);
     await act(async () => mainButton().click());
     expect(started).toEqual(["/project/docs"]);
 

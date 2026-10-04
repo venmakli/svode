@@ -21,6 +21,8 @@ interface SpaceSidebarProps {
   onOpenSearch: () => void;
   /** Starts a new agent session in the Space at this path. */
   onNewSession?: (spacePath: string) => void;
+  /** Opens a new terminal panel tab in the Space at this path. */
+  onNewTerminal?: (spacePath: string) => void;
   /** The "New session" row above Search. */
   newSessionItem?: ReactNode;
   /** Navigation sections between the top actions and the Artifacts tree. */
@@ -33,6 +35,7 @@ export function SpaceSidebar({
   onBeforeNavigation,
   onOpenSearch,
   onNewSession,
+  onNewTerminal,
   newSessionItem,
   navigationSections,
 }: SpaceSidebarProps) {
@@ -50,6 +53,7 @@ export function SpaceSidebar({
           onActivateContent={onActivateContent}
           onBeforeNavigation={onBeforeNavigation}
           onNewSession={onNewSession}
+          onNewTerminal={onNewTerminal}
         />
       </SidebarContent>
 

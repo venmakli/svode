@@ -32,6 +32,9 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
   installDomGlobals(dom);
 
   const closedPtys: string[] = [];
+  /** PTYs that are tabs of the terminal panel, and the ones asked to show. */
+  const panelPtys = new Set<string>();
+  const shownPanelPtys: string[] = [];
   let exitListener: ((ptyId: string) => void) | null = null;
   mock.module("@/features/terminal/session-surface", () => ({
     ManagedTerminalSurface: ({
@@ -53,6 +56,12 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
     spawnManagedTerminalSurface: async () => ({
       ptyId: "pty-new",
       cwd: "/project",
+    }),
+    usePanelTerminal: (ptyId: string | null) => ({
+      inPanel: ptyId !== null && panelPtys.has(ptyId),
+      show: () => {
+        if (ptyId) shownPanelPtys.push(ptyId);
+      },
     }),
     subscribeManagedTerminalExit: (listener: (ptyId: string) => void) => {
       exitListener = listener;
@@ -229,6 +238,39 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
     );
     expect(terminal()?.dataset.autofocus).toBe("true");
   });
+
+  peekTest(
+    "a session running in a terminal panel tab leads to the panel instead of a second terminal",
+    async () => {
+      listed = [
+        session({
+          id: "claude:panel",
+          title: "Panel agent",
+          runtime: { live: true, ptyId: "pty-panel" },
+        }),
+      ];
+      panelPtys.add("pty-panel");
+      try {
+        await mountPeek("/p-panel", {
+          sessionId: "claude:panel",
+          launchId: null,
+        });
+
+        expect(document.body.textContent?.includes("Panel agent")).toBe(true);
+        expect(terminal()).toBeNull();
+        expect(
+          document.body.textContent?.includes(
+            m.sessions_terminal_in_panel_title(),
+          ),
+        ).toBe(true);
+
+        await click(buttonByText(m.sessions_action_show_in_panel()));
+        expect(shownPanelPtys).toEqual(["pty-panel"]);
+      } finally {
+        panelPtys.clear();
+      }
+    },
+  );
 
   peekTest(
     "Esc in the terminal stays with the agent; Esc in the chrome closes",

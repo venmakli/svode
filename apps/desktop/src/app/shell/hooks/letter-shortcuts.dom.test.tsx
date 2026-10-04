@@ -52,7 +52,6 @@ if (process.env.SVODE_LETTER_DOM !== "1") {
     value: {
       invoke: async (command: string) => {
         commands.push(command);
-        if (command === "terminal_list_agent_surfaces") return [];
         if (command === "terminal_spawn")
           return { ptyId: "pty", cwd: "/project", shell: "sh", cols: 80 };
         throw new Error(`unexpected command ${command}`);

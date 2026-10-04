@@ -1,6 +1,7 @@
 export { TerminalPanelHost } from "./ui/terminal-panel-host";
-export { TerminalSidebarAction } from "./ui/terminal-sidebar-action";
+export { TerminalPanelToggle } from "./ui/terminal-panel-toggle";
 export { useTerminalPanelToggle } from "./hooks/use-terminal-panel-toggle";
+export { useNewSpaceTerminal } from "./hooks/use-new-space-terminal";
 export {
   useTerminalAgentSessionSync,
   type TerminalAgentSessionSyncOptions,

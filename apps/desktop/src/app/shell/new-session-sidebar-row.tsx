@@ -6,11 +6,10 @@ import {
 } from "@/features/agent-sessions";
 import { useActiveContentSelection } from "@/features/artifact";
 import { useSpace } from "@/features/space";
-import { TerminalSidebarAction } from "@/features/terminal";
 import { useShellStore } from "./model";
 import { useStartSessionInMainArea } from "./agent-session-peek-host";
 
-/** "New session" of the main sidebar with the terminal panel toggle. */
+/** "New session" of the main sidebar. */
 export function NewSessionSidebarRow() {
   const space = useNewSessionSpace();
   const startSession = useStartSessionInMainArea();
@@ -18,7 +17,6 @@ export function NewSessionSidebarRow() {
     <NewSessionSidebarItem
       space={space}
       onStart={(scope) => void startSession(scope)}
-      action={<TerminalSidebarAction />}
     />
   );
 }

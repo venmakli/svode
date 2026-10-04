@@ -14,11 +14,15 @@ interface TerminalPaneProps {
 
 export function TerminalPane({ tab, active, panelOpen }: TerminalPaneProps) {
   const closeTab = useTerminalStore((state) => state.closeTab);
+  const focusRequest = useTerminalStore((state) =>
+    state.focusRequest?.tabId === tab.id ? state.focusRequest.seq : 0,
+  );
   const { containerRef, terminalVisible, dropOverlay, dropHandlers } =
     useTerminalPaneRuntime({
       tab,
       active,
       panelOpen,
+      focusRequest,
     });
 
   return (

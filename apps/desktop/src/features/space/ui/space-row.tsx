@@ -2,6 +2,7 @@ import { useCallback, type CSSProperties, type RefObject } from "react";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import {
+  BotMessageSquare,
   ChevronRight,
   Database,
   Ellipsis,
@@ -69,6 +70,7 @@ interface SpaceRowProps {
   handleNewFolder: (scope: ScopeTarget) => void;
   handleNewCollection: (scope: ScopeTarget) => void;
   onNewSession?: (spacePath: string) => void;
+  onNewTerminal?: (spacePath: string) => void;
   openScopeHome: (ws: SpaceInfo) => void | Promise<void>;
   setDeleteTarget: (target: DeleteSpaceTarget) => void;
   handleCloneMissing: (spaceId: string, spacePath: string) => void;
@@ -103,6 +105,7 @@ export function SpaceRow({
   handleNewFolder,
   handleNewCollection,
   onNewSession,
+  onNewTerminal,
   openScopeHome,
   setDeleteTarget,
   handleCloneMissing,
@@ -290,14 +293,18 @@ export function SpaceRow({
               <Database />
               {m.collection_new()}
             </DropdownMenuItem>
+            {(onNewSession || onNewTerminal) && <DropdownMenuSeparator />}
             {onNewSession && (
-              <>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem onClick={() => onNewSession(ws.path)}>
-                  <SquareTerminal />
-                  {m.sessions_action_new()}
-                </DropdownMenuItem>
-              </>
+              <DropdownMenuItem onClick={() => onNewSession(ws.path)}>
+                <BotMessageSquare />
+                {m.sessions_action_new()}
+              </DropdownMenuItem>
+            )}
+            {onNewTerminal && (
+              <DropdownMenuItem onClick={() => onNewTerminal(ws.path)}>
+                <SquareTerminal />
+                {m.terminal_new_terminal()}
+              </DropdownMenuItem>
             )}
             {gitControls.dropdownItem}
             <DropdownMenuSeparator />

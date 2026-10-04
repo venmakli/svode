@@ -25,7 +25,7 @@ import {
   CommandPalette,
   useOpenCommandPalette,
 } from "@/features/search/app-shell";
-import { TerminalPanelHost } from "@/features/terminal";
+import { TerminalPanelHost, useNewSpaceTerminal } from "@/features/terminal";
 import { CollectionDetailPeekHost } from "@/features/collection/app-shell";
 import { setActiveContentShown } from "@/features/artifact";
 import { useSpace, useSpaceActions } from "@/features/space";
@@ -224,6 +224,7 @@ function ShellLayoutContent({
   const sidebarHidden = state === "collapsed";
   const useResizableSidebar = !isMobile && !sidebarHidden;
   const startSessionInPeek = useStartSessionInPeek();
+  const newSpaceTerminal = useNewSpaceTerminal();
 
   const sidebar = (
     <SpaceSidebar
@@ -239,6 +240,7 @@ function ShellLayoutContent({
       onBeforeNavigation={onBeforeNavigation}
       onOpenSearch={onOpenSearch}
       onNewSession={startSessionInPeek}
+      onNewTerminal={newSpaceTerminal}
       newSessionItem={<NewSessionSidebarRow />}
       navigationSections={
         <>

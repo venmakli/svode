@@ -23,18 +23,6 @@ export interface TerminalErrorEvent {
   message: string;
 }
 
-export interface TerminalAgentSurfaceSession {
-  ptyId: string;
-  agentSessionId: string;
-  title?: string | null;
-  source: string;
-  sourceSessionId: string;
-  shellCwd: string;
-  createdAt: string;
-  lastOutputAt?: string | null;
-  lastInputAt?: string | null;
-}
-
 export interface RegisterAgentTerminalSessionInput {
   ptyId: string;
   agentSessionId: string;
@@ -102,12 +90,6 @@ export function prepareTerminalResourcePaths(
     ptyId,
     resources,
   });
-}
-
-export function listAgentTerminalSurfaces(): Promise<
-  TerminalAgentSurfaceSession[]
-> {
-  return invoke<TerminalAgentSurfaceSession[]>("terminal_list_agent_surfaces");
 }
 
 export function registerAgentTerminalSession(

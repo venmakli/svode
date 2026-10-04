@@ -34,6 +34,7 @@ if (process.env.SVODE_AGENT_SESSIONS_SURFACE_DOM !== "1") {
   const spawned: string[] = [];
   mock.module("@/features/terminal/session-surface", () => ({
     ManagedTerminalSurface: () => null,
+    usePanelTerminal: () => ({ inPanel: false, show: () => undefined }),
     closeManagedTerminalSurface: async () => undefined,
     spawnManagedTerminalSurface: async (cwd: string) => {
       spawned.push(cwd);

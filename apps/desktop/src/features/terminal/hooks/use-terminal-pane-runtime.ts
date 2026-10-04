@@ -16,6 +16,8 @@ interface UseTerminalPaneRuntimeOptions {
   panelOpen: boolean;
   /** Focus the terminal when it attaches or becomes active; true by default. */
   autoFocus?: boolean;
+  /** Focuses the visible terminal whenever this number changes. */
+  focusRequest?: number;
 }
 
 type Disposable = { dispose: () => void };
@@ -48,6 +50,7 @@ export function useTerminalPaneRuntime({
   active,
   panelOpen,
   autoFocus = true,
+  focusRequest = 0,
 }: UseTerminalPaneRuntimeOptions) {
   const containerRef = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<Terminal | null>(null);
@@ -268,6 +271,11 @@ export function useTerminalPaneRuntime({
       scrollToBottom: true,
     });
   }, [active, autoFocus, panelOpen, scheduleStabilizedFit]);
+
+  useEffect(() => {
+    if (!focusRequest || !activeRef.current || !panelOpenRef.current) return;
+    scheduleStabilizedFit({ focus: true });
+  }, [focusRequest, scheduleStabilizedFit]);
 
   useEffect(() => {
     if (!active || !panelOpen) return;

@@ -44,12 +44,14 @@ interface NavSpacesProps {
   onActivateContent: () => void;
   onBeforeNavigation: () => Promise<boolean>;
   onNewSession?: (spacePath: string) => void;
+  onNewTerminal?: (spacePath: string) => void;
 }
 
 export function NavSpaces({
   onActivateContent,
   onBeforeNavigation,
   onNewSession,
+  onNewTerminal,
 }: NavSpacesProps) {
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -151,6 +153,9 @@ export function NavSpaces({
               onNewSession={
                 onNewSession && (() => onNewSession(activeRootPath))
               }
+              onNewTerminal={
+                onNewTerminal && (() => onNewTerminal(activeRootPath))
+              }
               spaceId={activeRootId}
               rootPath={activeRootPath}
               loading={treeLoading[activeRootId] ?? false}
@@ -199,6 +204,7 @@ export function NavSpaces({
                       handleNewFolder={handleNewFolder}
                       handleNewCollection={handleNewCollection}
                       onNewSession={onNewSession}
+                      onNewTerminal={onNewTerminal}
                       openScopeHome={handleOpenSpaceHome}
                       setDeleteTarget={setDeleteTarget}
                       handleCloneMissing={handleCloneMissing}
