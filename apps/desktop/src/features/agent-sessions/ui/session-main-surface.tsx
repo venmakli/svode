@@ -20,6 +20,7 @@ export function AgentSessionMainSurface({
   focus,
   focusTerminal = false,
   onOpenRoutine,
+  onOpenAgentSettings,
 }: {
   target: AgentSessionTarget;
   /** Move focus into the main area, as after "Expand"; the sidebar keeps it. */
@@ -27,6 +28,7 @@ export function AgentSessionMainSurface({
   /** The session was started for work in its terminal, e.g. a new session. */
   focusTerminal?: boolean;
   onOpenRoutine(routine: RoutineLaunchLink): void;
+  onOpenAgentSettings?: () => void;
 }) {
   const surfaceRef = useRef<HTMLDivElement>(null);
   // The terminal takes focus itself once it is attached.
@@ -42,6 +44,7 @@ export function AgentSessionMainSurface({
         target={target}
         focusTerminal={focusTerminal}
         onOpenRoutine={onOpenRoutine}
+        onOpenAgentSettings={onOpenAgentSettings}
       />
     </div>
   );

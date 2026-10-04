@@ -26,6 +26,7 @@ function session(
     runtime: overrides.runtime,
     capabilities: overrides.capabilities ?? {
       canResume: true,
+      canOpenInChat: false,
     },
   };
 }

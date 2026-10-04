@@ -403,10 +403,10 @@ mod tests {
     use super::*;
     use crate::agent_sessions::AgentSessionsState;
     use crate::agent_sessions::live_status::SOURCE_LOG_ACTIVE_STALE_AFTER_SECS;
-    use crate::agent_sessions::types::terminal_resume_argv;
     use crate::agent_sessions::types::{
         AgentSessionScopeConfidence, AgentSessionScopeKind, AgentSessionScopeStatus,
     };
+    use crate::agent_sessions::types::{catalog_session_key, terminal_resume_argv};
     use crate::terminal::{AgentTerminalStatusEvidence, AgentTerminalSurface};
     use svode_agents::catalog::SessionList;
     use svode_agents::identity::SessionKey;
@@ -1740,6 +1740,16 @@ mod tests {
         let custom = by_id(&result, "custom-local:acp:c1");
         assert!(custom.resume_command.is_none());
         assert!(!custom.capabilities.can_resume);
+        // Both open in the chat under the key the runtime drives them by.
+        assert!(created.capabilities.can_open_in_chat && custom.capabilities.can_open_in_chat);
+        assert_eq!(
+            catalog_session_key(created),
+            Some(SessionKey::from_acp("codex", "n1", true))
+        );
+        assert_eq!(
+            catalog_session_key(custom),
+            Some(SessionKey::from_acp("custom-local", "c1", false))
+        );
         // The runtime record never reaches the saved list of the project.
         assert!(
             state
@@ -1802,5 +1812,48 @@ mod tests {
         .expect("hot status");
         assert_eq!(hot.sessions.len(), 1);
         assert_eq!(hot.sessions[0].status.state, SessionState::Running);
+    }
+
+    #[test]
+    fn a_listed_session_opens_in_the_chat_under_its_key_in_its_directory() {
+        let (_temp, home, project) = project_dirs();
+        let state = AgentSessionsState::with_home(home);
+        let id = codex_id(22);
+        acp_list(
+            &state,
+            "codex",
+            true,
+            vec![(id.as_str(), &project, LISTED_AT)],
+        );
+
+        let target = crate::agent_sessions::chat::chat_target(
+            &state,
+            project.to_string_lossy().into_owned(),
+            &format!("codex:{id}"),
+            Vec::new(),
+            Vec::new(),
+        )
+        .expect("chat target")
+        .expect("a listed session opens in the chat");
+        assert_eq!(target.agent, "codex");
+        assert_eq!(target.key, SessionKey::from_acp("codex", &id, true));
+        assert_eq!(target.cwd, fs::canonicalize(&project).unwrap());
+        // Nothing tells whether another process writes to it.
+        assert_eq!(
+            target.liveness,
+            svode_agents::writer::ExternalLiveness::Unknown
+        );
+
+        assert_eq!(
+            crate::agent_sessions::chat::chat_target(
+                &state,
+                project.to_string_lossy().into_owned(),
+                "codex:unknown",
+                Vec::new(),
+                Vec::new(),
+            )
+            .expect("chat target"),
+            None
+        );
     }
 }

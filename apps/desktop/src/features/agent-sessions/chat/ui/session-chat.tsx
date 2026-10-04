@@ -1,21 +1,37 @@
 import { useState, type ReactNode } from "react";
-import { History, Info } from "lucide-react";
+import { Copy, History, Info, SquareTerminal } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { Marker, MarkerContent, MarkerIcon } from "@/components/ui/marker";
 import { Skeleton } from "@/components/ui/skeleton";
-import type { AgentSessionKeyDto, AgentSessionSnapshotDto } from "../api/chat";
+import type {
+  AgentExternalLivenessDto,
+  AgentSessionKeyDto,
+  AgentSessionSnapshotDto,
+} from "../api/chat";
 import { useSessionActivity } from "../hooks/use-session-activity";
 import {
   useSessionComposer,
   type SendRefusal,
 } from "../hooks/use-session-composer";
+import type { ContinueRefusal } from "../hooks/use-session-opening";
 import { toolCallOf } from "../model/timeline";
-import { SessionAgentLabel } from "./agent-button";
+import { SessionAgentLabel, unavailableText } from "./agent-button";
 import { ChatTimeline } from "./chat-timeline";
 import { Composer } from "./composer";
 import { PendingCard } from "./pending-card";
 import * as m from "@/paraglide/messages.js";
 
 const BOTTOM_ATTRIBUTE = "data-session-chat-bottom";
+
+/** Continuing a session the chat only read: its first send attaches it. */
+export interface ChatContinuation {
+  liveness: AgentExternalLivenessDto;
+  attaching: boolean;
+  refusal: ContinueRefusal | null;
+  attach: () => Promise<boolean>;
+  /** Manual fallback while another process writes to the session. */
+  onCopyResumeCommand: (() => void) | null;
+}
 
 /**
  * The chat of a session the Svode runtime drives: its timeline and, at the
@@ -26,12 +42,21 @@ export function SessionChat({
   sessionId,
   session,
   scopeLabel,
+  epoch = 0,
+  continuation,
+  onOpenInTerminal,
 }: {
   /** Catalogue id; the composer draft belongs to it. */
   sessionId: string;
   session: AgentSessionKeyDto;
   /** The Space the session works in; it does not change. */
   scopeLabel: string | null;
+  /** A new value follows the session anew, as after it was attached again. */
+  epoch?: number;
+  /** Present for a session opened in the chat rather than created there. */
+  continuation?: ChatContinuation;
+  /** The full history in the agent's terminal; between turns only. */
+  onOpenInTerminal?: (() => void) | null;
 }) {
   // The composer keeps focus when the chat replaces a surface that had it,
   // as a new session draft does after its first send; it never takes focus
@@ -39,8 +64,14 @@ export function SessionChat({
   const [autoFocus] = useState(
     () => typeof document !== "undefined" && document.activeElement === document.body,
   );
-  const { snapshot, error } = useSessionActivity(session);
-  const composer = useSessionComposer(sessionId, session, snapshot);
+  const { snapshot, error } = useSessionActivity(session, epoch);
+  const composer = useSessionComposer(
+    sessionId,
+    session,
+    snapshot,
+    continuation?.attach,
+  );
+  const [confirming, setConfirming] = useState(false);
   // When the request card replaces the field, or the field comes back,
   // focus follows only if it was in what is being replaced. This is read
   // while the replaced part is still mounted.
@@ -66,8 +97,29 @@ export function SessionChat({
   }
 
   const pending = snapshot.pending;
+  // A read session is continued by attaching it first (`04`, opening and
+  // continuing): at unknown liveness after an inline confirmation, never
+  // while another process writes to it.
+  const read = snapshot.writer !== "acp" && continuation !== undefined;
+  const externalWriter = read && continuation.liveness === "external_active";
   const canSend =
-    snapshot.writer === "acp" && snapshot.connection !== "closed" && !composer.running;
+    !composer.running &&
+    (read
+      ? !externalWriter && !continuation.attaching
+      : snapshot.writer === "acp" && snapshot.connection !== "closed");
+  // Only the confirmation's own button sends, never a repeated Enter.
+  const send = () => {
+    if (read && continuation.liveness === "unknown") {
+      if (composer.draft.text.trim()) setConfirming(true);
+      return;
+    }
+    void composer.send();
+  };
+  const confirmSend = () => {
+    setConfirming(false);
+    void composer.send();
+  };
+  const between = !composer.running && !pending;
 
   return (
     <div
@@ -84,13 +136,25 @@ export function SessionChat({
       <ChatTimeline
         session={session}
         snapshot={snapshot}
-        header={<HistoryHeader snapshot={snapshot} />}
+        header={
+          <HistoryHeader
+            snapshot={snapshot}
+            onOpenInTerminal={onOpenInTerminal}
+            canOpenInTerminal={between}
+          />
+        }
       />
       <div
         {...{ [BOTTOM_ATTRIBUTE]: "" }}
         className="mx-auto flex w-full max-w-3xl shrink-0 flex-col gap-1.5 px-6 pt-2"
       >
         {composer.refusal && <RefusalLine refusal={composer.refusal} />}
+        {continuation?.refusal && (
+          <ContinueRefusalLine refusal={continuation.refusal} />
+        )}
+        {confirming && read && !pending && (
+          <AttachConfirmation onConfirm={confirmSend} onCancel={() => setConfirming(false)} />
+        )}
         {pending ? (
           <PendingCard
             session={session}
@@ -102,6 +166,8 @@ export function SessionChat({
             onAnswer={(answer) => void composer.answer(pending.id, answer)}
             onStop={composer.stop}
           />
+        ) : externalWriter ? (
+          <ExternalWriter onCopyResumeCommand={continuation.onCopyResumeCommand} />
         ) : (
           <div>
             {composer.draft.notSent && (
@@ -112,11 +178,11 @@ export function SessionChat({
             <Composer
               text={composer.draft.text}
               onTextChange={composer.setText}
-              onSend={() => void composer.send()}
+              onSend={send}
               onStop={composer.stop}
               running={composer.running}
               cancelling={composer.cancelling}
-              sending={composer.sending}
+              sending={composer.sending || Boolean(continuation?.attaching)}
               canSend={canSend}
               placeholder={m.sessions_chat_placeholder_continue()}
               autoFocus={autoFocus || moveFocus}
@@ -140,7 +206,15 @@ export function ComposerFooter({ children }: { children: ReactNode }) {
   );
 }
 
-function HistoryHeader({ snapshot }: { snapshot: AgentSessionSnapshotDto }) {
+function HistoryHeader({
+  snapshot,
+  onOpenInTerminal,
+  canOpenInTerminal,
+}: {
+  snapshot: AgentSessionSnapshotDto;
+  onOpenInTerminal?: (() => void) | null;
+  canOpenInTerminal: boolean;
+}) {
   const { history } = snapshot;
   if (history.truncatedItems) {
     return (
@@ -153,6 +227,29 @@ function HistoryHeader({ snapshot }: { snapshot: AgentSessionSnapshotDto }) {
             count: history.truncatedItems,
           })}
         </MarkerContent>
+        {onOpenInTerminal && (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="ms-auto"
+            disabled={!canOpenInTerminal}
+            title={canOpenInTerminal ? undefined : m.sessions_chat_terminal_during_turn()}
+            onClick={onOpenInTerminal}
+          >
+            <SquareTerminal data-icon="inline-start" />
+            {m.sessions_action_open_in_terminal()}
+          </Button>
+        )}
+      </Marker>
+    );
+  }
+  if (history.available && snapshot.items.length === 0) {
+    return (
+      <Marker variant="border">
+        <MarkerIcon>
+          <Info />
+        </MarkerIcon>
+        <MarkerContent>{m.sessions_chat_history_empty()}</MarkerContent>
       </Marker>
     );
   }
@@ -187,6 +284,65 @@ function RefusalLine({ refusal }: { refusal: SendRefusal }) {
     default:
       text = m.sessions_chat_refusal_other({ message: refusal.message });
   }
+  return <p className="text-xs break-words text-destructive">{text}</p>;
+}
+
+/** Inline confirmation of the first send after reading (C7, one attempt). */
+function AttachConfirmation({
+  onConfirm,
+  onCancel,
+}: {
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <div
+      role="group"
+      aria-label={m.sessions_chat_attach_title()}
+      className="flex flex-col gap-2 rounded-lg border p-3 text-sm"
+    >
+      <p>{m.sessions_chat_attach_description()}</p>
+      <div className="flex flex-wrap justify-end gap-2">
+        <Button size="sm" variant="ghost" onClick={onCancel}>
+          {m.project_cancel()}
+        </Button>
+        <Button size="sm" onClick={onConfirm}>
+          {m.sessions_chat_attach_confirm()}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+/** In place of the composer while another process writes to the session. */
+function ExternalWriter({
+  onCopyResumeCommand,
+}: {
+  onCopyResumeCommand: (() => void) | null;
+}) {
+  return (
+    <div className="flex flex-wrap items-center gap-2 rounded-lg border p-3 text-sm">
+      <p className="min-w-0 flex-1">{m.sessions_chat_external_writer()}</p>
+      <Button
+        size="sm"
+        variant="outline"
+        disabled={!onCopyResumeCommand}
+        onClick={() => onCopyResumeCommand?.()}
+      >
+        <Copy data-icon="inline-start" />
+        {m.sessions_action_copy_resume_command()}
+      </Button>
+    </div>
+  );
+}
+
+function ContinueRefusalLine({ refusal }: { refusal: ContinueRefusal }) {
+  const text =
+    refusal.outcome === "unavailable"
+      ? unavailableText(refusal.reason)
+      : refusal.outcome === "auth_required"
+        ? m.sessions_chat_refusal_auth()
+        : m.sessions_chat_refusal_other({ message: refusal.message });
   return <p className="text-xs break-words text-destructive">{text}</p>;
 }
 

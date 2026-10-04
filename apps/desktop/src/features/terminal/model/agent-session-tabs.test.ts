@@ -37,6 +37,7 @@ function session(overrides: Partial<AgentSession> & Pick<AgentSession, "id">) {
     resumeCommand: overrides.resumeCommand,
     capabilities: overrides.capabilities ?? {
       canResume: true,
+      canOpenInChat: false,
     },
   };
 

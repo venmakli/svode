@@ -25,6 +25,7 @@ function session(lastActivityAt: string): AgentSession {
     lastActivityAt,
     capabilities: {
       canResume: true,
+      canOpenInChat: false,
     },
   };
 }

@@ -129,6 +129,7 @@ export function AgentSessionPeek({
             target={shownTarget}
             focusTerminal={focusTerminal}
             onOpenRoutine={onOpenRoutine}
+            onOpenAgentSettings={onOpenAgentSettings}
             renderActions={(menu, view) => (
               <>
                 {menu}

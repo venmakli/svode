@@ -26,6 +26,7 @@ export function listedSession(
     lastActivityAt: "2026-09-29T10:00:00Z",
     capabilities: {
       canResume: true,
+      canOpenInChat: false,
     },
     ...overrides,
   };

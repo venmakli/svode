@@ -41,6 +41,7 @@ function session(overrides: Partial<AgentSession> = {}): AgentSession {
     lastActivityAt: "2026-07-04T05:00:00Z",
     capabilities: {
       canResume: true,
+      canOpenInChat: false,
     },
     ...overrides,
   };

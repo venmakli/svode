@@ -13,11 +13,14 @@ use svode_agents::{AgentCheck, SettingValue};
 use tauri::ipc::Channel;
 use tauri::{State, Webview};
 
-use super::connections::{AgentConnections, SessionStart};
+use super::connections::{AgentConnections, SessionOpening, SessionStart};
 use super::{ActivityMessage, AgentRuntimeState};
+use crate::agent_sessions::AgentSessionsState;
+use crate::agent_sessions::chat::chat_target;
 use crate::agent_sessions::types::catalog_session_id;
 use crate::agent_setup::AgentSetupState;
 use crate::error::AppError;
+use crate::terminal::TerminalManager;
 use svode_core::agent_adapters::AgentId;
 
 /// Opens a delivery of the session's snapshot and deltas; returns its id.
@@ -173,4 +176,55 @@ pub async fn agent_runtime_start_session(
         }
         SessionStart::Unavailable { reason } => Ok(StartedSession::Unavailable { reason }),
     }
+}
+
+/// Opens a listed session of the project in the chat (Stage 10 `04`,
+/// opening and continuing); `attach` is the user's confirmation of one
+/// attempt to attach it with the writer. Never sends a prompt.
+#[tauri::command]
+pub async fn agent_runtime_open_session(
+    sessions: State<'_, AgentSessionsState>,
+    terminal_manager: State<'_, TerminalManager>,
+    runtime: State<'_, AgentRuntimeState>,
+    connections: State<'_, Arc<AgentConnections>>,
+    project_path: String,
+    session_id: String,
+    attach: bool,
+) -> Result<SessionOpening, AppError> {
+    let sessions = sessions.inner().clone();
+    let terminal_manager = terminal_manager.inner().clone();
+    let runtime_sessions = runtime.runtime().sessions();
+    let target = tokio::task::spawn_blocking(move || {
+        chat_target(
+            &sessions,
+            project_path,
+            &session_id,
+            terminal_manager.list_agent_surfaces()?,
+            runtime_sessions,
+        )
+    })
+    .await
+    .map_err(|error| AppError::General(format!("Agent sessions task failed: {error}")))??;
+    let Some(target) = target else {
+        return Ok(SessionOpening::Unsupported);
+    };
+    Ok(connections
+        .open_session(
+            &target.agent,
+            &target.key,
+            &target.cwd,
+            target.liveness,
+            attach,
+        )
+        .await?)
+}
+
+/// The chat stops driving the session between turns, so the terminal can
+/// continue it.
+#[tauri::command]
+pub async fn agent_runtime_release_session(
+    connections: State<'_, Arc<AgentConnections>>,
+    session: SessionKey,
+) -> Result<(), AppError> {
+    Ok(connections.release_session(&session).await?)
 }

@@ -25,6 +25,18 @@ pub(crate) fn catalog_session_id(agent: &AgentId, key: &SessionKey) -> String {
     }
 }
 
+/// The runtime key of a catalogue record, recovered from its id.
+pub(crate) fn catalog_session_key(session: &AgentSession) -> Option<SessionKey> {
+    [IdentityNamespace::Native, IdentityNamespace::Acp]
+        .into_iter()
+        .map(|namespace| SessionKey {
+            agent: session.source.as_str().to_string(),
+            namespace,
+            session_id: session.source_session_id.clone(),
+        })
+        .find(|key| catalog_session_id(&session.source, key) == session.id)
+}
+
 /// The command that continues a session in its agent's terminal by native
 /// id, when the agent's description has one.
 pub(crate) fn terminal_resume_argv(
@@ -168,6 +180,10 @@ pub struct AgentSessionResumeCommand {
 #[serde(rename_all = "camelCase")]
 pub struct AgentSessionCapabilities {
     pub can_resume: bool,
+    /// The record carries the key the agent's runtime opens it under: a
+    /// session of its ACP list or one the runtime drives.
+    #[serde(default)]
+    pub can_open_in_chat: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

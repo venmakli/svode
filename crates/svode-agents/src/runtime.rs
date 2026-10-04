@@ -950,12 +950,13 @@ impl AgentRuntime {
         } else {
             return Err(AgentRuntimeError::OpenUnsupported);
         };
-        self.take_for_session(id, &connection).await?;
+        // A refused claim leaves the connection to the next session.
         let claim = self
             .inner
             .writers
             .claim(key, Writer::Acp, liveness, unknown)
             .map_err(|refusal| AgentRuntimeError::WriterRefused { refusal })?;
+        self.take_for_session(id, &connection).await?;
         let acp_id = key.session_id.clone();
         let session = self.session_entry(
             &connection,
@@ -1138,6 +1139,27 @@ impl AgentRuntime {
 
     fn next_open(&self) -> u64 {
         self.inner.next_open.fetch_add(1, Ordering::Relaxed) + 1
+    }
+
+    /// Stops driving a session between turns so another writer may take
+    /// it: `session/close` where the agent declares it, then the writer slot
+    /// is free and the session leaves the catalogue of runtime sessions. Its
+    /// snapshot stays readable until it is released for idleness. A turn in
+    /// progress refuses with `turn_active`; a session the runtime does not
+    /// drive is already released.
+    pub async fn release_session(&self, key: &SessionKey) -> Result<(), AgentRuntimeError> {
+        let Ok(session) = self.session(key) else {
+            return Ok(());
+        };
+        if session.writer.lock().unwrap().is_none() {
+            return Ok(());
+        }
+        if session.projection.lock().unwrap().turn_active() {
+            return Err(AgentRuntimeError::TurnActive);
+        }
+        self.close_session(&session).await;
+        self.inner.catalog.changed(&session.connection.agent);
+        Ok(())
     }
 
     /// Accepts a prompt and returns the turn id at once; the runtime owns the

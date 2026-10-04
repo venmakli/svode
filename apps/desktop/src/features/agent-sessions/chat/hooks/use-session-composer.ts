@@ -30,6 +30,11 @@ export function useSessionComposer(
   sessionId: string,
   session: AgentSessionKeyDto,
   snapshot: AgentSessionSnapshotDto | null,
+  /**
+   * Attaches a session the chat only read before its first send; false
+   * when it did not attach, and the draft stays untouched.
+   */
+  attach?: () => Promise<boolean>,
 ) {
   const [draft, updateDraft] = useComposerDraft(sessionDraftKey(sessionId));
   const [refusal, setRefusal] = useState<SendRefusal | null>(null);
@@ -71,6 +76,9 @@ export function useSessionComposer(
     const text = draft.text.trim();
     if (!text || sending || running) return;
     setRefusal(null);
+    if (snapshotRef.current?.writer !== "acp" && attach && !(await attach())) {
+      return;
+    }
     updateDraft({
       sending: { previousTurnId: snapshotRef.current?.turn.turnId ?? null },
       notSent: false,
@@ -87,7 +95,7 @@ export function useSessionComposer(
       // Neither a turn nor a refusal: the effect above settles it by the
       // session's state.
     }
-  }, [draft.text, running, sending, session, updateDraft]);
+  }, [attach, draft.text, running, sending, session, updateDraft]);
 
   const stop = useCallback(() => {
     if (!running || cancelling) return;

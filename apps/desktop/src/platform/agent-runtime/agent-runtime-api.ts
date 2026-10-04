@@ -392,6 +392,47 @@ export function answerAgentInteraction(
   });
 }
 
+/** What Svode knows about a process outside it writing to the session. */
+export type AgentExternalLivenessDto = "free" | "external_active" | "unknown";
+
+/** What opening an existing session in the chat did. */
+export type AgentSessionOpeningDto =
+  /** The snapshot's writer tells whether the runtime drives or only read it. */
+  | {
+      outcome: "opened";
+      session: AgentSessionKeyDto;
+      liveness: AgentExternalLivenessDto;
+    }
+  /** Attaching needs the user's confirmation of this attempt. */
+  | { outcome: "confirmation_required" }
+  | { outcome: "external_active" }
+  /** A managed terminal of Svode drives the session. */
+  | { outcome: "terminal_active" }
+  | { outcome: "unsupported" }
+  | { outcome: "unavailable"; reason: AgentLaunchUnavailableDto }
+  | { outcome: "auth_required"; message: string };
+
+/**
+ * Opens a listed session in the chat without sending a prompt; `attach` is
+ * the user's confirmation of one attempt to attach it with the writer.
+ */
+export function openAgentSession(
+  projectPath: string,
+  sessionId: string,
+  attach: boolean,
+): Promise<AgentSessionOpeningDto> {
+  return invoke<AgentSessionOpeningDto>("agent_runtime_open_session", {
+    projectPath,
+    sessionId,
+    attach,
+  });
+}
+
+/** The chat stops driving the session between turns. */
+export function releaseAgentSession(session: AgentSessionKeyDto): Promise<void> {
+  return invoke<void>("agent_runtime_release_session", { session });
+}
+
 /** A value for one declared session setting. */
 export interface AgentSettingValueDto {
   setting: string;

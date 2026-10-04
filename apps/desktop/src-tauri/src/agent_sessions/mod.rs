@@ -1,5 +1,6 @@
 mod acp_list;
 mod cache;
+pub mod chat;
 pub mod commands;
 mod live_status;
 mod native_status;

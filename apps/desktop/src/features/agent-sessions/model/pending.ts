@@ -47,7 +47,7 @@ export function buildPendingAgentSession(
     cwd: pending.cwd,
     startedAt: pending.createdAt,
     lastActivityAt: pending.createdAt,
-    capabilities: { canResume: false },
+    capabilities: { canResume: false, canOpenInChat: false },
   };
 
   if (pending.scope.kind === "project") {

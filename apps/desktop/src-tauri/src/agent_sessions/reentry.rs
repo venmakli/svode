@@ -272,7 +272,10 @@ fn error_result(
     }
 }
 
-fn resolve_safe_cwd(session: &AgentSession, project: &Path) -> Result<String, Option<String>> {
+pub(super) fn resolve_safe_cwd(
+    session: &AgentSession,
+    project: &Path,
+) -> Result<String, Option<String>> {
     let raw_candidates = cwd_candidates(session);
     for raw in &raw_candidates {
         if let Some(cwd) = canonical_existing_dir(raw, project) {

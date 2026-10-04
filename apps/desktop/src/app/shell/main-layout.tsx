@@ -407,6 +407,7 @@ function ShellMainInset({
               focus={mainSessionFocus}
               focusTerminal={mainSessionFocusTerminal}
               onOpenRoutine={openSessionRoutine}
+              onOpenAgentSettings={() => openAppSettings("providers")}
             />
           ) : mainSurface === "session" && mainSessionDraft ? (
             <AgentSessionDraftMainSurface

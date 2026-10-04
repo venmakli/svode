@@ -85,6 +85,13 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
 
   let listed: ListedAgentSession[] = [];
   const commands: string[] = [];
+  /** `attach` of each opening in the chat, and what the next one answers. */
+  const openings: boolean[] = [];
+  let openingOutcome: (attach: boolean) => unknown = () => ({
+    outcome: "unsupported",
+  });
+  /** Writer of the snapshot a chat subscription delivers. */
+  let snapshotWriter: "none" | "acp" = "none";
   const { mockNativeIpc } = await import("@/platform/native/testing");
   mockNativeIpc((command, args) => {
     const payload = (args ?? {}) as Record<string, unknown>;
@@ -114,6 +121,32 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
         cwd: "/project",
       };
     }
+    if (command === "agent_runtime_open_session") {
+      openings.push(payload.attach as boolean);
+      return openingOutcome(payload.attach as boolean);
+    }
+    if (command === "agent_runtime_subscribe") {
+      const channel = payload.channel as { id: number };
+      const internals = (
+        window as unknown as {
+          __TAURI_INTERNALS__: {
+            runCallback: (id: number, data: unknown) => void;
+          };
+        }
+      ).__TAURI_INTERNALS__;
+      setTimeout(() =>
+        internals.runCallback(channel.id, {
+          index: 0,
+          message: {
+            type: "snapshot",
+            value: readSnapshot(payload.session, snapshotWriter),
+          },
+        }),
+      );
+      return 1;
+    }
+    if (command === "agent_runtime_unsubscribe") return null;
+    if (command === "agent_runtime_prompt") return "turn-1";
     if (command === "list_project_openers") return [];
     if (command === "routines_resolve_launches") return [];
     if (command.startsWith("plugin:event|")) return 1;
@@ -121,6 +154,9 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
   });
 
   const m = await import("@/paraglide/messages.js");
+  const { sessionDraftKey, writeComposerDraft } = await import(
+    "../chat/model/composer"
+  );
   const { TooltipProvider } = await import("@/components/ui/tooltip");
   const { useAgentSessionCatalog, useAgentSessionCatalogLifecycle } =
     await import("../hooks");
@@ -220,6 +256,111 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
       expect(terminal()?.dataset.terminal).toBe("pty-resume-codex:history");
       // Focus follows the explicit continue into the terminal.
       expect(terminal()?.dataset.autofocus).toBe("true");
+    },
+  );
+
+  peekTest(
+    "open in chat reads the history; its first send waits for the inline confirmation",
+    async () => {
+      const key = { agent: "codex", namespace: "native", sessionId: "read" };
+      listed = [
+        session({
+          id: "codex:read",
+          title: "Read",
+          capabilities: { canResume: true, canOpenInChat: true },
+        }),
+      ];
+      openings.length = 0;
+      commands.length = 0;
+      snapshotWriter = "none";
+      openingOutcome = () => ({
+        outcome: "opened",
+        session: key,
+        liveness: "unknown",
+      });
+      writeComposerDraft(sessionDraftKey("codex:read"), { text: "Continue" });
+      await mountPeek("/p-read", { sessionId: "codex:read", launchId: null });
+
+      await openMenu();
+      await click(menuItem(m.sessions_action_open_in_chat()));
+      expect(openings).toEqual([false]);
+      expect(document.body.textContent?.includes("Earlier")).toBe(true);
+
+      // Nothing reaches the agent before the user confirms this attempt.
+      await click(buttonByLabel(m.sessions_chat_send()));
+      expect(openings).toEqual([false]);
+      expect(commands.includes("agent_runtime_prompt")).toBe(false);
+      expect(
+        document.body.textContent?.includes(m.sessions_chat_attach_description()),
+      ).toBe(true);
+
+      snapshotWriter = "acp";
+      await click(buttonByText(m.sessions_chat_attach_confirm()));
+      expect(openings).toEqual([false, true]);
+      expect(
+        commands.filter((command) => command === "agent_runtime_prompt"),
+      ).toEqual(["agent_runtime_prompt"]);
+    },
+  );
+
+  peekTest(
+    "without read-only evidence the chat loads history only on request",
+    async () => {
+      const key = { agent: "hermes", namespace: "native", sessionId: "own" };
+      listed = [
+        session({
+          id: "hermes:own",
+          source: "hermes",
+          title: "Own",
+          capabilities: { canResume: true, canOpenInChat: true },
+        }),
+      ];
+      openings.length = 0;
+      snapshotWriter = "acp";
+      openingOutcome = (attach) =>
+        attach
+          ? { outcome: "opened", session: key, liveness: "unknown" }
+          : { outcome: "confirmation_required" };
+      await mountPeek("/p-own", { sessionId: "hermes:own", launchId: null });
+
+      await openMenu();
+      await click(menuItem(m.sessions_action_open_in_chat()));
+      expect(openings).toEqual([false]);
+      expect(document.body.textContent?.includes("Earlier")).toBe(false);
+      expect(Boolean(buttonByText(m.sessions_action_open_in_terminal()))).toBe(true);
+
+      await click(buttonByText(m.sessions_chat_load_history()));
+      expect(openings).toEqual([false, true]);
+      expect(document.body.textContent?.includes("Earlier")).toBe(true);
+    },
+  );
+
+  peekTest(
+    "a session with a live Svode terminal does not open in the chat",
+    async () => {
+      listed = [
+        session({
+          id: "codex:busyterm",
+          title: "Terminal",
+          runtime: { live: true, ptyId: "pty-busyterm" },
+          capabilities: { canResume: true, canOpenInChat: true },
+        }),
+      ];
+      await mountPeek("/p-busyterm", {
+        sessionId: "codex:busyterm",
+        launchId: null,
+      });
+
+      await openMenu();
+      const item = Array.from(
+        document.querySelectorAll("[role='menuitem']"),
+      ).find((element) =>
+        element.textContent?.includes(m.sessions_action_open_in_chat()),
+      );
+      expect(item?.getAttribute("aria-disabled")).toBe("true");
+      expect(
+        item?.textContent?.includes(m.sessions_open_in_chat_terminal_live()),
+      ).toBe(true);
     },
   );
 
@@ -510,8 +651,43 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
       },
       capabilities: {
         canResume: true,
+        canOpenInChat: false,
       },
       ...overrides,
+    };
+  }
+
+  function readSnapshot(session: unknown, writer: "none" | "acp") {
+    return {
+      seq: 0,
+      session,
+      connection: "ready",
+      turn: {
+        turnId: null,
+        phase: "none",
+        lastOutcome: null,
+        status: {
+          state: "idle",
+          stopReason: null,
+          source: "svode_runtime",
+          confidence: "exact",
+        },
+      },
+      items: [
+        {
+          kind: "user_message",
+          id: "u1",
+          turnId: "replay:1",
+          status: null,
+          summary: "Earlier",
+          hasDetail: false,
+        },
+      ],
+      pending: null,
+      history: { source: "replay", available: true, truncatedItems: null },
+      writer,
+      settings: [],
+      title: null,
     };
   }
 
@@ -545,6 +721,7 @@ function installDomGlobals(dom: JSDOM) {
     CSS: dom.window.CSS ?? { escape: (value: string) => value },
     CustomEvent: dom.window.CustomEvent,
     DOMRect: dom.window.DOMRect,
+    Document: dom.window.Document,
     DocumentFragment: dom.window.DocumentFragment,
     Element: dom.window.Element,
     Event: dom.window.Event,
@@ -558,6 +735,7 @@ function installDomGlobals(dom: JSDOM) {
     Node: dom.window.Node,
     NodeFilter: dom.window.NodeFilter,
     PointerEvent: dom.window.MouseEvent,
+    ShadowRoot: dom.window.ShadowRoot,
     ResizeObserver: class {
       disconnect() {}
       observe() {}

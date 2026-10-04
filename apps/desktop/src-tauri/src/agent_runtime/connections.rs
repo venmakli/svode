@@ -2,9 +2,9 @@
 //! agent's ACP entrypoint starts only at a lifecycle boundary and only for
 //! an available agent: an open Sessions collection for the agents whose
 //! catalogue is their ACP list, the user's explicit check, an agent chosen
-//! in a new session draft and the creation of a session; opening a session
-//! and a Routine/Actor launch acquire through the same planner in their
-//! slices. Sharing by launch plan, the provenance split and closing for
+//! in a new session draft, the creation of a session and opening one in the
+//! chat; a Routine/Actor launch acquires through the same planner in its
+//! slice. Sharing by launch plan, the provenance split and closing for
 //! idleness belong to the runtime.
 
 use std::collections::HashMap;
@@ -17,6 +17,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use svode_agents::adapters::LaunchUnavailable;
 use svode_agents::custom::CustomAgentDefinition;
 use svode_agents::identity::SessionKey;
+use svode_agents::writer::{ExternalLiveness, UnknownLiveness, Writer, WriterRefusal};
 use svode_agents::{
     AcpLaunch, AgentCheck, AgentRuntime, AgentRuntimeError, ConnectionLease, SettingValue,
 };
@@ -79,6 +80,39 @@ pub enum SessionStart {
     },
     /// The agent is no longer available; nothing started.
     Unavailable { reason: LaunchUnavailable },
+}
+
+/// What opening an existing session in the chat did (Stage 10 `04`,
+/// opening and continuing).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(
+    tag = "outcome",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
+pub enum SessionOpening {
+    /// The chat follows the session: the runtime drives it, attached it or
+    /// read its history; the snapshot's writer tells which. `liveness` is
+    /// what Svode knows about other writers before the chat continues it.
+    Opened {
+        session: SessionKey,
+        liveness: ExternalLiveness,
+    },
+    /// Attaching the session needs the user's confirmation of this attempt:
+    /// nothing tells whether another process writes to it.
+    ConfirmationRequired,
+    /// Another process writes to the session; manual fallback only.
+    ExternalActive,
+    /// A managed terminal of Svode drives the session.
+    TerminalActive,
+    /// The agent opens neither this session nor existing sessions at all.
+    Unsupported,
+    Unavailable {
+        reason: LaunchUnavailable,
+    },
+    AuthRequired {
+        message: String,
+    },
 }
 
 /// Open Sessions collections and the catalogue connections they keep.
@@ -204,6 +238,59 @@ impl AgentConnections {
         Ok(SessionStart::Started { session, turn_id })
     }
 
+    /// Opens an existing session of `agent` in the chat, a C1 boundary: a
+    /// session the runtime drives is followed as it is; otherwise its
+    /// history is read without a writer where the agent has evidence for
+    /// it, else the session is attached with the writer. `attach` attaches
+    /// it right away and is the user's confirmation of this one attempt.
+    /// Opening never sends a prompt, and a session a managed terminal
+    /// drives is left to it.
+    pub async fn open_session(
+        &self,
+        agent: &str,
+        session: &SessionKey,
+        cwd: &Path,
+        liveness: ExternalLiveness,
+        attach: bool,
+    ) -> Result<SessionOpening, AgentRuntimeError> {
+        if self.runtime.writers().writer(session) == Some(Writer::Pty) {
+            return Ok(SessionOpening::TerminalActive);
+        }
+        let lease = match self.acquire(agent).await {
+            Ok(lease) => lease,
+            Err(ConnectRefusal::Unavailable(reason)) => {
+                return Ok(SessionOpening::Unavailable { reason });
+            }
+            Err(ConnectRefusal::Failed(error)) => return opening(Err(error), session, liveness),
+        };
+        if !attach {
+            match self
+                .runtime
+                .read_session(lease.connection(), session, cwd)
+                .await
+            {
+                Err(AgentRuntimeError::ReadOnlyUnsupported) => {}
+                read => return opening(read, session, liveness),
+            }
+        }
+        let unknown = if attach {
+            UnknownLiveness::Confirmed
+        } else {
+            UnknownLiveness::NotConfirmed
+        };
+        let attached = self
+            .runtime
+            .open_session(lease.connection(), session, cwd, liveness, unknown)
+            .await;
+        opening(attached, session, liveness)
+    }
+
+    /// The chat no longer drives the session, e.g. to continue it in the
+    /// terminal; refused during a turn.
+    pub async fn release_session(&self, session: &SessionKey) -> Result<(), AgentRuntimeError> {
+        self.runtime.release_session(session).await
+    }
+
     /// The user's check of a custom agent's definition before it is saved.
     pub async fn check_draft(
         &self,
@@ -303,5 +390,42 @@ impl AgentConnections {
                 false
             }
         }
+    }
+}
+
+/// The opening outcome of a runtime call; refusals the chat shows as states
+/// are outcomes, other errors stay errors.
+fn opening(
+    result: Result<(), AgentRuntimeError>,
+    session: &SessionKey,
+    liveness: ExternalLiveness,
+) -> Result<SessionOpening, AgentRuntimeError> {
+    match result {
+        Ok(()) => Ok(SessionOpening::Opened {
+            session: session.clone(),
+            liveness,
+        }),
+        Err(AgentRuntimeError::WriterRefused { refusal }) => Ok(match refusal {
+            WriterRefusal::ConfirmationRequired => SessionOpening::ConfirmationRequired,
+            WriterRefusal::ExternalActive => SessionOpening::ExternalActive,
+            WriterRefusal::WriterActive {
+                writer: Writer::Pty,
+            } => SessionOpening::TerminalActive,
+            // Another connection of the runtime drives it; the chat follows
+            // it by its key.
+            WriterRefusal::WriterActive {
+                writer: Writer::Acp,
+            } => SessionOpening::Opened {
+                session: session.clone(),
+                liveness,
+            },
+        }),
+        Err(AgentRuntimeError::OpenUnsupported | AgentRuntimeError::SessionNotFound) => {
+            Ok(SessionOpening::Unsupported)
+        }
+        Err(AgentRuntimeError::AuthRequired { message }) => {
+            Ok(SessionOpening::AuthRequired { message })
+        }
+        Err(error) => Err(error),
     }
 }

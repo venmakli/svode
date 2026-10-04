@@ -218,7 +218,10 @@ pub(super) fn map_listed(
         last_activity_at: last_activity_at.to_rfc3339_opts(SecondsFormat::Secs, true),
         waiting_since: None,
         resume_command,
-        capabilities: AgentSessionCapabilities { can_resume: native },
+        capabilities: AgentSessionCapabilities {
+            can_resume: native,
+            can_open_in_chat: true,
+        },
     };
     if native {
         observations.extend(apply_terminal_runtime(&mut session, terminal_surfaces));
@@ -341,7 +344,10 @@ pub(super) fn map_provisional_surface(
         last_activity_at,
         waiting_since,
         resume_command: None,
-        capabilities: AgentSessionCapabilities { can_resume: false },
+        capabilities: AgentSessionCapabilities {
+            can_resume: false,
+            can_open_in_chat: false,
+        },
     }
 }
 
@@ -431,7 +437,10 @@ pub(super) fn map_runtime_session(
         last_activity_at: rfc3339(runtime.updated_at),
         waiting_since: None,
         resume_command,
-        capabilities: AgentSessionCapabilities { can_resume: native },
+        capabilities: AgentSessionCapabilities {
+            can_resume: native,
+            can_open_in_chat: true,
+        },
     }
 }
 

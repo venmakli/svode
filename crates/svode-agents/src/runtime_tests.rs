@@ -1051,6 +1051,101 @@ async fn acp_does_not_take_a_session_a_managed_pty_writes() {
 }
 
 #[tokio::test]
+async fn releasing_a_session_between_turns_closes_it_and_frees_its_writer() {
+    let runtime = AgentRuntime::default();
+    let (id, mut agent) = attached(&runtime);
+    let (key, ()) = tokio::join!(
+        async {
+            runtime
+                .new_session(id, Path::new("/project"), &[])
+                .await
+                .unwrap()
+        },
+        agent.open_session_declaring(
+            json!({ "loadSession": true, "sessionCapabilities": { "close": {} } })
+        )
+    );
+    let mut subscription = runtime.subscribe(&key).unwrap();
+    runtime.prompt(&key, "work").unwrap();
+    let prompt = agent.expect("session/prompt").await;
+    assert_eq!(
+        runtime.release_session(&key).await,
+        Err(AgentRuntimeError::TurnActive)
+    );
+    agent
+        .reply(&prompt, json!({ "stopReason": "end_turn" }))
+        .await;
+    follow(&mut subscription, idle).await;
+
+    let (released, ()) = tokio::join!(runtime.release_session(&key), async {
+        let close = agent.expect("session/close").await;
+        assert_eq!(close["params"]["sessionId"], "s1");
+        agent.reply(&close, json!({})).await;
+    });
+    released.unwrap();
+    follow(&mut subscription, |snapshot| {
+        snapshot.writer == WriterState::None
+    })
+    .await;
+    assert_eq!(
+        subscription.snapshot.turn.last_outcome,
+        Some(StopReason::EndTurn)
+    );
+    assert!(runtime.sessions().is_empty());
+    assert!(
+        runtime
+            .writers()
+            .claim(
+                &key,
+                Writer::Pty,
+                ExternalLiveness::Unknown,
+                UnknownLiveness::NotConfirmed
+            )
+            .is_ok()
+    );
+
+    // Nothing is left to release.
+    runtime.release_session(&key).await.unwrap();
+    agent.silent().await;
+}
+
+#[tokio::test]
+async fn a_refused_opening_leaves_the_connection_to_the_next_session() {
+    let runtime = AgentRuntime::default();
+    let (id, mut agent) = attached_with(
+        &runtime,
+        &AcpLaunch {
+            session_per_connection: true,
+            ..launch()
+        },
+    );
+    let key = SessionKey::from_acp("scripted", "s7", false);
+    let (opened, ()) = tokio::join!(
+        runtime.open_session(
+            id,
+            &key,
+            Path::new("/project"),
+            ExternalLiveness::Unknown,
+            UnknownLiveness::NotConfirmed,
+        ),
+        agent.initialize(json!({ "loadSession": true }))
+    );
+    assert_eq!(
+        opened,
+        Err(AgentRuntimeError::WriterRefused {
+            refusal: WriterRefusal::ConfirmationRequired
+        })
+    );
+    let (created, ()) = tokio::join!(runtime.new_session(id, Path::new("/project"), &[]), async {
+        let new_session = agent.expect("session/new").await;
+        agent
+            .reply(&new_session, json!({ "sessionId": "s1" }))
+            .await;
+    });
+    created.unwrap();
+}
+
+#[tokio::test]
 async fn leaving_the_surface_does_not_stop_the_turn() {
     let runtime = AgentRuntime::default();
     let (_connection, key, mut agent) = session(&runtime).await;

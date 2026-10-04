@@ -3,6 +3,7 @@ import {
   Copy,
   Info,
   ListChecks,
+  MessagesSquare,
   MoreHorizontal,
   SquareTerminal,
   X,
@@ -71,6 +72,8 @@ import {
 } from "./session-states";
 import { SessionStatusMarker, statusText } from "./session-status";
 import { SessionChat } from "../chat/ui/session-chat";
+import { OpenedSessionChat } from "../chat/ui/opened-session-chat";
+import { releaseAgentSession, type AgentSessionKeyDto } from "../chat/api/chat";
 import { AGENT_SESSION_CONTENT_ATTRIBUTE } from "../lib/session-content";
 import * as m from "@/paraglide/messages.js";
 
@@ -84,6 +87,8 @@ interface AgentSessionContentProps {
    */
   renderActions?: (menu: ReactNode, view: AgentSessionView) => ReactNode;
   onOpenRoutine(routine: RoutineLaunchLink): void;
+  /** Recovery of an agent the chat cannot start: the agent settings. */
+  onOpenAgentSettings?: () => void;
 }
 
 /**
@@ -95,10 +100,13 @@ export function AgentSessionContent({
   focusTerminal,
   renderActions,
   onOpenRoutine,
+  onOpenAgentSettings,
 }: AgentSessionContentProps) {
   const view = useAgentSessionView(target, { focusTerminal });
   const routine = useSessionRoutine(view.session);
   const [metadataOpen, setMetadataOpen] = useState(false);
+  // "Open in chat": the session's chat instead of its terminal state.
+  const [chatOpen, setChatOpen] = useState(false);
   const [confirmCloseOpen, setConfirmCloseOpen] = useState(false);
   const { activeRootName, spaces } = useSpace();
   const spaceNames = useMemo(() => {
@@ -135,6 +143,23 @@ export function AgentSessionContent({
       });
   }
 
+  /** Leaves the chat for the terminal; the chat first releases its writer. */
+  function openInTerminal(session: AgentSessionKeyDto | null) {
+    void (session ? releaseAgentSession(session) : Promise.resolve())
+      .then(() => {
+        setChatOpen(false);
+        view.continueInTerminal();
+      })
+      .catch((error) => {
+        toast.error(m.sessions_toast_open_in_terminal_failed(), {
+          description: getNativeErrorMessage(error),
+        });
+      });
+  }
+
+  const inChat =
+    chatOpen || Boolean(session?.runtime?.acpSession && !view.ptyId);
+
   function openExternalTerminal() {
     void view.openExternalTerminal().catch((error) => {
       toast.error(m.sessions_toast_external_terminal_failed(), {
@@ -156,6 +181,11 @@ export function AgentSessionContent({
       onOpenExternalTerminal={openExternalTerminal}
       onOpenRoutine={
         routine?.definitionPresent ? () => onOpenRoutine(routine) : null
+      }
+      onOpenInChat={
+        session?.capabilities.canOpenInChat && !inChat
+          ? () => setChatOpen(true)
+          : null
       }
     />
   );
@@ -190,8 +220,12 @@ export function AgentSessionContent({
           <SessionBody
             view={view}
             scopeLabel={identityLabel}
+            chatOpen={chatOpen}
             onCopyCommand={copyResumeCommand}
             onOpenExternalTerminal={openExternalTerminal}
+            onOpenInTerminal={openInTerminal}
+            onShowTerminal={() => setChatOpen(false)}
+            onOpenAgentSettings={onOpenAgentSettings}
           />
         </div>
       </div>
@@ -274,13 +308,21 @@ function SessionIdentity({
 function SessionBody({
   view,
   scopeLabel: sessionScopeLabel,
+  chatOpen,
   onCopyCommand,
   onOpenExternalTerminal,
+  onOpenInTerminal,
+  onShowTerminal,
+  onOpenAgentSettings,
 }: {
   view: AgentSessionView;
   scopeLabel: string | null;
+  chatOpen: boolean;
   onCopyCommand: () => void;
   onOpenExternalTerminal: () => void;
+  onOpenInTerminal: (session: AgentSessionKeyDto | null) => void;
+  onShowTerminal: () => void;
+  onOpenAgentSettings?: () => void;
 }) {
   const session = view.session;
   const panelTerminal = usePanelTerminal(view.ptyId);
@@ -306,6 +348,23 @@ function SessionBody({
       </Empty>
     );
   }
+  const canResume = Boolean(session?.capabilities.canResume);
+  // "Open in chat" (`04`, opening and continuing); a live Svode terminal
+  // keeps the session.
+  if (session && chatOpen && !view.ptyId) {
+    return (
+      <OpenedSessionChat
+        sessionId={session.id}
+        agent={session.source}
+        scopeLabel={sessionScopeLabel}
+        canOpenInTerminal={canResume}
+        onOpenInTerminal={onOpenInTerminal}
+        onShowTerminal={onShowTerminal}
+        onCopyResumeCommand={view.resumeCommand ? onCopyCommand : null}
+        onOpenAgentSettings={onOpenAgentSettings}
+      />
+    );
+  }
   // A session the Svode ACP runtime drives opens in its chat (`04`, chat
   // and terminal: the interface of the session's writer).
   const acpSession = session?.runtime?.acpSession;
@@ -315,6 +374,7 @@ function SessionBody({
         sessionId={session.id}
         session={acpSession}
         scopeLabel={sessionScopeLabel}
+        onOpenInTerminal={canResume ? () => onOpenInTerminal(acpSession) : null}
       />
     );
   }
@@ -343,7 +403,7 @@ function SessionBody({
     );
   }
 
-  const canContinue = Boolean(session?.capabilities.canResume);
+  const canContinue = canResume;
   return (
     <Empty className="h-full border-0">
       <EmptyHeader>
@@ -390,6 +450,7 @@ function SessionActionsMenu({
   onCopyCommand,
   onOpenExternalTerminal,
   onOpenRoutine,
+  onOpenInChat,
 }: {
   view: AgentSessionView;
   metadataOpen: boolean;
@@ -399,6 +460,8 @@ function SessionActionsMenu({
   onOpenExternalTerminal: () => void;
   /** Present when a Routine launched the session and still exists. */
   onOpenRoutine: (() => void) | null;
+  /** Present for a session the agent's runtime can open that the chat does not show. */
+  onOpenInChat: (() => void) | null;
 }) {
   return (
     <DropdownMenu>
@@ -413,6 +476,19 @@ function SessionActionsMenu({
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="min-w-56">
         <DropdownMenuGroup>
+          {onOpenInChat && (
+            <DropdownMenuItem disabled={Boolean(view.ptyId)} onSelect={onOpenInChat}>
+              <MessagesSquare />
+              <span className="flex min-w-0 flex-col">
+                {m.sessions_action_open_in_chat()}
+                {view.ptyId && (
+                  <span className="text-xs text-muted-foreground">
+                    {m.sessions_open_in_chat_terminal_live()}
+                  </span>
+                )}
+              </span>
+            </DropdownMenuItem>
+          )}
           {onOpenRoutine && (
             <DropdownMenuItem onSelect={onOpenRoutine}>
               <ListChecks />

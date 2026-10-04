@@ -50,6 +50,7 @@ function session(overrides: Partial<AgentSession> & Pick<AgentSession, "id">) {
     lastActivityAt: "2026-07-05T10:01:00Z",
     capabilities: {
       canResume: true,
+      canOpenInChat: false,
     },
   };
 

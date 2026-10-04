@@ -352,6 +352,8 @@ pub fn run() {
             agent_runtime::commands::agent_runtime_hold_draft,
             agent_runtime::commands::agent_runtime_release_draft,
             agent_runtime::commands::agent_runtime_start_session,
+            agent_runtime::commands::agent_runtime_open_session,
+            agent_runtime::commands::agent_runtime_release_session,
             agent_setup::commands::agent_setup_list,
             agent_setup::commands::agent_setup_chat_agents,
             agent_setup::commands::agent_setup_enable,

@@ -33,6 +33,8 @@ export interface AgentResumeCommand {
 
 export interface AgentSessionCapabilities {
   canResume: boolean;
+  /** The record carries the key the agent's runtime opens it under. */
+  canOpenInChat: boolean;
 }
 
 export interface AgentSession {

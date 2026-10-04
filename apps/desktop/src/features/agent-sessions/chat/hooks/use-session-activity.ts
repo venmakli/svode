@@ -14,9 +14,11 @@ export interface SessionActivity {
  */
 export function useSessionActivity(
   session: AgentSessionKeyDto | null,
+  /** A new value subscribes again, as after the session was attached anew. */
+  epoch = 0,
 ): SessionActivity {
   const key = session
-    ? `${session.agent}\n${session.namespace}\n${session.sessionId}`
+    ? `${session.agent}\n${session.namespace}\n${session.sessionId}\n${epoch}`
     : null;
   const [state, setState] = useState<SessionActivity & { key: string | null }>(
     { key: null, snapshot: null, error: null },

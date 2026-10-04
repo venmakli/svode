@@ -1,5 +1,5 @@
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -12,7 +12,12 @@ use svode_core::agent_adapters::AgentAdapterKind;
 use tauri::async_runtime::JoinHandle;
 
 use super::*;
-use crate::agent_runtime::connections::{AgentConnections, LaunchPlanner, PlanFuture};
+use crate::agent_runtime::connections::{
+    AgentConnections, LaunchPlanner, PlanFuture, SessionOpening,
+};
+use svode_agents::activity::WriterState;
+use svode_agents::identity::SessionKey;
+use svode_agents::writer::{ExternalLiveness, UnknownLiveness, Writer};
 
 /// A `/bin/sh` ACP agent that declares `session/list` and answers it by
 /// `$SVODE_LIST`: `ok` with one session, `error`, or `hang`; with `none` it
@@ -642,4 +647,188 @@ async fn the_first_send_creates_the_session_and_lists_it_once_the_prompt_is_acce
     ));
     assert_eq!(runtime.sessions().len(), 1);
     runtime.shutdown().await;
+}
+
+/// A `/bin/sh` ACP agent with session `h1` that replays one message on
+/// `session/load`, declares `close` and writes each method it receives to
+/// `calls`.
+fn history_agent(agent: &str, read_only_open: bool, calls: &Path) -> AcpLaunch {
+    const SCRIPT: &str = r#"while IFS= read -r line; do
+  id=${line#'{"id":'}; id=${id%%,*}
+  method=${line#*'"method":"'}; method=${method%%'"'*}
+  printf '%s\n' "$method" >> "$SVODE_CALLS"
+  case "$line" in
+    *'"method":"initialize"'*) printf '{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":1,"agentCapabilities":{"loadSession":true,"sessionCapabilities":{"close":{}}},"agentInfo":{"name":"scripted","version":"1.0.0"}}}\n' "$id";;
+    *'"method":"session/load"'*) printf '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"h1","update":{"sessionUpdate":"user_message_chunk","content":{"type":"text","text":"Earlier"}}}}\n'
+      printf '{"jsonrpc":"2.0","id":%s,"result":{}}\n' "$id";;
+    *'"method":"session/close"'*) printf '{"jsonrpc":"2.0","id":%s,"result":{}}\n' "$id";;
+  esac
+done"#;
+    AcpLaunch {
+        agent: agent.into(),
+        program: PathBuf::from("/bin/sh"),
+        args: vec!["-c".into(), SCRIPT.into()],
+        environment: None,
+        env: BTreeMap::from([("SVODE_CALLS".into(), calls.to_string_lossy().into_owned())]),
+        cwd: std::env::temp_dir(),
+        acp_id_is_native: true,
+        lists_catalog: false,
+        read_only_open,
+        writer_refusal: None,
+        session_per_connection: false,
+    }
+}
+
+fn calls(path: &Path) -> Vec<String> {
+    std::fs::read_to_string(path)
+        .unwrap_or_default()
+        .lines()
+        .map(str::to_string)
+        .collect()
+}
+
+fn opened(key: &SessionKey) -> SessionOpening {
+    SessionOpening::Opened {
+        session: key.clone(),
+        liveness: ExternalLiveness::Unknown,
+    }
+}
+
+#[tokio::test]
+async fn opening_reads_the_history_without_a_writer_where_the_agent_has_evidence() {
+    let runtime = runtime();
+    let dir = tempfile::tempdir().unwrap();
+    let log = dir.path().join("calls");
+    let (connections, _) = owner(
+        &runtime,
+        vec![("codex", Ok(history_agent("codex", true, &log)))],
+    );
+    let key = SessionKey::from_acp("codex", "h1", true);
+
+    let opening = connections
+        .open_session("codex", &key, dir.path(), ExternalLiveness::Unknown, false)
+        .await
+        .unwrap();
+    assert_eq!(opening, opened(&key));
+    let snapshot = runtime.subscribe(&key).unwrap().snapshot;
+    assert_eq!(snapshot.writer, WriterState::None);
+    assert_eq!(snapshot.items.len(), 1);
+    assert_eq!(snapshot.items[0].summary, "Earlier");
+    assert_eq!(runtime.writers().writer(&key), None);
+    // Opening sends no prompt; continuing needs the session attached.
+    assert_eq!(
+        runtime.prompt(&key, "Next"),
+        Err(svode_agents::AgentRuntimeError::WriterRequired)
+    );
+    assert_eq!(calls(&log), ["initialize", "session/load", "session/close"]);
+    runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn without_read_only_evidence_attaching_needs_a_confirmation_of_each_attempt() {
+    let runtime = runtime();
+    let dir = tempfile::tempdir().unwrap();
+    let log = dir.path().join("calls");
+    let (connections, _) = owner(
+        &runtime,
+        vec![("hermes", Ok(history_agent("hermes", false, &log)))],
+    );
+    let key = SessionKey::from_acp("hermes", "h1", true);
+
+    assert_eq!(
+        connections
+            .open_session("hermes", &key, dir.path(), ExternalLiveness::Unknown, false)
+            .await
+            .unwrap(),
+        SessionOpening::ConfirmationRequired
+    );
+    assert_eq!(
+        connections
+            .open_session(
+                "hermes",
+                &key,
+                dir.path(),
+                ExternalLiveness::ExternalActive,
+                true
+            )
+            .await
+            .unwrap(),
+        SessionOpening::ExternalActive
+    );
+    assert!(runtime.subscribe(&key).is_err());
+    assert_eq!(calls(&log), ["initialize"], "nothing reached the session");
+
+    // "Load history" confirms this attempt: the session is attached.
+    assert_eq!(
+        connections
+            .open_session("hermes", &key, dir.path(), ExternalLiveness::Unknown, true)
+            .await
+            .unwrap(),
+        opened(&key)
+    );
+    let snapshot = runtime.subscribe(&key).unwrap().snapshot;
+    assert_eq!(snapshot.writer, WriterState::Acp);
+    assert_eq!(snapshot.items[0].summary, "Earlier");
+    assert_eq!(runtime.writers().writer(&key), Some(Writer::Acp));
+
+    // Released for the terminal, the session needs a new confirmation.
+    connections.release_session(&key).await.unwrap();
+    assert_eq!(runtime.writers().writer(&key), None);
+    assert_eq!(
+        connections
+            .open_session("hermes", &key, dir.path(), ExternalLiveness::Unknown, false)
+            .await
+            .unwrap(),
+        SessionOpening::ConfirmationRequired
+    );
+    assert!(!calls(&log).iter().any(|method| method == "session/prompt"));
+    runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_session_a_managed_terminal_drives_is_left_to_it() {
+    let runtime = runtime();
+    let dir = tempfile::tempdir().unwrap();
+    let log = dir.path().join("calls");
+    let (connections, _) = owner(
+        &runtime,
+        vec![
+            ("codex", Ok(history_agent("codex", true, &log))),
+            ("pi", Err(LaunchUnavailable::NodeMissing { required: 22 })),
+        ],
+    );
+    let key = SessionKey::from_acp("codex", "h1", true);
+    let _terminal = runtime
+        .writers()
+        .claim(
+            &key,
+            Writer::Pty,
+            ExternalLiveness::Unknown,
+            UnknownLiveness::NotConfirmed,
+        )
+        .unwrap();
+
+    assert_eq!(
+        connections
+            .open_session("codex", &key, dir.path(), ExternalLiveness::Unknown, true)
+            .await
+            .unwrap(),
+        SessionOpening::TerminalActive
+    );
+    assert!(calls(&log).is_empty(), "the agent was not started");
+    assert!(matches!(
+        connections
+            .open_session(
+                "pi",
+                &SessionKey::from_acp("pi", "p1", true),
+                dir.path(),
+                ExternalLiveness::Unknown,
+                false,
+            )
+            .await
+            .unwrap(),
+        SessionOpening::Unavailable {
+            reason: LaunchUnavailable::NodeMissing { .. }
+        }
+    ));
 }
