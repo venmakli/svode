@@ -6,13 +6,11 @@ use std::sync::Arc;
 
 use serde::Serialize;
 use svode_agents::AgentCheck;
-use svode_agents::adapters::{AgentSetup, ChatOffer, chat_offer};
+use svode_agents::adapters::{AgentSetup, ChatOffer};
 use svode_agents::custom::{
     CustomAgent, CustomAgentDefinition, CustomAgentSetup, custom_agent_setup,
 };
-use svode_agents::registry::{
-    AdapterRuntimeRegistry, AdapterTarget, AgentVerdict, SystemRuntimeCommandRunner,
-};
+use svode_agents::registry::{AdapterRuntimeRegistry, AdapterTarget, SystemRuntimeCommandRunner};
 use svode_core::agent_adapters::{
     AgentAdapterKind, CustomAgentId, resolve_space_executable, system_home_dir,
 };
@@ -21,7 +19,7 @@ use tokio::task::JoinSet;
 
 use super::AgentSetupState;
 use crate::agent_runtime::AgentRuntimeState;
-use crate::agent_runtime::connections::{AgentConnections, LaunchPlanner};
+use crate::agent_runtime::connections::AgentConnections;
 use crate::agent_sessions::AgentSessionsState;
 use crate::error::AppError;
 use crate::process::path_env::ProcessPath;
@@ -107,39 +105,22 @@ pub struct ChatAgents {
 pub async fn agent_setup_chat_agents(
     state: State<'_, AgentSetupState>,
 ) -> Result<ChatAgents, AppError> {
-    let builtin = AgentAdapterKind::ALL.into_iter().map(|agent| {
-        (
-            agent.as_str().to_string(),
-            agent.display_name().to_string(),
-            AdapterRuntimeRegistry.verdict(agent) == AgentVerdict::Deferred,
-            Some(agent),
-        )
-    });
-    let custom = state.custom_agents().into_iter().map(|custom| {
-        (
-            custom.id.agent_id().as_str().to_string(),
-            custom.definition.name,
-            false,
-            None,
-        )
-    });
+    let agents = AgentAdapterKind::ALL
+        .into_iter()
+        .map(|agent| (agent.as_str().to_string(), agent.display_name().to_string()))
+        .chain(state.custom_agents().into_iter().map(|custom| {
+            (
+                custom.id.agent_id().as_str().to_string(),
+                custom.definition.name,
+            )
+        }));
     let target = target().await?;
     let mut reads = JoinSet::new();
-    for (order, (agent, name, deferred, builtin)) in builtin.chain(custom).enumerate() {
+    for (order, (agent, name)) in agents.enumerate() {
         let state = (*state).clone();
         let target = target.clone();
         reads.spawn(async move {
-            let plan = state.plan(&agent).await;
-            let authenticated = match (&plan, builtin) {
-                (Ok(_), Some(kind)) if !deferred => {
-                    AdapterRuntimeRegistry
-                        .diagnose(kind, &target, &SystemRuntimeCommandRunner)
-                        .await
-                        .authenticated
-                }
-                _ => None,
-            };
-            let offer = chat_offer(deferred, &plan, authenticated);
+            let offer = state.chat_offer(&agent, &target).await;
             (order, offer.map(|offer| ChatAgent { agent, name, offer }))
         });
     }

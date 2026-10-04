@@ -90,8 +90,9 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
   let openingOutcome: (attach: boolean) => unknown = () => ({
     outcome: "unsupported",
   });
-  /** Writer of the snapshot a chat subscription delivers. */
+  /** Writer and turn of the snapshot a chat subscription delivers. */
   let snapshotWriter: "none" | "acp" = "none";
+  let snapshotTurn: "none" | "running" = "none";
   const { mockNativeIpc } = await import("@/platform/native/testing");
   mockNativeIpc((command, args) => {
     const payload = (args ?? {}) as Record<string, unknown>;
@@ -139,13 +140,14 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
           index: 0,
           message: {
             type: "snapshot",
-            value: readSnapshot(payload.session, snapshotWriter),
+            value: readSnapshot(payload.session, snapshotWriter, snapshotTurn),
           },
         }),
       );
       return 1;
     }
     if (command === "agent_runtime_unsubscribe") return null;
+    if (command === "agent_runtime_release_session") return null;
     if (command === "agent_runtime_prompt") return "turn-1";
     if (command === "list_project_openers") return [];
     if (command === "routines_resolve_launches") return [];
@@ -260,7 +262,7 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
   );
 
   peekTest(
-    "open in chat reads the history; its first send waits for the inline confirmation",
+    "a session opens in the chat, which reads its history; its first send waits for the inline confirmation",
     async () => {
       const key = { agent: "codex", namespace: "native", sessionId: "read" };
       listed = [
@@ -281,9 +283,9 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
       writeComposerDraft(sessionDraftKey("codex:read"), { text: "Continue" });
       await mountPeek("/p-read", { sessionId: "codex:read", launchId: null });
 
-      await openMenu();
-      await click(menuItem(m.sessions_action_open_in_chat()));
+      // Without a Svode writer the chat is the default; opening sends nothing.
       expect(openings).toEqual([false]);
+      expect(commands.includes("agent_sessions_reenter")).toBe(false);
       expect(document.body.textContent?.includes("Earlier")).toBe(true);
 
       // Nothing reaches the agent before the user confirms this attempt.
@@ -323,8 +325,6 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
           : { outcome: "confirmation_required" };
       await mountPeek("/p-own", { sessionId: "hermes:own", launchId: null });
 
-      await openMenu();
-      await click(menuItem(m.sessions_action_open_in_chat()));
       expect(openings).toEqual([false]);
       expect(document.body.textContent?.includes("Earlier")).toBe(false);
       expect(Boolean(buttonByText(m.sessions_action_open_in_terminal()))).toBe(true);
@@ -360,6 +360,185 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
       expect(item?.getAttribute("aria-disabled")).toBe("true");
       expect(
         item?.textContent?.includes(m.sessions_open_in_chat_terminal_live()),
+      ).toBe(true);
+    },
+  );
+
+  peekTest(
+    "the chat follows a session the runtime drives without opening it",
+    async () => {
+      const key = {
+        agent: "codex",
+        namespace: "native",
+        sessionId: "driven",
+      } as const;
+      listed = [
+        session({
+          id: "codex:driven",
+          title: "Driven",
+          runtime: { live: true, acpSession: key },
+          capabilities: { canResume: true, canOpenInChat: true },
+        }),
+      ];
+      openings.length = 0;
+      snapshotWriter = "acp";
+      snapshotTurn = "none";
+      await mountPeek("/p-driven", { sessionId: "codex:driven", launchId: null });
+
+      expect(openings).toEqual([]);
+      expect(document.body.textContent?.includes("Earlier")).toBe(true);
+    },
+  );
+
+  peekTest("open in terminal is unavailable during a turn", async () => {
+    const key = {
+        agent: "codex",
+        namespace: "native",
+        sessionId: "busy",
+      } as const;
+    listed = [
+      session({
+        id: "codex:busy",
+        title: "Busy",
+        runtime: { live: true, acpSession: key },
+        capabilities: { canResume: true, canOpenInChat: true },
+      }),
+    ];
+    snapshotWriter = "acp";
+    snapshotTurn = "running";
+    await mountPeek("/p-busy", { sessionId: "codex:busy", launchId: null });
+
+    await openMenu();
+    const item = menuItemContaining(m.sessions_action_open_in_terminal());
+    expect(item?.getAttribute("aria-disabled")).toBe("true");
+    expect(
+      item?.textContent?.includes(m.sessions_chat_terminal_during_turn()),
+    ).toBe(true);
+    snapshotTurn = "none";
+  });
+
+  peekTest(
+    "open in terminal releases the chat between turns, then resumes in the terminal",
+    async () => {
+      const key = {
+        agent: "codex",
+        namespace: "native",
+        sessionId: "leave",
+      } as const;
+      listed = [
+        session({
+          id: "codex:leave",
+          title: "Leave",
+          runtime: { live: true, acpSession: key },
+          capabilities: { canResume: true, canOpenInChat: true },
+        }),
+      ];
+      commands.length = 0;
+      snapshotWriter = "acp";
+      snapshotTurn = "none";
+      await mountPeek("/p-leave", { sessionId: "codex:leave", launchId: null });
+
+      await openMenu();
+      await click(menuItem(m.sessions_action_open_in_terminal()));
+      // The chat releases its writer before the terminal resumes the session.
+      expect(
+        commands.filter(
+          (command) =>
+            command === "agent_runtime_release_session" ||
+            command === "agent_sessions_reenter",
+        ),
+      ).toEqual(["agent_runtime_release_session", "agent_sessions_reenter"]);
+      expect(terminal()?.dataset.terminal).toBe("pty-resume-codex:leave");
+    },
+  );
+
+  peekTest(
+    "terminal actions of an agent without a terminal are inactive with the reason",
+    async () => {
+      const key = {
+        agent: "custom-echo",
+        namespace: "acp",
+        sessionId: "own",
+      } as const;
+      listed = [
+        session({
+          id: "custom-echo:acp:own",
+          source: "custom-echo",
+          title: "Custom",
+          resumeCommand: undefined,
+          capabilities: { canResume: false, canOpenInChat: true },
+        }),
+      ];
+      openings.length = 0;
+      snapshotWriter = "none";
+      snapshotTurn = "none";
+      openingOutcome = () => ({
+        outcome: "opened",
+        session: key,
+        liveness: "free",
+      });
+      await mountPeek("/p-custom", {
+        sessionId: "custom-echo:acp:own",
+        launchId: null,
+      });
+
+      expect(openings).toEqual([false]);
+      await openMenu();
+      const item = menuItemContaining(m.sessions_action_open_in_terminal());
+      expect(item?.getAttribute("aria-disabled")).toBe("true");
+      expect(item?.textContent?.includes(m.sessions_chat_no_terminal())).toBe(
+        true,
+      );
+    },
+  );
+
+  peekTest(
+    "a session whose agent cannot start opens in its terminal with the reason",
+    async () => {
+      listed = [
+        session({
+          id: "codex:off",
+          title: "Off",
+          capabilities: { canResume: true, canOpenInChat: true },
+        }),
+      ];
+      openings.length = 0;
+      commands.length = 0;
+      openingOutcome = () => ({
+        outcome: "unavailable",
+        reason: { code: "disabled" },
+      });
+      await mountPeek("/p-off", { sessionId: "codex:off", launchId: null });
+
+      const reason = document.querySelector("[data-slot='marker']");
+      expect(
+        reason?.textContent?.includes(m.settings_agents_state_disabled()),
+      ).toBe(true);
+      expect(Boolean(buttonByText(m.sessions_action_continue_in_terminal()))).toBe(
+        true,
+      );
+      // Opening it in its terminal resumes nothing by itself.
+      expect(commands.includes("agent_sessions_reenter")).toBe(false);
+
+      // "Open in chat" tries the chat again.
+      await openMenu();
+      await click(menuItem(m.sessions_action_open_in_chat()));
+      expect(openings).toEqual([false, false]);
+    },
+  );
+
+  peekTest(
+    "a session the chat cannot open stays in its terminal with the reason",
+    async () => {
+      listed = [session({ id: "codex:plain", title: "Plain" })];
+      openings.length = 0;
+      await mountPeek("/p-plain", { sessionId: "codex:plain", launchId: null });
+
+      expect(openings).toEqual([]);
+      expect(
+        document.body.textContent?.includes(
+          m.sessions_chat_unavailable_not_openable(),
+        ),
       ).toBe(true);
     },
   );
@@ -577,6 +756,12 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
     )!;
   }
 
+  function menuItemContaining(text: string) {
+    return Array.from(document.querySelectorAll("[role='menuitem']")).find(
+      (item) => item.textContent?.includes(text),
+    ) as HTMLElement | undefined;
+  }
+
   function menuItem(text: string) {
     return Array.from(document.querySelectorAll("[role='menuitem']")).find(
       (item) => item.textContent?.trim() === text,
@@ -657,14 +842,18 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
     };
   }
 
-  function readSnapshot(session: unknown, writer: "none" | "acp") {
+  function readSnapshot(
+    session: unknown,
+    writer: "none" | "acp",
+    phase: "none" | "running",
+  ) {
     return {
       seq: 0,
       session,
       connection: "ready",
       turn: {
-        turnId: null,
-        phase: "none",
+        turnId: phase === "running" ? "turn-1" : null,
+        phase,
         lastOutcome: null,
         status: {
           state: "idle",

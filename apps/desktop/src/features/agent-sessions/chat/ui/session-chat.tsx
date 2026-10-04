@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Copy, History, Info, SquareTerminal } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Marker, MarkerContent, MarkerIcon } from "@/components/ui/marker";
@@ -14,6 +14,7 @@ import {
   type SendRefusal,
 } from "../hooks/use-session-composer";
 import type { ContinueRefusal } from "../hooks/use-session-opening";
+import type { ChatSessionState } from "../model/interface";
 import { toolCallOf } from "../model/timeline";
 import { SessionAgentLabel, unavailableText } from "./agent-button";
 import { ChatTimeline } from "./chat-timeline";
@@ -45,6 +46,7 @@ export function SessionChat({
   epoch = 0,
   continuation,
   onOpenInTerminal,
+  onStateChange,
 }: {
   /** Catalogue id; the composer draft belongs to it. */
   sessionId: string;
@@ -57,6 +59,8 @@ export function SessionChat({
   continuation?: ChatContinuation;
   /** The full history in the agent's terminal; between turns only. */
   onOpenInTerminal?: (() => void) | null;
+  /** Receives the session and its turn while the chat shows it, then null. */
+  onStateChange?: (state: ChatSessionState | null) => void;
 }) {
   // The composer keeps focus when the chat replaces a surface that had it,
   // as a new session draft does after its first send; it never takes focus
@@ -84,6 +88,18 @@ export function SessionChat({
     });
   }
   const moveFocus = focusMove.inside;
+
+  const shown = snapshot !== null;
+  const turnActive = composer.running || pendingId !== null;
+  const { agent, namespace, sessionId: keyId } = session;
+  useEffect(() => {
+    if (!shown) return;
+    onStateChange?.({
+      session: { agent, namespace, sessionId: keyId },
+      turnActive,
+    });
+  }, [agent, keyId, namespace, onStateChange, shown, turnActive]);
+  useEffect(() => () => onStateChange?.(null), [onStateChange]);
 
   if (!snapshot) {
     return error ? (

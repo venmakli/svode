@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from "react";
+import { useCallback, useMemo, useState, type ReactNode } from "react";
 import {
   Copy,
   Info,
@@ -73,7 +73,17 @@ import {
 import { SessionStatusMarker, statusText } from "./session-status";
 import { SessionChat } from "../chat/ui/session-chat";
 import { OpenedSessionChat } from "../chat/ui/opened-session-chat";
+import { ChatUnavailableLine } from "../chat/ui/chat-unavailable-line";
 import { releaseAgentSession, type AgentSessionKeyDto } from "../chat/api/chat";
+import {
+  chatInterface,
+  openInTerminalAvailability,
+  sessionInterfaceAtOpen,
+  type ChatSessionState,
+  type ChatUnavailableReason,
+  type SessionInterface,
+  type TerminalActionAvailability,
+} from "../chat/model/interface";
 import { AGENT_SESSION_CONTENT_ATTRIBUTE } from "../lib/session-content";
 import * as m from "@/paraglide/messages.js";
 
@@ -92,8 +102,10 @@ interface AgentSessionContentProps {
 }
 
 /**
- * Identity, status and terminal of one session, shared by the session peek and
- * the main area. Opening it never resumes the agent.
+ * Identity, status and the chat or terminal of one session, shared by the
+ * session peek and the main area. The interface is chosen when the session
+ * opens (Stage 10 `04`, chat and terminal); opening it never resumes the
+ * agent.
  */
 export function AgentSessionContent({
   target,
@@ -105,8 +117,25 @@ export function AgentSessionContent({
   const view = useAgentSessionView(target, { focusTerminal });
   const routine = useSessionRoutine(view.session);
   const [metadataOpen, setMetadataOpen] = useState(false);
-  // "Open in chat": the session's chat instead of its terminal state.
-  const [chatOpen, setChatOpen] = useState(false);
+  // Chosen once the session is known, then changed by the user or by a
+  // terminal that starts while it is shown.
+  const [chosen, setChosen] = useState<SessionInterface | null>(null);
+  const atOpen = sessionInterfaceAtOpen(view.session, view.ptyId);
+  if (chosen === null && atOpen !== null) setChosen(atOpen);
+  if (view.ptyId && chosen?.kind === "chat") {
+    setChosen({ kind: "terminal", chatUnavailable: null });
+  }
+  const surface = chosen ?? atOpen;
+  const [chatState, setChatState] = useState<ChatSessionState | null>(null);
+  const showTerminal = useCallback(
+    () => setChosen({ kind: "terminal", chatUnavailable: null }),
+    [],
+  );
+  const leaveChat = useCallback(
+    (reason: ChatUnavailableReason) =>
+      setChosen({ kind: "terminal", chatUnavailable: reason }),
+    [],
+  );
   const [confirmCloseOpen, setConfirmCloseOpen] = useState(false);
   const { activeRootName, spaces } = useSpace();
   const spaceNames = useMemo(() => {
@@ -147,7 +176,7 @@ export function AgentSessionContent({
   function openInTerminal(session: AgentSessionKeyDto | null) {
     void (session ? releaseAgentSession(session) : Promise.resolve())
       .then(() => {
-        setChatOpen(false);
+        showTerminal();
         view.continueInTerminal();
       })
       .catch((error) => {
@@ -157,8 +186,11 @@ export function AgentSessionContent({
       });
   }
 
-  const inChat =
-    chatOpen || Boolean(session?.runtime?.acpSession && !view.ptyId);
+  const inChat = surface?.kind === "chat";
+  const terminalAction = openInTerminalAvailability(
+    Boolean(session?.capabilities.canResume),
+    chatState ? chatState.turnActive : view.agentBusy,
+  );
 
   function openExternalTerminal() {
     void view.openExternalTerminal().catch((error) => {
@@ -184,7 +216,18 @@ export function AgentSessionContent({
       }
       onOpenInChat={
         session?.capabilities.canOpenInChat && !inChat
-          ? () => setChatOpen(true)
+          ? () => setChosen(chatInterface(session))
+          : null
+      }
+      openInTerminal={
+        session && inChat
+          ? {
+              availability: terminalAction,
+              onSelect: () =>
+                openInTerminal(
+                  chatState?.session ?? session.runtime?.acpSession ?? null,
+                ),
+            }
           : null
       }
     />
@@ -220,11 +263,13 @@ export function AgentSessionContent({
           <SessionBody
             view={view}
             scopeLabel={identityLabel}
-            chatOpen={chatOpen}
+            surface={surface}
             onCopyCommand={copyResumeCommand}
             onOpenExternalTerminal={openExternalTerminal}
             onOpenInTerminal={openInTerminal}
-            onShowTerminal={() => setChatOpen(false)}
+            onShowTerminal={showTerminal}
+            onChatUnavailable={leaveChat}
+            onChatStateChange={setChatState}
             onOpenAgentSettings={onOpenAgentSettings}
           />
         </div>
@@ -308,20 +353,24 @@ function SessionIdentity({
 function SessionBody({
   view,
   scopeLabel: sessionScopeLabel,
-  chatOpen,
+  surface,
   onCopyCommand,
   onOpenExternalTerminal,
   onOpenInTerminal,
   onShowTerminal,
+  onChatUnavailable,
+  onChatStateChange,
   onOpenAgentSettings,
 }: {
   view: AgentSessionView;
   scopeLabel: string | null;
-  chatOpen: boolean;
+  surface: SessionInterface | null;
   onCopyCommand: () => void;
   onOpenExternalTerminal: () => void;
   onOpenInTerminal: (session: AgentSessionKeyDto | null) => void;
   onShowTerminal: () => void;
+  onChatUnavailable: (reason: ChatUnavailableReason) => void;
+  onChatStateChange: (state: ChatSessionState | null) => void;
   onOpenAgentSettings?: () => void;
 }) {
   const session = view.session;
@@ -349,9 +398,22 @@ function SessionBody({
     );
   }
   const canResume = Boolean(session?.capabilities.canResume);
-  // "Open in chat" (`04`, opening and continuing); a live Svode terminal
-  // keeps the session.
-  if (session && chatOpen && !view.ptyId) {
+  // The chat follows a session the Svode runtime drives; any other session
+  // it opens (`04`, opening and continuing). A live Svode terminal keeps the
+  // session.
+  const acpSession = session?.runtime?.acpSession;
+  if (session && surface?.kind === "chat" && surface.followed && acpSession) {
+    return (
+      <SessionChat
+        sessionId={session.id}
+        session={acpSession}
+        scopeLabel={sessionScopeLabel}
+        onOpenInTerminal={canResume ? () => onOpenInTerminal(acpSession) : null}
+        onStateChange={onChatStateChange}
+      />
+    );
+  }
+  if (session && surface?.kind === "chat" && !view.ptyId) {
     return (
       <OpenedSessionChat
         sessionId={session.id}
@@ -360,21 +422,10 @@ function SessionBody({
         canOpenInTerminal={canResume}
         onOpenInTerminal={onOpenInTerminal}
         onShowTerminal={onShowTerminal}
+        onChatUnavailable={onChatUnavailable}
+        onStateChange={onChatStateChange}
         onCopyResumeCommand={view.resumeCommand ? onCopyCommand : null}
         onOpenAgentSettings={onOpenAgentSettings}
-      />
-    );
-  }
-  // A session the Svode ACP runtime drives opens in its chat (`04`, chat
-  // and terminal: the interface of the session's writer).
-  const acpSession = session?.runtime?.acpSession;
-  if (session && acpSession && !view.ptyId) {
-    return (
-      <SessionChat
-        sessionId={session.id}
-        session={acpSession}
-        scopeLabel={sessionScopeLabel}
-        onOpenInTerminal={canResume ? () => onOpenInTerminal(acpSession) : null}
       />
     );
   }
@@ -404,32 +455,45 @@ function SessionBody({
   }
 
   const canContinue = canResume;
+  const chatUnavailable =
+    surface?.kind === "terminal" ? surface.chatUnavailable : null;
   return (
-    <Empty className="h-full border-0">
-      <EmptyHeader>
-        <EmptyMedia variant="icon">
-          <SquareTerminal />
-        </EmptyMedia>
-        <EmptyTitle>
-          {view.terminalFinished
-            ? m.sessions_terminal_finished_title()
-            : m.sessions_terminal_closed_title()}
-        </EmptyTitle>
-        <EmptyDescription>
-          {canContinue
-            ? m.sessions_continue_description()
-            : m.sessions_continue_unavailable_description()}
-        </EmptyDescription>
-      </EmptyHeader>
-      {canContinue && (
-        <EmptyContent>
-          <Button size="sm" onClick={view.continueInTerminal}>
-            <SquareTerminal data-icon="inline-start" />
-            {m.sessions_action_continue_in_terminal()}
-          </Button>
-        </EmptyContent>
+    <div className="flex h-full min-h-0 flex-col">
+      {chatUnavailable && session && (
+        <div className="mx-auto w-full max-w-3xl shrink-0 px-6 pt-1">
+          <ChatUnavailableLine
+            agent={session.source}
+            reason={chatUnavailable}
+            onOpenAgentSettings={onOpenAgentSettings}
+          />
+        </div>
       )}
-    </Empty>
+      <Empty className="min-h-0 flex-1 border-0">
+        <EmptyHeader>
+          <EmptyMedia variant="icon">
+            <SquareTerminal />
+          </EmptyMedia>
+          <EmptyTitle>
+            {view.terminalFinished
+              ? m.sessions_terminal_finished_title()
+              : m.sessions_terminal_closed_title()}
+          </EmptyTitle>
+          <EmptyDescription>
+            {canContinue
+              ? m.sessions_continue_description()
+              : m.sessions_continue_unavailable_description()}
+          </EmptyDescription>
+        </EmptyHeader>
+        {canContinue && (
+          <EmptyContent>
+            <Button size="sm" onClick={view.continueInTerminal}>
+              <SquareTerminal data-icon="inline-start" />
+              {m.sessions_action_continue_in_terminal()}
+            </Button>
+          </EmptyContent>
+        )}
+      </Empty>
+    </div>
   );
 }
 
@@ -451,6 +515,7 @@ function SessionActionsMenu({
   onOpenExternalTerminal,
   onOpenRoutine,
   onOpenInChat,
+  openInTerminal,
 }: {
   view: AgentSessionView;
   metadataOpen: boolean;
@@ -462,6 +527,11 @@ function SessionActionsMenu({
   onOpenRoutine: (() => void) | null;
   /** Present for a session the agent's runtime can open that the chat does not show. */
   onOpenInChat: (() => void) | null;
+  /** Present while the chat shows the session. */
+  openInTerminal: {
+    availability: TerminalActionAvailability;
+    onSelect: () => void;
+  } | null;
 }) {
   return (
     <DropdownMenu>
@@ -484,6 +554,24 @@ function SessionActionsMenu({
                 {view.ptyId && (
                   <span className="text-xs text-muted-foreground">
                     {m.sessions_open_in_chat_terminal_live()}
+                  </span>
+                )}
+              </span>
+            </DropdownMenuItem>
+          )}
+          {openInTerminal && (
+            <DropdownMenuItem
+              disabled={!openInTerminal.availability.available}
+              onSelect={openInTerminal.onSelect}
+            >
+              <SquareTerminal />
+              <span className="flex min-w-0 flex-col">
+                {m.sessions_action_open_in_terminal()}
+                {!openInTerminal.availability.available && (
+                  <span className="text-xs text-muted-foreground">
+                    {openInTerminal.availability.reason === "turn_active"
+                      ? m.sessions_chat_terminal_during_turn()
+                      : m.sessions_chat_no_terminal()}
                   </span>
                 )}
               </span>

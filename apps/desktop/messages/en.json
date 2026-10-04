@@ -2437,9 +2437,10 @@
   "sessions_chat_terminal_writer_description": "Close the terminal to continue the session in the chat.",
   "sessions_chat_show_terminal": "Show terminal",
   "sessions_chat_unsupported_title": "The agent does not open this session in the chat",
-  "sessions_chat_unsupported_description": "Its agent cannot load or continue this session over the chat connection.",
   "sessions_chat_agent_unavailable_title": "The agent is not ready",
   "sessions_chat_open_failed_title": "Could not open the session",
   "sessions_chat_no_terminal": "This agent cannot continue the session in a terminal",
-  "sessions_chat_terminal_during_turn": "Available between turns"
+  "sessions_chat_terminal_during_turn": "Available between turns",
+  "sessions_chat_unavailable_not_openable": "The chat cannot open this session",
+  "sessions_chat_unavailable_agent": "{agent} is not available for the chat: {reason}"
 }

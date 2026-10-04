@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import {
   AlertCircle,
   Copy,
@@ -24,6 +24,7 @@ import { getNativeErrorMessage } from "@/platform/native/errors";
 import { useAgentSessionCatalog } from "../../hooks/use-agent-session-catalog";
 import { signInAgent, type AgentSessionKeyDto } from "../api/chat";
 import { useSessionOpening } from "../hooks/use-session-opening";
+import type { ChatSessionState, ChatUnavailableReason } from "../model/interface";
 import { AgentRecovery } from "./agent-button";
 import { SessionChat } from "./session-chat";
 import * as m from "@/paraglide/messages.js";
@@ -34,7 +35,8 @@ const CUSTOM_PREFIX = "custom-";
 /**
  * An existing session opened in the chat (Stage 10 `04`, opening and
  * continuing): its history without a prompt, then the chat; or why it is
- * not shown and the applicable way on.
+ * not shown and the applicable way on. An agent that cannot open it leaves
+ * the session to its terminal (`04`, chat and terminal).
  */
 export function OpenedSessionChat({
   sessionId,
@@ -43,6 +45,8 @@ export function OpenedSessionChat({
   canOpenInTerminal,
   onOpenInTerminal,
   onShowTerminal,
+  onChatUnavailable,
+  onStateChange,
   onCopyResumeCommand,
   onOpenAgentSettings,
 }: {
@@ -56,6 +60,9 @@ export function OpenedSessionChat({
   onOpenInTerminal: (session: AgentSessionKeyDto | null) => void;
   /** A Svode terminal drives the session. */
   onShowTerminal: () => void;
+  /** The agent cannot open the session in the chat. */
+  onChatUnavailable: (reason: ChatUnavailableReason) => void;
+  onStateChange?: (state: ChatSessionState | null) => void;
   onCopyResumeCommand: (() => void) | null;
   onOpenAgentSettings?: () => void;
 }) {
@@ -65,6 +72,13 @@ export function OpenedSessionChat({
   const [signIn, setSignIn] = useState<string | null>(null);
   const state = opening.opening;
   const openInTerminal = canOpenInTerminal ? () => onOpenInTerminal(null) : null;
+  useEffect(() => {
+    if (state.state === "unavailable") {
+      onChatUnavailable({ kind: "agent_unavailable", reason: state.reason });
+    } else if (state.state === "unsupported") {
+      onChatUnavailable({ kind: "unsupported" });
+    }
+  }, [onChatUnavailable, state]);
 
   if (state.state === "opened") {
     return (
@@ -83,6 +97,7 @@ export function OpenedSessionChat({
         onOpenInTerminal={
           canOpenInTerminal ? () => onOpenInTerminal(state.session) : null
         }
+        onStateChange={onStateChange}
       />
     );
   }
@@ -166,27 +181,16 @@ export function OpenedSessionChat({
       );
       break;
     case "unsupported":
-      body = (
-        <OpeningState
-          icon={<AlertCircle />}
-          title={m.sessions_chat_unsupported_title()}
-          description={m.sessions_chat_unsupported_description()}
-        >
-          <TerminalButton onClick={openInTerminal} />
-        </OpeningState>
-      );
-      break;
     case "unavailable":
+      // The session goes to its terminal with the reason.
+      return null;
     case "auth_required":
       body = (
         <OpeningState icon={<AlertCircle />} title={m.sessions_chat_agent_unavailable_title()}>
           <AgentRecovery
             readiness={{
               state: "checked",
-              check:
-                state.state === "unavailable"
-                  ? { state: "unavailable", reason: state.reason }
-                  : { state: "auth_required", message: state.message },
+              check: { state: "auth_required", message: state.message },
             }}
             recovery={{
               onSignIn: startSignIn,

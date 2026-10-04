@@ -11,12 +11,14 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use svode_agents::adapters::{
-    AdapterStore, LaunchContext, LaunchUnavailable, RegistryPackageSource,
+    AdapterStore, ChatOffer, LaunchContext, LaunchUnavailable, RegistryPackageSource,
 };
 use svode_agents::custom::{
     CustomAgent, CustomAgentDefinition, CustomAgentError, custom_launch_plan, new_custom_agent_id,
 };
-use svode_agents::registry::{AdapterRuntimeRegistry, SystemRuntimeCommandRunner};
+use svode_agents::registry::{
+    AdapterRuntimeRegistry, AdapterTarget, AgentVerdict, SystemRuntimeCommandRunner,
+};
 use svode_core::agent_adapters::{AgentAdapterKind, CustomAgentId};
 
 use crate::agent_runtime::connections::{LaunchPlanner, PlanFuture};
@@ -78,6 +80,32 @@ impl AgentSetupState {
             root.insert(LAST_CHAT_AGENT.into(), agent.into());
             Ok(())
         })
+    }
+
+    /// How a new session offers `agent` for chat (Stage 10 `04`, chat and
+    /// terminal; `03` A1/A5/A8): the one rule of whether the chat is
+    /// available to an agent, for a new session draft and for a Routine
+    /// launch. Resolves the launch plan and runs the agent's bounded sign-in
+    /// check in `target`; starts no ACP process.
+    pub(crate) async fn chat_offer(
+        &self,
+        agent: &str,
+        target: &AdapterTarget,
+    ) -> Option<ChatOffer> {
+        let builtin = AgentAdapterKind::from_id(agent);
+        let deferred = builtin
+            .is_some_and(|kind| AdapterRuntimeRegistry.verdict(kind) == AgentVerdict::Deferred);
+        let plan = self.plan(agent).await;
+        let authenticated = match (&plan, builtin) {
+            (Ok(_), Some(kind)) if !deferred => {
+                AdapterRuntimeRegistry
+                    .diagnose(kind, target, &SystemRuntimeCommandRunner)
+                    .await
+                    .authenticated
+            }
+            _ => None,
+        };
+        svode_agents::adapters::chat_offer(deferred, &plan, authenticated)
     }
 
     /// The custom ACP agents in the order the user added them.
