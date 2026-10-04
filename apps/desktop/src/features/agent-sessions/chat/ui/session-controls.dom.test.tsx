@@ -62,6 +62,10 @@ if (process.env.SVODE_SESSION_CONTROLS_DOM !== "1") {
   let snapshotFor: (session: typeof key) => unknown = (session) =>
     snapshot(session);
   let draftSession: typeof key | null = draftKey;
+  /** How the next prompt ends. */
+  let promptAnswer: () => unknown = () => "turn-2";
+  /** Messages the chat reported as accepted, by session. */
+  const messages: string[] = [];
   /** The detail of each timeline item by id. */
   let details: Record<string, unknown> = {};
 
@@ -82,6 +86,7 @@ if (process.env.SVODE_SESSION_CONTROLS_DOM !== "1") {
       return 1;
     }
     if (command === "agent_runtime_set_setting") return settingAnswer();
+    if (command === "agent_runtime_prompt") return promptAnswer();
     if (command === "agent_runtime_detail") {
       return details[payload.itemId as string] ?? { outcome: "unavailable", reason: "not_provided" };
     }
@@ -134,8 +139,12 @@ if (process.env.SVODE_SESSION_CONTROLS_DOM !== "1") {
   const { AGENT_SESSION_CONTENT_ATTRIBUTE, keepEscapeForSession } =
     await import("../../lib/session-content");
   const { NewSessionDraft } = await import("./new-session-draft");
-  const { newSessionDraftKey, writeComposerDraft } =
+  const { newSessionDraftKey, sessionDraftKey, writeComposerDraft } =
     await import("../model/composer");
+  const { subscribeUserEdits } = await import("@/features/navigation");
+  subscribeUserEdits((edit) => {
+    if (edit.kind === "message") messages.push(edit.sessionId);
+  });
 
   const mounted: Root[] = [];
   function controlsTest(name: string, fn: () => Promise<void>) {
@@ -146,6 +155,8 @@ if (process.env.SVODE_SESSION_CONTROLS_DOM !== "1") {
       snapshotFor = (session) => snapshot(session);
       draftSession = draftKey;
       details = {};
+      promptAnswer = () => "turn-2";
+      messages.length = 0;
       try {
         await fn();
       } finally {
@@ -346,6 +357,8 @@ if (process.env.SVODE_SESSION_CONTROLS_DOM !== "1") {
         prompt: [{ type: "text", text: "Fix it" }],
         hold: 5,
       });
+      // The first send keeps the new session in Now.
+      expect(messages).toEqual(["codex:d1"]);
     },
   );
 
@@ -558,6 +571,62 @@ if (process.env.SVODE_SESSION_CONTROLS_DOM !== "1") {
       );
       expect(Boolean(search)).toBe(true);
       expect(document.activeElement).toBe(search);
+    },
+  );
+
+  controlsTest(
+    "an accepted message keeps the session in Now once; a refusal or an unsent message does not",
+    async () => {
+      const write = (text: string) =>
+        writeComposerDraft(sessionDraftKey("codex:s1"), {
+          parts: [{ type: "text", text }],
+        });
+      write("First");
+      await mount(
+        <SessionChat sessionId="codex:s1" session={key} scopeLabel="Project" />,
+      );
+      await click(buttonByLabel(m.sessions_chat_send()));
+      expect(lastCall("agent_runtime_prompt")?.prompt).toEqual([
+        { type: "text", text: "First" },
+      ]);
+      expect(messages).toEqual(["codex:s1"]);
+      // The session showing the same turn reports nothing more.
+      const running = snapshot(key);
+      await deliver("s1", {
+        change: "turn",
+        value: { ...running.turn, turnId: "turn-2", phase: "running" },
+      });
+      await deliver("s1", {
+        change: "turn",
+        value: { ...running.turn, turnId: "turn-2", phase: "none" },
+      });
+      expect(messages).toEqual(["codex:s1"]);
+
+      // A typed refusal keeps the draft and the session out of Now.
+      promptAnswer = () => {
+        throw { kind: "agent_runtime", code: "turn_active", message: "busy" };
+      };
+      for (const root of mounted.splice(0)) {
+        await act(async () => root.unmount());
+      }
+      write("Second");
+      await mount(
+        <SessionChat sessionId="codex:s1" session={key} scopeLabel="Project" />,
+      );
+      await click(buttonByLabel(m.sessions_chat_send()));
+      expect(messages).toEqual(["codex:s1"]);
+
+      // An unknown outcome counts once the session shows a new turn.
+      promptAnswer = () => {
+        throw new Error("lost");
+      };
+      await click(buttonByLabel(m.sessions_chat_send()));
+      expect(messages).toEqual(["codex:s1"]);
+      await deliver("s1", {
+        change: "turn",
+        value: { ...running.turn, turnId: "turn-3", phase: "running" },
+      });
+      expect(messages).toEqual(["codex:s1", "codex:s1"]);
     },
   );
 

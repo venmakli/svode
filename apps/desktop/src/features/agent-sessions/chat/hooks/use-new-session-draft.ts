@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { signalSessionMessage } from "@/features/navigation";
 import {
   agentRuntimeErrorCode,
   agentSettingRefusal,
@@ -102,6 +103,8 @@ export function useNewSessionDraft(
       });
       if (started.outcome === "started") {
         updateDraft(() => ({ parts: [] }));
+        // The first send keeps the new session in Now (`01`, decision 16).
+        signalSessionMessage(started.sessionId);
         onStarted({ sessionId: started.sessionId, session: started.session });
         return;
       }

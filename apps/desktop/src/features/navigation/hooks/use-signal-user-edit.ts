@@ -19,3 +19,11 @@ export function useSignalUserEdit(): () => void {
 export function signalCreatedArtifact(spaceId: string, path: string) {
   emitUserEdit({ kind: "created", spaceId, path });
 }
+
+/**
+ * Reports a message the runtime accepted in the chat of a session, in a
+ * peek or the main area alike: it keeps the session in Now.
+ */
+export function signalSessionMessage(sessionId: string) {
+  emitUserEdit({ kind: "message", sessionId });
+}

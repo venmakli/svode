@@ -1,12 +1,15 @@
 import { createContext } from "react";
 
 /**
- * A user edit of the main area object, or an artifact the user created that
- * opens as the main area object. `spaceId` is the root id for root content.
+ * A user edit of the main area object, an artifact the user created that
+ * opens as the main area object, or a message the runtime accepted in the
+ * chat of a session from any host. `spaceId` is the root id for root
+ * content; `sessionId` is the canonical catalogue id.
  */
 export type UserEdit =
   | { kind: "edit" }
-  | { kind: "created"; spaceId: string; path: string };
+  | { kind: "created"; spaceId: string; path: string }
+  | { kind: "message"; sessionId: string };
 
 type UserEditListener = (edit: UserEdit) => void;
 

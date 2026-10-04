@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { signalSessionMessage } from "@/features/navigation";
 import {
   agentRuntimeErrorCode,
   answerAgentInteraction,
@@ -49,6 +50,17 @@ export function useSessionComposer(
   useEffect(() => {
     snapshotRef.current = snapshot;
   });
+  // An accepted message keeps the session in Now (`01`, decision 16): once
+  // per turn, whether the call returned it or the session showed it.
+  const acceptedTurnRef = useRef<string | null>(null);
+  const accept = useCallback(
+    (turnId: string | null) => {
+      if (!turnId || acceptedTurnRef.current === turnId) return;
+      acceptedTurnRef.current = turnId;
+      signalSessionMessage(sessionId);
+    },
+    [sessionId],
+  );
 
   const sending = Boolean(draft.sending);
   const running = snapshot ? snapshot.turn.phase !== "none" : false;
@@ -71,12 +83,13 @@ export function useSessionComposer(
   useEffect(() => {
     if (previousTurnId === undefined || !snapshot) return;
     if (reconcileUnknownSend(previousTurnId, snapshot) === "accepted") {
+      accept(snapshot.turn.turnId);
       settle();
       return;
     }
     const timer = window.setTimeout(settle, RECONCILE_MS);
     return () => window.clearTimeout(timer);
-  }, [previousTurnId, settle, snapshot]);
+  }, [accept, previousTurnId, settle, snapshot]);
 
   const send = useCallback(async () => {
     if (isDraftBlank(draft.parts) || sending || running) return;
@@ -89,7 +102,7 @@ export function useSessionComposer(
       notSent: false,
     });
     try {
-      await promptAgentSession(session, promptParts(draft.parts));
+      accept(await promptAgentSession(session, promptParts(draft.parts)));
       updateDraft(() => ({ parts: [] }));
     } catch (error) {
       const code = agentRuntimeErrorCode(error);
@@ -101,7 +114,7 @@ export function useSessionComposer(
       // Neither a turn nor a refusal: the effect above settles it by the
       // session's state.
     }
-  }, [attach, draft.parts, running, sending, session, updateDraft]);
+  }, [accept, attach, draft.parts, running, sending, session, updateDraft]);
 
   const stop = useCallback(() => {
     if (!running || cancelling) return;

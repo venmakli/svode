@@ -2,7 +2,10 @@ import { useCallback, useEffect, useRef } from "react";
 import { toast } from "sonner";
 import {
   agentSessionForNavigationKey,
+  pinnableAgentSessionItem,
   useActiveAgentSessions,
+  useListedAgentSessions,
+  type AgentSession,
 } from "@/features/agent-sessions";
 import {
   closeActiveContent,
@@ -54,22 +57,36 @@ function keepItem(item: NavigationItem) {
     });
 }
 
+/** The catalogue session of an accepted message, once listed. */
+function messagedSession(
+  sessionId: string,
+  sessions: readonly AgentSession[] | null,
+): AgentSession | null {
+  return sessions?.find((session) => session.id === sessionId) ?? null;
+}
+
 /**
  * Keeps the objects that the edit signal reports: the temporary main area
- * artifact on a user edit of the main area, and a created artifact once the
- * main area shows it. Mount once in app composition.
+ * artifact on a user edit of the main area, a created artifact once the
+ * main area shows it, and a session whose chat message the runtime
+ * accepted once the catalogue lists it. Mount once in app composition.
  */
 export function useKeepEditedObjects() {
   const object = useMainAreaObject();
   const rootId = useSpace((state) => state.activeRootId);
+  const listedSessions = useListedAgentSessions();
   const objectRef = useRef<MainAreaObject | null>(object);
   const rootIdRef = useRef(rootId);
+  const listedRef = useRef(listedSessions);
   const created = useRef<{ id: string; until: number } | null>(null);
+  /** Messaged sessions the catalogue does not list yet, e.g. a new one. */
+  const messaged = useRef(new Set<string>());
   const objectId = object ? navigationKeyId(object.item.key) : null;
 
   useEffect(() => {
     objectRef.current = object;
     rootIdRef.current = rootId;
+    listedRef.current = listedSessions;
   });
 
   useEffect(
@@ -78,6 +95,14 @@ export function useKeepEditedObjects() {
         const current = objectRef.current;
         if (edit.kind === "edit") {
           if (current?.kind === "artifact") keepItem(current.item);
+          return;
+        }
+        if (edit.kind === "message") {
+          const item = pinnableAgentSessionItem(
+            messagedSession(edit.sessionId, listedRef.current),
+          );
+          if (item) keepItem(item);
+          else messaged.current.add(edit.sessionId);
           return;
         }
         const id = navigationKeyId(
@@ -97,6 +122,23 @@ export function useKeepEditedObjects() {
       }),
     [],
   );
+
+  // A messaged session follows its canonical record into Now.
+  useEffect(() => {
+    for (const sessionId of messaged.current) {
+      const item = pinnableAgentSessionItem(
+        messagedSession(sessionId, listedSessions),
+      );
+      if (!item) continue;
+      messaged.current.delete(sessionId);
+      keepItem(item);
+    }
+  }, [listedSessions]);
+
+  // A project switch drops the sessions of the previous one.
+  useEffect(() => {
+    messaged.current.clear();
+  }, [rootId]);
 
   // The next object of the main area settles a created artifact.
   useEffect(() => {

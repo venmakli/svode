@@ -8,6 +8,7 @@ export { useKeepInNow, type KeepInNow } from "./hooks/use-keep-in-now";
 export { usePinToggle, type PinToggle } from "./hooks/use-pin-toggle";
 export {
   signalCreatedArtifact,
+  signalSessionMessage,
   useSignalUserEdit,
 } from "./hooks/use-signal-user-edit";
 export {

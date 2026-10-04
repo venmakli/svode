@@ -312,7 +312,13 @@ if (process.env.SVODE_NAVIGATION_SIDEBAR_DOM !== "1") {
   test("only edits inside the main area signal; a peek inside it does not", async () => {
     const edits: string[] = [];
     const unsubscribe = subscribeUserEdits((edit) =>
-      edits.push(edit.kind === "edit" ? "edit" : `created:${edit.path}`),
+      edits.push(
+        edit.kind === "edit"
+          ? "edit"
+          : edit.kind === "created"
+            ? `created:${edit.path}`
+            : `message:${edit.sessionId}`,
+      ),
     );
     function Editor({ id }: { id: string }) {
       const signal = useSignalUserEdit();
