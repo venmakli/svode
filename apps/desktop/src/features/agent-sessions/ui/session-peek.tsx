@@ -9,8 +9,11 @@ import type {
   AgentSessionTarget,
   NewSessionDraftTarget,
 } from "../model";
-import { isInsideAgentSessionContent } from "../lib/session-content";
-import { AGENT_SESSION_CONTENT_ATTRIBUTE } from "../lib/session-content";
+import {
+  AGENT_SESSION_CONTENT_ATTRIBUTE,
+  isInsideAgentSessionContent,
+  keepEscapeForSession,
+} from "../lib/session-content";
 import { NewSessionDraft } from "../chat/ui/new-session-draft";
 import type { StartedSession } from "../chat/hooks/use-new-session-draft";
 import { AgentSessionContent } from "./session-view";
@@ -83,7 +86,7 @@ export function AgentSessionPeek({
         style={{ width: "min(1120px, max(720px, 66vw), 94vw)" }}
         onEscapeKeyDown={(event) => {
           // Esc inside the session belongs to the agent, e.g. to interrupt a turn.
-          if (isInsideAgentSessionContent(event.target)) event.preventDefault();
+          if (isInsideAgentSessionContent(event.target)) keepEscapeForSession(event);
         }}
         onOpenAutoFocus={(event) => {
           // The terminal takes focus itself once it is attached.

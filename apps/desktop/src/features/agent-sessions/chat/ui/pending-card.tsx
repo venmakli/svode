@@ -1,6 +1,7 @@
 import { useEffect, useRef, type ReactNode } from "react";
 import { Square } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { MarkdownReader } from "@/shared/ui/markdown-reader";
 import {
   Questionnaire,
   QuestionnaireActions,
@@ -19,13 +20,17 @@ import {
 } from "@/components/ui/questionnaire";
 import type {
   AgentActivityItemDto,
+  AgentDetailBlockDto,
   AgentInteractionAnswerDto,
   AgentPendingInteractionDto,
   AgentQuestionFieldDto,
   AgentSessionKeyDto,
+  AgentToolKindDto,
 } from "../api/chat";
+import { useItemDetail } from "../hooks/use-item-detail";
 import { questionItems, questionValues } from "../model/question-form";
-import { ItemDetail } from "./item-detail";
+import { agentTextPolicy } from "./chat-timeline";
+import { DetailBlock, DetailView } from "./item-detail";
 import * as m from "@/paraglide/messages.js";
 
 /**
@@ -67,6 +72,7 @@ export function PendingCard({
       type="button"
       variant="ghost"
       size="sm"
+      className="-me-1.5 -mt-1 shrink-0"
       disabled={cancelling}
       onClick={onStop}
     >
@@ -125,37 +131,143 @@ function PermissionContent({
   onAnswer: (answer: AgentInteractionAnswerDto) => void;
   stop: ReactNode;
 }) {
+  const tool = toolCall?.kind === "tool_call" ? toolCall.tool : null;
   return (
     <>
-      <h3 className="text-sm font-medium break-words">{pending.title}</h3>
-      {toolCall?.hasDetail && (
-        <div className="min-h-0 overflow-y-auto">
-          <ItemDetail session={session} item={toolCall} />
-        </div>
+      <CardHeading stop={stop}>{requestHeading(tool)}</CardHeading>
+      {toolCall?.kind === "tool_call" ? (
+        <RequestSubject session={session} item={toolCall} />
+      ) : (
+        pending.title && <p className="text-sm break-words">{pending.title}</p>
       )}
-      <div className="flex flex-wrap items-center gap-2">
-        {pending.options.map((option, index) => (
+      <div className="flex shrink-0 flex-col gap-1.5">
+        {pending.options.map((option) => (
           <Button
             key={option.id}
             type="button"
-            size="sm"
-            variant={
-              index === 0
-                ? "default"
-                : option.kind.startsWith("reject")
-                  ? "outline"
-                  : "secondary"
-            }
+            variant="outline"
+            className="h-auto min-h-8 justify-start py-1.5 text-start whitespace-normal"
             disabled={disabled}
             onClick={() => onAnswer({ type: "option", optionId: option.id })}
           >
             {option.label}
           </Button>
         ))}
-        <span className="ms-auto">{stop}</span>
       </div>
     </>
   );
+}
+
+function CardHeading({ stop, children }: { stop: ReactNode; children: ReactNode }) {
+  return (
+    <div className="flex shrink-0 items-start gap-2">
+      <h3 className="min-w-0 flex-1 text-sm font-medium break-words whitespace-pre-wrap">
+        {children}
+      </h3>
+      {stop}
+    </div>
+  );
+}
+
+/** The request as a question, by what the tool call does. */
+function requestHeading(tool: AgentToolKindDto | null): string {
+  switch (tool) {
+    case "execute":
+      return m.sessions_chat_request_heading_execute();
+    case "edit":
+      return m.sessions_chat_request_heading_edit();
+    case "delete":
+      return m.sessions_chat_request_heading_delete();
+    case "move":
+      return m.sessions_chat_request_heading_move();
+    case "read":
+      return m.sessions_chat_request_heading_read();
+    case "search":
+      return m.sessions_chat_request_heading_search();
+    case "fetch":
+      return m.sessions_chat_request_heading_fetch();
+    // Claude Code and Codex ask to approve a plan as a mode switch.
+    case "switch_mode":
+      return m.sessions_chat_request_heading_plan();
+    default:
+      return m.sessions_chat_request_heading_other();
+  }
+}
+
+/**
+ * What the request is about: the tool call as the agent names it (the
+ * command, the edited file) and its content (a description, the diff,
+ * the plan text), in a bounded region of its own.
+ */
+function RequestSubject({
+  session,
+  item,
+}: {
+  session: AgentSessionKeyDto;
+  item: Extract<AgentActivityItemDto, { kind: "tool_call" }>;
+}) {
+  const detail = useItemDetail(session, item, item.hasDetail);
+  // A plan approval names only the request, which the heading says.
+  const title = item.tool === "switch_mode" ? "" : item.summary;
+  if (!title && !item.hasDetail) return null;
+  return (
+    <div
+      tabIndex={0}
+      className="flex max-h-72 min-h-0 flex-col gap-2 overflow-y-auto rounded-md outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
+    >
+      {title &&
+        (item.tool === "execute" ? (
+          <pre className="rounded-md bg-muted/60 px-3 py-2 font-mono text-xs leading-relaxed break-words whitespace-pre-wrap">
+            {commandText(title)}
+          </pre>
+        ) : (
+          <p className="text-sm break-words">{title}</p>
+        ))}
+      {item.hasDetail &&
+        (detail?.outcome === "available" ? (
+          detail.blocks.map((block, index) =>
+            block.type === "text" || block.type === "excerpt" ? (
+              <SubjectText
+                key={index}
+                text={block.type === "text" ? block.text : excerptText(block)}
+                markdown={item.tool === "switch_mode"}
+              />
+            ) : (
+              <DetailBlock key={index} block={block} />
+            ),
+          )
+        ) : (
+          <DetailView detail={detail} />
+        ))}
+    </div>
+  );
+}
+
+function SubjectText({ text, markdown }: { text: string; markdown: boolean }) {
+  if (markdown) {
+    return (
+      <div className="text-sm">
+        <MarkdownReader content={text} policy={agentTextPolicy} />
+      </div>
+    );
+  }
+  return (
+    <p className="text-sm break-words whitespace-pre-wrap text-muted-foreground">
+      {text}
+    </p>
+  );
+}
+
+/** A command title without the code marks an agent wraps it in. */
+function commandText(title: string): string {
+  const match = /^`([^`]+)`$/.exec(title.trim());
+  return match ? match[1] : title;
+}
+
+function excerptText(block: Extract<AgentDetailBlockDto, { type: "excerpt" }>) {
+  return `${block.head}\n\n${m.sessions_chat_detail_omitted({
+    count: block.omittedChars.toLocaleString(),
+  })}\n\n${block.tail}`;
 }
 
 function QuestionContent({
@@ -172,7 +284,7 @@ function QuestionContent({
   const fields = pending.fields;
   return (
     <>
-      <p className="text-sm break-words whitespace-pre-wrap">{pending.title}</p>
+      <CardHeading stop={stop}>{pending.title}</CardHeading>
       <Questionnaire
         className="min-h-0 overflow-y-auto"
         items={questionItems(fields)}
@@ -194,6 +306,16 @@ function QuestionContent({
           <QuestionnairePrevious size="sm">
             {m.sessions_chat_question_previous()}
           </QuestionnairePrevious>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="col-start-2 row-start-1 justify-self-end"
+            disabled={disabled}
+            onClick={() => onAnswer({ type: "decline" })}
+          >
+            {m.sessions_chat_question_decline()}
+          </Button>
           <QuestionnaireNext size="sm">
             {m.sessions_chat_question_next()}
           </QuestionnaireNext>
@@ -202,18 +324,6 @@ function QuestionContent({
           </QuestionnaireSubmit>
         </QuestionnaireActions>
       </Questionnaire>
-      <div className="flex items-center gap-2">
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          disabled={disabled}
-          onClick={() => onAnswer({ type: "decline" })}
-        >
-          {m.sessions_chat_question_decline()}
-        </Button>
-        <span className="ms-auto">{stop}</span>
-      </div>
     </>
   );
 }

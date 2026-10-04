@@ -34,6 +34,7 @@ export type {
   AgentSessionUsageDto,
   AgentSettingRefusalDto,
   AgentSettingValueDto,
+  AgentToolKindDto,
   StartedAgentSessionDto,
 } from "@/platform/agent-runtime/agent-runtime-api";
 export { listChatAgents } from "@/platform/agent-setup/agent-setup-api";

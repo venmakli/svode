@@ -23,6 +23,7 @@ import {
   type DraftPart,
 } from "../model/attachments";
 import type { AgentSessionCommandDto } from "../api/chat";
+import { isKeyTaken, takeKey } from "../../lib/session-content";
 import { composerKeyAction } from "../model/composer";
 import { COMMAND_PLUGINS, SessionCommandsPlugin } from "./composer-commands";
 import {
@@ -150,19 +151,13 @@ export function Composer({
             onKeyDown={(event) => {
               // Enter and Esc in an open `@` or `/` search choose or close
               // it first.
-              if (
-                event.defaultPrevented ||
-                (event.target instanceof Element &&
-                  event.target.closest('[role="combobox"]'))
-              ) {
-                return;
-              }
+              if (isKeyTaken(event.nativeEvent)) return;
               const action = composerKeyAction(event.nativeEvent, running);
               if (action === "send") {
                 event.preventDefault();
                 if (!running && !sendDisabled) onSend();
               } else if (action === "stop") {
-                event.preventDefault();
+                takeKey(event.nativeEvent);
                 onStop();
               }
             }}

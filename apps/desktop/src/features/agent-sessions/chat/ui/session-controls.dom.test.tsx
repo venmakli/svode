@@ -62,6 +62,8 @@ if (process.env.SVODE_SESSION_CONTROLS_DOM !== "1") {
   let snapshotFor: (session: typeof key) => unknown = (session) =>
     snapshot(session);
   let draftSession: typeof key | null = draftKey;
+  /** The detail of each timeline item by id. */
+  let details: Record<string, unknown> = {};
 
   const { mockNativeIpc } = await import("@/platform/native/testing");
   mockNativeIpc((command, args) => {
@@ -80,6 +82,9 @@ if (process.env.SVODE_SESSION_CONTROLS_DOM !== "1") {
       return 1;
     }
     if (command === "agent_runtime_set_setting") return settingAnswer();
+    if (command === "agent_runtime_detail") {
+      return details[payload.itemId as string] ?? { outcome: "unavailable", reason: "not_provided" };
+    }
     if (command === "agent_runtime_hold_draft") {
       return {
         hold: 5,
@@ -111,7 +116,8 @@ if (process.env.SVODE_SESSION_CONTROLS_DOM !== "1") {
     }
     if (
       command === "agent_runtime_unsubscribe" ||
-      command === "agent_runtime_release_draft"
+      command === "agent_runtime_release_draft" ||
+      command === "agent_runtime_cancel"
     ) {
       return null;
     }
@@ -124,6 +130,9 @@ if (process.env.SVODE_SESSION_CONTROLS_DOM !== "1") {
   setLocale("en", { reload: false });
   const { TooltipProvider } = await import("@/components/ui/tooltip");
   const { SessionChat } = await import("./session-chat");
+  const { Sheet, SheetContent, SheetTitle } = await import("@/components/ui/sheet");
+  const { AGENT_SESSION_CONTENT_ATTRIBUTE, keepEscapeForSession } =
+    await import("../../lib/session-content");
   const { NewSessionDraft } = await import("./new-session-draft");
   const { newSessionDraftKey, writeComposerDraft } =
     await import("../model/composer");
@@ -136,6 +145,7 @@ if (process.env.SVODE_SESSION_CONTROLS_DOM !== "1") {
       settingAnswer = () => null;
       snapshotFor = (session) => snapshot(session);
       draftSession = draftKey;
+      details = {};
       try {
         await fn();
       } finally {
@@ -380,6 +390,150 @@ if (process.env.SVODE_SESSION_CONTROLS_DOM !== "1") {
       await openMenu(buttonByLabel(m.sessions_chat_attach()));
       expect(Boolean(menuItem(m.sessions_chat_attach_project()))).toBe(true);
       expect(menuItem(m.sessions_chat_attach_command())).toBe(undefined);
+    },
+  );
+
+  controlsTest(
+    "Esc in a sheet that keeps it for the session stops the turn, Esc closing a menu does not",
+    async () => {
+      snapshotFor = (session) => {
+        const value = snapshot(session);
+        return { ...value, turn: { ...value.turn, turnId: "t1", phase: "running" } };
+      };
+      let closed = 0;
+      await mount(
+        <Sheet open onOpenChange={() => (closed += 1)}>
+          <SheetContent
+            onEscapeKeyDown={(event) => keepEscapeForSession(event)}
+          >
+            <SheetTitle>Session</SheetTitle>
+            <div {...{ [AGENT_SESSION_CONTENT_ATTRIBUTE]: "" }}>
+              <SessionChat
+                sessionId="codex:s1"
+                session={key}
+                scopeLabel="Project"
+              />
+            </div>
+          </SheetContent>
+        </Sheet>,
+      );
+
+      await openMenu(buttonByLabel(m.sessions_chat_attach()));
+      await pressKey(document.querySelector('[role="menu"]'), "Escape");
+      expect(document.querySelector('[role="menu"]')).toBe(null);
+      expect(calls.some((call) => call.command === "agent_runtime_cancel")).toBe(
+        false,
+      );
+
+      const field = document.querySelector<HTMLElement>(
+        `[aria-label="${m.sessions_chat_composer_label()}"]`,
+      );
+      await act(async () => field?.focus());
+      await pressKey(field, "Escape");
+      expect(lastCall("agent_runtime_cancel")?.session).toEqual(key);
+      expect(
+        calls.filter((call) => call.command === "agent_runtime_cancel").length,
+      ).toBe(1);
+      expect(closed).toBe(0);
+    },
+  );
+
+  controlsTest(
+    "a request card asks the request, shows its tool call as the subject and lists the options alike",
+    async () => {
+      details = {
+        "toolu_bash": {
+          outcome: "available",
+          blocks: [{ type: "text", text: "List the files" }],
+        },
+        "toolu_plan": {
+          outcome: "available",
+          blocks: [{ type: "text", text: "1. Add the test\n2. Fix the bug" }],
+        },
+      };
+      const request = (toolCallId: string, title: string, tool: string) => ({
+        items: [
+          {
+            id: toolCallId,
+            turnId: "t1",
+            kind: "tool_call",
+            tool,
+            status: "pending",
+            summary: title,
+            hasDetail: true,
+          },
+        ],
+        pending: {
+          id: `perm-${toolCallId}`,
+          kind: "permission",
+          title,
+          toolCallId,
+          options: [
+            { id: "allow", label: "Yes", kind: "allow_once" },
+            {
+              id: "always",
+              label: "Yes, and don't ask again for ls commands in this project",
+              kind: "allow_always",
+            },
+            { id: "reject", label: "No, and tell Claude what to do differently", kind: "reject_once" },
+          ],
+          fields: [],
+          state: "pending",
+        },
+      });
+      snapshotFor = (session) => {
+        const value = snapshot(session);
+        return {
+          ...value,
+          turn: { ...value.turn, turnId: "t1", phase: "running" },
+          ...request("toolu_bash", "`ls -la`", "execute"),
+        };
+      };
+      await mount(
+        <SessionChat sessionId="codex:s1" session={key} scopeLabel="Project" />,
+      );
+      const card = document.querySelector<HTMLElement>(
+        `[aria-label="${m.sessions_chat_request_permission()}"]`,
+      )!;
+      expect(card.querySelector("h3")?.textContent).toBe(
+        m.sessions_chat_request_heading_execute(),
+      );
+      expect(
+        card.querySelector("h3")?.parentElement?.textContent?.includes(
+          m.sessions_chat_stop(),
+        ),
+      ).toBe(true);
+      expect(card.querySelector("pre")?.textContent).toBe("ls -la");
+      expect(card.querySelectorAll("pre").length).toBe(1);
+      expect(card.textContent?.includes("List the files")).toBe(true);
+      const options = [...card.querySelectorAll("button")].filter((button) =>
+        ["Yes", "Yes, and", "No, and"].some((label) =>
+          button.textContent?.startsWith(label),
+        ),
+      );
+      expect(options.length).toBe(3);
+      expect(new Set(options.map((option) => option.dataset.variant))).toEqual(
+        new Set(["outline"]),
+      );
+
+      await deliver("s1", {
+        change: "pending",
+        value: request("toolu_plan", "Approve Plan", "switch_mode").pending,
+      });
+      await deliver("s1", {
+        change: "item",
+        value: request("toolu_plan", "Approve Plan", "switch_mode").items[0],
+      });
+      const plan = document.querySelector<HTMLElement>(
+        `[aria-label="${m.sessions_chat_request_permission()}"]`,
+      )!;
+      expect(plan.querySelector("h3")?.textContent).toBe(
+        m.sessions_chat_request_heading_plan(),
+      );
+      expect(plan.textContent?.includes("Approve Plan")).toBe(false);
+      expect(plan.querySelector("ol")?.textContent?.includes("Fix the bug")).toBe(
+        true,
+      );
     },
   );
 

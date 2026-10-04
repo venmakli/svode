@@ -15,6 +15,7 @@ import {
   type SendRefusal,
 } from "../hooks/use-session-composer";
 import type { ContinueRefusal } from "../hooks/use-session-opening";
+import { isKeyTaken, takeKey } from "../../lib/session-content";
 import { isDraftBlank } from "../model/attachments";
 import type { ChatSessionState } from "../model/interface";
 import { sessionControls } from "../model/session-controls";
@@ -157,9 +158,9 @@ export function SessionChat({
       onKeyDown={(event) => {
         // Esc stops a running turn anywhere in the session, after menus
         // and comboboxes had their chance to close.
-        if (event.key !== "Escape" || event.defaultPrevented) return;
+        if (event.key !== "Escape" || isKeyTaken(event.nativeEvent)) return;
         if (!composer.running) return;
-        event.preventDefault();
+        takeKey(event.nativeEvent);
         composer.stop();
       }}
     >

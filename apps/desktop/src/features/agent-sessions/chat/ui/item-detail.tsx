@@ -77,7 +77,7 @@ export function DetailView({
 const OUTPUT =
   "max-h-80 min-w-0 overflow-auto rounded-md bg-muted/60 px-3 py-2 font-mono text-xs leading-relaxed whitespace-pre-wrap break-words";
 
-function DetailBlock({ block }: { block: AgentDetailBlockDto }) {
+export function DetailBlock({ block }: { block: AgentDetailBlockDto }) {
   switch (block.type) {
     case "text":
       return (

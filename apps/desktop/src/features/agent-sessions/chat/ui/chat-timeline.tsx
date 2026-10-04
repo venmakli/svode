@@ -68,7 +68,7 @@ import { ItemDetail } from "./item-detail";
 import * as m from "@/paraglide/messages.js";
 
 /** Links in agent text stay text: the chat opens nothing on its own. */
-const agentTextPolicy: MarkdownReaderPolicy = {
+export const agentTextPolicy: MarkdownReaderPolicy = {
   openLink: () => undefined,
   resolveImageSource: () => null,
   resolveLink: () => null,
