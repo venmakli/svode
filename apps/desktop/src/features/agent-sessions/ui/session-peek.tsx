@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { PortalContext } from "@ariakit/react";
 import { Maximize2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
@@ -60,6 +61,9 @@ export function AgentSessionPeek({
   const open = Boolean(current);
   const expandingRef = useRef(false);
   const [expanding, setExpanding] = useState(false);
+  // The composer's `@` and `/` searches render inside the sheet, whose
+  // scroll lock otherwise swallows the wheel outside it.
+  const [content, setContent] = useState<HTMLElement | null>(null);
   usePeekStackEntry(open, () => onOpenChange(false));
   useEffect(() => {
     if (target) expandingRef.current = false;
@@ -79,6 +83,7 @@ export function AgentSessionPeek({
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent
+        ref={setContent}
         side="right"
         showCloseButton={false}
         overlayClassName="bg-black/25 backdrop-blur-none supports-backdrop-filter:backdrop-blur-none"
@@ -86,7 +91,8 @@ export function AgentSessionPeek({
         style={{ width: "min(1120px, max(720px, 66vw), 94vw)" }}
         onEscapeKeyDown={(event) => {
           // Esc inside the session belongs to the agent, e.g. to interrupt a turn.
-          if (isInsideAgentSessionContent(event.target)) keepEscapeForSession(event);
+          if (isInsideAgentSessionContent(event.target))
+            keepEscapeForSession(event);
         }}
         onOpenAutoFocus={(event) => {
           // The terminal takes focus itself once it is attached.
@@ -98,67 +104,69 @@ export function AgentSessionPeek({
         }}
       >
         <SheetTitle className="sr-only">{m.sessions_peek_title()}</SheetTitle>
-        {shownDraft && (
-          <div
-            {...{ [AGENT_SESSION_CONTENT_ATTRIBUTE]: "" }}
-            className="flex h-full min-h-0 flex-col"
-          >
-            <NewSessionDraft
-              key={shownDraft.draftId}
-              spacePath={shownDraft.spacePath}
-              onStarted={(started) => onDraftStarted?.(started)}
-              onOpenTerminal={(spacePath) =>
-                onOpenNewSessionTerminal?.(spacePath)
-              }
-              onOpenAgentSettings={() => onOpenAgentSettings?.()}
-              actions={
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  onClick={() => onOpenChange(false)}
-                >
-                  <X />
-                  <span className="sr-only">
-                    {m.sessions_action_close_peek()}
-                  </span>
-                </Button>
-              }
+        <PortalContext.Provider value={content}>
+          {shownDraft && (
+            <div
+              {...{ [AGENT_SESSION_CONTENT_ATTRIBUTE]: "" }}
+              className="flex h-full min-h-0 flex-col"
+            >
+              <NewSessionDraft
+                key={shownDraft.draftId}
+                spacePath={shownDraft.spacePath}
+                onStarted={(started) => onDraftStarted?.(started)}
+                onOpenTerminal={(spacePath) =>
+                  onOpenNewSessionTerminal?.(spacePath)
+                }
+                onOpenAgentSettings={() => onOpenAgentSettings?.()}
+                actions={
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    onClick={() => onOpenChange(false)}
+                  >
+                    <X />
+                    <span className="sr-only">
+                      {m.sessions_action_close_peek()}
+                    </span>
+                  </Button>
+                }
+              />
+            </div>
+          )}
+          {shownTarget && (
+            <AgentSessionContent
+              key={`${shownTarget.sessionId}\n${shownTarget.launchId ?? ""}`}
+              target={shownTarget}
+              focusTerminal={focusTerminal}
+              onOpenRoutine={onOpenRoutine}
+              onOpenAgentSettings={onOpenAgentSettings}
+              renderActions={(menu, view) => (
+                <>
+                  {menu}
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    disabled={expanding}
+                    onClick={() => void expand(view.session)}
+                  >
+                    <Maximize2 data-icon="inline-start" />
+                    {m.attachments_full_page()}
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    onClick={() => onOpenChange(false)}
+                  >
+                    <X />
+                    <span className="sr-only">
+                      {m.sessions_action_close_peek()}
+                    </span>
+                  </Button>
+                </>
+              )}
             />
-          </div>
-        )}
-        {shownTarget && (
-          <AgentSessionContent
-            key={`${shownTarget.sessionId}\n${shownTarget.launchId ?? ""}`}
-            target={shownTarget}
-            focusTerminal={focusTerminal}
-            onOpenRoutine={onOpenRoutine}
-            onOpenAgentSettings={onOpenAgentSettings}
-            renderActions={(menu, view) => (
-              <>
-                {menu}
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  disabled={expanding}
-                  onClick={() => void expand(view.session)}
-                >
-                  <Maximize2 data-icon="inline-start" />
-                  {m.attachments_full_page()}
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  onClick={() => onOpenChange(false)}
-                >
-                  <X />
-                  <span className="sr-only">
-                    {m.sessions_action_close_peek()}
-                  </span>
-                </Button>
-              </>
-            )}
-          />
-        )}
+          )}
+        </PortalContext.Provider>
       </SheetContent>
     </Sheet>
   );

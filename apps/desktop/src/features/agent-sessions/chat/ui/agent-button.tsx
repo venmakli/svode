@@ -130,7 +130,9 @@ export function AgentModelButton({
   };
   const blockProps = { canChange, changing, onChange: change };
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    // Modal: its own scroll lock lets the wheel scroll the model list in
+    // the session peek, whose sheet locks scroll outside itself.
+    <Popover modal open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <InputGroupButton
           size="sm"
