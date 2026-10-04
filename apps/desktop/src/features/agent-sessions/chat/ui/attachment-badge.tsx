@@ -8,6 +8,7 @@ import {
 } from "@/components/ui/hover-card";
 import { cn } from "@/shared/lib/utils";
 import {
+  recheckAttachments,
   useAttachmentAvailable,
   useAttachmentPreview,
 } from "../hooks/use-attachment-preview";
@@ -42,7 +43,14 @@ export function AttachmentBadge({
   const Icon = missing ? FileX : KIND_ICONS[kind];
 
   return (
-    <HoverCard open={open} onOpenChange={setOpen} openDelay={300}>
+    <HoverCard
+      open={open}
+      onOpenChange={(next) => {
+        setOpen(next);
+        if (next) recheckAttachments();
+      }}
+      openDelay={300}
+    >
       <HoverCardTrigger asChild>
         <Badge
           asChild

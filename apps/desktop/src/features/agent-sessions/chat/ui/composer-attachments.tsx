@@ -73,9 +73,13 @@ export function insertAttachments(
   });
 }
 
-/** Opens the `@` search for pages and files at the cursor. */
+/**
+ * Opens the `@` search for pages and files at the cursor. The search input
+ * takes focus itself: focusing the field as well would land after it and
+ * close the search into a plain `@`.
+ */
 function startMention(editor: PlateEditor) {
-  editor.tf.focus({ edge: editor.selection ? undefined : "end" });
+  if (!editor.selection) editor.tf.select(editor.api.end([]));
   editor.tf.insertNodes({
     type: KEYS.mentionInput,
     trigger: "@",

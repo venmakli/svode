@@ -42,7 +42,8 @@ export const COMMAND_PLUGINS = [
 
 /** Opens the command search at the cursor, as typing `/` does. */
 export function startCommand(editor: PlateEditor) {
-  editor.tf.focus({ edge: editor.selection ? undefined : "end" });
+  // The search input takes focus itself, as in `startMention`.
+  if (!editor.selection) editor.tf.select(editor.api.end([]));
   editor.tf.insertNodes({
     type: KEYS.slashInput,
     trigger: "/",

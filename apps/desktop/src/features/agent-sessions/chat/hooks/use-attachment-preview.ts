@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { useSpace } from "@/features/space";
 import {
   attachmentExists,
@@ -12,8 +12,38 @@ import {
   type Attachment,
 } from "../model/attachments";
 
-/** Whether the file is still there; null until checked. */
+/**
+ * Badges check their files again when the window comes back, e.g. after a
+ * file was deleted in the file manager, and when a send found one gone.
+ */
+let availabilityCheck = 0;
+const availabilityListeners = new Set<() => void>();
+
+/** Checks again whether the files of all badges are still there. */
+export function recheckAttachments() {
+  availabilityCheck += 1;
+  for (const listener of availabilityListeners) listener();
+}
+
+function subscribeAvailabilityCheck(listener: () => void) {
+  availabilityListeners.add(listener);
+  if (availabilityListeners.size === 1) {
+    window.addEventListener("focus", recheckAttachments);
+  }
+  return () => {
+    availabilityListeners.delete(listener);
+    if (availabilityListeners.size === 0) {
+      window.removeEventListener("focus", recheckAttachments);
+    }
+  };
+}
+
+/** Whether the file is still there; null until first checked. */
 export function useAttachmentAvailable(path: string): boolean | null {
+  const check = useSyncExternalStore(
+    subscribeAvailabilityCheck,
+    () => availabilityCheck,
+  );
   const [state, setState] = useState<{ path: string; available: boolean } | null>(
     null,
   );
@@ -29,7 +59,7 @@ export function useAttachmentAvailable(path: string): boolean | null {
     return () => {
       cancelled = true;
     };
-  }, [path]);
+  }, [path, check]);
   return state?.path === path ? state.available : null;
 }
 

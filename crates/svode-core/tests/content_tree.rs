@@ -254,3 +254,45 @@ fn a_file_search_finds_files_by_name_nearest_first_without_pages_or_ignored_path
         ]
     );
 }
+
+#[test]
+fn a_file_search_walks_each_space_with_its_policy_and_finds_local_assets() {
+    let project = tempfile::tempdir().unwrap();
+    let root = project.path();
+    fs::create_dir_all(root.join(".svode")).unwrap();
+    fs::write(
+        root.join(".svode/config.json"),
+        r#"{"name":"Root","spaces":[{"id":"child","path":"child","repo":null}]}"#,
+    )
+    .unwrap();
+    fs::write(
+        root.join(".gitignore"),
+        "build/\n# svode:spaces:start\nchild/\n# svode:spaces:end\n# svode:assets-local-paths:start\n# svode:path \"photo.jpg\"\n/photo.jpg\n# svode:path \"docs/scan.jpeg\"\n/docs/scan.jpeg\n# svode:assets-local-paths:end\n",
+    )
+    .unwrap();
+    fs::write(root.join("photo.jpg"), "").unwrap();
+    fs::create_dir_all(root.join("docs")).unwrap();
+    fs::write(root.join("docs/scan.jpeg"), "").unwrap();
+    fs::create_dir_all(root.join("build")).unwrap();
+    fs::write(root.join("build/photo-copy.jpg"), "").unwrap();
+    let child = root.join("child");
+    fs::create_dir_all(child.join(".svode")).unwrap();
+    fs::write(child.join(".svode/config.json"), r#"{"name":"Child"}"#).unwrap();
+    fs::write(child.join(".gitignore"), "tmp/\n").unwrap();
+    fs::write(child.join("offer.pdf"), "").unwrap();
+    fs::create_dir_all(child.join("tmp")).unwrap();
+    fs::write(child.join("tmp/offer-draft.pdf"), "").unwrap();
+
+    assert_eq!(
+        find_project_files(root, "", 10),
+        [
+            root.join("photo.jpg"),
+            root.join("docs/scan.jpeg"),
+            child.join("offer.pdf"),
+        ]
+    );
+    assert_eq!(
+        find_project_files(root, "OFFER", 10),
+        [child.join("offer.pdf")]
+    );
+}

@@ -537,6 +537,30 @@ if (process.env.SVODE_SESSION_CONTROLS_DOM !== "1") {
     },
   );
 
+  controlsTest(
+    "Page or project file in the + menu opens the search, which keeps focus",
+    async () => {
+      await mount(
+        <SessionChat sessionId="codex:s1" session={key} scopeLabel="Project" />,
+      );
+      // A click on + takes focus from the field, which jsdom does not do.
+      const attach = buttonByLabel(m.sessions_chat_attach());
+      await act(async () => attach?.focus());
+      await openMenu(attach);
+      await click(menuItem(m.sessions_chat_attach_project()));
+      // Past the retries the editor makes to take focus itself.
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      });
+      await settle();
+      const search = document.querySelector<HTMLElement>(
+        `[aria-label="${m.sessions_chat_mention_search()}"]`,
+      );
+      expect(Boolean(search)).toBe(true);
+      expect(document.activeElement).toBe(search);
+    },
+  );
+
   function settings(current: { model?: string } = {}) {
     return [
       {

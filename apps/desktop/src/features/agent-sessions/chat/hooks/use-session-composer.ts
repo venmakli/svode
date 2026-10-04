@@ -15,6 +15,7 @@ import {
   type DraftPart,
 } from "../model/attachments";
 import { reconcileUnknownSend, sessionDraftKey } from "../model/composer";
+import { recheckAttachments } from "./use-attachment-preview";
 import { useComposerDraft } from "./use-composer-draft";
 
 /** How long an unknown send waits for the session to show a new turn. */
@@ -95,6 +96,7 @@ export function useSessionComposer(
       if (code) {
         updateDraft({ sending: null });
         setRefusal({ code, message: errorMessage(error) });
+        if (code === "file_unavailable") recheckAttachments();
       }
       // Neither a turn nor a refusal: the effect above settles it by the
       // session's state.

@@ -13,6 +13,7 @@ import {
   type DraftPart,
 } from "../model/attachments";
 import { newSessionDraftKey } from "../model/composer";
+import { recheckAttachments } from "./use-attachment-preview";
 import { useChatAgents } from "./use-chat-agents";
 import { useComposerDraft } from "./use-composer-draft";
 import { useDraftAgent, type DraftAgentState } from "./use-draft-agent";
@@ -119,6 +120,7 @@ export function useNewSessionDraft(
         settings.refuse(setting);
       } else {
         setRefusal({ kind: "runtime", code, message: errorMessage(error) });
+        if (code === "file_unavailable") recheckAttachments();
       }
     } finally {
       setSending(false);
