@@ -218,6 +218,8 @@ export interface ChatAgentDto {
   name: string;
   offer:
     | { state: "available" }
+    /** The agent starts, but its own sign-in check reports no sign-in. */
+    | { state: "sign_in_required" }
     | { state: "unavailable"; reason: AgentLaunchUnavailableDto };
 }
 

@@ -6,25 +6,32 @@ import type {
 export type ChatAgent = ChatAgentDto;
 export type ChatAgents = ChatAgentsDto;
 
-/** "New session" opens a chat draft only when some agent can chat now. */
+/**
+ * "New session" opens a chat draft only when some agent can chat now, or
+ * can once the user signs in to it from the draft.
+ */
 export function canOpenChatDraft(agents: ChatAgents): boolean {
-  return agents.agents.some((agent) => agent.offer.state === "available");
+  return agents.agents.some(
+    (agent) =>
+      agent.offer.state === "available" ||
+      agent.offer.state === "sign_in_required",
+  );
 }
 
 /**
  * The agent a new draft starts with: the agent of the device's last chat
  * session while it is available, else the first available agent in the
- * order of the agent settings.
+ * order of the agent settings; without one, the same among the agents
+ * that need sign-in.
  */
 export function defaultChatAgent(agents: ChatAgents): string | null {
-  const available = agents.agents.filter(
-    (agent) => agent.offer.state === "available",
-  );
-  return (
-    available.find((agent) => agent.agent === agents.last)?.agent ??
-    available[0]?.agent ??
-    null
-  );
+  for (const state of ["available", "sign_in_required"] as const) {
+    const offered = agents.agents.filter((agent) => agent.offer.state === state);
+    const choice =
+      offered.find((agent) => agent.agent === agents.last) ?? offered[0];
+    if (choice) return choice.agent;
+  }
+  return null;
 }
 
 /** A remembered draft agent stays while the draft still offers it. */

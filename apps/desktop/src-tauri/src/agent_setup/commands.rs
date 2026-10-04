@@ -98,8 +98,11 @@ pub struct ChatAgents {
     pub last: Option<String>,
 }
 
-/// The agents a new session draft offers (Stage 10 `04`, `03` A1/A8). Only
-/// launch plans are resolved: bounded version probes, no ACP process.
+/// The agents a new session draft offers (Stage 10 `04`, `03` A1/A5/A8).
+/// Launch plans and the agents' own sign-in checks are resolved: bounded
+/// version and sign-in status probes, no ACP process. An agent's ACP
+/// `initialize` succeeds without sign-in, so its sign-in check is what
+/// shows "Sign in" before the first send.
 #[tauri::command]
 pub async fn agent_setup_chat_agents(
     state: State<'_, AgentSetupState>,
@@ -109,6 +112,7 @@ pub async fn agent_setup_chat_agents(
             agent.as_str().to_string(),
             agent.display_name().to_string(),
             AdapterRuntimeRegistry.verdict(agent) == AgentVerdict::Deferred,
+            Some(agent),
         )
     });
     let custom = state.custom_agents().into_iter().map(|custom| {
@@ -116,14 +120,26 @@ pub async fn agent_setup_chat_agents(
             custom.id.agent_id().as_str().to_string(),
             custom.definition.name,
             false,
+            None,
         )
     });
+    let target = target().await?;
     let mut reads = JoinSet::new();
-    for (order, (agent, name, deferred)) in builtin.chain(custom).enumerate() {
+    for (order, (agent, name, deferred, builtin)) in builtin.chain(custom).enumerate() {
         let state = (*state).clone();
+        let target = target.clone();
         reads.spawn(async move {
             let plan = state.plan(&agent).await;
-            let offer = chat_offer(deferred, &plan);
+            let authenticated = match (&plan, builtin) {
+                (Ok(_), Some(kind)) if !deferred => {
+                    AdapterRuntimeRegistry
+                        .diagnose(kind, &target, &SystemRuntimeCommandRunner)
+                        .await
+                        .authenticated
+                }
+                _ => None,
+            };
+            let offer = chat_offer(deferred, &plan, authenticated);
             (order, offer.map(|offer| ChatAgent { agent, name, offer }))
         });
     }

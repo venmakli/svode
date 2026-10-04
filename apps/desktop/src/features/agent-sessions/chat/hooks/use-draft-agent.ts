@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { holdDraftAgent, releaseDraftAgent, type AgentCheckDto } from "../api/chat";
 
 export type DraftAgentState =
@@ -54,10 +54,14 @@ export function useDraftAgent(agent: string | null) {
     };
   }, [agent, attempt]);
   const retry = useCallback(() => setAttempt((value) => value + 1), []);
-  const readiness: DraftAgentState = !agent
-    ? { state: "idle" }
-    : result && result.agent === agent && result.attempt === attempt
+  const current =
+    result && result.agent === agent && result.attempt === attempt
       ? result.value
-      : { state: "connecting" };
+      : null;
+  const readiness = useMemo<DraftAgentState>(
+    () =>
+      !agent ? { state: "idle" } : (current ?? { state: "connecting" }),
+    [agent, current],
+  );
   return { readiness, retry };
 }

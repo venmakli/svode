@@ -159,10 +159,10 @@ export function NewSessionDraft({
         <AgentSignInDialog
           agent={dictionary.label(signIn.agent)}
           ptyId={signIn.ptyId}
-          onSignedIn={draft.retryAgent}
+          onSignedIn={draft.recheckAgent}
           onClose={() => {
             setSignIn(null);
-            draft.retryAgent();
+            draft.recheckAgent();
           }}
         />
       )}

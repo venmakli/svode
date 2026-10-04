@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   agentRuntimeErrorCode,
   startAgentSession,
@@ -9,7 +9,7 @@ import { draftAgent } from "../model/agents";
 import { newSessionDraftKey } from "../model/composer";
 import { useChatAgents } from "./use-chat-agents";
 import { useComposerDraft } from "./use-composer-draft";
-import { useDraftAgent } from "./use-draft-agent";
+import { useDraftAgent, type DraftAgentState } from "./use-draft-agent";
 import { errorMessage, type SendRefusal } from "./use-session-composer";
 
 export interface StartedSession {
@@ -35,7 +35,21 @@ export function useNewSessionDraft(
   );
   const { agents, failed: agentsFailed, reload } = useChatAgents();
   const agent = agents ? draftAgent(agents, draft.agent) : null;
-  const { readiness, retry } = useDraftAgent(agent);
+  const { readiness: started, retry } = useDraftAgent(agent);
+  // The agent's ACP connection starts without sign-in; its own sign-in
+  // check tells that the first send would be refused.
+  const signInRequired =
+    agents?.agents.find((candidate) => candidate.agent === agent)?.offer
+      .state === "sign_in_required";
+  const readiness = useMemo<DraftAgentState>(
+    () =>
+      signInRequired &&
+      started.state === "checked" &&
+      started.check.state === "ready"
+        ? { state: "checked", check: { state: "auth_required", message: "" } }
+        : started,
+    [signInRequired, started],
+  );
   const [refusal, setRefusal] = useState<DraftRefusal | null>(null);
   const spacePath = draft.spacePath ?? initialSpacePath;
 
@@ -97,6 +111,11 @@ export function useNewSessionDraft(
     },
     readiness,
     retryAgent: retry,
+    /** After sign-in: read the agents' sign-in again and start the agent anew. */
+    recheckAgent: () => {
+      reload();
+      retry();
+    },
     spacePath,
     chooseSpace: (path: string) => updateDraft({ spacePath: path }),
     sending,

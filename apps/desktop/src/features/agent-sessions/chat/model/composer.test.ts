@@ -58,6 +58,28 @@ test("a draft starts with the last chat agent while available, else the first av
   ).toBe(false);
 });
 
+test("an agent that needs sign-in opens a draft and is chosen only without an available one", () => {
+  const signIn = { state: "sign_in_required" } as const;
+  const onlySignIn = {
+    agents: [
+      { agent: "pi", name: "pi", offer: outdated },
+      { agent: "claude-code", name: "Claude Code", offer: signIn },
+    ],
+    last: null,
+  };
+  expect(canOpenChatDraft(onlySignIn)).toBe(true);
+  expect(defaultChatAgent(onlySignIn)).toBe("claude-code");
+  expect(
+    defaultChatAgent({
+      agents: [
+        { agent: "claude-code", name: "Claude Code", offer: signIn },
+        { agent: "codex", name: "Codex", offer: available },
+      ],
+      last: "claude-code",
+    }),
+  ).toBe("codex");
+});
+
 test("a turn duration reads in seconds, minutes and hours", async () => {
   const { setLocale } = await import("@/paraglide/runtime");
   const { formatDuration } = await import("./format");

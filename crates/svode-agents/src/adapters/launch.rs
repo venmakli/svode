@@ -51,20 +51,29 @@ pub enum LaunchUnavailable {
 pub enum ChatOffer {
     /// The agent can start a chat session now.
     Available,
+    /// The agent can start, but its own sign-in check reports no sign-in
+    /// (`03` A5): the draft offers "Sign in" before the first send.
+    SignInRequired,
     /// The agent is enabled and on this device, but cannot start until
     /// the user recovers it in the agent settings.
     Unavailable { reason: LaunchUnavailable },
 }
 
-/// The offer of an agent whose launch plan resolved to `plan`; `None` for
-/// an agent a new session does not offer at all: deferred, disabled, not
-/// on this device, unsupported, or with an adapter that is not installed,
-/// which leaves it disabled.
-pub fn chat_offer<T>(deferred: bool, plan: &Result<T, LaunchUnavailable>) -> Option<ChatOffer> {
+/// The offer of an agent whose launch plan resolved to `plan` and whose
+/// sign-in check reported `authenticated` (`None` without a check or with
+/// an unreadable one); `None` for an agent a new session does not offer at
+/// all: deferred, disabled, not on this device, unsupported, or with an
+/// adapter that is not installed, which leaves it disabled.
+pub fn chat_offer<T>(
+    deferred: bool,
+    plan: &Result<T, LaunchUnavailable>,
+    authenticated: Option<bool>,
+) -> Option<ChatOffer> {
     if deferred {
         return None;
     }
     match plan {
+        Ok(_) if authenticated == Some(false) => Some(ChatOffer::SignInRequired),
         Ok(_) => Some(ChatOffer::Available),
         Err(
             LaunchUnavailable::Disabled
@@ -458,10 +467,21 @@ mod chat_offer_tests {
     use super::*;
 
     #[test]
-    fn a_new_session_offers_only_enabled_agents_on_this_device_that_are_not_deferred() {
+    fn a_new_session_offers_enabled_agents_on_this_device_and_names_a_missing_sign_in() {
         let available: Result<(), LaunchUnavailable> = Ok(());
-        assert_eq!(chat_offer(false, &available), Some(ChatOffer::Available));
-        assert_eq!(chat_offer(true, &available), None);
+        assert_eq!(
+            chat_offer(false, &available, None),
+            Some(ChatOffer::Available)
+        );
+        assert_eq!(
+            chat_offer(false, &available, Some(true)),
+            Some(ChatOffer::Available)
+        );
+        assert_eq!(
+            chat_offer(false, &available, Some(false)),
+            Some(ChatOffer::SignInRequired)
+        );
+        assert_eq!(chat_offer(true, &available, Some(false)), None);
         for hidden in [
             LaunchUnavailable::Disabled,
             LaunchUnavailable::ExecutableMissing {
@@ -470,13 +490,13 @@ mod chat_offer_tests {
             LaunchUnavailable::NotSupported,
             LaunchUnavailable::AdapterNotInstalled,
         ] {
-            assert_eq!(chat_offer::<()>(false, &Err(hidden)), None);
+            assert_eq!(chat_offer::<()>(false, &Err(hidden), Some(false)), None);
         }
         let outdated = LaunchUnavailable::AdapterNeedsUpdate {
             installed_version: "0.1.0".into(),
         };
         assert_eq!(
-            chat_offer::<()>(false, &Err(outdated.clone())),
+            chat_offer::<()>(false, &Err(outdated.clone()), Some(false)),
             Some(ChatOffer::Unavailable { reason: outdated })
         );
     }
