@@ -73,6 +73,7 @@ export function PlateDocumentEditor({
     currentDocumentSpaceId,
     deserializeToolbarMarkdown,
     documentLoading,
+    editorLoadGeneration,
     handleChange,
     projectPath,
     spacePath,
@@ -133,7 +134,7 @@ export function PlateDocumentEditor({
               usePageScroll ? "overflow-visible" : "flex-1 overflow-hidden",
             )}
           >
-            <TocSidebar />
+            <TocSidebar key={editorLoadGeneration} />
             {documentLoading ? (
               <EditorBodyLoadingState pageScroll={usePageScroll} />
             ) : null}

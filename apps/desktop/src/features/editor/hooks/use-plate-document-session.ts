@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { Descendant } from "platejs";
 import type { PlateEditor } from "platejs/react";
 
@@ -49,6 +49,7 @@ interface UsePlateDocumentSessionResult {
   currentDocumentSpaceId: string | null;
   deserializeToolbarMarkdown: (text: string) => Descendant[];
   documentLoading: boolean;
+  editorLoadGeneration: number;
   handleChange: (_: { value: Descendant[] }) => void;
   projectPath: string | null;
   spacePath: string;
@@ -120,10 +121,16 @@ export function usePlateDocumentSession({
   const isDebouncePendingRef = useRef(false);
   const ownNoncesRef = useRef<Set<string>>(new Set());
 
+  // A programmatic load replaces the value without onChange, so editor
+  // selectors (e.g. the TOC heading list) need an explicit load generation.
+  const [editorLoadGeneration, setEditorLoadGeneration] = useState(0);
+
   const loadEditorValue = useCallback(
     (value: Descendant[]) => {
       if (!editor) return value;
-      return loadProgrammaticEditorValue(editor, value);
+      const loaded = loadProgrammaticEditorValue(editor, value);
+      setEditorLoadGeneration((generation) => generation + 1);
+      return loaded;
     },
     [editor],
   );
@@ -287,6 +294,7 @@ export function usePlateDocumentSession({
     currentDocumentSpaceId,
     deserializeToolbarMarkdown,
     documentLoading,
+    editorLoadGeneration,
     handleChange,
     projectPath,
     spacePath,
