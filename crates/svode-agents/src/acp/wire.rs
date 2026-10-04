@@ -155,7 +155,10 @@ pub(crate) enum SessionUpdate {
         #[serde(rename = "configOptions", default)]
         config_options: Vec<Value>,
     },
-    SessionInfoUpdate {},
+    SessionInfoUpdate {
+        #[serde(default)]
+        title: Option<String>,
+    },
     UsageUpdate {
         used: u64,
         size: u64,
@@ -213,16 +216,10 @@ pub(crate) struct PlanEntry {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct RequestPermission {
     pub session_id: String,
-    pub tool_call: PermissionToolCall,
+    /// The tool call the request is for, with the fields its item gets.
+    pub tool_call: ToolCallUpdate,
     #[serde(default)]
     pub options: Vec<PermissionOption>,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct PermissionToolCall {
-    pub tool_call_id: String,
-    pub title: Option<String>,
 }
 
 #[derive(Deserialize)]

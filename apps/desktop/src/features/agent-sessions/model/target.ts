@@ -9,6 +9,15 @@ export interface AgentSessionTarget {
   launchId: string | null;
 }
 
+/**
+ * A new session draft in a host: `draftId` tells one opening from the next,
+ * `spacePath` is the Space of the context it was opened from.
+ */
+export interface NewSessionDraftTarget {
+  draftId: string;
+  spacePath: string;
+}
+
 /** How an entry point opens a session. */
 export interface AgentSessionOpenOptions {
   /** The user asked for the terminal, e.g. by starting a new session. */

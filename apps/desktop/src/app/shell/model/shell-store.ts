@@ -4,6 +4,7 @@ import { getActiveContentPath } from "@/features/artifact";
 import type {
   AgentSessionOpenOptions,
   AgentSessionTarget,
+  NewSessionDraftTarget,
 } from "@/features/agent-sessions";
 import type {
   KnowledgeGraphOpenRequest,
@@ -31,11 +32,15 @@ interface ShellState {
    * "session"; the Graph keeps it to return to.
    */
   mainSessionTarget: AgentSessionTarget | null;
+  /** A new session draft shown in the main area instead of a session. */
+  mainSessionDraft: NewSessionDraftTarget | null;
   /** The main area session was opened by a move into the main area. */
   mainSessionFocus: boolean;
   /** The main area session was started for work in its terminal. */
   mainSessionFocusTerminal: boolean;
   sessionPeekTarget: AgentSessionTarget | null;
+  /** A new session draft in the session peek instead of a session. */
+  sessionPeekDraft: NewSessionDraftTarget | null;
   /** The peek was opened for work in the terminal, e.g. a new session. */
   sessionPeekFocusTerminal: boolean;
   knowledgeGraphOpenRequest: KnowledgeGraphOpenRequest | null;
@@ -56,6 +61,8 @@ interface ShellState {
     target: AgentSessionTarget,
     options?: { focus?: boolean; focusTerminal?: boolean },
   ) => void;
+  /** A new session draft as the main area object; its first send makes it the session. */
+  openSessionDraftMainSurface: (draft: NewSessionDraftTarget) => void;
   openGraphSurface: (state: KnowledgeGraphState) => void;
   /** Leaves the Graph for the object it was opened over. */
   closeGraphSurface: () => void;
@@ -63,6 +70,8 @@ interface ShellState {
     target: AgentSessionTarget,
     options?: AgentSessionOpenOptions,
   ) => void;
+  /** A new session draft in the session peek over the current context. */
+  openSessionDraftPeek: (draft: NewSessionDraftTarget) => void;
   closeSessionPeek: () => void;
 }
 
@@ -105,9 +114,11 @@ export const useShellStore = create<ShellState>((set) => ({
   settingsDestination: null,
   mainSurface: "content",
   mainSessionTarget: null,
+  mainSessionDraft: null,
   mainSessionFocus: false,
   mainSessionFocusTerminal: false,
   sessionPeekTarget: null,
+  sessionPeekDraft: null,
   sessionPeekFocusTerminal: false,
   knowledgeGraphOpenRequest: null,
   nextKnowledgeGraphOpenRequestKey: 1,
@@ -140,15 +151,29 @@ export const useShellStore = create<ShellState>((set) => ({
     set({
       mainSurface: "content",
       mainSessionTarget: null,
+      mainSessionDraft: null,
       sessionPeekTarget: null,
+      sessionPeekDraft: null,
     }),
   openSessionMainSurface: (target, options) =>
     set({
       mainSurface: "session",
       mainSessionTarget: target,
+      mainSessionDraft: null,
       mainSessionFocus: options?.focus ?? true,
       mainSessionFocusTerminal: options?.focusTerminal ?? false,
       sessionPeekTarget: null,
+      sessionPeekDraft: null,
+    }),
+  openSessionDraftMainSurface: (draft) =>
+    set({
+      mainSurface: "session",
+      mainSessionTarget: null,
+      mainSessionDraft: draft,
+      mainSessionFocus: true,
+      mainSessionFocusTerminal: false,
+      sessionPeekTarget: null,
+      sessionPeekDraft: null,
     }),
   openGraphSurface: (graphState) =>
     set((state) => ({
@@ -162,17 +187,30 @@ export const useShellStore = create<ShellState>((set) => ({
       mainSessionFocus: false,
       mainSessionFocusTerminal: false,
       sessionPeekTarget: null,
+      sessionPeekDraft: null,
     })),
   closeGraphSurface: () =>
     set((state) =>
       state.mainSurface === "graph"
-        ? { mainSurface: state.mainSessionTarget ? "session" : "content" }
+        ? {
+            mainSurface:
+              state.mainSessionTarget || state.mainSessionDraft
+                ? "session"
+                : "content",
+          }
         : {},
     ),
   openSessionPeek: (target, options) =>
     set({
       sessionPeekTarget: target,
+      sessionPeekDraft: null,
       sessionPeekFocusTerminal: options?.focusTerminal ?? false,
     }),
-  closeSessionPeek: () => set({ sessionPeekTarget: null }),
+  openSessionDraftPeek: (draft) =>
+    set({
+      sessionPeekTarget: null,
+      sessionPeekDraft: draft,
+      sessionPeekFocusTerminal: false,
+    }),
+  closeSessionPeek: () => set({ sessionPeekTarget: null, sessionPeekDraft: null }),
 }));

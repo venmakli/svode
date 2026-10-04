@@ -729,7 +729,7 @@ mod tests {
                         move || {
                             calls.fetch_add(1, Ordering::SeqCst);
                             wait_for_release(&gate);
-                            read_model::list_sessions(&state, project_path, Vec::new())
+                            read_model::list_sessions(&state, project_path, Vec::new(), Vec::new())
                         },
                     )
                     .await

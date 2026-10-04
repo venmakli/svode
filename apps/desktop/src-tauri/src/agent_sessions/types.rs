@@ -148,6 +148,10 @@ pub struct AgentSessionRuntime {
     pub last_output_at: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_input_at: Option<String>,
+    /// The key a Svode ACP connection drives the session under; the chat
+    /// subscribes to its activity by it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub acp_session: Option<SessionKey>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

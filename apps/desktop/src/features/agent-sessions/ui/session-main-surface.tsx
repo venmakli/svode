@@ -8,7 +8,10 @@ import {
 } from "@/components/ui/breadcrumb";
 import { useAgentSessionSpace, useResolvedAgentSession } from "../hooks";
 import type { RoutineLaunchLink } from "@/features/routines/catalog";
-import type { AgentSessionTarget } from "../model";
+import type { AgentSessionTarget, NewSessionDraftTarget } from "../model";
+import { AGENT_SESSION_CONTENT_ATTRIBUTE } from "../lib/session-content";
+import { NewSessionDraft } from "../chat/ui/new-session-draft";
+import type { StartedSession } from "../chat/hooks/use-new-session-draft";
 import { AgentSessionContent } from "./session-view";
 
 /** A session as the one object of the main area. */
@@ -39,6 +42,34 @@ export function AgentSessionMainSurface({
         target={target}
         focusTerminal={focusTerminal}
         onOpenRoutine={onOpenRoutine}
+      />
+    </div>
+  );
+}
+
+/** A new session draft as the one object of the main area; focus goes to its composer. */
+export function AgentSessionDraftMainSurface({
+  draft,
+  onStarted,
+  onOpenTerminal,
+  onOpenAgentSettings,
+}: {
+  draft: NewSessionDraftTarget;
+  onStarted: (started: StartedSession) => void;
+  onOpenTerminal: (spacePath: string) => void;
+  onOpenAgentSettings: () => void;
+}) {
+  return (
+    <div
+      {...{ [AGENT_SESSION_CONTENT_ATTRIBUTE]: "" }}
+      className="flex h-full min-h-0 flex-col pt-3"
+    >
+      <NewSessionDraft
+        key={draft.draftId}
+        spacePath={draft.spacePath}
+        onStarted={onStarted}
+        onOpenTerminal={onOpenTerminal}
+        onOpenAgentSettings={onOpenAgentSettings}
       />
     </div>
   );

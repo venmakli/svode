@@ -19,11 +19,11 @@ export function activitySnapshot(
       },
     },
     items: [],
-    plan: null,
     pending: null,
     history: { source: "live", available: true, truncatedItems: null },
     writer: "acp",
     settings: [],
+    title: null,
     ...overrides,
   };
 }

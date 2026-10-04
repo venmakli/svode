@@ -70,6 +70,8 @@ if (process.env.SVODE_AGENT_SESSIONS_SURFACE_DOM !== "1") {
 
   let listed: ListedAgentSession[] = [];
   let listStatus: "ok" | "partial" = "ok";
+  let chatAgents: { agent: string; name: string; offer: { state: string } }[] =
+    [];
   const commands: string[] = [];
   const resolvedLaunches: string[][] = [];
   const releasedHolds: number[] = [];
@@ -123,6 +125,9 @@ if (process.env.SVODE_AGENT_SESSIONS_SURFACE_DOM !== "1") {
       return undefined;
     }
     if (command === "agent_sessions_raise_catalog") return undefined;
+    if (command === "agent_setup_chat_agents") {
+      return { agents: chatAgents, last: null };
+    }
     throw new Error(`unexpected command ${command}`);
   });
 
@@ -136,6 +141,7 @@ if (process.env.SVODE_AGENT_SESSIONS_SURFACE_DOM !== "1") {
   const { AgentSessionsSurface } = await import("./sessions-surface");
 
   const opened: AgentSessionTarget[] = [];
+  const drafts: { spacePath: string }[] = [];
   const openedWithFocus: boolean[] = [];
   let settingsOpened = 0;
 
@@ -162,6 +168,7 @@ if (process.env.SVODE_AGENT_SESSIONS_SURFACE_DOM !== "1") {
             opened.push(target);
             openedWithFocus.push(Boolean(options?.focusTerminal));
           }}
+          onOpenNewSessionDraft={(draft) => drafts.push(draft)}
           onOpenAppSettings={() => {
             settingsOpened += 1;
           }}
@@ -175,6 +182,8 @@ if (process.env.SVODE_AGENT_SESSIONS_SURFACE_DOM !== "1") {
   function surfaceTest(name: string, fn: () => Promise<void>) {
     test(name, async () => {
       opened.length = 0;
+      drafts.length = 0;
+      chatAgents = [];
       resolvedLaunches.length = 0;
       openedWithFocus.length = 0;
       commands.length = 0;
@@ -284,7 +293,24 @@ if (process.env.SVODE_AGENT_SESSIONS_SURFACE_DOM !== "1") {
   );
 
   surfaceTest(
-    "New session starts a pending session in this Space and opens it",
+    "New session opens a chat draft in this Space when an agent can chat",
+    async () => {
+      chatAgents = [
+        { agent: "codex", name: "Codex", offer: { state: "available" } },
+      ];
+      await mountSurface("/project/docs", "docs");
+      await click(buttonByText(m.sessions_action_new()));
+
+      expect(drafts.map((draft) => draft.spacePath)).toEqual([
+        "/project/docs",
+      ]);
+      expect(spawned).toEqual([]);
+      expect(opened).toEqual([]);
+    },
+  );
+
+  surfaceTest(
+    "New session without a chat agent starts a pending session in this Space and opens it",
     async () => {
       await mountSurface("/project/docs", "docs");
       await click(buttonByText(m.sessions_action_new()));

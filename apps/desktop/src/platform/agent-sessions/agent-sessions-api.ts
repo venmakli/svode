@@ -1,4 +1,7 @@
-import type { AgentSessionStatusDto } from "@/platform/agent-runtime/agent-runtime-api";
+import type {
+  AgentSessionKeyDto,
+  AgentSessionStatusDto,
+} from "@/platform/agent-runtime/agent-runtime-api";
 import { invokeCommand as invoke } from "@/platform/native/invoke";
 
 /** The id of the session's agent in the registry. */
@@ -17,6 +20,8 @@ export interface AgentSessionRuntime {
   provisional?: boolean;
   lastOutputAt?: string;
   lastInputAt?: string;
+  /** The key a Svode ACP connection drives the session under. */
+  acpSession?: AgentSessionKeyDto;
 }
 
 export interface AgentResumeCommand {

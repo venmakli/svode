@@ -107,11 +107,32 @@ pub enum ItemKind {
     ModeChange,
     ConfigChange,
     Usage,
+    /// The agent's plan as it stands in this turn; later plans of the turn
+    /// replace it in place.
+    Plan {
+        entries: Vec<PlanEntry>,
+    },
+    /// A resolved pending interaction. A permission is shown in the row of
+    /// its tool call; the summary is the request title.
+    Interaction {
+        request: InteractionKind,
+        state: InteractionState,
+        tool_call_id: Option<String>,
+        /// Label of the chosen permission option.
+        option: Option<String>,
+        /// The user declined to answer the question.
+        declined: bool,
+    },
     TurnOutcome {
         reason: StopReason,
+        /// From the accepted prompt to the turn result; unknown for a turn
+        /// this process did not run.
+        duration_ms: Option<u64>,
     },
     Error,
-    Interrupted,
+    Interrupted {
+        duration_ms: Option<u64>,
+    },
     /// An update or extension this runtime does not model.
     Generic {
         label: String,
@@ -155,12 +176,6 @@ pub struct PlanEntry {
     pub content: String,
     pub priority: PlanEntryPriority,
     pub status: PlanEntryStatus,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Plan {
-    pub entries: Vec<PlanEntry>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -264,6 +279,9 @@ pub struct PendingInteraction {
     pub kind: InteractionKind,
     /// The tool call a permission is for, or the question message.
     pub title: String,
+    /// The agent's tool call a permission is for; its item and detail carry
+    /// the subject of the request. None for a question.
+    pub tool_call_id: Option<String>,
     /// Permission options; empty for a question.
     pub options: Vec<InteractionOption>,
     /// Question fields in the agent's order; empty for a permission.
@@ -310,11 +328,12 @@ pub struct SessionSnapshot {
     pub connection: ConnectionState,
     pub turn: TurnState,
     pub items: Vec<ActivityItem>,
-    pub plan: Option<Plan>,
     pub pending: Option<PendingInteraction>,
     pub history: HistoryState,
     pub writer: WriterState,
     pub settings: Vec<SessionSetting>,
+    /// The session title the agent reported.
+    pub title: Option<String>,
 }
 
 /// Exactly one change; applying deltas with consecutive `seq` to the
@@ -324,7 +343,6 @@ pub struct SessionSnapshot {
 pub enum Change {
     /// Insert or replace the item with this id.
     Item(ActivityItem),
-    Plan(Plan),
     Turn(TurnState),
     /// Set the pending interaction; a non-`pending` state clears it with
     /// that outcome.
@@ -337,6 +355,7 @@ pub enum Change {
     Writer(WriterState),
     /// Replaces the whole set of session settings.
     Settings(Vec<SessionSetting>),
+    Title(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -415,7 +434,6 @@ impl SessionSnapshot {
                 Some(known) => *known = item.clone(),
                 None => self.items.push(item.clone()),
             },
-            Change::Plan(plan) => self.plan = Some(plan.clone()),
             Change::Turn(turn) => self.turn = turn.clone(),
             Change::Pending(pending) => {
                 self.pending = (pending.state == InteractionState::Pending).then(|| pending.clone())
@@ -429,6 +447,7 @@ impl SessionSnapshot {
             Change::Connection(connection) => self.connection = *connection,
             Change::Writer(writer) => self.writer = *writer,
             Change::Settings(settings) => self.settings = settings.clone(),
+            Change::Title(title) => self.title = Some(title.clone()),
         }
         true
     }

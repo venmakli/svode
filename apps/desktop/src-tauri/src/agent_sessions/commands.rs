@@ -30,6 +30,7 @@ pub async fn agent_sessions_list(
     state.acp_lists.refresh(agent_runtime.runtime());
     let state = state.inner().clone();
     let terminal_manager = terminal_manager.inner().clone();
+    let runtime = agent_runtime.runtime().clone();
     let project_key = root.to_string_lossy().into_owned();
     let reads = state.reads.clone();
     reads
@@ -42,6 +43,7 @@ pub async fn agent_sessions_list(
                     &state,
                     project_path,
                     terminal_manager.list_agent_surfaces()?,
+                    runtime.sessions(),
                 )?;
                 terminal_manager.reconcile_agent_sessions(&result.sessions)?;
                 Ok(result)
@@ -64,6 +66,7 @@ pub async fn agent_sessions_refresh(
     state.acp_lists.refresh(agent_runtime.runtime());
     let state = state.inner().clone();
     let terminal_manager = terminal_manager.inner().clone();
+    let runtime = agent_runtime.runtime().clone();
     let project_key = root.to_string_lossy().into_owned();
     let reads = state.reads.clone();
     reads
@@ -76,6 +79,7 @@ pub async fn agent_sessions_refresh(
                     &state,
                     project_path,
                     terminal_manager.list_agent_surfaces()?,
+                    runtime.sessions(),
                 )?;
                 terminal_manager.reconcile_agent_sessions(&result.sessions)?;
                 Ok(result)
@@ -126,6 +130,7 @@ pub async fn agent_sessions_hot_status(
     app: AppHandle,
     state: State<'_, AgentSessionsState>,
     terminal_manager: State<'_, TerminalManager>,
+    agent_runtime: State<'_, AgentRuntimeState>,
     project_path: String,
     session_ids: Vec<String>,
 ) -> Result<AgentSessionsHotStatusResult, AppError> {
@@ -133,12 +138,14 @@ pub async fn agent_sessions_hot_status(
     crate::git::delivery::repair_scope_best_effort(&app, &root, &root).await;
     let state = state.inner().clone();
     let terminal_manager = terminal_manager.inner().clone();
+    let runtime = agent_runtime.runtime().clone();
     run_blocking(move || {
         let result = read_model::hot_status(
             &state,
             project_path,
             session_ids,
             terminal_manager.list_agent_surfaces()?,
+            runtime.sessions(),
         )?;
         terminal_manager.reconcile_agent_sessions(&result.sessions)?;
         Ok(result)

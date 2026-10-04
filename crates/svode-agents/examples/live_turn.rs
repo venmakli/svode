@@ -35,6 +35,11 @@
 //!
 //! `--list` only reads the agent's `session/list` as the catalogue source
 //! and stops: no session is created or opened, no prompt is sent.
+//!
+//! `--record <file>` writes the turn as the runtime delivered it: the
+//! snapshot before the prompt, every delta, a fresh runtime snapshot at
+//! each seq it could be taken at, and the final snapshot. The chat timeline
+//! tests project such recordings.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -60,6 +65,7 @@ async fn main() {
     let mut writer_refusal = None;
     let mut reopen = false;
     let mut list = false;
+    let mut record = None;
     let mut settings = Vec::new();
     let mut env = BTreeMap::new();
     let mut command = Vec::new();
@@ -84,6 +90,7 @@ async fn main() {
                 writer_refusal = Some(args.next().expect("--writer-refusal value"))
             }
             "--list" => list = true,
+            "--record" => record = Some(PathBuf::from(args.next().expect("--record file"))),
             "--setting" => {
                 let pair = args.next().expect("--setting ID=VALUE");
                 let (setting, value) = pair.split_once('=').expect("--setting ID=VALUE");
@@ -227,6 +234,9 @@ async fn main() {
 
     if let Some(prompt) = prompt {
         let mut subscription = runtime.subscribe(&key).unwrap();
+        let initial = subscription.snapshot.clone();
+        let mut recorded = Vec::new();
+        let mut checkpoints = Vec::new();
         let turn = runtime.prompt(&key, &prompt).unwrap();
         println!("turn accepted: {turn}");
         if let Some(delay) = cancel_after {
@@ -247,6 +257,13 @@ async fn main() {
                 .expect("delta stream is open");
             if !subscription.snapshot.apply(&delta) {
                 gaps += 1;
+            }
+            if record.is_some() {
+                recorded.push(delta.clone());
+                let fresh = runtime.subscribe(&key).unwrap().snapshot;
+                if fresh.seq == delta.seq {
+                    checkpoints.push(fresh);
+                }
             }
             let change = match &delta.change {
                 Change::Item(item) => format!(
@@ -309,6 +326,19 @@ async fn main() {
             fresh.turn.last_outcome,
             fresh == subscription.snapshot
         );
+        if let Some(path) = &record {
+            let recording = serde_json::json!({
+                "agent": agent,
+                "prompt": prompt,
+                "initial": initial,
+                "deltas": recorded,
+                "checkpoints": checkpoints,
+                "final": fresh,
+            });
+            std::fs::write(path, serde_json::to_string_pretty(&recording).unwrap())
+                .expect("recording is written");
+            println!("recorded to {}", path.display());
+        }
     }
 
     runtime.close_connection(connection).await.unwrap();

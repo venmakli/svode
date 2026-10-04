@@ -10,6 +10,7 @@ function permission(
     id: "interaction:1",
     kind: "permission",
     title: "touch probe.txt",
+    toolCallId: "call_1",
     options: [{ id: "allow", label: "Allow", kind: "allow_once" }],
     fields: [],
     state,

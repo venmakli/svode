@@ -5,16 +5,19 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::{Instant, SystemTime};
 
 use tokio::sync::broadcast;
 
 use crate::acp::normalize::{self, DeclaredSettings, MessageRole, Normalized, ToolUpdate};
 use crate::activity::{
     ActivityItem, Change, ConnectionState, DetailBlock, DetailOutcome, HistorySource, HistoryState,
-    InteractionState, ItemKind, ItemStatus, PendingInteraction, SessionDelta, SessionSetting,
-    SessionSnapshot, Truncation, TurnPhase, TurnState, UnavailableReason, WriterState,
+    InteractionState, ItemKind, ItemStatus, PendingInteraction, PlanEntry, SessionDelta,
+    SessionSetting, SessionSnapshot, Truncation, TurnPhase, TurnState, UnavailableReason,
+    WriterState,
 };
 use crate::identity::SessionKey;
+use crate::interaction::InteractionAnswer;
 use crate::runtime::Retention;
 use crate::status::{SessionState, SessionStatus, StopReason};
 
@@ -73,6 +76,10 @@ pub(crate) struct Projection {
     replay: Option<Replay>,
     /// The settings are legacy session modes, changed by `session/set_mode`.
     legacy_modes: bool,
+    /// When the runtime accepted the prompt of the live turn.
+    turn_started: Option<Instant>,
+    /// When the session last changed.
+    updated_at: SystemTime,
 }
 
 impl Projection {
@@ -100,11 +107,11 @@ impl Projection {
                     status: SessionStatus::runtime(SessionState::Idle { stop_reason: None }),
                 },
                 items: Vec::new(),
-                plan: None,
                 pending: None,
                 history,
                 writer,
                 settings: Vec::new(),
+                title: None,
             },
             sender,
             details: HashMap::new(),
@@ -116,6 +123,8 @@ impl Projection {
             compact_bytes: 0,
             replay: replay.then(Replay::default),
             legacy_modes: false,
+            turn_started: None,
+            updated_at: SystemTime::now(),
         }
     }
 
@@ -156,6 +165,7 @@ impl Projection {
             return None;
         }
         self.open_message = None;
+        self.turn_started = Some(Instant::now());
         self.set_turn(Some(turn_id.to_string()), TurnPhase::Running, None);
         self.put_text_item(
             format!("user:{turn_id}"),
@@ -178,17 +188,24 @@ impl Projection {
             return;
         }
         if let Some(pending) = self.snapshot.pending.clone() {
-            self.resolve_pending(&pending.id, Self::pending_outcome(reason));
+            self.resolve_pending(&pending.id, Self::pending_outcome(reason), None);
         }
         self.open_message = None;
         if let Some(message) = error {
             let id = self.local_id(turn_id, "error");
             self.put_text_item(id, ItemKind::Error, message);
         }
+        let duration_ms = self
+            .turn_started
+            .take()
+            .map(|started| started.elapsed().as_millis() as u64);
         let kind = if reason == StopReason::Interrupted {
-            ItemKind::Interrupted
+            ItemKind::Interrupted { duration_ms }
         } else {
-            ItemKind::TurnOutcome { reason }
+            ItemKind::TurnOutcome {
+                reason,
+                duration_ms,
+            }
         };
         self.upsert(ActivityItem {
             id: format!("outcome:{turn_id}"),
@@ -208,7 +225,7 @@ impl Projection {
             Some(turn_id) => self.finish_turn(&turn_id, StopReason::Interrupted, None),
             None => {
                 if let Some(pending) = self.snapshot.pending.clone() {
-                    self.resolve_pending(&pending.id, InteractionState::Expired);
+                    self.resolve_pending(&pending.id, InteractionState::Expired, None);
                 }
             }
         }
@@ -231,7 +248,14 @@ impl Projection {
         self.refresh_status();
     }
 
-    pub(crate) fn resolve_pending(&mut self, id: &str, state: InteractionState) {
+    /// Closes the pending interaction with `state` and records it in the
+    /// timeline with the answer that closed it.
+    pub(crate) fn resolve_pending(
+        &mut self,
+        id: &str,
+        state: InteractionState,
+        answer: Option<&InteractionAnswer>,
+    ) {
         let Some(mut pending) = self
             .snapshot
             .pending
@@ -241,8 +265,49 @@ impl Projection {
             return;
         };
         pending.state = state;
+        let option = match answer {
+            Some(InteractionAnswer::Option { option_id }) => pending
+                .options
+                .iter()
+                .find(|option| &option.id == option_id)
+                .map(|option| option.label.clone()),
+            _ => None,
+        };
+        let record = ActivityItem {
+            id: pending.id.clone(),
+            turn_id: self.current_turn(),
+            kind: ItemKind::Interaction {
+                request: pending.kind,
+                state,
+                tool_call_id: pending.tool_call_id.clone(),
+                option,
+                declined: matches!(answer, Some(InteractionAnswer::Decline)),
+            },
+            status: None,
+            summary: normalize::bounded(&pending.title, SUMMARY_LIMIT),
+            has_detail: false,
+        };
         self.emit(Change::Pending(pending));
+        self.upsert(record);
         self.refresh_status();
+    }
+
+    /// The tool call a permission request is for, merged into its timeline
+    /// item like any update of that call.
+    pub(crate) fn merge_tool_call(&mut self, update: ToolUpdate) {
+        self.upsert_tool(update);
+    }
+
+    pub(crate) fn title(&self) -> Option<&str> {
+        self.snapshot.title.as_deref()
+    }
+
+    pub(crate) fn status(&self) -> SessionStatus {
+        self.snapshot.turn.status
+    }
+
+    pub(crate) fn updated_at(&self) -> SystemTime {
+        self.updated_at
     }
 
     pub(crate) fn set_connection(&mut self, connection: ConnectionState) {
@@ -299,10 +364,7 @@ impl Projection {
                 text,
             } => self.append_message(role, message_id, &text),
             Normalized::Tool(update) => self.upsert_tool(update),
-            Normalized::Plan(plan) => {
-                self.open_message = None;
-                self.emit(Change::Plan(plan));
-            }
+            Normalized::Plan(entries) => self.put_plan(entries),
             Normalized::ModeChange(mode) => {
                 self.set_legacy_mode(&mode);
                 let id = self.local_id("session", "mode");
@@ -325,6 +387,11 @@ impl Projection {
                     summary: format!("{used}/{size}"),
                     has_detail: false,
                 });
+            }
+            Normalized::Title(title) => {
+                if self.snapshot.title.as_deref() != Some(title.as_str()) {
+                    self.emit(Change::Title(title));
+                }
             }
             Normalized::None => {}
             Normalized::Generic(label) => {
@@ -433,6 +500,22 @@ impl Projection {
         };
         let block = extend_text(known, text, self.retention.item_detail);
         self.put_text_block(id, kind, block);
+    }
+
+    /// One plan item per turn at the place the turn's first plan appeared;
+    /// a later plan of the turn replaces it in place.
+    fn put_plan(&mut self, entries: Vec<PlanEntry>) {
+        self.open_message = None;
+        let turn_id = self.current_turn();
+        let id = format!("plan:{}", turn_id.as_deref().unwrap_or("session"));
+        self.upsert(ActivityItem {
+            id,
+            turn_id,
+            kind: ItemKind::Plan { entries },
+            status: None,
+            summary: String::new(),
+            has_detail: false,
+        });
     }
 
     fn upsert_tool(&mut self, update: ToolUpdate) {
@@ -630,6 +713,7 @@ impl Projection {
     }
 
     fn emit(&mut self, change: Change) {
+        self.updated_at = SystemTime::now();
         let delta = SessionDelta {
             seq: self.snapshot.seq + 1,
             change,
@@ -687,6 +771,8 @@ impl Drop for Projection {
 fn compact_size(item: &ActivityItem) -> usize {
     let label = match &item.kind {
         ItemKind::Generic { label } => label.len(),
+        ItemKind::Plan { entries } => entries.iter().map(|entry| entry.content.len()).sum(),
+        ItemKind::Interaction { option, .. } => option.as_ref().map_or(0, String::len),
         _ => 0,
     };
     ITEM_OVERHEAD

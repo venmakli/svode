@@ -102,6 +102,9 @@ export function ScopeSurfacePage({
     presentation === "compact" ? (routeState ?? compactRouteState) : routeState;
   const openPage = useOpenPage();
   const openSessionPeek = useShellStore((state) => state.openSessionPeek);
+  const openSessionDraftPeek = useShellStore(
+    (state) => state.openSessionDraftPeek,
+  );
   const openSpaceSettings = useShellStore((state) => state.openSpaceSettings);
   const openAppSettings = useShellStore((state) => state.openAppSettings);
   const openProvidersSettings = useCallback(
@@ -148,6 +151,7 @@ export function ScopeSurfacePage({
           <AgentSessionsSurface
             {...context}
             onOpenSession={openSessionPeek}
+            onOpenNewSessionDraft={openSessionDraftPeek}
             onOpenAppSettings={openProvidersSettings}
             onOpenRoutine={openSessionRoutine}
           />
@@ -173,6 +177,7 @@ export function ScopeSurfacePage({
       openProvidersSettings,
       openRepositorySettings,
       openRoutineSession,
+      openSessionDraftPeek,
       openSessionPeek,
       openSessionRoutine,
       owner,

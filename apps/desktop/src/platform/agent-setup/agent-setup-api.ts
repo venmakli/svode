@@ -1,6 +1,7 @@
 import type {
   AgentCheckDto,
   AgentInfoDto,
+  AgentLaunchUnavailableDto,
 } from "@/platform/agent-runtime/agent-runtime-api";
 import { listen, type UnlistenFn } from "@/platform/native/events";
 import { invokeCommand } from "@/platform/native/invoke";
@@ -209,4 +210,25 @@ export function listenCustomAgentsChanged(
   handler: () => void,
 ): Promise<UnlistenFn> {
   return listen<void>(CUSTOM_AGENTS_CHANGED_EVENT, () => handler());
+}
+
+/** One agent a new session offers for chat. */
+export interface ChatAgentDto {
+  agent: string;
+  name: string;
+  offer:
+    | { state: "available" }
+    | { state: "unavailable"; reason: AgentLaunchUnavailableDto };
+}
+
+export interface ChatAgentsDto {
+  /** In the order of the agent settings. */
+  agents: ChatAgentDto[];
+  /** The agent of the last session created in the chat on this device. */
+  last: string | null;
+}
+
+/** The agents a new session draft offers; starts no agent process. */
+export function listChatAgents(): Promise<ChatAgentsDto> {
+  return invokeCommand<ChatAgentsDto>("agent_setup_chat_agents");
 }

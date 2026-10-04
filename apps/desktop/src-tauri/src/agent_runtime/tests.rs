@@ -30,7 +30,6 @@ fn snapshot(seq: u64) -> SessionSnapshot {
             status: SessionStatus::runtime(SessionState::Idle { stop_reason: None }),
         },
         items: Vec::new(),
-        plan: None,
         pending: None,
         history: HistoryState {
             source: HistorySource::Live,
@@ -39,6 +38,7 @@ fn snapshot(seq: u64) -> SessionSnapshot {
         },
         writer: WriterState::Acp,
         settings: Vec::new(),
+        title: None,
     }
 }
 
@@ -54,6 +54,7 @@ fn permission(state: InteractionState) -> PendingInteraction {
         id: "interaction:1".into(),
         kind: InteractionKind::Permission,
         title: "touch probe.txt".into(),
+        tool_call_id: Some("call_1".into()),
         options: Vec::new(),
         fields: Vec::new(),
         state,

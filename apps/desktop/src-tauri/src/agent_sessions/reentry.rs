@@ -29,7 +29,7 @@ where
     ResolveCli: FnMut(&AgentSession, &Path) -> Option<String>,
     SpawnShell: FnMut(AgentTerminalSpawn, WriterClaim) -> Result<String, AppError>,
 {
-    let list = match read_model::list_sessions(state, project_path, terminal_surfaces) {
+    let list = match read_model::list_sessions(state, project_path, terminal_surfaces, Vec::new()) {
         Ok(list) => list,
         Err(AppError::PathNotAccessible(path)) => {
             return Ok(error_result(

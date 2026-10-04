@@ -50,6 +50,7 @@ if (process.env.SVODE_NEW_SESSION_ROW_DOM !== "1") {
   let session: { spaceId: string | null } | null = null;
   let contentAllows = true;
   const started: string[] = [];
+  let chatAvailable = false;
   const openedSpaces: (string | null)[] = [];
   let lastSpace: unknown;
   let onStart: ((scope: Scope) => void) | null = null;
@@ -70,6 +71,16 @@ if (process.env.SVODE_NEW_SESSION_ROW_DOM !== "1") {
     useStartAgentSession: () => async (spacePath: string) => {
       started.push(spacePath);
       return { sessionId: "pending:pty", launchId: null };
+    },
+    useOpenNewSession: () => async (spacePath: string) => {
+      if (chatAvailable) {
+        return { kind: "draft", draft: { draftId: "d1", spacePath } };
+      }
+      started.push(spacePath);
+      return {
+        kind: "terminal",
+        target: { sessionId: "pending:pty", launchId: null },
+      };
     },
   }));
   mock.module("@/features/artifact", () => ({
@@ -105,12 +116,32 @@ if (process.env.SVODE_NEW_SESSION_ROW_DOM !== "1") {
     contentAllows = true;
     started.length = 0;
     openedSpaces.length = 0;
+    chatAvailable = false;
     await setShell({
       mainSurface: "content",
       mainSessionTarget: null,
+      mainSessionDraft: null,
       mainSessionFocusTerminal: false,
     });
   }
+
+  test("with a chat agent the new session opens as a draft in the main area", async () => {
+    await reset();
+    chatAvailable = true;
+    await render();
+    await act(async () =>
+      onStart!({ kind: "space", scopeId: "docs", path: "/project/docs" }),
+    );
+    expect(started).toEqual([]);
+    expect(openedSpaces).toEqual(["docs"]);
+    const state = useShellStore.getState();
+    expect(state.mainSurface).toBe("session");
+    expect(state.mainSessionTarget).toBeNull();
+    expect(state.mainSessionDraft).toEqual({
+      draftId: "d1",
+      spacePath: "/project/docs",
+    });
+  });
 
   test("the target follows the Space of the main area object", async () => {
     await reset();

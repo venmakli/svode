@@ -175,6 +175,7 @@ mod tests {
             id: "interaction:1".into(),
             kind: InteractionKind::Question,
             title: "Codex needs your input".into(),
+            tool_call_id: None,
             options: Vec::new(),
             fields,
             state: InteractionState::Pending,

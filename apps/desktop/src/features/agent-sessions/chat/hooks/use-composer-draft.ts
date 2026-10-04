@@ -1,0 +1,33 @@
+import { useCallback, useState } from "react";
+import {
+  readComposerDraft,
+  writeComposerDraft,
+  type ComposerDraft,
+} from "../model/composer";
+
+const EMPTY: ComposerDraft = { text: "" };
+
+/** A composer draft kept in the window's session storage under `key`. */
+export function useComposerDraft(key: string) {
+  const [state, setState] = useState(() => ({
+    key,
+    draft: readComposerDraft(key) ?? EMPTY,
+  }));
+  const current =
+    state.key === key ? state.draft : (readComposerDraft(key) ?? EMPTY);
+  if (state.key !== key) setState({ key, draft: current });
+
+  const update = useCallback(
+    (change: Partial<ComposerDraft> | ((draft: ComposerDraft) => ComposerDraft)) => {
+      setState((previous) => {
+        const base = previous.key === key ? previous.draft : EMPTY;
+        const next =
+          typeof change === "function" ? change(base) : { ...base, ...change };
+        writeComposerDraft(key, next);
+        return { key, draft: next };
+      });
+    },
+    [key],
+  );
+  return [current, update] as const;
+}

@@ -1,10 +1,12 @@
 import { useCallback } from "react";
 import {
   AgentSessionPeek,
+  useOpenNewSession,
   useStartAgentSession,
   type AgentSession,
   type AgentSessionScopeGroup,
   type AgentSessionTarget,
+  type NewSessionStarted,
 } from "@/features/agent-sessions";
 import { useSpace } from "@/features/space";
 import { useShellStore } from "./model";
@@ -34,25 +36,74 @@ export function useOpenSessionInMainArea() {
 }
 
 /**
- * Starts a new session in a Space as the main area object with focus in its
- * terminal. The guards pass first: a cancelled one starts no terminal.
+ * "New session" in a Space as the main area object: a chat draft with focus
+ * in its composer, or without a chat agent a managed terminal with focus in
+ * it. The guards pass first: a cancelled one opens nothing.
  */
 export function useStartSessionInMainArea() {
   const showSession = useShowSessionInMainArea();
-  const startSession = useStartAgentSession();
+  const showDraft = useShowDraftInMainArea();
+  const openNewSession = useOpenNewSession();
 
   return useCallback(
     async (scope: AgentSessionScopeGroup) => {
       if (!(await passNavigationGuards())) return;
-      const target = await startSession(scope.path);
-      if (!target) return;
-      showSession(
-        target,
-        scope.kind === "space" ? { spaceId: scope.scopeId } : { spaceId: null },
-        { focusTerminal: true },
-      );
+      const opening = await openNewSession(scope.path);
+      if (!opening) return;
+      const space =
+        scope.kind === "space" ? { spaceId: scope.scopeId } : { spaceId: null };
+      if (opening.kind === "draft") {
+        showDraft(opening.draft, space);
+      } else {
+        showSession(opening.target, space, { focusTerminal: true });
+      }
     },
-    [showSession, startSession],
+    [openNewSession, showDraft, showSession],
+  );
+}
+
+/**
+ * "New session in terminal" from a main area draft: the managed terminal of
+ * phase 1 replaces the draft.
+ */
+export function useStartTerminalSessionInMainArea() {
+  const showSession = useShowSessionInMainArea();
+  const startSession = useStartAgentSession();
+  const scopes = useSessionScopesBySpacePath();
+  return useCallback(
+    async (spacePath: string) => {
+      const target = await startSession(spacePath);
+      if (target) {
+        showSession(target, scopes(spacePath), { focusTerminal: true });
+      }
+    },
+    [scopes, showSession, startSession],
+  );
+}
+
+/** The first send of a main area draft: the created session replaces it. */
+export function useShowStartedSessionInMainArea() {
+  const showSession = useShowSessionInMainArea();
+  const scopes = useSessionScopesBySpacePath();
+  return useCallback(
+    (started: NewSessionStarted, spacePath: string) =>
+      showSession(
+        { sessionId: started.sessionId, launchId: null },
+        scopes(spacePath),
+      ),
+    [scopes, showSession],
+  );
+}
+
+/** The Space reference of a Space path: a registered Space or the root. */
+function useSessionScopesBySpacePath() {
+  const spaces = useSpace((state) => state.spaces);
+  return useCallback(
+    (spacePath: string): SessionSpace => {
+      const space = spaces.find((candidate) => candidate.path === spacePath);
+      return { spaceId: space?.id ?? null };
+    },
+    [spaces],
   );
 }
 
@@ -64,6 +115,28 @@ function sessionSpaceOf(session: AgentSession | null): SessionSpace {
     return { spaceId: session.spaceId };
   }
   return session?.scopeKind === "project" ? { spaceId: null } : null;
+}
+
+function useShowDraftInMainArea() {
+  const openSessionDraftMainSurface = useShellStore(
+    (state) => state.openSessionDraftMainSurface,
+  );
+  const openSpace = useSpace((state) => state.openSpace);
+  const clearActiveSpace = useSpace((state) => state.clearActiveSpace);
+  return useCallback(
+    (
+      draft: Parameters<typeof openSessionDraftMainSurface>[0],
+      space: SessionSpace,
+    ) => {
+      if (space?.spaceId) {
+        void openSpace(space.spaceId);
+      } else if (space) {
+        clearActiveSpace();
+      }
+      openSessionDraftMainSurface(draft);
+    },
+    [clearActiveSpace, openSessionDraftMainSurface, openSpace],
+  );
 }
 
 function useShowSessionInMainArea() {
@@ -94,6 +167,10 @@ function useShowSessionInMainArea() {
 /** The session peek of the shell; "Expand" opens it in the main area. */
 export function AgentSessionPeekHost() {
   const target = useShellStore((state) => state.sessionPeekTarget);
+  const draft = useShellStore((state) => state.sessionPeekDraft);
+  const openSessionPeek = useShellStore((state) => state.openSessionPeek);
+  const openAppSettings = useShellStore((state) => state.openAppSettings);
+  const startSession = useStartAgentSession();
   const focusTerminal = useShellStore(
     (state) => state.sessionPeekFocusTerminal,
   );
@@ -104,6 +181,16 @@ export function AgentSessionPeekHost() {
   return (
     <AgentSessionPeek
       target={target}
+      draft={draft}
+      onDraftStarted={(started) =>
+        openSessionPeek({ sessionId: started.sessionId, launchId: null })
+      }
+      onOpenNewSessionTerminal={(spacePath) => {
+        void startSession(spacePath).then((terminal) => {
+          if (terminal) openSessionPeek(terminal, { focusTerminal: true });
+        });
+      }}
+      onOpenAgentSettings={() => openAppSettings("providers")}
       focusTerminal={focusTerminal}
       onOpenChange={(open) => {
         if (!open) closeSessionPeek();
@@ -115,18 +202,24 @@ export function AgentSessionPeekHost() {
 }
 
 /**
- * Starts a new session in a Space and opens it in the session peek over the
- * current context.
+ * "New session" in a Space in the session peek over the current context: a
+ * chat draft, or without a chat agent a managed terminal.
  */
 export function useStartSessionInPeek() {
-  const startSession = useStartAgentSession();
+  const openNewSession = useOpenNewSession();
   const openSessionPeek = useShellStore((state) => state.openSessionPeek);
+  const openSessionDraftPeek = useShellStore(
+    (state) => state.openSessionDraftPeek,
+  );
   return useCallback(
     (spacePath: string) => {
-      void startSession(spacePath).then((target) => {
-        if (target) openSessionPeek(target, { focusTerminal: true });
+      void openNewSession(spacePath).then((opening) => {
+        if (opening?.kind === "draft") openSessionDraftPeek(opening.draft);
+        else if (opening) {
+          openSessionPeek(opening.target, { focusTerminal: true });
+        }
       });
     },
-    [openSessionPeek, startSession],
+    [openNewSession, openSessionDraftPeek, openSessionPeek],
   );
 }

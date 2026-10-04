@@ -23,7 +23,11 @@ import {
 import type { RoutineLaunchLink } from "@/features/routines/catalog";
 import type { ScopeSurfaceRenderContext } from "@/features/scope-surfaces";
 import { useAgentSessionsCollection } from "../hooks/use-agent-sessions-collection";
-import type { AgentSessionOpenOptions, AgentSessionTarget } from "../model";
+import type {
+  AgentSessionOpenOptions,
+  AgentSessionTarget,
+  NewSessionDraftTarget,
+} from "../model";
 import { ExternalTerminalAppProvider } from "./external-terminal-icon";
 import { SessionsDiagnosticsDialog } from "./sessions-diagnostics-dialog";
 import * as m from "@/paraglide/messages.js";
@@ -32,6 +36,7 @@ import * as m from "@/paraglide/messages.js";
 export function AgentSessionsSurface({
   owner,
   onOpenSession,
+  onOpenNewSessionDraft,
   onOpenAppSettings,
   onOpenRoutine,
 }: ScopeSurfaceRenderContext & {
@@ -39,12 +44,15 @@ export function AgentSessionsSurface({
     target: AgentSessionTarget,
     options?: AgentSessionOpenOptions,
   ): void;
+  /** "New session" opened a chat draft for this Space. */
+  onOpenNewSessionDraft(draft: NewSessionDraftTarget): void;
   onOpenAppSettings(): void;
   onOpenRoutine(routine: RoutineLaunchLink): void;
 }) {
   const controller = useAgentSessionsCollection({
     owner,
     onOpenSession,
+    onOpenNewSessionDraft,
     onOpenAppSettings,
     onOpenRoutine,
   });

@@ -7,8 +7,8 @@ use super::wire;
 
 use crate::activity::{
     ChoiceOption, DetailBlock, FieldInput, InteractionOption, InteractionOptionKind, ItemStatus,
-    Plan, PlanEntry, PlanEntryPriority, PlanEntryStatus, QuestionField, SessionSetting,
-    SettingCategory, SettingOption, ToolKind,
+    PlanEntry, PlanEntryPriority, PlanEntryStatus, QuestionField, SessionSetting, SettingCategory,
+    SettingOption, ToolKind,
 };
 use crate::status::StopReason;
 
@@ -50,7 +50,8 @@ pub(crate) enum Normalized {
         text: String,
     },
     Tool(ToolUpdate),
-    Plan(Plan),
+    /// The whole plan; it replaces the previous one.
+    Plan(Vec<PlanEntry>),
     ModeChange(String),
     /// The full set of config options with their current values.
     ConfigChange(Vec<SessionSetting>),
@@ -58,7 +59,10 @@ pub(crate) enum Normalized {
         used: u64,
         size: u64,
     },
-    /// A known update that carries no activity (commands, session info).
+    /// The session title the agent reported.
+    Title(String),
+    /// A known update that carries no activity (commands, a session info
+    /// update without a title).
     None,
     /// An update or extension the runtime does not model.
     Generic(String),
@@ -92,22 +96,9 @@ fn normalize(update: wire::SessionUpdate) -> Normalized {
             status: Some(item_status(call.status.as_deref())),
             blocks: Some(tool_blocks(call.content, call.raw_output)),
         }),
-        wire::SessionUpdate::ToolCallUpdate(update) => Normalized::Tool(ToolUpdate {
-            id: update.tool_call_id,
-            title: update.title,
-            tool: update.kind.as_deref().map(|kind| tool_kind(Some(kind))),
-            status: update
-                .status
-                .as_deref()
-                .map(|status| item_status(Some(status))),
-            blocks: match (update.content, update.raw_output) {
-                (None, None) => None,
-                (content, raw_output) => Some(tool_blocks(content.unwrap_or_default(), raw_output)),
-            },
-        }),
-        wire::SessionUpdate::Plan(plan) => Normalized::Plan(Plan {
-            entries: plan
-                .entries
+        wire::SessionUpdate::ToolCallUpdate(update) => Normalized::Tool(tool_update(update)),
+        wire::SessionUpdate::Plan(plan) => Normalized::Plan(
+            plan.entries
                 .into_iter()
                 .map(|entry| PlanEntry {
                     content: entry.content,
@@ -123,7 +114,7 @@ fn normalize(update: wire::SessionUpdate) -> Normalized {
                     },
                 })
                 .collect(),
-        }),
+        ),
         wire::SessionUpdate::CurrentModeUpdate { current_mode_id } => {
             Normalized::ModeChange(bounded(&current_mode_id, LABEL_LIMIT))
         }
@@ -131,8 +122,29 @@ fn normalize(update: wire::SessionUpdate) -> Normalized {
             Normalized::ConfigChange(config_settings(config_options))
         }
         wire::SessionUpdate::UsageUpdate { used, size } => Normalized::Usage { used, size },
+        wire::SessionUpdate::SessionInfoUpdate { title: Some(title) }
+            if !title.trim().is_empty() =>
+        {
+            Normalized::Title(bounded(title.trim(), TITLE_LIMIT))
+        }
         wire::SessionUpdate::AvailableCommandsUpdate {}
-        | wire::SessionUpdate::SessionInfoUpdate {} => Normalized::None,
+        | wire::SessionUpdate::SessionInfoUpdate { .. } => Normalized::None,
+    }
+}
+
+fn tool_update(update: wire::ToolCallUpdate) -> ToolUpdate {
+    ToolUpdate {
+        id: update.tool_call_id,
+        title: update.title,
+        tool: update.kind.as_deref().map(|kind| tool_kind(Some(kind))),
+        status: update
+            .status
+            .as_deref()
+            .map(|status| item_status(Some(status))),
+        blocks: match (update.content, update.raw_output) {
+            (None, None) => None,
+            (content, raw_output) => Some(tool_blocks(content.unwrap_or_default(), raw_output)),
+        },
     }
 }
 
@@ -333,25 +345,26 @@ pub(crate) fn stop_reason(response: Value) -> Result<StopReason, String> {
     })
 }
 
-/// A `session/request_permission` in Svode terms.
+/// A `session/request_permission` in Svode terms: the request and the
+/// update its tool call fields make to the timeline item of that call.
 pub(crate) struct PermissionRequest {
     pub session_id: String,
     pub title: String,
+    pub tool_call: ToolUpdate,
     pub options: Vec<InteractionOption>,
 }
 
 pub(crate) fn permission_request(params: &str) -> Result<PermissionRequest, String> {
     let request: wire::RequestPermission =
         serde_json::from_str(params).map_err(|error| error.to_string())?;
+    let tool_call = tool_update(request.tool_call);
     Ok(PermissionRequest {
         session_id: request.session_id,
         title: bounded(
-            &request
-                .tool_call
-                .title
-                .unwrap_or(request.tool_call.tool_call_id),
+            tool_call.title.as_deref().unwrap_or(&tool_call.id),
             TITLE_LIMIT,
         ),
+        tool_call,
         options: request
             .options
             .into_iter()
@@ -608,7 +621,7 @@ mod tests {
             }
         }))
         .unwrap();
-        assert!(matches!(plan, Normalized::Plan(plan) if plan.entries.len() == 1));
+        assert!(matches!(plan, Normalized::Plan(entries) if entries.len() == 1));
     }
 
     #[test]

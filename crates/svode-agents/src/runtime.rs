@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, Weak};
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -28,7 +28,8 @@ use crate::activity::{
 };
 use crate::adapters::LaunchUnavailable;
 use crate::catalog::{
-    self, CatalogChanged, CatalogConnection, CatalogNotices, ListBounds, SessionList,
+    self, CatalogChanged, CatalogConnection, CatalogNotices, ListBounds, RuntimeSession,
+    SessionList,
 };
 use crate::error::{AgentRuntimeError, SettingRefusal};
 use crate::identity::SessionKey;
@@ -320,6 +321,14 @@ struct Connection {
 struct Session {
     acp_id: String,
     connection: Arc<Connection>,
+    cwd: PathBuf,
+    started_at: SystemTime,
+    /// The first prompt of a session this runtime created, once accepted;
+    /// an opened session is in the catalogue without one.
+    first_prompt: Mutex<Option<String>>,
+    /// A session this runtime created enters the catalogue with its first
+    /// accepted prompt, an opened one from its opening.
+    listed: AtomicBool,
     projection: Mutex<Projection>,
     /// Locked before `projection` wherever both are held.
     interactions: Mutex<Interactions>,
@@ -760,6 +769,7 @@ impl AgentRuntime {
             &connection,
             &acp_id,
             key.clone(),
+            cwd,
             Projection::live_history(),
             false,
             Some(claim),
@@ -951,10 +961,12 @@ impl AgentRuntime {
             &connection,
             &acp_id,
             key.clone(),
+            cwd,
             history,
             method == acp::SESSION_LOAD,
             Some(claim),
         );
+        session.listed.store(true, Ordering::Relaxed);
         let result = connection
             .call(
                 method,
@@ -1034,6 +1046,7 @@ impl AgentRuntime {
             &connection,
             &acp_id,
             key.clone(),
+            cwd,
             HistoryState {
                 source: HistorySource::Replay,
                 available: true,
@@ -1082,6 +1095,7 @@ impl AgentRuntime {
         connection: &Arc<Connection>,
         acp_id: &str,
         key: SessionKey,
+        cwd: &Path,
         history: HistoryState,
         replay: bool,
         claim: Option<WriterClaim>,
@@ -1095,6 +1109,10 @@ impl AgentRuntime {
         let session = Arc::new(Session {
             acp_id: acp_id.to_string(),
             connection: connection.clone(),
+            cwd: cwd.to_path_buf(),
+            started_at: SystemTime::now(),
+            first_prompt: Mutex::new(None),
+            listed: AtomicBool::new(false),
             projection: Mutex::new(Projection::new(
                 key,
                 state,
@@ -1137,6 +1155,14 @@ impl AgentRuntime {
             .unwrap()
             .begin_turn(&turn_id, text)
             .ok_or(AgentRuntimeError::TurnActive)?;
+        session
+            .first_prompt
+            .lock()
+            .unwrap()
+            .get_or_insert_with(|| text.to_string());
+        if !session.listed.swap(true, Ordering::Relaxed) {
+            self.inner.catalog.changed(&session.connection.agent);
+        }
         self.inner.enforce_detail_bound();
         let request = acp::prompt_request(&session.acp_id, text);
         let turn = turn_id.clone();
@@ -1156,6 +1182,9 @@ impl AgentRuntime {
                 Err(AgentRuntimeError::ConnectionClosed) => (StopReason::Interrupted, None),
                 Err(error) => (StopReason::Error, Some(error.to_string())),
             };
+            // Updates the agent sent before its answer belong to this turn;
+            // apply all of them before the turn ends.
+            session.connection.rpc.barrier().await;
             let mut interactions = session.interactions.lock().unwrap();
             interactions.close(Projection::pending_outcome(reason));
             session
@@ -1213,8 +1242,53 @@ impl AgentRuntime {
             .connection
             .rpc
             .respond(open.rpc_id, acp::answer(&answer));
-        projection.resolve_pending(&open.interaction, InteractionState::Answered);
+        projection.resolve_pending(&open.interaction, InteractionState::Answered, Some(&answer));
         Ok(AnswerOutcome::Accepted)
+    }
+
+    /// The sessions this runtime drives and lists by runtime evidence: a
+    /// created one after its first accepted prompt, an opened one from its
+    /// opening, while it holds its writer (Stage 10 `02` C3).
+    pub fn sessions(&self) -> Vec<RuntimeSession> {
+        let bounds = self.inner.config.list;
+        let sessions: Vec<(SessionKey, Arc<Session>)> = self
+            .inner
+            .sessions
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(key, session)| (key.clone(), session.clone()))
+            .collect();
+        let mut listed: Vec<RuntimeSession> = sessions
+            .into_iter()
+            .filter(|(_, session)| {
+                session.listed.load(Ordering::Relaxed) && session.writer.lock().unwrap().is_some()
+            })
+            .map(|(key, session)| {
+                let projection = session.projection.lock().unwrap();
+                let title = projection
+                    .title()
+                    .map(|title| normalize::bounded(title, bounds.title_bytes))
+                    .or_else(|| {
+                        session
+                            .first_prompt
+                            .lock()
+                            .unwrap()
+                            .as_deref()
+                            .and_then(|prompt| catalog::prompt_title(prompt, &bounds))
+                    });
+                RuntimeSession {
+                    key,
+                    cwd: session.cwd.clone(),
+                    title,
+                    status: projection.status(),
+                    started_at: session.started_at,
+                    updated_at: projection.updated_at(),
+                }
+            })
+            .collect();
+        listed.sort_by(|left, right| left.key.session_id.cmp(&right.key.session_id));
+        listed
     }
 
     /// Opening a session in a surface: it becomes the most recently opened
@@ -1478,7 +1552,7 @@ impl Session {
             self.connection
                 .rpc
                 .respond(open.rpc_id, acp::cancelled(open.kind));
-            projection.resolve_pending(&open.interaction, InteractionState::Cancelled);
+            projection.resolve_pending(&open.interaction, InteractionState::Cancelled, None);
         }
         drop(projection);
         drop(interactions);
@@ -1727,6 +1801,7 @@ fn request_permission(connection: &Connection, id: Value, params: &RawValue) {
             &request.session_id,
             InteractionKind::Permission,
             request.title,
+            Some(request.tool_call),
             request.options,
             Vec::new(),
         ),
@@ -1744,6 +1819,7 @@ fn request_question(connection: &Connection, id: Value, params: &RawValue) {
             &request.session_id,
             InteractionKind::Question,
             request.title,
+            None,
             Vec::new(),
             request.fields,
         ),
@@ -1761,13 +1837,17 @@ fn request_question(connection: &Connection, id: Value, params: &RawValue) {
 
 /// Keeps an agent request pending in the session until the user answers
 /// it, the turn is cancelled or the connection is lost. A second concurrent
-/// request, or one for an unknown session, is answered `cancel`.
+/// request, or one for an unknown session, is answered `cancel`. The tool
+/// call of a permission is merged into its timeline item first, so the
+/// subject of the request is there when the request appears.
+#[allow(clippy::too_many_arguments)]
 fn open_interaction(
     connection: &Connection,
     id: Value,
     session_id: &str,
     kind: InteractionKind,
     title: String,
+    tool_call: Option<normalize::ToolUpdate>,
     options: Vec<InteractionOption>,
     fields: Vec<QuestionField>,
 ) {
@@ -1789,18 +1869,20 @@ fn open_interaction(
         rpc_id: id,
         kind,
     });
-    session
-        .projection
-        .lock()
-        .unwrap()
-        .set_pending(PendingInteraction {
-            id: interaction,
-            kind,
-            title,
-            options,
-            fields,
-            state: InteractionState::Pending,
-        });
+    let mut projection = session.projection.lock().unwrap();
+    let tool_call_id = tool_call.as_ref().map(|call| call.id.clone());
+    if let Some(call) = tool_call {
+        projection.merge_tool_call(call);
+    }
+    projection.set_pending(PendingInteraction {
+        id: interaction,
+        kind,
+        title,
+        tool_call_id,
+        options,
+        fields,
+        state: InteractionState::Pending,
+    });
 }
 
 async fn collect_stderr(stderr: impl AsyncRead + Unpin, tail: Arc<Mutex<Vec<u8>>>) {

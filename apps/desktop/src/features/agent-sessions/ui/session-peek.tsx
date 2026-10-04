@@ -4,13 +4,27 @@ import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { usePeekStackEntry } from "@/shared/hooks/use-peek-stack-entry";
 import type { RoutineLaunchLink } from "@/features/routines/catalog";
-import type { AgentSession, AgentSessionTarget } from "../model";
+import type {
+  AgentSession,
+  AgentSessionTarget,
+  NewSessionDraftTarget,
+} from "../model";
 import { isInsideAgentSessionContent } from "../lib/session-content";
+import { AGENT_SESSION_CONTENT_ATTRIBUTE } from "../lib/session-content";
+import { NewSessionDraft } from "../chat/ui/new-session-draft";
+import type { StartedSession } from "../chat/hooks/use-new-session-draft";
 import { AgentSessionContent } from "./session-view";
 import * as m from "@/paraglide/messages.js";
 
 interface AgentSessionPeekProps {
   target: AgentSessionTarget | null;
+  /** A new session draft shown instead of a session. */
+  draft?: NewSessionDraftTarget | null;
+  /** The draft's first send created this session; the peek now shows it. */
+  onDraftStarted?: (started: StartedSession) => void;
+  /** "New session in terminal" from the draft. */
+  onOpenNewSessionTerminal?: (spacePath: string) => void;
+  onOpenAgentSettings?: () => void;
   /** Focus goes to the terminal instead of the peek chrome. */
   focusTerminal?: boolean;
   onOpenChange: (open: boolean) => void;
@@ -25,17 +39,25 @@ interface AgentSessionPeekProps {
 /** Session in the Page Peek pattern: a wide temporary panel over the context. */
 export function AgentSessionPeek({
   target,
+  draft = null,
+  onDraftStarted,
+  onOpenNewSessionTerminal,
+  onOpenAgentSettings,
   focusTerminal = false,
   onOpenChange,
   onExpand,
   onOpenRoutine,
 }: AgentSessionPeekProps) {
-  // Keep the last target while the sheet animates out.
-  const [shownTarget, setShownTarget] = useState(target);
-  if (target && target !== shownTarget) setShownTarget(target);
+  // Keep the last content while the sheet animates out.
+  const current = target ?? draft;
+  const [shown, setShown] = useState(current);
+  if (current && current !== shown) setShown(current);
+  const shownTarget = shown && "sessionId" in shown ? shown : null;
+  const shownDraft = shown && "draftId" in shown ? shown : null;
+  const open = Boolean(current);
   const expandingRef = useRef(false);
   const [expanding, setExpanding] = useState(false);
-  usePeekStackEntry(Boolean(target), () => onOpenChange(false));
+  usePeekStackEntry(open, () => onOpenChange(false));
   useEffect(() => {
     if (target) expandingRef.current = false;
   }, [target]);
@@ -52,7 +74,7 @@ export function AgentSessionPeek({
   };
 
   return (
-    <Sheet open={Boolean(target)} onOpenChange={onOpenChange}>
+    <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent
         side="right"
         showCloseButton={false}
@@ -73,6 +95,34 @@ export function AgentSessionPeek({
         }}
       >
         <SheetTitle className="sr-only">{m.sessions_peek_title()}</SheetTitle>
+        {shownDraft && (
+          <div
+            {...{ [AGENT_SESSION_CONTENT_ATTRIBUTE]: "" }}
+            className="flex h-full min-h-0 flex-col"
+          >
+            <NewSessionDraft
+              key={shownDraft.draftId}
+              spacePath={shownDraft.spacePath}
+              onStarted={(started) => onDraftStarted?.(started)}
+              onOpenTerminal={(spacePath) =>
+                onOpenNewSessionTerminal?.(spacePath)
+              }
+              onOpenAgentSettings={() => onOpenAgentSettings?.()}
+              actions={
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  onClick={() => onOpenChange(false)}
+                >
+                  <X />
+                  <span className="sr-only">
+                    {m.sessions_action_close_peek()}
+                  </span>
+                </Button>
+              }
+            />
+          </div>
+        )}
         {shownTarget && (
           <AgentSessionContent
             key={`${shownTarget.sessionId}\n${shownTarget.launchId ?? ""}`}

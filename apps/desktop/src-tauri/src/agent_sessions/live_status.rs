@@ -6,7 +6,7 @@ use super::types::{
     AgentSessionScope, AgentSessionTitleSource, catalog_session_id, terminal_resume_argv,
 };
 use crate::terminal::{AgentTerminalStatusEvidence, AgentTerminalSurface};
-use svode_agents::catalog::ListedSession;
+use svode_agents::catalog::{ListedSession, RuntimeSession};
 use svode_agents::identity::IdentityNamespace;
 use svode_agents::status::{SessionState, SessionStatus, StatusConfidence, StatusSource};
 use svode_agents::writer::ExternalLiveness;
@@ -267,6 +267,7 @@ fn apply_terminal_runtime(
         provisional: false,
         last_output_at: runtime_surface.last_output_at.clone(),
         last_input_at: runtime_surface.last_input_at.clone(),
+        acp_session: None,
     });
 
     matching
@@ -326,6 +327,7 @@ pub(super) fn map_provisional_surface(
             provisional: true,
             last_output_at: surface.last_output_at.clone(),
             last_input_at: surface.last_input_at.clone(),
+            acp_session: None,
         }),
         project_id: None,
         project_path: Some(scope.project_path.clone()),
@@ -340,6 +342,96 @@ pub(super) fn map_provisional_surface(
         waiting_since,
         resume_command: None,
         capabilities: AgentSessionCapabilities { can_resume: false },
+    }
+}
+
+fn rfc3339(time: std::time::SystemTime) -> String {
+    chrono::DateTime::<Utc>::from(time).to_rfc3339_opts(SecondsFormat::Secs, true)
+}
+
+const RUNTIME_STATUS_REASON: &str = "a Svode ACP connection drives the session";
+
+/// Lays a session the runtime drives over its listed record (Stage 10 `02`
+/// C3): one record per key, identity and resume target kept, exact runtime
+/// status and the key the chat follows.
+pub(super) fn overlay_runtime(session: &mut AgentSession, runtime: &RuntimeSession) {
+    session.status = runtime.status;
+    session.status_reason = Some(RUNTIME_STATUS_REASON.to_string());
+    session.waiting_since = None;
+    if session.title_source == AgentSessionTitleSource::SessionId
+        && let Some(title) = &runtime.title
+    {
+        session.title = title.clone();
+        session.title_source = AgentSessionTitleSource::CliTitle;
+    }
+    let updated_at = rfc3339(runtime.updated_at);
+    if updated_at > session.last_activity_at {
+        session.last_activity_at = updated_at;
+    }
+    session
+        .runtime
+        .get_or_insert_with(AgentSessionRuntime::default)
+        .acp_session = Some(runtime.key.clone());
+}
+
+/// The record of a session only the runtime knows so far, such as one just
+/// created in the chat before its agent lists it.
+pub(super) fn map_runtime_session(
+    source: AgentId,
+    runtime: &RuntimeSession,
+    scope: AgentSessionScope,
+) -> AgentSession {
+    let native = runtime.key.namespace == IdentityNamespace::Native;
+    let source_session_id = runtime.key.session_id.clone();
+    let (title, title_source) = match &runtime.title {
+        Some(title) => (title.clone(), AgentSessionTitleSource::CliTitle),
+        None => (
+            short_id(&source_session_id),
+            AgentSessionTitleSource::SessionId,
+        ),
+    };
+    let resume_command = native
+        .then(|| terminal_resume_argv(&source, &source_session_id))
+        .flatten()
+        .map(|mut argv| {
+            let program = argv.remove(0);
+            AgentSessionResumeCommand {
+                display: std::iter::once(program.as_str())
+                    .chain(argv.iter().map(String::as_str))
+                    .collect::<Vec<_>>()
+                    .join(" "),
+                program,
+                args: argv,
+                cwd: scope.cwd.clone(),
+            }
+        });
+    AgentSession {
+        id: catalog_session_id(&source, &runtime.key),
+        launch_id: None,
+        routine_run_id: None,
+        source,
+        source_session_id,
+        title,
+        title_source,
+        status: runtime.status,
+        status_reason: Some(RUNTIME_STATUS_REASON.to_string()),
+        runtime: Some(AgentSessionRuntime {
+            acp_session: Some(runtime.key.clone()),
+            ..AgentSessionRuntime::default()
+        }),
+        project_id: None,
+        project_path: Some(scope.project_path.clone()),
+        scope_kind: scope.kind,
+        scope_status: scope.status,
+        space_id: scope.space_id.clone(),
+        space_path: scope.space_path.clone(),
+        scope_confidence: scope.confidence,
+        cwd: scope.cwd,
+        started_at: Some(rfc3339(runtime.started_at)),
+        last_activity_at: rfc3339(runtime.updated_at),
+        waiting_since: None,
+        resume_command,
+        capabilities: AgentSessionCapabilities { can_resume: native },
     }
 }
 

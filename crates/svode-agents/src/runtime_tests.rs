@@ -5,8 +5,8 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, DuplexStream, ReadHal
 
 use super::*;
 use crate::activity::{
-    Change, DetailBlock, FieldInput, HistorySource, HistoryState, ItemKind, ItemStatus, TurnPhase,
-    UnavailableReason,
+    Change, DetailBlock, FieldInput, HistorySource, HistoryState, ItemKind, ItemStatus, ToolKind,
+    TurnPhase, UnavailableReason,
 };
 use crate::identity::IdentityNamespace;
 use crate::interaction::FieldValue;
@@ -234,7 +234,11 @@ async fn a_turn_streams_ordered_deltas_and_ends_with_the_agent_stop_reason() {
         == ItemKind::Generic {
             label: "future_update".into()
         }));
-    assert_eq!(fresh.plan.unwrap().entries.len(), 1);
+    let plan = items
+        .iter()
+        .find(|item| item.id == format!("plan:{turn}"))
+        .unwrap();
+    assert!(matches!(&plan.kind, ItemKind::Plan { entries } if entries.len() == 1));
     assert_eq!(
         fresh.turn.status,
         SessionStatus::runtime(SessionState::Idle {
@@ -480,7 +484,7 @@ async fn agent_exit_interrupts_the_turn_and_expires_the_pending_request() {
             .snapshot
             .items
             .iter()
-            .any(|item| item.kind == ItemKind::Interrupted)
+            .any(|item| matches!(item.kind, ItemKind::Interrupted { .. }))
     );
     assert_eq!(
         runtime.connection_status(connection).unwrap().state,
@@ -2839,4 +2843,403 @@ async fn a_failed_start_is_a_check_outcome_and_leaves_no_process() {
         runtime.connection_status(connection).unwrap().state,
         ConnectionState::Closed
     );
+}
+
+/// Claude Code `ExitPlanMode` in the shape `claude-agent-acp` 0.85.0 sends
+/// to a client that is not AIR (`permissions/presentation.js`,
+/// `tool-calls/reporters/interaction.js`, `permissions/options/tools.js`): the
+/// whole tool call again with the plan as its content.
+fn plan_approval(id: Value) -> Value {
+    json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "method": "session/request_permission",
+        "params": {
+            "sessionId": "s1",
+            "toolCall": {
+                "toolCallId": "toolu_plan",
+                "name": "ExitPlanMode",
+                "status": "pending",
+                "rawInput": { "plan": "1. Add the test\n2. Fix the bug" },
+                "title": "Approve Plan",
+                "kind": "switch_mode",
+                "content": [{ "type": "content", "content": { "type": "text", "text": "1. Add the test\n2. Fix the bug" } }]
+            },
+            "options": [
+                { "optionId": "exit-plan-clear-auto", "name": "Yes, clear context (12% used) and use auto mode", "kind": "allow_always" },
+                { "optionId": "exit-plan-auto", "name": "Yes, and use auto mode", "kind": "allow_always" },
+                { "optionId": "exit-plan-default", "name": "Yes, manually approve edits", "kind": "allow_once" },
+                { "optionId": "reject", "name": "No, keep planning", "kind": "reject_once" }
+            ]
+        }
+    })
+}
+
+#[tokio::test]
+async fn a_permission_names_its_tool_call_and_its_fields_merge_into_that_item() {
+    let runtime = AgentRuntime::default();
+    let (key, mut agent, mut subscription, _prompt) = start_turn(&runtime).await;
+    agent.send(plan_approval(json!("perm-plan"))).await;
+    let pending = until_pending(&mut subscription).await;
+    assert_eq!(pending.tool_call_id.as_deref(), Some("toolu_plan"));
+    assert_eq!(pending.title, "Approve Plan");
+
+    // The request created the item of its tool call, carrying the subject.
+    let item = subscription
+        .snapshot
+        .items
+        .iter()
+        .find(|item| item.id == "toolu_plan")
+        .unwrap();
+    assert_eq!(
+        item.kind,
+        ItemKind::ToolCall {
+            tool: ToolKind::SwitchMode
+        }
+    );
+    assert_eq!(item.summary, "Approve Plan");
+    assert_eq!(
+        runtime.detail(&key, "toolu_plan"),
+        DetailOutcome::Available {
+            blocks: vec![DetailBlock::Text {
+                text: "1. Add the test\n2. Fix the bug".into()
+            }]
+        }
+    );
+    let at = subscription
+        .snapshot
+        .items
+        .iter()
+        .position(|item| item.id == "toolu_plan")
+        .unwrap();
+
+    // A later update of the call lands in the same item.
+    agent
+        .update(
+            "s1",
+            json!({ "sessionUpdate": "tool_call_update", "toolCallId": "toolu_plan", "status": "completed" }),
+        )
+        .await;
+    runtime
+        .answer(&key, &pending.id, option("exit-plan-default"))
+        .unwrap();
+    agent.recv().await;
+    follow(&mut subscription, |snapshot| {
+        snapshot
+            .items
+            .iter()
+            .any(|item| item.id == "toolu_plan" && item.status == Some(ItemStatus::Completed))
+            && snapshot.items.iter().any(|item| item.id == pending.id)
+    })
+    .await;
+    let items = &subscription.snapshot.items;
+    assert_eq!(items[at].id, "toolu_plan");
+    assert_eq!(
+        items.iter().filter(|item| item.id == "toolu_plan").count(),
+        1
+    );
+}
+
+/// Codex plan review in the shape `codex-acp` 2.1.1 sends
+/// (`PlanReviewReporter`): a new tool call of its own without content; the
+/// plan itself came as an agent message.
+#[tokio::test]
+async fn a_permission_for_a_new_tool_call_creates_its_item() {
+    let runtime = AgentRuntime::default();
+    let (key, mut agent, mut subscription, _prompt) = start_turn(&runtime).await;
+    agent
+        .send(json!({
+            "jsonrpc": "2.0",
+            "id": 7,
+            "method": "session/request_permission",
+            "params": {
+                "sessionId": "s1",
+                "toolCall": {
+                    "toolCallId": "plan-review:item_7",
+                    "kind": "switch_mode",
+                    "status": "pending",
+                    "title": "Implement this plan?",
+                    "rawInput": { "plan": "1. Add the test" }
+                },
+                "options": [
+                    { "optionId": "implement_plan", "name": "Yes, implement this plan", "kind": "allow_once" },
+                    { "optionId": "revise_plan", "name": "No, and tell Codex what to do differently", "kind": "reject_once" }
+                ]
+            }
+        }))
+        .await;
+    let pending = until_pending(&mut subscription).await;
+    assert_eq!(pending.tool_call_id.as_deref(), Some("plan-review:item_7"));
+    let item = subscription
+        .snapshot
+        .items
+        .iter()
+        .find(|item| item.id == "plan-review:item_7")
+        .unwrap();
+    assert_eq!(item.summary, "Implement this plan?");
+    assert_eq!(item.status, Some(ItemStatus::Pending));
+    assert_eq!(
+        runtime.detail(&key, "plan-review:item_7"),
+        DetailOutcome::Unavailable {
+            reason: UnavailableReason::NotProvided
+        }
+    );
+}
+
+#[tokio::test]
+async fn resolved_requests_stay_in_the_timeline_with_their_outcome() {
+    let runtime = AgentRuntime::default();
+    let (key, mut agent, mut subscription, prompt) = start_turn(&runtime).await;
+    agent.send(permission(json!("perm-1"))).await;
+    let answered = until_pending(&mut subscription).await;
+    runtime.answer(&key, &answered.id, option("allow")).unwrap();
+    agent.recv().await;
+
+    agent.send(json!({
+        "jsonrpc": "2.0",
+        "id": "q-1",
+        "method": "elicitation/create",
+        "params": {
+            "sessionId": "s1",
+            "mode": "form",
+            "message": "Which branch?",
+            "requestedSchema": { "type": "object", "properties": { "branch": { "type": "string" } } }
+        }
+    }))
+    .await;
+    follow(&mut subscription, |snapshot| {
+        snapshot
+            .pending
+            .as_ref()
+            .is_some_and(|pending| pending.id != answered.id)
+    })
+    .await;
+    let declined = subscription.snapshot.pending.clone().unwrap();
+    runtime
+        .answer(&key, &declined.id, InteractionAnswer::Decline)
+        .unwrap();
+    agent.recv().await;
+
+    agent.send(permission(json!("perm-2"))).await;
+    follow(&mut subscription, |snapshot| {
+        snapshot
+            .pending
+            .as_ref()
+            .is_some_and(|pending| pending.id != declined.id)
+    })
+    .await;
+    let cancelled = subscription.snapshot.pending.clone().unwrap();
+    runtime.cancel(&key).unwrap();
+    agent.recv().await;
+    agent.expect("session/cancel").await;
+    agent
+        .reply(&prompt, json!({ "stopReason": "cancelled" }))
+        .await;
+    follow(&mut subscription, idle).await;
+
+    let record = |id: &str| {
+        subscription
+            .snapshot
+            .items
+            .iter()
+            .find(|item| item.id == id)
+            .unwrap()
+            .clone()
+    };
+    assert_eq!(
+        record(&answered.id).kind,
+        ItemKind::Interaction {
+            request: InteractionKind::Permission,
+            state: InteractionState::Answered,
+            tool_call_id: Some("t1".into()),
+            option: Some("Allow".into()),
+            declined: false,
+        }
+    );
+    assert_eq!(record(&answered.id).summary, "Run npm test");
+    assert_eq!(
+        record(&declined.id).kind,
+        ItemKind::Interaction {
+            request: InteractionKind::Question,
+            state: InteractionState::Answered,
+            tool_call_id: None,
+            option: None,
+            declined: true,
+        }
+    );
+    assert!(matches!(
+        record(&cancelled.id).kind,
+        ItemKind::Interaction {
+            state: InteractionState::Cancelled,
+            ..
+        }
+    ));
+    // After a reload the records are there and nothing is pending.
+    let reloaded = runtime.subscribe(&key).unwrap().snapshot;
+    assert_eq!(reloaded.pending, None);
+    assert_eq!(reloaded.items, subscription.snapshot.items);
+}
+
+#[tokio::test]
+async fn a_finished_turn_carries_its_duration_and_each_turn_its_own_plan() {
+    let runtime = AgentRuntime::default();
+    let (key, mut agent, mut subscription, prompt) = start_turn(&runtime).await;
+    let first = subscription.snapshot.turn.turn_id.clone();
+    let first = match first {
+        Some(turn) => turn,
+        None => {
+            follow(&mut subscription, |snapshot| {
+                snapshot.turn.turn_id.is_some()
+            })
+            .await;
+            subscription.snapshot.turn.turn_id.clone().unwrap()
+        }
+    };
+    let plan = |status: &str| json!({ "sessionUpdate": "plan", "entries": [{ "content": "Step", "priority": "high", "status": status }] });
+    agent.update("s1", plan("pending")).await;
+    agent.update("s1", agent_chunk("working")).await;
+    agent.update("s1", plan("completed")).await;
+    agent
+        .reply(&prompt, json!({ "stopReason": "end_turn" }))
+        .await;
+    follow(&mut subscription, idle).await;
+
+    let items = subscription.snapshot.items.clone();
+    let plans: Vec<_> = items
+        .iter()
+        .filter(|item| matches!(item.kind, ItemKind::Plan { .. }))
+        .collect();
+    assert_eq!(
+        plans.len(),
+        1,
+        "a later plan replaces the turn's plan in place"
+    );
+    assert!(matches!(
+        &plans[0].kind,
+        ItemKind::Plan { entries } if entries[0].status == crate::activity::PlanEntryStatus::Completed
+    ));
+    let plan_at = items
+        .iter()
+        .position(|item| item.id == format!("plan:{first}"));
+    let message_at = items
+        .iter()
+        .position(|item| item.kind == ItemKind::AgentMessage);
+    assert!(plan_at < message_at, "the plan keeps its first place");
+    assert!(items.iter().any(|item| matches!(
+        item.kind,
+        ItemKind::TurnOutcome {
+            reason: StopReason::EndTurn,
+            duration_ms: Some(_)
+        }
+    )));
+
+    runtime.prompt(&key, "again").unwrap();
+    let prompt = agent.expect("session/prompt").await;
+    agent.update("s1", plan("in_progress")).await;
+    agent
+        .reply(&prompt, json!({ "stopReason": "end_turn" }))
+        .await;
+    follow(&mut subscription, |snapshot| {
+        idle(snapshot)
+            && snapshot
+                .items
+                .iter()
+                .filter(|item| matches!(item.kind, ItemKind::Plan { .. }))
+                .count()
+                == 2
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn a_created_session_is_listed_from_its_first_prompt_while_the_runtime_drives_it() {
+    let runtime = AgentRuntime::default();
+    let (connection, key, mut agent) = session(&runtime).await;
+    let mut changes = runtime.catalog_changes();
+    assert!(
+        runtime.sessions().is_empty(),
+        "a session without a prompt is not in the catalogue"
+    );
+
+    let mut subscription = runtime.subscribe(&key).unwrap();
+    runtime
+        .prompt(&key, "\n  Fix the login bug\nthen run tests")
+        .unwrap();
+    assert_eq!(changes.recv().await.unwrap().agent, "scripted");
+    let listed = runtime.sessions();
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].key, key);
+    assert_eq!(listed[0].cwd, PathBuf::from("/project"));
+    assert_eq!(listed[0].title.as_deref(), Some("Fix the login bug"));
+    assert_eq!(listed[0].status.state, SessionState::Running);
+
+    let prompt = agent.expect("session/prompt").await;
+    agent
+        .update(
+            "s1",
+            json!({ "sessionUpdate": "session_info_update", "title": "Login bug" }),
+        )
+        .await;
+    agent
+        .reply(&prompt, json!({ "stopReason": "end_turn" }))
+        .await;
+    follow(&mut subscription, |snapshot| {
+        idle(snapshot) && snapshot.title.as_deref() == Some("Login bug")
+    })
+    .await;
+    let listed = runtime.sessions();
+    assert_eq!(listed[0].title.as_deref(), Some("Login bug"));
+    assert_eq!(
+        listed[0].status.state,
+        SessionState::Idle {
+            stop_reason: Some(StopReason::EndTurn)
+        }
+    );
+
+    runtime.close_connection(connection).await.unwrap();
+    assert!(
+        runtime.sessions().is_empty(),
+        "a session the runtime no longer drives leaves the runtime catalogue"
+    );
+}
+
+#[tokio::test]
+async fn updates_sent_before_the_answer_land_in_the_turn_before_it_ends() {
+    let runtime = AgentRuntime::default();
+    let (key, mut agent, mut subscription, prompt) = start_turn(&runtime).await;
+    let turn = subscription.snapshot.turn.turn_id.clone();
+    for index in 0..200 {
+        agent.update("s1", agent_chunk(&format!("{index} "))).await;
+    }
+    agent
+        .update(
+            "s1",
+            json!({ "sessionUpdate": "session_info_update", "title": "Counting" }),
+        )
+        .await;
+    agent
+        .reply(&prompt, json!({ "stopReason": "end_turn" }))
+        .await;
+    let deltas = follow(&mut subscription, idle).await;
+    let ended = deltas
+        .iter()
+        .position(
+            |delta| matches!(&delta.change, Change::Turn(state) if state.phase == TurnPhase::None),
+        )
+        .unwrap();
+    assert!(
+        deltas[ended..]
+            .iter()
+            .all(|delta| !matches!(delta.change, Change::Item(_) | Change::Title(_))),
+        "nothing of the turn arrives after it ended"
+    );
+    let snapshot = runtime.subscribe(&key).unwrap().snapshot;
+    assert_eq!(snapshot.title.as_deref(), Some("Counting"));
+    let message = snapshot
+        .items
+        .iter()
+        .find(|item| item.kind == ItemKind::AgentMessage)
+        .unwrap();
+    assert!(message.summary.ends_with("199 "));
+    assert_eq!(message.turn_id, turn.or(snapshot.turn.turn_id.clone()));
 }

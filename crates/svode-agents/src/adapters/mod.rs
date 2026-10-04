@@ -15,7 +15,7 @@ use serde::Serialize;
 use svode_core::agent_adapters::AgentAdapterKind;
 
 pub use install::{AdapterInstallState, AdapterStore, InstalledAdapter};
-pub use launch::{LaunchContext, LaunchUnavailable};
+pub use launch::{ChatOffer, LaunchContext, LaunchUnavailable, chat_offer};
 pub use node::{NodeStatus, detect_node};
 pub use setup::{AdapterSetup, AgentSetup, agent_enabled};
 pub use source::{PackageSource, RegistryPackageSource};

@@ -25,6 +25,7 @@ use crate::process::login_env::LoginEnvironment;
 
 const ENABLEMENT_FILE: &str = "agents.json";
 const CUSTOM_AGENTS: &str = "customAgents";
+const LAST_CHAT_AGENT: &str = "lastChatAgent";
 
 /// Clones share one store, package source and choices lock.
 #[derive(Clone)]
@@ -59,6 +60,24 @@ impl AgentSetupState {
     fn set_choice(&self, agent: &str, enabled: bool) -> Result<(), AppError> {
         let _guard = self.choices.lock().unwrap();
         write_choice(&self.config_dir, agent, enabled)
+    }
+
+    /// The agent of the last session created in the chat on this device.
+    pub(crate) fn last_chat_agent(&self) -> Option<String> {
+        read_file(&self.config_dir)
+            .ok()
+            .flatten()?
+            .get(LAST_CHAT_AGENT)?
+            .as_str()
+            .map(str::to_string)
+    }
+
+    pub(crate) fn set_last_chat_agent(&self, agent: &str) -> Result<(), AppError> {
+        let _guard = self.choices.lock().unwrap();
+        update_file(&self.config_dir, |root| {
+            root.insert(LAST_CHAT_AGENT.into(), agent.into());
+            Ok(())
+        })
     }
 
     /// The custom ACP agents in the order the user added them.

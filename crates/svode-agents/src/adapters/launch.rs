@@ -41,6 +41,43 @@ pub enum LaunchUnavailable {
     CliUnsupported { version: String, minimum: String },
 }
 
+/// How a new session offers an agent for chat (Stage 10 `04`, `03` A1/A8).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(
+    tag = "state",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
+pub enum ChatOffer {
+    /// The agent can start a chat session now.
+    Available,
+    /// The agent is enabled and on this device, but cannot start until
+    /// the user recovers it in the agent settings.
+    Unavailable { reason: LaunchUnavailable },
+}
+
+/// The offer of an agent whose launch plan resolved to `plan`; `None` for
+/// an agent a new session does not offer at all: deferred, disabled, not
+/// on this device, unsupported, or with an adapter that is not installed,
+/// which leaves it disabled.
+pub fn chat_offer<T>(deferred: bool, plan: &Result<T, LaunchUnavailable>) -> Option<ChatOffer> {
+    if deferred {
+        return None;
+    }
+    match plan {
+        Ok(_) => Some(ChatOffer::Available),
+        Err(
+            LaunchUnavailable::Disabled
+            | LaunchUnavailable::ExecutableMissing { .. }
+            | LaunchUnavailable::NotSupported
+            | LaunchUnavailable::AdapterNotInstalled,
+        ) => None,
+        Err(reason) => Some(ChatOffer::Unavailable {
+            reason: reason.clone(),
+        }),
+    }
+}
+
 /// Where and with what a host starts an agent.
 #[derive(Debug, Clone)]
 pub struct LaunchContext {
@@ -412,6 +449,35 @@ mod tests {
                 .await
                 .unwrap_err(),
             LaunchUnavailable::NotSupported
+        );
+    }
+}
+
+#[cfg(test)]
+mod chat_offer_tests {
+    use super::*;
+
+    #[test]
+    fn a_new_session_offers_only_enabled_agents_on_this_device_that_are_not_deferred() {
+        let available: Result<(), LaunchUnavailable> = Ok(());
+        assert_eq!(chat_offer(false, &available), Some(ChatOffer::Available));
+        assert_eq!(chat_offer(true, &available), None);
+        for hidden in [
+            LaunchUnavailable::Disabled,
+            LaunchUnavailable::ExecutableMissing {
+                executable: "codex".into(),
+            },
+            LaunchUnavailable::NotSupported,
+            LaunchUnavailable::AdapterNotInstalled,
+        ] {
+            assert_eq!(chat_offer::<()>(false, &Err(hidden)), None);
+        }
+        let outdated = LaunchUnavailable::AdapterNeedsUpdate {
+            installed_version: "0.1.0".into(),
+        };
+        assert_eq!(
+            chat_offer::<()>(false, &Err(outdated.clone())),
+            Some(ChatOffer::Unavailable { reason: outdated })
         );
     }
 }

@@ -49,3 +49,20 @@ test("unregistered adapters add one neutral fallback option", () => {
   ]);
   expect(agents.options(["codex"]).length).toBe(2);
 });
+
+test("built-in agents get their brand icon and the others their first letter", () => {
+  setLocale("en", { reload: false });
+  const agents = createAgentAdapterDictionary([
+    ...registry,
+    { id: "custom-local-llm", displayName: "local llm" },
+  ]);
+
+  const codex = agents.icon("codex");
+  expect(codex.kind).toBe("brand");
+  expect(codex.kind === "brand" && codex.src.length > 0).toBe(true);
+  expect(agents.icon("custom-local-llm")).toEqual({
+    kind: "letter",
+    letter: "L",
+  });
+  expect(agents.icon("future-agent")).toEqual({ kind: "letter", letter: "A" });
+});

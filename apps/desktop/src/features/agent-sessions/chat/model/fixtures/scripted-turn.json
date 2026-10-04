@@ -1,0 +1,1749 @@
+{
+  "agent": "scripted",
+  "checkpoints": [
+    {
+      "connection": "ready",
+      "history": {
+        "available": true,
+        "source": "live",
+        "truncatedItems": null
+      },
+      "items": [
+        {
+          "hasDetail": false,
+          "id": "user:01m42exa8xpk38d8qag0n5n05p",
+          "kind": "user_message",
+          "status": null,
+          "summary": "Fix the build",
+          "turnId": "01m42exa8xpk38d8qag0n5n05p"
+        }
+      ],
+      "pending": null,
+      "seq": 2,
+      "session": {
+        "agent": "scripted",
+        "namespace": "acp",
+        "sessionId": "s1"
+      },
+      "settings": [],
+      "title": null,
+      "turn": {
+        "lastOutcome": null,
+        "phase": "running",
+        "status": {
+          "confidence": "exact",
+          "source": "svode_runtime",
+          "state": "running"
+        },
+        "turnId": "01m42exa8xpk38d8qag0n5n05p"
+      },
+      "writer": "acp"
+    },
+    {
+      "connection": "ready",
+      "history": {
+        "available": true,
+        "source": "live",
+        "truncatedItems": null
+      },
+      "items": [
+        {
+          "hasDetail": false,
+          "id": "user:01m42exa8xpk38d8qag0n5n05p",
+          "kind": "user_message",
+          "status": null,
+          "summary": "Fix the build",
+          "turnId": "01m42exa8xpk38d8qag0n5n05p"
+        },
+        {
+          "hasDetail": false,
+          "id": "01m42exa8xpk38d8qag0n5n05p:message:1",
+          "kind": "reasoning",
+          "status": null,
+          "summary": "Reading the build ",
+          "turnId": "01m42exa8xpk38d8qag0n5n05p"
+        }
+      ],
+      "pending": null,
+      "seq": 3,
+      "session": {
+        "agent": "scripted",
+        "namespace": "acp",
+        "sessionId": "s1"
+      },
+      "settings": [],
+      "title": null,
+      "turn": {
+        "lastOutcome": null,
+        "phase": "running",
+        "status": {
+          "confidence": "exact",
+          "source": "svode_runtime",
+          "state": "running"
+        },
+        "turnId": "01m42exa8xpk38d8qag0n5n05p"
+      },
+      "writer": "acp"
+    },
+    {
+      "connection": "ready",
+      "history": {
+        "available": true,
+        "source": "live",
+        "truncatedItems": null
+      },
+      "items": [
+        {
+          "hasDetail": false,
+          "id": "user:01m42exa8xpk38d8qag0n5n05p",
+          "kind": "user_message",
+          "status": null,
+          "summary": "Fix the build",
+          "turnId": "01m42exa8xpk38d8qag0n5n05p"
+        },
+        {
+          "hasDetail": false,
+          "id": "01m42exa8xpk38d8qag0n5n05p:message:1",
+          "kind": "reasoning",
+          "status": null,
+          "summary": "Reading the build output first.",
+          "turnId": "01m42exa8xpk38d8qag0n5n05p"
+        }
+      ],
+      "pending": null,
+      "seq": 4,
+      "session": {
+        "agent": "scripted",
+        "namespace": "acp",
+        "sessionId": "s1"
+      },
+      "settings": [],
+      "title": null,
+      "turn": {
+        "lastOutcome": null,
+        "phase": "running",
+        "status": {
+          "confidence": "exact",
+          "source": "svode_runtime",
+          "state": "running"
+        },
+        "turnId": "01m42exa8xpk38d8qag0n5n05p"
+      },
+      "writer": "acp"
+    },
+    {
+      "connection": "ready",
+      "history": {
+        "available": true,
+        "source": "live",
+        "truncatedItems": null
+      },
+      "items": [
+        {
+          "hasDetail": false,
+          "id": "user:01m42exa8xpk38d8qag0n5n05p",
+          "kind": "user_message",
+          "status": null,
+          "summary": "Fix the build",
+          "turnId": "01m42exa8xpk38d8qag0n5n05p"
+        },
+        {
+          "hasDetail": false,
+          "id": "01m42exa8xpk38d8qag0n5n05p:message:1",
+          "kind": "reasoning",
+          "status": null,
+          "summary": "Reading the build output first.",
+          "turnId": "01m42exa8xpk38d8qag0n5n05p"
+        },
+        {
+          "entries": [
+            {
+              "content": "Run the build",
+              "priority": "high",
+              "status": "in_progress"
+            },
+            {
+              "content": "Fix the error",
+              "priority": "medium",
+              "status": "pending"
+            }
+          ],
+          "hasDetail": false,
+          "id": "plan:01m42exa8xpk38d8qag0n5n05p",
+          "kind": "plan",
+          "status": null,
+          "summary": "",
+          "turnId": "01m42exa8xpk38d8qag0n5n05p"
+        }
+      ],
+      "pending": null,
+      "seq": 5,
+      "session": {
+        "agent": "scripted",
+        "namespace": "acp",
+        "sessionId": "s1"
+      },
+      "settings": [],
+      "title": null,
+      "turn": {
+        "lastOutcome": null,
+        "phase": "running",
+        "status": {
+          "confidence": "exact",
+          "source": "svode_runtime",
+          "state": "running"
+        },
+        "turnId": "01m42exa8xpk38d8qag0n5n05p"
+      },
+      "writer": "acp"
+    },
+    {
+      "connection": "ready",
+      "history": {
+        "available": true,
+        "source": "live",
+        "truncatedItems": null
+      },
+      "items": [
+        {
+          "hasDetail": false,
+          "id": "user:01m42exa8xpk38d8qag0n5n05p",
+          "kind": "user_message",
+          "status": null,
+          "summary": "Fix the build",
+          "turnId": "01m42exa8xpk38d8qag0n5n05p"
+        },
+        {
+          "hasDetail": false,
+          "id": "01m42exa8xpk38d8qag0n5n05p:message:1",
+          "kind": "reasoning",
+          "status": null,
+          "summary": "Reading the build output first.",
+          "turnId": "01m42exa8xpk38d8qag0n5n05p"
+        },
+        {
+          "entries": [
+            {
+              "content": "Run the build",
+              "priority": "high",
+              "status": "in_progress"
+            },
+            {
+              "content": "Fix the error",
+              "priority": "medium",
+              "status": "pending"
+            }
+          ],
+          "hasDetail": false,
+          "id": "plan:01m42exa8xpk38d8qag0n5n05p",
+          "kind": "plan",
+          "status": null,
+          "summary": "",
+          "turnId": "01m42exa8xpk38d8qag0n5n05p"
+        },
+        {
+          "hasDetail": true,
+          "id": "call_build",
+          "kind": "tool_call",
+          "status": "failed",
+          "summary": "cargo build",
+          "tool": "execute",
+          "turnId": "01m42exa8xpk38d8qag0n5n05p"
+        }
+      ],
+      "pending": null,
+      "seq": 7,
+      "session": {
+        "agent": "scripted",
+        "namespace": "acp",
+        "sessionId": "s1"
+      },
+      "settings": [],
+      "title": null,
+      "turn": {
+        "lastOutcome": null,
+        "phase": "running",
+        "status": {
+          "confidence": "exact",
+          "source": "svode_runtime",
+          "state": "running"
+        },
+        "turnId": "01m42exa8xpk38d8qag0n5n05p"
+      },
+      "writer": "acp"
+    },
+    {
+      "connection": "ready",
+      "history": {
+        "available": true,
+        "source": "live",
+        "truncatedItems": null
+      },
+      "items": [
+        {
+          "hasDetail": false,
+          "id": "user:01m42exa8xpk38d8qag0n5n05p",
+          "kind": "user_message",
+          "status": null,
+          "summary": "Fix the build",
+          "turnId": "01m42exa8xpk38d8qag0n5n05p"
+        },
+        {
+          "hasDetail": false,
+          "id": "01m42exa8xpk38d8qag0n5n05p:message:1",
+          "kind": "reasoning",
+          "status": null,
+          "summary": "Reading the build output first.",
+          "turnId": "01m42exa8xpk38d8qag0n5n05p"
+        },
+        {
+          "entries": [
+            {
+              "content": "Run the build",
+              "priority": "high",
+              "status": "in_progress"
+            },
+            {
+              "content": "Fix the error",
+              "priority": "medium",
+              "status": "pending"
+            }
+          ],
+          "hasDetail": false,
+          "id": "plan:01m42exa8xpk38d8qag0n5n05p",
+          "kind": "plan",
+          "status": null,
+          "summary": "",
+          "turnId": "01m42exa8xpk38d8qag0n5n05p"
+        },
+        {
+          "hasDetail": true,
+          "id": "call_build",
+          "kind": "tool_call",
+          "status": "failed",
+          "summary": "cargo build",
+          "tool": "execute",
+          "turnId": "01m42exa8xpk38d8qag0n5n05p"
+        },
+        {
+          "hasDetail": true,
+          "id": "call_read",
+          "kind": "tool_call",
+          "status": "completed",
+          "summary": "Read src/main.rs",
+          "tool": "read",
+          "turnId": "01m42exa8xpk38d8qag0n5n05p"
+        },
+        {
+          "hasDetail": false,
+          "id": "m1",
+          "kind": "agent_message",
+          "status": null,
+          "summary": "The build fails on an undefined value.",
+          "turnId": "01m42exa8xpk38d8qag0n5n05p"
+        }
+      ],
+      "pending": null,
+      "seq": 10,
+      "session": {
+        "agent": "scripted",
+        "namespace": "acp",
+        "sessionId": "s1"
+      },
+      "settings": [],
+      "title": null,
+      "turn": {
+        "lastOutcome": null,
+        "phase": "running",
+        "status": {
+          "confidence": "exact",
+          "source": "svode_runtime",
+          "state": "running"
+        },
+        "turnId": "01m42exa8xpk38d8qag0n5n05p"
+      },
+      "writer": "acp"
+    },
+    {
+      "connection": "ready",
+      "history": {
+        "available": true,
+        "source": "live",
+        "truncatedItems": null
+      },
+      "items": [
+        {
+          "hasDetail": false,
+          "id": "user:01m42exa8xpk38d8qag0n5n05p",
+          "kind": "user_message",
+          "status": null,
+          "summary": "Fix the build",
+          "turnId": "01m42exa8xpk38d8qag0n5n05p"
+        },
+        {
+          "hasDetail": false,
+          "id": "01m42exa8xpk38d8qag0n5n05p:message:1",
+          "kind": "reasoning",
+          "status": null,
+          "summary": "Reading the build output first.",
+          "turnId": "01m42exa8xpk38d8qag0n5n05p"
+        },
+        {
+          "entries": [
+            {
+              "content": "Run the build",
+              "priority": "high",
+              "status": "in_progress"
+            },
+            {
+              "content": "Fix the error",
+              "priority": "medium",
+              "status": "pending"
+            }
+          ],
+          "hasDetail": false,
+          "id": "plan:01m42exa8xpk38d8qag0n5n05p",
+          "kind": "plan",
+          "status": null,
+          "summary": "",
+          "turnId": "01m42exa8xpk38d8qag0n5n05p"
+        },
+        {
+          "hasDetail": true,
+          "id": "call_build",
+          "kind": "tool_call",
+          "status": "failed",
+          "summary": "cargo build",
+          "tool": "execute",
+          "turnId": "01m42exa8xpk38d8qag0n5n05p"
+        },
+        {
+          "hasDetail": true,
+          "id": "call_read",
+          "kind": "tool_call",
+          "status": "completed",
+          "summary": "Read src/main.rs",
+          "tool": "read",
+          "turnId": "01m42exa8xpk38d8qag0n5n05p"
+        },
+        {
+          "hasDetail": false,
+          "id": "m1",
+          "kind": "agent_message",
+          "status": null,
+          "summary": "The build fails on an undefined value.",
+          "turnId": "01m42exa8xpk38d8qag0n5n05p"
+        },
+        {
+          "hasDetail": false,
+          "id": "session:generic:2",
+          "kind": "generic",
+          "label": "future_update",
+          "status": null,
+          "summary": "",
+          "turnId": "01m42exa8xpk38d8qag0n5n05p"
+        }
+      ],
+      "pending": null,
+      "seq": 11,
+      "session": {
+        "agent": "scripted",
+        "namespace": "acp",
+        "sessionId": "s1"
+      },
+      "settings": [],
+      "title": null,
+      "turn": {
+        "lastOutcome": null,
+        "phase": "running",
+        "status": {
+          "confidence": "exact",
+          "source": "svode_runtime",
+          "state": "running"
+        },
+        "turnId": "01m42exa8xpk38d8qag0n5n05p"
+      },
+      "writer": "acp"
+    },
+    {
+      "connection": "ready",
+      "history": {
+        "available": true,
+        "source": "live",
+        "truncatedItems": null
+      },
+      "items": [
+        {
+          "hasDetail": false,
+          "id": "user:01m42exa8xpk38d8qag0n5n05p",
+          "kind": "user_message",
+          "status": null,
+          "summary": "Fix the build",
+          "turnId": "01m42exa8xpk38d8qag0n5n05p"
+        },
+        {
+          "hasDetail": false,
+          "id": "01m42exa8xpk38d8qag0n5n05p:message:1",
+          "kind": "reasoning",
+          "status": null,
+          "summary": "Reading the build output first.",
+          "turnId": "01m42exa8xpk38d8qag0n5n05p"
+        },
+        {
+          "entries": [
+            {
+              "content": "Run the build",
+              "priority": "high",
+              "status": "in_progress"
+            },
+            {
+              "content": "Fix the error",
+              "priority": "medium",
+              "status": "pending"
+            }
+          ],
+          "hasDetail": false,
+          "id": "plan:01m42exa8xpk38d8qag0n5n05p",
+          "kind": "plan",
+          "status": null,
+          "summary": "",
+          "turnId": "01m42exa8xpk38d8qag0n5n05p"
+        },
+        {
+          "hasDetail": true,
+          "id": "call_build",
+          "kind": "tool_call",
+          "status": "failed",
+          "summary": "cargo build",
+          "tool": "execute",
+          "turnId": "01m42exa8xpk38d8qag0n5n05p"
+        },
+        {
+          "hasDetail": true,
+          "id": "call_read",
+          "kind": "tool_call",
+          "status": "completed",
+          "summary": "Read src/main.rs",
+          "tool": "read",
+          "turnId": "01m42exa8xpk38d8qag0n5n05p"
+        },
+        {
+          "hasDetail": false,
+          "id": "m1",
+          "kind": "agent_message",
+          "status": null,
+          "summary": "The build fails on an undefined value.",
+          "turnId": "01m42exa8xpk38d8qag0n5n05p"
+        },
+        {
+          "hasDetail": false,
+          "id": "session:generic:2",
+          "kind": "generic",
+          "label": "future_update",
+          "status": null,
+          "summary": "",
+          "turnId": "01m42exa8xpk38d8qag0n5n05p"
+        },
+        {
+          "hasDetail": true,
+          "id": "call_edit",
+          "kind": "tool_call",
+          "status": "pending",
+          "summary": "Edit src/main.rs",
+          "tool": "edit",
+          "turnId": "01m42exa8xpk38d8qag0n5n05p"
+        }
+      ],
+      "pending": null,
+      "seq": 12,
+      "session": {
+        "agent": "scripted",
+        "namespace": "acp",
+        "sessionId": "s1"
+      },
+      "settings": [],
+      "title": null,
+      "turn": {
+        "lastOutcome": null,
+        "phase": "running",
+        "status": {
+          "confidence": "exact",
+          "source": "svode_runtime",
+          "state": "running"
+        },
+        "turnId": "01m42exa8xpk38d8qag0n5n05p"
+      },
+      "writer": "acp"
+    },
+    {
+      "connection": "ready",
+      "history": {
+        "available": true,
+        "source": "live",
+        "truncatedItems": null
+      },
+      "items": [
+        {
+          "hasDetail": false,
+          "id": "user:01m42exa8xpk38d8qag0n5n05p",
+          "kind": "user_message",
+          "status": null,
+          "summary": "Fix the build",
+          "turnId": "01m42exa8xpk38d8qag0n5n05p"
+        },
+        {
+          "hasDetail": false,
+          "id": "01m42exa8xpk38d8qag0n5n05p:message:1",
+          "kind": "reasoning",
+          "status": null,
+          "summary": "Reading the build output first.",
+          "turnId": "01m42exa8xpk38d8qag0n5n05p"
+        },
+        {
+          "entries": [
+            {
+              "content": "Run the build",
+              "priority": "high",
+              "status": "in_progress"
+            },
+            {
+              "content": "Fix the error",
+              "priority": "medium",
+              "status": "pending"
+            }
+          ],
+          "hasDetail": false,
+          "id": "plan:01m42exa8xpk38d8qag0n5n05p",
+          "kind": "plan",
+          "status": null,
+          "summary": "",
+          "turnId": "01m42exa8xpk38d8qag0n5n05p"
+        },
+        {
+          "hasDetail": true,
+          "id": "call_build",
+          "kind": "tool_call",
+          "status": "failed",
+          "summary": "cargo build",
+          "tool": "execute",
+          "turnId": "01m42exa8xpk38d8qag0n5n05p"
+        },
+        {
+          "hasDetail": true,
+          "id": "call_read",
+          "kind": "tool_call",
+          "status": "completed",
+          "summary": "Read src/main.rs",
+          "tool": "read",
+          "turnId": "01m42exa8xpk38d8qag0n5n05p"
+        },
+        {
+          "hasDetail": false,
+          "id": "m1",
+          "kind": "agent_message",
+          "status": null,
+          "summary": "The build fails on an undefined value.",
+          "turnId": "01m42exa8xpk38d8qag0n5n05p"
+        },
+        {
+          "hasDetail": false,
+          "id": "session:generic:2",
+          "kind": "generic",
+          "label": "future_update",
+          "status": null,
+          "summary": "",
+          "turnId": "01m42exa8xpk38d8qag0n5n05p"
+        },
+        {
+          "hasDetail": true,
+          "id": "call_edit",
+          "kind": "tool_call",
+          "status": "pending",
+          "summary": "Edit src/main.rs",
+          "tool": "edit",
+          "turnId": "01m42exa8xpk38d8qag0n5n05p"
+        },
+        {
+          "declined": false,
+          "hasDetail": false,
+          "id": "interaction:1",
+          "kind": "interaction",
+          "option": "Allow",
+          "request": "permission",
+          "state": "answered",
+          "status": null,
+          "summary": "Edit src/main.rs",
+          "toolCallId": "call_edit",
+          "turnId": "01m42exa8xpk38d8qag0n5n05p"
+        }
+      ],
+      "pending": null,
+      "seq": 18,
+      "session": {
+        "agent": "scripted",
+        "namespace": "acp",
+        "sessionId": "s1"
+      },
+      "settings": [],
+      "title": null,
+      "turn": {
+        "lastOutcome": null,
+        "phase": "running",
+        "status": {
+          "confidence": "exact",
+          "source": "svode_runtime",
+          "state": "running"
+        },
+        "turnId": "01m42exa8xpk38d8qag0n5n05p"
+      },
+      "writer": "acp"
+    },
+    {
+      "connection": "ready",
+      "history": {
+        "available": true,
+        "source": "live",
+        "truncatedItems": null
+      },
+      "items": [
+        {
+          "hasDetail": false,
+          "id": "user:01m42exa8xpk38d8qag0n5n05p",
+          "kind": "user_message",
+          "status": null,
+          "summary": "Fix the build",
+          "turnId": "01m42exa8xpk38d8qag0n5n05p"
+        },
+        {
+          "hasDetail": false,
+          "id": "01m42exa8xpk38d8qag0n5n05p:message:1",
+          "kind": "reasoning",
+          "status": null,
+          "summary": "Reading the build output first.",
+          "turnId": "01m42exa8xpk38d8qag0n5n05p"
+        },
+        {
+          "entries": [
+            {
+              "content": "Run the build",
+              "priority": "high",
+              "status": "in_progress"
+            },
+            {
+              "content": "Fix the error",
+              "priority": "medium",
+              "status": "pending"
+            }
+          ],
+          "hasDetail": false,
+          "id": "plan:01m42exa8xpk38d8qag0n5n05p",
+          "kind": "plan",
+          "status": null,
+          "summary": "",
+          "turnId": "01m42exa8xpk38d8qag0n5n05p"
+        },
+        {
+          "hasDetail": true,
+          "id": "call_build",
+          "kind": "tool_call",
+          "status": "failed",
+          "summary": "cargo build",
+          "tool": "execute",
+          "turnId": "01m42exa8xpk38d8qag0n5n05p"
+        },
+        {
+          "hasDetail": true,
+          "id": "call_read",
+          "kind": "tool_call",
+          "status": "completed",
+          "summary": "Read src/main.rs",
+          "tool": "read",
+          "turnId": "01m42exa8xpk38d8qag0n5n05p"
+        },
+        {
+          "hasDetail": false,
+          "id": "m1",
+          "kind": "agent_message",
+          "status": null,
+          "summary": "The build fails on an undefined value.",
+          "turnId": "01m42exa8xpk38d8qag0n5n05p"
+        },
+        {
+          "hasDetail": false,
+          "id": "session:generic:2",
+          "kind": "generic",
+          "label": "future_update",
+          "status": null,
+          "summary": "",
+          "turnId": "01m42exa8xpk38d8qag0n5n05p"
+        },
+        {
+          "hasDetail": true,
+          "id": "call_edit",
+          "kind": "tool_call",
+          "status": "completed",
+          "summary": "Edit src/main.rs",
+          "tool": "edit",
+          "turnId": "01m42exa8xpk38d8qag0n5n05p"
+        },
+        {
+          "declined": false,
+          "hasDetail": false,
+          "id": "interaction:1",
+          "kind": "interaction",
+          "option": "Allow",
+          "request": "permission",
+          "state": "answered",
+          "status": null,
+          "summary": "Edit src/main.rs",
+          "toolCallId": "call_edit",
+          "turnId": "01m42exa8xpk38d8qag0n5n05p"
+        }
+      ],
+      "pending": null,
+      "seq": 19,
+      "session": {
+        "agent": "scripted",
+        "namespace": "acp",
+        "sessionId": "s1"
+      },
+      "settings": [],
+      "title": null,
+      "turn": {
+        "lastOutcome": null,
+        "phase": "running",
+        "status": {
+          "confidence": "exact",
+          "source": "svode_runtime",
+          "state": "running"
+        },
+        "turnId": "01m42exa8xpk38d8qag0n5n05p"
+      },
+      "writer": "acp"
+    },
+    {
+      "connection": "ready",
+      "history": {
+        "available": true,
+        "source": "live",
+        "truncatedItems": null
+      },
+      "items": [
+        {
+          "hasDetail": false,
+          "id": "user:01m42exa8xpk38d8qag0n5n05p",
+          "kind": "user_message",
+          "status": null,
+          "summary": "Fix the build",
+          "turnId": "01m42exa8xpk38d8qag0n5n05p"
+        },
+        {
+          "hasDetail": false,
+          "id": "01m42exa8xpk38d8qag0n5n05p:message:1",
+          "kind": "reasoning",
+          "status": null,
+          "summary": "Reading the build output first.",
+          "turnId": "01m42exa8xpk38d8qag0n5n05p"
+        },
+        {
+          "entries": [
+            {
+              "content": "Run the build",
+              "priority": "high",
+              "status": "completed"
+            },
+            {
+              "content": "Fix the error",
+              "priority": "medium",
+              "status": "completed"
+            }
+          ],
+          "hasDetail": false,
+          "id": "plan:01m42exa8xpk38d8qag0n5n05p",
+          "kind": "plan",
+          "status": null,
+          "summary": "",
+          "turnId": "01m42exa8xpk38d8qag0n5n05p"
+        },
+        {
+          "hasDetail": true,
+          "id": "call_build",
+          "kind": "tool_call",
+          "status": "failed",
+          "summary": "cargo build",
+          "tool": "execute",
+          "turnId": "01m42exa8xpk38d8qag0n5n05p"
+        },
+        {
+          "hasDetail": true,
+          "id": "call_read",
+          "kind": "tool_call",
+          "status": "completed",
+          "summary": "Read src/main.rs",
+          "tool": "read",
+          "turnId": "01m42exa8xpk38d8qag0n5n05p"
+        },
+        {
+          "hasDetail": false,
+          "id": "m1",
+          "kind": "agent_message",
+          "status": null,
+          "summary": "The build fails on an undefined value.",
+          "turnId": "01m42exa8xpk38d8qag0n5n05p"
+        },
+        {
+          "hasDetail": false,
+          "id": "session:generic:2",
+          "kind": "generic",
+          "label": "future_update",
+          "status": null,
+          "summary": "",
+          "turnId": "01m42exa8xpk38d8qag0n5n05p"
+        },
+        {
+          "hasDetail": true,
+          "id": "call_edit",
+          "kind": "tool_call",
+          "status": "completed",
+          "summary": "Edit src/main.rs",
+          "tool": "edit",
+          "turnId": "01m42exa8xpk38d8qag0n5n05p"
+        },
+        {
+          "declined": false,
+          "hasDetail": false,
+          "id": "interaction:1",
+          "kind": "interaction",
+          "option": "Allow",
+          "request": "permission",
+          "state": "answered",
+          "status": null,
+          "summary": "Edit src/main.rs",
+          "toolCallId": "call_edit",
+          "turnId": "01m42exa8xpk38d8qag0n5n05p"
+        }
+      ],
+      "pending": null,
+      "seq": 20,
+      "session": {
+        "agent": "scripted",
+        "namespace": "acp",
+        "sessionId": "s1"
+      },
+      "settings": [],
+      "title": null,
+      "turn": {
+        "lastOutcome": null,
+        "phase": "running",
+        "status": {
+          "confidence": "exact",
+          "source": "svode_runtime",
+          "state": "running"
+        },
+        "turnId": "01m42exa8xpk38d8qag0n5n05p"
+      },
+      "writer": "acp"
+    },
+    {
+      "connection": "ready",
+      "history": {
+        "available": true,
+        "source": "live",
+        "truncatedItems": null
+      },
+      "items": [
+        {
+          "hasDetail": false,
+          "id": "user:01m42exa8xpk38d8qag0n5n05p",
+          "kind": "user_message",
+          "status": null,
+          "summary": "Fix the build",
+          "turnId": "01m42exa8xpk38d8qag0n5n05p"
+        },
+        {
+          "hasDetail": false,
+          "id": "01m42exa8xpk38d8qag0n5n05p:message:1",
+          "kind": "reasoning",
+          "status": null,
+          "summary": "Reading the build output first.",
+          "turnId": "01m42exa8xpk38d8qag0n5n05p"
+        },
+        {
+          "entries": [
+            {
+              "content": "Run the build",
+              "priority": "high",
+              "status": "completed"
+            },
+            {
+              "content": "Fix the error",
+              "priority": "medium",
+              "status": "completed"
+            }
+          ],
+          "hasDetail": false,
+          "id": "plan:01m42exa8xpk38d8qag0n5n05p",
+          "kind": "plan",
+          "status": null,
+          "summary": "",
+          "turnId": "01m42exa8xpk38d8qag0n5n05p"
+        },
+        {
+          "hasDetail": true,
+          "id": "call_build",
+          "kind": "tool_call",
+          "status": "failed",
+          "summary": "cargo build",
+          "tool": "execute",
+          "turnId": "01m42exa8xpk38d8qag0n5n05p"
+        },
+        {
+          "hasDetail": true,
+          "id": "call_read",
+          "kind": "tool_call",
+          "status": "completed",
+          "summary": "Read src/main.rs",
+          "tool": "read",
+          "turnId": "01m42exa8xpk38d8qag0n5n05p"
+        },
+        {
+          "hasDetail": false,
+          "id": "m1",
+          "kind": "agent_message",
+          "status": null,
+          "summary": "The build fails on an undefined value.",
+          "turnId": "01m42exa8xpk38d8qag0n5n05p"
+        },
+        {
+          "hasDetail": false,
+          "id": "session:generic:2",
+          "kind": "generic",
+          "label": "future_update",
+          "status": null,
+          "summary": "",
+          "turnId": "01m42exa8xpk38d8qag0n5n05p"
+        },
+        {
+          "hasDetail": true,
+          "id": "call_edit",
+          "kind": "tool_call",
+          "status": "completed",
+          "summary": "Edit src/main.rs",
+          "tool": "edit",
+          "turnId": "01m42exa8xpk38d8qag0n5n05p"
+        },
+        {
+          "declined": false,
+          "hasDetail": false,
+          "id": "interaction:1",
+          "kind": "interaction",
+          "option": "Allow",
+          "request": "permission",
+          "state": "answered",
+          "status": null,
+          "summary": "Edit src/main.rs",
+          "toolCallId": "call_edit",
+          "turnId": "01m42exa8xpk38d8qag0n5n05p"
+        },
+        {
+          "hasDetail": false,
+          "id": "m2",
+          "kind": "agent_message",
+          "status": null,
+          "summary": "Fixed: `x` is defined now.",
+          "turnId": "01m42exa8xpk38d8qag0n5n05p"
+        }
+      ],
+      "pending": null,
+      "seq": 22,
+      "session": {
+        "agent": "scripted",
+        "namespace": "acp",
+        "sessionId": "s1"
+      },
+      "settings": [],
+      "title": "Fix the build",
+      "turn": {
+        "lastOutcome": null,
+        "phase": "running",
+        "status": {
+          "confidence": "exact",
+          "source": "svode_runtime",
+          "state": "running"
+        },
+        "turnId": "01m42exa8xpk38d8qag0n5n05p"
+      },
+      "writer": "acp"
+    },
+    {
+      "connection": "ready",
+      "history": {
+        "available": true,
+        "source": "live",
+        "truncatedItems": null
+      },
+      "items": [
+        {
+          "hasDetail": false,
+          "id": "user:01m42exa8xpk38d8qag0n5n05p",
+          "kind": "user_message",
+          "status": null,
+          "summary": "Fix the build",
+          "turnId": "01m42exa8xpk38d8qag0n5n05p"
+        },
+        {
+          "hasDetail": false,
+          "id": "01m42exa8xpk38d8qag0n5n05p:message:1",
+          "kind": "reasoning",
+          "status": null,
+          "summary": "Reading the build output first.",
+          "turnId": "01m42exa8xpk38d8qag0n5n05p"
+        },
+        {
+          "entries": [
+            {
+              "content": "Run the build",
+              "priority": "high",
+              "status": "completed"
+            },
+            {
+              "content": "Fix the error",
+              "priority": "medium",
+              "status": "completed"
+            }
+          ],
+          "hasDetail": false,
+          "id": "plan:01m42exa8xpk38d8qag0n5n05p",
+          "kind": "plan",
+          "status": null,
+          "summary": "",
+          "turnId": "01m42exa8xpk38d8qag0n5n05p"
+        },
+        {
+          "hasDetail": true,
+          "id": "call_build",
+          "kind": "tool_call",
+          "status": "failed",
+          "summary": "cargo build",
+          "tool": "execute",
+          "turnId": "01m42exa8xpk38d8qag0n5n05p"
+        },
+        {
+          "hasDetail": true,
+          "id": "call_read",
+          "kind": "tool_call",
+          "status": "completed",
+          "summary": "Read src/main.rs",
+          "tool": "read",
+          "turnId": "01m42exa8xpk38d8qag0n5n05p"
+        },
+        {
+          "hasDetail": false,
+          "id": "m1",
+          "kind": "agent_message",
+          "status": null,
+          "summary": "The build fails on an undefined value.",
+          "turnId": "01m42exa8xpk38d8qag0n5n05p"
+        },
+        {
+          "hasDetail": false,
+          "id": "session:generic:2",
+          "kind": "generic",
+          "label": "future_update",
+          "status": null,
+          "summary": "",
+          "turnId": "01m42exa8xpk38d8qag0n5n05p"
+        },
+        {
+          "hasDetail": true,
+          "id": "call_edit",
+          "kind": "tool_call",
+          "status": "completed",
+          "summary": "Edit src/main.rs",
+          "tool": "edit",
+          "turnId": "01m42exa8xpk38d8qag0n5n05p"
+        },
+        {
+          "declined": false,
+          "hasDetail": false,
+          "id": "interaction:1",
+          "kind": "interaction",
+          "option": "Allow",
+          "request": "permission",
+          "state": "answered",
+          "status": null,
+          "summary": "Edit src/main.rs",
+          "toolCallId": "call_edit",
+          "turnId": "01m42exa8xpk38d8qag0n5n05p"
+        },
+        {
+          "hasDetail": false,
+          "id": "m2",
+          "kind": "agent_message",
+          "status": null,
+          "summary": "Fixed: `x` is defined now.",
+          "turnId": "01m42exa8xpk38d8qag0n5n05p"
+        },
+        {
+          "durationMs": 0,
+          "hasDetail": false,
+          "id": "outcome:01m42exa8xpk38d8qag0n5n05p",
+          "kind": "turn_outcome",
+          "reason": "end_turn",
+          "status": null,
+          "summary": "",
+          "turnId": "01m42exa8xpk38d8qag0n5n05p"
+        }
+      ],
+      "pending": null,
+      "seq": 24,
+      "session": {
+        "agent": "scripted",
+        "namespace": "acp",
+        "sessionId": "s1"
+      },
+      "settings": [],
+      "title": "Fix the build",
+      "turn": {
+        "lastOutcome": "end_turn",
+        "phase": "none",
+        "status": {
+          "confidence": "exact",
+          "source": "svode_runtime",
+          "state": "idle",
+          "stopReason": "end_turn"
+        },
+        "turnId": "01m42exa8xpk38d8qag0n5n05p"
+      },
+      "writer": "acp"
+    }
+  ],
+  "deltas": [
+    {
+      "change": "turn",
+      "seq": 1,
+      "value": {
+        "lastOutcome": null,
+        "phase": "running",
+        "status": {
+          "confidence": "exact",
+          "source": "svode_runtime",
+          "state": "running"
+        },
+        "turnId": "01m42exa8xpk38d8qag0n5n05p"
+      }
+    },
+    {
+      "change": "item",
+      "seq": 2,
+      "value": {
+        "hasDetail": false,
+        "id": "user:01m42exa8xpk38d8qag0n5n05p",
+        "kind": "user_message",
+        "status": null,
+        "summary": "Fix the build",
+        "turnId": "01m42exa8xpk38d8qag0n5n05p"
+      }
+    },
+    {
+      "change": "item",
+      "seq": 3,
+      "value": {
+        "hasDetail": false,
+        "id": "01m42exa8xpk38d8qag0n5n05p:message:1",
+        "kind": "reasoning",
+        "status": null,
+        "summary": "Reading the build ",
+        "turnId": "01m42exa8xpk38d8qag0n5n05p"
+      }
+    },
+    {
+      "change": "item",
+      "seq": 4,
+      "value": {
+        "hasDetail": false,
+        "id": "01m42exa8xpk38d8qag0n5n05p:message:1",
+        "kind": "reasoning",
+        "status": null,
+        "summary": "Reading the build output first.",
+        "turnId": "01m42exa8xpk38d8qag0n5n05p"
+      }
+    },
+    {
+      "change": "item",
+      "seq": 5,
+      "value": {
+        "entries": [
+          {
+            "content": "Run the build",
+            "priority": "high",
+            "status": "in_progress"
+          },
+          {
+            "content": "Fix the error",
+            "priority": "medium",
+            "status": "pending"
+          }
+        ],
+        "hasDetail": false,
+        "id": "plan:01m42exa8xpk38d8qag0n5n05p",
+        "kind": "plan",
+        "status": null,
+        "summary": "",
+        "turnId": "01m42exa8xpk38d8qag0n5n05p"
+      }
+    },
+    {
+      "change": "item",
+      "seq": 6,
+      "value": {
+        "hasDetail": false,
+        "id": "call_build",
+        "kind": "tool_call",
+        "status": "in_progress",
+        "summary": "cargo build",
+        "tool": "execute",
+        "turnId": "01m42exa8xpk38d8qag0n5n05p"
+      }
+    },
+    {
+      "change": "item",
+      "seq": 7,
+      "value": {
+        "hasDetail": true,
+        "id": "call_build",
+        "kind": "tool_call",
+        "status": "failed",
+        "summary": "cargo build",
+        "tool": "execute",
+        "turnId": "01m42exa8xpk38d8qag0n5n05p"
+      }
+    },
+    {
+      "change": "item",
+      "seq": 8,
+      "value": {
+        "hasDetail": true,
+        "id": "call_read",
+        "kind": "tool_call",
+        "status": "completed",
+        "summary": "Read src/main.rs",
+        "tool": "read",
+        "turnId": "01m42exa8xpk38d8qag0n5n05p"
+      }
+    },
+    {
+      "change": "item",
+      "seq": 9,
+      "value": {
+        "hasDetail": false,
+        "id": "m1",
+        "kind": "agent_message",
+        "status": null,
+        "summary": "The build fails on an ",
+        "turnId": "01m42exa8xpk38d8qag0n5n05p"
+      }
+    },
+    {
+      "change": "item",
+      "seq": 10,
+      "value": {
+        "hasDetail": false,
+        "id": "m1",
+        "kind": "agent_message",
+        "status": null,
+        "summary": "The build fails on an undefined value.",
+        "turnId": "01m42exa8xpk38d8qag0n5n05p"
+      }
+    },
+    {
+      "change": "item",
+      "seq": 11,
+      "value": {
+        "hasDetail": false,
+        "id": "session:generic:2",
+        "kind": "generic",
+        "label": "future_update",
+        "status": null,
+        "summary": "",
+        "turnId": "01m42exa8xpk38d8qag0n5n05p"
+      }
+    },
+    {
+      "change": "item",
+      "seq": 12,
+      "value": {
+        "hasDetail": true,
+        "id": "call_edit",
+        "kind": "tool_call",
+        "status": "pending",
+        "summary": "Edit src/main.rs",
+        "tool": "edit",
+        "turnId": "01m42exa8xpk38d8qag0n5n05p"
+      }
+    },
+    {
+      "change": "item",
+      "seq": 13,
+      "value": {
+        "hasDetail": true,
+        "id": "call_edit",
+        "kind": "tool_call",
+        "status": "pending",
+        "summary": "Edit src/main.rs",
+        "tool": "edit",
+        "turnId": "01m42exa8xpk38d8qag0n5n05p"
+      }
+    },
+    {
+      "change": "pending",
+      "seq": 14,
+      "value": {
+        "fields": [],
+        "id": "interaction:1",
+        "kind": "permission",
+        "options": [
+          {
+            "id": "allow",
+            "kind": "allow_once",
+            "label": "Allow"
+          },
+          {
+            "id": "reject",
+            "kind": "reject_once",
+            "label": "Reject"
+          }
+        ],
+        "state": "pending",
+        "title": "Edit src/main.rs",
+        "toolCallId": "call_edit"
+      }
+    },
+    {
+      "change": "turn",
+      "seq": 15,
+      "value": {
+        "lastOutcome": null,
+        "phase": "running",
+        "status": {
+          "confidence": "exact",
+          "request": "permission",
+          "source": "svode_runtime",
+          "state": "requires_action"
+        },
+        "turnId": "01m42exa8xpk38d8qag0n5n05p"
+      }
+    },
+    {
+      "change": "pending",
+      "seq": 16,
+      "value": {
+        "fields": [],
+        "id": "interaction:1",
+        "kind": "permission",
+        "options": [
+          {
+            "id": "allow",
+            "kind": "allow_once",
+            "label": "Allow"
+          },
+          {
+            "id": "reject",
+            "kind": "reject_once",
+            "label": "Reject"
+          }
+        ],
+        "state": "answered",
+        "title": "Edit src/main.rs",
+        "toolCallId": "call_edit"
+      }
+    },
+    {
+      "change": "item",
+      "seq": 17,
+      "value": {
+        "declined": false,
+        "hasDetail": false,
+        "id": "interaction:1",
+        "kind": "interaction",
+        "option": "Allow",
+        "request": "permission",
+        "state": "answered",
+        "status": null,
+        "summary": "Edit src/main.rs",
+        "toolCallId": "call_edit",
+        "turnId": "01m42exa8xpk38d8qag0n5n05p"
+      }
+    },
+    {
+      "change": "turn",
+      "seq": 18,
+      "value": {
+        "lastOutcome": null,
+        "phase": "running",
+        "status": {
+          "confidence": "exact",
+          "source": "svode_runtime",
+          "state": "running"
+        },
+        "turnId": "01m42exa8xpk38d8qag0n5n05p"
+      }
+    },
+    {
+      "change": "item",
+      "seq": 19,
+      "value": {
+        "hasDetail": true,
+        "id": "call_edit",
+        "kind": "tool_call",
+        "status": "completed",
+        "summary": "Edit src/main.rs",
+        "tool": "edit",
+        "turnId": "01m42exa8xpk38d8qag0n5n05p"
+      }
+    },
+    {
+      "change": "item",
+      "seq": 20,
+      "value": {
+        "entries": [
+          {
+            "content": "Run the build",
+            "priority": "high",
+            "status": "completed"
+          },
+          {
+            "content": "Fix the error",
+            "priority": "medium",
+            "status": "completed"
+          }
+        ],
+        "hasDetail": false,
+        "id": "plan:01m42exa8xpk38d8qag0n5n05p",
+        "kind": "plan",
+        "status": null,
+        "summary": "",
+        "turnId": "01m42exa8xpk38d8qag0n5n05p"
+      }
+    },
+    {
+      "change": "item",
+      "seq": 21,
+      "value": {
+        "hasDetail": false,
+        "id": "m2",
+        "kind": "agent_message",
+        "status": null,
+        "summary": "Fixed: `x` is defined now.",
+        "turnId": "01m42exa8xpk38d8qag0n5n05p"
+      }
+    },
+    {
+      "change": "title",
+      "seq": 22,
+      "value": "Fix the build"
+    },
+    {
+      "change": "item",
+      "seq": 23,
+      "value": {
+        "durationMs": 0,
+        "hasDetail": false,
+        "id": "outcome:01m42exa8xpk38d8qag0n5n05p",
+        "kind": "turn_outcome",
+        "reason": "end_turn",
+        "status": null,
+        "summary": "",
+        "turnId": "01m42exa8xpk38d8qag0n5n05p"
+      }
+    },
+    {
+      "change": "turn",
+      "seq": 24,
+      "value": {
+        "lastOutcome": "end_turn",
+        "phase": "none",
+        "status": {
+          "confidence": "exact",
+          "source": "svode_runtime",
+          "state": "idle",
+          "stopReason": "end_turn"
+        },
+        "turnId": "01m42exa8xpk38d8qag0n5n05p"
+      }
+    }
+  ],
+  "final": {
+    "connection": "ready",
+    "history": {
+      "available": true,
+      "source": "live",
+      "truncatedItems": null
+    },
+    "items": [
+      {
+        "hasDetail": false,
+        "id": "user:01m42exa8xpk38d8qag0n5n05p",
+        "kind": "user_message",
+        "status": null,
+        "summary": "Fix the build",
+        "turnId": "01m42exa8xpk38d8qag0n5n05p"
+      },
+      {
+        "hasDetail": false,
+        "id": "01m42exa8xpk38d8qag0n5n05p:message:1",
+        "kind": "reasoning",
+        "status": null,
+        "summary": "Reading the build output first.",
+        "turnId": "01m42exa8xpk38d8qag0n5n05p"
+      },
+      {
+        "entries": [
+          {
+            "content": "Run the build",
+            "priority": "high",
+            "status": "completed"
+          },
+          {
+            "content": "Fix the error",
+            "priority": "medium",
+            "status": "completed"
+          }
+        ],
+        "hasDetail": false,
+        "id": "plan:01m42exa8xpk38d8qag0n5n05p",
+        "kind": "plan",
+        "status": null,
+        "summary": "",
+        "turnId": "01m42exa8xpk38d8qag0n5n05p"
+      },
+      {
+        "hasDetail": true,
+        "id": "call_build",
+        "kind": "tool_call",
+        "status": "failed",
+        "summary": "cargo build",
+        "tool": "execute",
+        "turnId": "01m42exa8xpk38d8qag0n5n05p"
+      },
+      {
+        "hasDetail": true,
+        "id": "call_read",
+        "kind": "tool_call",
+        "status": "completed",
+        "summary": "Read src/main.rs",
+        "tool": "read",
+        "turnId": "01m42exa8xpk38d8qag0n5n05p"
+      },
+      {
+        "hasDetail": false,
+        "id": "m1",
+        "kind": "agent_message",
+        "status": null,
+        "summary": "The build fails on an undefined value.",
+        "turnId": "01m42exa8xpk38d8qag0n5n05p"
+      },
+      {
+        "hasDetail": false,
+        "id": "session:generic:2",
+        "kind": "generic",
+        "label": "future_update",
+        "status": null,
+        "summary": "",
+        "turnId": "01m42exa8xpk38d8qag0n5n05p"
+      },
+      {
+        "hasDetail": true,
+        "id": "call_edit",
+        "kind": "tool_call",
+        "status": "completed",
+        "summary": "Edit src/main.rs",
+        "tool": "edit",
+        "turnId": "01m42exa8xpk38d8qag0n5n05p"
+      },
+      {
+        "declined": false,
+        "hasDetail": false,
+        "id": "interaction:1",
+        "kind": "interaction",
+        "option": "Allow",
+        "request": "permission",
+        "state": "answered",
+        "status": null,
+        "summary": "Edit src/main.rs",
+        "toolCallId": "call_edit",
+        "turnId": "01m42exa8xpk38d8qag0n5n05p"
+      },
+      {
+        "hasDetail": false,
+        "id": "m2",
+        "kind": "agent_message",
+        "status": null,
+        "summary": "Fixed: `x` is defined now.",
+        "turnId": "01m42exa8xpk38d8qag0n5n05p"
+      },
+      {
+        "durationMs": 0,
+        "hasDetail": false,
+        "id": "outcome:01m42exa8xpk38d8qag0n5n05p",
+        "kind": "turn_outcome",
+        "reason": "end_turn",
+        "status": null,
+        "summary": "",
+        "turnId": "01m42exa8xpk38d8qag0n5n05p"
+      }
+    ],
+    "pending": null,
+    "seq": 24,
+    "session": {
+      "agent": "scripted",
+      "namespace": "acp",
+      "sessionId": "s1"
+    },
+    "settings": [],
+    "title": "Fix the build",
+    "turn": {
+      "lastOutcome": "end_turn",
+      "phase": "none",
+      "status": {
+        "confidence": "exact",
+        "source": "svode_runtime",
+        "state": "idle",
+        "stopReason": "end_turn"
+      },
+      "turnId": "01m42exa8xpk38d8qag0n5n05p"
+    },
+    "writer": "acp"
+  },
+  "initial": {
+    "connection": "ready",
+    "history": {
+      "available": true,
+      "source": "live",
+      "truncatedItems": null
+    },
+    "items": [],
+    "pending": null,
+    "seq": 0,
+    "session": {
+      "agent": "scripted",
+      "namespace": "acp",
+      "sessionId": "s1"
+    },
+    "settings": [],
+    "title": null,
+    "turn": {
+      "lastOutcome": null,
+      "phase": "none",
+      "status": {
+        "confidence": "exact",
+        "source": "svode_runtime",
+        "state": "idle",
+        "stopReason": null
+      },
+      "turnId": null
+    },
+    "writer": "acp"
+  },
+  "prompt": "Fix the build"
+}

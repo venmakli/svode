@@ -70,6 +70,7 @@ import {
   SessionResumingState,
 } from "./session-states";
 import { SessionStatusMarker, statusText } from "./session-status";
+import { SessionChat } from "../chat/ui/session-chat";
 import { AGENT_SESSION_CONTENT_ATTRIBUTE } from "../lib/session-content";
 import * as m from "@/paraglide/messages.js";
 
@@ -109,6 +110,9 @@ export function AgentSessionContent({
     return names;
   }, [spaces]);
   const session = view.session;
+  const identityLabel = session
+    ? scopeLabel(session, activeRootName, spaceNames)
+    : null;
 
   function closeTerminal() {
     void view.closeTerminal().catch((error) => {
@@ -168,9 +172,7 @@ export function AgentSessionContent({
           <SessionIdentity
             session={session}
             checking={view.checking}
-            identityLabel={
-              session ? scopeLabel(session, activeRootName, spaceNames) : null
-            }
+            identityLabel={identityLabel}
           />
           {!renderActions && menu}
         </header>
@@ -187,6 +189,7 @@ export function AgentSessionContent({
         >
           <SessionBody
             view={view}
+            scopeLabel={identityLabel}
             onCopyCommand={copyResumeCommand}
             onOpenExternalTerminal={openExternalTerminal}
           />
@@ -270,10 +273,12 @@ function SessionIdentity({
 
 function SessionBody({
   view,
+  scopeLabel: sessionScopeLabel,
   onCopyCommand,
   onOpenExternalTerminal,
 }: {
   view: AgentSessionView;
+  scopeLabel: string | null;
   onCopyCommand: () => void;
   onOpenExternalTerminal: () => void;
 }) {
@@ -299,6 +304,18 @@ function SessionBody({
           </Button>
         </EmptyContent>
       </Empty>
+    );
+  }
+  // A session the Svode ACP runtime drives opens in its chat (`04`, chat
+  // and terminal: the interface of the session's writer).
+  const acpSession = session?.runtime?.acpSession;
+  if (session && acpSession && !view.ptyId) {
+    return (
+      <SessionChat
+        sessionId={session.id}
+        session={acpSession}
+        scopeLabel={sessionScopeLabel}
+      />
     );
   }
   if (view.ptyId) {

@@ -2,14 +2,16 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, SecondsFormat, Utc};
-use svode_agents::catalog::ListedSession;
+use svode_agents::catalog::{ListedSession, RuntimeSession};
 use svode_agents::identity::IdentityNamespace;
 use svode_agents::status::SessionState;
 use svode_core::agent_adapters::AgentId;
 
 use super::AgentSessionsState;
 use super::cache::{SavedList, SavedSession};
-use super::live_status::{map_listed, map_provisional_surface};
+use super::live_status::{
+    map_listed, map_provisional_surface, map_runtime_session, overlay_runtime,
+};
 use super::native_status::{NativeReads, parse_timestamp_str};
 use super::scope::{ScopeIndex, load_child_spaces, normalize_project_path, resolve_scope};
 use super::types::{
@@ -43,6 +45,7 @@ pub(crate) fn list_sessions(
     state: &AgentSessionsState,
     project_path: String,
     terminal_surfaces: Vec<AgentTerminalSurface>,
+    runtime_sessions: Vec<RuntimeSession>,
 ) -> Result<AgentSessionsListResult, AppError> {
     let project = normalize_project_path(&project_path)?;
     let scope_index = ScopeIndex::new(&project, load_child_spaces(&project)?)?;
@@ -94,6 +97,13 @@ pub(crate) fn list_sessions(
         reports.push(report);
     }
 
+    apply_runtime_sessions(
+        &mut sessions,
+        &runtime_sessions,
+        &scope_index,
+        &state.home_dir,
+        None,
+    );
     append_provisional_sessions(
         &mut sessions,
         &terminal_surfaces,
@@ -126,6 +136,7 @@ pub(crate) fn hot_status(
     project_path: String,
     session_ids: Vec<String>,
     terminal_surfaces: Vec<AgentTerminalSurface>,
+    runtime_sessions: Vec<RuntimeSession>,
 ) -> Result<AgentSessionsHotStatusResult, AppError> {
     let project = normalize_project_path(&project_path)?;
     let scope_index = ScopeIndex::new(&project, load_child_spaces(&project)?)?;
@@ -158,6 +169,13 @@ pub(crate) fn hot_status(
             ));
         }
     }
+    apply_runtime_sessions(
+        &mut sessions,
+        &runtime_sessions,
+        &scope_index,
+        &state.home_dir,
+        Some(&requested),
+    );
     let skipped_sessions = requested.len().saturating_sub(sessions.len());
 
     append_provisional_sessions(
@@ -286,6 +304,34 @@ fn read_native(
         return NativeReads::default();
     }
     state.native_status.read(source, &ids)
+}
+
+/// Sessions the runtime drives: laid over their listed record, or their own
+/// record of the project until their agent lists them.
+fn apply_runtime_sessions(
+    sessions: &mut Vec<AgentSession>,
+    runtime_sessions: &[RuntimeSession],
+    scope_index: &ScopeIndex,
+    home: &Path,
+    requested: Option<&HashSet<String>>,
+) {
+    for runtime in runtime_sessions {
+        let Ok(source) = AgentId::parse(&runtime.key.agent) else {
+            continue;
+        };
+        let id = catalog_session_id(&source, &runtime.key);
+        if let Some(listed) = sessions.iter_mut().find(|session| session.id == id) {
+            overlay_runtime(listed, runtime);
+            continue;
+        }
+        if requested.is_some_and(|ids| !ids.contains(&id)) {
+            continue;
+        }
+        let Some(scope) = resolve_scope(scope_index, &runtime.cwd, home) else {
+            continue;
+        };
+        sessions.push(map_runtime_session(source, runtime, scope));
+    }
 }
 
 fn append_provisional_sessions(
@@ -519,8 +565,13 @@ mod tests {
         project: &Path,
         surfaces: Vec<AgentTerminalSurface>,
     ) -> AgentSessionsListResult {
-        list_sessions(state, project.to_string_lossy().into_owned(), surfaces)
-            .expect("list sessions")
+        list_sessions(
+            state,
+            project.to_string_lossy().into_owned(),
+            surfaces,
+            Vec::new(),
+        )
+        .expect("list sessions")
     }
 
     fn hot(state: &AgentSessionsState, project: &Path, id: &str) -> AgentSessionsHotStatusResult {
@@ -528,6 +579,7 @@ mod tests {
             state,
             project.to_string_lossy().into_owned(),
             vec![id.to_string()],
+            Vec::new(),
             Vec::new(),
         )
         .expect("hot status")
@@ -1619,5 +1671,136 @@ mod tests {
             status_of(AgentAdapterKind::Codex),
             AgentSessionSourceStatus::Ok
         );
+    }
+
+    fn runtime_session(agent: &str, id: &str, native: bool, cwd: &Path) -> RuntimeSession {
+        RuntimeSession {
+            key: SessionKey::from_acp(agent, id, native),
+            cwd: cwd.to_path_buf(),
+            title: Some("Fix the login bug".into()),
+            status: SessionStatus::runtime(SessionState::Running),
+            started_at: std::time::SystemTime::now(),
+            updated_at: std::time::SystemTime::now(),
+        }
+    }
+
+    fn list_with_runtime(
+        state: &AgentSessionsState,
+        project: &Path,
+        runtime: Vec<RuntimeSession>,
+    ) -> AgentSessionsListResult {
+        list_sessions(
+            state,
+            project.to_string_lossy().into_owned(),
+            Vec::new(),
+            runtime,
+        )
+        .expect("list sessions")
+    }
+
+    #[test]
+    fn a_runtime_session_is_listed_in_its_space_before_its_agent_lists_it() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let home = temp.path().join("home");
+        let project = temp.path().join("project");
+        let child = project.join("dev");
+        fs::create_dir_all(&child).expect("child");
+        write_root_config(&project, vec![space_ref("dev-space", "dev", None)]);
+        let state = AgentSessionsState::with_home(home);
+        let elsewhere = temp.path().join("elsewhere");
+
+        let result = list_with_runtime(
+            &state,
+            &project,
+            vec![
+                runtime_session("codex", "n1", true, &child),
+                runtime_session("custom-local", "c1", false, &project),
+                runtime_session("codex", "other", true, &elsewhere),
+            ],
+        );
+
+        let mut ids: Vec<_> = result.sessions.iter().map(|s| s.id.as_str()).collect();
+        ids.sort();
+        assert_eq!(ids, ["codex:n1", "custom-local:acp:c1"]);
+        let created = by_id(&result, "codex:n1");
+        assert_eq!(created.space_id.as_deref(), Some("dev-space"));
+        assert_eq!(created.title, "Fix the login bug");
+        assert_eq!(
+            created.status,
+            SessionStatus::runtime(SessionState::Running)
+        );
+        assert_eq!(
+            created
+                .runtime
+                .as_ref()
+                .and_then(|runtime| runtime.acp_session.clone()),
+            Some(SessionKey::from_acp("codex", "n1", true))
+        );
+        assert!(created.resume_command.is_some());
+        let custom = by_id(&result, "custom-local:acp:c1");
+        assert!(custom.resume_command.is_none());
+        assert!(!custom.capabilities.can_resume);
+        // The runtime record never reaches the saved list of the project.
+        assert!(
+            state
+                .snapshots
+                .lists(&project, |_| ())
+                .values()
+                .all(|list| list.sessions.is_empty())
+        );
+    }
+
+    #[test]
+    fn a_listed_session_the_runtime_drives_stays_one_record_with_the_runtime_status() {
+        let (_temp, home, project) = project_dirs();
+        let state = AgentSessionsState::with_home(home);
+        let id = codex_id(21);
+        acp_list(
+            &state,
+            "codex",
+            true,
+            vec![(id.as_str(), &project, LISTED_AT)],
+        );
+
+        let result = list_with_runtime(
+            &state,
+            &project,
+            vec![runtime_session("codex", &id, true, &project)],
+        );
+
+        let key = format!("codex:{id}");
+        assert_eq!(
+            result
+                .sessions
+                .iter()
+                .filter(|session| session.id == key)
+                .count(),
+            1
+        );
+        let session = by_id(&result, &key);
+        assert_eq!(session.title, format!("ACP {id}"), "the listed title stays");
+        assert_eq!(
+            session.status,
+            SessionStatus::runtime(SessionState::Running)
+        );
+        assert!(session.resume_command.is_some());
+        assert_eq!(
+            session
+                .runtime
+                .as_ref()
+                .and_then(|runtime| runtime.acp_session.clone()),
+            Some(SessionKey::from_acp("codex", &id, true))
+        );
+
+        let hot = hot_status(
+            &state,
+            project.to_string_lossy().into_owned(),
+            vec![key.clone()],
+            Vec::new(),
+            vec![runtime_session("codex", &id, true, &project)],
+        )
+        .expect("hot status");
+        assert_eq!(hot.sessions.len(), 1);
+        assert_eq!(hot.sessions[0].status.state, SessionState::Running);
     }
 }

@@ -1,20 +1,25 @@
 //! Desktop owner of agent connections (Stage 10 `02` C1/C3, `03` A1). An
 //! agent's ACP entrypoint starts only at a lifecycle boundary and only for
 //! an available agent: an open Sessions collection for the agents whose
-//! catalogue is their ACP list, and the user's explicit check; opening or
-//! creating a session and a Routine/Actor launch acquire through the same
-//! planner in their slices. Sharing by launch plan, the provenance split
-//! and closing for idleness belong to the runtime.
+//! catalogue is their ACP list, the user's explicit check, an agent chosen
+//! in a new session draft and the creation of a session; opening a session
+//! and a Routine/Actor launch acquire through the same planner in their
+//! slices. Sharing by launch plan, the provenance split and closing for
+//! idleness belong to the runtime.
 
 use std::collections::HashMap;
 use std::future::Future;
+use std::path::Path;
 use std::pin::Pin;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use svode_agents::adapters::LaunchUnavailable;
 use svode_agents::custom::CustomAgentDefinition;
-use svode_agents::{AcpLaunch, AgentCheck, AgentRuntime, AgentRuntimeError, ConnectionLease};
+use svode_agents::identity::SessionKey;
+use svode_agents::{
+    AcpLaunch, AgentCheck, AgentRuntime, AgentRuntimeError, ConnectionLease, SettingValue,
+};
 
 pub(crate) type PlanFuture<'a> =
     Pin<Box<dyn Future<Output = Result<AcpLaunch, LaunchUnavailable>> + Send + 'a>>;
@@ -49,6 +54,31 @@ pub struct AgentConnections {
     planner: Box<dyn LaunchPlanner>,
     next_hold: AtomicU64,
     catalog: Mutex<CatalogDemand>,
+    /// Hold id → the new session draft that chose the agent of the lease.
+    drafts: Mutex<HashMap<u64, DraftHold>>,
+}
+
+struct DraftHold {
+    webview: String,
+    _lease: ConnectionLease,
+}
+
+/// What creating a session from a draft did.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(
+    tag = "outcome",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
+pub enum SessionStart {
+    /// The agent created the session and the runtime accepted its first
+    /// prompt as turn `turn_id`.
+    Started {
+        session: SessionKey,
+        turn_id: String,
+    },
+    /// The agent is no longer available; nothing started.
+    Unavailable { reason: LaunchUnavailable },
 }
 
 /// Open Sessions collections and the catalogue connections they keep.
@@ -74,6 +104,7 @@ impl AgentConnections {
             planner: Box::new(planner),
             next_hold: AtomicU64::new(0),
             catalog: Mutex::default(),
+            drafts: Mutex::default(),
         }
     }
 
@@ -96,6 +127,81 @@ impl AgentConnections {
             Ok(launch) => self.runtime.check(launch).await,
             Err(reason) => AgentCheck::Unavailable { reason },
         }
+    }
+
+    /// A new session draft chose `agent` (Stage 10 `04`, a C1 boundary): its
+    /// connection starts and stays while the hold lives, and the outcome is
+    /// what the draft shows before the first prompt. Only a ready agent
+    /// gets a hold.
+    pub async fn hold_draft(&self, webview: &str, agent: &str) -> (Option<u64>, AgentCheck) {
+        let lease = match self.acquire(agent).await {
+            Ok(lease) => lease,
+            Err(ConnectRefusal::Unavailable(reason)) => {
+                return (None, AgentCheck::Unavailable { reason });
+            }
+            Err(ConnectRefusal::Failed(AgentRuntimeError::AuthRequired { message })) => {
+                return (None, AgentCheck::AuthRequired { message });
+            }
+            Err(ConnectRefusal::Failed(error)) => {
+                return (
+                    None,
+                    AgentCheck::FailedToStart {
+                        message: error.to_string(),
+                    },
+                );
+            }
+        };
+        let Some(info) = self
+            .runtime
+            .connection_status(lease.connection())
+            .and_then(|status| status.agent)
+        else {
+            return (
+                None,
+                AgentCheck::FailedToStart {
+                    message: AgentRuntimeError::ConnectionClosed.to_string(),
+                },
+            );
+        };
+        let hold = self.next_hold.fetch_add(1, Ordering::Relaxed) + 1;
+        self.drafts.lock().unwrap().insert(
+            hold,
+            DraftHold {
+                webview: webview.to_string(),
+                _lease: lease,
+            },
+        );
+        (Some(hold), AgentCheck::Ready { agent: info })
+    }
+
+    /// The draft closed, chose another agent or became a session.
+    pub fn release_draft(&self, hold: u64) {
+        self.drafts.lock().unwrap().remove(&hold);
+    }
+
+    /// Creates a session of `agent` in `cwd` with the draft's setting values
+    /// and sends its first prompt: the first send of a new session draft.
+    /// The session enters the catalogue once the prompt is accepted.
+    pub async fn start_session(
+        &self,
+        agent: &str,
+        cwd: &Path,
+        settings: &[SettingValue],
+        prompt: &str,
+    ) -> Result<SessionStart, AgentRuntimeError> {
+        let lease = match self.acquire(agent).await {
+            Ok(lease) => lease,
+            Err(ConnectRefusal::Unavailable(reason)) => {
+                return Ok(SessionStart::Unavailable { reason });
+            }
+            Err(ConnectRefusal::Failed(error)) => return Err(error),
+        };
+        let session = self
+            .runtime
+            .new_session(lease.connection(), cwd, settings)
+            .await?;
+        let turn_id = self.runtime.prompt(&session, prompt)?;
+        Ok(SessionStart::Started { session, turn_id })
     }
 
     /// The user's check of a custom agent's definition before it is saved.
@@ -130,11 +236,17 @@ impl AgentConnections {
         catalog.release_if_unheld();
     }
 
-    /// A reloading or closing webview no longer shows its collections.
+    /// A reloading or closing webview no longer shows its collections and
+    /// drafts.
     pub fn release_webview(&self, webview: &str) {
         let mut catalog = self.catalog.lock().unwrap();
         catalog.holds.retain(|_, label| label != webview);
         catalog.release_if_unheld();
+        drop(catalog);
+        self.drafts
+            .lock()
+            .unwrap()
+            .retain(|_, draft| draft.webview != webview);
     }
 
     /// A disabled agent's catalogue is no longer kept.

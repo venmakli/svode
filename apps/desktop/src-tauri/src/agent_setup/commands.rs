@@ -4,12 +4,15 @@
 
 use std::sync::Arc;
 
+use serde::Serialize;
 use svode_agents::AgentCheck;
-use svode_agents::adapters::AgentSetup;
+use svode_agents::adapters::{AgentSetup, ChatOffer, chat_offer};
 use svode_agents::custom::{
     CustomAgent, CustomAgentDefinition, CustomAgentSetup, custom_agent_setup,
 };
-use svode_agents::registry::{AdapterRuntimeRegistry, AdapterTarget, SystemRuntimeCommandRunner};
+use svode_agents::registry::{
+    AdapterRuntimeRegistry, AdapterTarget, AgentVerdict, SystemRuntimeCommandRunner,
+};
 use svode_core::agent_adapters::{
     AgentAdapterKind, CustomAgentId, resolve_space_executable, system_home_dir,
 };
@@ -18,7 +21,7 @@ use tokio::task::JoinSet;
 
 use super::AgentSetupState;
 use crate::agent_runtime::AgentRuntimeState;
-use crate::agent_runtime::connections::AgentConnections;
+use crate::agent_runtime::connections::{AgentConnections, LaunchPlanner};
 use crate::agent_sessions::AgentSessionsState;
 use crate::error::AppError;
 use crate::process::path_env::ProcessPath;
@@ -74,6 +77,62 @@ pub async fn agent_setup_list(
     let mut setups = reads.join_all().await;
     setups.sort_by_key(|(order, _)| *order);
     Ok(setups.into_iter().map(|(_, setup)| setup).collect())
+}
+
+/// One agent a new session offers for chat.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatAgent {
+    pub agent: String,
+    pub name: String,
+    pub offer: ChatOffer,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatAgents {
+    /// In the order of the agent settings: registry agents, then custom
+    /// agents in the order the user added them.
+    pub agents: Vec<ChatAgent>,
+    /// The agent of the last session created in the chat on this device.
+    pub last: Option<String>,
+}
+
+/// The agents a new session draft offers (Stage 10 `04`, `03` A1/A8). Only
+/// launch plans are resolved: bounded version probes, no ACP process.
+#[tauri::command]
+pub async fn agent_setup_chat_agents(
+    state: State<'_, AgentSetupState>,
+) -> Result<ChatAgents, AppError> {
+    let builtin = AgentAdapterKind::ALL.into_iter().map(|agent| {
+        (
+            agent.as_str().to_string(),
+            agent.display_name().to_string(),
+            AdapterRuntimeRegistry.verdict(agent) == AgentVerdict::Deferred,
+        )
+    });
+    let custom = state.custom_agents().into_iter().map(|custom| {
+        (
+            custom.id.agent_id().as_str().to_string(),
+            custom.definition.name,
+            false,
+        )
+    });
+    let mut reads = JoinSet::new();
+    for (order, (agent, name, deferred)) in builtin.chain(custom).enumerate() {
+        let state = (*state).clone();
+        reads.spawn(async move {
+            let plan = state.plan(&agent).await;
+            let offer = chat_offer(deferred, &plan);
+            (order, offer.map(|offer| ChatAgent { agent, name, offer }))
+        });
+    }
+    let mut offered = reads.join_all().await;
+    offered.sort_by_key(|(order, _)| *order);
+    Ok(ChatAgents {
+        agents: offered.into_iter().filter_map(|(_, agent)| agent).collect(),
+        last: state.last_chat_agent(),
+    })
 }
 
 /// Enabling an agent with an adapter installs the adapter when none is

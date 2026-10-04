@@ -417,11 +417,12 @@ async fn live_the_acp_lists_are_the_catalogue_with_native_status() {
         let (state, project) = (state.clone(), project.clone());
         async move {
             let started = std::time::Instant::now();
-            let result =
-                tokio::task::spawn_blocking(move || list_sessions(&state, project, Vec::new()))
-                    .await
-                    .unwrap()
-                    .unwrap();
+            let result = tokio::task::spawn_blocking(move || {
+                list_sessions(&state, project, Vec::new(), Vec::new())
+            })
+            .await
+            .unwrap()
+            .unwrap();
             (result, started.elapsed())
         }
     };
@@ -506,4 +507,139 @@ async fn live_the_acp_lists_are_the_catalogue_with_native_status() {
         "adapter processes left: {}",
         String::from_utf8_lossy(&left.stdout)
     );
+}
+
+/// A `/bin/sh` ACP agent that creates session `n1` and accepts prompts
+/// without answering them, so the turn keeps running; with `$SVODE_AUTH`
+/// set it refuses to create a session until the user signs in, as the
+/// official adapters do.
+fn session_agent(agent: &str, auth: bool) -> AcpLaunch {
+    const SCRIPT: &str = r#"while IFS= read -r line; do
+  id=${line#'{"id":'}; id=${id%%,*}
+  case "$line" in
+    *'"method":"initialize"'*) printf '{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":1,"agentCapabilities":{},"agentInfo":{"name":"scripted","version":"1.0.0"}}}\n' "$id";;
+    *'"method":"session/new"'*) if [ -n "$SVODE_AUTH" ]; then
+        printf '{"jsonrpc":"2.0","id":%s,"error":{"code":-32000,"message":"Authentication required"}}\n' "$id"
+      else
+        printf '{"jsonrpc":"2.0","id":%s,"result":{"sessionId":"n1"}}\n' "$id"
+      fi;;
+  esac
+done"#;
+    let mut env = BTreeMap::new();
+    if auth {
+        env.insert("SVODE_AUTH".into(), "1".into());
+    }
+    AcpLaunch {
+        agent: agent.into(),
+        program: PathBuf::from("/bin/sh"),
+        args: vec!["-c".into(), SCRIPT.into()],
+        environment: None,
+        env,
+        cwd: std::env::temp_dir(),
+        acp_id_is_native: true,
+        lists_catalog: false,
+        read_only_open: false,
+        writer_refusal: None,
+        session_per_connection: false,
+    }
+}
+
+fn open_connections(runtime: &AgentRuntime, agent: &str) -> usize {
+    runtime
+        .sessions()
+        .iter()
+        .filter(|session| session.key.agent == agent)
+        .count()
+}
+
+#[tokio::test]
+async fn a_draft_starts_its_ready_agent_and_its_hold_keeps_the_connection() {
+    let runtime = runtime();
+    let (connections, _) = owner(
+        &runtime,
+        vec![
+            ("codex", Ok(session_agent("codex", false))),
+            ("claude-code", Ok(session_agent("claude-code", true))),
+            (
+                "pi",
+                Err(LaunchUnavailable::AdapterNeedsUpdate {
+                    installed_version: "0.0.1".into(),
+                }),
+            ),
+        ],
+    );
+
+    let (hold, check) = connections.hold_draft("main", "codex").await;
+    assert!(matches!(check, AgentCheck::Ready { .. }));
+    let hold = hold.expect("a ready agent is held");
+    let (none, unavailable) = connections.hold_draft("main", "pi").await;
+    assert_eq!(none, None);
+    assert!(matches!(
+        unavailable,
+        AgentCheck::Unavailable {
+            reason: LaunchUnavailable::AdapterNeedsUpdate { .. }
+        }
+    ));
+
+    // The hold keeps the connection past its idle time; a draft creates no
+    // session.
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    let (_, again) = connections.hold_draft("other", "codex").await;
+    let AgentCheck::Ready { .. } = again else {
+        panic!("still ready");
+    };
+    assert_eq!(open_connections(&runtime, "codex"), 0);
+
+    connections.release_draft(hold);
+    connections.release_webview("other");
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn the_first_send_creates_the_session_and_lists_it_once_the_prompt_is_accepted() {
+    let runtime = runtime();
+    let (connections, _) = owner(
+        &runtime,
+        vec![
+            ("codex", Ok(session_agent("codex", false))),
+            ("claude-code", Ok(session_agent("claude-code", true))),
+            ("pi", Err(LaunchUnavailable::NodeMissing { required: 22 })),
+        ],
+    );
+    let project = tempfile::tempdir().unwrap();
+
+    let start = connections
+        .start_session("codex", project.path(), &[], "Fix the build\nnow")
+        .await
+        .unwrap();
+    let crate::agent_runtime::connections::SessionStart::Started { session, turn_id } = start
+    else {
+        panic!("started: {start:?}");
+    };
+    assert_eq!(session.session_id, "n1");
+    assert!(!turn_id.is_empty());
+    let listed = runtime.sessions();
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].key, session);
+    assert_eq!(listed[0].title.as_deref(), Some("Fix the build"));
+
+    let unavailable = connections
+        .start_session("pi", project.path(), &[], "hello")
+        .await
+        .unwrap();
+    assert!(matches!(
+        unavailable,
+        crate::agent_runtime::connections::SessionStart::Unavailable { .. }
+    ));
+    // Sign-in is the agent's own: it refuses the session and nothing is
+    // listed.
+    assert!(matches!(
+        connections
+            .start_session("claude-code", project.path(), &[], "hello")
+            .await,
+        Err(svode_agents::AgentRuntimeError::AuthRequired { .. })
+    ));
+    assert_eq!(runtime.sessions().len(), 1);
+    runtime.shutdown().await;
 }

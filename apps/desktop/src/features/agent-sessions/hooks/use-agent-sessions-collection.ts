@@ -25,6 +25,7 @@ import {
   type AgentSession,
   type AgentSessionOpenOptions,
   type AgentSessionTarget,
+  type NewSessionDraftTarget,
 } from "../model";
 import {
   AGENT_SESSIONS_PRESENTATION_ID,
@@ -35,7 +36,7 @@ import {
 } from "../ui/sessions-presentation";
 import { useAgentSessionCatalog } from "./use-agent-session-catalog";
 import { useAgentSessionScopes } from "./use-agent-session-scopes";
-import { useStartAgentSession } from "./use-start-agent-session";
+import { useOpenNewSession } from "./use-open-new-session";
 import * as m from "@/paraglide/messages.js";
 
 export interface AgentSessionTerminalClose {
@@ -50,6 +51,7 @@ export interface AgentSessionTerminalClose {
 export function useAgentSessionsCollection({
   owner,
   onOpenSession,
+  onOpenNewSessionDraft,
   onOpenAppSettings,
   onOpenRoutine,
 }: {
@@ -58,6 +60,7 @@ export function useAgentSessionsCollection({
     target: AgentSessionTarget,
     options?: AgentSessionOpenOptions,
   ): void;
+  onOpenNewSessionDraft(draft: NewSessionDraftTarget): void;
   onOpenAppSettings(): void;
   onOpenRoutine(routine: RoutineLaunchLink): void;
 }) {
@@ -83,7 +86,7 @@ export function useAgentSessionsCollection({
   const closeCatalogTerminal = useAgentSessionCatalog(
     (state) => state.closeTerminal,
   );
-  const startSession = useStartAgentSession();
+  const openNewSession = useOpenNewSession();
   const [creating, setCreating] = useState(false);
   const [closeRequest, setCloseRequest] =
     useState<AgentSessionTerminalClose | null>(null);
@@ -147,9 +150,11 @@ export function useAgentSessionsCollection({
       if (creating) return;
       setCreating(true);
       try {
-        const target = await startSession(owner.spacePath);
-        // Starting a session is an explicit move into its terminal.
-        if (target) onOpenSession(target, { focusTerminal: true });
+        const opening = await openNewSession(owner.spacePath);
+        if (opening?.kind === "draft") onOpenNewSessionDraft(opening.draft);
+        // Without a chat agent it starts in a terminal, an explicit move
+        // into it.
+        else if (opening) onOpenSession(opening.target, { focusTerminal: true });
       } finally {
         setCreating(false);
       }

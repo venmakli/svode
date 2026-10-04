@@ -67,6 +67,12 @@ export type AgentToolKindDto =
   | "switch_mode"
   | "other";
 
+export interface AgentPlanEntryDto {
+  content: string;
+  priority: "high" | "medium" | "low";
+  status: "pending" | "in_progress" | "completed";
+}
+
 export type AgentActivityItemDto = (
   | { kind: "user_message" }
   | { kind: "agent_message" }
@@ -75,9 +81,24 @@ export type AgentActivityItemDto = (
   | { kind: "mode_change" }
   | { kind: "config_change" }
   | { kind: "usage" }
-  | { kind: "turn_outcome"; reason: AgentStopReasonDto }
+  /** The turn's plan; a later plan of the turn replaces it in place. */
+  | { kind: "plan"; entries: AgentPlanEntryDto[] }
+  /** A resolved request; a permission belongs to its tool call row. */
+  | {
+      kind: "interaction";
+      request: AgentInteractionKindDto;
+      state: AgentInteractionStateDto;
+      toolCallId: string | null;
+      option: string | null;
+      declined: boolean;
+    }
+  | {
+      kind: "turn_outcome";
+      reason: AgentStopReasonDto;
+      durationMs: number | null;
+    }
   | { kind: "error" }
-  | { kind: "interrupted" }
+  | { kind: "interrupted"; durationMs: number | null }
   | { kind: "generic"; label: string }
 ) & {
   id: string;
@@ -87,14 +108,6 @@ export type AgentActivityItemDto = (
   summary: string;
   hasDetail: boolean;
 };
-
-export interface AgentPlanDto {
-  entries: {
-    content: string;
-    priority: "high" | "medium" | "low";
-    status: "pending" | "in_progress" | "completed";
-  }[];
-}
 
 export type AgentInteractionStateDto =
   | "pending"
@@ -156,6 +169,8 @@ export interface AgentPendingInteractionDto {
   id: string;
   kind: AgentInteractionKindDto;
   title: string;
+  /** The tool call a permission is for; its item carries the subject. */
+  toolCallId: string | null;
   /** Permission options; empty for a question. */
   options: {
     id: string;
@@ -195,17 +210,17 @@ export interface AgentSessionSnapshotDto {
   connection: AgentConnectionStateDto;
   turn: AgentTurnStateDto;
   items: AgentActivityItemDto[];
-  plan: AgentPlanDto | null;
   pending: AgentPendingInteractionDto | null;
   history: AgentHistoryStateDto;
   writer: AgentWriterStateDto;
   settings: AgentSessionSettingDto[];
+  /** The session title the agent reported. */
+  title: string | null;
 }
 
 /** Exactly one change with seq = previous + 1. */
 export type AgentSessionDeltaDto = { seq: number } & (
   | { change: "item"; value: AgentActivityItemDto }
-  | { change: "plan"; value: AgentPlanDto }
   | { change: "turn"; value: AgentTurnStateDto }
   /** A non-`pending` state clears the pending interaction. */
   | { change: "pending"; value: AgentPendingInteractionDto }
@@ -219,6 +234,7 @@ export type AgentSessionDeltaDto = { seq: number } & (
   | { change: "writer"; value: AgentWriterStateDto }
   /** Replaces the whole set of session settings. */
   | { change: "settings"; value: AgentSessionSettingDto[] }
+  | { change: "title"; value: string }
 );
 
 /** The snapshot first, then the deltas after it in seq order. */
@@ -262,9 +278,16 @@ export type AgentRuntimeErrorCode =
   | "connection_not_found"
   | "connection_closed"
   | "session_not_found"
+  | "connection_taken"
+  | "open_unsupported"
+  | "read_only_unsupported"
+  | "writer_required"
+  | "list_unsupported"
   | "turn_active"
   | "invalid_answer"
   | "auth_required"
+  | "writer_refused"
+  | "setting_refused"
   | "timeout"
   | "agent"
   | "protocol";
@@ -367,4 +390,52 @@ export function answerAgentInteraction(
     interaction,
     answer,
   });
+}
+
+/** A value for one declared session setting. */
+export interface AgentSettingValueDto {
+  setting: string;
+  value: string;
+}
+
+/** What a new session draft shows for its agent. */
+export interface DraftAgentDto {
+  /** Present while the ready agent's connection is held for the draft. */
+  hold: number | null;
+  check: AgentCheckDto;
+}
+
+/**
+ * A new session draft chose `agent`: its connection starts so the draft
+ * shows its readiness before the first prompt.
+ */
+export function holdDraftAgent(agent: string): Promise<DraftAgentDto> {
+  return invoke<DraftAgentDto>("agent_runtime_hold_draft", { agent });
+}
+
+export function releaseDraftAgent(hold: number): Promise<void> {
+  return invoke<void>("agent_runtime_release_draft", { hold });
+}
+
+export type StartedAgentSessionDto =
+  | {
+      outcome: "started";
+      session: AgentSessionKeyDto;
+      /** The catalogue id the session is listed under. */
+      sessionId: string;
+      turnId: string;
+    }
+  | { outcome: "unavailable"; reason: AgentLaunchUnavailableDto };
+
+/**
+ * The first send of a new session draft: creates the session in `cwd`,
+ * applies `settings` and sends the prompt.
+ */
+export function startAgentSession(request: {
+  agent: string;
+  cwd: string;
+  settings: AgentSettingValueDto[];
+  text: string;
+}): Promise<StartedAgentSessionDto> {
+  return invoke<StartedAgentSessionDto>("agent_runtime_start_session", request);
 }

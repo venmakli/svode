@@ -4,7 +4,7 @@
 //! projects and merges them with its other sources by `SessionKey`.
 
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
@@ -12,6 +12,7 @@ use tokio::sync::broadcast;
 use crate::acp::normalize::bounded;
 use crate::identity::SessionKey;
 use crate::runtime::ConnectionId;
+use crate::status::SessionStatus;
 
 /// A session id longer than this is not an id Svode keeps.
 const SESSION_ID_BYTES: usize = 512;
@@ -65,6 +66,33 @@ pub struct SessionList {
     pub truncated: bool,
     /// Entries dropped as malformed, out of bounds or repeated.
     pub skipped: usize,
+}
+
+/// A session this runtime drives, by runtime evidence (Stage 10 `02` C3):
+/// a created one once its first prompt was accepted, an opened one from its
+/// opening. It lives in the runtime process only; a host merges it with
+/// its declared source by `key` and never writes it to a disk cache.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuntimeSession {
+    pub key: SessionKey,
+    /// The working directory the session was created or opened in.
+    pub cwd: PathBuf,
+    /// The agent's title, else the bounded first line of the first prompt.
+    pub title: Option<String>,
+    pub status: SessionStatus,
+    /// When this runtime created or opened the session.
+    pub started_at: SystemTime,
+    pub updated_at: SystemTime,
+}
+
+/// The bounded first line of a prompt, the title of a runtime session until
+/// the agent names it.
+pub(crate) fn prompt_title(prompt: &str, bounds: &ListBounds) -> Option<String> {
+    let line = prompt
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())?;
+    Some(bounded(line, bounds.title_bytes).trim().to_string())
 }
 
 /// The open connection whose `session/list` is the declared catalogue

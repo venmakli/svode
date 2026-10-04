@@ -45,8 +45,6 @@ function applyChange(
           : current.items.map((known, at) => (at === index ? item : known));
       return next;
     }
-    case "plan":
-      return { ...next, plan: delta.value };
     case "turn":
       return { ...next, turn: delta.value };
     case "pending":
@@ -70,5 +68,7 @@ function applyChange(
       return { ...next, writer: delta.value };
     case "settings":
       return { ...next, settings: delta.value };
+    case "title":
+      return { ...next, title: delta.value };
   }
 }

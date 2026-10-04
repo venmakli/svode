@@ -52,12 +52,17 @@ import {
   type MainSurface,
 } from "./model";
 import { GraphSurface } from "./main-surfaces";
-import { AgentSessionMainSurface } from "@/features/agent-sessions";
+import {
+  AgentSessionDraftMainSurface,
+  AgentSessionMainSurface,
+} from "@/features/agent-sessions";
 import { ActiveSpaceContent } from "./active-space-content";
 import { AgentSessionCatalogHost } from "./agent-session-catalog-host";
 import {
   AgentSessionPeekHost,
+  useShowStartedSessionInMainArea,
   useStartSessionInPeek,
+  useStartTerminalSessionInMainArea,
 } from "./agent-session-peek-host";
 import { NewSessionSidebarRow } from "./new-session-sidebar-row";
 import { useOpenSessionRoutine } from "./open-session-routine";
@@ -371,6 +376,10 @@ function ShellMainInset({
 }) {
   const openSessionRoutine = useOpenSessionRoutine();
   const mainSessionTarget = useShellStore((state) => state.mainSessionTarget);
+  const mainSessionDraft = useShellStore((state) => state.mainSessionDraft);
+  const openAppSettings = useShellStore((state) => state.openAppSettings);
+  const showStartedSession = useShowStartedSessionInMainArea();
+  const startTerminalSession = useStartTerminalSessionInMainArea();
   const mainSessionFocus = useShellStore((state) => state.mainSessionFocus);
   const mainSessionFocusTerminal = useShellStore(
     (state) => state.mainSessionFocusTerminal,
@@ -398,6 +407,17 @@ function ShellMainInset({
               focus={mainSessionFocus}
               focusTerminal={mainSessionFocusTerminal}
               onOpenRoutine={openSessionRoutine}
+            />
+          ) : mainSurface === "session" && mainSessionDraft ? (
+            <AgentSessionDraftMainSurface
+              draft={mainSessionDraft}
+              onStarted={(started) =>
+                showStartedSession(started, mainSessionDraft.spacePath)
+              }
+              onOpenTerminal={(spacePath) =>
+                void startTerminalSession(spacePath)
+              }
+              onOpenAgentSettings={() => openAppSettings("providers")}
             />
           ) : mainSurface === "graph" ? (
             <GraphSurface

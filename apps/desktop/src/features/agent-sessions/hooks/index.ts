@@ -8,6 +8,10 @@ export {
 export { useAgentSessionScopes } from "./use-agent-session-scopes";
 export { useStartAgentSession } from "./use-start-agent-session";
 export {
+  useOpenNewSession,
+  type NewSessionOpening,
+} from "./use-open-new-session";
+export {
   useAgentSessionView,
   useResolvedAgentSession,
   type AgentSessionView,
