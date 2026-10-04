@@ -28,7 +28,7 @@ const ITEM_OVERHEAD: usize = 64;
 enum Detail {
     /// The content with its size in bytes.
     Blocks(Vec<DetailBlock>, usize),
-    /// Beyond the per-item bound; never kept.
+    /// Detail other than text beyond the per-item bound; never kept.
     TooLarge,
     /// Released under the process bound; the summary stays.
     Released,
@@ -412,21 +412,27 @@ impl Projection {
             },
         };
         self.open_message = Some((role, id.clone()));
-        let mut full = match self.details.get(&id) {
+        let known = match self.details.get(&id) {
             Some(Detail::Blocks(blocks, _)) => match blocks.first() {
-                Some(DetailBlock::Text { text }) => text.clone(),
-                _ => String::new(),
+                Some(block @ (DetailBlock::Text { .. } | DetailBlock::Excerpt { .. })) => {
+                    block.clone()
+                }
+                _ => DetailBlock::Text {
+                    text: String::new(),
+                },
             },
             Some(Detail::TooLarge | Detail::Released) => return,
-            None => String::new(),
+            None => DetailBlock::Text {
+                text: String::new(),
+            },
         };
-        full.push_str(text);
         let kind = match role {
             MessageRole::User => ItemKind::UserMessage,
             MessageRole::Agent => ItemKind::AgentMessage,
             MessageRole::Reasoning => ItemKind::Reasoning,
         };
-        self.put_text_item(id, kind, full);
+        let block = extend_text(known, text, self.retention.item_detail);
+        self.put_text_block(id, kind, block);
     }
 
     fn upsert_tool(&mut self, update: ToolUpdate) {
@@ -473,9 +479,22 @@ impl Projection {
     }
 
     fn put_text_item(&mut self, id: String, kind: ItemKind, text: String) {
-        let has_detail = text.len() > SUMMARY_LIMIT;
-        let summary = normalize::bounded(&text, SUMMARY_LIMIT);
-        self.store_detail(&id, vec![DetailBlock::Text { text }]);
+        let block = excerpt(text, self.retention.item_detail);
+        self.put_text_block(id, kind, block);
+    }
+
+    /// Puts a text item whose detail `block` — text or its excerpt — is
+    /// already within the per-item bound.
+    fn put_text_block(&mut self, id: String, kind: ItemKind, block: DetailBlock) {
+        let (head, excerpted) = match &block {
+            DetailBlock::Text { text } => (text.as_str(), false),
+            DetailBlock::Excerpt { head, .. } => (head.as_str(), true),
+            DetailBlock::Diff { .. } | DetailBlock::Terminal { .. } => ("", false),
+        };
+        let has_detail = excerpted || head.len() > SUMMARY_LIMIT;
+        let summary = normalize::bounded(head, SUMMARY_LIMIT);
+        let size = block_size(&block);
+        self.set_detail(&id, Detail::Blocks(vec![block], size));
         let turn_id = self
             .snapshot
             .items
@@ -494,12 +513,7 @@ impl Projection {
     }
 
     fn store_detail(&mut self, id: &str, blocks: Vec<DetailBlock>) {
-        let size: usize = blocks.iter().map(block_size).sum();
-        let detail = if size > self.retention.item_detail {
-            Detail::TooLarge
-        } else {
-            Detail::Blocks(blocks, size)
-        };
+        let detail = bounded_detail(blocks, self.retention.item_detail);
         self.set_detail(id, detail);
     }
 
@@ -682,14 +696,223 @@ fn compact_size(item: &ActivityItem) -> usize {
         + label
 }
 
+/// The per-item bound: text beyond it keeps its head and tail, any other
+/// detail beyond it is `too_large`. Several text blocks beyond it become
+/// one excerpt of their joined text.
+fn bounded_detail(blocks: Vec<DetailBlock>, limit: usize) -> Detail {
+    let size: usize = blocks.iter().map(block_size).sum();
+    if size <= limit {
+        return Detail::Blocks(blocks, size);
+    }
+    let mut texts = Vec::new();
+    let mut terminals = Vec::new();
+    for block in blocks {
+        match block {
+            DetailBlock::Text { text } => texts.push(text),
+            DetailBlock::Terminal { .. } => terminals.push(block),
+            DetailBlock::Excerpt { .. } | DetailBlock::Diff { .. } => return Detail::TooLarge,
+        }
+    }
+    let budget = limit.saturating_sub(terminals.iter().map(block_size).sum());
+    if texts.is_empty() || budget == 0 {
+        return Detail::TooLarge;
+    }
+    let mut blocks = vec![excerpt(texts.join("\n"), budget)];
+    blocks.extend(terminals);
+    let size = blocks.iter().map(block_size).sum();
+    Detail::Blocks(blocks, size)
+}
+
+/// `text` within `limit` bytes: itself, or beyond it its head and tail with
+/// the characters omitted between them.
+fn excerpt(text: String, limit: usize) -> DetailBlock {
+    if text.len() <= limit {
+        return DetailBlock::Text { text };
+    }
+    let head_end = floor_char_boundary(&text, head_budget(limit));
+    let tail_start = ceil_char_boundary(&text, text.len() - tail_budget(limit));
+    DetailBlock::Excerpt {
+        head: text[..head_end].to_string(),
+        omitted_chars: text[head_end..tail_start].chars().count() as u64,
+        tail: text[tail_start..].to_string(),
+    }
+}
+
+/// Appends live `more` to a text detail: within `limit` the head stays
+/// fixed and the tail follows the newest text.
+fn extend_text(block: DetailBlock, more: &str, limit: usize) -> DetailBlock {
+    match block {
+        DetailBlock::Text { mut text } => {
+            text.push_str(more);
+            excerpt(text, limit)
+        }
+        DetailBlock::Excerpt {
+            head,
+            omitted_chars,
+            mut tail,
+        } => {
+            tail.push_str(more);
+            let cut = ceil_char_boundary(&tail, tail.len().saturating_sub(tail_budget(limit)));
+            DetailBlock::Excerpt {
+                head,
+                omitted_chars: omitted_chars + tail[..cut].chars().count() as u64,
+                tail: tail[cut..].to_string(),
+            }
+        }
+        other => other,
+    }
+}
+
+fn head_budget(limit: usize) -> usize {
+    limit / 2
+}
+
+fn tail_budget(limit: usize) -> usize {
+    limit - head_budget(limit)
+}
+
+fn floor_char_boundary(text: &str, mut index: usize) -> usize {
+    while !text.is_char_boundary(index) {
+        index -= 1;
+    }
+    index
+}
+
+fn ceil_char_boundary(text: &str, mut index: usize) -> usize {
+    while !text.is_char_boundary(index) {
+        index += 1;
+    }
+    index
+}
+
 fn block_size(block: &DetailBlock) -> usize {
     match block {
         DetailBlock::Text { text } => text.len(),
+        DetailBlock::Excerpt { head, tail, .. } => head.len() + tail.len(),
         DetailBlock::Diff {
             path,
             old_text,
             new_text,
         } => path.len() + old_text.as_ref().map_or(0, String::len) + new_text.len(),
         DetailBlock::Terminal { terminal_id } => terminal_id.len(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parts(block: &DetailBlock) -> (&str, u64, &str) {
+        match block {
+            DetailBlock::Excerpt {
+                head,
+                omitted_chars,
+                tail,
+            } => (head, *omitted_chars, tail),
+            other => panic!("expected an excerpt, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn text_within_the_bound_is_unchanged() {
+        let text = "a".repeat(16);
+        assert_eq!(
+            excerpt(text.clone(), 16),
+            DetailBlock::Text { text: text.clone() }
+        );
+        assert_eq!(
+            bounded_detail(vec![DetailBlock::Text { text: text.clone() }], 16).size(),
+            16
+        );
+    }
+
+    #[test]
+    fn text_beyond_the_bound_keeps_head_and_tail_with_the_omitted_count() {
+        let block = excerpt("0123456789abcdefXYZ".into(), 16);
+        assert_eq!(parts(&block), ("01234567", 3, "bcdefXYZ"));
+        assert!(block_size(&block) <= 16);
+    }
+
+    #[test]
+    fn an_excerpt_never_splits_a_utf8_character() {
+        let text = "й🙂".repeat(40);
+        for limit in 1..64 {
+            let block = excerpt(text.clone(), limit);
+            let (head, omitted, tail) = parts(&block);
+            assert!(head.len() + tail.len() <= limit, "limit {limit}");
+            assert!(text.starts_with(head) && text.ends_with(tail));
+            assert_eq!(
+                head.chars().count() as u64 + omitted + tail.chars().count() as u64,
+                text.chars().count() as u64
+            );
+        }
+    }
+
+    #[test]
+    fn live_text_keeps_its_head_and_its_tail_matches_the_whole_text() {
+        let chunks = ["01234", "5678й", "🙂abc", "def", "", "🙂🙂🙂🙂XYZ", "-more"];
+        let mut block = DetailBlock::Text {
+            text: String::new(),
+        };
+        let mut whole = String::new();
+        let mut first_head: Option<String> = None;
+        for chunk in chunks {
+            block = extend_text(block, chunk, 16);
+            whole.push_str(chunk);
+            assert_eq!(block, excerpt(whole.clone(), 16), "after {whole:?}");
+            if let DetailBlock::Excerpt { head, .. } = &block {
+                assert_eq!(first_head.get_or_insert_with(|| head.clone()), head);
+            }
+        }
+        assert!(first_head.is_some());
+    }
+
+    #[test]
+    fn a_diff_beyond_the_bound_is_too_large() {
+        let diff = DetailBlock::Diff {
+            path: "a.rs".into(),
+            old_text: None,
+            new_text: "x".repeat(32),
+        };
+        let text = DetailBlock::Text {
+            text: "y".repeat(32),
+        };
+        assert!(matches!(
+            bounded_detail(vec![diff.clone()], 16),
+            Detail::TooLarge
+        ));
+        assert!(matches!(
+            bounded_detail(vec![text, diff], 16),
+            Detail::TooLarge
+        ));
+    }
+
+    #[test]
+    fn text_blocks_beside_a_terminal_share_the_bound() {
+        let detail = bounded_detail(
+            vec![
+                DetailBlock::Text {
+                    text: "a".repeat(20),
+                },
+                DetailBlock::Terminal {
+                    terminal_id: "t1".into(),
+                },
+                DetailBlock::Text {
+                    text: "b".repeat(20),
+                },
+            ],
+            18,
+        );
+        let Detail::Blocks(blocks, size) = detail else {
+            panic!("text stays");
+        };
+        assert!(size <= 18);
+        assert_eq!(parts(&blocks[0]), ("aaaaaaaa", 25, "bbbbbbbb"));
+        assert_eq!(
+            blocks[1],
+            DetailBlock::Terminal {
+                terminal_id: "t1".into()
+            }
+        );
     }
 }

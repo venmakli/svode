@@ -493,7 +493,7 @@ async fn agent_exit_interrupts_the_turn_and_expires_the_pending_request() {
 }
 
 #[tokio::test]
-async fn detail_beyond_the_item_limit_is_too_large_and_client_methods_are_refused() {
+async fn a_diff_beyond_the_item_limit_is_too_large_and_client_methods_are_refused() {
     let runtime = AgentRuntime::default();
     let (_, key, mut agent) = session(&runtime).await;
     let mut subscription = runtime.subscribe(&key).unwrap();
@@ -508,7 +508,7 @@ async fn detail_beyond_the_item_limit_is_too_large_and_client_methods_are_refuse
 
     let huge = "x".repeat(Retention::default().item_detail + 1);
     agent
-        .update("s1", json!({ "sessionUpdate": "tool_call", "toolCallId": "big", "title": "Dump", "content": [{ "type": "content", "content": { "type": "text", "text": huge } }] }))
+        .update("s1", json!({ "sessionUpdate": "tool_call", "toolCallId": "big", "title": "Rewrite", "content": [{ "type": "diff", "path": "big.txt", "oldText": null, "newText": huge }] }))
         .await;
     agent
         .reply(&prompt, json!({ "stopReason": "end_turn" }))
@@ -525,6 +525,65 @@ async fn detail_beyond_the_item_limit_is_too_large_and_client_methods_are_refuse
         runtime.detail(&key, "missing"),
         DetailOutcome::Error { .. }
     ));
+}
+
+#[tokio::test]
+async fn long_live_text_keeps_its_head_and_follows_its_tail() {
+    let runtime = runtime_with(Retention {
+        item_detail: 16,
+        ..Retention::default()
+    });
+    let (_, key, mut agent) = session(&runtime).await;
+    let mut subscription = runtime.subscribe(&key).unwrap();
+    runtime.prompt(&key, "log").unwrap();
+    let prompt = agent.expect("session/prompt").await;
+    let excerpt = |head: &str, omitted_chars: u64, tail: &str| DetailOutcome::Available {
+        blocks: vec![DetailBlock::Excerpt {
+            head: head.into(),
+            omitted_chars,
+            tail: tail.into(),
+        }],
+    };
+
+    agent
+        .update("s1", json!({ "sessionUpdate": "tool_call", "toolCallId": "log", "title": "Build", "status": "in_progress", "content": [{ "type": "content", "content": { "type": "text", "text": "0123456789abcdefXYZ" } }] }))
+        .await;
+    follow(&mut subscription, |snapshot| {
+        snapshot.items.iter().any(|item| item.id == "log")
+    })
+    .await;
+    assert_eq!(
+        runtime.detail(&key, "log"),
+        excerpt("01234567", 3, "bcdefXYZ")
+    );
+
+    agent
+        .update("s1", json!({ "sessionUpdate": "tool_call_update", "toolCallId": "log", "status": "completed", "content": [{ "type": "content", "content": { "type": "text", "text": "0123456789abcdefXYZ-error" } }] }))
+        .await;
+    for chunk in ["0123456789", "abcdefXYZ", "-error"] {
+        agent.update("s1", agent_chunk(chunk)).await;
+    }
+    agent
+        .reply(&prompt, json!({ "stopReason": "end_turn" }))
+        .await;
+    follow(&mut subscription, idle).await;
+
+    assert_eq!(
+        runtime.detail(&key, "log"),
+        excerpt("01234567", 9, "YZ-error")
+    );
+    let message = subscription
+        .snapshot
+        .items
+        .iter()
+        .find(|item| item.kind == ItemKind::AgentMessage)
+        .unwrap();
+    assert_eq!(message.summary, "01234567");
+    assert!(message.has_detail);
+    assert_eq!(
+        runtime.detail(&key, &message.id),
+        excerpt("01234567", 9, "YZ-error")
+    );
 }
 
 #[cfg(unix)]
@@ -1428,8 +1487,12 @@ async fn a_large_replay_keeps_the_newest_whole_turns_and_marks_the_truncation() 
     assert_eq!(turn_of(&snapshot, "huge").as_deref(), Some("replay:500"));
     assert_eq!(
         runtime.detail(&key, "huge"),
-        DetailOutcome::Unavailable {
-            reason: UnavailableReason::TooLarge
+        DetailOutcome::Available {
+            blocks: vec![DetailBlock::Excerpt {
+                head: "x".repeat(512),
+                omitted_chars: 1024,
+                tail: "x".repeat(512),
+            }]
         }
     );
     assert!(matches!(
@@ -1438,7 +1501,7 @@ async fn a_large_replay_keeps_the_newest_whole_turns_and_marks_the_truncation() 
     ));
     // Evicted items no longer hold detail.
     let held = runtime.inner.detail_bytes.load(Ordering::Relaxed);
-    assert!(held < 1024, "{held} detail bytes held");
+    assert!(held <= 1024 + 10 * 100, "{held} detail bytes held");
 }
 
 #[tokio::test]

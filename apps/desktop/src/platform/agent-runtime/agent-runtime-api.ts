@@ -228,6 +228,8 @@ export type AgentActivityMessageDto =
 
 export type AgentDetailBlockDto =
   | { type: "text"; text: string }
+  /** Text beyond the per-item bound: its head and tail with the number of characters omitted between them. */
+  | { type: "excerpt"; head: string; omittedChars: number; tail: string }
   | { type: "diff"; path: string; oldText: string | null; newText: string }
   /** An agent-side terminal; display only. */
   | { type: "terminal"; terminalId: string };

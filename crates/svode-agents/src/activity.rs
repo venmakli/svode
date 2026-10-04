@@ -364,6 +364,13 @@ pub enum DetailBlock {
     Text {
         text: String,
     },
+    /// Text beyond the per-item bound: its head and tail within the bound
+    /// and the number of characters omitted between them.
+    Excerpt {
+        head: String,
+        omitted_chars: u64,
+        tail: String,
+    },
     Diff {
         path: String,
         old_text: Option<String>,

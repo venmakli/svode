@@ -79,7 +79,8 @@ pub struct Retention {
     pub session_items: usize,
     /// Bytes of the compact items one session keeps.
     pub session_bytes: usize,
-    /// Detail of one item; beyond it the detail is `too_large`.
+    /// Detail of one item; beyond it text keeps its head and tail and other
+    /// detail is `too_large`.
     pub item_detail: usize,
     /// Detail of all open sessions; beyond it the least recently opened
     /// sessions release theirs.
