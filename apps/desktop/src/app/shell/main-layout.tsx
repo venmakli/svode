@@ -58,6 +58,7 @@ import {
 } from "@/features/agent-sessions";
 import { ActiveSpaceContent } from "./active-space-content";
 import { AgentSessionCatalogHost } from "./agent-session-catalog-host";
+import { ChatAttachmentPeekProvider } from "./chat-attachment-peek";
 import {
   AgentSessionPeekHost,
   useShowStartedSessionInMainArea,
@@ -190,19 +191,21 @@ function MainLayoutRuntime() {
       style={sidebarProviderStyle}
       className="relative min-h-0 h-dvh overflow-hidden bg-sidebar"
     >
-      <ShellLayoutContent
-        sidebarProviderRef={sidebarProviderRef}
-        identityName={identityName}
-        identityEmail={identityEmail}
-        mainSurface={mainSurface}
-        onActivateContent={openContentSurface}
-        onBeforeNavigation={passNavigationGuards}
-        onOpenSearch={() => setCommandPaletteOpen(true)}
-        onOpenAppSettings={openAppSettings}
-      />
-      <AgentSessionCatalogHost projectPath={activeRootPath} />
-      <CollectionDetailPeekHost />
-      <AgentSessionPeekHost />
+      <ChatAttachmentPeekProvider>
+        <ShellLayoutContent
+          sidebarProviderRef={sidebarProviderRef}
+          identityName={identityName}
+          identityEmail={identityEmail}
+          mainSurface={mainSurface}
+          onActivateContent={openContentSurface}
+          onBeforeNavigation={passNavigationGuards}
+          onOpenSearch={() => setCommandPaletteOpen(true)}
+          onOpenAppSettings={openAppSettings}
+        />
+        <AgentSessionCatalogHost projectPath={activeRootPath} />
+        <CollectionDetailPeekHost />
+        <AgentSessionPeekHost />
+      </ChatAttachmentPeekProvider>
       <SpaceFileWatcher />
       {activeRootPath && <SpaceGitWatcher spacePath={activeRootPath} />}
       <GitMissingDialog open={available === false} onRecheck={recheck} />

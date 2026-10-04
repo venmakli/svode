@@ -22,7 +22,15 @@ pub(crate) struct AgentCapabilities {
     #[serde(default)]
     pub load_session: bool,
     #[serde(default)]
+    pub prompt_capabilities: PromptCapabilities,
+    #[serde(default)]
     pub session_capabilities: SessionCapabilities,
+}
+
+#[derive(Default, Deserialize)]
+pub(crate) struct PromptCapabilities {
+    #[serde(default)]
+    pub image: bool,
 }
 
 #[derive(Default, Deserialize)]

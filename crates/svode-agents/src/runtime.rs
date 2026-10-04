@@ -36,6 +36,7 @@ use crate::identity::SessionKey;
 use crate::interaction::{self, AnswerOutcome, InteractionAnswer};
 use crate::process;
 use crate::projection::Projection;
+use crate::prompt::{self, PromptPart};
 use crate::status::{InteractionKind, StopReason};
 use crate::writer::{
     ExternalLiveness, UnknownLiveness, Writer, WriterClaim, WriterRefusal, WriterRegistry,
@@ -240,6 +241,8 @@ pub struct AgentCapabilities {
     pub list_sessions: bool,
     pub resume_session: bool,
     pub close_session: bool,
+    /// The agent takes image blocks in a prompt.
+    pub image_prompt: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1162,31 +1165,42 @@ impl AgentRuntime {
         Ok(())
     }
 
-    /// Accepts a prompt and returns the turn id at once; the runtime owns the
-    /// call, so a lost caller does not lose the prompt.
-    pub fn prompt(&self, key: &SessionKey, text: &str) -> Result<String, AgentRuntimeError> {
+    /// Accepts a prompt — text and links to files in order — and returns the
+    /// turn id at once; the runtime owns the call, so a lost caller does not
+    /// lose the prompt. A link to a missing file is refused before anything
+    /// is sent.
+    pub fn prompt(
+        &self,
+        key: &SessionKey,
+        parts: &[PromptPart],
+    ) -> Result<String, AgentRuntimeError> {
         let session = self.session(key)?;
         session.connection.require_open()?;
         if session.writer.lock().unwrap().is_none() {
             return Err(AgentRuntimeError::WriterRequired);
         }
+        let images = session
+            .connection
+            .info
+            .lock()
+            .unwrap()
+            .as_ref()
+            .is_some_and(|info| info.capabilities.image_prompt);
+        let blocks = prompt::blocks(parts, images)?;
+        let (text, segments) = prompt::message(parts);
         let turn_id = ulid::Ulid::new().to_string().to_ascii_lowercase();
         session
             .projection
             .lock()
             .unwrap()
-            .begin_turn(&turn_id, text)
+            .begin_turn(&turn_id, &text, segments)
             .ok_or(AgentRuntimeError::TurnActive)?;
-        session
-            .first_prompt
-            .lock()
-            .unwrap()
-            .get_or_insert_with(|| text.to_string());
+        session.first_prompt.lock().unwrap().get_or_insert(text);
         if !session.listed.swap(true, Ordering::Relaxed) {
             self.inner.catalog.changed(&session.connection.agent);
         }
         self.inner.enforce_detail_bound();
-        let request = acp::prompt_request(&session.acp_id, text);
+        let request = acp::prompt_request(&session.acp_id, &blocks);
         let turn = turn_id.clone();
         tokio::spawn(async move {
             let (reason, error) = match session

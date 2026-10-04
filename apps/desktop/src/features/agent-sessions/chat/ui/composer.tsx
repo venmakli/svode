@@ -1,7 +1,8 @@
 import { useEffect, useRef, type ReactNode } from "react";
 import { ArrowUp, Loader2, Square } from "lucide-react";
-import { NodeApi, SingleBlockPlugin, type Value } from "platejs";
-import { Plate, usePlateEditor } from "platejs/react";
+import { MentionInputPlugin, MentionPlugin } from "@platejs/mention/react";
+import { SingleBlockPlugin } from "platejs";
+import { createPlatePlugin, Plate, usePlateEditor } from "platejs/react";
 import { Editor, EditorContainer } from "@/components/ui/editor";
 import {
   InputGroup,
@@ -14,16 +15,38 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { cn } from "@/shared/lib/utils";
+import {
+  ATTACHMENT_ELEMENT,
+  draftParts,
+  draftValue,
+  isDraftBlank,
+  type DraftPart,
+} from "../model/attachments";
 import { composerKeyAction } from "../model/composer";
+import {
+  AttachMenu,
+  AttachmentElementView,
+  MentionSearchElement,
+  pasteAttachments,
+} from "./composer-attachments";
 import * as m from "@/paraglide/messages.js";
 
-function valueOf(text: string): Value {
-  return [{ type: "p", children: [{ text }] }];
-}
+const AttachmentPlugin = createPlatePlugin({
+  key: ATTACHMENT_ELEMENT,
+  node: { isElement: true, isInline: true, isVoid: true },
+}).withComponent(AttachmentElementView);
+
+const COMPOSER_PLUGINS = [
+  SingleBlockPlugin,
+  AttachmentPlugin,
+  MentionPlugin,
+  MentionInputPlugin.withComponent(MentionSearchElement),
+];
 
 export interface ComposerProps {
-  text: string;
-  onTextChange: (text: string) => void;
+  /** Text and attachment badges in order. */
+  parts: DraftPart[];
+  onPartsChange: (parts: DraftPart[]) => void;
   onSend: () => void;
   onStop: () => void;
   /** A turn runs: the one action is stop, and the draft can still be typed. */
@@ -43,12 +66,13 @@ export interface ComposerProps {
 /**
  * The composer field (Stage 10 `04`): a small Plate editor with one root
  * block, so line breaks stay `\n` and nothing is rendered as markdown.
- * Enter sends, Shift+Enter breaks the line, Enter that ends an IME
- * composition only ends it, and Esc stops a running turn.
+ * Attachments are inline badges where they were added: "+", an `@`
+ * search or a paste. Enter sends, Shift+Enter breaks the line, Enter that
+ * ends an IME composition only ends it, and Esc stops a running turn.
  */
 export function Composer({
-  text,
-  onTextChange,
+  parts,
+  onPartsChange,
   onSend,
   onStop,
   running,
@@ -61,26 +85,27 @@ export function Composer({
   className,
 }: ComposerProps) {
   const editor = usePlateEditor({
-    plugins: [SingleBlockPlugin],
-    value: valueOf(text),
+    plugins: COMPOSER_PLUGINS,
+    value: draftValue(parts),
   });
-  const emittedRef = useRef(text);
+  const draftKey = JSON.stringify(parts);
+  const emittedRef = useRef(draftKey);
 
   // A draft changed outside the field — cleared after a send, restored
   // after one that did not reach the agent — replaces its content.
   useEffect(() => {
-    if (text === emittedRef.current) return;
-    emittedRef.current = text;
-    editor.tf.setValue(valueOf(text));
-    if (text) editor.tf.select(editor.api.end([]));
-  }, [editor, text]);
+    if (draftKey === emittedRef.current) return;
+    emittedRef.current = draftKey;
+    const next = JSON.parse(draftKey) as DraftPart[];
+    editor.tf.setValue(draftValue(next));
+    if (next.length > 0) editor.tf.select(editor.api.end([]));
+  }, [draftKey, editor]);
 
   useEffect(() => {
     if (autoFocus) editor.tf.focus({ edge: "end" });
   }, [autoFocus, editor]);
 
-  const hasText = text.trim().length > 0;
-  const sendDisabled = !hasText || !canSend || sending;
+  const sendDisabled = isDraftBlank(parts) || !canSend || sending;
 
   return (
     <InputGroup
@@ -94,10 +119,11 @@ export function Composer({
         editor={editor}
         readOnly={sending}
         onChange={({ value }) => {
-          const next = NodeApi.string({ type: "p", children: value });
-          if (next === emittedRef.current) return;
-          emittedRef.current = next;
-          onTextChange(next);
+          const next = draftParts(value);
+          const key = JSON.stringify(next);
+          if (key === emittedRef.current) return;
+          emittedRef.current = key;
+          onPartsChange(next);
         }}
       >
         <EditorContainer className="max-h-60 min-h-0 overflow-y-auto">
@@ -110,6 +136,7 @@ export function Composer({
               "min-h-11 px-3 pt-3 pb-1 text-sm",
               sending && "text-muted-foreground",
             )}
+            onPaste={(event) => pasteAttachments(editor, event)}
             onKeyDown={(event) => {
               const action = composerKeyAction(event.nativeEvent, running);
               if (action === "send") {
@@ -124,6 +151,7 @@ export function Composer({
         </EditorContainer>
       </Plate>
       <InputGroupAddon align="block-end" className="gap-1 pt-1">
+        <AttachMenu editor={editor} disabled={sending} />
         {controls}
         <div className="ms-auto flex items-center gap-2">
           {sending && (

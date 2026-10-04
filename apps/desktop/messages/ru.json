@@ -2445,5 +2445,18 @@
   "sessions_chat_no_terminal": "Этот агент не продолжает сессию в терминале",
   "sessions_chat_terminal_during_turn": "Доступно между ходами",
   "sessions_chat_unavailable_not_openable": "Чат не может открыть эту сессию",
-  "sessions_chat_unavailable_agent": "{agent} недоступен для чата: {reason}"
+  "sessions_chat_unavailable_agent": "{agent} недоступен для чата: {reason}",
+  "sessions_chat_attach": "Прикрепить",
+  "sessions_chat_attach_disk_file": "Файл с диска…",
+  "sessions_chat_attach_project": "Страница или файл проекта",
+  "sessions_chat_mention_search": "Поиск страниц и файлов",
+  "sessions_chat_mention_empty": "Ничего не найдено",
+  "sessions_chat_attachment_unavailable": "Файла больше нет по этому пути",
+  "sessions_chat_attachment_unavailable_label": "{name}, недоступен",
+  "sessions_chat_attachment_image": "Изображение",
+  "sessions_chat_attachment_page": "Страница",
+  "sessions_chat_attachment_file": "Файл",
+  "sessions_chat_attachment_file_type": "Файл {type}",
+  "sessions_chat_paste_failed": "Вставленная картинка не прикреплена: {message}",
+  "sessions_chat_refusal_file_unavailable": "Прикреплённого файла больше нет. Уберите его бейдж или прикрепите файл снова"
 }

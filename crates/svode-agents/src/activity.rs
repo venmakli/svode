@@ -98,7 +98,12 @@ pub enum ItemStatus {
     rename_all_fields = "camelCase"
 )]
 pub enum ItemKind {
-    UserMessage,
+    /// The summary and detail are the message text; `segments` is the
+    /// whole message in order once it holds a link or an image, and empty
+    /// for a text-only message.
+    UserMessage {
+        segments: Vec<MessageSegment>,
+    },
     AgentMessage,
     Reasoning,
     ToolCall {
@@ -136,6 +141,29 @@ pub enum ItemKind {
     /// An update or extension this runtime does not model.
     Generic {
         label: String,
+    },
+}
+
+/// One part of a user message in the order it was written. Image data is
+/// never kept, only its name and URI when the agent sent them.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(
+    tag = "type",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
+pub enum MessageSegment {
+    Text {
+        text: String,
+    },
+    /// A link to a file the agent reads with its own tools.
+    Link {
+        uri: String,
+        name: String,
+    },
+    Image {
+        uri: Option<String>,
+        name: Option<String>,
     },
 }
 

@@ -297,6 +297,7 @@ mod tests {
             list_sessions: true,
             resume_session: true,
             close_session: false,
+            image_prompt: false,
         };
         assert_eq!(restriction(&all), None);
         for capabilities in [

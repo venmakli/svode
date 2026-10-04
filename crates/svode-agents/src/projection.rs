@@ -12,9 +12,9 @@ use tokio::sync::broadcast;
 use crate::acp::normalize::{self, DeclaredSettings, MessageRole, Normalized, ToolUpdate};
 use crate::activity::{
     ActivityItem, Change, ConnectionState, DetailBlock, DetailOutcome, HistorySource, HistoryState,
-    InteractionState, ItemKind, ItemStatus, PendingInteraction, PlanEntry, SessionDelta,
-    SessionSetting, SessionSnapshot, Truncation, TurnPhase, TurnState, UnavailableReason,
-    WriterState,
+    InteractionState, ItemKind, ItemStatus, MessageSegment, PendingInteraction, PlanEntry,
+    SessionDelta, SessionSetting, SessionSnapshot, Truncation, TurnPhase, TurnState,
+    UnavailableReason, WriterState,
 };
 use crate::identity::SessionKey;
 use crate::interaction::InteractionAnswer;
@@ -159,8 +159,14 @@ impl Projection {
         self.snapshot.turn.phase != TurnPhase::None
     }
 
-    /// Starts a turn with the user's prompt; `None` while a turn is active.
-    pub(crate) fn begin_turn(&mut self, turn_id: &str, prompt: &str) -> Option<()> {
+    /// Starts a turn with the user's prompt, its text and its segments;
+    /// `None` while a turn is active.
+    pub(crate) fn begin_turn(
+        &mut self,
+        turn_id: &str,
+        text: &str,
+        segments: Vec<MessageSegment>,
+    ) -> Option<()> {
         if self.turn_active() {
             return None;
         }
@@ -169,8 +175,10 @@ impl Projection {
         self.set_turn(Some(turn_id.to_string()), TurnPhase::Running, None);
         self.put_text_item(
             format!("user:{turn_id}"),
-            ItemKind::UserMessage,
-            prompt.to_string(),
+            ItemKind::UserMessage {
+                segments: bounded_segments(segments),
+            },
+            text.to_string(),
         );
         Some(())
     }
@@ -362,7 +370,8 @@ impl Projection {
                 role,
                 message_id,
                 text,
-            } => self.append_message(role, message_id, &text),
+                segments,
+            } => self.append_message(role, message_id, &text, segments),
             Normalized::Tool(update) => self.upsert_tool(update),
             Normalized::Plan(entries) => self.put_plan(entries),
             Normalized::ModeChange(mode) => {
@@ -457,7 +466,13 @@ impl Projection {
         freed
     }
 
-    fn append_message(&mut self, role: MessageRole, message_id: Option<String>, text: &str) {
+    fn append_message(
+        &mut self,
+        role: MessageRole,
+        message_id: Option<String>,
+        text: &str,
+        segments: Vec<MessageSegment>,
+    ) {
         if role == MessageRole::User && self.replay.is_some() {
             let continues = match (&self.open_message, &message_id) {
                 (Some((MessageRole::User, open)), Some(id)) => open == id,
@@ -494,12 +509,53 @@ impl Projection {
             },
         };
         let kind = match role {
-            MessageRole::User => ItemKind::UserMessage,
+            MessageRole::User => ItemKind::UserMessage {
+                segments: self.extend_segments(&id, &known, text, segments),
+            },
             MessageRole::Agent => ItemKind::AgentMessage,
             MessageRole::Reasoning => ItemKind::Reasoning,
         };
         let block = extend_text(known, text, self.retention.item_detail);
         self.put_text_block(id, kind, block);
+    }
+
+    /// The segments of user message `id` with the next chunk, `text` or its
+    /// own segments: a message turns into segments with its first link or
+    /// image, after the text so far.
+    fn extend_segments(
+        &self,
+        id: &str,
+        known: &DetailBlock,
+        text: &str,
+        chunk: Vec<MessageSegment>,
+    ) -> Vec<MessageSegment> {
+        let mut segments = match self.snapshot.items.iter().find(|item| item.id == id) {
+            Some(ActivityItem {
+                kind: ItemKind::UserMessage { segments },
+                ..
+            }) => segments.clone(),
+            _ => Vec::new(),
+        };
+        if chunk.is_empty() {
+            if !segments.is_empty() {
+                segments.push(MessageSegment::Text {
+                    text: text.to_string(),
+                });
+            }
+            return bounded_segments(segments);
+        }
+        if segments.is_empty() {
+            let before = match known {
+                DetailBlock::Text { text } => text.as_str(),
+                DetailBlock::Excerpt { head, .. } => head.as_str(),
+                DetailBlock::Diff { .. } | DetailBlock::Terminal { .. } => "",
+            };
+            segments.push(MessageSegment::Text {
+                text: before.to_string(),
+            });
+        }
+        segments.extend(chunk);
+        bounded_segments(segments)
     }
 
     /// One plan item per turn at the place the turn's first plan appeared;
@@ -767,9 +823,49 @@ impl Drop for Projection {
     }
 }
 
+/// Segments of one user message within the summary bound: adjacent texts
+/// are joined, empty ones dropped, and text beyond the bound and parts
+/// after it are cut.
+fn bounded_segments(segments: Vec<MessageSegment>) -> Vec<MessageSegment> {
+    let mut bounded: Vec<MessageSegment> = Vec::with_capacity(segments.len());
+    let mut size = 0;
+    for segment in segments {
+        if size >= SUMMARY_LIMIT {
+            break;
+        }
+        match segment {
+            MessageSegment::Text { text } if text.is_empty() => {}
+            MessageSegment::Text { text } => {
+                let text = normalize::bounded(&text, SUMMARY_LIMIT - size);
+                size += text.len();
+                match bounded.last_mut() {
+                    Some(MessageSegment::Text { text: last }) => last.push_str(&text),
+                    _ => bounded.push(MessageSegment::Text { text }),
+                }
+            }
+            other => {
+                size += segment_size(&other);
+                bounded.push(other);
+            }
+        }
+    }
+    bounded
+}
+
+fn segment_size(segment: &MessageSegment) -> usize {
+    match segment {
+        MessageSegment::Text { text } => text.len(),
+        MessageSegment::Link { uri, name } => uri.len() + name.len(),
+        MessageSegment::Image { uri, name } => {
+            uri.as_ref().map_or(0, String::len) + name.as_ref().map_or(0, String::len)
+        }
+    }
+}
+
 /// Size of an item in the compact bound.
 fn compact_size(item: &ActivityItem) -> usize {
     let label = match &item.kind {
+        ItemKind::UserMessage { segments } => segments.iter().map(segment_size).sum(),
         ItemKind::Generic { label } => label.len(),
         ItemKind::Plan { entries } => entries.iter().map(|entry| entry.content.len()).sum(),
         ItemKind::Interaction { option, .. } => option.as_ref().map_or(0, String::len),

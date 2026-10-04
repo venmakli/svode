@@ -5,7 +5,7 @@ import {
   type ComposerDraft,
 } from "../model/composer";
 
-const EMPTY: ComposerDraft = { text: "" };
+const EMPTY: ComposerDraft = { parts: [] };
 
 /** A composer draft kept in the window's session storage under `key`. */
 export function useComposerDraft(key: string) {

@@ -9,6 +9,11 @@ import {
   type AgentSessionKeyDto,
   type AgentSessionSnapshotDto,
 } from "../api/chat";
+import {
+  isDraftBlank,
+  promptParts,
+  type DraftPart,
+} from "../model/attachments";
 import { reconcileUnknownSend, sessionDraftKey } from "../model/composer";
 import { useComposerDraft } from "./use-composer-draft";
 
@@ -58,7 +63,7 @@ export function useSessionComposer(
       if (!latest.sending) return latest;
       return reconcileUnknownSend(latest.sending.previousTurnId, current) ===
         "accepted"
-        ? { text: "" }
+        ? { parts: [] }
         : { ...latest, sending: null, notSent: true };
     });
   }, [updateDraft]);
@@ -73,8 +78,7 @@ export function useSessionComposer(
   }, [previousTurnId, settle, snapshot]);
 
   const send = useCallback(async () => {
-    const text = draft.text.trim();
-    if (!text || sending || running) return;
+    if (isDraftBlank(draft.parts) || sending || running) return;
     setRefusal(null);
     if (snapshotRef.current?.writer !== "acp" && attach && !(await attach())) {
       return;
@@ -84,8 +88,8 @@ export function useSessionComposer(
       notSent: false,
     });
     try {
-      await promptAgentSession(session, draft.text);
-      updateDraft(() => ({ text: "" }));
+      await promptAgentSession(session, promptParts(draft.parts));
+      updateDraft(() => ({ parts: [] }));
     } catch (error) {
       const code = agentRuntimeErrorCode(error);
       if (code) {
@@ -95,7 +99,7 @@ export function useSessionComposer(
       // Neither a turn nor a refusal: the effect above settles it by the
       // session's state.
     }
-  }, [attach, draft.text, running, sending, session, updateDraft]);
+  }, [attach, draft.parts, running, sending, session, updateDraft]);
 
   const stop = useCallback(() => {
     if (!running || cancelling) return;
@@ -120,7 +124,7 @@ export function useSessionComposer(
 
   return {
     draft,
-    setText: (text: string) => updateDraft({ text, notSent: false }),
+    setParts: (parts: DraftPart[]) => updateDraft({ parts, notSent: false }),
     sending,
     running,
     cancelling,

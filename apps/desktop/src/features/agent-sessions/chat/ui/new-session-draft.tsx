@@ -113,8 +113,8 @@ export function NewSessionDraft({
               <p className="text-xs text-destructive">{m.sessions_chat_not_sent()}</p>
             )}
             <Composer
-              text={draft.draft.text}
-              onTextChange={draft.setText}
+              parts={draft.draft.parts}
+              onPartsChange={draft.setParts}
               onSend={() => void draft.send()}
               onStop={() => undefined}
               running={false}
@@ -223,7 +223,9 @@ function DraftRefusalLine({
   }
   return (
     <p className="text-xs break-words text-destructive">
-      {m.sessions_chat_refusal_other({ message: refusal.message })}
+      {refusal.code === "file_unavailable"
+        ? m.sessions_chat_refusal_file_unavailable()
+        : m.sessions_chat_refusal_other({ message: refusal.message })}
     </p>
   );
 }

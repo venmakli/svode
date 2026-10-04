@@ -17,6 +17,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use svode_agents::adapters::LaunchUnavailable;
 use svode_agents::custom::CustomAgentDefinition;
 use svode_agents::identity::SessionKey;
+use svode_agents::prompt::PromptPart;
 use svode_agents::writer::{ExternalLiveness, UnknownLiveness, Writer, WriterRefusal};
 use svode_agents::{
     AcpLaunch, AgentCheck, AgentRuntime, AgentRuntimeError, ConnectionLease, SettingValue,
@@ -215,14 +216,16 @@ impl AgentConnections {
 
     /// Creates a session of `agent` in `cwd` with the draft's setting values
     /// and sends its first prompt: the first send of a new session draft.
-    /// The session enters the catalogue once the prompt is accepted.
+    /// The session enters the catalogue once the prompt is accepted; a
+    /// prompt linking a missing file creates no session.
     pub async fn start_session(
         &self,
         agent: &str,
         cwd: &Path,
         settings: &[SettingValue],
-        prompt: &str,
+        prompt: &[PromptPart],
     ) -> Result<SessionStart, AgentRuntimeError> {
+        svode_agents::prompt::check(prompt)?;
         let lease = match self.acquire(agent).await {
             Ok(lease) => lease,
             Err(ConnectRefusal::Unavailable(reason)) => {

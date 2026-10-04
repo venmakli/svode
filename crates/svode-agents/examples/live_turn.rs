@@ -9,6 +9,11 @@
 //!
 //! Without `--prompt` it stops after `session/new`, without a paid turn.
 //!
+//! `--file <path>` adds a link to that file to the prompt at its place among
+//! the `--prompt` texts: `--prompt "Compare " --file /tmp/a.png --prompt "
+//! with " --file /tmp/b.md`. The runtime sends a link, and an image block
+//! after it when the agent declares image prompts.
+//!
 //! `--setting ID=VALUE` applies a declared session setting at creation, as
 //! an ACP launch applies the mode an Actor approval maps to, and prints the
 //! settings the session then reports.
@@ -48,6 +53,7 @@ use std::time::{Duration, Instant};
 use svode_agents::activity::{ActivityItem, Change, InteractionState, ItemKind, TurnPhase};
 use svode_agents::identity::SessionKey;
 use svode_agents::interaction::InteractionAnswer;
+use svode_agents::prompt::PromptPart;
 use svode_agents::status::InteractionKind;
 use svode_agents::writer::{ExternalLiveness, UnknownLiveness};
 use svode_agents::{AcpLaunch, AgentRuntime, ConnectionId, RuntimeConfig, SettingValue};
@@ -57,7 +63,7 @@ async fn main() {
     let mut args = std::env::args().skip(1);
     let mut agent = "agent".to_string();
     let mut cwd = std::env::current_dir().unwrap();
-    let mut prompt = None;
+    let mut prompt = Vec::new();
     let mut on_pending = None;
     let mut cancel_after = None;
     let mut open = None;
@@ -73,7 +79,16 @@ async fn main() {
         match arg.as_str() {
             "--agent" => agent = args.next().expect("--agent value"),
             "--cwd" => cwd = PathBuf::from(args.next().expect("--cwd value")),
-            "--prompt" => prompt = Some(args.next().expect("--prompt value")),
+            "--prompt" => prompt.push(PromptPart::text(args.next().expect("--prompt value"))),
+            "--file" => {
+                let path = PathBuf::from(args.next().expect("--file path"));
+                let name = path
+                    .file_name()
+                    .expect("--file name")
+                    .to_string_lossy()
+                    .into_owned();
+                prompt.push(PromptPart::File { path, name });
+            }
             "--cancel-after" => {
                 cancel_after = Some(Duration::from_millis(
                     args.next()
@@ -147,7 +162,7 @@ async fn main() {
                 for (role, text) in messages(&snapshot.items) {
                     println!("  {role}: {:?}", text.chars().take(60).collect::<String>());
                 }
-                match runtime.prompt(&key, "not sent") {
+                match runtime.prompt(&key, &[PromptPart::text("not sent")]) {
                     Ok(turn) => println!("prompt accepted: {turn}"),
                     Err(error) => {
                         println!("prompt refused: {}", serde_json::to_string(&error).unwrap())
@@ -232,7 +247,7 @@ async fn main() {
     };
     println!("session: {}", serde_json::to_string(&key).unwrap());
 
-    if let Some(prompt) = prompt {
+    if !prompt.is_empty() {
         let mut subscription = runtime.subscribe(&key).unwrap();
         let initial = subscription.snapshot.clone();
         let mut recorded = Vec::new();
@@ -419,14 +434,19 @@ async fn open_existing(
             item.summary.chars().take(60).collect::<String>()
         );
     }
+    println!("messages: {:?}", messages(&snapshot.items));
 }
 
-/// The user and agent messages of a session, as text.
+/// The user and agent messages of a session, as text; a user message with
+/// links or images as its segments.
 fn messages(items: &[ActivityItem]) -> Vec<(String, String)> {
     items
         .iter()
-        .filter_map(|item| match item.kind {
-            ItemKind::UserMessage => Some(("user".to_string(), item.summary.clone())),
+        .filter_map(|item| match &item.kind {
+            ItemKind::UserMessage { segments } if !segments.is_empty() => {
+                Some(("user".to_string(), serde_json::to_string(segments).unwrap()))
+            }
+            ItemKind::UserMessage { .. } => Some(("user".to_string(), item.summary.clone())),
             ItemKind::AgentMessage => Some(("agent".to_string(), item.summary.clone())),
             _ => None,
         })

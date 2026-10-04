@@ -5,11 +5,12 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, DuplexStream, ReadHal
 
 use super::*;
 use crate::activity::{
-    Change, DetailBlock, FieldInput, HistorySource, HistoryState, ItemKind, ItemStatus, ToolKind,
-    TurnPhase, UnavailableReason,
+    Change, DetailBlock, FieldInput, HistorySource, HistoryState, ItemKind, ItemStatus,
+    MessageSegment, ToolKind, TurnPhase, UnavailableReason,
 };
 use crate::identity::IdentityNamespace;
 use crate::interaction::FieldValue;
+use crate::prompt::PromptPart;
 use crate::status::{SessionState, SessionStatus};
 use crate::writer::WriterRefusal;
 
@@ -175,7 +176,9 @@ async fn a_turn_streams_ordered_deltas_and_ends_with_the_agent_stop_reason() {
     assert!(status.agent.unwrap().capabilities.list_sessions);
 
     let mut subscription = runtime.subscribe(&key).unwrap();
-    let turn = runtime.prompt(&key, "Say hello").unwrap();
+    let turn = runtime
+        .prompt(&key, &[PromptPart::text("Say hello")])
+        .unwrap();
     let prompt = agent.expect("session/prompt").await;
     assert_eq!(prompt["params"]["prompt"][0]["text"], "Say hello");
     agent
@@ -211,7 +214,12 @@ async fn a_turn_streams_ordered_deltas_and_ends_with_the_agent_stop_reason() {
     );
 
     let items = &fresh.items;
-    assert_eq!(items[0].kind, ItemKind::UserMessage);
+    assert_eq!(
+        items[0].kind,
+        ItemKind::UserMessage {
+            segments: Vec::new()
+        }
+    );
     assert_eq!(items[0].turn_id.as_deref(), Some(turn.as_str()));
     let message = items
         .iter()
@@ -251,10 +259,10 @@ async fn a_turn_streams_ordered_deltas_and_ends_with_the_agent_stop_reason() {
 async fn a_prompt_during_an_active_turn_is_rejected_without_a_queue() {
     let runtime = AgentRuntime::default();
     let (_, key, mut agent) = session(&runtime).await;
-    runtime.prompt(&key, "first").unwrap();
+    runtime.prompt(&key, &[PromptPart::text("first")]).unwrap();
     let prompt = agent.expect("session/prompt").await;
     assert_eq!(
-        runtime.prompt(&key, "second"),
+        runtime.prompt(&key, &[PromptPart::text("second")]),
         Err(AgentRuntimeError::TurnActive)
     );
     assert_eq!(
@@ -266,7 +274,7 @@ async fn a_prompt_during_an_active_turn_is_rejected_without_a_queue() {
         .await;
     let mut subscription = runtime.subscribe(&key).unwrap();
     follow(&mut subscription, idle).await;
-    runtime.prompt(&key, "third").unwrap();
+    runtime.prompt(&key, &[PromptPart::text("third")]).unwrap();
     let next = agent.expect("session/prompt").await;
     assert_eq!(next["params"]["prompt"][0]["text"], "third");
 }
@@ -276,7 +284,7 @@ async fn cancel_answers_the_pending_permission_and_waits_for_the_agent() {
     let runtime = AgentRuntime::default();
     let (_, key, mut agent) = session(&runtime).await;
     let mut subscription = runtime.subscribe(&key).unwrap();
-    runtime.prompt(&key, "edit").unwrap();
+    runtime.prompt(&key, &[PromptPart::text("edit")]).unwrap();
     let prompt = agent.expect("session/prompt").await;
     agent
         .send(json!({
@@ -390,7 +398,9 @@ async fn agent_errors_and_timeouts_degrade_only_their_own_connection() {
         ConnectionState::Degraded
     );
 
-    runtime.prompt(&healthy_key, "still fine").unwrap();
+    runtime
+        .prompt(&healthy_key, &[PromptPart::text("still fine")])
+        .unwrap();
     let prompt = healthy.expect("session/prompt").await;
     healthy
         .reply(&prompt, json!({ "stopReason": "end_turn" }))
@@ -452,7 +462,7 @@ async fn agent_exit_interrupts_the_turn_and_expires_the_pending_request() {
     let runtime = AgentRuntime::default();
     let (connection, key, mut agent) = session(&runtime).await;
     let mut subscription = runtime.subscribe(&key).unwrap();
-    runtime.prompt(&key, "work").unwrap();
+    runtime.prompt(&key, &[PromptPart::text("work")]).unwrap();
     agent.expect("session/prompt").await;
     agent
         .send(json!({
@@ -491,7 +501,7 @@ async fn agent_exit_interrupts_the_turn_and_expires_the_pending_request() {
         ConnectionState::Closed
     );
     assert_eq!(
-        runtime.prompt(&key, "again"),
+        runtime.prompt(&key, &[PromptPart::text("again")]),
         Err(AgentRuntimeError::ConnectionClosed)
     );
 }
@@ -501,7 +511,7 @@ async fn a_diff_beyond_the_item_limit_is_too_large_and_client_methods_are_refuse
     let runtime = AgentRuntime::default();
     let (_, key, mut agent) = session(&runtime).await;
     let mut subscription = runtime.subscribe(&key).unwrap();
-    runtime.prompt(&key, "big").unwrap();
+    runtime.prompt(&key, &[PromptPart::text("big")]).unwrap();
     let prompt = agent.expect("session/prompt").await;
     agent
         .send(json!({ "jsonrpc": "2.0", "id": 9, "method": "fs/read_text_file", "params": { "sessionId": "s1", "path": "/etc/hosts" } }))
@@ -539,7 +549,7 @@ async fn long_live_text_keeps_its_head_and_follows_its_tail() {
     });
     let (_, key, mut agent) = session(&runtime).await;
     let mut subscription = runtime.subscribe(&key).unwrap();
-    runtime.prompt(&key, "log").unwrap();
+    runtime.prompt(&key, &[PromptPart::text("log")]).unwrap();
     let prompt = agent.expect("session/prompt").await;
     let excerpt = |head: &str, omitted_chars: u64, tail: &str| DetailOutcome::Available {
         blocks: vec![DetailBlock::Excerpt {
@@ -676,7 +686,7 @@ async fn start_turn(
 ) -> (SessionKey, ScriptedAgent, SessionSubscription, Value) {
     let (_, key, mut agent) = session(runtime).await;
     let subscription = runtime.subscribe(&key).unwrap();
-    runtime.prompt(&key, "work").unwrap();
+    runtime.prompt(&key, &[PromptPart::text("work")]).unwrap();
     let prompt = agent.expect("session/prompt").await;
     (key, agent, subscription, prompt)
 }
@@ -1066,7 +1076,7 @@ async fn releasing_a_session_between_turns_closes_it_and_frees_its_writer() {
         )
     );
     let mut subscription = runtime.subscribe(&key).unwrap();
-    runtime.prompt(&key, "work").unwrap();
+    runtime.prompt(&key, &[PromptPart::text("work")]).unwrap();
     let prompt = agent.expect("session/prompt").await;
     assert_eq!(
         runtime.release_session(&key).await,
@@ -1150,7 +1160,7 @@ async fn leaving_the_surface_does_not_stop_the_turn() {
     let runtime = AgentRuntime::default();
     let (_connection, key, mut agent) = session(&runtime).await;
     let subscription = runtime.subscribe(&key).unwrap();
-    runtime.prompt(&key, "work").unwrap();
+    runtime.prompt(&key, &[PromptPart::text("work")]).unwrap();
     let prompt = agent.expect("session/prompt").await;
     drop(subscription);
 
@@ -1177,7 +1187,7 @@ async fn shutdown_cancels_live_turns_then_closes_sessions_then_ends_the_agent() 
         agent.open_session_declaring(json!({ "sessionCapabilities": { "close": {} } }))
     );
     let mut subscription = runtime.subscribe(&key).unwrap();
-    runtime.prompt(&key, "work").unwrap();
+    runtime.prompt(&key, &[PromptPart::text("work")]).unwrap();
     let prompt = agent.expect("session/prompt").await;
 
     let agent_side = async {
@@ -1216,7 +1226,7 @@ async fn shutdown_stops_waiting_for_an_agent_that_ignores_cancel_at_its_budget()
     });
     let (_connection, key, mut agent) = session(&runtime).await;
     let mut subscription = runtime.subscribe(&key).unwrap();
-    runtime.prompt(&key, "work").unwrap();
+    runtime.prompt(&key, &[PromptPart::text("work")]).unwrap();
     agent.expect("session/prompt").await;
 
     let started = std::time::Instant::now();
@@ -1376,7 +1386,9 @@ async fn a_session_reopened_after_reconnect_is_restored_from_its_replay_without_
         kinds,
         vec![
             (
-                ItemKind::UserMessage,
+                ItemKind::UserMessage {
+                    segments: Vec::new()
+                },
                 replay("replay:1"),
                 "Read the plan".into()
             ),
@@ -1389,7 +1401,13 @@ async fn a_session_reopened_after_reconnect_is_restored_from_its_replay_without_
                 "Read file".into()
             ),
             (ItemKind::AgentMessage, replay("replay:1"), "Done".into()),
-            (ItemKind::UserMessage, replay("replay:2"), "Thanks".into()),
+            (
+                ItemKind::UserMessage {
+                    segments: Vec::new()
+                },
+                replay("replay:2"),
+                "Thanks".into()
+            ),
             (
                 ItemKind::AgentMessage,
                 replay("replay:2"),
@@ -1407,7 +1425,7 @@ async fn a_session_reopened_after_reconnect_is_restored_from_its_replay_without_
     );
 
     // The reopened session continues the same native session.
-    let turn = runtime.prompt(&key, "Next").unwrap();
+    let turn = runtime.prompt(&key, &[PromptPart::text("Next")]).unwrap();
     let prompt = agent.expect("session/prompt").await;
     assert_eq!(prompt["params"]["sessionId"], "s1");
     agent.update("s1", agent_chunk("Live")).await;
@@ -1655,7 +1673,7 @@ async fn live_turns_past_the_bound_evict_the_oldest_turn_for_subscribers_too() {
     let mut subscription = runtime.subscribe(&key).unwrap();
     let mut turns = Vec::new();
     for text in ["first", "second"] {
-        let turn = runtime.prompt(&key, text).unwrap();
+        let turn = runtime.prompt(&key, &[PromptPart::text(text)]).unwrap();
         let prompt = agent.expect("session/prompt").await;
         agent.update("s1", agent_chunk("ok")).await;
         agent
@@ -2067,7 +2085,7 @@ async fn a_new_session_and_a_finished_turn_announce_a_catalog_change() {
     assert_eq!(changes.recv().await.unwrap().agent, "scripted");
 
     let mut subscription = runtime.subscribe(&key).unwrap();
-    runtime.prompt(&key, "hi").unwrap();
+    runtime.prompt(&key, &[PromptPart::text("hi")]).unwrap();
     let request = agent.expect("session/prompt").await;
     agent
         .reply(&request, json!({ "stopReason": "end_turn" }))
@@ -2471,7 +2489,7 @@ async fn reading_replays_the_history_then_closes_the_session_without_a_writer() 
     // The snapshot does not follow the session, and no prompt reaches it.
     agent.update("s7", agent_chunk("Later")).await;
     assert_eq!(
-        runtime.prompt(&key, "Next"),
+        runtime.prompt(&key, &[PromptPart::text("Next")]),
         Err(AgentRuntimeError::WriterRequired)
     );
     agent.silent().await;
@@ -3228,7 +3246,7 @@ async fn a_finished_turn_carries_its_duration_and_each_turn_its_own_plan() {
         }
     )));
 
-    runtime.prompt(&key, "again").unwrap();
+    runtime.prompt(&key, &[PromptPart::text("again")]).unwrap();
     let prompt = agent.expect("session/prompt").await;
     agent.update("s1", plan("in_progress")).await;
     agent
@@ -3258,7 +3276,10 @@ async fn a_created_session_is_listed_from_its_first_prompt_while_the_runtime_dri
 
     let mut subscription = runtime.subscribe(&key).unwrap();
     runtime
-        .prompt(&key, "\n  Fix the login bug\nthen run tests")
+        .prompt(
+            &key,
+            &[PromptPart::text("\n  Fix the login bug\nthen run tests")],
+        )
         .unwrap();
     assert_eq!(changes.recv().await.unwrap().agent, "scripted");
     let listed = runtime.sessions();
@@ -3337,4 +3358,181 @@ async fn updates_sent_before_the_answer_land_in_the_turn_before_it_ends() {
         .unwrap();
     assert!(message.summary.ends_with("199 "));
     assert_eq!(message.turn_id, turn.or(snapshot.turn.turn_id.clone()));
+}
+
+#[tokio::test]
+async fn a_prompt_sends_text_and_links_in_order_and_an_image_only_to_an_agent_declaring_images() {
+    let dir = tempfile::tempdir().unwrap();
+    let note = dir.path().join("note.md");
+    let shot = dir.path().join("shot.png");
+    std::fs::write(&note, "# Note").unwrap();
+    std::fs::write(&shot, [137, 80, 78, 71]).unwrap();
+    let parts = [
+        PromptPart::text("Compare "),
+        PromptPart::File {
+            path: note.clone(),
+            name: "note.md".into(),
+        },
+        PromptPart::text(" with "),
+        PromptPart::File {
+            path: shot.clone(),
+            name: "shot.png".into(),
+        },
+    ];
+    for images in [true, false] {
+        let runtime = AgentRuntime::default();
+        let (id, mut agent) = attached(&runtime);
+        let (key, ()) = tokio::join!(
+            async {
+                runtime
+                    .new_session(id, Path::new("/project"), &[])
+                    .await
+                    .unwrap()
+            },
+            agent.open_session_declaring(json!({ "promptCapabilities": { "image": images } }))
+        );
+        let turn = runtime.prompt(&key, &parts).unwrap();
+        let prompt = agent.expect("session/prompt").await;
+        let types: Vec<&str> = prompt["params"]["prompt"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|block| block["type"].as_str().unwrap())
+            .collect();
+        let shot_uri = crate::prompt::file_uri(&shot);
+        if images {
+            assert_eq!(
+                types,
+                ["text", "resource_link", "text", "resource_link", "image"]
+            );
+            assert_eq!(
+                prompt["params"]["prompt"][4],
+                json!({ "type": "image", "mimeType": "image/png", "data": "iVBORw==", "uri": shot_uri })
+            );
+        } else {
+            assert_eq!(types, ["text", "resource_link", "text", "resource_link"]);
+        }
+        assert_eq!(
+            prompt["params"]["prompt"][1],
+            json!({ "type": "resource_link", "uri": crate::prompt::file_uri(&note), "name": "note.md" })
+        );
+        assert_eq!(
+            prompt["params"]["prompt"][3],
+            json!({ "type": "resource_link", "uri": shot_uri, "name": "shot.png", "mimeType": "image/png" })
+        );
+
+        let snapshot = runtime.subscribe(&key).unwrap().snapshot;
+        let message = snapshot
+            .items
+            .iter()
+            .find(|item| item.id == format!("user:{turn}"))
+            .unwrap();
+        assert_eq!(message.summary, "Compare @note.md with @shot.png");
+        assert_eq!(
+            message.kind,
+            ItemKind::UserMessage {
+                segments: vec![
+                    MessageSegment::Text {
+                        text: "Compare ".into()
+                    },
+                    MessageSegment::Link {
+                        uri: crate::prompt::file_uri(&note),
+                        name: "note.md".into()
+                    },
+                    MessageSegment::Text {
+                        text: " with ".into()
+                    },
+                    MessageSegment::Link {
+                        uri: shot_uri,
+                        name: "shot.png".into()
+                    },
+                ]
+            }
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_prompt_linking_a_missing_file_is_refused_without_a_prompt_or_a_turn() {
+    let runtime = AgentRuntime::default();
+    let (_id, key, mut agent) = session(&runtime).await;
+    let missing = std::env::temp_dir().join("svode-missing-attachment.md");
+    let refused = runtime.prompt(
+        &key,
+        &[
+            PromptPart::text("Read "),
+            PromptPart::File {
+                path: missing.clone(),
+                name: "gone.md".into(),
+            },
+        ],
+    );
+    assert_eq!(
+        refused,
+        Err(AgentRuntimeError::FileUnavailable {
+            path: missing.display().to_string()
+        })
+    );
+    agent.silent().await;
+    let snapshot = runtime.subscribe(&key).unwrap().snapshot;
+    assert!(snapshot.items.is_empty());
+    assert_eq!(snapshot.turn.phase, TurnPhase::None);
+    assert!(runtime.sessions().is_empty(), "nothing is listed");
+}
+
+#[tokio::test]
+async fn a_replayed_user_message_keeps_its_links_and_images_in_order() {
+    let runtime = AgentRuntime::default();
+    let key = SessionKey::from_acp("scripted", "links", false);
+    let _agent = reopened(
+        &runtime,
+        &launch(),
+        &key,
+        vec![
+            user_chunk("Look at "),
+            json!({ "sessionUpdate": "user_message_chunk", "content": { "type": "resource_link", "uri": "file:///p/a.md", "name": "a.md" } }),
+            json!({ "sessionUpdate": "user_message_chunk", "content": { "type": "image", "mimeType": "image/png", "data": "iVBORw==" } }),
+            user_chunk(" please"),
+            agent_chunk("Done"),
+            user_chunk("[@b.md](file:///p/b.md) only text"),
+        ],
+    )
+    .await;
+
+    let snapshot = runtime.subscribe(&key).unwrap().snapshot;
+    let users: Vec<_> = snapshot
+        .items
+        .iter()
+        .filter(|item| matches!(item.kind, ItemKind::UserMessage { .. }))
+        .collect();
+    assert_eq!(users.len(), 2);
+    assert_eq!(users[0].summary, "Look at @a.md please");
+    assert_eq!(
+        users[0].kind,
+        ItemKind::UserMessage {
+            segments: vec![
+                MessageSegment::Text {
+                    text: "Look at ".into()
+                },
+                MessageSegment::Link {
+                    uri: "file:///p/a.md".into(),
+                    name: "a.md".into()
+                },
+                MessageSegment::Image {
+                    uri: None,
+                    name: None
+                },
+                MessageSegment::Text {
+                    text: " please".into()
+                },
+            ]
+        }
+    );
+    assert_eq!(
+        users[1].kind,
+        ItemKind::UserMessage {
+            segments: Vec::new()
+        },
+        "links the adapter replays as text stay text for the chat to read"
+    );
 }

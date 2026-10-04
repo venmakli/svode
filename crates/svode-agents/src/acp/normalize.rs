@@ -7,13 +7,15 @@ use super::wire;
 
 use crate::activity::{
     ChoiceOption, DetailBlock, FieldInput, InteractionOption, InteractionOptionKind, ItemStatus,
-    PlanEntry, PlanEntryPriority, PlanEntryStatus, QuestionField, SessionSetting, SettingCategory,
-    SettingOption, ToolKind,
+    MessageSegment, PlanEntry, PlanEntryPriority, PlanEntryStatus, QuestionField, SessionSetting,
+    SettingCategory, SettingOption, ToolKind,
 };
 use crate::status::StopReason;
 
 /// Upper bound for labels taken from unknown agent payloads.
 const LABEL_LIMIT: usize = 80;
+/// A longer URI in a user message is not kept as a link.
+pub(crate) const URI_LIMIT: usize = 4 * 1024;
 /// Bounds of a pending interaction the runtime hands to consumers.
 pub(crate) const TITLE_LIMIT: usize = 512;
 const QUESTION_LIMIT: usize = 4 * 1024;
@@ -48,6 +50,9 @@ pub(crate) enum Normalized {
         role: MessageRole,
         message_id: Option<String>,
         text: String,
+        /// A user message chunk with a link or an image, as its segments in
+        /// order; empty for plain text. `text` is how the summary reads it.
+        segments: Vec<MessageSegment>,
     },
     Tool(ToolUpdate),
     /// The whole plan; it replaces the previous one.
@@ -244,11 +249,118 @@ fn setting_option(value: String, name: String, description: Option<String>) -> S
 }
 
 fn message(role: MessageRole, chunk: wire::ContentChunk) -> Normalized {
+    let (text, segments) = match role {
+        MessageRole::User => user_content(&chunk.content),
+        MessageRole::Agent | MessageRole::Reasoning => (content_text(&chunk.content), Vec::new()),
+    };
     Normalized::Message {
         role,
         message_id: chunk.message_id,
-        text: content_text(&chunk.content),
+        text,
+        segments,
     }
+}
+
+/// A block of a user message: text, or a link or an image kept as a
+/// segment. An embedded resource is kept as its link; image data is never
+/// kept, also when an adapter inlines it into the text.
+fn user_content(content: &Value) -> (String, Vec<MessageSegment>) {
+    let field =
+        |value: &Value, key: &str| value.get(key).and_then(Value::as_str).map(str::to_string);
+    match content.get("type").and_then(Value::as_str) {
+        Some("text") => {
+            let text = content_text(content);
+            let segments = inline_images(&text);
+            let plain = segments
+                .iter()
+                .filter_map(|segment| match segment {
+                    MessageSegment::Text { text } => Some(text.as_str()),
+                    _ => None,
+                })
+                .collect::<String>();
+            match segments.is_empty() {
+                true => (text, segments),
+                false => (plain, segments),
+            }
+        }
+        Some("resource_link") => link(field(content, "uri"), field(content, "name")),
+        Some("resource") => match content.get("resource") {
+            Some(resource) => link(field(resource, "uri"), None),
+            None => (content_text(content), Vec::new()),
+        },
+        Some("image") => (
+            String::new(),
+            vec![MessageSegment::Image {
+                uri: field(content, "uri")
+                    .filter(|uri| uri.len() <= URI_LIMIT && !uri.starts_with("data:")),
+                name: None,
+            }],
+        ),
+        _ => (content_text(content), Vec::new()),
+    }
+}
+
+/// The segments of a user message text in which an adapter inlined images
+/// as `[@name](data:…)` links (Codex replays them so): text around them and
+/// an image segment for each, without its data. Empty when there is none.
+fn inline_images(text: &str) -> Vec<MessageSegment> {
+    let mut segments = Vec::new();
+    let mut pending = String::new();
+    let mut rest = text;
+    while let Some(start) = rest.find("[@") {
+        let tail = &rest[start + 2..];
+        let image = tail
+            .find(']')
+            .filter(|end| !tail[..*end].contains('\n') && tail[end + 1..].starts_with("(data:"))
+            .and_then(|end| {
+                tail[end + 1..]
+                    .find(')')
+                    .map(|close| (end, end + 1 + close))
+            });
+        let Some((name_end, close)) = image else {
+            pending.push_str(&rest[..start + 2]);
+            rest = tail;
+            continue;
+        };
+        pending.push_str(&rest[..start]);
+        if !pending.is_empty() {
+            segments.push(MessageSegment::Text {
+                text: std::mem::take(&mut pending),
+            });
+        }
+        segments.push(MessageSegment::Image {
+            uri: None,
+            name: Some(bounded(&tail[..name_end], LABEL_LIMIT)),
+        });
+        rest = &tail[close + 1..];
+    }
+    if segments.is_empty() {
+        return segments;
+    }
+    pending.push_str(rest);
+    if !pending.is_empty() {
+        segments.push(MessageSegment::Text { text: pending });
+    }
+    segments
+}
+
+/// A link segment named `@name`; without a name the last part of the URI
+/// names it.
+fn link(uri: Option<String>, name: Option<String>) -> (String, Vec<MessageSegment>) {
+    let Some(uri) = uri.filter(|uri| !uri.is_empty() && uri.len() <= URI_LIMIT) else {
+        return ("[resource_link]".to_string(), Vec::new());
+    };
+    let name = bounded(
+        &name.unwrap_or_else(|| {
+            uri.trim_end_matches('/')
+                .rsplit('/')
+                .next()
+                .unwrap_or(&uri)
+                .to_string()
+        }),
+        LABEL_LIMIT,
+    );
+    (format!("@{name}"), vec![MessageSegment::Link { uri, name }])
 }
 
 fn tool_blocks(content: Vec<Value>, raw_output: Option<Value>) -> Vec<DetailBlock> {
@@ -568,6 +680,74 @@ mod tests {
     use super::*;
 
     #[test]
+    fn links_and_images_of_a_user_message_become_segments() {
+        let user = |content: Value| match session_update(json!({
+            "sessionId": "s1",
+            "update": { "sessionUpdate": "user_message_chunk", "content": content }
+        })) {
+            Some((_, Normalized::Message { text, segments, .. })) => (text, segments),
+            other => panic!("unexpected {other:?}"),
+        };
+        assert_eq!(
+            user(json!({ "type": "resource_link", "uri": "file:///p/a.md", "name": "a.md" })),
+            (
+                "@a.md".into(),
+                vec![MessageSegment::Link {
+                    uri: "file:///p/a.md".into(),
+                    name: "a.md".into()
+                }]
+            )
+        );
+        assert_eq!(
+            user(
+                json!({ "type": "resource", "resource": { "uri": "file:///p/b.txt", "text": "body" } })
+            ),
+            (
+                "@b.txt".into(),
+                vec![MessageSegment::Link {
+                    uri: "file:///p/b.txt".into(),
+                    name: "b.txt".into()
+                }]
+            )
+        );
+        assert_eq!(
+            user(json!({ "type": "image", "mimeType": "image/png", "data": "iVBORw==" })),
+            (
+                String::new(),
+                vec![MessageSegment::Image {
+                    uri: None,
+                    name: None
+                }]
+            )
+        );
+        assert_eq!(
+            user(json!({ "type": "text", "text": "[@a.md](file:///p/a.md)" })),
+            ("[@a.md](file:///p/a.md)".into(), Vec::new())
+        );
+        assert_eq!(
+            user(
+                json!({ "type": "text", "text": "See [@a.md](file:///a.md)[@image](data:image/png;base64,iVBO) then [@x] (data:y)" })
+            ),
+            (
+                "See [@a.md](file:///a.md) then [@x] (data:y)".into(),
+                vec![
+                    MessageSegment::Text {
+                        text: "See [@a.md](file:///a.md)".into()
+                    },
+                    MessageSegment::Image {
+                        uri: None,
+                        name: Some("image".into())
+                    },
+                    MessageSegment::Text {
+                        text: " then [@x] (data:y)".into()
+                    },
+                ]
+            ),
+            "Codex inlines the image data into the replayed text; it is not kept"
+        );
+    }
+
+    #[test]
     fn chunks_tools_and_plans_normalize_without_wire_types() {
         let (session, chunk) = session_update(json!({
             "sessionId": "s1",
@@ -584,7 +764,8 @@ mod tests {
             Normalized::Message {
                 role: MessageRole::Agent,
                 message_id: Some("m1".into()),
-                text: "Hello".into()
+                text: "Hello".into(),
+                segments: Vec::new()
             }
         );
 

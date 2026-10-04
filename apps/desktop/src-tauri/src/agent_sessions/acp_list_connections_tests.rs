@@ -6,6 +6,7 @@ use std::time::Duration;
 use svode_agents::activity::ConnectionState;
 use svode_agents::adapters::LaunchUnavailable;
 use svode_agents::catalog::ListBounds;
+use svode_agents::prompt::PromptPart;
 use svode_agents::registry::AdapterRuntimeRegistry;
 use svode_agents::{AcpLaunch, AgentCheck, AgentRuntime, RuntimeConfig};
 use svode_core::agent_adapters::AgentAdapterKind;
@@ -615,7 +616,12 @@ async fn the_first_send_creates_the_session_and_lists_it_once_the_prompt_is_acce
     let project = tempfile::tempdir().unwrap();
 
     let start = connections
-        .start_session("codex", project.path(), &[], "Fix the build\nnow")
+        .start_session(
+            "codex",
+            project.path(),
+            &[],
+            &[PromptPart::text("Fix the build\nnow")],
+        )
         .await
         .unwrap();
     let crate::agent_runtime::connections::SessionStart::Started { session, turn_id } = start
@@ -630,7 +636,7 @@ async fn the_first_send_creates_the_session_and_lists_it_once_the_prompt_is_acce
     assert_eq!(listed[0].title.as_deref(), Some("Fix the build"));
 
     let unavailable = connections
-        .start_session("pi", project.path(), &[], "hello")
+        .start_session("pi", project.path(), &[], &[PromptPart::text("hello")])
         .await
         .unwrap();
     assert!(matches!(
@@ -641,7 +647,12 @@ async fn the_first_send_creates_the_session_and_lists_it_once_the_prompt_is_acce
     // listed.
     assert!(matches!(
         connections
-            .start_session("claude-code", project.path(), &[], "hello")
+            .start_session(
+                "claude-code",
+                project.path(),
+                &[],
+                &[PromptPart::text("hello")]
+            )
             .await,
         Err(svode_agents::AgentRuntimeError::AuthRequired { .. })
     ));
@@ -717,7 +728,7 @@ async fn opening_reads_the_history_without_a_writer_where_the_agent_has_evidence
     assert_eq!(runtime.writers().writer(&key), None);
     // Opening sends no prompt; continuing needs the session attached.
     assert_eq!(
-        runtime.prompt(&key, "Next"),
+        runtime.prompt(&key, &[PromptPart::text("Next")]),
         Err(svode_agents::AgentRuntimeError::WriterRequired)
     );
     assert_eq!(calls(&log), ["initialize", "session/load", "session/close"]);

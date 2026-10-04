@@ -18,6 +18,9 @@ use objc2_foundation::{NSArray, NSURL};
 const DROP_CACHE_DIRECTORY: &str = "terminal-drops";
 const DROP_FILE_NAME_HEADER: &str = "x-svode-drop-file-name";
 const MAX_MATERIALIZED_DROP_BYTES: u64 = 100 * 1024 * 1024;
+/// Where an image pasted without a path is written, in the system temp
+/// directory; Svode neither tracks nor removes it, the OS cleans it up.
+const PASTED_IMAGE_DIRECTORY: &str = "svode-pasted";
 
 #[tauri::command]
 pub fn native_file_drop_paths() -> Vec<String> {
@@ -26,6 +29,47 @@ pub fn native_file_drop_paths() -> Vec<String> {
         .filter(|path| path.exists())
         .filter_map(|path| path.into_os_string().into_string().ok())
         .collect()
+}
+
+/// Files copied in the file manager: their paths on the general
+/// pasteboard. Empty on other OSes.
+#[tauri::command]
+pub fn native_clipboard_file_paths() -> Vec<String> {
+    platform_clipboard_paths()
+        .into_iter()
+        .filter(|path| path.is_file())
+        .filter_map(|path| path.into_os_string().into_string().ok())
+        .collect()
+}
+
+/// Writes an image pasted without a path — a screenshot, an image copied
+/// in a browser — as a file in the system temp directory and returns its
+/// path, so it is attached like a file from disk.
+#[tauri::command]
+pub async fn save_pasted_image(request: tauri::ipc::Request<'_>) -> Result<String, AppError> {
+    let InvokeBody::Raw(bytes) = request.body() else {
+        return Err(AppError::General(
+            "Pasted image content must use raw IPC".to_string(),
+        ));
+    };
+    let bytes = bytes.clone();
+    let encoded_name = request
+        .headers()
+        .get(DROP_FILE_NAME_HEADER)
+        .ok_or_else(|| AppError::General("Pasted image name is missing".to_string()))?
+        .to_str()
+        .map_err(|_| AppError::General("Pasted image name is invalid".to_string()))?;
+    let file_name = decode_drop_file_name(encoded_name)?;
+    let root = std::env::temp_dir().join(PASTED_IMAGE_DIRECTORY);
+    let path = tauri::async_runtime::spawn_blocking(move || {
+        materialize_drop_bytes(&root, &file_name, &bytes)
+    })
+    .await
+    .map_err(|error| AppError::General(format!("Pasted-image worker failed: {error}")))??;
+
+    path.into_os_string()
+        .into_string()
+        .map_err(|_| AppError::General("Pasted image path is not UTF-8".to_string()))
 }
 
 #[tauri::command]
@@ -317,7 +361,18 @@ fn restrict_materialized_file_permissions(_path: &Path) -> Result<(), AppError> 
 
 #[cfg(target_os = "macos")]
 fn platform_drag_paths() -> Vec<PathBuf> {
-    let pasteboard = NSPasteboard::pasteboardWithName(unsafe { NSPasteboardNameDrag });
+    pasteboard_file_paths(&NSPasteboard::pasteboardWithName(unsafe {
+        NSPasteboardNameDrag
+    }))
+}
+
+#[cfg(target_os = "macos")]
+fn platform_clipboard_paths() -> Vec<PathBuf> {
+    pasteboard_file_paths(&NSPasteboard::generalPasteboard())
+}
+
+#[cfg(target_os = "macos")]
+fn pasteboard_file_paths(pasteboard: &NSPasteboard) -> Vec<PathBuf> {
     let mut paths = Vec::new();
 
     // Finder and modern macOS drag sources publish file URLs. Reading NSURL
@@ -344,6 +399,11 @@ fn file_url_to_path(url: &NSURL) -> Option<PathBuf> {
 
 #[cfg(not(target_os = "macos"))]
 fn platform_drag_paths() -> Vec<std::path::PathBuf> {
+    Vec::new()
+}
+
+#[cfg(not(target_os = "macos"))]
+fn platform_clipboard_paths() -> Vec<std::path::PathBuf> {
     Vec::new()
 }
 

@@ -6,6 +6,11 @@ import {
   type AgentSessionKeyDto,
 } from "../api/chat";
 import { draftAgent } from "../model/agents";
+import {
+  isDraftBlank,
+  promptParts,
+  type DraftPart,
+} from "../model/attachments";
 import { newSessionDraftKey } from "../model/composer";
 import { useChatAgents } from "./use-chat-agents";
 import { useComposerDraft } from "./use-composer-draft";
@@ -64,8 +69,7 @@ export function useNewSessionDraft(
   }, [interrupted, sending, updateDraft]);
 
   const send = useCallback(async () => {
-    const text = draft.text.trim();
-    if (!text || !agent || sending) return;
+    if (isDraftBlank(draft.parts) || !agent || sending) return;
     if (readiness.state !== "checked" || readiness.check.state !== "ready") {
       return;
     }
@@ -77,10 +81,10 @@ export function useNewSessionDraft(
         agent,
         cwd: spacePath,
         settings: [],
-        text: draft.text,
+        prompt: promptParts(draft.parts),
       });
       if (started.outcome === "started") {
-        updateDraft(() => ({ text: "" }));
+        updateDraft(() => ({ parts: [] }));
         onStarted({ sessionId: started.sessionId, session: started.session });
         return;
       }
@@ -96,11 +100,11 @@ export function useNewSessionDraft(
     } finally {
       setSending(false);
     }
-  }, [agent, draft.text, onStarted, readiness, reload, sending, spacePath, updateDraft]);
+  }, [agent, draft.parts, onStarted, readiness, reload, sending, spacePath, updateDraft]);
 
   return {
     draft,
-    setText: (text: string) => updateDraft({ text, notSent: false }),
+    setParts: (parts: DraftPart[]) => updateDraft({ parts, notSent: false }),
     agents,
     agentsFailed,
     reloadAgents: reload,

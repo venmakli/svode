@@ -12,6 +12,7 @@ use serde_json::{Value, json};
 use crate::activity::SessionSetting;
 use crate::catalog::{ListEntry, ListPage};
 use crate::interaction::{FieldValue, InteractionAnswer};
+use crate::prompt::PromptBlock;
 use crate::runtime::{AgentCapabilities, AgentInfo};
 use crate::status::InteractionKind;
 use normalize::DeclaredSettings;
@@ -67,6 +68,7 @@ pub(crate) fn agent_info(response: Value) -> Result<AgentInfo, String> {
             list_sessions: capabilities.session_capabilities.list.is_some(),
             resume_session: capabilities.session_capabilities.resume.is_some(),
             close_session: capabilities.session_capabilities.close.is_some(),
+            image_prompt: capabilities.prompt_capabilities.image,
         },
     })
 }
@@ -153,8 +155,29 @@ pub(crate) fn list_page(response: Value) -> Result<ListPage, String> {
     })
 }
 
-pub(crate) fn prompt_request(session_id: &str, text: &str) -> Value {
-    json!({ "sessionId": session_id, "prompt": [{ "type": "text", "text": text }] })
+pub(crate) fn prompt_request(session_id: &str, blocks: &[PromptBlock]) -> Value {
+    let prompt: Vec<Value> = blocks
+        .iter()
+        .map(|block| match block {
+            PromptBlock::Text(text) => json!({ "type": "text", "text": text }),
+            PromptBlock::Link {
+                uri,
+                name,
+                mime_type,
+            } => match mime_type {
+                Some(mime_type) => {
+                    json!({ "type": "resource_link", "uri": uri, "name": name, "mimeType": mime_type })
+                }
+                None => json!({ "type": "resource_link", "uri": uri, "name": name }),
+            },
+            PromptBlock::Image {
+                uri,
+                mime_type,
+                data,
+            } => json!({ "type": "image", "mimeType": mime_type, "data": data, "uri": uri }),
+        })
+        .collect();
+    json!({ "sessionId": session_id, "prompt": prompt })
 }
 
 pub(crate) fn cancel_notification(session_id: &str) -> Value {

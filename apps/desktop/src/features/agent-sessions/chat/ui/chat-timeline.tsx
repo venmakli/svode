@@ -45,6 +45,8 @@ import type {
   AgentSessionSnapshotDto,
 } from "../api/chat";
 import { useItemDetail } from "../hooks/use-item-detail";
+import { messageParts } from "../model/attachments";
+import { AttachmentBadge, ImageMark } from "./attachment-badge";
 import {
   isExpanded,
   isSummaryExpanded,
@@ -219,7 +221,7 @@ function EntryView({
           <MessageContent>
             <Bubble variant="secondary" align="end">
               <BubbleContent className="whitespace-pre-wrap">
-                <ItemText session={session} item={entry.item} />
+                <UserMessageText session={session} item={entry.item} />
               </BubbleContent>
             </Bubble>
           </MessageContent>
@@ -291,6 +293,38 @@ function ItemText({
   const text = item.hasDetail ? (detailText(detail) ?? item.summary) : item.summary;
   if (!markdown) return <>{text}</>;
   return <MarkdownReader content={text} policy={agentTextPolicy} />;
+}
+
+/**
+ * The user's message with its attachments as badges: its segments, and
+ * links the agent replayed as text; anything unrecognized stays text.
+ */
+function UserMessageText({
+  session,
+  item,
+}: {
+  session: AgentSessionKeyDto;
+  item: Extract<AgentActivityItemDto, { kind: "user_message" }>;
+}) {
+  const detail = useItemDetail(session, item, item.hasDetail);
+  const text = item.hasDetail ? (detailText(detail) ?? item.summary) : item.summary;
+  return messageParts(item.segments, text).map((part, index) => {
+    switch (part.type) {
+      case "text":
+        return <span key={index}>{part.text}</span>;
+      case "attachment":
+        return (
+          <AttachmentBadge
+            key={index}
+            attachment={part.attachment}
+            variant="outline"
+            className="bg-background"
+          />
+        );
+      case "image":
+        return <ImageMark key={index} name={part.name} />;
+    }
+  });
 }
 
 function detailText(detail: AgentDetailOutcomeDto | null): string | null {

@@ -449,6 +449,58 @@ pub fn collect_markdown_paths(
     Ok(paths)
 }
 
+/// Entries one file search visits at most, so a large tree answers fast.
+const FIND_FILES_VISIT_LIMIT: usize = 20_000;
+
+/// Files under the project `root` whose name contains `query` ignoring
+/// case, nearest first, at most `limit`: what a user mentions besides
+/// pages. Markdown pages are left to the title search; hidden entries,
+/// symlinks and paths the tree policy ignores are skipped, and the walk
+/// stops after a bounded number of entries.
+pub fn find_project_files(root: &Path, query: &str, limit: usize) -> Vec<std::path::PathBuf> {
+    let policy = TreeIgnorePolicy::from_space_root(root);
+    let query = query.to_lowercase();
+    let mut found = Vec::new();
+    let mut directories = std::collections::VecDeque::from([root.to_path_buf()]);
+    let mut visited = 0;
+    while let Some(directory) = directories.pop_front() {
+        let Ok(entries) = fs::read_dir(&directory) else {
+            continue;
+        };
+        let mut entries: Vec<_> = entries.filter_map(Result::ok).collect();
+        entries.sort_by_key(|entry| entry.file_name().to_ascii_lowercase());
+        for entry in entries {
+            visited += 1;
+            if visited > FIND_FILES_VISIT_LIMIT || found.len() >= limit {
+                return found;
+            }
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let Ok(file_type) = entry.file_type() else {
+                continue;
+            };
+            if name.starts_with('.') || file_type.is_symlink() {
+                continue;
+            }
+            let path = entry.path();
+            let kind = if file_type.is_dir() {
+                TreePathKind::Directory
+            } else {
+                TreePathKind::File
+            };
+            if policy.is_ignored_abs(&path, kind) {
+                continue;
+            }
+            if file_type.is_dir() {
+                directories.push_back(path);
+            } else if !name.to_lowercase().ends_with(".md") && name.to_lowercase().contains(&query)
+            {
+                found.push(path);
+            }
+        }
+    }
+    found
+}
+
 /// Sort nodes by order.json for a given directory key.
 /// Entries in order come first (in order), then remaining entries alphabetically.
 fn apply_order(nodes: &mut Vec<TreeNode>, order_list: Option<&Vec<String>>) {

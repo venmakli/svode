@@ -13,6 +13,7 @@ pub mod identity;
 pub mod interaction;
 mod process;
 mod projection;
+pub mod prompt;
 pub mod registry;
 mod runtime;
 pub mod status;

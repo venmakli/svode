@@ -29,6 +29,7 @@ test("a snapshot replaces the local state, so a reload has no duplicates", () =>
     items: [
       {
         kind: "user_message",
+        segments: [],
         id: "user:t1",
         turnId: "t1",
         status: null,
@@ -113,6 +114,7 @@ test("a duplicate delta changes nothing and a seq gap resubscribes", () => {
 test("a truncation drops the evicted items and marks the history", () => {
   const message = (id: string, turnId: string) => ({
     kind: "user_message" as const,
+    segments: [],
     id,
     turnId,
     status: null,

@@ -9,6 +9,7 @@ use svode_agents::activity::DetailOutcome;
 use svode_agents::adapters::LaunchUnavailable;
 use svode_agents::identity::SessionKey;
 use svode_agents::interaction::{AnswerOutcome, InteractionAnswer};
+use svode_agents::prompt::PromptPart;
 use svode_agents::{AgentCheck, SettingValue};
 use tauri::ipc::Channel;
 use tauri::{State, Webview};
@@ -59,9 +60,9 @@ pub async fn agent_runtime_detail(
 pub async fn agent_runtime_prompt(
     state: State<'_, AgentRuntimeState>,
     session: SessionKey,
-    text: String,
+    prompt: Vec<PromptPart>,
 ) -> Result<String, AppError> {
-    Ok(state.runtime().prompt(&session, &text)?)
+    Ok(state.runtime().prompt(&session, &prompt)?)
 }
 
 #[tauri::command]
@@ -151,7 +152,7 @@ pub async fn agent_runtime_start_session(
     agent: String,
     cwd: PathBuf,
     settings: Vec<SettingValue>,
-    text: String,
+    prompt: Vec<PromptPart>,
 ) -> Result<StartedSession, AppError> {
     if !cwd.is_absolute() || !cwd.is_dir() {
         return Err(AppError::PathNotAccessible(
@@ -161,7 +162,7 @@ pub async fn agent_runtime_start_session(
     let source = AgentId::parse(&agent)
         .map_err(|error| AppError::General(format!("invalid agent id: {error}")))?;
     match connections
-        .start_session(&agent, &cwd, &settings, &text)
+        .start_session(&agent, &cwd, &settings, &prompt)
         .await?
     {
         SessionStart::Started { session, turn_id } => {

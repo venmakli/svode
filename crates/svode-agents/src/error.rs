@@ -40,6 +40,9 @@ pub enum AgentRuntimeError {
     /// The agent does not declare `session/list`.
     #[error("the agent does not list its sessions")]
     ListUnsupported,
+    /// A prompt links a file that is not there; nothing was sent.
+    #[error("the linked file is unavailable: {path}")]
+    FileUnavailable { path: String },
     /// A prompt while a turn is active; there is no queue.
     #[error("a turn is already active in this session")]
     TurnActive,

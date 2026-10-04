@@ -932,6 +932,29 @@ pub fn path_exists(path: String) -> Result<bool, AppError> {
     Ok(Path::new(&path).exists())
 }
 
+/// Files of the project whose name contains `query`, nearest first, as
+/// absolute paths; pages are found by the title search.
+#[tauri::command]
+pub async fn search_project_files(
+    project_path: String,
+    query: String,
+    limit: usize,
+) -> Result<Vec<String>, AppError> {
+    let root = PathBuf::from(&project_path);
+    if !root.is_absolute() || !root.is_dir() {
+        return Err(AppError::PathNotAccessible(project_path));
+    }
+    let found = tauri::async_runtime::spawn_blocking(move || {
+        svode_core::content_tree::find_project_files(&root, &query, limit.min(50))
+    })
+    .await
+    .map_err(|error| AppError::General(format!("File search failed: {error}")))?;
+    Ok(found
+        .into_iter()
+        .filter_map(|path| path.into_os_string().into_string().ok())
+        .collect())
+}
+
 /// Register the `<space_path>/.assets` directory with the Tauri asset
 /// protocol scope so the webview can render images/videos/audio uploaded
 /// to that space.

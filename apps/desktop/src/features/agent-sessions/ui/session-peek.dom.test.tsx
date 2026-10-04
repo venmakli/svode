@@ -76,6 +76,7 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
   const spaceState = {
     activeRootName: "Project",
     activeRootPath: "/project",
+    rootSpaces: [],
     spaces: [],
   };
   mock.module("@/features/space", () => ({
@@ -95,6 +96,11 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
   let snapshotTurn: "none" | "running" = "none";
   /** The message a reading of the history replays. */
   let replayedMessage = "Earlier";
+  /** Prompts the runtime accepted, and files that are no longer there. */
+  const prompts: unknown[] = [];
+  const missingPaths = new Set<string>();
+  /** Attachments the shell was asked to open. */
+  const openedAttachments: string[] = [];
   const { mockNativeIpc } = await import("@/platform/native/testing");
   mockNativeIpc((command, args) => {
     const payload = (args ?? {}) as Record<string, unknown>;
@@ -150,7 +156,11 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
     }
     if (command === "agent_runtime_unsubscribe") return null;
     if (command === "agent_runtime_release_session") return null;
-    if (command === "agent_runtime_prompt") return "turn-1";
+    if (command === "agent_runtime_prompt") {
+      prompts.push(payload.prompt);
+      return "turn-1";
+    }
+    if (command === "path_exists") return !missingPaths.has(String(payload.path));
     if (command === "list_project_openers") return [];
     if (command === "routines_resolve_launches") return [];
     if (command.startsWith("plugin:event|")) return 1;
@@ -162,6 +172,9 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
     "../chat/model/composer"
   );
   const { TooltipProvider } = await import("@/components/ui/tooltip");
+  const { AttachmentOpenerContext } = await import(
+    "../chat/hooks/use-attachment-opener"
+  );
   const { useAgentSessionCatalog, useAgentSessionCatalogLifecycle } =
     await import("../hooks");
   let reloadCatalog: () => Promise<void> = async () => {};
@@ -185,13 +198,17 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
     }, [load]);
     return (
       <TooltipProvider>
-        <AgentSessionPeek
-          target={target}
-          focusTerminal={focusTerminal}
-          onOpenChange={onOpenChange}
-          onExpand={async () => true}
-          onOpenRoutine={() => undefined}
-        />
+        <AttachmentOpenerContext.Provider
+          value={(attachment) => openedAttachments.push(attachment.path)}
+        >
+          <AgentSessionPeek
+            target={target}
+            focusTerminal={focusTerminal}
+            onOpenChange={onOpenChange}
+            onExpand={async () => true}
+            onOpenRoutine={() => undefined}
+          />
+        </AttachmentOpenerContext.Provider>
       </TooltipProvider>
     );
   }
@@ -282,7 +299,9 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
         session: key,
         liveness: "unknown",
       });
-      writeComposerDraft(sessionDraftKey("codex:read"), { text: "Continue" });
+      writeComposerDraft(sessionDraftKey("codex:read"), {
+        parts: [{ type: "text", text: "Continue" }],
+      });
       await mountPeek("/p-read", { sessionId: "codex:read", launchId: null });
 
       // Without a Svode writer the chat is the default; opening sends nothing.
@@ -304,6 +323,72 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
       expect(
         commands.filter((command) => command === "agent_runtime_prompt"),
       ).toEqual(["agent_runtime_prompt"]);
+    },
+  );
+
+  peekTest(
+    "attachments reach the agent as links where they were written, and a replayed link is a badge again",
+    async () => {
+      const key = { agent: "codex", namespace: "native", sessionId: "files" };
+      listed = [
+        session({
+          id: "codex:files",
+          title: "Files",
+          capabilities: { canResume: true, canOpenInChat: true },
+        }),
+      ];
+      openings.length = 0;
+      prompts.length = 0;
+      openedAttachments.length = 0;
+      missingPaths.clear();
+      missingPaths.add("/project/gone.md");
+      snapshotWriter = "acp";
+      openingOutcome = () => ({
+        outcome: "opened",
+        session: key,
+        liveness: "free",
+      });
+      replayedMessage =
+        "See [@plan.md](file:///project/plan.md) and [@gone.md](file:///project/gone.md)";
+      writeComposerDraft(sessionDraftKey("codex:files"), {
+        parts: [
+          { type: "text", text: "Compare " },
+          {
+            type: "attachment",
+            attachment: { path: "/project/notes.md", name: "Notes" },
+          },
+          { type: "text", text: " please" },
+        ],
+      });
+      try {
+        await mountPeek("/p-files", { sessionId: "codex:files", launchId: null });
+
+        // The replayed links are badges; the one whose file is gone is marked
+        // and opens nothing.
+        await click(buttonByLabel("plan.md"));
+        expect(openedAttachments).toEqual(["/project/plan.md"]);
+        await click(
+          buttonByLabel(
+            m.sessions_chat_attachment_unavailable_label({ name: "gone.md" }),
+          ),
+        );
+        expect(openedAttachments).toEqual(["/project/plan.md"]);
+        expect(document.body.textContent?.includes("[@plan.md]")).toBe(false);
+
+        // The draft's badge sits in the field and goes as a link in place.
+        expect(buttonByLabel("Notes") !== null).toBe(true);
+        await click(buttonByLabel(m.sessions_chat_send()));
+        expect(prompts).toEqual([
+          [
+            { type: "text", text: "Compare " },
+            { type: "file", path: "/project/notes.md", name: "Notes" },
+            { type: "text", text: " please" },
+          ],
+        ]);
+      } finally {
+        replayedMessage = "Earlier";
+        missingPaths.clear();
+      }
     },
   );
 
@@ -923,6 +1008,7 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
       items: [
         {
           kind: "user_message",
+          segments: [],
           id: "u1",
           turnId: "replay:1",
           status: null,
@@ -983,6 +1069,7 @@ function installDomGlobals(dom: JSDOM) {
     NodeFilter: dom.window.NodeFilter,
     PointerEvent: dom.window.MouseEvent,
     ShadowRoot: dom.window.ShadowRoot,
+    SVGElement: dom.window.SVGElement,
     ResizeObserver: class {
       disconnect() {}
       observe() {}

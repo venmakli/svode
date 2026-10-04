@@ -2445,5 +2445,18 @@
   "sessions_chat_no_terminal": "This agent cannot continue the session in a terminal",
   "sessions_chat_terminal_during_turn": "Available between turns",
   "sessions_chat_unavailable_not_openable": "The chat cannot open this session",
-  "sessions_chat_unavailable_agent": "{agent} is not available for the chat: {reason}"
+  "sessions_chat_unavailable_agent": "{agent} is not available for the chat: {reason}",
+  "sessions_chat_attach": "Attach",
+  "sessions_chat_attach_disk_file": "File from disk…",
+  "sessions_chat_attach_project": "Page or project file",
+  "sessions_chat_mention_search": "Search pages and files",
+  "sessions_chat_mention_empty": "Nothing found",
+  "sessions_chat_attachment_unavailable": "The file is no longer at this path",
+  "sessions_chat_attachment_unavailable_label": "{name}, unavailable",
+  "sessions_chat_attachment_image": "Image",
+  "sessions_chat_attachment_page": "Page",
+  "sessions_chat_attachment_file": "File",
+  "sessions_chat_attachment_file_type": "{type} file",
+  "sessions_chat_paste_failed": "The pasted image was not attached: {message}",
+  "sessions_chat_refusal_file_unavailable": "A linked file is no longer there. Remove its badge or attach the file again"
 }

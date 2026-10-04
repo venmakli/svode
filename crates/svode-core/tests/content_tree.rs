@@ -1,7 +1,8 @@
 use std::fs;
 
 use svode_core::content_tree::{
-    TreeChildKind, build_tree, list_project_children, list_tree_children_checked,
+    TreeChildKind, build_tree, find_project_files, list_project_children,
+    list_tree_children_checked,
 };
 use svode_core::page::SpaceReadiness;
 
@@ -213,4 +214,43 @@ fn scope_owner_facts_follow_the_tree_marker_rule_for_every_owner_form() {
         );
     }
     assert!(scope_owner_facts(root, "../outside.md").is_err());
+}
+
+#[test]
+fn a_file_search_finds_files_by_name_nearest_first_without_pages_or_ignored_paths() {
+    let project = tempfile::tempdir().unwrap();
+    let root = project.path();
+    fs::create_dir_all(root.join(".svode")).unwrap();
+    fs::write(
+        root.join(".svode/config.json"),
+        r#"{"name":"Root","spaces":[],"tree":{"exclude":["hidden"]}}"#,
+    )
+    .unwrap();
+    fs::write(root.join(".gitignore"), "build/\n").unwrap();
+    fs::write(root.join("Report.pdf"), "").unwrap();
+    fs::write(root.join("report.md"), "").unwrap();
+    fs::create_dir_all(root.join("docs/deep")).unwrap();
+    fs::write(root.join("docs/deep/report-2.png"), "").unwrap();
+    fs::write(root.join("docs/notes.txt"), "").unwrap();
+    for ignored in ["hidden", "build", ".git"] {
+        fs::create_dir_all(root.join(ignored)).unwrap();
+        fs::write(root.join(ignored).join("report.txt"), "").unwrap();
+    }
+
+    assert_eq!(
+        find_project_files(root, "REPORT", 10),
+        [root.join("Report.pdf"), root.join("docs/deep/report-2.png")]
+    );
+    assert_eq!(
+        find_project_files(root, "report", 1),
+        [root.join("Report.pdf")]
+    );
+    assert_eq!(
+        find_project_files(root, "", 10),
+        [
+            root.join("Report.pdf"),
+            root.join("docs/notes.txt"),
+            root.join("docs/deep/report-2.png"),
+        ]
+    );
 }

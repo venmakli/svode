@@ -1,4 +1,5 @@
 import type { AgentSessionSnapshotDto } from "@/platform/agent-runtime/agent-runtime-api";
+import type { DraftPart } from "./attachments";
 
 /**
  * A composer draft (Stage 10 `04`): it survives a window reload and moves
@@ -6,7 +7,8 @@ import type { AgentSessionSnapshotDto } from "@/platform/agent-runtime/agent-run
  * session storage and never in the project.
  */
 export interface ComposerDraft {
-  text: string;
+  /** Text and attachment badges in the order they were written. */
+  parts: DraftPart[];
   /** New session drafts only: the chosen agent and Space. */
   agent?: string | null;
   spacePath?: string | null;
@@ -38,7 +40,7 @@ export function readComposerDraft(key: string): ComposerDraft | null {
     const value = JSON.parse(raw) as unknown;
     if (!value || typeof value !== "object") return null;
     const draft = value as ComposerDraft;
-    return typeof draft.text === "string" ? draft : null;
+    return Array.isArray(draft.parts) ? draft : null;
   } catch {
     return null;
   }
@@ -59,7 +61,7 @@ export function writeComposerDraft(key: string, draft: ComposerDraft | null) {
 
 function isEmptyDraft(draft: ComposerDraft): boolean {
   return (
-    draft.text.length === 0 &&
+    draft.parts.length === 0 &&
     !draft.agent &&
     !draft.spacePath &&
     !draft.sending &&

@@ -14,6 +14,7 @@ import {
   type SendRefusal,
 } from "../hooks/use-session-composer";
 import type { ContinueRefusal } from "../hooks/use-session-opening";
+import { isDraftBlank } from "../model/attachments";
 import type { ChatSessionState } from "../model/interface";
 import { toolCallOf } from "../model/timeline";
 import { SessionAgentLabel, unavailableText } from "./agent-button";
@@ -129,7 +130,7 @@ export function SessionChat({
   // Only the confirmation's own button sends, never a repeated Enter.
   const send = () => {
     if (read && continuation.liveness === "unknown") {
-      if (composer.draft.text.trim()) setConfirming(true);
+      if (!isDraftBlank(composer.draft.parts)) setConfirming(true);
       return;
     }
     void composer.send();
@@ -195,8 +196,8 @@ export function SessionChat({
               </p>
             )}
             <Composer
-              text={composer.draft.text}
-              onTextChange={composer.setText}
+              parts={composer.draft.parts}
+              onPartsChange={composer.setParts}
               onSend={send}
               onStop={composer.stop}
               running={composer.running}
@@ -293,6 +294,9 @@ function RefusalLine({ refusal }: { refusal: SendRefusal }) {
       break;
     case "auth_required":
       text = m.sessions_chat_refusal_auth();
+      break;
+    case "file_unavailable":
+      text = m.sessions_chat_refusal_file_unavailable();
       break;
     case "connection_closed":
     case "connection_not_found":

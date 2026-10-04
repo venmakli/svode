@@ -73,8 +73,24 @@ export interface AgentPlanEntryDto {
   status: "pending" | "in_progress" | "completed";
 }
 
+/** One part of a user message in the order it was written. */
+export type AgentMessageSegmentDto =
+  | { type: "text"; text: string }
+  /** A link to a file; `uri` is a `file://` URI for local files. */
+  | { type: "link"; uri: string; name: string }
+  | { type: "image"; uri: string | null; name: string | null };
+
+/** A prompt part: text, or a link to a file by its absolute path. */
+export type AgentPromptPartDto =
+  | { type: "text"; text: string }
+  | { type: "file"; path: string; name: string };
+
 export type AgentActivityItemDto = (
-  | { kind: "user_message" }
+  /**
+   * The summary is the text; `segments` is the whole message in order once
+   * it links a file or an image, empty for a text-only message.
+   */
+  | { kind: "user_message"; segments: AgentMessageSegmentDto[] }
   | { kind: "agent_message" }
   | { kind: "reasoning" }
   | { kind: "tool_call"; tool: AgentToolKindDto }
@@ -283,6 +299,7 @@ export type AgentRuntimeErrorCode =
   | "read_only_unsupported"
   | "writer_required"
   | "list_unsupported"
+  | "file_unavailable"
   | "turn_active"
   | "invalid_answer"
   | "auth_required"
@@ -371,9 +388,9 @@ export function readAgentActivityDetail(
 /** Resolves to the turn id once the runtime accepted the prompt. */
 export function promptAgentSession(
   session: AgentSessionKeyDto,
-  text: string,
+  prompt: AgentPromptPartDto[],
 ): Promise<string> {
-  return invoke<string>("agent_runtime_prompt", { session, text });
+  return invoke<string>("agent_runtime_prompt", { session, prompt });
 }
 
 export function cancelAgentTurn(session: AgentSessionKeyDto): Promise<void> {
@@ -476,7 +493,7 @@ export function startAgentSession(request: {
   agent: string;
   cwd: string;
   settings: AgentSettingValueDto[];
-  text: string;
+  prompt: AgentPromptPartDto[];
 }): Promise<StartedAgentSessionDto> {
   return invoke<StartedAgentSessionDto>("agent_runtime_start_session", request);
 }

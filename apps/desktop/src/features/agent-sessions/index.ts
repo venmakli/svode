@@ -39,3 +39,13 @@ export type {
   NewSessionDraftTarget,
   NewSessionSpaceRef,
 } from "./model";
+export {
+  AttachmentOpenerContext as ChatAttachmentOpenerContext,
+  type OpenAttachment as OpenChatAttachment,
+} from "./chat/hooks/use-attachment-opener";
+export {
+  attachmentKind as chatAttachmentKind,
+  locateAttachment as locateChatAttachment,
+  type Attachment as ChatAttachment,
+  type AttachmentLocation as ChatAttachmentLocation,
+} from "./chat/model/attachments";
