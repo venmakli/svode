@@ -138,6 +138,11 @@ pub struct AcpLaunch {
     /// created, opened or read a session serves only that one and is no
     /// longer the plan's shared or catalogue connection.
     pub session_per_connection: bool,
+    /// Recorded evidence that `session/new` without a prompt leaves no
+    /// session in the agent's native store or list, so a new session draft
+    /// may create its session before the first prompt and show the settings
+    /// and commands the agent declares for it.
+    pub draft_session: bool,
 }
 
 /// The user's login shell environment a host captured for agent processes
@@ -787,6 +792,24 @@ impl AgentRuntime {
         self.inner.register(key.clone(), session);
         self.inner.catalog.changed(&connection.agent);
         Ok(key)
+    }
+
+    /// Changes one declared setting of a session the runtime drives (C6)
+    /// and returns once the agent confirmed the value, which also reaches
+    /// subscribers as a settings delta. A value the session does not
+    /// declare, or one the agent refuses, is refused and the setting keeps
+    /// its value.
+    pub async fn set_setting(
+        &self,
+        key: &SessionKey,
+        value: &SettingValue,
+    ) -> Result<(), AgentRuntimeError> {
+        let session = self.session(key)?;
+        session.connection.require_open()?;
+        if session.writer.lock().unwrap().is_none() {
+            return Err(AgentRuntimeError::WriterRequired);
+        }
+        self.apply_setting(&session, value).await
     }
 
     /// Sets one declared setting and waits for the agent to confirm it.

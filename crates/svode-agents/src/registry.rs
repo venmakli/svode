@@ -681,6 +681,13 @@ impl AdapterRuntimeRegistry {
             // the other sessions when one is loaded, and lists only the
             // last session's directory once a session ran.
             session_per_connection: adapter == AgentAdapterKind::Pi,
+            // E01: `session/new` without a prompt leaves no session in the
+            // native store or list of Claude Code and Codex; Claude creates
+            // only an empty project directory.
+            draft_session: matches!(
+                adapter,
+                AgentAdapterKind::Codex | AgentAdapterKind::ClaudeCode
+            ),
         })
     }
 
@@ -1951,6 +1958,7 @@ mod tests {
         assert!(launch.lists_catalog);
         assert!(launch.read_only_open);
         assert_eq!(launch.writer_refusal, None);
+        assert!(launch.draft_session);
 
         let codex = AdapterRuntimeRegistry
             .acp_launch(
@@ -1963,6 +1971,7 @@ mod tests {
         assert!(codex.acp_id_is_native);
         assert!(codex.lists_catalog);
         assert!(codex.read_only_open);
+        assert!(codex.draft_session);
         assert_eq!(
             codex.writer_refusal.as_deref(),
             Some("thread_active_writer")
@@ -1985,6 +1994,8 @@ mod tests {
         assert!(pi.acp_id_is_native);
         assert!(pi.lists_catalog);
         assert!(pi.session_per_connection);
+        // Without E01 evidence the draft shows settings after the first send.
+        assert!(!pi.draft_session);
         // An adapter entrypoint does not start without its Node.js.
         assert_eq!(
             AdapterRuntimeRegistry.acp_launch(
@@ -2019,6 +2030,7 @@ mod tests {
             assert!(launch.read_only_open);
             assert_eq!(launch.writer_refusal, None);
             assert!(!launch.session_per_connection);
+            assert!(!launch.draft_session);
         }
         // Cursor's ACP sessions are not its terminal chats.
         assert_eq!(

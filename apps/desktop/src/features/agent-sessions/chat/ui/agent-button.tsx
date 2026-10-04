@@ -1,7 +1,15 @@
 import { ChevronDown, RotateCw, Settings2 } from "lucide-react";
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { AgentIcon, useAgentAdapterDictionary } from "@/features/agent-adapters";
 import { Button } from "@/components/ui/button";
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
 import {
   Popover,
   PopoverContent,
@@ -21,6 +29,14 @@ import { InputGroupButton } from "@/components/ui/input-group";
 import type { AgentLaunchUnavailableDto } from "../api/chat";
 import type { ChatAgent } from "../model/agents";
 import type { DraftAgentState } from "../hooks/use-draft-agent";
+import {
+  currentOptionName,
+  filterOptions,
+  MODEL_SEARCH_FROM,
+  sessionControls,
+  type SessionSetting,
+  type SettingValue,
+} from "../model/session-controls";
 import * as m from "@/paraglide/messages.js";
 
 /** The A1 outcome of an agent that cannot start, in the words of the agent settings. */
@@ -62,121 +78,311 @@ export interface AgentRecoveryActions {
   onRetry: () => void;
 }
 
-/**
- * The agent of a new session draft (Stage 10 `04`, composer): one button in
- * the field with a popover of agent tabs, the agent's readiness under
- * "Model" while it starts or when it needs recovery, and a link to the
- * agent settings.
- */
-export function DraftAgentButton({
-  agents,
-  agent,
-  readiness,
-  onChoose,
-  recovery,
-}: {
+/** The agent tabs of a new session draft and the agent's readiness. */
+export interface DraftAgentChoice {
   agents: ChatAgent[];
-  agent: string | null;
-  readiness: DraftAgentState;
   onChoose: (agent: string) => void;
+  readiness: DraftAgentState;
   recovery: AgentRecoveryActions;
+  /**
+   * The agent's settings show only after the first send: there is no
+   * evidence that it creates a session without leaving it in its store.
+   */
+  settingsAfterSend: boolean;
+}
+
+/**
+ * The agent and model button in the composer field (Stage 10 `04`,
+ * composer): the agent's icon, the model and, in gray, the reasoning level.
+ * Its popover holds the agent tabs in a draft or the session's agent after
+ * the first send, then the model, reasoning and the agent's other settings,
+ * each under its own label. Values show as the agent confirmed them.
+ */
+export function AgentModelButton({
+  agent,
+  draft,
+  settings,
+  canChange,
+  changing,
+  onChange,
+}: {
+  agent: string | null;
+  /** Present in a new session draft only. */
+  draft: DraftAgentChoice | null;
+  /** The session's declared settings; null while they are not known yet. */
+  settings: SessionSetting[] | null;
+  /** The runtime drives the session, so its settings can change. */
+  canChange: boolean;
+  /** The setting whose change waits for the agent. */
+  changing: string | null;
+  onChange: (value: SettingValue) => void;
 }) {
   const dictionary = useAgentAdapterDictionary();
   const [open, setOpen] = useState(false);
-  const label = agent ? dictionary.label(agent) : m.sessions_chat_agent_choose();
+  const controls = sessionControls(settings ?? []);
+  const name = agent ? dictionary.label(agent) : m.sessions_chat_agent_choose();
+  const label = controls.model ? currentOptionName(controls.model) : name;
+  const reasoning = controls.reasoning ? currentOptionName(controls.reasoning) : null;
+  const change = (setting: SessionSetting, value: string) => {
+    if (value && value !== setting.currentValue) {
+      onChange({ setting: setting.id, value });
+    }
+  };
+  const blockProps = { canChange, changing, onChange: change };
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <InputGroupButton
           size="sm"
-          className="max-w-56 gap-1.5 px-2"
-          aria-label={m.sessions_chat_agent_button({ agent: label })}
+          className="max-w-64 min-w-0 gap-1.5 px-2"
+          aria-label={m.sessions_chat_agent_button({
+            agent: [name, controls.model && label, reasoning]
+              .filter(Boolean)
+              .join(", "),
+          })}
         >
           {agent && <AgentIcon agent={agent} />}
           <span className="truncate">{label}</span>
+          {reasoning && (
+            <span className="truncate text-muted-foreground @max-md/composer:hidden">
+              {reasoning}
+            </span>
+          )}
           <ChevronDown className="text-muted-foreground" />
         </InputGroupButton>
       </PopoverTrigger>
       <PopoverContent align="start" side="top" className="w-80 gap-0 p-0">
-        <div className="flex flex-col gap-3 p-3">
-          <ToggleGroup
-            type="single"
-            variant="outline"
-            size="sm"
-            spacing={1}
-            value={agent ?? ""}
-            onValueChange={(next) => {
-              if (next) onChoose(next);
-            }}
-            aria-label={m.sessions_chat_agent_tabs()}
-            className="flex-wrap justify-start"
-          >
-            {agents.map((candidate) => (
-              <Tooltip key={candidate.agent}>
-                <TooltipTrigger asChild>
-                  <ToggleGroupItem
-                    value={candidate.agent}
-                    aria-label={candidate.name}
-                    className="size-8 px-0"
-                  >
-                    <AgentIcon agent={candidate.agent} />
-                  </ToggleGroupItem>
-                </TooltipTrigger>
-                <TooltipContent>{candidate.name}</TooltipContent>
-              </Tooltip>
-            ))}
-          </ToggleGroup>
-          <AgentReadinessBlock readiness={readiness} recovery={recovery} />
+        <div className="flex max-h-[min(32rem,var(--radix-popover-content-available-height))] flex-col gap-3 overflow-y-auto p-3">
+          {draft ? (
+            <AgentTabs agent={agent} draft={draft} />
+          ) : (
+            agent && (
+              <div className="flex min-w-0 items-center gap-2 text-sm font-medium">
+                <AgentIcon agent={agent} />
+                <span className="truncate">{name}</span>
+              </div>
+            )
+          )}
+          <ModelBlock
+            draft={draft}
+            settings={settings}
+            model={controls.model}
+            {...blockProps}
+          />
+          {controls.reasoning && (
+            <SettingBlock
+              label={m.sessions_chat_reasoning_level()}
+              setting={controls.reasoning}
+              {...blockProps}
+            />
+          )}
+          {controls.others.map((setting) => (
+            <SettingBlock
+              key={setting.id}
+              label={setting.name}
+              setting={setting}
+              {...blockProps}
+            />
+          ))}
         </div>
-        <div className="border-t p-1">
-          <Button
-            variant="ghost"
-            size="sm"
-            className="w-full justify-start"
-            onClick={() => {
-              setOpen(false);
-              recovery.onOpenSettings();
-            }}
-          >
-            <Settings2 data-icon="inline-start" />
-            {m.sessions_chat_agent_settings()}
-          </Button>
-        </div>
+        {draft && (
+          <div className="border-t p-1">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="w-full justify-start"
+              onClick={() => {
+                setOpen(false);
+                draft.recovery.onOpenSettings();
+              }}
+            >
+              <Settings2 data-icon="inline-start" />
+              {m.sessions_chat_agent_settings()}
+            </Button>
+          </div>
+        )}
       </PopoverContent>
     </Popover>
   );
 }
 
-/**
- * The "Model" block while the agent starts or when it needs recovery. The
- * models themselves come with the session settings of the agent.
- */
-function AgentReadinessBlock({
-  readiness,
-  recovery,
-}: {
-  readiness: DraftAgentState;
-  recovery: AgentRecoveryActions;
-}) {
-  if (readiness.state === "idle") return null;
-  if (readiness.state === "checked" && readiness.check.state === "ready") {
-    return null;
-  }
+function AgentTabs({ agent, draft }: { agent: string | null; draft: DraftAgentChoice }) {
   return (
-    <section className="flex flex-col gap-1.5">
-      <h3 className="text-xs font-medium text-muted-foreground">
-        {m.sessions_chat_model()}
-      </h3>
-      {readiness.state === "connecting" ? (
-        <div className="flex flex-col gap-1.5" aria-busy="true">
-          <Skeleton className="h-7 w-full" />
-          <Skeleton className="h-7 w-3/4" />
-        </div>
-      ) : (
-        <AgentRecovery readiness={readiness} recovery={recovery} />
-      )}
+    <ToggleGroup
+      type="single"
+      variant="outline"
+      size="sm"
+      spacing={1}
+      value={agent ?? ""}
+      onValueChange={(next) => {
+        if (next) draft.onChoose(next);
+      }}
+      aria-label={m.sessions_chat_agent_tabs()}
+      className="flex-wrap justify-start"
+    >
+      {draft.agents.map((candidate) => (
+        <Tooltip key={candidate.agent}>
+          <TooltipTrigger asChild>
+            <ToggleGroupItem
+              value={candidate.agent}
+              aria-label={candidate.name}
+              className="size-8 px-0"
+            >
+              <AgentIcon agent={candidate.agent} />
+            </ToggleGroupItem>
+          </TooltipTrigger>
+          <TooltipContent>{candidate.name}</TooltipContent>
+        </Tooltip>
+      ))}
+    </ToggleGroup>
+  );
+}
+
+function Block({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <section className="flex flex-col gap-1.5" aria-label={label}>
+      <h3 className="text-xs font-medium text-muted-foreground">{label}</h3>
+      {children}
     </section>
   );
+}
+
+interface BlockProps {
+  canChange: boolean;
+  changing: string | null;
+  onChange: (setting: SessionSetting, value: string) => void;
+}
+
+/**
+ * "Model": the agent's models, with a search from five of them; while the
+ * agent starts a skeleton, and in its place the agent's recovery or why
+ * there is no choice.
+ */
+function ModelBlock({
+  draft,
+  settings,
+  model,
+  ...props
+}: BlockProps & {
+  draft: DraftAgentChoice | null;
+  settings: SessionSetting[] | null;
+  model: SessionSetting | null;
+}) {
+  const readiness = draft?.readiness;
+  let content: ReactNode;
+  if (readiness?.state === "idle") return null;
+  if (
+    readiness &&
+    readiness.state !== "connecting" &&
+    !(readiness.state === "checked" && readiness.check.state === "ready")
+  ) {
+    content = <AgentRecovery readiness={readiness} recovery={draft.recovery} />;
+  } else if (readiness?.state === "connecting" || (settings === null && !draft?.settingsAfterSend)) {
+    content = (
+      <div className="flex flex-col gap-1.5" aria-busy="true">
+        <Skeleton className="h-7 w-full" />
+        <Skeleton className="h-7 w-3/4" />
+      </div>
+    );
+  } else if (draft?.settingsAfterSend) {
+    content = <Note>{m.sessions_chat_model_after_send()}</Note>;
+  } else if (!model) {
+    content = <Note>{m.sessions_chat_model_not_declared()}</Note>;
+  } else {
+    content = <OptionList setting={model} search={model.options.length >= MODEL_SEARCH_FROM} {...props} />;
+  }
+  return <Block label={m.sessions_chat_model()}>{content}</Block>;
+}
+
+/** Reasoning and the agent's other settings, under their label. */
+function SettingBlock({
+  label,
+  setting,
+  ...props
+}: BlockProps & { label: string; setting: SessionSetting }) {
+  return (
+    <Block label={label}>
+      {setting.options.length <= TOGGLE_OPTIONS ? (
+        <ToggleGroup
+          type="single"
+          variant="outline"
+          size="sm"
+          value={setting.currentValue}
+          disabled={!props.canChange || props.changing === setting.id}
+          onValueChange={(value) => props.onChange(setting, value)}
+          aria-label={label}
+          className="w-full"
+        >
+          {setting.options.map((option) => (
+            <ToggleGroupItem
+              key={option.value}
+              value={option.value}
+              title={option.description ?? undefined}
+              className="min-w-0 flex-1"
+            >
+              <span className="truncate">{option.name}</span>
+            </ToggleGroupItem>
+          ))}
+        </ToggleGroup>
+      ) : (
+        <OptionList setting={setting} search={false} {...props} />
+      )}
+    </Block>
+  );
+}
+
+/** A setting with few values is a toggle group across the popover. */
+const TOGGLE_OPTIONS = 4;
+
+function OptionList({
+  setting,
+  search,
+  canChange,
+  changing,
+  onChange,
+}: BlockProps & { setting: SessionSetting; search: boolean }) {
+  const [query, setQuery] = useState("");
+  const options = filterOptions(setting.options, query);
+  const disabled = !canChange || changing === setting.id;
+  return (
+    <Command shouldFilter={false} className="rounded-lg! border p-0">
+      {search && (
+        <CommandInput
+          value={query}
+          onValueChange={setQuery}
+          placeholder={m.sessions_chat_model_search()}
+          aria-label={m.sessions_chat_model_search()}
+        />
+      )}
+      <CommandList className="max-h-56">
+        <CommandEmpty>{m.sessions_chat_model_search_empty()}</CommandEmpty>
+        <CommandGroup>
+          {options.map((option) => (
+            <CommandItem
+              key={option.value}
+              value={option.value}
+              disabled={disabled}
+              data-checked={option.value === setting.currentValue}
+              onSelect={() => onChange(setting, option.value)}
+            >
+              <span className="flex min-w-0 flex-col">
+                <span className="truncate">{option.name}</span>
+                {option.description && (
+                  <span className="truncate text-xs text-muted-foreground">
+                    {option.description}
+                  </span>
+                )}
+              </span>
+            </CommandItem>
+          ))}
+        </CommandGroup>
+      </CommandList>
+    </Command>
+  );
+}
+
+function Note({ children }: { children: ReactNode }) {
+  return <p className="text-sm text-muted-foreground">{children}</p>;
 }
 
 export function AgentRecovery({
@@ -232,16 +438,5 @@ export function AgentRecovery({
         </Button>
       </div>
     </div>
-  );
-}
-
-/** The agent of an existing session: it does not change. */
-export function SessionAgentLabel({ agent }: { agent: string }) {
-  const dictionary = useAgentAdapterDictionary();
-  return (
-    <span className="flex min-w-0 items-center gap-1.5 px-2 text-sm text-muted-foreground">
-      <AgentIcon agent={agent} />
-      <span className="truncate">{dictionary.label(agent)}</span>
-    </span>
   );
 }

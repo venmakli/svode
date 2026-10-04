@@ -107,6 +107,7 @@ fn launch() -> AcpLaunch {
         read_only_open: false,
         writer_refusal: None,
         session_per_connection: false,
+        draft_session: false,
     }
 }
 
@@ -1126,6 +1127,7 @@ async fn a_refused_opening_leaves_the_connection_to_the_next_session() {
         &runtime,
         &AcpLaunch {
             session_per_connection: true,
+            draft_session: false,
             ..launch()
         },
     );
@@ -2009,6 +2011,7 @@ async fn a_connection_of_an_agent_with_one_session_per_connection_serves_one_ses
     let runtime = AgentRuntime::default();
     let launch = AcpLaunch {
         session_per_connection: true,
+        draft_session: false,
         ..listing("pi")
     };
     let (id, mut agent) = attached_with(&runtime, &launch);
@@ -2368,6 +2371,177 @@ async fn a_config_option_update_replaces_the_session_settings() {
 }
 
 #[tokio::test]
+async fn a_setting_changes_once_the_agent_confirms_it_and_a_refusal_keeps_the_value() {
+    let runtime = AgentRuntime::default();
+    let (id, mut agent) = attached(&runtime);
+    let (key, ()) = tokio::join!(
+        async {
+            runtime
+                .new_session(id, Path::new("/project"), &[])
+                .await
+                .unwrap()
+        },
+        async {
+            agent
+                .initialize(json!({ "sessionCapabilities": { "close": {} } }))
+                .await;
+            let new_session = agent.expect("session/new").await;
+            agent.reply(&new_session, mode_settings("agent")).await;
+        }
+    );
+    let confirmed = |current: &str| {
+        let mut settings = mode_settings(current);
+        settings.as_object_mut().unwrap().remove("sessionId");
+        settings.as_object_mut().unwrap().remove("modes");
+        settings
+    };
+
+    let read_only = approval("read-only");
+    let (changed, ()) = tokio::join!(runtime.set_setting(&key, &read_only), async {
+        let set = agent.expect("session/set_config_option").await;
+        assert_eq!(
+            set["params"],
+            json!({ "sessionId": "s1", "configId": "mode", "value": "read-only" })
+        );
+        agent.reply(&set, confirmed("read-only")).await;
+    });
+    assert_eq!(changed, Ok(()));
+    let current = |runtime: &AgentRuntime| {
+        runtime.subscribe(&key).unwrap().snapshot.settings[0]
+            .current_value
+            .clone()
+    };
+    assert_eq!(current(&runtime), "read-only");
+
+    // A value the session does not declare never reaches the agent.
+    assert_eq!(
+        runtime
+            .set_setting(&key, &approval("agent-full-access"))
+            .await,
+        Err(AgentRuntimeError::SettingRefused {
+            setting: "mode".into(),
+            value: "agent-full-access".into(),
+            reason: SettingRefusal::NotDeclared,
+        })
+    );
+    agent.silent().await;
+
+    let workspace_write = approval("workspace-write");
+    let (refused, ()) = tokio::join!(runtime.set_setting(&key, &workspace_write), async {
+        let set = agent.expect("session/set_config_option").await;
+        agent
+            .send(json!({
+                "jsonrpc": "2.0", "id": set["id"],
+                "error": { "code": -32602, "message": "not allowed" }
+            }))
+            .await;
+    });
+    assert!(matches!(
+        refused,
+        Err(AgentRuntimeError::SettingRefused {
+            reason: SettingRefusal::Agent { .. },
+            ..
+        })
+    ));
+    assert_eq!(current(&runtime), "read-only", "a refusal keeps the value");
+
+    // A session the runtime no longer drives does not change.
+    let ((), ()) = tokio::join!(
+        async { runtime.release_session(&key).await.unwrap() },
+        async {
+            let close = agent.expect("session/close").await;
+            agent.reply(&close, json!({})).await;
+        }
+    );
+    assert_eq!(
+        runtime.set_setting(&key, &approval("agent")).await,
+        Err(AgentRuntimeError::WriterRequired)
+    );
+    agent.silent().await;
+}
+
+#[tokio::test]
+async fn commands_and_usage_reach_the_snapshot_as_session_controls() {
+    let runtime = AgentRuntime::default();
+    let (id, mut agent) = attached(&runtime);
+    let (key, ()) = tokio::join!(
+        async {
+            runtime
+                .new_session(id, Path::new("/project"), &[])
+                .await
+                .unwrap()
+        },
+        async {
+            agent.initialize(json!({})).await;
+            let new_session = agent.expect("session/new").await;
+            agent
+                .reply(&new_session, json!({ "sessionId": "s1" }))
+                .await;
+        }
+    );
+    let mut subscription = runtime.subscribe(&key).unwrap();
+    assert!(subscription.snapshot.commands.is_empty());
+    assert_eq!(subscription.snapshot.usage, None);
+    agent
+        .update(
+            "s1",
+            json!({
+                "sessionUpdate": "available_commands_update",
+                "availableCommands": [
+                    { "name": "review", "description": "Review changes", "input": { "hint": "focus" } },
+                    { "name": "init", "description": "Create AGENTS.md", "input": null },
+                    { "name": "two words", "description": "not a command name" },
+                    { "description": "no name" }
+                ]
+            }),
+        )
+        .await;
+    agent
+        .update(
+            "s1",
+            json!({
+                "sessionUpdate": "usage_update", "used": 53000, "size": 200000,
+                "cost": { "amount": 0.045, "currency": "USD" }
+            }),
+        )
+        .await;
+    let deltas = follow(&mut subscription, |snapshot| snapshot.usage.is_some()).await;
+    let snapshot = &subscription.snapshot;
+    let commands: Vec<_> = snapshot
+        .commands
+        .iter()
+        .map(|command| (command.name.as_str(), command.hint.as_deref()))
+        .collect();
+    assert_eq!(commands, [("review", Some("focus")), ("init", None)]);
+    let usage = snapshot.usage.as_ref().unwrap();
+    assert_eq!((usage.used, usage.size), (53000, 200000));
+    let cost = usage.cost.as_ref().unwrap();
+    assert_eq!((cost.amount, cost.currency.as_str()), (0.045, "USD"));
+    assert!(snapshot.items.is_empty(), "usage is not a timeline item");
+    assert!(
+        deltas
+            .iter()
+            .any(|delta| matches!(delta.change, Change::Commands(_)))
+    );
+
+    // Usage without a cost replaces the last report.
+    agent
+        .update(
+            "s1",
+            json!({ "sessionUpdate": "usage_update", "used": 60000, "size": 200000 }),
+        )
+        .await;
+    follow(&mut subscription, |snapshot| {
+        snapshot
+            .usage
+            .as_ref()
+            .is_some_and(|usage| usage.used == 60000)
+    })
+    .await;
+    assert_eq!(subscription.snapshot.usage.as_ref().unwrap().cost, None);
+}
+
+#[tokio::test]
 async fn an_opened_session_reports_its_settings_and_keeps_replayed_ones() {
     let runtime = AgentRuntime::default();
     let key = SessionKey::from_acp("scripted", "s1", false);
@@ -2411,6 +2585,7 @@ fn reading(writer_refusal: Option<&str>) -> AcpLaunch {
         read_only_open: true,
         writer_refusal: writer_refusal.map(str::to_string),
         session_per_connection: false,
+        draft_session: false,
         ..launch()
     }
 }
@@ -2752,6 +2927,7 @@ async fn a_launch_plan_with_one_session_per_connection_starts_another_after_a_se
         agent: "pi".into(),
         lists_catalog: true,
         session_per_connection: true,
+        draft_session: false,
         ..sh_agent(&[])
     };
     let catalog = runtime.acquire(plan.clone()).await.unwrap();

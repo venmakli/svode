@@ -96,7 +96,6 @@ export type AgentActivityItemDto = (
   | { kind: "tool_call"; tool: AgentToolKindDto }
   | { kind: "mode_change" }
   | { kind: "config_change" }
-  | { kind: "usage" }
   /** The turn's plan; a later plan of the turn replaces it in place. */
   | { kind: "plan"; entries: AgentPlanEntryDto[] }
   /** A resolved request; a permission belongs to its tool call row. */
@@ -220,6 +219,24 @@ export interface AgentSessionSettingDto {
   options: { value: string; name: string; description: string | null }[];
 }
 
+/** A slash command the agent declared; it goes to the agent as prompt text. */
+export interface AgentSessionCommandDto {
+  name: string;
+  description: string;
+  /** The agent's hint for the input after the command. */
+  hint: string | null;
+}
+
+/** The agent's last report of its context window. */
+export interface AgentSessionUsageDto {
+  /** Tokens currently in the context. */
+  used: number;
+  /** Size of the context window. */
+  size: number;
+  /** Cumulative cost of the session; `currency` is an ISO 4217 code. */
+  cost: { amount: number; currency: string } | null;
+}
+
 export interface AgentSessionSnapshotDto {
   seq: number;
   session: AgentSessionKeyDto;
@@ -230,6 +247,9 @@ export interface AgentSessionSnapshotDto {
   history: AgentHistoryStateDto;
   writer: AgentWriterStateDto;
   settings: AgentSessionSettingDto[];
+  /** The slash commands the agent offers now. */
+  commands: AgentSessionCommandDto[];
+  usage: AgentSessionUsageDto | null;
   /** The session title the agent reported. */
   title: string | null;
 }
@@ -250,6 +270,9 @@ export type AgentSessionDeltaDto = { seq: number } & (
   | { change: "writer"; value: AgentWriterStateDto }
   /** Replaces the whole set of session settings. */
   | { change: "settings"; value: AgentSessionSettingDto[] }
+  /** Replaces the whole set of slash commands. */
+  | { change: "commands"; value: AgentSessionCommandDto[] }
+  | { change: "usage"; value: AgentSessionUsageDto }
   | { change: "title"; value: string }
 );
 
@@ -323,6 +346,32 @@ export function agentRuntimeErrorCode(
     return error.code as AgentRuntimeErrorCode;
   }
   return null;
+}
+
+/** Why a setting value did not apply (`setting_refused`). */
+export interface AgentSettingRefusalDto {
+  setting: string;
+  value: string;
+  reason: { kind: "not_declared" } | { kind: "agent"; message: string };
+}
+
+export function agentSettingRefusal(
+  error: unknown,
+): AgentSettingRefusalDto | null {
+  if (agentRuntimeErrorCode(error) !== "setting_refused") return null;
+  const refusal = error as Partial<AgentSettingRefusalDto>;
+  if (
+    typeof refusal.setting !== "string" ||
+    typeof refusal.value !== "string" ||
+    !refusal.reason
+  ) {
+    return null;
+  }
+  return {
+    setting: refusal.setting,
+    value: refusal.value,
+    reason: refusal.reason,
+  };
 }
 
 export interface AgentInfoDto {
@@ -456,19 +505,37 @@ export interface AgentSettingValueDto {
   value: string;
 }
 
+/**
+ * Changes a declared setting of the session; resolves once the agent
+ * confirmed the value, which also arrives as a settings delta. A refusal
+ * (`setting_refused`) keeps the value.
+ */
+export function setAgentSessionSetting(
+  session: AgentSessionKeyDto,
+  value: AgentSettingValueDto,
+): Promise<void> {
+  return invoke<void>("agent_runtime_set_setting", { session, value });
+}
+
 /** What a new session draft shows for its agent. */
 export interface DraftAgentDto {
   /** Present while the ready agent's connection is held for the draft. */
   hold: number | null;
   check: AgentCheckDto;
+  /**
+   * The session the draft created without a prompt, where the agent leaves
+   * nothing in its store for it: its settings and commands show in the
+   * draft, and the first send goes to it.
+   */
+  session: AgentSessionKeyDto | null;
 }
 
 /**
- * A new session draft chose `agent`: its connection starts so the draft
- * shows its readiness before the first prompt.
+ * A new session draft chose `agent` in the Space `cwd`: its connection
+ * starts so the draft shows its readiness before the first prompt.
  */
-export function holdDraftAgent(agent: string): Promise<DraftAgentDto> {
-  return invoke<DraftAgentDto>("agent_runtime_hold_draft", { agent });
+export function holdDraftAgent(agent: string, cwd: string): Promise<DraftAgentDto> {
+  return invoke<DraftAgentDto>("agent_runtime_hold_draft", { agent, cwd });
 }
 
 export function releaseDraftAgent(hold: number): Promise<void> {
@@ -486,14 +553,16 @@ export type StartedAgentSessionDto =
   | { outcome: "unavailable"; reason: AgentLaunchUnavailableDto };
 
 /**
- * The first send of a new session draft: creates the session in `cwd`,
- * applies `settings` and sends the prompt.
+ * The first send of a new session draft: the session the draft `hold`
+ * created takes the prompt; otherwise a new session in `cwd` is created
+ * with `settings` first.
  */
 export function startAgentSession(request: {
   agent: string;
   cwd: string;
   settings: AgentSettingValueDto[];
   prompt: AgentPromptPartDto[];
+  hold: number | null;
 }): Promise<StartedAgentSessionDto> {
   return invoke<StartedAgentSessionDto>("agent_runtime_start_session", request);
 }

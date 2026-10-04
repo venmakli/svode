@@ -1,4 +1,7 @@
-import type { AgentSessionSnapshotDto } from "@/platform/agent-runtime/agent-runtime-api";
+import type {
+  AgentSessionSnapshotDto,
+  AgentSettingValueDto,
+} from "@/platform/agent-runtime/agent-runtime-api";
 import type { DraftPart } from "./attachments";
 
 /**
@@ -12,6 +15,11 @@ export interface ComposerDraft {
   /** New session drafts only: the chosen agent and Space. */
   agent?: string | null;
   spacePath?: string | null;
+  /**
+   * New session drafts only: the setting values the agent confirmed in the
+   * draft, applied again to a draft session created anew after a reload.
+   */
+  settings?: { agent: string; values: AgentSettingValueDto[] } | null;
   /**
    * A send whose outcome is unknown: the turn id the session had before
    * it. Set while sending, so a reload during the send reconciles too.
@@ -64,6 +72,7 @@ function isEmptyDraft(draft: ComposerDraft): boolean {
     draft.parts.length === 0 &&
     !draft.agent &&
     !draft.spacePath &&
+    !draft.settings?.values.length &&
     !draft.sending &&
     !draft.notSent
   );

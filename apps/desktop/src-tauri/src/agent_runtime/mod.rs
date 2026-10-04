@@ -21,7 +21,7 @@ use tokio::sync::broadcast::error::RecvError;
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type", content = "value", rename_all = "snake_case")]
 pub enum ActivityMessage {
-    Snapshot(SessionSnapshot),
+    Snapshot(Box<SessionSnapshot>),
     Delta(SessionDelta),
 }
 
@@ -124,7 +124,7 @@ async fn forward(subscription: SessionSubscription, mut send: impl FnMut(Activit
         snapshot,
         mut deltas,
     } = subscription;
-    if !send(ActivityMessage::Snapshot(snapshot)) {
+    if !send(ActivityMessage::Snapshot(Box::new(snapshot))) {
         return;
     }
     loop {

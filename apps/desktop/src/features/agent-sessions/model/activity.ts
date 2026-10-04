@@ -68,6 +68,10 @@ function applyChange(
       return { ...next, writer: delta.value };
     case "settings":
       return { ...next, settings: delta.value };
+    case "commands":
+      return { ...next, commands: delta.value };
+    case "usage":
+      return { ...next, usage: delta.value };
     case "title":
       return { ...next, title: delta.value };
   }

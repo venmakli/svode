@@ -2,14 +2,15 @@
 //! agent's ACP entrypoint starts only at a lifecycle boundary and only for
 //! an available agent: an open Sessions collection for the agents whose
 //! catalogue is their ACP list, the user's explicit check, an agent chosen
-//! in a new session draft, the creation of a session and opening one in the
-//! chat; a Routine/Actor launch acquires through the same planner in its
+//! in a new session draft (with the session it creates early where the
+//! agent has evidence for it), the creation of a session and opening one in
+//! the chat; a Routine/Actor launch acquires through the same planner in its
 //! slice. Sharing by launch plan, the provenance split and closing for
 //! idleness belong to the runtime.
 
 use std::collections::HashMap;
 use std::future::Future;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -62,7 +63,28 @@ pub struct AgentConnections {
 
 struct DraftHold {
     webview: String,
+    agent: String,
     _lease: ConnectionLease,
+    /// The session the draft created before its first prompt.
+    session: Option<DraftSession>,
+}
+
+struct DraftSession {
+    key: SessionKey,
+    cwd: PathBuf,
+}
+
+/// What a new session draft shows for its agent.
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DraftAgent {
+    /// Present while a ready agent's connection is held for the draft.
+    pub hold: Option<u64>,
+    pub check: AgentCheck,
+    /// The session the draft created without a prompt, for an agent with
+    /// evidence that this leaves nothing in its native store: its settings
+    /// and commands show in the draft, and the first send goes to it.
+    pub session: Option<SessionKey>,
 }
 
 /// What creating a session from a draft did.
@@ -144,15 +166,25 @@ impl AgentConnections {
     }
 
     async fn acquire(&self, agent: &str) -> Result<ConnectionLease, ConnectRefusal> {
+        Ok(self.acquire_launch(agent).await?.0)
+    }
+
+    /// The lease and the evidence of the launch plan it was acquired for.
+    async fn acquire_launch(
+        &self,
+        agent: &str,
+    ) -> Result<(ConnectionLease, AcpLaunch), ConnectRefusal> {
         let launch = self
             .planner
             .plan(agent)
             .await
             .map_err(ConnectRefusal::Unavailable)?;
-        self.runtime
-            .acquire(launch)
+        let lease = self
+            .runtime
+            .acquire(launch.clone())
             .await
-            .map_err(ConnectRefusal::Failed)
+            .map_err(ConnectRefusal::Failed)?;
+        Ok((lease, launch))
     }
 
     /// The user's explicit check: start, `initialize`, close unless the
@@ -167,23 +199,28 @@ impl AgentConnections {
     /// A new session draft chose `agent` (Stage 10 `04`, a C1 boundary): its
     /// connection starts and stays while the hold lives, and the outcome is
     /// what the draft shows before the first prompt. Only a ready agent
-    /// gets a hold.
-    pub async fn hold_draft(&self, webview: &str, agent: &str) -> (Option<u64>, AgentCheck) {
-        let lease = match self.acquire(agent).await {
-            Ok(lease) => lease,
+    /// gets a hold. For an agent with evidence that `session/new` without a
+    /// prompt leaves nothing in its native store, the draft's session is
+    /// created in `cwd` now, so its settings and commands show in the
+    /// draft; the catalogue lists it only after its first prompt.
+    pub async fn hold_draft(&self, webview: &str, agent: &str, cwd: &Path) -> DraftAgent {
+        let refused = |check| DraftAgent {
+            hold: None,
+            check,
+            session: None,
+        };
+        let (lease, launch) = match self.acquire_launch(agent).await {
+            Ok(acquired) => acquired,
             Err(ConnectRefusal::Unavailable(reason)) => {
-                return (None, AgentCheck::Unavailable { reason });
+                return refused(AgentCheck::Unavailable { reason });
             }
             Err(ConnectRefusal::Failed(AgentRuntimeError::AuthRequired { message })) => {
-                return (None, AgentCheck::AuthRequired { message });
+                return refused(AgentCheck::AuthRequired { message });
             }
             Err(ConnectRefusal::Failed(error)) => {
-                return (
-                    None,
-                    AgentCheck::FailedToStart {
-                        message: error.to_string(),
-                    },
-                );
+                return refused(AgentCheck::FailedToStart {
+                    message: error.to_string(),
+                });
             }
         };
         let Some(info) = self
@@ -191,41 +228,103 @@ impl AgentConnections {
             .connection_status(lease.connection())
             .and_then(|status| status.agent)
         else {
-            return (
-                None,
-                AgentCheck::FailedToStart {
-                    message: AgentRuntimeError::ConnectionClosed.to_string(),
-                },
-            );
+            return refused(AgentCheck::FailedToStart {
+                message: AgentRuntimeError::ConnectionClosed.to_string(),
+            });
         };
+        let mut session = None;
+        if launch.draft_session {
+            match self.runtime.new_session(lease.connection(), cwd, &[]).await {
+                Ok(key) => {
+                    session = Some(DraftSession {
+                        key,
+                        cwd: cwd.to_path_buf(),
+                    })
+                }
+                Err(AgentRuntimeError::AuthRequired { message }) => {
+                    return refused(AgentCheck::AuthRequired { message });
+                }
+                // The settings then show after the first send.
+                Err(error) => {
+                    tracing::warn!("the draft session of {agent} was not created: {error}")
+                }
+            }
+        }
+        let key = session.as_ref().map(|session| session.key.clone());
         let hold = self.next_hold.fetch_add(1, Ordering::Relaxed) + 1;
         self.drafts.lock().unwrap().insert(
             hold,
             DraftHold {
                 webview: webview.to_string(),
+                agent: agent.to_string(),
                 _lease: lease,
+                session,
             },
         );
-        (Some(hold), AgentCheck::Ready { agent: info })
+        DraftAgent {
+            hold: Some(hold),
+            check: AgentCheck::Ready { agent: info },
+            session: key,
+        }
     }
 
-    /// The draft closed, chose another agent or became a session.
+    /// The draft closed, chose another agent or Space, or became a session.
     pub fn release_draft(&self, hold: u64) {
-        self.drafts.lock().unwrap().remove(&hold);
+        let draft = self.drafts.lock().unwrap().remove(&hold);
+        if let Some(draft) = draft {
+            self.close_draft(draft);
+        }
+    }
+
+    /// A draft session that never got its prompt is closed; one that became
+    /// the user's session is not the draft's any more.
+    fn close_draft(&self, draft: DraftHold) {
+        let Some(session) = draft.session else {
+            return;
+        };
+        let runtime = self.runtime.clone();
+        tauri::async_runtime::spawn(async move {
+            if let Err(error) = runtime.release_session(&session.key).await {
+                tracing::warn!("a draft session was not closed: {error}");
+            }
+        });
     }
 
     /// Creates a session of `agent` in `cwd` with the draft's setting values
     /// and sends its first prompt: the first send of a new session draft.
-    /// The session enters the catalogue once the prompt is accepted; a
-    /// prompt linking a missing file creates no session.
+    /// A session the draft `hold` created for this agent and `cwd` takes the
+    /// prompt instead, with the values the agent confirmed in the draft; if
+    /// it is gone, a new one is created. The session enters the catalogue
+    /// once the prompt is accepted; a prompt linking a missing file creates
+    /// no session.
     pub async fn start_session(
         &self,
         agent: &str,
         cwd: &Path,
         settings: &[SettingValue],
         prompt: &[PromptPart],
+        hold: Option<u64>,
     ) -> Result<SessionStart, AgentRuntimeError> {
         svode_agents::prompt::check(prompt)?;
+        if let Some(hold) = hold
+            && let Some(session) = self.draft_session_for(hold, agent, cwd)
+        {
+            match self.runtime.prompt(&session, prompt) {
+                Ok(turn_id) => {
+                    if let Some(draft) = self.drafts.lock().unwrap().get_mut(&hold) {
+                        draft.session = None;
+                    }
+                    return Ok(SessionStart::Started { session, turn_id });
+                }
+                Err(
+                    AgentRuntimeError::ConnectionClosed
+                    | AgentRuntimeError::ConnectionNotFound
+                    | AgentRuntimeError::SessionNotFound
+                    | AgentRuntimeError::WriterRequired,
+                ) => {}
+                Err(error) => return Err(error),
+            }
+        }
         let lease = match self.acquire(agent).await {
             Ok(lease) => lease,
             Err(ConnectRefusal::Unavailable(reason)) => {
@@ -239,6 +338,19 @@ impl AgentConnections {
             .await?;
         let turn_id = self.runtime.prompt(&session, prompt)?;
         Ok(SessionStart::Started { session, turn_id })
+    }
+
+    /// The session the draft `hold` created for `agent` in `cwd`.
+    pub(crate) fn draft_session_for(
+        &self,
+        hold: u64,
+        agent: &str,
+        cwd: &Path,
+    ) -> Option<SessionKey> {
+        let drafts = self.drafts.lock().unwrap();
+        let draft = drafts.get(&hold)?;
+        let session = draft.session.as_ref()?;
+        (draft.agent == agent && session.cwd == cwd).then(|| session.key.clone())
     }
 
     /// Opens an existing session of `agent` in the chat, a C1 boundary: a
@@ -333,10 +445,21 @@ impl AgentConnections {
         catalog.holds.retain(|_, label| label != webview);
         catalog.release_if_unheld();
         drop(catalog);
-        self.drafts
-            .lock()
-            .unwrap()
-            .retain(|_, draft| draft.webview != webview);
+        let released: Vec<DraftHold> = {
+            let mut drafts = self.drafts.lock().unwrap();
+            let holds: Vec<u64> = drafts
+                .iter()
+                .filter(|(_, draft)| draft.webview == webview)
+                .map(|(hold, _)| *hold)
+                .collect();
+            holds
+                .into_iter()
+                .filter_map(|hold| drafts.remove(&hold))
+                .collect()
+        };
+        for draft in released {
+            self.close_draft(draft);
+        }
     }
 
     /// A disabled agent's catalogue is no longer kept.

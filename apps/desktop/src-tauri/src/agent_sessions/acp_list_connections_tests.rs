@@ -47,6 +47,7 @@ done"#;
         read_only_open: false,
         writer_refusal: None,
         session_per_connection: false,
+        draft_session: false,
     }
 }
 
@@ -547,6 +548,7 @@ done"#;
         read_only_open: false,
         writer_refusal: None,
         session_per_connection: false,
+        draft_session: false,
     }
 }
 
@@ -575,13 +577,15 @@ async fn a_draft_starts_its_ready_agent_and_its_hold_keeps_the_connection() {
         ],
     );
 
-    let (hold, check) = connections.hold_draft("main", "codex").await;
-    assert!(matches!(check, AgentCheck::Ready { .. }));
-    let hold = hold.expect("a ready agent is held");
-    let (none, unavailable) = connections.hold_draft("main", "pi").await;
-    assert_eq!(none, None);
+    let cwd = std::env::temp_dir();
+    let draft = connections.hold_draft("main", "codex", &cwd).await;
+    assert!(matches!(draft.check, AgentCheck::Ready { .. }));
+    assert_eq!(draft.session, None, "no evidence, no draft session");
+    let hold = draft.hold.expect("a ready agent is held");
+    let unavailable = connections.hold_draft("main", "pi", &cwd).await;
+    assert_eq!(unavailable.hold, None);
     assert!(matches!(
-        unavailable,
+        unavailable.check,
         AgentCheck::Unavailable {
             reason: LaunchUnavailable::AdapterNeedsUpdate { .. }
         }
@@ -590,8 +594,8 @@ async fn a_draft_starts_its_ready_agent_and_its_hold_keeps_the_connection() {
     // The hold keeps the connection past its idle time; a draft creates no
     // session.
     tokio::time::sleep(Duration::from_millis(400)).await;
-    let (_, again) = connections.hold_draft("other", "codex").await;
-    let AgentCheck::Ready { .. } = again else {
+    let again = connections.hold_draft("other", "codex", &cwd).await;
+    let AgentCheck::Ready { .. } = again.check else {
         panic!("still ready");
     };
     assert_eq!(open_connections(&runtime, "codex"), 0);
@@ -621,6 +625,7 @@ async fn the_first_send_creates_the_session_and_lists_it_once_the_prompt_is_acce
             project.path(),
             &[],
             &[PromptPart::text("Fix the build\nnow")],
+            None,
         )
         .await
         .unwrap();
@@ -636,7 +641,13 @@ async fn the_first_send_creates_the_session_and_lists_it_once_the_prompt_is_acce
     assert_eq!(listed[0].title.as_deref(), Some("Fix the build"));
 
     let unavailable = connections
-        .start_session("pi", project.path(), &[], &[PromptPart::text("hello")])
+        .start_session(
+            "pi",
+            project.path(),
+            &[],
+            &[PromptPart::text("hello")],
+            None,
+        )
         .await
         .unwrap();
     assert!(matches!(
@@ -651,12 +662,104 @@ async fn the_first_send_creates_the_session_and_lists_it_once_the_prompt_is_acce
                 "claude-code",
                 project.path(),
                 &[],
-                &[PromptPart::text("hello")]
+                &[PromptPart::text("hello")],
+                None,
             )
             .await,
         Err(svode_agents::AgentRuntimeError::AuthRequired { .. })
     ));
     assert_eq!(runtime.sessions().len(), 1);
+    runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_draft_creates_its_session_where_the_agent_has_evidence_and_the_first_send_uses_it() {
+    let runtime = runtime();
+    let draft_agent = |agent: &str| AcpLaunch {
+        draft_session: true,
+        ..session_agent(agent, false)
+    };
+    let (connections, _) = owner(
+        &runtime,
+        vec![
+            ("codex", Ok(draft_agent("codex"))),
+            ("claude-code", Ok(draft_agent("claude-code"))),
+            (
+                "opencode",
+                Ok(AcpLaunch {
+                    draft_session: true,
+                    ..session_agent("opencode", true)
+                }),
+            ),
+        ],
+    );
+    let project = tempfile::tempdir().unwrap();
+
+    let draft = connections
+        .hold_draft("main", "codex", project.path())
+        .await;
+    let hold = draft.hold.expect("a ready agent is held");
+    let session = draft.session.expect("the draft created its session");
+    assert!(runtime.subscribe(&session).is_ok());
+    assert!(
+        runtime.sessions().is_empty(),
+        "a draft session is not listed"
+    );
+
+    // Another Space does not take the draft's session.
+    let other = tempfile::tempdir().unwrap();
+    assert_eq!(
+        connections.draft_session_for(hold, "codex", other.path()),
+        None
+    );
+
+    let start = connections
+        .start_session(
+            "codex",
+            project.path(),
+            &[],
+            &[PromptPart::text("Fix the build")],
+            Some(hold),
+        )
+        .await
+        .unwrap();
+    let crate::agent_runtime::connections::SessionStart::Started {
+        session: started, ..
+    } = start
+    else {
+        panic!("started: {start:?}");
+    };
+    assert_eq!(
+        started, session,
+        "the first send goes to the draft's session"
+    );
+    assert_eq!(runtime.sessions().len(), 1);
+    // The draft became the session: releasing its hold keeps it.
+    connections.release_draft(hold);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(runtime.writers().writer(&session), Some(Writer::Acp));
+
+    // A draft closed without a send closes its session.
+    let closed = connections
+        .hold_draft("other", "claude-code", project.path())
+        .await;
+    let unsent = closed.session.expect("the draft created its session");
+    connections.release_webview("other");
+    for _ in 0..100 {
+        if runtime.writers().writer(&unsent).is_none() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert_eq!(runtime.writers().writer(&unsent), None);
+    assert_eq!(runtime.sessions().len(), 1);
+
+    // An agent that refuses the session until sign-in shows sign-in.
+    let refused = connections
+        .hold_draft("main", "opencode", project.path())
+        .await;
+    assert_eq!(refused.hold, None);
+    assert!(matches!(refused.check, AgentCheck::AuthRequired { .. }));
     runtime.shutdown().await;
 }
 
@@ -687,6 +790,7 @@ done"#;
         read_only_open,
         writer_refusal: None,
         session_per_connection: false,
+        draft_session: false,
     }
 }
 

@@ -23,6 +23,8 @@ export function activitySnapshot(
     history: { source: "live", available: true, truncatedItems: null },
     writer: "acp",
     settings: [],
+    commands: [],
+    usage: null,
     title: null,
     ...overrides,
   };

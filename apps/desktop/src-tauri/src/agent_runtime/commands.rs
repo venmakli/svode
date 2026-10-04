@@ -14,7 +14,7 @@ use svode_agents::{AgentCheck, SettingValue};
 use tauri::ipc::Channel;
 use tauri::{State, Webview};
 
-use super::connections::{AgentConnections, SessionOpening, SessionStart};
+use super::connections::{AgentConnections, DraftAgent, SessionOpening, SessionStart};
 use super::{ActivityMessage, AgentRuntimeState};
 use crate::agent_sessions::AgentSessionsState;
 use crate::agent_sessions::chat::chat_target;
@@ -65,6 +65,17 @@ pub async fn agent_runtime_prompt(
     Ok(state.runtime().prompt(&session, &prompt)?)
 }
 
+/// Changes a declared setting of the session (C6); returns once the agent
+/// confirmed the value.
+#[tauri::command]
+pub async fn agent_runtime_set_setting(
+    state: State<'_, AgentRuntimeState>,
+    session: SessionKey,
+    value: SettingValue,
+) -> Result<(), AppError> {
+    Ok(state.runtime().set_setting(&session, &value).await?)
+}
+
 #[tauri::command]
 pub async fn agent_runtime_cancel(
     state: State<'_, AgentRuntimeState>,
@@ -93,25 +104,18 @@ pub async fn agent_runtime_check(
     Ok(connections.check(&agent).await)
 }
 
-/// The outcome a new session draft shows for its agent; a ready agent's
-/// connection stays while the hold lives.
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DraftAgent {
-    pub hold: Option<u64>,
-    pub check: AgentCheck,
-}
-
-/// A new session draft chose `agent`: its connection starts (a C1
-/// boundary) so its readiness shows before the first prompt.
+/// A new session draft chose `agent` in the Space `cwd`: its connection
+/// starts (a C1 boundary) so its readiness shows before the first prompt,
+/// with the draft's session where the agent has evidence for it.
 #[tauri::command]
 pub async fn agent_runtime_hold_draft(
     webview: Webview,
     connections: State<'_, Arc<AgentConnections>>,
     agent: String,
+    cwd: PathBuf,
 ) -> Result<DraftAgent, AppError> {
-    let (hold, check) = connections.hold_draft(webview.label(), &agent).await;
-    Ok(DraftAgent { hold, check })
+    session_dir(&cwd)?;
+    Ok(connections.hold_draft(webview.label(), &agent, &cwd).await)
 }
 
 #[tauri::command]
@@ -142,9 +146,9 @@ pub enum StartedSession {
     },
 }
 
-/// The first send of a new session draft: creates the session in `cwd`,
-/// applies the draft's setting values and sends the prompt. The agent
-/// becomes the device's last chat agent.
+/// The first send of a new session draft: the session the draft `hold`
+/// created, or a new one in `cwd` with the draft's setting values, takes the
+/// prompt. The agent becomes the device's last chat agent.
 #[tauri::command]
 pub async fn agent_runtime_start_session(
     connections: State<'_, Arc<AgentConnections>>,
@@ -153,16 +157,13 @@ pub async fn agent_runtime_start_session(
     cwd: PathBuf,
     settings: Vec<SettingValue>,
     prompt: Vec<PromptPart>,
+    hold: Option<u64>,
 ) -> Result<StartedSession, AppError> {
-    if !cwd.is_absolute() || !cwd.is_dir() {
-        return Err(AppError::PathNotAccessible(
-            cwd.to_string_lossy().into_owned(),
-        ));
-    }
+    session_dir(&cwd)?;
     let source = AgentId::parse(&agent)
         .map_err(|error| AppError::General(format!("invalid agent id: {error}")))?;
     match connections
-        .start_session(&agent, &cwd, &settings, &prompt)
+        .start_session(&agent, &cwd, &settings, &prompt, hold)
         .await?
     {
         SessionStart::Started { session, turn_id } => {
@@ -228,4 +229,15 @@ pub async fn agent_runtime_release_session(
     session: SessionKey,
 ) -> Result<(), AppError> {
     Ok(connections.release_session(&session).await?)
+}
+
+/// A session works in an existing absolute directory.
+fn session_dir(cwd: &std::path::Path) -> Result<(), AppError> {
+    if cwd.is_absolute() && cwd.is_dir() {
+        Ok(())
+    } else {
+        Err(AppError::PathNotAccessible(
+            cwd.to_string_lossy().into_owned(),
+        ))
+    }
 }

@@ -7,8 +7,8 @@ use super::wire;
 
 use crate::activity::{
     ChoiceOption, DetailBlock, FieldInput, InteractionOption, InteractionOptionKind, ItemStatus,
-    MessageSegment, PlanEntry, PlanEntryPriority, PlanEntryStatus, QuestionField, SessionSetting,
-    SettingCategory, SettingOption, ToolKind,
+    MessageSegment, PlanEntry, PlanEntryPriority, PlanEntryStatus, QuestionField, SessionCommand,
+    SessionSetting, SessionUsage, SettingCategory, SettingOption, ToolKind, UsageCost,
 };
 use crate::status::StopReason;
 
@@ -24,6 +24,10 @@ const MAX_CHOICES: usize = 256;
 const MAX_SETTINGS: usize = 64;
 const SETTING_NAME_LIMIT: usize = 256;
 const SETTING_DESCRIPTION_LIMIT: usize = 1024;
+const MAX_COMMANDS: usize = 256;
+const COMMAND_NAME_LIMIT: usize = 128;
+const COMMAND_DESCRIPTION_LIMIT: usize = 1024;
+const CURRENCY_LIMIT: usize = 16;
 /// Id of the one setting legacy session modes become.
 pub(crate) const LEGACY_MODE_SETTING: &str = "mode";
 
@@ -60,14 +64,13 @@ pub(crate) enum Normalized {
     ModeChange(String),
     /// The full set of config options with their current values.
     ConfigChange(Vec<SessionSetting>),
-    Usage {
-        used: u64,
-        size: u64,
-    },
+    /// The whole set of slash commands the agent offers now.
+    Commands(Vec<SessionCommand>),
+    Usage(SessionUsage),
     /// The session title the agent reported.
     Title(String),
-    /// A known update that carries no activity (commands, a session info
-    /// update without a title).
+    /// A known update that carries no activity (a session info update
+    /// without a title).
     None,
     /// An update or extension the runtime does not model.
     Generic(String),
@@ -126,15 +129,52 @@ fn normalize(update: wire::SessionUpdate) -> Normalized {
         wire::SessionUpdate::ConfigOptionUpdate { config_options } => {
             Normalized::ConfigChange(config_settings(config_options))
         }
-        wire::SessionUpdate::UsageUpdate { used, size } => Normalized::Usage { used, size },
+        wire::SessionUpdate::AvailableCommandsUpdate { available_commands } => {
+            Normalized::Commands(commands(available_commands))
+        }
+        wire::SessionUpdate::UsageUpdate { used, size, cost } => Normalized::Usage(SessionUsage {
+            used,
+            size,
+            cost: cost
+                .and_then(|cost| serde_json::from_value::<wire::UsageCost>(cost).ok())
+                .filter(|cost| cost.amount.is_finite())
+                .map(|cost| UsageCost {
+                    amount: cost.amount,
+                    currency: bounded(&cost.currency, CURRENCY_LIMIT),
+                }),
+        }),
         wire::SessionUpdate::SessionInfoUpdate { title: Some(title) }
             if !title.trim().is_empty() =>
         {
             Normalized::Title(bounded(title.trim(), TITLE_LIMIT))
         }
-        wire::SessionUpdate::AvailableCommandsUpdate {}
-        | wire::SessionUpdate::SessionInfoUpdate { .. } => Normalized::None,
+        wire::SessionUpdate::SessionInfoUpdate { .. } => Normalized::None,
     }
+}
+
+/// Commands with a name, in the agent's order; a name is what the user
+/// types after `/`, so it never holds whitespace.
+fn commands(available: Vec<Value>) -> Vec<SessionCommand> {
+    available
+        .into_iter()
+        .filter_map(|command| serde_json::from_value::<wire::AvailableCommand>(command).ok())
+        .filter(|command| {
+            let name = command.name.trim_start_matches('/');
+            !name.is_empty()
+                && name.len() <= COMMAND_NAME_LIMIT
+                && !name.chars().any(char::is_whitespace)
+        })
+        .take(MAX_COMMANDS)
+        .map(|command| SessionCommand {
+            name: command.name.trim_start_matches('/').to_string(),
+            description: bounded(&command.description, COMMAND_DESCRIPTION_LIMIT),
+            hint: command
+                .input
+                .and_then(|input| input.hint)
+                .filter(|hint| !hint.trim().is_empty())
+                .map(|hint| bounded(&hint, COMMAND_DESCRIPTION_LIMIT)),
+        })
+        .collect()
 }
 
 fn tool_update(update: wire::ToolCallUpdate) -> ToolUpdate {

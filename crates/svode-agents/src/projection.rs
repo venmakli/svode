@@ -111,6 +111,8 @@ impl Projection {
                 history,
                 writer,
                 settings: Vec::new(),
+                commands: Vec::new(),
+                usage: None,
                 title: None,
             },
             sender,
@@ -387,15 +389,15 @@ impl Projection {
                 let id = self.local_id("session", "config");
                 self.put_text_item(id, ItemKind::ConfigChange, String::new());
             }
-            Normalized::Usage { used, size } => {
-                self.upsert(ActivityItem {
-                    id: "usage".into(),
-                    turn_id: self.snapshot.turn.turn_id.clone(),
-                    kind: ItemKind::Usage,
-                    status: None,
-                    summary: format!("{used}/{size}"),
-                    has_detail: false,
-                });
+            Normalized::Commands(commands) => {
+                if self.snapshot.commands != commands {
+                    self.emit(Change::Commands(commands));
+                }
+            }
+            Normalized::Usage(usage) => {
+                if self.snapshot.usage.as_ref() != Some(&usage) {
+                    self.emit(Change::Usage(usage));
+                }
             }
             Normalized::Title(title) => {
                 if self.snapshot.title.as_deref() != Some(title.as_str()) {

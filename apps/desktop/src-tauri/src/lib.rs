@@ -347,6 +347,7 @@ pub fn run() {
             agent_runtime::commands::agent_runtime_unsubscribe,
             agent_runtime::commands::agent_runtime_detail,
             agent_runtime::commands::agent_runtime_prompt,
+            agent_runtime::commands::agent_runtime_set_setting,
             agent_runtime::commands::agent_runtime_cancel,
             agent_runtime::commands::agent_runtime_answer,
             agent_runtime::commands::agent_runtime_check,

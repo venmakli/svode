@@ -20,9 +20,11 @@ import {
   type StartedSession,
 } from "../hooks/use-new-session-draft";
 import type { DraftAgentState } from "../hooks/use-draft-agent";
-import { AgentRecovery, DraftAgentButton, unavailableText } from "./agent-button";
+import { sessionControls } from "../model/session-controls";
+import { AgentModelButton, AgentRecovery, unavailableText } from "./agent-button";
 import { Composer } from "./composer";
 import { ComposerFooter } from "./session-chat";
+import { ContextIndicator, ModeSelect, SettingRefusalLine } from "./session-controls";
 import * as m from "@/paraglide/messages.js";
 
 /** Built-in agents have their own sign-in command; custom agents do not. */
@@ -78,6 +80,11 @@ export function NewSessionDraft({
     onRetry: draft.retryAgent,
   };
   const noAgents = draft.agents !== null && draft.agents.agents.length === 0;
+  const snapshot = draft.snapshot;
+  const mode = snapshot ? sessionControls(snapshot.settings).mode : null;
+  const canChange = snapshot?.writer === "acp" && !draft.sending;
+  const changeSetting = (value: Parameters<typeof draft.changeSetting>[0]) =>
+    void draft.changeSetting(value);
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -102,6 +109,12 @@ export function NewSessionDraft({
         ) : (
           <>
             <ReadinessLine readiness={readiness} recovery={recovery} />
+            {draft.settingRefusal && (
+              <SettingRefusalLine
+                refusal={draft.settingRefusal}
+                settings={snapshot?.settings ?? []}
+              />
+            )}
             {draft.refusal && (
               <DraftRefusalLine
                 refusal={draft.refusal}
@@ -120,7 +133,8 @@ export function NewSessionDraft({
               running={false}
               cancelling={false}
               sending={draft.sending}
-              canSend={ready}
+              canSend={ready && !draft.changingSetting}
+              commands={snapshot?.commands}
               autoFocus
               placeholder={
                 agent
@@ -129,12 +143,19 @@ export function NewSessionDraft({
               }
               controls={
                 draft.agents && (
-                  <DraftAgentButton
-                    agents={draft.agents.agents}
+                  <AgentModelButton
                     agent={agent}
-                    readiness={readiness}
-                    onChoose={draft.chooseAgent}
-                    recovery={recovery}
+                    draft={{
+                      agents: draft.agents.agents,
+                      onChoose: draft.chooseAgent,
+                      readiness,
+                      recovery,
+                      settingsAfterSend: draft.settingsAfterSend,
+                    }}
+                    settings={snapshot?.settings ?? null}
+                    canChange={canChange}
+                    changing={draft.changingSetting}
+                    onChange={changeSetting}
                   />
                 )
               }
@@ -148,11 +169,20 @@ export function NewSessionDraft({
             disabled={draft.sending}
             onChoose={draft.chooseSpace}
           />
-          {readiness.state === "connecting" && (
-            <span className="ms-auto">
-              {m.sessions_chat_agent_connecting()}
-            </span>
-          )}
+          <div className="ms-auto flex min-w-0 items-center gap-1">
+            {readiness.state === "connecting" && (
+              <span>{m.sessions_chat_agent_connecting()}</span>
+            )}
+            {mode && (
+              <ModeSelect
+                mode={mode}
+                canChange={canChange}
+                changing={draft.changingSetting === mode.id}
+                onChange={changeSetting}
+              />
+            )}
+            <ContextIndicator usage={snapshot?.usage ?? null} />
+          </div>
         </ComposerFooter>
       </div>
       {signIn && (

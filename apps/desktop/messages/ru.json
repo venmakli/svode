@@ -2458,5 +2458,22 @@
   "sessions_chat_attachment_file": "Файл",
   "sessions_chat_attachment_file_type": "Файл {type}",
   "sessions_chat_paste_failed": "Вставленная картинка не прикреплена: {message}",
-  "sessions_chat_refusal_file_unavailable": "Прикреплённого файла больше нет. Уберите его бейдж или прикрепите файл снова"
+  "sessions_chat_refusal_file_unavailable": "Прикреплённого файла больше нет. Уберите его бейдж или прикрепите файл снова",
+  "sessions_chat_model_after_send": "Модели появятся после первой отправки",
+  "sessions_chat_model_not_declared": "Агент не объявил выбор модели",
+  "sessions_chat_model_search": "Поиск моделей",
+  "sessions_chat_model_search_empty": "Ничего не найдено",
+  "sessions_chat_reasoning_level": "Reasoning",
+  "sessions_chat_attach_command": "Команда агента",
+  "sessions_chat_command_search": "Команды агента",
+  "sessions_chat_command_empty": "Такой команды нет",
+  "sessions_chat_mode_choose": "Режим разрешений: {mode}",
+  "sessions_chat_context_label": "Контекст: занято {percent}",
+  "sessions_chat_context_title": "Окно контекста",
+  "sessions_chat_context_used": "Использовано",
+  "sessions_chat_context_size": "Размер окна",
+  "sessions_chat_context_percent": "Доля",
+  "sessions_chat_context_cost": "Стоимость сессии",
+  "sessions_chat_setting_refused": "Агент не принял «{value}» для «{setting}»: {reason}",
+  "sessions_chat_setting_not_declared": "сессия не предлагает это значение"
 }

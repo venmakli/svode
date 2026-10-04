@@ -5,6 +5,7 @@ import {
 
 export {
   agentRuntimeErrorCode,
+  agentSettingRefusal,
   answerAgentInteraction,
   cancelAgentTurn,
   holdDraftAgent,
@@ -12,6 +13,7 @@ export {
   readAgentActivityDetail,
   releaseAgentSession,
   releaseDraftAgent,
+  setAgentSessionSetting,
   startAgentSession,
 } from "@/platform/agent-runtime/agent-runtime-api";
 export type {
@@ -25,9 +27,13 @@ export type {
   AgentPendingInteractionDto,
   AgentQuestionFieldDto,
   AgentRuntimeErrorCode,
+  AgentSessionCommandDto,
   AgentSessionKeyDto,
   AgentSessionOpeningDto,
   AgentSessionSnapshotDto,
+  AgentSessionUsageDto,
+  AgentSettingRefusalDto,
+  AgentSettingValueDto,
   StartedAgentSessionDto,
 } from "@/platform/agent-runtime/agent-runtime-api";
 export { listChatAgents } from "@/platform/agent-setup/agent-setup-api";

@@ -111,7 +111,6 @@ pub enum ItemKind {
     },
     ModeChange,
     ConfigChange,
-    Usage,
     /// The agent's plan as it stands in this turn; later plans of the turn
     /// replace it in place.
     Plan {
@@ -348,6 +347,39 @@ pub struct SessionSetting {
     pub options: Vec<SettingOption>,
 }
 
+/// A slash command the agent declared; it goes to the agent as prompt text.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionCommand {
+    pub name: String,
+    pub description: String,
+    /// The agent's hint for the input after the command.
+    pub hint: Option<String>,
+}
+
+/// Cumulative cost of the session as the agent reported it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UsageCost {
+    pub amount: f64,
+    /// ISO 4217 code.
+    pub currency: String,
+}
+
+/// The agent's last report of its context window.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionUsage {
+    /// Tokens currently in the context.
+    pub used: u64,
+    /// Size of the context window.
+    pub size: u64,
+    pub cost: Option<UsageCost>,
+}
+
+// `f64` rules out a derived `Eq`; the agent never sends NaN in JSON.
+impl Eq for SessionUsage {}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionSnapshot {
@@ -360,6 +392,9 @@ pub struct SessionSnapshot {
     pub history: HistoryState,
     pub writer: WriterState,
     pub settings: Vec<SessionSetting>,
+    /// The slash commands the agent offers now.
+    pub commands: Vec<SessionCommand>,
+    pub usage: Option<SessionUsage>,
     /// The session title the agent reported.
     pub title: Option<String>,
 }
@@ -383,6 +418,9 @@ pub enum Change {
     Writer(WriterState),
     /// Replaces the whole set of session settings.
     Settings(Vec<SessionSetting>),
+    /// Replaces the whole set of slash commands.
+    Commands(Vec<SessionCommand>),
+    Usage(SessionUsage),
     Title(String),
 }
 
@@ -475,6 +513,8 @@ impl SessionSnapshot {
             Change::Connection(connection) => self.connection = *connection,
             Change::Writer(writer) => self.writer = *writer,
             Change::Settings(settings) => self.settings = settings.clone(),
+            Change::Commands(commands) => self.commands = commands.clone(),
+            Change::Usage(usage) => self.usage = Some(usage.clone()),
             Change::Title(title) => self.title = Some(title.clone()),
         }
         true

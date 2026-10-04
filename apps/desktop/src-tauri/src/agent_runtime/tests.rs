@@ -38,6 +38,8 @@ fn snapshot(seq: u64) -> SessionSnapshot {
         },
         writer: WriterState::Acp,
         settings: Vec::new(),
+        commands: Vec::new(),
+        usage: None,
         title: None,
     }
 }

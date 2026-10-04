@@ -1,5 +1,5 @@
 import { useState, type ClipboardEvent } from "react";
-import { File, FileText, HardDrive, Plus } from "lucide-react";
+import { File, FileText, HardDrive, Plus, SquareSlash } from "lucide-react";
 import { KEYS, type TComboboxInputElement } from "platejs";
 import {
   PlateElement,
@@ -37,6 +37,7 @@ import {
   type AttachmentElement,
 } from "../model/attachments";
 import { AttachmentBadge } from "./attachment-badge";
+import { startCommand } from "./composer-commands";
 import * as m from "@/paraglide/messages.js";
 
 /** An attachment badge inside the composer field. */
@@ -143,13 +144,18 @@ export function MentionSearchElement(
   );
 }
 
-/** "+" in the composer field: a file from disk or a page or file of the project. */
+/**
+ * "+" in the composer field: a file from disk, a page or file of the
+ * project, and a command of the agent when it declared some.
+ */
 export function AttachMenu({
   editor,
   disabled,
+  commands,
 }: {
   editor: PlateEditor;
   disabled: boolean;
+  commands: boolean;
 }) {
   return (
     <DropdownMenu>
@@ -187,6 +193,14 @@ export function AttachMenu({
           <FileText />
           {m.sessions_chat_attach_project()}
         </DropdownMenuItem>
+        {commands && (
+          <DropdownMenuItem
+            onSelect={() => window.setTimeout(() => startCommand(editor))}
+          >
+            <SquareSlash />
+            {m.sessions_chat_attach_command()}
+          </DropdownMenuItem>
+        )}
       </DropdownMenuContent>
     </DropdownMenu>
   );

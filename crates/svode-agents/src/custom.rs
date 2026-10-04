@@ -218,6 +218,7 @@ pub fn custom_launch_plan(
         read_only_open: false,
         writer_refusal: None,
         session_per_connection: false,
+        draft_session: false,
     })
 }
 

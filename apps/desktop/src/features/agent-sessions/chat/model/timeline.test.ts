@@ -73,7 +73,6 @@ test("a turn keeps its order, groups consecutive tool calls and shows one plan",
       }),
       item("g1", "t1", { kind: "generic", label: "future_update" }),
       item("m2", "t1", { kind: "agent_message" }, "Done"),
-      item("usage", "t1", { kind: "usage" }, "10/100"),
       item("outcome:t1", "t1", {
         kind: "turn_outcome",
         reason: "end_turn",

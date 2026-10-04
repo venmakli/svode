@@ -2458,5 +2458,22 @@
   "sessions_chat_attachment_file": "File",
   "sessions_chat_attachment_file_type": "{type} file",
   "sessions_chat_paste_failed": "The pasted image was not attached: {message}",
-  "sessions_chat_refusal_file_unavailable": "A linked file is no longer there. Remove its badge or attach the file again"
+  "sessions_chat_refusal_file_unavailable": "A linked file is no longer there. Remove its badge or attach the file again",
+  "sessions_chat_model_after_send": "Models appear after the first message",
+  "sessions_chat_model_not_declared": "The agent did not declare a model choice",
+  "sessions_chat_model_search": "Search models",
+  "sessions_chat_model_search_empty": "Nothing found",
+  "sessions_chat_reasoning_level": "Reasoning",
+  "sessions_chat_attach_command": "Agent command",
+  "sessions_chat_command_search": "Agent commands",
+  "sessions_chat_command_empty": "No such command",
+  "sessions_chat_mode_choose": "Permission mode: {mode}",
+  "sessions_chat_context_label": "Context: {percent} used",
+  "sessions_chat_context_title": "Context window",
+  "sessions_chat_context_used": "Used",
+  "sessions_chat_context_size": "Window size",
+  "sessions_chat_context_percent": "Share",
+  "sessions_chat_context_cost": "Session cost",
+  "sessions_chat_setting_refused": "The agent did not take “{value}” for “{setting}”: {reason}",
+  "sessions_chat_setting_not_declared": "the session does not offer this value"
 }

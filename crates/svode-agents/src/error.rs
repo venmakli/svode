@@ -57,8 +57,8 @@ pub enum AgentRuntimeError {
     /// to it, or unknown liveness needs the user's confirmation.
     #[error("the session cannot take this writer: {refusal:?}")]
     WriterRefused { refusal: WriterRefusal },
-    /// A setting value the session was created with did not apply; the
-    /// session was closed before any prompt.
+    /// A setting value did not apply: a session created with it was closed
+    /// before any prompt; a changed setting keeps its value.
     #[error("setting {setting}={value} was refused: {reason}")]
     SettingRefused {
         setting: String,

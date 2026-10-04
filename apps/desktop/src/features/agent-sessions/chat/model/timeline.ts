@@ -180,8 +180,6 @@ function projectTurn(items: AgentActivityItemDto[]): TimelineEntry[] {
       case "interrupted":
         push({ kind: "outcome", id: item.id, item });
         break;
-      case "usage":
-        break;
     }
   }
   return entries;

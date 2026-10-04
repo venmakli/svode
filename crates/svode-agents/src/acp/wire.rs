@@ -154,7 +154,10 @@ pub(crate) enum SessionUpdate {
     ToolCall(ToolCall),
     ToolCallUpdate(ToolCallUpdate),
     Plan(Plan),
-    AvailableCommandsUpdate {},
+    AvailableCommandsUpdate {
+        #[serde(rename = "availableCommands", default)]
+        available_commands: Vec<Value>,
+    },
     CurrentModeUpdate {
         #[serde(rename = "currentModeId")]
         current_mode_id: String,
@@ -170,7 +173,30 @@ pub(crate) enum SessionUpdate {
     UsageUpdate {
         used: u64,
         size: u64,
+        #[serde(default)]
+        cost: Option<Value>,
     },
+}
+
+/// Entries are read one by one, so one malformed command does not drop
+/// the others.
+#[derive(Deserialize)]
+pub(crate) struct AvailableCommand {
+    pub name: String,
+    #[serde(default)]
+    pub description: String,
+    pub input: Option<AvailableCommandInput>,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct AvailableCommandInput {
+    pub hint: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct UsageCost {
+    pub amount: f64,
+    pub currency: String,
 }
 
 #[derive(Deserialize)]

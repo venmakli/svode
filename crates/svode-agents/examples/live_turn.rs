@@ -142,6 +142,7 @@ async fn main() {
         read_only_open: read.is_some(),
         writer_refusal,
         session_per_connection: false,
+        draft_session: false,
     };
     let connection = connect(&runtime, &launch).await;
 

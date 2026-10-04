@@ -9,6 +9,7 @@ import type {
   AgentSessionSnapshotDto,
 } from "../api/chat";
 import { useSessionActivity } from "../hooks/use-session-activity";
+import { useSessionSettings } from "../hooks/use-session-settings";
 import {
   useSessionComposer,
   type SendRefusal,
@@ -16,11 +17,13 @@ import {
 import type { ContinueRefusal } from "../hooks/use-session-opening";
 import { isDraftBlank } from "../model/attachments";
 import type { ChatSessionState } from "../model/interface";
+import { sessionControls } from "../model/session-controls";
 import { toolCallOf } from "../model/timeline";
-import { SessionAgentLabel, unavailableText } from "./agent-button";
+import { AgentModelButton, unavailableText } from "./agent-button";
 import { ChatTimeline } from "./chat-timeline";
 import { Composer } from "./composer";
 import { PendingCard } from "./pending-card";
+import { ContextIndicator, ModeSelect, SettingRefusalLine } from "./session-controls";
 import * as m from "@/paraglide/messages.js";
 
 const BOTTOM_ATTRIBUTE = "data-session-chat-bottom";
@@ -79,6 +82,7 @@ export function SessionChat({
     snapshot,
     continuation?.attach,
   );
+  const settings = useSessionSettings(session);
   const [confirming, setConfirming] = useState(false);
   // When the request card replaces the field, or the field comes back,
   // focus follows only if it was in what is being replaced. This is read
@@ -140,6 +144,12 @@ export function SessionChat({
     void composer.send();
   };
   const between = !composer.running && !pending;
+  // Settings change on the session the runtime drives, also during a turn:
+  // the agent applies them to the next one.
+  const canChange = snapshot.writer === "acp" && snapshot.connection !== "closed";
+  const mode = sessionControls(snapshot.settings).mode;
+  const changeSetting = (value: Parameters<typeof settings.change>[0]) =>
+    void settings.change(value);
 
   return (
     <div
@@ -169,6 +179,9 @@ export function SessionChat({
         className="mx-auto flex w-full max-w-3xl shrink-0 flex-col gap-1.5 px-6 pt-2"
       >
         {composer.refusal && <RefusalLine refusal={composer.refusal} />}
+        {settings.refusal && (
+          <SettingRefusalLine refusal={settings.refusal} settings={snapshot.settings} />
+        )}
         {continuation?.refusal && (
           <ContinueRefusalLine refusal={continuation.refusal} />
         )}
@@ -206,12 +219,33 @@ export function SessionChat({
               canSend={canSend}
               placeholder={m.sessions_chat_placeholder_continue()}
               autoFocus={autoFocus || moveFocus}
-              controls={<SessionAgentLabel agent={session.agent} />}
+              commands={snapshot.commands}
+              controls={
+                <AgentModelButton
+                  agent={session.agent}
+                  draft={null}
+                  settings={snapshot.settings}
+                  canChange={canChange}
+                  changing={settings.changing}
+                  onChange={changeSetting}
+                />
+              }
             />
           </div>
         )}
         <ComposerFooter>
           {scopeLabel && <span className="truncate">{scopeLabel}</span>}
+          <div className="ms-auto flex min-w-0 items-center gap-1">
+            {mode && (
+              <ModeSelect
+                mode={mode}
+                canChange={canChange}
+                changing={settings.changing === mode.id}
+                onChange={changeSetting}
+              />
+            )}
+            <ContextIndicator usage={snapshot.usage} />
+          </div>
         </ComposerFooter>
       </div>
     </div>

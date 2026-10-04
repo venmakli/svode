@@ -22,7 +22,9 @@ import {
   isDraftBlank,
   type DraftPart,
 } from "../model/attachments";
+import type { AgentSessionCommandDto } from "../api/chat";
 import { composerKeyAction } from "../model/composer";
+import { COMMAND_PLUGINS, SessionCommandsPlugin } from "./composer-commands";
 import {
   AttachMenu,
   AttachmentElementView,
@@ -41,6 +43,7 @@ const COMPOSER_PLUGINS = [
   AttachmentPlugin,
   MentionPlugin,
   MentionInputPlugin.withComponent(MentionSearchElement),
+  ...COMMAND_PLUGINS,
 ];
 
 export interface ComposerProps {
@@ -59,6 +62,8 @@ export interface ComposerProps {
   placeholder: string;
   /** Controls inside the field, left of the primary action. */
   controls?: ReactNode;
+  /** The agent's slash commands; without them `/` is a plain character. */
+  commands?: AgentSessionCommandDto[];
   autoFocus?: boolean;
   className?: string;
 }
@@ -81,6 +86,7 @@ export function Composer({
   canSend,
   placeholder,
   controls,
+  commands = NO_COMMANDS,
   autoFocus = false,
   className,
 }: ComposerProps) {
@@ -105,12 +111,16 @@ export function Composer({
     if (autoFocus) editor.tf.focus({ edge: "end" });
   }, [autoFocus, editor]);
 
+  useEffect(() => {
+    editor.setOption(SessionCommandsPlugin, "commands", commands);
+  }, [commands, editor]);
+
   const sendDisabled = isDraftBlank(parts) || !canSend || sending;
 
   return (
     <InputGroup
       className={cn(
-        "h-auto flex-col items-stretch rounded-xl bg-background shadow-xs has-[[data-slot=input-group-control]:focus]:border-ring has-[[data-slot=input-group-control]:focus]:ring-3 has-[[data-slot=input-group-control]:focus]:ring-ring/50",
+        "@container/composer h-auto flex-col items-stretch rounded-xl bg-background shadow-xs has-[[data-slot=input-group-control]:focus]:border-ring has-[[data-slot=input-group-control]:focus]:ring-3 has-[[data-slot=input-group-control]:focus]:ring-ring/50",
         className,
       )}
       data-sending={sending || undefined}
@@ -138,6 +148,15 @@ export function Composer({
             )}
             onPaste={(event) => pasteAttachments(editor, event)}
             onKeyDown={(event) => {
+              // Enter and Esc in an open `@` or `/` search choose or close
+              // it first.
+              if (
+                event.defaultPrevented ||
+                (event.target instanceof Element &&
+                  event.target.closest('[role="combobox"]'))
+              ) {
+                return;
+              }
               const action = composerKeyAction(event.nativeEvent, running);
               if (action === "send") {
                 event.preventDefault();
@@ -151,7 +170,11 @@ export function Composer({
         </EditorContainer>
       </Plate>
       <InputGroupAddon align="block-end" className="gap-1 pt-1">
-        <AttachMenu editor={editor} disabled={sending} />
+        <AttachMenu
+          editor={editor}
+          disabled={sending}
+          commands={commands.length > 0}
+        />
         {controls}
         <div className="ms-auto flex items-center gap-2">
           {sending && (
@@ -172,6 +195,8 @@ export function Composer({
     </InputGroup>
   );
 }
+
+const NO_COMMANDS: AgentSessionCommandDto[] = [];
 
 function PrimaryAction({
   running,
