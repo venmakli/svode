@@ -24,12 +24,10 @@ import {
 
 export function SettingsDialog({
   destination: request,
-  enableLegacyAgentIntegration,
   shortcutGroups,
   onClose,
 }: {
   destination: SettingsDestination;
-  enableLegacyAgentIntegration: boolean;
   shortcutGroups: readonly ShortcutGroup[];
   onClose: () => void;
 }) {
@@ -41,10 +39,7 @@ export function SettingsDialog({
       ? document.activeElement
       : null,
   );
-  const projectItems = getProjectSettingsNavItems(
-    enableLegacyAgentIntegration,
-    spaces.length > 0,
-  );
+  const projectItems = getProjectSettingsNavItems();
   const groups: SettingsNavigationGroup[] = [
     {
       label: "Svode",
@@ -137,8 +132,6 @@ export function SettingsDialog({
               <ProjectSettingsContent
                 key={activeRootPath}
                 destination={destination}
-                enableLegacyAgentIntegration={enableLegacyAgentIntegration}
-                onClose={close}
                 registerLeaveGuard={registerLeaveGuard}
               />
             </SettingsPage>

@@ -101,7 +101,7 @@ if (process.env.SVODE_LETTER_DOM !== "1") {
       selector({}),
   }));
   mock.module("../model", () => ({
-    useShellStore: () => ({ openAppSettings() {}, toggleChatPanel() {} }),
+    useShellStore: () => ({ openAppSettings() {} }),
   }));
   mock.module("../navigation-guards", () => ({
     passNavigationGuards: async () => {

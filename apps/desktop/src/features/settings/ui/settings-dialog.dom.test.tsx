@@ -98,12 +98,9 @@ if (process.env.SVODE_UNIFIED_SETTINGS_DOM !== "1") {
   mock.module("../hooks/use-space-settings-config-actions", () => ({
     useSpaceSettingsConfigActions: () => ({ saveConfig: async () => true }),
   }));
-  for (const [file, name] of [
-    ["use-space-settings-agent", "useSpaceSettingsAgent"],
-    ["use-space-settings-defaults", "useSpaceSettingsDefaults"],
-    ["use-space-settings-health", "useSpaceSettingsHealth"],
-  ])
-    mock.module(`../hooks/${file}`, () => ({ [name]: () => ({}) }));
+  mock.module("../hooks/use-space-settings-health", () => ({
+    useSpaceSettingsHealth: () => ({}),
+  }));
   // Repository types by space id; an empty map is a type still loading.
   let gitTypes: Record<string, string> = {
     docs: "independent",
@@ -201,15 +198,9 @@ if (process.env.SVODE_UNIFIED_SETTINGS_DOM !== "1") {
     storageSummary: (settings: { currentSpacePath: string }) =>
       `Storage of ${settings.currentSpacePath}`,
   }));
-  for (const [file, name] of [
-    ["space-agent-section", "SpaceAgentSection"],
-    ["space-defaults-section", "SpaceDefaultsSection"],
-    ["space-health-section", "SpaceHealthSection"],
-    ["space-instructions-section", "SpaceInstructionsSection"],
-  ])
-    mock.module(`./${file}`, () => ({
-      [name]: () => <div data-section={name} />,
-    }));
+  mock.module("./space-health-section", () => ({
+    SpaceHealthSection: () => <div data-section="SpaceHealthSection" />,
+  }));
 
   test("one real Dialog preserves navigation, pending guards, owner blocks, focus and no-project scope", async () => {
     const dom = new JSDOM(
@@ -285,14 +276,13 @@ if (process.env.SVODE_UNIFIED_SETTINGS_DOM !== "1") {
       scope: "app",
       section: "git-identity",
     };
-    const draw = async (next = request, legacy = false) => {
+    const draw = async (next = request) => {
       request = next;
       await act(async () => {
         root.render(
           <SettingsDialog
             shortcutGroups={[]}
             destination={request}
-            enableLegacyAgentIntegration={legacy}
             onClose={() => {
               closed = true;
               root.render(null);
@@ -679,10 +669,6 @@ if (process.env.SVODE_UNIFIED_SETTINGS_DOM !== "1") {
       expect(ownerTrigger("Docs").getAttribute("aria-expanded")).toBe("false");
       expect(document.activeElement).toBe(ownerTrigger("Other"));
 
-      await draw({ scope: "app", section: "git-identity" }, true);
-      // The legacy flag keeps the project agent section; the app one is gone.
-      expect(document.body.textContent?.includes("CLI Agents")).toBe(false);
-      expect(document.body.textContent?.includes("AI Agent")).toBe(true);
       activeRootPath = null;
       await draw(project("git", "/project/docs"));
       expect(

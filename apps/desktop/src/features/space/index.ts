@@ -1,5 +1,4 @@
 export type {
-  AgentConfig,
   AssetsS3Config,
   AssetsSpaceConfig,
   AssetsStrategy,

@@ -3,8 +3,7 @@ import { sidebarShortcut } from "./model/shortcut-descriptions";
 import { ChangesControl, useMainChangesTarget } from "@/features/changes";
 import { useLayoutEffect, useRef } from "react";
 import { useMatches } from "@tanstack/react-router";
-import { PanelLeft, PanelRight } from "lucide-react";
-import { ENABLE_IN_APP_CHAT } from "@/app/config/feature-flags";
+import { PanelLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Tooltip,
@@ -12,10 +11,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { useSidebar } from "@/components/ui/sidebar";
-import {
-  useActiveContentPath,
-  useActiveContentSelection,
-} from "@/features/artifact";
+import { useActiveContentSelection } from "@/features/artifact";
 import { selectActiveSpacePath, useSpace } from "@/features/space";
 import { useTrafficLightInset } from "./hooks/use-fullscreen";
 import { useShellStore } from "./model";
@@ -102,8 +98,6 @@ export function ShellChrome() {
 export function WindowHeader() {
   const changesTarget = useMainChangesTarget();
   const { selection } = useActiveContentSelection();
-  const activeContentPath = useActiveContentPath();
-  const toggleChatPanel = useShellStore((state) => state.toggleChatPanel);
   const mainSurface = useShellStore((state) => state.mainSurface);
   const mainSessionTarget = useShellStore((state) =>
     state.mainSurface === "session" ? state.mainSessionTarget : null,
@@ -115,8 +109,6 @@ export function WindowHeader() {
   const activeSpacePath = useSpace(selectActiveSpacePath);
   const { state } = useSidebar();
   const matches = useMatches();
-
-  const chatToggleDisabled = !activeContentPath;
 
   // Check if we're on the /space route
   const isSpaceRoute = matches.some((match) => match.fullPath === "/space");
@@ -196,23 +188,6 @@ export function WindowHeader() {
             <ProjectExternalOpenButton projectPath={activeRootPath} />
           </>
         ) : null}
-        {ENABLE_IN_APP_CHAT && (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                onClick={toggleChatPanel}
-                disabled={chatToggleDisabled}
-              >
-                <PanelRight />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent side="bottom">
-              Toggle chat panel (⌘R)
-            </TooltipContent>
-          </Tooltip>
-        )}
       </div>
     </header>
   );

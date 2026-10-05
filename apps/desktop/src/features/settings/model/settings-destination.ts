@@ -4,10 +4,7 @@ export type ProjectSettingsSection =
   | "general"
   | "variables"
   | "git"
-  | "storage"
-  | "ai-agent"
-  | "defaults"
-  | "instructions";
+  | "storage";
 
 export type SettingsDestination =
   | { scope: "app"; section: AppSettingsSection }

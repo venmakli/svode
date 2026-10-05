@@ -6,7 +6,6 @@ import { closeTopPeek } from "@/shared/lib/peek-stack";
 import { useEffect } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { toast } from "sonner";
-import { ENABLE_IN_APP_CHAT } from "@/app/config/feature-flags";
 import {
   requestActorMailmapSave,
   requestAgentActorCatalogSave,
@@ -49,7 +48,7 @@ export function useKeyboardShortcuts() {
   const { closeMainAreaObject } = useWorkingSetActions();
   const activeContentPath = useActiveContentPath();
   const activeContentSpaceId = useActiveContentSpaceId();
-  const { toggleChatPanel, openAppSettings } = useShellStore();
+  const { openAppSettings } = useShellStore();
   const toggleCommandPalette = useToggleCommandPalette();
   const activeRootPath = useSpace((s) => s.activeRootPath);
   const goHome = useSpace((s) => s.goHome);
@@ -140,11 +139,6 @@ export function useKeyboardShortcuts() {
         openAppSettings();
       }
 
-      if (ENABLE_IN_APP_CHAT && isMeta && e.key === "r") {
-        e.preventDefault();
-        toggleChatPanel();
-      }
-
       // Cmd/Ctrl+P - open project command palette.
       if (activeRootPath && matchesPhysicalShortcut(e, "KeyP")) {
         e.preventDefault();
@@ -172,7 +166,6 @@ export function useKeyboardShortcuts() {
     activeScopeSurface,
     actorsPresentationId,
     toggleCommandPalette,
-    toggleChatPanel,
     closeMainAreaObject,
     openAppSettings,
     goHome,

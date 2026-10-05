@@ -1,51 +1,16 @@
-import {
-  Bot,
-  FileText,
-  GitBranch,
-  HardDrive,
-  KeyRound,
-  Settings,
-} from "lucide-react";
+import { GitBranch, HardDrive, KeyRound, Settings } from "lucide-react";
 import * as m from "@/paraglide/messages.js";
 import type { ProjectSettingsSection } from "../model/settings-destination";
 
-export function getProjectSettingsNavItems(
-  enableLegacyAgentIntegration: boolean,
-  hasSpaces: boolean,
-) {
-  const items = [
-    { key: "general", label: m.settings_general(), icon: Settings, show: true },
-    {
-      key: "variables",
-      label: m.settings_variables_title(),
-      icon: KeyRound,
-      show: true,
-    },
-    {
-      key: "ai-agent",
-      label: m.settings_ai_agent(),
-      icon: Bot,
-      show: enableLegacyAgentIntegration,
-    },
-    { key: "git", label: m.git_section(), icon: GitBranch, show: true },
-    { key: "storage", label: m.storage_section(), icon: HardDrive, show: true },
-    {
-      key: "defaults",
-      label: m.settings_defaults(),
-      icon: Settings,
-      show: enableLegacyAgentIntegration && hasSpaces,
-    },
-    {
-      key: "instructions",
-      label: m.settings_instructions(),
-      icon: FileText,
-      show: enableLegacyAgentIntegration,
-    },
+export function getProjectSettingsNavItems() {
+  return [
+    { key: "general", label: m.settings_general(), icon: Settings },
+    { key: "variables", label: m.settings_variables_title(), icon: KeyRound },
+    { key: "git", label: m.git_section(), icon: GitBranch },
+    { key: "storage", label: m.storage_section(), icon: HardDrive },
   ] satisfies {
     key: ProjectSettingsSection;
     label: string;
     icon: typeof Settings;
-    show: boolean;
   }[];
-  return items.filter((item) => item.show);
 }

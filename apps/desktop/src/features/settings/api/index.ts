@@ -7,7 +7,6 @@ export {
 export * from "./app-variables-api";
 export { getAppVersion } from "./app-version-api";
 export * from "./mcp-api";
-export * from "./space-agent-api";
 export * from "./space-config-api";
 export * from "./space-git-api";
 export * from "./space-health-api";

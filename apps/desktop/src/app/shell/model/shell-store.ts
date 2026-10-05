@@ -1,6 +1,4 @@
 import { create } from "zustand";
-import { ENABLE_IN_APP_CHAT } from "@/app/config/feature-flags";
-import { getActiveContentPath } from "@/features/artifact";
 import type {
   AgentSessionOpenOptions,
   AgentSessionTarget,
@@ -24,7 +22,6 @@ export const SHELL_SIDEBAR_WIDTH_MIN = 240;
 export const SHELL_SIDEBAR_WIDTH_MAX = 420;
 
 interface ShellState {
-  chatPanelOpen: boolean;
   settingsDestination: SettingsDestination | null;
   mainSurface: MainSurface;
   /**
@@ -47,8 +44,6 @@ interface ShellState {
   nextKnowledgeGraphOpenRequestKey: number;
   sidebarWidth: number;
 
-  toggleChatPanel: () => void;
-  closeChatPanel: () => void;
   commitSidebarWidth: (width: number) => void;
   openAppSettings: (section?: AppSettingsSection) => void;
   openSpaceSettings: (
@@ -110,7 +105,6 @@ function persistSidebarWidth(width: number) {
 }
 
 export const useShellStore = create<ShellState>((set) => ({
-  chatPanelOpen: false,
   settingsDestination: null,
   mainSurface: "content",
   mainSessionTarget: null,
@@ -123,14 +117,6 @@ export const useShellStore = create<ShellState>((set) => ({
   knowledgeGraphOpenRequest: null,
   nextKnowledgeGraphOpenRequestKey: 1,
   sidebarWidth: readStoredSidebarWidth(),
-
-  toggleChatPanel: () => {
-    if (!ENABLE_IN_APP_CHAT) return;
-    if (!getActiveContentPath()) return;
-    set((state) => ({ chatPanelOpen: !state.chatPanelOpen }));
-  },
-
-  closeChatPanel: () => set({ chatPanelOpen: false }),
 
   commitSidebarWidth: (width) => {
     const sidebarWidth = clampSidebarWidth(width);
